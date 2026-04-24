@@ -68,7 +68,11 @@ enum ApplicationPayloadKind:
     stream_ack
     stream_window_update
     pubsub
+    task_control
+    relay_control
+    runner_control
     
+
 
 
 format PacketHeader:
