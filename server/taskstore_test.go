@@ -1,6 +1,7 @@
 package server
 
 import (
+	"path/filepath"
 	"regexp"
 	"testing"
 	"time"
@@ -245,5 +246,44 @@ func TestTaskStoreReadIsSnapshot(t *testing.T) {
 	second, _ := s.Get(id)
 	if second.RepoPath != "/original" {
 		t.Fatalf("store was poisoned by mutating returned snapshot: got RepoPath=%q, want \"/original\"", second.RepoPath)
+	}
+}
+
+func TestTaskStoreWALWriteAndReplay(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "events.log")
+	wal, _ := OpenWAL(walPath)
+
+	s := NewTaskStore()
+	s.SetWAL(wal)
+	id := s.Create("/r", "p")
+	s.Assign(id, "runner-x", "/tmp/wt")
+	s.Finish(id, 0, []byte("done"))
+	wal.Close() //nolint:errcheck
+
+	// Re-open and replay
+	events, _ := ReadWAL(walPath)
+	s2 := NewTaskStore()
+	s2.ReplayEvents(events)
+	got, ok := s2.Get(id)
+	if !ok || got.Status != protocol.TaskStatus_Succeeded {
+		t.Fatalf("replay: %+v ok=%v", got, ok)
+	}
+	if string(got.DiffInfo) != "done" {
+		t.Fatalf("DiffInfo lost: %q", got.DiffInfo)
+	}
+}
+
+func TestTaskStoreReplayMarksRunningAsFailed(t *testing.T) {
+	s := NewTaskStore()
+	events := []WALEvent{
+		{Type: "task_created", TaskID: "abc", RepoPath: "/r", Prompt: "p", Ts: 100},
+		{Type: "task_assigned", TaskID: "abc", RunnerID: "r1", WorktreeDir: "/wt", Ts: 200},
+		// No task_finished — simulates server-restart while task was running
+	}
+	s.ReplayEvents(events)
+	got, _ := s.Get("abc")
+	if got.Status != protocol.TaskStatus_Failed {
+		t.Fatalf("expected Failed, got %v", got.Status)
 	}
 }

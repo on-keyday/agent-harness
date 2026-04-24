@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
@@ -66,7 +68,28 @@ func New(cfg Config) *Server {
 }
 
 // Run listens on cfg.Addr until ctx is done. Returns the first fatal error.
+//
+// If cfg.DataDir is non-empty, Run creates the directory, replays any existing
+// WAL into the TaskStore (rebuilding Queued tasks and marking interrupted
+// Running tasks as Failed), then opens the WAL for new appends.
+// If cfg.DataDir is empty, WAL setup is skipped entirely (safe for tests that
+// do not need persistence).
 func (s *Server) Run(ctx context.Context) error {
+	if s.cfg.DataDir != "" {
+		if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
+			return fmt.Errorf("create data dir: %w", err)
+		}
+		walPath := filepath.Join(s.cfg.DataDir, "events.log")
+		if events, err := ReadWAL(walPath); err == nil && events != nil {
+			s.tasks.ReplayEvents(events)
+		}
+		wal, err := OpenWAL(walPath)
+		if err != nil {
+			return fmt.Errorf("open WAL: %w", err)
+		}
+		defer wal.Close()
+		s.tasks.SetWAL(wal)
+	}
 	sess, err := transport.WebSocketSession(s.cfg.Logger, s.cfg.Addr, nil, objproto.SessionModeServer)
 	if err != nil {
 		return fmt.Errorf("websocket session: %w", err)
