@@ -5,7 +5,11 @@ enum MessageKind:
     LEAVE
 
 format PubSubRequest:
+    config.go.union = "noheap"
     kind :MessageKind
+    if kind == MessageKind.JOIN:
+        nick_name_len :u8
+        nick_name :[nick_name_len]u8
     topic :[..]u8
 
 enum Status:

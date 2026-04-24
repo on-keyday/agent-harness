@@ -4,16 +4,21 @@ import (
 	"log/slog"
 	"sync"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
-func JoinTopic(topic string) []byte {
-	return (&protocol.PubSubRequest{
+func JoinTopic(nickName string, topic string) []byte {
+	p := (&protocol.PubSubRequest{
 		Kind:  protocol.MessageKind_JOIN,
 		Topic: []byte(topic),
-	}).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Control)})
+	})
+	if !p.SetNickName([]uint8(nickName)) {
+		return nil
+	}
+	return p.MustAppend([]byte{byte(wire.ApplicationPayloadKind_Control)})
 }
 
 func LeaveTopic(topic string) []byte {
@@ -32,7 +37,7 @@ func (s *Subscriber) HandleMessage(ps *PubSub, msg []byte) []byte {
 	switch req.Kind {
 	case protocol.MessageKind_JOIN:
 		topic := string(req.Topic)
-		return ps.Subscribe(topic, s).MustAppend(nil)
+		return ps.Subscribe(topic, string(*req.NickName()), s).MustAppend(nil)
 	case protocol.MessageKind_LEAVE:
 		topic := string(req.Topic)
 		return ps.Unsubscribe(topic, s).MustAppend(nil)
@@ -42,15 +47,28 @@ func (s *Subscriber) HandleMessage(ps *PubSub, msg []byte) []byte {
 	}).MustAppend(nil)
 }
 
-type Subscriber struct {
-	transport trsf.Transport
-	topics    map[string]trsf.BidirectionalStream
+func (s *Subscriber) LeaveAll(ps *PubSub) {
+	for topic := range s.topics {
+		ps.Unsubscribe(topic, s)
+	}
 }
 
-func NewSubscriber(transport trsf.Transport) *Subscriber {
+type topicJoinInfo struct {
+	name string
+	conn trsf.BidirectionalStream
+}
+
+type Subscriber struct {
+	id        objproto.ConnectionID
+	transport trsf.Transport
+	topics    map[string]*topicJoinInfo
+}
+
+func NewSubscriber(id objproto.ConnectionID, transport trsf.Transport) *Subscriber {
 	return &Subscriber{
+		id:        id,
 		transport: transport,
-		topics:    make(map[string]trsf.BidirectionalStream),
+		topics:    make(map[string]*topicJoinInfo),
 	}
 }
 
@@ -74,24 +92,26 @@ func (sl *SubscriberList) RemoveSubscriber(sub *Subscriber) {
 type PubSub struct {
 	m      sync.Mutex
 	topics map[string]*SubscriberList
+	logger *slog.Logger
 }
 
-func NewPubSub() *PubSub {
+func NewPubSub(logger *slog.Logger) *PubSub {
 	return &PubSub{
 		topics: make(map[string]*SubscriberList),
+		logger: logger,
 	}
 }
 
-func (ps *PubSub) Subscribe(topic string, sub *Subscriber) *protocol.PubSubResponse {
+func (ps *PubSub) Subscribe(topic string, nickName string, sub *Subscriber) *protocol.PubSubResponse {
 	ps.m.Lock()
 	defer ps.m.Unlock()
 	if sub.topics == nil {
-		sub.topics = make(map[string]trsf.BidirectionalStream)
+		sub.topics = make(map[string]*topicJoinInfo)
 	}
 	if id, ok := sub.topics[topic]; ok {
 		return &protocol.PubSubResponse{
 			Status:   protocol.Status_AlreadySubscribed,
-			StreamId: uint64(id.ID()),
+			StreamId: uint64(id.conn.ID()),
 		}
 	}
 	stream := sub.transport.CreateBidirectionalStream()
@@ -102,20 +122,24 @@ func (ps *PubSub) Subscribe(topic string, sub *Subscriber) *protocol.PubSubRespo
 			if err != nil {
 				return
 			}
-			slog.Info("received data from subscriber stream", "topic", topic, "length", len(data), "eof", eof)
+			ps.logger.Info("received data from subscriber stream", "topic", topic, "length", len(data), "eof", eof)
 			if len(data) != 0 {
-				ps.Publish(topic, data)
+				ps.Publish(nickName, topic, data)
 			}
 			if eof {
 				return
 			}
 		}
 	}()
-	sub.topics[topic] = stream
+	sub.topics[topic] = &topicJoinInfo{
+		name: nickName,
+		conn: stream,
+	}
 	if _, ok := ps.topics[topic]; !ok {
 		ps.topics[topic] = &SubscriberList{}
 	}
 	ps.topics[topic].AddSubscriber(sub)
+	ps.logger.Info("subscriber joined topic", "topic", topic, "nickName", nickName, "subscriberID", sub.id, "streamID", stream.ID())
 	return &protocol.PubSubResponse{
 		Status:   protocol.Status_Ok,
 		StreamId: uint64(stream.ID()),
@@ -131,11 +155,12 @@ func (ps *PubSub) Unsubscribe(topic string, sub *Subscriber) *protocol.PubSubRes
 			delete(ps.topics, topic)
 		}
 		if stream, ok := sub.topics[topic]; ok {
-			stream.CloseBoth()
+			stream.conn.CloseBoth()
 			delete(sub.topics, topic)
+			ps.logger.Info("subscriber left topic", "topic", topic, "nickName", stream.name, "subscriberID", sub.id, "streamID", stream.conn.ID())
 			return &protocol.PubSubResponse{
 				Status:   protocol.Status_Ok,
-				StreamId: uint64(stream.ID()),
+				StreamId: uint64(stream.conn.ID()),
 			}
 		}
 	}
@@ -145,7 +170,7 @@ func (ps *PubSub) Unsubscribe(topic string, sub *Subscriber) *protocol.PubSubRes
 
 }
 
-func (ps *PubSub) Publish(topic string, msg []byte) {
+func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 	ps.m.Lock()
 	defer ps.m.Unlock()
 	if sl, ok := ps.topics[topic]; ok {
@@ -154,7 +179,7 @@ func (ps *PubSub) Publish(topic string, msg []byte) {
 			if !ok {
 				continue
 			}
-			stream.Write(msg)
+			stream.conn.AppendData(false, []byte(nickName), []byte("\n"), msg, []byte("\n"))
 		}
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -18,9 +17,10 @@ import (
 
 var port = flag.String("port", "8539", "port number of server")
 var topic = flag.String("topic", "sample/talk", "topic to subscribe")
+var nickname = flag.String("nickname", "client1", "nickname for pubsub")
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	//slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	flag.Parse()
 	sess, err := transport.WebSocketSession(slog.Default(), fmt.Sprintf("localhost:%s", *port), nil, objproto.SessionModeClient)
 	if err != nil {
@@ -54,7 +54,7 @@ func main() {
 		}
 	})
 
-	request := pubsub.JoinTopic(*topic)
+	request := pubsub.JoinTopic(*nickname, *topic)
 	_, _, err = conn.SendMessage(request)
 	if err != nil {
 		slog.Error("failed to send join topic request", "error", err)
