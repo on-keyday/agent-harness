@@ -86,6 +86,22 @@ func TestRegistryNoIdle(t *testing.T) {
 	}
 }
 
+func TestRegistryAliasingInvariant(t *testing.T) {
+	r := NewRegistry()
+	r.Add(&RunnerEntry{ID: "A", RepoPath: "/x", Status: protocol.RunnerStatus_Idle, ConnectedAt: time.Now()})
+	first, _ := r.Get("A")
+	r.SetStatus("A", protocol.RunnerStatus_Busy, "task-1")
+	second, _ := r.Get("A")
+	// The registry returns pointers to entries it owns; SetStatus mutates the same entry.
+	// Both Get calls must return the same pointer.
+	if first != second {
+		t.Fatalf("expected same pointer across Get calls; got %p then %p", first, second)
+	}
+	if first.Status != protocol.RunnerStatus_Busy || first.CurrentTask != "task-1" {
+		t.Fatalf("first pointer should observe SetStatus mutation; got %+v", first)
+	}
+}
+
 func TestRegistrySetStatus(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()

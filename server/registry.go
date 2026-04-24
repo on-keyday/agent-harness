@@ -26,7 +26,7 @@ type RunnerEntry struct {
 
 // Registry tracks connected runners. All public methods are concurrency-safe.
 type Registry struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	runners map[string]*RunnerEntry
 }
 
@@ -54,8 +54,8 @@ func (r *Registry) Remove(id string) {
 // Get returns the entry for id. The returned pointer aliases the stored entry;
 // callers must not mutate it.
 func (r *Registry) Get(id string) (*RunnerEntry, bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	e, ok := r.runners[id]
 	return e, ok
 }
@@ -79,8 +79,8 @@ func (r *Registry) SetStatus(id string, s protocol.RunnerStatus, currentTask str
 // share the same ConnectedAt, the one with the lexicographically smaller ID
 // is returned to keep the result deterministic.
 func (r *Registry) OldestIdleForRepo(repo string) *RunnerEntry {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 
 	var candidates []*RunnerEntry
 	for _, e := range r.runners {
@@ -103,8 +103,8 @@ func (r *Registry) OldestIdleForRepo(repo string) *RunnerEntry {
 // List returns a snapshot of all entries in arbitrary order.
 // The returned pointers alias the stored entries; callers must not mutate them.
 func (r *Registry) List() []*RunnerEntry {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	result := make([]*RunnerEntry, 0, len(r.runners))
 	for _, e := range r.runners {
 		result = append(result, e)
