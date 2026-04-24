@@ -1,0 +1,195 @@
+package server
+
+import (
+	"regexp"
+	"testing"
+	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
+
+var hexRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
+
+func TestTaskStoreCreate(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "prompt")
+
+	if len(id) != 32 {
+		t.Fatalf("expected id length 32, got %d", len(id))
+	}
+	if !hexRE.MatchString(id) {
+		t.Fatalf("expected 32 lowercase hex chars, got %q", id)
+	}
+
+	before := time.Now()
+	entry, ok := s.Get(id)
+	if !ok {
+		t.Fatalf("Get(%q) returned ok=false, want true", id)
+	}
+	if entry.Status != protocol.TaskStatus_Queued {
+		t.Fatalf("expected Status=Queued, got %v", entry.Status)
+	}
+	if entry.Prompt != "prompt" {
+		t.Fatalf("expected Prompt=%q, got %q", "prompt", entry.Prompt)
+	}
+	if entry.RepoPath != "/repo" {
+		t.Fatalf("expected RepoPath=%q, got %q", "/repo", entry.RepoPath)
+	}
+	// CreatedAt should be recent (before the Get call but after test start).
+	if entry.CreatedAt.After(before) {
+		t.Fatalf("CreatedAt %v is after 'before' %v", entry.CreatedAt, before)
+	}
+	if time.Since(entry.CreatedAt) > 5*time.Second {
+		t.Fatalf("CreatedAt %v seems too old", entry.CreatedAt)
+	}
+}
+
+func TestTaskStoreAssignAndFinish(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "p")
+
+	s.Assign(id, "runner-1", "/tmp/wt")
+
+	entry, ok := s.Get(id)
+	if !ok {
+		t.Fatal("Get after Assign returned ok=false")
+	}
+	if entry.Status != protocol.TaskStatus_Running {
+		t.Fatalf("expected Status=Running, got %v", entry.Status)
+	}
+	if entry.AssignedTo != "runner-1" {
+		t.Fatalf("expected AssignedTo=%q, got %q", "runner-1", entry.AssignedTo)
+	}
+	if entry.WorktreeDir != "/tmp/wt" {
+		t.Fatalf("expected WorktreeDir=%q, got %q", "/tmp/wt", entry.WorktreeDir)
+	}
+	if entry.StartedAt == nil {
+		t.Fatal("expected StartedAt non-nil after Assign")
+	}
+
+	s.Finish(id, 0, []byte{})
+
+	entry, ok = s.Get(id)
+	if !ok {
+		t.Fatal("Get after Finish returned ok=false")
+	}
+	if entry.Status != protocol.TaskStatus_Succeeded {
+		t.Fatalf("expected Status=Succeeded, got %v", entry.Status)
+	}
+	if entry.ExitCode == nil {
+		t.Fatal("expected ExitCode non-nil after Finish")
+	}
+	if *entry.ExitCode != 0 {
+		t.Fatalf("expected *ExitCode=0, got %d", *entry.ExitCode)
+	}
+	if entry.EndedAt == nil {
+		t.Fatal("expected EndedAt non-nil after Finish")
+	}
+}
+
+func TestTaskStoreFinishNonZero(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "p")
+	s.Assign(id, "r", "/wt")
+	s.Finish(id, 7, nil)
+
+	entry, ok := s.Get(id)
+	if !ok {
+		t.Fatal("Get returned ok=false")
+	}
+	if entry.Status != protocol.TaskStatus_Failed {
+		t.Fatalf("expected Status=Failed, got %v", entry.Status)
+	}
+	if entry.ExitCode == nil {
+		t.Fatal("expected ExitCode non-nil")
+	}
+	if *entry.ExitCode != 7 {
+		t.Fatalf("expected *ExitCode=7, got %d", *entry.ExitCode)
+	}
+}
+
+func TestTaskStoreCancel(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "p")
+
+	s.Cancel(id)
+
+	entry, ok := s.Get(id)
+	if !ok {
+		t.Fatal("Get after Cancel returned ok=false")
+	}
+	if entry.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("expected Status=Cancelled, got %v", entry.Status)
+	}
+	if entry.EndedAt == nil {
+		t.Fatal("expected EndedAt non-nil after Cancel")
+	}
+
+	// Idempotent: second Cancel must not panic and status stays Cancelled.
+	s.Cancel(id)
+	entry2, _ := s.Get(id)
+	if entry2.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("expected Status=Cancelled after second Cancel, got %v", entry2.Status)
+	}
+}
+
+func TestTaskStoreNextQueuedForRepo(t *testing.T) {
+	s := NewTaskStore()
+	a := s.Create("/x", "a")
+	b := s.Create("/x", "b")
+	_ = s.Create("/y", "c")
+
+	got := s.NextQueuedForRepo("/x")
+	if got == nil {
+		t.Fatal("expected non-nil for /x, got nil")
+	}
+	if got.ID != a {
+		t.Fatalf("expected earliest id %q, got %q", a, got.ID)
+	}
+
+	s.Assign(a, "r", "/wt")
+
+	got = s.NextQueuedForRepo("/x")
+	if got == nil {
+		t.Fatal("expected non-nil for /x after assigning a, got nil")
+	}
+	if got.ID != b {
+		t.Fatalf("expected id %q after a assigned, got %q", b, got.ID)
+	}
+
+	got = s.NextQueuedForRepo("/z")
+	if got != nil {
+		t.Fatalf("expected nil for /z, got %+v", got)
+	}
+}
+
+func TestTaskStoreListLimit(t *testing.T) {
+	s := NewTaskStore()
+	ids := make([]string, 5)
+	for i := 0; i < 5; i++ {
+		ids[i] = s.Create("/repo", "p")
+	}
+
+	all := s.List(0)
+	if len(all) != 5 {
+		t.Fatalf("List(0) expected 5 entries, got %d", len(all))
+	}
+	// Verify insertion order.
+	for i, e := range all {
+		if e.ID != ids[i] {
+			t.Fatalf("List(0)[%d]: expected id %q, got %q", i, ids[i], e.ID)
+		}
+	}
+
+	recent := s.List(3)
+	if len(recent) != 3 {
+		t.Fatalf("List(3) expected 3 entries, got %d", len(recent))
+	}
+	// Most-recent 3 in insertion order = ids[2], ids[3], ids[4].
+	expected := ids[2:]
+	for i, e := range recent {
+		if e.ID != expected[i] {
+			t.Fatalf("List(3)[%d]: expected id %q, got %q", i, expected[i], e.ID)
+		}
+	}
+}
