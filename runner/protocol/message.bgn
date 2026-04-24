@@ -1,0 +1,170 @@
+config.go.package = "protocol"
+
+enum RunnerMessageType:
+    :u8
+    hello
+    task_accepted
+    task_started
+    task_finished
+    heartbeat
+
+enum RunnerRequestType:
+    :u8
+    assign_task
+    cancel_task
+
+format RunnerHello:
+    version :u8
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+
+format TaskID:
+    id :[16]u8
+
+format AssignTask:
+    task_id :TaskID
+    prompt :[..]u8
+
+format CancelTask:
+    task_id :TaskID
+
+format TaskAccepted:
+    task_id :TaskID
+
+format TaskStarted:
+    task_id :TaskID
+    worktree_dir_len :u16
+    worktree_dir :[worktree_dir_len]u8
+
+format TaskFinished:
+    task_id :TaskID
+    exit_code :i32
+    diff_info :[..]u8
+
+format RunnerMessage:
+    kind :RunnerMessageType
+    match kind:
+        RunnerMessageType.hello => hello :RunnerHello
+        RunnerMessageType.task_accepted => task_accepted :TaskAccepted
+        RunnerMessageType.task_started => task_started :TaskStarted
+        RunnerMessageType.task_finished => task_finished :TaskFinished
+        RunnerMessageType.heartbeat => ..
+        .. => error("Unexpected message")
+
+format RunnerRequest:
+    kind :RunnerRequestType
+    match kind:
+        RunnerRequestType.assign_task => assign_task :AssignTask
+        RunnerRequestType.cancel_task => cancel_task :CancelTask
+
+enum TaskControlKind:
+    :u8
+    submit
+    list
+    cancel
+
+format ListQuery:
+    query :[..]u8 # currently opaque
+
+format RunnerID:
+    transport_len :u8
+    transport :[transport_len]u8
+    ip_addr_len :u8
+    ip_addr_len == 4 || ip_addr_len == 16
+    ip_addr :[ip_addr_len]u8
+    port :u16
+    unique_number :u16
+
+enum TaskStatus:
+    :u8
+    Queued
+    Running
+    Succeeded
+    Failed
+    Cancelled
+
+enum RunnerStatus:
+    :u8
+    Offline
+    Idle
+    Busy
+
+format RunnerInfo:
+    id :RunnerID
+    status :RunnerStatus
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    current_task :TaskID
+    connected_at :u64  # unix nano
+    last_seen :u64
+
+format TaskInfo:
+    id :TaskID
+    status :TaskStatus
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    assigned_to :RunnerID
+    worktree_dir_len :u16
+    worktree_dir :[worktree_dir_len]u8
+    created_at :u64
+    started_at :u64
+    ended_at :u64
+    exit_code :i32
+    prompt_len :u32
+    prompt :[prompt_len]u8
+
+format ListResult:
+    runners_len :u16
+    runners :[runners_len]RunnerInfo
+    tasks_len :u16
+    tasks :[tasks_len]TaskInfo
+
+format SubmitRequest:
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    prompt_len :u32
+    prompt :[prompt_len]u8
+
+format SubmitResponse:
+    task_id :TaskID
+
+format TaskControlRequest:
+    kind :TaskControlKind
+    match kind:
+        TaskControlKind.submit => submit :SubmitRequest
+        TaskControlKind.list => list :ListQuery
+        TaskControlKind.cancel => cancel :CancelTask
+        .. => error("Unexpected task")
+
+format CancelStatus:
+    status :u8
+
+format TaskControlResponse:
+    kind :TaskControlKind
+    match kind:
+        TaskControlKind.submit => submit :SubmitResponse
+        TaskControlKind.list => list :ListResult
+        TaskControlKind.cancel => cancel :CancelStatus
+
+# Pubsub event payloads
+enum StatusEventKind:
+    :u8
+    task_queued
+    task_assigned
+    task_started
+    task_ended
+    runner_registered
+    runner_offline
+
+format TaskStatusEvent:
+    kind :StatusEventKind
+    task_id :TaskID
+    ts :u64
+    task_status :TaskStatus
+    exit_code :i32
+
+format RunnerStatusEvent:
+    kind :StatusEventKind
+    runner_id :RunnerID
+    ts :u64
+    runner_status :RunnerStatus
