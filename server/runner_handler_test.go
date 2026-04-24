@@ -303,6 +303,72 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	}
 }
 
+func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
+	reg := NewRegistry()
+	tasks := NewTaskStore()
+	changeCalled := 0
+
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(5 * time.Second)
+
+	nowFn := func() time.Time { return t1 }
+
+	h := &RunnerHandler{
+		Registry: reg,
+		Tasks:    tasks,
+		Now:      nowFn,
+		OnChange: func() { changeCalled++ },
+	}
+
+	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-7")}
+	runnerID := fc.ConnectionID().String()
+
+	// Expected task: fixed 32-hex string (32 bytes = 256 bits, displayed as 64 hex chars).
+	// Create a 16-byte task ID for CurrentTask by encoding it as hex (produces 32 hex chars).
+	var expectedRawID [16]byte
+	expectedRawID[0] = 0xAA
+	expectedTaskID := hex.EncodeToString(expectedRawID[:])
+
+	// Register the runner with LastSeen at t0 and CurrentTask set to the expected task.
+	reg.Add(&RunnerEntry{
+		ID:          runnerID,
+		RepoPath:    "/repo",
+		Status:      protocol.RunnerStatus_Busy,
+		CurrentTask: expectedTaskID,
+		ConnectedAt: t0,
+		LastSeen:    t0,
+	})
+
+	// Send TaskAccepted with a DIFFERENT TaskID (all 0xFF bytes).
+	var differentRawID [16]byte
+	for i := range differentRawID {
+		differentRawID[i] = 0xFF
+	}
+
+	ta := protocol.TaskAccepted{}
+	ta.TaskId.Id = differentRawID
+
+	msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskAccepted}
+	msg.SetTaskAccepted(ta)
+
+	payload := encodeRunnerMessage(t, msg)
+	h.Handle(fc, payload)
+
+	// Assert: LastSeen was updated to t1 despite the mismatch warning.
+	entry, ok := reg.Get(runnerID)
+	if !ok {
+		t.Fatalf("runner %q not found after Handle", runnerID)
+	}
+	if !entry.LastSeen.Equal(t1) {
+		t.Errorf("expected LastSeen %v after TaskAccepted (mismatch case), got %v", t1, entry.LastSeen)
+	}
+
+	// The mismatch warning does not prevent OnChange from being called.
+	if changeCalled != 1 {
+		t.Errorf("expected OnChange called 1 time, got %d", changeCalled)
+	}
+}
+
 func TestMalformedPayloadIsIgnored(t *testing.T) {
 	reg := NewRegistry()
 	tasks := NewTaskStore()

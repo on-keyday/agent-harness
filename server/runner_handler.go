@@ -59,7 +59,10 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 					"runner", runnerID, "expected", e.CurrentTask, "got", accepted)
 			}
 		}
-		h.Registry.SetLastSeen(runnerID, h.Now())
+		if !h.Registry.SetLastSeen(runnerID, now) {
+			slog.Error("runner_handler: SetLastSeen on unknown runner", "runner", runnerID)
+			return
+		}
 
 	case protocol.RunnerMessageType_TaskStarted:
 		taskStarted := msg.TaskStarted()
