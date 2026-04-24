@@ -12,7 +12,9 @@ var hexRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 func TestTaskStoreCreate(t *testing.T) {
 	s := NewTaskStore()
+	before := time.Now()
 	id := s.Create("/repo", "prompt")
+	after := time.Now()
 
 	if len(id) != 32 {
 		t.Fatalf("expected id length 32, got %d", len(id))
@@ -21,7 +23,6 @@ func TestTaskStoreCreate(t *testing.T) {
 		t.Fatalf("expected 32 lowercase hex chars, got %q", id)
 	}
 
-	before := time.Now()
 	entry, ok := s.Get(id)
 	if !ok {
 		t.Fatalf("Get(%q) returned ok=false, want true", id)
@@ -35,12 +36,9 @@ func TestTaskStoreCreate(t *testing.T) {
 	if entry.RepoPath != "/repo" {
 		t.Fatalf("expected RepoPath=%q, got %q", "/repo", entry.RepoPath)
 	}
-	// CreatedAt should be recent (before the Get call but after test start).
-	if entry.CreatedAt.After(before) {
-		t.Fatalf("CreatedAt %v is after 'before' %v", entry.CreatedAt, before)
-	}
-	if time.Since(entry.CreatedAt) > 5*time.Second {
-		t.Fatalf("CreatedAt %v seems too old", entry.CreatedAt)
+	// CreatedAt must fall within the before/after sandwich around Create.
+	if entry.CreatedAt.Before(before) || entry.CreatedAt.After(after) {
+		t.Fatalf("CreatedAt %v not in [%v, %v]", entry.CreatedAt, before, after)
 	}
 }
 
@@ -191,5 +189,23 @@ func TestTaskStoreListLimit(t *testing.T) {
 		if e.ID != expected[i] {
 			t.Fatalf("List(3)[%d]: expected id %q, got %q", i, expected[i], e.ID)
 		}
+	}
+}
+
+func TestTaskStoreCancelRunning(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/r", "p")
+	s.Assign(id, "runner-x", "/wt")
+	// sanity: now Running
+	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Running {
+		t.Fatalf("expected Running, got %v", got.Status)
+	}
+	s.Cancel(id)
+	got, _ := s.Get(id)
+	if got.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("expected Cancelled after cancelling a Running task, got %v", got.Status)
+	}
+	if got.EndedAt == nil {
+		t.Fatalf("EndedAt should be set after Cancel")
 	}
 }
