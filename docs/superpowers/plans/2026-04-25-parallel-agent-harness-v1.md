@@ -12,6 +12,61 @@
 
 ---
 
+## Protocol API 規約 (bgn 生成コードの使い方)
+
+`runner/protocol/` は brgen (`.bgn`) から生成される。以下 2 パターンで API が出てくるので、**全 task の code sample はこの規約に従う**:
+
+### 1. match union 型 (`RunnerMessage` / `RunnerRequest` / `TaskControlRequest` / `TaskControlResponse`)
+
+`kind` field で variant を切り替える型は、variant を **getter/setter メソッド** で公開する (直接 field ではない)。
+
+```go
+// ❌ 間違い — struct literal の Hello / Submit / Cancel はコンパイル不可
+msg := &protocol.RunnerMessage{
+    Kind:  protocol.RunnerMessageType_Hello,
+    Hello: &protocol.RunnerHello{...},
+}
+
+// ✅ 正しい — Kind を先に set、その後 SetXxx(value)
+msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
+ok := msg.SetHello(protocol.RunnerHello{
+    Version:     1,
+    RepoPathLen: uint16(len(path)),
+    RepoPath:    []byte(path),
+})
+// (SetXxx は Kind が正しい variant でなければ false を返す)
+
+// ✅ access — getter は nil チェックできる pointer を返す
+if h := msg.Hello(); h != nil {
+    // use h.Version, h.RepoPath, ...
+}
+```
+
+- 関連 setter: `msg.SetHello` / `msg.SetTaskAccepted` / `msg.SetTaskStarted` / `msg.SetTaskFinished`
+- 関連 getter: 同名の method (引数なし)
+- 未知 / 不一致 variant では setter は `false`、getter は `nil`
+
+### 2. 可変長 byte field (`RepoPath` / `Prompt` / `WorktreeDir` / `DiffInfo` 等)
+
+`*Len` field は **`SetXxx([]byte)` が自動同期** する。手動で Len を詰めない。
+
+```go
+sr := &protocol.SubmitRequest{}
+sr.SetRepoPath([]byte(repo))   // RepoPathLen も自動設定
+sr.SetPrompt([]byte(prompt))
+// 以降 sr.RepoPathLen は len(repo) に一致済
+```
+
+### Plan 内 code sample の読み方
+
+以下の task で出てくる `&protocol.X{..., Hello: &..., Submit: &...}` 相当の struct literal は **擬似コード**。実装時は上の規約に従って `SetXxx` / `Xxx()` に読み替える:
+
+- Task 2.5 / 2.6 / 2.7b / 3.3 / 3.4 / 4.1 / 4.4
+
+同様に `RepoPathLen` / `PromptLen` などの明示的な len 代入も `SetXxx([]byte)` に置き換える。
+
+---
+
 ## File structure
 
 ### Create
@@ -974,10 +1029,10 @@ func TestHelloRegistersRunner(t *testing.T) {
 	h := &RunnerHandler{Registry: reg, Tasks: store, Now: func() time.Time { return time.Unix(10, 0) }}
 
 	fc := &fakeConn{id: mustCID(t, "ws:127.0.0.1:8539-1")}
-	hello := &protocol.RunnerMessage{
-		Kind:  protocol.RunnerMessageType_Hello,
-		Hello: &protocol.RunnerHello{Version: 1, RepoPathLen: 4, RepoPath: []byte("/foo")},
-	}
+	hello := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
+	rh := protocol.RunnerHello{Version: 1}
+	rh.SetRepoPath([]byte("/foo"))
+	hello.SetHello(rh)
 	h.Handle(fc, mustEncodeRunnerMsg(t, hello))
 
 	entry, ok := reg.Get(fc.id.String())
@@ -998,12 +1053,10 @@ func TestTaskFinishedUpdatesStore(t *testing.T) {
 
 	tidBytes := protocol.TaskID{}
 	copy(tidBytes.Id[:], decodeHex(t, taskID))
-	finished := &protocol.RunnerMessage{
-		Kind: protocol.RunnerMessageType_TaskFinished,
-		TaskFinished: &protocol.TaskFinished{
-			TaskId: tidBytes, ExitCode: 0, DiffInfo: nil,
-		},
-	}
+	finished := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
+	finished.SetTaskFinished(protocol.TaskFinished{
+		TaskId: tidBytes, ExitCode: 0, DiffInfo: nil,
+	})
 	h.Handle(fc, mustEncodeRunnerMsg(t, finished))
 
 	got, _ := store.Get(taskID)
@@ -1054,9 +1107,13 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 	id := conn.ConnectionID().String()
 	switch msg.Kind {
 	case protocol.RunnerMessageType_Hello:
+		hello := msg.Hello()
+		if hello == nil {
+			return
+		}
 		h.Registry.Add(&RunnerEntry{
 			ID:          id,
-			RepoPath:    string(msg.Hello.RepoPath),
+			RepoPath:    string(hello.RepoPath),
 			Status:      protocol.RunnerStatus_Idle,
 			ConnectedAt: h.Now(),
 			LastSeen:    h.Now(),
@@ -1067,13 +1124,21 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			e.LastSeen = h.Now()
 		}
 	case protocol.RunnerMessageType_TaskStarted:
-		taskID := hex.EncodeToString(msg.TaskStarted.TaskId.Id[:])
+		ts := msg.TaskStarted()
+		if ts == nil {
+			return
+		}
+		taskID := hex.EncodeToString(ts.TaskId.Id[:])
 		if t, ok := h.Tasks.Get(taskID); ok {
-			t.WorktreeDir = string(msg.TaskStarted.WorktreeDir)
+			t.WorktreeDir = string(ts.WorktreeDir)
 		}
 	case protocol.RunnerMessageType_TaskFinished:
-		taskID := hex.EncodeToString(msg.TaskFinished.TaskId.Id[:])
-		h.Tasks.Finish(taskID, msg.TaskFinished.ExitCode, msg.TaskFinished.DiffInfo)
+		tf := msg.TaskFinished()
+		if tf == nil {
+			return
+		}
+		taskID := hex.EncodeToString(tf.TaskId.Id[:])
+		h.Tasks.Finish(taskID, tf.ExitCode, tf.DiffInfo)
 		h.Registry.SetStatus(id, protocol.RunnerStatus_Idle, "")
 	case protocol.RunnerMessageType_Heartbeat:
 		if e, ok := h.Registry.Get(id); ok {
@@ -1119,15 +1184,11 @@ func TestSubmitCreatesTask(t *testing.T) {
 	h := &TaskHandler{Tasks: store, Registry: reg, OnChange: func() {}}
 
 	fc := &fakeConn{id: mustCID(t, "ws:127.0.0.1:8539-3")}
-	req := &protocol.TaskControlRequest{
-		Kind: protocol.TaskControlKind_Submit,
-		Submit: &protocol.SubmitRequest{
-			RepoPathLen: 5,
-			RepoPath:    []byte("/repo"),
-			PromptLen:   8,
-			Prompt:      []byte("do stuff"),
-		},
-	}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
+	sub := protocol.SubmitRequest{}
+	sub.SetRepoPath([]byte("/repo"))
+	sub.SetPrompt([]byte("do stuff"))
+	req.SetSubmit(sub)
 	h.Handle(fc, mustEncodeTaskReq(t, req))
 
 	if len(fc.sent) != 1 {
@@ -1148,7 +1209,8 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	h := &TaskHandler{Tasks: store, Registry: reg}
 
 	fc := &fakeConn{id: mustCID(t, "ws:127.0.0.1:8539-4")}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List, List: &protocol.ListQuery{Query: nil}}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req.SetList(protocol.ListQuery{Query: nil})
 	h.Handle(fc, mustEncodeTaskReq(t, req))
 
 	if !bytes.Contains(bytes.Join(fc.sent, nil), []byte("/x")) {
@@ -1190,20 +1252,28 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	resp := &protocol.TaskControlResponse{Kind: req.Kind}
 	switch req.Kind {
 	case protocol.TaskControlKind_Submit:
-		taskID := h.Tasks.Create(string(req.Submit.RepoPath), string(req.Submit.Prompt))
+		sub := req.Submit()
+		if sub == nil {
+			return
+		}
+		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt))
 		var tid protocol.TaskID
 		raw, _ := hex.DecodeString(taskID)
 		copy(tid.Id[:], raw)
-		resp.Submit = &protocol.SubmitResponse{TaskId: tid}
+		resp.SetSubmit(protocol.SubmitResponse{TaskId: tid})
 		if h.OnChange != nil {
 			h.OnChange()
 		}
 	case protocol.TaskControlKind_List:
-		resp.List = h.buildListResult()
+		resp.SetList(*h.buildListResult())
 	case protocol.TaskControlKind_Cancel:
-		taskID := hex.EncodeToString(req.Cancel.TaskId.Id[:])
+		can := req.Cancel()
+		if can == nil {
+			return
+		}
+		taskID := hex.EncodeToString(can.TaskId.Id[:])
 		h.Tasks.Cancel(taskID)
-		resp.Cancel = &protocol.CancelStatus{Status: 0}
+		resp.SetCancel(protocol.CancelStatus{Status: 0})
 		if h.OnChange != nil {
 			h.OnChange()
 		}
@@ -1216,30 +1286,28 @@ func (h *TaskHandler) buildListResult() *protocol.ListResult {
 	res := &protocol.ListResult{}
 	for _, r := range h.Registry.List() {
 		res.Runners = append(res.Runners, toRunnerInfo(r))
-		res.RunnersLen++
 	}
+	res.RunnersLen = uint16(len(res.Runners))
 	for _, t := range h.Tasks.List(100) {
 		res.Tasks = append(res.Tasks, toTaskInfo(t))
-		res.TasksLen++
 	}
+	res.TasksLen = uint16(len(res.Tasks))
 	return res
 }
 
 func toRunnerInfo(r *RunnerEntry) protocol.RunnerInfo {
-	// RunnerID を objproto.ConnectionID から復元 (parse-round-trip)
-	// 簡易: transport="ws" 固定、他 field は 0 で済ませる (本実装は objproto 側の分解関数を借りる)
 	info := protocol.RunnerInfo{
 		Status:      r.Status,
-		RepoPathLen: uint16(len(r.RepoPath)),
-		RepoPath:    []byte(r.RepoPath),
 		ConnectedAt: uint64(r.ConnectedAt.UnixNano()),
 		LastSeen:    uint64(r.LastSeen.UnixNano()),
 	}
-	// CurrentTask を埋める
+	info.SetRepoPath([]byte(r.RepoPath))
 	if r.CurrentTask != "" {
 		raw, _ := hex.DecodeString(r.CurrentTask)
 		copy(info.CurrentTask.Id[:], raw)
 	}
+	// info.Id (protocol.RunnerID) の完全再構築は v1 では省略
+	// (CLI 表示は status / repo / current_task で足りる)
 	return info
 }
 
@@ -1248,16 +1316,13 @@ func toTaskInfo(t *TaskEntry) protocol.TaskInfo {
 	raw, _ := hex.DecodeString(t.ID)
 	copy(tid.Id[:], raw)
 	info := protocol.TaskInfo{
-		Id:             tid,
-		Status:         t.Status,
-		RepoPathLen:    uint16(len(t.RepoPath)),
-		RepoPath:       []byte(t.RepoPath),
-		WorktreeDirLen: uint16(len(t.WorktreeDir)),
-		WorktreeDir:    []byte(t.WorktreeDir),
-		PromptLen:      uint32(len(t.Prompt)),
-		Prompt:         []byte(t.Prompt),
-		CreatedAt:      uint64(t.CreatedAt.UnixNano()),
+		Id:        tid,
+		Status:    t.Status,
+		CreatedAt: uint64(t.CreatedAt.UnixNano()),
 	}
+	info.SetRepoPath([]byte(t.RepoPath))
+	info.SetWorktreeDir([]byte(t.WorktreeDir))
+	info.SetPrompt([]byte(t.Prompt))
 	if t.StartedAt != nil {
 		info.StartedAt = uint64(t.StartedAt.UnixNano())
 	}
@@ -1486,13 +1551,11 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	raw, _ := hex.DecodeString(taskID)
 	copy(tid.Id[:], raw)
 
-	req := &protocol.RunnerRequest{
-		Kind: protocol.RunnerRequestType_AssignTask,
-		AssignTask: &protocol.AssignTask{
-			TaskId: tid,
-			Prompt: []byte(task.Prompt),
-		},
-	}
+	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
+	req.SetAssignTask(protocol.AssignTask{
+		TaskId: tid,
+		Prompt: []byte(task.Prompt),
+	})
 	data := append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}, req.MustAppend(nil)...)
 	_, _, err := entry.Conn.SendMessage(data)
 	return err
@@ -2355,32 +2418,36 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	}
 	taskIDHex := hex(req.TaskId.Id[:])
 
+	// helper
+	send := func(kind protocol.RunnerMessageType, set func(m *protocol.RunnerMessage)) {
+		m := &protocol.RunnerMessage{Kind: kind}
+		set(m)
+		s.sendRunnerMsg(m)
+	}
+
 	// 1. Accept
-	s.sendRunnerMsg(&protocol.RunnerMessage{
-		Kind:         protocol.RunnerMessageType_TaskAccepted,
-		TaskAccepted: &protocol.TaskAccepted{TaskId: req.TaskId},
+	send(protocol.RunnerMessageType_TaskAccepted, func(m *protocol.RunnerMessage) {
+		m.SetTaskAccepted(protocol.TaskAccepted{TaskId: req.TaskId})
 	})
 
 	// 2. Worktree
 	dir, err := s.wm.Create(taskIDHex)
 	if err != nil {
-		s.sendRunnerMsg(&protocol.RunnerMessage{
-			Kind: protocol.RunnerMessageType_TaskFinished,
-			TaskFinished: &protocol.TaskFinished{
-				TaskId: req.TaskId, ExitCode: -1, DiffInfo: []byte("worktree_error:" + err.Error()),
-			},
+		send(protocol.RunnerMessageType_TaskFinished, func(m *protocol.RunnerMessage) {
+			m.SetTaskFinished(protocol.TaskFinished{
+				TaskId:   req.TaskId,
+				ExitCode: -1,
+				DiffInfo: []byte("worktree_error:" + err.Error()),
+			})
 		})
 		return
 	}
 
 	// 3. Started
-	s.sendRunnerMsg(&protocol.RunnerMessage{
-		Kind: protocol.RunnerMessageType_TaskStarted,
-		TaskStarted: &protocol.TaskStarted{
-			TaskId: req.TaskId,
-			WorktreeDirLen: uint16(len(dir)),
-			WorktreeDir: []byte(dir),
-		},
+	send(protocol.RunnerMessageType_TaskStarted, func(m *protocol.RunnerMessage) {
+		ts := protocol.TaskStarted{TaskId: req.TaskId}
+		ts.SetWorktreeDir([]byte(dir))
+		m.SetTaskStarted(ts)
 	})
 
 	// 4. pubsub JOIN task.<id>.log は現実装では外部 subscriber として JOIN message を送る必要あり
@@ -2395,11 +2462,10 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	_ = err // Process.Run 内でも exit に吸収される
 
 	// 6. Finished
-	s.sendRunnerMsg(&protocol.RunnerMessage{
-		Kind: protocol.RunnerMessageType_TaskFinished,
-		TaskFinished: &protocol.TaskFinished{
+	send(protocol.RunnerMessageType_TaskFinished, func(m *protocol.RunnerMessage) {
+		m.SetTaskFinished(protocol.TaskFinished{
 			TaskId: req.TaskId, ExitCode: int32(exit), DiffInfo: nil,
-		},
+		})
 	})
 }
 
@@ -2468,14 +2534,10 @@ func Run(ctx context.Context, cfg Config) error {
 	go trsf.AutoSend(ctx, p, conn, nil)
 
 	// Hello
-	hello := &protocol.RunnerMessage{
-		Kind: protocol.RunnerMessageType_Hello,
-		Hello: &protocol.RunnerHello{
-			Version: 1,
-			RepoPathLen: uint16(len(cfg.RepoPath)),
-			RepoPath: []byte(cfg.RepoPath),
-		},
-	}
+	hello := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
+	h := protocol.RunnerHello{Version: 1}
+	h.SetRepoPath([]byte(cfg.RepoPath))
+	hello.SetHello(h)
 	if _, _, err := conn.SendMessage(append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}, hello.MustAppend(nil)...)); err != nil {
 		return err
 	}
@@ -2496,7 +2558,9 @@ func Run(ctx context.Context, cfg Config) error {
 				return
 			}
 			if req.Kind == protocol.RunnerRequestType_AssignTask {
-				go session.handleAssign(ctx, req.AssignTask)
+				if at := req.AssignTask(); at != nil {
+					go session.handleAssign(ctx, at)
+				}
 			}
 			// cancel は v1 では runner 側未実装
 		}
@@ -2684,23 +2748,21 @@ func Submit(ctx context.Context, addr, repo, prompt string) (string, error) {
 	}
 	defer c.Close()
 
-	req := &protocol.TaskControlRequest{
-		Kind: protocol.TaskControlKind_Submit,
-		Submit: &protocol.SubmitRequest{
-			RepoPathLen: uint16(len(repo)),
-			RepoPath:    []byte(repo),
-			PromptLen:   uint32(len(prompt)),
-			Prompt:      []byte(prompt),
-		},
-	}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
+	sub := protocol.SubmitRequest{}
+	sub.SetRepoPath([]byte(repo))
+	sub.SetPrompt([]byte(prompt))
+	req.SetSubmit(sub)
+
 	resp, err := c.roundTripTaskControl(req)
 	if err != nil {
 		return "", err
 	}
-	if resp.Kind != protocol.TaskControlKind_Submit || resp.Submit == nil {
+	subResp := resp.Submit()
+	if resp.Kind != protocol.TaskControlKind_Submit || subResp == nil {
 		return "", fmt.Errorf("bad response")
 	}
-	return hex.EncodeToString(resp.Submit.TaskId.Id[:]), nil
+	return hex.EncodeToString(subResp.TaskId.Id[:]), nil
 }
 ```
 
@@ -2792,20 +2854,23 @@ func List(ctx context.Context, addr string, out io.Writer) error {
 		return err
 	}
 	defer c.Close()
-	resp, err := c.roundTripTaskControl(&protocol.TaskControlRequest{
-		Kind: protocol.TaskControlKind_List,
-		List: &protocol.ListQuery{Query: nil},
-	})
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req.SetList(protocol.ListQuery{Query: nil})
+	resp, err := c.roundTripTaskControl(req)
 	if err != nil {
 		return err
 	}
+	lr := resp.List()
+	if lr == nil {
+		return fmt.Errorf("empty list response")
+	}
 	fmt.Fprintln(out, "RUNNERS")
-	for _, r := range resp.List.Runners {
+	for _, r := range lr.Runners {
 		fmt.Fprintf(out, "  %s  %s  repo=%s  task=%x\n",
 			statusStr(r.Status), "runner", string(r.RepoPath), r.CurrentTask.Id[:4])
 	}
 	fmt.Fprintln(out, "TASKS")
-	for _, t := range resp.List.Tasks {
+	for _, t := range lr.Tasks {
 		fmt.Fprintf(out, "  %x  %s  repo=%s  prompt=%q\n",
 			t.Id.Id[:6], taskStatusStr(t.Status), string(t.RepoPath), string(t.Prompt))
 	}
@@ -2967,10 +3032,9 @@ func Cancel(ctx context.Context, addr, taskIDHex string) error {
 	raw, _ := hex.DecodeString(taskIDHex)
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
-	_, err = c.roundTripTaskControl(&protocol.TaskControlRequest{
-		Kind: protocol.TaskControlKind_Cancel,
-		Cancel: &protocol.CancelTask{TaskId: tid},
-	})
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel}
+	req.SetCancel(protocol.CancelTask{TaskId: tid})
+	_, err = c.roundTripTaskControl(req)
 	return err
 }
 ```
