@@ -43,8 +43,10 @@ func TestTaskInfoRoundTrip(t *testing.T) {
 	wantWorktreeDir := []byte("/srv/worktrees/task-001")
 	wantPrompt := []byte("Implement the feature described in issue #42.")
 	const wantStatus = TaskStatus_Running
+	const wantCreatedAt = uint64(1234567890)
 	const wantStartedAt = uint64(1700000001)
 	const wantEndedAt = uint64(1700000099)
+	const wantExitCode = int32(-1)
 
 	var wantID TaskID
 	wantID.Id[0] = 0xAB
@@ -59,8 +61,10 @@ func TestTaskInfoRoundTrip(t *testing.T) {
 	orig := TaskInfo{
 		Id:         wantID,
 		Status:     wantStatus,
+		CreatedAt:  wantCreatedAt,
 		StartedAt:  wantStartedAt,
 		EndedAt:    wantEndedAt,
+		ExitCode:   wantExitCode,
 		AssignedTo: assignedTo,
 	}
 	if !orig.SetRepoPath(wantRepoPath) {
@@ -84,10 +88,7 @@ func TestTaskInfoRoundTrip(t *testing.T) {
 		t.Fatalf("expected no remaining bytes after Decode, got %d", len(remain))
 	}
 
-	// Verify Id (first byte must be non-zero and the whole array must match)
-	if decoded.Id.Id[0] != wantID.Id[0] {
-		t.Errorf("Id.Id[0]: got 0x%02X, want 0x%02X", decoded.Id.Id[0], wantID.Id[0])
-	}
+	// Verify Id (the whole array must match)
 	if decoded.Id != wantID {
 		t.Errorf("Id: got %v, want %v", decoded.Id, wantID)
 	}
@@ -99,17 +100,36 @@ func TestTaskInfoRoundTrip(t *testing.T) {
 	if !bytes.Equal(decoded.RepoPath, wantRepoPath) {
 		t.Errorf("RepoPath: got %q, want %q", decoded.RepoPath, wantRepoPath)
 	}
+	if decoded.RepoPathLen != uint16(len(wantRepoPath)) {
+		t.Errorf("RepoPathLen: got %d, want %d", decoded.RepoPathLen, len(wantRepoPath))
+	}
 	if !bytes.Equal(decoded.WorktreeDir, wantWorktreeDir) {
 		t.Errorf("WorktreeDir: got %q, want %q", decoded.WorktreeDir, wantWorktreeDir)
+	}
+	if decoded.WorktreeDirLen != uint16(len(wantWorktreeDir)) {
+		t.Errorf("WorktreeDirLen: got %d, want %d", decoded.WorktreeDirLen, len(wantWorktreeDir))
 	}
 	if !bytes.Equal(decoded.Prompt, wantPrompt) {
 		t.Errorf("Prompt: got %q, want %q", decoded.Prompt, wantPrompt)
 	}
+	if decoded.PromptLen != uint32(len(wantPrompt)) {
+		t.Errorf("PromptLen: got %d, want %d", decoded.PromptLen, len(wantPrompt))
+	}
 
+	if decoded.CreatedAt != wantCreatedAt {
+		t.Errorf("CreatedAt: got %d, want %d", decoded.CreatedAt, wantCreatedAt)
+	}
 	if decoded.StartedAt != wantStartedAt {
 		t.Errorf("StartedAt: got %d, want %d", decoded.StartedAt, wantStartedAt)
 	}
 	if decoded.EndedAt != wantEndedAt {
 		t.Errorf("EndedAt: got %d, want %d", decoded.EndedAt, wantEndedAt)
+	}
+	if decoded.ExitCode != wantExitCode {
+		t.Errorf("ExitCode: got %d, want %d", decoded.ExitCode, wantExitCode)
+	}
+
+	if !bytes.Equal(decoded.AssignedTo.IpAddr, []byte{127, 0, 0, 1}) {
+		t.Errorf("AssignedTo.IpAddr: got %v, want %v", decoded.AssignedTo.IpAddr, []byte{127, 0, 0, 1})
 	}
 }
