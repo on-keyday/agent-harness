@@ -48,7 +48,9 @@ func main() {
 					return
 				}
 				slog.Info("message received", "data", string(msg.Data))
-				if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
+				kind := wire.ApplicationPayloadKind(msg.Data[0])
+				switch kind {
+				case wire.ApplicationPayloadKind_Pubsub:
 					slog.Info("control message received", "data", string(msg.Data[1:]))
 					response := subscriber.HandleMessage(pubSub, msg.Data[1:])
 					if response != nil {
@@ -57,6 +59,12 @@ func main() {
 							slog.Error("failed to send control response", "error", err)
 						}
 					}
+				case wire.ApplicationPayloadKind_TaskControl:
+
+				case wire.ApplicationPayloadKind_RelayControl:
+
+				case wire.ApplicationPayloadKind_RunnerControl:
+
 				}
 			})
 		}()
