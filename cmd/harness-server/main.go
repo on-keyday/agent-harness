@@ -48,7 +48,7 @@ func main() {
 					return
 				}
 				slog.Info("message received", "data", string(msg.Data))
-				if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Control {
+				if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
 					slog.Info("control message received", "data", string(msg.Data[1:]))
 					response := subscriber.HandleMessage(pubSub, msg.Data[1:])
 					if response != nil {

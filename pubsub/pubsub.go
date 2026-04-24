@@ -18,14 +18,14 @@ func JoinTopic(nickName string, topic string) []byte {
 	if !p.SetNickName([]uint8(nickName)) {
 		return nil
 	}
-	return p.MustAppend([]byte{byte(wire.ApplicationPayloadKind_Control)})
+	return p.MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
 }
 
 func LeaveTopic(topic string) []byte {
 	return (&protocol.PubSubRequest{
 		Kind:  protocol.MessageKind_LEAVE,
 		Topic: []byte(topic),
-	}).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Control)})
+	}).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
 }
 
 func (s *Subscriber) HandleMessage(ps *PubSub, msg []byte) []byte {

@@ -61,13 +61,14 @@ format CancelStreamPacket:
 
 enum ApplicationPayloadKind:
     :u8 
-    control
     ping
     pong
     stream_data
     stream_cancel
     stream_ack
     stream_window_update
+    pubsub
+    
 
 
 format PacketHeader:
@@ -79,12 +80,10 @@ fn isStreamRelated(kind :ApplicationPayloadKind) -> bool:
         ApplicationPayloadKind.stream_ack, ApplicationPayloadKind.stream_window_update => true
         .. => false
 
-format AppPacket:
+format StreamAppPacket:
     config.go.union = "noheap"
     header :PacketHeader
     match header.kind:
-        ApplicationPayloadKind.ping,ApplicationPayloadKind.pong => ..
-        ApplicationPayloadKind.control => control :[..]u8 
         ApplicationPayloadKind.stream_data => stream_data :StreamPacket
         ApplicationPayloadKind.stream_cancel => stream_cancel :CancelStreamPacket
         ApplicationPayloadKind.stream_ack => stream_ack :StreamACKPacket

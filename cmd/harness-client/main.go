@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdh"
 	"flag"
 	"fmt"
 	"log/slog"
+	"os"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -38,7 +41,7 @@ func main() {
 
 	p := trsf.NewStreams(context.Background(), false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
 	go trsf.AutoSend(context.Background(), p, conn, nil)
-	// go trsf.AutoPing(context.Background(), conn, 15*time.Second)
+	go trsf.AutoPing(context.Background(), conn, 15*time.Second)
 	go trsf.AutoReceive(context.Background(), p, conn, func(msg *objproto.Message, err error) {
 		if err != nil {
 			slog.Error("failed to receive data", "error", err)
@@ -47,7 +50,7 @@ func main() {
 		if len(msg.Data) == 0 {
 			return
 		}
-		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Control {
+		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
 			resp := &protocol.PubSubResponse{}
 			resp.Decode(msg.Data[1:])
 			slog.Info("control response received", "status", resp.Status, "streamID", resp.StreamId)
@@ -70,10 +73,21 @@ func main() {
 		slog.Info("bidirectional stream accepted", "streamID", stream.ID())
 		go func() {
 			// stdin reader
+			scanner := bufio.NewScanner(os.Stdin)
+			scanner.Split(bufio.ScanLines)
 			for {
 				var input string
-				fmt.Print("Enter message to publish (or 'exit' to quit): ")
-				_, err := fmt.Scanln(&input)
+				if !scanner.Scan() {
+					err := scanner.Err()
+					if err != nil {
+						slog.Error("failed to read input", "error", err)
+					}
+					return
+				}
+				input = scanner.Text()
+				if input == "" {
+					continue
+				}
 				if err != nil {
 					slog.Error("failed to read input", "error", err)
 					continue
@@ -96,10 +110,7 @@ func main() {
 					slog.Error("failed to read from stream", "error", err)
 					return
 				}
-				slog.Info("data received from stream", "length", len(data), "eof", eof)
-				if len(data) != 0 {
-					slog.Info("message from topic", "topic", "sample/talk", "message", string(data))
-				}
+				fmt.Printf("\n%s", string(data))
 				if eof {
 					slog.Info("stream closed by remote", "streamID", stream.ID())
 					return

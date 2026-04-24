@@ -226,7 +226,7 @@ func (s *Streams) removeSendStream(streamID StreamID) {
 }
 
 func (s *Streams) handlePacket(recvData *objproto.Message) {
-	pkt := wire.AppPacket{}
+	pkt := wire.StreamAppPacket{}
 	err := pkt.DecodeExact(recvData.Data)
 	if err != nil {
 		s.logger.Error("failed to decode packet", "error", err)
