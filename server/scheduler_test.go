@@ -206,6 +206,15 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 //   - c must remain Queued.
 //   - Both runners must be Busy.
 func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
+	// Two Idle runners, three Queued tasks. After one Tick, two tasks should be
+	// assigned (one per runner) and the third should remain Queued. We do NOT
+	// assert which specific runner got which specific task because reg.List()
+	// iterates an unordered map. Correctness depends on NextQueuedForRepo
+	// re-reading TaskStatus on every call: when the first runner's pair is
+	// committed via store.Assign, that task's Status flips to Running, so the
+	// second runner's NextQueuedForRepo skips it and picks the next FIFO entry.
+	// If TaskStore ever caches the queue separately from per-task status, this
+	// test would silently degrade — keep that filter live.
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
 		ID:          "r1",
