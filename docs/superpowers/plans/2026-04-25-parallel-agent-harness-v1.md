@@ -188,13 +188,19 @@ format ListResult:
     tasks_len :u16
     tasks :[tasks_len]TaskInfo
 
+format SubmitRequest:
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+    prompt_len :u32
+    prompt :[prompt_len]u8
+
 format SubmitResponse:
     task_id :TaskID
 
 format TaskControlRequest:
     kind :TaskControlKind
     match kind:
-        TaskControlKind.submit => submit :AssignTask
+        TaskControlKind.submit => submit :SubmitRequest
         TaskControlKind.list => list :ListQuery
         TaskControlKind.cancel => cancel :CancelTask
         .. => error("Unexpected task")
@@ -1115,12 +1121,14 @@ func TestSubmitCreatesTask(t *testing.T) {
 	fc := &fakeConn{id: mustCID(t, "ws:127.0.0.1:8539-3")}
 	req := &protocol.TaskControlRequest{
 		Kind: protocol.TaskControlKind_Submit,
-		Submit: &protocol.AssignTask{
-			TaskId: protocol.TaskID{},
-			Prompt: []byte("do stuff"),
+		Submit: &protocol.SubmitRequest{
+			RepoPathLen: 5,
+			RepoPath:    []byte("/repo"),
+			PromptLen:   8,
+			Prompt:      []byte("do stuff"),
 		},
 	}
-	h.Handle(fc, mustEncodeTaskReq(t, req, "/repo"))
+	h.Handle(fc, mustEncodeTaskReq(t, req))
 
 	if len(fc.sent) != 1 {
 		t.Fatalf("want 1 response, got %d", len(fc.sent))
@@ -1141,42 +1149,12 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 
 	fc := &fakeConn{id: mustCID(t, "ws:127.0.0.1:8539-4")}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List, List: &protocol.ListQuery{Query: nil}}
-	h.Handle(fc, mustEncodeTaskReq(t, req, ""))
+	h.Handle(fc, mustEncodeTaskReq(t, req))
 
 	if !bytes.Contains(bytes.Join(fc.sent, nil), []byte("/x")) {
 		t.Fatalf("repo_path not in response")
 	}
 }
-```
-
-**注:** `AssignTask` は `repo_path` を持たないので submit の signature 設計に問題あり。spec §7.3 は `Submit { repo_path, prompt }` だった。Task 1.1 の schema 修正で **`Submit` を `AssignTask` 流用せず専用 format** `SubmitRequest { repo_path, prompt }` を追加すべき。Task 1.1 に戻って schema 修正を追加で入れる。
-
-- [ ] **Step 1.5: Task 1.1 の schema に `SubmitRequest` 追加**
-
-`runner/protocol/message.bgn` の `TaskControlRequest` 付近を修正:
-
-```
-format SubmitRequest:
-    repo_path_len :u16
-    repo_path :[repo_path_len]u8
-    prompt_len :u32
-    prompt :[prompt_len]u8
-
-format TaskControlRequest:
-    kind :TaskControlKind
-    match kind:
-        TaskControlKind.submit => submit :SubmitRequest
-        TaskControlKind.list => list :ListQuery
-        TaskControlKind.cancel => cancel :CancelTask
-        .. => error("Unexpected task")
-```
-
-再生成して commit:
-
-```bash
-# regenerate
-git add runner/protocol/message.bgn runner/protocol/message.go
-git commit -m "protocol: use dedicated SubmitRequest for repo_path+prompt"
 ```
 
 - [ ] **Step 2: 失敗確認**
