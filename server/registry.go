@@ -13,6 +13,11 @@ import (
 // Read methods (Get, OldestIdleForRepo, List) return value snapshots; callers
 // may freely read the returned values. All mutations go through the Set* /
 // Add / Remove methods.
+//
+// Conn is set by the server when registering and is the path through which
+// sendAssign reaches the runner. The value-snapshot semantics still hold
+// (the field is a copy of an interface value). Conn may be nil if the entry
+// was constructed without an active connection (e.g. in tests).
 type RunnerEntry struct {
 	ID          string // = objproto.ConnectionID.String()
 	RepoPath    string
@@ -20,6 +25,7 @@ type RunnerEntry struct {
 	CurrentTask string // empty when Idle/Offline
 	ConnectedAt time.Time
 	LastSeen    time.Time
+	Conn        ConnHandle // set by server.go on registration; nil in zero-value / test stubs
 }
 
 // Registry tracks connected runners. All public methods are concurrency-safe.

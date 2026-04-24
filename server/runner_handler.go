@@ -37,14 +37,15 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("RunnerHandler: Hello variant is nil", "runnerID", runnerID)
 			return
 		}
-		h.Registry.Add(&RunnerEntry{
+		entry := &RunnerEntry{
 			ID:          runnerID,
 			RepoPath:    string(hello.RepoPath),
 			Status:      protocol.RunnerStatus_Idle,
 			ConnectedAt: now,
 			LastSeen:    now,
-			// Conn field is set by server.go later — left nil here.
-		})
+		}
+		entry.Conn = conn
+		h.Registry.Add(entry)
 
 	case protocol.RunnerMessageType_TaskAccepted:
 		ta := msg.TaskAccepted()
