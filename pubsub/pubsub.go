@@ -179,7 +179,7 @@ func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 			if !ok {
 				continue
 			}
-			stream.conn.AppendData(false, []byte(nickName), []byte("\n"), msg, []byte("\n"))
+			stream.conn.AppendData(false, msg)
 		}
 	}
 }
