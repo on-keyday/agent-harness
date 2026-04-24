@@ -257,8 +257,10 @@ func TestTaskStoreWALWriteAndReplay(t *testing.T) {
 	s := NewTaskStore()
 	s.SetWAL(wal)
 	id := s.Create("/r", "p")
+	before := time.Now()
 	s.Assign(id, "runner-x", "/tmp/wt")
 	s.Finish(id, 0, []byte("done"))
+	after := time.Now()
 	wal.Close() //nolint:errcheck
 
 	// Re-open and replay
@@ -271,6 +273,12 @@ func TestTaskStoreWALWriteAndReplay(t *testing.T) {
 	}
 	if string(got.DiffInfo) != "done" {
 		t.Fatalf("DiffInfo lost: %q", got.DiffInfo)
+	}
+	if got.StartedAt == nil {
+		t.Fatal("StartedAt lost in replay")
+	}
+	if got.StartedAt.Before(before) || got.StartedAt.After(after) {
+		t.Fatalf("StartedAt %v not in [%v, %v]", got.StartedAt, before, after)
 	}
 }
 

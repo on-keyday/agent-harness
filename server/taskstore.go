@@ -221,13 +221,12 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			}
 		case "task_finished":
 			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Status = protocol.TaskStatus_Succeeded
 				if ev.ExitCode != nil {
-					if *ev.ExitCode == 0 {
-						t.Status = protocol.TaskStatus_Succeeded
-					} else {
+					t.ExitCode = ev.ExitCode
+					if *ev.ExitCode != 0 {
 						t.Status = protocol.TaskStatus_Failed
 					}
-					t.ExitCode = ev.ExitCode
 				}
 				t.DiffInfo = ev.DiffInfo
 				ts := time.Unix(0, ev.Ts)

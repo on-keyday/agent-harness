@@ -80,7 +80,12 @@ func (s *Server) Run(ctx context.Context) error {
 			return fmt.Errorf("create data dir: %w", err)
 		}
 		walPath := filepath.Join(s.cfg.DataDir, "events.log")
-		if events, err := ReadWAL(walPath); err == nil && events != nil {
+		// Replay WAL if present. A corrupted WAL is logged but does not prevent
+		// server startup — an empty store is recoverable.
+		events, rerr := ReadWAL(walPath)
+		if rerr != nil {
+			s.cfg.Logger.Error("WAL replay failed", "path", walPath, "err", rerr)
+		} else if events != nil {
 			s.tasks.ReplayEvents(events)
 		}
 		wal, err := OpenWAL(walPath)
