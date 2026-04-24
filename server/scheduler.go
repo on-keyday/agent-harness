@@ -60,8 +60,8 @@ func (s *Scheduler) Tick() {
 			continue
 		}
 
-		task := s.store.NextQueuedForRepo(runner.RepoPath)
-		if task == nil {
+		task, ok := s.store.NextQueuedForRepo(runner.RepoPath)
+		if !ok {
 			continue
 		}
 

@@ -60,9 +60,9 @@ func TestRegistryIdleByRepo(t *testing.T) {
 		LastSeen:    time.Unix(1, 0),
 	})
 
-	oldest := r.OldestIdleForRepo("/x")
-	if oldest == nil {
-		t.Fatal("expected non-nil result from OldestIdleForRepo")
+	oldest, ok := r.OldestIdleForRepo("/x")
+	if !ok {
+		t.Fatal("expected ok=true from OldestIdleForRepo, got false")
 	}
 	if oldest.ID != "C" {
 		t.Fatalf("expected ID \"C\" (earliest ConnectedAt among Idle), got %q", oldest.ID)
@@ -80,25 +80,9 @@ func TestRegistryNoIdle(t *testing.T) {
 		LastSeen:    time.Unix(1, 0),
 	})
 
-	result := r.OldestIdleForRepo("/x")
-	if result != nil {
-		t.Fatalf("expected nil from OldestIdleForRepo when no Idle runners, got %v", result)
-	}
-}
-
-func TestRegistryAliasingInvariant(t *testing.T) {
-	r := NewRegistry()
-	r.Add(&RunnerEntry{ID: "A", RepoPath: "/x", Status: protocol.RunnerStatus_Idle, ConnectedAt: time.Now()})
-	first, _ := r.Get("A")
-	r.SetStatus("A", protocol.RunnerStatus_Busy, "task-1")
-	second, _ := r.Get("A")
-	// The registry returns pointers to entries it owns; SetStatus mutates the same entry.
-	// Both Get calls must return the same pointer.
-	if first != second {
-		t.Fatalf("expected same pointer across Get calls; got %p then %p", first, second)
-	}
-	if first.Status != protocol.RunnerStatus_Busy || first.CurrentTask != "task-1" {
-		t.Fatalf("first pointer should observe SetStatus mutation; got %+v", first)
+	_, ok := r.OldestIdleForRepo("/x")
+	if ok {
+		t.Fatal("expected ok=false from OldestIdleForRepo when no Idle runners, got true")
 	}
 }
 
@@ -129,5 +113,57 @@ func TestRegistrySetStatus(t *testing.T) {
 	}
 	if entry.LastSeen.Before(beforeCall) {
 		t.Fatalf("expected LastSeen >= call time, but LastSeen=%v, beforeCall=%v", entry.LastSeen, beforeCall)
+	}
+}
+
+func TestRegistrySetLastSeen(t *testing.T) {
+	r := NewRegistry()
+	t0 := time.Unix(1000, 0)
+	t1 := time.Unix(2000, 0)
+
+	r.Add(&RunnerEntry{
+		ID:          "A",
+		RepoPath:    "/x",
+		Status:      protocol.RunnerStatus_Idle,
+		ConnectedAt: t0,
+		LastSeen:    t0,
+	})
+
+	ok := r.SetLastSeen("A", t1)
+	if !ok {
+		t.Fatal("expected SetLastSeen to return true for registered runner, got false")
+	}
+
+	entry, _ := r.Get("A")
+	if !entry.LastSeen.Equal(t1) {
+		t.Fatalf("expected LastSeen=%v after SetLastSeen, got %v", t1, entry.LastSeen)
+	}
+
+	// Returns false for unknown runner.
+	if r.SetLastSeen("nonexistent", t1) {
+		t.Fatal("expected SetLastSeen to return false for unknown runner, got true")
+	}
+}
+
+func TestRegistryReadIsSnapshot(t *testing.T) {
+	r := NewRegistry()
+	r.Add(&RunnerEntry{
+		ID:          "A",
+		RepoPath:    "/original",
+		Status:      protocol.RunnerStatus_Idle,
+		ConnectedAt: time.Now(),
+	})
+
+	got, ok := r.Get("A")
+	if !ok {
+		t.Fatal("expected Get ok=true")
+	}
+
+	// Mutate the returned value snapshot; the registry must not be affected.
+	got.RepoPath = "/poison"
+
+	second, _ := r.Get("A")
+	if second.RepoPath != "/original" {
+		t.Fatalf("registry was poisoned by mutating returned snapshot: got RepoPath=%q, want \"/original\"", second.RepoPath)
 	}
 }

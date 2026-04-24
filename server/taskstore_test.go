@@ -137,9 +137,9 @@ func TestTaskStoreNextQueuedForRepo(t *testing.T) {
 	b := s.Create("/x", "b")
 	_ = s.Create("/y", "c")
 
-	got := s.NextQueuedForRepo("/x")
-	if got == nil {
-		t.Fatal("expected non-nil for /x, got nil")
+	got, ok := s.NextQueuedForRepo("/x")
+	if !ok {
+		t.Fatal("expected ok=true for /x, got false")
 	}
 	if got.ID != a {
 		t.Fatalf("expected earliest id %q, got %q", a, got.ID)
@@ -147,17 +147,17 @@ func TestTaskStoreNextQueuedForRepo(t *testing.T) {
 
 	s.Assign(a, "r", "/wt")
 
-	got = s.NextQueuedForRepo("/x")
-	if got == nil {
-		t.Fatal("expected non-nil for /x after assigning a, got nil")
+	got, ok = s.NextQueuedForRepo("/x")
+	if !ok {
+		t.Fatal("expected ok=true for /x after assigning a, got false")
 	}
 	if got.ID != b {
 		t.Fatalf("expected id %q after a assigned, got %q", b, got.ID)
 	}
 
-	got = s.NextQueuedForRepo("/z")
-	if got != nil {
-		t.Fatalf("expected nil for /z, got %+v", got)
+	_, ok = s.NextQueuedForRepo("/z")
+	if ok {
+		t.Fatal("expected ok=false for /z, got true")
 	}
 }
 
@@ -207,5 +207,43 @@ func TestTaskStoreCancelRunning(t *testing.T) {
 	}
 	if got.EndedAt == nil {
 		t.Fatalf("EndedAt should be set after Cancel")
+	}
+}
+
+func TestTaskStoreSetWorktreeDir(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "p")
+
+	ok := s.SetWorktreeDir(id, "/new/wt")
+	if !ok {
+		t.Fatal("expected SetWorktreeDir to return true for existing task, got false")
+	}
+
+	entry, _ := s.Get(id)
+	if entry.WorktreeDir != "/new/wt" {
+		t.Fatalf("expected WorktreeDir=%q after SetWorktreeDir, got %q", "/new/wt", entry.WorktreeDir)
+	}
+
+	// Returns false for unknown task.
+	if s.SetWorktreeDir("nonexistent", "/wt") {
+		t.Fatal("expected SetWorktreeDir to return false for unknown task, got true")
+	}
+}
+
+func TestTaskStoreReadIsSnapshot(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/original", "p")
+
+	got, ok := s.Get(id)
+	if !ok {
+		t.Fatal("expected Get ok=true")
+	}
+
+	// Mutate the returned value snapshot; the store must not be affected.
+	got.RepoPath = "/poison"
+
+	second, _ := s.Get(id)
+	if second.RepoPath != "/original" {
+		t.Fatalf("store was poisoned by mutating returned snapshot: got RepoPath=%q, want \"/original\"", second.RepoPath)
 	}
 }

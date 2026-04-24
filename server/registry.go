@@ -10,11 +10,9 @@ import (
 
 // RunnerEntry holds the current state of a connected runner.
 //
-// Note: Get and OldestIdleForRepo return pointers to the same RunnerEntry
-// stored in the map. Callers must not mutate the returned pointer;
-// all mutations must go through SetStatus (or Remove/Add). This matches
-// the intended use pattern where only the server reads entries after
-// retrieval, and the scheduler calls SetStatus for state transitions.
+// Read methods (Get, OldestIdleForRepo, List) return value snapshots; callers
+// may freely read the returned values. All mutations go through the Set* /
+// Add / Remove methods.
 type RunnerEntry struct {
 	ID          string // = objproto.ConnectionID.String()
 	RepoPath    string
@@ -51,13 +49,16 @@ func (r *Registry) Remove(id string) {
 	delete(r.runners, id)
 }
 
-// Get returns the entry for id. The returned pointer aliases the stored entry;
-// callers must not mutate it.
-func (r *Registry) Get(id string) (*RunnerEntry, bool) {
+// Get returns a value snapshot of the entry for id. The returned value is
+// independent of the internal map; callers may read or copy it freely.
+func (r *Registry) Get(id string) (RunnerEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.runners[id]
-	return e, ok
+	if !ok {
+		return RunnerEntry{}, false
+	}
+	return *e, true
 }
 
 // SetStatus updates Status, CurrentTask, and LastSeen for the entry with id.
@@ -74,11 +75,24 @@ func (r *Registry) SetStatus(id string, s protocol.RunnerStatus, currentTask str
 	e.LastSeen = time.Now()
 }
 
-// OldestIdleForRepo returns the Idle runner for repo with the earliest
-// ConnectedAt time, or nil if no such runner exists. When two Idle runners
-// share the same ConnectedAt, the one with the lexicographically smaller ID
-// is returned to keep the result deterministic.
-func (r *Registry) OldestIdleForRepo(repo string) *RunnerEntry {
+// SetLastSeen updates the runner's LastSeen timestamp to ts.
+// Returns false if the runner is not registered.
+func (r *Registry) SetLastSeen(id string, ts time.Time) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.runners[id]
+	if !ok {
+		return false
+	}
+	e.LastSeen = ts
+	return true
+}
+
+// OldestIdleForRepo returns a value snapshot of the Idle runner for repo with
+// the earliest ConnectedAt time. Returns (zero, false) if no such runner exists.
+// When two Idle runners share the same ConnectedAt, the one with the
+// lexicographically smaller ID is returned to keep the result deterministic.
+func (r *Registry) OldestIdleForRepo(repo string) (RunnerEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -89,7 +103,7 @@ func (r *Registry) OldestIdleForRepo(repo string) *RunnerEntry {
 		}
 	}
 	if len(candidates) == 0 {
-		return nil
+		return RunnerEntry{}, false
 	}
 	sort.Slice(candidates, func(i, j int) bool {
 		if candidates[i].ConnectedAt.Equal(candidates[j].ConnectedAt) {
@@ -97,17 +111,17 @@ func (r *Registry) OldestIdleForRepo(repo string) *RunnerEntry {
 		}
 		return candidates[i].ConnectedAt.Before(candidates[j].ConnectedAt)
 	})
-	return candidates[0]
+	return *candidates[0], true
 }
 
-// List returns a snapshot of all entries in arbitrary order.
-// The returned pointers alias the stored entries; callers must not mutate them.
-func (r *Registry) List() []*RunnerEntry {
+// List returns value snapshots of all entries in arbitrary order.
+// The returned slice is independent of the internal map.
+func (r *Registry) List() []RunnerEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	result := make([]*RunnerEntry, 0, len(r.runners))
+	result := make([]RunnerEntry, 0, len(r.runners))
 	for _, e := range r.runners {
-		result = append(result, e)
+		result = append(result, *e)
 	}
 	return result
 }

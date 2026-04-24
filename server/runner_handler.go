@@ -49,22 +49,17 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 	case protocol.RunnerMessageType_TaskAccepted:
 		ta := msg.TaskAccepted()
 		if ta == nil {
-			slog.Error("RunnerHandler: TaskAccepted variant is nil", "runnerID", runnerID)
+			slog.Error("runner_handler: TaskAccepted variant missing", "runner", runnerID)
 			return
 		}
-		// Touching LastSeen only. We use the aliased pointer returned by Get
-		// and write directly to LastSeen. This is acceptable because:
-		// - Registry.Get documents that the returned pointer aliases the stored
-		//   entry, and the aliasing contract allows direct field writes when the
-		//   mutation is narrow (single field, no structural invariant broken).
-		// - There is no SetLastSeen helper, and SetStatus would also overwrite
-		//   Status and CurrentTask which we don't want to change here.
-		entry, ok := h.Registry.Get(runnerID)
-		if !ok {
-			slog.Error("RunnerHandler: TaskAccepted from unknown runner", "runnerID", runnerID)
-			return
+		accepted := hex.EncodeToString(ta.TaskId.Id[:])
+		if e, ok := h.Registry.Get(runnerID); ok {
+			if e.CurrentTask != "" && e.CurrentTask != accepted {
+				slog.Warn("runner_handler: runner accepted unexpected task",
+					"runner", runnerID, "expected", e.CurrentTask, "got", accepted)
+			}
 		}
-		entry.LastSeen = now
+		h.Registry.SetLastSeen(runnerID, h.Now())
 
 	case protocol.RunnerMessageType_TaskStarted:
 		taskStarted := msg.TaskStarted()
@@ -73,14 +68,10 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		taskID := hex.EncodeToString(taskStarted.TaskId.Id[:])
-		task, ok := h.Tasks.Get(taskID)
-		if !ok {
+		if !h.Tasks.SetWorktreeDir(taskID, string(taskStarted.WorktreeDir)) {
 			slog.Error("RunnerHandler: TaskStarted for unknown task", "runnerID", runnerID, "taskID", taskID)
 			return
 		}
-		// Direct field write on aliased pointer — same aliasing contract as Registry.
-		// TaskStore.Get documents that returned pointers alias stored entries.
-		task.WorktreeDir = string(taskStarted.WorktreeDir)
 
 	case protocol.RunnerMessageType_TaskFinished:
 		tf := msg.TaskFinished()
@@ -95,13 +86,10 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		h.Registry.SetStatus(runnerID, protocol.RunnerStatus_Idle, "")
 
 	case protocol.RunnerMessageType_Heartbeat:
-		// Touching LastSeen only. Same aliasing rationale as TaskAccepted.
-		entry, ok := h.Registry.Get(runnerID)
-		if !ok {
+		if !h.Registry.SetLastSeen(runnerID, now) {
 			slog.Error("RunnerHandler: Heartbeat from unknown runner", "runnerID", runnerID)
 			return
 		}
-		entry.LastSeen = now
 
 	default:
 		slog.Error("RunnerHandler: unhandled message kind", "runnerID", runnerID, "kind", msg.Kind)

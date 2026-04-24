@@ -247,6 +247,62 @@ func TestHeartbeatUpdatesLastSeen(t *testing.T) {
 	}
 }
 
+func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
+	reg := NewRegistry()
+	tasks := NewTaskStore()
+	changeCalled := 0
+
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	t1 := t0.Add(5 * time.Second)
+
+	nowFn := func() time.Time { return t1 }
+
+	h := &RunnerHandler{
+		Registry: reg,
+		Tasks:    tasks,
+		Now:      nowFn,
+		OnChange: func() { changeCalled++ },
+	}
+
+	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-6")}
+	runnerID := fc.ConnectionID().String()
+
+	var rawID [16]byte
+	rawID[0] = 0x99
+	taskID := hex.EncodeToString(rawID[:])
+
+	// Register the runner with LastSeen at t0 and CurrentTask set.
+	reg.Add(&RunnerEntry{
+		ID:          runnerID,
+		RepoPath:    "/repo",
+		Status:      protocol.RunnerStatus_Busy,
+		CurrentTask: taskID,
+		ConnectedAt: t0,
+		LastSeen:    t0,
+	})
+
+	ta := protocol.TaskAccepted{}
+	ta.TaskId.Id = rawID
+
+	msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskAccepted}
+	msg.SetTaskAccepted(ta)
+
+	payload := encodeRunnerMessage(t, msg)
+	h.Handle(fc, payload)
+
+	entry, ok := reg.Get(runnerID)
+	if !ok {
+		t.Fatalf("runner %q not found after Handle", runnerID)
+	}
+	if !entry.LastSeen.Equal(t1) {
+		t.Errorf("expected LastSeen %v after TaskAccepted, got %v", t1, entry.LastSeen)
+	}
+
+	if changeCalled != 1 {
+		t.Errorf("expected OnChange called 1 time, got %d", changeCalled)
+	}
+}
+
 func TestMalformedPayloadIsIgnored(t *testing.T) {
 	reg := NewRegistry()
 	tasks := NewTaskStore()

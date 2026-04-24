@@ -26,10 +26,9 @@ type TaskEntry struct {
 
 // TaskStore is the in-memory authority for task lifecycle.
 //
-// Get, NextQueuedForRepo, and List return pointers into the internal map.
-// Callers must not mutate the returned pointers; all state transitions must go
-// through Assign, Finish, or Cancel. This matches the aliasing contract used
-// by Registry.
+// Read methods (Get, NextQueuedForRepo, List) return value snapshots; callers
+// may freely read the returned values. All mutations go through Assign, Finish,
+// Cancel, SetWorktreeDir, or Create.
 //
 // WAL persistence will be retrofitted in Task 2.8 — the wal field is reserved
 // as a nil-checkable hook point (not yet present).
@@ -75,13 +74,16 @@ func (s *TaskStore) Create(repo, prompt string) string {
 	return id
 }
 
-// Get returns the TaskEntry for id. The returned pointer aliases the stored
-// entry; callers must not mutate it.
-func (s *TaskStore) Get(id string) (*TaskEntry, bool) {
+// Get returns a value snapshot of the TaskEntry for id.
+// The returned value is independent of the internal map.
+func (s *TaskStore) Get(id string) (TaskEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	e, ok := s.tasks[id]
-	return e, ok
+	if !ok {
+		return TaskEntry{}, false
+	}
+	return *e, true
 }
 
 // Assign transitions the task to Running, recording the runner and worktree.
@@ -139,25 +141,38 @@ func (s *TaskStore) Cancel(id string) {
 	e.EndedAt = &now
 }
 
-// NextQueuedForRepo returns the earliest-created Queued task whose RepoPath
-// equals repo. Returns nil if no such task exists.
-func (s *TaskStore) NextQueuedForRepo(repo string) *TaskEntry {
+// SetWorktreeDir updates the worktree path for a task (called when the runner reports TaskStarted).
+// Returns false if the task is not present.
+func (s *TaskStore) SetWorktreeDir(id, wt string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return false
+	}
+	t.WorktreeDir = wt
+	return true
+}
+
+// NextQueuedForRepo returns a value snapshot of the earliest-created Queued
+// task whose RepoPath equals repo. Returns (zero, false) if no such task exists.
+func (s *TaskStore) NextQueuedForRepo(repo string) (TaskEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	// order slice preserves insertion (creation) order; iterate to find first match.
 	for _, id := range s.order {
 		e := s.tasks[id]
 		if e.RepoPath == repo && e.Status == protocol.TaskStatus_Queued {
-			return e
+			return *e, true
 		}
 	}
-	return nil
+	return TaskEntry{}, false
 }
 
-// List returns the N most-recent entries in insertion order. If limit <= 0,
-// all entries are returned. The returned pointers alias the stored entries;
-// callers must not mutate them.
-func (s *TaskStore) List(limit int) []*TaskEntry {
+// List returns value snapshots of the N most-recent entries in insertion order.
+// If limit <= 0, all entries are returned. The returned slice is independent
+// of the internal map.
+func (s *TaskStore) List(limit int) []TaskEntry {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	total := len(s.order)
@@ -166,9 +181,9 @@ func (s *TaskStore) List(limit int) []*TaskEntry {
 		start = total - limit
 	}
 	slice := s.order[start:]
-	result := make([]*TaskEntry, len(slice))
+	result := make([]TaskEntry, len(slice))
 	for i, id := range slice {
-		result[i] = s.tasks[id]
+		result[i] = *s.tasks[id]
 	}
 	return result
 }
