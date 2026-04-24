@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -27,65 +28,37 @@ func main() {
 
 	go objproto.AutoGarbageCollect(sess, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 
+	pubSub := pubsub.NewPubSub()
+
 	activeSessChan := sess.GetNewActiveSessionChannel()
 	for session := range activeSessChan {
 		go func() {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			p := trsf.NewStreams(ctx, true, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, session, slog.Default())
+			subscriber := pubsub.NewSubscriber(p)
 			go trsf.AutoSend(ctx, p, session, func(err error) {
 				if err != nil {
 					slog.Error("failed to send data", "error", err)
 				}
 			})
-			go func() {
-				for {
-					stream, err := p.AcceptBidirectionalStream(ctx)
-					if err != nil {
-						slog.Error("failed to accept bidirectional stream", "error", err)
-						return
-					}
-					slog.Info("accepted new bidirectional stream", "stream_id", stream.ID())
-					go func() {
-						for {
-							var buffer [4096]byte
-							n, err := stream.ReadContext(ctx, buffer[:])
-							if err != nil {
-								slog.Error("failed to read from stream", "error", err)
-								return
-							}
-							slog.Info("received data from stream", "length", n)
-							_, err = stream.WriteContext(ctx, buffer[:n])
-							if err != nil {
-								slog.Error("failed to write to stream", "error", err)
-								return
-							}
-							slog.Info("echoed data back to stream", "length", n)
+			trsf.AutoReceive(ctx, p, session, func(msg *objproto.Message, err error) {
+				if err != nil {
+					slog.Error("failed to receive data", "error", err)
+					return
+				}
+				slog.Info("message received", "data", string(msg.Data))
+				if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Control {
+					slog.Info("control message received", "data", string(msg.Data[1:]))
+					response := subscriber.HandleMessage(pubSub, msg.Data[1:])
+					if response != nil {
+						_, _, err := session.SendMessage(response)
+						if err != nil {
+							slog.Error("failed to send control response", "error", err)
 						}
-					}()
+					}
 				}
-			}()
-			for {
-				msg, err := session.ReceiveMessage()
-				if err != nil {
-					slog.Error("failed to receive message", "error", err)
-					return
-				}
-				if len(msg.Data) == 0 {
-					slog.Info("received empty message, closing session")
-					return
-				}
-				if wire.IsStreamRelated(wire.ApplicationPayloadKind(msg.Data[0])) {
-					p.Send(msg)
-					continue
-				}
-				_, _, err = session.SendMessage(msg.Data)
-				if err != nil {
-					slog.Error("failed to send message", "error", err)
-					return
-				}
-				slog.Info("sent message", "data", string(msg.Data))
-			}
+			})
 		}()
 	}
 }

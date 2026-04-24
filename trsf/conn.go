@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/objproto/packet"
 	"github.com/on-keyday/agent-harness/trsf/congestion"
 	"github.com/on-keyday/agent-harness/trsf/mtu"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -110,7 +109,7 @@ type Streams struct {
 }
 
 type InternalSentPacket struct {
-	Kind       packet.ApplicationPayloadKind
+	Kind       wire.ApplicationPayloadKind
 	StreamID   StreamID
 	SentTime   time.Time
 	PacketSize int
@@ -156,6 +155,38 @@ func (s *Streams) GetInternalState() *InternalState {
 	}
 }
 
+func (s *Streams) GetSendStream(id StreamID) SendStream {
+	s.streamsLock.Lock()
+	defer s.streamsLock.Unlock()
+	if sd, ok := s.sendStreams[id]; ok {
+		return sd
+	}
+	return nil
+}
+
+func (s *Streams) GetReceiveStream(id StreamID) ReceiveStream {
+	s.streamsLock.Lock()
+	defer s.streamsLock.Unlock()
+	if rs, ok := s.recvStreams[id]; ok {
+		return &wrapRecvStream{rs}
+	}
+	return nil
+}
+
+func (s *Streams) GetBidirectionalStream(id StreamID) BidirectionalStream {
+	s.streamsLock.Lock()
+	defer s.streamsLock.Unlock()
+	if rs, ok := s.recvStreams[id]; ok {
+		if sd, ok := s.sendStreams[id]; ok {
+			return &bidiStream{
+				recvStream: rs,
+				sendStream: sd,
+			}
+		}
+	}
+	return nil
+}
+
 func (s *Streams) getRecvStream(streamID StreamID) *recvStream {
 	s.streamsLock.Lock()
 	defer s.streamsLock.Unlock()
@@ -164,10 +195,10 @@ func (s *Streams) getRecvStream(streamID StreamID) *recvStream {
 		if !s.isServer && streamID.IsServerInitiated() ||
 			s.isServer && streamID.IsClientInitiated() {
 			// new stream
-			rs = newReceiveStream(s.ctx, s.logger, streamID, initialFlowWindow, s.updateWindow, s.cancelTrigger)
+			rs = newReceiveStream(s.ctx, s.logger, streamID, InitialFlowWindow, s.updateWindow, s.cancelTrigger)
 			s.recvStreams[streamID] = rs
 			if streamID.IsBidirectional() {
-				sd := newSendStream(s.ctx, s.mtu, streamID, newFlowController(initialFlowWindow), s.logger, s.sendTrigger)
+				sd := newSendStream(s.ctx, s.mtu, streamID, newFlowController(InitialFlowWindow), s.logger, s.sendTrigger)
 				s.sendStreams[streamID] = sd
 				bs := &bidiStream{
 					recvStream: rs,
@@ -331,7 +362,7 @@ func (s *Streams) run(ctx context.Context) {
 			if err != nil {
 				s.logger.Error("failed to create transfer ack", "error", err)
 			} else {
-				encodedAck, err := ackPkt.Append([]byte{byte(packet.ApplicationPayloadKind_StreamAck)})
+				encodedAck, err := ackPkt.Append([]byte{byte(wire.ApplicationPayloadKind_StreamAck)})
 				if err != nil {
 					s.logger.Error("failed to encode transfer ack", "error", err)
 				} else {
@@ -368,7 +399,7 @@ func (s *Streams) run(ctx context.Context) {
 		if cancelStream != nil && !cancelStream.EOF() {
 			pn := s.pnIssuer.ConsumePacketNumber()
 			s.sh.OnSent(&SentPacket{
-				Kind:         packet.ApplicationPayloadKind_StreamCancel,
+				Kind:         wire.ApplicationPayloadKind_StreamCancel,
 				PacketNumber: pn,
 				StreamID:     cancelStream.id,
 				PacketSize:   fixedOverhead + payloadOverhead,
@@ -387,7 +418,7 @@ func (s *Streams) run(ctx context.Context) {
 			}
 			encodedCancel, err := (&wire.CancelStreamPacket{
 				Id: encodedID,
-			}).Append([]byte{byte(packet.ApplicationPayloadKind_StreamCancel)})
+			}).Append([]byte{byte(wire.ApplicationPayloadKind_StreamCancel)})
 			if err != nil {
 				s.logger.Error("failed to encode cancel stream packet", "stream_id", cancelStream.id, "error", err)
 				continue
@@ -410,7 +441,7 @@ func (s *Streams) run(ctx context.Context) {
 			newWindow := updateWindowStream.Window()
 			pn := s.pnIssuer.ConsumePacketNumber()
 			s.sh.OnSent(&SentPacket{
-				Kind: packet.ApplicationPayloadKind_StreamWindowUpdate,
+				Kind: wire.ApplicationPayloadKind_StreamWindowUpdate,
 				OnACK: func(now time.Time) {
 					s.logger.Debug("Peer updated window size", "new_window", newWindow)
 					updateWindowStream.onWindowAck(newWindow)
@@ -439,7 +470,7 @@ func (s *Streams) run(ctx context.Context) {
 			encodedWindow, err := (&wire.UpdateWindow{
 				Id:        encodedID,
 				WindowMax: encodedSize,
-			}).Append([]byte{byte(packet.ApplicationPayloadKind_StreamWindowUpdate)})
+			}).Append([]byte{byte(wire.ApplicationPayloadKind_StreamWindowUpdate)})
 			if err != nil {
 				s.logger.Error("failed to encode update window packet", "stream_id", updateWindowStream.id, "window_size", newWindow, "error", err)
 				continue
@@ -461,7 +492,7 @@ func (s *Streams) run(ctx context.Context) {
 			if sentRange != nil {
 				pn := s.pnIssuer.ConsumePacketNumber()
 				s.sh.OnSent(&SentPacket{
-					Kind:         packet.ApplicationPayloadKind_StreamData,
+					Kind:         wire.ApplicationPayloadKind_StreamData,
 					OnACK:        sentRange.OnACK,
 					OnLost:       sentRange.OnLost,
 					PacketNumber: pn,
@@ -490,7 +521,7 @@ func (s *Streams) run(ctx context.Context) {
 				}
 				pkt.SetIsEof(sentRange.Eof)
 				pkt.Data = sentRange.Data
-				encodedPkt, err := pkt.Append([]byte{byte(packet.ApplicationPayloadKind_StreamData)})
+				encodedPkt, err := pkt.Append([]byte{byte(wire.ApplicationPayloadKind_StreamData)})
 				if err != nil {
 					s.logger.Error("failed to encode stream packet", "stream_id", stream.id, "error", err)
 					continue
@@ -510,7 +541,7 @@ func (s *Streams) run(ctx context.Context) {
 			s.logger.Debug("sending MTU probe", "size", probe)
 			pn := s.pnIssuer.ConsumePacketNumber()
 			s.sh.OnSent(&SentPacket{
-				Kind:         packet.ApplicationPayloadKind_StreamData,
+				Kind:         wire.ApplicationPayloadKind_StreamData,
 				PacketNumber: pn,
 				PacketSize:   probe,
 				SentTime:     probeTime,
@@ -526,7 +557,7 @@ func (s *Streams) run(ctx context.Context) {
 			pkt := wire.StreamPacket{}
 			pkt.SetIsProbe(true)
 			pkt.Data = make([]byte, probe-fixedOverhead) // fill the packet to the probed MTU size
-			data, err := pkt.Append([]byte{byte(packet.ApplicationPayloadKind_StreamData)})
+			data, err := pkt.Append([]byte{byte(wire.ApplicationPayloadKind_StreamData)})
 			if err != nil {
 				s.logger.Error("failed to create MTU probe packet", "error", err)
 				continue
@@ -629,8 +660,8 @@ func (r *Streams) CreateBidirectionalStream() BidirectionalStream {
 	defer r.streamsLock.Unlock()
 	id := StreamID(0)
 	id = r.bidiIDIssuer.Next()
-	ss := newSendStream(r.ctx, r.mtu, id, newFlowController(initialFlowWindow), r.logger, r.sendTrigger)
-	rs := newReceiveStream(r.ctx, r.logger, id, initialFlowWindow, r.updateWindow, r.cancelTrigger)
+	ss := newSendStream(r.ctx, r.mtu, id, newFlowController(InitialFlowWindow), r.logger, r.sendTrigger)
+	rs := newReceiveStream(r.ctx, r.logger, id, InitialFlowWindow, r.updateWindow, r.cancelTrigger)
 	r.sendStreams[ss.ID()] = ss
 	r.recvStreams[ss.ID()] = rs
 	return &bidiStream{
@@ -644,7 +675,7 @@ func (r *Streams) CreateSendStream() SendStream {
 	defer r.streamsLock.Unlock()
 	id := StreamID(0)
 	id = r.uniIDIssuer.Next()
-	ss := newSendStream(r.ctx, r.mtu, id, newFlowController(initialFlowWindow), r.logger, r.sendTrigger)
+	ss := newSendStream(r.ctx, r.mtu, id, newFlowController(InitialFlowWindow), r.logger, r.sendTrigger)
 	r.sendStreams[ss.ID()] = ss
 	return ss
 }

@@ -3,6 +3,7 @@ package trsf
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -51,6 +52,8 @@ type ReceiveStream interface {
 	ID() StreamID
 	io.Reader
 	ReadContext(ctx context.Context, p []byte) (n int, err error)
+	ReadDirectContext(ctx context.Context, maxN uint64) ([]byte, bool, error)
+	ReadDirect(maxN uint64) ([]byte, bool, error)
 	HasRecvData() bool
 	EOF() bool
 	Cancel()
@@ -68,6 +71,9 @@ type Multiplexer interface {
 	AcceptBidirectionalStream(ctx context.Context) (BidirectionalStream, error)
 	AcceptReceiveStream(ctx context.Context) (ReceiveStream, error)
 	GetInternalState() *InternalState
+	GetSendStream(id StreamID) SendStream
+	GetReceiveStream(id StreamID) ReceiveStream
+	GetBidirectionalStream(id StreamID) BidirectionalStream
 }
 
 type Transport interface {
@@ -99,7 +105,25 @@ type UnderlayingReceiveTransport interface {
 	ReceiveMessageContext(ctx context.Context) (*objproto.Message, error)
 }
 
-func AutoReceive(ctx context.Context, p Transport, conn UnderlayingReceiveTransport, onEvent func(msg *objproto.Message, err error)) {
+type UnderlayingBidirectionalTransport interface {
+	UnderlayingSendTransport
+	UnderlayingReceiveTransport
+}
+
+func AutoPing(ctx context.Context, conn UnderlayingSendTransport, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			conn.SendMessage([]byte{byte(wire.ApplicationPayloadKind_Ping)})
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func AutoReceive(ctx context.Context, p Transport, conn UnderlayingBidirectionalTransport, onEvent func(msg *objproto.Message, err error)) {
 	for {
 		data, err := conn.ReceiveMessageContext(ctx)
 		if err != nil {
@@ -111,8 +135,18 @@ func AutoReceive(ctx context.Context, p Transport, conn UnderlayingReceiveTransp
 		if len(data.Data) == 0 {
 			continue
 		}
-		if wire.IsStreamRelated(wire.ApplicationPayloadKind(data.Data[0])) {
+		kind := wire.ApplicationPayloadKind(data.Data[0])
+		if wire.IsStreamRelated(kind) {
 			p.Send(data)
+			continue
+		}
+		if kind == wire.ApplicationPayloadKind_Ping {
+			// respond with a Pong
+			conn.SendMessage([]byte{byte(wire.ApplicationPayloadKind_Pong)})
+			continue
+		}
+		if kind == wire.ApplicationPayloadKind_Pong {
+			// ignore
 			continue
 		}
 		if onEvent != nil {

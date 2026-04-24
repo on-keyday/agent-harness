@@ -1,0 +1,21 @@
+config.go.package = "protocol"
+enum MessageKind:
+    :u8
+    JOIN
+    LEAVE
+
+format PubSubRequest:
+    kind :MessageKind
+    topic :[..]u8
+
+enum Status:
+    :u8 
+    ok 
+    already_subscribed
+    unknown_message
+    unknown_topic
+
+format PubSubResponse:
+    status :Status 
+    stream_id :u64
+

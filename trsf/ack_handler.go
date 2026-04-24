@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/objproto/packet"
 	"github.com/on-keyday/agent-harness/trsf/congestion"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // QUICではpacket number spaceごとにACKを管理する必要があるが
@@ -51,7 +51,7 @@ type SentPacket struct {
 	PacketNumber objproto.PacketNumber
 	SentTime     time.Time
 	IsMTUProbe   bool
-	Kind         packet.ApplicationPayloadKind
+	Kind         wire.ApplicationPayloadKind
 }
 
 func (ah *SentPacketHandler) GetInternal() ([]InternalSentPacket, int, int, time.Duration, time.Duration) {

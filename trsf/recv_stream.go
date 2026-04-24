@@ -13,7 +13,7 @@ type RecvRange struct {
 	Eof    bool
 }
 
-const initialFlowWindow = 16 * 1024 * 1024 // 16MB
+const InitialFlowWindow = 16 * 1024 * 1024 // 16MB
 
 type recvStream struct {
 	m             sync.Mutex
@@ -96,6 +96,41 @@ func (r *recvStream) Cancel() {
 	r.cancelStream.Push(r)
 	r.cancelSent = true
 	r.oq.Notify()
+}
+
+func (r *recvStream) ReadDirectContext(ctx context.Context, maxN uint64) ([]byte, bool, error) {
+	for {
+		r.m.Lock()
+		data, eof := r.oq.ReadDirect(maxN)
+		if len(data) > 0 {
+			r.recvWindow += uint64(len(data))
+			// if window is less than half, notify to update
+			if r.recvWindow-r.ackedWindow >= r.initialWindow/2 {
+				r.updateWindow.Push(r)
+			}
+		}
+		if len(data) == 0 && !eof { // nothing to read,
+			if r.cancelSent {
+				r.m.Unlock()
+				return nil, false, context.Canceled
+			}
+			r.m.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, false, ctx.Err()
+			case <-r.ctx.Done():
+				return nil, false, r.ctx.Err()
+			case <-r.oq.Notification():
+				continue // try to read again
+			}
+		}
+		r.m.Unlock()
+		return data, eof, nil
+	}
+}
+
+func (r *recvStream) ReadDirect(maxN uint64) ([]byte, bool, error) {
+	return r.ReadDirectContext(context.Background(), maxN)
 }
 
 func (r *recvStream) ReadContext(ctx context.Context, p []byte) (n int, err error) {
