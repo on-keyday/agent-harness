@@ -39,6 +39,9 @@ func (m *LogsModel) IsFocused() bool { return m.focused }
 func (m *LogsModel) SetSize(w, h int) {
 	m.vp.Width = w
 	m.vp.Height = h
+	if len(m.lines) > 0 {
+		m.applyContent()
+	}
 }
 
 // Reset clears the viewport and sets the task ID we're following.
@@ -56,19 +59,26 @@ func (m *LogsModel) Reset(taskID string) {
 }
 
 // applyContent rebuilds the viewport content from m.lines, applying the
-// current horizontal offset. Lines shorter than hOffset render as empty.
+// current horizontal offset and clipping each logical line at the viewport
+// width so the terminal does not soft-wrap onto the next row (which would
+// defeat horizontal scrolling). Lines shorter than hOffset render as empty.
 func (m *LogsModel) applyContent() {
 	full := strings.Join(m.lines, "")
-	if m.hOffset <= 0 {
-		m.vp.SetContent(full)
-		return
+	width := m.vp.Width
+	if width <= 0 {
+		width = 80
 	}
 	var b strings.Builder
 	parts := strings.Split(full, "\n")
 	for i, line := range parts {
+		clipped := ""
 		if m.hOffset < len(line) {
-			b.WriteString(line[m.hOffset:])
+			clipped = line[m.hOffset:]
 		}
+		if len(clipped) > width {
+			clipped = clipped[:width]
+		}
+		b.WriteString(clipped)
 		if i < len(parts)-1 {
 			b.WriteByte('\n')
 		}
