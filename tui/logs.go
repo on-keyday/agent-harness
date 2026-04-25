@@ -17,7 +17,12 @@ type LogsModel struct {
 	// the user scrolls up (with arrows / PgUp / k), it flips to false so live
 	// chunks don't yank the view back to the bottom.
 	stickToBottom bool
+	// hOffset is how many bytes of each line to skip from the left.
+	// Adjusted via ←/→ when the panel is focused. byte-based, not rune-aware.
+	hOffset int
 }
+
+const hScrollStep = 8
 
 func NewLogs() LogsModel {
 	vp := viewport.New(80, 10)
@@ -37,16 +42,38 @@ func (m *LogsModel) SetSize(w, h int) {
 }
 
 // Reset clears the viewport and sets the task ID we're following.
-// taskID == "" means no task selected. Resets sticky-tail.
+// taskID == "" means no task selected. Resets sticky-tail and h-scroll.
 func (m *LogsModel) Reset(taskID string) {
 	m.taskID = taskID
 	m.lines = nil
 	m.stickToBottom = true
+	m.hOffset = 0
 	if taskID == "" {
 		m.vp.SetContent("(no task selected)")
 	} else {
 		m.vp.SetContent("(following " + taskID[:12] + "…)")
 	}
+}
+
+// applyContent rebuilds the viewport content from m.lines, applying the
+// current horizontal offset. Lines shorter than hOffset render as empty.
+func (m *LogsModel) applyContent() {
+	full := strings.Join(m.lines, "")
+	if m.hOffset <= 0 {
+		m.vp.SetContent(full)
+		return
+	}
+	var b strings.Builder
+	parts := strings.Split(full, "\n")
+	for i, line := range parts {
+		if m.hOffset < len(line) {
+			b.WriteString(line[m.hOffset:])
+		}
+		if i < len(parts)-1 {
+			b.WriteByte('\n')
+		}
+	}
+	m.vp.SetContent(b.String())
 }
 
 // TaskID returns which task we're currently following, or "" if none.
@@ -65,7 +92,7 @@ func (m *LogsModel) Append(chunk []byte) {
 	if len(m.lines) > 1000 {
 		m.lines = m.lines[len(m.lines)-1000:]
 	}
-	m.vp.SetContent(strings.Join(m.lines, ""))
+	m.applyContent()
 	if m.stickToBottom {
 		m.vp.GotoBottom()
 	}
@@ -82,19 +109,38 @@ func (m *LogsModel) Prepend(content []byte) {
 	if len(m.lines) > 1000 {
 		m.lines = m.lines[len(m.lines)-1000:]
 	}
-	m.vp.SetContent(strings.Join(m.lines, ""))
+	m.applyContent()
 	if m.stickToBottom {
 		m.vp.GotoBottom()
 	}
 }
 
 // Update forwards key/mouse events to the embedded viewport when focused.
+// Intercepts ←/→ for horizontal scroll (byte-step hScrollStep). Other keys
+// (↑/↓/PgUp/PgDn/g/G) are handled by viewport for vertical scroll.
 // We also update stickToBottom: any user-initiated scroll that takes us
 // off the bottom flips it false; returning to the bottom (e.g. End / G)
 // flips it true again so live chunks resume tailing.
 func (m LogsModel) Update(msg tea.Msg) (LogsModel, tea.Cmd) {
 	if !m.focused {
 		return m, nil
+	}
+	if k, ok := msg.(tea.KeyMsg); ok {
+		switch k.Type {
+		case tea.KeyLeft:
+			if m.hOffset > 0 {
+				m.hOffset -= hScrollStep
+				if m.hOffset < 0 {
+					m.hOffset = 0
+				}
+				m.applyContent()
+			}
+			return m, nil
+		case tea.KeyRight:
+			m.hOffset += hScrollStep
+			m.applyContent()
+			return m, nil
+		}
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)

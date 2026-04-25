@@ -391,7 +391,7 @@ func (a *App) View() string {
 
 	cmdresultView := PanelStyle.Width(a.width - 2).Render(a.cmdresult.View())
 	cmdlineView := a.cmdline.View()
-	footer := FooterStyle.Render("tab focus · ↑/↓ scroll (logs) · s submit · c cancel · enter follow · q quit")
+	footer := FooterStyle.Render("tab focus · ↑/↓/←/→ scroll (logs) · s submit · c cancel · enter follow · q quit")
 
 	view := strings.Join([]string{
 		header,
