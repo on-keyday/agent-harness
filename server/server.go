@@ -270,6 +270,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	trsf.AutoReceive(connCtx, p, session, func(msg *objproto.Message, err error) {
 		if err != nil {
 			// Includes io.EOF on peer-sent Close; AutoReceive returns next.
+			s.cfg.Logger.Info("server: AutoReceive callback err", "cid", session.ConnectionID().String(), "err", err)
 			return
 		}
 		if msg == nil || len(msg.Data) == 0 {
@@ -287,7 +288,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	})
 
 	// Connection closed: deregister the runner if present and trigger rescheduling.
-	s.registry.Remove(session.ConnectionID().String())
+	cid := session.ConnectionID().String()
+	s.cfg.Logger.Info("server: connection closed, deregistering", "cid", cid)
+	s.registry.Remove(cid)
 	s.scheduler.Tick()
 }
 

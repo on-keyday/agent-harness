@@ -47,7 +47,12 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	// On exit, tell the server we're going away so the registry deregisters
 	// us immediately instead of waiting for the AutoGarbageCollect timeout.
-	defer trsf.SendClose(conn) //nolint:errcheck
+	// Order matters: ship the Close wire byte first, then close the underlying
+	// objproto/WS session so the close frame doesn't preempt our payload.
+	defer func() {
+		_ = trsf.SendClose(conn)
+		_ = conn.Close()
+	}()
 
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, cfg.Logger)
 	go trsf.AutoSend(ctx, p, conn, nil)
