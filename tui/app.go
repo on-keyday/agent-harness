@@ -248,8 +248,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			return a, tea.Quit
 		}
-		// `q` quits when not in the cmdline (cmdline must accept literal 'q').
-		if a.focus != focusCmdline && msg.String() == "q" {
+		// While the logs panel is in filter-edit mode, every printable rune
+		// (including 'q', 's', 'c') belongs to the filter draft, just like
+		// in cmdline focus.
+		logsEditing := a.focus == focusLogs && a.logs.IsEditingFilter()
+		// `q` quits when not in the cmdline / not composing a filter (those
+		// must accept literal 'q').
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "q" {
 			return a, tea.Quit
 		}
 		// Tab cycles focus.
@@ -261,8 +266,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cycleFocus(-1)
 			return a, nil
 		}
-		// `s` opens the submit popup when not in cmdline focus.
-		if a.focus != focusCmdline && msg.String() == "s" {
+		// `s` opens the submit popup when not in cmdline focus / filter edit.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "s" {
 			a.popup.SetRepo(a.defaultRepo)
 			a.popup.Open()
 			return a, nil
@@ -391,7 +396,16 @@ func (a *App) View() string {
 
 	cmdresultView := PanelStyle.Width(a.width - 2).Render(a.cmdresult.View())
 	cmdlineView := a.cmdline.View()
-	footer := FooterStyle.Render("tab focus · ↑/↓/←/→ scroll (logs) · s submit · c cancel · enter follow · q quit")
+	var hint string
+	switch {
+	case a.logs.IsEditingFilter():
+		hint = "/" + a.logs.FilterDraft() + "_   (enter apply · esc cancel)"
+	case a.logs.Filter() != "":
+		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
+	default:
+		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · c cancel · q quit"
+	}
+	footer := FooterStyle.Render(hint)
 
 	view := strings.Join([]string{
 		header,
