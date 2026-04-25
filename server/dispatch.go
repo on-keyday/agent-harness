@@ -14,10 +14,17 @@ import (
 // use it for responses too large to fit in a single objproto message
 // (e.g. GetTaskLog returning a full log file). May return nil in tests where
 // the fake doesn't wire trsf.
+//
+// CreateBidirectionalStream returns a server-initiated bidirectional stream
+// for handlers that need to splice bytes both ways with the peer (e.g.
+// OpenInteractive opening an interactive PTY claude over a frame-multiplexed
+// stream that the runner writes to and the client reads from). Like
+// CreateSendStream, may return nil in tests.
 type ConnHandle interface {
 	ConnectionID() objproto.ConnectionID
 	SendMessage(b []byte) (int, uint64, error)
 	CreateSendStream() trsf.SendStream
+	CreateBidirectionalStream() trsf.BidirectionalStream
 }
 
 type Dispatcher struct {

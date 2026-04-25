@@ -255,6 +255,10 @@ type streamingConn struct {
 
 func (s streamingConn) CreateSendStream() trsf.SendStream { return s.trans.CreateSendStream() }
 
+func (s streamingConn) CreateBidirectionalStream() trsf.BidirectionalStream {
+	return s.trans.CreateBidirectionalStream()
+}
+
 // handleConnection manages a single active objproto connection for its lifetime.
 func (s *Server) handleConnection(ctx context.Context, session objproto.Connection) {
 	connCtx, cancel := context.WithCancel(ctx)

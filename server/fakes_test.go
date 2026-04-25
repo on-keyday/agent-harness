@@ -19,3 +19,7 @@ func (f *fakeConn) SendMessage(b []byte) (int, uint64, error) {
 // CreateSendStream returns nil; tests that rely on streamed responses
 // (GetTaskLog) wire a real connection or skip the assertion.
 func (f *fakeConn) CreateSendStream() trsf.SendStream { return nil }
+
+// CreateBidirectionalStream returns nil; tests that exercise OpenInteractive
+// either wire a real connection or skip the splice assertion.
+func (f *fakeConn) CreateBidirectionalStream() trsf.BidirectionalStream { return nil }

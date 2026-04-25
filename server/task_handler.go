@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -133,8 +135,142 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		taskID := hex.EncodeToString(gl.TaskId.Id[:])
 		h.handleGetTaskLog(conn, req.RequestId, taskID)
 
+	case protocol.TaskControlKind_OpenInteractive:
+		oi := req.OpenInteractive()
+		if oi == nil {
+			slog.Error("TaskHandler: OpenInteractive variant is nil")
+			return
+		}
+		h.handleOpenInteractive(conn, req.RequestId, string(oi.RepoPath))
+
 	default:
 		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)
+	}
+}
+
+// OpenInteractiveResponse status values.
+const (
+	openInteractiveStatusOK              uint8 = 0
+	openInteractiveStatusNoRunner        uint8 = 1
+	openInteractiveStatusRunnerBusy      uint8 = 2 // reserved; Registry currently picks Idle only
+	openInteractiveStatusInternalError   uint8 = 3
+)
+
+// handleOpenInteractive matches the request's repo to an idle runner, allocates
+// two server-initiated bidirectional streams (one toward the client, one
+// toward the runner), tells the runner via RunnerRequest{open_exec, ...} to
+// hook its end into exec.ExecuteCommand for an interactive PTY claude
+// session, and starts a bytewise splice goroutine between the two streams.
+//
+// The task is registered as Running before the splice begins so the
+// scheduler does not pick it up for a parallel AssignTask. The runner
+// finalizes the task lifecycle by sending TaskStarted (worktree dir filled
+// in) and TaskFinished (exit code from claude) over the regular
+// RunnerControl path.
+func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32, repoPath string) {
+	respond := func(status uint8, tid protocol.TaskID, streamID uint64) {
+		resp := protocol.TaskControlResponse{
+			Kind:      protocol.TaskControlKind_OpenInteractive,
+			RequestId: requestID,
+		}
+		resp.SetOpenInteractive(protocol.OpenInteractiveResponse{
+			Status:   status,
+			TaskId:   tid,
+			StreamId: streamID,
+		})
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		tuiConn.SendMessage(out) //nolint:errcheck
+	}
+
+	runner, ok := h.Registry.OldestIdleForRepo(repoPath)
+	if !ok || runner.Conn == nil {
+		respond(openInteractiveStatusNoRunner, protocol.TaskID{}, 0)
+		return
+	}
+
+	// Allocate the task entry. Empty prompt marks the task as interactive
+	// (the user-facing distinguisher in the tasks list).
+	taskIDHex := h.Tasks.Create(repoPath, "")
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+
+	// Mark the task Running and bound to this runner immediately so the
+	// scheduler doesn't try to AssignTask it. The runner will fill in the
+	// real worktree dir via TaskStarted shortly after open_exec arrives.
+	h.Tasks.Assign(taskIDHex, runner.ID, "")
+	h.Registry.SetStatus(runner.ID, protocol.RunnerStatus_Busy, taskIDHex)
+
+	finishWithError := func(reason string) {
+		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
+		h.Registry.SetStatus(runner.ID, protocol.RunnerStatus_Idle, "")
+	}
+
+	tuiStream := tuiConn.CreateBidirectionalStream()
+	if tuiStream == nil {
+		finishWithError("create client-side stream failed")
+		respond(openInteractiveStatusInternalError, tid, 0)
+		return
+	}
+	runnerStream := runner.Conn.CreateBidirectionalStream()
+	if runnerStream == nil {
+		_ = tuiStream.CloseBoth()
+		finishWithError("create runner-side stream failed")
+		respond(openInteractiveStatusInternalError, tid, 0)
+		return
+	}
+
+	// Tell the runner to wire its stream end to claude.
+	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExec}
+	rreq.SetOpenExec(protocol.OpenExecRunnerRequest{
+		TaskId:   tid,
+		StreamId: uint64(runnerStream.ID()),
+	})
+	rdata := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	if _, _, err := runner.Conn.SendMessage(rdata); err != nil {
+		_ = tuiStream.CloseBoth()
+		_ = runnerStream.CloseBoth()
+		finishWithError("send open_exec to runner: " + err.Error())
+		respond(openInteractiveStatusInternalError, tid, 0)
+		return
+	}
+
+	respond(openInteractiveStatusOK, tid, uint64(tuiStream.ID()))
+	go spliceBidi(tuiStream, runnerStream, taskIDHex)
+}
+
+// spliceBidi pumps bytes between two bidirectional streams in both directions
+// until either side closes or errors. Each side's EOF is propagated to the
+// other so exec.ExecuteCommand can react to TUI detach (close stream → EOF
+// on PTY stdin pipe → claude exits via SIGHUP/SIGTERM/SIGKILL ladder).
+func spliceBidi(a, b trsf.BidirectionalStream, taskIDHex string) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); relayBytes(a, b) }()
+	go func() { defer wg.Done(); relayBytes(b, a) }()
+	wg.Wait()
+	slog.Info("OpenInteractive: splice ended", "task_id", taskIDHex)
+}
+
+// relayBytes copies bytes from src to dst, propagating EOF. Returns on the
+// first read error or write error — the paired goroutine in the other
+// direction handles the reverse half.
+func relayBytes(src, dst trsf.BidirectionalStream) {
+	for {
+		data, eof, err := src.ReadDirect(64 * 1024)
+		if err != nil {
+			return
+		}
+		if len(data) > 0 {
+			if werr := dst.AppendData(eof, data); werr != nil {
+				return
+			}
+		} else if eof {
+			_ = dst.AppendData(true)
+		}
+		if eof {
+			return
+		}
 	}
 }
 

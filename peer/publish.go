@@ -90,13 +90,21 @@ func (c *Conn) Publish(ctx context.Context, nick, topic string, data []byte) err
 	return t.stream.AppendData(false, data)
 }
 
-// WaitForBidirectionalStream returns trans.GetBidirectionalStream(id),
-// polling briefly if the stream isn't yet visible — the JOIN response can
-// race ahead of the stream-creation trsf frame on the wire. Returns nil on
-// ctx cancellation or after ~2s. Callers that need a different deadline
-// should set their own ctx timeout.
-func WaitForBidirectionalStream(ctx context.Context, trans trsf.Transport, id trsf.StreamID) trsf.BidirectionalStream {
-	if st := trans.GetBidirectionalStream(id); st != nil {
+// BidirectionalStreamLookup is the narrow subset of trsf.Transport
+// WaitForBidirectionalStream needs. trsf.Transport satisfies it; callers
+// that have a smaller surface (e.g. tests, runner.Session) can implement
+// it directly without taking a dep on the whole transport interface.
+type BidirectionalStreamLookup interface {
+	GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream
+}
+
+// WaitForBidirectionalStream returns lookup.GetBidirectionalStream(id),
+// polling briefly if the stream isn't yet visible — the response carrying
+// the id can race ahead of the stream-creation trsf frame on the wire.
+// Returns nil on ctx cancellation or after ~2s. Callers that need a
+// different deadline should set their own ctx timeout.
+func WaitForBidirectionalStream(ctx context.Context, lookup BidirectionalStreamLookup, id trsf.StreamID) trsf.BidirectionalStream {
+	if st := lookup.GetBidirectionalStream(id); st != nil {
 		return st
 	}
 	deadline := time.NewTimer(2 * time.Second)
@@ -110,7 +118,7 @@ func WaitForBidirectionalStream(ctx context.Context, trans trsf.Transport, id tr
 		case <-deadline.C:
 			return nil
 		case <-tick.C:
-			if st := trans.GetBidirectionalStream(id); st != nil {
+			if st := lookup.GetBidirectionalStream(id); st != nil {
 				return st
 			}
 		}
