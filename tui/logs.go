@@ -5,12 +5,16 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type LogsModel struct {
 	vp     viewport.Model
 	taskID string
-	lines  []string
+	// chunks are raw stdout/stderr fragments as published by the runner.
+	// They may contain embedded newlines and partial lines; we concatenate
+	// them with no separator and rewrap per the viewport width.
+	chunks []string
 }
 
 func NewLogs() LogsModel {
@@ -22,13 +26,14 @@ func NewLogs() LogsModel {
 func (m *LogsModel) SetSize(w, h int) {
 	m.vp.Width = w
 	m.vp.Height = h
+	m.rebuildContent()
 }
 
 // Reset clears the viewport and sets the task ID we're following.
 // taskID == "" means no task selected.
 func (m *LogsModel) Reset(taskID string) {
 	m.taskID = taskID
-	m.lines = nil
+	m.chunks = nil
 	if taskID == "" {
 		m.vp.SetContent("(no task selected)")
 	} else {
@@ -40,16 +45,30 @@ func (m *LogsModel) Reset(taskID string) {
 func (m *LogsModel) TaskID() string { return m.taskID }
 
 // Append appends a chunk of bytes (already prefixed by the runner with [out]/[err]).
-// Chunks may contain partial lines; we keep them as-is.
+// Chunks may contain partial lines; we keep them as-is and re-wrap on render.
 func (m *LogsModel) Append(chunk []byte) {
 	if m.taskID == "" {
 		return
 	}
-	m.lines = append(m.lines, string(chunk))
-	if len(m.lines) > 1000 {
-		m.lines = m.lines[len(m.lines)-1000:]
+	m.chunks = append(m.chunks, string(chunk))
+	if len(m.chunks) > 1000 {
+		m.chunks = m.chunks[len(m.chunks)-1000:]
 	}
-	m.vp.SetContent(strings.Join(m.lines, ""))
+	m.rebuildContent()
+}
+
+// rebuildContent concatenates all chunks and wraps the whole text to the
+// current viewport width so long lines (e.g. file paths in stack traces) are
+// visible instead of being clipped.
+func (m *LogsModel) rebuildContent() {
+	joined := strings.Join(m.chunks, "")
+	if m.vp.Width <= 0 {
+		m.vp.SetContent(joined)
+		m.vp.GotoBottom()
+		return
+	}
+	wrap := lipgloss.NewStyle().Width(m.vp.Width)
+	m.vp.SetContent(wrap.Render(joined))
 	m.vp.GotoBottom()
 }
 
