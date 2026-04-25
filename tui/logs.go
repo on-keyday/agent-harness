@@ -2,10 +2,47 @@ package tui
 
 import (
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 )
+
+// clipLine returns the substring of line whose display rendering starts
+// at column `from` and is at most `width` cells wide. Honors UTF-8 and
+// east-asian width (e.g. Japanese chars are 2 cells). When `from` lands
+// in the middle of a wide rune, the rune is skipped entirely (we never
+// emit a partial wide rune). If line is shorter than `from`, returns "".
+func clipLine(line string, from, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	skipped := 0
+	rest := line
+	for skipped < from && len(rest) > 0 {
+		r, size := utf8.DecodeRuneInString(rest)
+		w := runewidth.RuneWidth(r)
+		skipped += w
+		rest = rest[size:]
+	}
+	if len(rest) == 0 {
+		return ""
+	}
+	consumed := 0
+	var b strings.Builder
+	for len(rest) > 0 {
+		r, size := utf8.DecodeRuneInString(rest)
+		w := runewidth.RuneWidth(r)
+		if consumed+w > width {
+			break
+		}
+		b.WriteString(rest[:size])
+		rest = rest[size:]
+		consumed += w
+	}
+	return b.String()
+}
 
 type LogsModel struct {
 	vp      viewport.Model
@@ -22,7 +59,8 @@ type LogsModel struct {
 	hOffset int
 }
 
-const hScrollStep = 8
+// hScrollStep is the per-keypress horizontal scroll distance, in display cells.
+const hScrollStep = 16
 
 func NewLogs() LogsModel {
 	vp := viewport.New(80, 10)
@@ -59,9 +97,10 @@ func (m *LogsModel) Reset(taskID string) {
 }
 
 // applyContent rebuilds the viewport content from m.lines, applying the
-// current horizontal offset and clipping each logical line at the viewport
-// width so the terminal does not soft-wrap onto the next row (which would
-// defeat horizontal scrolling). Lines shorter than hOffset render as empty.
+// current horizontal offset (in display cells) and clipping each logical
+// line at the viewport width so the terminal does not soft-wrap onto the
+// next row. Both ends are cell-aware so multibyte / east-asian-wide chars
+// don't get sliced mid-codepoint.
 func (m *LogsModel) applyContent() {
 	full := strings.Join(m.lines, "")
 	width := m.vp.Width
@@ -71,14 +110,7 @@ func (m *LogsModel) applyContent() {
 	var b strings.Builder
 	parts := strings.Split(full, "\n")
 	for i, line := range parts {
-		clipped := ""
-		if m.hOffset < len(line) {
-			clipped = line[m.hOffset:]
-		}
-		if len(clipped) > width {
-			clipped = clipped[:width]
-		}
-		b.WriteString(clipped)
+		b.WriteString(clipLine(line, m.hOffset, width))
 		if i < len(parts)-1 {
 			b.WriteByte('\n')
 		}
