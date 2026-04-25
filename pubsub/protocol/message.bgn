@@ -7,6 +7,7 @@ enum MessageKind:
 format PubSubRequest:
     config.go.union = "noheap"
     kind :MessageKind
+    request_id :u32
     if kind == MessageKind.JOIN:
         nick_name_len :u8
         nick_name :[nick_name_len]u8
@@ -20,6 +21,7 @@ enum Status:
     unknown_topic
 
 format PubSubResponse:
+    request_id :u32
     status :Status 
     stream_id :u64
 

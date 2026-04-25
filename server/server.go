@@ -260,6 +260,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		}
 		kind := wire.ApplicationPayloadKind(msg.Data[0])
 		if kind == wire.ApplicationPayloadKind_Pubsub {
+			// HandleMessage already returns the response wire-kind prefixed.
 			if resp := subscriber.HandleMessage(s.pubsub, msg.Data[1:]); resp != nil {
 				session.SendMessage(resp) //nolint:errcheck
 			}

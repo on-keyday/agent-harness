@@ -9,8 +9,10 @@ import (
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
+	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // Logs subscribes to task.<taskID>.log and writes each chunk to out until ctx is cancelled
@@ -24,27 +26,43 @@ func Logs(ctx context.Context, addr, taskID string, out io.Writer) error {
 
 	conn := c.Conn()
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
+	pubClient := pubsub.NewClient()
 	go trsf.AutoSend(ctx, p, conn, nil)
-	// AutoReceive blocks; run it in the background so it dispatches stream-related frames
-	// into the trsf state machine while we wait on AcceptBidirectionalStream.
-	go trsf.AutoReceive(ctx, p, conn, func(_ *objproto.Message, _ error) {
-		// Logs is read-only on the data channel; we don't expect inbound control messages.
-		// Stream-related frames are auto-dispatched by AutoReceive itself.
+	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
+		if err != nil || len(msg.Data) == 0 {
+			return
+		}
+		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
+			pubClient.HandleResponse(msg.Data[1:])
+		}
 	})
 	// Keep the objproto session alive — server's AutoGarbageCollect drops idle sessions
 	// after 1 minute, and Logs may sit waiting for output much longer than that.
 	go trsf.AutoPing(ctx, conn, 30*time.Second)
 
 	topic := topics.TaskLog(taskID)
-	joinBytes := pubsub.JoinTopic("cli", topic)
+	respCh := make(chan *pubsubproto.PubSubResponse, 1)
+	joinBytes := pubClient.JoinTopic("cli", topic, func(r *pubsubproto.PubSubResponse) { respCh <- r })
+	if joinBytes == nil {
+		return fmt.Errorf("encode JOIN failed (nickname too long?)")
+	}
 	if _, _, err := conn.SendMessage(joinBytes); err != nil {
 		return fmt.Errorf("send JOIN: %w", err)
 	}
 
-	// Wait for the broker to open the topic stream towards us.
-	st, err := p.AcceptBidirectionalStream(ctx)
-	if err != nil {
-		return fmt.Errorf("accept stream: %w", err)
+	var resp *pubsubproto.PubSubResponse
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case resp = <-respCh:
+	}
+	if resp.Status != pubsubproto.Status_Ok {
+		return fmt.Errorf("JOIN rejected: status %v", resp.Status)
+	}
+
+	st := waitForStream(ctx, p, trsf.StreamID(resp.StreamId))
+	if st == nil {
+		return fmt.Errorf("stream %d not visible after JOIN", resp.StreamId)
 	}
 
 	// First read: discard the topic-name header line.
@@ -91,6 +109,32 @@ func readUntilNewline(ctx context.Context, st trsf.BidirectionalStream) error {
 		}
 		if eof {
 			return io.EOF
+		}
+	}
+}
+
+// waitForStream returns p.GetBidirectionalStream(id), polling briefly if the
+// stream isn't yet visible (the JOIN response may race ahead of the
+// stream-creation trsf frame on the wire). Returns nil on ctx cancellation
+// or if the stream doesn't appear within ~2s.
+func waitForStream(ctx context.Context, p trsf.Transport, id trsf.StreamID) trsf.BidirectionalStream {
+	if st := p.GetBidirectionalStream(id); st != nil {
+		return st
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-deadline.C:
+			return nil
+		case <-tick.C:
+			if st := p.GetBidirectionalStream(id); st != nil {
+				return st
+			}
 		}
 	}
 }

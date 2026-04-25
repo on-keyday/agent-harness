@@ -48,16 +48,16 @@ func main() {
 	slogHandler.BindProgram(program)
 
 	go func() {
-		conn, p, err := tui.Connect(ctx, *serverAddr)
+		conn, p, pubClient, err := tui.Connect(ctx, *serverAddr)
 		if err != nil {
 			program.Send(tui.ConnectionMsg{Connected: false, Err: err})
 			return
 		}
-		app.BindTransport(conn, p)
+		app.BindTransport(conn, p, pubClient)
 		program.Send(tui.ConnectionMsg{Connected: true})
 		program.Send(tui.RefreshSnapshot(*serverAddr)())
-		go tui.SubscribeTaskStatus(ctx, conn, p, program)
-		go tui.SubscribeRunnerStatus(ctx, conn, p, program)
+		go tui.SubscribeTaskStatus(ctx, conn, p, pubClient, program)
+		go tui.SubscribeRunnerStatus(ctx, conn, p, pubClient, program)
 		<-ctx.Done()
 	}()
 

@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
@@ -27,23 +28,36 @@ func portFrom(addr string) string {
 }
 
 // Connect dials the harness-server and returns a connection ready for both
-// pubsub subscriptions (via trsf streams) and ad-hoc TaskControl round-trips.
+// pubsub subscriptions (via trsf streams) and ad-hoc TaskControl round-trips,
+// along with a pubsub.Client that correlates broker responses by request_id.
+// The AutoReceive goroutine routes Pubsub-kind messages into the Client's
+// HandleResponse so subscribeAndStream can pick up the StreamId for its JOIN.
 // Caller is responsible for cancelling ctx; the goroutines exit on cancel.
-func Connect(ctx context.Context, addr string) (objproto.Connection, trsf.Transport, error) {
+func Connect(ctx context.Context, addr string) (objproto.Connection, trsf.Transport, *pubsub.Client, error) {
 	sess, err := transport.WebSocketSession(slog.Default(), addr, nil, objproto.SessionModeClient)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ws session: %w", err)
+		return nil, nil, nil, fmt.Errorf("ws session: %w", err)
 	}
 	cid := objproto.MustParseConnectionID(fmt.Sprintf("ws:127.0.0.1:%s-3333", portFrom(addr)))
 	conn, err := objproto.DoECDHHandshake(ctx, sess, cid, ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
-		return nil, nil, fmt.Errorf("ecdh: %w", err)
+		return nil, nil, nil, fmt.Errorf("ecdh: %w", err)
 	}
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
+	pubClient := pubsub.NewClient()
 	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoReceive(ctx, p, conn, func(*objproto.Message, error) {})
+	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
+		if err != nil || len(msg.Data) == 0 {
+			return
+		}
+		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
+			pubClient.HandleResponse(msg.Data[1:])
+		}
+		// Other kinds are not consumed by the TUI's read path (TaskControl
+		// responses go through cli.Client's synchronous ReceiveMessage call).
+	})
 	go trsf.AutoPing(ctx, conn, 30*time.Second)
-	return conn, p, nil
+	return conn, p, pubClient, nil
 }
 
 // --- tea.Cmd factories backed by short-lived cli.* helpers ---

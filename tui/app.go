@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 )
@@ -55,6 +56,7 @@ type App struct {
 	logsCancel context.CancelFunc
 	conn       objproto.Connection
 	trans      trsf.Transport
+	pubClient  *pubsub.Client
 	appCtx     context.Context
 	program    *tea.Program
 }
@@ -92,10 +94,12 @@ func New(cfg Config) *App {
 func (a *App) BindContext(ctx context.Context) { a.appCtx = ctx }
 
 // BindTransport stores the persistent objproto connection / trsf transport
-// used for per-task log subscriptions. Called by main.go after Connect succeeds.
-func (a *App) BindTransport(conn objproto.Connection, p trsf.Transport) {
+// and pubsub client used for per-task log subscriptions. Called by main.go
+// after Connect succeeds.
+func (a *App) BindTransport(conn objproto.Connection, p trsf.Transport, pubClient *pubsub.Client) {
 	a.conn = conn
 	a.trans = p
+	a.pubClient = pubClient
 }
 
 // BindProgram stores the tea.Program so per-task subscriber goroutines can
@@ -389,13 +393,13 @@ func (a *App) followTask(taskID string) tea.Cmd {
 		a.logsCancel = nil
 	}
 	a.logs.Reset(taskID)
-	if taskID == "" || a.conn == nil || a.trans == nil || a.program == nil || a.appCtx == nil {
+	if taskID == "" || a.conn == nil || a.trans == nil || a.pubClient == nil || a.program == nil || a.appCtx == nil {
 		return nil
 	}
 	subCtx, cancel := context.WithCancel(a.appCtx)
 	a.logsCancel = cancel
 	return func() tea.Msg {
-		go SubscribeTaskLog(subCtx, a.conn, a.trans, a.program, taskID)
+		go SubscribeTaskLog(subCtx, a.conn, a.trans, a.pubClient, a.program, taskID)
 		return nil
 	}
 }

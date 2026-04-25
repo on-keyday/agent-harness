@@ -10,10 +10,11 @@ import (
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
-func JoinTopic(nickName string, topic string) []byte {
+func JoinTopic(reqID uint32, nickName string, topic string) []byte {
 	p := (&protocol.PubSubRequest{
-		Kind:  protocol.MessageKind_JOIN,
-		Topic: []byte(topic),
+		Kind:      protocol.MessageKind_JOIN,
+		RequestId: reqID,
+		Topic:     []byte(topic),
 	})
 	if !p.SetNickName([]uint8(nickName)) {
 		return nil
@@ -21,10 +22,11 @@ func JoinTopic(nickName string, topic string) []byte {
 	return p.MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
 }
 
-func LeaveTopic(topic string) []byte {
+func LeaveTopic(reqID uint32, topic string) []byte {
 	return (&protocol.PubSubRequest{
-		Kind:  protocol.MessageKind_LEAVE,
-		Topic: []byte(topic),
+		Kind:      protocol.MessageKind_LEAVE,
+		RequestId: reqID,
+		Topic:     []byte(topic),
 	}).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
 }
 
@@ -37,19 +39,19 @@ func (s *Subscriber) HandleMessage(ps *PubSub, msg []byte) []byte {
 	switch req.Kind {
 	case protocol.MessageKind_JOIN:
 		topic := string(req.Topic)
-		return ps.Subscribe(topic, string(*req.NickName()), s).MustAppend(nil)
+		return ps.Subscribe(req.RequestId, topic, string(*req.NickName()), s).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
 	case protocol.MessageKind_LEAVE:
 		topic := string(req.Topic)
-		return ps.Unsubscribe(topic, s).MustAppend(nil)
+		return ps.Unsubscribe(req.RequestId, topic, s).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
 	}
 	return (&protocol.PubSubResponse{
 		Status: protocol.Status_UnknownMessage,
-	}).MustAppend(nil)
+	}).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
 }
 
 func (s *Subscriber) LeaveAll(ps *PubSub) {
 	for topic := range s.topics {
-		ps.Unsubscribe(topic, s)
+		ps.Unsubscribe(0, topic, s)
 	}
 }
 
@@ -134,7 +136,7 @@ func (ps *PubSub) TapUnsubscribe(topic string, t *Tap) {
 	}
 }
 
-func (ps *PubSub) Subscribe(topic string, nickName string, sub *Subscriber) *protocol.PubSubResponse {
+func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub *Subscriber) *protocol.PubSubResponse {
 	ps.m.Lock()
 	defer ps.m.Unlock()
 	if sub.topics == nil {
@@ -142,8 +144,9 @@ func (ps *PubSub) Subscribe(topic string, nickName string, sub *Subscriber) *pro
 	}
 	if id, ok := sub.topics[topic]; ok {
 		return &protocol.PubSubResponse{
-			Status:   protocol.Status_AlreadySubscribed,
-			StreamId: uint64(id.conn.ID()),
+			Status:    protocol.Status_AlreadySubscribed,
+			RequestId: requestID,
+			StreamId:  uint64(id.conn.ID()),
 		}
 	}
 	stream := sub.transport.CreateBidirectionalStream()
@@ -173,12 +176,13 @@ func (ps *PubSub) Subscribe(topic string, nickName string, sub *Subscriber) *pro
 	ps.topics[topic].AddSubscriber(sub)
 	ps.logger.Info("subscriber joined topic", "topic", topic, "nickName", nickName, "subscriberID", sub.id, "streamID", stream.ID())
 	return &protocol.PubSubResponse{
-		Status:   protocol.Status_Ok,
-		StreamId: uint64(stream.ID()),
+		Status:    protocol.Status_Ok,
+		RequestId: requestID,
+		StreamId:  uint64(stream.ID()),
 	}
 }
 
-func (ps *PubSub) Unsubscribe(topic string, sub *Subscriber) *protocol.PubSubResponse {
+func (ps *PubSub) Unsubscribe(requestID uint32, topic string, sub *Subscriber) *protocol.PubSubResponse {
 	ps.m.Lock()
 	defer ps.m.Unlock()
 	if sl, ok := ps.topics[topic]; ok {
@@ -191,13 +195,15 @@ func (ps *PubSub) Unsubscribe(topic string, sub *Subscriber) *protocol.PubSubRes
 			delete(sub.topics, topic)
 			ps.logger.Info("subscriber left topic", "topic", topic, "nickName", stream.name, "subscriberID", sub.id, "streamID", stream.conn.ID())
 			return &protocol.PubSubResponse{
-				Status:   protocol.Status_Ok,
-				StreamId: uint64(stream.conn.ID()),
+				Status:    protocol.Status_Ok,
+				RequestId: requestID,
+				StreamId:  uint64(stream.conn.ID()),
 			}
 		}
 	}
 	return &protocol.PubSubResponse{
-		Status: protocol.Status_UnknownTopic,
+		Status:    protocol.Status_UnknownTopic,
+		RequestId: requestID,
 	}
 
 }

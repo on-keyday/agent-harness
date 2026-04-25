@@ -203,8 +203,11 @@ func (c *connSender) Publish(topic string, data []byte) error {
 	// Check if there is already a pending join in progress.
 	ch, pending := c.pending[topic]
 	if !pending {
-		// Issue a JOIN so the server creates the stream.
-		joinBytes := pubsub.JoinTopic("runner", topic)
+		// Issue a JOIN so the server creates the stream. The runner relies on
+		// AcceptBidirectionalStream + topic-header dispatch in acceptLoop and
+		// discards the PubSubResponse (AutoReceive's ignore-non-RunnerControl
+		// path), so reqID is unused here.
+		joinBytes := pubsub.JoinTopic(0, "runner", topic)
 		if _, _, err := c.conn.SendMessage(joinBytes); err != nil {
 			c.mu.Unlock()
 			return fmt.Errorf("join topic %q: %w", topic, err)

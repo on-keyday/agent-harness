@@ -10,18 +10,21 @@ import (
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
+	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // Watch subscribes to tasks.status and runners.status topics and prints a
 // human-readable line to out for each event. Returns when ctx is cancelled.
 //
-// Implementation note: two separate JOIN messages are sent and two streams are
-// accepted, one per topic. Each stream goroutine knows which topic it handles
-// (by the order of JOIN / Accept), so it decodes the correct event type without
-// ambiguity. The decode-twice heuristic from the original design is avoided.
+// Each JOIN carries a unique request_id (managed by pubsub.Client); the
+// broker echoes it back in the PubSubResponse along with the StreamId of the
+// stream it created. Both subscribers are correlated independently, so
+// concurrent JOIN ordering on the wire does not affect which goroutine reads
+// which stream.
 func Watch(ctx context.Context, addr string, out io.Writer) error {
 	c, err := Dial(ctx, addr)
 	if err != nil {
@@ -31,33 +34,30 @@ func Watch(ctx context.Context, addr string, out io.Writer) error {
 
 	conn := c.Conn()
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
+	pubClient := pubsub.NewClient()
 	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoReceive(ctx, p, conn, func(*objproto.Message, error) {})
+	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
+		if err != nil || len(msg.Data) == 0 {
+			return
+		}
+		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
+			pubClient.HandleResponse(msg.Data[1:])
+		}
+	})
 	// Keep the objproto session alive — server's AutoGarbageCollect drops idle sessions
 	// after 1 minute, and Watch sits waiting for events indefinitely.
 	go trsf.AutoPing(ctx, conn, 30*time.Second)
 
-	// Send JOIN for tasks.status first, then runners.status.
-	// The broker opens streams in the order it receives JOINs, so Accept order
-	// corresponds to JOIN order.
 	tasksTopic := topics.TasksStatus()
 	runnersTopic := topics.RunnersStatus()
 
-	if _, _, err := conn.SendMessage(pubsub.JoinTopic("watch", tasksTopic)); err != nil {
-		return fmt.Errorf("send JOIN %s: %w", tasksTopic, err)
-	}
-	if _, _, err := conn.SendMessage(pubsub.JoinTopic("watch", runnersTopic)); err != nil {
-		return fmt.Errorf("send JOIN %s: %w", runnersTopic, err)
-	}
-
-	// Accept the two streams in the same order as JOIN.
-	tasksStream, err := p.AcceptBidirectionalStream(ctx)
+	tasksStream, err := joinAndGetStream(ctx, conn, p, pubClient, tasksTopic)
 	if err != nil {
-		return fmt.Errorf("accept tasks.status stream: %w", err)
+		return fmt.Errorf("join %s: %w", tasksTopic, err)
 	}
-	runnersStream, err := p.AcceptBidirectionalStream(ctx)
+	runnersStream, err := joinAndGetStream(ctx, conn, p, pubClient, runnersTopic)
 	if err != nil {
-		return fmt.Errorf("accept runners.status stream: %w", err)
+		return fmt.Errorf("join %s: %w", runnersTopic, err)
 	}
 
 	var mu sync.Mutex
@@ -132,6 +132,37 @@ func drainTaskEvents(buf []byte, out io.Writer, mu *sync.Mutex) []byte {
 		buf = rest
 	}
 	return buf
+}
+
+// joinAndGetStream issues a JOIN on topic via pubClient and returns the
+// broker-created stream once the response correlates back. The topic-header
+// line written by the broker as the first chunk is consumed before returning.
+func joinAndGetStream(ctx context.Context, conn objproto.Connection, p trsf.Transport, pubClient *pubsub.Client, topic string) (trsf.BidirectionalStream, error) {
+	respCh := make(chan *pubsubproto.PubSubResponse, 1)
+	joinBytes := pubClient.JoinTopic("watch", topic, func(r *pubsubproto.PubSubResponse) { respCh <- r })
+	if joinBytes == nil {
+		return nil, fmt.Errorf("encode JOIN failed (nickname too long?)")
+	}
+	if _, _, err := conn.SendMessage(joinBytes); err != nil {
+		return nil, fmt.Errorf("send JOIN: %w", err)
+	}
+	var resp *pubsubproto.PubSubResponse
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case resp = <-respCh:
+	}
+	if resp.Status != pubsubproto.Status_Ok {
+		return nil, fmt.Errorf("JOIN rejected: status %v", resp.Status)
+	}
+	st := waitForStream(ctx, p, trsf.StreamID(resp.StreamId))
+	if st == nil {
+		return nil, fmt.Errorf("stream %d not visible after JOIN", resp.StreamId)
+	}
+	if err := readUntilNewline(ctx, st); err != nil {
+		return nil, fmt.Errorf("read topic header: %w", err)
+	}
+	return st, nil
 }
 
 // drainRunnerEvents decodes as many RunnerStatusEvent records as possible from buf,
