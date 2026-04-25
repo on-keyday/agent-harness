@@ -71,6 +71,15 @@ func main() {
 			die(err)
 		}
 
+	case "logs":
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "logs: missing task id")
+			os.Exit(2)
+		}
+		if err := cli.Logs(ctx, *server, args[0], os.Stdout); err != nil {
+			die(err)
+		}
+
 	default:
 		usage()
 		os.Exit(2)
@@ -83,6 +92,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--repo PATH] [--before DUR]  remove old harness worktrees")
+	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 }
 
 func die(err error) {
