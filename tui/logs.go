@@ -59,13 +59,8 @@ func (m *LogsModel) Append(chunk []byte) {
 
 // rebuildContent concatenates all chunks and wraps the whole text to the
 // current viewport width so long lines (e.g. file paths in stack traces) are
-// visible instead of being clipped. When chunks is empty, the call is a no-op
-// so the "(no task selected)" / "(following …)" placeholders set by Reset
-// survive a subsequent SetSize.
+// visible instead of being clipped.
 func (m *LogsModel) rebuildContent() {
-	if len(m.chunks) == 0 {
-		return
-	}
 	joined := strings.Join(m.chunks, "")
 	if m.vp.Width <= 0 {
 		m.vp.SetContent(joined)
