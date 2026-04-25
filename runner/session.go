@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/hex"
+	"sync"
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
@@ -87,7 +88,13 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		CWD:       dir,
 		Timeout:   s.Timeout,
 	}
+	// Serialize concurrent log-sink calls so that the first Publish (which blocks
+	// to establish the pubsub stream) completes before a second concurrent call can
+	// also attempt stream setup, which would deadlock in connSender.Publish.
+	var logMu sync.Mutex
 	logSink := func(data []byte) {
+		logMu.Lock()
+		defer logMu.Unlock()
 		_ = s.Sender.Publish(topic, data)
 	}
 	exit, runErr := proc.Run(ctx, string(req.Prompt), logSink)

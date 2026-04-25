@@ -18,14 +18,27 @@ type Client struct {
 	conn objproto.Connection
 }
 
+// portFrom extracts the port portion from a "host:port" string.
+// Falls back to the full string if no colon is found.
+func portFrom(addr string) string {
+	for i := len(addr) - 1; i >= 0; i-- {
+		if addr[i] == ':' {
+			return addr[i+1:]
+		}
+	}
+	return addr
+}
+
 // Dial establishes a WebSocket session, ECDH handshake, and returns a ready Client.
 func Dial(ctx context.Context, addr string) (*Client, error) {
 	sess, err := transport.WebSocketSession(slog.Default(), addr, nil, objproto.SessionModeClient)
 	if err != nil {
 		return nil, fmt.Errorf("ws session: %w", err)
 	}
+	// Build a valid ConnectionID using the same format as the runner: "ws:127.0.0.1:<port>-<id>"
+	cidStr := fmt.Sprintf("ws:127.0.0.1:%s-2222", portFrom(addr))
 	conn, err := objproto.DoECDHHandshake(ctx, sess,
-		objproto.MustParseConnectionID(addr+"-2222"),
+		objproto.MustParseConnectionID(cidStr),
 		ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
 		return nil, fmt.Errorf("ecdh: %w", err)
