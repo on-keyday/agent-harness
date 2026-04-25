@@ -216,6 +216,32 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))
 		return a, RefreshSnapshot(a.client)
 
+	case InteractiveReadyMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("open interactive failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		short := msg.TaskID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		a.cmdresult.Append(OKStyle.Render("attaching ") + short + " — Ctrl+D / `exit` to detach")
+		return a, tea.Exec(&interactiveExec{stream: msg.Stream}, func(err error) tea.Msg {
+			return InteractiveDoneMsg{TaskID: msg.TaskID, Err: err}
+		})
+
+	case InteractiveDoneMsg:
+		short := msg.TaskID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		if msg.Err != nil {
+			a.cmdresult.Append(WarnStyle.Render("interactive ended: ") + short + " (" + msg.Err.Error() + ")")
+		} else {
+			a.cmdresult.Append(OKStyle.Render("interactive ended: ") + short)
+		}
+		return a, RefreshSnapshot(a.client)
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
@@ -271,6 +297,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.popup.SetRepo(a.defaultRepo)
 			a.popup.Open()
 			return a, nil
+		}
+		// `i` opens an interactive PTY claude session in the default repo.
+		// The RPC + tea.Exec dance is two-stage: the Cmd dispatches the RPC,
+		// the response arrives as InteractiveReadyMsg, and Update returns
+		// tea.Exec then to actually suspend the program and run the shell.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
+			return a, DoOpenInteractive(a.client, a.defaultRepo)
 		}
 		// `c` cancels the selected task when tasks panel is focused.
 		if a.focus == focusTasks && msg.String() == "c" {
@@ -403,7 +436,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · c cancel · q quit"
+		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · i interactive · c cancel · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
