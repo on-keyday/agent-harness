@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,7 +9,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf"
 )
 
 type focus int
@@ -27,6 +30,7 @@ type App struct {
 
 	runners   RunnersModel
 	tasks     TasksModel
+	logs      LogsModel
 	cmdresult CmdResultModel
 	cmdline   textinput.Model
 
@@ -45,6 +49,13 @@ type App struct {
 	tasksByID map[string]protocol.TaskInfo
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
+
+	// log-following state
+	logsCancel context.CancelFunc
+	conn       objproto.Connection
+	trans      trsf.Transport
+	appCtx     context.Context
+	program    *tea.Program
 }
 
 type Config struct {
@@ -63,6 +74,7 @@ func New(cfg Config) *App {
 		defaultRepo: cfg.DefaultRepo,
 		runners:     NewRunners(),
 		tasks:       NewTasks(),
+		logs:        NewLogs(),
 		cmdresult:   NewCmdResult(),
 		cmdline:     cmd,
 		focus:       focusTasks,
@@ -73,6 +85,20 @@ func New(cfg Config) *App {
 	a.tasks.Focus()
 	return a
 }
+
+// BindContext stores the application-level context for spawning per-task subscriptions.
+func (a *App) BindContext(ctx context.Context) { a.appCtx = ctx }
+
+// BindTransport stores the persistent objproto connection / trsf transport
+// used for per-task log subscriptions. Called by main.go after Connect succeeds.
+func (a *App) BindTransport(conn objproto.Connection, p trsf.Transport) {
+	a.conn = conn
+	a.trans = p
+}
+
+// BindProgram stores the tea.Program so per-task subscriber goroutines can
+// dispatch LogChunkMsg back to the model.
+func (a *App) BindProgram(p *tea.Program) { a.program = p }
 
 func (a *App) Init() tea.Cmd {
 	return textinput.Blink
@@ -119,6 +145,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// so we kick a full snapshot refresh on every runner event.
 		return a, RefreshSnapshot(a.server)
 
+	case LogChunkMsg:
+		if msg.TaskID == a.logs.TaskID() {
+			a.logs.Append(msg.Chunk)
+		}
+		return a, nil
+
 	case ConnectionMsg:
 		a.connected = msg.Connected
 		if !msg.Connected && msg.Err != nil {
@@ -164,6 +196,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.cmdresult.Append("> " + input)
 			return a.runAction(act)
+		}
+		// Follow task on Enter when tasks panel is focused.
+		if a.focus == focusTasks && msg.Type == tea.KeyEnter {
+			id := a.tasks.SelectedID()
+			if id != "" {
+				return a, a.followTask(id)
+			}
+			return a, nil
 		}
 	}
 
@@ -236,15 +276,15 @@ func (a *App) View() string {
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, runnersView, tasksView)
 
-	// Log placeholder until Task 11 fills this in.
 	logHeight := a.height - 22
 	if logHeight < 5 {
 		logHeight = 5
 	}
+	a.logs.SetSize(a.width-4, logHeight-2) // -2 for the panel border rows
 	logView := PanelStyle.
 		Width(a.width - 2).
 		Height(logHeight).
-		Render("(log will appear here when a task is selected)")
+		Render(a.logs.View())
 
 	cmdresultView := PanelStyle.Width(a.width - 2).Render(a.cmdresult.View())
 	cmdlineView := a.cmdline.View()
@@ -258,6 +298,25 @@ func (a *App) View() string {
 		cmdlineView,
 		footer,
 	}, "\n")
+}
+
+// followTask LEAVEs the previous log subscription (if any) and JOINs the
+// task.<taskID>.log topic. Returns a tea.Cmd that spawns the subscriber goroutine.
+func (a *App) followTask(taskID string) tea.Cmd {
+	if a.logsCancel != nil {
+		a.logsCancel()
+		a.logsCancel = nil
+	}
+	a.logs.Reset(taskID)
+	if taskID == "" || a.conn == nil || a.trans == nil || a.program == nil || a.appCtx == nil {
+		return nil
+	}
+	subCtx, cancel := context.WithCancel(a.appCtx)
+	a.logsCancel = cancel
+	return func() tea.Msg {
+		go SubscribeTaskLog(subCtx, a.conn, a.trans, a.program, taskID)
+		return nil
+	}
 }
 
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by

@@ -34,6 +34,8 @@ func main() {
 		DefaultRepo: repoAbs,
 	})
 	program := tea.NewProgram(app, tea.WithAltScreen())
+	app.BindProgram(program)
+	app.BindContext(ctx)
 
 	go func() {
 		conn, p, err := tui.Connect(ctx, *serverAddr)
@@ -41,6 +43,7 @@ func main() {
 			program.Send(tui.ConnectionMsg{Connected: false, Err: err})
 			return
 		}
+		app.BindTransport(conn, p)
 		program.Send(tui.ConnectionMsg{Connected: true})
 		program.Send(tui.RefreshSnapshot(*serverAddr)())
 		go tui.SubscribeTaskStatus(ctx, conn, p, program)
