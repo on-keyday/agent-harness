@@ -62,6 +62,7 @@ enum TaskControlKind:
     submit
     list
     cancel
+    prune_tasks
 
 format ListQuery:
     query :[..]u8 # currently opaque
@@ -128,12 +129,19 @@ format SubmitRequest:
 format SubmitResponse:
     task_id :TaskID
 
+format PruneTasksRequest:
+    before_ts :u64    # unix nano cutoff; terminal tasks with EndedAt < this are removed
+
+format PruneTasksResponse:
+    removed :u32
+
 format TaskControlRequest:
     kind :TaskControlKind
     match kind:
         TaskControlKind.submit => submit :SubmitRequest
         TaskControlKind.list => list :ListQuery
         TaskControlKind.cancel => cancel :CancelTask
+        TaskControlKind.prune_tasks => prune :PruneTasksRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -145,6 +153,7 @@ format TaskControlResponse:
         TaskControlKind.submit => submit :SubmitResponse
         TaskControlKind.list => list :ListResult
         TaskControlKind.cancel => cancel :CancelStatus
+        TaskControlKind.prune_tasks => prune :PruneTasksResponse
 
 # Pubsub event payloads
 enum StatusEventKind:

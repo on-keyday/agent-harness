@@ -62,6 +62,13 @@ func New(cfg Config) *Server {
 		Tasks:    s.tasks,
 		Registry: s.registry,
 		OnChange: s.scheduler.Tick,
+		PruneFn: func(cutoff time.Time) int {
+			logsDir := ""
+			if s.cfg.DataDir != "" {
+				logsDir = filepath.Join(s.cfg.DataDir, "logs")
+			}
+			return s.tasks.PruneTerminal(cutoff, logsDir)
+		},
 	}
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,

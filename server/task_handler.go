@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/hex"
 	"log/slog"
+	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -15,6 +16,11 @@ type TaskHandler struct {
 	Tasks    *TaskStore
 	Registry *Registry
 	OnChange func() // called after Submit / Cancel mutations
+
+	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply
+	// with removed=0. Server.New wires this to TaskStore.PruneTerminal with the
+	// configured logs directory.
+	PruneFn func(cutoff time.Time) int
 }
 
 // Handle decodes a TaskControlRequest payload (bytes after the wire-kind byte) and replies via conn.SendMessage.
@@ -92,6 +98,23 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if h.OnChange != nil {
 			h.OnChange()
 		}
+
+	case protocol.TaskControlKind_PruneTasks:
+		pr := req.Prune()
+		if pr == nil {
+			slog.Error("TaskHandler: Prune variant is nil")
+			return
+		}
+		var removed uint32
+		if h.PruneFn != nil {
+			cutoff := time.Unix(0, int64(pr.BeforeTs))
+			removed = uint32(h.PruneFn(cutoff))
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PruneTasks}
+		resp.SetPrune(protocol.PruneTasksResponse{Removed: removed})
+
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
 
 	default:
 		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)

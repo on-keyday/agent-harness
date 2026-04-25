@@ -63,8 +63,11 @@ go run ./cmd/harness-cli cancel <task-id>
 - **Local only.** Server and runners must be reachable on `localhost`. The transport
   supports remote operation; configurable endpoints will land in v2.
 - **No auto-commit.** The runner creates a worktree under `<repo>/.harness-worktrees/<task-id>/`
-  and leaves any changes uncommitted. You inspect them yourself; `prune` removes old
-  worktrees with `git worktree remove --force`.
+  and leaves any changes uncommitted. You inspect them yourself; `harness-cli prune`
+  removes old worktrees with `git worktree remove --force` AND asks the server to
+  forget the corresponding task records and per-task log files. Pass `--offline` to
+  do only the local worktree pass. The server can also auto-prune by passing
+  `harness-server --task-retain=DUR` (e.g. `--task-retain=720h`).
 - **One task per runner process.** Spawn N runners against the same repo to get N
   parallel slots — the server schedules FIFO across idle runners.
 - **No interactive attach.** Submitted tasks run headless. The "session multiplexer" /

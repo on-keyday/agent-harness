@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +41,8 @@ func TestPruneRemovesOldWorktrees(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := Prune(repo, 7*24*time.Hour, &out); err != nil {
+	// addr="" → server step skipped, exercises the worktree-only path.
+	if err := Prune(context.Background(), "", repo, 7*24*time.Hour, &out); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
@@ -50,7 +52,7 @@ func TestPruneRemovesOldWorktrees(t *testing.T) {
 
 func TestPruneNoDir(t *testing.T) {
 	var out bytes.Buffer
-	err := Prune(t.TempDir(), 7*24*time.Hour, &out)
+	err := Prune(context.Background(), "", t.TempDir(), 7*24*time.Hour, &out)
 	if err != nil {
 		t.Fatalf("Prune on empty repo should not error: %v", err)
 	}

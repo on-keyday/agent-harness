@@ -61,13 +61,18 @@ func main() {
 	case "prune":
 		fs := flag.NewFlagSet("prune", flag.ExitOnError)
 		repo := fs.String("repo", ".", "repo to prune")
-		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees older than this")
+		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees and forget tasks older than this")
+		offline := fs.Bool("offline", false, "skip the server task-forget step (worktrees only)")
 		fs.Parse(args)
 		abs, err := filepath.Abs(*repo)
 		if err != nil {
 			die(err)
 		}
-		if err := cli.Prune(abs, *before, os.Stdout); err != nil {
+		serverAddr := *server
+		if *offline {
+			serverAddr = ""
+		}
+		if err := cli.Prune(ctx, serverAddr, abs, *before, os.Stdout); err != nil {
 			die(err)
 		}
 
@@ -96,7 +101,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  submit [--repo PATH] --task TEXT    enqueue a new task (--repo defaults to cwd)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
-	fmt.Fprintln(os.Stderr, "  prune [--repo PATH] [--before DUR]  remove old harness worktrees")
+	fmt.Fprintln(os.Stderr, "  prune [--repo PATH] [--before DUR]  remove old worktrees and forget old tasks (--offline = local only)")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 }
