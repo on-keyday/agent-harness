@@ -1,23 +1,65 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    // TUI debug workflow (the freeze in interactive RemoteShell):
+    //   1) in a real terminal, run:
+    //        ./scripts/dlv-tui.sh --server=127.0.0.1:8539 --repo=$PWD
+    //      this builds harness-tui with debug symbols and launches dlv
+    //      headless on :2345 — the program is suspended waiting for a
+    //      debugger to attach + issue Continue.
+    //   2) in VSCode, F5 → "Attach to dlv :2345".
+    //   3) hit Continue (F5 again) — TUI appears in step-1's terminal.
+    //   4) reproduce the freeze, then in VSCode click Pause to inspect
+    //      goroutines (the io.Copy(stdin, os.Stdin) goroutine inside
+    //      RemoteShell is the suspect — see what it is blocked on).
+    //
+    // Already-running attach: if harness-tui was launched without dlv,
+    // attach after-the-fact with:
+    //   ~/go/bin/dlv attach $(pgrep -f harness-tui-debug) \
+    //       --headless --listen=:2345 --api-version=2 --accept-multiclient
+    // then use the same "Attach to dlv :2345" config.
+    //
+    // The Launch configs below are for the non-PTY components (server /
+    // runner). They use "integratedTerminal" so stdout is visible.
     "version": "0.2.0",
     "configurations": [
-
         {
-            "name": "Launch Server",
+            "name": "Attach to dlv :2345",
             "type": "go",
-            "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/cmd/harness-server",
+            "request": "attach",
+            "mode": "remote",
+            "host": "127.0.0.1",
+            "port": 2345,
+            "substitutePath": [
+                {
+                    "from": "${workspaceFolder}",
+                    "to": "${workspaceFolder}"
+                }
+            ]
         },
-            {
-            "name": "Launch Client",
+        {
+            "name": "Launch harness-server",
             "type": "go",
             "request": "launch",
-            "mode": "auto",
-            "program": "${workspaceFolder}/cmd/harness-client",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/harness-server",
+            "console": "integratedTerminal",
+            "args": [
+                "--port=8539",
+                "--data-dir=/tmp/harness-data"
+            ]
+        },
+        {
+            "name": "Launch agent-runner",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/cmd/agent-runner",
+            "console": "integratedTerminal",
+            "args": [
+                "--server=127.0.0.1:8539",
+                "--repo=${workspaceFolder}",
+                "--claude-bin=claude",
+                "--claude-args=--dangerously-skip-permissions"
+            ]
         }
     ]
 }
