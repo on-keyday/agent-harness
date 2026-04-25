@@ -41,6 +41,16 @@ type sendStream struct {
 	cancelRequested atomic.Bool
 	eofSent         bool
 
+	// pendingOpen is set on streams created locally (CreateBidirectionalStream
+	// / CreateSendStream) so that triggerPacket emits a 0-byte STREAM frame
+	// once even if the user never calls AppendData. Without this, the peer
+	// only learns about the stream when the first non-empty STREAM frame
+	// arrives — a freshly created stream that nobody writes to is invisible,
+	// and GetBidirectionalStream(id) on the peer returns nil. The marker
+	// frame goes through the normal retransmit path, so a lost open is
+	// resent like any other frame.
+	pendingOpen atomic.Bool
+
 	sentRanges []*SentRange
 	flow       FlowController
 	id         StreamID
@@ -267,14 +277,20 @@ func (r *sendStream) triggerPacket(maxPayload int) *SentRange {
 	}
 	maxPayload -= headerSize
 	sendable := r.flow.SendableSize()
-	if sendable == 0 {
-		r.logger.Debug("send window is full, cannot send more data on stream", "id", r.id)
-		return nil
+	var data []byte
+	var eof bool
+	if sendable > 0 {
+		chunkSize := min(maxPayload, sendable)
+		data, eof = r.readChunk(chunkSize)
 	}
-	chunkSize := min(maxPayload, sendable)
-	data, eof := r.readChunk(chunkSize)
 	if len(data) == 0 && !eof {
-		return nil
+		// No buffered data and no EOF: only emit a frame to advertise stream
+		// creation, and only once per stream. The peer's recv path creates
+		// its stream entry on the first frame for an unknown id; without this
+		// open marker, an idle freshly-created stream stays invisible.
+		if !r.pendingOpen.CompareAndSwap(true, false) {
+			return nil
+		}
 	}
 	sentRange := &SentRange{
 		ID:       r.id,

@@ -664,6 +664,11 @@ func (r *Streams) CreateBidirectionalStream() BidirectionalStream {
 	rs := newReceiveStream(r.ctx, r.logger, id, InitialFlowWindow, r.updateWindow, r.cancelTrigger)
 	r.sendStreams[ss.ID()] = ss
 	r.recvStreams[ss.ID()] = rs
+	// Advertise creation: queue a 0-byte STREAM frame so the peer's recv
+	// path materializes the stream entry. Without this, peers can't resolve
+	// an idle freshly-created stream via GetBidirectionalStream(id).
+	ss.pendingOpen.Store(true)
+	r.sendTrigger.Push(ss)
 	return &bidiStream{
 		sendStream: ss,
 		recvStream: rs,
@@ -677,6 +682,8 @@ func (r *Streams) CreateSendStream() SendStream {
 	id = r.uniIDIssuer.Next()
 	ss := newSendStream(r.ctx, r.mtu, id, newFlowController(InitialFlowWindow), r.logger, r.sendTrigger)
 	r.sendStreams[ss.ID()] = ss
+	ss.pendingOpen.Store(true)
+	r.sendTrigger.Push(ss)
 	return ss
 }
 
