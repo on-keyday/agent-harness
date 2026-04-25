@@ -268,7 +268,11 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	wrapped := streamingConn{Connection: session, trans: p}
 
 	trsf.AutoReceive(connCtx, p, session, func(msg *objproto.Message, err error) {
-		if err != nil || len(msg.Data) == 0 {
+		if err != nil {
+			// Includes io.EOF on peer-sent Close; AutoReceive returns next.
+			return
+		}
+		if msg == nil || len(msg.Data) == 0 {
 			return
 		}
 		kind := wire.ApplicationPayloadKind(msg.Data[0])

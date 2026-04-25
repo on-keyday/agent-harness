@@ -45,6 +45,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("ecdh handshake: %w", err)
 	}
+	// On exit, tell the server we're going away so the registry deregisters
+	// us immediately instead of waiting for the AutoGarbageCollect timeout.
+	defer trsf.SendClose(conn) //nolint:errcheck
 
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, cfg.Logger)
 	go trsf.AutoSend(ctx, p, conn, nil)
@@ -73,9 +76,14 @@ func Run(ctx context.Context, cfg Config) error {
 		Now:             time.Now,
 	}
 
-	// Receive loop. trsf.AutoReceive blocks until ctx is done or the connection breaks.
+	// Receive loop. trsf.AutoReceive blocks until ctx is done, the connection
+	// breaks, or the server sends a Close (in which case AutoReceive returns
+	// after dispatching a (nil, io.EOF) event).
 	trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
-		if err != nil || len(msg.Data) == 0 {
+		if err != nil {
+			return
+		}
+		if msg == nil || len(msg.Data) == 0 {
 			return
 		}
 		kind := wire.ApplicationPayloadKind(msg.Data[0])

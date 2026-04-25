@@ -85,7 +85,11 @@ func (c *Client) Pubsub() *pubsub.Client { return c.pubClient }
 // pubsub.Client and TaskControl-kind messages to the pending request map.
 // Other kinds are ignored (no client uses RunnerControl as a client today).
 func (c *Client) dispatch(msg *objproto.Message, err error) {
-	if err != nil || len(msg.Data) == 0 {
+	if err != nil {
+		// io.EOF when the server sent Close; any other err signals network failure.
+		return
+	}
+	if msg == nil || len(msg.Data) == 0 {
 		return
 	}
 	switch wire.ApplicationPayloadKind(msg.Data[0]) {
@@ -141,5 +145,11 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 	}
 }
 
-// Close releases the underlying connection.
-func (c *Client) Close() { _ = c.conn.Close() }
+// Close sends a wire-level Close to the peer (best-effort; the server
+// uses it to deregister the runner / drop the subscriber immediately
+// instead of waiting for the idle GC) and then releases the underlying
+// objproto connection.
+func (c *Client) Close() {
+	_ = trsf.SendClose(c.conn)
+	_ = c.conn.Close()
+}

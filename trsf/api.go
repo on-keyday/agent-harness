@@ -123,6 +123,15 @@ func AutoPing(ctx context.Context, conn UnderlayingSendTransport, interval time.
 	}
 }
 
+// SendClose tells the peer that we are going away. The peer's AutoReceive
+// will return after dispatching a final (nil, io.EOF) event so its caller
+// can clean up immediately instead of waiting for the connection's idle
+// timeout. Best-effort: any send error is returned to the caller.
+func SendClose(conn UnderlayingSendTransport) error {
+	_, _, err := conn.SendMessage([]byte{byte(wire.ApplicationPayloadKind_Close)})
+	return err
+}
+
 func AutoReceive(ctx context.Context, p Transport, conn UnderlayingBidirectionalTransport, onEvent func(msg *objproto.Message, err error)) {
 	for {
 		data, err := conn.ReceiveMessageContext(ctx)
@@ -148,6 +157,14 @@ func AutoReceive(ctx context.Context, p Transport, conn UnderlayingBidirectional
 		if kind == wire.ApplicationPayloadKind_Pong {
 			// ignore
 			continue
+		}
+		if kind == wire.ApplicationPayloadKind_Close {
+			// Peer signalled it is going away. Dispatch a final EOF event so
+			// the caller can run its cleanup, then exit the loop.
+			if onEvent != nil {
+				onEvent(nil, io.EOF)
+			}
+			return
 		}
 		if onEvent != nil {
 			onEvent(data, nil)
