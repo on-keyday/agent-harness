@@ -27,11 +27,11 @@ func main() {
 	switch sub {
 	case "submit":
 		fs := flag.NewFlagSet("submit", flag.ExitOnError)
-		repo := fs.String("repo", "", "absolute path to repo")
+		repo := fs.String("repo", ".", "path to repo (defaults to cwd)")
 		task := fs.String("task", "", "prompt text")
 		fs.Parse(args)
-		if *repo == "" || *task == "" {
-			fmt.Fprintln(os.Stderr, "submit: --repo and --task are required")
+		if *task == "" {
+			fmt.Fprintln(os.Stderr, "submit: --task is required")
 			os.Exit(2)
 		}
 		abs, err := filepath.Abs(*repo)
@@ -93,7 +93,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server HOST:PORT] <subcommand> [args]")
-	fmt.Fprintln(os.Stderr, "  submit --repo PATH --task TEXT     enqueue a new task")
+	fmt.Fprintln(os.Stderr, "  submit [--repo PATH] --task TEXT    enqueue a new task (--repo defaults to cwd)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--repo PATH] [--before DUR]  remove old harness worktrees")

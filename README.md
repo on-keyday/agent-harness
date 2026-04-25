@@ -47,8 +47,9 @@ go run ./cmd/harness-server --port 8539 --data-dir ./harness-data
 go run ./cmd/agent-runner --server localhost:8539 --repo /abs/path/to/repo
 go run ./cmd/agent-runner --server localhost:8539 --repo /abs/path/to/repo  # 2 in parallel
 
-# 3. Submit a task
-go run ./cmd/harness-cli submit --repo /abs/path/to/repo --task "fix the flaky test in foo_test.go"
+# 3. Submit a task (run from inside the repo, or pass --repo)
+cd /abs/path/to/repo
+go run /elsewhere/agent-harness/cmd/harness-cli submit --task "test task"
 # → prints task ID
 
 # 4. Inspect
