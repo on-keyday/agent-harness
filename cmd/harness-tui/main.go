@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/tui"
 )
 
@@ -48,17 +49,18 @@ func main() {
 	slogHandler.BindProgram(program)
 
 	go func() {
-		conn, p, pubClient, err := tui.Connect(ctx, *serverAddr)
+		c, err := cli.Dial(ctx, *serverAddr)
 		if err != nil {
 			program.Send(tui.ConnectionMsg{Connected: false, Err: err})
 			return
 		}
-		app.BindTransport(conn, p, pubClient)
+		app.BindClient(c)
 		program.Send(tui.ConnectionMsg{Connected: true})
-		program.Send(tui.RefreshSnapshot(*serverAddr)())
-		go tui.SubscribeTaskStatus(ctx, conn, p, pubClient, program)
-		go tui.SubscribeRunnerStatus(ctx, conn, p, pubClient, program)
+		program.Send(tui.RefreshSnapshot(c)())
+		go tui.SubscribeTaskStatus(ctx, c, program)
+		go tui.SubscribeRunnerStatus(ctx, c, program)
 		<-ctx.Done()
+		c.Close()
 	}()
 
 	if _, err := program.Run(); err != nil {

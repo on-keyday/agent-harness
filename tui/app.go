@@ -9,10 +9,8 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/pubsub"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
 )
 
 type focus int
@@ -54,9 +52,7 @@ type App struct {
 
 	// log-following state
 	logsCancel context.CancelFunc
-	conn       objproto.Connection
-	trans      trsf.Transport
-	pubClient  *pubsub.Client
+	client     *cli.Client
 	appCtx     context.Context
 	program    *tea.Program
 }
@@ -93,13 +89,10 @@ func New(cfg Config) *App {
 // BindContext stores the application-level context for spawning per-task subscriptions.
 func (a *App) BindContext(ctx context.Context) { a.appCtx = ctx }
 
-// BindTransport stores the persistent objproto connection / trsf transport
-// and pubsub client used for per-task log subscriptions. Called by main.go
-// after Connect succeeds.
-func (a *App) BindTransport(conn objproto.Connection, p trsf.Transport, pubClient *pubsub.Client) {
-	a.conn = conn
-	a.trans = p
-	a.pubClient = pubClient
+// BindClient stores the persistent cli.Client used for both pubsub
+// subscriptions and TaskControl RPCs. Called by main.go after cli.Dial succeeds.
+func (a *App) BindClient(c *cli.Client) {
+	a.client = c
 }
 
 // BindProgram stores the tea.Program so per-task subscriber goroutines can
@@ -149,7 +142,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RunnerEventMsg:
 		// server-side RunnerStatusEvent.RunnerId is a placeholder (not keyable),
 		// so we kick a full snapshot refresh on every runner event.
-		return a, RefreshSnapshot(a.server)
+		return a, RefreshSnapshot(a.client)
 
 	case LogChunkMsg:
 		if msg.TaskID == a.logs.TaskID() {
@@ -221,7 +214,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))
-		return a, RefreshSnapshot(a.server)
+		return a, RefreshSnapshot(a.client)
 
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -245,7 +238,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
 					return a, nil
 				}
-				return a, DoSubmit(a.server, repo, prompt)
+				return a, DoSubmit(a.client, repo, prompt)
 			}
 			var pcmd tea.Cmd
 			a.popup, pcmd = a.popup.Update(msg)
@@ -281,7 +274,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.cmdresult.Append(WarnStyle.Render("no task selected"))
 				return a, nil
 			}
-			return a, DoCancel(a.server, id, id)
+			return a, DoCancel(a.client, id, id)
 		}
 		// Cmdline submit.
 		if a.focus == focusCmdline && msg.Type == tea.KeyEnter {
@@ -416,15 +409,15 @@ func (a *App) followTask(taskID string) tea.Cmd {
 		a.logsCancel = nil
 	}
 	a.logs.Reset(taskID)
-	if taskID == "" || a.conn == nil || a.trans == nil || a.pubClient == nil || a.program == nil || a.appCtx == nil {
+	if taskID == "" || a.client == nil || a.program == nil || a.appCtx == nil {
 		return nil
 	}
 	subCtx, cancel := context.WithCancel(a.appCtx)
 	a.logsCancel = cancel
 	return tea.Batch(
-		DoGetTaskLog(a.server, taskID),
+		DoGetTaskLog(a.client, taskID),
 		func() tea.Msg {
-			go SubscribeTaskLog(subCtx, a.conn, a.trans, a.pubClient, a.program, taskID)
+			go SubscribeTaskLog(subCtx, a.client, a.program, taskID)
 			return nil
 		},
 	)
@@ -476,20 +469,20 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("commands: submit / cancel <id> / prune [--before=DUR] [--offline] / clear / help / quit")
 		return a, nil
 	case SubmitAction:
-		return a, DoSubmit(a.server, v.Repo, v.Prompt)
+		return a, DoSubmit(a.client, v.Repo, v.Prompt)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
-		return a, DoCancel(a.server, v.IDPrefix, full)
+		return a, DoCancel(a.client, v.IDPrefix, full)
 	case PruneAction:
 		if v.Offline {
 			a.cmdresult.Append(WarnStyle.Render("--offline is a CLI-only flag; use harness-cli prune --offline. Server-side prune skipped."))
 			return a, nil
 		}
-		return a, DoPruneTasks(a.server, v.Before)
+		return a, DoPruneTasks(a.client, v.Before)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil

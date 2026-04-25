@@ -2,65 +2,17 @@ package tui
 
 import (
 	"context"
-	"crypto/ecdh"
+	"encoding/hex"
 	"fmt"
-	"log/slog"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
-// portFrom returns the port part of "host:port".
-func portFrom(addr string) string {
-	i := strings.LastIndex(addr, ":")
-	if i < 0 {
-		return addr
-	}
-	return addr[i+1:]
-}
-
-// Connect dials the harness-server and returns a connection ready for both
-// pubsub subscriptions (via trsf streams) and ad-hoc TaskControl round-trips,
-// along with a pubsub.Client that correlates broker responses by request_id.
-// The AutoReceive goroutine routes Pubsub-kind messages into the Client's
-// HandleResponse so subscribeAndStream can pick up the StreamId for its JOIN.
-// Caller is responsible for cancelling ctx; the goroutines exit on cancel.
-func Connect(ctx context.Context, addr string) (objproto.Connection, trsf.Transport, *pubsub.Client, error) {
-	sess, err := transport.WebSocketSession(slog.Default(), addr, nil, objproto.SessionModeClient)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("ws session: %w", err)
-	}
-	cid := objproto.MustParseConnectionID(fmt.Sprintf("ws:127.0.0.1:%s-3333", portFrom(addr)))
-	conn, err := objproto.DoECDHHandshake(ctx, sess, cid, ecdh.P521(), objproto.AES128GCM)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("ecdh: %w", err)
-	}
-	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
-	pubClient := pubsub.NewClient()
-	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
-		if err != nil || len(msg.Data) == 0 {
-			return
-		}
-		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
-			pubClient.HandleResponse(msg.Data[1:])
-		}
-		// Other kinds are not consumed by the TUI's read path (TaskControl
-		// responses go through cli.Client's synchronous ReceiveMessage call).
-	})
-	go trsf.AutoPing(ctx, conn, 30*time.Second)
-	return conn, p, pubClient, nil
-}
-
-// --- tea.Cmd factories backed by short-lived cli.* helpers ---
+// --- tea.Cmd factories using the persistent cli.Client ---
 
 type SubmitResultMsg struct {
 	TaskID string
@@ -90,67 +42,128 @@ type LogHistoryMsg struct {
 	Err     error
 }
 
-// DoSubmit returns a tea.Cmd that calls cli.Submit and returns SubmitResultMsg.
-func DoSubmit(addr, repo, prompt string) tea.Cmd {
+// DoSubmit issues a Submit RPC over the existing persistent client.
+func DoSubmit(c *cli.Client, repo, prompt string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		echo := fmt.Sprintf("submit --repo %q %q", repo, prompt)
-		id, err := cli.Submit(ctx, addr, repo, prompt)
-		return SubmitResultMsg{TaskID: id, Err: err, Echo: echo}
+
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
+		sub := protocol.SubmitRequest{}
+		sub.SetRepoPath([]byte(repo))
+		sub.SetPrompt([]byte(prompt))
+		req.SetSubmit(sub)
+		resp, err := c.RoundTripTaskControl(ctx, req)
+		if err != nil {
+			return SubmitResultMsg{Err: err, Echo: echo}
+		}
+		s := resp.Submit()
+		if s == nil || resp.Kind != protocol.TaskControlKind_Submit {
+			return SubmitResultMsg{Err: fmt.Errorf("unexpected submit response"), Echo: echo}
+		}
+		return SubmitResultMsg{TaskID: hex.EncodeToString(s.TaskId.Id[:]), Echo: echo}
 	}
 }
 
-// DoCancel: the caller resolves the id-prefix to a full id BEFORE invoking
-// (lookup happens in app.go using the local tasks snapshot). If resolved == ""
-// the action returns an error message without contacting the server.
-func DoCancel(addr, idPrefix, resolved string) tea.Cmd {
+// DoCancel issues a Cancel RPC over the existing persistent client.
+// resolved is the full hex id (callers resolve prefixes against tasksByID).
+func DoCancel(c *cli.Client, idPrefix, resolved string) tea.Cmd {
 	return func() tea.Msg {
 		if resolved == "" {
 			return CancelResultMsg{IDPrefix: idPrefix, Err: fmt.Errorf("no task matching prefix %q", idPrefix)}
 		}
+		raw, err := hex.DecodeString(resolved)
+		if err != nil {
+			return CancelResultMsg{IDPrefix: idPrefix, Err: fmt.Errorf("invalid id %q: %w", resolved, err)}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := cli.Cancel(ctx, addr, resolved)
+
+		var tid protocol.TaskID
+		copy(tid.Id[:], raw)
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel}
+		req.SetCancel(protocol.CancelTask{TaskId: tid})
+		_, err = c.RoundTripTaskControl(ctx, req)
 		return CancelResultMsg{IDPrefix: idPrefix, Resolved: resolved, Err: err}
 	}
 }
 
-// DoGetTaskLog fetches the historical log for taskID from the server and
-// dispatches a LogHistoryMsg. The fetch always uses its own short-lived
-// connection so the TUI's persistent pubsub conn is unaffected.
-func DoGetTaskLog(addr, taskID string) tea.Cmd {
+// DoGetTaskLog fetches the historical log via the persistent client. The
+// stream-pointer response is read off the same trsf transport the client
+// already runs.
+func DoGetTaskLog(c *cli.Client, taskID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		content, found, err := cli.GetTaskLog(ctx, addr, taskID)
-		return LogHistoryMsg{TaskID: taskID, Content: content, Found: found, Err: err}
+
+		raw, err := hex.DecodeString(taskID)
+		if err != nil {
+			return LogHistoryMsg{TaskID: taskID, Err: err}
+		}
+		var tid protocol.TaskID
+		copy(tid.Id[:], raw)
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog}
+		req.SetGetLog(protocol.GetTaskLogRequest{TaskId: tid})
+		resp, err := c.RoundTripTaskControl(ctx, req)
+		if err != nil {
+			return LogHistoryMsg{TaskID: taskID, Err: err}
+		}
+		gl := resp.GetLog()
+		if gl == nil {
+			return LogHistoryMsg{TaskID: taskID, Err: fmt.Errorf("expected GetTaskLog response, got kind=%v", resp.Kind)}
+		}
+		if gl.Found == 0 {
+			return LogHistoryMsg{TaskID: taskID, Found: false}
+		}
+		st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(gl.StreamId))
+		if st == nil {
+			return LogHistoryMsg{TaskID: taskID, Found: true, Err: fmt.Errorf("stream %d not visible", gl.StreamId)}
+		}
+		var out []byte
+		for {
+			data, eof, err := st.ReadDirect(64 * 1024)
+			if err != nil {
+				return LogHistoryMsg{TaskID: taskID, Found: true, Content: out, Err: err}
+			}
+			if len(data) > 0 {
+				out = append(out, data...)
+			}
+			if eof {
+				return LogHistoryMsg{TaskID: taskID, Found: true, Content: out}
+			}
+			if ctx.Err() != nil {
+				return LogHistoryMsg{TaskID: taskID, Found: true, Content: out, Err: ctx.Err()}
+			}
+		}
 	}
 }
 
 // DoPruneTasks asks the server to forget terminal tasks older than `before`.
-func DoPruneTasks(addr string, before time.Duration) tea.Cmd {
+func DoPruneTasks(c *cli.Client, before time.Duration) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		cutoff := time.Now().Add(-before)
-		removed, err := cli.PruneTasks(ctx, addr, cutoff)
-		return PruneResultMsg{Removed: removed, Err: err}
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_PruneTasks}
+		req.SetPrune(protocol.PruneTasksRequest{BeforeTs: uint64(cutoff.UnixNano())})
+		resp, err := c.RoundTripTaskControl(ctx, req)
+		if err != nil {
+			return PruneResultMsg{Err: err}
+		}
+		pr := resp.Prune()
+		if pr == nil {
+			return PruneResultMsg{Err: fmt.Errorf("unexpected prune response kind: %v", resp.Kind)}
+		}
+		return PruneResultMsg{Removed: pr.Removed}
 	}
 }
 
-// RefreshSnapshot calls List on the server (via a short-lived cli connection)
-// and dispatches a SnapshotMsg.
-func RefreshSnapshot(addr string) tea.Cmd {
+// RefreshSnapshot calls List over the persistent client.
+func RefreshSnapshot(c *cli.Client) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		c, err := cli.Dial(ctx, addr)
-		if err != nil {
-			return SnapshotMsg{Err: err}
-		}
-		defer c.Close()
-
 		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 		req.SetList(protocol.ListQuery{})
 		resp, err := c.RoundTripTaskControl(ctx, req)
@@ -166,5 +179,31 @@ func RefreshSnapshot(addr string) tea.Cmd {
 		tasks := make([]protocol.TaskInfo, len(lr.Tasks))
 		copy(tasks, lr.Tasks)
 		return SnapshotMsg{Runners: runners, Tasks: tasks}
+	}
+}
+
+// waitForReceiveStream polls until p.GetReceiveStream(id) returns non-nil
+// or ctx / 2s elapses. Server-initiated send-stream creation can race the
+// response message (the response goes via objproto.SendMessage; the
+// stream-create frame travels via trsf.AutoSend).
+func waitForReceiveStream(ctx context.Context, p trsf.Transport, id trsf.StreamID) trsf.ReceiveStream {
+	if st := p.GetReceiveStream(id); st != nil {
+		return st
+	}
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-deadline.C:
+			return nil
+		case <-tick.C:
+			if st := p.GetReceiveStream(id); st != nil {
+				return st
+			}
+		}
 	}
 }

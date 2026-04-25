@@ -8,8 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/pubsub"
+	"github.com/on-keyday/agent-harness/cli"
 	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
@@ -63,8 +62,8 @@ func DecodeRunnerStatus(payload []byte) (protocol.RunnerStatusEvent, error) {
 // stream via the response's StreamId, and forwards each decoded event as
 // TaskEventMsg via program.Send. Returns once ctx is cancelled or the stream
 // errors out.
-func SubscribeTaskStatus(ctx context.Context, conn objproto.Connection, p trsf.Transport, pubClient *pubsub.Client, program *tea.Program) {
-	subscribeAndStream(ctx, conn, p, pubClient, topics.TasksStatus(), program, func(payload []byte) tea.Msg {
+func SubscribeTaskStatus(ctx context.Context, c *cli.Client, program *tea.Program) {
+	subscribeAndStream(ctx, c, topics.TasksStatus(), program, func(payload []byte) tea.Msg {
 		ev, err := DecodeTaskStatus(payload)
 		if err != nil {
 			slog.Warn("decode task event", "err", err)
@@ -75,8 +74,8 @@ func SubscribeTaskStatus(ctx context.Context, conn objproto.Connection, p trsf.T
 }
 
 // SubscribeRunnerStatus mirror of SubscribeTaskStatus for runners.status.
-func SubscribeRunnerStatus(ctx context.Context, conn objproto.Connection, p trsf.Transport, pubClient *pubsub.Client, program *tea.Program) {
-	subscribeAndStream(ctx, conn, p, pubClient, topics.RunnersStatus(), program, func(payload []byte) tea.Msg {
+func SubscribeRunnerStatus(ctx context.Context, c *cli.Client, program *tea.Program) {
+	subscribeAndStream(ctx, c, topics.RunnersStatus(), program, func(payload []byte) tea.Msg {
 		ev, err := DecodeRunnerStatus(payload)
 		if err != nil {
 			slog.Warn("decode runner event", "err", err)
@@ -88,8 +87,8 @@ func SubscribeRunnerStatus(ctx context.Context, conn objproto.Connection, p trsf
 
 // SubscribeTaskLog joins task.<taskID>.log and forwards each chunk as
 // LogChunkMsg{TaskID: taskID}.
-func SubscribeTaskLog(ctx context.Context, conn objproto.Connection, p trsf.Transport, pubClient *pubsub.Client, program *tea.Program, taskID string) {
-	subscribeAndStream(ctx, conn, p, pubClient, topics.TaskLog(taskID), program, func(payload []byte) tea.Msg {
+func SubscribeTaskLog(ctx context.Context, c *cli.Client, program *tea.Program, taskID string) {
+	subscribeAndStream(ctx, c, topics.TaskLog(taskID), program, func(payload []byte) tea.Msg {
 		chunk := make([]byte, len(payload))
 		copy(chunk, payload)
 		return LogChunkMsg{TaskID: taskID, Chunk: chunk}
@@ -97,20 +96,19 @@ func SubscribeTaskLog(ctx context.Context, conn objproto.Connection, p trsf.Tran
 }
 
 // subscribeAndStream sends a JOIN with a unique request_id (managed by
-// pubsub.Client), waits for the matching response, looks up the broker-created
-// stream by its StreamId, validates the topic-header line, then delivers
-// payload chunks via fn(payload) → program.Send. The request_id correlation
-// removes any race between concurrent JOIN goroutines.
-func subscribeAndStream(ctx context.Context, conn objproto.Connection, p trsf.Transport, pubClient *pubsub.Client, topic string, program *tea.Program, fn func([]byte) tea.Msg) {
+// cli.Client.Pubsub()), waits for the matching response, looks up the
+// broker-created stream by its StreamId, validates the topic-header line,
+// then delivers payload chunks via fn(payload) → program.Send.
+func subscribeAndStream(ctx context.Context, c *cli.Client, topic string, program *tea.Program, fn func([]byte) tea.Msg) {
 	respCh := make(chan *pubsubproto.PubSubResponse, 1)
-	joinBytes := pubClient.JoinTopic("tui", topic, func(r *pubsubproto.PubSubResponse) {
+	joinBytes := c.Pubsub().JoinTopic("tui", topic, func(r *pubsubproto.PubSubResponse) {
 		respCh <- r
 	})
 	if joinBytes == nil {
 		slog.Warn("JOIN encode failed (nickname too long?)", "topic", topic)
 		return
 	}
-	if _, _, err := conn.SendMessage(joinBytes); err != nil {
+	if _, _, err := c.Conn().SendMessage(joinBytes); err != nil {
 		slog.Warn("JOIN send failed", "topic", topic, "err", err)
 		return
 	}
@@ -128,7 +126,7 @@ func subscribeAndStream(ctx context.Context, conn objproto.Connection, p trsf.Tr
 
 	// Find the broker-created stream. The response may arrive before the
 	// stream-creation trsf frame on the wire, so poll briefly if absent.
-	st := waitForStream(ctx, p, trsf.StreamID(resp.StreamId))
+	st := waitForStream(ctx, c.Transport(), trsf.StreamID(resp.StreamId))
 	if st == nil {
 		slog.Warn("stream not visible after JOIN", "topic", topic, "stream_id", resp.StreamId)
 		return
