@@ -41,8 +41,13 @@ func (m *CmdResultModel) Clear() {
 // rebuildContent wraps each stored line to the current viewport width so long
 // log lines (slog records, error messages with paths, etc.) don't get clipped
 // at the right edge. Lipgloss is ANSI-aware, so styling applied via FooterStyle
-// / OKStyle / etc. is preserved across the wrapped fragments.
+// / OKStyle / etc. is preserved across the wrapped fragments. When lines is
+// empty the call is a no-op so the initial "(no command yet)" placeholder
+// survives a subsequent SetSize.
 func (m *CmdResultModel) rebuildContent() {
+	if len(m.lines) == 0 {
+		return
+	}
 	if m.vp.Width <= 0 {
 		m.vp.SetContent(strings.Join(m.lines, "\n"))
 		m.vp.GotoBottom()
