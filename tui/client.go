@@ -153,7 +153,7 @@ func RefreshSnapshot(addr string) tea.Cmd {
 
 		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 		req.SetList(protocol.ListQuery{})
-		resp, err := roundTripList(c, req)
+		resp, err := c.RoundTripTaskControl(ctx, req)
 		if err != nil {
 			return SnapshotMsg{Err: err}
 		}
@@ -167,26 +167,4 @@ func RefreshSnapshot(addr string) tea.Cmd {
 		copy(tasks, lr.Tasks)
 		return SnapshotMsg{Runners: runners, Tasks: tasks}
 	}
-}
-
-// roundTripList sends a TaskControl request through an existing Client.
-// (cli.roundTripTaskControl is unexported, so we inline this small helper.)
-func roundTripList(c *cli.Client, req *protocol.TaskControlRequest) (*protocol.TaskControlResponse, error) {
-	conn := c.Conn()
-	data := req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
-	if _, _, err := conn.SendMessage(data); err != nil {
-		return nil, err
-	}
-	msg, err := conn.ReceiveMessage()
-	if err != nil {
-		return nil, err
-	}
-	if len(msg.Data) == 0 || wire.ApplicationPayloadKind(msg.Data[0]) != wire.ApplicationPayloadKind_TaskControl {
-		return nil, fmt.Errorf("unexpected response kind")
-	}
-	resp := &protocol.TaskControlResponse{}
-	if _, err := resp.Decode(msg.Data[1:]); err != nil {
-		return nil, err
-	}
-	return resp, nil
 }

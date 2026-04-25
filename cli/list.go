@@ -18,7 +18,7 @@ func List(ctx context.Context, addr string, out io.Writer) error {
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{Query: nil})
-	resp, err := c.roundTripTaskControl(req)
+	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return err
 	}

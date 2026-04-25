@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"sync"
-	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -14,7 +12,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // Watch subscribes to tasks.status and runners.status topics and prints a
@@ -32,30 +29,14 @@ func Watch(ctx context.Context, addr string, out io.Writer) error {
 	}
 	defer c.Close()
 
-	conn := c.Conn()
-	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
-	pubClient := pubsub.NewClient()
-	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
-		if err != nil || len(msg.Data) == 0 {
-			return
-		}
-		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
-			pubClient.HandleResponse(msg.Data[1:])
-		}
-	})
-	// Keep the objproto session alive — server's AutoGarbageCollect drops idle sessions
-	// after 1 minute, and Watch sits waiting for events indefinitely.
-	go trsf.AutoPing(ctx, conn, 30*time.Second)
-
 	tasksTopic := topics.TasksStatus()
 	runnersTopic := topics.RunnersStatus()
 
-	tasksStream, err := joinAndGetStream(ctx, conn, p, pubClient, tasksTopic)
+	tasksStream, err := joinAndGetStream(ctx, c.Conn(), c.Transport(), c.Pubsub(), tasksTopic)
 	if err != nil {
 		return fmt.Errorf("join %s: %w", tasksTopic, err)
 	}
-	runnersStream, err := joinAndGetStream(ctx, conn, p, pubClient, runnersTopic)
+	runnersStream, err := joinAndGetStream(ctx, c.Conn(), c.Transport(), c.Pubsub(), runnersTopic)
 	if err != nil {
 		return fmt.Errorf("join %s: %w", runnersTopic, err)
 	}

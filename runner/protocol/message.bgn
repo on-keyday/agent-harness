@@ -148,6 +148,7 @@ format GetTaskLogResponse:
 
 format TaskControlRequest:
     kind :TaskControlKind
+    request_id :u32
     match kind:
         TaskControlKind.submit => submit :SubmitRequest
         TaskControlKind.list => list :ListQuery
@@ -161,6 +162,7 @@ format CancelStatus:
 
 format TaskControlResponse:
     kind :TaskControlKind
+    request_id :u32
     match kind:
         TaskControlKind.submit => submit :SubmitResponse
         TaskControlKind.list => list :ListResult

@@ -54,7 +54,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		var tid protocol.TaskID
 		copy(tid.Id[:], raw)
 
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
 		resp.SetSubmit(protocol.SubmitResponse{TaskId: tid})
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
@@ -82,7 +82,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		list.SetRunners(runnerInfos)
 		list.SetTasks(taskInfos)
 
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: req.RequestId}
 		resp.SetList(list)
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
@@ -97,7 +97,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		taskID := hex.EncodeToString(can.TaskId.Id[:])
 		h.Tasks.Cancel(taskID)
 
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel, RequestId: req.RequestId}
 		resp.SetCancel(protocol.CancelStatus{Status: 0})
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
@@ -118,7 +118,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			cutoff := time.Unix(0, int64(pr.BeforeTs))
 			removed = uint32(h.PruneFn(cutoff))
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PruneTasks}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PruneTasks, RequestId: req.RequestId}
 		resp.SetPrune(protocol.PruneTasksResponse{Removed: removed})
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
@@ -131,7 +131,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		taskID := hex.EncodeToString(gl.TaskId.Id[:])
-		h.handleGetTaskLog(conn, taskID)
+		h.handleGetTaskLog(conn, req.RequestId, taskID)
 
 	default:
 		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)
@@ -145,9 +145,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 //
 // If LogsDir is empty (server started without --data-dir) or the file does
 // not exist, the response carries Found=0 and StreamId=0.
-func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, taskID string) {
+func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID string) {
 	respond := func(found uint8, streamID uint64) {
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: requestID}
 		resp.SetGetLog(protocol.GetTaskLogResponse{Found: found, StreamId: streamID})
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck

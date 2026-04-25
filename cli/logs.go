@@ -4,19 +4,15 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log/slog"
 	"time"
 
-	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/pubsub"
 	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // Logs subscribes to task.<taskID>.log and writes each chunk to out until ctx is cancelled
-// or the stream ends (task finished).
+// or the stream ends (task finished). Uses the Client's pre-wired pubsub correlator.
 func Logs(ctx context.Context, addr, taskID string, out io.Writer) error {
 	c, err := Dial(ctx, addr)
 	if err != nil {
@@ -24,29 +20,13 @@ func Logs(ctx context.Context, addr, taskID string, out io.Writer) error {
 	}
 	defer c.Close()
 
-	conn := c.Conn()
-	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
-	pubClient := pubsub.NewClient()
-	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
-		if err != nil || len(msg.Data) == 0 {
-			return
-		}
-		if wire.ApplicationPayloadKind(msg.Data[0]) == wire.ApplicationPayloadKind_Pubsub {
-			pubClient.HandleResponse(msg.Data[1:])
-		}
-	})
-	// Keep the objproto session alive — server's AutoGarbageCollect drops idle sessions
-	// after 1 minute, and Logs may sit waiting for output much longer than that.
-	go trsf.AutoPing(ctx, conn, 30*time.Second)
-
 	topic := topics.TaskLog(taskID)
 	respCh := make(chan *pubsubproto.PubSubResponse, 1)
-	joinBytes := pubClient.JoinTopic("cli", topic, func(r *pubsubproto.PubSubResponse) { respCh <- r })
+	joinBytes := c.Pubsub().JoinTopic("cli", topic, func(r *pubsubproto.PubSubResponse) { respCh <- r })
 	if joinBytes == nil {
 		return fmt.Errorf("encode JOIN failed (nickname too long?)")
 	}
-	if _, _, err := conn.SendMessage(joinBytes); err != nil {
+	if _, _, err := c.Conn().SendMessage(joinBytes); err != nil {
 		return fmt.Errorf("send JOIN: %w", err)
 	}
 
@@ -60,7 +40,7 @@ func Logs(ctx context.Context, addr, taskID string, out io.Writer) error {
 		return fmt.Errorf("JOIN rejected: status %v", resp.Status)
 	}
 
-	st := waitForStream(ctx, p, trsf.StreamID(resp.StreamId))
+	st := waitForStream(ctx, c.Transport(), trsf.StreamID(resp.StreamId))
 	if st == nil {
 		return fmt.Errorf("stream %d not visible after JOIN", resp.StreamId)
 	}

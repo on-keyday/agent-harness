@@ -4,17 +4,14 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"time"
 
-	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
-// GetTaskLog fetches the historical log for `taskIDHex` from the server. The
-// server replies with a TaskControlResponse{GetTaskLog} that points at a
+// GetTaskLog fetches the historical log for `taskIDHex` from the server.
+// The server replies with a TaskControlResponse{GetTaskLog} that points at a
 // server-initiated send-stream; this helper reads the stream until EOF and
 // returns the assembled bytes.
 //
@@ -33,47 +30,15 @@ func GetTaskLog(ctx context.Context, addr, taskIDHex string) ([]byte, bool, erro
 		return nil, false, err
 	}
 	defer c.Close()
-	conn := c.Conn()
-
-	// trsf is required to receive the server's send-stream. AutoReceive owns
-	// the only ReceiveMessage caller on this conn — TaskControl responses are
-	// channel-routed via the callback so they don't race with stream-data
-	// frames coming through the same recv path.
-	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
-	respCh := make(chan *protocol.TaskControlResponse, 1)
-	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
-		if err != nil || len(msg.Data) == 0 {
-			return
-		}
-		if wire.ApplicationPayloadKind(msg.Data[0]) != wire.ApplicationPayloadKind_TaskControl {
-			return
-		}
-		r := &protocol.TaskControlResponse{}
-		if _, derr := r.Decode(msg.Data[1:]); derr != nil {
-			return
-		}
-		select {
-		case respCh <- r:
-		default:
-			// already routed; drop late duplicates
-		}
-	})
 
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog}
 	req.SetGetLog(protocol.GetTaskLogRequest{TaskId: tid})
-	data := req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
-	if _, _, err := conn.SendMessage(data); err != nil {
-		return nil, false, fmt.Errorf("send: %w", err)
-	}
 
-	var resp *protocol.TaskControlResponse
-	select {
-	case <-ctx.Done():
-		return nil, false, ctx.Err()
-	case resp = <-respCh:
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return nil, false, err
 	}
 	gl := resp.GetLog()
 	if gl == nil || resp.Kind != protocol.TaskControlKind_GetTaskLog {
@@ -83,7 +48,7 @@ func GetTaskLog(ctx context.Context, addr, taskIDHex string) ([]byte, bool, erro
 		return nil, false, nil
 	}
 
-	st := waitForReceiveStream(ctx, p, trsf.StreamID(gl.StreamId))
+	st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(gl.StreamId))
 	if st == nil {
 		return nil, true, fmt.Errorf("stream %d not visible after GetTaskLog response", gl.StreamId)
 	}
@@ -107,9 +72,11 @@ func GetTaskLog(ctx context.Context, addr, taskIDHex string) ([]byte, bool, erro
 	}
 }
 
-// waitForReceiveStream is the receive-only counterpart of waitForStream
-// (logs.go). The server-initiated send-stream may not be visible to the
-// client yet when the GetTaskLog response arrives; poll briefly.
+// waitForReceiveStream polls Transport.GetReceiveStream until the stream
+// becomes visible or ctx / 2s deadline elapses. The server-initiated
+// send-stream may not be visible to the client yet when the GetTaskLog
+// response arrives — the response goes through objproto.SendMessage while
+// the stream-creation trsf frame travels via AutoSend.
 func waitForReceiveStream(ctx context.Context, p trsf.Transport, id trsf.StreamID) trsf.ReceiveStream {
 	if st := p.GetReceiveStream(id); st != nil {
 		return st

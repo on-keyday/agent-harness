@@ -26,7 +26,7 @@ func Cancel(ctx context.Context, addr, taskIDHex string) error {
 	copy(tid.Id[:], raw)
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel}
 	req.SetCancel(protocol.CancelTask{TaskId: tid})
-	resp, err := c.roundTripTaskControl(req)
+	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return err
 	}

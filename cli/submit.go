@@ -22,7 +22,7 @@ func Submit(ctx context.Context, addr, repo, prompt string) (string, error) {
 	sub.SetPrompt([]byte(prompt))
 	req.SetSubmit(sub)
 
-	resp, err := c.roundTripTaskControl(req)
+	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return "", err
 	}
