@@ -3,7 +3,6 @@ package peer
 import (
 	"context"
 	"fmt"
-	"io"
 	"time"
 
 	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
@@ -25,8 +24,7 @@ type pubTopic struct {
 }
 
 // JoinAndGetStream issues a JOIN for topic, awaits the broker's response,
-// fetches the server-initiated bidi stream by id, and reads off the
-// "<topic>\n" header line so subsequent Reads/Writes are pure payload.
+// and returns the server-initiated bidi stream resolved by stream_id.
 // Single-shot — does not cache. Suitable both for subscribers (which read
 // payloads off the returned stream) and for callers that want one-off
 // publish access. For long-running per-topic publishing, prefer Publish,
@@ -57,9 +55,6 @@ func (c *Conn) JoinAndGetStream(ctx context.Context, nick, topic string) (trsf.B
 	st := WaitForBidirectionalStream(ctx, c.trans, trsf.StreamID(resp.StreamId))
 	if st == nil {
 		return nil, fmt.Errorf("peer: stream %d not visible after JOIN %q", resp.StreamId, topic)
-	}
-	if err := ReadTopicHeader(ctx, st); err != nil {
-		return nil, fmt.Errorf("peer: read topic header for %q: %w", topic, err)
 	}
 	return st, nil
 }
@@ -122,26 +117,3 @@ func WaitForBidirectionalStream(ctx context.Context, trans trsf.Transport, id tr
 	}
 }
 
-// ReadTopicHeader reads bytes from st one at a time until '\n' is consumed.
-// The broker writes a "<topic>\n" header line into every server-initiated
-// pubsub stream (see pubsub/pubsub.go); subscribers and publishers both
-// need to discard it before treating the rest as payload.
-func ReadTopicHeader(ctx context.Context, st trsf.BidirectionalStream) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		data, eof, err := st.ReadDirect(1)
-		if err != nil {
-			return err
-		}
-		if len(data) > 0 && data[0] == '\n' {
-			return nil
-		}
-		if eof {
-			return io.EOF
-		}
-	}
-}

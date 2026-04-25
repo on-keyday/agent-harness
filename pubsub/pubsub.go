@@ -149,8 +149,11 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 			StreamId:  uint64(id.conn.ID()),
 		}
 	}
+	// Stream identification is by stream_id, returned in the PubSubResponse
+	// below — subscribers/publishers look it up via Transport.GetBidirectional
+	// Stream(id). No "<topic>\n" preamble: the legacy header was a leftover
+	// from before request_id / stream_id correlation existed.
 	stream := sub.transport.CreateBidirectionalStream()
-	stream.AppendData(false, []byte(topic), []byte("\n"))
 	go func() {
 		for {
 			data, eof, err := stream.ReadDirect(trsf.InitialFlowWindow)
