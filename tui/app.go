@@ -33,6 +33,7 @@ type App struct {
 	logs      LogsModel
 	cmdresult CmdResultModel
 	cmdline   textinput.Model
+	popup     PopupModel
 
 	focus  focus
 	width  int
@@ -77,6 +78,7 @@ func New(cfg Config) *App {
 		logs:        NewLogs(),
 		cmdresult:   NewCmdResult(),
 		cmdline:     cmd,
+		popup:       NewPopup(cfg.DefaultRepo),
 		focus:       focusTasks,
 		connected:   false,
 		status:      "connecting…",
@@ -165,6 +167,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(FooterStyle.Render("[log] " + msg.Line))
 		return a, nil
 
+	case SubmitResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("submit failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		short := msg.TaskID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		a.cmdresult.Append(OKStyle.Render("submitted: ") + short)
+		return a, nil
+
+	case CancelResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("cancel failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		short := msg.Resolved
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		a.cmdresult.Append(OKStyle.Render("cancelled ") + short)
+		return a, nil
+
+	case PruneResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("prune failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))
+		return a, RefreshSnapshot(a.server)
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
@@ -172,6 +206,27 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
+		// Popup intercepts ALL keys when open.
+		if a.popup.IsOpen() {
+			switch msg.Type {
+			case tea.KeyEsc:
+				a.popup.Close()
+				return a, nil
+			case tea.KeyCtrlJ:
+				// Bubbletea reports Ctrl+Enter as Ctrl+J on most terminals.
+				repo := a.popup.Repo()
+				prompt := a.popup.Prompt()
+				a.popup.Close()
+				if prompt == "" {
+					a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
+					return a, nil
+				}
+				return a, DoSubmit(a.server, repo, prompt)
+			}
+			var pcmd tea.Cmd
+			a.popup, pcmd = a.popup.Update(msg)
+			return a, pcmd
+		}
 		// Ctrl+C always quits.
 		if msg.Type == tea.KeyCtrlC {
 			return a, tea.Quit
@@ -188,6 +243,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyShiftTab:
 			a.cycleFocus(-1)
 			return a, nil
+		}
+		// `s` opens the submit popup when not in cmdline focus.
+		if a.focus != focusCmdline && msg.String() == "s" {
+			a.popup.SetRepo(a.defaultRepo)
+			a.popup.Open()
+			return a, nil
+		}
+		// `c` cancels the selected task when tasks panel is focused.
+		if a.focus == focusTasks && msg.String() == "c" {
+			id := a.tasks.SelectedID()
+			if id == "" {
+				a.cmdresult.Append(WarnStyle.Render("no task selected"))
+				return a, nil
+			}
+			return a, DoCancel(a.server, id, id)
 		}
 		// Cmdline submit.
 		if a.focus == focusCmdline && msg.Type == tea.KeyEnter {
@@ -297,7 +367,7 @@ func (a *App) View() string {
 	cmdlineView := a.cmdline.View()
 	footer := FooterStyle.Render("tab focus · s submit · c cancel · enter follow · ? help · q quit")
 
-	return strings.Join([]string{
+	view := strings.Join([]string{
 		header,
 		top,
 		logView,
@@ -305,6 +375,10 @@ func (a *App) View() string {
 		cmdlineView,
 		footer,
 	}, "\n")
+	if a.popup.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.popup.View())
+	}
+	return view
 }
 
 // followTask LEAVEs the previous log subscription (if any) and JOINs the
@@ -340,19 +414,53 @@ func (a *App) refreshTasksTable() {
 	a.tasks.SetRows(all)
 }
 
-// runAction is the placeholder dispatch — Task 13 fills in Submit/Cancel/Prune.
+// resolveTaskIDPrefix returns the full hex id matching prefix (case-insensitive).
+// Returns ("", reason) if zero or multiple matches.
+func (a *App) resolveTaskIDPrefix(prefix string) (string, string) {
+	p := strings.ToLower(prefix)
+	var matches []string
+	for id := range a.tasksByID {
+		if strings.HasPrefix(id, p) {
+			matches = append(matches, id)
+		}
+	}
+	switch len(matches) {
+	case 0:
+		return "", "no task matches " + prefix
+	case 1:
+		return matches[0], ""
+	default:
+		return "", fmt.Sprintf("ambiguous prefix %q matches %d tasks", prefix, len(matches))
+	}
+}
+
+// runAction dispatches a parsed cmdline Action.
 func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
-	switch act.(type) {
+	switch v := act.(type) {
 	case QuitAction:
 		return a, tea.Quit
 	case ClearAction:
 		a.cmdresult.Clear()
 		return a, nil
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / cancel / prune / clear / help / quit")
+		a.cmdresult.Append("commands: submit / cancel <id> / prune [--before=DUR] [--offline] / clear / help / quit")
 		return a, nil
-	default:
-		a.cmdresult.Append(WarnStyle.Render("(action not yet implemented)"))
-		return a, nil
+	case SubmitAction:
+		return a, DoSubmit(a.server, v.Repo, v.Prompt)
+	case CancelAction:
+		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoCancel(a.server, v.IDPrefix, full)
+	case PruneAction:
+		if v.Offline {
+			a.cmdresult.Append(WarnStyle.Render("--offline is a CLI-only flag; use harness-cli prune --offline. Server-side prune skipped."))
+			return a, nil
+		}
+		return a, DoPruneTasks(a.server, v.Before)
 	}
+	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
+	return a, nil
 }
