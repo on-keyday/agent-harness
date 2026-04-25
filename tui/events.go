@@ -5,14 +5,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
-	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
-	"github.com/on-keyday/agent-harness/trsf"
 )
 
 // Messages dispatched into the tea.Program from the pubsub bridge.
@@ -95,59 +92,17 @@ func SubscribeTaskLog(ctx context.Context, c *cli.Client, program *tea.Program, 
 	})
 }
 
-// subscribeAndStream sends a JOIN with a unique request_id (managed by
-// cli.Client.Pubsub()), waits for the matching response, looks up the
-// broker-created stream by its StreamId, validates the topic-header line,
-// then delivers payload chunks via fn(payload) → program.Send.
+// subscribeAndStream uses peer.Conn.JoinAndGetStream to do the JOIN+lookup+
+// header-discard dance, then pumps payload chunks through fn → program.Send
+// until ctx is cancelled or the stream EOFs.
 func subscribeAndStream(ctx context.Context, c *cli.Client, topic string, program *tea.Program, fn func([]byte) tea.Msg) {
-	respCh := make(chan *pubsubproto.PubSubResponse, 1)
-	joinBytes := c.Pubsub().JoinTopic("tui", topic, func(r *pubsubproto.PubSubResponse) {
-		respCh <- r
-	})
-	if joinBytes == nil {
-		slog.Warn("JOIN encode failed (nickname too long?)", "topic", topic)
-		return
-	}
-	if _, _, err := c.Conn().SendMessage(joinBytes); err != nil {
-		slog.Warn("JOIN send failed", "topic", topic, "err", err)
-		return
-	}
-
-	var resp *pubsubproto.PubSubResponse
-	select {
-	case <-ctx.Done():
-		return
-	case resp = <-respCh:
-	}
-	if resp.Status != pubsubproto.Status_Ok {
-		slog.Warn("JOIN rejected", "topic", topic, "status", resp.Status)
-		return
-	}
-
-	// Find the broker-created stream. The response may arrive before the
-	// stream-creation trsf frame on the wire, so poll briefly if absent.
-	st := waitForStream(ctx, c.Transport(), trsf.StreamID(resp.StreamId))
-	if st == nil {
-		slog.Warn("stream not visible after JOIN", "topic", topic, "stream_id", resp.StreamId)
-		return
-	}
-
-	// Read + validate the topic-header line written by the broker as the first chunk.
-	var headerBuf []byte
-	for {
-		data, eof, err := st.ReadDirect(1)
-		if err != nil || eof {
-			return
+	st, err := c.Peer().JoinAndGetStream(ctx, "tui", topic)
+	if err != nil {
+		// context.Canceled is the normal path when the user switches tasks
+		// (followTask cancels the prior subscription's ctx) — don't log.
+		if ctx.Err() == nil {
+			slog.Warn("subscribe", "topic", topic, "err", err)
 		}
-		if len(data) > 0 {
-			if data[0] == '\n' {
-				break
-			}
-			headerBuf = append(headerBuf, data[0])
-		}
-	}
-	if got := string(headerBuf); got != topic {
-		slog.Warn("topic mismatch on stream", "want", topic, "got", got)
 		return
 	}
 
@@ -168,32 +123,6 @@ func subscribeAndStream(ctx context.Context, c *cli.Client, topic string, progra
 		}
 		if eof {
 			return
-		}
-	}
-}
-
-// waitForStream returns p.GetBidirectionalStream(id), polling briefly if the
-// stream isn't yet visible (the JOIN response may race ahead of the
-// stream-creation trsf frame on the wire). Returns nil on ctx cancellation
-// or if the stream doesn't appear within ~2s.
-func waitForStream(ctx context.Context, p trsf.Transport, id trsf.StreamID) trsf.BidirectionalStream {
-	if st := p.GetBidirectionalStream(id); st != nil {
-		return st
-	}
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
-	tick := time.NewTicker(10 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-deadline.C:
-			return nil
-		case <-tick.C:
-			if st := p.GetBidirectionalStream(id); st != nil {
-				return st
-			}
 		}
 	}
 }
