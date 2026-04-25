@@ -12,6 +12,7 @@ import (
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -94,6 +95,32 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		defer wal.Close()
 		s.tasks.SetWAL(wal)
+
+		logStore, err := NewLogStore(filepath.Join(s.cfg.DataDir, "logs"))
+		if err != nil {
+			return fmt.Errorf("open log store: %w", err)
+		}
+		defer logStore.Close()
+
+		s.tasks.OnCreate = func(taskID string) {
+			topic := topics.TaskLog(taskID)
+			s.pubsub.TapSubscribe(topic, func(_ string, msg []byte) {
+				if err := logStore.Append(taskID, msg); err != nil {
+					s.cfg.Logger.Error("logstore append", "task", taskID, "err", err)
+				}
+			})
+		}
+
+		// Register taps for tasks that survived replay and may still emit logs.
+		for _, t := range s.tasks.List(0) {
+			if t.Status == protocol.TaskStatus_Queued || t.Status == protocol.TaskStatus_Running {
+				taskID := t.ID
+				topic := topics.TaskLog(taskID)
+				s.pubsub.TapSubscribe(topic, func(_ string, msg []byte) {
+					logStore.Append(taskID, msg) //nolint:errcheck
+				})
+			}
+		}
 	}
 	sess, err := transport.WebSocketSession(s.cfg.Logger, s.cfg.Addr, nil, objproto.SessionModeServer)
 	if err != nil {

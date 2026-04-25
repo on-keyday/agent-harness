@@ -37,6 +37,8 @@ type TaskStore struct {
 	tasks map[string]*TaskEntry
 	order []string // insertion order; used by List and NextQueuedForRepo
 	wal   *WAL
+
+	OnCreate func(id string) // optional; called after each Create. Server uses this to register pubsub taps.
 }
 
 // SetWAL attaches a WAL to which subsequent mutations append. nil disables WAL hooks.
@@ -64,23 +66,25 @@ func newTaskID() string {
 // Create adds a new Queued task for the given repo and prompt. It returns the
 // new task's ID (32 lowercase hex characters).
 func (s *TaskStore) Create(repo, prompt string) string {
+	s.mu.Lock()
 	id := newTaskID()
-	now := time.Now()
-	e := &TaskEntry{
+	s.tasks[id] = &TaskEntry{
 		ID:        id,
 		RepoPath:  repo,
 		Prompt:    prompt,
 		Status:    protocol.TaskStatus_Queued,
-		CreatedAt: now,
+		CreatedAt: time.Now(),
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.tasks[id] = e
 	s.order = append(s.order, id)
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_created", TaskID: id, RepoPath: repo, Prompt: prompt, Ts: now.UnixNano()}); err != nil {
+		if err := s.wal.Write(WALEvent{Type: "task_created", TaskID: id, RepoPath: repo, Prompt: prompt}); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
+	}
+	onCreate := s.OnCreate
+	s.mu.Unlock()
+	if onCreate != nil {
+		onCreate(id)
 	}
 	return id
 }

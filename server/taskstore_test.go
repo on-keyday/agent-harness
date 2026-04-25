@@ -282,6 +282,17 @@ func TestTaskStoreWALWriteAndReplay(t *testing.T) {
 	}
 }
 
+func TestTaskStoreOnCreateFires(t *testing.T) {
+	s := NewTaskStore()
+	var got []string
+	s.OnCreate = func(id string) { got = append(got, id) }
+	a := s.Create("/r", "p")
+	b := s.Create("/r", "q")
+	if len(got) != 2 || got[0] != a || got[1] != b {
+		t.Fatalf("got %v, expected [%s, %s]", got, a, b)
+	}
+}
+
 func TestTaskStoreReplayMarksRunningAsFailed(t *testing.T) {
 	s := NewTaskStore()
 	events := []WALEvent{

@@ -89,9 +89,16 @@ func (sl *SubscriberList) RemoveSubscriber(sub *Subscriber) {
 	}
 }
 
+// Tap is a server-internal subscriber that receives raw published bytes for a topic
+// without setting up a transport-level stream. Used for in-process logging / persistence.
+type Tap struct {
+	cb func(nickName string, msg []byte)
+}
+
 type PubSub struct {
 	m      sync.Mutex
 	topics map[string]*SubscriberList
+	taps   map[string][]*Tap
 	logger *slog.Logger
 }
 
@@ -99,6 +106,31 @@ func NewPubSub(logger *slog.Logger) *PubSub {
 	return &PubSub{
 		topics: make(map[string]*SubscriberList),
 		logger: logger,
+	}
+}
+
+// TapSubscribe registers a callback for topic. Returns the Tap handle for later removal.
+func (ps *PubSub) TapSubscribe(topic string, cb func(nickName string, msg []byte)) *Tap {
+	t := &Tap{cb: cb}
+	ps.m.Lock()
+	defer ps.m.Unlock()
+	if ps.taps == nil {
+		ps.taps = make(map[string][]*Tap)
+	}
+	ps.taps[topic] = append(ps.taps[topic], t)
+	return t
+}
+
+// TapUnsubscribe removes a previously-registered tap.
+func (ps *PubSub) TapUnsubscribe(topic string, t *Tap) {
+	ps.m.Lock()
+	defer ps.m.Unlock()
+	sl := ps.taps[topic]
+	for i, tap := range sl {
+		if tap == t {
+			ps.taps[topic] = append(sl[:i], sl[i+1:]...)
+			return
+		}
 	}
 }
 
@@ -172,7 +204,6 @@ func (ps *PubSub) Unsubscribe(topic string, sub *Subscriber) *protocol.PubSubRes
 
 func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 	ps.m.Lock()
-	defer ps.m.Unlock()
 	if sl, ok := ps.topics[topic]; ok {
 		for _, sub := range sl.subscribers {
 			stream, ok := sub.topics[topic]
@@ -181,5 +212,13 @@ func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 			}
 			stream.conn.AppendData(false, msg)
 		}
+	}
+	var tapsCopy []*Tap
+	if ts, ok := ps.taps[topic]; ok {
+		tapsCopy = append(tapsCopy, ts...) // snapshot
+	}
+	ps.m.Unlock()
+	for _, t := range tapsCopy {
+		t.cb(nickName, msg)
 	}
 }
