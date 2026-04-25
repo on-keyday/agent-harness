@@ -7,14 +7,16 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/runner"
 )
 
 var (
-	server    = flag.String("server", "localhost:8539", "server host:port")
-	repo      = flag.String("repo", ".", "absolute path to the repo this runner serves")
-	claudeBin = flag.String("claude-bin", "claude", "path to the claude binary")
+	server     = flag.String("server", "localhost:8539", "server host:port")
+	repo       = flag.String("repo", ".", "absolute path to the repo this runner serves")
+	claudeBin  = flag.String("claude-bin", "claude", "path to the claude binary")
+	claudeArgs = flag.String("claude-args", "", "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
 )
 
 func main() {
@@ -27,10 +29,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := runner.Run(ctx, runner.Config{
-		ServerAddr: *server,
-		RepoPath:   abs,
-		ClaudeBin:  *claudeBin,
-		Logger:     slog.Default(),
+		ServerAddr:      *server,
+		RepoPath:        abs,
+		ClaudeBin:       *claudeBin,
+		ExtraClaudeArgs: strings.Fields(*claudeArgs),
+		Logger:          slog.Default(),
 	}); err != nil {
 		slog.Error("runner exit", "err", err)
 		os.Exit(1)

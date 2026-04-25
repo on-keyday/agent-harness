@@ -19,10 +19,11 @@ import (
 
 // Config holds the configuration for the runner connection.
 type Config struct {
-	ServerAddr string       // host:port
-	RepoPath   string       // absolute path of the repo this runner serves
-	ClaudeBin  string       // path to the claude binary
-	Logger     *slog.Logger
+	ServerAddr      string   // host:port
+	RepoPath        string   // absolute path of the repo this runner serves
+	ClaudeBin       string   // path to the claude binary
+	ExtraClaudeArgs []string // forwarded to every claude invocation (before -p)
+	Logger          *slog.Logger
 }
 
 // Run connects to the server, registers via Hello, and processes AssignTask requests until ctx is done.
@@ -65,10 +66,11 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	session := &Session{
-		RepoPath:  cfg.RepoPath,
-		ClaudeBin: cfg.ClaudeBin,
-		Sender:    sender,
-		Now:       time.Now,
+		RepoPath:        cfg.RepoPath,
+		ClaudeBin:       cfg.ClaudeBin,
+		ExtraClaudeArgs: cfg.ExtraClaudeArgs,
+		Sender:          sender,
+		Now:             time.Now,
 	}
 
 	// Receive loop. trsf.AutoReceive blocks until ctx is done or the connection breaks.

@@ -24,11 +24,12 @@ type Sender interface {
 }
 
 type Session struct {
-	RepoPath  string
-	ClaudeBin string
-	Timeout   time.Duration
-	Sender    Sender
-	Now       func() time.Time
+	RepoPath        string
+	ClaudeBin       string
+	ExtraClaudeArgs []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
+	Timeout         time.Duration
+	Sender          Sender
+	Now             func() time.Time
 
 	wm *WorktreeManager // set on first use
 }
@@ -87,6 +88,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		ClaudeBin: s.ClaudeBin,
 		CWD:       dir,
 		Timeout:   s.Timeout,
+		ExtraArgs: s.ExtraClaudeArgs,
 	}
 	// Serialize concurrent log-sink calls so that the first Publish (which blocks
 	// to establish the pubsub stream) completes before a second concurrent call can

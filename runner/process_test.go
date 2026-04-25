@@ -23,6 +23,48 @@ func fakeClaudePath(t *testing.T) string {
 	return abs
 }
 
+func TestRunClaudeWithExtraArgs(t *testing.T) {
+	// Verify ExtraArgs are inserted before "-p <prompt>". fake-claude.sh prints all its
+	// args via "$*", so we can search the captured stdout for the extra flag.
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+	dir, _ := wm.Create("extra-args")
+
+	var mu sync.Mutex
+	var chunks [][]byte
+	sink := func(data []byte) {
+		mu.Lock()
+		chunks = append(chunks, append([]byte{}, data...))
+		mu.Unlock()
+	}
+	p := &Process{
+		ClaudeBin: fakeClaudePath(t),
+		CWD:       dir,
+		Timeout:   5 * time.Second,
+		ExtraArgs: []string{"--dangerously-skip-permissions"},
+	}
+	exit, err := p.Run(context.Background(), "hi", sink)
+	if err != nil || exit != 0 {
+		t.Fatalf("run: exit=%d err=%v", exit, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	var combined strings.Builder
+	for _, c := range chunks {
+		combined.Write(c)
+	}
+	got := combined.String()
+	if !strings.Contains(got, "--dangerously-skip-permissions") {
+		t.Errorf("extra arg not forwarded; got: %q", got)
+	}
+	// Confirm order: --dangerously-skip-permissions appears before -p in fake-claude's "$*" echo.
+	idxExtra := strings.Index(got, "--dangerously-skip-permissions")
+	idxP := strings.Index(got, "-p")
+	if idxExtra < 0 || idxP < 0 || idxExtra > idxP {
+		t.Errorf("extra arg should precede -p; got: %q", got)
+	}
+}
+
 func TestRunClaudeStreamsLogs(t *testing.T) {
 	repo := initRepo(t)
 	wm := &WorktreeManager{Repo: repo}
