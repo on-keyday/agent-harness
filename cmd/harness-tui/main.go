@@ -4,6 +4,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/tui"
 )
 
 var (
@@ -13,5 +17,18 @@ var (
 
 func main() {
 	flag.Parse()
-	fmt.Fprintf(os.Stderr, "harness-tui (skeleton): server=%s repo=%s\n", *serverAddr, *repoFlag)
+	repoAbs, err := filepath.Abs(*repoFlag)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "repo:", err)
+		os.Exit(1)
+	}
+	app := tui.New(tui.Config{
+		Server:      *serverAddr,
+		DefaultRepo: repoAbs,
+	})
+	p := tea.NewProgram(app, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
