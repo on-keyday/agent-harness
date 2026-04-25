@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -104,7 +105,11 @@ func subscribeAndStream(ctx context.Context, conn objproto.Connection, p trsf.Tr
 	}
 	st, err := p.AcceptBidirectionalStream(ctx)
 	if err != nil {
-		slog.Warn("accept stream failed", "topic", topic, "err", err)
+		// ctx.Cancel happens routinely when a follow-up Enter cancels a still-pending
+		// AcceptBidirectionalStream from a prior follow. Don't yell about it.
+		if !errors.Is(err, context.Canceled) {
+			slog.Warn("accept stream failed", "topic", topic, "err", err)
+		}
 		return
 	}
 	// Topic-header line: byte-by-byte until '\n'.
