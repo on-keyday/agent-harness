@@ -35,10 +35,30 @@ func GetTaskLog(ctx context.Context, addr, taskIDHex string) ([]byte, bool, erro
 	defer c.Close()
 	conn := c.Conn()
 
-	// Spin up a trsf transport so the server-initiated stream can flow back.
+	// trsf is required to receive the server's send-stream. AutoReceive owns
+	// the only ReceiveMessage caller on this conn — TaskControl responses are
+	// channel-routed via the callback so they don't race with stream-data
+	// frames coming through the same recv path.
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
+	respCh := make(chan *protocol.TaskControlResponse, 1)
 	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoReceive(ctx, p, conn, func(*objproto.Message, error) {})
+	go trsf.AutoReceive(ctx, p, conn, func(msg *objproto.Message, err error) {
+		if err != nil || len(msg.Data) == 0 {
+			return
+		}
+		if wire.ApplicationPayloadKind(msg.Data[0]) != wire.ApplicationPayloadKind_TaskControl {
+			return
+		}
+		r := &protocol.TaskControlResponse{}
+		if _, derr := r.Decode(msg.Data[1:]); derr != nil {
+			return
+		}
+		select {
+		case respCh <- r:
+		default:
+			// already routed; drop late duplicates
+		}
+	})
 
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
@@ -49,18 +69,11 @@ func GetTaskLog(ctx context.Context, addr, taskIDHex string) ([]byte, bool, erro
 		return nil, false, fmt.Errorf("send: %w", err)
 	}
 
-	// Block on the matching response (TaskControl is request/response on the
-	// connection). Other kinds shouldn't arrive here on a fresh per-call conn.
-	msg, err := conn.ReceiveMessage()
-	if err != nil {
-		return nil, false, fmt.Errorf("recv: %w", err)
-	}
-	if len(msg.Data) == 0 || wire.ApplicationPayloadKind(msg.Data[0]) != wire.ApplicationPayloadKind_TaskControl {
-		return nil, false, fmt.Errorf("unexpected response kind")
-	}
-	resp := &protocol.TaskControlResponse{}
-	if _, err := resp.Decode(msg.Data[1:]); err != nil {
-		return nil, false, fmt.Errorf("decode: %w", err)
+	var resp *protocol.TaskControlResponse
+	select {
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	case resp = <-respCh:
 	}
 	gl := resp.GetLog()
 	if gl == nil || resp.Kind != protocol.TaskControlKind_GetTaskLog {
