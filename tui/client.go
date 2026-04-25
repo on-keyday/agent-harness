@@ -11,8 +11,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // portFrom returns the port part of "host:port".
@@ -98,4 +100,56 @@ func DoPruneTasks(addr string, before time.Duration) tea.Cmd {
 		removed, err := cli.PruneTasks(ctx, addr, cutoff)
 		return PruneResultMsg{Removed: removed, Err: err}
 	}
+}
+
+// RefreshSnapshot calls List on the server (via a short-lived cli connection)
+// and dispatches a SnapshotMsg.
+func RefreshSnapshot(addr string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		c, err := cli.Dial(ctx, addr)
+		if err != nil {
+			return SnapshotMsg{Err: err}
+		}
+		defer c.Close()
+
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+		req.SetList(protocol.ListQuery{})
+		resp, err := roundTripList(c, req)
+		if err != nil {
+			return SnapshotMsg{Err: err}
+		}
+		lr := resp.List()
+		if lr == nil {
+			return SnapshotMsg{Err: fmt.Errorf("empty list response")}
+		}
+		runners := make([]protocol.RunnerInfo, len(lr.Runners))
+		copy(runners, lr.Runners)
+		tasks := make([]protocol.TaskInfo, len(lr.Tasks))
+		copy(tasks, lr.Tasks)
+		return SnapshotMsg{Runners: runners, Tasks: tasks}
+	}
+}
+
+// roundTripList sends a TaskControl request through an existing Client.
+// (cli.roundTripTaskControl is unexported, so we inline this small helper.)
+func roundTripList(c *cli.Client, req *protocol.TaskControlRequest) (*protocol.TaskControlResponse, error) {
+	conn := c.Conn()
+	data := req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+	if _, _, err := conn.SendMessage(data); err != nil {
+		return nil, err
+	}
+	msg, err := conn.ReceiveMessage()
+	if err != nil {
+		return nil, err
+	}
+	if len(msg.Data) == 0 || wire.ApplicationPayloadKind(msg.Data[0]) != wire.ApplicationPayloadKind_TaskControl {
+		return nil, fmt.Errorf("unexpected response kind")
+	}
+	resp := &protocol.TaskControlResponse{}
+	if _, err := resp.Decode(msg.Data[1:]); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }

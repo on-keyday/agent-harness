@@ -2,11 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 type focus int
@@ -38,6 +40,11 @@ type App struct {
 	// status is a one-line message at the top (e.g., "DISCONNECTED — retrying").
 	// Reserved for later tasks.
 	status string
+
+	// tasksByID holds the latest TaskInfo keyed by FormatTaskID(t.Id).
+	tasksByID map[string]protocol.TaskInfo
+	// runnersSnapshot holds the latest runners from the most recent snapshot.
+	runnersSnapshot []protocol.RunnerInfo
 }
 
 type Config struct {
@@ -61,6 +68,7 @@ func New(cfg Config) *App {
 		focus:       focusTasks,
 		connected:   false,
 		status:      "connecting…",
+		tasksByID:   map[string]protocol.TaskInfo{},
 	}
 	a.tasks.Focus()
 	return a
@@ -72,6 +80,52 @@ func (a *App) Init() tea.Cmd {
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case SnapshotMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("snapshot: " + msg.Err.Error()))
+			return a, nil
+		}
+		a.runnersSnapshot = msg.Runners
+		a.runners.SetRows(msg.Runners)
+		a.tasksByID = make(map[string]protocol.TaskInfo, len(msg.Tasks))
+		for _, t := range msg.Tasks {
+			a.tasksByID[FormatTaskID(t.Id)] = t
+		}
+		a.refreshTasksTable()
+		return a, nil
+
+	case TaskEventMsg:
+		id := FormatTaskID(msg.Event.TaskId)
+		cur, ok := a.tasksByID[id]
+		if !ok {
+			var ti protocol.TaskInfo
+			ti.Id = msg.Event.TaskId
+			ti.Status = msg.Event.TaskStatus
+			ti.CreatedAt = msg.Event.Ts
+			a.tasksByID[id] = ti
+		} else {
+			cur.Status = msg.Event.TaskStatus
+			if msg.Event.Kind == protocol.StatusEventKind_TaskEnded {
+				cur.ExitCode = msg.Event.ExitCode
+				cur.EndedAt = msg.Event.Ts
+			}
+			a.tasksByID[id] = cur
+		}
+		a.refreshTasksTable()
+		return a, nil
+
+	case RunnerEventMsg:
+		// server-side RunnerStatusEvent.RunnerId is a placeholder (not keyable),
+		// so we kick a full snapshot refresh on every runner event.
+		return a, RefreshSnapshot(a.server)
+
+	case ConnectionMsg:
+		a.connected = msg.Connected
+		if !msg.Connected && msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("disconnected: " + msg.Err.Error()))
+		}
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
@@ -204,6 +258,20 @@ func (a *App) View() string {
 		cmdlineView,
 		footer,
 	}, "\n")
+}
+
+// refreshTasksTable rebuilds the tasks table from tasksByID, sorted by
+// descending CreatedAt, capped at 100 rows.
+func (a *App) refreshTasksTable() {
+	all := make([]protocol.TaskInfo, 0, len(a.tasksByID))
+	for _, t := range a.tasksByID {
+		all = append(all, t)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt > all[j].CreatedAt })
+	if len(all) > 100 {
+		all = all[:100]
+	}
+	a.tasks.SetRows(all)
 }
 
 // runAction is the placeholder dispatch — Task 13 fills in Submit/Cancel/Prune.
