@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -16,13 +17,15 @@ type LogTailMsg struct {
 	Line string
 }
 
-// SlogTailHandler is a slog.Handler that forwards each record as LogTailMsg.
-// Before BindProgram is called (e.g. during early startup), records are
-// buffered up to bufCap entries; BindProgram drains them and switches to
-// direct dispatch.
+// SlogTailHandler is a slog.Handler that forwards each record as LogTailMsg
+// to the bound tea.Program AND optionally mirrors the formatted line to an
+// io.Writer (typically a debug log file). Before BindProgram is called the
+// records are buffered up to bufCap entries; BindProgram drains them and
+// switches to direct dispatch.
 type SlogTailHandler struct {
 	mu      sync.Mutex
 	program *tea.Program
+	mirror  io.Writer // optional; nil means no mirror
 	buf     []string
 	bufCap  int
 	level   slog.Level
@@ -33,22 +36,34 @@ func NewSlogTailHandler(level slog.Level) *SlogTailHandler {
 	return &SlogTailHandler{level: level, bufCap: 256}
 }
 
+// SetMirror enables mirroring of every formatted record to w. Pass nil to
+// disable. Safe to call before or after BindProgram.
+func (h *SlogTailHandler) SetMirror(w io.Writer) {
+	h.mu.Lock()
+	h.mirror = w
+	h.mu.Unlock()
+}
+
 func (h *SlogTailHandler) Enabled(_ context.Context, l slog.Level) bool { return l >= h.level }
 
 func (h *SlogTailHandler) Handle(_ context.Context, r slog.Record) error {
 	line := formatSlogRecord(r)
 	h.mu.Lock()
-	if h.program != nil {
-		prog := h.program
-		h.mu.Unlock()
-		prog.Send(LogTailMsg{Line: line})
-		return nil
+	prog := h.program
+	mirror := h.mirror
+	if prog == nil {
+		if len(h.buf) >= h.bufCap {
+			h.buf = h.buf[1:]
+		}
+		h.buf = append(h.buf, line)
 	}
-	if len(h.buf) >= h.bufCap {
-		h.buf = h.buf[1:]
-	}
-	h.buf = append(h.buf, line)
 	h.mu.Unlock()
+	if mirror != nil {
+		_, _ = io.WriteString(mirror, line+"\n")
+	}
+	if prog != nil {
+		prog.Send(LogTailMsg{Line: line})
+	}
 	return nil
 }
 
