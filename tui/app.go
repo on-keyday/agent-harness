@@ -308,6 +308,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runners, cmd = a.runners.Update(msg)
 	case focusTasks:
 		a.tasks, cmd = a.tasks.Update(msg)
+	case focusLogs:
+		a.logs, cmd = a.logs.Update(msg)
 	case focusCmdline:
 		a.cmdline, cmd = a.cmdline.Update(msg)
 	}
@@ -317,6 +319,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *App) cycleFocus(delta int) {
 	a.runners.Blur()
 	a.tasks.Blur()
+	a.logs.Blur()
 	a.cmdline.Blur()
 
 	a.focus = focus((int(a.focus) + delta + 4) % 4)
@@ -326,6 +329,8 @@ func (a *App) cycleFocus(delta int) {
 		a.runners.Focus()
 	case focusTasks:
 		a.tasks.Focus()
+	case focusLogs:
+		a.logs.Focus()
 	case focusCmdline:
 		a.cmdline.Focus()
 	}
@@ -375,14 +380,18 @@ func (a *App) View() string {
 		logHeight = 5
 	}
 	a.logs.SetSize(a.width-4, logHeight-2) // -2 for the panel border rows
-	logView := PanelStyle.
+	logBorder := PanelStyle
+	if a.logs.IsFocused() {
+		logBorder = PanelStyleFocused
+	}
+	logView := logBorder.
 		Width(a.width - 2).
 		Height(logHeight).
 		Render(a.logs.View())
 
 	cmdresultView := PanelStyle.Width(a.width - 2).Render(a.cmdresult.View())
 	cmdlineView := a.cmdline.View()
-	footer := FooterStyle.Render("tab focus · s submit · c cancel · enter follow · ? help · q quit")
+	footer := FooterStyle.Render("tab focus · ↑/↓ scroll (logs) · s submit · c cancel · enter follow · q quit")
 
 	view := strings.Join([]string{
 		header,
