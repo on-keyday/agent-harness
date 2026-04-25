@@ -96,17 +96,44 @@ func (m *LogsModel) Reset(taskID string) {
 	}
 }
 
-// applyContent rebuilds the viewport content from m.lines, applying the
-// current horizontal offset (in display cells) and clipping each logical
-// line at the viewport width so the terminal does not soft-wrap onto the
-// next row. Both ends are cell-aware so multibyte / east-asian-wide chars
-// don't get sliced mid-codepoint.
-func (m *LogsModel) applyContent() {
-	full := strings.Join(m.lines, "")
+// maxHOffset returns the largest useful hOffset for the current content +
+// viewport width: scrolling past it would slide the longest line entirely
+// off the left edge with no new content appearing on the right. Cell-aware.
+func (m *LogsModel) maxHOffset() int {
 	width := m.vp.Width
 	if width <= 0 {
 		width = 80
 	}
+	full := strings.Join(m.lines, "")
+	maxCells := 0
+	for _, line := range strings.Split(full, "\n") {
+		w := runewidth.StringWidth(line)
+		if w > maxCells {
+			maxCells = w
+		}
+	}
+	if maxCells <= width {
+		return 0
+	}
+	return maxCells - width
+}
+
+// applyContent rebuilds the viewport content from m.lines, applying the
+// current horizontal offset (in display cells) and clipping each logical
+// line at the viewport width so the terminal does not soft-wrap onto the
+// next row. Both ends are cell-aware so multibyte / east-asian-wide chars
+// don't get sliced mid-codepoint. hOffset is clamped to the max so that
+// content lines becoming shorter (e.g. a long task ending and shorter
+// lines following) don't leave the viewport stuck at an empty offset.
+func (m *LogsModel) applyContent() {
+	width := m.vp.Width
+	if width <= 0 {
+		width = 80
+	}
+	if max := m.maxHOffset(); m.hOffset > max {
+		m.hOffset = max
+	}
+	full := strings.Join(m.lines, "")
 	var b strings.Builder
 	parts := strings.Split(full, "\n")
 	for i, line := range parts {
@@ -179,7 +206,14 @@ func (m LogsModel) Update(msg tea.Msg) (LogsModel, tea.Cmd) {
 			}
 			return m, nil
 		case tea.KeyRight:
+			max := m.maxHOffset()
+			if m.hOffset >= max {
+				return m, nil
+			}
 			m.hOffset += hScrollStep
+			if m.hOffset > max {
+				m.hOffset = max
+			}
 			m.applyContent()
 			return m, nil
 		}
