@@ -158,6 +158,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case LogTailMsg:
+		// slog records routed via SlogTailHandler land here. Display in cmdresult
+		// with a dim "[log]" prefix so they share the panel without scribbling
+		// over the alt-screen TUI.
+		a.cmdresult.Append(FooterStyle.Render("[log] " + msg.Line))
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height

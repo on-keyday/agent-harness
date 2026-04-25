@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,6 +27,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Route slog away from stderr — the bubbletea alt screen shares the
+	// terminal, so any direct stderr write scribbles over the TUI.
+	// SlogTailHandler buffers records until BindProgram is called, then
+	// dispatches each as a LogTailMsg that app.go renders into the cmdresult
+	// panel with a dim "[log]" prefix.
+	slogHandler := tui.NewSlogTailHandler(slog.LevelInfo)
+	slog.SetDefault(slog.New(slogHandler))
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
@@ -36,6 +45,7 @@ func main() {
 	program := tea.NewProgram(app, tea.WithAltScreen())
 	app.BindProgram(program)
 	app.BindContext(ctx)
+	slogHandler.BindProgram(program)
 
 	go func() {
 		conn, p, err := tui.Connect(ctx, *serverAddr)
