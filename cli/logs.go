@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -30,6 +31,9 @@ func Logs(ctx context.Context, addr, taskID string, out io.Writer) error {
 		// Logs is read-only on the data channel; we don't expect inbound control messages.
 		// Stream-related frames are auto-dispatched by AutoReceive itself.
 	})
+	// Keep the objproto session alive — server's AutoGarbageCollect drops idle sessions
+	// after 1 minute, and Logs may sit waiting for output much longer than that.
+	go trsf.AutoPing(ctx, conn, 30*time.Second)
 
 	topic := topics.TaskLog(taskID)
 	joinBytes := pubsub.JoinTopic("cli", topic)

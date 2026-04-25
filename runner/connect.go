@@ -47,6 +47,9 @@ func Run(ctx context.Context, cfg Config) error {
 
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, cfg.Logger)
 	go trsf.AutoSend(ctx, p, conn, nil)
+	// Keep the objproto session alive while the runner is idle (no incoming AssignTask).
+	// Server's AutoGarbageCollect drops sessions after 1 minute of silence.
+	go trsf.AutoPing(ctx, conn, 30*time.Second)
 
 	// Build the production Sender.
 	sender := newConnSender(ctx, conn, p, cfg.Logger)

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -32,6 +33,9 @@ func Watch(ctx context.Context, addr string, out io.Writer) error {
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, slog.Default())
 	go trsf.AutoSend(ctx, p, conn, nil)
 	go trsf.AutoReceive(ctx, p, conn, func(*objproto.Message, error) {})
+	// Keep the objproto session alive — server's AutoGarbageCollect drops idle sessions
+	// after 1 minute, and Watch sits waiting for events indefinitely.
+	go trsf.AutoPing(ctx, conn, 30*time.Second)
 
 	// Send JOIN for tasks.status first, then runners.status.
 	// The broker opens streams in the order it receives JOINs, so Accept order
