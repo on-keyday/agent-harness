@@ -20,9 +20,11 @@ import (
 
 // Config holds the configuration for a Server instance.
 type Config struct {
-	Addr    string // host:port for the WebSocket listener
-	DataDir string // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
-	Logger  *slog.Logger
+	Addr           string        // host:port for the WebSocket listener
+	DataDir        string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
+	TaskRetention  time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
+	PruneInterval  time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
+	Logger         *slog.Logger
 }
 
 // Server wires all components together and manages the main accept loop.
@@ -186,6 +188,34 @@ func (s *Server) Run(ctx context.Context) error {
 					logStore.Append(taskID, msg) //nolint:errcheck
 				})
 			}
+		}
+
+		// Auto-prune terminal tasks older than TaskRetention. Skipped when retention is 0.
+		if s.cfg.TaskRetention > 0 {
+			interval := s.cfg.PruneInterval
+			if interval <= 0 {
+				interval = time.Hour
+			}
+			logsDir := filepath.Join(s.cfg.DataDir, "logs")
+			runPrune := func() {
+				cutoff := time.Now().Add(-s.cfg.TaskRetention)
+				if n := s.tasks.PruneTerminal(cutoff, logsDir); n > 0 {
+					s.cfg.Logger.Info("auto-prune", "removed", n, "cutoff", cutoff)
+				}
+			}
+			runPrune() // startup pass
+			go func() {
+				t := time.NewTicker(interval)
+				defer t.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-t.C:
+						runPrune()
+					}
+				}
+			}()
 		}
 	}
 	sess, err := transport.WebSocketSession(s.cfg.Logger, s.cfg.Addr, nil, objproto.SessionModeServer)

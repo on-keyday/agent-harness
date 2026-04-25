@@ -1,6 +1,7 @@
 package server
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -304,5 +305,82 @@ func TestTaskStoreReplayMarksRunningAsFailed(t *testing.T) {
 	got, _ := s.Get("abc")
 	if got.Status != protocol.TaskStatus_Failed {
 		t.Fatalf("expected Failed, got %v", got.Status)
+	}
+}
+
+func TestTaskStorePruneTerminal(t *testing.T) {
+	s := NewTaskStore()
+
+	// 1: queued (still active — must NOT be pruned)
+	idQueued := s.Create("/r", "still-queued")
+
+	// 2: succeeded long ago (should be pruned)
+	idOldSucc := s.Create("/r", "old-success")
+	s.Assign(idOldSucc, "runner-x", "/wt-1")
+	s.Finish(idOldSucc, 0, nil)
+	oldTime := time.Now().Add(-48 * time.Hour)
+	got, _ := s.Get(idOldSucc)
+	*s.tasks[got.ID].EndedAt = oldTime
+
+	// 3: failed recently (must NOT be pruned)
+	idRecentFail := s.Create("/r", "recent-fail")
+	s.Assign(idRecentFail, "runner-x", "/wt-2")
+	s.Finish(idRecentFail, 7, nil)
+
+	// 4: cancelled long ago (should be pruned)
+	idOldCancel := s.Create("/r", "old-cancel")
+	s.Cancel(idOldCancel)
+	*s.tasks[idOldCancel].EndedAt = oldTime
+
+	cutoff := time.Now().Add(-24 * time.Hour)
+	logDir := t.TempDir()
+	// Drop a sentinel log file that should be removed.
+	logPath := filepath.Join(logDir, idOldSucc+".log")
+	if err := os.WriteFile(logPath, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	removed := s.PruneTerminal(cutoff, logDir)
+	if removed != 2 {
+		t.Fatalf("removed=%d, want 2", removed)
+	}
+	if _, ok := s.Get(idOldSucc); ok {
+		t.Errorf("old-succeeded task should be gone")
+	}
+	if _, ok := s.Get(idOldCancel); ok {
+		t.Errorf("old-cancelled task should be gone")
+	}
+	if _, ok := s.Get(idQueued); !ok {
+		t.Errorf("queued task should be retained")
+	}
+	if _, ok := s.Get(idRecentFail); !ok {
+		t.Errorf("recent failed task should be retained")
+	}
+	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
+		t.Errorf("log file should be removed, got err=%v", err)
+	}
+	if got := len(s.List(0)); got != 2 {
+		t.Errorf("List(0) length=%d, want 2", got)
+	}
+}
+
+func TestReplayHandlesPruned(t *testing.T) {
+	s := NewTaskStore()
+	exit := int32(0)
+	events := []WALEvent{
+		{Type: "task_created", TaskID: "abc", RepoPath: "/r", Prompt: "p", Ts: 100},
+		{Type: "task_finished", TaskID: "abc", ExitCode: &exit, Ts: 200},
+		{Type: "task_pruned", TaskID: "abc", Ts: 300},
+		{Type: "task_created", TaskID: "xyz", RepoPath: "/r", Prompt: "q", Ts: 400},
+	}
+	s.ReplayEvents(events)
+	if _, ok := s.Get("abc"); ok {
+		t.Errorf("pruned task abc should not survive replay")
+	}
+	if _, ok := s.Get("xyz"); !ok {
+		t.Errorf("xyz should survive replay")
+	}
+	if got := len(s.List(0)); got != 1 {
+		t.Errorf("List(0) length=%d, want 1", got)
 	}
 }

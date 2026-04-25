@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -263,6 +265,18 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
 			}
+		case "task_pruned":
+			if _, ok := s.tasks[ev.TaskID]; ok {
+				delete(s.tasks, ev.TaskID)
+				// Rebuild order to drop this id.
+				kept := s.order[:0]
+				for _, oid := range s.order {
+					if oid != ev.TaskID {
+						kept = append(kept, oid)
+					}
+				}
+				s.order = kept
+			}
 		}
 	}
 	// Any task still Running after full replay had no Finished event — restart killed it.
@@ -273,6 +287,53 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			t.EndedAt = &now
 		}
 	}
+}
+
+// PruneTerminal removes terminal-status tasks whose EndedAt is before cutoff.
+// For each pruned task, its log file at <logDir>/<id>.log is also deleted (errors are logged but non-fatal).
+// A "task_pruned" WAL event is emitted so a subsequent replay applies the same removal.
+// Returns the number of tasks removed. logDir may be "" to skip log-file deletion.
+func (s *TaskStore) PruneTerminal(cutoff time.Time, logDir string) int {
+	s.mu.Lock()
+	var pruned []string
+	keepOrder := s.order[:0]
+	for _, id := range s.order {
+		t := s.tasks[id]
+		if t == nil {
+			continue
+		}
+		terminal := false
+		switch t.Status {
+		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+			terminal = true
+		}
+		if terminal && t.EndedAt != nil && t.EndedAt.Before(cutoff) {
+			pruned = append(pruned, id)
+			delete(s.tasks, id)
+			continue
+		}
+		keepOrder = append(keepOrder, id)
+	}
+	s.order = keepOrder
+	if s.wal != nil {
+		now := time.Now().UnixNano()
+		for _, id := range pruned {
+			if err := s.wal.Write(WALEvent{Type: "task_pruned", TaskID: id, Ts: now}); err != nil {
+				slog.Error("WAL write failed", "op", "task_pruned", "task_id", id, "err", err)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	if logDir != "" {
+		for _, id := range pruned {
+			path := filepath.Join(logDir, id+".log")
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				slog.Warn("prune log file", "task_id", id, "err", err)
+			}
+		}
+	}
+	return len(pruned)
 }
 
 // List returns value snapshots of the N most-recent entries in insertion order.
