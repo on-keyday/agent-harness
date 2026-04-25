@@ -63,6 +63,7 @@ enum TaskControlKind:
     list
     cancel
     prune_tasks
+    get_task_log
 
 format ListQuery:
     query :[..]u8 # currently opaque
@@ -135,6 +136,13 @@ format PruneTasksRequest:
 format PruneTasksResponse:
     removed :u32
 
+format GetTaskLogRequest:
+    task_id :TaskID
+
+format GetTaskLogResponse:
+    found :u8         # 0 = no log file on server, 1 = found
+    content :[..]u8   # raw bytes from <data-dir>/logs/<task-id>.log (may be empty even when found=1)
+
 format TaskControlRequest:
     kind :TaskControlKind
     match kind:
@@ -142,6 +150,7 @@ format TaskControlRequest:
         TaskControlKind.list => list :ListQuery
         TaskControlKind.cancel => cancel :CancelTask
         TaskControlKind.prune_tasks => prune :PruneTasksRequest
+        TaskControlKind.get_task_log => get_log :GetTaskLogRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -154,6 +163,7 @@ format TaskControlResponse:
         TaskControlKind.list => list :ListResult
         TaskControlKind.cancel => cancel :CancelStatus
         TaskControlKind.prune_tasks => prune :PruneTasksResponse
+        TaskControlKind.get_task_log => get_log :GetTaskLogResponse
 
 # Pubsub event payloads
 enum StatusEventKind:
