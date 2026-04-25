@@ -12,6 +12,7 @@ enum RunnerRequestType:
     :u8
     assign_task
     cancel_task
+    open_exec
 
 format RunnerHello:
     version :u8
@@ -27,6 +28,13 @@ format AssignTask:
 
 format CancelTask:
     task_id :TaskID
+
+format OpenExecRunnerRequest:
+    task_id :TaskID
+    stream_id :u64    # bidi stream the server has just created toward this
+                      # runner; runner looks it up via
+                      # Transport.GetBidirectionalStream(id) and feeds it to
+                      # exec.ExecuteCommand for an interactive PTY claude.
 
 format TaskAccepted:
     task_id :TaskID
@@ -56,6 +64,7 @@ format RunnerRequest:
     match kind:
         RunnerRequestType.assign_task => assign_task :AssignTask
         RunnerRequestType.cancel_task => cancel_task :CancelTask
+        RunnerRequestType.open_exec   => open_exec   :OpenExecRunnerRequest
 
 enum TaskControlKind:
     :u8
@@ -64,6 +73,7 @@ enum TaskControlKind:
     cancel
     prune_tasks
     get_task_log
+    open_interactive
 
 format ListQuery:
     query :[..]u8 # currently opaque
@@ -146,6 +156,24 @@ format GetTaskLogResponse:
                       # (closed with EOF when complete). Client reads via
                       # trsf.Transport.GetReceiveStream.
 
+format OpenInteractiveRequest:
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+
+format OpenInteractiveResponse:
+    status :u8         # 0 = ok, 1 = no_runner_for_repo,
+                       # 2 = runner_busy, 3 = internal_error
+    task_id :TaskID    # populated when status == 0
+    stream_id :u64     # populated when status == 0. Bidirectional stream the
+                       # server opens toward the client; client looks it up via
+                       # Transport.GetBidirectionalStream(id) and wraps it in
+                       # exec.NewCommandExecutionStream. Server splices this
+                       # bytewise to a separate bidi stream it has also opened
+                       # toward the runner — the runner is told about its end
+                       # via RunnerRequest{open_exec, task_id, stream_id} and
+                       # feeds it to exec.ExecuteCommand for an interactive
+                       # PTY claude session.
+
 format TaskControlRequest:
     kind :TaskControlKind
     request_id :u32
@@ -155,6 +183,7 @@ format TaskControlRequest:
         TaskControlKind.cancel => cancel :CancelTask
         TaskControlKind.prune_tasks => prune :PruneTasksRequest
         TaskControlKind.get_task_log => get_log :GetTaskLogRequest
+        TaskControlKind.open_interactive => open_interactive :OpenInteractiveRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -169,6 +198,7 @@ format TaskControlResponse:
         TaskControlKind.cancel => cancel :CancelStatus
         TaskControlKind.prune_tasks => prune :PruneTasksResponse
         TaskControlKind.get_task_log => get_log :GetTaskLogResponse
+        TaskControlKind.open_interactive => open_interactive :OpenInteractiveResponse
 
 # Pubsub event payloads
 enum StatusEventKind:
