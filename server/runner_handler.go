@@ -11,10 +11,11 @@ import (
 // RunnerHandler decodes inbound RunnerMessage payloads from runners
 // and applies them to Registry and TaskStore.
 type RunnerHandler struct {
-	Registry *Registry
-	Tasks    *TaskStore
-	Now      func() time.Time
-	OnChange func() // called after any state mutation, used to trigger Scheduler.Tick
+	Registry       *Registry
+	Tasks          *TaskStore
+	Now            func() time.Time
+	OnChange       func()          // called after any state mutation, used to trigger Scheduler.Tick
+	OnTaskStarted  func(taskID string) // optional; called when the runner reports TaskStarted
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -75,6 +76,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		if !h.Tasks.SetWorktreeDir(taskID, string(taskStarted.WorktreeDir)) {
 			slog.Error("RunnerHandler: TaskStarted for unknown task", "runnerID", runnerID, "taskID", taskID)
 			return
+		}
+		if h.OnTaskStarted != nil {
+			h.OnTaskStarted(taskID)
 		}
 
 	case protocol.RunnerMessageType_TaskFinished:

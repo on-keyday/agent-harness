@@ -80,6 +80,11 @@ func main() {
 			die(err)
 		}
 
+	case "watch":
+		if err := cli.Watch(ctx, *server, os.Stdout); err != nil {
+			die(err)
+		}
+
 	default:
 		usage()
 		os.Exit(2)
@@ -93,6 +98,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--repo PATH] [--before DUR]  remove old harness worktrees")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
+	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 }
 
 func die(err error) {

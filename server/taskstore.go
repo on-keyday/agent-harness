@@ -38,7 +38,10 @@ type TaskStore struct {
 	order []string // insertion order; used by List and NextQueuedForRepo
 	wal   *WAL
 
-	OnCreate func(id string) // optional; called after each Create. Server uses this to register pubsub taps.
+	OnCreate func(id string)                                     // optional; called after each Create. Server uses this to register pubsub taps.
+	OnAssign func(id, runnerID, worktreeDir string)              // optional; called after Assign transitions a task to Running.
+	OnFinish func(id string, exit int32, status protocol.TaskStatus) // optional; called after Finish marks a task terminal.
+	OnCancel func(id string)                                     // optional; called after Cancel marks a task Cancelled.
 }
 
 // SetWAL attaches a WAL to which subsequent mutations append. nil disables WAL hooks.
@@ -105,9 +108,9 @@ func (s *TaskStore) Get(id string) (TaskEntry, bool) {
 func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 	now := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	e, ok := s.tasks[id]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	e.Status = protocol.TaskStatus_Running
@@ -119,6 +122,11 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 			slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
 		}
 	}
+	onAssign := s.OnAssign
+	s.mu.Unlock()
+	if onAssign != nil {
+		onAssign(id, runnerID, worktreeDir)
+	}
 }
 
 // Finish marks the task terminal. exit==0 → Succeeded; non-zero → Failed.
@@ -126,16 +134,18 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 func (s *TaskStore) Finish(id string, exit int32, diff []byte) {
 	now := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	e, ok := s.tasks[id]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
+	var finalStatus protocol.TaskStatus
 	if exit == 0 {
-		e.Status = protocol.TaskStatus_Succeeded
+		finalStatus = protocol.TaskStatus_Succeeded
 	} else {
-		e.Status = protocol.TaskStatus_Failed
+		finalStatus = protocol.TaskStatus_Failed
 	}
+	e.Status = finalStatus
 	exitCopy := exit
 	e.ExitCode = &exitCopy
 	e.DiffInfo = diff
@@ -145,6 +155,11 @@ func (s *TaskStore) Finish(id string, exit int32, diff []byte) {
 			slog.Error("WAL write failed", "op", "task_finished", "task_id", id, "err", err)
 		}
 	}
+	onFinish := s.OnFinish
+	s.mu.Unlock()
+	if onFinish != nil {
+		onFinish(id, exit, finalStatus)
+	}
 }
 
 // Cancel sets the task to Cancelled and records EndedAt. Idempotent: if the
@@ -152,14 +167,15 @@ func (s *TaskStore) Finish(id string, exit int32, diff []byte) {
 func (s *TaskStore) Cancel(id string) {
 	now := time.Now()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	e, ok := s.tasks[id]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	// Idempotent: skip if already terminal.
 	switch e.Status {
 	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+		s.mu.Unlock()
 		return
 	}
 	e.Status = protocol.TaskStatus_Cancelled
@@ -168,6 +184,11 @@ func (s *TaskStore) Cancel(id string) {
 		if err := s.wal.Write(WALEvent{Type: "task_cancelled", TaskID: id, Ts: now.UnixNano()}); err != nil {
 			slog.Error("WAL write failed", "op", "task_cancelled", "task_id", id, "err", err)
 		}
+	}
+	onCancel := s.OnCancel
+	s.mu.Unlock()
+	if onCancel != nil {
+		onCancel(id)
 	}
 }
 

@@ -32,6 +32,9 @@ type RunnerEntry struct {
 type Registry struct {
 	mu      sync.RWMutex
 	runners map[string]*RunnerEntry
+
+	OnAdd    func(RunnerEntry) // optional; called after Add inserts an entry.
+	OnRemove func(id string)   // optional; called after Remove deletes an entry.
 }
 
 // NewRegistry creates an empty Registry.
@@ -44,15 +47,25 @@ func NewRegistry() *Registry {
 // Add inserts or replaces the entry keyed by e.ID.
 func (r *Registry) Add(e *RunnerEntry) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.runners[e.ID] = e
+	snapshot := *e
+	onAdd := r.OnAdd
+	r.mu.Unlock()
+	if onAdd != nil {
+		onAdd(snapshot)
+	}
 }
 
 // Remove deletes the entry with the given id. No-op if absent.
 func (r *Registry) Remove(id string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	_, existed := r.runners[id]
 	delete(r.runners, id)
+	onRemove := r.OnRemove
+	r.mu.Unlock()
+	if existed && onRemove != nil {
+		onRemove(id)
+	}
 }
 
 // Get returns a value snapshot of the entry for id. The returned value is

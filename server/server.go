@@ -65,6 +65,66 @@ func New(cfg Config) *Server {
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
 	}
+
+	// publishTaskEvent constructs and publishes a TaskStatusEvent to the
+	// global tasks.status topic and the per-task task.<id>.status topic.
+	publishTaskEvent := func(taskID string, kind protocol.StatusEventKind, status protocol.TaskStatus, exitCode int32) {
+		ev := protocol.TaskStatusEvent{
+			Kind:       kind,
+			Ts:         uint64(time.Now().UnixNano()),
+			TaskStatus: status,
+			ExitCode:   exitCode,
+		}
+		raw, err := hex.DecodeString(taskID)
+		if err == nil {
+			copy(ev.TaskId.Id[:], raw)
+		}
+		payload := ev.MustAppend(nil)
+		s.pubsub.Publish("server", topics.TasksStatus(), payload)
+		s.pubsub.Publish("server", topics.TaskStatus(taskID), payload)
+	}
+
+	// publishRunnerEvent constructs and publishes a RunnerStatusEvent to
+	// the global runners.status topic.
+	publishRunnerEvent := func(_ string, kind protocol.StatusEventKind, status protocol.RunnerStatus) {
+		ev := protocol.RunnerStatusEvent{
+			Kind:         kind,
+			Ts:           uint64(time.Now().UnixNano()),
+			RunnerStatus: status,
+			RunnerId:     placeholderRunnerID(),
+		}
+		payload := ev.MustAppend(nil)
+		s.pubsub.Publish("server", topics.RunnersStatus(), payload)
+	}
+
+	// Wire task lifecycle hooks.
+	// OnCreate publishes task_queued; Run may wrap this further for log store taps.
+	s.tasks.OnCreate = func(id string) {
+		publishTaskEvent(id, protocol.StatusEventKind_TaskQueued, protocol.TaskStatus_Queued, 0)
+	}
+	s.tasks.OnAssign = func(id, runnerID, worktreeDir string) {
+		publishTaskEvent(id, protocol.StatusEventKind_TaskAssigned, protocol.TaskStatus_Running, 0)
+	}
+	s.tasks.OnFinish = func(id string, exit int32, status protocol.TaskStatus) {
+		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, status, exit)
+	}
+	s.tasks.OnCancel = func(id string) {
+		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, protocol.TaskStatus_Cancelled, 0)
+	}
+
+	// Wire registry hooks.
+	s.registry.OnAdd = func(entry RunnerEntry) {
+		publishRunnerEvent(entry.ID, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
+	}
+	s.registry.OnRemove = func(id string) {
+		publishRunnerEvent(id, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
+	}
+
+	// Wire TaskStarted hook so the runner_handler can publish the event.
+	s.runnerHandler.OnTaskStarted = func(taskID string) {
+		publishTaskEvent(taskID, protocol.StatusEventKind_TaskStarted, protocol.TaskStatus_Running, 0)
+	}
+
 	return s
 }
 
@@ -102,7 +162,13 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		defer logStore.Close()
 
+		// Chain log store tap into the existing OnCreate hook (which publishes task_queued).
+		existingOnCreate := s.tasks.OnCreate
 		s.tasks.OnCreate = func(taskID string) {
+			if existingOnCreate != nil {
+				existingOnCreate(taskID)
+			}
+			// Register log store tap for this task.
 			topic := topics.TaskLog(taskID)
 			s.pubsub.TapSubscribe(topic, func(_ string, msg []byte) {
 				if err := logStore.Append(taskID, msg); err != nil {
