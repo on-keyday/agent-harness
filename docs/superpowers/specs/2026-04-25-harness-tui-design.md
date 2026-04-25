@@ -186,7 +186,12 @@ Panels have lipgloss borders; the focused panel uses an accent color (defined in
 | `help` | open help overlay |
 | `quit` / `exit` | `tea.Quit` |
 
-Tokenization: `github.com/google/shlex` for proper quoting support.
+**Parsing pipeline** (two stages):
+
+1. Tokenization: `github.com/google/shlex.Split` → `[]string` argv with quoting / escapes handled.
+2. Subcommand + flag parse: stdlib `flag.NewFlagSet` per subcommand (`flag.ContinueOnError`, `SetOutput(io.Discard)` so errors come back as Go errors instead of being printed). This matches the convention already used in `cmd/harness-cli/main.go`.
+
+The parsed result is converted into a small action struct (`submitAction{repo, prompt}` / `cancelAction{idPrefix}` / `pruneAction{before, offline}` / `clearAction{}` / `quitAction{}` / `helpAction{}`). The action type is a `tea.Cmd` factory consumed by `app.go`.
 
 ## 5. Real-time updates
 
