@@ -141,7 +141,10 @@ format GetTaskLogRequest:
 
 format GetTaskLogResponse:
     found :u8         # 0 = no log file on server, 1 = found
-    content :[..]u8   # raw bytes from <data-dir>/logs/<task-id>.log (may be empty even when found=1)
+    stream_id :u64    # 0 if !found; otherwise the unidirectional send-stream
+                      # the server creates and writes the file content into
+                      # (closed with EOF when complete). Client reads via
+                      # trsf.Transport.GetReceiveStream.
 
 format TaskControlRequest:
     kind :TaskControlKind

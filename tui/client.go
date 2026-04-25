@@ -79,6 +79,17 @@ type PruneResultMsg struct {
 	Err     error
 }
 
+// LogHistoryMsg carries the historical content of a task log fetched from the
+// server's on-disk store. app.go appends it into the LogsModel when the task
+// id matches the currently-followed one (a switch can happen between fetch
+// and arrival).
+type LogHistoryMsg struct {
+	TaskID  string
+	Content []byte
+	Found   bool
+	Err     error
+}
+
 // DoSubmit returns a tea.Cmd that calls cli.Submit and returns SubmitResultMsg.
 func DoSubmit(addr, repo, prompt string) tea.Cmd {
 	return func() tea.Msg {
@@ -102,6 +113,18 @@ func DoCancel(addr, idPrefix, resolved string) tea.Cmd {
 		defer cancel()
 		err := cli.Cancel(ctx, addr, resolved)
 		return CancelResultMsg{IDPrefix: idPrefix, Resolved: resolved, Err: err}
+	}
+}
+
+// DoGetTaskLog fetches the historical log for taskID from the server and
+// dispatches a LogHistoryMsg. The fetch always uses its own short-lived
+// connection so the TUI's persistent pubsub conn is unaffected.
+func DoGetTaskLog(addr, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		content, found, err := cli.GetTaskLog(ctx, addr, taskID)
+		return LogHistoryMsg{TaskID: taskID, Content: content, Found: found, Err: err}
 	}
 }
 

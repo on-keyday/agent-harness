@@ -53,6 +53,21 @@ func (m *LogsModel) Append(chunk []byte) {
 	m.vp.GotoBottom()
 }
 
+// Prepend inserts content before any already-appended live chunks. Used to
+// fold the historical log file (fetched via GetTaskLog) in front of pubsub
+// chunks that may have started arriving while the fetch was in flight.
+func (m *LogsModel) Prepend(content []byte) {
+	if m.taskID == "" || len(content) == 0 {
+		return
+	}
+	m.lines = append([]string{string(content)}, m.lines...)
+	if len(m.lines) > 1000 {
+		m.lines = m.lines[len(m.lines)-1000:]
+	}
+	m.vp.SetContent(strings.Join(m.lines, ""))
+	m.vp.GotoBottom()
+}
+
 func (m LogsModel) Update(msg tea.Msg) (LogsModel, tea.Cmd) {
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)

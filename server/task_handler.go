@@ -2,7 +2,10 @@ package server
 
 import (
 	"encoding/hex"
+	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -21,6 +24,11 @@ type TaskHandler struct {
 	// with removed=0. Server.New wires this to TaskStore.PruneTerminal with the
 	// configured logs directory.
 	PruneFn func(cutoff time.Time) int
+
+	// LogsDir is the directory containing per-task log files
+	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
+	// (always returns Found=0). Server.New wires it from cfg.DataDir.
+	LogsDir string
 }
 
 // Handle decodes a TaskControlRequest payload (bytes after the wire-kind byte) and replies via conn.SendMessage.
@@ -116,9 +124,81 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_GetTaskLog:
+		gl := req.GetLog()
+		if gl == nil {
+			slog.Error("TaskHandler: GetLog variant is nil")
+			return
+		}
+		taskID := hex.EncodeToString(gl.TaskId.Id[:])
+		h.handleGetTaskLog(conn, taskID)
+
 	default:
 		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)
 	}
+}
+
+// handleGetTaskLog responds to a GetTaskLog request by opening the per-task
+// log file at <LogsDir>/<taskID>.log, allocating a server-initiated
+// unidirectional stream, sending a TaskControlResponse referencing that
+// stream's id, and then streaming the file content + EOF asynchronously.
+//
+// If LogsDir is empty (server started without --data-dir) or the file does
+// not exist, the response carries Found=0 and StreamId=0.
+func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, taskID string) {
+	respond := func(found uint8, streamID uint64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog}
+		resp.SetGetLog(protocol.GetTaskLogResponse{Found: found, StreamId: streamID})
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+	}
+
+	if h.LogsDir == "" {
+		respond(0, 0)
+		return
+	}
+	path := filepath.Join(h.LogsDir, taskID+".log")
+	f, err := os.Open(path)
+	if err != nil {
+		// Includes os.ErrNotExist (no log yet) and any I/O error.
+		respond(0, 0)
+		return
+	}
+	stream := conn.CreateSendStream()
+	if stream == nil {
+		// Test or non-streaming connection: degrade to "no log".
+		f.Close()
+		respond(0, 0)
+		return
+	}
+
+	respond(1, uint64(stream.ID()))
+
+	// Stream the file content asynchronously so the response goes out first.
+	go func() {
+		defer f.Close()
+		buf := make([]byte, 32*1024)
+		for {
+			n, rerr := f.Read(buf)
+			if n > 0 {
+				if werr := stream.AppendData(false, buf[:n]); werr != nil {
+					slog.Warn("GetTaskLog: stream write failed", "task_id", taskID, "err", werr)
+					break
+				}
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				slog.Warn("GetTaskLog: file read failed", "task_id", taskID, "err", rerr)
+				break
+			}
+		}
+		// Signal EOF on the stream so the client knows we're done.
+		if err := stream.AppendData(true); err != nil {
+			slog.Warn("GetTaskLog: stream EOF failed", "task_id", taskID, "err", err)
+		}
+	}()
 }
 
 // toRunnerInfo converts a RunnerEntry value snapshot to the wire-format RunnerInfo.

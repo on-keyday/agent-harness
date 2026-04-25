@@ -58,15 +58,16 @@ func New(cfg Config) *Server {
 		Now:      time.Now,
 		OnChange: s.scheduler.Tick,
 	}
+	logsDir := ""
+	if s.cfg.DataDir != "" {
+		logsDir = filepath.Join(s.cfg.DataDir, "logs")
+	}
 	s.taskHandler = &TaskHandler{
 		Tasks:    s.tasks,
 		Registry: s.registry,
 		OnChange: s.scheduler.Tick,
+		LogsDir:  logsDir,
 		PruneFn: func(cutoff time.Time) int {
-			logsDir := ""
-			if s.cfg.DataDir != "" {
-				logsDir = filepath.Join(s.cfg.DataDir, "logs")
-			}
 			return s.tasks.PruneTerminal(cutoff, logsDir)
 		},
 	}
@@ -244,6 +245,16 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// streamingConn wraps an objproto.Connection together with the trsf transport
+// so handlers can both reply with single messages and create server-initiated
+// streams for bulk responses (GetTaskLog, future BulkList, etc.).
+type streamingConn struct {
+	objproto.Connection
+	trans trsf.Transport
+}
+
+func (s streamingConn) CreateSendStream() trsf.SendStream { return s.trans.CreateSendStream() }
+
 // handleConnection manages a single active objproto connection for its lifetime.
 func (s *Server) handleConnection(ctx context.Context, session objproto.Connection) {
 	connCtx, cancel := context.WithCancel(ctx)
@@ -253,6 +264,8 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	defer subscriber.LeaveAll(s.pubsub)
 
 	go trsf.AutoSend(connCtx, p, session, nil)
+
+	wrapped := streamingConn{Connection: session, trans: p}
 
 	trsf.AutoReceive(connCtx, p, session, func(msg *objproto.Message, err error) {
 		if err != nil || len(msg.Data) == 0 {
@@ -266,7 +279,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 			}
 			return
 		}
-		s.dispatcher.Dispatch(session, msg.Data)
+		s.dispatcher.Dispatch(wrapped, msg.Data)
 	})
 
 	// Connection closed: deregister the runner if present and trigger rescheduling.

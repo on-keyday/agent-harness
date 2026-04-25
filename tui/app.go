@@ -157,6 +157,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case LogHistoryMsg:
+		// The user may have switched tasks between fetch and arrival; only
+		// apply if it still matches.
+		if msg.TaskID != a.logs.TaskID() {
+			return a, nil
+		}
+		if msg.Err != nil {
+			a.cmdresult.Append(WarnStyle.Render("history fetch failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		if !msg.Found {
+			// Server has no log file for this task (e.g. pruned, or DataDir
+			// unset). Leave the placeholder; the live subscription, if any,
+			// will append from there.
+			return a, nil
+		}
+		// Prepend history before any live chunks that may have already arrived.
+		a.logs.Prepend(msg.Content)
+		return a, nil
+
 	case ConnectionMsg:
 		a.connected = msg.Connected
 		if !msg.Connected && msg.Err != nil {
@@ -385,8 +405,11 @@ func (a *App) View() string {
 	return view
 }
 
-// followTask LEAVEs the previous log subscription (if any) and JOINs the
-// task.<taskID>.log topic. Returns a tea.Cmd that spawns the subscriber goroutine.
+// followTask LEAVEs the previous log subscription (if any), kicks off both a
+// historical fetch (GetTaskLog) and a live subscribe (task.<taskID>.log).
+// History arrives via LogHistoryMsg and is Prepend'd; live chunks arrive via
+// LogChunkMsg and are Append'd. For Done tasks the live subscription yields
+// nothing — the user still sees the persisted log file.
 func (a *App) followTask(taskID string) tea.Cmd {
 	if a.logsCancel != nil {
 		a.logsCancel()
@@ -398,10 +421,13 @@ func (a *App) followTask(taskID string) tea.Cmd {
 	}
 	subCtx, cancel := context.WithCancel(a.appCtx)
 	a.logsCancel = cancel
-	return func() tea.Msg {
-		go SubscribeTaskLog(subCtx, a.conn, a.trans, a.pubClient, a.program, taskID)
-		return nil
-	}
+	return tea.Batch(
+		DoGetTaskLog(a.server, taskID),
+		func() tea.Msg {
+			go SubscribeTaskLog(subCtx, a.conn, a.trans, a.pubClient, a.program, taskID)
+			return nil
+		},
+	)
 }
 
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by
