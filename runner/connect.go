@@ -47,6 +47,8 @@ func Run(ctx context.Context, cfg Config) error {
 		ClaudeBin:       cfg.ClaudeBin,
 		ExtraClaudeArgs: cfg.ExtraClaudeArgs,
 		Sender:          sender,
+		Streams:         pc.Transport(),
+		Logger:          cfg.Logger,
 		Now:             time.Now,
 	}
 
@@ -70,6 +72,12 @@ func Run(ctx context.Context, cfg Config) error {
 		case protocol.RunnerRequestType_CancelTask:
 			// v1 does not implement runner-side cancel; log and ignore.
 			cfg.Logger.Info("runner: cancel not implemented", "kind", req.Kind)
+		case protocol.RunnerRequestType_OpenExec:
+			oer := req.OpenExec()
+			if oer == nil {
+				return
+			}
+			go session.handleOpenExec(ctx, oer)
 		}
 	})
 	pc.Start(ctx)

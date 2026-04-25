@@ -3,11 +3,15 @@ package runner
 import (
 	"context"
 	"encoding/hex"
+	"log/slog"
 	"time"
 
+	agentexec "github.com/on-keyday/agent-harness/exec"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -28,9 +32,18 @@ type Session struct {
 	ExtraClaudeArgs []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
 	Timeout         time.Duration
 	Sender          Sender
+	Streams         peer.BidirectionalStreamLookup // optional; required for handleOpenExec
+	Logger          *slog.Logger                   // optional; defaults to slog.Default()
 	Now             func() time.Time
 
 	wm *WorktreeManager // set on first use
+}
+
+func (s *Session) logger() *slog.Logger {
+	if s.Logger != nil {
+		return s.Logger
+	}
+	return slog.Default()
 }
 
 // handleAssign performs the full lifecycle for one assigned task:
@@ -113,3 +126,87 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		_ = s.Sender.Send(data)
 	}
 }
+
+// handleOpenExec is the runner-side counterpart of the server's
+// handleOpenInteractive. The server has already created a bidi stream
+// toward us and stored its id in oer.StreamId; we look it up and feed it
+// to exec.ExecuteCommand for an interactive PTY claude session in a fresh
+// worktree.
+//
+// Lifecycle messages mirror handleAssign:
+//   - TaskAccepted (we are committed even if worktree creation later fails)
+//   - TaskStarted with worktree dir (after a successful worktree create)
+//   - TaskFinished with claude's exit code (after exec.ExecuteCommand returns)
+//
+// On EOF / detach from the TUI side, exec.ExecuteCommand's SIGHUP→SIGTERM→
+// SIGKILL ladder reaps claude; this method returns and TaskFinished follows.
+func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunnerRequest) {
+	taskIDHex := hex.EncodeToString(oer.TaskId.Id[:])
+	log := s.logger()
+
+	// Step 1: TaskAccepted.
+	{
+		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskAccepted}
+		m.SetTaskAccepted(protocol.TaskAccepted{TaskId: oer.TaskId})
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+	}
+
+	finishWithError := func(code int32, reason string) {
+		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
+		tf := protocol.TaskFinished{TaskId: oer.TaskId, ExitCode: code}
+		tf.DiffInfo = []byte(reason)
+		m.SetTaskFinished(tf)
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+	}
+
+	if s.Streams == nil {
+		log.Error("runner: handleOpenExec missing Streams lookup")
+		finishWithError(-1, "runner: missing stream lookup")
+		return
+	}
+
+	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(oer.StreamId))
+	if stream == nil {
+		finishWithError(-1, "runner: server-allocated exec stream not visible")
+		return
+	}
+
+	// Step 2: worktree.
+	if s.wm == nil {
+		s.wm = &WorktreeManager{Repo: s.RepoPath}
+	}
+	dir, err := s.wm.Create(taskIDHex)
+	if err != nil {
+		_ = stream.CloseBoth()
+		finishWithError(-1, "worktree_error: "+err.Error())
+		return
+	}
+
+	// Step 3: TaskStarted.
+	{
+		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskStarted}
+		ts := protocol.TaskStarted{TaskId: oer.TaskId}
+		ts.SetWorktreeDir([]byte(dir))
+		m.SetTaskStarted(ts)
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+	}
+
+	// Step 4: spawn claude under PTY, hand the stream to exec.
+	// ExecuteCommand defers stream.CloseBoth() so we don't double-close here.
+	runErr := agentexec.ExecuteCommand(ctx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true)
+
+	// Step 5: TaskFinished.
+	{
+		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
+		tf := protocol.TaskFinished{TaskId: oer.TaskId}
+		if runErr != nil {
+			// Could be claude's non-zero exit (passed up by errgroup as an
+			// *exec.ExitError) or a stream/setup error. Bucket as Failed.
+			tf.ExitCode = -1
+			tf.DiffInfo = []byte("interactive_error: " + runErr.Error())
+		}
+		m.SetTaskFinished(tf)
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+	}
+}
+
