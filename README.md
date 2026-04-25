@@ -58,6 +58,50 @@ go run ./cmd/harness-cli logs <task-id>
 go run ./cmd/harness-cli cancel <task-id>
 ```
 
+## TUI
+
+`cmd/harness-tui` is an interactive Bubble Tea frontend that bundles
+`submit / ls / logs / cancel / prune / watch` into one screen.
+
+```bash
+go run ./cmd/harness-tui --server localhost:8539 --repo /abs/path/to/repo
+```
+
+Layout:
+
+```
+┌── Runners ────────┐ ┌── Tasks ──────────────────────┐
+│ Idle  /home/foo   │ │ Queued  9d50  prompt...        │
+│ Busy  /home/foo   │ │ Running abcd  prompt...        │
+└────────────────────┘ └────────────────────────────────┘
+┌── Log: <selected task> ──────────────────────────────┐
+│ [out] hello                                           │
+│ [err] ...                                             │
+└───────────────────────────────────────────────────────┘
+┌── Last command output ───────────────────────────────┐
+│ submitted: 9d508...                                   │
+│ [log] 11:06AM INFO ws session started ...             │
+└───────────────────────────────────────────────────────┘
+> [cmdline]
+tab focus · s submit · enter follow · c cancel · ? help · q quit
+```
+
+Keys:
+
+| Key | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | Cycle focus runners → tasks → cmdline |
+| `s` | Open the multi-line submit popup (`Ctrl+J` / `Ctrl+Enter` to send, `Esc` to cancel) |
+| `Enter` (tasks focus) | Follow the selected task's log |
+| `c` (tasks focus) | Cancel the selected task |
+| `q`, `Ctrl+C` | Quit |
+
+The cmdline accepts `submit / cancel / prune / clear / help / quit` (use
+`harness-cli prune --offline` for local-only worktree cleanup; the TUI's
+`prune` command is server-only). slog output (transport / pubsub / etc.)
+is folded into the cmdresult pane with a `[log]` prefix so it never
+scribbles over the alt screen.
+
 ## v1 limitations / non-goals
 
 - **Local only.** Server and runners must be reachable on `localhost`. The transport

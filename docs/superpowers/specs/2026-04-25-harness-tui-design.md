@@ -203,14 +203,14 @@ The parsed result is converted into a small action struct (`submitAction{repo, p
 - Goroutines bridge pubsub byte streams to `tea.Msg` via `program.Send(...)`.
 - One persistent `objproto.Connection` (with `trsf.AutoPing` keep-alive) for the lifetime of the TUI.
 
-Reconnection: if the underlying conn drops, dispatch a `disconnectedMsg`. The header bar shows a "DISCONNECTED" indicator and the TUI retries `cli.Dial` every 3 seconds. Tables and log viewport keep their last known state; events resume on reconnect.
+Reconnection: v1 detects loss only via cmdline-level RPC failures (each round-trip dials its own conn, so its error message lands in cmdresult). If the persistent pubsub conn drops silently, events stop arriving but the header keeps showing CONNECTED. Manual restart needed. Auto-reconnect is a v2 item — see §9 open questions.
 
 ## 6. Error handling
 
 | Failure | UI behavior |
 |---|---|
 | Initial Dial fails | Print error to stderr, exit non-zero |
-| Mid-run conn drop | Header shows DISCONNECTED, tables keep last state, retry every 3s |
+| Mid-run conn drop | v1: silent — header keeps showing CONNECTED, events stop. RPC errors during cmdline ops surface in cmdresult. Manual TUI restart. (Auto-reconnect deferred to v2.) |
 | Submit / Cancel / Prune RPC error | Error string shown in cmdresult, no state change |
 | Pubsub stream EOF (server LEAVE) | Try to JOIN again; log a single line in cmdresult |
 | Decode failure on event payload | Drop event, log to cmdresult footer "warn: decode error" |
@@ -233,6 +233,7 @@ None at design time. UX details (keybind ergonomics, color choices, popup width)
 
 ## 9. Out of scope (potential v2)
 
+- **Auto-reconnect** of the persistent pubsub connection (v1 needs a manual restart on drop)
 - Multi-server support (switch profile via header)
 - Persistent user config + history
 - Log search (`/`-mode within viewport)
