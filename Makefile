@@ -1,4 +1,4 @@
-.PHONY: all build webui-build wasm-check test vet clean help
+.PHONY: all build webui-build wasm-check test vet clean protoregen help
 
 GOROOT := $(shell go env GOROOT)
 WASM_EXEC := $(GOROOT)/lib/wasm/wasm_exec.js
@@ -34,6 +34,17 @@ clean:
 	rm -f webui/static/main.wasm
 	go clean ./...
 
+# Regenerate Go from .bgn schemas via the brgen local api server.
+# Default target set is runner/protocol/message.bgn only. Pass paths
+# as arguments or use --all to sweep every .bgn in the repo. First
+# invocation downloads ~/.cache/brgen-kit (~20 MB tarball + npm install,
+# one-time ~10 s); subsequent runs are ~5 s server start + ~1 s codegen.
+#   make protoregen
+#   make protoregen ARGS='runner/protocol/message.bgn'
+#   make protoregen ARGS=--all
+protoregen:
+	@./scripts/protoregen.sh $(ARGS)
+
 help:
 	@echo "Targets:"
 	@echo "  webui-build   build wasm module + refresh wasm_exec.js"
@@ -41,4 +52,5 @@ help:
 	@echo "  wasm-check    GOOS=js GOARCH=wasm go build (lint level)"
 	@echo "  test          go test ./..."
 	@echo "  vet           go vet ./..."
+	@echo "  protoregen    regenerate Go from .bgn via brgen api server"
 	@echo "  clean         remove build artifacts"
