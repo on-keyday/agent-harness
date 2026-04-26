@@ -152,6 +152,9 @@ const POLL_INTERVAL_MS = 5000;
       alert("select a runner from the dropdown first");
       return;
     }
+    // Reset xterm so the new session starts on a clean canvas (no leftover
+    // output, escape state, or scrollback from the previous attach).
+    term.reset();
     try {
       const taskID = await window.harness.startInteractive({ repo });
       attachedTask.textContent = `attached: ${taskID}`;
