@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>harness-webui</title>
+<link rel="stylesheet" href="/static/xterm.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>harness-webui</h1>
+    <div id="status">disconnected</div>
+  </header>
+  <main>
+    <section id="runners">
+      <h2>Runners</h2>
+      <pre id="runner-list"></pre>
+    </section>
+    <section id="tasks">
+      <h2>Tasks</h2>
+      <pre id="task-list"></pre>
+    </section>
+    <section id="cmdline">
+      <h2>Command</h2>
+      <input id="cmd-input" type="text" placeholder='submit --repo /tmp/test --task "echo hi"' size="80">
+      <button id="cmd-run">Run</button>
+      <pre id="cmd-output"></pre>
+    </section>
+    <section id="interactive">
+      <h2>Interactive</h2>
+      <input id="repo-input" type="text" placeholder="repo path (optional)" size="40">
+      <button id="attach">Attach</button>
+      <button id="detach">Detach</button>
+      <div id="attached-task"></div>
+      <div id="terminal"></div>
+    </section>
+  </main>
+</div>
+<script src="/static/wasm_exec.js"></script>
+<script src="/static/xterm.js"></script>
+<script src="/static/main.js" defer></script>
+</body>
+</html>
