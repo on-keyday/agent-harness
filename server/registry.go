@@ -94,6 +94,25 @@ func (r *Registry) SetStatus(id string, s protocol.RunnerStatus, currentTask str
 	e.LastSeen = time.Now()
 }
 
+// SetIdleIfBoundTo flips the runner's status to Idle and clears CurrentTask
+// only if it is currently bound to wantTaskID. Used as a defensive cleanup
+// path (e.g. after an interactive splice ends) where the runner might have
+// already been reassigned to a different task by the scheduler — clobbering
+// that with an unconditional SetStatus would lose the new assignment.
+// Returns true if the transition was applied.
+func (r *Registry) SetIdleIfBoundTo(id, wantTaskID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.runners[id]
+	if !ok || e.CurrentTask != wantTaskID {
+		return false
+	}
+	e.Status = protocol.RunnerStatus_Idle
+	e.CurrentTask = ""
+	e.LastSeen = time.Now()
+	return true
+}
+
 // SetLastSeen updates the runner's LastSeen timestamp to ts.
 // Returns false if the runner is not registered.
 func (r *Registry) SetLastSeen(id string, ts time.Time) bool {

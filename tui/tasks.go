@@ -63,7 +63,7 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo) {
 			taskStatusStr(t.Status),
 			idHex[:12],
 			truncateLeft(string(t.RepoPath), 28),
-			truncatePrompt(string(t.Prompt)),
+			renderPromptCell(t),
 		})
 		ids = append(ids, idHex)
 	}
@@ -110,6 +110,19 @@ func taskStatusStr(s protocol.TaskStatus) string {
 		return "Cancel"
 	}
 	return "?"
+}
+
+// renderPromptCell returns the prompt-column display string for a task.
+// Interactive tasks are surfaced as "<interactive>" because their prompt
+// is intentionally empty; oneshot tasks render their prompt truncated.
+// The Kind field is the authoritative source — TaskStatusEvent carries it
+// from the very first event, so a freshly-stubbed row knows its kind
+// without needing the next List snapshot to disambiguate.
+func renderPromptCell(t protocol.TaskInfo) string {
+	if t.Kind == protocol.TaskKind_Interactive {
+		return "<interactive>"
+	}
+	return truncatePrompt(string(t.Prompt))
 }
 
 // truncatePrompt collapses newlines and clips to ~140 chars (the column SetSize will further clip).

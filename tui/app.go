@@ -126,6 +126,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var ti protocol.TaskInfo
 			ti.Id = msg.Event.TaskId
 			ti.Status = msg.Event.TaskStatus
+			ti.Kind = msg.Event.TaskKind
 			ti.CreatedAt = msg.Event.Ts
 			a.tasksByID[id] = ti
 		} else {

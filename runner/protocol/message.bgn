@@ -95,6 +95,18 @@ enum TaskStatus:
     Failed
     Cancelled
 
+# TaskKind distinguishes how the task was requested.
+#  - oneshot:     submitted via SubmitRequest, claude runs with -p prompt and exits
+#  - interactive: opened via OpenInteractiveRequest, claude runs under a PTY
+#                 spliced bytewise to the requesting client. Has empty prompt.
+# Without this field the TUI has to infer the kind from len(prompt)==0,
+# which is brittle (a freshly-stubbed TaskInfo from TaskStatusEvent would
+# spuriously look interactive until the next List snapshot fills the prompt).
+enum TaskKind:
+    :u8
+    oneshot
+    interactive
+
 enum RunnerStatus:
     :u8
     Offline
@@ -113,6 +125,7 @@ format RunnerInfo:
 format TaskInfo:
     id :TaskID
     status :TaskStatus
+    kind :TaskKind
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     assigned_to :RunnerID
@@ -160,9 +173,15 @@ format OpenInteractiveRequest:
     repo_path_len :u16
     repo_path :[repo_path_len]u8
 
+enum OpenInteractiveStatus:
+    :u8
+    ok  = "ok"
+    no_runner_for_repo = "no_runner_for_repo"
+    runner_busy = "runner_busy"
+    internal_error = "internal_error"
+
 format OpenInteractiveResponse:
-    status :u8         # 0 = ok, 1 = no_runner_for_repo,
-                       # 2 = runner_busy, 3 = internal_error
+    status :OpenInteractiveStatus        
     task_id :TaskID    # populated when status == 0
     stream_id :u64     # populated when status == 0. Bidirectional stream the
                        # server opens toward the client; client looks it up via
@@ -215,6 +234,10 @@ format TaskStatusEvent:
     task_id :TaskID
     ts :u64
     task_status :TaskStatus
+    task_kind :TaskKind   # carried on every event (immutable for a task's lifetime)
+                          # so a TUI receiving the very first event for a task
+                          # can already render the right kind without waiting for
+                          # the next List snapshot.
     exit_code :i32
 
 format RunnerStatusEvent:

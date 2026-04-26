@@ -78,11 +78,20 @@ func New(cfg Config) *Server {
 
 	// publishTaskEvent constructs and publishes a TaskStatusEvent to the
 	// global tasks.status topic and the per-task task.<id>.status topic.
+	// TaskKind is looked up from the TaskStore — it is immutable for a
+	// task's lifetime, so emitting it on every event lets a fresh TUI
+	// subscriber tell oneshot from interactive without waiting for the
+	// next List snapshot.
 	publishTaskEvent := func(taskID string, kind protocol.StatusEventKind, status protocol.TaskStatus, exitCode int32) {
+		var taskKind protocol.TaskKind
+		if t, ok := s.tasks.Get(taskID); ok {
+			taskKind = t.Kind
+		}
 		ev := protocol.TaskStatusEvent{
 			Kind:       kind,
 			Ts:         uint64(time.Now().UnixNano()),
 			TaskStatus: status,
+			TaskKind:   taskKind,
 			ExitCode:   exitCode,
 		}
 		raw, err := hex.DecodeString(taskID)

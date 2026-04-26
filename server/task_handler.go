@@ -49,7 +49,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: Submit variant is nil")
 			return
 		}
-		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt))
+		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt), protocol.TaskKind_Oneshot)
 
 		// Decode hex task ID back to 16 raw bytes for the response.
 		raw, _ := hex.DecodeString(taskID)
@@ -148,14 +148,6 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	}
 }
 
-// OpenInteractiveResponse status values.
-const (
-	openInteractiveStatusOK              uint8 = 0
-	openInteractiveStatusNoRunner        uint8 = 1
-	openInteractiveStatusRunnerBusy      uint8 = 2 // reserved; Registry currently picks Idle only
-	openInteractiveStatusInternalError   uint8 = 3
-)
-
 // handleOpenInteractive matches the request's repo to an idle runner, allocates
 // two server-initiated bidirectional streams (one toward the client, one
 // toward the runner), tells the runner via RunnerRequest{open_exec, ...} to
@@ -168,7 +160,7 @@ const (
 // in) and TaskFinished (exit code from claude) over the regular
 // RunnerControl path.
 func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32, repoPath string) {
-	respond := func(status uint8, tid protocol.TaskID, streamID uint64) {
+	respond := func(status protocol.OpenInteractiveStatus, tid protocol.TaskID, streamID uint64) {
 		resp := protocol.TaskControlResponse{
 			Kind:      protocol.TaskControlKind_OpenInteractive,
 			RequestId: requestID,
@@ -184,13 +176,13 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32
 
 	runner, ok := h.Registry.OldestIdleForRepo(repoPath)
 	if !ok || runner.Conn == nil {
-		respond(openInteractiveStatusNoRunner, protocol.TaskID{}, 0)
+		respond(protocol.OpenInteractiveStatus_NoRunnerForRepo, protocol.TaskID{}, 0)
 		return
 	}
 
-	// Allocate the task entry. Empty prompt marks the task as interactive
-	// (the user-facing distinguisher in the tasks list).
-	taskIDHex := h.Tasks.Create(repoPath, "")
+	// Allocate the task entry. The TaskKind_Interactive value is the
+	// authoritative marker — empty prompt is incidental.
+	taskIDHex := h.Tasks.Create(repoPath, "", protocol.TaskKind_Interactive)
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
@@ -209,14 +201,14 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32
 	tuiStream := tuiConn.CreateBidirectionalStream()
 	if tuiStream == nil {
 		finishWithError("create client-side stream failed")
-		respond(openInteractiveStatusInternalError, tid, 0)
+		respond(protocol.OpenInteractiveStatus_InternalError, tid, 0)
 		return
 	}
 	runnerStream := runner.Conn.CreateBidirectionalStream()
 	if runnerStream == nil {
 		_ = tuiStream.CloseBoth()
 		finishWithError("create runner-side stream failed")
-		respond(openInteractiveStatusInternalError, tid, 0)
+		respond(protocol.OpenInteractiveStatus_InternalError, tid, 0)
 		return
 	}
 
@@ -231,30 +223,73 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32
 		_ = tuiStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
 		finishWithError("send open_exec to runner: " + err.Error())
-		respond(openInteractiveStatusInternalError, tid, 0)
+		respond(protocol.OpenInteractiveStatus_InternalError, tid, 0)
 		return
 	}
 
-	respond(openInteractiveStatusOK, tid, uint64(tuiStream.ID()))
-	go spliceBidi(tuiStream, runnerStream, taskIDHex)
+	respond(protocol.OpenInteractiveStatus_Ok, tid, uint64(tuiStream.ID()))
+	go func() {
+		spliceBidi(tuiStream, runnerStream, taskIDHex)
+
+		// Defensive cleanup. The expected path is that the runner's
+		// ExecuteCommand returns once the splice tears down both stream
+		// ends, and the runner sends TaskFinished — RunnerHandler then
+		// flips the task to Succeeded/Failed and the runner back to Idle.
+		//
+		// But if the runner crashed mid-session, the runner connection
+		// dropped, or the runner is wedged before it can reach the
+		// TaskFinished step, the task we marked Running in this handler
+		// (and the runner we marked Busy) would otherwise stay that way
+		// forever. Finalize them here, but only if the state we set is
+		// still in place — a TaskFinished that genuinely arrived first
+		// already moved the task terminal and the runner Idle, and we
+		// must not undo that (the scheduler may have re-bound the
+		// runner to a different task by now).
+		// Cancel is idempotent (skips terminal states), so a TaskFinished
+		// that genuinely arrived first is unaffected. SetIdleIfBoundTo
+		// holds the registry lock for the check + flip, so it cannot
+		// clobber a fresh scheduler assignment that already moved the
+		// runner to a different task.
+		if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
+			h.Tasks.Cancel(taskIDHex)
+		}
+		h.Registry.SetIdleIfBoundTo(runner.ID, taskIDHex)
+		if h.OnChange != nil {
+			h.OnChange()
+		}
+	}()
 }
 
 // spliceBidi pumps bytes between two bidirectional streams in both directions
 // until either side closes or errors. Each side's EOF is propagated to the
 // other so exec.ExecuteCommand can react to TUI detach (close stream → EOF
 // on PTY stdin pipe → claude exits via SIGHUP/SIGTERM/SIGKILL ladder).
+//
+// When either direction returns — clean EOF or error — both streams are
+// fully closed via CloseBoth. For an interactive PTY, half-closes are not
+// meaningful: if one direction is dead the other should be torn down too,
+// otherwise the surviving relay goroutine blocks forever on ReadDirect
+// (e.g. TUI vanished mid-session, claude is sitting idle waiting for
+// stdin) and the splice never finishes.
 func spliceBidi(a, b trsf.BidirectionalStream, taskIDHex string) {
 	var wg sync.WaitGroup
+	var once sync.Once
+	teardown := func() {
+		once.Do(func() {
+			_ = a.CloseBoth()
+			_ = b.CloseBoth()
+		})
+	}
 	wg.Add(2)
-	go func() { defer wg.Done(); relayBytes(a, b) }()
-	go func() { defer wg.Done(); relayBytes(b, a) }()
+	go func() { defer wg.Done(); defer teardown(); relayBytes(a, b) }()
+	go func() { defer wg.Done(); defer teardown(); relayBytes(b, a) }()
 	wg.Wait()
 	slog.Info("OpenInteractive: splice ended", "task_id", taskIDHex)
 }
 
 // relayBytes copies bytes from src to dst, propagating EOF. Returns on the
-// first read error or write error — the paired goroutine in the other
-// direction handles the reverse half.
+// first read error or write error — the spliceBidi caller force-closes both
+// streams once either direction returns, which unblocks the reverse relay.
 func relayBytes(src, dst trsf.BidirectionalStream) {
 	for {
 		data, eof, err := src.ReadDirect(64 * 1024)
@@ -367,6 +402,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info := protocol.TaskInfo{
 		Id:        tid,
 		Status:    t.Status,
+		Kind:      t.Kind,
 		CreatedAt: uint64(t.CreatedAt.UnixNano()),
 	}
 	info.SetRepoPath([]byte(t.RepoPath))

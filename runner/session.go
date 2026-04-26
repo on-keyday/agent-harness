@@ -125,6 +125,15 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 		_ = s.Sender.Send(data)
 	}
+
+	// Step 6: Clean up the worktree directory. The branch ref harness/<id>
+	// is intentionally retained so any commits claude made in the worktree
+	// are still reachable via `git checkout harness/<id>`. Failure to remove
+	// is logged but does not affect task lifecycle (TaskFinished already
+	// sent); a subsequent runner start can scan stale worktrees if needed.
+	if err := s.wm.Remove(taskIDHex); err != nil {
+		s.logger().Warn("worktree remove failed", "task_id", taskIDHex, "err", err)
+	}
 }
 
 // handleOpenExec is the runner-side counterpart of the server's
@@ -207,6 +216,12 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		}
 		m.SetTaskFinished(tf)
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+	}
+
+	// Step 6: Clean up the worktree directory. See handleAssign for the
+	// rationale on why the branch ref is retained.
+	if err := s.wm.Remove(taskIDHex); err != nil {
+		log.Warn("worktree remove failed", "task_id", taskIDHex, "err", err)
 	}
 }
 

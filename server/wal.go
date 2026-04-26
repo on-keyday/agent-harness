@@ -11,11 +11,16 @@ import (
 
 // WALEvent is one append record. Only the fields relevant to the event type are populated.
 type WALEvent struct {
-	Type        string `json:"type"`                    // "task_created" | "task_assigned" | "task_finished" | "task_cancelled"
+	Type        string `json:"type"` // "task_created" | "task_assigned" | "task_finished" | "task_cancelled"
 	TaskID      string `json:"task_id,omitempty"`
 	RunnerID    string `json:"runner_id,omitempty"`
 	RepoPath    string `json:"repo_path,omitempty"`
 	Prompt      string `json:"prompt,omitempty"`
+	// Kind distinguishes oneshot vs interactive tasks. Encoded as the
+	// numeric protocol.TaskKind value so the wire format is stable across
+	// schema renames. 0 (oneshot) is the default for legacy WAL entries
+	// that pre-date this field.
+	Kind        uint8  `json:"kind,omitempty"`
 	WorktreeDir string `json:"worktree_dir,omitempty"`
 	ExitCode    *int32 `json:"exit_code,omitempty"`
 	DiffInfo    []byte `json:"diff_info,omitempty"`
