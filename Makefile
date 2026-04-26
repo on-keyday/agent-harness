@@ -1,0 +1,44 @@
+.PHONY: all build webui-build wasm-check test vet clean help
+
+GOROOT := $(shell go env GOROOT)
+WASM_EXEC := $(GOROOT)/lib/wasm/wasm_exec.js
+
+all: build
+
+# Build the wasm module and refresh wasm_exec.js from the current Go SDK.
+webui-build:
+	GOOS=js GOARCH=wasm go build -o webui/static/main.wasm ./cmd/harness-webui-wasm/
+	cp $(WASM_EXEC) webui/static/wasm_exec.js
+
+# Build all native binaries. Requires webui-build to have run at least once
+# (cmd/harness-server uses //go:embed which needs static/main.wasm).
+build: webui-build
+	go build ./...
+
+# Static check that the wasm-relevant packages still compile under
+# GOOS=js GOARCH=wasm. Run before commit.
+wasm-check:
+	GOOS=js GOARCH=wasm go build ./cli/... ./transport/... ./cmd/harness-webui-wasm/
+
+test:
+	go test ./...
+
+# NOTE: go vet currently exits non-zero due to pre-existing unreachable-code
+# warnings in exec/frame/frame.go (bgn-generated; will be overwritten on
+# regeneration). Treat exit-1 as expected unless new warnings appear in
+# non-generated files.
+vet:
+	go vet ./...
+
+clean:
+	rm -f webui/static/main.wasm
+	go clean ./...
+
+help:
+	@echo "Targets:"
+	@echo "  webui-build   build wasm module + refresh wasm_exec.js"
+	@echo "  build         webui-build then go build ./..."
+	@echo "  wasm-check    GOOS=js GOARCH=wasm go build (lint level)"
+	@echo "  test          go test ./..."
+	@echo "  vet           go vet ./..."
+	@echo "  clean         remove build artifacts"
