@@ -83,14 +83,49 @@ func (m *connectionMap) Delete(addr netip.AddrPort) {
 	delete(m.connMap, addr)
 }
 
-func handleRawEndpoint(transportName string, connChan chan *WebSocketConn, senderChannel <-chan *objproto.PacketData, rawSess objproto.RawEndpoint, connMap *connectionMap, logger *slog.Logger, tlsConf *tls.Config) {
+// WebSocketConfig configures a WebSocket-backed objproto Endpoint. The same
+// struct is used for Client / Server / Mutual modes; the Path field is
+// interpreted by Client/Mutual as the dial Location.Path, and by
+// Server/Mutual as the mount path passed to mux.Handle.
+//
+// The transport package does not own a path convention. Callers are expected
+// to align Client and Server values; cli.WebSocketPath is the canonical
+// harness-side default.
+//
+// TLS is consulted for Origin scheme decisions (ws:// vs wss://). The
+// listen-side TLS for Server / Mutual is owned by the caller's *http.Server.
+//
+// Mode selects Client / Server / Mutual semantics. The mux argument of
+// WebSocketEndpoint must be nil for Client and non-nil for Server / Mutual.
+type WebSocketConfig struct {
+	Logger *slog.Logger
+	Path   string
+	TLS    *tls.Config
+	Mode   objproto.EndpointMode
+}
+
+// startTransportLoops runs two goroutines on top of rawSess:
+//   - recv: pumps frames from each accepted/dialed *WebSocketConn into rawSess.Receive
+//   - send: drains rawSess.GetSenderChannel and writes to the mapped conn,
+//     dialing a fresh outbound connection (using dialPath) when a Handshake
+//     packet targets an unknown peer.
+//
+// The dial branch in the send loop relies on an upstream invariant:
+// objproto.endpoint.SendHandshake (objproto/objproto.go:639-641) returns an
+// error for EndpointModeServer. So Handshake packets only reach this loop
+// from Client or Mutual endpoints; for pure Server callers dialPath being
+// empty is safe because no Handshake is ever observed.
+func startTransportLoops(rawSess objproto.RawEndpoint, transportName string,
+	connChan chan *WebSocketConn, connMap *connectionMap,
+	senderChannel <-chan *objproto.PacketData,
+	tlsConf *tls.Config, dialPath string, logger *slog.Logger) {
+
 	go func() {
 		for conn := range connChan {
 			go func(c *WebSocketConn) {
 				for {
 					recv, err := c.Receive()
 					if err != nil {
-						// map
 						connMap.Delete(c.remoteAddr)
 						if errors.Is(err, io.EOF) {
 							logger.Info("websocket connection closed by remote", slog.String("address", c.remoteAddr.String()))
@@ -109,7 +144,7 @@ func handleRawEndpoint(transportName string, connChan chan *WebSocketConn, sende
 		for pkt := range senderChannel {
 			conn, ok := connMap.Get(pkt.To.Addr)
 			if !ok {
-				if pkt.Kind == packet.PacketKind_Handshake { // initial, create connection
+				if pkt.Kind == packet.PacketKind_Handshake {
 					go func() {
 						wsScheme := "ws"
 						httpScheme := "http"
@@ -121,6 +156,7 @@ func handleRawEndpoint(transportName string, connChan chan *WebSocketConn, sende
 							Location: &url.URL{
 								Scheme: wsScheme,
 								Host:   pkt.To.Addr.String(),
+								Path:   dialPath,
 							},
 							Origin: &url.URL{
 								Scheme: httpScheme,
@@ -162,81 +198,104 @@ func handleRawEndpoint(transportName string, connChan chan *WebSocketConn, sende
 	}()
 }
 
-// WebSocketEndpoint constructs a WebSocket-backed objproto.Endpoint in the
-// requested mode. NOTE: addr is only used when sessMode is EndpointModeServer
-// or EndpointModeMutual (it is the listen address for the embedded http.Server).
-// In EndpointModeClient, addr is ignored — pass "" by convention. tlsConf is
-// used for both the listen side (Server/Mutual) and the dial side (Client),
-// so it is meaningful in all modes.
-func WebSocketEndpoint(logger *slog.Logger, addr string, tlsConf *tls.Config, sessMode objproto.EndpointMode) (objproto.Endpoint, error) {
-	rawSess := objproto.NewEndpoint(logger, sessMode)
-	return WebSocketEndpointEx(rawSess, logger, addr, tlsConf, rawSess.GetSenderChannel())
+// newAcceptHandler builds the http.Handler that upgrades incoming WS
+// connections, registers them in connMap, and feeds them into connChan
+// for the recv loop to pick up.
+func newAcceptHandler(connChan chan<- *WebSocketConn, connMap *connectionMap, tlsConf *tls.Config, logger *slog.Logger) http.Handler {
+	return &websocket.Server{
+		Config: websocket.Config{
+			TlsConfig: tlsConf,
+		},
+		Handshake: func(c *websocket.Config, r *http.Request) error {
+			var err error
+			c.Origin, err = websocket.Origin(c, r)
+			if err == nil && c.Origin == nil {
+				return fmt.Errorf("null origin")
+			}
+			return err
+		},
+		Handler: func(ws *websocket.Conn) {
+			ctx, cancel := context.WithCancel(ws.Request().Context())
+			remoteAddr, err := netip.ParseAddrPort(ws.Request().RemoteAddr)
+			if err != nil {
+				logger.Error("invalid remote address", slog.String("address", ws.Request().RemoteAddr))
+				ws.Close()
+				cancel()
+				return
+			}
+			conn := newWebSocketConn(ws, remoteAddr, cancel)
+			connMap.Set(remoteAddr, conn)
+			connChan <- conn
+			<-ctx.Done()
+		},
+	}
 }
 
-// WebSocketEndpointEx is the lower-level constructor used by dualstack and
-// callers that want to share a RawEndpoint. The addr / tlsConf rules are the
-// same as WebSocketEndpoint (addr ignored for Client, tlsConf used by all).
-func WebSocketEndpointEx(rawSess objproto.RawEndpoint, logger *slog.Logger, addr string, tlsConf *tls.Config, sendTo <-chan *objproto.PacketData) (objproto.Endpoint, error) {
+// transportName returns "wss" if a TLS config is supplied, "ws" otherwise.
+// Used to tag PacketData with the right transport identifier.
+func transportName(tlsConf *tls.Config) string {
+	if tlsConf != nil {
+		return "wss"
+	}
+	return "ws"
+}
+
+// WebSocketEndpoint constructs a WebSocket-backed objproto Endpoint in the
+// mode specified by cfg.Mode.
+//
+// mux contract:
+//   - Client:        mux must be nil (no accept handler is registered)
+//   - Server/Mutual: mux must be non-nil; the accept handler is registered
+//     via mux.Handle(cfg.Path, handler)
+//
+// The returned Endpoint is rawSess directly (objproto.RawEndpoint embeds
+// objproto.Endpoint). The listen-side http.Server lifecycle is owned by
+// the caller; for Server / Mutual the caller must run http.ListenAndServe
+// (or equivalent) on a *http.Server bound to mux.
+func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoint, error) {
+	rawSess := objproto.NewEndpoint(cfg.Logger, cfg.Mode)
+	if err := WebSocketEndpointEx(rawSess, mux, cfg); err != nil {
+		return nil, err
+	}
+	return rawSess, nil
+}
+
+// WebSocketEndpointEx is the lower-level variant for callers that already
+// own a RawEndpoint (e.g. dualstack). It enforces the same mux contract
+// as WebSocketEndpoint.
+func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig) error {
+	switch cfg.Mode {
+	case objproto.EndpointModeClient:
+		if mux != nil {
+			return fmt.Errorf("transport.WebSocketEndpoint: mux must be nil for Client mode")
+		}
+	case objproto.EndpointModeServer, objproto.EndpointModeMutual:
+		if mux == nil {
+			return fmt.Errorf("transport.WebSocketEndpoint: mux is required for %v mode", cfg.Mode)
+		}
+	default:
+		return fmt.Errorf("transport.WebSocketEndpoint: unknown EndpointMode: %v", cfg.Mode)
+	}
+
 	connChan := make(chan *WebSocketConn, 10)
 	connMap := &connectionMap{
 		connMap: make(map[netip.AddrPort]*WebSocketConn),
 	}
 
-	// mutual or server mode listens for incoming connections
-	if rawSess.EndpointMode() != objproto.EndpointModeClient {
-		handler := &websocket.Server{
-			Config: websocket.Config{
-				TlsConfig: tlsConf,
-			},
-			Handshake: func(c *websocket.Config, r *http.Request) error {
-				var err error
-				c.Origin, err = websocket.Origin(c, r)
-				if err == nil && c.Origin == nil {
-					return fmt.Errorf("null origin")
-				}
-				return err
-			},
-			Handler: func(ws *websocket.Conn) {
-				ctx, cancel := context.WithCancel(ws.Request().Context())
-				remoteAddr, err := netip.ParseAddrPort(ws.Request().RemoteAddr)
-				if err != nil {
-					logger.Error("invalid remote address", slog.String("address", ws.Request().RemoteAddr))
-					ws.Close()
-					cancel()
-					return
-				}
-				conn := newWebSocketConn(ws, remoteAddr, cancel)
-				connMap.Set(remoteAddr, conn)
-				connChan <- conn
-				<-ctx.Done() // Wait for the context to be done before closing the connection
-			},
-		}
-
-		httpServer := &http.Server{Addr: addr}
-		mux := http.NewServeMux()
-		mux.Handle("/", handler)
-		httpServer.Handler = mux
-
-		go func() {
-			if tlsConf != nil {
-				httpServer.TLSConfig = tlsConf
-				if err := httpServer.ListenAndServeTLS("", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					logger.Error("HTTPS server failed", "error", err)
-				}
-			} else {
-				if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-					logger.Error("HTTP server failed", "error", err)
-				}
-			}
-		}()
+	// Server/Mutual: register accept handler on caller-owned mux.
+	if cfg.Mode != objproto.EndpointModeClient {
+		mux.Handle(cfg.Path, newAcceptHandler(connChan, connMap, cfg.TLS, cfg.Logger))
 	}
 
-	transportName := "ws"
-	if tlsConf != nil {
-		transportName = "wss"
+	// dialPath: Client/Mutual will dial outbound, Server will not.
+	// Per upstream invariant (objproto.SendHandshake rejects Server mode),
+	// no Handshake packet reaches the sender loop in Server mode anyway.
+	dialPath := ""
+	if cfg.Mode != objproto.EndpointModeServer {
+		dialPath = cfg.Path
 	}
 
-	handleRawEndpoint(transportName, connChan, sendTo, rawSess, connMap, logger, tlsConf)
-
-	return rawSess, nil
+	startTransportLoops(rawSess, transportName(cfg.TLS), connChan, connMap,
+		rawSess.GetSenderChannel(), cfg.TLS, dialPath, cfg.Logger)
+	return nil
 }

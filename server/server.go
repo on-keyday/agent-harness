@@ -3,12 +3,15 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -235,18 +238,47 @@ func (s *Server) Run(ctx context.Context) error {
 			}()
 		}
 	}
-	sess, err := transport.WebSocketEndpoint(s.cfg.Logger, s.cfg.Addr, nil, objproto.EndpointModeServer)
+	mux := http.NewServeMux()
+	sess, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
+		Logger: s.cfg.Logger,
+		Path:   cli.WebSocketPath,
+		Mode:   objproto.EndpointModeServer,
+	})
 	if err != nil {
 		return fmt.Errorf("websocket session: %w", err)
 	}
+
+	httpServer := &http.Server{Addr: s.cfg.Addr, Handler: mux}
+	serverDone := make(chan error, 1)
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverDone <- err
+			return
+		}
+		serverDone <- nil
+	}()
+
 	go objproto.AutoGarbageCollect(sess, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 	ch := sess.GetNewActiveConnectionChannel()
 	for {
 		select {
 		case <-ctx.Done():
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = httpServer.Shutdown(shutdownCtx)
+			shutdownCancel()
+			<-serverDone
 			return ctx.Err()
+		case serveErr := <-serverDone:
+			if serveErr != nil {
+				return fmt.Errorf("http server: %w", serveErr)
+			}
+			return nil
 		case session, ok := <-ch:
 			if !ok {
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = httpServer.Shutdown(shutdownCtx)
+				shutdownCancel()
+				<-serverDone
 				return nil
 			}
 			go s.handleConnection(ctx, session)

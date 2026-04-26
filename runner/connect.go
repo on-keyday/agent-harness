@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -31,7 +32,11 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.Logger = slog.Default()
 	}
 
-	ep, err := transport.WebSocketEndpoint(cfg.Logger, "", nil, objproto.EndpointModeClient)
+	ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
+		Logger: cfg.Logger,
+		Path:   cli.WebSocketPath,
+		Mode:   objproto.EndpointModeClient,
+	})
 	if err != nil {
 		return fmt.Errorf("ws endpoint: %w", err)
 	}

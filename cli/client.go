@@ -35,7 +35,11 @@ type Client struct {
 // kind responses are handled by peer.Conn directly (it routes them to its
 // pubsub.Client); TaskControl-kind responses land in c.dispatchControl below.
 func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
-	ep, err := transport.WebSocketEndpoint(slog.Default(), "", nil, objproto.EndpointModeClient)
+	ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
+		Logger: slog.Default(),
+		Path:   WebSocketPath,
+		Mode:   objproto.EndpointModeClient,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("ws endpoint: %w", err)
 	}
