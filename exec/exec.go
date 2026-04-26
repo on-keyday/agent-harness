@@ -8,7 +8,6 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"os/signal"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -348,30 +347,15 @@ func (w *CommandExecutionStream) RemoteShell() error {
 		return err
 	}
 
-	// SIGWINCH forwarding: when the local terminal resizes, the kernel
-	// delivers SIGWINCH to this process. We forward each event as a fresh
-	// TerminalWindowSize control frame so the runner-side PTY (and claude
-	// inside it) sees the new dimensions and re-flows. Without this,
-	// claude renders at the dimensions captured at attach time and stays
-	// frozen at that size for the rest of the session even if the user
-	// resizes their terminal.
-	winch := make(chan os.Signal, 1)
-	signal.Notify(winch, syscall.SIGWINCH)
-	done := make(chan struct{})
-	defer func() {
-		signal.Stop(winch)
-		close(done)
-	}()
-	go func() {
-		for {
-			select {
-			case <-winch:
-				_ = sendSize()
-			case <-done:
-				return
-			}
-		}
-	}()
+	// Window-size forwarding: when the local terminal resizes, push a
+	// fresh TerminalWindowSize control frame so the runner-side PTY (and
+	// claude inside it) sees the new dimensions and re-flows. Without
+	// this, claude renders at the dimensions captured at attach time and
+	// stays frozen for the rest of the session even if the user resizes
+	// their terminal. Detection is platform-specific: SIGWINCH on Unix,
+	// polling on Windows — see winsize_{unix,windows}.go.
+	stopWinSize := startWindowSizeForwarder(sendSize)
+	defer stopWinSize()
 
 	stdin := w.Stdin()
 	stdout := w.Stdout()
