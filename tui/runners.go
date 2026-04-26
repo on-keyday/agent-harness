@@ -11,6 +11,10 @@ import (
 type RunnersModel struct {
 	table   table.Model
 	focused bool
+	// rowRunners[i] is the full RunnerInfo for table row i; mirrored alongside
+	// the bubbles/table rows so the detail popup can show fields the row
+	// truncates (full repo path, full current task id, timestamps).
+	rowRunners []protocol.RunnerInfo
 }
 
 func NewRunners() RunnersModel {
@@ -50,7 +54,21 @@ func (m *RunnersModel) SetRows(rs []protocol.RunnerInfo) {
 			shortHexNonZero(r.CurrentTask.Id[:]),
 		})
 	}
+	m.rowRunners = rs
 	m.table.SetRows(rows)
+}
+
+// SelectedRunner returns the full RunnerInfo for the focused row, or nil
+// when the table is empty / cursor out of range.
+func (m *RunnersModel) SelectedRunner() *protocol.RunnerInfo {
+	if len(m.rowRunners) == 0 {
+		return nil
+	}
+	idx := m.table.Cursor()
+	if idx < 0 || idx >= len(m.rowRunners) {
+		return nil
+	}
+	return &m.rowRunners[idx]
 }
 
 func (m RunnersModel) Update(msg tea.Msg) (RunnersModel, tea.Cmd) {

@@ -14,6 +14,10 @@ type TasksModel struct {
 	// rowIDs[i] is the full hex task ID for row i; bubbles/table doesn't carry
 	// arbitrary metadata so we mirror.
 	rowIDs []string
+	// rowTasks[i] is the full TaskInfo for row i, mirrored for the detail
+	// popup so it can show fields the row truncates (full prompt, worktree
+	// dir, timestamps, exit code).
+	rowTasks []protocol.TaskInfo
 }
 
 func NewTasks() TasksModel {
@@ -68,6 +72,7 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo) {
 		ids = append(ids, idHex)
 	}
 	m.rowIDs = ids
+	m.rowTasks = ts
 	m.table.SetRows(rows)
 }
 
@@ -81,6 +86,19 @@ func (m *TasksModel) SelectedID() string {
 		return ""
 	}
 	return m.rowIDs[idx]
+}
+
+// SelectedTask returns the full TaskInfo for the focused row, or nil when
+// the table is empty / cursor out of range.
+func (m *TasksModel) SelectedTask() *protocol.TaskInfo {
+	if len(m.rowTasks) == 0 {
+		return nil
+	}
+	idx := m.table.Cursor()
+	if idx < 0 || idx >= len(m.rowTasks) {
+		return nil
+	}
+	return &m.rowTasks[idx]
 }
 
 func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {

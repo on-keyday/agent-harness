@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -33,6 +34,7 @@ type App struct {
 	cmdresult CmdResultModel
 	cmdline   textinput.Model
 	popup     PopupModel
+	detail    DetailPopup
 
 	focus  focus
 	width  int
@@ -65,7 +67,7 @@ type Config struct {
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / cancel / prune / clear / help / quit"
+	cmd.Placeholder = "submit / cancel / prune / repo / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -123,20 +125,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		id := FormatTaskID(msg.Event.TaskId)
 		cur, ok := a.tasksByID[id]
 		if !ok {
+			// First time we see this task. TaskStatusEvent carries id /
+			// status / kind / timestamps but not RepoPath, Prompt, or
+			// WorktreeDir — those live only in the full TaskInfo from
+			// List. Stub the row so the table reflects the new task
+			// immediately (with the correct interactive/oneshot kind),
+			// then kick a snapshot refresh so the remaining fields fill
+			// in on the next tick rather than waiting for the periodic
+			// refresh cadence.
 			var ti protocol.TaskInfo
 			ti.Id = msg.Event.TaskId
 			ti.Status = msg.Event.TaskStatus
 			ti.Kind = msg.Event.TaskKind
 			ti.CreatedAt = msg.Event.Ts
 			a.tasksByID[id] = ti
-		} else {
-			cur.Status = msg.Event.TaskStatus
-			if msg.Event.Kind == protocol.StatusEventKind_TaskEnded {
-				cur.ExitCode = msg.Event.ExitCode
-				cur.EndedAt = msg.Event.Ts
-			}
-			a.tasksByID[id] = cur
+			a.refreshTasksTable()
+			return a, RefreshSnapshot(a.client)
 		}
+		cur.Status = msg.Event.TaskStatus
+		if msg.Event.Kind == protocol.StatusEventKind_TaskEnded {
+			cur.ExitCode = msg.Event.ExitCode
+			cur.EndedAt = msg.Event.Ts
+		}
+		a.tasksByID[id] = cur
 		a.refreshTasksTable()
 		return a, nil
 
@@ -195,7 +206,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			short = short[:12]
 		}
 		a.cmdresult.Append(OKStyle.Render("submitted: ") + short)
-		return a, nil
+		// Pull a fresh snapshot so the new row shows up populated (Repo /
+		// Prompt) without waiting for the periodic refresh — and without
+		// leaving the user looking at a stub that arrived via TaskEventMsg.
+		return a, RefreshSnapshot(a.client)
 
 	case CancelResultMsg:
 		if msg.Err != nil {
@@ -250,7 +264,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case tea.KeyMsg:
-		// Popup intercepts ALL keys when open.
+		// Detail popup is read-only — Esc closes, all other keys swallowed
+		// so cursor movement / 'q' / etc. don't leak through.
+		if a.detail.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				a.detail.Close()
+			}
+			return a, nil
+		}
+		// Submit popup intercepts ALL keys when open.
 		if a.popup.IsOpen() {
 			switch msg.Type {
 			case tea.KeyEsc:
@@ -305,6 +327,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tea.Exec then to actually suspend the program and run the shell.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
 			return a, DoOpenInteractive(a.client, a.defaultRepo)
+		}
+		// `d` opens the detail popup for the focused row (runners or tasks).
+		if !logsEditing && msg.String() == "d" {
+			switch a.focus {
+			case focusRunners:
+				if r := a.runners.SelectedRunner(); r != nil {
+					a.detail.Open("Runner detail", formatRunnerDetail(*r))
+				} else {
+					a.cmdresult.Append(WarnStyle.Render("no runner selected"))
+				}
+				return a, nil
+			case focusTasks:
+				if t := a.tasks.SelectedTask(); t != nil {
+					a.detail.Open("Task detail", formatTaskDetail(*t))
+				} else {
+					a.cmdresult.Append(WarnStyle.Render("no task selected"))
+				}
+				return a, nil
+			}
 		}
 		// `c` cancels the selected task when tasks panel is focused.
 		if a.focus == focusTasks && msg.String() == "c" {
@@ -437,7 +478,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · i interactive · c cancel · q quit"
+		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · i interactive · d detail · c cancel · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -451,6 +492,9 @@ func (a *App) View() string {
 	}, "\n")
 	if a.popup.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.popup.View())
+	}
+	if a.detail.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.detail.View())
 	}
 	return view
 }
@@ -523,7 +567,36 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Clear()
 		return a, nil
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / cancel <id> / prune [--before=DUR] [--offline] / clear / help / quit")
+		a.cmdresult.Append("commands: submit / cancel <id> / prune [--before=DUR] [--offline] / repo <path> / clear / help / quit")
+		return a, nil
+	case RepoAction:
+		// Validate against the runner registry (the actual source of truth
+		// for "is this a dispatchable repo"), not the TUI host's local fs —
+		// runner and TUI may be on different hosts in the future, in which
+		// case a local os.Stat would be meaningless.
+		//
+		// We still resolve relative input via filepath.Abs against the
+		// TUI's cwd, since that matches the convention of harness-tui's
+		// startup --repo flag. Users who want literal cross-host paths
+		// can pass an already-absolute string.
+		abs, err := filepath.Abs(v.Path)
+		if err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("repo: %v", err)))
+			return a, nil
+		}
+		hasRunner := false
+		for _, r := range a.runnersSnapshot {
+			if string(r.RepoPath) == abs {
+				hasRunner = true
+				break
+			}
+		}
+		if !hasRunner {
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("repo: no runner currently registered for %s — submit/interactive will fail with NoRunnerForRepo until one connects", abs)))
+		}
+		a.defaultRepo = abs
+		a.popup.SetRepo(abs)
+		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", abs))
 		return a, nil
 	case SubmitAction:
 		return a, DoSubmit(a.client, v.Repo, v.Prompt)

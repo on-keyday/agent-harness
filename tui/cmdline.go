@@ -32,12 +32,20 @@ type ClearAction struct{}
 type QuitAction struct{}
 type HelpAction struct{}
 
+// RepoAction switches the TUI session's default repo. Subsequent submit
+// popups, interactive opens, and slash-command --repo defaults all use the
+// new value. Per-action --repo overrides still win on a single call.
+type RepoAction struct {
+	Path string
+}
+
 func (SubmitAction) isAction() {}
 func (CancelAction) isAction() {}
 func (PruneAction) isAction()  {}
 func (ClearAction) isAction()  {}
 func (QuitAction) isAction()   {}
 func (HelpAction) isAction()   {}
+func (RepoAction) isAction()   {}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -63,9 +71,21 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return QuitAction{}, nil
 	case "help":
 		return HelpAction{}, nil
+	case "repo":
+		return parseRepo(tokens[1:])
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
 	}
+}
+
+func parseRepo(args []string) (Action, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("repo: path required")
+	}
+	if len(args) > 1 {
+		return nil, fmt.Errorf("repo: too many arguments (got %d, want 1)", len(args))
+	}
+	return RepoAction{Path: args[0]}, nil
 }
 
 func parseSubmit(args []string, defaultRepo string) (Action, error) {
