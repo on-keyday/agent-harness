@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"os/signal"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -333,12 +334,45 @@ func (w *CommandExecutionStream) RemoteShell() error {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), old)
 
-	fullSize, err := pty.GetsizeFull(os.Stdin)
-
-	err = w.SetTerminalWindowSize(fullSize.Rows, fullSize.Cols, fullSize.X, fullSize.Y)
-	if err != nil {
+	// sendSize re-queries the local terminal dimensions and forwards them
+	// over the control frame channel. Used both for the initial size and
+	// for every SIGWINCH thereafter.
+	sendSize := func() error {
+		sz, err := pty.GetsizeFull(os.Stdin)
+		if err != nil {
+			return err
+		}
+		return w.SetTerminalWindowSize(sz.Rows, sz.Cols, sz.X, sz.Y)
+	}
+	if err := sendSize(); err != nil {
 		return err
 	}
+
+	// SIGWINCH forwarding: when the local terminal resizes, the kernel
+	// delivers SIGWINCH to this process. We forward each event as a fresh
+	// TerminalWindowSize control frame so the runner-side PTY (and claude
+	// inside it) sees the new dimensions and re-flows. Without this,
+	// claude renders at the dimensions captured at attach time and stays
+	// frozen at that size for the rest of the session even if the user
+	// resizes their terminal.
+	winch := make(chan os.Signal, 1)
+	signal.Notify(winch, syscall.SIGWINCH)
+	done := make(chan struct{})
+	defer func() {
+		signal.Stop(winch)
+		close(done)
+	}()
+	go func() {
+		for {
+			select {
+			case <-winch:
+				_ = sendSize()
+			case <-done:
+				return
+			}
+		}
+	}()
+
 	stdin := w.Stdin()
 	stdout := w.Stdout()
 	go io.Copy(stdin, os.Stdin)

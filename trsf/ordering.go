@@ -30,6 +30,19 @@ func (oq *OrderingQueue) maybeNotify() {
 }
 
 func (oq *OrderingQueue) Push(data *RecvData) error {
+	// A zero-length non-EOF frame carries no payload byte range
+	// (covers [Offset, Offset)) and no terminator. Its only purpose on
+	// the wire is to advertise stream creation — by the time we reach
+	// here, Streams.handlePacket has already materialised the recv
+	// stream entry via getRecvStream, so the OrderingQueue has nothing
+	// to track. Dropping these here also prevents a subsequent real
+	// payload at the same offset from being mis-detected as a duplicate
+	// by the data.Offset == d.Offset branch below (which assumes
+	// "same offset ⇒ same byte range", an assumption that 0-length
+	// markers violate).
+	if len(data.Data) == 0 && !data.Eof {
+		return nil
+	}
 	if oq.nextOffset > data.Offset {
 		return nil // duplicate or old data, ignore
 	}

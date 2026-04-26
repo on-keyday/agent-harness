@@ -598,19 +598,6 @@ func (s *Streams) Recv(ctx context.Context) *SendAction {
 	}
 }
 
-func BackgroundSenderThread(ctx context.Context, logger *slog.Logger, tr UnderlayingSendTransport, streams Transport) {
-	for {
-		action := streams.Recv(ctx)
-		if action == nil {
-			return
-		}
-		err := action.Send(ctx, tr)
-		if err != nil {
-			logger.Error("failed to send data", "error", err)
-		}
-	}
-}
-
 const DefaultInitialMTU = 1200
 const DefaultMaxMTU = 1500
 
