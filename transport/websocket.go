@@ -263,18 +263,24 @@ func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoi
 // WebSocketEndpointEx is the lower-level variant for callers that already
 // own a RawEndpoint (e.g. dualstack). It enforces the same mux contract
 // as WebSocketEndpoint.
+//
+// Unlike UDPEndpointEx, this constructor does not accept a sendTo channel
+// override; it always reads rawSess.GetSenderChannel() directly. dualstack
+// callers that share a RawEndpoint between UDP and WS legs need to be
+// aware of this asymmetry — see transport/dualstack.go for the documented
+// consequence.
 func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig) error {
 	switch cfg.Mode {
 	case objproto.EndpointModeClient:
 		if mux != nil {
-			return fmt.Errorf("transport.WebSocketEndpoint: mux must be nil for Client mode")
+			return errors.New("mux must be nil for Client mode")
 		}
 	case objproto.EndpointModeServer, objproto.EndpointModeMutual:
 		if mux == nil {
-			return fmt.Errorf("transport.WebSocketEndpoint: mux is required for %v mode", cfg.Mode)
+			return fmt.Errorf("mux is required for %v mode", cfg.Mode)
 		}
 	default:
-		return fmt.Errorf("transport.WebSocketEndpoint: unknown EndpointMode: %v", cfg.Mode)
+		return fmt.Errorf("unknown EndpointMode: %v", cfg.Mode)
 	}
 
 	connChan := make(chan *WebSocketConn, 10)

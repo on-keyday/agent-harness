@@ -238,6 +238,8 @@ func (s *Server) Run(ctx context.Context) error {
 			}()
 		}
 	}
+	const shutdownGracePeriod = 2 * time.Second
+
 	mux := http.NewServeMux()
 	sess, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
 		Logger: s.cfg.Logger,
@@ -263,7 +265,8 @@ func (s *Server) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			// explicit cancel: tear down the timeout ctx before draining serverDone
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
 			_ = httpServer.Shutdown(shutdownCtx)
 			shutdownCancel()
 			<-serverDone
@@ -275,7 +278,8 @@ func (s *Server) Run(ctx context.Context) error {
 			return nil
 		case session, ok := <-ch:
 			if !ok {
-				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
+				// explicit cancel: tear down the timeout ctx before draining serverDone
+				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
 				_ = httpServer.Shutdown(shutdownCtx)
 				shutdownCancel()
 				<-serverDone

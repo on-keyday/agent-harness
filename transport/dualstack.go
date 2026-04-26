@@ -72,13 +72,18 @@ func UDPWebsocketDualStackEndpoint(cfg UDPWebsocketDualStackConfig) (UDPWebsocke
 		return UDPWebsocketDualStack{}, err
 	}
 
-	// Split rawSess.GetSenderChannel by pkt.To.Transport.
-	// NOTE: in the current shape both UDPEndpointEx and WebSocketEndpointEx
-	// internally read from rawSess.GetSenderChannel. The dispatch loop here
-	// is preserved from the original dualstack design as a reference, but
-	// when both legs are wired through Ex variants the upstream routing
-	// happens at the rawSess level, not through this fan-out. Future
-	// rewiring can revisit this.
+	// BROKEN AS-IS: this loop and WebSocketEndpointEx's internal sender loop
+	// both range over rawSess.GetSenderChannel(), so packets are split
+	// non-deterministically between the two readers. Calling
+	// UDPWebsocketDualStackEndpoint today will lose roughly half the WS-bound
+	// traffic. UDPEndpointEx accepts an explicit sendTo channel arg
+	// (UDPEndpointEx(sess, logger, port, sendTo)); WebSocketEndpointEx
+	// dropped the equivalent sendTo override during the WebSocketConfig
+	// refactor and now always reads rawSess.GetSenderChannel() directly.
+	// Preserved per plan as a template for future re-wiring (likely fix:
+	// re-introduce a sendTo override on WebSocketEndpointEx mirroring
+	// UDPEndpointEx, then route through this fan-out). If you need
+	// dualstack today, fix the asymmetry first — do not delete this code.
 	go func() {
 		for pkt := range rawSess.GetSenderChannel() {
 			switch pkt.To.Transport {
