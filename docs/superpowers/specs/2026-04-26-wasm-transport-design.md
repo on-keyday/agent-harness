@@ -399,13 +399,12 @@ claude
 
 ## Out of scope
 
-- 認証 / 認可（toy-scope 継承、上位層責務）
-- LAN / 公開インターネット運用（loopback dogfood 前提）
+- 認証 / 認可：当面実装しない。LAN 程度の利用は視野に入れる（`harness-server --listen=:8539` で外部 IF にも開く運用）が、認証層を伴った公開インターネット運用は対象外。loopback / 信頼された LAN を前提とする。
 - 複数 runner 横断のリソース管理（既存挙動踏襲）
 - bubbletea TUI のブラウザ移植（DOM 側はゼロから書く、tui パッケージは流用しない）
 - wasm 側の build version チェック (E2)
 - wasm 側 `--ws-path` override（ビルド時固定 `/ws`）
-- harness-server の dual-stack listen (`[::]` 経由 IPv4/IPv6 同時 listen)：別途検討、本 spec では loopback IPv4 固定運用に閉じる
+- harness-server の dual-stack listen (`[::]` 経由 IPv4/IPv6 同時 listen)：別途検討、本 spec では IPv4 単独 listen に閉じる
 
 ---
 
