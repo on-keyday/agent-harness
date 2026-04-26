@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	serverCID := flag.String("server-cid", "ws:localhost:8539-*",
+	serverCID := flag.String("server-cid", "ws:127.0.0.1:8539-*",
 		"server ConnectionID (e.g. ws:host:port-id, * for random)")
 	flag.Usage = usage
 	flag.Parse()

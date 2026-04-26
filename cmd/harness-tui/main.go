@@ -17,7 +17,7 @@ import (
 )
 
 var (
-	serverCID = flag.String("server-cid", "ws:localhost:8539-*", "harness-server ConnectionID (e.g. ws:host:port-id, * for random)")
+	serverCID = flag.String("server-cid", "ws:127.0.0.1:8539-*", "harness-server ConnectionID (e.g. ws:host:port-id, * for random)")
 	repoFlag  = flag.String("repo", ".", "default repo path for submit popup")
 )
 

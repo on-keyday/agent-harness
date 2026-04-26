@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	serverCID  = flag.String("server-cid", "ws:localhost:8539-*", "server ConnectionID (e.g. ws:host:port-id, * for random)")
+	serverCID  = flag.String("server-cid", "ws:127.0.0.1:8539-*", "server ConnectionID (e.g. ws:host:port-id, * for random)")
 	repo       = flag.String("repo", ".", "absolute path to the repo this runner serves")
 	claudeBin  = flag.String("claude-bin", "claude", "path to the claude binary")
 	claudeArgs = flag.String("claude-args", "", "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
