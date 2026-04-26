@@ -610,6 +610,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, DoCancel(a.client, v.IDPrefix, full)
 	case PruneAction:
+		a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
 		return a, DoPruneTasks(a.client, v.Before)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
