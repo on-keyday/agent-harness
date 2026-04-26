@@ -162,11 +162,20 @@ func handleRawEndpoint(transportName string, connChan chan *WebSocketConn, sende
 	}()
 }
 
+// WebSocketEndpoint constructs a WebSocket-backed objproto.Endpoint in the
+// requested mode. NOTE: addr is only used when sessMode is EndpointModeServer
+// or EndpointModeMutual (it is the listen address for the embedded http.Server).
+// In EndpointModeClient, addr is ignored — pass "" by convention. tlsConf is
+// used for both the listen side (Server/Mutual) and the dial side (Client),
+// so it is meaningful in all modes.
 func WebSocketEndpoint(logger *slog.Logger, addr string, tlsConf *tls.Config, sessMode objproto.EndpointMode) (objproto.Endpoint, error) {
 	rawSess := objproto.NewEndpoint(logger, sessMode)
 	return WebSocketEndpointEx(rawSess, logger, addr, tlsConf, rawSess.GetSenderChannel())
 }
 
+// WebSocketEndpointEx is the lower-level constructor used by dualstack and
+// callers that want to share a RawEndpoint. The addr / tlsConf rules are the
+// same as WebSocketEndpoint (addr ignored for Client, tlsConf used by all).
 func WebSocketEndpointEx(rawSess objproto.RawEndpoint, logger *slog.Logger, addr string, tlsConf *tls.Config, sendTo <-chan *objproto.PacketData) (objproto.Endpoint, error) {
 	connChan := make(chan *WebSocketConn, 10)
 	connMap := &connectionMap{
