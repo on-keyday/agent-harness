@@ -20,7 +20,12 @@ type WALEvent struct {
 	// numeric protocol.TaskKind value so the wire format is stable across
 	// schema renames. 0 (oneshot) is the default for legacy WAL entries
 	// that pre-date this field.
-	Kind        uint8  `json:"kind,omitempty"`
+	Kind uint8 `json:"kind,omitempty"`
+	// OriginKind records which kind of client (cli / tui / webui) submitted
+	// the task. Encoded as the numeric protocol.ClientKind. Legacy WAL
+	// entries that pre-date this field default to 0 (Unspecified) on
+	// replay, which is the intended sentinel for "unknown origin".
+	OriginKind  uint8  `json:"origin_kind,omitempty"`
 	WorktreeDir string `json:"worktree_dir,omitempty"`
 	ExitCode    *int32 `json:"exit_code,omitempty"`
 	DiffInfo    []byte `json:"diff_info,omitempty"`

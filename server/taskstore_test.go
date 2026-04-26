@@ -15,7 +15,7 @@ var hexRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
 func TestTaskStoreCreate(t *testing.T) {
 	s := NewTaskStore()
 	before := time.Now()
-	id := s.Create("/repo", "prompt", protocol.TaskKind_Oneshot)
+	id := s.Create("/repo", "prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	after := time.Now()
 
 	if len(id) != 32 {
@@ -46,7 +46,7 @@ func TestTaskStoreCreate(t *testing.T) {
 
 func TestTaskStoreAssignAndFinish(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot)
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	s.Assign(id, "runner-1", "/tmp/wt")
 
@@ -89,7 +89,7 @@ func TestTaskStoreAssignAndFinish(t *testing.T) {
 
 func TestTaskStoreFinishNonZero(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot)
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	s.Assign(id, "r", "/wt")
 	s.Finish(id, 7, nil)
 
@@ -110,7 +110,7 @@ func TestTaskStoreFinishNonZero(t *testing.T) {
 
 func TestTaskStoreCancel(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot)
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	s.Cancel(id)
 
@@ -135,9 +135,9 @@ func TestTaskStoreCancel(t *testing.T) {
 
 func TestTaskStoreNextQueuedForRepo(t *testing.T) {
 	s := NewTaskStore()
-	a := s.Create("/x", "a", protocol.TaskKind_Oneshot)
-	b := s.Create("/x", "b", protocol.TaskKind_Oneshot)
-	_ = s.Create("/y", "c", protocol.TaskKind_Oneshot)
+	a := s.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
+	b := s.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
+	_ = s.Create("/y", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	got, ok := s.NextQueuedForRepo("/x")
 	if !ok {
@@ -167,7 +167,7 @@ func TestTaskStoreListLimit(t *testing.T) {
 	s := NewTaskStore()
 	ids := make([]string, 5)
 	for i := 0; i < 5; i++ {
-		ids[i] = s.Create("/repo", "p", protocol.TaskKind_Oneshot)
+		ids[i] = s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	}
 
 	all := s.List(0)
@@ -196,7 +196,7 @@ func TestTaskStoreListLimit(t *testing.T) {
 
 func TestTaskStoreCancelRunning(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/r", "p", protocol.TaskKind_Oneshot)
+	id := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	s.Assign(id, "runner-x", "/wt")
 	// sanity: now Running
 	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Running {
@@ -214,7 +214,7 @@ func TestTaskStoreCancelRunning(t *testing.T) {
 
 func TestTaskStoreSetWorktreeDir(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot)
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	ok := s.SetWorktreeDir(id, "/new/wt")
 	if !ok {
@@ -234,7 +234,7 @@ func TestTaskStoreSetWorktreeDir(t *testing.T) {
 
 func TestTaskStoreReadIsSnapshot(t *testing.T) {
 	s := NewTaskStore()
-	id := s.Create("/original", "p", protocol.TaskKind_Oneshot)
+	id := s.Create("/original", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	got, ok := s.Get(id)
 	if !ok {
@@ -257,7 +257,7 @@ func TestTaskStoreWALWriteAndReplay(t *testing.T) {
 
 	s := NewTaskStore()
 	s.SetWAL(wal)
-	id := s.Create("/r", "p", protocol.TaskKind_Oneshot)
+	id := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	before := time.Now()
 	s.Assign(id, "runner-x", "/tmp/wt")
 	s.Finish(id, 0, []byte("done"))
@@ -287,8 +287,8 @@ func TestTaskStoreOnCreateFires(t *testing.T) {
 	s := NewTaskStore()
 	var got []string
 	s.OnCreate = func(id string) { got = append(got, id) }
-	a := s.Create("/r", "p", protocol.TaskKind_Oneshot)
-	b := s.Create("/r", "q", protocol.TaskKind_Oneshot)
+	a := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
+	b := s.Create("/r", "q", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	if len(got) != 2 || got[0] != a || got[1] != b {
 		t.Fatalf("got %v, expected [%s, %s]", got, a, b)
 	}
@@ -312,10 +312,10 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 	s := NewTaskStore()
 
 	// 1: queued (still active — must NOT be pruned)
-	idQueued := s.Create("/r", "still-queued", protocol.TaskKind_Oneshot)
+	idQueued := s.Create("/r", "still-queued", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	// 2: succeeded long ago (should be pruned)
-	idOldSucc := s.Create("/r", "old-success", protocol.TaskKind_Oneshot)
+	idOldSucc := s.Create("/r", "old-success", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	s.Assign(idOldSucc, "runner-x", "/wt-1")
 	s.Finish(idOldSucc, 0, nil)
 	oldTime := time.Now().Add(-48 * time.Hour)
@@ -323,12 +323,12 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 	*s.tasks[got.ID].EndedAt = oldTime
 
 	// 3: failed recently (must NOT be pruned)
-	idRecentFail := s.Create("/r", "recent-fail", protocol.TaskKind_Oneshot)
+	idRecentFail := s.Create("/r", "recent-fail", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	s.Assign(idRecentFail, "runner-x", "/wt-2")
 	s.Finish(idRecentFail, 7, nil)
 
 	// 4: cancelled long ago (should be pruned)
-	idOldCancel := s.Create("/r", "old-cancel", protocol.TaskKind_Oneshot)
+	idOldCancel := s.Create("/r", "old-cancel", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	s.Cancel(idOldCancel)
 	*s.tasks[idOldCancel].EndedAt = oldTime
 

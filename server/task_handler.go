@@ -31,6 +31,24 @@ type TaskHandler struct {
 	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
 	// (always returns Found=0). Server.New wires it from cfg.DataDir.
 	LogsDir string
+
+	// clientKinds maps connection ID → the kind of client that announced
+	// itself via ClientHello on that connection. Submit / OpenInteractive
+	// look it up to attribute task origin (ClientKind_Cli / Tui / Webui).
+	// Entries are added on ClientHello and never explicitly removed; for
+	// individual-dogfood scale the leak is acceptable. Tasks created on a
+	// connection that never sent ClientHello get ClientKind_Unspecified
+	// (the zero value of a missing map entry).
+	clientKindsMu sync.Mutex
+	clientKinds   map[string]protocol.ClientKind
+}
+
+// lookupClientKind returns the ClientKind associated with connID.
+// Unknown connections return ClientKind_Unspecified (zero value).
+func (h *TaskHandler) lookupClientKind(connID string) protocol.ClientKind {
+	h.clientKindsMu.Lock()
+	defer h.clientKindsMu.Unlock()
+	return h.clientKinds[connID]
 }
 
 // Handle decodes a TaskControlRequest payload (bytes after the wire-kind byte) and replies via conn.SendMessage.
@@ -49,7 +67,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: Submit variant is nil")
 			return
 		}
-		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt), protocol.TaskKind_Oneshot)
+		origin := h.lookupClientKind(conn.ConnectionID().String())
+		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt), protocol.TaskKind_Oneshot, origin)
 
 		// Decode hex task ID back to 16 raw bytes for the response.
 		raw, _ := hex.DecodeString(taskID)
@@ -149,7 +168,18 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ClientHello variant is nil")
 			return
 		}
-		slog.Info("client hello", "kind", hello.Kind.String(), "cid", conn.ConnectionID().String())
+		cid := conn.ConnectionID().String()
+		slog.Info("client hello", "kind", hello.Kind.String(), "cid", cid)
+
+		// Remember this connection's kind so subsequent Submit /
+		// OpenInteractive requests on the same connection can attribute
+		// task origin without the client having to re-send it.
+		h.clientKindsMu.Lock()
+		if h.clientKinds == nil {
+			h.clientKinds = make(map[string]protocol.ClientKind)
+		}
+		h.clientKinds[cid] = hello.Kind
+		h.clientKindsMu.Unlock()
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ClientHello, RequestId: req.RequestId}
 		resp.SetClientHello(protocol.ClientHelloResponse{Status: protocol.ClientHelloStatus_Ok})
@@ -196,7 +226,8 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32
 
 	// Allocate the task entry. The TaskKind_Interactive value is the
 	// authoritative marker — empty prompt is incidental.
-	taskIDHex := h.Tasks.Create(repoPath, "", protocol.TaskKind_Interactive)
+	origin := h.lookupClientKind(tuiConn.ConnectionID().String())
+	taskIDHex := h.Tasks.Create(repoPath, "", protocol.TaskKind_Interactive, origin)
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
@@ -414,10 +445,11 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	copy(tid.Id[:], raw)
 
 	info := protocol.TaskInfo{
-		Id:        tid,
-		Status:    t.Status,
-		Kind:      t.Kind,
-		CreatedAt: uint64(t.CreatedAt.UnixNano()),
+		Id:         tid,
+		Status:     t.Status,
+		Kind:       t.Kind,
+		OriginKind: t.OriginKind,
+		CreatedAt:  uint64(t.CreatedAt.UnixNano()),
 	}
 	info.SetRepoPath([]byte(t.RepoPath))
 	info.SetWorktreeDir([]byte(t.WorktreeDir))

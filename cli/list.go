@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -52,14 +53,25 @@ func (c *Client) List(ctx context.Context, out io.Writer) error {
 		fmt.Fprintln(out, "  (none)")
 	}
 	for _, t := range lr.Tasks {
-		fmt.Fprintf(out, "  %s  %s  repo=%s  prompt=%q\n",
+		fmt.Fprintf(out, "  %s  %s  repo=%s  from=%s  prompt=%q\n",
 			shortHex(t.Id.Id[:]),
 			taskStatusStr(t.Status),
 			string(t.RepoPath),
+			originStr(t.OriginKind),
 			string(t.Prompt),
 		)
 	}
 	return nil
+}
+
+// originStr formats a ClientKind for the `from=` column. Unspecified renders
+// as "-" so a row visibly shows "no recorded origin" rather than the
+// confusingly literal "unspecified" / "Unspecified" enum name.
+func originStr(k protocol.ClientKind) string {
+	if k == protocol.ClientKind_Unspecified {
+		return "-"
+	}
+	return strings.ToLower(k.String())
 }
 
 // List (package-level) is a thin wrapper that opens a fresh Client per call.

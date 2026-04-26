@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/hex"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,6 +25,7 @@ func NewTasks() TasksModel {
 	cols := []table.Column{
 		{Title: "Status", Width: 9},
 		{Title: "ID", Width: 12},
+		{Title: "From", Width: 6},
 		{Title: "Repo", Width: 28},
 		{Title: "Prompt", Width: 0}, // resized later via SetSize
 	}
@@ -66,6 +68,7 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo) {
 		rows = append(rows, table.Row{
 			taskStatusStr(t.Status),
 			idHex[:12],
+			originCell(t.OriginKind),
 			truncateLeft(string(t.RepoPath), 28),
 			renderPromptCell(t),
 		})
@@ -112,6 +115,16 @@ func (m TasksModel) Update(msg tea.Msg) (TasksModel, tea.Cmd) {
 
 func (m TasksModel) View() string {
 	return m.table.View()
+}
+
+// originCell renders the From column as lowercase "cli" / "tui" / "webui",
+// or "-" when no ClientHello has attributed the task. Mirrors cli.originStr
+// so cli ls and the TUI agree on display.
+func originCell(k protocol.ClientKind) string {
+	if k == protocol.ClientKind_Unspecified {
+		return "-"
+	}
+	return strings.ToLower(k.String())
 }
 
 func taskStatusStr(s protocol.TaskStatus) string {

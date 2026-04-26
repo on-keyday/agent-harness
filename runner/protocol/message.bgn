@@ -148,6 +148,9 @@ format TaskInfo:
     id :TaskID
     status :TaskStatus
     kind :TaskKind
+    origin_kind :ClientKind   # which kind of client submitted this task (cli / tui / webui).
+                              # Set by the server from the connection's last ClientHello.
+                              # Stays Unspecified for tasks created before any hello.
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     assigned_to :RunnerID

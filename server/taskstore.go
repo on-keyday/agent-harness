@@ -18,6 +18,11 @@ type TaskEntry struct {
 	RepoPath    string
 	Prompt      string
 	Kind        protocol.TaskKind
+	// OriginKind records which kind of caller submitted this task — set by
+	// the server from the originating connection's last ClientHello. Stays
+	// ClientKind_Unspecified when the connection didn't issue a hello (e.g.
+	// orphan tasks replayed from an older WAL with no origin field).
+	OriginKind  protocol.ClientKind
 	Status      protocol.TaskStatus
 	AssignedTo  string
 	WorktreeDir string
@@ -69,24 +74,28 @@ func newTaskID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// Create adds a new Queued task for the given repo, prompt, and kind. It
-// returns the new task's ID (32 lowercase hex characters). Use
+// Create adds a new Queued task for the given repo, prompt, kind, and
+// origin. It returns the new task's ID (32 lowercase hex characters). Use
 // TaskKind_Oneshot for prompt-driven submits and TaskKind_Interactive for
-// PTY claude sessions opened via OpenInteractive.
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind) string {
+// PTY claude sessions opened via OpenInteractive. origin records which kind
+// of caller (cli / tui / webui) submitted the task; pass
+// ClientKind_Unspecified when the caller is unknown (e.g. tests, internal
+// scheduler bookkeeping).
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
-		ID:        id,
-		RepoPath:  repo,
-		Prompt:    prompt,
-		Kind:      kind,
-		Status:    protocol.TaskStatus_Queued,
-		CreatedAt: time.Now(),
+		ID:         id,
+		RepoPath:   repo,
+		Prompt:     prompt,
+		Kind:       kind,
+		OriginKind: origin,
+		Status:     protocol.TaskStatus_Queued,
+		CreatedAt:  time.Now(),
 	}
 	s.order = append(s.order, id)
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_created", TaskID: id, RepoPath: repo, Prompt: prompt, Kind: uint8(kind)}); err != nil {
+		if err := s.wal.Write(WALEvent{Type: "task_created", TaskID: id, RepoPath: repo, Prompt: prompt, Kind: uint8(kind), OriginKind: uint8(origin)}); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
 	}
@@ -234,13 +243,17 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	for _, ev := range events {
 		switch ev.Type {
 		case "task_created":
+			// OriginKind is best-effort: legacy WAL entries (pre-ii) lack
+			// the origin_kind field and unmarshal to 0 (Unspecified),
+			// which is exactly the desired default.
 			s.tasks[ev.TaskID] = &TaskEntry{
-				ID:        ev.TaskID,
-				RepoPath:  ev.RepoPath,
-				Prompt:    ev.Prompt,
-				Kind:      protocol.TaskKind(ev.Kind),
-				Status:    protocol.TaskStatus_Queued,
-				CreatedAt: time.Unix(0, ev.Ts),
+				ID:         ev.TaskID,
+				RepoPath:   ev.RepoPath,
+				Prompt:     ev.Prompt,
+				Kind:       protocol.TaskKind(ev.Kind),
+				OriginKind: protocol.ClientKind(ev.OriginKind),
+				Status:     protocol.TaskStatus_Queued,
+				CreatedAt:  time.Unix(0, ev.Ts),
 			}
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":

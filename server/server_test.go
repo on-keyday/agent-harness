@@ -22,7 +22,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 		Status:   protocol.RunnerStatus_Idle,
 		Conn:     fc,
 	})
-	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot)
+	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 	if err := s.sendAssign(fc.id.String(), taskID); err != nil {
 		t.Fatalf("send: %v", err)
 	}

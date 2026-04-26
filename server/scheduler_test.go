@@ -22,7 +22,7 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	var captured []string
 	assignFn := func(runnerID, tID string) error {
@@ -75,7 +75,7 @@ func TestSchedulerNoMatch(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	assignFn := func(runnerID, tID string) error {
 		t.Fatal("assignFn must not be called when there is no repo match")
@@ -118,7 +118,7 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	var assigned []string
 	assignFn := func(runnerID, tID string) error {
@@ -165,7 +165,7 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	assignFn := func(runnerID, tID string) error {
 		return errors.New("boom")
@@ -232,9 +232,9 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskA := store.Create("/x", "a", protocol.TaskKind_Oneshot)
-	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot)
-	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot)
+	taskA := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
+	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
+	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
 
 	var assigned []string
 	assignFn := func(runnerID, tID string) error {
