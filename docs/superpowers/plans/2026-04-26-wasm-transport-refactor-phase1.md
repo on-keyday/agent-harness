@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** WS transport API を `WebSocketConfig` 単一構造体 + Client/Server/Mutual 3 関数 (各 + Ex) に統一し、`http.Server` lifecycle と mux 構築を caller (`harness-server`) 所有に移す。Phase 2 (wasm 本体) の前提整備。
+**Goal:** WS transport API を `WebSocketConfig` 単一構造体 + 単一関数 `WebSocketEndpoint(Ex)` (Mode フィールドで分岐) に統一し、`http.Server` lifecycle と mux 構築を caller (`harness-server`) 所有に移す。Phase 2 (wasm 本体) の前提整備。
 
-**Architecture:** `transport/websocket.go` を server-mode の内部 `http.Server` 所有から切り離し、caller が渡す `*http.ServeMux` に accept handler を登録する形にする。WS path は `cli.WebSocketPath` (var、デフォルト `/ws`) で harness 統合層が所有し、各 cmd/main の `--ws-path` flag で override 可能にする。`startTransportLoops` (旧 `handleRawEndpoint`) はロジック流用 + `dialPath` 引数追加。
+**Architecture:** `transport/websocket.go` を server-mode の内部 `http.Server` 所有から切り離し、caller が渡す `*http.ServeMux` に accept handler を登録する形にする。WS path は `cli.WebSocketPath` (var、デフォルト `/ws`) で harness 統合層が所有し、各 cmd/main の `--ws-path` flag で override 可能にする。`startTransportLoops` (旧 `handleRawEndpoint`) はロジック流用 + `dialPath` 引数追加。AI subagent 主体の作業前提で API 表面を最小化 (関数 2 つ)、Mode 別の振る舞い分岐は内部に閉じる。
 
 **Tech Stack:** Go 1.25.7, 既存の `objproto` / `peer` / `transport` / `cli` / `runner` / `server` パッケージ群。新規依存なし。`Spec`: `docs/superpowers/specs/2026-04-26-wasm-transport-design.md`.
 
@@ -55,10 +55,10 @@ cli/path.go                           cli.WebSocketPath var (1 行)
 ### Modify
 
 ```
-transport/websocket.go                WebSocketConfig + 6 関数 + startTransportLoops に書き換え
-transport/dualstack.go                新 API (WebSocketServerEndpointEx 等) を呼ぶ形に追従
-server/server.go                      WebSocketEndpoint 呼びを WebSocketServerEndpointEx に書き換え、mux + http.Server を所有
-cli/client.go                         WebSocketClientEndpoint(WebSocketConfig{Path: cli.WebSocketPath}) 呼びに
+transport/websocket.go                WebSocketConfig (Mode 含む) + 単一関数 WebSocketEndpoint(Ex) + startTransportLoops に書き換え
+transport/dualstack.go                新 API (WebSocketEndpointEx) を呼ぶ形に追従、Mode フィールドは WS.Mode に集約
+server/server.go                      旧 WebSocketEndpoint 呼びを WebSocketEndpoint(mux, cfg{Mode: Server}) に書き換え、mux + http.Server を所有
+cli/client.go                         WebSocketEndpoint(nil, cfg{Mode: Client, Path: cli.WebSocketPath}) 呼びに
 runner/connect.go                     同上 (cli.WebSocketPath を参照)
 cmd/harness-cli/main.go               --ws-path flag 追加
 cmd/agent-runner/main.go              --ws-path flag 追加
@@ -151,10 +151,14 @@ EOF
 //
 // TLS is consulted for Origin scheme decisions (ws:// vs wss://). The
 // listen-side TLS for Server / Mutual is owned by the caller's *http.Server.
+//
+// Mode selects Client / Server / Mutual semantics. The mux argument of
+// WebSocketEndpoint must be nil for Client and non-nil for Server / Mutual.
 type WebSocketConfig struct {
 	Logger *slog.Logger
 	Path   string
 	TLS    *tls.Config
+	Mode   objproto.EndpointMode
 }
 ```
 
@@ -312,102 +316,94 @@ func transportName(tlsConf *tls.Config) string {
 }
 ```
 
-- [ ] **Step 5: `WebSocketClientEndpoint` + `WebSocketClientEndpointEx` を実装**
+- [ ] **Step 5: `WebSocketEndpoint` + `WebSocketEndpointEx` (新 API、単一関数) を実装**
+
+旧 `WebSocketEndpoint(logger, addr, tlsConf, sessMode)` と `WebSocketEndpointEx(rawSess, logger, addr, tlsConf, sendTo)` の宣言を削除し、以下の新 API に置き換える:
 
 ```go
-// WebSocketClientEndpoint constructs a Client-mode WebSocket-backed Endpoint.
-// It dials peers (resolved from each PacketData's ConnectionID) on cfg.Path.
-// The returned Endpoint is also a RawEndpoint (Endpoint is embedded).
-func WebSocketClientEndpoint(cfg WebSocketConfig) (objproto.Endpoint, error) {
-	rawSess := objproto.NewEndpoint(cfg.Logger, objproto.EndpointModeClient)
-	if err := WebSocketClientEndpointEx(rawSess, cfg); err != nil {
+// WebSocketEndpoint constructs a WebSocket-backed objproto Endpoint in the
+// mode specified by cfg.Mode.
+//
+// mux contract:
+//   - Client:        mux must be nil (no accept handler is registered)
+//   - Server/Mutual: mux must be non-nil; the accept handler is registered
+//                    via mux.Handle(cfg.Path, handler)
+//
+// The returned Endpoint is rawSess directly (objproto.RawEndpoint embeds
+// objproto.Endpoint). The listen-side http.Server lifecycle is owned by
+// the caller; for Server / Mutual the caller must run http.ListenAndServe
+// (or equivalent) on a *http.Server bound to mux.
+func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoint, error) {
+	rawSess := objproto.NewEndpoint(cfg.Logger, cfg.Mode)
+	if err := WebSocketEndpointEx(rawSess, mux, cfg); err != nil {
 		return nil, err
 	}
 	return rawSess, nil
 }
 
-// WebSocketClientEndpointEx is the lower-level variant that lets the caller
-// share a RawEndpoint across multiple transports (e.g. dualstack).
-func WebSocketClientEndpointEx(rawSess objproto.RawEndpoint, cfg WebSocketConfig) error {
+// WebSocketEndpointEx is the lower-level variant for callers that already
+// own a RawEndpoint (e.g. dualstack). It enforces the same mux contract
+// as WebSocketEndpoint.
+func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig) error {
+	switch cfg.Mode {
+	case objproto.EndpointModeClient:
+		if mux != nil {
+			return fmt.Errorf("transport.WebSocketEndpoint: mux must be nil for Client mode")
+		}
+	case objproto.EndpointModeServer, objproto.EndpointModeMutual:
+		if mux == nil {
+			return fmt.Errorf("transport.WebSocketEndpoint: mux is required for %v mode", cfg.Mode)
+		}
+	default:
+		return fmt.Errorf("transport.WebSocketEndpoint: unknown EndpointMode: %v", cfg.Mode)
+	}
+
 	connChan := make(chan *WebSocketConn, 10)
 	connMap := &connectionMap{
 		connMap: make(map[netip.AddrPort]*WebSocketConn),
 	}
+
+	// Server/Mutual: register accept handler on caller-owned mux.
+	if cfg.Mode != objproto.EndpointModeClient {
+		mux.Handle(cfg.Path, newAcceptHandler(connChan, connMap, cfg.TLS, cfg.Logger))
+	}
+
+	// dialPath: Client/Mutual will dial outbound, Server will not.
+	// Per upstream invariant (objproto.SendHandshake rejects Server mode),
+	// no Handshake packet reaches the sender loop in Server mode anyway.
+	dialPath := ""
+	if cfg.Mode != objproto.EndpointModeServer {
+		dialPath = cfg.Path
+	}
+
 	startTransportLoops(rawSess, transportName(cfg.TLS), connChan, connMap,
-		rawSess.GetSenderChannel(), cfg.TLS, cfg.Path, cfg.Logger)
+		rawSess.GetSenderChannel(), cfg.TLS, dialPath, cfg.Logger)
 	return nil
 }
 ```
 
-- [ ] **Step 6: `WebSocketServerEndpoint` + `WebSocketServerEndpointEx` を実装**
+- [ ] **Step 6: 旧 API の取り残し / 未使用 import を確認**
 
-```go
-// WebSocketServerEndpoint constructs a Server-mode WebSocket-backed
-// Endpoint. The accept handler is registered onto mux at cfg.Path; the
-// caller owns the *http.Server that serves mux.
-func WebSocketServerEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoint, error) {
-	rawSess := objproto.NewEndpoint(cfg.Logger, objproto.EndpointModeServer)
-	if err := WebSocketServerEndpointEx(rawSess, mux, cfg); err != nil {
-		return nil, err
-	}
-	return rawSess, nil
-}
+Step 5 で旧 `WebSocketEndpoint(logger, addr, tlsConf, sessMode)` と旧 `WebSocketEndpointEx(rawSess, logger, addr, tlsConf, sendTo)` の宣言は新 API に置き換え済み。最終確認として:
 
-// WebSocketServerEndpointEx is the lower-level variant for callers that
-// already own a RawEndpoint (e.g. dualstack).
-func WebSocketServerEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig) error {
-	connChan := make(chan *WebSocketConn, 10)
-	connMap := &connectionMap{
-		connMap: make(map[netip.AddrPort]*WebSocketConn),
-	}
-	mux.Handle(cfg.Path, newAcceptHandler(connChan, connMap, cfg.TLS, cfg.Logger))
-	startTransportLoops(rawSess, transportName(cfg.TLS), connChan, connMap,
-		rawSess.GetSenderChannel(), cfg.TLS, "" /* server: no outbound dial */, cfg.Logger)
-	return nil
-}
+Run:
+```sh
+grep -n 'WebSocketEndpoint\b\|WebSocketEndpointEx\b\|handleRawEndpoint' transport/
 ```
 
-- [ ] **Step 7: `WebSocketMutualEndpoint` + `WebSocketMutualEndpointEx` を実装**
+Expected: 新 API (`WebSocketEndpoint(mux, cfg)`, `WebSocketEndpointEx(rawSess, mux, cfg)`, `startTransportLoops`) のみが hit。旧シグネチャや旧名が残っていたら削除する。
 
-```go
-// WebSocketMutualEndpoint constructs a Mutual-mode Endpoint that both
-// accepts (at cfg.Path on mux) and dials (to peers' ConnectionIDs on
-// cfg.Path). Currently no caller in this repo uses Mutual on WS; the API
-// is provided for symmetry and dualstack alignment.
-func WebSocketMutualEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoint, error) {
-	rawSess := objproto.NewEndpoint(cfg.Logger, objproto.EndpointModeMutual)
-	if err := WebSocketMutualEndpointEx(rawSess, mux, cfg); err != nil {
-		return nil, err
-	}
-	return rawSess, nil
-}
+`transport/websocket.go` の import を見直し、未使用なものは整理（`context` / `golang.org/x/net/websocket` / `crypto/tls` / `net/http` / `net/netip` / `net/url` 等は新 API でも使うので残す）。
 
-func WebSocketMutualEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig) error {
-	connChan := make(chan *WebSocketConn, 10)
-	connMap := &connectionMap{
-		connMap: make(map[netip.AddrPort]*WebSocketConn),
-	}
-	mux.Handle(cfg.Path, newAcceptHandler(connChan, connMap, cfg.TLS, cfg.Logger))
-	startTransportLoops(rawSess, transportName(cfg.TLS), connChan, connMap,
-		rawSess.GetSenderChannel(), cfg.TLS, cfg.Path, cfg.Logger)
-	return nil
-}
-```
-
-- [ ] **Step 8: 旧 `WebSocketEndpoint` / `WebSocketEndpointEx` を削除**
-
-`transport/websocket.go` の旧 `func WebSocketEndpoint(...)` (元 line 165-174 あたり) と `func WebSocketEndpointEx(...)` (元 line 179-241 あたり) を完全に削除する。中身の logic は Step 2-7 で新 API に分配済み。
-
-未使用 import が出たら整理（特に `context` が新 API でも使われていれば残す。`golang.org/x/net/websocket` も新 API で使われるので残す）。
-
-- [ ] **Step 9: `cli/client.go:38` の Dial を新 API 呼びに**
+- [ ] **Step 7: `cli/client.go:38` の Dial を新 API 呼びに**
 
 `cli/client.go` の `Dial` 関数内、`transport.WebSocketEndpoint(slog.Default(), "", nil, objproto.EndpointModeClient)` を以下に置き換え:
 
 ```go
-ep, err := transport.WebSocketClientEndpoint(transport.WebSocketConfig{
+ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
     Logger: slog.Default(),
     Path:   WebSocketPath,
+    Mode:   objproto.EndpointModeClient,
 })
 if err != nil {
     return nil, fmt.Errorf("ws endpoint: %w", err)
@@ -416,23 +412,24 @@ if err != nil {
 
 `WebSocketPath` は同 `cli` package の package-level var (`cli/path.go` で定義済み)。same-package 参照なのでパッケージプレフィックスなし。
 
-- [ ] **Step 10: `runner/connect.go:34` の Run を新 API 呼びに**
+- [ ] **Step 8: `runner/connect.go:34` の Run を新 API 呼びに**
 
 `runner/connect.go` の import に `"github.com/on-keyday/agent-harness/cli"` を追加。
 
 `Run` 関数内、`transport.WebSocketEndpoint(cfg.Logger, "", nil, objproto.EndpointModeClient)` を以下に置き換え:
 
 ```go
-ep, err := transport.WebSocketClientEndpoint(transport.WebSocketConfig{
+ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
     Logger: cfg.Logger,
     Path:   cli.WebSocketPath,
+    Mode:   objproto.EndpointModeClient,
 })
 if err != nil {
     return fmt.Errorf("ws endpoint: %w", err)
 }
 ```
 
-- [ ] **Step 11: `server/server.go:238` の Run を mux + http.Server 所有に**
+- [ ] **Step 9: `server/server.go:238` の Run を mux + http.Server 所有に**
 
 まず `server/server.go` を読み、`Run` 関数の中で `transport.WebSocketEndpoint(s.cfg.Logger, s.cfg.Addr, nil, objproto.EndpointModeServer)` を呼んでいる箇所を確認。`Addr` を listen に使っていた前提で、新形は以下:
 
@@ -446,9 +443,10 @@ import に以下を追加:
 
 ```go
 mux := http.NewServeMux()
-sess, err := transport.WebSocketServerEndpoint(mux, transport.WebSocketConfig{
+sess, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
     Logger: s.cfg.Logger,
     Path:   cli.WebSocketPath,
+    Mode:   objproto.EndpointModeServer,
 })
 if err != nil {
     return fmt.Errorf("ws endpoint: %w", err)
@@ -478,13 +476,13 @@ return ctx.Err()
 
 > **注**: `server.Run` の現状の構造 (どこで `<-ctx.Done()` を待っているか、return 値の扱いがどうなっているか) は実装者が `server/server.go` を読んでから判断する。上の挿入はあくまで「mux + http.Server 所有を caller 側に持つ」基本パターンで、既存コードの error / shutdown 経路に合わせて配置を調整する。`errors` import が既存になければ追加。
 
-- [ ] **Step 12: `cmd/harness-server/main.go` は変更不要（Step 11 で server.Run が完結するため）**
+- [ ] **Step 10: `cmd/harness-server/main.go` は変更不要（Step 9 で server.Run が完結するため）**
 
 確認のみ。既存の `s := server.New(server.Config{...})` + `s.Run(ctx)` 呼びは新 API でも変わらない。Phase 2 で embed.FS を追加するときに本ファイルを再度触る予定。
 
 > Phase 1 では `server.Config.Mux` のような新フィールドは追加しない。mux は `server.Run` の内部で生成・所有する。Phase 2 で外部から embed.FS handler を渡したくなったら、その時点で `server.Config` に `WebUIFS *embed.FS` 等を追加する想定（本 plan の対象外）。
 
-- [ ] **Step 13: `transport/dualstack.go` を新 API に追従**
+- [ ] **Step 11: `transport/dualstack.go` を新 API に追従**
 
 `transport/dualstack.go:34-65` の `UDPWebsocketDualStackEndpoint` を以下に置き換え:
 
@@ -496,12 +494,14 @@ return ctx.Err()
 // channel split by pkt.To.Transport) is preserved as a reference for
 // future UDP-on-harness work. If this code has bit-rotted by the time you
 // need it, prefer fixing it over deleting it.
+//
+// WS.Mode selects the WS leg behaviour (Client / Server / Mutual). Mux
+// must be non-nil for Server / Mutual; nil for Client.
 type UDPWebsocketDualStackConfig struct {
 	Logger  *slog.Logger
 	UDPPort uint16
-	Mux     *http.ServeMux       // required for Server / Mutual modes; ignored for Client
-	WS      WebSocketConfig      // Path / TLS / Logger shared with the WS leg
-	Mode    objproto.EndpointMode
+	Mux     *http.ServeMux       // required when WS.Mode is Server or Mutual; nil for Client
+	WS      WebSocketConfig      // Mode / Path / TLS / Logger drive the WS leg
 }
 
 type UDPWebsocketDualStack struct {
@@ -509,7 +509,7 @@ type UDPWebsocketDualStack struct {
 }
 
 func UDPWebsocketDualStackEndpoint(cfg UDPWebsocketDualStackConfig) (UDPWebsocketDualStack, error) {
-	rawSess := objproto.NewEndpoint(cfg.Logger, cfg.Mode)
+	rawSess := objproto.NewEndpoint(cfg.Logger, cfg.WS.Mode)
 	udpChan := make(chan *objproto.PacketData, 100)
 	wsChan := make(chan *objproto.PacketData, 100)
 
@@ -517,37 +517,12 @@ func UDPWebsocketDualStackEndpoint(cfg UDPWebsocketDualStackConfig) (UDPWebsocke
 		return UDPWebsocketDualStack{}, err
 	}
 
-	switch cfg.Mode {
-	case objproto.EndpointModeClient:
-		// Client only dials; no mux required.
-		// We use a Client endpoint over the shared rawSess but drive it via
-		// the wsChan for parity with the dispatch loop below.
-		// (Note: WebSocketClientEndpointEx will start its own sender loop
-		// reading from rawSess.GetSenderChannel directly, NOT from wsChan.
-		// In Client-only dual stack the wsChan is unused; we keep the
-		// dispatch loop's "case ws/wss" branch as a no-op fallback.)
-		if err := WebSocketClientEndpointEx(rawSess, cfg.WS); err != nil {
-			return UDPWebsocketDualStack{}, err
-		}
-	case objproto.EndpointModeServer, objproto.EndpointModeMutual:
-		if cfg.Mux == nil {
-			return UDPWebsocketDualStack{}, fmt.Errorf("UDPWebsocketDualStackEndpoint: Mux is required for Server/Mutual mode")
-		}
-		var err error
-		if cfg.Mode == objproto.EndpointModeServer {
-			err = WebSocketServerEndpointEx(rawSess, cfg.Mux, cfg.WS)
-		} else {
-			err = WebSocketMutualEndpointEx(rawSess, cfg.Mux, cfg.WS)
-		}
-		if err != nil {
-			return UDPWebsocketDualStack{}, err
-		}
-	default:
-		return UDPWebsocketDualStack{}, fmt.Errorf("unknown EndpointMode: %v", cfg.Mode)
+	if err := WebSocketEndpointEx(rawSess, cfg.Mux, cfg.WS); err != nil {
+		return UDPWebsocketDualStack{}, err
 	}
 
 	// Split rawSess.GetSenderChannel by pkt.To.Transport.
-	// NOTE: in the current shape both UDPEndpointEx and the WS variants
+	// NOTE: in the current shape both UDPEndpointEx and WebSocketEndpointEx
 	// internally read from rawSess.GetSenderChannel. The dispatch loop here
 	// is preserved from the original dualstack design as a reference, but
 	// when both legs are wired through Ex variants the upstream routing
@@ -570,11 +545,11 @@ func UDPWebsocketDualStackEndpoint(cfg UDPWebsocketDualStackConfig) (UDPWebsocke
 }
 ```
 
-`transport/dualstack.go` の import に `"net/http"` を追加。`UDPEndpointEx` の呼び方は既存通り。
+`transport/dualstack.go` の import に `"net/http"` を追加。`UDPEndpointEx` の呼び方は既存通り。`WebSocketEndpointEx` の mux/Mode 整合性 (Client + nil mux / Server + non-nil mux) は呼び出し時の早期 error で弾かれるので、dualstack 自前で switch する必要なし。
 
-> **注**: dualstack の sender 分配ループは "原版から保存しているテンプレ"。実は新 API では `WebSocketClientEndpointEx` / `WebSocketServerEndpointEx` の中でそれぞれ `rawSess.GetSenderChannel` を直接読むので、上のループは厳密には冗長 (両者が同じ channel を競って読むことになる)。Phase 1 ではこの正確な振る舞いまで詰めず、godoc に「テンプレ／要 rewiring」を明示することで現状を許容する。テストもないので動作未保証で OK。
+> **注**: dualstack の sender 分配ループは "原版から保存しているテンプレ"。新 API では `WebSocketEndpointEx` が内部で `rawSess.GetSenderChannel` を直接読むので、上のループは厳密には冗長 (両者が同じ channel を競って読むことになる)。Phase 1 ではこの正確な振る舞いまで詰めず、godoc に「テンプレ／要 rewiring」を明示することで現状を許容する。テストもないので動作未保証で OK。
 
-- [ ] **Step 14: ビルドとテスト**
+- [ ] **Step 12: ビルドとテスト**
 
 Run:
 ```sh
@@ -600,20 +575,21 @@ go test -tags integration ./integration/...
 ```
 Expected: 既存通り (smoke 環境が要るので CI/手元で実行できる範囲で確認)。
 
-- [ ] **Step 15: commit**
+- [ ] **Step 13: commit**
 
 ```sh
 git add transport/websocket.go transport/dualstack.go cli/client.go runner/connect.go server/server.go
 git commit -m "$(cat <<'EOF'
 transport+cli+runner+server: WebSocket API を構造体化し caller-owned mux に切替
 
-- transport.WebSocketConfig 単一構造体を導入し、Client/Server/Mutual の
-  3 関数 (各 + Ex) に分離
-- 旧 transport.WebSocketEndpoint(Ex) を削除。server-mode の内部 http.Server
-  所有を撤去し、caller (server.Run) が mux と http.Server を所有する形に
+- transport.WebSocketConfig 単一構造体を導入し、Mode フィールドで
+  Client/Server/Mutual を区別する単一関数 WebSocketEndpoint(Ex) に統一
+- 旧 transport.WebSocketEndpoint(logger, addr, tlsConf, sessMode) を削除。
+  server-mode の内部 http.Server 所有を撤去し、caller (server.Run) が
+  mux と http.Server を所有する形に
 - handleRawEndpoint を startTransportLoops にリネーム + dialPath 引数追加
-- transport/dualstack.go を新 API に追従。caller 不在のまま template として
-  保存
+- transport/dualstack.go を新 API (WebSocketEndpointEx) に追従、内部 switch
+  を削減。caller 不在のまま template として保存
 - cli.Dial / runner.Run / server.Run を新 API 呼びに更新。WS path は
   cli.WebSocketPath を共有参照
 
