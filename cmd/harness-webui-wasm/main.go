@@ -119,7 +119,8 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			if _, err := currentClient(); err != nil {
+			c, err := currentClient()
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -130,7 +131,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			opts := args[0]
 			repo := opts.Get("repo").String()
 			task := opts.Get("task").String()
-			id, err := cli.Submit(rootCtx, peerCID, repo, task)
+			id, err := c.Submit(rootCtx, repo, task)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -151,12 +152,13 @@ func harnessList(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			if _, err := currentClient(); err != nil {
+			c, err := currentClient()
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
 			var buf bytesBuffer
-			if err := cli.List(rootCtx, peerCID, &buf); err != nil {
+			if err := c.List(rootCtx, &buf); err != nil {
 				rejectErr(reject, fmt.Errorf("list: %w", err))
 				return
 			}
@@ -176,7 +178,8 @@ func harnessCancel(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			if _, err := currentClient(); err != nil {
+			c, err := currentClient()
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -185,7 +188,7 @@ func harnessCancel(this js.Value, args []js.Value) any {
 				return
 			}
 			taskIDHex := args[0].String()
-			if err := cli.Cancel(rootCtx, peerCID, taskIDHex); err != nil {
+			if err := c.Cancel(rootCtx, taskIDHex); err != nil {
 				rejectErr(reject, fmt.Errorf("cancel: %w", err))
 				return
 			}
@@ -208,13 +211,14 @@ func harnessWatch(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			if _, err := currentClient(); err != nil {
+			c, err := currentClient()
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
 			pipe := &watchPipe{}
 			go func() {
-				if err := cli.Watch(rootCtx, peerCID, pipe); err != nil {
+				if err := c.Watch(rootCtx, pipe); err != nil {
 					slog.Error("watch ended", "err", err)
 				}
 			}()
@@ -236,7 +240,8 @@ func harnessPrune(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			if _, err := currentClient(); err != nil {
+			c, err := currentClient()
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -251,7 +256,7 @@ func harnessPrune(this js.Value, args []js.Value) any {
 				return
 			}
 			var buf bytesBuffer
-			if err := cli.Prune(rootCtx, peerCID, before, &buf); err != nil {
+			if err := c.Prune(rootCtx, before, &buf); err != nil {
 				rejectErr(reject, fmt.Errorf("prune: %w", err))
 				return
 			}
@@ -275,7 +280,8 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			if _, err := currentClient(); err != nil {
+			c, err := currentClient()
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -289,7 +295,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, errors.New("startInteractive: opts.repo is required"))
 				return
 			}
-			taskID, err := cli.Interactive(rootCtx, peerCID, repo)
+			taskID, err := c.Interactive(rootCtx, repo)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return

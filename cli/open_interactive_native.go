@@ -59,19 +59,12 @@ func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentex
 	return agentexec.NewCommandExecutionStream(st), taskIDHex, nil
 }
 
-// Interactive is the one-shot helper for harness-cli's `interactive`
-// subcommand: dial, open the interactive session, RemoteShell to splice
-// stdin/stdout/SIGWINCH between the local terminal and the remote PTY,
-// then close. The caller's terminal must be a real tty (RemoteShell
-// flips it into raw mode). Returns the new task's hex id even on error
-// so the caller can surface it for cleanup.
-func Interactive(ctx context.Context, peerCID objproto.ConnectionID, repo string) (string, error) {
-	c, err := Dial(ctx, peerCID)
-	if err != nil {
-		return "", err
-	}
-	defer c.Close()
-
+// Interactive splices stdin/stdout/SIGWINCH between the local terminal and
+// the remote PTY for an interactive claude session in repo. Method form:
+// callable on an existing *Client without re-dialing. The caller's terminal
+// must be a real tty (RemoteShell flips it into raw mode). Returns the new
+// task's hex id even on error so the caller can surface it for cleanup.
+func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
 	stream, taskIDHex, err := c.OpenInteractive(ctx, repo)
 	if err != nil {
 		return taskIDHex, err
@@ -87,4 +80,17 @@ func Interactive(ctx context.Context, peerCID objproto.ConnectionID, repo string
 		return taskIDHex, err
 	}
 	return taskIDHex, nil
+}
+
+// Interactive (package-level) is a thin wrapper that opens a fresh Client per
+// call: dial, open the interactive session, splice, then close. Suitable for
+// the harness-cli `interactive` subcommand. Long-lived consumers should hold
+// a *Client and call (*Client).Interactive instead.
+func Interactive(ctx context.Context, peerCID objproto.ConnectionID, repo string) (string, error) {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	return c.Interactive(ctx, repo)
 }

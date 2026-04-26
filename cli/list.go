@@ -9,14 +9,9 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// List queries server for all runners + recent tasks and writes a human-readable summary to out.
-func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
-	c, err := Dial(ctx, peerCID)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
+// List queries the server for all runners + recent tasks and writes a human-
+// readable summary to out. Method form: callable repeatedly without re-dialing.
+func (c *Client) List(ctx context.Context, out io.Writer) error {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{Query: nil})
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -53,6 +48,18 @@ func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) err
 		)
 	}
 	return nil
+}
+
+// List (package-level) is a thin wrapper that opens a fresh Client per call.
+// Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
+// should hold a *Client and call (*Client).List instead.
+func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.List(ctx, out)
 }
 
 func runnerStatusStr(s protocol.RunnerStatus) string {

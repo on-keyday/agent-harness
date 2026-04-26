@@ -36,12 +36,14 @@ func formatBefore(d time.Duration) string {
 	}
 }
 
-// Prune asks the server to forget terminal tasks older than `before`.
+// Prune asks the server to forget terminal tasks older than `before`. Method
+// form: callable on an existing *Client without re-dialing.
+//
 // This used to also walk local worktrees; that step is now in PruneLocal.
-func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Duration, out io.Writer) error {
+func (c *Client) Prune(ctx context.Context, before time.Duration, out io.Writer) error {
 	cutoff := time.Now().Add(-before)
 	fmt.Fprintf(out, "prune: cutoff = %s; asking server to forget terminal tasks\n", FormatPruneCutoff(before))
-	removed, err := PruneTasks(ctx, peerCID, cutoff)
+	removed, err := c.PruneTasks(ctx, cutoff)
 	if err != nil {
 		return err
 	}
@@ -50,15 +52,9 @@ func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Durat
 }
 
 // PruneTasks asks the server to forget terminal tasks whose EndedAt is before
-// cutoff. Internal helper used by Prune; exposed for callers that want the
-// raw count (e.g. tui).
-func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.Time) (uint32, error) {
-	c, err := Dial(ctx, peerCID)
-	if err != nil {
-		return 0, err
-	}
-	defer c.Close()
-
+// cutoff. Method form: callable on an existing *Client without re-dialing.
+// Used by callers that want the raw count (e.g. tui).
+func (c *Client) PruneTasks(ctx context.Context, cutoff time.Time) (uint32, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_PruneTasks}
 	req.SetPrune(protocol.PruneTasksRequest{BeforeTs: uint64(cutoff.UnixNano())})
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -73,4 +69,28 @@ func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.
 		return 0, fmt.Errorf("empty prune response")
 	}
 	return pr.Removed, nil
+}
+
+// Prune (package-level) is a thin wrapper that opens a fresh Client per call.
+// Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
+// should hold a *Client and call (*Client).Prune instead.
+func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Duration, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.Prune(ctx, before, out)
+}
+
+// PruneTasks (package-level) is a thin wrapper that opens a fresh Client per
+// call. Suitable for short-lived CLI processes. Long-lived consumers should
+// hold a *Client and call (*Client).PruneTasks instead.
+func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.Time) (uint32, error) {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	return c.PruneTasks(ctx, cutoff)
 }

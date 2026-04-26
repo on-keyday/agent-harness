@@ -8,15 +8,11 @@ import (
 	"github.com/on-keyday/agent-harness/topics"
 )
 
-// Logs subscribes to task.<taskID>.log and writes each chunk to out until ctx is cancelled
-// or the stream ends (task finished). Uses the Client's pre-wired pubsub correlator.
-func Logs(ctx context.Context, peerCID objproto.ConnectionID, taskID string, out io.Writer) error {
-	c, err := Dial(ctx, peerCID)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
+// Logs subscribes to task.<taskID>.log and writes each chunk to out until ctx
+// is cancelled or the stream ends (task finished). Method form: callable on
+// an existing *Client without re-dialing. Uses the Client's pre-wired pubsub
+// correlator.
+func (c *Client) Logs(ctx context.Context, taskID string, out io.Writer) error {
 	st, err := c.Peer().JoinAndGetStream(ctx, "cli", topics.TaskLog(taskID))
 	if err != nil {
 		return err
@@ -41,4 +37,16 @@ func Logs(ctx context.Context, peerCID objproto.ConnectionID, taskID string, out
 			return nil
 		}
 	}
+}
+
+// Logs (package-level) is a thin wrapper that opens a fresh Client per call.
+// Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
+// should hold a *Client and call (*Client).Logs instead.
+func Logs(ctx context.Context, peerCID objproto.ConnectionID, taskID string, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.Logs(ctx, taskID, out)
 }

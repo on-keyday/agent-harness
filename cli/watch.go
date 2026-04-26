@@ -15,18 +15,15 @@ import (
 // Watch subscribes to tasks.status and runners.status topics and prints a
 // human-readable line to out for each event. Returns when ctx is cancelled.
 //
+// Method form: callable on an existing *Client without re-dialing. Long-lived
+// consumers (tui, wasm) should use this directly.
+//
 // Each JOIN carries a unique request_id (managed by pubsub.Client); the
 // broker echoes it back in the PubSubResponse along with the StreamId of the
 // stream it created. Both subscribers are correlated independently, so
 // concurrent JOIN ordering on the wire does not affect which goroutine reads
 // which stream.
-func Watch(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
-	c, err := Dial(ctx, peerCID)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
+func (c *Client) Watch(ctx context.Context, out io.Writer) error {
 	tasksTopic := topics.TasksStatus()
 	runnersTopic := topics.RunnersStatus()
 
@@ -84,6 +81,18 @@ func Watch(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) er
 
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+// Watch (package-level) is a thin wrapper that opens a fresh Client per call.
+// Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
+// should hold a *Client and call (*Client).Watch instead.
+func Watch(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.Watch(ctx, out)
 }
 
 // drainTaskEvents decodes as many TaskStatusEvent records as possible from buf,

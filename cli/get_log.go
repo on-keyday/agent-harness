@@ -16,9 +16,11 @@ import (
 // server-initiated send-stream; this helper reads the stream until EOF and
 // returns the assembled bytes.
 //
+// Method form: callable on an existing *Client without re-dialing.
+//
 // Returns (nil, false, nil) when the server has no log file for the task
 // (e.g. tasks pruned, or DataDir-less server).
-func GetTaskLog(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex string) ([]byte, bool, error) {
+func (c *Client) GetTaskLog(ctx context.Context, taskIDHex string) ([]byte, bool, error) {
 	raw, err := hex.DecodeString(taskIDHex)
 	if err != nil {
 		return nil, false, fmt.Errorf("invalid task id %q: %w", taskIDHex, err)
@@ -26,12 +28,6 @@ func GetTaskLog(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex st
 	if len(raw) != 16 {
 		return nil, false, fmt.Errorf("task id must be 16 bytes (32 hex chars)")
 	}
-	c, err := Dial(ctx, peerCID)
-	if err != nil {
-		return nil, false, err
-	}
-	defer c.Close()
-
 	var tid protocol.TaskID
 	copy(tid.Id[:], raw)
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog}
@@ -71,6 +67,18 @@ func GetTaskLog(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex st
 			return out, true, nil
 		}
 	}
+}
+
+// GetTaskLog (package-level) is a thin wrapper that opens a fresh Client per
+// call. Suitable for short-lived CLI processes. Long-lived consumers should
+// hold a *Client and call (*Client).GetTaskLog instead.
+func GetTaskLog(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex string) ([]byte, bool, error) {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return nil, false, err
+	}
+	defer c.Close()
+	return c.GetTaskLog(ctx, taskIDHex)
 }
 
 // waitForReceiveStream polls Transport.GetReceiveStream until the stream

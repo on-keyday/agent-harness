@@ -2,17 +2,20 @@ package tui
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
 )
 
 // --- tea.Cmd factories using the persistent cli.Client ---
+//
+// These wrap (*cli.Client) methods with the tea.Msg shapes the TUI's update
+// loop expects (echo strings, prefix/resolved IDs for cancel, structured
+// snapshots for List). The methods themselves are defined in package cli;
+// we only own the result-message wrapping here.
 
 type SubmitResultMsg struct {
 	TaskID string
@@ -48,21 +51,11 @@ func DoSubmit(c *cli.Client, repo, prompt string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		echo := fmt.Sprintf("submit --repo %q %q", repo, prompt)
-
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
-		sub := protocol.SubmitRequest{}
-		sub.SetRepoPath([]byte(repo))
-		sub.SetPrompt([]byte(prompt))
-		req.SetSubmit(sub)
-		resp, err := c.RoundTripTaskControl(ctx, req)
+		id, err := c.Submit(ctx, repo, prompt)
 		if err != nil {
 			return SubmitResultMsg{Err: err, Echo: echo}
 		}
-		s := resp.Submit()
-		if s == nil || resp.Kind != protocol.TaskControlKind_Submit {
-			return SubmitResultMsg{Err: fmt.Errorf("unexpected submit response"), Echo: echo}
-		}
-		return SubmitResultMsg{TaskID: hex.EncodeToString(s.TaskId.Id[:]), Echo: echo}
+		return SubmitResultMsg{TaskID: id, Echo: echo}
 	}
 }
 
@@ -73,18 +66,9 @@ func DoCancel(c *cli.Client, idPrefix, resolved string) tea.Cmd {
 		if resolved == "" {
 			return CancelResultMsg{IDPrefix: idPrefix, Err: fmt.Errorf("no task matching prefix %q", idPrefix)}
 		}
-		raw, err := hex.DecodeString(resolved)
-		if err != nil {
-			return CancelResultMsg{IDPrefix: idPrefix, Err: fmt.Errorf("invalid id %q: %w", resolved, err)}
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-
-		var tid protocol.TaskID
-		copy(tid.Id[:], raw)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel}
-		req.SetCancel(protocol.CancelTask{TaskId: tid})
-		_, err = c.RoundTripTaskControl(ctx, req)
+		err := c.Cancel(ctx, resolved)
 		return CancelResultMsg{IDPrefix: idPrefix, Resolved: resolved, Err: err}
 	}
 }
@@ -96,46 +80,8 @@ func DoGetTaskLog(c *cli.Client, taskID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-
-		raw, err := hex.DecodeString(taskID)
-		if err != nil {
-			return LogHistoryMsg{TaskID: taskID, Err: err}
-		}
-		var tid protocol.TaskID
-		copy(tid.Id[:], raw)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog}
-		req.SetGetLog(protocol.GetTaskLogRequest{TaskId: tid})
-		resp, err := c.RoundTripTaskControl(ctx, req)
-		if err != nil {
-			return LogHistoryMsg{TaskID: taskID, Err: err}
-		}
-		gl := resp.GetLog()
-		if gl == nil {
-			return LogHistoryMsg{TaskID: taskID, Err: fmt.Errorf("expected GetTaskLog response, got kind=%v", resp.Kind)}
-		}
-		if gl.Found == 0 {
-			return LogHistoryMsg{TaskID: taskID, Found: false}
-		}
-		st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(gl.StreamId))
-		if st == nil {
-			return LogHistoryMsg{TaskID: taskID, Found: true, Err: fmt.Errorf("stream %d not visible", gl.StreamId)}
-		}
-		var out []byte
-		for {
-			data, eof, err := st.ReadDirect(64 * 1024)
-			if err != nil {
-				return LogHistoryMsg{TaskID: taskID, Found: true, Content: out, Err: err}
-			}
-			if len(data) > 0 {
-				out = append(out, data...)
-			}
-			if eof {
-				return LogHistoryMsg{TaskID: taskID, Found: true, Content: out}
-			}
-			if ctx.Err() != nil {
-				return LogHistoryMsg{TaskID: taskID, Found: true, Content: out, Err: ctx.Err()}
-			}
-		}
+		content, found, err := c.GetTaskLog(ctx, taskID)
+		return LogHistoryMsg{TaskID: taskID, Content: content, Found: found, Err: err}
 	}
 }
 
@@ -145,21 +91,18 @@ func DoPruneTasks(c *cli.Client, before time.Duration) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		cutoff := time.Now().Add(-before)
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_PruneTasks}
-		req.SetPrune(protocol.PruneTasksRequest{BeforeTs: uint64(cutoff.UnixNano())})
-		resp, err := c.RoundTripTaskControl(ctx, req)
+		removed, err := c.PruneTasks(ctx, cutoff)
 		if err != nil {
 			return PruneResultMsg{Err: err}
 		}
-		pr := resp.Prune()
-		if pr == nil {
-			return PruneResultMsg{Err: fmt.Errorf("unexpected prune response kind: %v", resp.Kind)}
-		}
-		return PruneResultMsg{Removed: pr.Removed}
+		return PruneResultMsg{Removed: removed}
 	}
 }
 
-// RefreshSnapshot calls List over the persistent client.
+// RefreshSnapshot calls List over the persistent client. We do NOT delegate
+// to (*cli.Client).List here because that method writes a human-readable
+// summary to an io.Writer, whereas the TUI needs the structured Runners /
+// Tasks slices. Keep the bespoke RoundTripTaskControl call here.
 func RefreshSnapshot(c *cli.Client) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -179,31 +122,5 @@ func RefreshSnapshot(c *cli.Client) tea.Cmd {
 		tasks := make([]protocol.TaskInfo, len(lr.Tasks))
 		copy(tasks, lr.Tasks)
 		return SnapshotMsg{Runners: runners, Tasks: tasks}
-	}
-}
-
-// waitForReceiveStream polls until p.GetReceiveStream(id) returns non-nil
-// or ctx / 2s elapses. Server-initiated send-stream creation can race the
-// response message (the response goes via objproto.SendMessage; the
-// stream-create frame travels via trsf.AutoSend).
-func waitForReceiveStream(ctx context.Context, p trsf.Transport, id trsf.StreamID) trsf.ReceiveStream {
-	if st := p.GetReceiveStream(id); st != nil {
-		return st
-	}
-	deadline := time.NewTimer(2 * time.Second)
-	defer deadline.Stop()
-	tick := time.NewTicker(10 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-deadline.C:
-			return nil
-		case <-tick.C:
-			if st := p.GetReceiveStream(id); st != nil {
-				return st
-			}
-		}
 	}
 }

@@ -13,7 +13,6 @@ import (
 	"syscall/js"
 
 	"github.com/on-keyday/agent-harness/exec/frame"
-	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
@@ -43,31 +42,23 @@ var (
 )
 
 // Interactive (wasm) opens an interactive PTY session against an idle runner
-// for repoPath and wires the bidirectional stream's bytes to the browser
-// xterm. Unlike the native variant it does not exec a local PTY; it just
-// pumps frame-encapsulated bytes between the runner and the JS-side xterm.
+// for repo and wires the bidirectional stream's bytes to the browser xterm.
+// Unlike the native variant it does not exec a local PTY; it just pumps
+// frame-encapsulated bytes between the runner and the JS-side xterm.
 //
-// The signature mirrors native (`(ctx, peerCID, repo) (taskIDHex, error)`)
-// rather than the spec's earlier `(ctx, peerCID, taskIDHex)` form. Reason:
-// OpenInteractiveRequest carries RepoPath, not TaskID — the server allocates
-// the TaskID. Forcing the JS side to pre-supply a taskID would require a
-// separate "create interactive task placeholder" RPC that does not exist.
-// Returning the server-allocated taskIDHex lets the JS caller surface it
-// for cancel/list flows symmetric to the native CLI.
+// Method form only: the wasm caller (cmd/harness-webui-wasm) holds a single
+// *Client for the lifetime of the page and reuses it across submit/list/
+// cancel/watch/interactive. The session's bidirectional stream lives on top
+// of that connection until DetachInteractive (or page unload) tears it down.
+//
+// The signature mirrors native (`(ctx, repo) (taskIDHex, error)`); the
+// server allocates the TaskID from OpenInteractiveRequest{RepoPath}, so
+// JS supplies the repo and gets the taskID back, not the other way around.
 //
 // On success this returns immediately after the recv goroutine is started.
 // The active session is stored in activeInteractiveSession; subsequent calls
 // to SendInteractive / ResizeInteractive / DetachInteractive operate on it.
-func Interactive(ctx context.Context, peerCID objproto.ConnectionID, repo string) (string, error) {
-	c, err := Dial(ctx, peerCID)
-	if err != nil {
-		return "", fmt.Errorf("dial: %w", err)
-	}
-	// NOTE: we intentionally do not c.Close() here — the bidirectional
-	// stream lives on top of the connection for the lifetime of the
-	// session. DetachInteractive tears the stream down; the connection
-	// is owned by the wasm process and reaped on page unload.
-
+func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
