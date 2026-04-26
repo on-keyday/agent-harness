@@ -87,20 +87,15 @@ const (
 )
 
 func ParseConnectionID(s string, opt ParseOption) (ConnectionID, error) {
-	var transport string
-	var addrStr string
 	// split by first ':' then split by '-'
-	splited := strings.SplitN(s, ":", 2)
-	if len(splited) != 2 {
+	transport, rest, found := strings.Cut(s, ":")
+	if !found {
 		return ConnectionID{}, fmt.Errorf("invalid connection ID format")
 	}
-	nextSplited := strings.SplitN(splited[1], "-", 2)
-	if len(nextSplited) != 2 {
+	addrStr, idStr, found := strings.Cut(rest, "-")
+	if !found {
 		return ConnectionID{}, fmt.Errorf("invalid connection ID format")
 	}
-	transport = splited[0]
-	addrStr = nextSplited[0]
-	idStr := nextSplited[1]
 	addr, err := netip.ParseAddrPort(addrStr)
 	if err != nil {
 		if !opt.Has(ParseOption_ResolveAddr) {
