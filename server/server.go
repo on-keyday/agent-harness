@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,6 +29,13 @@ type Config struct {
 	TaskRetention time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
 	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
 	Logger        *slog.Logger
+
+	// WebUIFS, when non-nil, causes server.Run to register handlers on its
+	// internal mux for "/" (serving "<root>/index.html") and "/static/" (serving
+	// the directory tree). The fs.FS is expected to have index.html at its
+	// root and static/* below. Typically supplied via //go:embed from
+	// cmd/harness-server.
+	WebUIFS fs.FS
 }
 
 // Server wires all components together and manages the main accept loop.
@@ -241,6 +249,33 @@ func (s *Server) Run(ctx context.Context) error {
 	const shutdownGracePeriod = 2 * time.Second
 
 	mux := http.NewServeMux()
+
+	// Register web UI handlers (index.html at "/" and embedded static tree at
+	// "/static/") before the WebSocket handler so all failures here happen
+	// fast — before any background goroutine is spawned.
+	if s.cfg.WebUIFS != nil {
+		indexBytes, err := fs.ReadFile(s.cfg.WebUIFS, "index.html")
+		if err != nil {
+			return fmt.Errorf("webui: index.html not in embed.FS: %w", err)
+		}
+		if _, err := fs.Stat(s.cfg.WebUIFS, "static/main.wasm"); err != nil {
+			return fmt.Errorf("webui: static/main.wasm missing (did you forget `make webui-build`?): %w", err)
+		}
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/" {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(indexBytes)
+		})
+		staticFS, err := fs.Sub(s.cfg.WebUIFS, "static")
+		if err != nil {
+			return fmt.Errorf("webui: fs.Sub(static): %w", err)
+		}
+		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	}
+
 	sess, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
 		Logger: s.cfg.Logger,
 		Path:   cli.WebSocketPath,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/server"
+	"github.com/on-keyday/agent-harness/webui"
 )
 
 var (
@@ -28,6 +29,7 @@ func main() {
 		DataDir:       *dataDir,
 		TaskRetention: *taskRetain,
 		Logger:        slog.Default(),
+		WebUIFS:       webui.FS,
 	})
 	if err := s.Run(ctx); err != nil && err != context.Canceled {
 		slog.Error("server exited", "err", err)
