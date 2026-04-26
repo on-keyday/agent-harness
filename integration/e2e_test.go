@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/server"
 )
@@ -67,6 +68,11 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 
 	// Random-ish port to avoid collision when this test is run repeatedly.
 	addr := "localhost:18539"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -86,9 +92,9 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			ServerAddr: addr,
-			RepoPath:   repo,
-			ClaudeBin:  fakeClaude,
+			ServerCID: peerCID,
+			RepoPath:  repo,
+			ClaudeBin: fakeClaude,
 		})
 	}()
 
@@ -96,7 +102,7 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Submit a task.
-	taskID, err := cli.Submit(ctx, addr, repo, "do-the-thing")
+	taskID, err := cli.Submit(ctx, peerCID, repo, "do-the-thing")
 	if err != nil {
 		t.Fatalf("submit: %v", err)
 	}
@@ -114,7 +120,7 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	var lastOutput string
 	for time.Now().Before(deadline) {
 		var buf bytes.Buffer
-		if err := cli.List(ctx, addr, &buf); err != nil {
+		if err := cli.List(ctx, peerCID, &buf); err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		lastOutput = buf.String()
