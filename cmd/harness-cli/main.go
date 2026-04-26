@@ -12,6 +12,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func main() {
@@ -53,7 +54,18 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		id, err := cli.Submit(ctx, parseCID(), abs, *task)
+		// Hand-rolled Dial→SayHello→Submit→Close so the server records
+		// kind=cli on this connection. Used by ii (origin tracking) so
+		// the resulting task is attributed to "cli" in `harness-cli ls`.
+		c, err := cli.Dial(ctx, parseCID())
+		if err != nil {
+			die(err)
+		}
+		defer c.Close()
+		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+			die(err)
+		}
+		id, err := c.Submit(ctx, abs, *task)
 		if err != nil {
 			die(err)
 		}
@@ -116,7 +128,17 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		if _, err := cli.Interactive(ctx, parseCID(), abs); err != nil {
+		// Hand-rolled Dial→SayHello→Interactive→Close so the server
+		// records kind=cli on this connection (origin attribution).
+		c, err := cli.Dial(ctx, parseCID())
+		if err != nil {
+			die(err)
+		}
+		defer c.Close()
+		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+			die(err)
+		}
+		if _, err := c.Interactive(ctx, abs); err != nil {
 			die(err)
 		}
 
