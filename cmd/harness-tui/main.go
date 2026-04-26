@@ -12,12 +12,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/tui"
 )
 
 var (
-	serverAddr = flag.String("server", "localhost:8539", "harness-server host:port")
-	repoFlag   = flag.String("repo", ".", "default repo path for submit popup")
+	serverCID = flag.String("server-cid", "ws:localhost:8539-*", "harness-server ConnectionID (e.g. ws:host:port-id, * for random)")
+	repoFlag  = flag.String("repo", ".", "default repo path for submit popup")
 )
 
 func main() {
@@ -25,6 +26,12 @@ func main() {
 	repoAbs, err := filepath.Abs(*repoFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "repo:", err)
+		os.Exit(1)
+	}
+	peerCID, err := objproto.ParseConnectionID(*serverCID,
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "server-cid:", err)
 		os.Exit(1)
 	}
 
@@ -40,7 +47,7 @@ func main() {
 	defer cancel()
 
 	app := tui.New(tui.Config{
-		Server:      *serverAddr,
+		Server:      *serverCID,
 		DefaultRepo: repoAbs,
 	})
 	program := tea.NewProgram(app, tea.WithAltScreen())
@@ -49,7 +56,7 @@ func main() {
 	slogHandler.BindProgram(program)
 
 	go func() {
-		c, err := cli.Dial(ctx, *serverAddr)
+		c, err := cli.Dial(ctx, peerCID)
 		if err != nil {
 			program.Send(tui.ConnectionMsg{Connected: false, Err: err})
 			return

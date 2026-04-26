@@ -5,10 +5,11 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func Cancel(ctx context.Context, addr, taskIDHex string) error {
+func Cancel(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex string) error {
 	raw, err := hex.DecodeString(taskIDHex)
 	if err != nil {
 		return fmt.Errorf("invalid task id %q: %w", taskIDHex, err)
@@ -16,7 +17,7 @@ func Cancel(ctx context.Context, addr, taskIDHex string) error {
 	if len(raw) != 16 {
 		return fmt.Errorf("task id must be 16 bytes (32 hex chars)")
 	}
-	c, err := Dial(ctx, addr)
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return err
 	}

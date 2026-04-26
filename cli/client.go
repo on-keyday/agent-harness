@@ -10,6 +10,7 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
@@ -29,14 +30,17 @@ type Client struct {
 }
 
 // Dial establishes the underlying peer.Conn and starts the receive loop
-// with this Client's TaskControl-aware handler. Pubsub-kind responses are
-// handled by peer.Conn directly (it routes them to its pubsub.Client);
-// TaskControl-kind responses land in c.dispatchControl below.
-func Dial(ctx context.Context, addr string) (*Client, error) {
-	pc, err := peer.Dial(ctx, peer.DialConfig{
-		Addr:         addr,
-		UniqueNumber: 2222,
-		Logger:       slog.Default(),
+// with this Client's TaskControl-aware handler. The peerCID identifies
+// which server peer to ECDH with (e.g. parsed from --server-cid). Pubsub-
+// kind responses are handled by peer.Conn directly (it routes them to its
+// pubsub.Client); TaskControl-kind responses land in c.dispatchControl below.
+func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
+	ep, err := transport.WebSocketEndpoint(slog.Default(), "", nil, objproto.EndpointModeClient)
+	if err != nil {
+		return nil, fmt.Errorf("ws endpoint: %w", err)
+	}
+	pc, err := peer.Dial(ctx, ep, peerCID, peer.DialConfig{
+		Logger: slog.Default(),
 	})
 	if err != nil {
 		return nil, err

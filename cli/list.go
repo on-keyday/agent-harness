@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // List queries server for all runners + recent tasks and writes a human-readable summary to out.
-func List(ctx context.Context, addr string, out io.Writer) error {
-	c, err := Dial(ctx, addr)
+func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return err
 	}

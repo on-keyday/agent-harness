@@ -9,11 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 )
 
 var (
-	server     = flag.String("server", "localhost:8539", "server host:port")
+	serverCID  = flag.String("server-cid", "ws:localhost:8539-*", "server ConnectionID (e.g. ws:host:port-id, * for random)")
 	repo       = flag.String("repo", ".", "absolute path to the repo this runner serves")
 	claudeBin  = flag.String("claude-bin", "claude", "path to the claude binary")
 	claudeArgs = flag.String("claude-args", "", "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
@@ -26,10 +27,16 @@ func main() {
 		slog.Error("repo abs", "err", err)
 		os.Exit(1)
 	}
+	peerCID, err := objproto.ParseConnectionID(*serverCID,
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		slog.Error("server-cid", "err", err)
+		os.Exit(1)
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	if err := runner.Run(ctx, runner.Config{
-		ServerAddr:      *server,
+		ServerCID:       peerCID,
 		RepoPath:        abs,
 		ClaudeBin:       *claudeBin,
 		ExtraClaudeArgs: strings.Fields(*claudeArgs),

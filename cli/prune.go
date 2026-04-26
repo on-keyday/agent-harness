@@ -9,22 +9,24 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Prune removes old harness worktrees in <repo>/.harness-worktrees/ AND asks the server
 // to forget terminal tasks (and their log files) older than `before`. Both steps run on
 // each call: the worktree pass walks the local filesystem; the server pass speaks
-// TaskControl. If `addr` is empty, the server step is skipped. If the server is
-// unreachable, the local pass still runs and a warning is printed to out.
-func Prune(ctx context.Context, addr, repo string, before time.Duration, out io.Writer) error {
+// TaskControl. If `peerCID` is the zero value, the server step is skipped. If the
+// server is unreachable, the local pass still runs and a warning is printed to out.
+func Prune(ctx context.Context, peerCID objproto.ConnectionID, repo string, before time.Duration, out io.Writer) error {
 	cutoff := time.Now().Add(-before)
 
 	// Step 1: ask the server to forget terminal tasks older than cutoff.
 	// We do this BEFORE the worktree sweep so a freshly-pruned task's
 	// worktree (still on disk) still appears for cleanup below.
-	if addr != "" {
-		if removed, err := PruneTasks(ctx, addr, cutoff); err != nil {
+	var zero objproto.ConnectionID
+	if peerCID != zero {
+		if removed, err := PruneTasks(ctx, peerCID, cutoff); err != nil {
 			fmt.Fprintf(out, "warning: server prune skipped: %v\n", err)
 		} else if removed > 0 {
 			fmt.Fprintf(out, "server forgot %d task(s)\n", removed)
@@ -64,8 +66,8 @@ func Prune(ctx context.Context, addr, repo string, before time.Duration, out io.
 // PruneTasks asks the server to forget terminal tasks whose EndedAt is before cutoff.
 // Returns the count of tasks removed by the server. The server also deletes the
 // per-task log files at <data-dir>/logs/<id>.log.
-func PruneTasks(ctx context.Context, addr string, cutoff time.Time) (uint32, error) {
-	c, err := Dial(ctx, addr)
+func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.Time) (uint32, error) {
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return 0, err
 	}

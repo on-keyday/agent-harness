@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/objproto"
 )
 
 func TestPruneRemovesOldWorktrees(t *testing.T) {
@@ -41,8 +43,8 @@ func TestPruneRemovesOldWorktrees(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	// addr="" → server step skipped, exercises the worktree-only path.
-	if err := Prune(context.Background(), "", repo, 7*24*time.Hour, &out); err != nil {
+	// zero ConnectionID → server step skipped, exercises the worktree-only path.
+	if err := Prune(context.Background(), objproto.ConnectionID{}, repo, 7*24*time.Hour, &out); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(wtDir); !os.IsNotExist(err) {
@@ -52,7 +54,7 @@ func TestPruneRemovesOldWorktrees(t *testing.T) {
 
 func TestPruneNoDir(t *testing.T) {
 	var out bytes.Buffer
-	err := Prune(context.Background(), "", t.TempDir(), 7*24*time.Hour, &out)
+	err := Prune(context.Background(), objproto.ConnectionID{}, t.TempDir(), 7*24*time.Hour, &out)
 	if err != nil {
 		t.Fatalf("Prune on empty repo should not error: %v", err)
 	}

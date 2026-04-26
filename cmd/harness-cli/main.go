@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/objproto"
 )
 
 func main() {
-	server := flag.String("server", "localhost:8539", "server host:port")
+	serverCID := flag.String("server-cid", "ws:localhost:8539-*",
+		"server ConnectionID (e.g. ws:host:port-id, * for random)")
 	flag.Usage = usage
 	flag.Parse()
 
@@ -23,6 +25,15 @@ func main() {
 	sub := flag.Arg(0)
 	args := flag.Args()[1:]
 	ctx := context.Background()
+
+	parseCID := func() objproto.ConnectionID {
+		peerCID, err := objproto.ParseConnectionID(*serverCID,
+			objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+		if err != nil {
+			die(fmt.Errorf("server-cid: %w", err))
+		}
+		return peerCID
+	}
 
 	switch sub {
 	case "submit":
@@ -38,14 +49,14 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		id, err := cli.Submit(ctx, *server, abs, *task)
+		id, err := cli.Submit(ctx, parseCID(), abs, *task)
 		if err != nil {
 			die(err)
 		}
 		fmt.Println(id)
 
 	case "ls":
-		if err := cli.List(ctx, *server, os.Stdout); err != nil {
+		if err := cli.List(ctx, parseCID(), os.Stdout); err != nil {
 			die(err)
 		}
 
@@ -54,11 +65,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, "cancel: missing task id")
 			os.Exit(2)
 		}
-		if err := cli.Cancel(ctx, *server, args[0]); err != nil {
+		if err := cli.Cancel(ctx, parseCID(), args[0]); err != nil {
 			die(err)
 		}
 
 	case "prune":
+		// Task 3 で subcommand 分離する。Task 2 では現状の --offline を維持して型のみ追従。
 		fs := flag.NewFlagSet("prune", flag.ExitOnError)
 		repo := fs.String("repo", ".", "repo to prune")
 		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees and forget tasks older than this")
@@ -68,11 +80,11 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		serverAddr := *server
-		if *offline {
-			serverAddr = ""
+		var pcid objproto.ConnectionID
+		if !*offline {
+			pcid = parseCID()
 		}
-		if err := cli.Prune(ctx, serverAddr, abs, *before, os.Stdout); err != nil {
+		if err := cli.Prune(ctx, pcid, abs, *before, os.Stdout); err != nil {
 			die(err)
 		}
 
@@ -81,12 +93,12 @@ func main() {
 			fmt.Fprintln(os.Stderr, "logs: missing task id")
 			os.Exit(2)
 		}
-		if err := cli.Logs(ctx, *server, args[0], os.Stdout); err != nil {
+		if err := cli.Logs(ctx, parseCID(), args[0], os.Stdout); err != nil {
 			die(err)
 		}
 
 	case "watch":
-		if err := cli.Watch(ctx, *server, os.Stdout); err != nil {
+		if err := cli.Watch(ctx, parseCID(), os.Stdout); err != nil {
 			die(err)
 		}
 
@@ -98,7 +110,7 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		if _, err := cli.Interactive(ctx, *server, abs); err != nil {
+		if _, err := cli.Interactive(ctx, parseCID(), abs); err != nil {
 			die(err)
 		}
 
@@ -109,7 +121,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server HOST:PORT] <subcommand> [args]")
+	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] <subcommand> [args]")
 	fmt.Fprintln(os.Stderr, "  submit [--repo PATH] --task TEXT    enqueue a new task (--repo defaults to cwd)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")

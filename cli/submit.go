@@ -5,12 +5,13 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Submit asks the server to enqueue a new task. Returns the assigned task ID (32 hex chars).
-func Submit(ctx context.Context, addr, repo, prompt string) (string, error) {
-	c, err := Dial(ctx, addr)
+func Submit(ctx context.Context, peerCID objproto.ConnectionID, repo, prompt string) (string, error) {
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return "", err
 	}

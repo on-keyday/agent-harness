@@ -4,13 +4,14 @@ import (
 	"context"
 	"io"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/topics"
 )
 
 // Logs subscribes to task.<taskID>.log and writes each chunk to out until ctx is cancelled
 // or the stream ends (task finished). Uses the Client's pre-wired pubsub correlator.
-func Logs(ctx context.Context, addr, taskID string, out io.Writer) error {
-	c, err := Dial(ctx, addr)
+func Logs(ctx context.Context, peerCID objproto.ConnectionID, taskID string, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return err
 	}

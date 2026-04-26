@@ -6,7 +6,7 @@
 //
 // Lifecycle:
 //
-//	pc, err := peer.Dial(ctx, peer.DialConfig{...})  // WS+ECDH+trsf+AutoSend+AutoPing only
+//	pc, err := peer.Dial(ctx, ep, peerCID, peer.DialConfig{...})  // ECDH+trsf+AutoSend+AutoPing only
 //	pc.SetOnControl(handler)                          // optional; before Start
 //	pc.Start(ctx)                                     // spawns AutoReceive goroutine
 //	defer pc.Close()
@@ -25,7 +25,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
-	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
@@ -55,26 +54,21 @@ type Conn struct {
 
 // DialConfig configures a peer.Conn.
 type DialConfig struct {
-	// Addr is the server's "host:port".
-	Addr string
-	// UniqueNumber is the trailing token in the synthetic ConnectionID
-	// the endpoint uses ("ws:127.0.0.1:<port>-<UniqueNumber>"). Runner
-	// uses 1111, cli uses 2222 — match what the server's registry expects.
-	UniqueNumber uint16
 	// Logger; defaults to slog.Default() when nil.
 	Logger *slog.Logger
 	// PingInterval; defaults to 30s when zero.
 	PingInterval time.Duration
 }
 
-// Dial opens a WebSocket endpoint, runs the ECDH handshake, sets up the
-// trsf transport, and starts AutoSend + AutoPing. AutoReceive is NOT started yet
-// — the caller must call SetOnControl (optional) and then Start before any
-// inbound message can be processed. This split exists so callers whose
-// handler depends on values produced by Dial (e.g. the runner's session,
-// which holds the peer.Conn-backed Sender) can finish wiring before the
-// receive loop begins.
-func Dial(ctx context.Context, cfg DialConfig) (*Conn, error) {
+// Dial wires up an objproto Connection (via ECDH on the supplied Endpoint),
+// a trsf transport, AutoSend, and AutoPing on top of the given peerCID. The
+// caller owns ep — its lifetime is independent of the returned *Conn.
+// AutoReceive is NOT started yet; the caller must call SetOnControl
+// (optional) and then Start before any inbound message can be processed.
+// This split exists so callers whose handler depends on values produced
+// by Dial (e.g. the runner's session, which holds the peer.Conn-backed
+// Sender) can finish wiring before the receive loop begins.
+func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.ConnectionID, cfg DialConfig) (*Conn, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -82,13 +76,8 @@ func Dial(ctx context.Context, cfg DialConfig) (*Conn, error) {
 		cfg.PingInterval = 30 * time.Second
 	}
 
-	ep, err := transport.WebSocketEndpoint(cfg.Logger, cfg.Addr, nil, objproto.EndpointModeClient)
-	if err != nil {
-		return nil, fmt.Errorf("ws endpoint: %w", err)
-	}
-	cidStr := fmt.Sprintf("ws:127.0.0.1:%s-%d", portFrom(cfg.Addr), cfg.UniqueNumber)
 	conn, err := objproto.DoECDHHandshake(ctx, ep,
-		objproto.MustParseConnectionID(cidStr),
+		peerCID,
 		ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
 		return nil, fmt.Errorf("ecdh: %w", err)
@@ -151,8 +140,9 @@ func (c *Conn) Wait(ctx context.Context) error {
 // Close sends a wire-level Close to the peer (best-effort; lets the server
 // deregister the runner / drop the subscriber immediately instead of
 // waiting for the idle GC) and then releases the underlying objproto
-// connection. The owning objproto.Endpoint is NOT torn down here — it has
-// no Close API and is process-scoped by design.
+// connection. The owning objproto.Endpoint is owned by the caller and is
+// NOT torn down here — peer.Dial accepts an externally constructed Endpoint
+// and does not assume ownership.
 func (c *Conn) Close() {
 	_ = trsf.SendClose(c.conn)
 	_ = c.conn.Close()
@@ -199,13 +189,3 @@ func (c *Conn) dispatch(msg *objproto.Message, err error) {
 	}
 }
 
-// portFrom extracts the port portion from a "host:port" string. Falls back
-// to the full string if no colon is found.
-func portFrom(addr string) string {
-	for i := len(addr) - 1; i >= 0; i-- {
-		if addr[i] == ':' {
-			return addr[i+1:]
-		}
-	}
-	return addr
-}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 )
@@ -17,7 +18,7 @@ import (
 //
 // Returns (nil, false, nil) when the server has no log file for the task
 // (e.g. tasks pruned, or DataDir-less server).
-func GetTaskLog(ctx context.Context, addr, taskIDHex string) ([]byte, bool, error) {
+func GetTaskLog(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex string) ([]byte, bool, error) {
 	raw, err := hex.DecodeString(taskIDHex)
 	if err != nil {
 		return nil, false, fmt.Errorf("invalid task id %q: %w", taskIDHex, err)
@@ -25,7 +26,7 @@ func GetTaskLog(ctx context.Context, addr, taskIDHex string) ([]byte, bool, erro
 	if len(raw) != 16 {
 		return nil, false, fmt.Errorf("task id must be 16 bytes (32 hex chars)")
 	}
-	c, err := Dial(ctx, addr)
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return nil, false, err
 	}

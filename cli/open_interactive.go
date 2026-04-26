@@ -7,6 +7,7 @@ import (
 	"os"
 
 	agentexec "github.com/on-keyday/agent-harness/exec"
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
@@ -62,8 +63,8 @@ func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentex
 // then close. The caller's terminal must be a real tty (RemoteShell
 // flips it into raw mode). Returns the new task's hex id even on error
 // so the caller can surface it for cleanup.
-func Interactive(ctx context.Context, addr, repo string) (string, error) {
-	c, err := Dial(ctx, addr)
+func Interactive(ctx context.Context, peerCID objproto.ConnectionID, repo string) (string, error) {
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return "", err
 	}

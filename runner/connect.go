@@ -9,15 +9,16 @@ import (
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // Config holds the configuration for the runner connection.
 type Config struct {
-	ServerAddr      string   // host:port
-	RepoPath        string   // absolute path of the repo this runner serves
-	ClaudeBin       string   // path to the claude binary
-	ExtraClaudeArgs []string // forwarded to every claude invocation (before -p)
+	ServerCID       objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
+	RepoPath        string                // absolute path of the repo this runner serves
+	ClaudeBin       string                // path to the claude binary
+	ExtraClaudeArgs []string              // forwarded to every claude invocation (before -p)
 	Logger          *slog.Logger
 }
 
@@ -30,9 +31,11 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.Logger = slog.Default()
 	}
 
-	pc, err := peer.Dial(ctx, peer.DialConfig{
-		Addr:         cfg.ServerAddr,
-		UniqueNumber: 1111,
+	ep, err := transport.WebSocketEndpoint(cfg.Logger, "", nil, objproto.EndpointModeClient)
+	if err != nil {
+		return fmt.Errorf("ws endpoint: %w", err)
+	}
+	pc, err := peer.Dial(ctx, ep, cfg.ServerCID, peer.DialConfig{
 		Logger:       cfg.Logger,
 		PingInterval: 30 * time.Second,
 	})

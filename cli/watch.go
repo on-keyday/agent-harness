@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/trsf"
@@ -19,8 +20,8 @@ import (
 // stream it created. Both subscribers are correlated independently, so
 // concurrent JOIN ordering on the wire does not affect which goroutine reads
 // which stream.
-func Watch(ctx context.Context, addr string, out io.Writer) error {
-	c, err := Dial(ctx, addr)
+func Watch(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return err
 	}
