@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 
 	agentexec "github.com/on-keyday/agent-harness/exec"
 	"github.com/on-keyday/agent-harness/peer"
@@ -53,4 +54,34 @@ func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentex
 		return nil, taskIDHex, fmt.Errorf("exec stream %d not visible after OpenInteractive", oir.StreamId)
 	}
 	return agentexec.NewCommandExecutionStream(st), taskIDHex, nil
+}
+
+// Interactive is the one-shot helper for harness-cli's `interactive`
+// subcommand: dial, open the interactive session, RemoteShell to splice
+// stdin/stdout/SIGWINCH between the local terminal and the remote PTY,
+// then close. The caller's terminal must be a real tty (RemoteShell
+// flips it into raw mode). Returns the new task's hex id even on error
+// so the caller can surface it for cleanup.
+func Interactive(ctx context.Context, addr, repo string) (string, error) {
+	c, err := Dial(ctx, addr)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+
+	stream, taskIDHex, err := c.OpenInteractive(ctx, repo)
+	if err != nil {
+		return taskIDHex, err
+	}
+	defer stream.Close()
+
+	// stderr because stdout is owned by the remote PTY's output once
+	// RemoteShell starts. Printing before MakeRaw keeps the message in
+	// cooked mode so the trailing newline behaves.
+	fmt.Fprintf(os.Stderr, "harness-cli: attached to task %s (Ctrl+D / `exit` to detach)\n", taskIDHex)
+
+	if err := stream.RemoteShell(); err != nil {
+		return taskIDHex, err
+	}
+	return taskIDHex, nil
 }

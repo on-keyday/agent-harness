@@ -90,6 +90,18 @@ func main() {
 			die(err)
 		}
 
+	case "interactive":
+		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
+		repo := fs.String("repo", ".", "path to repo (defaults to cwd)")
+		fs.Parse(args)
+		abs, err := filepath.Abs(*repo)
+		if err != nil {
+			die(err)
+		}
+		if _, err := cli.Interactive(ctx, *server, abs); err != nil {
+			die(err)
+		}
+
 	default:
 		usage()
 		os.Exit(2)
@@ -104,6 +116,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  prune [--repo PATH] [--before DUR]  remove old worktrees and forget old tasks (--offline = local only)")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
+	fmt.Fprintln(os.Stderr, "  interactive [--repo PATH]           attach an interactive PTY claude session (must be run from a tty)")
 }
 
 func die(err error) {

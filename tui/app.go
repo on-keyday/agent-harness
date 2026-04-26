@@ -67,7 +67,7 @@ type Config struct {
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / cancel / prune / repo / clear / help / quit"
+	cmd.Placeholder = "submit / interactive / cancel / prune / repo / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -567,7 +567,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Clear()
 		return a, nil
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / cancel <id> / prune [--before=DUR] [--offline] / repo <path> / clear / help / quit")
+		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / prune [--before=DUR] [--offline] / repo <path> / clear / help / quit")
 		return a, nil
 	case RepoAction:
 		// Validate against the runner registry (the actual source of truth
@@ -598,6 +598,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.popup.SetRepo(abs)
 		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", abs))
 		return a, nil
+	case InteractiveAction:
+		return a, DoOpenInteractive(a.client, v.Repo)
 	case SubmitAction:
 		return a, DoSubmit(a.client, v.Repo, v.Prompt)
 	case CancelAction:
