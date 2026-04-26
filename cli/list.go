@@ -9,18 +9,30 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// List queries the server for all runners + recent tasks and writes a human-
-// readable summary to out. Method form: callable repeatedly without re-dialing.
-func (c *Client) List(ctx context.Context, out io.Writer) error {
+// Snapshot queries the server for all runners + recent tasks and returns the
+// structured ListResult. Both the human-readable List and the TUI/webui code
+// paths share this helper so the RoundTripTaskControl + decode logic exists in
+// exactly one place.
+func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResult, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{Query: nil})
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	lr := resp.List()
 	if lr == nil {
-		return fmt.Errorf("empty list response")
+		return nil, fmt.Errorf("empty list response")
+	}
+	return lr, nil
+}
+
+// List queries the server for all runners + recent tasks and writes a human-
+// readable summary to out. Method form: callable repeatedly without re-dialing.
+func (c *Client) List(ctx context.Context, out io.Writer) error {
+	lr, err := c.Snapshot(ctx)
+	if err != nil {
+		return err
 	}
 
 	fmt.Fprintln(out, "RUNNERS")

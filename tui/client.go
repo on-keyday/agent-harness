@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // --- tea.Cmd factories using the persistent cli.Client ---
@@ -99,28 +98,17 @@ func DoPruneTasks(c *cli.Client, before time.Duration) tea.Cmd {
 	}
 }
 
-// RefreshSnapshot calls List over the persistent client. We do NOT delegate
-// to (*cli.Client).List here because that method writes a human-readable
-// summary to an io.Writer, whereas the TUI needs the structured Runners /
-// Tasks slices. Keep the bespoke RoundTripTaskControl call here.
+// RefreshSnapshot wraps (*cli.Client).Snapshot with the SnapshotMsg envelope
+// the TUI's update loop expects. The RoundTripTaskControl + decode lives in
+// the cli package so the wasm bridge and other consumers can share it.
 func RefreshSnapshot(c *cli.Client) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
-		req.SetList(protocol.ListQuery{})
-		resp, err := c.RoundTripTaskControl(ctx, req)
+		lr, err := c.Snapshot(ctx)
 		if err != nil {
 			return SnapshotMsg{Err: err}
 		}
-		lr := resp.List()
-		if lr == nil {
-			return SnapshotMsg{Err: fmt.Errorf("empty list response")}
-		}
-		runners := make([]protocol.RunnerInfo, len(lr.Runners))
-		copy(runners, lr.Runners)
-		tasks := make([]protocol.TaskInfo, len(lr.Tasks))
-		copy(tasks, lr.Tasks)
-		return SnapshotMsg{Runners: runners, Tasks: tasks}
+		return SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks}
 	}
 }

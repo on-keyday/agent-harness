@@ -34,12 +34,24 @@ pre {
   overflow: auto;
   font-size: 0.85rem;
 }
-input {
+input, select {
   background: #2a2a2a;
   color: #d4d4d4;
   border: 1px solid #555;
   padding: 0.3rem;
   font-family: monospace;
+}
+#runner-select {
+  min-width: 24rem;
+  margin: 0 0.5rem 0.5rem 0.4rem;
+}
+#runner-select option:disabled {
+  color: #777;
+}
+#runners label {
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-right: 0.4rem;
 }
 button {
   background: #444;
