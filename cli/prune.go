@@ -13,27 +13,24 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// Prune removes old harness worktrees in <repo>/.harness-worktrees/ AND asks the server
-// to forget terminal tasks (and their log files) older than `before`. Both steps run on
-// each call: the worktree pass walks the local filesystem; the server pass speaks
-// TaskControl. If `peerCID` is the zero value, the server step is skipped. If the
-// server is unreachable, the local pass still runs and a warning is printed to out.
-func Prune(ctx context.Context, peerCID objproto.ConnectionID, repo string, before time.Duration, out io.Writer) error {
+// Prune asks the server to forget terminal tasks older than `before`.
+// This used to also walk local worktrees; that step is now in PruneLocal.
+func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Duration, out io.Writer) error {
 	cutoff := time.Now().Add(-before)
-
-	// Step 1: ask the server to forget terminal tasks older than cutoff.
-	// We do this BEFORE the worktree sweep so a freshly-pruned task's
-	// worktree (still on disk) still appears for cleanup below.
-	var zero objproto.ConnectionID
-	if peerCID != zero {
-		if removed, err := PruneTasks(ctx, peerCID, cutoff); err != nil {
-			fmt.Fprintf(out, "warning: server prune skipped: %v\n", err)
-		} else if removed > 0 {
-			fmt.Fprintf(out, "server forgot %d task(s)\n", removed)
-		}
+	removed, err := PruneTasks(ctx, peerCID, cutoff)
+	if err != nil {
+		return err
 	}
+	if removed > 0 {
+		fmt.Fprintf(out, "server forgot %d task(s)\n", removed)
+	}
+	return nil
+}
 
-	// Step 2: walk local worktrees and `git worktree remove --force` the old ones.
+// PruneLocal walks <repo>/.harness-worktrees/ and `git worktree remove --force`
+// the entries whose ModTime is older than `before`. No server interaction.
+func PruneLocal(ctx context.Context, repo string, before time.Duration, out io.Writer) error {
+	cutoff := time.Now().Add(-before)
 	dir := filepath.Join(repo, ".harness-worktrees")
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -63,9 +60,9 @@ func Prune(ctx context.Context, peerCID objproto.ConnectionID, repo string, befo
 	return nil
 }
 
-// PruneTasks asks the server to forget terminal tasks whose EndedAt is before cutoff.
-// Returns the count of tasks removed by the server. The server also deletes the
-// per-task log files at <data-dir>/logs/<id>.log.
+// PruneTasks asks the server to forget terminal tasks whose EndedAt is before
+// cutoff. Internal helper used by Prune; exposed for callers that want the
+// raw count (e.g. tui).
 func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.Time) (uint32, error) {
 	c, err := Dial(ctx, peerCID)
 	if err != nil {
