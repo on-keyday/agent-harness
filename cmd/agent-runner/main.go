@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 )
@@ -18,10 +19,12 @@ var (
 	repo       = flag.String("repo", ".", "absolute path to the repo this runner serves")
 	claudeBin  = flag.String("claude-bin", "claude", "path to the claude binary")
 	claudeArgs = flag.String("claude-args", "", "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
+	wsPath     = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
 )
 
 func main() {
 	flag.Parse()
+	cli.WebSocketPath = *wsPath
 	abs, err := filepath.Abs(*repo)
 	if err != nil {
 		slog.Error("repo abs", "err", err)

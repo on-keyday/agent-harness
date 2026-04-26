@@ -19,10 +19,12 @@ import (
 var (
 	serverCID = flag.String("server-cid", "ws:127.0.0.1:8539-*", "harness-server ConnectionID (e.g. ws:host:port-id, * for random)")
 	repoFlag  = flag.String("repo", ".", "default repo path for submit popup")
+	wsPath    = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
 )
 
 func main() {
 	flag.Parse()
+	cli.WebSocketPath = *wsPath
 	repoAbs, err := filepath.Abs(*repoFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "repo:", err)

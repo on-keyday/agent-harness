@@ -15,8 +15,10 @@ import (
 func main() {
 	serverCID := flag.String("server-cid", "ws:127.0.0.1:8539-*",
 		"server ConnectionID (e.g. ws:host:port-id, * for random)")
+	wsPath := flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
 	flag.Usage = usage
 	flag.Parse()
+	cli.WebSocketPath = *wsPath
 
 	if flag.NArg() == 0 {
 		usage()
