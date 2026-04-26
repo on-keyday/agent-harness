@@ -83,7 +83,7 @@ func (m *connectionMap) Delete(addr netip.AddrPort) {
 	delete(m.connMap, addr)
 }
 
-func handleRawSession(transportName string, connChan chan *WebSocketConn, senderChannel <-chan *objproto.PacketData, rawSess objproto.RawSession, connMap *connectionMap, logger *slog.Logger, tlsConf *tls.Config) {
+func handleRawEndpoint(transportName string, connChan chan *WebSocketConn, senderChannel <-chan *objproto.PacketData, rawSess objproto.RawEndpoint, connMap *connectionMap, logger *slog.Logger, tlsConf *tls.Config) {
 	go func() {
 		for conn := range connChan {
 			go func(c *WebSocketConn) {
@@ -162,19 +162,19 @@ func handleRawSession(transportName string, connChan chan *WebSocketConn, sender
 	}()
 }
 
-func WebSocketSession(logger *slog.Logger, addr string, tlsConf *tls.Config, sessMode objproto.SessionMode) (objproto.Session, error) {
-	rawSess := objproto.NewSession(logger, sessMode)
-	return WebSocketSessionEx(rawSess, logger, addr, tlsConf, rawSess.GetSenderChannel())
+func WebSocketEndpoint(logger *slog.Logger, addr string, tlsConf *tls.Config, sessMode objproto.EndpointMode) (objproto.Endpoint, error) {
+	rawSess := objproto.NewEndpoint(logger, sessMode)
+	return WebSocketEndpointEx(rawSess, logger, addr, tlsConf, rawSess.GetSenderChannel())
 }
 
-func WebSocketSessionEx(rawSess objproto.RawSession, logger *slog.Logger, addr string, tlsConf *tls.Config, sendTo <-chan *objproto.PacketData) (objproto.Session, error) {
+func WebSocketEndpointEx(rawSess objproto.RawEndpoint, logger *slog.Logger, addr string, tlsConf *tls.Config, sendTo <-chan *objproto.PacketData) (objproto.Endpoint, error) {
 	connChan := make(chan *WebSocketConn, 10)
 	connMap := &connectionMap{
 		connMap: make(map[netip.AddrPort]*WebSocketConn),
 	}
 
 	// mutual or server mode listens for incoming connections
-	if rawSess.SessionMode() != objproto.SessionModeClient {
+	if rawSess.EndpointMode() != objproto.EndpointModeClient {
 		handler := &websocket.Server{
 			Config: websocket.Config{
 				TlsConfig: tlsConf,
@@ -227,7 +227,7 @@ func WebSocketSessionEx(rawSess objproto.RawSession, logger *slog.Logger, addr s
 		transportName = "wss"
 	}
 
-	handleRawSession(transportName, connChan, sendTo, rawSess, connMap, logger, tlsConf)
+	handleRawEndpoint(transportName, connChan, sendTo, rawSess, connMap, logger, tlsConf)
 
 	return rawSess, nil
 }

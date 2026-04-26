@@ -97,7 +97,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 // peerSender adapts *peer.Conn to the runner.Sender interface so existing
 // session code (and its tests via mockSender) doesn't have to know about
-// peer at all. Send writes raw control bytes through the objproto session;
+// peer at all. Send writes raw control bytes through the objproto connection;
 // Publish goes through peer.Conn.Publish (per-topic singleflight + cached
 // stream — replaces the old connSender, which lived alongside this file).
 type peerSender struct {
@@ -106,12 +106,12 @@ type peerSender struct {
 }
 
 func (s *peerSender) Send(data []byte) error {
-	_, _, err := s.pc.Session().SendMessage(data)
+	_, _, err := s.pc.Connection().SendMessage(data)
 	return err
 }
 
 func (s *peerSender) ID() objproto.ConnectionID {
-	return s.pc.Session().ConnectionID()
+	return s.pc.Connection().ConnectionID()
 }
 
 func (s *peerSender) Publish(topic string, data []byte) error {

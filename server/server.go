@@ -20,11 +20,11 @@ import (
 
 // Config holds the configuration for a Server instance.
 type Config struct {
-	Addr           string        // host:port for the WebSocket listener
-	DataDir        string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
-	TaskRetention  time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
-	PruneInterval  time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
-	Logger         *slog.Logger
+	Addr          string        // host:port for the WebSocket listener
+	DataDir       string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
+	TaskRetention time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
+	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
+	Logger        *slog.Logger
 }
 
 // Server wires all components together and manages the main accept loop.
@@ -235,12 +235,12 @@ func (s *Server) Run(ctx context.Context) error {
 			}()
 		}
 	}
-	sess, err := transport.WebSocketSession(s.cfg.Logger, s.cfg.Addr, nil, objproto.SessionModeServer)
+	sess, err := transport.WebSocketEndpoint(s.cfg.Logger, s.cfg.Addr, nil, objproto.EndpointModeServer)
 	if err != nil {
 		return fmt.Errorf("websocket session: %w", err)
 	}
 	go objproto.AutoGarbageCollect(sess, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-	ch := sess.GetNewActiveSessionChannel()
+	ch := sess.GetNewActiveConnectionChannel()
 	for {
 		select {
 		case <-ctx.Done():

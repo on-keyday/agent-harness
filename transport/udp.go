@@ -11,12 +11,12 @@ import (
 	"github.com/on-keyday/agent-harness/objproto"
 )
 
-func UDPSession(logger *slog.Logger, port uint16, mode objproto.SessionMode) (objproto.Session, error) {
-	sess := objproto.NewSession(logger, mode)
-	return UDPSessionEx(sess, logger, port, sess.GetSenderChannel())
+func UDPEndpoint(logger *slog.Logger, port uint16, mode objproto.EndpointMode) (objproto.Endpoint, error) {
+	sess := objproto.NewEndpoint(logger, mode)
+	return UDPEndpointEx(sess, logger, port, sess.GetSenderChannel())
 }
 
-func UDPSessionEx(sess objproto.RawSession, logger *slog.Logger, port uint16, sendTo <-chan *objproto.PacketData) (objproto.Session, error) {
+func UDPEndpointEx(sess objproto.RawEndpoint, logger *slog.Logger, port uint16, sendTo <-chan *objproto.PacketData) (objproto.Endpoint, error) {
 	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{
 		IP:   net.IPv6unspecified,
 		Port: int(port),

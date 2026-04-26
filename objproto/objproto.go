@@ -156,20 +156,20 @@ func MustParseConnectionID(s string) ConnectionID {
 }
 
 type handshakeInfo struct {
-	ConnectionID ConnectionID
-	KeyKind      packet.KeyKind
-	PrivateKey   []byte
-	LastTime     time.Time
-	Transcript   []byte
-	hsDone       chan Connection
-	proxySession *ActiveSession
+	ConnectionID    ConnectionID
+	KeyKind         packet.KeyKind
+	PrivateKey      []byte
+	LastTime        time.Time
+	Transcript      []byte
+	hsDone          chan Connection
+	proxyConnection *activeConnection
 }
 
 func (h *handshakeInfo) closeUnlocked() {
 	close(h.hsDone)
 	clear(h.PrivateKey)
-	if h.proxySession != nil {
-		h.proxySession.closeUnlocked()
+	if h.proxyConnection != nil {
+		h.proxyConnection.closeUnlocked()
 	}
 }
 
@@ -254,14 +254,14 @@ func (r *receiveNonceTracker) InsertNonce(nonce uint64, now time.Time, dryRun bo
 	return true
 }
 
-type ActiveSession struct {
+type activeConnection struct {
 	name              atomic.Value
 	mu                sync.Mutex
-	session           *session
+	endpoint          *endpoint
 	cid               ConnectionID
 	connTime          time.Time
 	lastTime          time.Time
-	sessionSecret     cipher.AEAD
+	connectionSecret  cipher.AEAD
 	selfIV            []byte
 	peerIV            []byte
 	selfHeaderProtect cipher.Block
@@ -274,70 +274,70 @@ type ActiveSession struct {
 	proxied           bool
 }
 
-func (a *ActiveSession) SetName(name string) {
+func (a *activeConnection) SetName(name string) {
 	a.name.Store(name)
 }
 
-func (a *ActiveSession) Name() string {
+func (a *activeConnection) Name() string {
 	if v := a.name.Load(); v != nil {
 		return v.(string)
 	}
 	return ""
 }
 
-func (a *ActiveSession) ConnectionID() ConnectionID {
+func (a *activeConnection) ConnectionID() ConnectionID {
 	return a.cid
 }
 
-func (a *ActiveSession) SendMessageWithPacketNumber(data []byte, pn PacketNumber) (int, PacketNumber, error) {
-	return a.session.sendApplication(a.cid, data, a, &pn)
+func (a *activeConnection) SendMessageWithPacketNumber(data []byte, pn PacketNumber) (int, PacketNumber, error) {
+	return a.endpoint.sendApplication(a.cid, data, a, &pn)
 }
 
-func (a *ActiveSession) SendMessage(data []byte) (int, PacketNumber, error) {
-	return a.session.sendApplication(a.cid, data, a, nil)
+func (a *activeConnection) SendMessage(data []byte) (int, PacketNumber, error) {
+	return a.endpoint.sendApplication(a.cid, data, a, nil)
 }
 
-func (a *ActiveSession) ReceiveMessage() (*Message, error) {
+func (a *activeConnection) ReceiveMessage() (*Message, error) {
 	return a.msgs.ReceiveMessage()
 }
 
-func (a *ActiveSession) ReceiveMessageTimeout(ctx context.Context, timeout time.Duration) (*Message, error) {
+func (a *activeConnection) ReceiveMessageTimeout(ctx context.Context, timeout time.Duration) (*Message, error) {
 	ctx, cancel := context.WithTimeoutCause(ctx, timeout, ErrTimeout)
 	defer cancel()
 	return a.msgs.ReceiveMessageContext(ctx)
 }
 
-func (a *ActiveSession) ReceiveMessageContext(ctx context.Context) (*Message, error) {
+func (a *activeConnection) ReceiveMessageContext(ctx context.Context) (*Message, error) {
 	return a.msgs.ReceiveMessageContext(ctx)
 }
 
-func (a *ActiveSession) GetTranscript() []byte {
+func (a *activeConnection) GetTranscript() []byte {
 	return a.transcript
 }
 
-func (a *ActiveSession) ConnectedAt() time.Time {
+func (a *activeConnection) ConnectedAt() time.Time {
 	return a.connTime
 }
 
-func (a *ActiveSession) LastTime() time.Time {
+func (a *activeConnection) LastTime() time.Time {
 	return a.lastTime
 }
 
-func (a *ActiveSession) Close() error {
+func (a *activeConnection) Close() error {
 	select {
 	case <-a.closed:
 		return nil // already closed
 	default:
 	}
-	return a.session.closeConnection(a)
+	return a.endpoint.closeConnection(a)
 }
 
-func (a *ActiveSession) closeUnlocked() {
+func (a *activeConnection) closeUnlocked() {
 	close(a.closed)
 	a.msgs.CloseChannel()
 }
 
-func (a *ActiveSession) IsActive() bool {
+func (a *activeConnection) IsActive() bool {
 	select {
 	case <-a.closed:
 		return false
@@ -345,24 +345,24 @@ func (a *ActiveSession) IsActive() bool {
 		return true
 	}
 }
-func (a *ActiveSession) Done() <-chan struct{} {
+func (a *activeConnection) Done() <-chan struct{} {
 	return a.closed
 }
 
 // for proxy connections
-func (a *ActiveSession) RehandshakeForProxy(priv []byte, hs *Handshake) (*ChanWithTimeout[Connection], error) {
-	return a.session.sendRehandshakeForProxy(a, priv, hs)
+func (a *activeConnection) RehandshakeForProxy(priv []byte, hs *Handshake) (*ChanWithTimeout[Connection], error) {
+	return a.endpoint.sendRehandshakeForProxy(a, priv, hs)
 }
 
-func (a *ActiveSession) IsProxied() bool {
+func (a *activeConnection) IsProxied() bool {
 	return a.proxied
 }
 
-func (a *ActiveSession) ConsumePacketNumber() PacketNumber {
+func (a *activeConnection) ConsumePacketNumber() PacketNumber {
 	return PacketNumber(a.sentCounter.Add(1)) // from 1
 }
 
-var _ Connection = (*ActiveSession)(nil)
+var _ Connection = (*activeConnection)(nil)
 
 type PacketData struct {
 	To   ConnectionID
@@ -376,12 +376,12 @@ type ProbeInfo struct {
 	IpAddress  netip.AddrPort
 }
 
-type SessionMode string
+type EndpointMode string
 
 const (
-	SessionModeMutual SessionMode = "mutual"
-	SessionModeServer SessionMode = "server"
-	SessionModeClient SessionMode = "client"
+	EndpointModeMutual EndpointMode = "mutual"
+	EndpointModeServer EndpointMode = "server"
+	EndpointModeClient EndpointMode = "client"
 )
 
 type proxySetting struct {
@@ -400,44 +400,44 @@ func (p *proxySetting) getPeer(cid ConnectionID) (ConnectionID, bool) {
 	return ConnectionID{}, false
 }
 
-type session struct {
-	sessionsLock   sync.RWMutex
-	sentHandshake  map[ConnectionID]*handshakeInfo
-	activeSessions map[ConnectionID]*ActiveSession
-	probeInfo      chan *ProbeInfo
-	pktQueue       chan *PacketData
-	newActiveSess  chan Connection
-	logger         *slog.Logger
-	mode           SessionMode
+type endpoint struct {
+	endpointLock      sync.RWMutex
+	sentHandshake     map[ConnectionID]*handshakeInfo
+	activeConnections map[ConnectionID]*activeConnection
+	probeInfo         chan *ProbeInfo
+	pktQueue          chan *PacketData
+	newActiveSess     chan Connection
+	logger            *slog.Logger
+	mode              EndpointMode
 
 	proxyLock     sync.Mutex
 	proxySettings map[ConnectionID]*proxySetting
 	cookieSecret  []byte
 }
 
-func NewSession(logger *slog.Logger, mode SessionMode) RawSession {
-	if mode != SessionModeMutual && mode != SessionModeServer && mode != SessionModeClient {
-		panic("invalid session mode")
+func NewEndpoint(logger *slog.Logger, mode EndpointMode) RawEndpoint {
+	if mode != EndpointModeMutual && mode != EndpointModeServer && mode != EndpointModeClient {
+		panic("invalid endpoint mode")
 	}
-	return &session{
-		sentHandshake:  make(map[ConnectionID]*handshakeInfo),
-		activeSessions: make(map[ConnectionID]*ActiveSession),
-		pktQueue:       make(chan *PacketData, 1024),
-		newActiveSess:  make(chan Connection, 1024),
-		probeInfo:      make(chan *ProbeInfo, 1024),
-		logger:         logger,
-		mode:           mode,
-		proxySettings:  make(map[ConnectionID]*proxySetting),
+	return &endpoint{
+		sentHandshake:     make(map[ConnectionID]*handshakeInfo),
+		activeConnections: make(map[ConnectionID]*activeConnection),
+		pktQueue:          make(chan *PacketData, 1024),
+		newActiveSess:     make(chan Connection, 1024),
+		probeInfo:         make(chan *ProbeInfo, 1024),
+		logger:            logger,
+		mode:              mode,
+		proxySettings:     make(map[ConnectionID]*proxySetting),
 	}
 }
 
-func (s *session) SetProxy(owned, allocate ConnectionID) error {
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
-	if _, exists := s.activeSessions[owned]; !exists {
+func (s *endpoint) SetProxy(owned, allocate ConnectionID) error {
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
+	if _, exists := s.activeConnections[owned]; !exists {
 		return fmt.Errorf("owned connection not found")
 	}
-	if _, exists := s.activeSessions[allocate]; exists {
+	if _, exists := s.activeConnections[allocate]; exists {
 		return fmt.Errorf("allocate connection already exists")
 	}
 	s.proxyLock.Lock()
@@ -453,7 +453,7 @@ func (s *session) SetProxy(owned, allocate ConnectionID) error {
 	return nil
 }
 
-func (s *session) DeleteProxy(peer ConnectionID) error {
+func (s *endpoint) DeleteProxy(peer ConnectionID) error {
 	s.proxyLock.Lock()
 	defer s.proxyLock.Unlock()
 	if setting, exists := s.proxySettings[peer]; exists {
@@ -465,30 +465,30 @@ func (s *session) DeleteProxy(peer ConnectionID) error {
 	return fmt.Errorf("proxy setting not found for %s", peer.String())
 }
 
-func (s *session) SessionMode() SessionMode {
+func (s *endpoint) EndpointMode() EndpointMode {
 	return s.mode
 }
 
-func (s *session) deleteActiveSession(cid ConnectionID) {
-	delete(s.activeSessions, cid)
+func (s *endpoint) deleteActiveConnection(cid ConnectionID) {
+	delete(s.activeConnections, cid)
 }
 
-func (s *session) deleteHandshake(cid ConnectionID) {
+func (s *endpoint) deleteHandshake(cid ConnectionID) {
 	delete(s.sentHandshake, cid)
 }
 
-func (s *session) closeConnection(a *ActiveSession) error {
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
-	if session, exists := s.activeSessions[a.cid]; exists && session == a {
-		s.deleteActiveSession(a.cid)
+func (s *endpoint) closeConnection(a *activeConnection) error {
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
+	if conn, exists := s.activeConnections[a.cid]; exists && conn == a {
+		s.deleteActiveConnection(a.cid)
 		a.closeUnlocked()
-		s.logger.Info("active session closed", "cid", a.cid.String())
+		s.logger.Info("active connection closed", "cid", a.cid.String())
 	}
 	return nil
 }
 
-func (s *session) mayCloseProxy(pkt *PacketData) bool {
+func (s *endpoint) mayCloseProxy(pkt *PacketData) bool {
 	s.proxyLock.Lock()
 	defer s.proxyLock.Unlock()
 	setting, exists := s.proxySettings[pkt.To]
@@ -500,13 +500,13 @@ func (s *session) mayCloseProxy(pkt *PacketData) bool {
 	return false
 }
 
-func (s *session) closeCannotSend(pkt *PacketData) {
+func (s *endpoint) closeCannotSend(pkt *PacketData) {
 	if s.mayCloseProxy(pkt) {
-		s.logger.Info("proxy session closed due to cannot send", "cid", pkt.To.String())
+		s.logger.Info("proxy connection closed due to cannot send", "cid", pkt.To.String())
 		return
 	}
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
 	switch pkt.Kind {
 	case packet.PacketKind_Handshake:
 		if sent, exists := s.sentHandshake[pkt.To]; exists {
@@ -517,12 +517,12 @@ func (s *session) closeCannotSend(pkt *PacketData) {
 			s.logger.Warn("cannot send for unknown handshake", "cid", pkt.To.String())
 		}
 	case packet.PacketKind_HandshakeAck, packet.PacketKind_Application:
-		if session, exists := s.activeSessions[pkt.To]; exists {
-			s.deleteActiveSession(pkt.To)
-			session.closeUnlocked()
-			s.logger.Info("active session closed due to cannot send", "cid", pkt.To.String())
+		if conn, exists := s.activeConnections[pkt.To]; exists {
+			s.deleteActiveConnection(pkt.To)
+			conn.closeUnlocked()
+			s.logger.Info("active connection closed due to cannot send", "cid", pkt.To.String())
 		} else {
-			s.logger.Warn("cannot send for unknown active session", "cid", pkt.To.String())
+			s.logger.Warn("cannot send for unknown active connection", "cid", pkt.To.String())
 		}
 	case packet.PacketKind_Probe:
 		// no action needed for probes
@@ -531,11 +531,11 @@ func (s *session) closeCannotSend(pkt *PacketData) {
 	}
 }
 
-func (s *session) GetSenderChannel() <-chan *PacketData {
+func (s *endpoint) GetSenderChannel() <-chan *PacketData {
 	return s.pktQueue
 }
 
-func (s *session) sendPacket(cid ConnectionID, kind packet.PacketKind, data []byte) {
+func (s *endpoint) sendPacket(cid ConnectionID, kind packet.PacketKind, data []byte) {
 	s.pktQueue <- &PacketData{
 		To:   cid,
 		Kind: kind,
@@ -543,20 +543,20 @@ func (s *session) sendPacket(cid ConnectionID, kind packet.PacketKind, data []by
 	}
 }
 
-func (s *session) GetNewActiveSessionChannel() <-chan Connection {
+func (s *endpoint) GetNewActiveConnectionChannel() <-chan Connection {
 	return s.newActiveSess
 }
 
-func (s *session) WaitNewActiveSession(timeout time.Duration) (Connection, error) {
+func (s *endpoint) WaitNewActiveConnection(timeout time.Duration) (Connection, error) {
 	select {
 	case active := <-s.newActiveSess:
 		return active, nil
 	case <-time.After(timeout):
-		return nil, fmt.Errorf("timeout waiting for new active session")
+		return nil, fmt.Errorf("timeout waiting for new active connection")
 	}
 }
 
-func (s *session) WaitProbeInfo(timeout time.Duration) (*ProbeInfo, error) {
+func (s *endpoint) WaitProbeInfo(timeout time.Duration) (*ProbeInfo, error) {
 	select {
 	case info := <-s.probeInfo:
 		return info, nil
@@ -565,11 +565,11 @@ func (s *session) WaitProbeInfo(timeout time.Duration) (*ProbeInfo, error) {
 	}
 }
 
-func (s *session) GetConnection(cid ConnectionID) (Connection, bool) {
-	s.sessionsLock.RLock()
-	defer s.sessionsLock.RUnlock()
-	session, exists := s.activeSessions[cid]
-	return session, exists
+func (s *endpoint) GetConnection(cid ConnectionID) (Connection, bool) {
+	s.endpointLock.RLock()
+	defer s.endpointLock.RUnlock()
+	conn, exists := s.activeConnections[cid]
+	return conn, exists
 }
 
 type Handshake = packet.Handshake
@@ -579,7 +579,7 @@ func unmapAddrPort(addr netip.AddrPort) netip.AddrPort {
 	return netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port())
 }
 
-func (s *session) sendHandshake(cid ConnectionID, priv []byte, hs *Handshake, conn *ActiveSession) (*ChanWithTimeout[Connection], error) {
+func (s *endpoint) sendHandshake(cid ConnectionID, priv []byte, hs *Handshake, conn *activeConnection) (*ChanWithTimeout[Connection], error) {
 	pkt := &packet.Packet{
 		Header: packet.PacketHeader{
 			Version:      0,
@@ -603,52 +603,52 @@ func (s *session) sendHandshake(cid ConnectionID, priv []byte, hs *Handshake, co
 	sent, exists := s.sentHandshake[cid]
 	if !exists {
 		s.sentHandshake[cid] = &handshakeInfo{
-			ConnectionID: cid,
-			KeyKind:      hs.KeyKind,
-			PrivateKey:   priv,
-			LastTime:     time.Now(),
-			Transcript:   p,
-			hsDone:       hsDone,
-			proxySession: conn,
+			ConnectionID:    cid,
+			KeyKind:         hs.KeyKind,
+			PrivateKey:      priv,
+			LastTime:        time.Now(),
+			Transcript:      p,
+			hsDone:          hsDone,
+			proxyConnection: conn,
 		}
 	} else {
 		close(sent.hsDone)
 		clear(sent.PrivateKey)
-		if sent.proxySession != nil {
-			sent.proxySession.closeUnlocked()
+		if sent.proxyConnection != nil {
+			sent.proxyConnection.closeUnlocked()
 		}
 		sent.KeyKind = hs.KeyKind
 		sent.PrivateKey = priv
 		sent.LastTime = time.Now()
 		sent.Transcript = p
 		sent.hsDone = hsDone
-		sent.proxySession = conn
+		sent.proxyConnection = conn
 	}
 	s.sendPacket(cid, packet.PacketKind_Handshake, p)
 	s.logger.Debug("sent handshake", "cid", cid.String())
 	return &ChanWithTimeout[Connection]{C: hsDone}, nil
 }
 
-func (s *session) sendRehandshakeForProxy(a *ActiveSession, priv []byte, hs *Handshake) (*ChanWithTimeout[Connection], error) {
-	// deleting from active sessions temporary
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
-	if c, exists := s.activeSessions[a.cid]; !exists || c != a {
-		return nil, fmt.Errorf("active session not found for rehandshake: %v", a.cid)
+func (s *endpoint) sendRehandshakeForProxy(a *activeConnection, priv []byte, hs *Handshake) (*ChanWithTimeout[Connection], error) {
+	// deleting from active connections temporary
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
+	if c, exists := s.activeConnections[a.cid]; !exists || c != a {
+		return nil, fmt.Errorf("active connection not found for rehandshake: %v", a.cid)
 	}
-	s.deleteActiveSession(a.cid)
+	s.deleteActiveConnection(a.cid)
 	return s.sendHandshake(a.cid, priv, hs, a)
 }
 
-func (s *session) SendHandshake(cid ConnectionID, priv []byte, hs *Handshake) (*ChanWithTimeout[Connection], error) {
-	if s.mode == SessionModeServer {
+func (s *endpoint) SendHandshake(cid ConnectionID, priv []byte, hs *Handshake) (*ChanWithTimeout[Connection], error) {
+	if s.mode == EndpointModeServer {
 		return nil, fmt.Errorf("cannot send handshake in server mode")
 	}
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
 	cid.Addr = unmapAddrPort(cid.Addr)
-	if _, exists := s.activeSessions[cid]; exists {
-		return nil, fmt.Errorf("session already exists for %v", cid)
+	if _, exists := s.activeConnections[cid]; exists {
+		return nil, fmt.Errorf("connection already exists for %v", cid)
 	}
 	return s.sendHandshake(cid, priv, hs, nil)
 }
@@ -658,24 +658,24 @@ type HandshakeInfo struct {
 	LastTime time.Time
 }
 
-func (s *session) DeleteInactiveSessionsBefore(limit time.Time) []Connection {
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
+func (s *endpoint) DeleteInactiveConnectionsBefore(limit time.Time) []Connection {
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
 	var deleted []Connection
-	for addr, session := range s.activeSessions {
-		if session.lastTime.Before(limit) {
-			s.deleteActiveSession(addr)
-			session.closeUnlocked()
-			deleted = append(deleted, session)
-			s.logger.Info("deleting inactive session", "cid", addr.String())
+	for addr, conn := range s.activeConnections {
+		if conn.lastTime.Before(limit) {
+			s.deleteActiveConnection(addr)
+			conn.closeUnlocked()
+			deleted = append(deleted, conn)
+			s.logger.Info("deleting inactive connection", "cid", addr.String())
 		}
 	}
 	return deleted
 }
 
-func (s *session) DeleteHandshakeBefore(limit time.Time) []HandshakeInfo {
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
+func (s *endpoint) DeleteHandshakeBefore(limit time.Time) []HandshakeInfo {
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
 	var deleted []HandshakeInfo
 	for addr, probe := range s.sentHandshake {
 		if probe.LastTime.Before(limit) {
@@ -697,7 +697,7 @@ type ProxyInfo struct {
 	LastTime time.Time
 }
 
-func (s *session) DeleteProxyBefore(limit time.Time) []ProxyInfo {
+func (s *endpoint) DeleteProxyBefore(limit time.Time) []ProxyInfo {
 	s.proxyLock.Lock()
 	defer s.proxyLock.Unlock()
 	var deleted []ProxyInfo
@@ -737,7 +737,7 @@ type KeyInfo struct {
 }
 
 func keySchedule(secret []byte, integrityInfo []byte) (keyInfo KeyInfo, err error) {
-	preMasterSecret, err := DeriveKey(secret, "ksdk-protocol-session"+string(integrityInfo), 32)
+	preMasterSecret, err := DeriveKey(secret, "ksdk-protocol-connection"+string(integrityInfo), 32)
 	if err != nil {
 		return KeyInfo{}, fmt.Errorf("failed to derive pre-master secret: %w", err)
 	}
@@ -770,11 +770,11 @@ func keySchedule(secret []byte, integrityInfo []byte) (keyInfo KeyInfo, err erro
 	}, nil
 }
 
-func (s *session) addActiveSession(cid ConnectionID, aead cipher.AEAD,
+func (s *endpoint) addActiveConnection(cid ConnectionID, aead cipher.AEAD,
 	selfIV []byte, peerIV []byte,
 	commonKeyKind packet.CommonKeyKind,
 	selfHeaderProtect []byte, peerHeaderProtect []byte,
-	transcript []byte, hsDone chan Connection, proxyConn *ActiveSession) error {
+	transcript []byte, hsDone chan Connection, proxyConn *activeConnection) error {
 	var (
 		selfHeaderProtectBlock cipher.Block
 		peerHeaderProtectBlock cipher.Block
@@ -800,15 +800,15 @@ func (s *session) addActiveSession(cid ConnectionID, aead cipher.AEAD,
 		return fmt.Errorf("failed to create peer header protect cipher: %w", err2)
 	}
 	now := time.Now()
-	var active *ActiveSession
+	var active *activeConnection
 	if proxyConn != nil {
 		proxyConn.mu.Lock()
 		defer proxyConn.mu.Unlock()
 		active = proxyConn
-		active.session = s
+		active.endpoint = s
 		active.connTime = now
 		active.lastTime = now
-		active.sessionSecret = aead
+		active.connectionSecret = aead
 		active.selfIV = selfIV
 		active.peerIV = peerIV
 		active.selfHeaderProtect = selfHeaderProtectBlock
@@ -818,12 +818,12 @@ func (s *session) addActiveSession(cid ConnectionID, aead cipher.AEAD,
 		active.sentCounter.Store(0)
 		active.proxied = true
 	} else {
-		active = &ActiveSession{
-			session:           s,
+		active = &activeConnection{
+			endpoint:          s,
 			cid:               cid,
 			connTime:          now,
 			lastTime:          now,
-			sessionSecret:     aead,
+			connectionSecret:  aead,
 			selfIV:            selfIV,
 			peerIV:            peerIV,
 			selfHeaderProtect: selfHeaderProtectBlock,
@@ -834,17 +834,17 @@ func (s *session) addActiveSession(cid ConnectionID, aead cipher.AEAD,
 			closed: make(chan struct{}),
 		}
 	}
-	s.activeSessions[cid] = active
+	s.activeConnections[cid] = active
 	if hsDone != nil {
 		hsDone <- active
 	} else {
 		s.newActiveSess <- active
 	}
-	s.logger.Info("new active session added", "cid", cid.String())
+	s.logger.Info("new active connection added", "cid", cid.String())
 	return nil
 }
 
-func (s *session) receiveHandshake(cid ConnectionID, hs *packet.Handshake, originalPacket []byte) error {
+func (s *endpoint) receiveHandshake(cid ConnectionID, hs *packet.Handshake, originalPacket []byte) error {
 	curve, err := CurveFromKeyKind(hs.KeyKind)
 	if err != nil {
 		s.logger.Error("failed to get curve from key kind", "cid", cid.String(), "error", err, "keyKind", hs.KeyKind)
@@ -868,11 +868,11 @@ func (s *session) receiveHandshake(cid ConnectionID, hs *packet.Handshake, origi
 		return fmt.Errorf("failed to create AEAD: %w", err)
 	}
 	clear(priv)
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
-	if _, exists := s.activeSessions[cid]; exists {
-		s.logger.Warn("session already exists for handshake", "cid", cid.String())
-		return fmt.Errorf("session already exists for %v", cid)
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
+	if _, exists := s.activeConnections[cid]; exists {
+		s.logger.Warn("connection already exists for handshake", "cid", cid.String())
+		return fmt.Errorf("connection already exists for %v", cid)
 	}
 	ackPkt := &packet.Packet{
 		Header: packet.PacketHeader{
@@ -891,10 +891,10 @@ func (s *session) receiveHandshake(cid ConnectionID, hs *packet.Handshake, origi
 	if err != nil {
 		return fmt.Errorf("failed to encode packet: %w", err)
 	}
-	err = s.addActiveSession(cid, aead, keys.AckIV, keys.HSIV, commonKeyKind, keys.AckHeaderProtect, keys.HsHeaderProtect, append(originalPacket, ackData...), nil, nil)
+	err = s.addActiveConnection(cid, aead, keys.AckIV, keys.HSIV, commonKeyKind, keys.AckHeaderProtect, keys.HsHeaderProtect, append(originalPacket, ackData...), nil, nil)
 	if err != nil {
-		s.logger.Error("failed to add active session", "cid", cid.String(), "error", err)
-		return fmt.Errorf("failed to add active session: %w", err)
+		s.logger.Error("failed to add active connection", "cid", cid.String(), "error", err)
+		return fmt.Errorf("failed to add active connection: %w", err)
 	}
 	s.sendPacket(cid, packet.PacketKind_HandshakeAck, ackData)
 	s.logger.Debug("sent handshake ack", "cid", cid.String())
@@ -909,9 +909,9 @@ func integrityInfo(cid ConnectionID, hs *packet.Handshake) []byte {
 	return appended
 }
 
-func (s *session) receiveHandshakeAck(cid ConnectionID, hs *packet.Handshake, originalData []byte) (err error) {
-	s.sessionsLock.Lock()
-	defer s.sessionsLock.Unlock()
+func (s *endpoint) receiveHandshakeAck(cid ConnectionID, hs *packet.Handshake, originalData []byte) (err error) {
+	s.endpointLock.Lock()
+	defer s.endpointLock.Unlock()
 	sentProbes, exists := s.sentHandshake[cid]
 	if !exists {
 		s.logger.Warn("no sent probe for handshake ack", "cid", cid.String())
@@ -937,50 +937,50 @@ func (s *session) receiveHandshakeAck(cid ConnectionID, hs *packet.Handshake, or
 	}
 	clear(sentProbes.PrivateKey) // only clear private key
 	s.deleteHandshake(cid)
-	err = s.addActiveSession(cid, aead, keys.HSIV, keys.AckIV, commonKeyKind, keys.HsHeaderProtect, keys.AckHeaderProtect, append(sentProbes.Transcript, originalData...), sentProbes.hsDone, sentProbes.proxySession)
+	err = s.addActiveConnection(cid, aead, keys.HSIV, keys.AckIV, commonKeyKind, keys.HsHeaderProtect, keys.AckHeaderProtect, append(sentProbes.Transcript, originalData...), sentProbes.hsDone, sentProbes.proxyConnection)
 	if err != nil {
-		s.logger.Error("failed to add active session", "cid", cid.String(), "error", err)
-		return fmt.Errorf("failed to add active session: %w", err)
+		s.logger.Error("failed to add active connection", "cid", cid.String(), "error", err)
+		return fmt.Errorf("failed to add active connection: %w", err)
 	}
 	return nil
 }
 
-func (s *session) receiveApplication(cid ConnectionID, data []byte, hdr *packet.PacketHeader) error {
-	s.sessionsLock.RLock()
-	defer s.sessionsLock.RUnlock()
-	activeSession, exists := s.activeSessions[cid]
+func (s *endpoint) receiveApplication(cid ConnectionID, data []byte, hdr *packet.PacketHeader) error {
+	s.endpointLock.RLock()
+	defer s.endpointLock.RUnlock()
+	activeConn, exists := s.activeConnections[cid]
 	if !exists {
-		s.logger.Warn("no active session for application data", "cid", cid.String())
-		return fmt.Errorf("no active session for %v", cid)
+		s.logger.Warn("no active connection for application data", "cid", cid.String())
+		return fmt.Errorf("no active connection for %v", cid)
 	}
-	activeSession.mu.Lock()
-	defer activeSession.mu.Unlock()
+	activeConn.mu.Lock()
+	defer activeConn.mu.Unlock()
 	if len(data) < 8+16 {
 		s.logger.Warn("application data too short for decryption", "cid", cid.String())
 		return fmt.Errorf("data too short for decryption")
 	}
 	hdrData := hdr.MustAppend(nil)
-	nonce := make([]byte, activeSession.sessionSecret.NonceSize())
+	nonce := make([]byte, activeConn.connectionSecret.NonceSize())
 	var sample [16]byte
 	copy(sample[:], data[8:8+16])
-	mask := headerProtectionMask(sample, activeSession.peerHeaderProtect)
+	mask := headerProtectionMask(sample, activeConn.peerHeaderProtect)
 	subtle.XORBytes(data[:8], mask[:], data[:8])
 	nonceCounter := binary.BigEndian.Uint64(data[:8])
-	if !activeSession.recvTracker.InsertNonce(nonceCounter, time.Now(), true) {
-		s.logger.Warn("replay attack detected", "cid", cid.String(), "nonceCounter", nonceCounter, "lastCounter", activeSession.recvTracker.largestNonce)
+	if !activeConn.recvTracker.InsertNonce(nonceCounter, time.Now(), true) {
+		s.logger.Warn("replay attack detected", "cid", cid.String(), "nonceCounter", nonceCounter, "lastCounter", activeConn.recvTracker.largestNonce)
 		return fmt.Errorf("replay attack detected")
 	}
 	copy(nonce[4:], data[:8]) // Use first 8 bytes as nonce counter
 	ciphertext := data[8:]
-	subtle.XORBytes(nonce[:], activeSession.peerIV, nonce)
-	plaintext, err := activeSession.sessionSecret.Open(ciphertext[:0], nonce, ciphertext, hdrData)
+	subtle.XORBytes(nonce[:], activeConn.peerIV, nonce)
+	plaintext, err := activeConn.connectionSecret.Open(ciphertext[:0], nonce, ciphertext, hdrData)
 	if err != nil {
 		s.logger.Warn("failed to decrypt application data", "cid", cid.String(), "error", err)
 		return fmt.Errorf("failed to decrypt data: %w", err)
 	}
-	activeSession.recvTracker.InsertNonce(nonceCounter, time.Now(), false)
-	activeSession.lastTime = time.Now()
-	activeSession.msgs.SendMessage(Message{
+	activeConn.recvTracker.InsertNonce(nonceCounter, time.Now(), false)
+	activeConn.lastTime = time.Now()
+	activeConn.msgs.SendMessage(Message{
 		From:         cid,
 		PacketNumber: nonceCounter,
 		Data:         plaintext,
@@ -988,7 +988,7 @@ func (s *session) receiveApplication(cid ConnectionID, data []byte, hdr *packet.
 	return nil
 }
 
-func (s *session) Receive(transport string, from netip.AddrPort, data []byte) error {
+func (s *endpoint) Receive(transport string, from netip.AddrPort, data []byte) error {
 	// for unifying ipv4 and ipv6 addresses
 	from = netip.AddrPortFrom(from.Addr().Unmap(), from.Port())
 	if err := s.receive(transport, from, data); err != nil {
@@ -998,7 +998,7 @@ func (s *session) Receive(transport string, from netip.AddrPort, data []byte) er
 	return nil
 }
 
-func (s *session) receiveProbe(cid ConnectionID, data []byte) error {
+func (s *endpoint) receiveProbe(cid ConnectionID, data []byte) error {
 	probe := &packet.Probe{}
 	if err := probe.DecodeExact(data); err != nil {
 		return fmt.Errorf("failed to decode probe: %w", err)
@@ -1020,7 +1020,7 @@ func (s *session) receiveProbe(cid ConnectionID, data []byte) error {
 	return nil
 }
 
-func (s *session) receive(transport string, from netip.AddrPort, data []byte) error {
+func (s *endpoint) receive(transport string, from netip.AddrPort, data []byte) error {
 	pkt := &packet.Packet{}
 	if err := pkt.DecodeExact(data); err != nil {
 		return fmt.Errorf("failed to decode packet: %w", err)
@@ -1044,12 +1044,12 @@ func (s *session) receive(transport string, from netip.AddrPort, data []byte) er
 	}
 	switch pkt.Header.Kind {
 	case packet.PacketKind_Handshake, packet.PacketKind_HandshakeAck:
-		if s.mode == SessionModeClient && pkt.Header.Kind == packet.PacketKind_Handshake {
-			s.logger.Warn("client session received handshake packet, ignoring", "cid", cid.String())
+		if s.mode == EndpointModeClient && pkt.Header.Kind == packet.PacketKind_Handshake {
+			s.logger.Warn("client connection received handshake packet, ignoring", "cid", cid.String())
 			return nil
 		}
-		if s.mode == SessionModeServer && pkt.Header.Kind == packet.PacketKind_HandshakeAck {
-			s.logger.Warn("server session received handshake ack packet, ignoring", "cid", cid.String())
+		if s.mode == EndpointModeServer && pkt.Header.Kind == packet.PacketKind_HandshakeAck {
+			s.logger.Warn("server connection received handshake ack packet, ignoring", "cid", cid.String())
 			return nil
 		}
 		hs := &packet.Handshake{}
@@ -1075,18 +1075,18 @@ func headerProtectionMask(sample [16]byte, headerProtectKey cipher.Block) [16]by
 	return mask
 }
 
-func (s *session) sendApplication(cid ConnectionID, data []byte, a *ActiveSession, pn *PacketNumber) (int, PacketNumber, error) {
-	s.sessionsLock.RLock()
-	defer s.sessionsLock.RUnlock()
-	activeSession, exists := s.activeSessions[cid]
+func (s *endpoint) sendApplication(cid ConnectionID, data []byte, a *activeConnection, pn *PacketNumber) (int, PacketNumber, error) {
+	s.endpointLock.RLock()
+	defer s.endpointLock.RUnlock()
+	activeConn, exists := s.activeConnections[cid]
 	if !exists {
-		return 0, 0, fmt.Errorf("no active session for %v", cid)
+		return 0, 0, fmt.Errorf("no active connection for %v", cid)
 	}
-	if activeSession != a {
-		return 0, 0, fmt.Errorf("active session mismatch for %v", cid)
+	if activeConn != a {
+		return 0, 0, fmt.Errorf("active connection mismatch for %v", cid)
 	}
-	activeSession.mu.Lock()
-	defer activeSession.mu.Unlock()
+	activeConn.mu.Lock()
+	defer activeConn.mu.Unlock()
 	pkt := &packet.Packet{
 		Header: packet.PacketHeader{
 			Version:      0,
@@ -1094,28 +1094,28 @@ func (s *session) sendApplication(cid ConnectionID, data []byte, a *ActiveSessio
 			ConnectionId: cid.ID,
 		},
 	}
-	pktLen := 8 + len(data) + activeSession.sessionSecret.Overhead()
+	pktLen := 8 + len(data) + activeConn.connectionSecret.Overhead()
 	if pktLen > 0xffff {
 		return 0, 0, fmt.Errorf("data too large to send")
 	}
 	pkt.Header.Len = uint16(pktLen)
 	plaintext := data
-	nonce := make([]byte, activeSession.sessionSecret.NonceSize())
+	nonce := make([]byte, activeConn.connectionSecret.NonceSize())
 	var count uint64
 	if pn != nil {
 		count = uint64(*pn)
 	} else {
-		count = uint64(activeSession.sentCounter.Add(1)) // from 1
+		count = uint64(activeConn.sentCounter.Add(1)) // from 1
 	}
 	copy(nonce[4:], binary.BigEndian.AppendUint64(nil, count))
 	hdrData := pkt.Header.MustAppend(nil)
 	finalData := make([]byte, pktLen)
 	copy(finalData[:8], nonce[4:])
-	subtle.XORBytes(nonce[:], activeSession.selfIV, nonce)
-	activeSession.sessionSecret.Seal(finalData[8:8], nonce, plaintext, hdrData)
+	subtle.XORBytes(nonce[:], activeConn.selfIV, nonce)
+	activeConn.connectionSecret.Seal(finalData[8:8], nonce, plaintext, hdrData)
 	sample := [16]byte{}
 	copy(sample[:], finalData[8:8+16])
-	mask := headerProtectionMask(sample, activeSession.selfHeaderProtect)
+	mask := headerProtectionMask(sample, activeConn.selfHeaderProtect)
 	subtle.XORBytes(finalData[:8], mask[:], finalData[:8])
 	pkt.Data = finalData
 	pktData, err := pkt.Append(nil)
@@ -1128,7 +1128,7 @@ func (s *session) sendApplication(cid ConnectionID, data []byte, a *ActiveSessio
 	return pktLength, count, nil
 }
 
-func (s *session) SendProbe(cid ConnectionID, macAddr [6]byte, ipAddr netip.AddrPort) error {
+func (s *endpoint) SendProbe(cid ConnectionID, macAddr [6]byte, ipAddr netip.AddrPort) error {
 	data, err := s.makeProbe(cid.ID, macAddr, ipAddr)
 	if err != nil {
 		return fmt.Errorf("failed to make probe response: %w", err)
@@ -1138,7 +1138,7 @@ func (s *session) SendProbe(cid ConnectionID, macAddr [6]byte, ipAddr netip.Addr
 	return nil
 }
 
-func (s *session) makeProbe(probeID uint16, mac [6]byte, ipAddr netip.AddrPort) ([]byte, error) {
+func (s *endpoint) makeProbe(probeID uint16, mac [6]byte, ipAddr netip.AddrPort) ([]byte, error) {
 	probe := &packet.Probe{}
 	probe.MacAddress = packet.MacAddress{Address: mac}
 	if !probe.IpAddress.SetAddress(ipAddr.Addr().AsSlice()) {
@@ -1165,27 +1165,27 @@ func (s *session) makeProbe(probeID uint16, mac [6]byte, ipAddr netip.AddrPort) 
 	return pktData, nil
 }
 
-func (s *session) GetProbeInfoChannel() <-chan *ProbeInfo {
+func (s *endpoint) GetProbeInfoChannel() <-chan *ProbeInfo {
 	return s.probeInfo
 }
 
-func (s *session) ListActiveConnections() []Connection {
-	s.sessionsLock.RLock()
-	defer s.sessionsLock.RUnlock()
-	connections := make([]Connection, 0, len(s.activeSessions))
-	for _, conn := range s.activeSessions {
+func (s *endpoint) ListActiveConnections() []Connection {
+	s.endpointLock.RLock()
+	defer s.endpointLock.RUnlock()
+	connections := make([]Connection, 0, len(s.activeConnections))
+	for _, conn := range s.activeConnections {
 		connections = append(connections, conn)
 	}
 	return connections
 }
 
 // transport detected that the packet cannot be sent
-func (s *session) CannotSend(pkt *PacketData) {
+func (s *endpoint) CannotSend(pkt *PacketData) {
 	s.closeCannotSend(pkt)
 }
-func (s *session) ListHandshakes() []HandshakeInfo {
-	s.sessionsLock.RLock()
-	defer s.sessionsLock.RUnlock()
+func (s *endpoint) ListHandshakes() []HandshakeInfo {
+	s.endpointLock.RLock()
+	defer s.endpointLock.RUnlock()
 	var list []HandshakeInfo
 	for addr, probe := range s.sentHandshake {
 		list = append(list, HandshakeInfo{
@@ -1196,7 +1196,7 @@ func (s *session) ListHandshakes() []HandshakeInfo {
 	return list
 }
 
-func (s *session) ListProxies() []ProxyInfo {
+func (s *endpoint) ListProxies() []ProxyInfo {
 	s.proxyLock.Lock()
 	defer s.proxyLock.Unlock()
 	seen := make(map[string]struct{})

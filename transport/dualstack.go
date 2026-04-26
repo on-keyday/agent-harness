@@ -8,20 +8,20 @@ import (
 	"github.com/on-keyday/agent-harness/objproto"
 )
 
-func ClientSession(logger *slog.Logger, addr string, udpPort uint16) (objproto.ConnectionID, objproto.Session, error) {
+func ClientEndpoint(logger *slog.Logger, addr string, udpPort uint16) (objproto.ConnectionID, objproto.Endpoint, error) {
 	cid, err := objproto.ParseConnectionID(addr, objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 	if err != nil {
 		return objproto.ConnectionID{}, nil, err
 	}
-	sess := objproto.NewSession(logger, objproto.SessionModeClient)
+	sess := objproto.NewEndpoint(logger, objproto.EndpointModeClient)
 	switch cid.Transport {
 	case "ws", "wss":
-		_, err = WebSocketSessionEx(sess, logger, addr, nil, sess.GetSenderChannel())
+		_, err = WebSocketEndpointEx(sess, logger, addr, nil, sess.GetSenderChannel())
 		if err != nil {
 			return objproto.ConnectionID{}, nil, err
 		}
 	case "udp":
-		_, err = UDPSessionEx(sess, logger, udpPort, sess.GetSenderChannel())
+		_, err = UDPEndpointEx(sess, logger, udpPort, sess.GetSenderChannel())
 		if err != nil {
 			return objproto.ConnectionID{}, nil, err
 		}
@@ -31,18 +31,18 @@ func ClientSession(logger *slog.Logger, addr string, udpPort uint16) (objproto.C
 	return cid, sess, nil
 }
 
-func UDPWebsocketDualStackSession(logger *slog.Logger, udpPort uint16, wsAddr string, tlsConf *tls.Config, sessMode objproto.SessionMode) (objproto.Session, error) {
-	sess := objproto.NewSession(logger, sessMode)
+func UDPWebsocketDualStackEndpoint(logger *slog.Logger, udpPort uint16, wsAddr string, tlsConf *tls.Config, sessMode objproto.EndpointMode) (objproto.Endpoint, error) {
+	sess := objproto.NewEndpoint(logger, sessMode)
 	baseChan := sess.GetSenderChannel()
 	udpChan := make(chan *objproto.PacketData, 100)
 	wsChan := make(chan *objproto.PacketData, 100)
 
-	_, err := UDPSessionEx(sess, logger, udpPort, udpChan)
+	_, err := UDPEndpointEx(sess, logger, udpPort, udpChan)
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = WebSocketSessionEx(sess, logger, wsAddr, tlsConf, wsChan)
+	_, err = WebSocketEndpointEx(sess, logger, wsAddr, tlsConf, wsChan)
 	if err != nil {
 		return nil, err
 	}

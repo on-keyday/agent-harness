@@ -10,7 +10,7 @@
 //	pc.SetOnControl(handler)                          // optional; before Start
 //	pc.Start(ctx)                                     // spawns AutoReceive goroutine
 //	defer pc.Close()
-//	... use pc.Session() / pc.Transport() / pc.Pubsub() / pc.Publish(...) ...
+//	... use pc.Connection() / pc.Transport() / pc.Pubsub() / pc.Publish(...) ...
 //	return pc.Wait(ctx)                               // long-running endpoints only
 package peer
 
@@ -40,7 +40,7 @@ type ControlHandler func(kind wire.ApplicationPayloadKind, payload []byte)
 // pubsub.Client correlator. Both cli.Client and the runner embed one of
 // these and layer their RPC / dispatch logic on top.
 type Conn struct {
-	sess  objproto.Connection
+	conn  objproto.Connection
 	trans trsf.Transport
 	pub   *pubsub.Client
 	log   *slog.Logger
@@ -67,8 +67,8 @@ type DialConfig struct {
 	PingInterval time.Duration
 }
 
-// Dial opens a WebSocket session, runs the ECDH handshake, sets up the trsf
-// transport, and starts AutoSend + AutoPing. AutoReceive is NOT started yet
+// Dial opens a WebSocket endpoint, runs the ECDH handshake, sets up the
+// trsf transport, and starts AutoSend + AutoPing. AutoReceive is NOT started yet
 // — the caller must call SetOnControl (optional) and then Start before any
 // inbound message can be processed. This split exists so callers whose
 // handler depends on values produced by Dial (e.g. the runner's session,
@@ -82,12 +82,12 @@ func Dial(ctx context.Context, cfg DialConfig) (*Conn, error) {
 		cfg.PingInterval = 30 * time.Second
 	}
 
-	sess, err := transport.WebSocketSession(cfg.Logger, cfg.Addr, nil, objproto.SessionModeClient)
+	ep, err := transport.WebSocketEndpoint(cfg.Logger, cfg.Addr, nil, objproto.EndpointModeClient)
 	if err != nil {
-		return nil, fmt.Errorf("ws session: %w", err)
+		return nil, fmt.Errorf("ws endpoint: %w", err)
 	}
 	cidStr := fmt.Sprintf("ws:127.0.0.1:%s-%d", portFrom(cfg.Addr), cfg.UniqueNumber)
-	conn, err := objproto.DoECDHHandshake(ctx, sess,
+	conn, err := objproto.DoECDHHandshake(ctx, ep,
 		objproto.MustParseConnectionID(cidStr),
 		ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
@@ -96,7 +96,7 @@ func Dial(ctx context.Context, cfg DialConfig) (*Conn, error) {
 	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, cfg.Logger)
 
 	c := &Conn{
-		sess:      conn,
+		conn:      conn,
 		trans:     p,
 		pub:       pubsub.NewClient(),
 		log:       cfg.Logger,
@@ -129,7 +129,7 @@ func (c *Conn) Start(ctx context.Context) {
 	}
 	go func() {
 		defer close(c.done)
-		trsf.AutoReceive(ctx, c.trans, c.sess, c.dispatch)
+		trsf.AutoReceive(ctx, c.trans, c.conn, c.dispatch)
 	}()
 }
 
@@ -151,16 +151,17 @@ func (c *Conn) Wait(ctx context.Context) error {
 // Close sends a wire-level Close to the peer (best-effort; lets the server
 // deregister the runner / drop the subscriber immediately instead of
 // waiting for the idle GC) and then releases the underlying objproto
-// session.
+// connection. The owning objproto.Endpoint is NOT torn down here — it has
+// no Close API and is process-scoped by design.
 func (c *Conn) Close() {
-	_ = trsf.SendClose(c.sess)
-	_ = c.sess.Close()
+	_ = trsf.SendClose(c.conn)
+	_ = c.conn.Close()
 }
 
-// Session returns the underlying objproto.Connection. Callers use it for
+// Connection returns the underlying objproto.Connection. Callers use it for
 // raw SendMessage when they want bypass the pubsub.Client / Publish helpers
 // (e.g. issuing a TaskControl request, sending the runner Hello).
-func (c *Conn) Session() objproto.Connection { return c.sess }
+func (c *Conn) Connection() objproto.Connection { return c.conn }
 
 // Transport returns the trsf.Transport. Callers use it to look up streams
 // by id (GetBidirectionalStream / GetReceiveStream) when an RPC response
@@ -168,7 +169,7 @@ func (c *Conn) Session() objproto.Connection { return c.sess }
 func (c *Conn) Transport() trsf.Transport { return c.trans }
 
 // Pubsub returns the request_id-correlator for JOIN/LEAVE responses on
-// this connection. Outbound JOIN/LEAVE bytes still go through Session's
+// this connection. Outbound JOIN/LEAVE bytes still go through Connection's
 // SendMessage; this just bookkeeps the response handler map.
 func (c *Conn) Pubsub() *pubsub.Client { return c.pub }
 

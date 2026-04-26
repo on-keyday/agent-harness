@@ -38,7 +38,7 @@ func (c *Conn) JoinAndGetStream(ctx context.Context, nick, topic string) (trsf.B
 	if joinBytes == nil {
 		return nil, fmt.Errorf("peer: encode JOIN failed (nickname %q too long?)", nick)
 	}
-	if _, _, err := c.sess.SendMessage(joinBytes); err != nil {
+	if _, _, err := c.conn.SendMessage(joinBytes); err != nil {
 		return nil, fmt.Errorf("peer: send JOIN %q: %w", topic, err)
 	}
 
@@ -124,4 +124,3 @@ func WaitForBidirectionalStream(ctx context.Context, lookup BidirectionalStreamL
 		}
 	}
 }
-

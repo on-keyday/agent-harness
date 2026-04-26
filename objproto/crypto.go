@@ -74,7 +74,7 @@ func CurveFromKeyKind(kind packet.KeyKind) (ecdh.Curve, error) {
 	}
 }
 
-func DoECDHHandshake(ctx context.Context, sess Session, cid ConnectionID, curve ecdh.Curve, commonKeyKind packet.CommonKeyKind) (Connection, error) {
+func DoECDHHandshake(ctx context.Context, sess Endpoint, cid ConnectionID, curve ecdh.Curve, commonKeyKind packet.CommonKeyKind) (Connection, error) {
 	priv, probe, err := NewECDHHandshake(curve, commonKeyKind)
 	if err != nil {
 		return nil, err

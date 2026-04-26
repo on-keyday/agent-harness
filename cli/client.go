@@ -74,7 +74,7 @@ func (c *Client) dispatchControl(kind wire.ApplicationPayloadKind, payload []byt
 
 // Conn exposes the underlying objproto.Connection for callers that need to
 // SendMessage directly (e.g. raw JOIN bytes from pubsub.Client.JoinTopic).
-func (c *Client) Conn() objproto.Connection { return c.conn.Session() }
+func (c *Client) Conn() objproto.Connection { return c.conn.Connection() }
 
 // Transport returns the trsf transport — used by callers that need to wait
 // on server-initiated streams.
@@ -102,7 +102,7 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 
 	req.RequestId = id
 	data := req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
-	if _, _, err := c.conn.Session().SendMessage(data); err != nil {
+	if _, _, err := c.conn.Connection().SendMessage(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
@@ -121,7 +121,8 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 }
 
 // Close tears down the underlying peer.Conn (best-effort wire-level Close
-// + objproto session shutdown).
+// + objproto connection shutdown; the process-scoped Endpoint is left
+// running).
 func (c *Client) Close() {
 	c.conn.Close()
 }
