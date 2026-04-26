@@ -24,8 +24,7 @@ type CancelAction struct {
 }
 
 type PruneAction struct {
-	Before  time.Duration
-	Offline bool
+	Before time.Duration
 }
 
 type ClearAction struct{}
@@ -141,9 +140,8 @@ func parsePrune(args []string) (Action, error) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	before := fs.Duration("before", 7*24*time.Hour, "")
-	offline := fs.Bool("offline", false, "")
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("prune: %w", err)
 	}
-	return PruneAction{Before: *before, Offline: *offline}, nil
+	return PruneAction{Before: *before}, nil
 }

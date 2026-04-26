@@ -567,7 +567,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Clear()
 		return a, nil
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / prune [--before=DUR] [--offline] / repo <path> / clear / help / quit")
+		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / prune [--before=DUR] / repo <path> / clear / help / quit")
 		return a, nil
 	case RepoAction:
 		// Validate against the runner registry (the actual source of truth
@@ -610,10 +610,6 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, DoCancel(a.client, v.IDPrefix, full)
 	case PruneAction:
-		if v.Offline {
-			a.cmdresult.Append(WarnStyle.Render("--offline is a CLI-only flag; use harness-cli prune --offline. Server-side prune skipped."))
-			return a, nil
-		}
 		return a, DoPruneTasks(a.client, v.Before)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))

@@ -70,22 +70,16 @@ func TestParsePruneDefault(t *testing.T) {
 	if a.Before != 7*24*time.Hour {
 		t.Errorf("Before=%v, want 168h", a.Before)
 	}
-	if a.Offline {
-		t.Error("Offline=true, want false")
-	}
 }
 
 func TestParsePruneFlags(t *testing.T) {
-	got, err := ParseCommand(`prune --before=1h --offline`, "/cwd")
+	got, err := ParseCommand(`prune --before=1h`, "/cwd")
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := got.(PruneAction)
 	if a.Before != time.Hour {
 		t.Errorf("Before=%v", a.Before)
-	}
-	if !a.Offline {
-		t.Error("Offline=false")
 	}
 }
 
