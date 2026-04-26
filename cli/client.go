@@ -125,8 +125,11 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 }
 
 // Close tears down the underlying peer.Conn (best-effort wire-level Close
-// + objproto connection shutdown; the process-scoped Endpoint is left
-// running).
+// + objproto connection shutdown). The objproto.Endpoint constructed by
+// Dial is intentionally not torn down here — it has no Close API and is
+// leaked until process exit. cli subcommands are short-lived processes,
+// so this is acceptable; long-running embedders (e.g. the tui) reuse the
+// same *Client for the lifetime of the program.
 func (c *Client) Close() {
 	c.conn.Close()
 }

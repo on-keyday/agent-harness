@@ -1,8 +1,9 @@
 // Package peer is the shared endpoint-side wrapper that both the cli and the
-// runner build on top of. It owns the WS + ECDH + trsf + objproto plumbing
-// and the receive-loop dispatch, leaving each side to layer its own control
-// payload handler (TaskControl RPC pending for cli, RunnerRequest dispatch
-// for the runner) on top via SetOnControl.
+// runner build on top of. It owns the ECDH + trsf + objproto plumbing on top
+// of a caller-supplied objproto.Endpoint, and the receive-loop dispatch,
+// leaving each side to layer its own control payload handler (TaskControl
+// RPC pending for cli, RunnerRequest dispatch for the runner) on top via
+// SetOnControl.
 //
 // Lifecycle:
 //
