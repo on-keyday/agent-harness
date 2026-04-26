@@ -74,6 +74,28 @@ enum TaskControlKind:
     prune_tasks
     get_task_log
     open_interactive
+    client_hello
+
+# ClientKind tags the kind of caller that opened a TaskControl session.
+# Sent once right after handshake via TaskControlRequest{client_hello,...} so
+# the server can log who connected (cli / tui / webui). Runners do not send
+# this — they identify themselves via RunnerHello on a different channel.
+enum ClientKind:
+    :u8
+    unspecified
+    cli
+    tui
+    webui
+
+format ClientHello:
+    kind :ClientKind
+
+enum ClientHelloStatus:
+    :u8
+    ok = "ok"
+
+format ClientHelloResponse:
+    status :ClientHelloStatus
 
 format ListQuery:
     query :[..]u8 # currently opaque
@@ -203,6 +225,7 @@ format TaskControlRequest:
         TaskControlKind.prune_tasks => prune :PruneTasksRequest
         TaskControlKind.get_task_log => get_log :GetTaskLogRequest
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveRequest
+        TaskControlKind.client_hello => client_hello :ClientHello
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -218,6 +241,7 @@ format TaskControlResponse:
         TaskControlKind.prune_tasks => prune :PruneTasksResponse
         TaskControlKind.get_task_log => get_log :GetTaskLogResponse
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveResponse
+        TaskControlKind.client_hello => client_hello :ClientHelloResponse
 
 # Pubsub event payloads
 enum StatusEventKind:

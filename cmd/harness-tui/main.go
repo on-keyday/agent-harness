@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/tui"
 )
 
@@ -60,6 +61,11 @@ func main() {
 	go func() {
 		c, err := cli.Dial(ctx, peerCID)
 		if err != nil {
+			program.Send(tui.ConnectionMsg{Connected: false, Err: err})
+			return
+		}
+		if err := c.SayHello(ctx, protocol.ClientKind_Tui); err != nil {
+			c.Close()
 			program.Send(tui.ConnectionMsg{Connected: false, Err: err})
 			return
 		}

@@ -143,6 +143,20 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleOpenInteractive(conn, req.RequestId, string(oi.RepoPath))
 
+	case protocol.TaskControlKind_ClientHello:
+		hello := req.ClientHello()
+		if hello == nil {
+			slog.Error("TaskHandler: ClientHello variant is nil")
+			return
+		}
+		slog.Info("client hello", "kind", hello.Kind.String(), "cid", conn.ConnectionID().String())
+
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ClientHello, RequestId: req.RequestId}
+		resp.SetClientHello(protocol.ClientHelloResponse{Status: protocol.ClientHelloStatus_Ok})
+
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	default:
 		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)
 	}

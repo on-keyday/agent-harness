@@ -25,6 +25,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 var (
@@ -99,6 +100,11 @@ func harnessConnect(this js.Value, args []js.Value) any {
 			c, err := cli.Dial(rootCtx, cid)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("dial: %w", err))
+				return
+			}
+			if err := c.SayHello(rootCtx, protocol.ClientKind_Webui); err != nil {
+				c.Close()
+				rejectErr(reject, fmt.Errorf("client hello: %w", err))
 				return
 			}
 			clientMu.Lock()
