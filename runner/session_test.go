@@ -232,6 +232,109 @@ func TestSessionRepoAllowedDelegatesToProtocol(t *testing.T) {
 	}
 }
 
+// collectTaskFinished decodes all sent messages from a mockSender and returns a
+// map keyed by TaskID.Id for every TaskFinished message found.
+func collectTaskFinished(t *testing.T, sent [][]byte) map[[16]byte]protocol.TaskFinished {
+	t.Helper()
+	result := make(map[[16]byte]protocol.TaskFinished)
+	for _, raw := range sent {
+		msg := decodeRunnerMsg(t, raw)
+		if msg.Kind != protocol.RunnerMessageType_TaskFinished {
+			continue
+		}
+		tf := msg.TaskFinished()
+		if tf == nil {
+			continue
+		}
+		result[tf.TaskId.Id] = *tf
+	}
+	return result
+}
+
+// TestSessionPanicIsolatesSiblingTask verifies that a panic in handleAssign for
+// one task is recovered and reported as TaskFinished (with ExitCode -1), while a
+// concurrently running sibling task completes normally with ExitCode 0.
+//
+// The test uses testHookHandleAssign to inject a panic into the FIRST task only.
+// A sync.Once ensures exactly one invocation triggers the panic; subsequent calls
+// (from the sibling goroutine) return without panicking.
+func TestSessionPanicIsolatesSiblingTask(t *testing.T) {
+	repo := initRepo(t)
+	ms := &mockSender{}
+	fakePath, _ := filepath.Abs("../testdata/fake-claude.sh")
+
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fakePath,
+		Timeout:      10 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+	}
+
+	// Arm panic for the FIRST invocation only; subsequent invocations are no-ops.
+	var once sync.Once
+	s.testHookHandleAssign = func() {
+		once.Do(func() {
+			panic("test-panic-isolation")
+		})
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Task 0x01 — panics.
+	go func() {
+		defer wg.Done()
+		req := &protocol.AssignTask{
+			TaskId: protocol.TaskID{Id: [16]byte{0x01}},
+			Prompt: []byte("task-a"),
+		}
+		req.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), req)
+	}()
+
+	// Task 0x02 — runs normally. Small delay to allow 0x01 to fire the once.Do first.
+	go func() {
+		defer wg.Done()
+		time.Sleep(80 * time.Millisecond)
+		req := &protocol.AssignTask{
+			TaskId: protocol.TaskID{Id: [16]byte{0x02}},
+			Prompt: []byte("task-b"),
+		}
+		req.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), req)
+	}()
+
+	wg.Wait()
+
+	ms.mu.Lock()
+	sentCopy := append([][]byte{}, ms.sent...)
+	ms.mu.Unlock()
+
+	finished := collectTaskFinished(t, sentCopy)
+
+	// Task 0x01 must be panic-reported: ExitCode -1, DiffInfo contains "runner_panic".
+	tf01, ok := finished[[16]byte{0x01}]
+	if !ok {
+		t.Fatal("no TaskFinished for task 0x01")
+	}
+	if tf01.ExitCode != -1 {
+		t.Errorf("task 0x01: want ExitCode -1, got %d", tf01.ExitCode)
+	}
+	if !bytes.Contains(tf01.DiffInfo, []byte("runner_panic")) {
+		t.Errorf("task 0x01: expected 'runner_panic' in DiffInfo, got %q", tf01.DiffInfo)
+	}
+
+	// Task 0x02 must have succeeded: ExitCode 0.
+	tf02, ok := finished[[16]byte{0x02}]
+	if !ok {
+		t.Fatal("no TaskFinished for task 0x02")
+	}
+	if tf02.ExitCode != 0 {
+		t.Errorf("task 0x02: want ExitCode 0 (success), got %d", tf02.ExitCode)
+	}
+}
+
 // decodeRunnerMsg parses the wire-prefixed RunnerControl payload from a Sender.Send call.
 func decodeRunnerMsg(t *testing.T, raw []byte) *protocol.RunnerMessage {
 	t.Helper()
