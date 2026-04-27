@@ -378,3 +378,66 @@ func TestHandleSubmitOK(t *testing.T) {
 		t.Fatalf("Selector.Kind=%v want Any", got.Selector.Kind)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 4.2: handleOpenInteractive synchronous error codes
+// ---------------------------------------------------------------------------
+
+func TestHandleOpenInteractiveNoRunnerForRepo(t *testing.T) {
+	h := newTestHandler(t) // empty registry
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
+		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
+	}
+}
+
+func TestHandleOpenInteractiveBusy(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	// Runner is at capacity (MaxTasks=1, 1 active task).
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_RunnerBusy {
+		t.Fatalf("status=%v want RunnerBusy", resp.Status)
+	}
+}
+
+func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/shared/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
+		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
+	}
+}
+
+func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
+	sel.SetHostname(mustHostname(t, "raspi")) // hostname not present
+	req := &protocol.OpenInteractiveRequest{Selector: sel}
+	req.SetRepoPath([]byte("/x/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_PinnedNotFound {
+		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
+	}
+}
