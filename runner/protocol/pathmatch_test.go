@@ -17,6 +17,7 @@ func TestIsUnderRoot(t *testing.T) {
 		{"trailing slash root", "/home/kforfk/workspace/", "/home/kforfk/workspace/foo", true},
 		{"trailing slash repo", "/home/kforfk/workspace", "/home/kforfk/workspace/foo/", true},
 		{"relative repo refused", "/home/kforfk/workspace", "workspace/foo", false},
+		{"relative root refused", "workspace", "/home/kforfk/workspace/foo", false},
 		{"root parent", "/home/kforfk/workspace", "/home/kforfk", false},
 	}
 	for _, tc := range cases {

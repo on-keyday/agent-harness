@@ -27,5 +27,7 @@ func IsUnderRoot(root, repo string) bool {
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return false
 	}
+	// On Windows, filepath.Rel returns an absolute path when root and repo
+	// are on different drive letters; treat that as "not under root".
 	return !filepath.IsAbs(rel)
 }
