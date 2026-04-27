@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -203,7 +204,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 //
 // On Ok, the returned SubmitResponse carries the new TaskId.
 func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind) protocol.SubmitResponse {
-	repo := filepath.Clean(string(req.RepoPath))
+	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
+	// server stays OS-agnostic when matching runner-supplied roots.
+	repo := path.Clean(string(req.RepoPath))
 	cands := h.Registry.Candidates(repo, req.Selector)
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
@@ -254,7 +257,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return protocol.OpenInteractiveResponse{Status: status}
 	}
 
-	repo := filepath.Clean(string(req.RepoPath))
+	repo := path.Clean(string(req.RepoPath))
 	cands := h.Registry.Candidates(repo, req.Selector)
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
@@ -434,8 +437,8 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 		respond(0, 0)
 		return
 	}
-	path := filepath.Join(h.LogsDir, taskID+".log")
-	f, err := os.Open(path)
+	logPath := filepath.Join(h.LogsDir, taskID+".log")
+	f, err := os.Open(logPath)
 	if err != nil {
 		// Includes os.ErrNotExist (no log yet) and any I/O error.
 		respond(0, 0)

@@ -3,7 +3,7 @@ package server
 import (
 	"encoding/hex"
 	"log/slog"
-	"path/filepath"
+	"path"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -45,7 +45,10 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		roots := make([]string, len(hello.AllowedRoots))
 		for i, ar := range hello.AllowedRoots {
-			roots[i] = filepath.Clean(string(ar.Path))
+			// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so a
+			// Windows-running server doesn't convert '/' to '\' and break the
+			// boundary predicate.
+			roots[i] = path.Clean(string(ar.Path))
 		}
 		entry := &RunnerEntry{
 			ID:           runnerID,

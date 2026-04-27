@@ -26,7 +26,7 @@ import (
 type RunnerEntry struct {
 	ID           string              // = objproto.ConnectionID.String()
 	Hostname     string              // from RunnerHello.hostname
-	AllowedRoots []string            // absolute, filepath.Clean'd at Hello receipt
+	AllowedRoots []string            // POSIX '/'-paths, path.Clean'd at Hello receipt (wire-format)
 	MaxTasks     int                 // from RunnerHello.max_tasks (>=1)
 	ActiveTasks  map[string]struct{} // task_id (hex) set; len() = current load
 	ConnectedAt  time.Time

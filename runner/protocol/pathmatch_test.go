@@ -19,6 +19,8 @@ func TestIsUnderRoot(t *testing.T) {
 		{"relative repo refused", "/home/kforfk/workspace", "workspace/foo", false},
 		{"relative root refused", "workspace", "/home/kforfk/workspace/foo", false},
 		{"root parent", "/home/kforfk/workspace", "/home/kforfk", false},
+		{"posix root covers any abs", "/", "/anything/here", true},
+		{"posix root vs itself", "/", "/", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

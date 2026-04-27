@@ -45,7 +45,12 @@ func main() {
 			slog.Error("roots abs", "root", r, "err", err)
 			os.Exit(1)
 		}
-		abs = append(abs, filepath.Clean(a))
+		// Wire is POSIX '/'-paths. Linux: ToSlash is no-op. Windows: converts
+		// '\' separators (and lower-cased drive letters survive as-is). The
+		// server treats wire paths as opaque POSIX strings (path package, not
+		// path/filepath), so any OS-mismatch between server and runner stays
+		// inside the runner binary.
+		abs = append(abs, filepath.ToSlash(filepath.Clean(a)))
 	}
 	if len(abs) < 1 {
 		fmt.Fprintf(os.Stderr, "agent-runner: --roots must contain at least one non-empty path\n")
