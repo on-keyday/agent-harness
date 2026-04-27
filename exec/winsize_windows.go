@@ -6,7 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/creack/pty"
 	"golang.org/x/term"
 )
 
@@ -18,6 +17,17 @@ import (
 // resize feel responsive while making the polling overhead negligible.
 const windowSizePollInterval = 250 * time.Millisecond
 
+// getConsoleSize returns the current console (rows, cols). It must be
+// called against the console *output* handle: GetConsoleScreenBufferInfo,
+// which term.GetSize wraps on Windows, requires a screen-buffer handle and
+// fails with ERROR_INVALID_HANDLE on a console input handle.
+// term.GetSize itself returns (width, height) — i.e. (cols, rows) — so we
+// re-order to match SetTerminalWindowSize's (rows, columns, ...) signature.
+func getConsoleSize() (rows, cols int, err error) {
+	cols, rows, err = term.GetSize(int(os.Stdout.Fd()))
+	return rows, cols, err
+}
+
 // startWindowSizeForwarder polls the local terminal dimensions every
 // windowSizePollInterval and invokes sendSize when they change. This is
 // the Windows fallback for the Unix SIGWINCH-driven path. The returned
@@ -25,21 +35,21 @@ const windowSizePollInterval = 250 * time.Millisecond
 func startWindowSizeForwarder(sendSize func() error) func() {
 	done := make(chan struct{})
 	go func() {
-		var last pty.Winsize
+		var lastRows, lastCols int
 		haveLast := false
 		ticker := time.NewTicker(windowSizePollInterval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				cur, err := pty.GetsizeFull(os.Stdin)
+				rows, cols, err := getConsoleSize()
 				if err != nil {
 					continue
 				}
-				if haveLast && *cur == last {
+				if haveLast && rows == lastRows && cols == lastCols {
 					continue
 				}
-				last = *cur
+				lastRows, lastCols = rows, cols
 				haveLast = true
 				_ = sendSize()
 			case <-done:
@@ -51,7 +61,7 @@ func startWindowSizeForwarder(sendSize func() error) func() {
 }
 
 func (w *CommandExecutionStream) sendWindowSize() error {
-	rows, cols, err := term.GetSize(int(os.Stdin.Fd()))
+	rows, cols, err := getConsoleSize()
 	if err != nil {
 		return err
 	}
