@@ -21,14 +21,14 @@ format AllowedRoot:
 
 # RunnerHello replaces the old single-repo shape.
 # hostname is the runner's short hostname (for display / pinning).
-# max_tasks is the concurrency limit this runner enforces (0 = unlimited).
+# max_tasks is the concurrency limit this runner enforces (>=1; 0 -> server rejects).
 # allowed_roots lists every repo root the runner can serve.
 format RunnerHello:
     version :u8
     hostname_len :u8
     hostname :[hostname_len]u8
-    max_tasks :u8
-    allowed_roots_len :u16
+    max_tasks :u16
+    allowed_roots_len :u8
     allowed_roots :[allowed_roots_len]AllowedRoot
 
 format TaskID:
@@ -160,16 +160,16 @@ format ActiveTaskRef:
 # RunnerInfo replaces the old single-repo shape with multi-root and active-tasks.
 format RunnerInfo:
     id :RunnerID
-    status :RunnerStatus
     hostname_len :u8
     hostname :[hostname_len]u8
-    max_tasks :u8
-    connected_at :u64  # unix nano
-    last_seen :u64
-    allowed_roots_len :u16
+    status :RunnerStatus
+    max_tasks :u16
+    allowed_roots_len :u8
     allowed_roots :[allowed_roots_len]AllowedRoot
     active_tasks_len :u16
     active_tasks :[active_tasks_len]ActiveTaskRef
+    connected_at :u64  # unix nano
+    last_seen :u64
 
 format TaskInfo:
     id :TaskID
