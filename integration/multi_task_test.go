@@ -435,6 +435,57 @@ func TestIntegrationCancelKillsClaude(t *testing.T) {
 	}, 10*time.Second, 200*time.Millisecond, "runner capacity to be released after cancel")
 }
 
+// ---- Task 11.6: Runner disconnect marks all stranded tasks Failed -----------
+
+func TestIntegrationDisconnectMarksTasksFailed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+
+	slowBin := fakeClaudeSlowPath(t)
+	r := startRunner(t, serverCID, runnerOpts{
+		MaxTasks:  4,
+		Roots:     []string{repo},
+		ClaudeBin: slowBin,
+	})
+
+	c := dialClient(t, serverCID)
+
+	ids := []string{
+		mustSubmit(t, c, repo, "sleep1"),
+		mustSubmit(t, c, repo, "sleep2"),
+		mustSubmit(t, c, repo, "sleep3"),
+	}
+
+	// Wait for all tasks to be Running.
+	eventually(t, func() bool {
+		for _, id := range ids {
+			ti := getTask(t, c, id)
+			if ti.Status != protocol.TaskStatus_Running {
+				return false
+			}
+		}
+		return true
+	}, 10*time.Second, 100*time.Millisecond, "all tasks Running before disconnect")
+
+	// Disconnect the runner abruptly.
+	r.Close()
+
+	// All tasks should transition to Failed. DiffInfo on the server-side entry
+	// contains "runner_disconnected" but that field is not exposed in the wire
+	// TaskInfo; we verify Status == Failed as the observable contract.
+	for _, id := range ids {
+		waitTaskTerminal(t, c, id, 10*time.Second)
+		ti := getTask(t, c, id)
+		if ti.Status != protocol.TaskStatus_Failed {
+			t.Errorf("task %s: want Failed after runner disconnect, got %v", id[:12], ti.Status)
+		}
+	}
+}
+
 // ---- Task 11.1: Two tasks run concurrently ----------------------------------
 
 func TestIntegrationTwoTasksConcurrent(t *testing.T) {
