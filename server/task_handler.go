@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,20 +69,15 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		origin := h.lookupClientKind(conn.ConnectionID().String())
-		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt), protocol.TaskKind_Oneshot, origin, "", protocol.RunnerSelector{})
-
-		// Decode hex task ID back to 16 raw bytes for the response.
-		raw, _ := hex.DecodeString(taskID)
-		var tid protocol.TaskID
-		copy(tid.Id[:], raw)
+		submitResp := h.handleSubmit(sub, origin)
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
-		resp.SetSubmit(protocol.SubmitResponse{TaskId: tid})
+		resp.SetSubmit(submitResp)
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
-		if h.OnChange != nil {
+		if submitResp.Status == protocol.SubmitStatus_Ok && h.OnChange != nil {
 			h.OnChange()
 		}
 
@@ -190,6 +186,41 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	default:
 		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)
 	}
+}
+
+// handleSubmit resolves the runner selector and either enqueues the task or
+// returns a synchronous error status. The four possible outcomes:
+//
+//   - SubmitStatus_Ok            — exactly one candidate, task created and queued
+//   - SubmitStatus_NoRunner      — no candidates match (Any selector)
+//   - SubmitStatus_PinnedNotFound — no candidates match (pinned selector)
+//   - SubmitStatus_AmbiguousRunner — more than one candidate (error_msg lists hostnames)
+//
+// On Ok, the returned SubmitResponse carries the new TaskId.
+func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind) protocol.SubmitResponse {
+	repo := filepath.Clean(string(req.RepoPath))
+	cands := h.Registry.Candidates(repo, req.Selector)
+	switch {
+	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}
+	case len(cands) == 0:
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
+	case len(cands) > 1:
+		hostnames := make([]string, len(cands))
+		for i, c := range cands {
+			hostnames[i] = c.Hostname
+		}
+		msg := []byte("ambiguous: " + strings.Join(hostnames, ", "))
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}
+		resp.SetErrorMsg(msg)
+		return resp
+	}
+	bound := cands[0]
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, bound.ID, req.Selector)
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}
 }
 
 // handleOpenInteractive matches the request's repo to an idle runner, allocates
