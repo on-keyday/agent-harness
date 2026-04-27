@@ -51,12 +51,20 @@ func (d *DetailPopup) View() string {
 func formatRunnerDetail(r protocol.RunnerInfo) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
-	fmt.Fprintf(&sb, "repo:          %s\n", string(r.RepoPath))
+	fmt.Fprintf(&sb, "host:          %s\n", string(r.Hostname))
+	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
+	for i, root := range r.AllowedRoots {
+		fmt.Fprintf(&sb, "root[%d]:       %s\n", i, string(root.Path))
+	}
+	if len(r.ActiveTasks) > 0 {
+		for i, at := range r.ActiveTasks {
+			fmt.Fprintf(&sb, "active[%d]:     %s  %s\n", i,
+				hex.EncodeToString(at.TaskId.Id[:]),
+				string(at.RepoPath))
+		}
+	}
 	fmt.Fprintf(&sb, "connected:     %s\n", formatNanoTs(r.ConnectedAt))
 	fmt.Fprintf(&sb, "last seen:     %s\n", formatNanoTs(r.LastSeen))
-	if cur := r.CurrentTask.Id[:]; !allZero(cur) {
-		fmt.Fprintf(&sb, "current task:  %s\n", hex.EncodeToString(cur))
-	}
 	return sb.String()
 }
 

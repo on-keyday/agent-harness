@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -33,8 +34,19 @@ type InteractiveDoneMsg struct {
 // happens in the App's Update when InteractiveReadyMsg arrives — Cmds run
 // outside the Update loop, but tea.Exec must be returned from Update.
 func DoOpenInteractive(c *cli.Client, repo string) tea.Cmd {
+	return DoOpenInteractiveWithHost(c, repo, "")
+}
+
+// DoOpenInteractiveWithHost is the same as DoOpenInteractive but accepts an
+// optional hostname pin. On AmbiguousRunner the error is surfaced in
+// InteractiveReadyMsg.Err with a hint to supply a host.
+func DoOpenInteractiveWithHost(c *cli.Client, repo, host string) tea.Cmd {
 	return func() tea.Msg {
-		stream, taskID, err := c.OpenInteractive(context.Background(), repo)
+		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
+		if err != nil {
+			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
+		}
+		stream, taskID, err := c.OpenInteractiveWithSelector(context.Background(), repo, sel)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }

@@ -20,8 +20,9 @@ type RunnersModel struct {
 func NewRunners() RunnersModel {
 	cols := []table.Column{
 		{Title: "Status", Width: 8},
-		{Title: "Repo", Width: 40},
-		{Title: "Current Task", Width: 14},
+		{Title: "Host", Width: 20},
+		{Title: "Tasks", Width: 7},
+		{Title: "Roots", Width: 30},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(false))
 	return RunnersModel{table: t}
@@ -50,8 +51,9 @@ func (m *RunnersModel) SetRows(rs []protocol.RunnerInfo) {
 	for _, r := range rs {
 		rows = append(rows, table.Row{
 			runnerStatusStr(r.Status),
-			truncateLeft(string(r.RepoPath), 40),
-			shortHexNonZero(r.CurrentTask.Id[:]),
+			string(r.Hostname),
+			runnerTasksCell(r),
+			runnerRootsCell(r),
 		})
 	}
 	m.rowRunners = rs
@@ -126,3 +128,21 @@ func shortHexNonZero(b []byte) string {
 
 // formatTaskID is a small helper used by tests / debug.
 func formatTaskID(b []byte) string { return fmt.Sprintf("%x", b) }
+
+// runnerTasksCell renders "active/max" for the Tasks column.
+func runnerTasksCell(r protocol.RunnerInfo) string {
+	return fmt.Sprintf("%d/%d", r.ActiveTasksLen, r.MaxTasks)
+}
+
+// runnerRootsCell renders the first AllowedRoot path (truncated) for the table.
+// When multiple roots exist, the count is appended so the user knows to check detail.
+func runnerRootsCell(r protocol.RunnerInfo) string {
+	if len(r.AllowedRoots) == 0 {
+		return "(any)"
+	}
+	first := truncateLeft(string(r.AllowedRoots[0].Path), 24)
+	if len(r.AllowedRoots) > 1 {
+		return fmt.Sprintf("%s (+%d)", first, len(r.AllowedRoots)-1)
+	}
+	return first
+}

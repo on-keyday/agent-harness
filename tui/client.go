@@ -46,11 +46,28 @@ type LogHistoryMsg struct {
 
 // DoSubmit issues a Submit RPC over the existing persistent client.
 func DoSubmit(c *cli.Client, repo, prompt string) tea.Cmd {
+	return DoSubmitWithOpts(c, repo, prompt, "")
+}
+
+// DoSubmitWithOpts issues a Submit RPC with an optional hostname pin.
+// When host is non-empty, a ByHostname selector is built; otherwise Any is used.
+// On AmbiguousRunner the error is surfaced in SubmitResultMsg.Err with a hint
+// to use the popup's host selector.
+func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		echo := fmt.Sprintf("submit --repo %q %q", repo, prompt)
-		id, err := c.Submit(ctx, repo, prompt)
+		var echo string
+		if host != "" {
+			echo = fmt.Sprintf("submit --repo %q --host %q %q", repo, host, prompt)
+		} else {
+			echo = fmt.Sprintf("submit --repo %q %q", repo, prompt)
+		}
+		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
+		if err != nil {
+			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
+		}
+		id, err := c.SubmitWithSelector(ctx, repo, prompt, sel)
 		if err != nil {
 			return SubmitResultMsg{Err: err, Echo: echo}
 		}

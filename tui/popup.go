@@ -11,16 +11,20 @@ import (
 type PopupModel struct {
 	repoChoices []string
 	repoIdx     int
+	// hostChoices holds "(any)" followed by the known runner hostnames.
+	// hostIdx 0 means no pin (Any selector).
+	hostChoices []string
+	hostIdx     int
 	ta          textarea.Model
 	open        bool
 }
 
 func NewPopup(defaultRepo string) PopupModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to submit, Tab to switch repo, Esc to cancel."
+	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to submit, Tab to switch repo, Shift+Tab to cycle host pin, Esc to cancel."
 	ta.SetWidth(60)
 	ta.SetHeight(10)
-	pm := PopupModel{ta: ta}
+	pm := PopupModel{ta: ta, hostChoices: []string{"(any)"}}
 	if defaultRepo != "" {
 		pm.repoChoices = []string{defaultRepo}
 	}
@@ -31,6 +35,7 @@ func (m *PopupModel) IsOpen() bool { return m.open }
 
 func (m *PopupModel) Open() {
 	m.open = true
+	m.hostIdx = 0
 	m.ta.Reset()
 	m.ta.Focus()
 }
@@ -47,6 +52,38 @@ func (m *PopupModel) Repo() string {
 	return m.repoChoices[m.repoIdx]
 }
 func (m *PopupModel) Prompt() string { return m.ta.Value() }
+
+// Host returns the selected pin hostname, or "" when "(any)" is selected.
+func (m *PopupModel) Host() string {
+	if m.hostIdx == 0 || len(m.hostChoices) == 0 {
+		return ""
+	}
+	return m.hostChoices[m.hostIdx]
+}
+
+// SetHostChoices replaces the list of selectable hosts.
+// The first entry is always "(any)" (no pin); then the supplied hostnames follow.
+// Empty strings in hosts are skipped.
+func (m *PopupModel) SetHostChoices(hosts []string) {
+	final := []string{"(any)"}
+	for _, h := range hosts {
+		if h != "" {
+			final = append(final, h)
+		}
+	}
+	m.hostChoices = final
+	m.hostIdx = 0
+}
+
+// CycleHost advances host selection by step (1 = next, -1 = prev), wrapping
+// around. No-op when there are 0 or 1 choices.
+func (m *PopupModel) CycleHost(step int) {
+	n := len(m.hostChoices)
+	if n <= 1 {
+		return
+	}
+	m.hostIdx = ((m.hostIdx+step)%n + n) % n
+}
 
 // SetRepo sets a single-choice repo (no cycling). Convenience for callers
 // that only have a default and no runner registry context.
@@ -111,8 +148,16 @@ func (m PopupModel) View() string {
 	}
 	header := "New task — repo: " + repo
 	if n := len(m.repoChoices); n > 1 {
-		header += fmt.Sprintf("  [Tab/Shift+Tab: switch (%d/%d)]", m.repoIdx+1, n)
+		header += fmt.Sprintf("  [Tab: switch repo (%d/%d)]", m.repoIdx+1, n)
 	}
-	footer := FooterStyle.Render("Ctrl+J: submit  ·  Esc: cancel")
+	host := m.Host()
+	if host == "" {
+		host = "(any)"
+	}
+	header += "\n             host: " + host
+	if n := len(m.hostChoices); n > 1 {
+		header += fmt.Sprintf("  [Shift+Tab: cycle (%d/%d)]", m.hostIdx+1, n)
+	}
+	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Esc: cancel")
 	return box.Render(header + "\n\n" + m.ta.View() + "\n\n" + footer)
 }
