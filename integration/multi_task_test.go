@@ -238,6 +238,62 @@ func fakeClaudeSlowPath(t *testing.T) string {
 	return abs
 }
 
+// ---- Task 11.2: Capacity queuing then auto-dispatch -------------------------
+
+func TestIntegrationCapacityQueueing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+
+	// The slow runner holds id1 while id2 stays Queued.
+	slowBin := fakeClaudeSlowPath(t)
+	slowRunner := startRunner(t, serverCID, runnerOpts{
+		MaxTasks:  1,
+		Roots:     []string{repo},
+		ClaudeBin: slowBin,
+	})
+
+	c := dialClient(t, serverCID)
+
+	// id1 will block the slow runner (fake-claude-slow sleeps 60s).
+	id1 := mustSubmit(t, c, repo, "blocking task")
+	// id2 should be queued while id1 holds the slot.
+	id2 := mustSubmit(t, c, repo, "queued task")
+
+	// Wait for id1 to be Running and id2 to be Queued.
+	eventually(t, func() bool {
+		t1 := getTask(t, c, id1)
+		t2 := getTask(t, c, id2)
+		return t1.Status == protocol.TaskStatus_Running && t2.Status == protocol.TaskStatus_Queued
+	}, 10*time.Second, 100*time.Millisecond, "id1 Running and id2 Queued")
+
+	// Close the slow runner (simulates it going away). This disconnects it:
+	// - id1 gets marked Failed by the disconnect handler
+	// - id2 remains Queued (it was never assigned to the slow runner)
+	// Then start a fast runner so id2 auto-dispatches immediately.
+	slowRunner.Close()
+
+	waitTaskTerminal(t, c, id1, 5*time.Second)
+
+	// Start a fast runner so the scheduler can dispatch id2.
+	startRunner(t, serverCID, runnerOpts{
+		MaxTasks:  1,
+		Roots:     []string{repo},
+		ClaudeBin: fakeClaudePath(t),
+	})
+
+	// id2 should now auto-dispatch to the fast runner and Succeed.
+	waitTaskTerminal(t, c, id2, 30*time.Second)
+
+	t2 := getTask(t, c, id2)
+	if t2.Status != protocol.TaskStatus_Succeeded {
+		t.Fatalf("id2 should auto-dispatch and succeed; got %v", t2.Status)
+	}
+}
+
 // ---- Task 11.1: Two tasks run concurrently ----------------------------------
 
 func TestIntegrationTwoTasksConcurrent(t *testing.T) {
