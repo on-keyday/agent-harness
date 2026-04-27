@@ -85,6 +85,8 @@ func New(cfg Config) *Server {
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
+		Registry:        s.registry,
+		Tasks:           s.tasks,
 	}
 
 	// publishTaskEvent constructs and publishes a TaskStatusEvent to the
@@ -140,6 +142,7 @@ func New(cfg Config) *Server {
 	}
 	s.tasks.OnCancel = func(id string) {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, protocol.TaskStatus_Cancelled, 0)
+		s.dispatcher.OnCancel(id)
 	}
 
 	// Wire registry hooks.

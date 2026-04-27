@@ -127,10 +127,10 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 	return false
 }
 
-// OnCancel looks up the BoundRunnerID for taskID and sends a CancelTask
-// message to that runner. Capacity is intentionally NOT released here;
-// the TaskFinished message from the runner (or the runner disconnect path)
-// will call UnbindTask.
+// OnCancel looks up the runner that is executing taskID (via AssignedTo, falling
+// back to BoundRunnerID) and sends a CancelTask message to it. Capacity is
+// intentionally NOT released here; the TaskFinished message from the runner (or
+// the runner-disconnect path) will call UnbindTask.
 func (d *Dispatcher) OnCancel(taskID string) {
 	if d.Registry == nil || d.Tasks == nil {
 		return
@@ -139,7 +139,12 @@ func (d *Dispatcher) OnCancel(taskID string) {
 	if !ok {
 		return
 	}
-	runnerID := task.BoundRunnerID
+	// AssignedTo is set by Assign() when TryDispatch succeeds; BoundRunnerID is
+	// the pinned runner from the submit-time selector. Prefer AssignedTo.
+	runnerID := task.AssignedTo
+	if runnerID == "" {
+		runnerID = task.BoundRunnerID
+	}
 	if runnerID == "" {
 		// Task was never dispatched to a runner; nothing to forward.
 		return
