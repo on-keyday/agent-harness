@@ -120,8 +120,9 @@ func harnessConnect(this js.Value, args []js.Value) any {
 }
 
 // harnessSubmit submits a task and resolves with the server-assigned task id.
+// An optional "host" field pins the task to a specific runner by hostname.
 //
-//	harness.submit({repo: "/abs/path", task: "..."}) -> Promise<taskIDHex>
+//	harness.submit({repo: "/abs/path", task: "...", host: "raspi"}) -> Promise<taskIDHex>
 func harnessSubmit(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -139,7 +140,17 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			opts := args[0]
 			repo := opts.Get("repo").String()
 			task := opts.Get("task").String()
-			id, err := c.Submit(rootCtx, repo, task)
+			hostVal := opts.Get("host")
+			host := ""
+			if hostVal.Type() == js.TypeString {
+				host = hostVal.String()
+			}
+			sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("submit: selector: %w", err))
+				return
+			}
+			id, err := c.SubmitWithSelector(rootCtx, repo, task, sel)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -179,12 +190,12 @@ func harnessList(this js.Value, args []js.Value) any {
 }
 
 // harnessSnapshot returns the current runners + tasks as a JS object,
-// shaped for direct consumption by the webui. Strings are pre-decoded
-// (RepoPath / Prompt are []byte on the wire), TaskIDs are pre-hexed, and
-// statuses are stringified so the JS side does not need a label table.
+// shaped for direct consumption by the webui. Strings are pre-decoded,
+// TaskIDs are pre-hexed, and statuses are stringified so the JS side does
+// not need a label table.
 //
 //	harness.snapshot() -> Promise<{
-//	  runners: [{repoPath, status, connectedAt, currentTask}],
+//	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen}],
 //	  tasks:   [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	             createdAt, startedAt, endedAt}]
 //	}>
@@ -205,12 +216,18 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			}
 			runners := make([]any, 0, len(lr.Runners))
 			for _, r := range lr.Runners {
+				roots := make([]any, 0, len(r.AllowedRoots))
+				for _, root := range r.AllowedRoots {
+					roots = append(roots, string(root.Path))
+				}
 				runners = append(runners, map[string]any{
-					"repoPath":    string(r.RepoPath),
+					"hostname":    string(r.Hostname),
 					"status":      r.Status.String(),
+					"tasks":       float64(r.ActiveTasksLen),
+					"maxTasks":    float64(r.MaxTasks),
+					"roots":       roots,
 					"connectedAt": float64(r.ConnectedAt),
 					"lastSeen":    float64(r.LastSeen),
-					"currentTask": shortHexBytes(r.CurrentTask.Id[:]),
 				})
 			}
 			tasks := make([]any, 0, len(lr.Tasks))
@@ -363,9 +380,10 @@ func harnessPrune(this js.Value, args []js.Value) any {
 // and resolves with the server-allocated task id (hex). The signature
 // mirrors cli.Interactive (native+wasm) — the server allocates the TaskID
 // from OpenInteractiveRequest{RepoPath}, so JS supplies the repo and gets
-// the taskID back, not the other way around.
+// the taskID back, not the other way around. An optional "host" field pins
+// the session to a specific runner by hostname.
 //
-//	harness.startInteractive({repo: "/abs/path"}) -> Promise<taskIDHex>
+//	harness.startInteractive({repo: "/abs/path", host: "raspi"}) -> Promise<taskIDHex>
 func harnessStartInteractive(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -386,7 +404,17 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, errors.New("startInteractive: opts.repo is required"))
 				return
 			}
-			taskID, err := c.Interactive(rootCtx, repo)
+			hostVal := opts.Get("host")
+			host := ""
+			if hostVal.Type() == js.TypeString {
+				host = hostVal.String()
+			}
+			sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
+				return
+			}
+			taskID, err := c.InteractiveWithSelector(rootCtx, repo, sel)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return

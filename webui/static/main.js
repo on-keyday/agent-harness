@@ -43,6 +43,7 @@ const POLL_INTERVAL_MS = 5000;
   //    runner-list + task-list. Replaces the old refreshList(harness.list)
   //    string-based renderer.
   const runnerSelect = document.getElementById("runner-select");
+  const hostSelect   = document.getElementById("host-select");
   const runnerList   = document.getElementById("runner-list");
   const taskList     = document.getElementById("task-list");
 
@@ -55,6 +56,7 @@ const POLL_INTERVAL_MS = 5000;
       return;
     }
     renderRunnerSelect(runnerSelect, snap.runners);
+    renderHostSelect(hostSelect, snap.runners);
     runnerList.textContent = renderRunners(snap.runners);
     taskList.textContent   = renderTasks(snap.tasks);
   };
@@ -101,7 +103,8 @@ const POLL_INTERVAL_MS = 5000;
           // task is preserved verbatim.
           const task = tokens.slice(1).join(" ");
           if (!task) throw new Error("submit: missing task prompt");
-          out = await window.harness.submit({ repo, task });
+          const host = hostSelect ? (hostSelect.value || "") : "";
+          out = await window.harness.submit({ repo, task, host });
           break;
         }
         case "list":
@@ -152,11 +155,12 @@ const POLL_INTERVAL_MS = 5000;
       alert("select a runner from the dropdown first");
       return;
     }
+    const host = hostSelect ? (hostSelect.value || "") : "";
     // Reset xterm so the new session starts on a clean canvas (no leftover
     // output, escape state, or scrollback from the previous attach).
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({ repo });
+      const taskID = await window.harness.startInteractive({ repo, host });
       attachedTask.textContent = `attached: ${taskID}`;
       term.focus();
     } catch (e) {
@@ -170,9 +174,9 @@ const POLL_INTERVAL_MS = 5000;
   });
 })();
 
-// renderRunnerSelect rebuilds the <select> options from the snapshot. We
-// preserve the previously-selected value if the same repo is still present
-// and Idle, otherwise we fall back to the first Idle runner (if any).
+// renderRunnerSelect rebuilds the repo <select> options from the snapshot.
+// Each option value is a root path. We de-duplicate across runners and
+// preserve the previously-selected value when still present.
 function renderRunnerSelect(sel, runners) {
   const prev = sel.value;
   sel.innerHTML = "";
@@ -183,24 +187,73 @@ function renderRunnerSelect(sel, runners) {
     sel.appendChild(opt);
     return;
   }
-  let prevStillIdle = false;
-  let firstIdle = "";
+  // Collect unique root paths; annotate with the first runner's status.
+  const seen = new Map(); // path → status
   for (const r of runners) {
-    const opt = document.createElement("option");
-    opt.value = r.repoPath;
-    const idle = r.status === "Idle";
-    opt.disabled = !idle;
-    opt.textContent = `${r.repoPath}  [${r.status}]`;
-    sel.appendChild(opt);
-    if (idle && !firstIdle) firstIdle = r.repoPath;
-    if (idle && r.repoPath === prev) prevStillIdle = true;
+    if (!r.roots || r.roots.length === 0) continue;
+    for (const root of r.roots) {
+      if (root && !seen.has(root)) seen.set(root, r.status);
+    }
   }
-  sel.value = prevStillIdle ? prev : firstIdle;
+  if (seen.size === 0) {
+    // Runners have no specific roots — fall back to "(any root)" per runner.
+    for (const r of runners) {
+      const opt = document.createElement("option");
+      opt.value = r.hostname || "";
+      const idle = r.status === "Idle";
+      opt.disabled = !idle;
+      opt.textContent = `${r.hostname || "(unknown)"}  [${r.status}]`;
+      sel.appendChild(opt);
+    }
+    return;
+  }
+  let prevStillPresent = false;
+  let firstIdle = "";
+  for (const [root, status] of seen) {
+    const opt = document.createElement("option");
+    opt.value = root;
+    const idle = status === "Idle";
+    opt.disabled = !idle;
+    opt.textContent = `${root}  [${status}]`;
+    sel.appendChild(opt);
+    if (idle && !firstIdle) firstIdle = root;
+    if (root === prev) prevStillPresent = true;
+  }
+  sel.value = prevStillPresent ? prev : firstIdle;
+}
+
+// renderHostSelect rebuilds the host pin <select>. First option is always
+// "(any)" (value=""). Subsequent options are unique runner hostnames.
+function renderHostSelect(sel, runners) {
+  if (!sel) return;
+  const prev = sel.value;
+  sel.innerHTML = "";
+  const anyOpt = document.createElement("option");
+  anyOpt.value = "";
+  anyOpt.textContent = "(any host)";
+  sel.appendChild(anyOpt);
+  if (!runners) return;
+  const seen = new Set();
+  for (const r of runners) {
+    const h = r.hostname || "";
+    if (h && !seen.has(h)) {
+      seen.add(h);
+      const opt = document.createElement("option");
+      opt.value = h;
+      opt.textContent = `${h}  [${r.status}]`;
+      sel.appendChild(opt);
+    }
+  }
+  // Preserve previous selection if still available.
+  if (prev && seen.has(prev)) sel.value = prev;
 }
 
 function renderRunners(runners) {
   if (!runners || runners.length === 0) return "(none)";
-  return runners.map(r => `  ${pad(r.status, 8)} repo=${r.repoPath}  current=${r.currentTask}`).join("\n");
+  return runners.map(r => {
+    const roots = (r.roots && r.roots.length > 0) ? r.roots.join(", ") : "(any)";
+    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  tasks=${r.tasks}/${r.maxTasks}  roots=${roots}`;
+  }).join("\n");
 }
 
 function renderTasks(tasks) {
