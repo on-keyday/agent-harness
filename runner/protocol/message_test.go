@@ -8,7 +8,7 @@ import (
 func TestRunnerHelloRoundTrip(t *testing.T) {
 	const wantVersion = uint8(42)
 	wantHostname := []byte("build-runner-01")
-	const wantMaxTasks = uint8(4)
+	const wantMaxTasks = uint16(4)
 	wantRoots := []AllowedRoot{}
 	root1 := AllowedRoot{}
 	if !root1.SetPath([]byte("/home/runner/repos/myproject")) {
@@ -50,7 +50,7 @@ func TestRunnerHelloRoundTrip(t *testing.T) {
 	if decoded.MaxTasks != wantMaxTasks {
 		t.Errorf("MaxTasks: got %d, want %d", decoded.MaxTasks, wantMaxTasks)
 	}
-	if decoded.AllowedRootsLen != uint16(len(wantRoots)) {
+	if decoded.AllowedRootsLen != uint8(len(wantRoots)) {
 		t.Errorf("AllowedRootsLen: got %d, want %d", decoded.AllowedRootsLen, len(wantRoots))
 	}
 	if len(decoded.AllowedRoots) != 1 {
