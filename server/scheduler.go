@@ -19,9 +19,6 @@ type AssignFunc func(runnerID, taskID string) error
 // Scheduler matches Queued tasks to available runners sharing a compatible repo root.
 // It is the orchestration glue between Registry and TaskStore.
 //
-// Deprecated flow: Tick iterates runners and calls OldestIdleForRepo-compatible logic.
-// Phase 5 will replace Tick with a Candidates+BindTask based dispatcher loop.
-//
 // Atomicity note: the state mutation (store.Assign + reg.BindTask) is NOT
 // atomic across both stores. A tiny window exists where the task is Running but
 // the runner slot is not yet bound. For v1 single-process operation this is
@@ -67,8 +64,6 @@ func (s *Scheduler) Tick() {
 		}
 
 		// Find a queued task for any root this runner serves.
-		// Deprecated path: uses NextQueuedForRepo per root until Phase 5 replaces
-		// with Candidates+BindTask.
 		var task *TaskEntry
 		var foundRepo string
 		for _, root := range runner.AllowedRoots {

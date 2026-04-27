@@ -157,42 +157,6 @@ func (r *Registry) UnbindTask(id, taskID string) {
 	e.LastSeen = time.Now()
 }
 
-// SetStatus is a compatibility shim retained for the Scheduler and TaskHandler
-// until Phase 5 replaces them with BindTask/UnbindTask calls.
-//
-// Deprecated: Use BindTask / UnbindTask instead.
-func (r *Registry) SetStatus(id string, s protocol.RunnerStatus, currentTask string) {
-	switch s {
-	case protocol.RunnerStatus_Busy:
-		if currentTask != "" {
-			r.BindTask(id, currentTask)
-		}
-	case protocol.RunnerStatus_Idle:
-		if currentTask != "" {
-			r.UnbindTask(id, currentTask)
-		}
-	}
-}
-
-// SetIdleIfBoundTo is a compatibility shim retained for the TaskHandler until
-// Phase 5 replaces it with UnbindTask.
-//
-// Deprecated: Use UnbindTask instead.
-func (r *Registry) SetIdleIfBoundTo(id, wantTaskID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	e, ok := r.runners[id]
-	if !ok {
-		return false
-	}
-	if _, has := e.ActiveTasks[wantTaskID]; !has {
-		return false
-	}
-	delete(e.ActiveTasks, wantTaskID)
-	e.LastSeen = time.Now()
-	return true
-}
-
 // Candidates returns runner snapshots whose AllowedRoots contain repo
 // (directory-boundary-aware via protocol.IsUnderRoot) and which match the
 // selector (or any runner if Kind == Any). The returned slice is
@@ -304,35 +268,6 @@ func parseConnIDForIP(id string) (netip.Addr, error) {
 		return netip.Addr{}, err
 	}
 	return cid.Addr.Addr(), nil
-}
-
-// OldestIdleForRepo returns a value snapshot of the Idle runner for repo with
-// the earliest ConnectedAt time.
-//
-// Deprecated: Use Candidates(repo, RunnerSelector{Kind: RunnerSelectorKind_Any})
-// and check capacity via BindTask. This method is kept for backward compatibility
-// with the Scheduler until Phase 5 replaces it.
-func (r *Registry) OldestIdleForRepo(repo string) (RunnerEntry, bool) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var candidates []*RunnerEntry
-	for _, e := range r.runners {
-		// Match any runner whose AllowedRoots contains repo and has capacity.
-		if e.Conn != nil && len(e.ActiveTasks) < e.MaxTasks && rootsContain(e.AllowedRoots, repo) {
-			candidates = append(candidates, e)
-		}
-	}
-	if len(candidates) == 0 {
-		return RunnerEntry{}, false
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].ConnectedAt.Equal(candidates[j].ConnectedAt) {
-			return candidates[i].ID < candidates[j].ID
-		}
-		return candidates[i].ConnectedAt.Before(candidates[j].ConnectedAt)
-	})
-	return *candidates[0], true
 }
 
 // List returns value snapshots of all entries in arbitrary order.

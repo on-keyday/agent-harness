@@ -289,11 +289,11 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
 	h.Tasks.Assign(taskIDHex, runner.ID, "")
-	h.Registry.SetStatus(runner.ID, protocol.RunnerStatus_Busy, taskIDHex)
+	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	finishWithError := func(reason string) {
 		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
-		h.Registry.SetStatus(runner.ID, protocol.RunnerStatus_Idle, "")
+		h.Registry.UnbindTask(runner.ID, taskIDHex)
 	}
 
 	tuiStream := tuiConn.CreateBidirectionalStream()
@@ -346,14 +346,14 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		// must not undo that (the scheduler may have re-bound the
 		// runner to a different task by now).
 		// Cancel is idempotent (skips terminal states), so a TaskFinished
-		// that genuinely arrived first is unaffected. SetIdleIfBoundTo
-		// holds the registry lock for the check + flip, so it cannot
-		// clobber a fresh scheduler assignment that already moved the
+		// that genuinely arrived first is unaffected. UnbindTask is
+		// idempotent (no-op if the task slot is no longer present), so it
+		// cannot clobber a fresh scheduler assignment that already moved the
 		// runner to a different task.
 		if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
 			h.Tasks.Cancel(taskIDHex)
 		}
-		h.Registry.SetIdleIfBoundTo(runner.ID, taskIDHex)
+		h.Registry.UnbindTask(runner.ID, taskIDHex)
 		if h.OnChange != nil {
 			h.OnChange()
 		}
