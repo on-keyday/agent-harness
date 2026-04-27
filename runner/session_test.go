@@ -45,11 +45,11 @@ func TestHandleAssignSuccessSequence(t *testing.T) {
 	ms := &mockSender{}
 	fakePath, _ := filepath.Abs("../testdata/fake-claude.sh") // relative from runner/
 	s := &Session{
-		RepoPath:  repo,
-		ClaudeBin: fakePath,
-		Timeout:   5 * time.Second,
-		Sender:    ms,
-		Now:       time.Now,
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fakePath,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
 	}
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xAB
@@ -57,6 +57,7 @@ func TestHandleAssignSuccessSequence(t *testing.T) {
 		TaskId: protocol.TaskID{Id: taskIDBytes},
 		Prompt: []byte("hello"),
 	}
+	req.SetRepoPath([]byte(repo))
 	s.handleAssign(context.Background(), req)
 
 	// Should have sent at least 3 control messages: Accepted, Started, Finished.
@@ -116,13 +117,14 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 	// Use a non-existent repo path; WorktreeManager.Create will fail.
 	ms := &mockSender{}
 	s := &Session{
-		RepoPath:  "/no/such/repo",
-		ClaudeBin: "/bin/true",
-		Timeout:   1 * time.Second,
-		Sender:    ms,
-		Now:       time.Now,
+		AllowedRoots: []string{"/no/such/repo"},
+		ClaudeBin:    "/bin/true",
+		Timeout:      1 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
 	}
 	req := &protocol.AssignTask{TaskId: protocol.TaskID{}, Prompt: []byte("x")}
+	req.SetRepoPath([]byte("/no/such/repo"))
 	s.handleAssign(context.Background(), req)
 
 	// Should have sent: TaskAccepted, then TaskFinished with error info.
@@ -139,6 +141,94 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 	}
 	if !bytes.Contains(tf.DiffInfo, []byte("worktree_error")) {
 		t.Fatalf("expected 'worktree_error' in DiffInfo, got %q", tf.DiffInfo)
+	}
+}
+
+// TestHandleAssignPanicSendsTaskFinished verifies that a panic inside handleAssign
+// is recovered and reported as a TaskFinished message so the server doesn't wait
+// forever. Uses the testHookHandleAssign seam to inject the panic.
+func TestHandleAssignPanicSendsTaskFinished(t *testing.T) {
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{"/some/repo"},
+		ClaudeBin:    "/bin/true",
+		Timeout:      1 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+		testHookHandleAssign: func() {
+			panic("injected test panic")
+		},
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xCC
+	req := &protocol.AssignTask{
+		TaskId: protocol.TaskID{Id: taskIDBytes},
+		Prompt: []byte("test"),
+	}
+	req.SetRepoPath([]byte("/some/repo"))
+
+	// handleAssign should not re-panic; it should send Accepted then Finished.
+	s.handleAssign(context.Background(), req)
+
+	// Must have sent at least TaskAccepted + TaskFinished.
+	if len(ms.sent) < 2 {
+		t.Fatalf("expected ≥2 messages (Accepted + Finished), got %d", len(ms.sent))
+	}
+
+	first := decodeRunnerMsg(t, ms.sent[0])
+	if first.Kind != protocol.RunnerMessageType_TaskAccepted {
+		t.Fatalf("first message should be TaskAccepted, got %v", first.Kind)
+	}
+
+	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
+	if last.Kind != protocol.RunnerMessageType_TaskFinished {
+		t.Fatalf("last message should be TaskFinished, got %v", last.Kind)
+	}
+	tf := last.TaskFinished()
+	if tf == nil || tf.ExitCode == 0 {
+		t.Fatalf("expected non-zero exit on panic, got %+v", tf)
+	}
+}
+
+// TestSessionGetWorktreeManagerCachesPerRepo verifies that getWorktreeManager
+// returns the same *WorktreeManager for the same repo path across calls.
+func TestSessionGetWorktreeManagerCachesPerRepo(t *testing.T) {
+	s := &Session{}
+	wm1 := s.getWorktreeManager("/repo/a")
+	wm2 := s.getWorktreeManager("/repo/a")
+	if wm1 != wm2 {
+		t.Errorf("expected same WorktreeManager instance for same repo, got different pointers")
+	}
+
+	wm3 := s.getWorktreeManager("/repo/b")
+	if wm3 == wm1 {
+		t.Errorf("expected different WorktreeManager instance for different repo")
+	}
+}
+
+// TestSessionRepoAllowedDelegatesToProtocol verifies that repoAllowed uses
+// protocol.IsUnderRoot semantics — same rules as the server side.
+func TestSessionRepoAllowedDelegatesToProtocol(t *testing.T) {
+	s := &Session{AllowedRoots: []string{"/home/user/repos"}}
+
+	cases := []struct {
+		repo    string
+		allowed bool
+	}{
+		{"/home/user/repos", true},
+		{"/home/user/repos/project", true},
+		{"/home/user/repos/a/b/c", true},
+		{"/home/user/other", false},
+		{"/home/user", false},
+		{"relative/path", false},
+	}
+
+	for _, tc := range cases {
+		got := s.repoAllowed(tc.repo)
+		if got != tc.allowed {
+			t.Errorf("repoAllowed(%q) = %v, want %v", tc.repo, got, tc.allowed)
+		}
 	}
 }
 
