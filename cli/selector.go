@@ -41,9 +41,15 @@ func (s SelectorOpts) ValidateSelector() error {
 	return nil
 }
 
-// buildSelector converts SelectorOpts into a protocol.RunnerSelector.
+// BuildSelector converts SelectorOpts into a protocol.RunnerSelector.
 // It returns an error when the options are invalid or cannot be parsed.
 // If all fields are empty, it returns RunnerSelectorKind_Any.
+// This is the exported form; buildSelector is an alias used within the package.
+func BuildSelector(opts SelectorOpts) (protocol.RunnerSelector, error) {
+	return buildSelector(opts)
+}
+
+// buildSelector is the package-internal implementation used by tests.
 func buildSelector(opts SelectorOpts) (protocol.RunnerSelector, error) {
 	switch {
 	case opts.Runner != "":
