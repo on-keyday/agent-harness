@@ -423,16 +423,34 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 // the runner identity precisely, but server-internal logic uses RunnerEntry.ID directly).
 func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	info := protocol.RunnerInfo{
-		Status:      r.Status,
+		Status:      r.Status(),
+		MaxTasks:    uint16(r.MaxTasks),
 		ConnectedAt: uint64(r.ConnectedAt.UnixNano()),
 		LastSeen:    uint64(r.LastSeen.UnixNano()),
 	}
-	info.SetRepoPath([]byte(r.RepoPath))
+	info.SetHostname([]byte(r.Hostname))
 	info.Id = placeholderRunnerID()
-	if r.CurrentTask != "" {
-		raw, _ := hex.DecodeString(r.CurrentTask)
-		copy(info.CurrentTask.Id[:], raw)
+
+	// Populate AllowedRoots.
+	roots := make([]protocol.AllowedRoot, len(r.AllowedRoots))
+	for i, root := range r.AllowedRoots {
+		var ar protocol.AllowedRoot
+		ar.SetPath([]byte(root))
+		roots[i] = ar
 	}
+	info.SetAllowedRoots(roots)
+
+	// Populate ActiveTasks.
+	activeTasks := make([]protocol.ActiveTaskRef, 0, len(r.ActiveTasks))
+	for taskID := range r.ActiveTasks {
+		var ref protocol.ActiveTaskRef
+		raw, _ := hex.DecodeString(taskID)
+		copy(ref.TaskId.Id[:], raw)
+		activeTasks = append(activeTasks, ref)
+	}
+	info.ActiveTasksLen = uint16(len(activeTasks))
+	info.ActiveTasks = activeTasks
+
 	return info
 }
 

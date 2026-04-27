@@ -9,16 +9,19 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// TestSchedulerAssignsOnePair verifies that Tick assigns a single Idle runner
-// to a Queued task on the same RepoPath.
+// TestSchedulerAssignsOnePair verifies that Tick assigns a single available runner
+// to a Queued task on a compatible root.
 func TestSchedulerAssignsOnePair(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:          "r1",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
+		ID:           "r1",
+		Hostname:     "h1",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Unix(1, 0),
+		LastSeen:     time.Unix(1, 0),
+		Conn:         &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -40,16 +43,16 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 		t.Fatalf("expected pair starting with \"r1:\", got %q", captured[0])
 	}
 
-	// Runner must now be Busy with CurrentTask == taskID.
+	// Runner must now have the task in ActiveTasks.
 	entry, ok := reg.Get("r1")
 	if !ok {
 		t.Fatal("runner r1 not found after Tick")
 	}
-	if entry.Status != protocol.RunnerStatus_Busy {
-		t.Fatalf("expected runner Status=Busy, got %v", entry.Status)
+	if _, bound := entry.ActiveTasks[taskID]; !bound {
+		t.Fatalf("expected task %q in runner ActiveTasks, got %v", taskID, entry.ActiveTasks)
 	}
-	if entry.CurrentTask != taskID {
-		t.Fatalf("expected CurrentTask=%q, got %q", taskID, entry.CurrentTask)
+	if entry.Status() != protocol.RunnerStatus_Busy {
+		t.Fatalf("expected runner Status=Busy (at capacity), got %v", entry.Status())
 	}
 
 	// Task must now be Running.
@@ -62,16 +65,19 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 	}
 }
 
-// TestSchedulerNoMatch verifies that Tick does not assign when runner and task
-// are on different RepoPaths.
+// TestSchedulerNoMatch verifies that Tick does not assign when runner's roots don't
+// contain the task's repo.
 func TestSchedulerNoMatch(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:          "r1",
-		RepoPath:    "/y",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
+		ID:           "r1",
+		Hostname:     "h1",
+		AllowedRoots: []string{"/y"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Unix(1, 0),
+		LastSeen:     time.Unix(1, 0),
+		Conn:         &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -85,10 +91,10 @@ func TestSchedulerNoMatch(t *testing.T) {
 	s := NewScheduler(reg, store, assignFn)
 	s.Tick()
 
-	// Runner must remain Idle.
+	// Runner must remain Idle (no active tasks).
 	entry, _ := reg.Get("r1")
-	if entry.Status != protocol.RunnerStatus_Idle {
-		t.Fatalf("expected runner to remain Idle, got %v", entry.Status)
+	if entry.Status() != protocol.RunnerStatus_Idle {
+		t.Fatalf("expected runner to remain Idle, got %v", entry.Status())
 	}
 
 	// Task must remain Queued.
@@ -98,23 +104,30 @@ func TestSchedulerNoMatch(t *testing.T) {
 	}
 }
 
-// TestSchedulerSkipsBusy verifies that Tick only assigns Idle runners and
-// ignores Busy runners.
+// TestSchedulerSkipsBusy verifies that Tick only assigns runners with capacity and
+// ignores runners at capacity.
 func TestSchedulerSkipsBusy(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:          "r1",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
+		ID:           "r1",
+		Hostname:     "h1",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Unix(1, 0),
+		LastSeen:     time.Unix(1, 0),
+		Conn:         &fakeConn{},
 	})
+	// r2 starts at capacity (1/1).
 	reg.Add(&RunnerEntry{
-		ID:          "r2",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Busy,
-		ConnectedAt: time.Unix(2, 0),
-		LastSeen:    time.Unix(2, 0),
+		ID:           "r2",
+		Hostname:     "h2",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{"existing": {}},
+		ConnectedAt:  time.Unix(2, 0),
+		LastSeen:     time.Unix(2, 0),
+		Conn:         &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -136,19 +149,10 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 		t.Fatalf("expected assignment to r1 (Idle), got %q", assigned[0])
 	}
 
-	// r1 must be Busy.
+	// r1 must be Busy (task bound).
 	r1, _ := reg.Get("r1")
-	if r1.Status != protocol.RunnerStatus_Busy {
-		t.Fatalf("expected r1 Status=Busy, got %v", r1.Status)
-	}
-	if r1.CurrentTask != taskID {
-		t.Fatalf("expected r1 CurrentTask=%q, got %q", taskID, r1.CurrentTask)
-	}
-
-	// r2 must remain Busy (unchanged).
-	r2, _ := reg.Get("r2")
-	if r2.Status != protocol.RunnerStatus_Busy {
-		t.Fatalf("expected r2 to remain Busy, got %v", r2.Status)
+	if _, bound := r1.ActiveTasks[taskID]; !bound {
+		t.Fatalf("expected task %q bound to r1, got ActiveTasks=%v", taskID, r1.ActiveTasks)
 	}
 }
 
@@ -157,11 +161,14 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:          "r1",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
+		ID:           "r1",
+		Hostname:     "h1",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Unix(1, 0),
+		LastSeen:     time.Unix(1, 0),
+		Conn:         &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -174,16 +181,16 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	s := NewScheduler(reg, store, assignFn)
 	s.Tick() // must not panic; error is logged, not propagated
 
-	// Runner must remain Idle.
+	// Runner must remain Idle (no active tasks added due to error).
 	entry, ok := reg.Get("r1")
 	if !ok {
 		t.Fatal("runner r1 not found")
 	}
-	if entry.Status != protocol.RunnerStatus_Idle {
-		t.Fatalf("expected runner to remain Idle after assign error, got %v", entry.Status)
+	if entry.Status() != protocol.RunnerStatus_Idle {
+		t.Fatalf("expected runner to remain Idle after assign error, got %v", entry.Status())
 	}
-	if entry.CurrentTask != "" {
-		t.Fatalf("expected runner CurrentTask to remain empty, got %q", entry.CurrentTask)
+	if len(entry.ActiveTasks) != 0 {
+		t.Fatalf("expected runner ActiveTasks empty, got %v", entry.ActiveTasks)
 	}
 
 	// Task must remain Queued.
@@ -196,39 +203,30 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	}
 }
 
-// TestSchedulerMultipleRunnersFIFO verifies that when multiple Idle runners and
+// TestSchedulerMultipleRunnersFIFO verifies that when multiple available runners and
 // multiple Queued tasks exist on the same repo, Tick assigns one task per runner
 // in FIFO order and leaves remaining tasks Queued.
-//
-// Two Idle runners (r1: ConnectedAt=Unix(2,0), r2: ConnectedAt=Unix(1,0)) and
-// three Queued tasks (a, b, c) are set up. After one Tick:
-//   - Both a and b must be assigned to some runner (in any pairing).
-//   - c must remain Queued.
-//   - Both runners must be Busy.
 func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
-	// Two Idle runners, three Queued tasks. After one Tick, two tasks should be
-	// assigned (one per runner) and the third should remain Queued. We do NOT
-	// assert which specific runner got which specific task because reg.List()
-	// iterates an unordered map. Correctness depends on NextQueuedForRepo
-	// re-reading TaskStatus on every call: when the first runner's pair is
-	// committed via store.Assign, that task's Status flips to Running, so the
-	// second runner's NextQueuedForRepo skips it and picks the next FIFO entry.
-	// If TaskStore ever caches the queue separately from per-task status, this
-	// test would silently degrade — keep that filter live.
 	reg := NewRegistry()
 	reg.Add(&RunnerEntry{
-		ID:          "r1",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(2, 0),
-		LastSeen:    time.Unix(2, 0),
+		ID:           "r1",
+		Hostname:     "h1",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Unix(2, 0),
+		LastSeen:     time.Unix(2, 0),
+		Conn:         &fakeConn{},
 	})
 	reg.Add(&RunnerEntry{
-		ID:          "r2",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
+		ID:           "r2",
+		Hostname:     "h2",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Unix(1, 0),
+		LastSeen:     time.Unix(1, 0),
+		Conn:         &fakeConn{},
 	})
 
 	store := NewTaskStore()
@@ -245,13 +243,11 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	s := NewScheduler(reg, store, assignFn)
 	s.Tick()
 
-	// Exactly 2 assignments must have been made (one per Idle runner).
+	// Exactly 2 assignments must have been made (one per available runner).
 	if len(assigned) != 2 {
 		t.Fatalf("expected 2 assignments, got %d: %v", len(assigned), assigned)
 	}
 
-	// Collect the task IDs that were assigned (order of runner→task pairing is
-	// non-deterministic due to map iteration in reg.List()).
 	assignedTasks := make(map[string]bool)
 	for _, pair := range assigned {
 		parts := strings.SplitN(pair, ":", 2)
@@ -277,13 +273,13 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 		t.Fatalf("expected task c to remain Queued, got %v", taskCEntry.Status)
 	}
 
-	// Both runners must be Busy.
+	// Both runners must be at capacity (Busy).
 	r1, _ := reg.Get("r1")
-	if r1.Status != protocol.RunnerStatus_Busy {
-		t.Fatalf("expected r1 Status=Busy, got %v", r1.Status)
+	if r1.Status() != protocol.RunnerStatus_Busy {
+		t.Fatalf("expected r1 Status=Busy, got %v", r1.Status())
 	}
 	r2, _ := reg.Get("r2")
-	if r2.Status != protocol.RunnerStatus_Busy {
-		t.Fatalf("expected r2 Status=Busy, got %v", r2.Status)
+	if r2.Status() != protocol.RunnerStatus_Busy {
+		t.Fatalf("expected r2 Status=Busy, got %v", r2.Status())
 	}
 }

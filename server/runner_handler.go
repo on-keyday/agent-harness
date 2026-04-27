@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/hex"
 	"log/slog"
+	"path/filepath"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -14,7 +15,7 @@ type RunnerHandler struct {
 	Registry       *Registry
 	Tasks          *TaskStore
 	Now            func() time.Time
-	OnChange       func()          // called after any state mutation, used to trigger Scheduler.Tick
+	OnChange       func()             // called after any state mutation, used to trigger Scheduler.Tick
 	OnTaskStarted  func(taskID string) // optional; called when the runner reports TaskStarted
 }
 
@@ -38,12 +39,22 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("RunnerHandler: Hello variant is nil", "runnerID", runnerID)
 			return
 		}
+		maxTasks := int(hello.MaxTasks)
+		if maxTasks < 1 {
+			maxTasks = 1
+		}
+		roots := make([]string, len(hello.AllowedRoots))
+		for i, ar := range hello.AllowedRoots {
+			roots[i] = filepath.Clean(string(ar.Path))
+		}
 		entry := &RunnerEntry{
-			ID:          runnerID,
-			RepoPath:    string(hello.RepoPath),
-			Status:      protocol.RunnerStatus_Idle,
-			ConnectedAt: now,
-			LastSeen:    now,
+			ID:           runnerID,
+			Hostname:     string(hello.Hostname),
+			AllowedRoots: roots,
+			MaxTasks:     maxTasks,
+			ActiveTasks:  make(map[string]struct{}),
+			ConnectedAt:  now,
+			LastSeen:     now,
 		}
 		entry.Conn = conn
 		h.Registry.Add(entry)
@@ -56,9 +67,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		accepted := hex.EncodeToString(ta.TaskId.Id[:])
 		if e, ok := h.Registry.Get(runnerID); ok {
-			if e.CurrentTask != "" && e.CurrentTask != accepted {
-				slog.Warn("runner_handler: runner accepted unexpected task",
-					"runner", runnerID, "expected", e.CurrentTask, "got", accepted)
+			if _, has := e.ActiveTasks[accepted]; !has && len(e.ActiveTasks) > 0 {
+				slog.Warn("runner_handler: runner accepted task not in ActiveTasks",
+					"runner", runnerID, "accepted", accepted)
 			}
 		}
 		if !h.Registry.SetLastSeen(runnerID, now) {
@@ -89,9 +100,9 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		taskID := hex.EncodeToString(tf.TaskId.Id[:])
 		// Tasks.Finish silently no-ops if task is not found — that is acceptable.
-		// The runner's status still resets to Idle regardless.
 		h.Tasks.Finish(taskID, tf.ExitCode, tf.DiffInfo)
-		h.Registry.SetStatus(runnerID, protocol.RunnerStatus_Idle, "")
+		// Release the capacity slot so the dispatcher can re-use it.
+		h.Registry.UnbindTask(runnerID, taskID)
 
 	case protocol.RunnerMessageType_Heartbeat:
 		if !h.Registry.SetLastSeen(runnerID, now) {

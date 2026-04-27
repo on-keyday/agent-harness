@@ -146,7 +146,7 @@ func New(cfg Config) *Server {
 	s.registry.OnAdd = func(entry RunnerEntry) {
 		publishRunnerEvent(entry.ID, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
 	}
-	s.registry.OnRemove = func(id string) {
+	s.registry.OnRemove = func(id string, _ RunnerEntry) {
 		publishRunnerEvent(id, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
 	}
 

@@ -33,8 +33,11 @@ func TestHelloRegistersRunner(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-1")}
 
 	msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
-	hello := protocol.RunnerHello{Version: 1}
-	hello.SetRepoPath([]byte("/foo"))
+	hello := protocol.RunnerHello{Version: 1, MaxTasks: 2}
+	hello.SetHostname([]byte("myhost"))
+	ar := protocol.AllowedRoot{}
+	ar.SetPath([]byte("/foo"))
+	hello.SetAllowedRoots([]protocol.AllowedRoot{ar})
 	msg.SetHello(hello)
 
 	payload := encodeRunnerMessage(t, msg)
@@ -45,11 +48,17 @@ func TestHelloRegistersRunner(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected runner entry for ID %q, not found", runnerID)
 	}
-	if entry.RepoPath != "/foo" {
-		t.Errorf("expected RepoPath /foo, got %q", entry.RepoPath)
+	if entry.Hostname != "myhost" {
+		t.Errorf("expected Hostname myhost, got %q", entry.Hostname)
 	}
-	if entry.Status != protocol.RunnerStatus_Idle {
-		t.Errorf("expected Status Idle, got %v", entry.Status)
+	if len(entry.AllowedRoots) == 0 || entry.AllowedRoots[0] != "/foo" {
+		t.Errorf("expected AllowedRoots[/foo], got %v", entry.AllowedRoots)
+	}
+	if entry.MaxTasks != 2 {
+		t.Errorf("expected MaxTasks 2, got %d", entry.MaxTasks)
+	}
+	if entry.Status() != protocol.RunnerStatus_Idle {
+		t.Errorf("expected Status Idle (has Conn, no active tasks), got %v", entry.Status())
 	}
 	if changeCalled != 1 {
 		t.Errorf("expected OnChange called 1 time, got %d", changeCalled)
@@ -75,14 +84,16 @@ func TestTaskFinishedUpdatesStore(t *testing.T) {
 	rawID[15] = 0x42
 	taskID := hex.EncodeToString(rawID[:])
 
-	// Pre-populate Registry with a Busy runner whose CurrentTask matches.
+	// Pre-populate Registry with a Busy runner that has the task bound.
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		RepoPath:    "/repo",
-		Status:      protocol.RunnerStatus_Busy,
-		CurrentTask: taskID,
-		ConnectedAt: time.Now(),
-		LastSeen:    time.Now(),
+		ID:           runnerID,
+		Hostname:     "h",
+		AllowedRoots: []string{"/repo"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{taskID: {}},
+		ConnectedAt:  time.Now(),
+		LastSeen:     time.Now(),
+		Conn:         fc,
 	})
 
 	// Pre-populate TaskStore with a Running task.
@@ -121,16 +132,16 @@ func TestTaskFinishedUpdatesStore(t *testing.T) {
 		t.Errorf("expected ExitCode 0, got %v", taskEntry.ExitCode)
 	}
 
-	// Verify runner status.
+	// Verify runner slot was released.
 	runnerEntry, ok := reg.Get(runnerID)
 	if !ok {
 		t.Fatalf("runner %q not found after Handle", runnerID)
 	}
-	if runnerEntry.Status != protocol.RunnerStatus_Idle {
-		t.Errorf("expected runner Status Idle, got %v", runnerEntry.Status)
+	if len(runnerEntry.ActiveTasks) != 0 {
+		t.Errorf("expected runner ActiveTasks empty after TaskFinished, got %v", runnerEntry.ActiveTasks)
 	}
-	if runnerEntry.CurrentTask != "" {
-		t.Errorf("expected runner CurrentTask empty, got %q", runnerEntry.CurrentTask)
+	if runnerEntry.Status() != protocol.RunnerStatus_Idle {
+		t.Errorf("expected runner Status Idle after TaskFinished, got %v", runnerEntry.Status())
 	}
 
 	if changeCalled != 1 {
@@ -158,12 +169,14 @@ func TestTaskStartedSetsWorktreeDir(t *testing.T) {
 
 	// Pre-populate Registry.
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		RepoPath:    "/repo",
-		Status:      protocol.RunnerStatus_Busy,
-		CurrentTask: taskID,
-		ConnectedAt: time.Now(),
-		LastSeen:    time.Now(),
+		ID:           runnerID,
+		Hostname:     "h",
+		AllowedRoots: []string{"/repo"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{taskID: {}},
+		ConnectedAt:  time.Now(),
+		LastSeen:     time.Now(),
+		Conn:         fc,
 	})
 
 	// Pre-populate TaskStore with a Running task.
@@ -222,11 +235,14 @@ func TestHeartbeatUpdatesLastSeen(t *testing.T) {
 
 	// Pre-populate registry with LastSeen at t0.
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		RepoPath:    "/repo",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: t0,
-		LastSeen:    t0,
+		ID:           runnerID,
+		Hostname:     "h",
+		AllowedRoots: []string{"/repo"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  t0,
+		LastSeen:     t0,
+		Conn:         fc,
 	})
 
 	msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Heartbeat}
@@ -271,14 +287,16 @@ func TestTaskAcceptedUpdatesLastSeen(t *testing.T) {
 	rawID[0] = 0x99
 	taskID := hex.EncodeToString(rawID[:])
 
-	// Register the runner with LastSeen at t0 and CurrentTask set.
+	// Register the runner with LastSeen at t0 and an active task.
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		RepoPath:    "/repo",
-		Status:      protocol.RunnerStatus_Busy,
-		CurrentTask: taskID,
-		ConnectedAt: t0,
-		LastSeen:    t0,
+		ID:           runnerID,
+		Hostname:     "h",
+		AllowedRoots: []string{"/repo"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{taskID: {}},
+		ConnectedAt:  t0,
+		LastSeen:     t0,
+		Conn:         fc,
 	})
 
 	ta := protocol.TaskAccepted{}
@@ -323,20 +341,20 @@ func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-7")}
 	runnerID := fc.ConnectionID().String()
 
-	// Expected task: fixed 32-hex string (32 bytes = 256 bits, displayed as 64 hex chars).
-	// Create a 16-byte task ID for CurrentTask by encoding it as hex (produces 32 hex chars).
 	var expectedRawID [16]byte
 	expectedRawID[0] = 0xAA
 	expectedTaskID := hex.EncodeToString(expectedRawID[:])
 
-	// Register the runner with LastSeen at t0 and CurrentTask set to the expected task.
+	// Register the runner with LastSeen at t0 and an active task.
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		RepoPath:    "/repo",
-		Status:      protocol.RunnerStatus_Busy,
-		CurrentTask: expectedTaskID,
-		ConnectedAt: t0,
-		LastSeen:    t0,
+		ID:           runnerID,
+		Hostname:     "h",
+		AllowedRoots: []string{"/repo"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{expectedTaskID: {}},
+		ConnectedAt:  t0,
+		LastSeen:     t0,
+		Conn:         fc,
 	})
 
 	// Send TaskAccepted with a DIFFERENT TaskID (all 0xFF bytes).

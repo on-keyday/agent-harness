@@ -41,10 +41,17 @@ func (c *Client) List(ctx context.Context, out io.Writer) error {
 		fmt.Fprintln(out, "  (none)")
 	}
 	for _, r := range lr.Runners {
-		fmt.Fprintf(out, "  %s  repo=%s  current=%s\n",
+		roots := make([]string, len(r.AllowedRoots))
+		for i, ar := range r.AllowedRoots {
+			roots[i] = string(ar.Path)
+		}
+		fmt.Fprintf(out, "  %s  host=%s  tasks=%d/%d  roots=%s  id=%s\n",
 			runnerStatusStr(r.Status),
-			string(r.RepoPath),
-			shortHex(r.CurrentTask.Id[:]),
+			string(r.Hostname),
+			len(r.ActiveTasks),
+			r.MaxTasks,
+			strings.Join(roots, ","),
+			shortHex(r.Id.IpAddr),
 		)
 	}
 

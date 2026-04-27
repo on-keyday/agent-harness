@@ -104,13 +104,15 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 		OnChange: func() { changeCalled++ },
 	}
 
-	// Pre-populate Registry with 1 Idle runner on "/x".
+	// Pre-populate Registry with 1 Idle runner serving "/x".
 	reg.Add(&RunnerEntry{
-		ID:          "runner-1",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Now(),
-		LastSeen:    time.Now(),
+		ID:           "runner-1",
+		Hostname:     "h1",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Now(),
+		LastSeen:     time.Now(),
 	})
 
 	// Pre-populate TaskStore with 1 Queued task on "/x".
@@ -144,8 +146,8 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	if listResult.TasksLen != 1 {
 		t.Errorf("expected TasksLen=1, got %d", listResult.TasksLen)
 	}
-	if len(listResult.Runners) > 0 && string(listResult.Runners[0].RepoPath) != "/x" {
-		t.Errorf("expected runner RepoPath /x, got %q", string(listResult.Runners[0].RepoPath))
+	if len(listResult.Runners) > 0 && string(listResult.Runners[0].Hostname) != "h1" {
+		t.Errorf("expected runner Hostname h1, got %q", string(listResult.Runners[0].Hostname))
 	}
 	if len(listResult.Tasks) > 0 && string(listResult.Tasks[0].Prompt) != "list-prompt" {
 		t.Errorf("expected task Prompt 'list-prompt', got %q", string(listResult.Tasks[0].Prompt))

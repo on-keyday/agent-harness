@@ -3,8 +3,6 @@ package server
 import (
 	"testing"
 	"time"
-
-	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestRegistryAddFindRemove(t *testing.T) {
@@ -12,19 +10,21 @@ func TestRegistryAddFindRemove(t *testing.T) {
 	now := time.Now()
 
 	r.Add(&RunnerEntry{
-		ID:          "A",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: now,
-		LastSeen:    now,
+		ID:           "A",
+		Hostname:     "hostA",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  now,
+		LastSeen:     now,
 	})
 
 	entry, ok := r.Get("A")
 	if !ok {
 		t.Fatal("expected Get(\"A\") ok=true, got false")
 	}
-	if entry.RepoPath != "/x" {
-		t.Fatalf("expected RepoPath \"/x\", got %q", entry.RepoPath)
+	if len(entry.AllowedRoots) == 0 || entry.AllowedRoots[0] != "/x" {
+		t.Fatalf("expected AllowedRoots[\"/x\"], got %v", entry.AllowedRoots)
 	}
 
 	r.Remove("A")
@@ -35,98 +35,19 @@ func TestRegistryAddFindRemove(t *testing.T) {
 	}
 }
 
-func TestRegistryIdleByRepo(t *testing.T) {
-	r := NewRegistry()
-
-	r.Add(&RunnerEntry{
-		ID:          "A",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Busy,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
-	})
-	r.Add(&RunnerEntry{
-		ID:          "B",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(2, 0),
-		LastSeen:    time.Unix(2, 0),
-	})
-	r.Add(&RunnerEntry{
-		ID:          "C",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
-	})
-
-	oldest, ok := r.OldestIdleForRepo("/x")
-	if !ok {
-		t.Fatal("expected ok=true from OldestIdleForRepo, got false")
-	}
-	if oldest.ID != "C" {
-		t.Fatalf("expected ID \"C\" (earliest ConnectedAt among Idle), got %q", oldest.ID)
-	}
-}
-
-func TestRegistryNoIdle(t *testing.T) {
-	r := NewRegistry()
-
-	r.Add(&RunnerEntry{
-		ID:          "A",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Busy,
-		ConnectedAt: time.Unix(1, 0),
-		LastSeen:    time.Unix(1, 0),
-	})
-
-	_, ok := r.OldestIdleForRepo("/x")
-	if ok {
-		t.Fatal("expected ok=false from OldestIdleForRepo when no Idle runners, got true")
-	}
-}
-
-func TestRegistrySetStatus(t *testing.T) {
-	r := NewRegistry()
-	now := time.Now()
-
-	r.Add(&RunnerEntry{
-		ID:          "A",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: now,
-		LastSeen:    now,
-	})
-
-	beforeCall := time.Now()
-	r.SetStatus("A", protocol.RunnerStatus_Busy, "task-1")
-
-	entry, ok := r.Get("A")
-	if !ok {
-		t.Fatal("expected Get(\"A\") ok=true")
-	}
-	if entry.Status != protocol.RunnerStatus_Busy {
-		t.Fatalf("expected Status=Busy, got %v", entry.Status)
-	}
-	if entry.CurrentTask != "task-1" {
-		t.Fatalf("expected CurrentTask=\"task-1\", got %q", entry.CurrentTask)
-	}
-	if entry.LastSeen.Before(beforeCall) {
-		t.Fatalf("expected LastSeen >= call time, but LastSeen=%v, beforeCall=%v", entry.LastSeen, beforeCall)
-	}
-}
-
 func TestRegistrySetLastSeen(t *testing.T) {
 	r := NewRegistry()
 	t0 := time.Unix(1000, 0)
 	t1 := time.Unix(2000, 0)
 
 	r.Add(&RunnerEntry{
-		ID:          "A",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: t0,
-		LastSeen:    t0,
+		ID:           "A",
+		Hostname:     "hostA",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  t0,
+		LastSeen:     t0,
 	})
 
 	ok := r.SetLastSeen("A", t1)
@@ -148,10 +69,12 @@ func TestRegistrySetLastSeen(t *testing.T) {
 func TestRegistryReadIsSnapshot(t *testing.T) {
 	r := NewRegistry()
 	r.Add(&RunnerEntry{
-		ID:          "A",
-		RepoPath:    "/original",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Now(),
+		ID:           "A",
+		Hostname:     "hostA",
+		AllowedRoots: []string{"/original"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Now(),
 	})
 
 	got, ok := r.Get("A")
@@ -160,10 +83,39 @@ func TestRegistryReadIsSnapshot(t *testing.T) {
 	}
 
 	// Mutate the returned value snapshot; the registry must not be affected.
-	got.RepoPath = "/poison"
+	got.Hostname = "poison"
 
 	second, _ := r.Get("A")
-	if second.RepoPath != "/original" {
-		t.Fatalf("registry was poisoned by mutating returned snapshot: got RepoPath=%q, want \"/original\"", second.RepoPath)
+	if second.Hostname != "hostA" {
+		t.Fatalf("registry was poisoned by mutating returned snapshot: got Hostname=%q, want \"hostA\"", second.Hostname)
+	}
+}
+
+// TestRegistryStatusMethod verifies the Status() method derives status from connection + capacity.
+func TestRegistryStatusMethod(t *testing.T) {
+	now := time.Now()
+
+	// No conn = Offline
+	e := &RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+		Conn: nil,
+	}
+	if s := e.Status(); s.String() != "Offline" {
+		t.Fatalf("expected Offline when Conn==nil, got %v", s)
+	}
+
+	// With a mock conn and no active tasks = Idle
+	e.Conn = &fakeConn{}
+	e.MaxTasks = 2
+	if s := e.Status(); s.String() != "Idle" {
+		t.Fatalf("expected Idle, got %v", s)
+	}
+
+	// Fill to capacity = Busy
+	e.ActiveTasks["t1"] = struct{}{}
+	e.ActiveTasks["t2"] = struct{}{}
+	if s := e.Status(); s.String() != "Busy" {
+		t.Fatalf("expected Busy at capacity, got %v", s)
 	}
 }
