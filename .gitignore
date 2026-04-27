@@ -2,3 +2,4 @@ harness-data/
 .harness-worktrees/
 harness-tui.log
 server.log
+bin/

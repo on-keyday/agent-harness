@@ -1,4 +1,7 @@
-.PHONY: all build webui-build wasm-check test vet clean protoregen help
+CMDS := agent-runner harness-cli harness-server harness-tui
+BIN_TARGETS := $(addprefix bin/,$(CMDS))
+
+.PHONY: all build check webui-build wasm-check test vet clean protoregen help $(BIN_TARGETS)
 
 GOROOT := $(shell go env GOROOT)
 WASM_EXEC := $(GOROOT)/lib/wasm/wasm_exec.js
@@ -10,9 +13,17 @@ webui-build:
 	GOOS=js GOARCH=wasm go build -o webui/static/main.wasm ./cmd/harness-webui-wasm/
 	cp "$(WASM_EXEC)" webui/static/wasm_exec.js
 
-# Build all native binaries. Requires webui-build to have run at least once
+# Build all native binaries into bin/. Requires webui-build first
 # (cmd/harness-server uses //go:embed which needs static/main.wasm).
-build: webui-build
+build: webui-build $(BIN_TARGETS)
+
+$(BIN_TARGETS): bin/%:
+	@mkdir -p bin
+	go build -o $@ ./cmd/$*
+
+# Compile-check every package without producing binaries (faster than `build`).
+# Useful before commit to catch breakage outside cmd/.
+check: webui-build
 	go build ./...
 
 # Static check that the wasm-relevant packages still compile under
@@ -31,6 +42,7 @@ vet:
 	go vet ./...
 
 clean:
+	rm -rf bin
 	rm -f webui/static/main.wasm
 	go clean ./...
 
@@ -48,9 +60,10 @@ protoregen:
 help:
 	@echo "Targets:"
 	@echo "  webui-build   build wasm module + refresh wasm_exec.js"
-	@echo "  build         webui-build then go build ./..."
+	@echo "  build         webui-build + emit bin/<cmd> for each cmd/*"
+	@echo "  check         webui-build + go build ./... (compile-check, no artifacts)"
 	@echo "  wasm-check    GOOS=js GOARCH=wasm go build (lint level)"
 	@echo "  test          go test ./..."
 	@echo "  vet           go vet ./..."
 	@echo "  protoregen    regenerate Go from .bgn via brgen api server"
-	@echo "  clean         remove build artifacts"
+	@echo "  clean         remove bin/ and build artifacts"
