@@ -5,6 +5,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestRegistryAddFindRemove(t *testing.T) {
@@ -181,5 +183,64 @@ func TestRegistryStatusMethod(t *testing.T) {
 	e.ActiveTasks["t2"] = struct{}{}
 	if s := e.Status(); s.String() != "Busy" {
 		t.Fatalf("expected Busy at capacity, got %v", s)
+	}
+}
+
+func TestRegistryCandidatesPrefixMatch(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/home/kforfk/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Hostname: "raspi", AllowedRoots: []string{"/home/pi/workspace"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+
+	cs := r.Candidates("/home/kforfk/workspace/repo1", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 1 || cs[0].ID != "A" {
+		t.Fatalf("expected only A, got %v", cs)
+	}
+	cs = r.Candidates("/home/pi/workspace/foo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 1 || cs[0].ID != "B" {
+		t.Fatalf("expected only B, got %v", cs)
+	}
+	cs = r.Candidates("/etc/passwd", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 0 {
+		t.Fatalf("expected no candidates, got %v", cs)
+	}
+}
+
+func TestRegistryCandidatesAmbiguous(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	cs := r.Candidates("/shared/foo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 2 {
+		t.Fatalf("expected 2 candidates (ambiguous), got %d", len(cs))
+	}
+}
+
+func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastSeen: now})
+	cs := r.Candidates("/x/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 1 {
+		t.Fatalf("Candidates must include at-capacity runners (caller filters), got %d", len(cs))
+	}
+}
+
+func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Hostname: "raspi", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
+	h := protocol.Hostname{}
+	h.SetName([]byte("gmkhost"))
+	sel.SetHostname(h)
+
+	cs := r.Candidates("/x/repo", sel)
+	if len(cs) != 1 || cs[0].ID != "A" {
+		t.Fatalf("expected only A (gmkhost), got %v", cs)
 	}
 }
