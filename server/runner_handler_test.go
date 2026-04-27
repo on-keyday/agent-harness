@@ -387,6 +387,79 @@ func TestTaskAcceptedMismatchStillUpdatesLastSeen(t *testing.T) {
 	}
 }
 
+// TestRunnerHandlerTaskFinishedReleasesCapacity verifies that receiving a
+// TaskFinished message causes UnbindTask to remove the task from the runner's
+// ActiveTasks, releasing the capacity slot for future dispatch.
+func TestRunnerHandlerTaskFinishedReleasesCapacity(t *testing.T) {
+	reg := NewRegistry()
+	tasks := NewTaskStore()
+	h := &RunnerHandler{
+		Registry: reg,
+		Tasks:    tasks,
+		Now:      time.Now,
+		OnChange: func() {},
+	}
+
+	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-10")}
+	runnerID := fc.ConnectionID().String()
+
+	// Step 1: a runner with MaxTasks=1 and ActiveTasks={"t1"}.
+	// Use a fixed 16-byte raw ID to represent task "t1".
+	var rawID [16]byte
+	rawID[0] = 0x01
+	taskIDHex := hex.EncodeToString(rawID[:])
+
+	reg.Add(&RunnerEntry{
+		ID:          runnerID,
+		Hostname:    "host",
+		AllowedRoots: []string{"/repo"},
+		MaxTasks:    1,
+		ActiveTasks: map[string]struct{}{taskIDHex: {}},
+		ConnectedAt: time.Now(),
+		LastSeen:    time.Now(),
+		Conn:        fc,
+	})
+
+	// Step 2: add + MarkRunning task t1 in the TaskStore.
+	tasks.mu.Lock()
+	tasks.tasks[taskIDHex] = &TaskEntry{
+		ID:       taskIDHex,
+		RepoPath: "/repo",
+		Prompt:   "t1",
+		Status:   protocol.TaskStatus_Running,
+	}
+	tasks.order = append(tasks.order, taskIDHex)
+	tasks.mu.Unlock()
+
+	// Confirm runner is Busy before the message.
+	entry, ok := reg.Get(runnerID)
+	if !ok {
+		t.Fatal("runner not found before TaskFinished")
+	}
+	if entry.Status() != protocol.RunnerStatus_Busy {
+		t.Fatalf("expected runner Busy before TaskFinished, got %v", entry.Status())
+	}
+
+	// Step 3: construct and dispatch a TaskFinished message.
+	tf := protocol.TaskFinished{ExitCode: 0}
+	tf.TaskId.Id = rawID
+	msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
+	msg.SetTaskFinished(tf)
+	h.Handle(fc, encodeRunnerMessage(t, msg))
+
+	// Step 4: assert ActiveTasks no longer contains taskIDHex.
+	entry, ok = reg.Get(runnerID)
+	if !ok {
+		t.Fatal("runner not found after TaskFinished")
+	}
+	if _, stillBound := entry.ActiveTasks[taskIDHex]; stillBound {
+		t.Errorf("expected ActiveTasks to not contain %q after TaskFinished, got %v", taskIDHex, entry.ActiveTasks)
+	}
+	if entry.Status() != protocol.RunnerStatus_Idle {
+		t.Errorf("expected runner Status Idle after TaskFinished, got %v", entry.Status())
+	}
+}
+
 func TestMalformedPayloadIsIgnored(t *testing.T) {
 	reg := NewRegistry()
 	tasks := NewTaskStore()
