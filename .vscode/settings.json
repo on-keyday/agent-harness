@@ -1,0 +1,7 @@
+{
+    "go.toolsEnvVars": {
+        "GOOS": "linux",
+
+    },
+    "go.buildTags": "" 
+}

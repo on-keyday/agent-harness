@@ -338,14 +338,8 @@ func (w *CommandExecutionStream) RemoteShell() error {
 	// sendSize re-queries the local terminal dimensions and forwards them
 	// over the control frame channel. Used both for the initial size and
 	// for every SIGWINCH thereafter.
-	sendSize := func() error {
-		sz, err := pty.GetsizeFull(os.Stdin)
-		if err != nil {
-			return err
-		}
-		return w.SetTerminalWindowSize(sz.Rows, sz.Cols, sz.X, sz.Y)
-	}
-	if err := sendSize(); err != nil {
+
+	if err := w.sendWindowSize(); err != nil {
 		return err
 	}
 
@@ -356,7 +350,7 @@ func (w *CommandExecutionStream) RemoteShell() error {
 	// stays frozen for the rest of the session even if the user resizes
 	// their terminal. Detection is platform-specific: SIGWINCH on Unix,
 	// polling on Windows — see winsize_{unix,windows}.go.
-	stopWinSize := startWindowSizeForwarder(sendSize)
+	stopWinSize := startWindowSizeForwarder(w.sendWindowSize)
 	defer stopWinSize()
 
 	stdin := w.Stdin()

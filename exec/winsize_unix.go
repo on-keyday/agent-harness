@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+
+	"github.com/creack/pty"
 )
 
 // startWindowSizeForwarder spawns a goroutine that calls sendSize whenever
@@ -31,4 +33,12 @@ func startWindowSizeForwarder(sendSize func() error) func() {
 		signal.Stop(winch)
 		close(done)
 	}
+}
+
+func (w *CommandExecutionStream) sendWindowSize() error {
+	sz, err := pty.GetsizeFull(os.Stdin)
+	if err != nil {
+		return err
+	}
+	return w.SetTerminalWindowSize(sz.Rows, sz.Cols, sz.X, sz.Y)
 }

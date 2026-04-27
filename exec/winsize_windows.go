@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+	"golang.org/x/term"
 )
 
 // windowSizePollInterval is how often the Windows fallback re-queries the
@@ -47,4 +48,12 @@ func startWindowSizeForwarder(sendSize func() error) func() {
 		}
 	}()
 	return func() { close(done) }
+}
+
+func (w *CommandExecutionStream) sendWindowSize() error {
+	rows, cols, err := term.GetSize(int(os.Stdin.Fd()))
+	if err != nil {
+		return err
+	}
+	return w.SetTerminalWindowSize(uint16(rows), uint16(cols), 0, 0)
 }
