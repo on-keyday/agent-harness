@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,6 +292,90 @@ func TestIntegrationCapacityQueueing(t *testing.T) {
 	t2 := getTask(t, c, id2)
 	if t2.Status != protocol.TaskStatus_Succeeded {
 		t.Fatalf("id2 should auto-dispatch and succeed; got %v", t2.Status)
+	}
+}
+
+// ---- Task 11.3: Ambiguous runner / pin by hostname / pin not found ----------
+
+func TestIntegrationAmbiguousRunner(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "h1"})
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "h2"})
+
+	c := dialClient(t, serverCID)
+
+	// Both runners serve the same repo. With Any selector, submit should return ambiguous_runner.
+	_, err := c.SubmitWithSelector(context.Background(), repo, "echo test",
+		protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if err == nil {
+		t.Fatal("expected ambiguous_runner error, got nil")
+	}
+	if !strings.Contains(err.Error(), "ambiguous_runner") {
+		t.Fatalf("expected 'ambiguous_runner' in error, got: %v", err)
+	}
+}
+
+func TestIntegrationPinByHostnameSuccess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "gmkhost"})
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "raspi"})
+
+	c := dialClient(t, serverCID)
+
+	// Build a ByHostname selector for "raspi".
+	sel, err := cli.BuildSelector(cli.SelectorOpts{Host: "raspi"})
+	if err != nil {
+		t.Fatalf("build selector: %v", err)
+	}
+
+	id, err := c.SubmitWithSelector(context.Background(), repo, "echo pinned", sel)
+	if err != nil {
+		t.Fatalf("submit with hostname pin: %v", err)
+	}
+
+	waitTaskTerminal(t, c, id, 30*time.Second)
+
+	ti := getTask(t, c, id)
+	if ti.Status != protocol.TaskStatus_Succeeded {
+		t.Fatalf("pinned task should have Succeeded; got %v", ti.Status)
+	}
+}
+
+func TestIntegrationPinNotFound(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 1, Roots: []string{repo}, Hostname: "gmkhost"})
+
+	c := dialClient(t, serverCID)
+
+	sel, err := cli.BuildSelector(cli.SelectorOpts{Host: "nowhere"})
+	if err != nil {
+		t.Fatalf("build selector: %v", err)
+	}
+
+	_, err = c.SubmitWithSelector(context.Background(), repo, "echo pinned", sel)
+	if err == nil {
+		t.Fatal("expected pinned_not_found error, got nil")
+	}
+	if !strings.Contains(err.Error(), "pinned_not_found") {
+		t.Fatalf("expected 'pinned_not_found' in error, got: %v", err)
 	}
 }
 
