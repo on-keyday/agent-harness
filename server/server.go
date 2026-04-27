@@ -149,7 +149,13 @@ func New(cfg Config) *Server {
 	s.registry.OnAdd = func(entry RunnerEntry) {
 		publishRunnerEvent(entry.ID, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
 	}
-	s.registry.OnRemove = func(id string, _ RunnerEntry) {
+	s.registry.OnRemove = func(id string, snap RunnerEntry) {
+		// Mark all tasks that were active on the disconnected runner as Failed
+		// before publishing the RunnerOffline event. MarkFailed is idempotent
+		// so it is safe if TaskFinished already processed some of them.
+		for taskID := range snap.ActiveTasks {
+			s.tasks.MarkFailed(taskID, "runner_disconnected")
+		}
 		publishRunnerEvent(id, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
 	}
 
