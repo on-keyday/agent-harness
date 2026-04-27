@@ -35,7 +35,14 @@ func (c *Client) List(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	renderList(lr, out)
+	return nil
+}
 
+// renderList writes a human-readable summary of a ListResult to out.
+// Extracted for testability: tests can construct a ListResult directly without
+// a live server and call renderList to verify the rendered columns.
+func renderList(lr *protocol.ListResult, out io.Writer) {
 	fmt.Fprintln(out, "RUNNERS")
 	if len(lr.Runners) == 0 {
 		fmt.Fprintln(out, "  (none)")
@@ -68,7 +75,6 @@ func (c *Client) List(ctx context.Context, out io.Writer) error {
 			string(t.Prompt),
 		)
 	}
-	return nil
 }
 
 // originStr formats a ClientKind for the `from=` column. Unspecified renders
