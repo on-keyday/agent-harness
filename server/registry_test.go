@@ -228,6 +228,23 @@ func TestRegistryCandidatesCapacityAgnostic(t *testing.T) {
 	}
 }
 
+func TestRegistryOnRemovePassesSnapshot(t *testing.T) {
+	r := NewRegistry()
+	var got RunnerEntry
+	r.OnRemove = func(id string, snap RunnerEntry) {
+		got = snap
+	}
+	now := time.Now()
+	r.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 2,
+		ActiveTasks: map[string]struct{}{"t1": {}, "t2": {}}, ConnectedAt: now, LastSeen: now,
+	})
+	r.Remove("A")
+	if got.ID != "A" || len(got.ActiveTasks) != 2 {
+		t.Fatalf("snapshot lost ActiveTasks: %+v", got)
+	}
+}
+
 func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
