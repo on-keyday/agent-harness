@@ -379,6 +379,62 @@ func TestIntegrationPinNotFound(t *testing.T) {
 	}
 }
 
+// ---- Task 11.4: Cancel mid-execution kills claude ---------------------------
+
+func TestIntegrationCancelKillsClaude(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+
+	slowBin := fakeClaudeSlowPath(t)
+	startRunner(t, serverCID, runnerOpts{
+		MaxTasks:  1,
+		Roots:     []string{repo},
+		ClaudeBin: slowBin,
+	})
+
+	c := dialClient(t, serverCID)
+
+	id := mustSubmit(t, c, repo, "cancel me")
+
+	// Wait for the task to be Running.
+	eventually(t, func() bool {
+		ti := getTask(t, c, id)
+		return ti.Status == protocol.TaskStatus_Running
+	}, 10*time.Second, 100*time.Millisecond, "task to be Running before cancel")
+
+	// Cancel the task.
+	if err := c.Cancel(context.Background(), id); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+
+	// The task should transition to Cancelled. The process receives SIGTERM
+	// and has 5s WaitDelay before SIGKILL; then TaskFinished arrives at the
+	// server, but Cancel's idempotency means the state stays Cancelled.
+	eventually(t, func() bool {
+		ti := getTask(t, c, id)
+		return ti.Status == protocol.TaskStatus_Cancelled && ti.EndedAt != 0
+	}, 15*time.Second, 200*time.Millisecond, "task to reach Cancelled with EndedAt set")
+
+	// Capacity on the runner must be released: at least one runner should
+	// have no active tasks once the cancellation propagates.
+	eventually(t, func() bool {
+		lr, err := c.Snapshot(context.Background())
+		if err != nil {
+			return false
+		}
+		for _, ru := range lr.Runners {
+			if int(ru.ActiveTasksLen) == 0 {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 200*time.Millisecond, "runner capacity to be released after cancel")
+}
+
 // ---- Task 11.1: Two tasks run concurrently ----------------------------------
 
 func TestIntegrationTwoTasksConcurrent(t *testing.T) {
