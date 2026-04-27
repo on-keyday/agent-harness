@@ -1,6 +1,8 @@
 package server
 
 import (
+	"fmt"
+	"sync"
 	"testing"
 	"time"
 )
@@ -88,6 +90,68 @@ func TestRegistryReadIsSnapshot(t *testing.T) {
 	second, _ := r.Get("A")
 	if second.Hostname != "hostA" {
 		t.Fatalf("registry was poisoned by mutating returned snapshot: got Hostname=%q, want \"hostA\"", second.Hostname)
+	}
+}
+
+func TestRegistryBindTaskAtCapacity(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+	})
+	if !r.BindTask("A", "t1") {
+		t.Fatal("expected first BindTask to succeed")
+	}
+	if r.BindTask("A", "t2") {
+		t.Fatal("expected second BindTask to fail at capacity")
+	}
+	r.UnbindTask("A", "t1")
+	if !r.BindTask("A", "t2") {
+		t.Fatal("expected BindTask to succeed after UnbindTask")
+	}
+}
+
+func TestRegistryUnbindTaskIdempotent(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 2,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+	})
+	r.UnbindTask("A", "absent") // double-release safe
+	r.BindTask("A", "t1")
+	r.UnbindTask("A", "t1")
+	r.UnbindTask("A", "t1") // idempotent on already-unbound
+}
+
+func TestRegistryBindTaskRace(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 4,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+	})
+	const N = 64
+	results := make(chan bool, N)
+	var wg sync.WaitGroup
+	for i := 0; i < N; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results <- r.BindTask("A", fmt.Sprintf("t%d", i))
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	successes := 0
+	for ok := range results {
+		if ok {
+			successes++
+		}
+	}
+	if successes != 4 {
+		t.Fatalf("expected exactly 4 successful binds (MaxTasks), got %d", successes)
 	}
 }
 
