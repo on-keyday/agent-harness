@@ -8,7 +8,7 @@ all: build
 # Build the wasm module and refresh wasm_exec.js from the current Go SDK.
 webui-build:
 	GOOS=js GOARCH=wasm go build -o webui/static/main.wasm ./cmd/harness-webui-wasm/
-	cp $(WASM_EXEC) webui/static/wasm_exec.js
+	cp "$(WASM_EXEC)" webui/static/wasm_exec.js
 
 # Build all native binaries. Requires webui-build to have run at least once
 # (cmd/harness-server uses //go:embed which needs static/main.wasm).
