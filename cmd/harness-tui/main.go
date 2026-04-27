@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,18 +18,13 @@ import (
 
 var (
 	serverCID = flag.String("server-cid", "ws:127.0.0.1:8539-*", "harness-server ConnectionID (e.g. ws:host:port-id, * for random)")
-	repoFlag  = flag.String("repo", ".", "default repo path for submit popup")
+	repoFlag  = flag.String("repo", "", "default repo path for submit popup; must match a runner-registered RepoPath verbatim (no client-side normalization, since runner may be on a different OS)")
 	wsPath    = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
 )
 
 func main() {
 	flag.Parse()
 	cli.WebSocketPath = *wsPath
-	repoAbs, err := filepath.Abs(*repoFlag)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "repo:", err)
-		os.Exit(1)
-	}
 	peerCID, err := objproto.ParseConnectionID(*serverCID,
 		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 	if err != nil {
@@ -51,7 +45,7 @@ func main() {
 
 	app := tui.New(tui.Config{
 		Server:      *serverCID,
-		DefaultRepo: repoAbs,
+		DefaultRepo: *repoFlag,
 	})
 	program := tea.NewProgram(app, tea.WithAltScreen())
 	app.BindProgram(program)

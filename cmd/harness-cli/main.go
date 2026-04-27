@@ -43,16 +43,16 @@ func main() {
 	switch sub {
 	case "submit":
 		fs := flag.NewFlagSet("submit", flag.ExitOnError)
-		repo := fs.String("repo", ".", "path to repo (defaults to cwd)")
+		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
 		task := fs.String("task", "", "prompt text")
 		fs.Parse(args)
 		if *task == "" {
 			fmt.Fprintln(os.Stderr, "submit: --task is required")
 			os.Exit(2)
 		}
-		abs, err := filepath.Abs(*repo)
-		if err != nil {
-			die(err)
+		if *repo == "" {
+			fmt.Fprintln(os.Stderr, "submit: --repo is required (must match a runner's RepoPath)")
+			os.Exit(2)
 		}
 		// Hand-rolled Dial→SayHello→Submit→Close so the server records
 		// kind=cli on this connection. Used by ii (origin tracking) so
@@ -65,7 +65,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		id, err := c.Submit(ctx, abs, *task)
+		id, err := c.Submit(ctx, *repo, *task)
 		if err != nil {
 			die(err)
 		}
@@ -122,11 +122,11 @@ func main() {
 
 	case "interactive":
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
-		repo := fs.String("repo", ".", "path to repo (defaults to cwd)")
+		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
 		fs.Parse(args)
-		abs, err := filepath.Abs(*repo)
-		if err != nil {
-			die(err)
+		if *repo == "" {
+			fmt.Fprintln(os.Stderr, "interactive: --repo is required (must match a runner's RepoPath)")
+			os.Exit(2)
 		}
 		// Hand-rolled Dial→SayHello→Interactive→Close so the server
 		// records kind=cli on this connection (origin attribution).
@@ -138,7 +138,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.Interactive(ctx, abs); err != nil {
+		if _, err := c.Interactive(ctx, *repo); err != nil {
 			die(err)
 		}
 
@@ -150,15 +150,15 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] <subcommand> [args]")
-	fmt.Fprintln(os.Stderr, "  submit [--repo PATH] --task TEXT    enqueue a new task (--repo defaults to cwd)")
+	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT      enqueue a new task (REPO must match a runner's RepoPath verbatim)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
 	fmt.Fprintln(os.Stderr, "  prune-local [--repo PATH] [--before DUR]")
-	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/")
+	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (local fs; PATH is client-side)")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
-	fmt.Fprintln(os.Stderr, "  interactive [--repo PATH]           attach an interactive PTY claude session (must be run from a tty)")
+	fmt.Fprintln(os.Stderr, "  interactive --repo REPO             attach an interactive PTY claude session (REPO must match a runner's RepoPath verbatim)")
 }
 
 func die(err error) {

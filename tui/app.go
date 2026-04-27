@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -287,7 +286,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
 					return a, nil
 				}
+				if repo == "" {
+					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
+					return a, nil
+				}
 				return a, DoSubmit(a.client, repo, prompt)
+			case tea.KeyTab:
+				a.popup.CycleRepo(+1)
+				return a, nil
+			case tea.KeyShiftTab:
+				a.popup.CycleRepo(-1)
+				return a, nil
 			}
 			var pcmd tea.Cmd
 			a.popup, pcmd = a.popup.Update(msg)
@@ -317,7 +326,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// `s` opens the submit popup when not in cmdline focus / filter edit.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "s" {
-			a.popup.SetRepo(a.defaultRepo)
+			a.popup.SetRepoChoices(uniqueRepoPaths(a.runnersSnapshot), a.defaultRepo)
 			a.popup.Open()
 			return a, nil
 		}
@@ -570,33 +579,25 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / prune [--before=DUR] / repo <path> / clear / help / quit")
 		return a, nil
 	case RepoAction:
-		// Validate against the runner registry (the actual source of truth
-		// for "is this a dispatchable repo"), not the TUI host's local fs —
-		// runner and TUI may be on different hosts in the future, in which
-		// case a local os.Stat would be meaningless.
-		//
-		// We still resolve relative input via filepath.Abs against the
-		// TUI's cwd, since that matches the convention of harness-tui's
-		// startup --repo flag. Users who want literal cross-host paths
-		// can pass an already-absolute string.
-		abs, err := filepath.Abs(v.Path)
-		if err != nil {
-			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("repo: %v", err)))
-			return a, nil
-		}
+		// The repo string is treated as an opaque identifier — server
+		// matches it byte-for-byte against runner-registered RepoPath. We
+		// cannot filepath.Abs() here because the TUI host and runner host
+		// may have different OSes (e.g. Windows TUI + Linux runner), where
+		// local Abs would mangle a valid runner path into a meaningless
+		// drive-prefixed one.
+		path := v.Path
 		hasRunner := false
 		for _, r := range a.runnersSnapshot {
-			if string(r.RepoPath) == abs {
+			if string(r.RepoPath) == path {
 				hasRunner = true
 				break
 			}
 		}
 		if !hasRunner {
-			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("repo: no runner currently registered for %s — submit/interactive will fail with NoRunnerForRepo until one connects", abs)))
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("repo: no runner currently registered for %s — submit/interactive will fail with NoRunnerForRepo until one connects", path)))
 		}
-		a.defaultRepo = abs
-		a.popup.SetRepo(abs)
-		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", abs))
+		a.defaultRepo = path
+		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
 		return a, nil
 	case InteractiveAction:
 		return a, DoOpenInteractive(a.client, v.Repo)
@@ -615,4 +616,25 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil
+}
+
+// uniqueRepoPaths returns the de-duplicated list of RepoPath strings from a
+// runner snapshot, in stable (sorted) order — used to populate the submit
+// popup's repo selector.
+func uniqueRepoPaths(rs []protocol.RunnerInfo) []string {
+	seen := make(map[string]struct{}, len(rs))
+	out := make([]string, 0, len(rs))
+	for _, r := range rs {
+		p := string(r.RepoPath)
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
 }
