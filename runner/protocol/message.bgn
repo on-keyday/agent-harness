@@ -14,16 +14,30 @@ enum RunnerRequestType:
     cancel_task
     open_exec
 
+# AllowedRoot is a single repository root path the runner is willing to accept tasks for.
+format AllowedRoot:
+    path_len :u16
+    path :[path_len]u8
+
+# RunnerHello replaces the old single-repo shape.
+# hostname is the runner's short hostname (for display / pinning).
+# max_tasks is the concurrency limit this runner enforces (0 = unlimited).
+# allowed_roots lists every repo root the runner can serve.
 format RunnerHello:
     version :u8
-    repo_path_len :u16
-    repo_path :[repo_path_len]u8
+    hostname_len :u8
+    hostname :[hostname_len]u8
+    max_tasks :u8
+    allowed_roots_len :u16
+    allowed_roots :[allowed_roots_len]AllowedRoot
 
 format TaskID:
     id :[16]u8
 
 format AssignTask:
     task_id :TaskID
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
     prompt :[..]u8
 
 format CancelTask:
@@ -31,6 +45,8 @@ format CancelTask:
 
 format OpenExecRunnerRequest:
     task_id :TaskID
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
     stream_id :u64    # bidi stream the server has just created toward this
                       # runner; runner looks it up via
                       # Transport.GetBidirectionalStream(id) and feeds it to
@@ -135,14 +151,25 @@ enum RunnerStatus:
     Idle
     Busy
 
+# ActiveTaskRef records a currently-running task assigned to a runner.
+format ActiveTaskRef:
+    task_id :TaskID
+    repo_path_len :u16
+    repo_path :[repo_path_len]u8
+
+# RunnerInfo replaces the old single-repo shape with multi-root and active-tasks.
 format RunnerInfo:
     id :RunnerID
     status :RunnerStatus
-    repo_path_len :u16
-    repo_path :[repo_path_len]u8
-    current_task :TaskID
+    hostname_len :u8
+    hostname :[hostname_len]u8
+    max_tasks :u8
     connected_at :u64  # unix nano
     last_seen :u64
+    allowed_roots_len :u16
+    allowed_roots :[allowed_roots_len]AllowedRoot
+    active_tasks_len :u16
+    active_tasks :[active_tasks_len]ActiveTaskRef
 
 format TaskInfo:
     id :TaskID
@@ -169,14 +196,57 @@ format ListResult:
     tasks_len :u16
     tasks :[tasks_len]TaskInfo
 
+# RunnerSelectorKind tags which selector variant is active.
+enum RunnerSelectorKind:
+    :u8
+    any          # no preference; server picks
+    by_runner_id # pin to a specific RunnerID
+    by_hostname  # pin to a runner with a matching hostname
+    by_ip        # pin to a runner at a specific IP address
+
+# Hostname selector: the hostname string the runner advertised in RunnerHello.
+format Hostname:
+    name_len :u8
+    name :[name_len]u8
+
+# IPAddr selector: raw IPv4 (4 bytes) or IPv6 (16 bytes).
+format IPAddr:
+    addr_len :u8
+    addr_len == 4 || addr_len == 16
+    addr :[addr_len]u8
+
+# RunnerSelector is the tagged union embedded in SubmitRequest and
+# OpenInteractiveRequest that lets a client pin a task to a specific runner.
+format RunnerSelector:
+    kind :RunnerSelectorKind
+    match kind:
+        RunnerSelectorKind.any          => ..
+        RunnerSelectorKind.by_runner_id => runner_id :RunnerID
+        RunnerSelectorKind.by_hostname  => hostname  :Hostname
+        RunnerSelectorKind.by_ip        => ip_addr   :IPAddr
+
 format SubmitRequest:
     repo_path_len :u16
     repo_path :[repo_path_len]u8
+    selector :RunnerSelector
     prompt_len :u32
     prompt :[prompt_len]u8
 
+# SubmitStatus indicates the outcome of a SubmitRequest.
+enum SubmitStatus:
+    :u8
+    ok               = "ok"
+    no_runner        = "no_runner"
+    ambiguous_runner = "ambiguous_runner"
+    pinned_not_found = "pinned_not_found"
+    internal_error   = "internal_error"
+
+# SubmitResponse replaces the old bare task_id with a status + optional error.
 format SubmitResponse:
-    task_id :TaskID
+    status :SubmitStatus
+    task_id :TaskID        # zero when status != ok
+    error_msg_len :u16
+    error_msg :[error_msg_len]u8
 
 format PruneTasksRequest:
     before_ts :u64    # unix nano cutoff; terminal tasks with EndedAt < this are removed
@@ -197,16 +267,19 @@ format GetTaskLogResponse:
 format OpenInteractiveRequest:
     repo_path_len :u16
     repo_path :[repo_path_len]u8
+    selector :RunnerSelector
 
 enum OpenInteractiveStatus:
     :u8
     ok  = "ok"
-    no_runner_for_repo = "no_runner_for_repo"
-    runner_busy = "runner_busy"
-    internal_error = "internal_error"
+    no_runner_for_repo  = "no_runner_for_repo"
+    runner_busy         = "runner_busy"
+    ambiguous_runner    = "ambiguous_runner"
+    pinned_not_found    = "pinned_not_found"
+    internal_error      = "internal_error"
 
 format OpenInteractiveResponse:
-    status :OpenInteractiveStatus        
+    status :OpenInteractiveStatus
     task_id :TaskID    # populated when status == 0
     stream_id :u64     # populated when status == 0. Bidirectional stream the
                        # server opens toward the client; client looks it up via
@@ -272,4 +345,3 @@ format RunnerStatusEvent:
     runner_id :RunnerID
     ts :u64
     runner_status :RunnerStatus
-

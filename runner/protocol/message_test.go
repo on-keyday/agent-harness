@@ -7,13 +7,24 @@ import (
 
 func TestRunnerHelloRoundTrip(t *testing.T) {
 	const wantVersion = uint8(42)
-	wantRepoPath := []byte("/home/runner/repos/myproject")
+	wantHostname := []byte("build-runner-01")
+	const wantMaxTasks = uint8(4)
+	wantRoots := []AllowedRoot{}
+	root1 := AllowedRoot{}
+	if !root1.SetPath([]byte("/home/runner/repos/myproject")) {
+		t.Fatal("SetPath returned false unexpectedly")
+	}
+	wantRoots = append(wantRoots, root1)
 
 	orig := RunnerHello{
-		Version: wantVersion,
+		Version:  wantVersion,
+		MaxTasks: wantMaxTasks,
 	}
-	if !orig.SetRepoPath(wantRepoPath) {
-		t.Fatal("SetRepoPath returned false unexpectedly")
+	if !orig.SetHostname(wantHostname) {
+		t.Fatal("SetHostname returned false unexpectedly")
+	}
+	if !orig.SetAllowedRoots(wantRoots) {
+		t.Fatal("SetAllowedRoots returned false unexpectedly")
 	}
 
 	buf := orig.MustAppend(nil)
@@ -30,11 +41,23 @@ func TestRunnerHelloRoundTrip(t *testing.T) {
 	if decoded.Version != wantVersion {
 		t.Errorf("Version: got %d, want %d", decoded.Version, wantVersion)
 	}
-	if !bytes.Equal(decoded.RepoPath, wantRepoPath) {
-		t.Errorf("RepoPath: got %q, want %q", decoded.RepoPath, wantRepoPath)
+	if !bytes.Equal(decoded.Hostname, wantHostname) {
+		t.Errorf("Hostname: got %q, want %q", decoded.Hostname, wantHostname)
 	}
-	if decoded.RepoPathLen != uint16(len(wantRepoPath)) {
-		t.Errorf("RepoPathLen: got %d, want %d", decoded.RepoPathLen, len(wantRepoPath))
+	if decoded.HostnameLen != uint8(len(wantHostname)) {
+		t.Errorf("HostnameLen: got %d, want %d", decoded.HostnameLen, len(wantHostname))
+	}
+	if decoded.MaxTasks != wantMaxTasks {
+		t.Errorf("MaxTasks: got %d, want %d", decoded.MaxTasks, wantMaxTasks)
+	}
+	if decoded.AllowedRootsLen != uint16(len(wantRoots)) {
+		t.Errorf("AllowedRootsLen: got %d, want %d", decoded.AllowedRootsLen, len(wantRoots))
+	}
+	if len(decoded.AllowedRoots) != 1 {
+		t.Fatalf("AllowedRoots: got %d entries, want 1", len(decoded.AllowedRoots))
+	}
+	if !bytes.Equal(decoded.AllowedRoots[0].Path, root1.Path) {
+		t.Errorf("AllowedRoots[0].Path: got %q, want %q", decoded.AllowedRoots[0].Path, root1.Path)
 	}
 }
 
