@@ -22,7 +22,7 @@ import (
 // pre-date this field decode as a zero RunnerSelector (Kind == RunnerSelectorKind_Any),
 // which is the correct "any runner" default.
 type WALEvent struct {
-	Type        string `json:"type"` // "task_created" | "task_assigned" | "task_finished" | "task_cancelled"
+	Type        string `json:"type"` // "task_created" | "task_assigned" | "task_finished" | "task_cancelled" | "task_failed"
 	TaskID      string `json:"task_id,omitempty"`
 	RunnerID    string `json:"runner_id,omitempty"`
 	RepoPath    string `json:"repo_path,omitempty"`
@@ -42,7 +42,9 @@ type WALEvent struct {
 	DiffInfo    []byte `json:"diff_info,omitempty"`
 	// BoundRunnerID, when non-empty, pins the task to a specific runner.
 	BoundRunnerID string `json:"bound_runner_id,omitempty"`
-	Ts            int64  `json:"ts"` // unix nano
+	// Reason holds a human-readable failure description (used by task_failed events).
+	Reason string `json:"reason,omitempty"`
+	Ts     int64  `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -65,6 +67,7 @@ type walEventJSON struct {
 	ExitCode      *int32 `json:"exit_code,omitempty"`
 	DiffInfo      []byte `json:"diff_info,omitempty"`
 	BoundRunnerID string `json:"bound_runner_id,omitempty"`
+	Reason        string `json:"reason,omitempty"`
 	Ts            int64  `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
@@ -86,6 +89,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		ExitCode:      e.ExitCode,
 		DiffInfo:      e.DiffInfo,
 		BoundRunnerID: e.BoundRunnerID,
+		Reason:        e.Reason,
 		Ts:            e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -114,6 +118,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.ExitCode = j.ExitCode
 	e.DiffInfo = j.DiffInfo
 	e.BoundRunnerID = j.BoundRunnerID
+	e.Reason = j.Reason
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

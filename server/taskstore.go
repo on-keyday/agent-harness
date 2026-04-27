@@ -229,6 +229,36 @@ func (s *TaskStore) Cancel(id string) {
 	}
 }
 
+// MarkFailed transitions a non-terminal task to Failed, recording reason in DiffInfo.
+// Idempotent: if the task is already in a terminal state (Succeeded, Failed, Cancelled),
+// the call is a no-op. Emits a "task_failed" WAL event with the reason string.
+// This is the preferred path for server-internal failures (e.g. runner disconnected)
+// where there is no meaningful exit code.
+func (s *TaskStore) MarkFailed(id, reason string) {
+	now := time.Now()
+	s.mu.Lock()
+	e, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	// Idempotent: skip if already terminal.
+	switch e.Status {
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+		s.mu.Unlock()
+		return
+	}
+	e.Status = protocol.TaskStatus_Failed
+	e.EndedAt = &now
+	e.DiffInfo = []byte(reason)
+	if s.wal != nil {
+		if err := s.wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, Ts: now.UnixNano()}); err != nil {
+			slog.Error("WAL write failed", "op", "task_failed", "task_id", id, "err", err)
+		}
+	}
+	s.mu.Unlock()
+}
+
 // SetWorktreeDir updates the worktree path for a task (called when the runner reports TaskStarted).
 // Returns false if the task is not present.
 func (s *TaskStore) SetWorktreeDir(id, wt string) bool {
@@ -308,6 +338,14 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Status = protocol.TaskStatus_Cancelled
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
+			}
+		case "task_failed":
+			// MarkFailed events: move task to Failed and store reason in DiffInfo.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Status = protocol.TaskStatus_Failed
+				ts := time.Unix(0, ev.Ts)
+				t.EndedAt = &ts
+				t.DiffInfo = []byte(ev.Reason)
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {

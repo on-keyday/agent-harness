@@ -413,3 +413,30 @@ func TestTaskStoreAddCarriesSelectorAndBoundRunner(t *testing.T) {
 	}
 }
 
+func TestTaskStoreMarkFailedTransitions(t *testing.T) {
+	ts := NewTaskStore()
+	id := ts.Create("/x", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		"", protocol.RunnerSelector{})
+	ts.Assign(id, "runner-x", "/wt")
+	ts.MarkFailed(id, "runner_disconnected")
+	got, _ := ts.Get(id)
+	if got.Status != protocol.TaskStatus_Failed {
+		t.Fatalf("status=%v want Failed", got.Status)
+	}
+	if string(got.DiffInfo) != "runner_disconnected" {
+		t.Fatalf("DiffInfo=%q want runner_disconnected", string(got.DiffInfo))
+	}
+}
+
+func TestTaskStoreMarkFailedIdempotentOnTerminal(t *testing.T) {
+	ts := NewTaskStore()
+	id := ts.Create("/x", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		"", protocol.RunnerSelector{})
+	ts.Finish(id, 0, nil) // already terminal (Succeeded)
+	ts.MarkFailed(id, "runner_disconnected")
+	got, _ := ts.Get(id)
+	if got.Status != protocol.TaskStatus_Succeeded {
+		t.Fatalf("MarkFailed should be no-op on terminal state, got %v", got.Status)
+	}
+}
+
