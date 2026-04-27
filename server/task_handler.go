@@ -68,7 +68,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		origin := h.lookupClientKind(conn.ConnectionID().String())
-		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt), protocol.TaskKind_Oneshot, origin)
+		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt), protocol.TaskKind_Oneshot, origin, "", protocol.RunnerSelector{})
 
 		// Decode hex task ID back to 16 raw bytes for the response.
 		raw, _ := hex.DecodeString(taskID)
@@ -227,7 +227,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32
 	// Allocate the task entry. The TaskKind_Interactive value is the
 	// authoritative marker — empty prompt is incidental.
 	origin := h.lookupClientKind(tuiConn.ConnectionID().String())
-	taskIDHex := h.Tasks.Create(repoPath, "", protocol.TaskKind_Interactive, origin)
+	taskIDHex := h.Tasks.Create(repoPath, "", protocol.TaskKind_Interactive, origin, "", protocol.RunnerSelector{})
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)

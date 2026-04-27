@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func must(t *testing.T, err error) {
@@ -50,6 +53,50 @@ func TestReadWALMissingFile(t *testing.T) {
 	}
 	if events != nil {
 		t.Fatalf("expected nil events, got %v", events)
+	}
+}
+
+func TestWALReplayRestoresSelectorAndBoundRunner(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "events.log")
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		t.Fatalf("OpenWAL: %v", err)
+	}
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
+	var hn protocol.Hostname
+	hn.SetName([]byte("gmkhost"))
+	sel.SetHostname(hn)
+	if err := wal.Write(WALEvent{
+		Type:          "task_created",
+		TaskID:        "abc",
+		Ts:            time.Now().UnixNano(),
+		RepoPath:      "/x/repo",
+		BoundRunnerID: "runner-A",
+		Selector:      sel,
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	wal.Close() //nolint:errcheck
+
+	events, err := ReadWAL(walPath)
+	if err != nil {
+		t.Fatalf("ReadWAL: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	e := events[0]
+	if e.BoundRunnerID != "runner-A" {
+		t.Fatalf("BoundRunnerID=%q want runner-A", e.BoundRunnerID)
+	}
+	if e.Selector.Kind != protocol.RunnerSelectorKind_ByHostname {
+		t.Fatalf("Selector.Kind=%v want ByHostname", e.Selector.Kind)
+	}
+	// Verify the hostname payload survived the round-trip.
+	hn2 := e.Selector.Hostname()
+	if hn2 == nil || string(hn2.Name) != "gmkhost" {
+		t.Fatalf("Hostname lost in round-trip: %+v", hn2)
 	}
 }
 

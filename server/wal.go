@@ -2,14 +2,25 @@ package server
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
 	"sync"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // WALEvent is one append record. Only the fields relevant to the event type are populated.
+//
+// Selector serialization: protocol.RunnerSelector is a generated wire-format struct
+// with an internal tagged-union field that does not marshal to useful JSON directly.
+// We encode the selector as opaque base64-of-wire-bytes using RunnerSelector.MustAppend /
+// RunnerSelector.DecodeExact. This is mechanical (no custom logic per variant) and
+// round-trips perfectly. The JSON key is "selector_b64". Legacy WAL entries that
+// pre-date this field decode as a zero RunnerSelector (Kind == RunnerSelectorKind_Any),
+// which is the correct "any runner" default.
 type WALEvent struct {
 	Type        string `json:"type"` // "task_created" | "task_assigned" | "task_finished" | "task_cancelled"
 	TaskID      string `json:"task_id,omitempty"`
@@ -29,7 +40,94 @@ type WALEvent struct {
 	WorktreeDir string `json:"worktree_dir,omitempty"`
 	ExitCode    *int32 `json:"exit_code,omitempty"`
 	DiffInfo    []byte `json:"diff_info,omitempty"`
-	Ts          int64  `json:"ts"` // unix nano
+	// BoundRunnerID, when non-empty, pins the task to a specific runner.
+	BoundRunnerID string `json:"bound_runner_id,omitempty"`
+	Ts            int64  `json:"ts"` // unix nano
+
+	// Selector is the runner-selection constraint. It is not stored directly as
+	// a JSON struct — see the selectorB64 field for the serialized form.
+	// Populated by WALEvent.UnmarshalJSON and consumed by WALEvent.MarshalJSON.
+	Selector protocol.RunnerSelector `json:"-"`
+}
+
+// walEventJSON is the over-the-wire representation of WALEvent used by
+// MarshalJSON / UnmarshalJSON to add the base64 selector field alongside
+// the other plain JSON fields.
+type walEventJSON struct {
+	Type          string `json:"type"`
+	TaskID        string `json:"task_id,omitempty"`
+	RunnerID      string `json:"runner_id,omitempty"`
+	RepoPath      string `json:"repo_path,omitempty"`
+	Prompt        string `json:"prompt,omitempty"`
+	Kind          uint8  `json:"kind,omitempty"`
+	OriginKind    uint8  `json:"origin_kind,omitempty"`
+	WorktreeDir   string `json:"worktree_dir,omitempty"`
+	ExitCode      *int32 `json:"exit_code,omitempty"`
+	DiffInfo      []byte `json:"diff_info,omitempty"`
+	BoundRunnerID string `json:"bound_runner_id,omitempty"`
+	Ts            int64  `json:"ts"`
+	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
+	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
+	SelectorB64 string `json:"selector_b64,omitempty"`
+}
+
+// MarshalJSON encodes the Selector as base64 wire bytes and delegates the rest
+// of the fields to the plain walEventJSON struct.
+func (e WALEvent) MarshalJSON() ([]byte, error) {
+	j := walEventJSON{
+		Type:          e.Type,
+		TaskID:        e.TaskID,
+		RunnerID:      e.RunnerID,
+		RepoPath:      e.RepoPath,
+		Prompt:        e.Prompt,
+		Kind:          e.Kind,
+		OriginKind:    e.OriginKind,
+		WorktreeDir:   e.WorktreeDir,
+		ExitCode:      e.ExitCode,
+		DiffInfo:      e.DiffInfo,
+		BoundRunnerID: e.BoundRunnerID,
+		Ts:            e.Ts,
+	}
+	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
+	if e.Selector.Kind != protocol.RunnerSelectorKind_Any {
+		wire := e.Selector.MustAppend(nil)
+		j.SelectorB64 = base64.StdEncoding.EncodeToString(wire)
+	}
+	return json.Marshal(j)
+}
+
+// UnmarshalJSON decodes the base64 selector wire bytes back into Selector and
+// copies the remaining fields from walEventJSON.
+func (e *WALEvent) UnmarshalJSON(b []byte) error {
+	var j walEventJSON
+	if err := json.Unmarshal(b, &j); err != nil {
+		return err
+	}
+	e.Type = j.Type
+	e.TaskID = j.TaskID
+	e.RunnerID = j.RunnerID
+	e.RepoPath = j.RepoPath
+	e.Prompt = j.Prompt
+	e.Kind = j.Kind
+	e.OriginKind = j.OriginKind
+	e.WorktreeDir = j.WorktreeDir
+	e.ExitCode = j.ExitCode
+	e.DiffInfo = j.DiffInfo
+	e.BoundRunnerID = j.BoundRunnerID
+	e.Ts = j.Ts
+
+	if j.SelectorB64 != "" {
+		wire, err := base64.StdEncoding.DecodeString(j.SelectorB64)
+		if err != nil {
+			return err
+		}
+		if err := e.Selector.DecodeExact(wire); err != nil {
+			return err
+		}
+	}
+	// If SelectorB64 is absent, e.Selector remains zero (Kind == Any). That is
+	// the correct default for pre-3.1 WAL entries.
+	return nil
 }
 
 // WAL is a write-ahead log that appends events as JSONL to a file.
