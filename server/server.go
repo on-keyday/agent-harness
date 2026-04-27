@@ -398,12 +398,10 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	if !ok {
 		return fmt.Errorf("task %s not found", taskID)
 	}
-	var tid protocol.TaskID
-	raw, _ := hex.DecodeString(taskID)
-	copy(tid.Id[:], raw)
-	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
-	req.SetAssignTask(protocol.AssignTask{TaskId: tid, Prompt: []byte(task.Prompt)})
-	data := req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
-	_, _, err := entry.Conn.SendMessage(data)
+	msg, err := buildAssignMsg(task)
+	if err != nil {
+		return fmt.Errorf("buildAssignMsg: %w", err)
+	}
+	_, _, err = entry.Conn.SendMessage(msg)
 	return err
 }

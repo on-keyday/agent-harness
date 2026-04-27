@@ -92,9 +92,9 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			ServerCID: peerCID,
-			RepoPath:  repo,
-			ClaudeBin: fakeClaude,
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			ClaudeBin:    fakeClaude,
 		})
 	}()
 

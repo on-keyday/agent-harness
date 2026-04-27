@@ -1,0 +1,265 @@
+//go:build integration
+
+package integration
+
+import (
+	"context"
+	"encoding/hex"
+	"fmt"
+	"net"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/runner"
+	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/server"
+)
+
+// ---- helpers ----------------------------------------------------------------
+
+// freePort asks the OS for an available TCP port on localhost.
+func freePort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("freePort: %v", err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	return addr
+}
+
+// startServerAt starts a server on addr and returns its peer CID and a cancel function.
+func startServerAt(t *testing.T, addr string) (objproto.ConnectionID, context.CancelFunc) {
+	t.Helper()
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	s := server.New(server.Config{
+		Addr:    addr,
+		DataDir: t.TempDir(),
+	})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-serverDone:
+		case <-time.After(3 * time.Second):
+			t.Log("server did not exit within 3s of cancel")
+		}
+	})
+
+	// Wait for the server to start listening.
+	time.Sleep(300 * time.Millisecond)
+	return peerCID, cancel
+}
+
+// startServer picks a free port and starts the server.
+func startServer(t *testing.T) objproto.ConnectionID {
+	t.Helper()
+	addr := freePort(t)
+	cid, _ := startServerAt(t, addr)
+	return cid
+}
+
+// runnerHandle wraps a running runner goroutine so tests can close it.
+type runnerHandle struct {
+	cancel   context.CancelFunc
+	done     chan error
+	hostname string
+	roots    []string
+}
+
+// Close cancels the runner's context and waits for it to exit.
+func (r *runnerHandle) Close() {
+	r.cancel()
+	select {
+	case <-r.done:
+	case <-time.After(5 * time.Second):
+	}
+}
+
+// Hostname returns the hostname this runner registered with.
+func (r *runnerHandle) Hostname() string { return r.hostname }
+
+// runnerOpts configures a test runner.
+type runnerOpts struct {
+	MaxTasks  int
+	Roots     []string
+	Hostname  string
+	ClaudeBin string // defaults to fake-claude.sh
+}
+
+// startRunner starts a runner connected to serverCID with the given options.
+func startRunner(t *testing.T, serverCID objproto.ConnectionID, opts runnerOpts) *runnerHandle {
+	t.Helper()
+
+	claudeBin := opts.ClaudeBin
+	if claudeBin == "" {
+		abs, err := filepath.Abs("../testdata/fake-claude.sh")
+		if err != nil {
+			t.Fatalf("resolve fake-claude.sh: %v", err)
+		}
+		claudeBin = abs
+	}
+
+	roots := opts.Roots
+	maxTasks := opts.MaxTasks
+	if maxTasks < 1 {
+		maxTasks = 1
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- runner.Run(ctx, runner.Config{
+			ServerCID:    serverCID,
+			AllowedRoots: roots,
+			MaxTasks:     maxTasks,
+			Hostname:     opts.Hostname,
+			ClaudeBin:    claudeBin,
+		})
+	}()
+
+	h := &runnerHandle{
+		cancel:   cancel,
+		done:     done,
+		hostname: opts.Hostname,
+		roots:    roots,
+	}
+
+	t.Cleanup(h.Close)
+
+	// Give runner time to connect and send Hello.
+	time.Sleep(500 * time.Millisecond)
+	return h
+}
+
+// tempRepo creates a temp git repo and returns its absolute path.
+func tempRepo(t *testing.T) string {
+	t.Helper()
+	return initRepo(t) // reuse initRepo defined in e2e_test.go
+}
+
+// dialClient opens a fresh cli.Client connected to serverCID.
+// The client lives for the duration of the test; t.Cleanup closes it.
+func dialClient(t *testing.T, serverCID objproto.ConnectionID) *cli.Client {
+	t.Helper()
+	// Use a background context so the connection lives beyond the dial call.
+	// The test's Cancel (registered via t.Cleanup) will cancel the server,
+	// which closes the connection. cli.Client.Close handles the teardown.
+	c, err := cli.Dial(context.Background(), serverCID)
+	if err != nil {
+		t.Fatalf("dial client: %v", err)
+	}
+	t.Cleanup(c.Close)
+	return c
+}
+
+// mustSubmit submits a task and fails the test on error.
+func mustSubmit(t *testing.T, c *cli.Client, repo, prompt string) string {
+	t.Helper()
+	id, err := c.Submit(context.Background(), repo, prompt)
+	if err != nil {
+		t.Fatalf("submit(%q): %v", prompt, err)
+	}
+	return id
+}
+
+// getTask returns the TaskInfo for taskID from a Snapshot, or the zero value if not found.
+func getTask(t *testing.T, c *cli.Client, taskID string) protocol.TaskInfo {
+	t.Helper()
+	lr, err := c.Snapshot(context.Background())
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	wantRaw, _ := hex.DecodeString(taskID)
+	for _, ti := range lr.Tasks {
+		if string(ti.Id.Id[:]) == string(wantRaw) {
+			return ti
+		}
+	}
+	return protocol.TaskInfo{}
+}
+
+// eventually polls fn until it returns true or timeout elapses.
+// It fails the test if the deadline is exceeded.
+func eventually(t *testing.T, fn func() bool, timeout time.Duration, interval time.Duration, msg string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(interval)
+	}
+	t.Fatalf("eventually: timed out after %v: %s", timeout, msg)
+}
+
+// waitTaskTerminal polls until the task reaches a terminal state (Succeeded, Failed, Cancelled).
+func waitTaskTerminal(t *testing.T, c *cli.Client, taskID string, timeout time.Duration) {
+	t.Helper()
+	eventually(t, func() bool {
+		ti := getTask(t, c, taskID)
+		switch ti.Status {
+		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+			return true
+		}
+		return false
+	}, timeout, 200*time.Millisecond, fmt.Sprintf("task %s to reach terminal state", taskID[:12]))
+}
+
+// fakeClaudePath returns the absolute path to fake-claude.sh.
+func fakeClaudePath(t *testing.T) string {
+	t.Helper()
+	abs, err := filepath.Abs("../testdata/fake-claude.sh")
+	if err != nil {
+		t.Fatalf("resolve fake-claude.sh: %v", err)
+	}
+	return abs
+}
+
+// fakeClaudeSlowPath returns the absolute path to fake-claude-slow.sh.
+func fakeClaudeSlowPath(t *testing.T) string {
+	t.Helper()
+	abs, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatalf("resolve fake-claude-slow.sh: %v", err)
+	}
+	return abs
+}
+
+// ---- Task 11.1: Two tasks run concurrently ----------------------------------
+
+func TestIntegrationTwoTasksConcurrent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+	startRunner(t, serverCID, runnerOpts{MaxTasks: 2, Roots: []string{repo}})
+
+	c := dialClient(t, serverCID)
+
+	id1 := mustSubmit(t, c, repo, "echo one")
+	id2 := mustSubmit(t, c, repo, "echo two")
+
+	waitTaskTerminal(t, c, id1, 30*time.Second)
+	waitTaskTerminal(t, c, id2, 30*time.Second)
+
+	t1 := getTask(t, c, id1)
+	t2 := getTask(t, c, id2)
+	if t1.Status != protocol.TaskStatus_Succeeded || t2.Status != protocol.TaskStatus_Succeeded {
+		t.Fatalf("expected both Succeeded; got %v and %v", t1.Status, t2.Status)
+	}
+}
