@@ -40,20 +40,42 @@ func main() {
 		return peerCID
 	}
 
+	// addSelectorFlags registers --runner/--host/--ip on fs and returns a
+	// function that resolves them to a RunnerSelector after fs.Parse.
+	addSelectorFlags := func(fs *flag.FlagSet) func() protocol.RunnerSelector {
+		runner := fs.String("runner", "", "pin to a specific runner by ConnectionID hex")
+		host := fs.String("host", "", "pin to runner by hostname")
+		ip := fs.String("ip", "", "pin to runner by IP address")
+		return func() protocol.RunnerSelector {
+			opts := cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}
+			if err := opts.ValidateSelector(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			sel, err := cli.BuildSelector(opts)
+			if err != nil {
+				die(err)
+			}
+			return sel
+		}
+	}
+
 	switch sub {
 	case "submit":
 		fs := flag.NewFlagSet("submit", flag.ExitOnError)
 		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
 		task := fs.String("task", "", "prompt text")
+		resolveSelector := addSelectorFlags(fs)
 		fs.Parse(args)
 		if *task == "" {
 			fmt.Fprintln(os.Stderr, "submit: --task is required")
 			os.Exit(2)
 		}
 		if *repo == "" {
-			fmt.Fprintln(os.Stderr, "submit: --repo is required (must match a runner's RepoPath)")
+			fmt.Fprintln(os.Stderr, "submit: --repo is required (must match a runner's RepoPath verbatim)")
 			os.Exit(2)
 		}
+		sel := resolveSelector()
 		// Hand-rolled Dial→SayHello→Submit→Close so the server records
 		// kind=cli on this connection. Used by ii (origin tracking) so
 		// the resulting task is attributed to "cli" in `harness-cli ls`.
@@ -65,7 +87,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		id, err := c.Submit(ctx, *repo, *task)
+		id, err := c.SubmitWithSelector(ctx, *repo, *task, sel)
 		if err != nil {
 			die(err)
 		}
@@ -123,11 +145,13 @@ func main() {
 	case "interactive":
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
 		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
+		resolveSelector := addSelectorFlags(fs)
 		fs.Parse(args)
 		if *repo == "" {
-			fmt.Fprintln(os.Stderr, "interactive: --repo is required (must match a runner's RepoPath)")
+			fmt.Fprintln(os.Stderr, "interactive: --repo is required (must match a runner's RepoPath verbatim)")
 			os.Exit(2)
 		}
+		sel := resolveSelector()
 		// Hand-rolled Dial→SayHello→Interactive→Close so the server
 		// records kind=cli on this connection (origin attribution).
 		c, err := cli.Dial(ctx, parseCID())
@@ -138,7 +162,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.Interactive(ctx, *repo); err != nil {
+		if _, err := c.InteractiveWithSelector(ctx, *repo, sel); err != nil {
 			die(err)
 		}
 
@@ -150,7 +174,8 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] <subcommand> [args]")
-	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT      enqueue a new task (REPO must match a runner's RepoPath verbatim)")
+	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR]")
+	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (optionally pin to a runner)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
@@ -158,7 +183,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (local fs; PATH is client-side)")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
-	fmt.Fprintln(os.Stderr, "  interactive --repo REPO             attach an interactive PTY claude session (REPO must match a runner's RepoPath verbatim)")
+	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR]")
+	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude session")
 }
 
 func die(err error) {

@@ -1,13 +1,37 @@
 package server
 
 import (
+	"bytes"
 	"encoding/hex"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
+
+// stubConn is a minimal ConnHandle used to mark a RunnerEntry as connected
+// without wiring real network I/O. It no-ops all methods.
+type stubConn struct{}
+
+func (stubConn) ConnectionID() objproto.ConnectionID       { return objproto.ConnectionID{} }
+func (stubConn) SendMessage([]byte) (int, uint64, error)   { return 0, 0, nil }
+func (stubConn) CreateSendStream() trsf.SendStream         { return nil }
+func (stubConn) CreateBidirectionalStream() trsf.BidirectionalStream { return nil }
+
+// newTestHandler returns a *TaskHandler with an empty Registry and TaskStore,
+// suitable for unit-testing handleSubmit and handleOpenInteractive.
+func newTestHandler(t *testing.T) *TaskHandler {
+	t.Helper()
+	return &TaskHandler{
+		Tasks:    NewTaskStore(),
+		Registry: NewRegistry(),
+	}
+}
+
+// mustHostname is declared in taskstore_test.go (same package).
 
 // encodeTaskControlRequest encodes a TaskControlRequest to its wire form (including Kind byte).
 func encodeTaskControlRequest(t *testing.T, req *protocol.TaskControlRequest) []byte {
@@ -24,6 +48,18 @@ func TestSubmitCreatesTaskAndReplies(t *testing.T) {
 	tasks := NewTaskStore()
 	reg := NewRegistry()
 	changeCalled := 0
+
+	// Register a runner that covers /repo so handleSubmit succeeds.
+	reg.Add(&RunnerEntry{
+		ID:           "r-test-1",
+		Hostname:     "testhost",
+		AllowedRoots: []string{"/"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Now(),
+		LastSeen:     time.Now(),
+		Conn:         stubConn{},
+	})
 
 	h := &TaskHandler{
 		Tasks:    tasks,
@@ -104,17 +140,19 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 		OnChange: func() { changeCalled++ },
 	}
 
-	// Pre-populate Registry with 1 Idle runner on "/x".
+	// Pre-populate Registry with 1 Idle runner serving "/x".
 	reg.Add(&RunnerEntry{
-		ID:          "runner-1",
-		RepoPath:    "/x",
-		Status:      protocol.RunnerStatus_Idle,
-		ConnectedAt: time.Now(),
-		LastSeen:    time.Now(),
+		ID:           "runner-1",
+		Hostname:     "h1",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  time.Now(),
+		LastSeen:     time.Now(),
 	})
 
 	// Pre-populate TaskStore with 1 Queued task on "/x".
-	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
+	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{})
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{})
@@ -144,8 +182,8 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	if listResult.TasksLen != 1 {
 		t.Errorf("expected TasksLen=1, got %d", listResult.TasksLen)
 	}
-	if len(listResult.Runners) > 0 && string(listResult.Runners[0].RepoPath) != "/x" {
-		t.Errorf("expected runner RepoPath /x, got %q", string(listResult.Runners[0].RepoPath))
+	if len(listResult.Runners) > 0 && string(listResult.Runners[0].Hostname) != "h1" {
+		t.Errorf("expected runner Hostname h1, got %q", string(listResult.Runners[0].Hostname))
 	}
 	if len(listResult.Tasks) > 0 && string(listResult.Tasks[0].Prompt) != "list-prompt" {
 		t.Errorf("expected task Prompt 'list-prompt', got %q", string(listResult.Tasks[0].Prompt))
@@ -255,5 +293,208 @@ func TestMalformedPayloadIsIgnoredTask(t *testing.T) {
 	}
 	if changeCalled != 0 {
 		t.Errorf("expected OnChange NOT called for malformed payload, got %d", changeCalled)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.1: handleSubmit synchronous error codes
+// ---------------------------------------------------------------------------
+
+func TestHandleSubmitNoRunnerForRepo(t *testing.T) {
+	h := newTestHandler(t) // empty registry
+
+	req := &protocol.SubmitRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+	req.SetPrompt([]byte("p"))
+	// Selector is zero value == RunnerSelectorKind_Any (no pinning)
+
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.SubmitStatus_NoRunner {
+		t.Fatalf("status=%v want NoRunner", resp.Status)
+	}
+}
+
+func TestHandleSubmitAmbiguousRunner(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.SubmitRequest{}
+	req.SetRepoPath([]byte("/shared/repo"))
+	req.SetPrompt([]byte("p"))
+
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.SubmitStatus_AmbiguousRunner {
+		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
+	}
+	if !bytes.Contains(resp.ErrorMsg, []byte("h1")) || !bytes.Contains(resp.ErrorMsg, []byte("h2")) {
+		t.Fatalf("error_msg lacks hostnames: %q", resp.ErrorMsg)
+	}
+}
+
+func TestHandleSubmitPinnedNotFound(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
+	sel.SetHostname(mustHostname(t, "raspi")) // hostname not present
+	req := &protocol.SubmitRequest{Selector: sel}
+	req.SetRepoPath([]byte("/x/repo"))
+	req.SetPrompt([]byte("p"))
+
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.SubmitStatus_PinnedNotFound {
+		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
+	}
+}
+
+func TestHandleSubmitOK(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "runner-a", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.SubmitRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+	req.SetPrompt([]byte("p"))
+
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.SubmitStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+	zeroID := protocol.TaskID{}
+	if resp.TaskId == zeroID {
+		t.Fatal("expected non-zero TaskId in SubmitResponse")
+	}
+	taskIDHex := hex.EncodeToString(resp.TaskId.Id[:])
+	got, ok := h.Tasks.Get(taskIDHex)
+	if !ok {
+		t.Fatalf("task %q not found in store", taskIDHex)
+	}
+	if got.BoundRunnerID != "A" {
+		t.Fatalf("BoundRunnerID=%q want A", got.BoundRunnerID)
+	}
+	if got.Selector.Kind != protocol.RunnerSelectorKind_Any {
+		t.Fatalf("Selector.Kind=%v want Any", got.Selector.Kind)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 4.2: handleOpenInteractive synchronous error codes
+// ---------------------------------------------------------------------------
+
+func TestHandleOpenInteractiveNoRunnerForRepo(t *testing.T) {
+	h := newTestHandler(t) // empty registry
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
+		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
+	}
+}
+
+func TestHandleOpenInteractiveBusy(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	// Runner is at capacity (MaxTasks=1, 1 active task).
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h", AllowedRoots: []string{"/x"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{"existing": {}}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/x/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_RunnerBusy {
+		t.Fatalf("status=%v want RunnerBusy", resp.Status)
+	}
+}
+
+func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/shared/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
+		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
+	}
+}
+
+func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "gmkhost", AllowedRoots: []string{"/x"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
+	sel.SetHostname(mustHostname(t, "raspi")) // hostname not present
+	req := &protocol.OpenInteractiveRequest{Selector: sel}
+	req.SetRepoPath([]byte("/x/repo"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_PinnedNotFound {
+		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
+	}
+}
+
+// TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec verifies the Ok path of
+// handleOpenInteractive emits a RunnerControl/OpenExec message that carries
+// the cleaned RepoPath. Regression guard: the original implementation only
+// set TaskId/StreamId on the OpenExecRunnerRequest, leaving RepoPath empty,
+// which made the runner's AllowedRoots gate reject every interactive task
+// with TaskFinished exit=-1.
+func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9100-1"), nextStreamID: 42}
+	h.Registry.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/shared"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+		Conn: runnerConn,
+	})
+
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9101-2"), nextStreamID: 7}
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/shared/repo"))
+
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+
+	// Find the OpenExec message captured on the runner conn. The handler also
+	// sends nothing else on this conn during Ok, so sent[0] is the target.
+	if len(runnerConn.sent) != 1 {
+		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
+	}
+	raw := runnerConn.sent[0]
+	if raw[0] != byte(wire.ApplicationPayloadKind_RunnerControl) {
+		t.Fatalf("first byte=%d, want RunnerControl kind", raw[0])
+	}
+
+	rr := &protocol.RunnerRequest{}
+	if _, err := rr.Decode(raw[1:]); err != nil {
+		t.Fatalf("decode RunnerRequest: %v", err)
+	}
+	if rr.Kind != protocol.RunnerRequestType_OpenExec {
+		t.Fatalf("kind=%v want OpenExec", rr.Kind)
+	}
+	oer := rr.OpenExec()
+	if oer == nil {
+		t.Fatal("OpenExec variant nil")
+	}
+	if got, want := string(oer.RepoPath), "/shared/repo"; got != want {
+		t.Fatalf("OpenExec.RepoPath=%q want %q", got, want)
+	}
+	if oer.StreamId != 42 {
+		t.Fatalf("OpenExec.StreamId=%d want 42 (runner-side stream)", oer.StreamId)
 	}
 }

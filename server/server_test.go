@@ -17,12 +17,14 @@ func TestSendAssignReachesRunner(t *testing.T) {
 	fc := &fakeConn{id: mustParseCID(t, "ws:127.0.0.1:8539-9")}
 	s := New(Config{Addr: "localhost:0"})
 	s.registry.Add(&RunnerEntry{
-		ID:       fc.id.String(),
-		RepoPath: "/r",
-		Status:   protocol.RunnerStatus_Idle,
-		Conn:     fc,
+		ID:           fc.id.String(),
+		Hostname:     "testhost",
+		AllowedRoots: []string{"/r"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		Conn:         fc,
 	})
-	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified)
+	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{})
 	if err := s.sendAssign(fc.id.String(), taskID); err != nil {
 		t.Fatalf("send: %v", err)
 	}

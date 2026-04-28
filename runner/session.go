@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
+	"sync"
 	"time"
 
 	agentexec "github.com/on-keyday/agent-harness/exec"
@@ -26,8 +27,16 @@ type Sender interface {
 	Publish(topic string, data []byte) error
 }
 
+// taskEntry holds the per-task cancellation function and the repo it runs under.
+type taskEntry struct {
+	cancel  context.CancelFunc
+	repoPath string
+}
+
+// Session manages the runner's task lifecycle. It is created once per connection
+// and handles concurrent tasks through its internal maps.
 type Session struct {
-	RepoPath        string
+	AllowedRoots    []string      // absolute paths this runner is allowed to serve
 	ClaudeBin       string
 	ExtraClaudeArgs []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
 	Timeout         time.Duration
@@ -36,7 +45,49 @@ type Session struct {
 	Logger          *slog.Logger                   // optional; defaults to slog.Default()
 	Now             func() time.Time
 
-	wm *WorktreeManager // set on first use
+	mu    sync.Mutex
+	tasks map[string]*taskEntry    // taskID (hex) → cancel + repo
+	wms   map[string]*WorktreeManager // repoPath → WorktreeManager
+
+	// testHookHandleAssign is called at the start of handleAssign in tests to
+	// inject faults (e.g. panics). It is nil in production.
+	testHookHandleAssign func()
+}
+
+// initMaps initialises the internal maps if they have not been set yet.
+// Must be called with s.mu held.
+func (s *Session) initMaps() {
+	if s.tasks == nil {
+		s.tasks = make(map[string]*taskEntry)
+	}
+	if s.wms == nil {
+		s.wms = make(map[string]*WorktreeManager)
+	}
+}
+
+// getWorktreeManager returns the cached WorktreeManager for repoPath, creating
+// one if it doesn't exist yet. Thread-safe.
+func (s *Session) getWorktreeManager(repoPath string) *WorktreeManager {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.initMaps()
+	wm, ok := s.wms[repoPath]
+	if !ok {
+		wm = &WorktreeManager{Repo: repoPath}
+		s.wms[repoPath] = wm
+	}
+	return wm
+}
+
+// repoAllowed reports whether repoPath is under at least one of AllowedRoots.
+// Uses protocol.IsUnderRoot for consistent semantics with the server side.
+func (s *Session) repoAllowed(repoPath string) bool {
+	for _, root := range s.AllowedRoots {
+		if protocol.IsUnderRoot(root, repoPath) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Session) logger() *slog.Logger {
@@ -55,9 +106,15 @@ func (s *Session) logger() *slog.Logger {
 //
 // Errors during steps 2 or 4 are conveyed via the TaskFinished message's exit code and
 // DiffInfo (textual error). The runner does NOT retry; the server can re-dispatch.
+//
+// A per-task context derived from ctx is used so CancelTask can cancel individual
+// tasks without affecting others. Panics are recovered and reported as TaskFinished.
 func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	topic := topics.TaskLog(taskIDHex)
+
+	// Validate repo path from the request.
+	repoPath := string(req.RepoPath)
 
 	// Step 1: Send TaskAccepted — signals we are committed even if worktree fails.
 	{
@@ -67,21 +124,64 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		_ = s.Sender.Send(data)
 	}
 
-	// Step 2: Create worktree.
-	if s.wm == nil {
-		s.wm = &WorktreeManager{Repo: s.RepoPath}
-	}
-	dir, err := s.wm.Create(taskIDHex)
-	if err != nil {
-		// Worktree creation failure → TaskFinished with error.
+	finishWithError := func(code int32, reason string) {
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
-		m.SetTaskFinished(protocol.TaskFinished{
+		tf := protocol.TaskFinished{
 			TaskId:   req.TaskId,
-			ExitCode: -1,
-			DiffInfo: []byte("worktree_error: " + err.Error()),
-		})
+			ExitCode: code,
+			DiffInfo: []byte(reason),
+		}
+		m.SetTaskFinished(tf)
 		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 		_ = s.Sender.Send(data)
+	}
+
+	// Panic recovery: report as TaskFinished so the server doesn't wait forever.
+	// Must be deferred BEFORE the test hook so that hook-injected panics are caught.
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger().Error("handleAssign panic", "task_id", taskIDHex, "panic", r)
+			finishWithError(-1, "runner_panic")
+		}
+	}()
+
+	// testHookHandleAssign runs after TaskAccepted and the recover defer are in place,
+	// so that hook-injected panics are caught and result in a TaskFinished message.
+	if s.testHookHandleAssign != nil {
+		s.testHookHandleAssign()
+	}
+
+	// Gate: check repo is under an allowed root (skip check if AllowedRoots is empty
+	// so existing tests that don't set AllowedRoots continue to work).
+	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
+		finishWithError(-1, "repo_not_allowed: "+repoPath)
+		return
+	}
+
+	// If the request didn't provide a RepoPath, fall back to AllowedRoots[0]
+	// (for backward compatibility with tests that don't set req.RepoPath).
+	if repoPath == "" && len(s.AllowedRoots) > 0 {
+		repoPath = s.AllowedRoots[0]
+	}
+
+	// Register per-task cancellable context.
+	taskCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.initMaps()
+	s.tasks[taskIDHex] = &taskEntry{cancel: cancel, repoPath: repoPath}
+	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.tasks, taskIDHex)
+		s.mu.Unlock()
+	}()
+
+	// Step 2: Create worktree.
+	wm := s.getWorktreeManager(repoPath)
+	dir, err := wm.Create(taskIDHex)
+	if err != nil {
+		finishWithError(-1, "worktree_error: "+err.Error())
 		return
 	}
 
@@ -96,9 +196,6 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	}
 
 	// Step 4: Execute the process, publishing log lines to the task log topic.
-	// peer.Conn.Publish (under the Sender adapter) handles concurrent first-
-	// callers via per-topic leader/follower, so no caller-side serialization
-	// is needed here.
 	proc := &Process{
 		ClaudeBin: s.ClaudeBin,
 		CWD:       dir,
@@ -108,7 +205,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	logSink := func(data []byte) {
 		_ = s.Sender.Publish(topic, data)
 	}
-	exit, runErr := proc.Run(ctx, string(req.Prompt), logSink)
+	exit, runErr := proc.Run(taskCtx, string(req.Prompt), logSink)
 
 	// Step 5: Send TaskFinished.
 	{
@@ -131,7 +228,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	// are still reachable via `git checkout harness/<id>`. Failure to remove
 	// is logged but does not affect task lifecycle (TaskFinished already
 	// sent); a subsequent runner start can scan stale worktrees if needed.
-	if err := s.wm.Remove(taskIDHex); err != nil {
+	if err := wm.Remove(taskIDHex); err != nil {
 		s.logger().Warn("worktree remove failed", "task_id", taskIDHex, "err", err)
 	}
 }
@@ -152,6 +249,8 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunnerRequest) {
 	taskIDHex := hex.EncodeToString(oer.TaskId.Id[:])
 	log := s.logger()
+
+	repoPath := string(oer.RepoPath)
 
 	// Step 1: TaskAccepted.
 	{
@@ -174,17 +273,45 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
+	// Acquire the server-allocated bidi stream BEFORE any gate / setup checks.
+	// The server side has already created its end and started splicing it to
+	// the TUI; any error path that returns without closing this stream would
+	// leave the server's splice goroutine — and the TUI it serves — blocked
+	// forever on ReadDirect.
 	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(oer.StreamId))
 	if stream == nil {
 		finishWithError(-1, "runner: server-allocated exec stream not visible")
 		return
 	}
 
-	// Step 2: worktree.
-	if s.wm == nil {
-		s.wm = &WorktreeManager{Repo: s.RepoPath}
+	// Gate: check repo is under an allowed root.
+	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
+		_ = stream.CloseBoth()
+		finishWithError(-1, "repo_not_allowed: "+repoPath)
+		return
 	}
-	dir, err := s.wm.Create(taskIDHex)
+
+	// Fallback if RepoPath not set.
+	if repoPath == "" && len(s.AllowedRoots) > 0 {
+		repoPath = s.AllowedRoots[0]
+	}
+
+	// Register per-task cancellable context.
+	taskCtx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	s.initMaps()
+	s.tasks[taskIDHex] = &taskEntry{cancel: cancel, repoPath: repoPath}
+	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.tasks, taskIDHex)
+		s.mu.Unlock()
+	}()
+
+	// Step 2: worktree.
+	wm := s.getWorktreeManager(repoPath)
+	dir, err := wm.Create(taskIDHex)
 	if err != nil {
 		_ = stream.CloseBoth()
 		finishWithError(-1, "worktree_error: "+err.Error())
@@ -202,7 +329,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommand defers stream.CloseBoth() so we don't double-close here.
-	runErr := agentexec.ExecuteCommand(ctx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true)
+	runErr := agentexec.ExecuteCommand(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true)
 
 	// Step 5: TaskFinished.
 	{
@@ -220,8 +347,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	// Step 6: Clean up the worktree directory. See handleAssign for the
 	// rationale on why the branch ref is retained.
-	if err := s.wm.Remove(taskIDHex); err != nil {
+	if err := wm.Remove(taskIDHex); err != nil {
 		log.Warn("worktree remove failed", "task_id", taskIDHex, "err", err)
 	}
 }
-

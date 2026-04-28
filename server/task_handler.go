@@ -5,7 +5,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -68,20 +70,15 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		origin := h.lookupClientKind(conn.ConnectionID().String())
-		taskID := h.Tasks.Create(string(sub.RepoPath), string(sub.Prompt), protocol.TaskKind_Oneshot, origin)
-
-		// Decode hex task ID back to 16 raw bytes for the response.
-		raw, _ := hex.DecodeString(taskID)
-		var tid protocol.TaskID
-		copy(tid.Id[:], raw)
+		submitResp := h.handleSubmit(sub, origin)
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
-		resp.SetSubmit(protocol.SubmitResponse{TaskId: tid})
+		resp.SetSubmit(submitResp)
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
-		if h.OnChange != nil {
+		if submitResp.Status == protocol.SubmitStatus_Ok && h.OnChange != nil {
 			h.OnChange()
 		}
 
@@ -160,7 +157,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenInteractive variant is nil")
 			return
 		}
-		h.handleOpenInteractive(conn, req.RequestId, string(oi.RepoPath))
+		origin := h.lookupClientKind(conn.ConnectionID().String())
+		oresp := h.handleOpenInteractive(conn, oi, origin)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
+		resp.SetOpenInteractive(oresp)
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_ClientHello:
 		hello := req.ClientHello()
@@ -192,42 +194,96 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	}
 }
 
-// handleOpenInteractive matches the request's repo to an idle runner, allocates
-// two server-initiated bidirectional streams (one toward the client, one
-// toward the runner), tells the runner via RunnerRequest{open_exec, ...} to
-// hook its end into exec.ExecuteCommand for an interactive PTY claude
-// session, and starts a bytewise splice goroutine between the two streams.
+// handleSubmit resolves the runner selector and either enqueues the task or
+// returns a synchronous error status. The four possible outcomes:
 //
-// The task is registered as Running before the splice begins so the
-// scheduler does not pick it up for a parallel AssignTask. The runner
-// finalizes the task lifecycle by sending TaskStarted (worktree dir filled
-// in) and TaskFinished (exit code from claude) over the regular
-// RunnerControl path.
-func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32, repoPath string) {
-	respond := func(status protocol.OpenInteractiveStatus, tid protocol.TaskID, streamID uint64) {
-		resp := protocol.TaskControlResponse{
-			Kind:      protocol.TaskControlKind_OpenInteractive,
-			RequestId: requestID,
+//   - SubmitStatus_Ok            — exactly one candidate, task created and queued
+//   - SubmitStatus_NoRunner      — no candidates match (Any selector)
+//   - SubmitStatus_PinnedNotFound — no candidates match (pinned selector)
+//   - SubmitStatus_AmbiguousRunner — more than one candidate (error_msg lists hostnames)
+//
+// On Ok, the returned SubmitResponse carries the new TaskId.
+func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind) protocol.SubmitResponse {
+	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
+	// server stays OS-agnostic when matching runner-supplied roots.
+	repo := path.Clean(string(req.RepoPath))
+	cands := h.Registry.Candidates(repo, req.Selector)
+	switch {
+	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}
+	case len(cands) == 0:
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
+	case len(cands) > 1:
+		hostnames := make([]string, len(cands))
+		for i, c := range cands {
+			hostnames[i] = c.Hostname
 		}
-		resp.SetOpenInteractive(protocol.OpenInteractiveResponse{
-			Status:   status,
-			TaskId:   tid,
-			StreamId: streamID,
-		})
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
-		tuiConn.SendMessage(out) //nolint:errcheck
+		msg := []byte("ambiguous: " + strings.Join(hostnames, ", "))
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}
+		resp.SetErrorMsg(msg)
+		return resp
+	}
+	bound := cands[0]
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, bound.ID, req.Selector)
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}
+}
+
+// handleOpenInteractive resolves the runner selector, gates on capacity, and
+// (when all checks pass) allocates two bidirectional streams, binds the task,
+// sends OpenExec to the runner, and starts the splice goroutine.
+//
+// Return value is the synchronous protocol response; the caller sends it over
+// tuiConn. tuiConn may be nil when called from tests that only exercise the
+// error paths (NoRunnerForRepo, RunnerBusy, AmbiguousRunner, PinnedNotFound).
+//
+// Synchronous decision logic (four cases):
+//   - PinnedNotFound   — pinned selector (Kind != Any) but no candidates match
+//   - NoRunnerForRepo  — Any selector and no candidates match
+//   - AmbiguousRunner  — more than one candidate matches
+//   - RunnerBusy       — exactly one candidate but it is at capacity
+//
+// If none of the above apply, the method proceeds with stream setup. Stream
+// errors (CreateBidirectionalStream, SendMessage) return InternalError.
+//
+// The task is registered as Running before the splice begins so the scheduler
+// does not pick it up for a parallel AssignTask. The runner finalizes the task
+// lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
+// (exit code from claude) over the regular RunnerControl path.
+func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind) protocol.OpenInteractiveResponse {
+	errResp := func(status protocol.OpenInteractiveStatus) protocol.OpenInteractiveResponse {
+		return protocol.OpenInteractiveResponse{Status: status}
 	}
 
-	runner, ok := h.Registry.OldestIdleForRepo(repoPath)
-	if !ok || runner.Conn == nil {
-		respond(protocol.OpenInteractiveStatus_NoRunnerForRepo, protocol.TaskID{}, 0)
-		return
+	repo := path.Clean(string(req.RepoPath))
+	cands := h.Registry.Candidates(repo, req.Selector)
+	switch {
+	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
+		return errResp(protocol.OpenInteractiveStatus_PinnedNotFound)
+	case len(cands) == 0:
+		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
+	case len(cands) > 1:
+		return errResp(protocol.OpenInteractiveStatus_AmbiguousRunner)
+	}
+	runner := cands[0]
+
+	// Capacity gate — interactive sessions cannot queue; fail fast if runner is full.
+	if len(runner.ActiveTasks) >= runner.MaxTasks {
+		return errResp(protocol.OpenInteractiveStatus_RunnerBusy)
+	}
+
+	// tuiConn is nil in test invocations that only exercise the error paths above.
+	// A nil conn here indicates a programming error in production callers.
+	if tuiConn == nil {
+		slog.Error("handleOpenInteractive: tuiConn is nil on Ok path")
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 
 	// Allocate the task entry. The TaskKind_Interactive value is the
 	// authoritative marker — empty prompt is incidental.
-	origin := h.lookupClientKind(tuiConn.ConnectionID().String())
-	taskIDHex := h.Tasks.Create(repoPath, "", protocol.TaskKind_Interactive, origin)
+	taskIDHex := h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, runner.ID, req.Selector)
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
@@ -236,43 +292,47 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
 	h.Tasks.Assign(taskIDHex, runner.ID, "")
-	h.Registry.SetStatus(runner.ID, protocol.RunnerStatus_Busy, taskIDHex)
+	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	finishWithError := func(reason string) {
 		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
-		h.Registry.SetStatus(runner.ID, protocol.RunnerStatus_Idle, "")
+		h.Registry.UnbindTask(runner.ID, taskIDHex)
 	}
 
 	tuiStream := tuiConn.CreateBidirectionalStream()
 	if tuiStream == nil {
 		finishWithError("create client-side stream failed")
-		respond(protocol.OpenInteractiveStatus_InternalError, tid, 0)
-		return
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
-	runnerStream := runner.Conn.CreateBidirectionalStream()
+	runnerConn := runner.Conn
+	if runnerConn == nil {
+		_ = tuiStream.CloseBoth()
+		finishWithError("runner conn nil")
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	}
+	runnerStream := runnerConn.CreateBidirectionalStream()
 	if runnerStream == nil {
 		_ = tuiStream.CloseBoth()
 		finishWithError("create runner-side stream failed")
-		respond(protocol.OpenInteractiveStatus_InternalError, tid, 0)
-		return
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 
 	// Tell the runner to wire its stream end to claude.
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExec}
-	rreq.SetOpenExec(protocol.OpenExecRunnerRequest{
+	oer := protocol.OpenExecRunnerRequest{
 		TaskId:   tid,
 		StreamId: uint64(runnerStream.ID()),
-	})
+	}
+	oer.SetRepoPath([]byte(repo))
+	rreq.SetOpenExec(oer)
 	rdata := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
-	if _, _, err := runner.Conn.SendMessage(rdata); err != nil {
+	if _, _, err := runnerConn.SendMessage(rdata); err != nil {
 		_ = tuiStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
 		finishWithError("send open_exec to runner: " + err.Error())
-		respond(protocol.OpenInteractiveStatus_InternalError, tid, 0)
-		return
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 
-	respond(protocol.OpenInteractiveStatus_Ok, tid, uint64(tuiStream.ID()))
 	go func() {
 		spliceBidi(tuiStream, runnerStream, taskIDHex)
 
@@ -291,18 +351,24 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, requestID uint32
 		// must not undo that (the scheduler may have re-bound the
 		// runner to a different task by now).
 		// Cancel is idempotent (skips terminal states), so a TaskFinished
-		// that genuinely arrived first is unaffected. SetIdleIfBoundTo
-		// holds the registry lock for the check + flip, so it cannot
-		// clobber a fresh scheduler assignment that already moved the
+		// that genuinely arrived first is unaffected. UnbindTask is
+		// idempotent (no-op if the task slot is no longer present), so it
+		// cannot clobber a fresh scheduler assignment that already moved the
 		// runner to a different task.
 		if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
 			h.Tasks.Cancel(taskIDHex)
 		}
-		h.Registry.SetIdleIfBoundTo(runner.ID, taskIDHex)
+		h.Registry.UnbindTask(runner.ID, taskIDHex)
 		if h.OnChange != nil {
 			h.OnChange()
 		}
 	}()
+
+	return protocol.OpenInteractiveResponse{
+		Status:   protocol.OpenInteractiveStatus_Ok,
+		TaskId:   tid,
+		StreamId: uint64(tuiStream.ID()),
+	}
 }
 
 // spliceBidi pumps bytes between two bidirectional streams in both directions
@@ -373,8 +439,8 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 		respond(0, 0)
 		return
 	}
-	path := filepath.Join(h.LogsDir, taskID+".log")
-	f, err := os.Open(path)
+	logPath := filepath.Join(h.LogsDir, taskID+".log")
+	f, err := os.Open(logPath)
 	if err != nil {
 		// Includes os.ErrNotExist (no log yet) and any I/O error.
 		respond(0, 0)
@@ -423,16 +489,34 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 // the runner identity precisely, but server-internal logic uses RunnerEntry.ID directly).
 func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	info := protocol.RunnerInfo{
-		Status:      r.Status,
+		Status:      r.Status(),
+		MaxTasks:    uint16(r.MaxTasks),
 		ConnectedAt: uint64(r.ConnectedAt.UnixNano()),
 		LastSeen:    uint64(r.LastSeen.UnixNano()),
 	}
-	info.SetRepoPath([]byte(r.RepoPath))
+	info.SetHostname([]byte(r.Hostname))
 	info.Id = placeholderRunnerID()
-	if r.CurrentTask != "" {
-		raw, _ := hex.DecodeString(r.CurrentTask)
-		copy(info.CurrentTask.Id[:], raw)
+
+	// Populate AllowedRoots.
+	roots := make([]protocol.AllowedRoot, len(r.AllowedRoots))
+	for i, root := range r.AllowedRoots {
+		var ar protocol.AllowedRoot
+		ar.SetPath([]byte(root))
+		roots[i] = ar
 	}
+	info.SetAllowedRoots(roots)
+
+	// Populate ActiveTasks.
+	activeTasks := make([]protocol.ActiveTaskRef, 0, len(r.ActiveTasks))
+	for taskID := range r.ActiveTasks {
+		var ref protocol.ActiveTaskRef
+		raw, _ := hex.DecodeString(taskID)
+		copy(ref.TaskId.Id[:], raw)
+		activeTasks = append(activeTasks, ref)
+	}
+	info.ActiveTasksLen = uint16(len(activeTasks))
+	info.ActiveTasks = activeTasks
+
 	return info
 }
 

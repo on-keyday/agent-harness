@@ -85,6 +85,8 @@ func New(cfg Config) *Server {
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
+		Registry:        s.registry,
+		Tasks:           s.tasks,
 	}
 
 	// publishTaskEvent constructs and publishes a TaskStatusEvent to the
@@ -140,13 +142,20 @@ func New(cfg Config) *Server {
 	}
 	s.tasks.OnCancel = func(id string) {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, protocol.TaskStatus_Cancelled, 0)
+		s.dispatcher.OnCancel(id)
 	}
 
 	// Wire registry hooks.
 	s.registry.OnAdd = func(entry RunnerEntry) {
 		publishRunnerEvent(entry.ID, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
 	}
-	s.registry.OnRemove = func(id string) {
+	s.registry.OnRemove = func(id string, snap RunnerEntry) {
+		// Mark all tasks that were active on the disconnected runner as Failed
+		// before publishing the RunnerOffline event. MarkFailed is idempotent
+		// so it is safe if TaskFinished already processed some of them.
+		for taskID := range snap.ActiveTasks {
+			s.tasks.MarkFailed(taskID, "runner_disconnected")
+		}
 		publishRunnerEvent(id, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
 	}
 
@@ -389,12 +398,10 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	if !ok {
 		return fmt.Errorf("task %s not found", taskID)
 	}
-	var tid protocol.TaskID
-	raw, _ := hex.DecodeString(taskID)
-	copy(tid.Id[:], raw)
-	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
-	req.SetAssignTask(protocol.AssignTask{TaskId: tid, Prompt: []byte(task.Prompt)})
-	data := req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
-	_, _, err := entry.Conn.SendMessage(data)
+	msg, err := buildAssignMsg(task)
+	if err != nil {
+		return fmt.Errorf("buildAssignMsg: %w", err)
+	}
+	_, _, err = entry.Conn.SendMessage(msg)
 	return err
 }

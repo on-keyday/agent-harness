@@ -31,6 +31,14 @@ type TaskEntry struct {
 	EndedAt     *time.Time
 	ExitCode    *int32
 	DiffInfo    []byte
+
+	// Selector is the runner-selection constraint supplied at task submission.
+	// A zero value (Kind == RunnerSelectorKind_Any) means "any available runner".
+	Selector protocol.RunnerSelector
+	// BoundRunnerID, when non-empty, pins this task to a specific runner ID
+	// (the registry's string key). Populated by the scheduler or submit handler
+	// when the caller supplies a ByRunnerId selector.
+	BoundRunnerID string
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -81,21 +89,35 @@ func newTaskID() string {
 // of caller (cli / tui / webui) submitted the task; pass
 // ClientKind_Unspecified when the caller is unknown (e.g. tests, internal
 // scheduler bookkeeping).
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind) string {
+//
+// boundRunnerID pins the task to a specific runner (empty = no pinning).
+// selector is the runner-selection constraint; use a zero value for "any".
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, boundRunnerID string, selector protocol.RunnerSelector) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
-		ID:         id,
-		RepoPath:   repo,
-		Prompt:     prompt,
-		Kind:       kind,
-		OriginKind: origin,
-		Status:     protocol.TaskStatus_Queued,
-		CreatedAt:  time.Now(),
+		ID:            id,
+		RepoPath:      repo,
+		Prompt:        prompt,
+		Kind:          kind,
+		OriginKind:    origin,
+		Status:        protocol.TaskStatus_Queued,
+		CreatedAt:     time.Now(),
+		BoundRunnerID: boundRunnerID,
+		Selector:      selector,
 	}
 	s.order = append(s.order, id)
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_created", TaskID: id, RepoPath: repo, Prompt: prompt, Kind: uint8(kind), OriginKind: uint8(origin)}); err != nil {
+		if err := s.wal.Write(WALEvent{
+			Type:          "task_created",
+			TaskID:        id,
+			RepoPath:      repo,
+			Prompt:        prompt,
+			Kind:          uint8(kind),
+			OriginKind:    uint8(origin),
+			BoundRunnerID: boundRunnerID,
+			Selector:      selector,
+		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
 	}
@@ -207,6 +229,36 @@ func (s *TaskStore) Cancel(id string) {
 	}
 }
 
+// MarkFailed transitions a non-terminal task to Failed, recording reason in DiffInfo.
+// Idempotent: if the task is already in a terminal state (Succeeded, Failed, Cancelled),
+// the call is a no-op. Emits a "task_failed" WAL event with the reason string.
+// This is the preferred path for server-internal failures (e.g. runner disconnected)
+// where there is no meaningful exit code.
+func (s *TaskStore) MarkFailed(id, reason string) {
+	now := time.Now()
+	s.mu.Lock()
+	e, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	// Idempotent: skip if already terminal.
+	switch e.Status {
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+		s.mu.Unlock()
+		return
+	}
+	e.Status = protocol.TaskStatus_Failed
+	e.EndedAt = &now
+	e.DiffInfo = []byte(reason)
+	if s.wal != nil {
+		if err := s.wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, Ts: now.UnixNano()}); err != nil {
+			slog.Error("WAL write failed", "op", "task_failed", "task_id", id, "err", err)
+		}
+	}
+	s.mu.Unlock()
+}
+
 // SetWorktreeDir updates the worktree path for a task (called when the runner reports TaskStarted).
 // Returns false if the task is not present.
 func (s *TaskStore) SetWorktreeDir(id, wt string) bool {
@@ -246,14 +298,18 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			// OriginKind is best-effort: legacy WAL entries (pre-ii) lack
 			// the origin_kind field and unmarshal to 0 (Unspecified),
 			// which is exactly the desired default.
+			// Selector and BoundRunnerID default to zero/empty for pre-3.1
+			// WAL entries, which is the correct "any runner" sentinel.
 			s.tasks[ev.TaskID] = &TaskEntry{
-				ID:         ev.TaskID,
-				RepoPath:   ev.RepoPath,
-				Prompt:     ev.Prompt,
-				Kind:       protocol.TaskKind(ev.Kind),
-				OriginKind: protocol.ClientKind(ev.OriginKind),
-				Status:     protocol.TaskStatus_Queued,
-				CreatedAt:  time.Unix(0, ev.Ts),
+				ID:            ev.TaskID,
+				RepoPath:      ev.RepoPath,
+				Prompt:        ev.Prompt,
+				Kind:          protocol.TaskKind(ev.Kind),
+				OriginKind:    protocol.ClientKind(ev.OriginKind),
+				Status:        protocol.TaskStatus_Queued,
+				CreatedAt:     time.Unix(0, ev.Ts),
+				BoundRunnerID: ev.BoundRunnerID,
+				Selector:      ev.Selector,
 			}
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
@@ -282,6 +338,14 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Status = protocol.TaskStatus_Cancelled
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
+			}
+		case "task_failed":
+			// MarkFailed events: move task to Failed and store reason in DiffInfo.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Status = protocol.TaskStatus_Failed
+				ts := time.Unix(0, ev.Ts)
+				t.EndedAt = &ts
+				t.DiffInfo = []byte(ev.Reason)
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {

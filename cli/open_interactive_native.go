@@ -24,9 +24,17 @@ import (
 // calling RemoteShell (or Stdin/Stdout/Stderr individually) and Close.
 // The runner's exec.ExecuteCommand drives PTY lifecycle on the other side.
 func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentexec.CommandExecutionStream, string, error) {
+	return c.OpenInteractiveWithSelector(ctx, repoPath, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+}
+
+// OpenInteractiveWithSelector is the same as OpenInteractive but accepts an
+// explicit runner selector. Callers that want the Any-runner behaviour can
+// use OpenInteractive directly.
+func (c *Client) OpenInteractiveWithSelector(ctx context.Context, repoPath string, sel protocol.RunnerSelector) (*agentexec.CommandExecutionStream, string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repoPath))
+	oi.Selector = sel
 	req.SetOpenInteractive(oi)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -40,14 +48,8 @@ func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentex
 	if oir == nil {
 		return nil, "", fmt.Errorf("OpenInteractive response variant missing")
 	}
-	switch oir.Status {
-	case 0: // ok
-	case 1:
-		return nil, "", fmt.Errorf("no idle runner for repo %q", repoPath)
-	case 2:
-		return nil, "", fmt.Errorf("runner busy")
-	default:
-		return nil, "", fmt.Errorf("server-side error opening interactive (status=%d)", oir.Status)
+	if err := openInteractiveStatusError(repoPath, oir.Status); err != nil {
+		return nil, "", err
 	}
 
 	taskIDHex := hex.EncodeToString(oir.TaskId.Id[:])
@@ -59,13 +61,40 @@ func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentex
 	return agentexec.NewCommandExecutionStream(st), taskIDHex, nil
 }
 
+// openInteractiveStatusError converts a non-Ok OpenInteractiveStatus into a
+// Go error. Returns nil for OpenInteractiveStatus_Ok.
+func openInteractiveStatusError(repo string, status protocol.OpenInteractiveStatus) error {
+	switch status {
+	case protocol.OpenInteractiveStatus_Ok:
+		return nil
+	case protocol.OpenInteractiveStatus_NoRunnerForRepo:
+		return fmt.Errorf("interactive no_runner_for_repo: no idle runner for repo %q", repo)
+	case protocol.OpenInteractiveStatus_RunnerBusy:
+		return fmt.Errorf("interactive runner_busy: runner is at capacity")
+	case protocol.OpenInteractiveStatus_AmbiguousRunner:
+		return fmt.Errorf("interactive ambiguous_runner: multiple runners match; pin one with --runner/--host/--ip")
+	case protocol.OpenInteractiveStatus_PinnedNotFound:
+		return fmt.Errorf("interactive pinned_not_found: the specified runner was not found")
+	case protocol.OpenInteractiveStatus_InternalError:
+		return fmt.Errorf("interactive internal_error")
+	default:
+		return fmt.Errorf("interactive error (status=%d)", status)
+	}
+}
+
 // Interactive splices stdin/stdout/SIGWINCH between the local terminal and
 // the remote PTY for an interactive claude session in repo. Method form:
 // callable on an existing *Client without re-dialing. The caller's terminal
 // must be a real tty (RemoteShell flips it into raw mode). Returns the new
 // task's hex id even on error so the caller can surface it for cleanup.
 func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
-	stream, taskIDHex, err := c.OpenInteractive(ctx, repo)
+	return c.InteractiveWithSelector(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+}
+
+// InteractiveWithSelector is the same as Interactive but accepts an explicit
+// runner selector.
+func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
+	stream, taskIDHex, err := c.OpenInteractiveWithSelector(ctx, repo, sel)
 	if err != nil {
 		return taskIDHex, err
 	}

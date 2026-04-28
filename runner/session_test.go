@@ -3,15 +3,18 @@ package runner
 import (
 	"bytes"
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -45,11 +48,11 @@ func TestHandleAssignSuccessSequence(t *testing.T) {
 	ms := &mockSender{}
 	fakePath, _ := filepath.Abs("../testdata/fake-claude.sh") // relative from runner/
 	s := &Session{
-		RepoPath:  repo,
-		ClaudeBin: fakePath,
-		Timeout:   5 * time.Second,
-		Sender:    ms,
-		Now:       time.Now,
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fakePath,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
 	}
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xAB
@@ -57,6 +60,7 @@ func TestHandleAssignSuccessSequence(t *testing.T) {
 		TaskId: protocol.TaskID{Id: taskIDBytes},
 		Prompt: []byte("hello"),
 	}
+	req.SetRepoPath([]byte(repo))
 	s.handleAssign(context.Background(), req)
 
 	// Should have sent at least 3 control messages: Accepted, Started, Finished.
@@ -116,13 +120,14 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 	// Use a non-existent repo path; WorktreeManager.Create will fail.
 	ms := &mockSender{}
 	s := &Session{
-		RepoPath:  "/no/such/repo",
-		ClaudeBin: "/bin/true",
-		Timeout:   1 * time.Second,
-		Sender:    ms,
-		Now:       time.Now,
+		AllowedRoots: []string{"/no/such/repo"},
+		ClaudeBin:    "/bin/true",
+		Timeout:      1 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
 	}
 	req := &protocol.AssignTask{TaskId: protocol.TaskID{}, Prompt: []byte("x")}
+	req.SetRepoPath([]byte("/no/such/repo"))
 	s.handleAssign(context.Background(), req)
 
 	// Should have sent: TaskAccepted, then TaskFinished with error info.
@@ -142,6 +147,197 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 	}
 }
 
+// TestHandleAssignPanicSendsTaskFinished verifies that a panic inside handleAssign
+// is recovered and reported as a TaskFinished message so the server doesn't wait
+// forever. Uses the testHookHandleAssign seam to inject the panic.
+func TestHandleAssignPanicSendsTaskFinished(t *testing.T) {
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{"/some/repo"},
+		ClaudeBin:    "/bin/true",
+		Timeout:      1 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+		testHookHandleAssign: func() {
+			panic("injected test panic")
+		},
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xCC
+	req := &protocol.AssignTask{
+		TaskId: protocol.TaskID{Id: taskIDBytes},
+		Prompt: []byte("test"),
+	}
+	req.SetRepoPath([]byte("/some/repo"))
+
+	// handleAssign should not re-panic; it should send Accepted then Finished.
+	s.handleAssign(context.Background(), req)
+
+	// Must have sent at least TaskAccepted + TaskFinished.
+	if len(ms.sent) < 2 {
+		t.Fatalf("expected ≥2 messages (Accepted + Finished), got %d", len(ms.sent))
+	}
+
+	first := decodeRunnerMsg(t, ms.sent[0])
+	if first.Kind != protocol.RunnerMessageType_TaskAccepted {
+		t.Fatalf("first message should be TaskAccepted, got %v", first.Kind)
+	}
+
+	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
+	if last.Kind != protocol.RunnerMessageType_TaskFinished {
+		t.Fatalf("last message should be TaskFinished, got %v", last.Kind)
+	}
+	tf := last.TaskFinished()
+	if tf == nil || tf.ExitCode == 0 {
+		t.Fatalf("expected non-zero exit on panic, got %+v", tf)
+	}
+}
+
+// TestSessionGetWorktreeManagerCachesPerRepo verifies that getWorktreeManager
+// returns the same *WorktreeManager for the same repo path across calls.
+func TestSessionGetWorktreeManagerCachesPerRepo(t *testing.T) {
+	s := &Session{}
+	wm1 := s.getWorktreeManager("/repo/a")
+	wm2 := s.getWorktreeManager("/repo/a")
+	if wm1 != wm2 {
+		t.Errorf("expected same WorktreeManager instance for same repo, got different pointers")
+	}
+
+	wm3 := s.getWorktreeManager("/repo/b")
+	if wm3 == wm1 {
+		t.Errorf("expected different WorktreeManager instance for different repo")
+	}
+}
+
+// TestSessionRepoAllowedDelegatesToProtocol verifies that repoAllowed uses
+// protocol.IsUnderRoot semantics — same rules as the server side.
+func TestSessionRepoAllowedDelegatesToProtocol(t *testing.T) {
+	s := &Session{AllowedRoots: []string{"/home/user/repos"}}
+
+	cases := []struct {
+		repo    string
+		allowed bool
+	}{
+		{"/home/user/repos", true},
+		{"/home/user/repos/project", true},
+		{"/home/user/repos/a/b/c", true},
+		{"/home/user/other", false},
+		{"/home/user", false},
+		{"relative/path", false},
+	}
+
+	for _, tc := range cases {
+		got := s.repoAllowed(tc.repo)
+		if got != tc.allowed {
+			t.Errorf("repoAllowed(%q) = %v, want %v", tc.repo, got, tc.allowed)
+		}
+	}
+}
+
+// collectTaskFinished decodes all sent messages from a mockSender and returns a
+// map keyed by TaskID.Id for every TaskFinished message found.
+func collectTaskFinished(t *testing.T, sent [][]byte) map[[16]byte]protocol.TaskFinished {
+	t.Helper()
+	result := make(map[[16]byte]protocol.TaskFinished)
+	for _, raw := range sent {
+		msg := decodeRunnerMsg(t, raw)
+		if msg.Kind != protocol.RunnerMessageType_TaskFinished {
+			continue
+		}
+		tf := msg.TaskFinished()
+		if tf == nil {
+			continue
+		}
+		result[tf.TaskId.Id] = *tf
+	}
+	return result
+}
+
+// TestSessionPanicIsolatesSiblingTask verifies that a panic in handleAssign for
+// one task is recovered and reported as TaskFinished (with ExitCode -1), while a
+// concurrently running sibling task completes normally with ExitCode 0.
+//
+// The test uses testHookHandleAssign to inject a panic into the FIRST task only.
+// A sync.Once ensures exactly one invocation triggers the panic; subsequent calls
+// (from the sibling goroutine) return without panicking.
+func TestSessionPanicIsolatesSiblingTask(t *testing.T) {
+	repo := initRepo(t)
+	ms := &mockSender{}
+	fakePath, _ := filepath.Abs("../testdata/fake-claude.sh")
+
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fakePath,
+		Timeout:      10 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+	}
+
+	// Arm panic for the FIRST invocation only; subsequent invocations are no-ops.
+	var once sync.Once
+	s.testHookHandleAssign = func() {
+		once.Do(func() {
+			panic("test-panic-isolation")
+		})
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// Task 0x01 — panics.
+	go func() {
+		defer wg.Done()
+		req := &protocol.AssignTask{
+			TaskId: protocol.TaskID{Id: [16]byte{0x01}},
+			Prompt: []byte("task-a"),
+		}
+		req.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), req)
+	}()
+
+	// Task 0x02 — runs normally. Small delay to allow 0x01 to fire the once.Do first.
+	go func() {
+		defer wg.Done()
+		time.Sleep(80 * time.Millisecond)
+		req := &protocol.AssignTask{
+			TaskId: protocol.TaskID{Id: [16]byte{0x02}},
+			Prompt: []byte("task-b"),
+		}
+		req.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), req)
+	}()
+
+	wg.Wait()
+
+	ms.mu.Lock()
+	sentCopy := append([][]byte{}, ms.sent...)
+	ms.mu.Unlock()
+
+	finished := collectTaskFinished(t, sentCopy)
+
+	// Task 0x01 must be panic-reported: ExitCode -1, DiffInfo contains "runner_panic".
+	tf01, ok := finished[[16]byte{0x01}]
+	if !ok {
+		t.Fatal("no TaskFinished for task 0x01")
+	}
+	if tf01.ExitCode != -1 {
+		t.Errorf("task 0x01: want ExitCode -1, got %d", tf01.ExitCode)
+	}
+	if !bytes.Contains(tf01.DiffInfo, []byte("runner_panic")) {
+		t.Errorf("task 0x01: expected 'runner_panic' in DiffInfo, got %q", tf01.DiffInfo)
+	}
+
+	// Task 0x02 must have succeeded: ExitCode 0.
+	tf02, ok := finished[[16]byte{0x02}]
+	if !ok {
+		t.Fatal("no TaskFinished for task 0x02")
+	}
+	if tf02.ExitCode != 0 {
+		t.Errorf("task 0x02: want ExitCode 0 (success), got %d", tf02.ExitCode)
+	}
+}
+
 // decodeRunnerMsg parses the wire-prefixed RunnerControl payload from a Sender.Send call.
 func decodeRunnerMsg(t *testing.T, raw []byte) *protocol.RunnerMessage {
 	t.Helper()
@@ -153,4 +349,93 @@ func decodeRunnerMsg(t *testing.T, raw []byte) *protocol.RunnerMessage {
 		t.Fatalf("decode runner msg: %v", err)
 	}
 	return msg
+}
+
+// fakeBidiLookup is a minimal peer.BidirectionalStreamLookup implementation
+// that returns pre-registered streams for the requested StreamID.
+type fakeBidiLookup struct {
+	streams map[trsf.StreamID]trsf.BidirectionalStream
+}
+
+func (l *fakeBidiLookup) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
+	return l.streams[id]
+}
+
+// noopBidiStream is a minimal trsf.BidirectionalStream stub. Reads return EOF
+// immediately and CloseBoth flips a flag so tests can assert teardown.
+type noopBidiStream struct {
+	streamID trsf.StreamID
+	closed   atomic.Bool
+}
+
+func (s *noopBidiStream) ID() trsf.StreamID                       { return s.streamID }
+func (s *noopBidiStream) Write(p []byte) (int, error)             { return len(p), nil }
+func (s *noopBidiStream) Close() error                            { return nil }
+func (s *noopBidiStream) WriteContext(_ context.Context, p []byte) (int, error) {
+	return len(p), nil
+}
+func (s *noopBidiStream) HasSendData() bool                    { return false }
+func (s *noopBidiStream) Completed() bool                      { return true }
+func (s *noopBidiStream) AppendData(_ bool, _ ...[]byte) error { return nil }
+func (s *noopBidiStream) AppendDataContext(_ context.Context, _ bool, _ ...[]byte) error {
+	return nil
+}
+func (s *noopBidiStream) Read([]byte) (int, error)                            { return 0, io.EOF }
+func (s *noopBidiStream) ReadContext(_ context.Context, _ []byte) (int, error) { return 0, io.EOF }
+func (s *noopBidiStream) ReadDirect(_ uint64) ([]byte, bool, error)           { return nil, true, nil }
+func (s *noopBidiStream) ReadDirectContext(_ context.Context, _ uint64) ([]byte, bool, error) {
+	return nil, true, nil
+}
+func (s *noopBidiStream) HasRecvData() bool { return false }
+func (s *noopBidiStream) EOF() bool         { return true }
+func (s *noopBidiStream) Cancel()           {}
+func (s *noopBidiStream) CloseBoth() error  { s.closed.Store(true); return nil }
+
+// TestHandleOpenExecGateFailureClosesStream verifies that when the AllowedRoots
+// gate rejects an OpenExec request, the runner closes the server-allocated
+// bidi stream before returning. Without this the server-side splice goroutine
+// would block on ReadDirect forever and the TUI behind it would hang.
+func TestHandleOpenExecGateFailureClosesStream(t *testing.T) {
+	ms := &mockSender{}
+	const streamID trsf.StreamID = 99
+	stream := &noopBidiStream{streamID: streamID}
+	lookup := &fakeBidiLookup{streams: map[trsf.StreamID]trsf.BidirectionalStream{streamID: stream}}
+
+	s := &Session{
+		AllowedRoots: []string{"/allowed"},
+		ClaudeBin:    "/bin/true",
+		Sender:       ms,
+		Streams:      lookup,
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xDE
+	oer := &protocol.OpenExecRunnerRequest{
+		TaskId:   protocol.TaskID{Id: taskIDBytes},
+		StreamId: uint64(streamID),
+	}
+	oer.SetRepoPath([]byte("/disallowed/repo"))
+
+	s.handleOpenExec(context.Background(), oer)
+
+	if !stream.closed.Load() {
+		t.Fatal("stream.CloseBoth was not called on gate failure — server splice would hang")
+	}
+
+	// Should have sent TaskAccepted then TaskFinished with exit=-1.
+	if len(ms.sent) < 2 {
+		t.Fatalf("expected ≥2 messages, got %d", len(ms.sent))
+	}
+	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
+	if last.Kind != protocol.RunnerMessageType_TaskFinished {
+		t.Fatalf("last kind=%v want TaskFinished", last.Kind)
+	}
+	tf := last.TaskFinished()
+	if tf == nil || tf.ExitCode != -1 {
+		t.Fatalf("TaskFinished=%+v want exit=-1", tf)
+	}
+	if !bytes.Contains(tf.DiffInfo, []byte("repo_not_allowed")) {
+		t.Fatalf("DiffInfo=%q want repo_not_allowed reason", tf.DiffInfo)
+	}
 }

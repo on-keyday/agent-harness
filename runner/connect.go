@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -17,7 +18,9 @@ import (
 // Config holds the configuration for the runner connection.
 type Config struct {
 	ServerCID       objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
-	RepoPath        string                // absolute path of the repo this runner serves
+	AllowedRoots    []string              // absolute repo paths (or root prefixes) this runner serves
+	MaxTasks        int                   // maximum concurrent tasks (0 → defaults to 1)
+	Hostname        string                // hostname reported in Hello (empty → no hostname sent)
 	ClaudeBin       string                // path to the claude binary
 	ExtraClaudeArgs []string              // forwarded to every claude invocation (before -p)
 	Logger          *slog.Logger
@@ -51,7 +54,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
-		RepoPath:        cfg.RepoPath,
+		AllowedRoots:    cfg.AllowedRoots,
 		ClaudeBin:       cfg.ClaudeBin,
 		ExtraClaudeArgs: cfg.ExtraClaudeArgs,
 		Sender:          sender,
@@ -61,39 +64,33 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-		if kind != wire.ApplicationPayloadKind_RunnerControl {
-			return // server side never sends TaskControl/Pubsub-other to runners
-		}
-		req := &protocol.RunnerRequest{}
-		if _, derr := req.Decode(payload); derr != nil {
-			cfg.Logger.Error("runner_request decode", "err", derr)
-			return
-		}
-		switch req.Kind {
-		case protocol.RunnerRequestType_AssignTask:
-			at := req.AssignTask()
-			if at == nil {
-				return
-			}
-			// Spawn the task handler so the receive loop stays responsive.
-			go session.handleAssign(ctx, at)
-		case protocol.RunnerRequestType_CancelTask:
-			// v1 does not implement runner-side cancel; log and ignore.
-			cfg.Logger.Info("runner: cancel not implemented", "kind", req.Kind)
-		case protocol.RunnerRequestType_OpenExec:
-			oer := req.OpenExec()
-			if oer == nil {
-				return
-			}
-			go session.handleOpenExec(ctx, oer)
-		}
+		dispatchRunnerRequest(ctx, session, cfg.Logger, kind, payload)
 	})
 	pc.Start(ctx)
 
-	// Send Hello — the server's registry uses this to bind ConnectionID → repo.
+	// Build and send Hello — the server's registry uses this to bind
+	// ConnectionID → allowed_roots / max_tasks / hostname.
 	hello := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
 	h := protocol.RunnerHello{Version: 1}
-	h.SetRepoPath([]byte(cfg.RepoPath))
+
+	maxTasks := cfg.MaxTasks
+	if maxTasks < 1 {
+		maxTasks = 1
+	}
+	h.MaxTasks = uint16(maxTasks)
+
+	if cfg.Hostname != "" {
+		h.SetHostname([]byte(cfg.Hostname))
+	}
+
+	roots := make([]protocol.AllowedRoot, 0, len(cfg.AllowedRoots))
+	for _, r := range cfg.AllowedRoots {
+		var ar protocol.AllowedRoot
+		ar.SetPath([]byte(r))
+		roots = append(roots, ar)
+	}
+	h.SetAllowedRoots(roots)
+
 	hello.SetHello(h)
 	helloBytes := hello.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 	if err := sender.Send(helloBytes); err != nil {
@@ -101,6 +98,49 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 
 	return pc.Wait(ctx)
+}
+
+// dispatchRunnerRequest decodes an inbound control payload and dispatches it to
+// the appropriate session handler. Extracted from the OnControl closure so that
+// tests can call it directly without a live peer connection.
+func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logger, kind wire.ApplicationPayloadKind, payload []byte) {
+	if kind != wire.ApplicationPayloadKind_RunnerControl {
+		return // server side never sends TaskControl/Pubsub-other to runners
+	}
+	req := &protocol.RunnerRequest{}
+	if _, derr := req.Decode(payload); derr != nil {
+		log.Error("runner_request decode", "err", derr)
+		return
+	}
+	switch req.Kind {
+	case protocol.RunnerRequestType_AssignTask:
+		at := req.AssignTask()
+		if at == nil {
+			return
+		}
+		// Spawn the task handler so the receive loop stays responsive.
+		go session.handleAssign(ctx, at)
+	case protocol.RunnerRequestType_CancelTask:
+		ct := req.CancelTask()
+		if ct == nil {
+			return
+		}
+		taskIDHex := hex.EncodeToString(ct.TaskId.Id[:])
+		session.mu.Lock()
+		te, ok := session.tasks[taskIDHex]
+		session.mu.Unlock()
+		if ok {
+			te.cancel()
+		} else {
+			log.Info("runner: cancel for unknown task", "task_id", taskIDHex)
+		}
+	case protocol.RunnerRequestType_OpenExec:
+		oer := req.OpenExec()
+		if oer == nil {
+			return
+		}
+		go session.handleOpenExec(ctx, oer)
+	}
 }
 
 // peerSender adapts *peer.Conn to the runner.Sender interface so existing

@@ -1,4 +1,4 @@
-//go:build integration
+////go:build integration
 
 package integration
 
@@ -67,7 +67,10 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	}
 
 	// Random-ish port to avoid collision when this test is run repeatedly.
-	addr := "localhost:18539"
+	// Use 127.0.0.1 explicitly: "localhost" resolves to ::1 on systems where
+	// IPv6 is preferred, but the http server only listens on IPv4 — the dial
+	// would then connect-refuse on [::1]:18539.
+	addr := "127.0.0.1:18539"
 	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
 		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 	if err != nil {
@@ -92,9 +95,9 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	runnerDone := make(chan error, 1)
 	go func() {
 		runnerDone <- runner.Run(ctx, runner.Config{
-			ServerCID: peerCID,
-			RepoPath:  repo,
-			ClaudeBin: fakeClaude,
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			ClaudeBin:    fakeClaude,
 		})
 	}()
 

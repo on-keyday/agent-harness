@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -69,5 +71,44 @@ func TestCreateWorktreeWithDirtyFile(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "new.txt"), []byte("uncommitted"), 0o644)
 	if err := wm.Remove("dirty"); err != nil {
 		t.Fatalf("Remove should succeed despite dirty changes: %v", err)
+	}
+}
+
+// TestWorktreeManagerSerializesSameRepo verifies that concurrent Create/Remove
+// calls on the same WorktreeManager do not corrupt the git worktree list.
+// The -race flag + -count=10 catches any mutex regression.
+func TestWorktreeManagerSerializesSameRepo(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+
+	const n = 5
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			id := fmt.Sprintf("concurrent-%d", idx)
+			dir, err := wm.Create(id)
+			if err != nil {
+				errs[idx] = fmt.Errorf("Create(%s): %w", id, err)
+				return
+			}
+			if _, err := os.Stat(dir); err != nil {
+				errs[idx] = fmt.Errorf("stat after Create(%s): %w", id, err)
+				return
+			}
+			if err := wm.Remove(id); err != nil {
+				errs[idx] = fmt.Errorf("Remove(%s): %w", id, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
 	}
 }

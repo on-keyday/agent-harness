@@ -281,6 +281,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Bubbletea reports Ctrl+Enter as Ctrl+J on most terminals.
 				repo := a.popup.Repo()
 				prompt := a.popup.Prompt()
+				host := a.popup.Host()
 				a.popup.Close()
 				if prompt == "" {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
@@ -290,12 +291,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmit(a.client, repo, prompt)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
 			case tea.KeyShiftTab:
-				a.popup.CycleRepo(-1)
+				a.popup.CycleHost(+1)
 				return a, nil
 			}
 			var pcmd tea.Cmd
@@ -327,6 +328,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `s` opens the submit popup when not in cmdline focus / filter edit.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "s" {
 			a.popup.SetRepoChoices(uniqueRepoPaths(a.runnersSnapshot), a.defaultRepo)
+			a.popup.SetHostChoices(uniqueHostnames(a.runnersSnapshot))
 			a.popup.Open()
 			return a, nil
 		}
@@ -580,17 +582,20 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server
-		// matches it byte-for-byte against runner-registered RepoPath. We
-		// cannot filepath.Abs() here because the TUI host and runner host
-		// may have different OSes (e.g. Windows TUI + Linux runner), where
-		// local Abs would mangle a valid runner path into a meaningless
-		// drive-prefixed one.
+		// matches it byte-for-byte against runner-registered AllowedRoots.
+		// We cannot filepath.Abs() here because the TUI host and runner
+		// host may have different OSes (e.g. Windows TUI + Linux runner),
+		// where local Abs would mangle a valid runner path into a
+		// meaningless drive-prefixed one.
 		path := v.Path
 		hasRunner := false
+	outer:
 		for _, r := range a.runnersSnapshot {
-			if string(r.RepoPath) == path {
-				hasRunner = true
-				break
+			for _, root := range r.AllowedRoots {
+				if string(root.Path) == path {
+					hasRunner = true
+					break outer
+				}
 			}
 		}
 		if !hasRunner {
@@ -618,22 +623,45 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
-// uniqueRepoPaths returns the de-duplicated list of RepoPath strings from a
+// uniqueRepoPaths returns the de-duplicated list of allowed-root paths from a
 // runner snapshot, in stable (sorted) order — used to populate the submit
 // popup's repo selector.
 func uniqueRepoPaths(rs []protocol.RunnerInfo) []string {
 	seen := make(map[string]struct{}, len(rs))
 	out := make([]string, 0, len(rs))
 	for _, r := range rs {
-		p := string(r.RepoPath)
-		if p == "" {
+		for _, root := range r.AllowedRoots {
+			p := string(root.Path)
+			if p == "" {
+				continue
+			}
+			if _, ok := seen[p]; ok {
+				continue
+			}
+			seen[p] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// uniqueHostnames returns the de-duplicated list of runner hostnames from a
+// snapshot, in stable (sorted) order — used to populate the submit popup's
+// optional host-pin selector.
+func uniqueHostnames(rs []protocol.RunnerInfo) []string {
+	seen := make(map[string]struct{}, len(rs))
+	out := make([]string, 0, len(rs))
+	for _, r := range rs {
+		h := string(r.Hostname)
+		if h == "" {
 			continue
 		}
-		if _, ok := seen[p]; ok {
+		if _, ok := seen[h]; ok {
 			continue
 		}
-		seen[p] = struct{}{}
-		out = append(out, p)
+		seen[h] = struct{}{}
+		out = append(out, h)
 	}
 	sort.Strings(out)
 	return out
