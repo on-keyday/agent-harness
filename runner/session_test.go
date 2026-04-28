@@ -3,15 +3,18 @@ package runner
 import (
 	"bytes"
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -346,4 +349,93 @@ func decodeRunnerMsg(t *testing.T, raw []byte) *protocol.RunnerMessage {
 		t.Fatalf("decode runner msg: %v", err)
 	}
 	return msg
+}
+
+// fakeBidiLookup is a minimal peer.BidirectionalStreamLookup implementation
+// that returns pre-registered streams for the requested StreamID.
+type fakeBidiLookup struct {
+	streams map[trsf.StreamID]trsf.BidirectionalStream
+}
+
+func (l *fakeBidiLookup) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
+	return l.streams[id]
+}
+
+// noopBidiStream is a minimal trsf.BidirectionalStream stub. Reads return EOF
+// immediately and CloseBoth flips a flag so tests can assert teardown.
+type noopBidiStream struct {
+	streamID trsf.StreamID
+	closed   atomic.Bool
+}
+
+func (s *noopBidiStream) ID() trsf.StreamID                       { return s.streamID }
+func (s *noopBidiStream) Write(p []byte) (int, error)             { return len(p), nil }
+func (s *noopBidiStream) Close() error                            { return nil }
+func (s *noopBidiStream) WriteContext(_ context.Context, p []byte) (int, error) {
+	return len(p), nil
+}
+func (s *noopBidiStream) HasSendData() bool                    { return false }
+func (s *noopBidiStream) Completed() bool                      { return true }
+func (s *noopBidiStream) AppendData(_ bool, _ ...[]byte) error { return nil }
+func (s *noopBidiStream) AppendDataContext(_ context.Context, _ bool, _ ...[]byte) error {
+	return nil
+}
+func (s *noopBidiStream) Read([]byte) (int, error)                            { return 0, io.EOF }
+func (s *noopBidiStream) ReadContext(_ context.Context, _ []byte) (int, error) { return 0, io.EOF }
+func (s *noopBidiStream) ReadDirect(_ uint64) ([]byte, bool, error)           { return nil, true, nil }
+func (s *noopBidiStream) ReadDirectContext(_ context.Context, _ uint64) ([]byte, bool, error) {
+	return nil, true, nil
+}
+func (s *noopBidiStream) HasRecvData() bool { return false }
+func (s *noopBidiStream) EOF() bool         { return true }
+func (s *noopBidiStream) Cancel()           {}
+func (s *noopBidiStream) CloseBoth() error  { s.closed.Store(true); return nil }
+
+// TestHandleOpenExecGateFailureClosesStream verifies that when the AllowedRoots
+// gate rejects an OpenExec request, the runner closes the server-allocated
+// bidi stream before returning. Without this the server-side splice goroutine
+// would block on ReadDirect forever and the TUI behind it would hang.
+func TestHandleOpenExecGateFailureClosesStream(t *testing.T) {
+	ms := &mockSender{}
+	const streamID trsf.StreamID = 99
+	stream := &noopBidiStream{streamID: streamID}
+	lookup := &fakeBidiLookup{streams: map[trsf.StreamID]trsf.BidirectionalStream{streamID: stream}}
+
+	s := &Session{
+		AllowedRoots: []string{"/allowed"},
+		ClaudeBin:    "/bin/true",
+		Sender:       ms,
+		Streams:      lookup,
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xDE
+	oer := &protocol.OpenExecRunnerRequest{
+		TaskId:   protocol.TaskID{Id: taskIDBytes},
+		StreamId: uint64(streamID),
+	}
+	oer.SetRepoPath([]byte("/disallowed/repo"))
+
+	s.handleOpenExec(context.Background(), oer)
+
+	if !stream.closed.Load() {
+		t.Fatal("stream.CloseBoth was not called on gate failure — server splice would hang")
+	}
+
+	// Should have sent TaskAccepted then TaskFinished with exit=-1.
+	if len(ms.sent) < 2 {
+		t.Fatalf("expected ≥2 messages, got %d", len(ms.sent))
+	}
+	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
+	if last.Kind != protocol.RunnerMessageType_TaskFinished {
+		t.Fatalf("last kind=%v want TaskFinished", last.Kind)
+	}
+	tf := last.TaskFinished()
+	if tf == nil || tf.ExitCode != -1 {
+		t.Fatalf("TaskFinished=%+v want exit=-1", tf)
+	}
+	if !bytes.Contains(tf.DiffInfo, []byte("repo_not_allowed")) {
+		t.Fatalf("DiffInfo=%q want repo_not_allowed reason", tf.DiffInfo)
+	}
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // stubConn is a minimal ConnHandle used to mark a RunnerEntry as connected
@@ -439,5 +440,61 @@ func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
 	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
 	if resp.Status != protocol.OpenInteractiveStatus_PinnedNotFound {
 		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
+	}
+}
+
+// TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec verifies the Ok path of
+// handleOpenInteractive emits a RunnerControl/OpenExec message that carries
+// the cleaned RepoPath. Regression guard: the original implementation only
+// set TaskId/StreamId on the OpenExecRunnerRequest, leaving RepoPath empty,
+// which made the runner's AllowedRoots gate reject every interactive task
+// with TaskFinished exit=-1.
+func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9100-1"), nextStreamID: 42}
+	h.Registry.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/shared"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+		Conn: runnerConn,
+	})
+
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9101-2"), nextStreamID: 7}
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/shared/repo"))
+
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+
+	// Find the OpenExec message captured on the runner conn. The handler also
+	// sends nothing else on this conn during Ok, so sent[0] is the target.
+	if len(runnerConn.sent) != 1 {
+		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
+	}
+	raw := runnerConn.sent[0]
+	if raw[0] != byte(wire.ApplicationPayloadKind_RunnerControl) {
+		t.Fatalf("first byte=%d, want RunnerControl kind", raw[0])
+	}
+
+	rr := &protocol.RunnerRequest{}
+	if _, err := rr.Decode(raw[1:]); err != nil {
+		t.Fatalf("decode RunnerRequest: %v", err)
+	}
+	if rr.Kind != protocol.RunnerRequestType_OpenExec {
+		t.Fatalf("kind=%v want OpenExec", rr.Kind)
+	}
+	oer := rr.OpenExec()
+	if oer == nil {
+		t.Fatal("OpenExec variant nil")
+	}
+	if got, want := string(oer.RepoPath), "/shared/repo"; got != want {
+		t.Fatalf("OpenExec.RepoPath=%q want %q", got, want)
+	}
+	if oer.StreamId != 42 {
+		t.Fatalf("OpenExec.StreamId=%d want 42 (runner-side stream)", oer.StreamId)
 	}
 }

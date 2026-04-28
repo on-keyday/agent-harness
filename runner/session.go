@@ -273,8 +273,20 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
+	// Acquire the server-allocated bidi stream BEFORE any gate / setup checks.
+	// The server side has already created its end and started splicing it to
+	// the TUI; any error path that returns without closing this stream would
+	// leave the server's splice goroutine — and the TUI it serves — blocked
+	// forever on ReadDirect.
+	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(oer.StreamId))
+	if stream == nil {
+		finishWithError(-1, "runner: server-allocated exec stream not visible")
+		return
+	}
+
 	// Gate: check repo is under an allowed root.
 	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
+		_ = stream.CloseBoth()
 		finishWithError(-1, "repo_not_allowed: "+repoPath)
 		return
 	}
@@ -296,12 +308,6 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		delete(s.tasks, taskIDHex)
 		s.mu.Unlock()
 	}()
-
-	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(oer.StreamId))
-	if stream == nil {
-		finishWithError(-1, "runner: server-allocated exec stream not visible")
-		return
-	}
 
 	// Step 2: worktree.
 	wm := s.getWorktreeManager(repoPath)
