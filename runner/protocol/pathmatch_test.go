@@ -21,6 +21,17 @@ func TestIsUnderRoot(t *testing.T) {
 		{"root parent", "/home/kforfk/workspace", "/home/kforfk", false},
 		{"posix root covers any abs", "/", "/anything/here", true},
 		{"posix root vs itself", "/", "/", true},
+
+		// Windows drive-letter forms (runner emits these via filepath.ToSlash).
+		{"win exact", "C:/Users/foo", "C:/Users/foo", true},
+		{"win child", "C:/Users/foo", "C:/Users/foo/bar", true},
+		{"win deep child", "C:/Users/foo", "C:/Users/foo/bar/baz", true},
+		{"win sibling lookalike", "C:/Users/foo", "C:/Users/foo-evil", false},
+		{"win different drive", "C:/Users/foo", "D:/Users/foo", false},
+		{"win parent", "C:/Users/foo", "C:/Users", false},
+		{"win lowercase drive", "c:/users/foo", "c:/users/foo/bar", true},
+		{"win drive only refused (no slash)", "C:Users/foo", "C:Users/foo/bar", false},
+		{"win cross-form mismatch", "/Users/foo", "C:/Users/foo", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

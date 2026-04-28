@@ -1,5 +1,6 @@
 CMDS := agent-runner harness-cli harness-server harness-tui
-BIN_TARGETS := $(addprefix bin/,$(CMDS))
+GOEXE := $(shell go env GOEXE)
+BIN_TARGETS := $(addsuffix $(GOEXE),$(addprefix bin/,$(CMDS)))
 
 .PHONY: all build check webui-build wasm-check test vet clean protoregen help $(BIN_TARGETS)
 
@@ -17,7 +18,7 @@ webui-build:
 # (cmd/harness-server uses //go:embed which needs static/main.wasm).
 build: webui-build $(BIN_TARGETS)
 
-$(BIN_TARGETS): bin/%:
+$(BIN_TARGETS): bin/%$(GOEXE):
 	@mkdir -p bin
 	go build -o $@ ./cmd/$*
 
