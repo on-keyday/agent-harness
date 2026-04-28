@@ -36,6 +36,7 @@ format TaskID:
 
 format AssignTask:
     task_id :TaskID
+    auth_ticket :[16]u8
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     prompt :[..]u8
@@ -45,6 +46,7 @@ format CancelTask:
 
 format OpenExecRunnerRequest:
     task_id :TaskID
+    auth_ticket :[16]u8
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     stream_id :u64    # bidi stream the server has just created toward this
