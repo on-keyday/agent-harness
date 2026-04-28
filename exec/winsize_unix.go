@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 // startWindowSizeForwarder spawns a goroutine that calls sendSize whenever
@@ -36,9 +36,9 @@ func startWindowSizeForwarder(sendSize func() error) func() {
 }
 
 func (w *CommandExecutionStream) sendWindowSize() error {
-	sz, err := pty.GetsizeFull(os.Stdin)
+	sz, err := unix.IoctlGetWinsize(int(os.Stdin.Fd()), unix.TIOCGWINSZ)
 	if err != nil {
 		return err
 	}
-	return w.SetTerminalWindowSize(sz.Rows, sz.Cols, sz.X, sz.Y)
+	return w.SetTerminalWindowSize(sz.Row, sz.Col, sz.Xpixel, sz.Ypixel)
 }

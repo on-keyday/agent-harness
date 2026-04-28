@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/creack/pty"
+	pty "github.com/aymanbagabas/go-pty"
 	"github.com/on-keyday/agent-harness/exec/frame"
 	"github.com/on-keyday/agent-harness/trsf"
 
@@ -60,15 +60,27 @@ func (c *outStreamWrapper) Close() error {
 	return c.s.AppendData(true, hdr.MustAppend(nil))
 }
 
+// resizePty applies a window-size update to the given Pty. On Unix it uses
+// the UnixPty extension to also propagate pixel dimensions (Xpixel/Ypixel),
+// which some TUIs use for inline image / sixel sizing. On Windows ConPTY
+// has no pixel concept and we fall back to the cell-only Resize.
+func resizePty(p pty.Pty, rows, cols, width, height uint16) error {
+	if up, ok := p.(pty.UnixPty); ok {
+		return up.SetWinsize(&pty.Winsize{
+			Row:    rows,
+			Col:    cols,
+			Xpixel: width,
+			Ypixel: height,
+		})
+	}
+	return p.Resize(int(cols), int(rows))
+}
+
 func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger *slog.Logger, command string, args []string, cwd string, ptyEnabled bool) error {
 	defer stream.CloseBoth()
 	logger.Info("Executing command", "command", command, "args", args, "cwd", cwd, "pty", ptyEnabled)
 	gr, grCtx := errgroup.WithContext(ctx)
 	gr.SetLimit(-1)
-	cmd := exec.CommandContext(grCtx, command, args...)
-	if cwd != "" {
-		cmd.Dir = cwd
-	}
 	stdout := &outStreamWrapper{
 		frameType: frame.FrameType_Stdout,
 		s:         stream,
@@ -78,7 +90,9 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		s:         stream,
 	}
 	pipeOut, pipeIn := io.Pipe()
-	var ptyFile *os.File
+	var ptyHandle pty.Pty
+	var process *os.Process
+	var waitFn func() error
 	handleInput := func() error {
 		defer pipeIn.Close()
 		for {
@@ -103,24 +117,21 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 			} else if ctrl := hdr.Control(); ctrl != nil {
 				switch ctrl.Type {
 				case frame.ControlType_TerminalWindowSize:
-					if ptyFile == nil {
+					if ptyHandle == nil {
 						logger.Warn("received terminal window size control frame, but pty is not enabled")
 						continue
 					}
 					ws := ctrl.TerminalWindowSize()
-					err := pty.Setsize(ptyFile, &pty.Winsize{
-						Cols: ws.Columns,
-						Rows: ws.Rows,
-						X:    ws.Width,
-						Y:    ws.Height,
-					})
-					if err != nil {
+					if err := resizePty(ptyHandle, ws.Rows, ws.Columns, ws.Width, ws.Height); err != nil {
 						logger.Error("failed to set pty window size", "error", err)
 					}
 				case frame.ControlType_Signal:
 					sig := ctrl.Signal()
-					err := cmd.Process.Signal(syscall.Signal(sig.Signal))
-					if err != nil {
+					if process == nil {
+						logger.Warn("received signal control frame before process start", "signal", sig.Signal)
+						continue
+					}
+					if err := process.Signal(syscall.Signal(sig.Signal)); err != nil {
 						logger.Error("failed to send signal to process", "error", err)
 					}
 				default:
@@ -133,26 +144,35 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 	}
 	var procExited atomic.Bool
 	if ptyEnabled {
-		tty, err := pty.Start(cmd)
+		p, err := pty.New()
 		if err != nil {
 			return err
 		}
-		defer tty.Close()
-		ptyFile = tty
+		defer p.Close()
+		ptyCmd := p.CommandContext(grCtx, command, args...)
+		if cwd != "" {
+			ptyCmd.Dir = cwd
+		}
+		if err := ptyCmd.Start(); err != nil {
+			return err
+		}
+		ptyHandle = p
+		process = ptyCmd.Process
+		waitFn = ptyCmd.Wait
 		gr.Go(func() error {
-			defer tty.Close()
-			_, err := io.Copy(tty, pipeOut)
+			defer p.Close()
+			_, err := io.Copy(p, pipeOut)
 			// try SIGHUP to notify EOF
-			if cmd.Process != nil {
-				cmd.Process.Signal(syscall.SIGHUP)
+			if process != nil {
+				process.Signal(syscall.SIGHUP)
 				// try SIGTERM after 1 second if not exited
 				time.AfterFunc(1*time.Second, func() {
-					if !procExited.Load() && cmd.Process != nil {
-						cmd.Process.Signal(syscall.SIGTERM)
+					if !procExited.Load() && process != nil {
+						process.Signal(syscall.SIGTERM)
 						// finally try SIGKILL after another 1 second
 						time.AfterFunc(1*time.Second, func() {
-							if !procExited.Load() && cmd.Process != nil {
-								cmd.Process.Kill()
+							if !procExited.Load() && process != nil {
+								process.Kill()
 							}
 						})
 					}
@@ -162,22 +182,27 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		})
 		gr.Go(func() error {
 			defer stdout.Close()
-			_, err := io.Copy(stdout, tty)
+			_, err := io.Copy(stdout, p)
 			return err
 		})
 	} else {
+		cmd := exec.CommandContext(grCtx, command, args...)
+		if cwd != "" {
+			cmd.Dir = cwd
+		}
 		cmd.Stdin = pipeOut
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		err := cmd.Start()
-		if err != nil {
+		if err := cmd.Start(); err != nil {
 			return err
 		}
+		process = cmd.Process
+		waitFn = cmd.Wait
 	}
 	gr.Go(handleInput)
 	gr.Go(func() error {
 		defer stream.Cancel() // terminate the input handler
-		err := cmd.Wait()
+		err := waitFn()
 		procExited.Store(true)
 		return err
 	})
