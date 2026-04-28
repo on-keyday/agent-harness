@@ -148,12 +148,19 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		if err != nil {
 			return err
 		}
-		defer p.Close()
 		ptyCmd := p.CommandContext(grCtx, command, args...)
 		if cwd != "" {
 			ptyCmd.Dir = cwd
 		}
 		if err := ptyCmd.Start(); err != nil {
+			// Only this early-error path closes p; once Start succeeds,
+			// the wait goroutine becomes the sole owner of p.Close.
+			// Pty.Close is non-idempotent on Windows: go-pty's conPty.Close
+			// re-invokes ClosePseudoConsole on a closed handle, which
+			// produces STATUS_HEAP_CORRUPTION (0xC0000374). A double-close
+			// here would crash the runner immediately on the natural detach
+			// path even though both calls are "expected".
+			_ = p.Close()
 			return err
 		}
 		ptyHandle = p
@@ -209,11 +216,12 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		err := waitFn()
 		procExited.Store(true)
 		// Close the Pty here, AFTER the child has fully exited and been
-		// reaped. Doing this earlier (e.g. from the input-copy goroutine on
-		// stdin EOF) races with the output-copy goroutine still reading
-		// from outPipe and triggers STATUS_HEAP_CORRUPTION inside
-		// ClosePseudoConsole on Windows. The outer defer p.Close() in the
-		// PTY block is the idempotent safety net for early-error paths.
+		// reaped. This is the SOLE close site on the success path: go-pty's
+		// conPty.Close on Windows is non-idempotent (re-invokes
+		// ClosePseudoConsole on a closed handle, producing
+		// STATUS_HEAP_CORRUPTION 0xC0000374), so the early-error path in
+		// the PTY block above does its own explicit close instead of an
+		// outer defer.
 		if ptyHandle != nil {
 			_ = ptyHandle.Close()
 		}
