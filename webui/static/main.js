@@ -138,10 +138,18 @@ const POLL_INTERVAL_MS = 5000;
 
   // 7. Interactive PTY.
   const term = new Terminal({ convertEol: true, fontSize: 13 });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
   term.open(document.getElementById("terminal"));
+  fit.fit();
   window.harness_xtermWrite = (uint8Array) => term.write(uint8Array);
   term.onData((data) => window.harness.sendInteractive(data));
   const ro = new ResizeObserver(() => {
+    // ResizeObserver gives us pixel-size changes on the container. xterm
+    // does not recompute its grid on its own, so call fit.fit() to derive
+    // new cols/rows from the current font metrics + container size, then
+    // forward that to the PTY side.
+    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   });
   ro.observe(document.getElementById("terminal"));
@@ -159,6 +167,7 @@ const POLL_INTERVAL_MS = 5000;
     // Reset xterm so the new session starts on a clean canvas (no leftover
     // output, escape state, or scrollback from the previous attach).
     term.reset();
+    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
     try {
       const taskID = await window.harness.startInteractive({ repo, host });
       attachedTask.textContent = `attached: ${taskID}`;

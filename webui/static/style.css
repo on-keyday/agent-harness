@@ -70,6 +70,7 @@ button:hover { background: #555; }
 }
 #terminal {
   background: #000;
-  height: 400px;
+  height: 60vh;
+  min-height: 200px;
   border-radius: 4px;
 }
