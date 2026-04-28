@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -20,6 +21,7 @@ type Process struct {
 	CWD       string        // worktree directory; cmd.Dir = CWD
 	Timeout   time.Duration // max wall time; if zero, defaults to 30 minutes
 	ExtraArgs []string      // additional args inserted before "-p <prompt>" (e.g. --dangerously-skip-permissions)
+	Env       []string      // additional env vars to merge with os.Environ()
 }
 
 // Run starts ClaudeBin with `-p <prompt>`, captures stdout and stderr line-by-line,
@@ -41,6 +43,9 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	args = append(args, "-p", prompt)
 	cmd := exec.CommandContext(runCtx, p.ClaudeBin, args...)
 	cmd.Dir = p.CWD
+	if len(p.Env) > 0 {
+		cmd.Env = append(os.Environ(), p.Env...)
+	}
 	// Give SIGTERM 5s grace before SIGKILL when ctx fires.
 	cmd.WaitDelay = 5 * time.Second
 	cmd.Cancel = func() error {
