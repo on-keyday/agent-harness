@@ -1,0 +1,131 @@
+config.go.package = "agentboard"
+
+format RunnerID:
+    transport_len :u8
+    transport :[transport_len]u8
+    ip_addr_len :u8
+    ip_addr_len == 4 || ip_addr_len == 16
+    ip_addr :[ip_addr_len]u8
+    port :u16
+    unique_number :u16
+
+format TaskID:
+    id :[16]u8
+
+enum AgentMessageKind:
+    :u8
+    hello
+    hello_response
+    send
+    send_response
+    subscribe
+    subscribe_response
+    unsubscribe
+    wait
+    wait_response
+    inbox
+    inbox_response
+    deliver
+
+format AgentBridgeHello:
+    runner_id :RunnerID
+    task_id :TaskID
+    auth_ticket :[16]u8
+    hostname_len :u8
+    hostname :[hostname_len]u8
+
+enum HelloStatus:
+    :u8
+    ok
+    bad_ticket
+    unknown_task
+    runner_mismatch
+
+format AgentBridgeHelloResponse:
+    status :HelloStatus
+
+format SendRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+    payload_len :u32
+    payload :[payload_len]u8
+
+enum SendStatus:
+    :u8
+    ok
+    payload_too_large
+    too_many_topics
+    bad_frame
+
+format SendResponse:
+    request_id :u32
+    status :SendStatus
+    seq :u64
+
+format SubscribeRequest:
+    request_id :u32
+    pattern_len :u16
+    pattern :[pattern_len]u8
+
+format UnsubscribeRequest:
+    request_id :u32
+    pattern_len :u16
+    pattern :[pattern_len]u8
+
+enum SubscribeStatus:
+    :u8
+    ok
+    bad_pattern
+
+format SubscribeResponse:
+    request_id :u32
+    status :SubscribeStatus
+
+format DeliveredMessage:
+    seq :u64
+    topic_len :u16
+    topic :[topic_len]u8
+    payload_len :u32
+    payload :[payload_len]u8
+
+format WaitRequest:
+    request_id :u32
+    pattern_len :u16
+    pattern :[pattern_len]u8
+    since :u64
+    timeout_ms :u32
+
+format WaitResponse:
+    request_id :u32
+    timed_out :u8
+    next_cursor :u64
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
+format InboxRequest:
+    request_id :u32
+    since :u64
+
+format InboxResponse:
+    request_id :u32
+    next_cursor :u64
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
+format AgentMessage:
+    kind :AgentMessageKind
+    match kind:
+        AgentMessageKind.hello => hello :AgentBridgeHello
+        AgentMessageKind.hello_response => hello_response :AgentBridgeHelloResponse
+        AgentMessageKind.send => send :SendRequest
+        AgentMessageKind.send_response => send_response :SendResponse
+        AgentMessageKind.subscribe => subscribe :SubscribeRequest
+        AgentMessageKind.subscribe_response => subscribe_response :SubscribeResponse
+        AgentMessageKind.unsubscribe => unsubscribe :UnsubscribeRequest
+        AgentMessageKind.wait => wait :WaitRequest
+        AgentMessageKind.wait_response => wait_response :WaitResponse
+        AgentMessageKind.inbox => inbox :InboxRequest
+        AgentMessageKind.inbox_response => inbox_response :InboxResponse
+        AgentMessageKind.deliver => deliver :DeliveredMessage
+        .. => error("Unexpected agent message kind")
