@@ -101,6 +101,10 @@ func (s *Server) agentHandleHello(conn ConnHandle, ac *agentConn, h *agentboard.
 		ac.helloed = true
 		ac.state = s.Board.Attach()
 	}
+	// On rejection we don't close the connection: ConnHandle does not
+	// expose Close(), and subsequent agent messages are dropped by the
+	// !ac.helloed gate in every other handler. The peer's own client
+	// CLI exits after observing HelloResponse{status!=Ok}.
 }
 
 func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.SendRequest) {
