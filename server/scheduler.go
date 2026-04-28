@@ -2,6 +2,7 @@ package server
 
 import (
 	"log/slog"
+	"sync"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -19,12 +20,14 @@ type AssignFunc func(runnerID, taskID string) error
 // Scheduler matches Queued tasks to available runners sharing a compatible repo root.
 // It is the orchestration glue between Registry and TaskStore.
 //
-// Atomicity note: the state mutation (store.Assign + reg.BindTask) is NOT
-// atomic across both stores. A tiny window exists where the task is Running but
-// the runner slot is not yet bound. For v1 single-process operation this is
-// acceptable because Tick is driven by a single goroutine in practice, and the
-// window only affects concurrent Tick callers seeing a partially-updated state.
+// Concurrency: Tick takes an internal mutex so concurrent callers (OnChange
+// fires from per-connection goroutines: submit/cancel/runner-control/
+// disconnect) cannot observe the same Queued task between the assign-send and
+// the subsequent state mutation. Without this serialization a task could be
+// AssignTask'd twice — the runner would then create the same worktree branch
+// twice and the second attempt would fail with "branch already exists".
 type Scheduler struct {
+	mu     sync.Mutex
 	reg    *Registry
 	store  *TaskStore
 	assign AssignFunc
@@ -52,10 +55,12 @@ func NewScheduler(reg *Registry, store *TaskStore, assign AssignFunc) *Scheduler
 //  5. On error: log via slog.Error and continue; no state change.
 //  6. On success: store.Assign(task.ID, runner.ID, "") and reg.BindTask(runner.ID, task.ID).
 //
-// Tick is safe to call concurrently; it relies on Registry and TaskStore's
-// internal RWMutexes for concurrency safety. No goroutines are spawned.
-// The call returns as soon as all runners have been processed.
+// Tick serializes itself via s.mu so concurrent callers run one at a time.
+// No goroutines are spawned. The call returns as soon as all runners have
+// been processed.
 func (s *Scheduler) Tick() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	runners := s.reg.List()
 	for _, runner := range runners {
 		// Skip runners that are offline or at capacity.
