@@ -447,6 +447,51 @@ func (s *noopBidiStream) EOF() bool         { return true }
 func (s *noopBidiStream) Cancel()           {}
 func (s *noopBidiStream) CloseBoth() error  { s.closed.Store(true); return nil }
 
+// TestHandleAssign_OmitsEmptyHostname verifies that when Session.Hostname is empty,
+// handleAssign does NOT pass a HARNESS_HOSTNAME= env var to the spawned claude process.
+// This tests the full session-level flow, complementing the unit-level BuildAgentEnv test.
+func TestHandleAssign_OmitsEmptyHostname(t *testing.T) {
+	// Fake claude: print the HARNESS_HOSTNAME env var (or empty string if unset).
+	fake := writeFakeClaude(t, `echo "HOSTNAME=$HARNESS_HOSTNAME"`)
+
+	repo := initRepo(t)
+	ms := &mockSender{}
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "", // Empty hostname — should not be passed to claude
+		WSPath:       "/ws",
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xEE
+	req := &protocol.AssignTask{
+		TaskId: protocol.TaskID{Id: taskIDBytes},
+		Prompt: []byte("test-empty-hostname"),
+	}
+	req.SetRepoPath([]byte(repo))
+
+	sess.handleAssign(context.Background(), req)
+
+	// Collect all published log data.
+	ms.mu.Lock()
+	var combined []byte
+	for _, p := range ms.publishes {
+		combined = append(combined, p.data...)
+	}
+	ms.mu.Unlock()
+
+	output := string(combined)
+	// When HARNESS_HOSTNAME is not set, the echo will print just "HOSTNAME="
+	if !strings.Contains(output, "HOSTNAME=") || strings.Contains(output, "HOSTNAME=test") {
+		t.Errorf("empty hostname should not be passed; output=%q", output)
+	}
+}
+
 // TestHandleOpenExecGateFailureClosesStream verifies that when the AllowedRoots
 // gate rejects an OpenExec request, the runner closes the server-allocated
 // bidi stream before returning. Without this the server-side splice goroutine
