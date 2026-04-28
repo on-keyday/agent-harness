@@ -351,9 +351,26 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
 	}
 
+	// Write .claude/settings.json into the worktree so the inbox hook fires.
+	// Non-fatal: task continues even if settings file can't be written.
+	if err := WriteAgentSettings(dir); err != nil {
+		log.Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
+	}
+
+	// Build HARNESS_* env vars for the subprocess.
+	env := BuildAgentEnv(AgentEnvSpec{
+		ServerCID:  s.ServerCID,
+		RunnerID:   s.Sender.ID(),
+		TaskID:     oer.TaskId,
+		RepoPath:   repoPath,
+		Hostname:   s.Hostname,
+		WSPath:     s.WSPath,
+		AuthTicket: oer.AuthTicket,
+	})
+
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommand defers stream.CloseBoth() so we don't double-close here.
-	runErr := agentexec.ExecuteCommand(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true)
+	runErr := agentexec.ExecuteCommand(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true, env)
 
 	if runErr != nil {
 		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)

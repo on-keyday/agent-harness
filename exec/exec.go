@@ -76,7 +76,7 @@ func resizePty(p pty.Pty, rows, cols, width, height uint16) error {
 	return p.Resize(int(cols), int(rows))
 }
 
-func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger *slog.Logger, command string, args []string, cwd string, ptyEnabled bool) error {
+func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger *slog.Logger, command string, args []string, cwd string, ptyEnabled bool, extraEnv []string) error {
 	defer stream.CloseBoth()
 	logger.Info("Executing command", "command", command, "args", args, "cwd", cwd, "pty", ptyEnabled)
 	gr, grCtx := errgroup.WithContext(ctx)
@@ -152,6 +152,9 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		if cwd != "" {
 			ptyCmd.Dir = cwd
 		}
+		if len(extraEnv) > 0 {
+			ptyCmd.Env = append(os.Environ(), extraEnv...)
+		}
 		if err := ptyCmd.Start(); err != nil {
 			// Only this early-error path closes p; once Start succeeds,
 			// the wait goroutine becomes the sole owner of p.Close.
@@ -200,6 +203,9 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		cmd := exec.CommandContext(grCtx, command, args...)
 		if cwd != "" {
 			cmd.Dir = cwd
+		}
+		if len(extraEnv) > 0 {
+			cmd.Env = append(os.Environ(), extraEnv...)
 		}
 		cmd.Stdin = pipeOut
 		cmd.Stdout = stdout
