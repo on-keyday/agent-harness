@@ -160,7 +160,11 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		process = ptyCmd.Process
 		waitFn = ptyCmd.Wait
 		gr.Go(func() error {
-			defer p.Close()
+			// Don't close p here. On Windows, conPty.Close calls
+			// ClosePseudoConsole, and doing so while the output goroutine is
+			// still mid-Read on outPipe causes STATUS_HEAP_CORRUPTION
+			// (0xC0000374). Pty.Close is centralized in the wait goroutine
+			// below, after ptyCmd.Wait returns and the child is fully gone.
 			_, err := io.Copy(p, pipeOut)
 			// try SIGHUP to notify EOF
 			if process != nil {
@@ -204,6 +208,15 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		defer stream.Cancel() // terminate the input handler
 		err := waitFn()
 		procExited.Store(true)
+		// Close the Pty here, AFTER the child has fully exited and been
+		// reaped. Doing this earlier (e.g. from the input-copy goroutine on
+		// stdin EOF) races with the output-copy goroutine still reading
+		// from outPipe and triggers STATUS_HEAP_CORRUPTION inside
+		// ClosePseudoConsole on Windows. The outer defer p.Close() in the
+		// PTY block is the idempotent safety net for early-error paths.
+		if ptyHandle != nil {
+			_ = ptyHandle.Close()
+		}
 		return err
 	})
 	err := gr.Wait()
