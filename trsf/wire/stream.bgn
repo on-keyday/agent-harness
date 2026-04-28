@@ -72,6 +72,7 @@ enum ApplicationPayloadKind:
     relay_control
     runner_control
     close          # peer is going away; AutoReceive returns after dispatching
+    agent_message  # NEW
     
 
 
