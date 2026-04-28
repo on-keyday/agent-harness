@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -166,6 +167,35 @@ func main() {
 			die(err)
 		}
 
+	case "agent":
+		if len(args) == 0 {
+			agentUsage()
+			os.Exit(2)
+		}
+		asub := args[0]
+		rest := args[1:]
+		var err error
+		switch asub {
+		case "send":
+			err = agent.Send(ctx, rest, os.Stdin, os.Stdout)
+		case "wait":
+			err = agent.Wait(ctx, rest, os.Stdout)
+		case "inbox":
+			err = agent.Inbox(ctx, rest, os.Stdout)
+		case "subscribe":
+			err = agent.Subscribe(ctx, rest, os.Stdout)
+		case "unsubscribe":
+			err = agent.Unsubscribe(ctx, rest, os.Stdout)
+		case "dispatch":
+			err = agent.Dispatch(ctx, rest, os.Stdin, os.Stdout)
+		default:
+			agentUsage()
+			os.Exit(2)
+		}
+		if err != nil {
+			die(err)
+		}
+
 	default:
 		usage()
 		os.Exit(2)
@@ -185,6 +215,25 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR]")
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude session")
+	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch}")
+	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
+}
+
+func agentUsage() {
+	fmt.Fprintln(os.Stderr, "usage: harness-cli agent <subcommand> [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Env-primary (HARNESS_*): SERVER_CID, TASK_ID, RUNNER_ID, HOSTNAME, WS_PATH, REPO_PATH")
+	fmt.Fprintln(os.Stderr, "HARNESS_AUTH_TICKET is env-only (no flag accepted).")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
+	fmt.Fprintln(os.Stderr, "  send --topic T --data D|-           publish a message")
+	fmt.Fprintln(os.Stderr, "  wait --topic T [--since-last] [--timeout DUR]")
+	fmt.Fprintln(os.Stderr, "                                       block until next message")
+	fmt.Fprintln(os.Stderr, "  inbox [--since-last]                 non-blocking dump (used by hook)")
+	fmt.Fprintln(os.Stderr, "  subscribe --topic T                  register a subscription")
+	fmt.Fprintln(os.Stderr, "  unsubscribe --topic T                remove a subscription")
+	fmt.Fprintln(os.Stderr, "  dispatch --topic T --reply-topic R --data D|- [--timeout DUR]")
+	fmt.Fprintln(os.Stderr, "                                       send + wait for reply (sugar)")
 }
 
 func die(err error) {
