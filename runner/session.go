@@ -29,14 +29,14 @@ type Sender interface {
 
 // taskEntry holds the per-task cancellation function and the repo it runs under.
 type taskEntry struct {
-	cancel  context.CancelFunc
+	cancel   context.CancelFunc
 	repoPath string
 }
 
 // Session manages the runner's task lifecycle. It is created once per connection
 // and handles concurrent tasks through its internal maps.
 type Session struct {
-	AllowedRoots    []string      // absolute paths this runner is allowed to serve
+	AllowedRoots    []string // absolute paths this runner is allowed to serve
 	ClaudeBin       string
 	ExtraClaudeArgs []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
 	Timeout         time.Duration
@@ -46,7 +46,7 @@ type Session struct {
 	Now             func() time.Time
 
 	mu    sync.Mutex
-	tasks map[string]*taskEntry    // taskID (hex) → cancel + repo
+	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
 	wms   map[string]*WorktreeManager // repoPath → WorktreeManager
 
 	// testHookHandleAssign is called at the start of handleAssign in tests to
@@ -330,6 +330,10 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommand defers stream.CloseBoth() so we don't double-close here.
 	runErr := agentexec.ExecuteCommand(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true)
+
+	if runErr != nil {
+		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)
+	}
 
 	// Step 5: TaskFinished.
 	{
