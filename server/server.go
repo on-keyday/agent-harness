@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -412,7 +413,9 @@ func (s *Server) SetBoard(b *agentboard.Board) {
 }
 
 // sendAssign sends an AssignTask runner-control message to the runner identified by runnerID.
-// It is used as the AssignFunc supplied to the Scheduler.
+// It is used as the AssignFunc supplied to the Scheduler. A fresh agentboard
+// auth ticket is generated and registered before send so that the spawned
+// claude can authenticate its agent_message Hello against the same Board.
 func (s *Server) sendAssign(runnerID, taskID string) error {
 	entry, ok := s.registry.Get(runnerID)
 	if !ok || entry.Conn == nil {
@@ -422,7 +425,14 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	if !ok {
 		return fmt.Errorf("task %s not found", taskID)
 	}
-	msg, err := buildAssignMsg(task, [16]byte{})
+	var ticket [16]byte
+	if _, err := rand.Read(ticket[:]); err != nil {
+		return fmt.Errorf("ticket gen: %w", err)
+	}
+	if s.Board != nil {
+		s.Board.Registry().Register(runnerIDFromConnID(runnerID), taskIDFromHex(taskID), ticket)
+	}
+	msg, err := buildAssignMsg(task, ticket)
 	if err != nil {
 		return fmt.Errorf("buildAssignMsg: %w", err)
 	}
