@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"io"
 	"path/filepath"
 	"strings"
@@ -489,6 +490,72 @@ func TestHandleAssign_OmitsEmptyHostname(t *testing.T) {
 	// When HARNESS_HOSTNAME is not set, the echo will print just "HOSTNAME="
 	if !strings.Contains(output, "HOSTNAME=") || strings.Contains(output, "HOSTNAME=test") {
 		t.Errorf("empty hostname should not be passed; output=%q", output)
+	}
+}
+
+// TestHandleAssign_WritesSettingsAndPropagatesEnv verifies the full assign chain:
+// (1) settings.json is written into the worktree under .claude/,
+// (2) the file contains the UserPromptSubmit hook entry,
+// (3) HARNESS_AUTH_TICKET is visible to the spawned claude process.
+func TestHandleAssign_WritesSettingsAndPropagatesEnv(t *testing.T) {
+	// Fake claude: list the settings file, print its first few lines, echo the ticket env.
+	fake := writeFakeClaude(t, `ls -la .claude/settings.json
+head -5 .claude/settings.json
+echo "TICKET=$HARNESS_AUTH_TICKET"`)
+
+	repo := initRepo(t)
+	ms := &mockSender{}
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "test-host",
+		WSPath:       "/ws",
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xAB
+	var ticket [16]byte
+	ticket[0] = 0xFE
+	ticket[15] = 0xED
+
+	req := &protocol.AssignTask{
+		TaskId:     protocol.TaskID{Id: taskIDBytes},
+		AuthTicket: ticket,
+		Prompt:     []byte("settings-smoke"),
+	}
+	req.SetRepoPath([]byte(repo))
+
+	sess.handleAssign(context.Background(), req)
+
+	// Collect all published log data.
+	ms.mu.Lock()
+	var combined []byte
+	for _, p := range ms.publishes {
+		combined = append(combined, p.data...)
+	}
+	ms.mu.Unlock()
+
+	output := string(combined)
+
+	// (1) settings.json was written — ls -la output includes the filename.
+	if !strings.Contains(output, "settings.json") {
+		t.Errorf("settings.json not written to worktree; output=%q", output)
+	}
+
+	// (2) settings.json contains UserPromptSubmit — head -5 includes the hook key.
+	if !strings.Contains(output, "UserPromptSubmit") {
+		t.Errorf("settings.json missing UserPromptSubmit hook; output=%q", output)
+	}
+
+	// (3) HARNESS_AUTH_TICKET reaches claude — build expected hex at runtime.
+	expectedTicketHex := hex.EncodeToString(ticket[:])
+	expectedLine := "TICKET=" + expectedTicketHex
+	if !strings.Contains(output, expectedLine) {
+		t.Errorf("auth ticket env not propagated to claude; output=%q want substring %q", output, expectedLine)
 	}
 }
 
