@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -48,6 +50,13 @@ type Server struct {
 	runnerHandler *RunnerHandler
 	taskHandler   *TaskHandler
 	dispatcher    *Dispatcher
+
+	// Board is the agentboard instance, wired in by the server binary (Task 9).
+	// When nil, agent_message payloads are ignored silently.
+	Board *agentboard.Board
+
+	agentConnsMu sync.Mutex
+	agentConns   map[objproto.ConnectionID]*agentConn
 }
 
 // New constructs a Server with all components wired but NOT yet listening.
@@ -85,6 +94,7 @@ func New(cfg Config) *Server {
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
+		OnAgentMessage:  s.handleAgentMessage,
 		Registry:        s.registry,
 		Tasks:           s.tasks,
 	}
@@ -380,9 +390,10 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		s.dispatcher.Dispatch(wrapped, msg.Data)
 	})
 
-	// Connection closed: deregister the runner if present and trigger rescheduling.
+	// Connection closed: clean up agent state, deregister runner, and trigger rescheduling.
 	cid := session.ConnectionID().String()
 	s.cfg.Logger.Info("server: connection closed, deregistering", "cid", cid)
+	s.removeAgentConn(session.ConnectionID())
 	s.registry.Remove(cid)
 	s.scheduler.Tick()
 }

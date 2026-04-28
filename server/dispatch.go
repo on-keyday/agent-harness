@@ -34,6 +34,7 @@ type ConnHandle interface {
 type Dispatcher struct {
 	OnRunnerControl func(ConnHandle, []byte) // payload is everything after the kind byte
 	OnTaskControl   func(ConnHandle, []byte)
+	OnAgentMessage  func(ConnHandle, []byte) // payload is the full AgentMessage bytes (kind byte stripped)
 
 	// Registry and Tasks are used by TryDispatch and OnCancel.
 	Registry *Registry
@@ -59,6 +60,10 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 	case wire.ApplicationPayloadKind_TaskControl:
 		if d.OnTaskControl != nil {
 			d.OnTaskControl(conn, payload)
+		}
+	case wire.ApplicationPayloadKind_AgentMessage:
+		if d.OnAgentMessage != nil {
+			d.OnAgentMessage(conn, payload)
 		}
 	}
 }
