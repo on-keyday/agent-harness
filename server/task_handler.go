@@ -319,10 +319,12 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 
 	// Tell the runner to wire its stream end to claude.
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExec}
-	rreq.SetOpenExec(protocol.OpenExecRunnerRequest{
+	oer := protocol.OpenExecRunnerRequest{
 		TaskId:   tid,
 		StreamId: uint64(runnerStream.ID()),
-	})
+	}
+	oer.SetRepoPath([]byte(repo))
+	rreq.SetOpenExec(oer)
 	rdata := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 	if _, _, err := runnerConn.SendMessage(rdata); err != nil {
 		_ = tuiStream.CloseBoth()
