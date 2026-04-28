@@ -97,6 +97,7 @@ func New(cfg Config) *Server {
 		OnAgentMessage:  s.handleAgentMessage,
 		Registry:        s.registry,
 		Tasks:           s.tasks,
+		// Board is wired after construction via Server.SetBoard (Task 9).
 	}
 
 	// publishTaskEvent constructs and publishes a TaskStatusEvent to the
@@ -398,6 +399,18 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	s.scheduler.Tick()
 }
 
+// SetBoard wires an agentboard.Board into all handlers that participate in the
+// ticket lifecycle (Dispatcher, TaskHandler, RunnerHandler). Call this after
+// New and before Run. Task 9 (cmd/harness-server/main.go) is responsible for
+// constructing the Board and calling this method; tests that exercise the ticket
+// flow construct a Board and set it directly on the individual handler structs.
+func (s *Server) SetBoard(b *agentboard.Board) {
+	s.Board = b
+	s.dispatcher.Board = b
+	s.taskHandler.Board = b
+	s.runnerHandler.Board = b
+}
+
 // sendAssign sends an AssignTask runner-control message to the runner identified by runnerID.
 // It is used as the AssignFunc supplied to the Scheduler.
 func (s *Server) sendAssign(runnerID, taskID string) error {
@@ -409,7 +422,7 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	if !ok {
 		return fmt.Errorf("task %s not found", taskID)
 	}
-	msg, err := buildAssignMsg(task)
+	msg, err := buildAssignMsg(task, [16]byte{})
 	if err != nil {
 		return fmt.Errorf("buildAssignMsg: %w", err)
 	}

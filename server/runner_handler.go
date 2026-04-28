@@ -6,6 +6,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -17,6 +18,10 @@ type RunnerHandler struct {
 	Now            func() time.Time
 	OnChange       func()             // called after any state mutation, used to trigger Scheduler.Tick
 	OnTaskStarted  func(taskID string) // optional; called when the runner reports TaskStarted
+
+	// Board is the agentboard instance for ticket lifecycle management.
+	// When nil, ticket revocation is skipped (safe for tests that do not wire a Board).
+	Board *agentboard.Board
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -106,6 +111,10 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		h.Tasks.Finish(taskID, tf.ExitCode, tf.DiffInfo)
 		// Release the capacity slot so the dispatcher can re-use it.
 		h.Registry.UnbindTask(runnerID, taskID)
+		// Revoke the auth ticket so the agent can no longer authenticate for this task.
+		if h.Board != nil {
+			h.Board.Registry().Revoke(runnerIDFromConnID(runnerID), taskIDFromHex(taskID))
+		}
 
 	case protocol.RunnerMessageType_Heartbeat:
 		if !h.Registry.SetLastSeen(runnerID, now) {
