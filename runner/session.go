@@ -45,6 +45,12 @@ type Session struct {
 	Logger          *slog.Logger                   // optional; defaults to slog.Default()
 	Now             func() time.Time
 
+	// ServerCID, Hostname, WSPath are required for HARNESS_* env injection at
+	// task spawn time. Filled from Config in connect.go.
+	ServerCID objproto.ConnectionID
+	Hostname  string
+	WSPath    string
+
 	mu    sync.Mutex
 	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
 	wms   map[string]*WorktreeManager // repoPath → WorktreeManager
@@ -195,12 +201,30 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		_ = s.Sender.Send(data)
 	}
 
+	// Write .claude/settings.json into the worktree so the inbox hook fires.
+	// Non-fatal: task continues even if settings file can't be written.
+	if err := WriteAgentSettings(dir); err != nil {
+		s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
+	}
+
+	// Build HARNESS_* env vars for the subprocess.
+	env := BuildAgentEnv(AgentEnvSpec{
+		ServerCID:  s.ServerCID,
+		RunnerID:   s.Sender.ID(),
+		TaskID:     req.TaskId,
+		RepoPath:   repoPath,
+		Hostname:   s.Hostname,
+		WSPath:     s.WSPath,
+		AuthTicket: req.AuthTicket,
+	})
+
 	// Step 4: Execute the process, publishing log lines to the task log topic.
 	proc := &Process{
 		ClaudeBin: s.ClaudeBin,
 		CWD:       dir,
 		Timeout:   s.Timeout,
 		ExtraArgs: s.ExtraClaudeArgs,
+		Env:       env,
 	}
 	logSink := func(data []byte) {
 		_ = s.Sender.Publish(topic, data)
