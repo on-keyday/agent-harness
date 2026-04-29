@@ -306,6 +306,9 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	if err := WriteAgentSettings(dir); err != nil {
 		s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
 	}
+	if err := WriteAgentSkills(dir); err != nil {
+		s.logger().Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
+	}
 
 	// Build HARNESS_* env vars for the subprocess. RunnerID is the canonical
 	// value the server keys this runner as (from RunnerHelloResponse), NOT
@@ -466,6 +469,9 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// Non-fatal: task continues even if settings file can't be written.
 	if err := WriteAgentSettings(dir); err != nil {
 		log.Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
+	}
+	if err := WriteAgentSkills(dir); err != nil {
+		log.Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
 	}
 
 	// Build HARNESS_* env vars for the subprocess. See handleAssign comment.
