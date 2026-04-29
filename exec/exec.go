@@ -76,7 +76,34 @@ func resizePty(p pty.Pty, rows, cols, width, height uint16) error {
 	return p.Resize(int(cols), int(rows))
 }
 
+// ExecuteOption groups optional hooks for ExecuteCommand. Pass via
+// ExecuteCommandWithOption. The original ExecuteCommand keeps its
+// historical signature and forwards an empty option.
+type ExecuteOption struct {
+	// OnStdinWriter, if non-nil, is invoked exactly once shortly after the
+	// child process's stdin pipe is wired up. The argument is a write fn
+	// that the caller can stash and call any time before
+	// ExecuteCommandWithOption returns to inject bytes directly into the
+	// child's stdin. Writes after the process exits return io.ErrClosedPipe.
+	//
+	// Used by the runner to deliver agentboard wake markers without going
+	// through the TUI/WebUI frame protocol.
+	OnStdinWriter func(write func([]byte) (int, error))
+}
+
+// ExecuteCommandWithOption is the option-bearing form of ExecuteCommand.
+func ExecuteCommandWithOption(ctx context.Context, stream trsf.BidirectionalStream, logger *slog.Logger, command string, args []string, cwd string, ptyEnabled bool, extraEnv []string, opt ExecuteOption) error {
+	return executeCommandImpl(ctx, stream, logger, command, args, cwd, ptyEnabled, extraEnv, opt)
+}
+
+// ExecuteCommand runs command with its stdout/stderr forwarded over stream and
+// stdin read from stream. It keeps its historical signature; use
+// ExecuteCommandWithOption for additional hooks.
 func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger *slog.Logger, command string, args []string, cwd string, ptyEnabled bool, extraEnv []string) error {
+	return executeCommandImpl(ctx, stream, logger, command, args, cwd, ptyEnabled, extraEnv, ExecuteOption{})
+}
+
+func executeCommandImpl(ctx context.Context, stream trsf.BidirectionalStream, logger *slog.Logger, command string, args []string, cwd string, ptyEnabled bool, extraEnv []string, opt ExecuteOption) error {
 	defer stream.CloseBoth()
 	logger.Info("Executing command", "command", command, "args", args, "cwd", cwd, "pty", ptyEnabled)
 	gr, grCtx := errgroup.WithContext(ctx)
@@ -215,6 +242,15 @@ func ExecuteCommand(ctx context.Context, stream trsf.BidirectionalStream, logger
 		}
 		process = cmd.Process
 		waitFn = cmd.Wait
+	}
+	if opt.OnStdinWriter != nil {
+		writeFn := func(p []byte) (int, error) {
+			return pipeIn.Write(p)
+		}
+		gr.Go(func() error {
+			opt.OnStdinWriter(writeFn)
+			return nil
+		})
 	}
 	gr.Go(handleInput)
 	gr.Go(func() error {
