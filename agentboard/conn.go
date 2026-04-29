@@ -1,35 +1,19 @@
 package agentboard
 
-import "sync"
-
-// ConnState is per-attached-client subscription state.
+// ConnState is per-attached-client transient state. The persistent piece —
+// subscription pattern set — lives in the shared *taskState (one per
+// (runner_id, task_id)) so it survives across the short-lived per-subcommand
+// harness-cli connections.
 type ConnState struct {
-	mu       sync.Mutex
-	patterns map[string]struct{} // exact topic strings (glob is v2)
-	notify   chan struct{}        // pinged when a relevant publish happens
+	notify chan struct{} // pinged when a relevant publish happens
+	task   *taskState
 }
 
-func newConnState() *ConnState {
-	return &ConnState{patterns: make(map[string]struct{}), notify: make(chan struct{}, 1)}
-}
-
-func (c *ConnState) addPattern(p string) {
-	c.mu.Lock()
-	c.patterns[p] = struct{}{}
-	c.mu.Unlock()
-}
-
-func (c *ConnState) removePattern(p string) {
-	c.mu.Lock()
-	delete(c.patterns, p)
-	c.mu.Unlock()
-}
-
-func (c *ConnState) matches(topic string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, ok := c.patterns[topic]
-	return ok
+func newConnState(task *taskState) *ConnState {
+	return &ConnState{
+		notify: make(chan struct{}, 1),
+		task:   task,
+	}
 }
 
 func (c *ConnState) ping() {
@@ -37,4 +21,11 @@ func (c *ConnState) ping() {
 	case c.notify <- struct{}{}:
 	default:
 	}
+}
+
+func (c *ConnState) matches(topic string) bool {
+	if c == nil || c.task == nil {
+		return false
+	}
+	return c.task.matches(topic)
 }

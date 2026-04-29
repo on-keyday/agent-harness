@@ -166,7 +166,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		if err != nil {
 			slog.Error("dispatcher: buildAssignMsg failed", "task", task.ID, "err", err)
 			if d.Board != nil {
-				d.Board.Registry().Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
+				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
 			}
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
@@ -175,7 +175,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		if _, _, err := runner.Conn.SendMessage(msg); err != nil {
 			slog.Error("dispatcher: SendMessage failed, rolling back", "runner", runner.ID, "task", task.ID, "err", err)
 			if d.Board != nil {
-				d.Board.Registry().Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
+				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
 			}
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue

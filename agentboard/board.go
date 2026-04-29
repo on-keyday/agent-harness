@@ -6,6 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 type Config struct {
@@ -19,7 +21,7 @@ type Board struct {
 	cfg     Config
 	mu      sync.Mutex
 	topics  map[string]*topic
-	conns   map[*ConnState]struct{}
+	tasks   map[ticketKey]*taskState // per-(runner_id, task_id) persistent state
 	seq     atomic.Uint64
 	reg     *registry
 	stopCh  chan struct{}
@@ -30,7 +32,7 @@ func New(cfg Config) *Board {
 	b := &Board{
 		cfg:    cfg,
 		topics: make(map[string]*topic),
-		conns:  make(map[*ConnState]struct{}),
+		tasks:  make(map[ticketKey]*taskState),
 		reg:    newRegistry(),
 		stopCh: make(chan struct{}),
 	}
@@ -51,30 +53,61 @@ func (b *Board) Close() {
 // Registry returns the ticket registry for server lifecycle code (TryDispatch / TaskFinished).
 func (b *Board) Registry() *registry { return b.reg }
 
-func (b *Board) Attach() *ConnState {
-	c := newConnState()
+// Attach is called from the agent_message Hello handler after Validate(rid, tid, ticket)
+// returns Ok. It returns a ConnState bound to the (rid, tid) taskState, lazy-creating
+// the taskState if this is the first agent connecting under that ticket.
+func (b *Board) Attach(rid RunnerID, tid TaskID) *ConnState {
+	key := ticketKey{runner: runnerIDStringBoard(rid), task: hexTaskIDBoard(tid)}
 	b.mu.Lock()
-	b.conns[c] = struct{}{}
+	ts, ok := b.tasks[key]
+	if !ok {
+		ts = newTaskState()
+		b.tasks[key] = ts
+	}
 	b.mu.Unlock()
+	c := newConnState(ts)
+	ts.attachConn(c)
 	return c
 }
 
+// Detach removes a ConnState from its taskState's attached set. The taskState
+// itself is preserved so subscriptions survive across reconnects; it is only
+// destroyed by Revoke (TaskFinished).
 func (b *Board) Detach(c *ConnState) {
+	if c == nil || c.task == nil {
+		return
+	}
+	c.task.detachConn(c)
+}
+
+// Revoke removes the ticket and destroys the (rid, tid) taskState. Called by the
+// server runner_handler on TaskFinished and by dispatch on send-failure rollback.
+func (b *Board) Revoke(rid protocol.RunnerID, tid protocol.TaskID) {
+	b.reg.Revoke(rid, tid)
+	key := ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}
 	b.mu.Lock()
-	delete(b.conns, c)
+	delete(b.tasks, key)
 	b.mu.Unlock()
 }
 
+// Subscribe records a topic pattern in the taskState shared by all ConnStates
+// of the same (rid, tid). Persists across reconnects until Revoke.
 func (b *Board) Subscribe(c *ConnState, pattern string) error {
 	if pattern == "" {
 		return errors.New("empty pattern")
 	}
-	c.addPattern(pattern)
+	if c == nil || c.task == nil {
+		return errors.New("not attached")
+	}
+	c.task.addPattern(pattern)
 	return nil
 }
 
 func (b *Board) Unsubscribe(c *ConnState, pattern string) {
-	c.removePattern(pattern)
+	if c == nil || c.task == nil {
+		return
+	}
+	c.task.removePattern(pattern)
 }
 
 var (
@@ -99,32 +132,36 @@ func (b *Board) Send(topicName string, payload []byte) (uint64, error) {
 		t = newTopic(topicName, b.cfg.RingN)
 		b.topics[topicName] = t
 	}
-	conns := make([]*ConnState, 0, len(b.conns))
-	for c := range b.conns {
-		conns = append(conns, c)
+	// Snapshot taskStates whose patterns include this topic. b.mu is held
+	// during the iteration; ts.matches takes ts.mu (different lock, no order
+	// inversion since b.mu → ts.mu is the only direction taken anywhere).
+	targets := make([]*taskState, 0)
+	for _, ts := range b.tasks {
+		if ts.matches(topicName) {
+			targets = append(targets, ts)
+		}
 	}
 	b.mu.Unlock()
 
 	seq := b.seq.Add(1)
 	t.append(seq, payload)
 
-	for _, c := range conns {
-		if c.matches(topicName) {
+	for _, ts := range targets {
+		for _, c := range ts.snapshotConns() {
 			c.ping()
 		}
 	}
 	return seq, nil
 }
 
-// Inbox returns retained messages for all topics this conn is subscribed to,
-// with Seq > since, plus the new cursor (max seq seen, or since if none).
+// Inbox returns retained messages for all topics the (rid, tid) taskState is
+// subscribed to, with Seq > since, plus the new cursor (max seq seen, or
+// since if none).
 func (b *Board) Inbox(c *ConnState, since uint64) ([]RetainedMessage, uint64) {
-	c.mu.Lock()
-	patterns := make([]string, 0, len(c.patterns))
-	for p := range c.patterns {
-		patterns = append(patterns, p)
+	if c == nil || c.task == nil {
+		return nil, since
 	}
-	c.mu.Unlock()
+	patterns := c.task.snapshotPatterns()
 
 	b.mu.Lock()
 	all := make([]RetainedMessage, 0)
@@ -145,11 +182,16 @@ func (b *Board) Inbox(c *ConnState, since uint64) ([]RetainedMessage, uint64) {
 }
 
 // Wait blocks until at least one message arrives on topicName with seq > since,
-// or until ctx is done. Returns (messages, timedOut, error). An implicit subscribe
-// is added for the wait window.
+// or until ctx is done. Returns (messages, timedOut, error). Implicitly adds
+// topicName to the persistent (rid, tid) subscription set — Wait callers
+// inherit Subscribe's persistence semantics. Disable this side-effect by
+// pre-Subscribing then Unsubscribing if undesired.
 func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since uint64) ([]RetainedMessage, bool, error) {
-	if !c.matches(topicName) {
-		c.addPattern(topicName)
+	if c == nil || c.task == nil {
+		return nil, false, errors.New("not attached")
+	}
+	if !c.task.matches(topicName) {
+		c.task.addPattern(topicName)
 	}
 	for {
 		b.mu.Lock()

@@ -129,7 +129,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		h.Registry.UnbindTask(runnerID, taskID)
 		// Revoke the auth ticket so the agent can no longer authenticate for this task.
 		if h.Board != nil {
-			h.Board.Registry().Revoke(runnerIDFromConnID(runnerID), taskIDFromHex(taskID))
+			h.Board.Revoke(runnerIDFromConnID(runnerID), taskIDFromHex(taskID))
 		}
 
 	case protocol.RunnerMessageType_Heartbeat:

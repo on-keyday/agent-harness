@@ -304,7 +304,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
 		h.Registry.UnbindTask(runner.ID, taskIDHex)
 		if h.Board != nil {
-			h.Board.Registry().Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex))
+			h.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex))
 		}
 	}
 

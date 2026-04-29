@@ -99,7 +99,7 @@ func (s *Server) agentHandleHello(conn ConnHandle, ac *agentConn, h *agentboard.
 	s.sendAgent(conn, resp)
 	if status == agentboard.HelloStatusOk {
 		ac.helloed = true
-		ac.state = s.Board.Attach()
+		ac.state = s.Board.Attach(h.RunnerId, h.TaskId)
 	}
 	// On rejection we don't close the connection: ConnHandle does not
 	// expose Close(), and subsequent agent messages are dropped by the
