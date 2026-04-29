@@ -281,6 +281,15 @@ type BoardTopicSummary struct {
 	MsgCount        int
 }
 
+// ListSubscriptions returns the registered patterns for the (rid, tid) bound
+// to c. Order is unspecified. Returns nil for a nil/unattached ConnState.
+func (b *Board) ListSubscriptions(c *ConnState) []string {
+	if c == nil || c.task == nil {
+		return nil
+	}
+	return c.task.snapshotPatterns()
+}
+
 // ListTopics returns a snapshot of every topic currently retained on the board.
 // Order is unspecified.
 func (b *Board) ListTopics() []BoardTopicSummary {

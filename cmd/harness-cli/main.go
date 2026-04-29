@@ -206,6 +206,8 @@ func main() {
 			err = agent.Dispatch(ctx, rest, os.Stdin, os.Stdout)
 		case "topics":
 			err = agent.Topics(ctx, rest, os.Stdout)
+		case "subscriptions":
+			err = agent.Subscriptions(ctx, rest, os.Stdout)
 		default:
 			agentUsage()
 			os.Exit(2)
@@ -239,7 +241,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR]")
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics}")
+	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
 }
 
@@ -259,6 +261,7 @@ func agentUsage() {
 	fmt.Fprintln(os.Stderr, "  dispatch --topic T --reply-topic R --data D|- [--timeout DUR]")
 	fmt.Fprintln(os.Stderr, "                                       send + wait for reply (sugar)")
 	fmt.Fprintln(os.Stderr, "  topics                              list every topic on the board (JSON Lines)")
+	fmt.Fprintln(os.Stderr, "  subscriptions                       list this agent's registered patterns (JSON Lines)")
 }
 
 func die(err error) {

@@ -56,3 +56,36 @@ func TestBoard_ListTopics_AfterSends(t *testing.T) {
 		t.Errorf("b/y last_seq = %d, want 3", byName["b/y"].LastSeq)
 	}
 }
+
+func TestBoard_ListSubscriptions(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+	var rid RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var tid TaskID
+	tid.Id[0] = 1
+	c := b.Attach(rid, tid, "host")
+	if err := b.Subscribe(c, "alpha/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Subscribe(c, "beta/y"); err != nil {
+		t.Fatal(err)
+	}
+	got := b.ListSubscriptions(c)
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	set := map[string]bool{got[0]: true, got[1]: true}
+	if !set["alpha/x"] || !set["beta/y"] {
+		t.Errorf("subs = %v", got)
+	}
+}
+
+func TestBoard_ListSubscriptions_Detached(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+	if got := b.ListSubscriptions(nil); got != nil {
+		t.Errorf("nil ConnState should yield nil, got %v", got)
+	}
+}

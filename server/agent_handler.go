@@ -79,6 +79,8 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		s.agentHandleInbox(conn, ac, msg.Inbox())
 	case agentboard.AgentMessageKind_ListTopics:
 		s.agentHandleListTopics(conn, ac, msg.ListTopics())
+	case agentboard.AgentMessageKind_ListSubscriptions:
+		s.agentHandleListSubscriptions(conn, ac, msg.ListSubscriptions())
 	}
 }
 
@@ -271,5 +273,22 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 	out.TopicsLen = uint16(len(out.Topics))
 	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopicsResponse}
 	resp.SetListTopicsResponse(out)
+	s.sendAgent(conn, resp)
+}
+
+func (s *Server) agentHandleListSubscriptions(conn ConnHandle, ac *agentConn, req *agentboard.ListSubscriptionsRequest) {
+	if !ac.helloed || req == nil {
+		return
+	}
+	patterns := s.Board.ListSubscriptions(ac.state)
+	out := agentboard.ListSubscriptionsResponse{RequestId: req.RequestId}
+	for _, p := range patterns {
+		ss := agentboard.SubscriptionSummary{}
+		ss.SetPattern([]byte(p))
+		out.Subscriptions = append(out.Subscriptions, ss)
+	}
+	out.SubscriptionsLen = uint16(len(out.Subscriptions))
+	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListSubscriptionsResponse}
+	resp.SetListSubscriptionsResponse(out)
 	s.sendAgent(conn, resp)
 }
