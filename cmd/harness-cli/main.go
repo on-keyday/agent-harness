@@ -20,10 +20,14 @@ import (
 func main() {
 	serverCID := flag.String("server-cid", "",
 		"server ConnectionID (env: HARNESS_SERVER_CID; default ws:127.0.0.1:8539-*)")
-	wsPath := flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
+	wsPath := flag.String("ws-path", "", "WebSocket URL path (env: HARNESS_WS_PATH; default /ws)")
 	flag.Usage = usage
 	flag.Parse()
-	cli.WebSocketPath = *wsPath
+	resolvedWS := cliopts.ResolveString(*wsPath, "HARNESS_WS_PATH")
+	if resolvedWS == "" {
+		resolvedWS = "/ws"
+	}
+	cli.WebSocketPath = resolvedWS
 
 	if flag.NArg() == 0 {
 		usage()
