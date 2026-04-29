@@ -22,6 +22,7 @@ var (
 	claudeBin  = flag.String("claude-bin", "claude", "path to the claude binary")
 	claudeArgs = flag.String("claude-args", "", "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
 	wsPath     = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
+	hostName   = flag.String("hostname", "", "hostname to report in Hello (default: os.Hostname())")
 )
 
 func main() {
@@ -57,9 +58,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	hostname, err := os.Hostname()
-	if err != nil {
-		hostname = "unknown"
+	hostname := *hostName
+	if hostname == "" {
+		nativeHostname, err := os.Hostname()
+		if err != nil {
+			hostname = "unknown"
+		} else {
+			hostname = nativeHostname
+		}
 	}
 
 	peerCID, err := objproto.ParseConnectionID(*serverCID,
