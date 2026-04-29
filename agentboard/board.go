@@ -55,8 +55,10 @@ func (b *Board) Registry() *registry { return b.reg }
 
 // Attach is called from the agent_message Hello handler after Validate(rid, tid, ticket)
 // returns Ok. It returns a ConnState bound to the (rid, tid) taskState, lazy-creating
-// the taskState if this is the first agent connecting under that ticket.
-func (b *Board) Attach(rid RunnerID, tid TaskID) *ConnState {
+// the taskState if this is the first agent connecting under that ticket. hostname is
+// captured into the taskState so Board.Send can attach sender attestation to every
+// message published by this (rid, tid).
+func (b *Board) Attach(rid RunnerID, tid TaskID, hostname string) *ConnState {
 	key := ticketKey{runner: runnerIDStringBoard(rid), task: hexTaskIDBoard(tid)}
 	b.mu.Lock()
 	ts, ok := b.tasks[key]
@@ -65,6 +67,15 @@ func (b *Board) Attach(rid RunnerID, tid TaskID) *ConnState {
 		b.tasks[key] = ts
 	}
 	b.mu.Unlock()
+	// Convert agentboard.RunnerID / TaskID → protocol.RunnerID / TaskID for identity storage.
+	var protoRid protocol.RunnerID
+	protoRid.SetTransport(rid.Transport)
+	protoRid.SetIpAddr(rid.IpAddr)
+	protoRid.Port = rid.Port
+	protoRid.UniqueNumber = rid.UniqueNumber
+	var protoTid protocol.TaskID
+	copy(protoTid.Id[:], tid.Id[:])
+	ts.setIdentity(protoRid, protoTid, hostname)
 	c := newConnState(ts)
 	ts.attachConn(c)
 	return c
@@ -115,7 +126,11 @@ var (
 	ErrTooManyTopics   = errors.New("agentboard: too many topics")
 )
 
-func (b *Board) Send(topicName string, payload []byte) (uint64, error) {
+// Send appends a message to topicName attributed to the given (rid, tid, hostname).
+// The caller (server agent_handler) is responsible for passing the *authenticated*
+// sender — taken from the calling ConnState's taskState — so agents cannot spoof
+// the from_* fields.
+func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost string) (uint64, error) {
 	if len(payload) > b.cfg.MaxPayload {
 		return 0, ErrPayloadTooLarge
 	}
@@ -132,9 +147,6 @@ func (b *Board) Send(topicName string, payload []byte) (uint64, error) {
 		t = newTopic(topicName, b.cfg.RingN)
 		b.topics[topicName] = t
 	}
-	// Snapshot taskStates whose patterns include this topic. b.mu is held
-	// during the iteration; ts.matches takes ts.mu (different lock, no order
-	// inversion since b.mu → ts.mu is the only direction taken anywhere).
 	targets := make([]*taskState, 0)
 	for _, ts := range b.tasks {
 		if ts.matches(topicName) {
@@ -144,7 +156,7 @@ func (b *Board) Send(topicName string, payload []byte) (uint64, error) {
 	b.mu.Unlock()
 
 	seq := b.seq.Add(1)
-	t.append(seq, payload)
+	t.append(seq, payload, fromRid, fromTid, fromHost)
 
 	for _, ts := range targets {
 		for _, c := range ts.snapshotConns() {

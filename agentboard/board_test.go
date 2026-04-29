@@ -8,15 +8,18 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+var testRid protocol.RunnerID
+var testTid protocol.TaskID
+
 func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{})
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "topic/foo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("topic/foo", []byte("hello")); err != nil {
+	if _, err := b.Send("topic/foo", []byte("hello"), testRid, testTid, "test-host"); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := b.Inbox(conn, 0)
@@ -28,13 +31,13 @@ func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{})
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/bar")
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		_, _ = b.Send("topic/bar", []byte("ping"))
+		_, _ = b.Send("topic/bar", []byte("ping"), testRid, testTid, "test-host")
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -50,7 +53,7 @@ func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 func TestBoard_WaitTimesOut(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{})
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/quiet")
 
@@ -65,7 +68,7 @@ func TestBoard_WaitTimesOut(t *testing.T) {
 func TestBoard_PayloadTooLargeRejected(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 4})
 	defer b.Close()
-	if _, err := b.Send("topic/big", []byte("toolong")); err == nil {
+	if _, err := b.Send("topic/big", []byte("toolong"), testRid, testTid, "test-host"); err == nil {
 		t.Fatal("expected payload_too_large error")
 	}
 }
@@ -81,7 +84,7 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 	rid, tid := RunnerID{}, TaskID{}
 
 	// Connection 1: subscribe.
-	c1 := b.Attach(rid, tid)
+	c1 := b.Attach(rid, tid, "test-host")
 	if err := b.Subscribe(c1, "topic/persistent"); err != nil {
 		t.Fatal(err)
 	}
@@ -89,12 +92,12 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 
 	// Send while no connection is attached. Message should land in the topic
 	// ring and become visible to a future Inbox call.
-	if _, err := b.Send("topic/persistent", []byte("delivered")); err != nil {
+	if _, err := b.Send("topic/persistent", []byte("delivered"), testRid, testTid, "test-host"); err != nil {
 		t.Fatal(err)
 	}
 
 	// Connection 2: same (rid, tid). Should inherit the subscription.
-	c2 := b.Attach(rid, tid)
+	c2 := b.Attach(rid, tid, "test-host")
 	defer b.Detach(c2)
 	msgs, _ := b.Inbox(c2, 0)
 	if len(msgs) != 1 || string(msgs[0].Payload) != "delivered" {
@@ -111,19 +114,19 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 
 	rid, tid := RunnerID{}, TaskID{}
 
-	c1 := b.Attach(rid, tid)
+	c1 := b.Attach(rid, tid, "test-host")
 	_ = b.Subscribe(c1, "topic/scoped")
 	b.Detach(c1)
 
 	// Revoke the (rid, tid) — destroys the taskState.
 	b.Revoke(protoRunnerIDFromBoard(rid), protoTaskIDFromBoard(tid))
 
-	if _, err := b.Send("topic/scoped", []byte("after-revoke")); err != nil {
+	if _, err := b.Send("topic/scoped", []byte("after-revoke"), testRid, testTid, "test-host"); err != nil {
 		t.Fatal(err)
 	}
 
 	// New attach — fresh taskState, no inherited subscription.
-	c2 := b.Attach(rid, tid)
+	c2 := b.Attach(rid, tid, "test-host")
 	defer b.Detach(c2)
 	msgs, _ := b.Inbox(c2, 0)
 	if len(msgs) != 0 {

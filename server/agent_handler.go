@@ -99,7 +99,7 @@ func (s *Server) agentHandleHello(conn ConnHandle, ac *agentConn, h *agentboard.
 	s.sendAgent(conn, resp)
 	if status == agentboard.HelloStatusOk {
 		ac.helloed = true
-		ac.state = s.Board.Attach(h.RunnerId, h.TaskId)
+		ac.state = s.Board.Attach(h.RunnerId, h.TaskId, string(h.Hostname))
 	}
 	// On rejection we don't close the connection: ConnHandle does not
 	// expose Close(), and subsequent agent messages are dropped by the
@@ -111,7 +111,8 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 	if !ac.helloed || r == nil {
 		return
 	}
-	seq, err := s.Board.Send(string(r.Topic), r.Payload)
+	fromRid, fromTid, fromHost := ac.state.Identity()
+	seq, err := s.Board.Send(string(r.Topic), r.Payload, fromRid, fromTid, fromHost)
 	var status agentboard.SendStatus
 	switch err {
 	case nil:
@@ -152,6 +153,31 @@ func (s *Server) agentHandleUnsubscribe(conn ConnHandle, ac *agentConn, r *agent
 	s.sendAgent(conn, resp)
 }
 
+// protoToAgentboardRunnerID converts a protocol.RunnerID (stored in RetainedMessage)
+// to agentboard.RunnerID (the type carried in DeliveredMessage). The two types are
+// distinct Go types with identical field shapes. If IpAddr is empty (zero sender),
+// a placeholder IPv4 {0,0,0,0} is used to satisfy the hard IpAddrLen == 4|16 assertion
+// in the encoder.
+func protoToAgentboardRunnerID(r agentboard.RetainedMessage) agentboard.RunnerID {
+	var out agentboard.RunnerID
+	out.SetTransport(r.FromRunner.Transport)
+	ip := r.FromRunner.IpAddr
+	if len(ip) != 4 && len(ip) != 16 {
+		ip = []byte{0, 0, 0, 0}
+	}
+	out.SetIpAddr(ip)
+	out.Port = r.FromRunner.Port
+	out.UniqueNumber = r.FromRunner.UniqueNumber
+	return out
+}
+
+// protoToAgentboardTaskID converts a protocol.TaskID to agentboard.TaskID.
+func protoToAgentboardTaskID(r agentboard.RetainedMessage) agentboard.TaskID {
+	var out agentboard.TaskID
+	copy(out.Id[:], r.FromTask.Id[:])
+	return out
+}
+
 func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.WaitRequest) {
 	if !ac.helloed || r == nil {
 		return
@@ -161,9 +187,14 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 	msgs, timedOut, _ := s.Board.Wait(ctx, ac.state, string(r.Pattern), r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
-		dm := agentboard.DeliveredMessage{Seq: m.Seq, Payload: m.Payload}
+		dm := agentboard.DeliveredMessage{
+			Seq:          m.Seq,
+			FromRunnerId: protoToAgentboardRunnerID(m),
+			FromTaskId:   protoToAgentboardTaskID(m),
+		}
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetPayload(m.Payload)
+		dm.SetFromHostname([]byte(m.FromHostname))
 		delivered = append(delivered, dm)
 	}
 	var to uint8
@@ -194,9 +225,14 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	msgs, next := s.Board.Inbox(ac.state, r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
-		dm := agentboard.DeliveredMessage{Seq: m.Seq}
+		dm := agentboard.DeliveredMessage{
+			Seq:          m.Seq,
+			FromRunnerId: protoToAgentboardRunnerID(m),
+			FromTaskId:   protoToAgentboardTaskID(m),
+		}
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetPayload(m.Payload)
+		dm.SetFromHostname([]byte(m.FromHostname))
 		delivered = append(delivered, dm)
 	}
 	ir := agentboard.InboxResponse{
