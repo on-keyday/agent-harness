@@ -29,6 +29,25 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 	if _, ok := hooks["UserPromptSubmit"]; !ok {
 		t.Error("UserPromptSubmit hook not present")
 	}
+	startGroups, ok := hooks["SessionStart"].([]any)
+	if !ok || len(startGroups) == 0 {
+		t.Fatal("SessionStart hook not present")
+	}
+	{
+		g0, _ := startGroups[0].(map[string]any)
+		hs, _ := g0["hooks"].([]any)
+		if len(hs) == 0 {
+			t.Fatal("SessionStart hook group has no hooks")
+		}
+		h0, _ := hs[0].(map[string]any)
+		cmd, _ := h0["command"].(string)
+		if !strings.Contains(cmd, "agent subscribe") || !strings.Contains(cmd, "harness.hello") {
+			t.Errorf("SessionStart hook command missing expected pieces: %q", cmd)
+		}
+		if strings.Contains(cmd, "/dev/null") {
+			t.Errorf("SessionStart hook uses POSIX-only redirect; breaks on Windows shells: %q", cmd)
+		}
+	}
 	stopGroups, ok := hooks["Stop"].([]any)
 	if !ok || len(stopGroups) == 0 {
 		t.Fatal("Stop hook not present")

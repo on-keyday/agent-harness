@@ -20,7 +20,16 @@ type hookSpec struct {
 	Command string `json:"command"`
 }
 
-// WriteAgentSettings creates <dir>/.claude/settings.json with two hooks:
+// WriteAgentSettings creates <dir>/.claude/settings.json with three hooks:
+//   - SessionStart: subscribes the agent to the reserved handshake topic
+//     `harness.hello` so the multi-agent meeting protocol works without the
+//     agent having to remember to subscribe. Subscriptions are keyed by
+//     (rid, tid) on the broker and de-duplicated via a map, so re-firing
+//     this hook on /clear or /resume is a no-op. The command is left bare
+//     (no shell redirect) for cross-OS portability — `>/dev/null` is not
+//     valid in PowerShell / cmd, and the runner OS is not pinned. The
+//     resulting `{"status":"ok"}` line is injected as additionalContext at
+//     session start; the noise is negligible (17 bytes, once per session).
 //   - UserPromptSubmit: injects pending agentboard messages on each user
 //     prompt submission (covers idle agents woken by user input).
 //   - Stop: emits a Claude Code block decision when new agentboard messages
@@ -32,6 +41,12 @@ type hookSpec struct {
 func WriteAgentSettings(worktreeDir string) error {
 	s := agentSettings{
 		Hooks: map[string][]hookGroup{
+			"SessionStart": {{
+				Hooks: []hookSpec{{
+					Type:    "command",
+					Command: "harness-cli agent subscribe --topic harness.hello",
+				}},
+			}},
 			"UserPromptSubmit": {{
 				Hooks: []hookSpec{{
 					Type:    "command",
