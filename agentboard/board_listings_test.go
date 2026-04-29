@@ -1,11 +1,27 @@
 package agentboard
 
 import (
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
+
+func toAgentboardRunnerID(r protocol.RunnerID) RunnerID {
+	var out RunnerID
+	out.SetTransport(r.Transport)
+	out.SetIpAddr(r.IpAddr)
+	out.Port = r.Port
+	out.UniqueNumber = r.UniqueNumber
+	return out
+}
+
+func toAgentboardTaskID(t protocol.TaskID) TaskID {
+	var out TaskID
+	copy(out.Id[:], t.Id[:])
+	return out
+}
 
 func TestBoard_ListTopics_Empty(t *testing.T) {
 	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
@@ -88,4 +104,67 @@ func TestBoard_ListSubscriptions_Detached(t *testing.T) {
 	if got := b.ListSubscriptions(nil); got != nil {
 		t.Errorf("nil ConnState should yield nil, got %v", got)
 	}
+}
+
+func TestBoard_OnDeliver_FiresPerSubscriber(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+
+	type hit struct {
+		rid protocol.RunnerID
+		tid protocol.TaskID
+	}
+	var got []hit
+	var mu sync.Mutex
+	b.SetOnDeliver(func(rid protocol.RunnerID, tid protocol.TaskID) {
+		mu.Lock()
+		got = append(got, hit{rid, tid})
+		mu.Unlock()
+	})
+
+	mkRid := func(uniq uint16) protocol.RunnerID {
+		var r protocol.RunnerID
+		r.SetTransport([]byte("ws"))
+		r.SetIpAddr([]byte{1, 2, 3, 4})
+		r.UniqueNumber = uniq
+		return r
+	}
+	mkTid := func(b byte) protocol.TaskID {
+		var t protocol.TaskID
+		t.Id[0] = b
+		return t
+	}
+
+	cA := b.Attach(toAgentboardRunnerID(mkRid(1)), toAgentboardTaskID(mkTid(0xAA)), "host-A")
+	cB := b.Attach(toAgentboardRunnerID(mkRid(2)), toAgentboardTaskID(mkTid(0xBB)), "host-B")
+	cC := b.Attach(toAgentboardRunnerID(mkRid(3)), toAgentboardTaskID(mkTid(0xCC)), "host-C") // does not subscribe
+
+	if err := b.Subscribe(cA, "topic/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Subscribe(cB, "topic/x"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := b.Send("topic/x", []byte("hello"), mkRid(99), mkTid(0x99), "host-S"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Give async OnDeliver callbacks time to fire if they're not synchronous.
+	// If implementation is synchronous, this is a no-op.
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(got) != 2 {
+		t.Fatalf("OnDeliver fired %d times, want 2", len(got))
+	}
+	tids := map[byte]bool{}
+	for _, h := range got {
+		tids[h.tid.Id[0]] = true
+	}
+	if !tids[0xAA] || !tids[0xBB] || tids[0xCC] {
+		t.Errorf("got tids = %v, want {AA, BB} only", tids)
+	}
+	_ = cC
 }

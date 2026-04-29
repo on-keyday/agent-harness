@@ -26,6 +26,12 @@ type Board struct {
 	reg     *registry
 	stopCh  chan struct{}
 	stopped bool
+
+	// onDeliver, if non-nil, is invoked once per subscriber that Send delivers
+	// to (i.e. once per (rid, tid) whose subscription set matches the
+	// published topic). Used by the server to emit task_wake to the runners
+	// hosting those tasks. Called outside b.mu.
+	onDeliver func(protocol.RunnerID, protocol.TaskID)
 }
 
 func New(cfg Config) *Board {
@@ -52,6 +58,16 @@ func (b *Board) Close() {
 
 // Registry returns the ticket registry for server lifecycle code (TryDispatch / TaskFinished).
 func (b *Board) Registry() *registry { return b.reg }
+
+// SetOnDeliver registers a callback fired once per matched subscriber
+// after Send has appended the message to the topic ring. Non-blocking
+// expected; runs on the publisher's goroutine. Safe to call once at
+// startup before any Send.
+func (b *Board) SetOnDeliver(fn func(protocol.RunnerID, protocol.TaskID)) {
+	b.mu.Lock()
+	b.onDeliver = fn
+	b.mu.Unlock()
+}
 
 // Attach is called from the agent_message Hello handler after Validate(rid, tid, ticket)
 // returns Ok. It returns a ConnState bound to the (rid, tid) taskState, lazy-creating
@@ -158,9 +174,16 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	seq := b.seq.Add(1)
 	t.append(seq, payload, fromRid, fromTid, fromHost)
 
+	b.mu.Lock()
+	fn := b.onDeliver
+	b.mu.Unlock()
 	for _, ts := range targets {
 		for _, c := range ts.snapshotConns() {
 			c.ping()
+		}
+		if fn != nil {
+			rid, tid, _ := ts.identity()
+			fn(rid, tid)
 		}
 	}
 	return seq, nil
