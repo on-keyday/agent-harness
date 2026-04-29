@@ -10,7 +10,7 @@ config.go.package = "packet"
 
 format IPAddress:
     len :u8
-    len == 4 || len == 6
+    len == 4 || len == 16
     address :[len]u8
 
 format MacAddress:
