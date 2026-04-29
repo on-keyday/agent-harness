@@ -164,6 +164,13 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		session.SetRunnerCanonicalID(rhr.YourRunnerId)
+	case protocol.RunnerRequestType_TaskWake:
+		tw := req.TaskWake()
+		if tw == nil {
+			break
+		}
+		taskIDHex := hex.EncodeToString(tw.TaskId.Id[:])
+		session.WakeStdin(taskIDHex)
 	}
 }
 
