@@ -26,7 +26,16 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 // turn. The leading "<harness:agentboard-wake>" tag is machine-detectable
 // for future hook post-processing; the suffix is action-agnostic so the
 // LLM is not forced into a reply when the message does not warrant one.
-const wakeMarker = "<harness:agentboard-wake> new agentboard message(s) — review and act as appropriate\n"
+//
+// Trailing byte is "\r" (carriage return) because Bubble Tea-based TUIs —
+// which claude code interactive uses — interpret a bare "\n" as a literal
+// newline character inside the input field (multiline editing) and only
+// recognise "\r" as the Enter / submit key event in the PTY raw-mode
+// stream. Sending "\n" leaves the marker text rendered in the input box
+// but unsubmitted, requiring the human to press Enter manually — i.e.
+// the wake doesn't actually wake the agent. "\r" makes the marker behave
+// as a typed-and-submitted prompt.
+const wakeMarker = "<harness:agentboard-wake> new agentboard message(s) — review and act as appropriate\r"
 
 // Sender is the runner's outbound interface to the server. Decoupled from concrete
 // trsf.Transport / objproto.Connection so tests can use a mock.
