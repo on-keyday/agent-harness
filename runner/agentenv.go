@@ -34,6 +34,13 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 		"HARNESS_REPO_PATH=" + s.RepoPath,
 		"HARNESS_WS_PATH=" + s.WSPath,
 		"HARNESS_AUTH_TICKET=" + hex.EncodeToString(s.AuthTicket[:]),
+		// Disable MSYS/MinGW automatic POSIX-path → Windows-path rewriting
+		// so that POSIX-style args we pass (topics like "chat/demo", ws
+		// paths like "/ws", task IDs starting with "/", etc.) are not
+		// silently mangled when claude runs under MSYS bash on Windows.
+		// Both vars are no-ops outside MSYS/MinGW.
+		"MSYS_NO_PATHCONV=1",
+		"MSYS2_ARG_CONV_EXCL=*",
 	}
 	if s.Hostname != "" {
 		env = append(env, "HARNESS_HOSTNAME="+s.Hostname)

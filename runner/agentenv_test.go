@@ -106,6 +106,26 @@ func TestBuildAgentEnv_BinDirEmpty_NoPATHEntry(t *testing.T) {
 	}
 }
 
+// TestBuildAgentEnv_DisablesMingwPathConv verifies that MSYS_NO_PATHCONV=1
+// and MSYS2_ARG_CONV_EXCL=* are injected so that when claude runs under
+// MSYS/MinGW bash on Windows, POSIX-style paths passed as args (e.g. "/ws"
+// or topic strings like "chat/demo") are not silently rewritten into
+// Windows paths. Harmless no-op on non-Windows / non-MSYS shells.
+func TestBuildAgentEnv_DisablesMingwPathConv(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+	}
+	got := envMap(BuildAgentEnv(spec))
+	if got["MSYS_NO_PATHCONV"] != "1" {
+		t.Errorf("MSYS_NO_PATHCONV = %q, want %q", got["MSYS_NO_PATHCONV"], "1")
+	}
+	if got["MSYS2_ARG_CONV_EXCL"] != "*" {
+		t.Errorf("MSYS2_ARG_CONV_EXCL = %q, want %q", got["MSYS2_ARG_CONV_EXCL"], "*")
+	}
+}
+
 func TestBuildAgentEnv_BinDirWithEmptyParentPATH(t *testing.T) {
 	t.Setenv("PATH", "")
 	spec := AgentEnvSpec{
