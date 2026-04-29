@@ -38,6 +38,11 @@ type hookSpec struct {
 //
 // The shared --since-last cursor at ~/.cache/harness/agent-cursor-<task>
 // prevents the same seq from being delivered twice across the two paths.
+// Both hooks pass --commit so they advance the live cursor; manual
+// `harness-cli agent inbox --since-last` callers (LLM-initiated) leave
+// it off and read from the prev-cursor snapshot — i.e. they see the
+// same batch the most recent hook just delivered, idempotently. See
+// cli/agent/cursor.go.
 func WriteAgentSettings(worktreeDir string) error {
 	s := agentSettings{
 		Hooks: map[string][]hookGroup{
@@ -50,13 +55,13 @@ func WriteAgentSettings(worktreeDir string) error {
 			"UserPromptSubmit": {{
 				Hooks: []hookSpec{{
 					Type:    "command",
-					Command: "harness-cli agent inbox --since-last --json",
+					Command: "harness-cli agent inbox --since-last --commit --json",
 				}},
 			}},
 			"Stop": {{
 				Hooks: []hookSpec{{
 					Type:    "command",
-					Command: "harness-cli agent inbox --since-last --stop-hook",
+					Command: "harness-cli agent inbox --since-last --commit --stop-hook",
 				}},
 			}},
 		},

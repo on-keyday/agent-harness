@@ -13,8 +13,17 @@ import (
 
 // Inbox returns the JSON-Lines dump of pending messages on subscribed topics.
 // This is the entry point invoked by the .claude/settings.json
-// UserPromptSubmit hook. Output goes to stdout; cursor file is updated when
-// --since-last is set.
+// UserPromptSubmit hook. Output goes to stdout.
+//
+// `--since-last` alone is a peek: it reads from the prev-cursor snapshot
+// (the position just before the most recent advance) so a manually
+// invoked inbox returns the same batch the hook just delivered to the
+// prompt context. The persisted cursor is NOT modified.
+//
+// `--since-last --commit` is the consuming form used by the hooks: it
+// reads from the live cursor, advances it to NextCursor, and snapshots
+// the old live position into prev-cursor. Calling --commit by hand will
+// suppress the next hook's delivery of those seqs.
 //
 // With --stop-hook, the output instead becomes a single JSON object
 // {"decision":"block","reason":<JSON-Lines>} that Claude Code's Stop hook
@@ -25,7 +34,8 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	serverCID := fs.String("server-cid", "", "")
 	taskID := fs.String("task-id", "", "")
 	runnerID := fs.String("runner-id", "", "")
-	sinceLast := fs.Bool("since-last", false, "use persisted cursor")
+	sinceLast := fs.Bool("since-last", false, "use persisted cursor (peek; combine with --commit to advance)")
+	commit := fs.Bool("commit", false, "advance the persisted cursor (hook use only — manual callers should leave this off)")
 	since := fs.Uint64("since", 0, "cursor (ignored if --since-last)")
 	asJSON := fs.Bool("json", false, "output JSON Lines (current default; flag accepted for forward compat)")
 	stopHook := fs.Bool("stop-hook", false, "wrap output as Claude Code Stop-hook block decision")
@@ -45,10 +55,16 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	defer conn.Close()
 
 	cursor := *since
+	var oldLive uint64
 	if *sinceLast {
-		c, err := LoadCursor(hexTaskID(conn.TaskID()))
+		live, prev, err := LoadCursor(hexTaskID(conn.TaskID()))
 		if err == nil {
-			cursor = c
+			oldLive = live
+			if *commit {
+				cursor = live
+			} else {
+				cursor = prev
+			}
 		}
 	}
 
@@ -92,8 +108,8 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 				emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 			}
 		}
-		if *sinceLast {
-			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor)
+		if *sinceLast && *commit {
+			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor, oldLive)
 		}
 		return nil
 	case <-ctx.Done():

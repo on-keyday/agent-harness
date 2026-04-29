@@ -134,6 +134,72 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 	}
 }
 
+// TestBoard_SendSkipsOnDeliverForPublisher verifies the self-wake fix:
+// when a (rid, tid) publishes on a topic it is itself subscribed to, the
+// onDeliver callback fires for *other* matching subscribers but not for
+// the publisher itself — so the server's task_wake hook does not inject
+// <harness:agentboard-wake> into the publisher's own stdin.
+func TestBoard_SendSkipsOnDeliverForPublisher(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	var pubRid, subRid RunnerID
+	pubRid.SetTransport([]byte("ws"))
+	pubRid.SetIpAddr([]byte{127, 0, 0, 1})
+	pubRid.UniqueNumber = 1
+	subRid.SetTransport([]byte("ws"))
+	subRid.SetIpAddr([]byte{127, 0, 0, 2})
+	subRid.UniqueNumber = 2
+	var pubTid, subTid TaskID
+	pubTid.Id[0] = 0xaa
+	subTid.Id[0] = 0xbb
+
+	pubConn := b.Attach(pubRid, pubTid, "pub-host")
+	defer b.Detach(pubConn)
+	subConn := b.Attach(subRid, subTid, "sub-host")
+	defer b.Detach(subConn)
+
+	if err := b.Subscribe(pubConn, "topic/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Subscribe(subConn, "topic/x"); err != nil {
+		t.Fatal(err)
+	}
+
+	pubProtoTid := protoTaskIDFromBoard(pubTid)
+	subProtoTid := protoTaskIDFromBoard(subTid)
+
+	var pubDeliveries, subDeliveries int
+	b.SetOnDeliver(func(_ protocol.RunnerID, tid protocol.TaskID) {
+		switch tid.Id {
+		case pubProtoTid.Id:
+			pubDeliveries++
+		case subProtoTid.Id:
+			subDeliveries++
+		}
+	})
+
+	fromRid := protoRunnerIDFromBoard(pubRid)
+	fromTid := protoTaskIDFromBoard(pubTid)
+	if _, err := b.Send("topic/x", []byte("hello"), fromRid, fromTid, "pub-host"); err != nil {
+		t.Fatal(err)
+	}
+
+	if pubDeliveries != 0 {
+		t.Errorf("publisher onDeliver fired %d times; want 0 (self-wake should be skipped)", pubDeliveries)
+	}
+	if subDeliveries != 1 {
+		t.Errorf("subscriber onDeliver fired %d times; want 1", subDeliveries)
+	}
+
+	// Publisher's own inbox still sees the message via the topic ring —
+	// only the wake hook is suppressed.
+	msgs, _ := b.Inbox(pubConn, 0)
+	if len(msgs) != 1 || string(msgs[0].Payload) != "hello" {
+		t.Errorf("publisher inbox = %+v, want one message 'hello'", msgs)
+	}
+}
+
 // protoRunnerIDFromBoard / protoTaskIDFromBoard are test-only helpers to
 // bridge the agentboard.RunnerID/TaskID (Hello-side) and protocol.RunnerID/
 // TaskID (server-dispatch side). The two have the same field shape; both

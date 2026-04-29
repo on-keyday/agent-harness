@@ -42,10 +42,12 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 	defer conn.Close()
 
 	cursor := *since
+	var oldLive uint64
 	if *sinceLast {
-		c, err := LoadCursor(hexTaskID(conn.TaskID()))
+		live, _, err := LoadCursor(hexTaskID(conn.TaskID()))
 		if err == nil {
-			cursor = c
+			oldLive = live
+			cursor = live
 		}
 	}
 
@@ -91,7 +93,7 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 		}
 		if *sinceLast {
-			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor)
+			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor, oldLive)
 		}
 		if r.TimedOut == 1 && len(r.Msgs) == 0 {
 			return errors.New("timeout")

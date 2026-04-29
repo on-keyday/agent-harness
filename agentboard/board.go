@@ -163,10 +163,15 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		t = newTopic(topicName, b.cfg.RingN)
 		b.topics[topicName] = t
 	}
+	fromKey := ticketKey{runner: runnerIDStringProto(fromRid), task: hexTaskIDProto(fromTid)}
 	targets := make([]*taskState, 0)
-	for _, ts := range b.tasks {
+	var selfTs *taskState
+	for k, ts := range b.tasks {
 		if ts.matches(topicName) {
 			targets = append(targets, ts)
+			if k == fromKey {
+				selfTs = ts
+			}
 		}
 	}
 	b.mu.Unlock()
@@ -178,10 +183,17 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	fn := b.onDeliver
 	b.mu.Unlock()
 	for _, ts := range targets {
+		// ping self too — supports loopback waits where the same (rid, tid)
+		// has one connection waiting and another publishing (e.g. concurrent
+		// `harness-cli agent wait` + `agent send`). Cheap and harmless.
 		for _, c := range ts.snapshotConns() {
 			c.ping()
 		}
-		if fn != nil {
+		// Skip onDeliver for the publisher's own taskState — otherwise the
+		// server's wake hook would emit task_wake to the publisher's runner
+		// for a message the publisher just sent itself, injecting a spurious
+		// <harness:agentboard-wake> into the publisher's own stdin.
+		if fn != nil && ts != selfTs {
 			rid, tid, _ := ts.identity()
 			fn(rid, tid)
 		}

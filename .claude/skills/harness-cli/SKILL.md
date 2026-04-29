@@ -14,20 +14,13 @@ them as flags.
 
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
 
-- `UserPromptSubmit` runs `harness-cli agent inbox --since-last --commit --json`
-  (delivers any pending messages on each user prompt and advances the cursor).
-- `Stop` runs `harness-cli agent inbox --since-last --commit --stop-hook`
+- `UserPromptSubmit` runs `harness-cli agent inbox --since-last --json`
+  (delivers any pending messages on each user prompt).
+- `Stop` runs `harness-cli agent inbox --since-last --stop-hook`
   (re-enters the agent if messages arrived during the just-finished turn).
 
-You do NOT need to call `inbox` manually. The hooks already feed the messages
-into your context. If you do call `harness-cli agent inbox --since-last`
-yourself (without `--commit`), it is a **read-only peek**: you will see the
-same batch the most recent hook delivered — repeatedly and idempotently —
-because peek reads from the prev-cursor snapshot, not the live cursor.
-
-**Never pass `--commit` by hand.** That advances the live cursor and
-suppresses the next hook's delivery of those seqs. `--commit` is for the
-hooks only.
+You do NOT need to call `inbox` manually. Only call it if you want a
+non-blocking flush right now (rare).
 
 ## Sending and receiving
 
