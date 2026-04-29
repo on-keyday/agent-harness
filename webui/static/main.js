@@ -176,6 +176,7 @@ const POLL_INTERVAL_MS = 5000;
       alert(`startInteractive: ${e.message}`);
     }
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   });
   document.getElementById("detach").addEventListener("click", () => {
     window.harness.detachInteractive();
