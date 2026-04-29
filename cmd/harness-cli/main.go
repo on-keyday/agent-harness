@@ -72,7 +72,7 @@ func main() {
 	switch sub {
 	case "submit":
 		fs := flag.NewFlagSet("submit", flag.ExitOnError)
-		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
+		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		task := fs.String("task", "", "prompt text")
 		resolveSelector := addSelectorFlags(fs)
 		fs.Parse(args)
@@ -80,8 +80,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "submit: --task is required")
 			os.Exit(2)
 		}
-		if *repo == "" {
-			fmt.Fprintln(os.Stderr, "submit: --repo is required (must match a runner's RepoPath verbatim)")
+		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
+		if repoVal == "" {
+			fmt.Fprintln(os.Stderr, "submit: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim)")
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -96,7 +97,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		id, err := c.SubmitWithSelector(ctx, *repo, *task, sel)
+		id, err := c.SubmitWithSelector(ctx, repoVal, *task, sel)
 		if err != nil {
 			die(err)
 		}
@@ -126,10 +127,16 @@ func main() {
 
 	case "prune-local":
 		fs := flag.NewFlagSet("prune-local", flag.ExitOnError)
-		repo := fs.String("repo", ".", "repo to prune")
+		repo := fs.String("repo", ".", "repo to prune (env: HARNESS_REPO_PATH; default \".\")")
 		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees older than this")
 		fs.Parse(args)
-		abs, err := filepath.Abs(*repo)
+		repoVal := *repo
+		if repoVal == "." {
+			if env := os.Getenv("HARNESS_REPO_PATH"); env != "" {
+				repoVal = env
+			}
+		}
+		abs, err := filepath.Abs(repoVal)
 		if err != nil {
 			die(err)
 		}
@@ -153,11 +160,12 @@ func main() {
 
 	case "interactive":
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
-		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
+		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		resolveSelector := addSelectorFlags(fs)
 		fs.Parse(args)
-		if *repo == "" {
-			fmt.Fprintln(os.Stderr, "interactive: --repo is required (must match a runner's RepoPath verbatim)")
+		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
+		if repoVal == "" {
+			fmt.Fprintln(os.Stderr, "interactive: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim)")
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -171,7 +179,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.InteractiveWithSelector(ctx, *repo, sel); err != nil {
+		if _, err := c.InteractiveWithSelector(ctx, repoVal, sel); err != nil {
 			die(err)
 		}
 
