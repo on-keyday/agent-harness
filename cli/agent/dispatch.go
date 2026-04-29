@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -123,12 +122,7 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	select {
 	case r := <-waitCh:
 		for _, m := range r.Msgs {
-			line, _ := json.Marshal(map[string]any{
-				"seq":     m.Seq,
-				"topic":   string(m.Topic),
-				"payload": json.RawMessage(m.Payload),
-			})
-			fmt.Fprintln(stdout, string(line))
+			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload)
 		}
 		if r.TimedOut == 1 && len(r.Msgs) == 0 {
 			return errors.New("dispatch reply timeout")

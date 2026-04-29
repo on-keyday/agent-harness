@@ -2,10 +2,8 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
-	"fmt"
 	"io"
 	"math/rand"
 	"time"
@@ -90,12 +88,7 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 	select {
 	case r := <-respCh:
 		for _, m := range r.Msgs {
-			line, _ := json.Marshal(map[string]any{
-				"seq":     m.Seq,
-				"topic":   string(m.Topic),
-				"payload": json.RawMessage(m.Payload),
-			})
-			fmt.Fprintln(stdout, string(line))
+			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload)
 		}
 		if *sinceLast {
 			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor)
