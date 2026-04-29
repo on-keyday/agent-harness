@@ -48,19 +48,25 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 			t.Errorf("SessionStart hook uses POSIX-only redirect; breaks on Windows shells: %q", cmd)
 		}
 	}
-	stopGroups, ok := hooks["Stop"].([]any)
-	if !ok || len(stopGroups) == 0 {
-		t.Fatal("Stop hook not present")
+	if _, ok := hooks["Stop"]; ok {
+		t.Error("Stop hook must not be present: it conflicts with WakeStdin stdin injection")
 	}
-	g0, _ := stopGroups[0].(map[string]any)
-	hs, _ := g0["hooks"].([]any)
-	if len(hs) == 0 {
-		t.Fatal("Stop hook group has no hooks")
+	perms, ok := parsed["permissions"].(map[string]any)
+	if !ok {
+		t.Fatal("permissions key missing")
 	}
-	h0, _ := hs[0].(map[string]any)
-	cmd, _ := h0["command"].(string)
-	if !strings.Contains(cmd, "agent inbox") || !strings.Contains(cmd, "--stop-hook") {
-		t.Errorf("Stop hook command missing expected flags: %q", cmd)
+	allow, ok := perms["allow"].([]any)
+	if !ok || len(allow) == 0 {
+		t.Fatal("permissions.allow missing or empty")
+	}
+	found := false
+	for _, v := range allow {
+		if s, _ := v.(string); s == "Bash(harness-cli *)" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("permissions.allow missing Bash(harness-cli *), got %v", allow)
 	}
 }
 

@@ -16,8 +16,11 @@ them as flags.
 
 - `UserPromptSubmit` runs `harness-cli agent inbox --since-last --commit --json`
   (delivers any pending messages on each user prompt and advances the cursor).
-- `Stop` runs `harness-cli agent inbox --since-last --commit --stop-hook`
-  (re-enters the agent if messages arrived during the just-finished turn).
+
+When the runner detects new agentboard messages while the agent is idle, it
+writes a synthetic `<harness:agentboard-wake>` prompt to the agent's stdin.
+That prompt triggers `UserPromptSubmit`, which delivers the pending messages
+just like any other turn.
 
 You do NOT need to call `inbox` manually. The hooks already feed the messages
 into your context. If you do call `harness-cli agent inbox --since-last`
@@ -92,6 +95,57 @@ message lands on the other side. Recommended:
   equivalent discriminator) so the receiver can branch on intent.
 - Use raw bytes / plain text only for trivial signals (e.g. a single token)
   where the receiver does not need to inspect contents.
+
+## Agent-to-agent communication conventions
+
+### Only subscribe to topics you receive on
+
+Each agent owns exactly the topics it **receives** on. Never subscribe to a
+topic you only **send** to — doing so causes your own outbound messages to
+loop back into your inbox.
+
+Typical per-agent setup after a handshake:
+
+```
+subscribe:  harness.hello          # always — for new-agent discovery
+subscribe:  chat.<my-short-id>     # my inbound channel (peers write here)
+# do NOT subscribe: chat.<peer-short-id>   ← peer's inbound, not mine
+```
+
+### Naming inbound channels
+
+Use `chat.<first-8-chars-of-task-id>` as your personal inbound topic.
+Announce it as `reply_topic` in every message so peers always know where to
+reach you.
+
+### Full handshake flow
+
+1. **Subscribe** to `harness.hello` and your own inbound topic before
+   sending anything.
+2. **Post to `harness.hello`** with at minimum:
+   ```json
+   {
+     "kind": "hello",
+     "from": "<model>",
+     "role": "<role>",
+     "worktree": "<task-id>",
+     "message": "...",
+     "reply_topic": "chat.<short-id>"
+   }
+   ```
+3. **Peer replies** on your `reply_topic`. Switch all further conversation
+   to the pair topics — stop using `harness.hello` for ongoing chat.
+4. Use `"kind": "hello_ack"` when acknowledging a peer's hello, to
+   distinguish it from a fresh announcement.
+
+### Checking for stray subscriptions
+
+If you accidentally subscribed to a topic you only send to, clean it up:
+
+```bash
+harness-cli agent subscriptions                        # audit
+harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
+```
 
 ## Other conventions
 
