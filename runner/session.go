@@ -17,6 +17,17 @@ import (
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
+// wakeDebounceWindow is the minimum interval between successive wake
+// writes for one task. Coalescing rationale lives in
+// docs/superpowers/specs/2026-04-29-agent-wake-and-origin-design.md.
+const wakeDebounceWindow = 1500 * time.Millisecond
+
+// wakeMarker is the line written to the agent's stdin to provoke a new
+// turn. The leading "<harness:agentboard-wake>" tag is machine-detectable
+// for future hook post-processing; the suffix is action-agnostic so the
+// LLM is not forced into a reply when the message does not warrant one.
+const wakeMarker = "<harness:agentboard-wake> new agentboard message(s) — review and act as appropriate\n"
+
 // Sender is the runner's outbound interface to the server. Decoupled from concrete
 // trsf.Transport / objproto.Connection so tests can use a mock.
 type Sender interface {
@@ -28,10 +39,21 @@ type Sender interface {
 	Publish(topic string, data []byte) error
 }
 
-// taskEntry holds the per-task cancellation function and the repo it runs under.
+// taskEntry holds the per-task cancellation function, the repo it runs
+// under, and the (debounced) stdin-wake state.
 type taskEntry struct {
 	cancel   context.CancelFunc
 	repoPath string
+
+	// wakeWrite is the closure handed to OnStdinWriter — writes bytes
+	// directly to the running claude's stdin pipe. nil until the agent
+	// process is spawned.
+	wakeWrite func([]byte) (int, error)
+
+	// lastWakeAt is the most recent time WakeStdin actually wrote to
+	// stdin. Wakes within wakeDebounceWindow are dropped (the agent's
+	// next inbox call will pick up everything via --since-last cursor).
+	lastWakeAt time.Time
 }
 
 // Session manages the runner's task lifecycle. It is created once per connection
@@ -285,6 +307,13 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		Timeout:   s.Timeout,
 		ExtraArgs: s.ExtraClaudeArgs,
 		Env:       env,
+		OnStdinWriter: func(write func([]byte) (int, error)) {
+			s.mu.Lock()
+			if e := s.tasks[taskIDHex]; e != nil {
+				e.wakeWrite = write
+			}
+			s.mu.Unlock()
+		},
 	}
 	logSink := func(data []byte) {
 		_ = s.Sender.Publish(topic, data)
@@ -430,8 +459,16 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	})
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.
-	// ExecuteCommand defers stream.CloseBoth() so we don't double-close here.
-	runErr := agentexec.ExecuteCommand(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true, env)
+	// ExecuteCommandWithOption defers stream.CloseBoth() so we don't double-close here.
+	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true, env, agentexec.ExecuteOption{
+		OnStdinWriter: func(write func([]byte) (int, error)) {
+			s.mu.Lock()
+			if e := s.tasks[taskIDHex]; e != nil {
+				e.wakeWrite = write
+			}
+			s.mu.Unlock()
+		},
+	})
 
 	if runErr != nil {
 		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)
@@ -456,4 +493,39 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	if err := wm.Remove(taskIDHex); err != nil {
 		log.Warn("worktree remove failed", "task_id", taskIDHex, "err", err)
 	}
+}
+
+// WakeStdin writes the wake marker to the agent's stdin pipe for the given
+// task, debounced per task to one write per wakeDebounceWindow. Safe to
+// call from any goroutine. No-op if the task is unknown or its agent
+// process has not yet wired its stdin via OnStdinWriter.
+//
+// Coalescing rationale: subsequent agentboard messages within the window
+// are not lost — they are read by the agent's next `agent inbox
+// --since-last`, which uses a persisted cursor.
+func (s *Session) WakeStdin(taskIDHex string) {
+	s.mu.Lock()
+	e, ok := s.tasks[taskIDHex]
+	if !ok || e == nil || e.wakeWrite == nil {
+		s.mu.Unlock()
+		return
+	}
+	now := s.Now()
+	if !e.lastWakeAt.IsZero() && now.Sub(e.lastWakeAt) < wakeDebounceWindow {
+		s.mu.Unlock()
+		return
+	}
+	write := e.wakeWrite
+	s.mu.Unlock()
+
+	if _, err := write([]byte(wakeMarker)); err != nil {
+		s.logger().Warn("wake stdin write failed", "task_id", taskIDHex, "err", err)
+		return
+	}
+
+	s.mu.Lock()
+	if e2, ok := s.tasks[taskIDHex]; ok && e2 != nil {
+		e2.lastWakeAt = now
+	}
+	s.mu.Unlock()
 }

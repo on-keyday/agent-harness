@@ -22,6 +22,13 @@ type Process struct {
 	Timeout   time.Duration // max wall time; if zero, defaults to 30 minutes
 	ExtraArgs []string      // additional args inserted before "-p <prompt>" (e.g. --dangerously-skip-permissions)
 	Env       []string      // additional env vars to merge with os.Environ()
+
+	// OnStdinWriter, if non-nil, is called once after the process stdin pipe
+	// is ready. The argument is a write fn that can be used to inject bytes
+	// into stdin from any goroutine while the process is running. Used by
+	// Session.WakeStdin to deliver agentboard wake markers to non-interactive
+	// (oneshot) tasks.
+	OnStdinWriter func(write func([]byte) (int, error))
 }
 
 // Run starts ClaudeBin with `-p <prompt>`, captures stdout and stderr line-by-line,
@@ -61,8 +68,58 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 		return -1, fmt.Errorf("stderr pipe: %w", err)
 	}
 
+	// Wire up a writable stdin pipe when the caller wants to inject wake
+	// markers. If OnStdinWriter is nil, cmd.Stdin stays nil (reads from
+	// /dev/null-equivalent).
+	//
+	// Lifecycle constraint: the exec-internal stdin-copy goroutine blocks on
+	// stdinPipeR.Read; cmd.Wait waits for that goroutine. To avoid a deadlock
+	// we must close stdinPipeW BEFORE cmd.Wait can return.
+	//
+	// We solve this with a procDone channel that is closed by a dedicated
+	// watcher goroutine (which calls cmd.Process.Wait) immediately after the
+	// OS-level process exits. The stdin-closer goroutine listens on procDone
+	// and closes stdinPipeW — this unblocks the exec-internal goroutine so
+	// cmd.Wait can finish.
+	//
+	// Calling cmd.Process.Wait in the watcher is safe: on Linux the result is
+	// cached in os.Process after the first waitpid syscall, so the subsequent
+	// cmd.Wait call reads the cached exit status instead of issuing a second
+	// waitpid.
+	var stdinPipeW *io.PipeWriter
+	if p.OnStdinWriter != nil {
+		var stdinPipeR *io.PipeReader
+		stdinPipeR, stdinPipeW = io.Pipe()
+		cmd.Stdin = stdinPipeR
+	}
+
 	if err := cmd.Start(); err != nil {
+		if stdinPipeW != nil {
+			stdinPipeW.Close()
+		}
 		return -1, fmt.Errorf("start: %w", err)
+	}
+
+	if p.OnStdinWriter != nil {
+		writeFn := func(b []byte) (int, error) {
+			return stdinPipeW.Write(b)
+		}
+		p.OnStdinWriter(writeFn)
+
+		// procDone is closed once the OS process has exited.
+		procDone := make(chan struct{})
+		proc := cmd.Process
+		go func() {
+			proc.Wait() //nolint:errcheck // only used to detect exit
+			close(procDone)
+		}()
+		go func() {
+			select {
+			case <-runCtx.Done():
+			case <-procDone:
+			}
+			stdinPipeW.Close()
+		}()
 	}
 
 	var wg sync.WaitGroup
