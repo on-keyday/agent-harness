@@ -6,7 +6,9 @@ import (
 	"path"
 	"time"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // RunnerHandler decodes inbound RunnerMessage payloads from runners
@@ -17,6 +19,10 @@ type RunnerHandler struct {
 	Now            func() time.Time
 	OnChange       func()             // called after any state mutation, used to trigger Scheduler.Tick
 	OnTaskStarted  func(taskID string) // optional; called when the runner reports TaskStarted
+
+	// Board is the agentboard instance for ticket lifecycle management.
+	// When nil, ticket revocation is skipped (safe for tests that do not wire a Board).
+	Board *agentboard.Board
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -62,6 +68,21 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		entry.Conn = conn
 		h.Registry.Add(entry)
 
+		// Tell the runner what canonical RunnerID the server keys it as.
+		// The peer transport's ConnectionID is symmetric (surfaces the peer's
+		// ID), so the runner cannot derive this locally; without this the
+		// runner would inject the wrong HARNESS_RUNNER_ID and agent Hello
+		// validation would fail.
+		rhResp := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
+		rhResp.SetRunnerHelloResponse(protocol.RunnerHelloResponse{
+			YourRunnerId: runnerIDFromConnID(runnerID),
+		})
+		if rhBytes, err := rhResp.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}); err != nil {
+			slog.Error("RunnerHandler: encode RunnerHelloResponse failed", "runner", runnerID, "err", err)
+		} else if _, _, err := conn.SendMessage(rhBytes); err != nil {
+			slog.Error("RunnerHandler: send RunnerHelloResponse failed", "runner", runnerID, "err", err)
+		}
+
 	case protocol.RunnerMessageType_TaskAccepted:
 		ta := msg.TaskAccepted()
 		if ta == nil {
@@ -106,6 +127,10 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		h.Tasks.Finish(taskID, tf.ExitCode, tf.DiffInfo)
 		// Release the capacity slot so the dispatcher can re-use it.
 		h.Registry.UnbindTask(runnerID, taskID)
+		// Revoke the auth ticket so the agent can no longer authenticate for this task.
+		if h.Board != nil {
+			h.Board.Revoke(runnerIDFromConnID(runnerID), taskIDFromHex(taskID))
+		}
 
 	case protocol.RunnerMessageType_Heartbeat:
 		if !h.Registry.SetLastSeen(runnerID, now) {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/rand"
 	"encoding/hex"
 	"io"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -33,6 +35,10 @@ type TaskHandler struct {
 	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
 	// (always returns Found=0). Server.New wires it from cfg.DataDir.
 	LogsDir string
+
+	// Board is the agentboard instance for ticket lifecycle management.
+	// When nil, ticket registration is skipped (safe for tests that do not wire a Board).
+	Board *agentboard.Board
 
 	// clientKinds maps connection ID → the kind of client that announced
 	// itself via ClientHello on that connection. Submit / OpenInteractive
@@ -297,6 +303,20 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	finishWithError := func(reason string) {
 		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
 		h.Registry.UnbindTask(runner.ID, taskIDHex)
+		if h.Board != nil {
+			h.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex))
+		}
+	}
+
+	// Generate a fresh ticket for the agent Hello handshake.
+	var ticket [16]byte
+	if _, err := rand.Read(ticket[:]); err != nil {
+		slog.Error("handleOpenInteractive: ticket generation failed", "task", taskIDHex, "err", err)
+		finishWithError("ticket gen failed: " + err.Error())
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	}
+	if h.Board != nil {
+		h.Board.Registry().Register(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex), ticket)
 	}
 
 	tuiStream := tuiConn.CreateBidirectionalStream()
@@ -320,8 +340,9 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// Tell the runner to wire its stream end to claude.
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenExec}
 	oer := protocol.OpenExecRunnerRequest{
-		TaskId:   tid,
-		StreamId: uint64(runnerStream.ID()),
+		TaskId:     tid,
+		StreamId:   uint64(runnerStream.ID()),
+		AuthTicket: ticket,
 	}
 	oer.SetRepoPath([]byte(repo))
 	rreq.SetOpenExec(oer)

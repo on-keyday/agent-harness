@@ -1,10 +1,12 @@
 package server
 
 import (
+	"encoding/hex"
 	"errors"
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -168,5 +170,118 @@ func TestTryDispatch_SendError(t *testing.T) {
 	te, _ := tasks.Get(taskID)
 	if te.Status != protocol.TaskStatus_Queued {
 		t.Errorf("expected task to remain Queued after send error, got %v", te.Status)
+	}
+}
+
+// boardRunnerID builds an agentboard.RunnerID from a connection ID string so
+// tests can call board.Registry().Validate without going through the protocol
+// wire. The format mirrors runnerIDFromConnID (same underlying string).
+func boardRunnerID(t *testing.T, connIDStr string) agentboard.RunnerID {
+	t.Helper()
+	cid, err := objproto.ParseConnectionID(connIDStr, 0)
+	if err != nil {
+		t.Fatalf("boardRunnerID: parse %q: %v", connIDStr, err)
+	}
+	var rid agentboard.RunnerID
+	rid.SetTransport([]byte(cid.Transport))
+	ip := cid.Addr.Addr().AsSlice()
+	rid.SetIpAddr(ip)
+	rid.Port = uint16(cid.Addr.Port())
+	rid.UniqueNumber = cid.ID
+	return rid
+}
+
+// boardTaskID converts a hex task ID string to agentboard.TaskID.
+func boardTaskID(taskIDHex string) agentboard.TaskID {
+	var tid agentboard.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+	return tid
+}
+
+// TestTryDispatch_RegistersTicket verifies the full ticket lifecycle:
+//  1. TryDispatch registers a non-zero ticket in the Board.
+//  2. The AssignTask sent to the runner contains that ticket.
+//  3. board.Registry().Validate returns HelloStatusOk.
+//  4. After TaskFinished is handled, Validate returns HelloStatusUnknownTask.
+func TestTryDispatch_RegistersTicket(t *testing.T) {
+	board := agentboard.New(agentboard.Config{
+		RingN:      8,
+		TopicTTL:   time.Hour,
+		MaxTopics:  16,
+		MaxPayload: 1024,
+	})
+	defer board.Close()
+
+	reg := NewRegistry()
+	tasks := NewTaskStore()
+	d := &Dispatcher{
+		Registry: reg,
+		Tasks:    tasks,
+		Board:    board,
+	}
+
+	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-20")}
+	runnerID := fc.id.String()
+	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
+
+	taskIDHex := tasks.Create("/repo", "ticket-test", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	task, _ := tasks.Get(taskIDHex)
+
+	ok := d.TryDispatch(task)
+	if !ok {
+		t.Fatal("expected TryDispatch to return true")
+	}
+
+	// 1. Exactly one message was sent; decode the AssignTask.
+	if len(fc.sent) != 1 {
+		t.Fatalf("expected 1 sent message, got %d", len(fc.sent))
+	}
+	var req protocol.RunnerRequest
+	if _, err := req.Decode(fc.sent[0][1:]); err != nil {
+		t.Fatalf("decode RunnerRequest: %v", err)
+	}
+	at := req.AssignTask()
+	if at == nil {
+		t.Fatal("AssignTask() returned nil")
+	}
+
+	// 2. The AuthTicket in the message must be non-zero.
+	var zero [16]byte
+	if at.AuthTicket == zero {
+		t.Error("expected non-zero AuthTicket in AssignTask, got all-zero")
+	}
+
+	// 3. board.Registry().Validate must return HelloStatusOk for the registered ticket.
+	brid := boardRunnerID(t, runnerID)
+	btid := boardTaskID(taskIDHex)
+	status := board.Registry().Validate(brid, btid, at.AuthTicket)
+	if status != agentboard.HelloStatusOk {
+		t.Errorf("expected HelloStatusOk after TryDispatch, got %v", status)
+	}
+
+	// 4. Simulate TaskFinished via RunnerHandler — the ticket must be revoked.
+	rh := &RunnerHandler{
+		Registry: reg,
+		Tasks:    tasks,
+		Now:      time.Now,
+		Board:    board,
+	}
+
+	var tfTaskID protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tfTaskID.Id[:], raw)
+	tfMsg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
+	tfMsg.SetTaskFinished(protocol.TaskFinished{TaskId: tfTaskID, ExitCode: 0})
+	payload, err := tfMsg.Append(nil)
+	if err != nil {
+		t.Fatalf("encode TaskFinished: %v", err)
+	}
+	rh.Handle(fc, payload)
+
+	// After revocation, Validate must return HelloStatusUnknownTask.
+	status = board.Registry().Validate(brid, btid, at.AuthTicket)
+	if status != agentboard.HelloStatusUnknownTask {
+		t.Errorf("expected HelloStatusUnknownTask after TaskFinished, got %v", status)
 	}
 }

@@ -23,6 +23,17 @@ func fakeClaudePath(t *testing.T) string {
 	return abs
 }
 
+// writeFakeClaude creates a temporary executable script with the given body and returns its path.
+func writeFakeClaude(t *testing.T, body string) string {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "fake-claude.sh")
+	fullBody := "#!/usr/bin/env bash\nset -e\n" + body + "\nexit 0\n"
+	if err := os.WriteFile(script, []byte(fullBody), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return script
+}
+
 func TestRunClaudeWithExtraArgs(t *testing.T) {
 	// Verify ExtraArgs are inserted before "-p <prompt>". fake-claude.sh prints all its
 	// args via "$*", so we can search the captured stdout for the extra flag.
@@ -155,5 +166,26 @@ func TestRunClaudeTimeout(t *testing.T) {
 	}
 	if elapsed > 10*time.Second {
 		t.Errorf("timeout took too long: %v", elapsed)
+	}
+}
+
+func TestProcess_RunSetsEnv(t *testing.T) {
+	fake := writeFakeClaude(t, `echo "TASK_ID=$HARNESS_TASK_ID"`)
+	p := &Process{
+		ClaudeBin: fake,
+		CWD:       t.TempDir(),
+		Env:       []string{"HARNESS_TASK_ID=deadbeef"},
+	}
+	var out []byte
+	sink := func(data []byte) { out = append(out, data...) }
+	code, err := p.Run(context.Background(), "ignored", sink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(string(out), "TASK_ID=deadbeef") {
+		t.Errorf("env not propagated; output = %q", out)
 	}
 }

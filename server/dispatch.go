@@ -1,9 +1,11 @@
 package server
 
 import (
+	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
@@ -34,10 +36,15 @@ type ConnHandle interface {
 type Dispatcher struct {
 	OnRunnerControl func(ConnHandle, []byte) // payload is everything after the kind byte
 	OnTaskControl   func(ConnHandle, []byte)
+	OnAgentMessage  func(ConnHandle, []byte) // payload is the full AgentMessage bytes (kind byte stripped)
 
 	// Registry and Tasks are used by TryDispatch and OnCancel.
 	Registry *Registry
 	Tasks    *TaskStore
+
+	// Board is the agentboard instance for ticket lifecycle management.
+	// When nil, ticket registration is skipped (safe for tests that do not wire a Board).
+	Board *agentboard.Board
 }
 
 // Dispatch routes msg by inspecting the first byte (the wire kind).
@@ -60,16 +67,22 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 		if d.OnTaskControl != nil {
 			d.OnTaskControl(conn, payload)
 		}
+	case wire.ApplicationPayloadKind_AgentMessage:
+		if d.OnAgentMessage != nil {
+			d.OnAgentMessage(conn, payload)
+		}
 	}
 }
 
 // buildAssignMsg constructs the wire bytes for a RunnerControl/AssignTask message.
-func buildAssignMsg(task TaskEntry) ([]byte, error) {
+// ticket is included verbatim in AssignTask.AuthTicket; pass [16]byte{} when no
+// ticket is available (e.g. Scheduler path that does not yet generate tickets).
+func buildAssignMsg(task TaskEntry, ticket [16]byte) ([]byte, error) {
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(task.ID)
 	copy(tid.Id[:], raw)
 
-	assign := protocol.AssignTask{TaskId: tid}
+	assign := protocol.AssignTask{TaskId: tid, AuthTicket: ticket}
 	assign.SetRepoPath([]byte(task.RepoPath))
 	assign.Prompt = []byte(task.Prompt)
 
@@ -77,6 +90,37 @@ func buildAssignMsg(task TaskEntry) ([]byte, error) {
 	req.SetAssignTask(assign)
 	data, err := req.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 	return data, err
+}
+
+// runnerIDFromConnID parses a runner's string ID (objproto.ConnectionID.String() format:
+// "transport:ip:port-unique") into a protocol.RunnerID suitable for agentboard registry calls.
+// Returns a placeholder RunnerID on parse error so callers can still proceed (the
+// ticket will simply not match on validation, which is safe — the agent will get
+// HelloStatusUnknownTask and reconnect).
+func runnerIDFromConnID(id string) protocol.RunnerID {
+	cid, err := objproto.ParseConnectionID(id, 0)
+	if err != nil {
+		// Fallback to loopback placeholder (safe: validation will fail, not panic).
+		var rid protocol.RunnerID
+		rid.SetTransport([]byte("ws"))
+		rid.SetIpAddr([]byte{127, 0, 0, 1})
+		return rid
+	}
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte(cid.Transport))
+	ip := cid.Addr.Addr().AsSlice()
+	rid.SetIpAddr(ip)
+	rid.Port = uint16(cid.Addr.Port())
+	rid.UniqueNumber = cid.ID
+	return rid
+}
+
+// taskIDFromHex converts a hex task ID string to a protocol.TaskID.
+func taskIDFromHex(taskIDHex string) protocol.TaskID {
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+	return tid
 }
 
 // TryDispatch attempts to find an available runner for the given queued task,
@@ -107,15 +151,32 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			continue
 		}
 
-		msg, err := buildAssignMsg(task)
+		// Generate a fresh ticket for the agent Hello handshake.
+		var ticket [16]byte
+		if _, err := rand.Read(ticket[:]); err != nil {
+			slog.Error("dispatcher: ticket generation failed", "task", task.ID, "err", err)
+			d.Registry.UnbindTask(runner.ID, task.ID)
+			continue
+		}
+		if d.Board != nil {
+			d.Board.Registry().Register(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID), ticket)
+		}
+
+		msg, err := buildAssignMsg(task, ticket)
 		if err != nil {
 			slog.Error("dispatcher: buildAssignMsg failed", "task", task.ID, "err", err)
+			if d.Board != nil {
+				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
+			}
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}
 
 		if _, _, err := runner.Conn.SendMessage(msg); err != nil {
 			slog.Error("dispatcher: SendMessage failed, rolling back", "runner", runner.ID, "task", task.ID, "err", err)
+			if d.Board != nil {
+				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
+			}
 			d.Registry.UnbindTask(runner.ID, task.ID)
 			continue
 		}

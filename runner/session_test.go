@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"io"
 	"path/filepath"
 	"strings"
@@ -338,6 +339,62 @@ func TestSessionPanicIsolatesSiblingTask(t *testing.T) {
 	}
 }
 
+// TestHandleAssign_PassesEnvToProcess verifies that HARNESS_* env vars built from
+// session fields and request data are visible to the spawned claude process.
+func TestHandleAssign_PassesEnvToProcess(t *testing.T) {
+	// Fake claude: print the two env vars we care about, then exit 0.
+	fake := writeFakeClaude(t, `echo "TICKET=$HARNESS_AUTH_TICKET"
+echo "TASK=$HARNESS_TASK_ID"`)
+
+	repo := initRepo(t)
+	ms := &mockSender{}
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "test-host",
+		WSPath:       "/ws",
+		Logger:       nil, // defaults to slog.Default()
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xAB
+	var ticket [16]byte
+	ticket[0] = 0xCD
+	ticket[15] = 0xEF
+	req := &protocol.AssignTask{
+		TaskId:     protocol.TaskID{Id: taskIDBytes},
+		AuthTicket: ticket,
+		Prompt:     []byte("env-test"),
+	}
+	req.SetRepoPath([]byte(repo))
+
+	sess.handleAssign(context.Background(), req)
+
+	// Collect all published log data.
+	ms.mu.Lock()
+	var combined []byte
+	for _, p := range ms.publishes {
+		combined = append(combined, p.data...)
+	}
+	ms.mu.Unlock()
+
+	output := string(combined)
+	// ticket[0]=0xCD, ticket[15]=0xEF, all others zero → 32-char hex
+	expectedTicket := "TICKET=cd" + strings.Repeat("00", 14) + "ef"
+	// taskID[0]=0xAB, rest zero
+	expectedTask := "TASK=ab" + strings.Repeat("00", 15)
+	if !strings.Contains(output, expectedTicket) {
+		t.Errorf("auth ticket env not visible to claude; output=%q want substring %q", output, expectedTicket)
+	}
+	if !strings.Contains(output, expectedTask) {
+		t.Errorf("task id env not visible to claude; output=%q want substring %q", output, expectedTask)
+	}
+}
+
 // decodeRunnerMsg parses the wire-prefixed RunnerControl payload from a Sender.Send call.
 func decodeRunnerMsg(t *testing.T, raw []byte) *protocol.RunnerMessage {
 	t.Helper()
@@ -390,6 +447,117 @@ func (s *noopBidiStream) HasRecvData() bool { return false }
 func (s *noopBidiStream) EOF() bool         { return true }
 func (s *noopBidiStream) Cancel()           {}
 func (s *noopBidiStream) CloseBoth() error  { s.closed.Store(true); return nil }
+
+// TestHandleAssign_OmitsEmptyHostname verifies that when Session.Hostname is empty,
+// handleAssign does NOT pass a HARNESS_HOSTNAME= env var to the spawned claude process.
+// This tests the full session-level flow, complementing the unit-level BuildAgentEnv test.
+func TestHandleAssign_OmitsEmptyHostname(t *testing.T) {
+	// Fake claude: print the HARNESS_HOSTNAME env var (or empty string if unset).
+	fake := writeFakeClaude(t, `echo "HOSTNAME=$HARNESS_HOSTNAME"`)
+
+	repo := initRepo(t)
+	ms := &mockSender{}
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "", // Empty hostname — should not be passed to claude
+		WSPath:       "/ws",
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xEE
+	req := &protocol.AssignTask{
+		TaskId: protocol.TaskID{Id: taskIDBytes},
+		Prompt: []byte("test-empty-hostname"),
+	}
+	req.SetRepoPath([]byte(repo))
+
+	sess.handleAssign(context.Background(), req)
+
+	// Collect all published log data.
+	ms.mu.Lock()
+	var combined []byte
+	for _, p := range ms.publishes {
+		combined = append(combined, p.data...)
+	}
+	ms.mu.Unlock()
+
+	output := string(combined)
+	// When HARNESS_HOSTNAME is not set, the echo will print just "HOSTNAME="
+	if !strings.Contains(output, "HOSTNAME=") || strings.Contains(output, "HOSTNAME=test") {
+		t.Errorf("empty hostname should not be passed; output=%q", output)
+	}
+}
+
+// TestHandleAssign_WritesSettingsAndPropagatesEnv verifies the full assign chain:
+// (1) settings.json is written into the worktree under .claude/,
+// (2) the file contains the UserPromptSubmit hook entry,
+// (3) HARNESS_AUTH_TICKET is visible to the spawned claude process.
+func TestHandleAssign_WritesSettingsAndPropagatesEnv(t *testing.T) {
+	// Fake claude: list the settings file, print its first few lines, echo the ticket env.
+	fake := writeFakeClaude(t, `ls -la .claude/settings.json
+head -5 .claude/settings.json
+echo "TICKET=$HARNESS_AUTH_TICKET"`)
+
+	repo := initRepo(t)
+	ms := &mockSender{}
+	sess := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		Hostname:     "test-host",
+		WSPath:       "/ws",
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xAB
+	var ticket [16]byte
+	ticket[0] = 0xFE
+	ticket[15] = 0xED
+
+	req := &protocol.AssignTask{
+		TaskId:     protocol.TaskID{Id: taskIDBytes},
+		AuthTicket: ticket,
+		Prompt:     []byte("settings-smoke"),
+	}
+	req.SetRepoPath([]byte(repo))
+
+	sess.handleAssign(context.Background(), req)
+
+	// Collect all published log data.
+	ms.mu.Lock()
+	var combined []byte
+	for _, p := range ms.publishes {
+		combined = append(combined, p.data...)
+	}
+	ms.mu.Unlock()
+
+	output := string(combined)
+
+	// (1) settings.json was written — ls -la output includes the filename.
+	if !strings.Contains(output, "settings.json") {
+		t.Errorf("settings.json not written to worktree; output=%q", output)
+	}
+
+	// (2) settings.json contains UserPromptSubmit — head -5 includes the hook key.
+	if !strings.Contains(output, "UserPromptSubmit") {
+		t.Errorf("settings.json missing UserPromptSubmit hook; output=%q", output)
+	}
+
+	// (3) HARNESS_AUTH_TICKET reaches claude — build expected hex at runtime.
+	expectedTicketHex := hex.EncodeToString(ticket[:])
+	expectedLine := "TICKET=" + expectedTicketHex
+	if !strings.Contains(output, expectedLine) {
+		t.Errorf("auth ticket env not propagated to claude; output=%q want substring %q", output, expectedLine)
+	}
+}
 
 // TestHandleOpenExecGateFailureClosesStream verifies that when the AllowedRoots
 // gate rejects an OpenExec request, the runner closes the server-allocated

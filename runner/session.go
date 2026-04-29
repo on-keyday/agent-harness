@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -45,6 +46,24 @@ type Session struct {
 	Logger          *slog.Logger                   // optional; defaults to slog.Default()
 	Now             func() time.Time
 
+	// ServerCID, Hostname, WSPath, BinDir are required for HARNESS_* env
+	// injection at task spawn time. Filled from Config in connect.go.
+	// BinDir is prepended to the agent's PATH so harness-cli is reachable
+	// from within the task worktree (which is a different worktree than
+	// the runner's binary location).
+	ServerCID objproto.ConnectionID
+	Hostname  string
+	WSPath    string
+	BinDir    string
+
+	// runnerCanonicalID is the RunnerID the server keys this runner as in
+	// its registry / agentboard ticket store. Filled from RunnerHelloResponse
+	// (server → runner) before any AssignTask. Reads/writes are guarded by
+	// mu — the wire ordering guarantees Set happens before any handleAssign
+	// reads, but the lock provides a memory barrier for the cross-goroutine
+	// happens-before.
+	runnerCanonicalID protocol.RunnerID
+
 	mu    sync.Mutex
 	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
 	wms   map[string]*WorktreeManager // repoPath → WorktreeManager
@@ -52,6 +71,49 @@ type Session struct {
 	// testHookHandleAssign is called at the start of handleAssign in tests to
 	// inject faults (e.g. panics). It is nil in production.
 	testHookHandleAssign func()
+}
+
+// SetRunnerCanonicalID stores the RunnerID the server reports for this
+// runner connection (via RunnerHelloResponse). Called from
+// dispatchRunnerRequest synchronously before any AssignTask is dispatched.
+func (s *Session) SetRunnerCanonicalID(rid protocol.RunnerID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runnerCanonicalID = rid
+}
+
+// runnerCanonicalConnID returns the runner's canonical RunnerID, converted to
+// objproto.ConnectionID format for embedding in HARNESS_RUNNER_ID. Returns the
+// zero ConnectionID (which stringifies as ":invalid AddrPort-0") if the server
+// has not yet sent RunnerHelloResponse — agent Hello validation will then fail
+// with UnknownTask, surfacing the missing handshake clearly rather than
+// silently sending the server's own CID.
+func (s *Session) runnerCanonicalConnID() objproto.ConnectionID {
+	s.mu.Lock()
+	rid := s.runnerCanonicalID
+	s.mu.Unlock()
+	return runnerIDToConnID(rid)
+}
+
+// runnerIDToConnID converts protocol.RunnerID → objproto.ConnectionID without
+// going through wire encode/decode (so a zero RunnerID does not panic on the
+// IpAddrLen invariant).
+func runnerIDToConnID(rid protocol.RunnerID) objproto.ConnectionID {
+	var ip netip.Addr
+	switch rid.IpAddrLen {
+	case 4:
+		ip = netip.AddrFrom4([4]byte(rid.IpAddr))
+	case 16:
+		ip = netip.AddrFrom16([16]byte(rid.IpAddr))
+	default:
+		// zero-value or unset; leave ip invalid — caller stringification
+		// will produce a clearly-malformed CID.
+	}
+	return objproto.ConnectionID{
+		Transport: string(rid.Transport),
+		Addr:      netip.AddrPortFrom(ip, rid.Port),
+		ID:        rid.UniqueNumber,
+	}
 }
 
 // initMaps initialises the internal maps if they have not been set yet.
@@ -195,12 +257,34 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		_ = s.Sender.Send(data)
 	}
 
+	// Write .claude/settings.json into the worktree so the inbox hook fires.
+	// Non-fatal: task continues even if settings file can't be written.
+	if err := WriteAgentSettings(dir); err != nil {
+		s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
+	}
+
+	// Build HARNESS_* env vars for the subprocess. RunnerID is the canonical
+	// value the server keys this runner as (from RunnerHelloResponse), NOT
+	// s.Sender.ID() — the latter is the peer's symmetric ConnectionID, which
+	// is the server's own CID from the runner's vantage.
+	env := BuildAgentEnv(AgentEnvSpec{
+		ServerCID:  s.ServerCID,
+		RunnerID:   s.runnerCanonicalConnID(),
+		TaskID:     req.TaskId,
+		RepoPath:   repoPath,
+		Hostname:   s.Hostname,
+		WSPath:     s.WSPath,
+		AuthTicket: req.AuthTicket,
+		BinDir:     s.BinDir,
+	})
+
 	// Step 4: Execute the process, publishing log lines to the task log topic.
 	proc := &Process{
 		ClaudeBin: s.ClaudeBin,
 		CWD:       dir,
 		Timeout:   s.Timeout,
 		ExtraArgs: s.ExtraClaudeArgs,
+		Env:       env,
 	}
 	logSink := func(data []byte) {
 		_ = s.Sender.Publish(topic, data)
@@ -327,9 +411,27 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
 	}
 
+	// Write .claude/settings.json into the worktree so the inbox hook fires.
+	// Non-fatal: task continues even if settings file can't be written.
+	if err := WriteAgentSettings(dir); err != nil {
+		log.Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
+	}
+
+	// Build HARNESS_* env vars for the subprocess. See handleAssign comment.
+	env := BuildAgentEnv(AgentEnvSpec{
+		ServerCID:  s.ServerCID,
+		RunnerID:   s.runnerCanonicalConnID(),
+		TaskID:     oer.TaskId,
+		RepoPath:   repoPath,
+		Hostname:   s.Hostname,
+		WSPath:     s.WSPath,
+		AuthTicket: oer.AuthTicket,
+		BinDir:     s.BinDir,
+	})
+
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommand defers stream.CloseBoth() so we don't double-close here.
-	runErr := agentexec.ExecuteCommand(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true)
+	runErr := agentexec.ExecuteCommand(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true, env)
 
 	if runErr != nil {
 		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)

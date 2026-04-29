@@ -11,17 +11,23 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/agent"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func main() {
-	serverCID := flag.String("server-cid", "ws:127.0.0.1:8539-*",
-		"server ConnectionID (e.g. ws:host:port-id, * for random)")
-	wsPath := flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
+	serverCID := flag.String("server-cid", "",
+		"server ConnectionID (env: HARNESS_SERVER_CID; default ws:127.0.0.1:8539-*)")
+	wsPath := flag.String("ws-path", "", "WebSocket URL path (env: HARNESS_WS_PATH; default /ws)")
 	flag.Usage = usage
 	flag.Parse()
-	cli.WebSocketPath = *wsPath
+	resolvedWS := cliopts.ResolveString(*wsPath, "HARNESS_WS_PATH")
+	if resolvedWS == "" {
+		resolvedWS = "/ws"
+	}
+	cli.WebSocketPath = resolvedWS
 
 	if flag.NArg() == 0 {
 		usage()
@@ -32,12 +38,15 @@ func main() {
 	ctx := context.Background()
 
 	parseCID := func() objproto.ConnectionID {
-		peerCID, err := objproto.ParseConnectionID(*serverCID,
-			objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-		if err != nil {
-			die(fmt.Errorf("server-cid: %w", err))
+		val := *serverCID
+		if val == "" && os.Getenv("HARNESS_SERVER_CID") == "" {
+			val = "ws:127.0.0.1:8539-*"
 		}
-		return peerCID
+		cid, err := cliopts.ResolveServerCID(val)
+		if err != nil {
+			die(err)
+		}
+		return cid
 	}
 
 	// addSelectorFlags registers --runner/--host/--ip on fs and returns a
@@ -63,7 +72,7 @@ func main() {
 	switch sub {
 	case "submit":
 		fs := flag.NewFlagSet("submit", flag.ExitOnError)
-		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
+		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		task := fs.String("task", "", "prompt text")
 		resolveSelector := addSelectorFlags(fs)
 		fs.Parse(args)
@@ -71,8 +80,9 @@ func main() {
 			fmt.Fprintln(os.Stderr, "submit: --task is required")
 			os.Exit(2)
 		}
-		if *repo == "" {
-			fmt.Fprintln(os.Stderr, "submit: --repo is required (must match a runner's RepoPath verbatim)")
+		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
+		if repoVal == "" {
+			fmt.Fprintln(os.Stderr, "submit: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim)")
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -87,7 +97,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		id, err := c.SubmitWithSelector(ctx, *repo, *task, sel)
+		id, err := c.SubmitWithSelector(ctx, repoVal, *task, sel)
 		if err != nil {
 			die(err)
 		}
@@ -117,10 +127,16 @@ func main() {
 
 	case "prune-local":
 		fs := flag.NewFlagSet("prune-local", flag.ExitOnError)
-		repo := fs.String("repo", ".", "repo to prune")
+		repo := fs.String("repo", ".", "repo to prune (env: HARNESS_REPO_PATH; default \".\")")
 		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees older than this")
 		fs.Parse(args)
-		abs, err := filepath.Abs(*repo)
+		repoVal := *repo
+		if repoVal == "." {
+			if env := os.Getenv("HARNESS_REPO_PATH"); env != "" {
+				repoVal = env
+			}
+		}
+		abs, err := filepath.Abs(repoVal)
 		if err != nil {
 			die(err)
 		}
@@ -144,11 +160,12 @@ func main() {
 
 	case "interactive":
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
-		repo := fs.String("repo", "", "repo identifier; must match a runner-registered RepoPath verbatim")
+		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		resolveSelector := addSelectorFlags(fs)
 		fs.Parse(args)
-		if *repo == "" {
-			fmt.Fprintln(os.Stderr, "interactive: --repo is required (must match a runner's RepoPath verbatim)")
+		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
+		if repoVal == "" {
+			fmt.Fprintln(os.Stderr, "interactive: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim)")
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -162,7 +179,36 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.InteractiveWithSelector(ctx, *repo, sel); err != nil {
+		if _, err := c.InteractiveWithSelector(ctx, repoVal, sel); err != nil {
+			die(err)
+		}
+
+	case "agent":
+		if len(args) == 0 {
+			agentUsage()
+			os.Exit(2)
+		}
+		asub := args[0]
+		rest := args[1:]
+		var err error
+		switch asub {
+		case "send":
+			err = agent.Send(ctx, rest, os.Stdin, os.Stdout)
+		case "wait":
+			err = agent.Wait(ctx, rest, os.Stdout)
+		case "inbox":
+			err = agent.Inbox(ctx, rest, os.Stdout)
+		case "subscribe":
+			err = agent.Subscribe(ctx, rest, os.Stdout)
+		case "unsubscribe":
+			err = agent.Unsubscribe(ctx, rest, os.Stdout)
+		case "dispatch":
+			err = agent.Dispatch(ctx, rest, os.Stdin, os.Stdout)
+		default:
+			agentUsage()
+			os.Exit(2)
+		}
+		if err != nil {
 			die(err)
 		}
 
@@ -173,18 +219,43 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] <subcommand> [args]")
+	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] [--ws-path PATH] <subcommand> [args]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Global flags fall back to env when omitted (flag > env > default):")
+	fmt.Fprintln(os.Stderr, "  --server-cid  HARNESS_SERVER_CID  (default ws:127.0.0.1:8539-*)")
+	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (default /ws)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR]")
-	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (optionally pin to a runner)")
+	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
 	fmt.Fprintln(os.Stderr, "  prune-local [--repo PATH] [--before DUR]")
-	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (local fs; PATH is client-side)")
+	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR]")
-	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude session")
+	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch}")
+	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
+}
+
+func agentUsage() {
+	fmt.Fprintln(os.Stderr, "usage: harness-cli agent <subcommand> [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Env-primary (HARNESS_*): SERVER_CID, TASK_ID, RUNNER_ID, HOSTNAME, WS_PATH, REPO_PATH")
+	fmt.Fprintln(os.Stderr, "HARNESS_AUTH_TICKET is env-only (no flag accepted).")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
+	fmt.Fprintln(os.Stderr, "  send --topic T --data D|-           publish a message")
+	fmt.Fprintln(os.Stderr, "  wait --topic T [--since-last] [--timeout DUR]")
+	fmt.Fprintln(os.Stderr, "                                       block until next message")
+	fmt.Fprintln(os.Stderr, "  inbox [--since-last]                 non-blocking dump (used by hook)")
+	fmt.Fprintln(os.Stderr, "  subscribe --topic T                  register a subscription")
+	fmt.Fprintln(os.Stderr, "  unsubscribe --topic T                remove a subscription")
+	fmt.Fprintln(os.Stderr, "  dispatch --topic T --reply-topic R --data D|- [--timeout DUR]")
+	fmt.Fprintln(os.Stderr, "                                       send + wait for reply (sugar)")
 }
 
 func die(err error) {
