@@ -20,8 +20,15 @@ type hookSpec struct {
 	Command string `json:"command"`
 }
 
-// WriteAgentSettings creates <dir>/.claude/settings.json with the
-// UserPromptSubmit hook that injects pending agentboard messages each turn.
+// WriteAgentSettings creates <dir>/.claude/settings.json with two hooks:
+//   - UserPromptSubmit: injects pending agentboard messages on each user
+//     prompt submission (covers idle agents woken by user input).
+//   - Stop: emits a Claude Code block decision when new agentboard messages
+//     arrived during the just-finished turn, so the agent re-enters and
+//     processes them without requiring a user prompt.
+//
+// The shared --since-last cursor at ~/.cache/harness/agent-cursor-<task>
+// prevents the same seq from being delivered twice across the two paths.
 func WriteAgentSettings(worktreeDir string) error {
 	s := agentSettings{
 		Hooks: map[string][]hookGroup{
@@ -29,6 +36,12 @@ func WriteAgentSettings(worktreeDir string) error {
 				Hooks: []hookSpec{{
 					Type:    "command",
 					Command: "harness-cli agent inbox --since-last --json",
+				}},
+			}},
+			"Stop": {{
+				Hooks: []hookSpec{{
+					Type:    "command",
+					Command: "harness-cli agent inbox --since-last --stop-hook",
 				}},
 			}},
 		},

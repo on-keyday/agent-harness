@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,20 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 	}
 	if _, ok := hooks["UserPromptSubmit"]; !ok {
 		t.Error("UserPromptSubmit hook not present")
+	}
+	stopGroups, ok := hooks["Stop"].([]any)
+	if !ok || len(stopGroups) == 0 {
+		t.Fatal("Stop hook not present")
+	}
+	g0, _ := stopGroups[0].(map[string]any)
+	hs, _ := g0["hooks"].([]any)
+	if len(hs) == 0 {
+		t.Fatal("Stop hook group has no hooks")
+	}
+	h0, _ := hs[0].(map[string]any)
+	cmd, _ := h0["command"].(string)
+	if !strings.Contains(cmd, "agent inbox") || !strings.Contains(cmd, "--stop-hook") {
+		t.Errorf("Stop hook command missing expected flags: %q", cmd)
 	}
 }
 

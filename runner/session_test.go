@@ -500,7 +500,7 @@ func TestHandleAssign_OmitsEmptyHostname(t *testing.T) {
 func TestHandleAssign_WritesSettingsAndPropagatesEnv(t *testing.T) {
 	// Fake claude: list the settings file, print its first few lines, echo the ticket env.
 	fake := writeFakeClaude(t, `ls -la .claude/settings.json
-head -5 .claude/settings.json
+cat .claude/settings.json
 echo "TICKET=$HARNESS_AUTH_TICKET"`)
 
 	repo := initRepo(t)

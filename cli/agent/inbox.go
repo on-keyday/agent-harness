@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"io"
@@ -14,6 +15,11 @@ import (
 // This is the entry point invoked by the .claude/settings.json
 // UserPromptSubmit hook. Output goes to stdout; cursor file is updated when
 // --since-last is set.
+//
+// With --stop-hook, the output instead becomes a single JSON object
+// {"decision":"block","reason":<JSON-Lines>} that Claude Code's Stop hook
+// uses to keep the agent looping when new agentboard messages arrive
+// mid-turn. Empty inbox in --stop-hook mode produces no output.
 func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent inbox", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
@@ -22,6 +28,7 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	sinceLast := fs.Bool("since-last", false, "use persisted cursor")
 	since := fs.Uint64("since", 0, "cursor (ignored if --since-last)")
 	asJSON := fs.Bool("json", false, "output JSON Lines (current default; flag accepted for forward compat)")
+	stopHook := fs.Bool("stop-hook", false, "wrap output as Claude Code Stop-hook block decision")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -74,8 +81,16 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 
 	select {
 	case r := <-respCh:
-		for _, m := range r.Msgs {
-			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload)
+		if *stopHook {
+			var reason bytes.Buffer
+			for _, m := range r.Msgs {
+				emitMessageLine(&reason, m.Seq, string(m.Topic), m.Payload)
+			}
+			emitStopHookOutput(stdout, reason.String())
+		} else {
+			for _, m := range r.Msgs {
+				emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload)
+			}
 		}
 		if *sinceLast {
 			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor)
