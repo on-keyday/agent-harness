@@ -13,6 +13,7 @@ enum RunnerRequestType:
     assign_task
     cancel_task
     open_exec
+    runner_hello_response
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -54,6 +55,17 @@ format OpenExecRunnerRequest:
                       # Transport.GetBidirectionalStream(id) and feeds it to
                       # exec.ExecuteCommand for an interactive PTY claude.
 
+# RunnerHelloResponse is sent by the server immediately after a successful
+# RunnerHello. your_runner_id is the canonical RunnerID the server uses to
+# key this runner in its registry / agentboard ticket store. The runner
+# stores this and injects it as HARNESS_RUNNER_ID for spawned agents so the
+# agent's bridge Hello (runner_id, task_id, ticket) matches what the server
+# registered. The peer transport's ConnectionID is symmetric and surfaces
+# the peer's ID, not the runner's own — so the runner cannot derive this
+# value locally.
+format RunnerHelloResponse:
+    your_runner_id :RunnerID
+
 format TaskAccepted:
     task_id :TaskID
 
@@ -83,6 +95,7 @@ format RunnerRequest:
         RunnerRequestType.assign_task => assign_task :AssignTask
         RunnerRequestType.cancel_task => cancel_task :CancelTask
         RunnerRequestType.open_exec   => open_exec   :OpenExecRunnerRequest
+        RunnerRequestType.runner_hello_response => runner_hello_response :RunnerHelloResponse
 
 enum TaskControlKind:
     :u8

@@ -162,3 +162,45 @@ func TestRunnerHello(t *testing.T) {
 		t.Errorf("AllowedRoots[1]: want %q, got %q", "/data/work", string(hd.AllowedRoots[1].Path))
 	}
 }
+
+// TestDispatchRunnerHelloResponseStoresCanonicalID verifies the new dispatch
+// case: a RunnerRequest of kind RunnerHelloResponse populates Session.runnerCanonicalID,
+// and the converted ConnectionID surfaces through runnerCanonicalConnID.
+func TestDispatchRunnerHelloResponseStoresCanonicalID(t *testing.T) {
+	s := &Session{Now: time.Now}
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{192, 168, 1, 42})
+	rid.Port = 8539
+	rid.UniqueNumber = 0x4242
+
+	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
+	req.SetRunnerHelloResponse(protocol.RunnerHelloResponse{YourRunnerId: rid})
+	payload, err := req.Append(nil)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	dispatchRunnerRequest(context.Background(), s, nil, wire.ApplicationPayloadKind_RunnerControl, payload)
+
+	got := s.runnerCanonicalConnID().String()
+	want := "ws:192.168.1.42:8539-16962" // 0x4242 = 16962
+	if got != want {
+		t.Errorf("canonical ConnID = %q, want %q", got, want)
+	}
+}
+
+// TestRunnerCanonicalConnIDZeroValueDoesNotPanic guards against the
+// IpAddrLen==0 panic path in protocol.RunnerID.Encode — runnerIDToConnID
+// must produce a malformed (but non-panicking) value when no
+// RunnerHelloResponse has been received yet.
+func TestRunnerCanonicalConnIDZeroValueDoesNotPanic(t *testing.T) {
+	s := &Session{}
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("panicked on zero-value RunnerID: %v", r)
+		}
+	}()
+	_ = s.runnerCanonicalConnID().String()
+}

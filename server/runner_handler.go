@@ -8,6 +8,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // RunnerHandler decodes inbound RunnerMessage payloads from runners
@@ -66,6 +67,21 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		entry.Conn = conn
 		h.Registry.Add(entry)
+
+		// Tell the runner what canonical RunnerID the server keys it as.
+		// The peer transport's ConnectionID is symmetric (surfaces the peer's
+		// ID), so the runner cannot derive this locally; without this the
+		// runner would inject the wrong HARNESS_RUNNER_ID and agent Hello
+		// validation would fail.
+		rhResp := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
+		rhResp.SetRunnerHelloResponse(protocol.RunnerHelloResponse{
+			YourRunnerId: runnerIDFromConnID(runnerID),
+		})
+		if rhBytes, err := rhResp.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}); err != nil {
+			slog.Error("RunnerHandler: encode RunnerHelloResponse failed", "runner", runnerID, "err", err)
+		} else if _, _, err := conn.SendMessage(rhBytes); err != nil {
+			slog.Error("RunnerHandler: send RunnerHelloResponse failed", "runner", runnerID, "err", err)
+		}
 
 	case protocol.RunnerMessageType_TaskAccepted:
 		ta := msg.TaskAccepted()

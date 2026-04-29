@@ -156,6 +156,14 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleOpenExec(ctx, oer)
+	case protocol.RunnerRequestType_RunnerHelloResponse:
+		// Stored synchronously: peer.Conn delivers messages serially, so
+		// by the time the next AssignTask is dispatched, this field is set.
+		rhr := req.RunnerHelloResponse()
+		if rhr == nil {
+			return
+		}
+		session.SetRunnerCanonicalID(rhr.YourRunnerId)
 	}
 }
 
