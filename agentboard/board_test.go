@@ -134,6 +134,51 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 	}
 }
 
+// TestBoard_RevokeEvictsOrphanedTopics verifies that Revoke immediately removes
+// topics that are no longer subscribed by any remaining task, while preserving
+// topics that other tasks are still subscribed to.
+func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
+	b := New(Config{RingN: 4, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid1, rid2 RunnerID
+	rid1.SetTransport([]byte("ws"))
+	rid2.SetTransport([]byte("ws"))
+	rid2.Port = 2
+	tid1, tid2 := TaskID{Id: [16]byte{1}}, TaskID{Id: [16]byte{2}}
+
+	c1 := b.Attach(rid1, tid1, "host1")
+	c2 := b.Attach(rid2, tid2, "host2")
+
+	_ = b.Subscribe(c1, "chat.task1")  // exclusive to task1
+	_ = b.Subscribe(c1, "harness.hello") // shared
+	_ = b.Subscribe(c2, "harness.hello") // shared
+
+	// Publish to both topics so they exist in b.topics.
+	if _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Send("harness.hello", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1"); err != nil {
+		t.Fatal(err)
+	}
+
+	b.Detach(c1)
+	b.Revoke(protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1))
+
+	topics := b.ListTopics()
+	names := make(map[string]bool, len(topics))
+	for _, ts := range topics {
+		names[ts.Name] = true
+	}
+
+	if names["chat.task1"] {
+		t.Error("chat.task1 should have been evicted after Revoke (no remaining subscribers)")
+	}
+	if !names["harness.hello"] {
+		t.Error("harness.hello should still be present (task2 is still subscribed)")
+	}
+}
+
 // TestBoard_SendSkipsOnDeliverForPublisher verifies the self-wake fix:
 // when a (rid, tid) publishes on a topic it is itself subscribed to, the
 // onDeliver callback fires for *other* matching subscribers but not for

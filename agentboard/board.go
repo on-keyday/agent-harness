@@ -109,12 +109,33 @@ func (b *Board) Detach(c *ConnState) {
 
 // Revoke removes the ticket and destroys the (rid, tid) taskState. Called by the
 // server runner_handler on TaskFinished and by dispatch on send-failure rollback.
+// Topics that were exclusively subscribed by this task are deleted immediately
+// rather than waiting for TTL eviction.
 func (b *Board) Revoke(rid protocol.RunnerID, tid protocol.TaskID) {
 	b.reg.Revoke(rid, tid)
 	key := ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}
 	b.mu.Lock()
+	ts := b.tasks[key]
 	delete(b.tasks, key)
+	if ts != nil {
+		for _, p := range ts.snapshotPatterns() {
+			if _, ok := b.topics[p]; ok && !b.anyTaskMatchesLocked(p) {
+				delete(b.topics, p)
+			}
+		}
+	}
 	b.mu.Unlock()
+}
+
+// anyTaskMatchesLocked returns true if at least one taskState in b.tasks subscribes
+// to topic. Must be called with b.mu held.
+func (b *Board) anyTaskMatchesLocked(topic string) bool {
+	for _, ts := range b.tasks {
+		if ts.matches(topic) {
+			return true
+		}
+	}
+	return false
 }
 
 // Subscribe records a topic pattern in the taskState shared by all ConnStates
