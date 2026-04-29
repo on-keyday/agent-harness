@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
@@ -52,6 +54,16 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 	defer pc.Close()
 
+	// Resolve the runner binary's directory so we can prepend it to the
+	// agent's PATH. Errors are non-fatal: the agent simply won't have
+	// harness-cli on its PATH (legacy behaviour).
+	var binDir string
+	if exe, err := os.Executable(); err == nil {
+		binDir = filepath.Dir(exe)
+	} else {
+		cfg.Logger.Warn("os.Executable failed; agent PATH will not include runner bin dir", "err", err)
+	}
+
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
 		AllowedRoots:    cfg.AllowedRoots,
@@ -60,6 +72,7 @@ func Run(ctx context.Context, cfg Config) error {
 		ServerCID:       cfg.ServerCID,
 		Hostname:        cfg.Hostname,
 		WSPath:          cli.WebSocketPath,
+		BinDir:          binDir,
 		Sender:          sender,
 		Streams:         pc.Transport(),
 		Logger:          cfg.Logger,

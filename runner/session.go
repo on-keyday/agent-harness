@@ -45,11 +45,15 @@ type Session struct {
 	Logger          *slog.Logger                   // optional; defaults to slog.Default()
 	Now             func() time.Time
 
-	// ServerCID, Hostname, WSPath are required for HARNESS_* env injection at
-	// task spawn time. Filled from Config in connect.go.
+	// ServerCID, Hostname, WSPath, BinDir are required for HARNESS_* env
+	// injection at task spawn time. Filled from Config in connect.go.
+	// BinDir is prepended to the agent's PATH so harness-cli is reachable
+	// from within the task worktree (which is a different worktree than
+	// the runner's binary location).
 	ServerCID objproto.ConnectionID
 	Hostname  string
 	WSPath    string
+	BinDir    string
 
 	mu    sync.Mutex
 	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
@@ -216,6 +220,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		Hostname:   s.Hostname,
 		WSPath:     s.WSPath,
 		AuthTicket: req.AuthTicket,
+		BinDir:     s.BinDir,
 	})
 
 	// Step 4: Execute the process, publishing log lines to the task log topic.
@@ -366,6 +371,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		Hostname:   s.Hostname,
 		WSPath:     s.WSPath,
 		AuthTicket: oer.AuthTicket,
+		BinDir:     s.BinDir,
 	})
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.

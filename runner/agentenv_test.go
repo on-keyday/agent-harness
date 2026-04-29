@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/hex"
+	"os"
 	"strings"
 	"testing"
 
@@ -72,5 +73,50 @@ func TestBuildAgentEnv_OmitsEmptyHostname(t *testing.T) {
 		if strings.HasPrefix(e, "HARNESS_HOSTNAME=") {
 			t.Errorf("hostname should be omitted when empty, got %q", e)
 		}
+	}
+}
+
+func TestBuildAgentEnv_BinDirPrependsPATH(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+		BinDir:    "/opt/harness/bin",
+	}
+	env := BuildAgentEnv(spec)
+	got := envMap(env)
+	want := "/opt/harness/bin" + string(os.PathListSeparator) + "/usr/bin:/bin"
+	if got["PATH"] != want {
+		t.Errorf("PATH = %q, want %q", got["PATH"], want)
+	}
+}
+
+func TestBuildAgentEnv_BinDirEmpty_NoPATHEntry(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+	}
+	env := BuildAgentEnv(spec)
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			t.Errorf("PATH should be omitted when BinDir empty, got %q", e)
+		}
+	}
+}
+
+func TestBuildAgentEnv_BinDirWithEmptyParentPATH(t *testing.T) {
+	t.Setenv("PATH", "")
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+		BinDir:    "/opt/harness/bin",
+	}
+	env := BuildAgentEnv(spec)
+	got := envMap(env)
+	if got["PATH"] != "/opt/harness/bin" {
+		t.Errorf("PATH = %q, want %q (no separator when parent PATH empty)", got["PATH"], "/opt/harness/bin")
 	}
 }

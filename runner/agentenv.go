@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/hex"
+	"os"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -16,6 +17,11 @@ type AgentEnvSpec struct {
 	Hostname   string
 	WSPath     string
 	AuthTicket [16]byte
+	// BinDir, when non-empty, is prepended to PATH so the agent can invoke
+	// harness-cli without a fully-qualified path. The agent runs in a
+	// per-task worktree distinct from the runner's binary directory, so
+	// PATH inheritance from the runner alone does not surface harness-cli.
+	BinDir string
 }
 
 // BuildAgentEnv returns "KEY=VAL" entries to merge with os.Environ() in Process.Env.
@@ -31,6 +37,13 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 	}
 	if s.Hostname != "" {
 		env = append(env, "HARNESS_HOSTNAME="+s.Hostname)
+	}
+	if s.BinDir != "" {
+		path := s.BinDir
+		if existing := os.Getenv("PATH"); existing != "" {
+			path += string(os.PathListSeparator) + existing
+		}
+		env = append(env, "PATH="+path)
 	}
 	return env
 }
