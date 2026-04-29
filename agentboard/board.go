@@ -271,3 +271,37 @@ func (b *Board) evictOldestTopicLocked() {
 		delete(b.topics, oldestName)
 	}
 }
+
+// BoardTopicSummary is one row of ListTopics output. It uses Go-native types
+// (string, time.Time, int) and is distinct from the generated wire type TopicSummary.
+type BoardTopicSummary struct {
+	Name            string
+	LastSeq         uint64
+	LastPublishedAt time.Time
+	MsgCount        int
+}
+
+// ListTopics returns a snapshot of every topic currently retained on the board.
+// Order is unspecified.
+func (b *Board) ListTopics() []BoardTopicSummary {
+	b.mu.Lock()
+	names := make([]string, 0, len(b.topics))
+	tps := make([]*topic, 0, len(b.topics))
+	for n, t := range b.topics {
+		names = append(names, n)
+		tps = append(tps, t)
+	}
+	b.mu.Unlock()
+
+	out := make([]BoardTopicSummary, 0, len(names))
+	for i, n := range names {
+		ls, lp, c := tps[i].summary()
+		out = append(out, BoardTopicSummary{
+			Name:            n,
+			LastSeq:         ls,
+			LastPublishedAt: lp,
+			MsgCount:        c,
+		})
+	}
+	return out
+}

@@ -77,6 +77,8 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		go s.agentHandleWait(conn, ac, msg.Wait())
 	case agentboard.AgentMessageKind_Inbox:
 		s.agentHandleInbox(conn, ac, msg.Inbox())
+	case agentboard.AgentMessageKind_ListTopics:
+		s.agentHandleListTopics(conn, ac, msg.ListTopics())
 	}
 }
 
@@ -242,5 +244,32 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	ir.SetMsgs(delivered)
 	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxResponse}
 	resp.SetInboxResponse(ir)
+	s.sendAgent(conn, resp)
+}
+
+func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agentboard.ListTopicsRequest) {
+	if !ac.helloed || req == nil {
+		return
+	}
+	rows := s.Board.ListTopics()
+
+	out := agentboard.ListTopicsResponse{RequestId: req.RequestId}
+	for _, r := range rows {
+		ts := agentboard.TopicSummary{
+			LastSeq:               r.LastSeq,
+			LastPublishedAtUnixMs: uint64(r.LastPublishedAt.UnixMilli()),
+		}
+		ts.SetName([]byte(r.Name))
+		// MsgCount: clamp to u16
+		if r.MsgCount > 65535 {
+			ts.MsgCount = 65535
+		} else {
+			ts.MsgCount = uint16(r.MsgCount)
+		}
+		out.Topics = append(out.Topics, ts)
+	}
+	out.TopicsLen = uint16(len(out.Topics))
+	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopicsResponse}
+	resp.SetListTopicsResponse(out)
 	s.sendAgent(conn, resp)
 }
