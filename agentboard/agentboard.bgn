@@ -26,6 +26,10 @@ enum AgentMessageKind:
     inbox
     inbox_response
     deliver
+    list_topics
+    list_topics_response
+    list_subscriptions
+    list_subscriptions_response
 
 format AgentBridgeHello:
     runner_id :RunnerID
@@ -88,6 +92,10 @@ format DeliveredMessage:
     topic :[topic_len]u8
     payload_len :u32
     payload :[payload_len]u8
+    from_runner_id :RunnerID
+    from_task_id :TaskID
+    from_hostname_len :u8
+    from_hostname :[from_hostname_len]u8
 
 format WaitRequest:
     request_id :u32
@@ -113,6 +121,33 @@ format InboxResponse:
     msgs_len :u16
     msgs :[msgs_len]DeliveredMessage
 
+format ListTopicsRequest:
+    request_id :u32
+
+format TopicSummary:
+    name_len :u16
+    name :[name_len]u8
+    last_seq :u64
+    last_published_at_unix_ms :u64
+    msg_count :u16
+
+format ListTopicsResponse:
+    request_id :u32
+    topics_len :u16
+    topics :[topics_len]TopicSummary
+
+format ListSubscriptionsRequest:
+    request_id :u32
+
+format SubscriptionSummary:
+    pattern_len :u16
+    pattern :[pattern_len]u8
+
+format ListSubscriptionsResponse:
+    request_id :u32
+    subscriptions_len :u16
+    subscriptions :[subscriptions_len]SubscriptionSummary
+
 format AgentMessage:
     kind :AgentMessageKind
     match kind:
@@ -128,4 +163,8 @@ format AgentMessage:
         AgentMessageKind.inbox => inbox :InboxRequest
         AgentMessageKind.inbox_response => inbox_response :InboxResponse
         AgentMessageKind.deliver => deliver :DeliveredMessage
+        AgentMessageKind.list_topics => list_topics :ListTopicsRequest
+        AgentMessageKind.list_topics_response => list_topics_response :ListTopicsResponse
+        AgentMessageKind.list_subscriptions => list_subscriptions :ListSubscriptionsRequest
+        AgentMessageKind.list_subscriptions_response => list_subscriptions_response :ListSubscriptionsResponse
         .. => error("Unexpected agent message kind")

@@ -88,7 +88,7 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 	select {
 	case r := <-respCh:
 		for _, m := range r.Msgs {
-			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload)
+			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 		}
 		if *sinceLast {
 			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor)

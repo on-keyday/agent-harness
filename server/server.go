@@ -410,6 +410,7 @@ func (s *Server) SetBoard(b *agentboard.Board) {
 	s.dispatcher.Board = b
 	s.taskHandler.Board = b
 	s.runnerHandler.Board = b
+	s.wireAgentBoardWake(b)
 }
 
 // sendAssign sends an AssignTask runner-control message to the runner identified by runnerID.

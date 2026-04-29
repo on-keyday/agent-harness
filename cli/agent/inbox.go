@@ -84,12 +84,12 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 		if *stopHook {
 			var reason bytes.Buffer
 			for _, m := range r.Msgs {
-				emitMessageLine(&reason, m.Seq, string(m.Topic), m.Payload)
+				emitMessageLine(&reason, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 			}
 			emitStopHookOutput(stdout, reason.String())
 		} else {
 			for _, m := range r.Msgs {
-				emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload)
+				emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 			}
 		}
 		if *sinceLast {

@@ -122,7 +122,7 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	select {
 	case r := <-waitCh:
 		for _, m := range r.Msgs {
-			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload)
+			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 		}
 		if r.TimedOut == 1 && len(r.Msgs) == 0 {
 			return errors.New("dispatch reply timeout")

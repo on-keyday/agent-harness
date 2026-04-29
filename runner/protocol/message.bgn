@@ -14,6 +14,7 @@ enum RunnerRequestType:
     cancel_task
     open_exec
     runner_hello_response
+    task_wake
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -54,6 +55,9 @@ format OpenExecRunnerRequest:
                       # runner; runner looks it up via
                       # Transport.GetBidirectionalStream(id) and feeds it to
                       # exec.ExecuteCommand for an interactive PTY claude.
+
+format TaskWakeRequest:
+    task_id :TaskID
 
 # RunnerHelloResponse is sent by the server immediately after a successful
 # RunnerHello. your_runner_id is the canonical RunnerID the server uses to
@@ -96,6 +100,7 @@ format RunnerRequest:
         RunnerRequestType.cancel_task => cancel_task :CancelTask
         RunnerRequestType.open_exec   => open_exec   :OpenExecRunnerRequest
         RunnerRequestType.runner_hello_response => runner_hello_response :RunnerHelloResponse
+        RunnerRequestType.task_wake => task_wake :TaskWakeRequest
 
 enum TaskControlKind:
     :u8

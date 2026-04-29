@@ -1,6 +1,10 @@
 package agentboard
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
 
 // taskState is per-(runner_id, task_id) persistent state shared across all
 // ConnStates of the same task. Lifetime: lazily created on the first
@@ -13,6 +17,9 @@ type taskState struct {
 	mu       sync.Mutex
 	patterns map[string]struct{}
 	conns    map[*ConnState]struct{}
+	rid      protocol.RunnerID
+	tid      protocol.TaskID
+	host     string
 }
 
 func newTaskState() *taskState {
@@ -71,4 +78,18 @@ func (t *taskState) snapshotConns() []*ConnState {
 		out = append(out, c)
 	}
 	return out
+}
+
+func (t *taskState) setIdentity(rid protocol.RunnerID, tid protocol.TaskID, hostname string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.rid = rid
+	t.tid = tid
+	t.host = hostname
+}
+
+func (t *taskState) identity() (protocol.RunnerID, protocol.TaskID, string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.rid, t.tid, t.host
 }

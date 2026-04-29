@@ -77,6 +77,10 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		go s.agentHandleWait(conn, ac, msg.Wait())
 	case agentboard.AgentMessageKind_Inbox:
 		s.agentHandleInbox(conn, ac, msg.Inbox())
+	case agentboard.AgentMessageKind_ListTopics:
+		s.agentHandleListTopics(conn, ac, msg.ListTopics())
+	case agentboard.AgentMessageKind_ListSubscriptions:
+		s.agentHandleListSubscriptions(conn, ac, msg.ListSubscriptions())
 	}
 }
 
@@ -99,7 +103,7 @@ func (s *Server) agentHandleHello(conn ConnHandle, ac *agentConn, h *agentboard.
 	s.sendAgent(conn, resp)
 	if status == agentboard.HelloStatusOk {
 		ac.helloed = true
-		ac.state = s.Board.Attach(h.RunnerId, h.TaskId)
+		ac.state = s.Board.Attach(h.RunnerId, h.TaskId, string(h.Hostname))
 	}
 	// On rejection we don't close the connection: ConnHandle does not
 	// expose Close(), and subsequent agent messages are dropped by the
@@ -111,7 +115,8 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 	if !ac.helloed || r == nil {
 		return
 	}
-	seq, err := s.Board.Send(string(r.Topic), r.Payload)
+	fromRid, fromTid, fromHost := ac.state.Identity()
+	seq, err := s.Board.Send(string(r.Topic), r.Payload, fromRid, fromTid, fromHost)
 	var status agentboard.SendStatus
 	switch err {
 	case nil:
@@ -152,6 +157,31 @@ func (s *Server) agentHandleUnsubscribe(conn ConnHandle, ac *agentConn, r *agent
 	s.sendAgent(conn, resp)
 }
 
+// protoToAgentboardRunnerID converts a protocol.RunnerID (stored in RetainedMessage)
+// to agentboard.RunnerID (the type carried in DeliveredMessage). The two types are
+// distinct Go types with identical field shapes. If IpAddr is empty (zero sender),
+// a placeholder IPv4 {0,0,0,0} is used to satisfy the hard IpAddrLen == 4|16 assertion
+// in the encoder.
+func protoToAgentboardRunnerID(r agentboard.RetainedMessage) agentboard.RunnerID {
+	var out agentboard.RunnerID
+	out.SetTransport(r.FromRunner.Transport)
+	ip := r.FromRunner.IpAddr
+	if len(ip) != 4 && len(ip) != 16 {
+		ip = []byte{0, 0, 0, 0}
+	}
+	out.SetIpAddr(ip)
+	out.Port = r.FromRunner.Port
+	out.UniqueNumber = r.FromRunner.UniqueNumber
+	return out
+}
+
+// protoToAgentboardTaskID converts a protocol.TaskID to agentboard.TaskID.
+func protoToAgentboardTaskID(r agentboard.RetainedMessage) agentboard.TaskID {
+	var out agentboard.TaskID
+	copy(out.Id[:], r.FromTask.Id[:])
+	return out
+}
+
 func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.WaitRequest) {
 	if !ac.helloed || r == nil {
 		return
@@ -161,9 +191,14 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 	msgs, timedOut, _ := s.Board.Wait(ctx, ac.state, string(r.Pattern), r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
-		dm := agentboard.DeliveredMessage{Seq: m.Seq, Payload: m.Payload}
+		dm := agentboard.DeliveredMessage{
+			Seq:          m.Seq,
+			FromRunnerId: protoToAgentboardRunnerID(m),
+			FromTaskId:   protoToAgentboardTaskID(m),
+		}
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetPayload(m.Payload)
+		dm.SetFromHostname([]byte(m.FromHostname))
 		delivered = append(delivered, dm)
 	}
 	var to uint8
@@ -194,9 +229,14 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	msgs, next := s.Board.Inbox(ac.state, r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
-		dm := agentboard.DeliveredMessage{Seq: m.Seq}
+		dm := agentboard.DeliveredMessage{
+			Seq:          m.Seq,
+			FromRunnerId: protoToAgentboardRunnerID(m),
+			FromTaskId:   protoToAgentboardTaskID(m),
+		}
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetPayload(m.Payload)
+		dm.SetFromHostname([]byte(m.FromHostname))
 		delivered = append(delivered, dm)
 	}
 	ir := agentboard.InboxResponse{
@@ -206,5 +246,49 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	ir.SetMsgs(delivered)
 	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxResponse}
 	resp.SetInboxResponse(ir)
+	s.sendAgent(conn, resp)
+}
+
+func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agentboard.ListTopicsRequest) {
+	if !ac.helloed || req == nil {
+		return
+	}
+	rows := s.Board.ListTopics()
+
+	out := agentboard.ListTopicsResponse{RequestId: req.RequestId}
+	for _, r := range rows {
+		ts := agentboard.TopicSummary{
+			LastSeq:               r.LastSeq,
+			LastPublishedAtUnixMs: uint64(r.LastPublishedAt.UnixMilli()),
+		}
+		ts.SetName([]byte(r.Name))
+		// MsgCount: clamp to u16
+		if r.MsgCount > 65535 {
+			ts.MsgCount = 65535
+		} else {
+			ts.MsgCount = uint16(r.MsgCount)
+		}
+		out.Topics = append(out.Topics, ts)
+	}
+	out.TopicsLen = uint16(len(out.Topics))
+	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopicsResponse}
+	resp.SetListTopicsResponse(out)
+	s.sendAgent(conn, resp)
+}
+
+func (s *Server) agentHandleListSubscriptions(conn ConnHandle, ac *agentConn, req *agentboard.ListSubscriptionsRequest) {
+	if !ac.helloed || req == nil {
+		return
+	}
+	patterns := s.Board.ListSubscriptions(ac.state)
+	out := agentboard.ListSubscriptionsResponse{RequestId: req.RequestId}
+	for _, p := range patterns {
+		ss := agentboard.SubscriptionSummary{}
+		ss.SetPattern([]byte(p))
+		out.Subscriptions = append(out.Subscriptions, ss)
+	}
+	out.SubscriptionsLen = uint16(len(out.Subscriptions))
+	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListSubscriptionsResponse}
+	resp.SetListSubscriptionsResponse(out)
 	s.sendAgent(conn, resp)
 }
