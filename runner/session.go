@@ -22,20 +22,33 @@ import (
 // docs/superpowers/specs/2026-04-29-agent-wake-and-origin-design.md.
 const wakeDebounceWindow = 1500 * time.Millisecond
 
-// wakeMarker is the line written to the agent's stdin to provoke a new
-// turn. The leading "<harness:agentboard-wake>" tag is machine-detectable
-// for future hook post-processing; the suffix is action-agnostic so the
-// LLM is not forced into a reply when the message does not warrant one.
+// wakeMarker is the body of the synthetic prompt written to the agent's
+// stdin. The leading "<harness:agentboard-wake>" tag is machine-detectable
+// for future hook post-processing; the rest is action-agnostic so the LLM
+// is not forced into a reply when the message does not warrant one.
 //
-// Trailing byte is "\r" (carriage return) because Bubble Tea-based TUIs —
-// which claude code interactive uses — interpret a bare "\n" as a literal
-// newline character inside the input field (multiline editing) and only
-// recognise "\r" as the Enter / submit key event in the PTY raw-mode
-// stream. Sending "\n" leaves the marker text rendered in the input box
-// but unsubmitted, requiring the human to press Enter manually — i.e.
-// the wake doesn't actually wake the agent. "\r" makes the marker behave
-// as a typed-and-submitted prompt.
-const wakeMarker = "<harness:agentboard-wake> new agentboard message(s) — review and act as appropriate\r"
+// IMPORTANT: wakeMarker has NO trailing newline / carriage return. The
+// submit keystroke is sent as a separate write after wakeSubmitDelay (see
+// WakeStdin). claude code's UI is built with Ink (a React-based terminal
+// renderer); empirically, when the runner writes the marker text and a
+// trailing "\r" or "\n" in a single syscall, Ink treats the whole chunk
+// as paste content and the trailing byte becomes a literal newline inside
+// the input box rather than firing the Enter / submit handler. The
+// human still has to press Enter manually. Splitting the write — text,
+// short pause, lone "\r" — makes the second write parse as a real
+// keystroke and the prompt is submitted automatically.
+const wakeMarker = "<harness:agentboard-wake> new agentboard message(s) — review and act as appropriate"
+
+// wakeSubmitDelay is the gap between the marker text write and the lone
+// submit byte write. Long enough for Ink's input parser to flush the
+// first chunk into its text-input state before the trailing keystroke
+// arrives, short enough not to be perceptible. Tuned by feel; see
+// the wakeMarker comment for why a single combined write fails.
+const wakeSubmitDelay = 100 * time.Millisecond
+
+// wakeSubmitByte is the byte sequence treated as Enter by Ink-based TUIs
+// when delivered as a standalone PTY write.
+var wakeSubmitByte = []byte{'\r'}
 
 // Sender is the runner's outbound interface to the server. Decoupled from concrete
 // trsf.Transport / objproto.Connection so tests can use a mock.
@@ -527,8 +540,16 @@ func (s *Session) WakeStdin(taskIDHex string) {
 	write := e.wakeWrite
 	s.mu.Unlock()
 
+	// Split write — text first, brief pause, lone Enter byte. See the
+	// wakeMarker / wakeSubmitDelay comments for why a single combined
+	// write fails against Ink-based TUIs.
 	if _, err := write([]byte(wakeMarker)); err != nil {
-		s.logger().Warn("wake stdin write failed", "task_id", taskIDHex, "err", err)
+		s.logger().Warn("wake stdin write (text) failed", "task_id", taskIDHex, "err", err)
+		return
+	}
+	time.Sleep(wakeSubmitDelay)
+	if _, err := write(wakeSubmitByte); err != nil {
+		s.logger().Warn("wake stdin write (submit) failed", "task_id", taskIDHex, "err", err)
 		return
 	}
 
