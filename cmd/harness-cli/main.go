@@ -12,13 +12,14 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/agent"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func main() {
-	serverCID := flag.String("server-cid", "ws:127.0.0.1:8539-*",
-		"server ConnectionID (e.g. ws:host:port-id, * for random)")
+	serverCID := flag.String("server-cid", "",
+		"server ConnectionID (env: HARNESS_SERVER_CID; default ws:127.0.0.1:8539-*)")
 	wsPath := flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
 	flag.Usage = usage
 	flag.Parse()
@@ -33,12 +34,15 @@ func main() {
 	ctx := context.Background()
 
 	parseCID := func() objproto.ConnectionID {
-		peerCID, err := objproto.ParseConnectionID(*serverCID,
-			objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-		if err != nil {
-			die(fmt.Errorf("server-cid: %w", err))
+		val := *serverCID
+		if val == "" && os.Getenv("HARNESS_SERVER_CID") == "" {
+			val = "ws:127.0.0.1:8539-*"
 		}
-		return peerCID
+		cid, err := cliopts.ResolveServerCID(val)
+		if err != nil {
+			die(err)
+		}
+		return cid
 	}
 
 	// addSelectorFlags registers --runner/--host/--ip on fs and returns a
