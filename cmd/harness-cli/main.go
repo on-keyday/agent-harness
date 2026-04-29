@@ -219,18 +219,24 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] <subcommand> [args]")
+	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] [--ws-path PATH] <subcommand> [args]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Global flags fall back to env when omitted (flag > env > default):")
+	fmt.Fprintln(os.Stderr, "  --server-cid  HARNESS_SERVER_CID  (default ws:127.0.0.1:8539-*)")
+	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (default /ws)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR]")
-	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (optionally pin to a runner)")
+	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
 	fmt.Fprintln(os.Stderr, "  prune-local [--repo PATH] [--before DUR]")
-	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (local fs; PATH is client-side)")
+	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR]")
-	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude session")
+	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
 }
