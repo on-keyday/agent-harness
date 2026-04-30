@@ -367,6 +367,7 @@ func (s streamingConn) CreateBidirectionalStream() trsf.BidirectionalStream {
 
 // handleConnection manages a single active objproto connection for its lifetime.
 func (s *Server) handleConnection(ctx context.Context, session objproto.Connection) {
+	defer session.Close()
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	p := trsf.NewStreams(connCtx, true, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, session, s.cfg.Logger)
