@@ -106,6 +106,33 @@ func TestBuildAgentEnv_BinDirEmpty_NoPATHEntry(t *testing.T) {
 	}
 }
 
+func TestBuildAgentEnv_PSKForwarded(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+		PSK:       []byte("hunter2"),
+	}
+	got := envMap(BuildAgentEnv(spec))
+	if got["HARNESS_PSK"] != "hunter2" {
+		t.Errorf("HARNESS_PSK = %q, want %q", got["HARNESS_PSK"], "hunter2")
+	}
+}
+
+func TestBuildAgentEnv_PSKEmpty_NoEntry(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+	}
+	env := BuildAgentEnv(spec)
+	for _, e := range env {
+		if strings.HasPrefix(e, "HARNESS_PSK=") {
+			t.Errorf("HARNESS_PSK should be omitted when PSK nil, got %q", e)
+		}
+	}
+}
+
 // TestBuildAgentEnv_DisablesMingwPathConv verifies that MSYS_NO_PATHCONV=1
 // and MSYS2_ARG_CONV_EXCL=* are injected so that when claude runs under
 // MSYS/MinGW bash on Windows, POSIX-style paths passed as args (e.g. "/ws"

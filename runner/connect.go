@@ -68,6 +68,11 @@ func Run(ctx context.Context, cfg Config) error {
 		cfg.Logger.Warn("os.Executable failed; agent PATH will not include runner bin dir", "err", err)
 	}
 
+	psk := cfg.PSK
+	if psk == nil {
+		psk = cli.GetPSK()
+	}
+
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
 		AllowedRoots:    cfg.AllowedRoots,
@@ -77,15 +82,11 @@ func Run(ctx context.Context, cfg Config) error {
 		Hostname:        cfg.Hostname,
 		WSPath:          cli.WebSocketPath,
 		BinDir:          binDir,
+		PSK:             psk,
 		Sender:          sender,
 		Streams:         pc.Transport(),
 		Logger:          cfg.Logger,
 		Now:             time.Now,
-	}
-
-	psk := cfg.PSK
-	if psk == nil {
-		psk = cli.GetPSK()
 	}
 	pskRespCh := make(chan wire.PskAuthStatus, 1)
 

@@ -99,6 +99,10 @@ type Session struct {
 	Hostname  string
 	WSPath    string
 	BinDir    string
+	// PSK, when non-nil, is forwarded to the agent subprocess via
+	// HARNESS_PSK so harness-cli invocations from inside the agent can
+	// authenticate against the PSK-protected server.
+	PSK []byte
 
 	// runnerCanonicalID is the RunnerID the server keys this runner as in
 	// its registry / agentboard ticket store. Filled from RunnerHelloResponse
@@ -323,6 +327,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		WSPath:     s.WSPath,
 		AuthTicket: req.AuthTicket,
 		BinDir:     s.BinDir,
+		PSK:        s.PSK,
 	})
 
 	// Step 4: Execute the process, publishing log lines to the task log topic.
@@ -484,6 +489,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		WSPath:     s.WSPath,
 		AuthTicket: oer.AuthTicket,
 		BinDir:     s.BinDir,
+		PSK:        s.PSK,
 	})
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.

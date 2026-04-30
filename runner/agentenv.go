@@ -22,6 +22,11 @@ type AgentEnvSpec struct {
 	// per-task worktree distinct from the runner's binary directory, so
 	// PATH inheritance from the runner alone does not surface harness-cli.
 	BinDir string
+	// PSK, when non-nil, is forwarded to the agent subprocess as
+	// HARNESS_PSK so harness-cli invocations from inside the agent
+	// (e.g. agentboard send/recv) can authenticate against the
+	// PSK-protected server.
+	PSK []byte
 }
 
 // BuildAgentEnv returns "KEY=VAL" entries to merge with os.Environ() in Process.Env.
@@ -51,6 +56,9 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 			path += string(os.PathListSeparator) + existing
 		}
 		env = append(env, "PATH="+path)
+	}
+	if len(s.PSK) > 0 {
+		env = append(env, "HARNESS_PSK="+string(s.PSK))
 	}
 	return env
 }
