@@ -134,6 +134,54 @@ func TestCreateAfterStaleRegistration(t *testing.T) {
 	}
 }
 
+// TestWorktreeRegisteredFromPorcelainNormalizesSeparators is a regression
+// guard for the Windows resume bug: git emits worktree paths with forward
+// slashes on every platform, but filepath.Join on Windows produces
+// backslashes. The parser must compare in slash-normalised form so the
+// resume-idempotent reuse path fires on Windows. (On Linux both sides are
+// already slash-form, so this also covers that case.)
+func TestWorktreeRegisteredFromPorcelainNormalizesSeparators(t *testing.T) {
+	porcelain := []byte("worktree C:/repo/main\n" +
+		"HEAD abcd1234\n" +
+		"branch refs/heads/main\n" +
+		"\n" +
+		"worktree C:/repo/.harness-worktrees/task-w\n" +
+		"HEAD deadbeef\n" +
+		"branch refs/heads/harness/task-w\n" +
+		"\n")
+
+	// Windows-style dir produced by filepath.Join on a Windows runner.
+	winDir := `C:\repo\.harness-worktrees\task-w`
+	if !worktreeRegisteredFromPorcelain(porcelain, winDir, "harness/task-w") {
+		t.Errorf("Windows-style dir %q failed to match porcelain forward-slash entry", winDir)
+	}
+
+	// Linux-style dir on a Linux runner.
+	linDir := "/srv/repo/.harness-worktrees/task-l"
+	linPorcelain := []byte("worktree /srv/repo/main\n" +
+		"HEAD abcd1234\n" +
+		"branch refs/heads/main\n" +
+		"\n" +
+		"worktree /srv/repo/.harness-worktrees/task-l\n" +
+		"HEAD deadbeef\n" +
+		"branch refs/heads/harness/task-l\n" +
+		"\n")
+	if !worktreeRegisteredFromPorcelain(linPorcelain, linDir, "harness/task-l") {
+		t.Errorf("Linux-style dir %q failed to match its porcelain entry", linDir)
+	}
+
+	// Negative: prunable record must not match.
+	prunable := []byte("worktree C:/repo/.harness-worktrees/task-p\n" +
+		"HEAD deadbeef\n" +
+		"branch refs/heads/harness/task-p\n" +
+		"prunable gitdir file points to non-existent location\n" +
+		"\n")
+	winPrunable := `C:\repo\.harness-worktrees\task-p`
+	if worktreeRegisteredFromPorcelain(prunable, winPrunable, "harness/task-p") {
+		t.Errorf("prunable record should not match")
+	}
+}
+
 // TestRemoveIfCleanRemovesWhenNothingDirty verifies the basic clean path:
 // a fresh worktree with no edits gets removed.
 func TestRemoveIfCleanRemovesWhenNothingDirty(t *testing.T) {

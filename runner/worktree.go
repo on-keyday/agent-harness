@@ -74,11 +74,6 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 // worktreeRegisteredLocked reports whether <dir> is currently a non-prunable
 // worktree of wm.Repo checked out at refs/heads/<branch>. Caller must hold
 // wm.mu.
-//
-// Parses `git worktree list --porcelain`, whose record format is one block
-// per worktree (blocks separated by a blank line); each block starts with
-// "worktree <abs-path>" and may include "branch refs/heads/<name>",
-// "detached", and "prunable <reason>" lines.
 func (wm *WorktreeManager) worktreeRegisteredLocked(dir, branch string) bool {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = wm.Repo
@@ -86,11 +81,35 @@ func (wm *WorktreeManager) worktreeRegisteredLocked(dir, branch string) bool {
 	if err != nil {
 		return false
 	}
+	return worktreeRegisteredFromPorcelain(out, dir, branch)
+}
+
+// worktreeRegisteredFromPorcelain parses `git worktree list --porcelain` and
+// reports whether <dir> matches a non-prunable record on `refs/heads/<branch>`.
+// Split out from worktreeRegisteredLocked so tests can exercise the parser
+// against handcrafted output (in particular, the Windows separator case
+// documented below).
+//
+// Format: one block per worktree, blocks separated by a blank line. Each
+// block starts with "worktree <abs-path>" and may include "branch
+// refs/heads/<name>", "detached", and "prunable <reason>" lines.
+//
+// Cross-OS quirk: git emits worktree paths with forward slashes on every
+// platform (e.g. `C:/repo/.harness-worktrees/abc` on Windows), while
+// filepath.Join on Windows produces backslashes. Normalise both sides via
+// `strings.ReplaceAll(..., "\\", "/")` so the resume-idempotent reuse path
+// triggers on Windows runners — without this, the previous-run worktree
+// was never recognised as already-registered and re-add would fail with
+// "already exists". `filepath.ToSlash` is not used because it is OS-aware
+// (no-op on Linux) and would silently regress on a Linux build that
+// happens to inspect Windows-style paths in tests or fixtures.
+func worktreeRegisteredFromPorcelain(out []byte, dir, branch string) bool {
+	wantWT := slashPath(dir)
 	wantRef := "refs/heads/" + branch
 	var curWT, curBranch string
 	var curPrunable bool
 	matches := func() bool {
-		return curWT == dir && curBranch == wantRef && !curPrunable
+		return curWT == wantWT && curBranch == wantRef && !curPrunable
 	}
 	for line := range strings.SplitSeq(string(out), "\n") {
 		if line == "" {
@@ -102,7 +121,7 @@ func (wm *WorktreeManager) worktreeRegisteredLocked(dir, branch string) bool {
 		}
 		switch {
 		case strings.HasPrefix(line, "worktree "):
-			curWT = strings.TrimPrefix(line, "worktree ")
+			curWT = slashPath(strings.TrimPrefix(line, "worktree "))
 		case strings.HasPrefix(line, "branch "):
 			curBranch = strings.TrimPrefix(line, "branch ")
 		case line == "prunable" || strings.HasPrefix(line, "prunable "):
@@ -111,6 +130,11 @@ func (wm *WorktreeManager) worktreeRegisteredLocked(dir, branch string) bool {
 	}
 	return matches()
 }
+
+// slashPath converts every backslash in p to a forward slash. Used to
+// normalise paths for cross-OS comparison; see the comment on
+// worktreeRegisteredFromPorcelain.
+func slashPath(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 
 // branchExistsLocked reports whether the given branch ref exists in wm.Repo.
 // Caller must hold wm.mu — this is only invoked from Create which already
