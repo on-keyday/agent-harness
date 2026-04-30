@@ -272,8 +272,8 @@ func TestTaskStoreWALWriteAndReplay(t *testing.T) {
 	if !ok || got.Status != protocol.TaskStatus_Succeeded {
 		t.Fatalf("replay: %+v ok=%v", got, ok)
 	}
-	if string(got.DiffInfo) != "done" {
-		t.Fatalf("DiffInfo lost: %q", got.DiffInfo)
+	if string(got.ErrorMsg) != "done" {
+		t.Fatalf("DiffInfo lost: %q", got.ErrorMsg)
 	}
 	if got.StartedAt == nil {
 		t.Fatal("StartedAt lost in replay")
@@ -423,8 +423,8 @@ func TestTaskStoreMarkFailedTransitions(t *testing.T) {
 	if got.Status != protocol.TaskStatus_Failed {
 		t.Fatalf("status=%v want Failed", got.Status)
 	}
-	if string(got.DiffInfo) != "runner_disconnected" {
-		t.Fatalf("DiffInfo=%q want runner_disconnected", string(got.DiffInfo))
+	if string(got.ErrorMsg) != "runner_disconnected" {
+		t.Fatalf("DiffInfo=%q want runner_disconnected", string(got.ErrorMsg))
 	}
 }
 
@@ -439,4 +439,3 @@ func TestTaskStoreMarkFailedIdempotentOnTerminal(t *testing.T) {
 		t.Fatalf("MarkFailed should be no-op on terminal state, got %v", got.Status)
 	}
 }
-

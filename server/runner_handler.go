@@ -14,11 +14,11 @@ import (
 // RunnerHandler decodes inbound RunnerMessage payloads from runners
 // and applies them to Registry and TaskStore.
 type RunnerHandler struct {
-	Registry       *Registry
-	Tasks          *TaskStore
-	Now            func() time.Time
-	OnChange       func()             // called after any state mutation, used to trigger Scheduler.Tick
-	OnTaskStarted  func(taskID string) // optional; called when the runner reports TaskStarted
+	Registry      *Registry
+	Tasks         *TaskStore
+	Now           func() time.Time
+	OnChange      func()              // called after any state mutation, used to trigger Scheduler.Tick
+	OnTaskStarted func(taskID string) // optional; called when the runner reports TaskStarted
 
 	// Board is the agentboard instance for ticket lifecycle management.
 	// When nil, ticket revocation is skipped (safe for tests that do not wire a Board).
@@ -124,7 +124,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		taskID := hex.EncodeToString(tf.TaskId.Id[:])
 		// Tasks.Finish silently no-ops if task is not found — that is acceptable.
-		h.Tasks.Finish(taskID, tf.ExitCode, tf.DiffInfo)
+		h.Tasks.Finish(taskID, tf.ExitCode, tf.ErrorMessage)
 		// Release the capacity slot so the dispatcher can re-use it.
 		h.Registry.UnbindTask(runnerID, taskID)
 		// Revoke the auth ticket so the agent can no longer authenticate for this task.

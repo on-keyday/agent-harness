@@ -100,7 +100,7 @@ format TaskStarted:
 format TaskFinished:
     task_id :TaskID
     exit_code :i32
-    diff_info :[..]u8
+    error_message :[..]u8
 
 format RunnerMessage:
     kind :RunnerMessageType
@@ -159,7 +159,7 @@ format RunnerID:
     transport_len :u8
     transport :[transport_len]u8
     ip_addr_len :u8
-    ip_addr_len == 4 || ip_addr_len == 16
+    ip_addr_len == 0 || ip_addr_len == 4 || ip_addr_len == 16
     ip_addr :[ip_addr_len]u8
     port :u16
     unique_number :u16
@@ -228,6 +228,8 @@ format TaskInfo:
     exit_code :i32
     prompt_len :u32
     prompt :[prompt_len]u8
+    error_len :u32 
+    error_message :[error_len]u8
 
 format ListResult:
     runners_len :u16

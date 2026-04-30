@@ -143,8 +143,8 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 	if tf == nil || tf.ExitCode == 0 {
 		t.Fatalf("expected non-zero exit on worktree failure, got %+v", tf)
 	}
-	if !bytes.Contains(tf.DiffInfo, []byte("worktree_error")) {
-		t.Fatalf("expected 'worktree_error' in DiffInfo, got %q", tf.DiffInfo)
+	if !bytes.Contains(tf.ErrorMessage, []byte("worktree_error")) {
+		t.Fatalf("expected 'worktree_error' in ErrorMessage, got %q", tf.ErrorMessage)
 	}
 }
 
@@ -325,8 +325,8 @@ func TestSessionPanicIsolatesSiblingTask(t *testing.T) {
 	if tf01.ExitCode != -1 {
 		t.Errorf("task 0x01: want ExitCode -1, got %d", tf01.ExitCode)
 	}
-	if !bytes.Contains(tf01.DiffInfo, []byte("runner_panic")) {
-		t.Errorf("task 0x01: expected 'runner_panic' in DiffInfo, got %q", tf01.DiffInfo)
+	if !bytes.Contains(tf01.ErrorMessage, []byte("runner_panic")) {
+		t.Errorf("task 0x01: expected 'runner_panic' in ErrorMessage, got %q", tf01.ErrorMessage)
 	}
 
 	// Task 0x02 must have succeeded: ExitCode 0.
@@ -425,9 +425,9 @@ type noopBidiStream struct {
 	closed   atomic.Bool
 }
 
-func (s *noopBidiStream) ID() trsf.StreamID                       { return s.streamID }
-func (s *noopBidiStream) Write(p []byte) (int, error)             { return len(p), nil }
-func (s *noopBidiStream) Close() error                            { return nil }
+func (s *noopBidiStream) ID() trsf.StreamID           { return s.streamID }
+func (s *noopBidiStream) Write(p []byte) (int, error) { return len(p), nil }
+func (s *noopBidiStream) Close() error                { return nil }
 func (s *noopBidiStream) WriteContext(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
@@ -437,9 +437,9 @@ func (s *noopBidiStream) AppendData(_ bool, _ ...[]byte) error { return nil }
 func (s *noopBidiStream) AppendDataContext(_ context.Context, _ bool, _ ...[]byte) error {
 	return nil
 }
-func (s *noopBidiStream) Read([]byte) (int, error)                            { return 0, io.EOF }
+func (s *noopBidiStream) Read([]byte) (int, error)                             { return 0, io.EOF }
 func (s *noopBidiStream) ReadContext(_ context.Context, _ []byte) (int, error) { return 0, io.EOF }
-func (s *noopBidiStream) ReadDirect(_ uint64) ([]byte, bool, error)           { return nil, true, nil }
+func (s *noopBidiStream) ReadDirect(_ uint64) ([]byte, bool, error)            { return nil, true, nil }
 func (s *noopBidiStream) ReadDirectContext(_ context.Context, _ uint64) ([]byte, bool, error) {
 	return nil, true, nil
 }
@@ -603,7 +603,7 @@ func TestHandleOpenExecGateFailureClosesStream(t *testing.T) {
 	if tf == nil || tf.ExitCode != -1 {
 		t.Fatalf("TaskFinished=%+v want exit=-1", tf)
 	}
-	if !bytes.Contains(tf.DiffInfo, []byte("repo_not_allowed")) {
-		t.Fatalf("DiffInfo=%q want repo_not_allowed reason", tf.DiffInfo)
+	if !bytes.Contains(tf.ErrorMessage, []byte("repo_not_allowed")) {
+		t.Fatalf("ErrorMessage=%q want repo_not_allowed reason", tf.ErrorMessage)
 	}
 }

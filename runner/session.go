@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
-	"net/netip"
 	"sync"
 	"time"
 
@@ -140,28 +139,7 @@ func (s *Session) runnerCanonicalConnID() objproto.ConnectionID {
 	s.mu.Lock()
 	rid := s.runnerCanonicalID
 	s.mu.Unlock()
-	return runnerIDToConnID(rid)
-}
-
-// runnerIDToConnID converts protocol.RunnerID → objproto.ConnectionID without
-// going through wire encode/decode (so a zero RunnerID does not panic on the
-// IpAddrLen invariant).
-func runnerIDToConnID(rid protocol.RunnerID) objproto.ConnectionID {
-	var ip netip.Addr
-	switch rid.IpAddrLen {
-	case 4:
-		ip = netip.AddrFrom4([4]byte(rid.IpAddr))
-	case 16:
-		ip = netip.AddrFrom16([16]byte(rid.IpAddr))
-	default:
-		// zero-value or unset; leave ip invalid — caller stringification
-		// will produce a clearly-malformed CID.
-	}
-	return objproto.ConnectionID{
-		Transport: string(rid.Transport),
-		Addr:      netip.AddrPortFrom(ip, rid.Port),
-		ID:        rid.UniqueNumber,
-	}
+	return protocol.RunnerIDToConnID(rid)
 }
 
 // initMaps initialises the internal maps if they have not been set yet.
@@ -237,9 +215,9 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	finishWithError := func(code int32, reason string) {
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
 		tf := protocol.TaskFinished{
-			TaskId:   req.TaskId,
-			ExitCode: code,
-			DiffInfo: []byte(reason),
+			TaskId:       req.TaskId,
+			ExitCode:     code,
+			ErrorMessage: []byte(reason),
 		}
 		m.SetTaskFinished(tf)
 		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
@@ -362,7 +340,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		}
 		if runErr != nil {
 			tf.ExitCode = -1
-			tf.DiffInfo = []byte("process_error: " + runErr.Error())
+			tf.ErrorMessage = []byte("process_error: " + runErr.Error())
 		}
 		m.SetTaskFinished(tf)
 		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
@@ -409,7 +387,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		log.Error("handleOpenExec: "+reason, "task_id", taskIDHex, "repo", repoPath)
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
 		tf := protocol.TaskFinished{TaskId: oer.TaskId, ExitCode: code}
-		tf.DiffInfo = []byte(reason)
+		tf.ErrorMessage = []byte(reason)
 		m.SetTaskFinished(tf)
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
 	}
@@ -522,7 +500,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// Could be claude's non-zero exit (passed up by errgroup as an
 			// *exec.ExitError) or a stream/setup error. Bucket as Failed.
 			tf.ExitCode = -1
-			tf.DiffInfo = []byte("interactive_error: " + runErr.Error())
+			tf.ErrorMessage = []byte("interactive_error: " + runErr.Error())
 		}
 		m.SetTaskFinished(tf)
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))

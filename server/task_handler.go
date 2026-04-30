@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
@@ -621,7 +622,7 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 		LastSeen:    uint64(r.LastSeen.UnixNano()),
 	}
 	info.SetHostname([]byte(r.Hostname))
-	info.Id = placeholderRunnerID()
+	info.Id = protocol.ConnIDToRunnerID(r.Conn.ConnectionID())
 
 	// Populate AllowedRoots.
 	roots := make([]protocol.AllowedRoot, len(r.AllowedRoots))
@@ -664,7 +665,11 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.SetRepoPath([]byte(t.RepoPath))
 	info.SetWorktreeDir([]byte(t.WorktreeDir))
 	info.SetPrompt([]byte(t.Prompt))
-	info.AssignedTo = placeholderRunnerID()
+	info.SetErrorMessage([]byte(t.ErrorMsg))
+	parsed, err := objproto.ParseConnectionID(t.AssignedTo, 0)
+	if err == nil {
+		info.AssignedTo = protocol.ConnIDToRunnerID(parsed)
+	}
 
 	if t.StartedAt != nil {
 		info.StartedAt = uint64(t.StartedAt.UnixNano())

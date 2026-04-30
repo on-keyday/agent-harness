@@ -14,10 +14,10 @@ import (
 
 // TaskEntry holds the current state of a task throughout its lifecycle.
 type TaskEntry struct {
-	ID          string
-	RepoPath    string
-	Prompt      string
-	Kind        protocol.TaskKind
+	ID       string
+	RepoPath string
+	Prompt   string
+	Kind     protocol.TaskKind
 	// OriginKind records which kind of caller submitted this task — set by
 	// the server from the originating connection's last ClientHello. Stays
 	// ClientKind_Unspecified when the connection didn't issue a hello (e.g.
@@ -30,7 +30,7 @@ type TaskEntry struct {
 	StartedAt   *time.Time
 	EndedAt     *time.Time
 	ExitCode    *int32
-	DiffInfo    []byte
+	ErrorMsg    []byte
 
 	// Selector is the runner-selection constraint supplied at task submission.
 	// A zero value (Kind == RunnerSelectorKind_Any) means "any available runner".
@@ -60,10 +60,10 @@ type TaskStore struct {
 	order []string // insertion order; used by List and NextQueuedForRepo
 	wal   *WAL
 
-	OnCreate func(id string)                                     // optional; called after each Create. Server uses this to register pubsub taps.
-	OnAssign func(id, runnerID, worktreeDir string)              // optional; called after Assign transitions a task to Running.
+	OnCreate func(id string)                                         // optional; called after each Create. Server uses this to register pubsub taps.
+	OnAssign func(id, runnerID, worktreeDir string)                  // optional; called after Assign transitions a task to Running.
 	OnFinish func(id string, exit int32, status protocol.TaskStatus) // optional; called after Finish marks a task terminal.
-	OnCancel func(id string)                                     // optional; called after Cancel marks a task Cancelled.
+	OnCancel func(id string)                                         // optional; called after Cancel marks a task Cancelled.
 }
 
 // SetWAL attaches a WAL to which subsequent mutations append. nil disables WAL hooks.
@@ -203,7 +203,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	e.StartedAt = nil
 	e.EndedAt = nil
 	e.ExitCode = nil
-	e.DiffInfo = nil
+	e.ErrorMsg = nil
 	e.Prompt = prompt
 	e.ExtraArgs = extraArgs
 	e.Selector = selector
@@ -290,7 +290,7 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 
 // Finish marks the task terminal. exit==0 → Succeeded; non-zero → Failed.
 // It records ExitCode, DiffInfo, and EndedAt.
-func (s *TaskStore) Finish(id string, exit int32, diff []byte) {
+func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
@@ -307,10 +307,10 @@ func (s *TaskStore) Finish(id string, exit int32, diff []byte) {
 	e.Status = finalStatus
 	exitCopy := exit
 	e.ExitCode = &exitCopy
-	e.DiffInfo = diff
+	e.ErrorMsg = errorMsg
 	e.EndedAt = &now
 	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_finished", TaskID: id, ExitCode: &exitCopy, DiffInfo: diff, Ts: now.UnixNano()}); err != nil {
+		if err := s.wal.Write(WALEvent{Type: "task_finished", TaskID: id, ExitCode: &exitCopy, DiffInfo: errorMsg, Ts: now.UnixNano()}); err != nil {
 			slog.Error("WAL write failed", "op", "task_finished", "task_id", id, "err", err)
 		}
 	}
@@ -372,7 +372,7 @@ func (s *TaskStore) MarkFailed(id, reason string) {
 	}
 	e.Status = protocol.TaskStatus_Failed
 	e.EndedAt = &now
-	e.DiffInfo = []byte(reason)
+	e.ErrorMsg = []byte(reason)
 	if s.wal != nil {
 		if err := s.wal.Write(WALEvent{Type: "task_failed", TaskID: id, Reason: reason, Ts: now.UnixNano()}); err != nil {
 			slog.Error("WAL write failed", "op", "task_failed", "task_id", id, "err", err)
@@ -452,7 +452,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 						t.Status = protocol.TaskStatus_Failed
 					}
 				}
-				t.DiffInfo = ev.DiffInfo
+				t.ErrorMsg = ev.DiffInfo
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
 			}
@@ -468,7 +468,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Status = protocol.TaskStatus_Failed
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
-				t.DiffInfo = []byte(ev.Reason)
+				t.ErrorMsg = []byte(ev.Reason)
 			}
 		case "task_resumed":
 			// Resume on replay: reset the existing TaskEntry to Queued under
@@ -484,7 +484,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.StartedAt = nil
 				t.EndedAt = nil
 				t.ExitCode = nil
-				t.DiffInfo = nil
+				t.ErrorMsg = nil
 				t.Prompt = ev.Prompt
 				t.ExtraArgs = ev.ExtraArgs
 				t.Selector = ev.Selector

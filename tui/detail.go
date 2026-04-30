@@ -51,6 +51,7 @@ func (d *DetailPopup) View() string {
 func formatRunnerDetail(r protocol.RunnerInfo) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
+	fmt.Fprintf(&sb, "id:            %s\n", protocol.RunnerIDToConnID(r.Id).String())
 	fmt.Fprintf(&sb, "host:          %s\n", string(r.Hostname))
 	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
 	for i, root := range r.AllowedRoots {
@@ -84,10 +85,14 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	fmt.Fprintf(&sb, "created:       %s\n", formatNanoTs(t.CreatedAt))
 	if t.StartedAt > 0 {
 		fmt.Fprintf(&sb, "started:       %s\n", formatNanoTs(t.StartedAt))
+		fmt.Fprintf(&sb, "assigned to:   %s\n", protocol.RunnerIDToConnID(t.AssignedTo).String())
 	}
 	if t.EndedAt > 0 {
 		fmt.Fprintf(&sb, "ended:         %s\n", formatNanoTs(t.EndedAt))
 		fmt.Fprintf(&sb, "exit code:     %d\n", t.ExitCode)
+		if len(t.ErrorMessage) > 0 {
+			fmt.Fprintf(&sb, "error:         %s\n", string(t.ErrorMessage))
+		}
 	}
 	if len(t.Prompt) > 0 {
 		fmt.Fprintf(&sb, "\nprompt:\n%s\n", string(t.Prompt))

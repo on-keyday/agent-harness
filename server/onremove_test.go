@@ -61,8 +61,8 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 		if te.Status != protocol.TaskStatus_Failed {
 			t.Errorf("task %q: expected Failed status, got %v", taskID, te.Status)
 		}
-		if string(te.DiffInfo) != "runner_disconnected" {
-			t.Errorf("task %q: expected reason 'runner_disconnected', got %q", taskID, te.DiffInfo)
+		if string(te.ErrorMsg) != "runner_disconnected" {
+			t.Errorf("task %q: expected reason 'runner_disconnected', got %q", taskID, te.ErrorMsg)
 		}
 	}
 }

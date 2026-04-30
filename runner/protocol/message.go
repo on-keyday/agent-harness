@@ -69,25 +69,25 @@ type AllowedRoot struct {
 	Path    []uint8
 }
 
-func (a *AllowedRoot) SetPath(tmp2316 []uint8) bool {
-	if len(tmp2316) > int(65535) {
+func (a *AllowedRoot) SetPath(tmp2314 []uint8) bool {
+	if len(tmp2314) > int(65535) {
 		return false
 	}
-	a.PathLen = uint16(len(tmp2316))
-	a.Path = tmp2316
+	a.PathLen = uint16(len(tmp2314))
+	a.Path = tmp2314
 	return true
 }
 
-func (a *AllowedRoot) Write(tmp1024 io.Writer) error {
-	tmp102 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp102[:], uint16(a.PathLen))
-	if _, err := tmp1024.Write(tmp102[:2]); err != nil {
+func (a *AllowedRoot) Write(tmp1032 io.Writer) error {
+	tmp106 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp106[:], uint16(a.PathLen))
+	if _, err := tmp1032.Write(tmp106[:2]); err != nil {
 		return err
 	}
 	if len(a.Path) != int(a.PathLen) {
 		return fmt.Errorf("size mismatch when writing field \"AllowedRoot::Path\": expected %d, got %d", int(a.PathLen), len(a.Path))
 	}
-	if _, err := tmp1024.Write(a.Path); err != nil {
+	if _, err := tmp1032.Write(a.Path); err != nil {
 		return err
 	}
 	return nil
@@ -107,22 +107,22 @@ func (s *AllowedRoot) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (a *AllowedRoot) EncodeSlice(tmp1024 []byte, tmp1024Offset *int) error {
-	tmp102 := []uint8{}
-	if len(tmp1024)-*tmp1024Offset < int(2) {
+func (a *AllowedRoot) EncodeSlice(tmp1032 []byte, tmp1032Offset *int) error {
+	tmp106 := []uint8{}
+	if len(tmp1032)-*tmp1032Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"AllowedRoot::PathLen\"")
 	}
-	tmp102 = tmp1024[*tmp1024Offset : *tmp1024Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp102[:], uint16(a.PathLen))
-	*tmp1024Offset += int(2)
+	tmp106 = tmp1032[*tmp1032Offset : *tmp1032Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp106[:], uint16(a.PathLen))
+	*tmp1032Offset += int(2)
 	if len(a.Path) != int(a.PathLen) {
 		return fmt.Errorf("size mismatch when writing field \"AllowedRoot::Path\": expected %d, got %d", int(a.PathLen), len(a.Path))
 	}
-	if len(tmp1024)-*tmp1024Offset < int(0+a.PathLen) {
+	if len(tmp1032)-*tmp1032Offset < int(0+a.PathLen) {
 		return errors.New("not enough space to write for field \"AllowedRoot::Path\"")
 	}
-	copy(tmp1024[*tmp1024Offset:*tmp1024Offset+int(a.PathLen)], a.Path)
-	*tmp1024Offset += int(a.PathLen)
+	copy(tmp1032[*tmp1032Offset:*tmp1032Offset+int(a.PathLen)], a.Path)
+	*tmp1032Offset += int(a.PathLen)
 	return nil
 }
 func (s *AllowedRoot) Encode(buf []byte) ([]byte, error) {
@@ -140,15 +140,15 @@ func (s *AllowedRoot) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (a *AllowedRoot) Append(tmp1024 []byte) ([]byte, error) {
-	tmp102 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp102[:], uint16(a.PathLen))
-	tmp1024 = append(tmp1024, tmp102[:2]...)
+func (a *AllowedRoot) Append(tmp1032 []byte) ([]byte, error) {
+	tmp106 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp106[:], uint16(a.PathLen))
+	tmp1032 = append(tmp1032, tmp106[:2]...)
 	if len(a.Path) != int(a.PathLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"AllowedRoot::Path\": expected %d, got %d", int(a.PathLen), len(a.Path))
 	}
-	tmp1024 = append(tmp1024, a.Path...)
-	return tmp1024, nil
+	tmp1032 = append(tmp1032, a.Path...)
+	return tmp1032, nil
 }
 func (s *AllowedRoot) MustAppend(buf []byte) []byte {
 	var err error
@@ -159,13 +159,13 @@ func (s *AllowedRoot) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (a *AllowedRoot) Read(tmp1027 io.Reader) error {
-	tmp103 := [2]uint8{}
-	if _, err := io.ReadFull(tmp1027, tmp103[0:0+2]); err != nil {
+func (a *AllowedRoot) Read(tmp1035 io.Reader) error {
+	tmp107 := [2]uint8{}
+	if _, err := io.ReadFull(tmp1035, tmp107[0:0+2]); err != nil {
 		return err
 	}
-	a.PathLen = binary.BigEndian.Uint16(tmp103[:])
-	if seeker, ok := tmp1027.(io.Seeker); ok {
+	a.PathLen = binary.BigEndian.Uint16(tmp107[:])
+	if seeker, ok := tmp1035.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -182,17 +182,17 @@ func (a *AllowedRoot) Read(tmp1027 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(a.PathLen)))
 		}
 		a.Path = make([]byte, int(a.PathLen))
-		if _, err := io.ReadFull(tmp1027, a.Path[0:0+int(a.PathLen)]); err != nil {
+		if _, err := io.ReadFull(tmp1035, a.Path[0:0+int(a.PathLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_8825 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_8825, tmp1027, int64(int(a.PathLen))); err != nil {
+		io_temp_8910 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_8910, tmp1035, int64(int(a.PathLen))); err != nil {
 			return err
 		}
-		a.Path = io_temp_8825.Bytes()
+		a.Path = io_temp_8910.Bytes()
 	}
 	return nil
 }
@@ -214,19 +214,19 @@ func (s *AllowedRoot) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (a *AllowedRoot) DecodeSlice(tmp1027 []byte, tmp1027Offset *int) error {
-	tmp103 := []uint8{}
-	if len(tmp1027)-*tmp1027Offset < 2 {
+func (a *AllowedRoot) DecodeSlice(tmp1035 []byte, tmp1035Offset *int) error {
+	tmp107 := []uint8{}
+	if len(tmp1035)-*tmp1035Offset < 2 {
 		return errors.New("not enough data to read for field \"AllowedRoot::PathLen\"")
 	}
-	tmp103 = tmp1027[*tmp1027Offset : *tmp1027Offset+2]
-	*tmp1027Offset += int(2)
-	a.PathLen = binary.BigEndian.Uint16(tmp103[:])
-	if len(tmp1027)-*tmp1027Offset < int(a.PathLen) {
+	tmp107 = tmp1035[*tmp1035Offset : *tmp1035Offset+2]
+	*tmp1035Offset += int(2)
+	a.PathLen = binary.BigEndian.Uint16(tmp107[:])
+	if len(tmp1035)-*tmp1035Offset < int(a.PathLen) {
 		return errors.New("not enough data to read for field \"AllowedRoot::Path\"")
 	}
-	a.Path = tmp1027[*tmp1027Offset : *tmp1027Offset+int(a.PathLen)]
-	*tmp1027Offset += int(int(a.PathLen))
+	a.Path = tmp1035[*tmp1035Offset : *tmp1035Offset+int(a.PathLen)]
+	*tmp1035Offset += int(int(a.PathLen))
 	return nil
 }
 func (s *AllowedRoot) Decode(buf []byte) ([]byte, error) {
@@ -253,25 +253,25 @@ type ClaudeArg struct {
 	Arg    []uint8
 }
 
-func (c *ClaudeArg) SetArg(tmp2596 []uint8) bool {
-	if len(tmp2596) > int(65535) {
+func (c *ClaudeArg) SetArg(tmp2652 []uint8) bool {
+	if len(tmp2652) > int(65535) {
 		return false
 	}
-	c.ArgLen = uint16(len(tmp2596))
-	c.Arg = tmp2596
+	c.ArgLen = uint16(len(tmp2652))
+	c.Arg = tmp2652
 	return true
 }
 
-func (c *ClaudeArg) Write(tmp1022 io.Writer) error {
-	tmp2710 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2710[:], uint16(c.ArgLen))
-	if _, err := tmp1022.Write(tmp2710[:2]); err != nil {
+func (c *ClaudeArg) Write(tmp1025 io.Writer) error {
+	tmp2728 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2728[:], uint16(c.ArgLen))
+	if _, err := tmp1025.Write(tmp2728[:2]); err != nil {
 		return err
 	}
 	if len(c.Arg) != int(c.ArgLen) {
 		return fmt.Errorf("size mismatch when writing field \"ClaudeArg::Arg\": expected %d, got %d", int(c.ArgLen), len(c.Arg))
 	}
-	if _, err := tmp1022.Write(c.Arg); err != nil {
+	if _, err := tmp1025.Write(c.Arg); err != nil {
 		return err
 	}
 	return nil
@@ -291,22 +291,22 @@ func (s *ClaudeArg) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClaudeArg) EncodeSlice(tmp1022 []byte, tmp1022Offset *int) error {
-	tmp2710 := []uint8{}
-	if len(tmp1022)-*tmp1022Offset < int(2) {
+func (c *ClaudeArg) EncodeSlice(tmp1025 []byte, tmp1025Offset *int) error {
+	tmp2728 := []uint8{}
+	if len(tmp1025)-*tmp1025Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"ClaudeArg::ArgLen\"")
 	}
-	tmp2710 = tmp1022[*tmp1022Offset : *tmp1022Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2710[:], uint16(c.ArgLen))
-	*tmp1022Offset += int(2)
+	tmp2728 = tmp1025[*tmp1025Offset : *tmp1025Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2728[:], uint16(c.ArgLen))
+	*tmp1025Offset += int(2)
 	if len(c.Arg) != int(c.ArgLen) {
 		return fmt.Errorf("size mismatch when writing field \"ClaudeArg::Arg\": expected %d, got %d", int(c.ArgLen), len(c.Arg))
 	}
-	if len(tmp1022)-*tmp1022Offset < int(0+c.ArgLen) {
+	if len(tmp1025)-*tmp1025Offset < int(0+c.ArgLen) {
 		return errors.New("not enough space to write for field \"ClaudeArg::Arg\"")
 	}
-	copy(tmp1022[*tmp1022Offset:*tmp1022Offset+int(c.ArgLen)], c.Arg)
-	*tmp1022Offset += int(c.ArgLen)
+	copy(tmp1025[*tmp1025Offset:*tmp1025Offset+int(c.ArgLen)], c.Arg)
+	*tmp1025Offset += int(c.ArgLen)
 	return nil
 }
 func (s *ClaudeArg) Encode(buf []byte) ([]byte, error) {
@@ -324,15 +324,15 @@ func (s *ClaudeArg) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClaudeArg) Append(tmp1022 []byte) ([]byte, error) {
-	tmp2710 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2710[:], uint16(c.ArgLen))
-	tmp1022 = append(tmp1022, tmp2710[:2]...)
+func (c *ClaudeArg) Append(tmp1025 []byte) ([]byte, error) {
+	tmp2728 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2728[:], uint16(c.ArgLen))
+	tmp1025 = append(tmp1025, tmp2728[:2]...)
 	if len(c.Arg) != int(c.ArgLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"ClaudeArg::Arg\": expected %d, got %d", int(c.ArgLen), len(c.Arg))
 	}
-	tmp1022 = append(tmp1022, c.Arg...)
-	return tmp1022, nil
+	tmp1025 = append(tmp1025, c.Arg...)
+	return tmp1025, nil
 }
 func (s *ClaudeArg) MustAppend(buf []byte) []byte {
 	var err error
@@ -343,13 +343,13 @@ func (s *ClaudeArg) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *ClaudeArg) Read(tmp1021 io.Reader) error {
-	tmp2713 := [2]uint8{}
-	if _, err := io.ReadFull(tmp1021, tmp2713[0:0+2]); err != nil {
+func (c *ClaudeArg) Read(tmp1028 io.Reader) error {
+	tmp2731 := [2]uint8{}
+	if _, err := io.ReadFull(tmp1028, tmp2731[0:0+2]); err != nil {
 		return err
 	}
-	c.ArgLen = binary.BigEndian.Uint16(tmp2713[:])
-	if seeker, ok := tmp1021.(io.Seeker); ok {
+	c.ArgLen = binary.BigEndian.Uint16(tmp2731[:])
+	if seeker, ok := tmp1028.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -366,17 +366,17 @@ func (c *ClaudeArg) Read(tmp1021 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(c.ArgLen)))
 		}
 		c.Arg = make([]byte, int(c.ArgLen))
-		if _, err := io.ReadFull(tmp1021, c.Arg[0:0+int(c.ArgLen)]); err != nil {
+		if _, err := io.ReadFull(tmp1028, c.Arg[0:0+int(c.ArgLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_8845 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_8845, tmp1021, int64(int(c.ArgLen))); err != nil {
+		io_temp_8931 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_8931, tmp1028, int64(int(c.ArgLen))); err != nil {
 			return err
 		}
-		c.Arg = io_temp_8845.Bytes()
+		c.Arg = io_temp_8931.Bytes()
 	}
 	return nil
 }
@@ -398,19 +398,19 @@ func (s *ClaudeArg) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *ClaudeArg) DecodeSlice(tmp1021 []byte, tmp1021Offset *int) error {
-	tmp2713 := []uint8{}
-	if len(tmp1021)-*tmp1021Offset < 2 {
+func (c *ClaudeArg) DecodeSlice(tmp1028 []byte, tmp1028Offset *int) error {
+	tmp2731 := []uint8{}
+	if len(tmp1028)-*tmp1028Offset < 2 {
 		return errors.New("not enough data to read for field \"ClaudeArg::ArgLen\"")
 	}
-	tmp2713 = tmp1021[*tmp1021Offset : *tmp1021Offset+2]
-	*tmp1021Offset += int(2)
-	c.ArgLen = binary.BigEndian.Uint16(tmp2713[:])
-	if len(tmp1021)-*tmp1021Offset < int(c.ArgLen) {
+	tmp2731 = tmp1028[*tmp1028Offset : *tmp1028Offset+2]
+	*tmp1028Offset += int(2)
+	c.ArgLen = binary.BigEndian.Uint16(tmp2731[:])
+	if len(tmp1028)-*tmp1028Offset < int(c.ArgLen) {
 		return errors.New("not enough data to read for field \"ClaudeArg::Arg\"")
 	}
-	c.Arg = tmp1021[*tmp1021Offset : *tmp1021Offset+int(c.ArgLen)]
-	*tmp1021Offset += int(int(c.ArgLen))
+	c.Arg = tmp1028[*tmp1028Offset : *tmp1028Offset+int(c.ArgLen)]
+	*tmp1028Offset += int(int(c.ArgLen))
 	return nil
 }
 func (s *ClaudeArg) Decode(buf []byte) ([]byte, error) {
@@ -437,31 +437,31 @@ type ClaudeArgs struct {
 	Args    []ClaudeArg
 }
 
-func (c *ClaudeArgs) SetArgs(tmp2699 []ClaudeArg) bool {
-	if len(tmp2699) > int(65535) {
+func (c *ClaudeArgs) SetArgs(tmp2706 []ClaudeArg) bool {
+	if len(tmp2706) > int(65535) {
 		return false
 	}
-	c.ArgsLen = uint16(len(tmp2699))
-	c.Args = tmp2699
+	c.ArgsLen = uint16(len(tmp2706))
+	c.Args = tmp2706
 	return true
 }
 
-func (c *ClaudeArgs) Write(tmp650 io.Writer) error {
-	tmp2692 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2692[:], uint16(c.ArgsLen))
-	if _, err := tmp650.Write(tmp2692[:2]); err != nil {
+func (c *ClaudeArgs) Write(tmp655 io.Writer) error {
+	tmp2715 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2715[:], uint16(c.ArgsLen))
+	if _, err := tmp655.Write(tmp2715[:2]); err != nil {
 		return err
 	}
 	if len(c.Args) != int(c.ArgsLen) {
 		return fmt.Errorf("size mismatch when writing field \"ClaudeArgs::Args\": expected %d, got %d", int(c.ArgsLen), len(c.Args))
 	}
-	tmp145 := int(0)
-	for tmp145 < int(c.ArgsLen) {
-		tmp2687 := c.Args[tmp145].Write(tmp650)
-		if tmp2687 != nil {
-			return tmp2687
+	tmp146 := int(0)
+	for tmp146 < int(c.ArgsLen) {
+		tmp2710 := c.Args[tmp146].Write(tmp655)
+		if tmp2710 != nil {
+			return tmp2710
 		}
-		tmp145 = tmp145 + int(1)
+		tmp146 = tmp146 + int(1)
 	}
 	return nil
 }
@@ -480,24 +480,24 @@ func (s *ClaudeArgs) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClaudeArgs) EncodeSlice(tmp650 []byte, tmp650Offset *int) error {
-	tmp2692 := []uint8{}
-	if len(tmp650)-*tmp650Offset < int(2) {
+func (c *ClaudeArgs) EncodeSlice(tmp655 []byte, tmp655Offset *int) error {
+	tmp2715 := []uint8{}
+	if len(tmp655)-*tmp655Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"ClaudeArgs::ArgsLen\"")
 	}
-	tmp2692 = tmp650[*tmp650Offset : *tmp650Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2692[:], uint16(c.ArgsLen))
-	*tmp650Offset += int(2)
+	tmp2715 = tmp655[*tmp655Offset : *tmp655Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2715[:], uint16(c.ArgsLen))
+	*tmp655Offset += int(2)
 	if len(c.Args) != int(c.ArgsLen) {
 		return fmt.Errorf("size mismatch when writing field \"ClaudeArgs::Args\": expected %d, got %d", int(c.ArgsLen), len(c.Args))
 	}
-	tmp145 := int(0)
-	for tmp145 < int(c.ArgsLen) {
-		tmp2687 := c.Args[tmp145].EncodeSlice(tmp650, tmp650Offset)
-		if tmp2687 != nil {
-			return tmp2687
+	tmp146 := int(0)
+	for tmp146 < int(c.ArgsLen) {
+		tmp2710 := c.Args[tmp146].EncodeSlice(tmp655, tmp655Offset)
+		if tmp2710 != nil {
+			return tmp2710
 		}
-		tmp145 = tmp145 + int(1)
+		tmp146 = tmp146 + int(1)
 	}
 	return nil
 }
@@ -516,24 +516,24 @@ func (s *ClaudeArgs) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClaudeArgs) Append(tmp650 []byte) ([]byte, error) {
-	tmp2692 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2692[:], uint16(c.ArgsLen))
-	tmp650 = append(tmp650, tmp2692[:2]...)
+func (c *ClaudeArgs) Append(tmp655 []byte) ([]byte, error) {
+	tmp2715 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2715[:], uint16(c.ArgsLen))
+	tmp655 = append(tmp655, tmp2715[:2]...)
 	if len(c.Args) != int(c.ArgsLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"ClaudeArgs::Args\": expected %d, got %d", int(c.ArgsLen), len(c.Args))
 	}
-	tmp145 := int(0)
-	for tmp145 < int(c.ArgsLen) {
-		var tmp2687 error
-		tmp650, tmp2687 = c.Args[tmp145].Append(tmp650)
+	tmp146 := int(0)
+	for tmp146 < int(c.ArgsLen) {
+		var tmp2710 error
+		tmp655, tmp2710 = c.Args[tmp146].Append(tmp655)
 
-		if tmp2687 != nil {
-			return nil, tmp2687
+		if tmp2710 != nil {
+			return nil, tmp2710
 		}
-		tmp145 = tmp145 + int(1)
+		tmp146 = tmp146 + int(1)
 	}
-	return tmp650, nil
+	return tmp655, nil
 }
 func (s *ClaudeArgs) MustAppend(buf []byte) []byte {
 	var err error
@@ -544,21 +544,21 @@ func (s *ClaudeArgs) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *ClaudeArgs) Read(tmp653 io.Reader) error {
-	tmp2718 := [2]uint8{}
-	if _, err := io.ReadFull(tmp653, tmp2718[0:0+2]); err != nil {
+func (c *ClaudeArgs) Read(tmp658 io.Reader) error {
+	tmp2722 := [2]uint8{}
+	if _, err := io.ReadFull(tmp658, tmp2722[0:0+2]); err != nil {
 		return err
 	}
-	c.ArgsLen = binary.BigEndian.Uint16(tmp2718[:])
-	tmp1393 := int(0)
-	for tmp1393 < int(c.ArgsLen) {
-		tmp2705 := ClaudeArg{}
-		tmp2704 := tmp2705.Read(tmp653)
-		if tmp2704 != nil {
-			return tmp2704
+	c.ArgsLen = binary.BigEndian.Uint16(tmp2722[:])
+	tmp1403 := int(0)
+	for tmp1403 < int(c.ArgsLen) {
+		tmp2721 := ClaudeArg{}
+		tmp2719 := tmp2721.Read(tmp658)
+		if tmp2719 != nil {
+			return tmp2719
 		}
-		c.Args = append(c.Args, tmp2705)
-		tmp1393 = tmp1393 + int(1)
+		c.Args = append(c.Args, tmp2721)
+		tmp1403 = tmp1403 + int(1)
 	}
 	return nil
 }
@@ -580,23 +580,23 @@ func (s *ClaudeArgs) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *ClaudeArgs) DecodeSlice(tmp653 []byte, tmp653Offset *int) error {
-	tmp2718 := []uint8{}
-	if len(tmp653)-*tmp653Offset < 2 {
+func (c *ClaudeArgs) DecodeSlice(tmp658 []byte, tmp658Offset *int) error {
+	tmp2722 := []uint8{}
+	if len(tmp658)-*tmp658Offset < 2 {
 		return errors.New("not enough data to read for field \"ClaudeArgs::ArgsLen\"")
 	}
-	tmp2718 = tmp653[*tmp653Offset : *tmp653Offset+2]
-	*tmp653Offset += int(2)
-	c.ArgsLen = binary.BigEndian.Uint16(tmp2718[:])
-	tmp1393 := int(0)
-	for tmp1393 < int(c.ArgsLen) {
-		tmp2705 := ClaudeArg{}
-		tmp2704 := tmp2705.DecodeSlice(tmp653, tmp653Offset)
-		if tmp2704 != nil {
-			return tmp2704
+	tmp2722 = tmp658[*tmp658Offset : *tmp658Offset+2]
+	*tmp658Offset += int(2)
+	c.ArgsLen = binary.BigEndian.Uint16(tmp2722[:])
+	tmp1403 := int(0)
+	for tmp1403 < int(c.ArgsLen) {
+		tmp2721 := ClaudeArg{}
+		tmp2719 := tmp2721.DecodeSlice(tmp658, tmp658Offset)
+		if tmp2719 != nil {
+			return tmp2719
 		}
-		c.Args = append(c.Args, tmp2705)
-		tmp1393 = tmp1393 + int(1)
+		c.Args = append(c.Args, tmp2721)
+		tmp1403 = tmp1403 + int(1)
 	}
 	return nil
 }
@@ -628,61 +628,61 @@ type RunnerHello struct {
 	AllowedRoots    []AllowedRoot
 }
 
-func (r *RunnerHello) SetHostname(tmp2651 []uint8) bool {
-	if len(tmp2651) > int(255) {
+func (r *RunnerHello) SetHostname(tmp2672 []uint8) bool {
+	if len(tmp2672) > int(255) {
 		return false
 	}
-	r.HostnameLen = uint8(len(tmp2651))
-	r.Hostname = tmp2651
+	r.HostnameLen = uint8(len(tmp2672))
+	r.Hostname = tmp2672
 	return true
 }
 
-func (r *RunnerHello) SetAllowedRoots(tmp2637 []AllowedRoot) bool {
-	if len(tmp2637) > int(255) {
+func (r *RunnerHello) SetAllowedRoots(tmp2667 []AllowedRoot) bool {
+	if len(tmp2667) > int(255) {
 		return false
 	}
-	r.AllowedRootsLen = uint8(len(tmp2637))
-	r.AllowedRoots = tmp2637
+	r.AllowedRootsLen = uint8(len(tmp2667))
+	r.AllowedRoots = tmp2667
 	return true
 }
 
-func (r *RunnerHello) Write(tmp136 io.Writer) error {
+func (r *RunnerHello) Write(tmp135 io.Writer) error {
 	tmp65 := [1]uint8{}
 	tmp65[0] = r.Version
-	if _, err := tmp136.Write(tmp65[:1]); err != nil {
+	if _, err := tmp135.Write(tmp65[:1]); err != nil {
 		return err
 	}
-	tmp2669 := [1]uint8{}
-	tmp2669[0] = r.HostnameLen
-	if _, err := tmp136.Write(tmp2669[:1]); err != nil {
+	tmp2688 := [1]uint8{}
+	tmp2688[0] = r.HostnameLen
+	if _, err := tmp135.Write(tmp2688[:1]); err != nil {
 		return err
 	}
 	if len(r.Hostname) != int(r.HostnameLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerHello::Hostname\": expected %d, got %d", int(r.HostnameLen), len(r.Hostname))
 	}
-	if _, err := tmp136.Write(r.Hostname); err != nil {
+	if _, err := tmp135.Write(r.Hostname); err != nil {
 		return err
 	}
-	tmp2664 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2664[:], uint16(r.MaxTasks))
-	if _, err := tmp136.Write(tmp2664[:2]); err != nil {
+	tmp2683 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2683[:], uint16(r.MaxTasks))
+	if _, err := tmp135.Write(tmp2683[:2]); err != nil {
 		return err
 	}
-	tmp2662 := [1]uint8{}
-	tmp2662[0] = r.AllowedRootsLen
-	if _, err := tmp136.Write(tmp2662[:1]); err != nil {
+	tmp2681 := [1]uint8{}
+	tmp2681[0] = r.AllowedRootsLen
+	if _, err := tmp135.Write(tmp2681[:1]); err != nil {
 		return err
 	}
 	if len(r.AllowedRoots) != int(r.AllowedRootsLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerHello::AllowedRoots\": expected %d, got %d", int(r.AllowedRootsLen), len(r.AllowedRoots))
 	}
-	tmp1384 := int(0)
-	for tmp1384 < int(r.AllowedRootsLen) {
-		tmp2656 := r.AllowedRoots[tmp1384].Write(tmp136)
-		if tmp2656 != nil {
-			return tmp2656
+	tmp1398 := int(0)
+	for tmp1398 < int(r.AllowedRootsLen) {
+		tmp2676 := r.AllowedRoots[tmp1398].Write(tmp135)
+		if tmp2676 != nil {
+			return tmp2676
 		}
-		tmp1384 = tmp1384 + int(1)
+		tmp1398 = tmp1398 + int(1)
 	}
 	return nil
 }
@@ -701,53 +701,53 @@ func (s *RunnerHello) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerHello) EncodeSlice(tmp136 []byte, tmp136Offset *int) error {
+func (r *RunnerHello) EncodeSlice(tmp135 []byte, tmp135Offset *int) error {
 	tmp65 := []uint8{}
-	if len(tmp136)-*tmp136Offset < int(1) {
+	if len(tmp135)-*tmp135Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerHello::Version\"")
 	}
-	tmp65 = tmp136[*tmp136Offset : *tmp136Offset+int(1)]
+	tmp65 = tmp135[*tmp135Offset : *tmp135Offset+int(1)]
 	tmp65[0] = r.Version
-	*tmp136Offset += int(1)
-	tmp2669 := []uint8{}
-	if len(tmp136)-*tmp136Offset < int(1) {
+	*tmp135Offset += int(1)
+	tmp2688 := []uint8{}
+	if len(tmp135)-*tmp135Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerHello::HostnameLen\"")
 	}
-	tmp2669 = tmp136[*tmp136Offset : *tmp136Offset+int(1)]
-	tmp2669[0] = r.HostnameLen
-	*tmp136Offset += int(1)
+	tmp2688 = tmp135[*tmp135Offset : *tmp135Offset+int(1)]
+	tmp2688[0] = r.HostnameLen
+	*tmp135Offset += int(1)
 	if len(r.Hostname) != int(r.HostnameLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerHello::Hostname\": expected %d, got %d", int(r.HostnameLen), len(r.Hostname))
 	}
-	if len(tmp136)-*tmp136Offset < int(0+r.HostnameLen) {
+	if len(tmp135)-*tmp135Offset < int(0+r.HostnameLen) {
 		return errors.New("not enough space to write for field \"RunnerHello::Hostname\"")
 	}
-	copy(tmp136[*tmp136Offset:*tmp136Offset+int(r.HostnameLen)], r.Hostname)
-	*tmp136Offset += int(r.HostnameLen)
-	tmp2664 := []uint8{}
-	if len(tmp136)-*tmp136Offset < int(2) {
+	copy(tmp135[*tmp135Offset:*tmp135Offset+int(r.HostnameLen)], r.Hostname)
+	*tmp135Offset += int(r.HostnameLen)
+	tmp2683 := []uint8{}
+	if len(tmp135)-*tmp135Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"RunnerHello::MaxTasks\"")
 	}
-	tmp2664 = tmp136[*tmp136Offset : *tmp136Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2664[:], uint16(r.MaxTasks))
-	*tmp136Offset += int(2)
-	tmp2662 := []uint8{}
-	if len(tmp136)-*tmp136Offset < int(1) {
+	tmp2683 = tmp135[*tmp135Offset : *tmp135Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2683[:], uint16(r.MaxTasks))
+	*tmp135Offset += int(2)
+	tmp2681 := []uint8{}
+	if len(tmp135)-*tmp135Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerHello::AllowedRootsLen\"")
 	}
-	tmp2662 = tmp136[*tmp136Offset : *tmp136Offset+int(1)]
-	tmp2662[0] = r.AllowedRootsLen
-	*tmp136Offset += int(1)
+	tmp2681 = tmp135[*tmp135Offset : *tmp135Offset+int(1)]
+	tmp2681[0] = r.AllowedRootsLen
+	*tmp135Offset += int(1)
 	if len(r.AllowedRoots) != int(r.AllowedRootsLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerHello::AllowedRoots\": expected %d, got %d", int(r.AllowedRootsLen), len(r.AllowedRoots))
 	}
-	tmp1384 := int(0)
-	for tmp1384 < int(r.AllowedRootsLen) {
-		tmp2656 := r.AllowedRoots[tmp1384].EncodeSlice(tmp136, tmp136Offset)
-		if tmp2656 != nil {
-			return tmp2656
+	tmp1398 := int(0)
+	for tmp1398 < int(r.AllowedRootsLen) {
+		tmp2676 := r.AllowedRoots[tmp1398].EncodeSlice(tmp135, tmp135Offset)
+		if tmp2676 != nil {
+			return tmp2676
 		}
-		tmp1384 = tmp1384 + int(1)
+		tmp1398 = tmp1398 + int(1)
 	}
 	return nil
 }
@@ -766,37 +766,37 @@ func (s *RunnerHello) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerHello) Append(tmp136 []byte) ([]byte, error) {
+func (r *RunnerHello) Append(tmp135 []byte) ([]byte, error) {
 	tmp65 := [1]uint8{}
 	tmp65[0] = r.Version
-	tmp136 = append(tmp136, tmp65[:1]...)
-	tmp2669 := [1]uint8{}
-	tmp2669[0] = r.HostnameLen
-	tmp136 = append(tmp136, tmp2669[:1]...)
+	tmp135 = append(tmp135, tmp65[:1]...)
+	tmp2688 := [1]uint8{}
+	tmp2688[0] = r.HostnameLen
+	tmp135 = append(tmp135, tmp2688[:1]...)
 	if len(r.Hostname) != int(r.HostnameLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"RunnerHello::Hostname\": expected %d, got %d", int(r.HostnameLen), len(r.Hostname))
 	}
-	tmp136 = append(tmp136, r.Hostname...)
-	tmp2664 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2664[:], uint16(r.MaxTasks))
-	tmp136 = append(tmp136, tmp2664[:2]...)
-	tmp2662 := [1]uint8{}
-	tmp2662[0] = r.AllowedRootsLen
-	tmp136 = append(tmp136, tmp2662[:1]...)
+	tmp135 = append(tmp135, r.Hostname...)
+	tmp2683 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2683[:], uint16(r.MaxTasks))
+	tmp135 = append(tmp135, tmp2683[:2]...)
+	tmp2681 := [1]uint8{}
+	tmp2681[0] = r.AllowedRootsLen
+	tmp135 = append(tmp135, tmp2681[:1]...)
 	if len(r.AllowedRoots) != int(r.AllowedRootsLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"RunnerHello::AllowedRoots\": expected %d, got %d", int(r.AllowedRootsLen), len(r.AllowedRoots))
 	}
-	tmp1384 := int(0)
-	for tmp1384 < int(r.AllowedRootsLen) {
-		var tmp2656 error
-		tmp136, tmp2656 = r.AllowedRoots[tmp1384].Append(tmp136)
+	tmp1398 := int(0)
+	for tmp1398 < int(r.AllowedRootsLen) {
+		var tmp2676 error
+		tmp135, tmp2676 = r.AllowedRoots[tmp1398].Append(tmp135)
 
-		if tmp2656 != nil {
-			return nil, tmp2656
+		if tmp2676 != nil {
+			return nil, tmp2676
 		}
-		tmp1384 = tmp1384 + int(1)
+		tmp1398 = tmp1398 + int(1)
 	}
-	return tmp136, nil
+	return tmp135, nil
 }
 func (s *RunnerHello) MustAppend(buf []byte) []byte {
 	var err error
@@ -807,18 +807,18 @@ func (s *RunnerHello) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (r *RunnerHello) Read(tmp137 io.Reader) error {
+func (r *RunnerHello) Read(tmp136 io.Reader) error {
 	tmp66 := [1]uint8{}
-	if _, err := io.ReadFull(tmp137, tmp66[0:0+1]); err != nil {
+	if _, err := io.ReadFull(tmp136, tmp66[0:0+1]); err != nil {
 		return err
 	}
 	r.Version = tmp66[0]
-	tmp2723 := [1]uint8{}
-	if _, err := io.ReadFull(tmp137, tmp2723[0:0+1]); err != nil {
+	tmp2739 := [1]uint8{}
+	if _, err := io.ReadFull(tmp136, tmp2739[0:0+1]); err != nil {
 		return err
 	}
-	r.HostnameLen = tmp2723[0]
-	if seeker, ok := tmp137.(io.Seeker); ok {
+	r.HostnameLen = tmp2739[0]
+	if seeker, ok := tmp136.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -835,37 +835,37 @@ func (r *RunnerHello) Read(tmp137 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(r.HostnameLen)))
 		}
 		r.Hostname = make([]byte, int(r.HostnameLen))
-		if _, err := io.ReadFull(tmp137, r.Hostname[0:0+int(r.HostnameLen)]); err != nil {
+		if _, err := io.ReadFull(tmp136, r.Hostname[0:0+int(r.HostnameLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_8634 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_8634, tmp137, int64(int(r.HostnameLen))); err != nil {
+		io_temp_8735 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_8735, tmp136, int64(int(r.HostnameLen))); err != nil {
 			return err
 		}
-		r.Hostname = io_temp_8634.Bytes()
+		r.Hostname = io_temp_8735.Bytes()
 	}
-	tmp2678 := [2]uint8{}
-	if _, err := io.ReadFull(tmp137, tmp2678[0:0+2]); err != nil {
+	tmp2700 := [2]uint8{}
+	if _, err := io.ReadFull(tmp136, tmp2700[0:0+2]); err != nil {
 		return err
 	}
-	r.MaxTasks = binary.BigEndian.Uint16(tmp2678[:])
-	tmp2677 := [1]uint8{}
-	if _, err := io.ReadFull(tmp137, tmp2677[0:0+1]); err != nil {
+	r.MaxTasks = binary.BigEndian.Uint16(tmp2700[:])
+	tmp2699 := [1]uint8{}
+	if _, err := io.ReadFull(tmp136, tmp2699[0:0+1]); err != nil {
 		return err
 	}
-	r.AllowedRootsLen = tmp2677[0]
-	tmp1388 := int(0)
-	for tmp1388 < int(r.AllowedRootsLen) {
-		tmp1387 := AllowedRoot{}
-		tmp2675 := tmp1387.Read(tmp137)
-		if tmp2675 != nil {
-			return tmp2675
+	r.AllowedRootsLen = tmp2699[0]
+	tmp1397 := int(0)
+	for tmp1397 < int(r.AllowedRootsLen) {
+		tmp1396 := AllowedRoot{}
+		tmp2695 := tmp1396.Read(tmp136)
+		if tmp2695 != nil {
+			return tmp2695
 		}
-		r.AllowedRoots = append(r.AllowedRoots, tmp1387)
-		tmp1388 = tmp1388 + int(1)
+		r.AllowedRoots = append(r.AllowedRoots, tmp1396)
+		tmp1397 = tmp1397 + int(1)
 	}
 	return nil
 }
@@ -887,49 +887,49 @@ func (s *RunnerHello) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (r *RunnerHello) DecodeSlice(tmp137 []byte, tmp137Offset *int) error {
+func (r *RunnerHello) DecodeSlice(tmp136 []byte, tmp136Offset *int) error {
 	tmp66 := []uint8{}
-	if len(tmp137)-*tmp137Offset < 1 {
+	if len(tmp136)-*tmp136Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerHello::Version\"")
 	}
-	tmp66 = tmp137[*tmp137Offset : *tmp137Offset+1]
-	*tmp137Offset += int(1)
+	tmp66 = tmp136[*tmp136Offset : *tmp136Offset+1]
+	*tmp136Offset += int(1)
 	r.Version = tmp66[0]
-	tmp2723 := []uint8{}
-	if len(tmp137)-*tmp137Offset < 1 {
+	tmp2739 := []uint8{}
+	if len(tmp136)-*tmp136Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerHello::HostnameLen\"")
 	}
-	tmp2723 = tmp137[*tmp137Offset : *tmp137Offset+1]
-	*tmp137Offset += int(1)
-	r.HostnameLen = tmp2723[0]
-	if len(tmp137)-*tmp137Offset < int(r.HostnameLen) {
+	tmp2739 = tmp136[*tmp136Offset : *tmp136Offset+1]
+	*tmp136Offset += int(1)
+	r.HostnameLen = tmp2739[0]
+	if len(tmp136)-*tmp136Offset < int(r.HostnameLen) {
 		return errors.New("not enough data to read for field \"RunnerHello::Hostname\"")
 	}
-	r.Hostname = tmp137[*tmp137Offset : *tmp137Offset+int(r.HostnameLen)]
-	*tmp137Offset += int(int(r.HostnameLen))
-	tmp2678 := []uint8{}
-	if len(tmp137)-*tmp137Offset < 2 {
+	r.Hostname = tmp136[*tmp136Offset : *tmp136Offset+int(r.HostnameLen)]
+	*tmp136Offset += int(int(r.HostnameLen))
+	tmp2700 := []uint8{}
+	if len(tmp136)-*tmp136Offset < 2 {
 		return errors.New("not enough data to read for field \"RunnerHello::MaxTasks\"")
 	}
-	tmp2678 = tmp137[*tmp137Offset : *tmp137Offset+2]
-	*tmp137Offset += int(2)
-	r.MaxTasks = binary.BigEndian.Uint16(tmp2678[:])
-	tmp2677 := []uint8{}
-	if len(tmp137)-*tmp137Offset < 1 {
+	tmp2700 = tmp136[*tmp136Offset : *tmp136Offset+2]
+	*tmp136Offset += int(2)
+	r.MaxTasks = binary.BigEndian.Uint16(tmp2700[:])
+	tmp2699 := []uint8{}
+	if len(tmp136)-*tmp136Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerHello::AllowedRootsLen\"")
 	}
-	tmp2677 = tmp137[*tmp137Offset : *tmp137Offset+1]
-	*tmp137Offset += int(1)
-	r.AllowedRootsLen = tmp2677[0]
-	tmp1388 := int(0)
-	for tmp1388 < int(r.AllowedRootsLen) {
-		tmp1387 := AllowedRoot{}
-		tmp2675 := tmp1387.DecodeSlice(tmp137, tmp137Offset)
-		if tmp2675 != nil {
-			return tmp2675
+	tmp2699 = tmp136[*tmp136Offset : *tmp136Offset+1]
+	*tmp136Offset += int(1)
+	r.AllowedRootsLen = tmp2699[0]
+	tmp1397 := int(0)
+	for tmp1397 < int(r.AllowedRootsLen) {
+		tmp1396 := AllowedRoot{}
+		tmp2695 := tmp1396.DecodeSlice(tmp136, tmp136Offset)
+		if tmp2695 != nil {
+			return tmp2695
 		}
-		r.AllowedRoots = append(r.AllowedRoots, tmp1387)
-		tmp1388 = tmp1388 + int(1)
+		r.AllowedRoots = append(r.AllowedRoots, tmp1396)
+		tmp1397 = tmp1397 + int(1)
 	}
 	return nil
 }
@@ -956,8 +956,8 @@ type TaskID struct {
 	Id [16]uint8
 }
 
-func (t *TaskID) Write(tmp2616 io.Writer) error {
-	if _, err := tmp2616.Write(t.Id[:16]); err != nil {
+func (t *TaskID) Write(tmp2658 io.Writer) error {
+	if _, err := tmp2658.Write(t.Id[:16]); err != nil {
 		return err
 	}
 	return nil
@@ -977,12 +977,12 @@ func (s *TaskID) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskID) EncodeSlice(tmp2616 []byte, tmp2616Offset *int) error {
-	if len(tmp2616)-*tmp2616Offset < int(16) {
+func (t *TaskID) EncodeSlice(tmp2658 []byte, tmp2658Offset *int) error {
+	if len(tmp2658)-*tmp2658Offset < int(16) {
 		return errors.New("not enough space to write for field \"TaskID::Id\"")
 	}
-	copy(tmp2616[*tmp2616Offset:*tmp2616Offset+int(16)], t.Id[:])
-	*tmp2616Offset += int(16)
+	copy(tmp2658[*tmp2658Offset:*tmp2658Offset+int(16)], t.Id[:])
+	*tmp2658Offset += int(16)
 	return nil
 }
 func (s *TaskID) Encode(buf []byte) ([]byte, error) {
@@ -1000,9 +1000,9 @@ func (s *TaskID) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskID) Append(tmp2616 []byte) ([]byte, error) {
-	tmp2616 = append(tmp2616, t.Id[:16]...)
-	return tmp2616, nil
+func (t *TaskID) Append(tmp2658 []byte) ([]byte, error) {
+	tmp2658 = append(tmp2658, t.Id[:16]...)
+	return tmp2658, nil
 }
 func (s *TaskID) MustAppend(buf []byte) []byte {
 	var err error
@@ -1013,8 +1013,8 @@ func (s *TaskID) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (t *TaskID) Read(tmp2619 io.Reader) error {
-	if _, err := io.ReadFull(tmp2619, t.Id[0:0+16]); err != nil {
+func (t *TaskID) Read(tmp2661 io.Reader) error {
+	if _, err := io.ReadFull(tmp2661, t.Id[0:0+16]); err != nil {
 		return err
 	}
 	return nil
@@ -1037,12 +1037,12 @@ func (s *TaskID) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (t *TaskID) DecodeSlice(tmp2619 []byte, tmp2619Offset *int) error {
-	if len(tmp2619)-*tmp2619Offset < 16 {
+func (t *TaskID) DecodeSlice(tmp2661 []byte, tmp2661Offset *int) error {
+	if len(tmp2661)-*tmp2661Offset < 16 {
 		return errors.New("not enough data to read for field \"TaskID::Id\"")
 	}
-	copy(t.Id[:], tmp2619[*tmp2619Offset:*tmp2619Offset+16])
-	*tmp2619Offset += int(16)
+	copy(t.Id[:], tmp2661[*tmp2661Offset:*tmp2661Offset+16])
+	*tmp2661Offset += int(16)
 	return nil
 }
 func (s *TaskID) Decode(buf []byte) ([]byte, error) {
@@ -1074,57 +1074,57 @@ type AssignTask struct {
 	ExtraArgs   ClaudeArgs
 }
 
-func (a *AssignTask) SetRepoPath(tmp2640 []uint8) bool {
-	if len(tmp2640) > int(65535) {
+func (a *AssignTask) SetRepoPath(tmp2633 []uint8) bool {
+	if len(tmp2633) > int(65535) {
 		return false
 	}
-	a.RepoPathLen = uint16(len(tmp2640))
-	a.RepoPath = tmp2640
+	a.RepoPathLen = uint16(len(tmp2633))
+	a.RepoPath = tmp2633
 	return true
 }
 
-func (a *AssignTask) SetPrompt(tmp2606 []uint8) bool {
-	if len(tmp2606) > int(4294967295) {
+func (a *AssignTask) SetPrompt(tmp2621 []uint8) bool {
+	if len(tmp2621) > int(4294967295) {
 		return false
 	}
-	a.PromptLen = uint32(len(tmp2606))
-	a.Prompt = tmp2606
+	a.PromptLen = uint32(len(tmp2621))
+	a.Prompt = tmp2621
 	return true
 }
 
-func (a *AssignTask) Write(tmp190 io.Writer) error {
-	tmp2602 := a.TaskId.Write(tmp190)
-	if tmp2602 != nil {
-		return tmp2602
+func (a *AssignTask) Write(tmp192 io.Writer) error {
+	tmp2644 := a.TaskId.Write(tmp192)
+	if tmp2644 != nil {
+		return tmp2644
 	}
-	if _, err := tmp190.Write(a.AuthTicket[:16]); err != nil {
+	if _, err := tmp192.Write(a.AuthTicket[:16]); err != nil {
 		return err
 	}
-	tmp2600 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2600[:], uint16(a.RepoPathLen))
-	if _, err := tmp190.Write(tmp2600[:2]); err != nil {
+	tmp2642 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2642[:], uint16(a.RepoPathLen))
+	if _, err := tmp192.Write(tmp2642[:2]); err != nil {
 		return err
 	}
 	if len(a.RepoPath) != int(a.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"AssignTask::RepoPath\": expected %d, got %d", int(a.RepoPathLen), len(a.RepoPath))
 	}
-	if _, err := tmp190.Write(a.RepoPath); err != nil {
+	if _, err := tmp192.Write(a.RepoPath); err != nil {
 		return err
 	}
-	tmp297 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp297[:], uint32(a.PromptLen))
-	if _, err := tmp190.Write(tmp297[:4]); err != nil {
+	tmp246 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp246[:], uint32(a.PromptLen))
+	if _, err := tmp192.Write(tmp246[:4]); err != nil {
 		return err
 	}
 	if len(a.Prompt) != int(a.PromptLen) {
 		return fmt.Errorf("size mismatch when writing field \"AssignTask::Prompt\": expected %d, got %d", int(a.PromptLen), len(a.Prompt))
 	}
-	if _, err := tmp190.Write(a.Prompt); err != nil {
+	if _, err := tmp192.Write(a.Prompt); err != nil {
 		return err
 	}
-	tmp2627 := a.ExtraArgs.Write(tmp190)
-	if tmp2627 != nil {
-		return tmp2627
+	tmp2635 := a.ExtraArgs.Write(tmp192)
+	if tmp2635 != nil {
+		return tmp2635
 	}
 	return nil
 }
@@ -1143,49 +1143,49 @@ func (s *AssignTask) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (a *AssignTask) EncodeSlice(tmp190 []byte, tmp190Offset *int) error {
-	tmp2602 := a.TaskId.EncodeSlice(tmp190, tmp190Offset)
-	if tmp2602 != nil {
-		return tmp2602
+func (a *AssignTask) EncodeSlice(tmp192 []byte, tmp192Offset *int) error {
+	tmp2644 := a.TaskId.EncodeSlice(tmp192, tmp192Offset)
+	if tmp2644 != nil {
+		return tmp2644
 	}
-	if len(tmp190)-*tmp190Offset < int(16) {
+	if len(tmp192)-*tmp192Offset < int(16) {
 		return errors.New("not enough space to write for field \"AssignTask::AuthTicket\"")
 	}
-	copy(tmp190[*tmp190Offset:*tmp190Offset+int(16)], a.AuthTicket[:])
-	*tmp190Offset += int(16)
-	tmp2600 := []uint8{}
-	if len(tmp190)-*tmp190Offset < int(2) {
+	copy(tmp192[*tmp192Offset:*tmp192Offset+int(16)], a.AuthTicket[:])
+	*tmp192Offset += int(16)
+	tmp2642 := []uint8{}
+	if len(tmp192)-*tmp192Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"AssignTask::RepoPathLen\"")
 	}
-	tmp2600 = tmp190[*tmp190Offset : *tmp190Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2600[:], uint16(a.RepoPathLen))
-	*tmp190Offset += int(2)
+	tmp2642 = tmp192[*tmp192Offset : *tmp192Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2642[:], uint16(a.RepoPathLen))
+	*tmp192Offset += int(2)
 	if len(a.RepoPath) != int(a.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"AssignTask::RepoPath\": expected %d, got %d", int(a.RepoPathLen), len(a.RepoPath))
 	}
-	if len(tmp190)-*tmp190Offset < int(0+a.RepoPathLen) {
+	if len(tmp192)-*tmp192Offset < int(0+a.RepoPathLen) {
 		return errors.New("not enough space to write for field \"AssignTask::RepoPath\"")
 	}
-	copy(tmp190[*tmp190Offset:*tmp190Offset+int(a.RepoPathLen)], a.RepoPath)
-	*tmp190Offset += int(a.RepoPathLen)
-	tmp297 := []uint8{}
-	if len(tmp190)-*tmp190Offset < int(4) {
+	copy(tmp192[*tmp192Offset:*tmp192Offset+int(a.RepoPathLen)], a.RepoPath)
+	*tmp192Offset += int(a.RepoPathLen)
+	tmp246 := []uint8{}
+	if len(tmp192)-*tmp192Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"AssignTask::PromptLen\"")
 	}
-	tmp297 = tmp190[*tmp190Offset : *tmp190Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp297[:], uint32(a.PromptLen))
-	*tmp190Offset += int(4)
+	tmp246 = tmp192[*tmp192Offset : *tmp192Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp246[:], uint32(a.PromptLen))
+	*tmp192Offset += int(4)
 	if len(a.Prompt) != int(a.PromptLen) {
 		return fmt.Errorf("size mismatch when writing field \"AssignTask::Prompt\": expected %d, got %d", int(a.PromptLen), len(a.Prompt))
 	}
-	if len(tmp190)-*tmp190Offset < int(0+a.PromptLen) {
+	if len(tmp192)-*tmp192Offset < int(0+a.PromptLen) {
 		return errors.New("not enough space to write for field \"AssignTask::Prompt\"")
 	}
-	copy(tmp190[*tmp190Offset:*tmp190Offset+int(a.PromptLen)], a.Prompt)
-	*tmp190Offset += int(a.PromptLen)
-	tmp2627 := a.ExtraArgs.EncodeSlice(tmp190, tmp190Offset)
-	if tmp2627 != nil {
-		return tmp2627
+	copy(tmp192[*tmp192Offset:*tmp192Offset+int(a.PromptLen)], a.Prompt)
+	*tmp192Offset += int(a.PromptLen)
+	tmp2635 := a.ExtraArgs.EncodeSlice(tmp192, tmp192Offset)
+	if tmp2635 != nil {
+		return tmp2635
 	}
 	return nil
 }
@@ -1204,35 +1204,35 @@ func (s *AssignTask) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (a *AssignTask) Append(tmp190 []byte) ([]byte, error) {
-	var tmp2602 error
-	tmp190, tmp2602 = a.TaskId.Append(tmp190)
+func (a *AssignTask) Append(tmp192 []byte) ([]byte, error) {
+	var tmp2644 error
+	tmp192, tmp2644 = a.TaskId.Append(tmp192)
 
-	if tmp2602 != nil {
-		return nil, tmp2602
+	if tmp2644 != nil {
+		return nil, tmp2644
 	}
-	tmp190 = append(tmp190, a.AuthTicket[:16]...)
-	tmp2600 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2600[:], uint16(a.RepoPathLen))
-	tmp190 = append(tmp190, tmp2600[:2]...)
+	tmp192 = append(tmp192, a.AuthTicket[:16]...)
+	tmp2642 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2642[:], uint16(a.RepoPathLen))
+	tmp192 = append(tmp192, tmp2642[:2]...)
 	if len(a.RepoPath) != int(a.RepoPathLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"AssignTask::RepoPath\": expected %d, got %d", int(a.RepoPathLen), len(a.RepoPath))
 	}
-	tmp190 = append(tmp190, a.RepoPath...)
-	tmp297 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp297[:], uint32(a.PromptLen))
-	tmp190 = append(tmp190, tmp297[:4]...)
+	tmp192 = append(tmp192, a.RepoPath...)
+	tmp246 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp246[:], uint32(a.PromptLen))
+	tmp192 = append(tmp192, tmp246[:4]...)
 	if len(a.Prompt) != int(a.PromptLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"AssignTask::Prompt\": expected %d, got %d", int(a.PromptLen), len(a.Prompt))
 	}
-	tmp190 = append(tmp190, a.Prompt...)
-	var tmp2627 error
-	tmp190, tmp2627 = a.ExtraArgs.Append(tmp190)
+	tmp192 = append(tmp192, a.Prompt...)
+	var tmp2635 error
+	tmp192, tmp2635 = a.ExtraArgs.Append(tmp192)
 
-	if tmp2627 != nil {
-		return nil, tmp2627
+	if tmp2635 != nil {
+		return nil, tmp2635
 	}
-	return tmp190, nil
+	return tmp192, nil
 }
 func (s *AssignTask) MustAppend(buf []byte) []byte {
 	var err error
@@ -1243,20 +1243,20 @@ func (s *AssignTask) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (a *AssignTask) Read(tmp191 io.Reader) error {
-	tmp2629 := a.TaskId.Read(tmp191)
-	if tmp2629 != nil {
-		return tmp2629
+func (a *AssignTask) Read(tmp193 io.Reader) error {
+	tmp2655 := a.TaskId.Read(tmp193)
+	if tmp2655 != nil {
+		return tmp2655
 	}
-	if _, err := io.ReadFull(tmp191, a.AuthTicket[0:0+16]); err != nil {
+	if _, err := io.ReadFull(tmp193, a.AuthTicket[0:0+16]); err != nil {
 		return err
 	}
-	tmp2612 := [2]uint8{}
-	if _, err := io.ReadFull(tmp191, tmp2612[0:0+2]); err != nil {
+	tmp2651 := [2]uint8{}
+	if _, err := io.ReadFull(tmp193, tmp2651[0:0+2]); err != nil {
 		return err
 	}
-	a.RepoPathLen = binary.BigEndian.Uint16(tmp2612[:])
-	if seeker, ok := tmp191.(io.Seeker); ok {
+	a.RepoPathLen = binary.BigEndian.Uint16(tmp2651[:])
+	if seeker, ok := tmp193.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -1273,24 +1273,24 @@ func (a *AssignTask) Read(tmp191 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(a.RepoPathLen)))
 		}
 		a.RepoPath = make([]byte, int(a.RepoPathLen))
-		if _, err := io.ReadFull(tmp191, a.RepoPath[0:0+int(a.RepoPathLen)]); err != nil {
+		if _, err := io.ReadFull(tmp193, a.RepoPath[0:0+int(a.RepoPathLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_8323 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_8323, tmp191, int64(int(a.RepoPathLen))); err != nil {
+		io_temp_8616 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_8616, tmp193, int64(int(a.RepoPathLen))); err != nil {
 			return err
 		}
-		a.RepoPath = io_temp_8323.Bytes()
+		a.RepoPath = io_temp_8616.Bytes()
 	}
-	tmp298 := [4]uint8{}
-	if _, err := io.ReadFull(tmp191, tmp298[0:0+4]); err != nil {
+	tmp249 := [4]uint8{}
+	if _, err := io.ReadFull(tmp193, tmp249[0:0+4]); err != nil {
 		return err
 	}
-	a.PromptLen = binary.BigEndian.Uint32(tmp298[:])
-	if seeker, ok := tmp191.(io.Seeker); ok {
+	a.PromptLen = binary.BigEndian.Uint32(tmp249[:])
+	if seeker, ok := tmp193.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -1307,21 +1307,21 @@ func (a *AssignTask) Read(tmp191 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(a.PromptLen)))
 		}
 		a.Prompt = make([]byte, int(a.PromptLen))
-		if _, err := io.ReadFull(tmp191, a.Prompt[0:0+int(a.PromptLen)]); err != nil {
+		if _, err := io.ReadFull(tmp193, a.Prompt[0:0+int(a.PromptLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_8149 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_8149, tmp191, int64(int(a.PromptLen))); err != nil {
+		io_temp_8406 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_8406, tmp193, int64(int(a.PromptLen))); err != nil {
 			return err
 		}
-		a.Prompt = io_temp_8149.Bytes()
+		a.Prompt = io_temp_8406.Bytes()
 	}
-	tmp2584 := a.ExtraArgs.Read(tmp191)
-	if tmp2584 != nil {
-		return tmp2584
+	tmp2629 := a.ExtraArgs.Read(tmp193)
+	if tmp2629 != nil {
+		return tmp2629
 	}
 	return nil
 }
@@ -1343,43 +1343,43 @@ func (s *AssignTask) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (a *AssignTask) DecodeSlice(tmp191 []byte, tmp191Offset *int) error {
-	tmp2629 := a.TaskId.DecodeSlice(tmp191, tmp191Offset)
-	if tmp2629 != nil {
-		return tmp2629
+func (a *AssignTask) DecodeSlice(tmp193 []byte, tmp193Offset *int) error {
+	tmp2655 := a.TaskId.DecodeSlice(tmp193, tmp193Offset)
+	if tmp2655 != nil {
+		return tmp2655
 	}
-	if len(tmp191)-*tmp191Offset < 16 {
+	if len(tmp193)-*tmp193Offset < 16 {
 		return errors.New("not enough data to read for field \"AssignTask::AuthTicket\"")
 	}
-	copy(a.AuthTicket[:], tmp191[*tmp191Offset:*tmp191Offset+16])
-	*tmp191Offset += int(16)
-	tmp2612 := []uint8{}
-	if len(tmp191)-*tmp191Offset < 2 {
+	copy(a.AuthTicket[:], tmp193[*tmp193Offset:*tmp193Offset+16])
+	*tmp193Offset += int(16)
+	tmp2651 := []uint8{}
+	if len(tmp193)-*tmp193Offset < 2 {
 		return errors.New("not enough data to read for field \"AssignTask::RepoPathLen\"")
 	}
-	tmp2612 = tmp191[*tmp191Offset : *tmp191Offset+2]
-	*tmp191Offset += int(2)
-	a.RepoPathLen = binary.BigEndian.Uint16(tmp2612[:])
-	if len(tmp191)-*tmp191Offset < int(a.RepoPathLen) {
+	tmp2651 = tmp193[*tmp193Offset : *tmp193Offset+2]
+	*tmp193Offset += int(2)
+	a.RepoPathLen = binary.BigEndian.Uint16(tmp2651[:])
+	if len(tmp193)-*tmp193Offset < int(a.RepoPathLen) {
 		return errors.New("not enough data to read for field \"AssignTask::RepoPath\"")
 	}
-	a.RepoPath = tmp191[*tmp191Offset : *tmp191Offset+int(a.RepoPathLen)]
-	*tmp191Offset += int(int(a.RepoPathLen))
-	tmp298 := []uint8{}
-	if len(tmp191)-*tmp191Offset < 4 {
+	a.RepoPath = tmp193[*tmp193Offset : *tmp193Offset+int(a.RepoPathLen)]
+	*tmp193Offset += int(int(a.RepoPathLen))
+	tmp249 := []uint8{}
+	if len(tmp193)-*tmp193Offset < 4 {
 		return errors.New("not enough data to read for field \"AssignTask::PromptLen\"")
 	}
-	tmp298 = tmp191[*tmp191Offset : *tmp191Offset+4]
-	*tmp191Offset += int(4)
-	a.PromptLen = binary.BigEndian.Uint32(tmp298[:])
-	if len(tmp191)-*tmp191Offset < int(a.PromptLen) {
+	tmp249 = tmp193[*tmp193Offset : *tmp193Offset+4]
+	*tmp193Offset += int(4)
+	a.PromptLen = binary.BigEndian.Uint32(tmp249[:])
+	if len(tmp193)-*tmp193Offset < int(a.PromptLen) {
 		return errors.New("not enough data to read for field \"AssignTask::Prompt\"")
 	}
-	a.Prompt = tmp191[*tmp191Offset : *tmp191Offset+int(a.PromptLen)]
-	*tmp191Offset += int(int(a.PromptLen))
-	tmp2584 := a.ExtraArgs.DecodeSlice(tmp191, tmp191Offset)
-	if tmp2584 != nil {
-		return tmp2584
+	a.Prompt = tmp193[*tmp193Offset : *tmp193Offset+int(a.PromptLen)]
+	*tmp193Offset += int(int(a.PromptLen))
+	tmp2629 := a.ExtraArgs.DecodeSlice(tmp193, tmp193Offset)
+	if tmp2629 != nil {
+		return tmp2629
 	}
 	return nil
 }
@@ -1406,10 +1406,10 @@ type CancelTask struct {
 	TaskId TaskID
 }
 
-func (c *CancelTask) Write(tmp1352 io.Writer) error {
-	tmp2578 := c.TaskId.Write(tmp1352)
-	if tmp2578 != nil {
-		return tmp2578
+func (c *CancelTask) Write(tmp1376 io.Writer) error {
+	tmp2619 := c.TaskId.Write(tmp1376)
+	if tmp2619 != nil {
+		return tmp2619
 	}
 	return nil
 }
@@ -1428,10 +1428,10 @@ func (s *CancelTask) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *CancelTask) EncodeSlice(tmp1352 []byte, tmp1352Offset *int) error {
-	tmp2578 := c.TaskId.EncodeSlice(tmp1352, tmp1352Offset)
-	if tmp2578 != nil {
-		return tmp2578
+func (c *CancelTask) EncodeSlice(tmp1376 []byte, tmp1376Offset *int) error {
+	tmp2619 := c.TaskId.EncodeSlice(tmp1376, tmp1376Offset)
+	if tmp2619 != nil {
+		return tmp2619
 	}
 	return nil
 }
@@ -1450,14 +1450,14 @@ func (s *CancelTask) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *CancelTask) Append(tmp1352 []byte) ([]byte, error) {
-	var tmp2578 error
-	tmp1352, tmp2578 = c.TaskId.Append(tmp1352)
+func (c *CancelTask) Append(tmp1376 []byte) ([]byte, error) {
+	var tmp2619 error
+	tmp1376, tmp2619 = c.TaskId.Append(tmp1376)
 
-	if tmp2578 != nil {
-		return nil, tmp2578
+	if tmp2619 != nil {
+		return nil, tmp2619
 	}
-	return tmp1352, nil
+	return tmp1376, nil
 }
 func (s *CancelTask) MustAppend(buf []byte) []byte {
 	var err error
@@ -1468,10 +1468,10 @@ func (s *CancelTask) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *CancelTask) Read(tmp1350 io.Reader) error {
-	tmp2582 := c.TaskId.Read(tmp1350)
-	if tmp2582 != nil {
-		return tmp2582
+func (c *CancelTask) Read(tmp1373 io.Reader) error {
+	tmp2608 := c.TaskId.Read(tmp1373)
+	if tmp2608 != nil {
+		return tmp2608
 	}
 	return nil
 }
@@ -1493,10 +1493,10 @@ func (s *CancelTask) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *CancelTask) DecodeSlice(tmp1350 []byte, tmp1350Offset *int) error {
-	tmp2582 := c.TaskId.DecodeSlice(tmp1350, tmp1350Offset)
-	if tmp2582 != nil {
-		return tmp2582
+func (c *CancelTask) DecodeSlice(tmp1373 []byte, tmp1373Offset *int) error {
+	tmp2608 := c.TaskId.DecodeSlice(tmp1373, tmp1373Offset)
+	if tmp2608 != nil {
+		return tmp2608
 	}
 	return nil
 }
@@ -1528,42 +1528,42 @@ type OpenExecRunnerRequest struct {
 	ExtraArgs   ClaudeArgs
 }
 
-func (o *OpenExecRunnerRequest) SetRepoPath(tmp2609 []uint8) bool {
-	if len(tmp2609) > int(65535) {
+func (o *OpenExecRunnerRequest) SetRepoPath(tmp2611 []uint8) bool {
+	if len(tmp2611) > int(65535) {
 		return false
 	}
-	o.RepoPathLen = uint16(len(tmp2609))
-	o.RepoPath = tmp2609
+	o.RepoPathLen = uint16(len(tmp2611))
+	o.RepoPath = tmp2611
 	return true
 }
 
-func (o *OpenExecRunnerRequest) Write(tmp240 io.Writer) error {
-	tmp2550 := o.TaskId.Write(tmp240)
-	if tmp2550 != nil {
-		return tmp2550
+func (o *OpenExecRunnerRequest) Write(tmp241 io.Writer) error {
+	tmp2570 := o.TaskId.Write(tmp241)
+	if tmp2570 != nil {
+		return tmp2570
 	}
-	if _, err := tmp240.Write(o.AuthTicket[:16]); err != nil {
+	if _, err := tmp241.Write(o.AuthTicket[:16]); err != nil {
 		return err
 	}
-	tmp2547 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2547[:], uint16(o.RepoPathLen))
-	if _, err := tmp240.Write(tmp2547[:2]); err != nil {
+	tmp2573 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2573[:], uint16(o.RepoPathLen))
+	if _, err := tmp241.Write(tmp2573[:2]); err != nil {
 		return err
 	}
 	if len(o.RepoPath) != int(o.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"OpenExecRunnerRequest::RepoPath\": expected %d, got %d", int(o.RepoPathLen), len(o.RepoPath))
 	}
-	if _, err := tmp240.Write(o.RepoPath); err != nil {
+	if _, err := tmp241.Write(o.RepoPath); err != nil {
 		return err
 	}
-	tmp187 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp187[:], uint64(o.StreamId))
-	if _, err := tmp240.Write(tmp187[:8]); err != nil {
+	tmp189 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp189[:], uint64(o.StreamId))
+	if _, err := tmp241.Write(tmp189[:8]); err != nil {
 		return err
 	}
-	tmp2533 := o.ExtraArgs.Write(tmp240)
-	if tmp2533 != nil {
-		return tmp2533
+	tmp2557 := o.ExtraArgs.Write(tmp241)
+	if tmp2557 != nil {
+		return tmp2557
 	}
 	return nil
 }
@@ -1582,41 +1582,41 @@ func (s *OpenExecRunnerRequest) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (o *OpenExecRunnerRequest) EncodeSlice(tmp240 []byte, tmp240Offset *int) error {
-	tmp2550 := o.TaskId.EncodeSlice(tmp240, tmp240Offset)
-	if tmp2550 != nil {
-		return tmp2550
+func (o *OpenExecRunnerRequest) EncodeSlice(tmp241 []byte, tmp241Offset *int) error {
+	tmp2570 := o.TaskId.EncodeSlice(tmp241, tmp241Offset)
+	if tmp2570 != nil {
+		return tmp2570
 	}
-	if len(tmp240)-*tmp240Offset < int(16) {
+	if len(tmp241)-*tmp241Offset < int(16) {
 		return errors.New("not enough space to write for field \"OpenExecRunnerRequest::AuthTicket\"")
 	}
-	copy(tmp240[*tmp240Offset:*tmp240Offset+int(16)], o.AuthTicket[:])
-	*tmp240Offset += int(16)
-	tmp2547 := []uint8{}
-	if len(tmp240)-*tmp240Offset < int(2) {
+	copy(tmp241[*tmp241Offset:*tmp241Offset+int(16)], o.AuthTicket[:])
+	*tmp241Offset += int(16)
+	tmp2573 := []uint8{}
+	if len(tmp241)-*tmp241Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"OpenExecRunnerRequest::RepoPathLen\"")
 	}
-	tmp2547 = tmp240[*tmp240Offset : *tmp240Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2547[:], uint16(o.RepoPathLen))
-	*tmp240Offset += int(2)
+	tmp2573 = tmp241[*tmp241Offset : *tmp241Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2573[:], uint16(o.RepoPathLen))
+	*tmp241Offset += int(2)
 	if len(o.RepoPath) != int(o.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"OpenExecRunnerRequest::RepoPath\": expected %d, got %d", int(o.RepoPathLen), len(o.RepoPath))
 	}
-	if len(tmp240)-*tmp240Offset < int(0+o.RepoPathLen) {
+	if len(tmp241)-*tmp241Offset < int(0+o.RepoPathLen) {
 		return errors.New("not enough space to write for field \"OpenExecRunnerRequest::RepoPath\"")
 	}
-	copy(tmp240[*tmp240Offset:*tmp240Offset+int(o.RepoPathLen)], o.RepoPath)
-	*tmp240Offset += int(o.RepoPathLen)
-	tmp187 := []uint8{}
-	if len(tmp240)-*tmp240Offset < int(8) {
+	copy(tmp241[*tmp241Offset:*tmp241Offset+int(o.RepoPathLen)], o.RepoPath)
+	*tmp241Offset += int(o.RepoPathLen)
+	tmp189 := []uint8{}
+	if len(tmp241)-*tmp241Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"OpenExecRunnerRequest::StreamId\"")
 	}
-	tmp187 = tmp240[*tmp240Offset : *tmp240Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp187[:], uint64(o.StreamId))
-	*tmp240Offset += int(8)
-	tmp2533 := o.ExtraArgs.EncodeSlice(tmp240, tmp240Offset)
-	if tmp2533 != nil {
-		return tmp2533
+	tmp189 = tmp241[*tmp241Offset : *tmp241Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp189[:], uint64(o.StreamId))
+	*tmp241Offset += int(8)
+	tmp2557 := o.ExtraArgs.EncodeSlice(tmp241, tmp241Offset)
+	if tmp2557 != nil {
+		return tmp2557
 	}
 	return nil
 }
@@ -1635,31 +1635,31 @@ func (s *OpenExecRunnerRequest) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (o *OpenExecRunnerRequest) Append(tmp240 []byte) ([]byte, error) {
-	var tmp2550 error
-	tmp240, tmp2550 = o.TaskId.Append(tmp240)
+func (o *OpenExecRunnerRequest) Append(tmp241 []byte) ([]byte, error) {
+	var tmp2570 error
+	tmp241, tmp2570 = o.TaskId.Append(tmp241)
 
-	if tmp2550 != nil {
-		return nil, tmp2550
+	if tmp2570 != nil {
+		return nil, tmp2570
 	}
-	tmp240 = append(tmp240, o.AuthTicket[:16]...)
-	tmp2547 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2547[:], uint16(o.RepoPathLen))
-	tmp240 = append(tmp240, tmp2547[:2]...)
+	tmp241 = append(tmp241, o.AuthTicket[:16]...)
+	tmp2573 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2573[:], uint16(o.RepoPathLen))
+	tmp241 = append(tmp241, tmp2573[:2]...)
 	if len(o.RepoPath) != int(o.RepoPathLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"OpenExecRunnerRequest::RepoPath\": expected %d, got %d", int(o.RepoPathLen), len(o.RepoPath))
 	}
-	tmp240 = append(tmp240, o.RepoPath...)
-	tmp187 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp187[:], uint64(o.StreamId))
-	tmp240 = append(tmp240, tmp187[:8]...)
-	var tmp2533 error
-	tmp240, tmp2533 = o.ExtraArgs.Append(tmp240)
+	tmp241 = append(tmp241, o.RepoPath...)
+	tmp189 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp189[:], uint64(o.StreamId))
+	tmp241 = append(tmp241, tmp189[:8]...)
+	var tmp2557 error
+	tmp241, tmp2557 = o.ExtraArgs.Append(tmp241)
 
-	if tmp2533 != nil {
-		return nil, tmp2533
+	if tmp2557 != nil {
+		return nil, tmp2557
 	}
-	return tmp240, nil
+	return tmp241, nil
 }
 func (s *OpenExecRunnerRequest) MustAppend(buf []byte) []byte {
 	var err error
@@ -1670,20 +1670,20 @@ func (s *OpenExecRunnerRequest) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (o *OpenExecRunnerRequest) Read(tmp242 io.Reader) error {
-	tmp2564 := o.TaskId.Read(tmp242)
-	if tmp2564 != nil {
-		return tmp2564
+func (o *OpenExecRunnerRequest) Read(tmp244 io.Reader) error {
+	tmp2602 := o.TaskId.Read(tmp244)
+	if tmp2602 != nil {
+		return tmp2602
 	}
-	if _, err := io.ReadFull(tmp242, o.AuthTicket[0:0+16]); err != nil {
+	if _, err := io.ReadFull(tmp244, o.AuthTicket[0:0+16]); err != nil {
 		return err
 	}
-	tmp2561 := [2]uint8{}
-	if _, err := io.ReadFull(tmp242, tmp2561[0:0+2]); err != nil {
+	tmp2597 := [2]uint8{}
+	if _, err := io.ReadFull(tmp244, tmp2597[0:0+2]); err != nil {
 		return err
 	}
-	o.RepoPathLen = binary.BigEndian.Uint16(tmp2561[:])
-	if seeker, ok := tmp242.(io.Seeker); ok {
+	o.RepoPathLen = binary.BigEndian.Uint16(tmp2597[:])
+	if seeker, ok := tmp244.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -1700,26 +1700,26 @@ func (o *OpenExecRunnerRequest) Read(tmp242 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(o.RepoPathLen)))
 		}
 		o.RepoPath = make([]byte, int(o.RepoPathLen))
-		if _, err := io.ReadFull(tmp242, o.RepoPath[0:0+int(o.RepoPathLen)]); err != nil {
+		if _, err := io.ReadFull(tmp244, o.RepoPath[0:0+int(o.RepoPathLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_8048 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_8048, tmp242, int64(int(o.RepoPathLen))); err != nil {
+		io_temp_8233 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_8233, tmp244, int64(int(o.RepoPathLen))); err != nil {
 			return err
 		}
-		o.RepoPath = io_temp_8048.Bytes()
+		o.RepoPath = io_temp_8233.Bytes()
 	}
-	tmp188 := [8]uint8{}
-	if _, err := io.ReadFull(tmp242, tmp188[0:0+8]); err != nil {
+	tmp191 := [8]uint8{}
+	if _, err := io.ReadFull(tmp244, tmp191[0:0+8]); err != nil {
 		return err
 	}
-	o.StreamId = binary.BigEndian.Uint64(tmp188[:])
-	tmp2555 := o.ExtraArgs.Read(tmp242)
-	if tmp2555 != nil {
-		return tmp2555
+	o.StreamId = binary.BigEndian.Uint64(tmp191[:])
+	tmp2582 := o.ExtraArgs.Read(tmp244)
+	if tmp2582 != nil {
+		return tmp2582
 	}
 	return nil
 }
@@ -1741,38 +1741,38 @@ func (s *OpenExecRunnerRequest) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (o *OpenExecRunnerRequest) DecodeSlice(tmp242 []byte, tmp242Offset *int) error {
-	tmp2564 := o.TaskId.DecodeSlice(tmp242, tmp242Offset)
-	if tmp2564 != nil {
-		return tmp2564
+func (o *OpenExecRunnerRequest) DecodeSlice(tmp244 []byte, tmp244Offset *int) error {
+	tmp2602 := o.TaskId.DecodeSlice(tmp244, tmp244Offset)
+	if tmp2602 != nil {
+		return tmp2602
 	}
-	if len(tmp242)-*tmp242Offset < 16 {
+	if len(tmp244)-*tmp244Offset < 16 {
 		return errors.New("not enough data to read for field \"OpenExecRunnerRequest::AuthTicket\"")
 	}
-	copy(o.AuthTicket[:], tmp242[*tmp242Offset:*tmp242Offset+16])
-	*tmp242Offset += int(16)
-	tmp2561 := []uint8{}
-	if len(tmp242)-*tmp242Offset < 2 {
+	copy(o.AuthTicket[:], tmp244[*tmp244Offset:*tmp244Offset+16])
+	*tmp244Offset += int(16)
+	tmp2597 := []uint8{}
+	if len(tmp244)-*tmp244Offset < 2 {
 		return errors.New("not enough data to read for field \"OpenExecRunnerRequest::RepoPathLen\"")
 	}
-	tmp2561 = tmp242[*tmp242Offset : *tmp242Offset+2]
-	*tmp242Offset += int(2)
-	o.RepoPathLen = binary.BigEndian.Uint16(tmp2561[:])
-	if len(tmp242)-*tmp242Offset < int(o.RepoPathLen) {
+	tmp2597 = tmp244[*tmp244Offset : *tmp244Offset+2]
+	*tmp244Offset += int(2)
+	o.RepoPathLen = binary.BigEndian.Uint16(tmp2597[:])
+	if len(tmp244)-*tmp244Offset < int(o.RepoPathLen) {
 		return errors.New("not enough data to read for field \"OpenExecRunnerRequest::RepoPath\"")
 	}
-	o.RepoPath = tmp242[*tmp242Offset : *tmp242Offset+int(o.RepoPathLen)]
-	*tmp242Offset += int(int(o.RepoPathLen))
-	tmp188 := []uint8{}
-	if len(tmp242)-*tmp242Offset < 8 {
+	o.RepoPath = tmp244[*tmp244Offset : *tmp244Offset+int(o.RepoPathLen)]
+	*tmp244Offset += int(int(o.RepoPathLen))
+	tmp191 := []uint8{}
+	if len(tmp244)-*tmp244Offset < 8 {
 		return errors.New("not enough data to read for field \"OpenExecRunnerRequest::StreamId\"")
 	}
-	tmp188 = tmp242[*tmp242Offset : *tmp242Offset+8]
-	*tmp242Offset += int(8)
-	o.StreamId = binary.BigEndian.Uint64(tmp188[:])
-	tmp2555 := o.ExtraArgs.DecodeSlice(tmp242, tmp242Offset)
-	if tmp2555 != nil {
-		return tmp2555
+	tmp191 = tmp244[*tmp244Offset : *tmp244Offset+8]
+	*tmp244Offset += int(8)
+	o.StreamId = binary.BigEndian.Uint64(tmp191[:])
+	tmp2582 := o.ExtraArgs.DecodeSlice(tmp244, tmp244Offset)
+	if tmp2582 != nil {
+		return tmp2582
 	}
 	return nil
 }
@@ -1799,10 +1799,10 @@ type TaskWakeRequest struct {
 	TaskId TaskID
 }
 
-func (t *TaskWakeRequest) Write(tmp1319 io.Writer) error {
-	tmp2528 := t.TaskId.Write(tmp1319)
-	if tmp2528 != nil {
-		return tmp2528
+func (t *TaskWakeRequest) Write(tmp1322 io.Writer) error {
+	tmp2550 := t.TaskId.Write(tmp1322)
+	if tmp2550 != nil {
+		return tmp2550
 	}
 	return nil
 }
@@ -1821,10 +1821,10 @@ func (s *TaskWakeRequest) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskWakeRequest) EncodeSlice(tmp1319 []byte, tmp1319Offset *int) error {
-	tmp2528 := t.TaskId.EncodeSlice(tmp1319, tmp1319Offset)
-	if tmp2528 != nil {
-		return tmp2528
+func (t *TaskWakeRequest) EncodeSlice(tmp1322 []byte, tmp1322Offset *int) error {
+	tmp2550 := t.TaskId.EncodeSlice(tmp1322, tmp1322Offset)
+	if tmp2550 != nil {
+		return tmp2550
 	}
 	return nil
 }
@@ -1843,14 +1843,14 @@ func (s *TaskWakeRequest) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskWakeRequest) Append(tmp1319 []byte) ([]byte, error) {
-	var tmp2528 error
-	tmp1319, tmp2528 = t.TaskId.Append(tmp1319)
+func (t *TaskWakeRequest) Append(tmp1322 []byte) ([]byte, error) {
+	var tmp2550 error
+	tmp1322, tmp2550 = t.TaskId.Append(tmp1322)
 
-	if tmp2528 != nil {
-		return nil, tmp2528
+	if tmp2550 != nil {
+		return nil, tmp2550
 	}
-	return tmp1319, nil
+	return tmp1322, nil
 }
 func (s *TaskWakeRequest) MustAppend(buf []byte) []byte {
 	var err error
@@ -1861,10 +1861,10 @@ func (s *TaskWakeRequest) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (t *TaskWakeRequest) Read(tmp1320 io.Reader) error {
-	tmp2530 := t.TaskId.Read(tmp1320)
-	if tmp2530 != nil {
-		return tmp2530
+func (t *TaskWakeRequest) Read(tmp1323 io.Reader) error {
+	tmp2552 := t.TaskId.Read(tmp1323)
+	if tmp2552 != nil {
+		return tmp2552
 	}
 	return nil
 }
@@ -1886,10 +1886,10 @@ func (s *TaskWakeRequest) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (t *TaskWakeRequest) DecodeSlice(tmp1320 []byte, tmp1320Offset *int) error {
-	tmp2530 := t.TaskId.DecodeSlice(tmp1320, tmp1320Offset)
-	if tmp2530 != nil {
-		return tmp2530
+func (t *TaskWakeRequest) DecodeSlice(tmp1323 []byte, tmp1323Offset *int) error {
+	tmp2552 := t.TaskId.DecodeSlice(tmp1323, tmp1323Offset)
+	if tmp2552 != nil {
+		return tmp2552
 	}
 	return nil
 }
@@ -1916,10 +1916,10 @@ type RunnerHelloResponse struct {
 	YourRunnerId RunnerID
 }
 
-func (r *RunnerHelloResponse) Write(tmp1311 io.Writer) error {
-	tmp2489 := r.YourRunnerId.Write(tmp1311)
-	if tmp2489 != nil {
-		return tmp2489
+func (r *RunnerHelloResponse) Write(tmp1320 io.Writer) error {
+	tmp2515 := r.YourRunnerId.Write(tmp1320)
+	if tmp2515 != nil {
+		return tmp2515
 	}
 	return nil
 }
@@ -1938,10 +1938,10 @@ func (s *RunnerHelloResponse) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerHelloResponse) EncodeSlice(tmp1311 []byte, tmp1311Offset *int) error {
-	tmp2489 := r.YourRunnerId.EncodeSlice(tmp1311, tmp1311Offset)
-	if tmp2489 != nil {
-		return tmp2489
+func (r *RunnerHelloResponse) EncodeSlice(tmp1320 []byte, tmp1320Offset *int) error {
+	tmp2515 := r.YourRunnerId.EncodeSlice(tmp1320, tmp1320Offset)
+	if tmp2515 != nil {
+		return tmp2515
 	}
 	return nil
 }
@@ -1960,14 +1960,14 @@ func (s *RunnerHelloResponse) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerHelloResponse) Append(tmp1311 []byte) ([]byte, error) {
-	var tmp2489 error
-	tmp1311, tmp2489 = r.YourRunnerId.Append(tmp1311)
+func (r *RunnerHelloResponse) Append(tmp1320 []byte) ([]byte, error) {
+	var tmp2515 error
+	tmp1320, tmp2515 = r.YourRunnerId.Append(tmp1320)
 
-	if tmp2489 != nil {
-		return nil, tmp2489
+	if tmp2515 != nil {
+		return nil, tmp2515
 	}
-	return tmp1311, nil
+	return tmp1320, nil
 }
 func (s *RunnerHelloResponse) MustAppend(buf []byte) []byte {
 	var err error
@@ -1978,10 +1978,10 @@ func (s *RunnerHelloResponse) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (r *RunnerHelloResponse) Read(tmp1314 io.Reader) error {
-	tmp2484 := r.YourRunnerId.Read(tmp1314)
-	if tmp2484 != nil {
-		return tmp2484
+func (r *RunnerHelloResponse) Read(tmp1321 io.Reader) error {
+	tmp2511 := r.YourRunnerId.Read(tmp1321)
+	if tmp2511 != nil {
+		return tmp2511
 	}
 	return nil
 }
@@ -2003,10 +2003,10 @@ func (s *RunnerHelloResponse) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (r *RunnerHelloResponse) DecodeSlice(tmp1314 []byte, tmp1314Offset *int) error {
-	tmp2484 := r.YourRunnerId.DecodeSlice(tmp1314, tmp1314Offset)
-	if tmp2484 != nil {
-		return tmp2484
+func (r *RunnerHelloResponse) DecodeSlice(tmp1321 []byte, tmp1321Offset *int) error {
+	tmp2511 := r.YourRunnerId.DecodeSlice(tmp1321, tmp1321Offset)
+	if tmp2511 != nil {
+		return tmp2511
 	}
 	return nil
 }
@@ -2033,10 +2033,10 @@ type TaskAccepted struct {
 	TaskId TaskID
 }
 
-func (t *TaskAccepted) Write(tmp1309 io.Writer) error {
-	tmp2482 := t.TaskId.Write(tmp1309)
-	if tmp2482 != nil {
-		return tmp2482
+func (t *TaskAccepted) Write(tmp1318 io.Writer) error {
+	tmp2509 := t.TaskId.Write(tmp1318)
+	if tmp2509 != nil {
+		return tmp2509
 	}
 	return nil
 }
@@ -2055,10 +2055,10 @@ func (s *TaskAccepted) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskAccepted) EncodeSlice(tmp1309 []byte, tmp1309Offset *int) error {
-	tmp2482 := t.TaskId.EncodeSlice(tmp1309, tmp1309Offset)
-	if tmp2482 != nil {
-		return tmp2482
+func (t *TaskAccepted) EncodeSlice(tmp1318 []byte, tmp1318Offset *int) error {
+	tmp2509 := t.TaskId.EncodeSlice(tmp1318, tmp1318Offset)
+	if tmp2509 != nil {
+		return tmp2509
 	}
 	return nil
 }
@@ -2077,14 +2077,14 @@ func (s *TaskAccepted) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskAccepted) Append(tmp1309 []byte) ([]byte, error) {
-	var tmp2482 error
-	tmp1309, tmp2482 = t.TaskId.Append(tmp1309)
+func (t *TaskAccepted) Append(tmp1318 []byte) ([]byte, error) {
+	var tmp2509 error
+	tmp1318, tmp2509 = t.TaskId.Append(tmp1318)
 
-	if tmp2482 != nil {
-		return nil, tmp2482
+	if tmp2509 != nil {
+		return nil, tmp2509
 	}
-	return tmp1309, nil
+	return tmp1318, nil
 }
 func (s *TaskAccepted) MustAppend(buf []byte) []byte {
 	var err error
@@ -2095,10 +2095,10 @@ func (s *TaskAccepted) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (t *TaskAccepted) Read(tmp1308 io.Reader) error {
-	tmp2477 := t.TaskId.Read(tmp1308)
-	if tmp2477 != nil {
-		return tmp2477
+func (t *TaskAccepted) Read(tmp1316 io.Reader) error {
+	tmp2503 := t.TaskId.Read(tmp1316)
+	if tmp2503 != nil {
+		return tmp2503
 	}
 	return nil
 }
@@ -2120,10 +2120,10 @@ func (s *TaskAccepted) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (t *TaskAccepted) DecodeSlice(tmp1308 []byte, tmp1308Offset *int) error {
-	tmp2477 := t.TaskId.DecodeSlice(tmp1308, tmp1308Offset)
-	if tmp2477 != nil {
-		return tmp2477
+func (t *TaskAccepted) DecodeSlice(tmp1316 []byte, tmp1316Offset *int) error {
+	tmp2503 := t.TaskId.DecodeSlice(tmp1316, tmp1316Offset)
+	if tmp2503 != nil {
+		return tmp2503
 	}
 	return nil
 }
@@ -2152,29 +2152,29 @@ type TaskStarted struct {
 	WorktreeDir    []uint8
 }
 
-func (t *TaskStarted) SetWorktreeDir(tmp2457 []uint8) bool {
-	if len(tmp2457) > int(65535) {
+func (t *TaskStarted) SetWorktreeDir(tmp2485 []uint8) bool {
+	if len(tmp2485) > int(65535) {
 		return false
 	}
-	t.WorktreeDirLen = uint16(len(tmp2457))
-	t.WorktreeDir = tmp2457
+	t.WorktreeDirLen = uint16(len(tmp2485))
+	t.WorktreeDir = tmp2485
 	return true
 }
 
-func (t *TaskStarted) Write(tmp480 io.Writer) error {
-	tmp2467 := t.TaskId.Write(tmp480)
-	if tmp2467 != nil {
-		return tmp2467
+func (t *TaskStarted) Write(tmp484 io.Writer) error {
+	tmp2492 := t.TaskId.Write(tmp484)
+	if tmp2492 != nil {
+		return tmp2492
 	}
-	tmp2464 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2464[:], uint16(t.WorktreeDirLen))
-	if _, err := tmp480.Write(tmp2464[:2]); err != nil {
+	tmp2489 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2489[:], uint16(t.WorktreeDirLen))
+	if _, err := tmp484.Write(tmp2489[:2]); err != nil {
 		return err
 	}
 	if len(t.WorktreeDir) != int(t.WorktreeDirLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskStarted::WorktreeDir\": expected %d, got %d", int(t.WorktreeDirLen), len(t.WorktreeDir))
 	}
-	if _, err := tmp480.Write(t.WorktreeDir); err != nil {
+	if _, err := tmp484.Write(t.WorktreeDir); err != nil {
 		return err
 	}
 	return nil
@@ -2194,26 +2194,26 @@ func (s *TaskStarted) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskStarted) EncodeSlice(tmp480 []byte, tmp480Offset *int) error {
-	tmp2467 := t.TaskId.EncodeSlice(tmp480, tmp480Offset)
-	if tmp2467 != nil {
-		return tmp2467
+func (t *TaskStarted) EncodeSlice(tmp484 []byte, tmp484Offset *int) error {
+	tmp2492 := t.TaskId.EncodeSlice(tmp484, tmp484Offset)
+	if tmp2492 != nil {
+		return tmp2492
 	}
-	tmp2464 := []uint8{}
-	if len(tmp480)-*tmp480Offset < int(2) {
+	tmp2489 := []uint8{}
+	if len(tmp484)-*tmp484Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"TaskStarted::WorktreeDirLen\"")
 	}
-	tmp2464 = tmp480[*tmp480Offset : *tmp480Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2464[:], uint16(t.WorktreeDirLen))
-	*tmp480Offset += int(2)
+	tmp2489 = tmp484[*tmp484Offset : *tmp484Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2489[:], uint16(t.WorktreeDirLen))
+	*tmp484Offset += int(2)
 	if len(t.WorktreeDir) != int(t.WorktreeDirLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskStarted::WorktreeDir\": expected %d, got %d", int(t.WorktreeDirLen), len(t.WorktreeDir))
 	}
-	if len(tmp480)-*tmp480Offset < int(0+t.WorktreeDirLen) {
+	if len(tmp484)-*tmp484Offset < int(0+t.WorktreeDirLen) {
 		return errors.New("not enough space to write for field \"TaskStarted::WorktreeDir\"")
 	}
-	copy(tmp480[*tmp480Offset:*tmp480Offset+int(t.WorktreeDirLen)], t.WorktreeDir)
-	*tmp480Offset += int(t.WorktreeDirLen)
+	copy(tmp484[*tmp484Offset:*tmp484Offset+int(t.WorktreeDirLen)], t.WorktreeDir)
+	*tmp484Offset += int(t.WorktreeDirLen)
 	return nil
 }
 func (s *TaskStarted) Encode(buf []byte) ([]byte, error) {
@@ -2231,21 +2231,21 @@ func (s *TaskStarted) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskStarted) Append(tmp480 []byte) ([]byte, error) {
-	var tmp2467 error
-	tmp480, tmp2467 = t.TaskId.Append(tmp480)
+func (t *TaskStarted) Append(tmp484 []byte) ([]byte, error) {
+	var tmp2492 error
+	tmp484, tmp2492 = t.TaskId.Append(tmp484)
 
-	if tmp2467 != nil {
-		return nil, tmp2467
+	if tmp2492 != nil {
+		return nil, tmp2492
 	}
-	tmp2464 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2464[:], uint16(t.WorktreeDirLen))
-	tmp480 = append(tmp480, tmp2464[:2]...)
+	tmp2489 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2489[:], uint16(t.WorktreeDirLen))
+	tmp484 = append(tmp484, tmp2489[:2]...)
 	if len(t.WorktreeDir) != int(t.WorktreeDirLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"TaskStarted::WorktreeDir\": expected %d, got %d", int(t.WorktreeDirLen), len(t.WorktreeDir))
 	}
-	tmp480 = append(tmp480, t.WorktreeDir...)
-	return tmp480, nil
+	tmp484 = append(tmp484, t.WorktreeDir...)
+	return tmp484, nil
 }
 func (s *TaskStarted) MustAppend(buf []byte) []byte {
 	var err error
@@ -2256,17 +2256,17 @@ func (s *TaskStarted) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (t *TaskStarted) Read(tmp478 io.Reader) error {
-	tmp2475 := t.TaskId.Read(tmp478)
-	if tmp2475 != nil {
-		return tmp2475
+func (t *TaskStarted) Read(tmp482 io.Reader) error {
+	tmp2501 := t.TaskId.Read(tmp482)
+	if tmp2501 != nil {
+		return tmp2501
 	}
-	tmp2472 := [2]uint8{}
-	if _, err := io.ReadFull(tmp478, tmp2472[0:0+2]); err != nil {
+	tmp2496 := [2]uint8{}
+	if _, err := io.ReadFull(tmp482, tmp2496[0:0+2]); err != nil {
 		return err
 	}
-	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2472[:])
-	if seeker, ok := tmp478.(io.Seeker); ok {
+	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2496[:])
+	if seeker, ok := tmp482.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -2283,17 +2283,17 @@ func (t *TaskStarted) Read(tmp478 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(t.WorktreeDirLen)))
 		}
 		t.WorktreeDir = make([]byte, int(t.WorktreeDirLen))
-		if _, err := io.ReadFull(tmp478, t.WorktreeDir[0:0+int(t.WorktreeDirLen)]); err != nil {
+		if _, err := io.ReadFull(tmp482, t.WorktreeDir[0:0+int(t.WorktreeDirLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_7266 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_7266, tmp478, int64(int(t.WorktreeDirLen))); err != nil {
+		io_temp_7425 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_7425, tmp482, int64(int(t.WorktreeDirLen))); err != nil {
 			return err
 		}
-		t.WorktreeDir = io_temp_7266.Bytes()
+		t.WorktreeDir = io_temp_7425.Bytes()
 	}
 	return nil
 }
@@ -2315,23 +2315,23 @@ func (s *TaskStarted) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (t *TaskStarted) DecodeSlice(tmp478 []byte, tmp478Offset *int) error {
-	tmp2475 := t.TaskId.DecodeSlice(tmp478, tmp478Offset)
-	if tmp2475 != nil {
-		return tmp2475
+func (t *TaskStarted) DecodeSlice(tmp482 []byte, tmp482Offset *int) error {
+	tmp2501 := t.TaskId.DecodeSlice(tmp482, tmp482Offset)
+	if tmp2501 != nil {
+		return tmp2501
 	}
-	tmp2472 := []uint8{}
-	if len(tmp478)-*tmp478Offset < 2 {
+	tmp2496 := []uint8{}
+	if len(tmp482)-*tmp482Offset < 2 {
 		return errors.New("not enough data to read for field \"TaskStarted::WorktreeDirLen\"")
 	}
-	tmp2472 = tmp478[*tmp478Offset : *tmp478Offset+2]
-	*tmp478Offset += int(2)
-	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2472[:])
-	if len(tmp478)-*tmp478Offset < int(t.WorktreeDirLen) {
+	tmp2496 = tmp482[*tmp482Offset : *tmp482Offset+2]
+	*tmp482Offset += int(2)
+	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2496[:])
+	if len(tmp482)-*tmp482Offset < int(t.WorktreeDirLen) {
 		return errors.New("not enough data to read for field \"TaskStarted::WorktreeDir\"")
 	}
-	t.WorktreeDir = tmp478[*tmp478Offset : *tmp478Offset+int(t.WorktreeDirLen)]
-	*tmp478Offset += int(int(t.WorktreeDirLen))
+	t.WorktreeDir = tmp482[*tmp482Offset : *tmp482Offset+int(t.WorktreeDirLen)]
+	*tmp482Offset += int(int(t.WorktreeDirLen))
 	return nil
 }
 func (s *TaskStarted) Decode(buf []byte) ([]byte, error) {
@@ -2354,22 +2354,22 @@ func (s *TaskStarted) DecodeExact(buf []byte) error {
 }
 
 type TaskFinished struct {
-	TaskId   TaskID
-	ExitCode int32
-	DiffInfo []uint8
+	TaskId       TaskID
+	ExitCode     int32
+	ErrorMessage []uint8
 }
 
-func (t *TaskFinished) Write(tmp476 io.Writer) error {
-	tmp2443 := t.TaskId.Write(tmp476)
-	if tmp2443 != nil {
-		return tmp2443
+func (t *TaskFinished) Write(tmp479 io.Writer) error {
+	tmp2466 := t.TaskId.Write(tmp479)
+	if tmp2466 != nil {
+		return tmp2466
 	}
-	tmp2440 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp2440[:], uint32(uint32(t.ExitCode)))
-	if _, err := tmp476.Write(tmp2440[:4]); err != nil {
+	tmp2463 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2463[:], uint32(uint32(t.ExitCode)))
+	if _, err := tmp479.Write(tmp2463[:4]); err != nil {
 		return err
 	}
-	if _, err := tmp476.Write(t.DiffInfo); err != nil {
+	if _, err := tmp479.Write(t.ErrorMessage); err != nil {
 		return err
 	}
 	return nil
@@ -2389,23 +2389,23 @@ func (s *TaskFinished) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskFinished) EncodeSlice(tmp476 []byte, tmp476Offset *int) error {
-	tmp2443 := t.TaskId.EncodeSlice(tmp476, tmp476Offset)
-	if tmp2443 != nil {
-		return tmp2443
+func (t *TaskFinished) EncodeSlice(tmp479 []byte, tmp479Offset *int) error {
+	tmp2466 := t.TaskId.EncodeSlice(tmp479, tmp479Offset)
+	if tmp2466 != nil {
+		return tmp2466
 	}
-	tmp2440 := []uint8{}
-	if len(tmp476)-*tmp476Offset < int(4) {
+	tmp2463 := []uint8{}
+	if len(tmp479)-*tmp479Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"TaskFinished::ExitCode\"")
 	}
-	tmp2440 = tmp476[*tmp476Offset : *tmp476Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp2440[:], uint32(uint32(t.ExitCode)))
-	*tmp476Offset += int(4)
-	if len(tmp476)-*tmp476Offset < int(0+len(t.DiffInfo)) {
-		return errors.New("not enough space to write for field \"TaskFinished::DiffInfo\"")
+	tmp2463 = tmp479[*tmp479Offset : *tmp479Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp2463[:], uint32(uint32(t.ExitCode)))
+	*tmp479Offset += int(4)
+	if len(tmp479)-*tmp479Offset < int(0+len(t.ErrorMessage)) {
+		return errors.New("not enough space to write for field \"TaskFinished::ErrorMessage\"")
 	}
-	copy(tmp476[*tmp476Offset:*tmp476Offset+int(len(t.DiffInfo))], t.DiffInfo)
-	*tmp476Offset += int(len(t.DiffInfo))
+	copy(tmp479[*tmp479Offset:*tmp479Offset+int(len(t.ErrorMessage))], t.ErrorMessage)
+	*tmp479Offset += int(len(t.ErrorMessage))
 	return nil
 }
 func (s *TaskFinished) Encode(buf []byte) ([]byte, error) {
@@ -2423,18 +2423,18 @@ func (s *TaskFinished) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskFinished) Append(tmp476 []byte) ([]byte, error) {
-	var tmp2443 error
-	tmp476, tmp2443 = t.TaskId.Append(tmp476)
+func (t *TaskFinished) Append(tmp479 []byte) ([]byte, error) {
+	var tmp2466 error
+	tmp479, tmp2466 = t.TaskId.Append(tmp479)
 
-	if tmp2443 != nil {
-		return nil, tmp2443
+	if tmp2466 != nil {
+		return nil, tmp2466
 	}
-	tmp2440 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp2440[:], uint32(uint32(t.ExitCode)))
-	tmp476 = append(tmp476, tmp2440[:4]...)
-	tmp476 = append(tmp476, t.DiffInfo...)
-	return tmp476, nil
+	tmp2463 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2463[:], uint32(uint32(t.ExitCode)))
+	tmp479 = append(tmp479, tmp2463[:4]...)
+	tmp479 = append(tmp479, t.ErrorMessage...)
+	return tmp479, nil
 }
 func (s *TaskFinished) MustAppend(buf []byte) []byte {
 	var err error
@@ -2445,19 +2445,19 @@ func (s *TaskFinished) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (t *TaskFinished) Read(tmp389 io.Reader) error {
-	tmp2450 := t.TaskId.Read(tmp389)
-	if tmp2450 != nil {
-		return tmp2450
+func (t *TaskFinished) Read(tmp388 io.Reader) error {
+	tmp2472 := t.TaskId.Read(tmp388)
+	if tmp2472 != nil {
+		return tmp2472
 	}
-	tmp2447 := [4]uint8{}
-	if _, err := io.ReadFull(tmp389, tmp2447[0:0+4]); err != nil {
+	tmp2470 := [4]uint8{}
+	if _, err := io.ReadFull(tmp388, tmp2470[0:0+4]); err != nil {
 		return err
 	}
-	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2447[:]))
+	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2470[:]))
 	{
 		var readErr error
-		t.DiffInfo, readErr = io.ReadAll(tmp389)
+		t.ErrorMessage, readErr = io.ReadAll(tmp388)
 		if readErr != nil {
 			return readErr
 		}
@@ -2482,20 +2482,20 @@ func (s *TaskFinished) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (t *TaskFinished) DecodeSlice(tmp389 []byte, tmp389Offset *int) error {
-	tmp2450 := t.TaskId.DecodeSlice(tmp389, tmp389Offset)
-	if tmp2450 != nil {
-		return tmp2450
+func (t *TaskFinished) DecodeSlice(tmp388 []byte, tmp388Offset *int) error {
+	tmp2472 := t.TaskId.DecodeSlice(tmp388, tmp388Offset)
+	if tmp2472 != nil {
+		return tmp2472
 	}
-	tmp2447 := []uint8{}
-	if len(tmp389)-*tmp389Offset < 4 {
+	tmp2470 := []uint8{}
+	if len(tmp388)-*tmp388Offset < 4 {
 		return errors.New("not enough data to read for field \"TaskFinished::ExitCode\"")
 	}
-	tmp2447 = tmp389[*tmp389Offset : *tmp389Offset+4]
-	*tmp389Offset += int(4)
-	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2447[:]))
-	t.DiffInfo = tmp389[*tmp389Offset:]
-	*tmp389Offset += len(t.DiffInfo)
+	tmp2470 = tmp388[*tmp388Offset : *tmp388Offset+4]
+	*tmp388Offset += int(4)
+	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2470[:]))
+	t.ErrorMessage = tmp388[*tmp388Offset:]
+	*tmp388Offset += len(t.ErrorMessage)
 	return nil
 }
 func (s *TaskFinished) Decode(buf []byte) ([]byte, error) {
@@ -2517,69 +2517,69 @@ func (s *TaskFinished) DecodeExact(buf []byte) error {
 	return nil
 }
 
-type tmp2436 struct {
+type tmp2446 struct {
 	Hello RunnerHello
 }
 
-func (v *tmp2436) isVariant319() {}
+func (v *tmp2446) isVariant321() {}
 
-type tmp2434 struct {
+type tmp2442 struct {
 	TaskAccepted TaskAccepted
 }
 
-func (v *tmp2434) isVariant319() {}
+func (v *tmp2442) isVariant321() {}
 
-type tmp2432 struct {
+type tmp2458 struct {
 	TaskStarted TaskStarted
 }
 
-func (v *tmp2432) isVariant319() {}
+func (v *tmp2458) isVariant321() {}
 
-type tmp2430 struct {
+type tmp2456 struct {
 	TaskFinished TaskFinished
 }
 
-func (v *tmp2430) isVariant319() {}
+func (v *tmp2456) isVariant321() {}
 
-type tmp2428 struct {
+type tmp2454 struct {
 }
 
-func (v *tmp2428) isVariant319() {}
+func (v *tmp2454) isVariant321() {}
 
-type tmp7151 struct {
+type tmp7317 struct {
 }
 
-func (v *tmp7151) isVariant319() {}
+func (v *tmp7317) isVariant321() {}
 
-type Variant319 interface {
-	isVariant319()
+type Variant321 interface {
+	isVariant321()
 }
 
 type RunnerMessage struct {
 	Kind    RunnerMessageType
-	tmp1284 Variant319
+	tmp1292 Variant321
 }
 
 func (r *RunnerMessage) Hello() *RunnerHello {
 	if r.Kind == RunnerMessageType_Hello {
-		tmp2435, ok := r.tmp1284.(*tmp2436)
+		tmp2422, ok := r.tmp1292.(*tmp2446)
 		if !ok {
 			return nil
 		}
-		_ = tmp2435 // to prevent unused warnings
-		return &tmp2435.Hello
+		_ = tmp2422 // to prevent unused warnings
+		return &tmp2422.Hello
 	}
 	return nil
 }
-func (r *RunnerMessage) SetHello(tmp2495 RunnerHello) bool {
+func (r *RunnerMessage) SetHello(tmp2513 RunnerHello) bool {
 	if r.Kind == RunnerMessageType_Hello {
-		tmp2435, ok := r.tmp1284.(*tmp2436)
+		tmp2422, ok := r.tmp1292.(*tmp2446)
 		if !ok {
-			tmp2435 = &tmp2436{}
-			r.tmp1284 = tmp2435
+			tmp2422 = &tmp2446{}
+			r.tmp1292 = tmp2422
 		}
-		_ = tmp2435 // to prevent unused warnings
-		tmp2435.Hello = tmp2495
+		_ = tmp2422 // to prevent unused warnings
+		tmp2422.Hello = tmp2513
 		return true
 	}
 	return false
@@ -2589,26 +2589,26 @@ func (r *RunnerMessage) TaskAccepted() *TaskAccepted {
 	if r.Kind == RunnerMessageType_Hello {
 		return nil
 	} else if r.Kind == RunnerMessageType_TaskAccepted {
-		tmp2433, ok := r.tmp1284.(*tmp2434)
+		tmp2459, ok := r.tmp1292.(*tmp2442)
 		if !ok {
 			return nil
 		}
-		_ = tmp2433 // to prevent unused warnings
-		return &tmp2433.TaskAccepted
+		_ = tmp2459 // to prevent unused warnings
+		return &tmp2459.TaskAccepted
 	}
 	return nil
 }
-func (r *RunnerMessage) SetTaskAccepted(tmp2514 TaskAccepted) bool {
+func (r *RunnerMessage) SetTaskAccepted(tmp2507 TaskAccepted) bool {
 	if r.Kind == RunnerMessageType_Hello {
 		return false
 	} else if r.Kind == RunnerMessageType_TaskAccepted {
-		tmp2433, ok := r.tmp1284.(*tmp2434)
+		tmp2459, ok := r.tmp1292.(*tmp2442)
 		if !ok {
-			tmp2433 = &tmp2434{}
-			r.tmp1284 = tmp2433
+			tmp2459 = &tmp2442{}
+			r.tmp1292 = tmp2459
 		}
-		_ = tmp2433 // to prevent unused warnings
-		tmp2433.TaskAccepted = tmp2514
+		_ = tmp2459 // to prevent unused warnings
+		tmp2459.TaskAccepted = tmp2507
 		return true
 	}
 	return false
@@ -2618,26 +2618,26 @@ func (r *RunnerMessage) TaskFinished() *TaskFinished {
 	if ((RunnerMessageType_Hello == r.Kind) || (RunnerMessageType_TaskAccepted == r.Kind)) || (RunnerMessageType_TaskStarted == r.Kind) {
 		return nil
 	} else if r.Kind == RunnerMessageType_TaskFinished {
-		tmp2429, ok := r.tmp1284.(*tmp2430)
+		tmp2455, ok := r.tmp1292.(*tmp2456)
 		if !ok {
 			return nil
 		}
-		_ = tmp2429 // to prevent unused warnings
-		return &tmp2429.TaskFinished
+		_ = tmp2455 // to prevent unused warnings
+		return &tmp2455.TaskFinished
 	}
 	return nil
 }
-func (r *RunnerMessage) SetTaskFinished(tmp2490 TaskFinished) bool {
+func (r *RunnerMessage) SetTaskFinished(tmp2495 TaskFinished) bool {
 	if ((RunnerMessageType_Hello == r.Kind) || (RunnerMessageType_TaskAccepted == r.Kind)) || (RunnerMessageType_TaskStarted == r.Kind) {
 		return false
 	} else if r.Kind == RunnerMessageType_TaskFinished {
-		tmp2429, ok := r.tmp1284.(*tmp2430)
+		tmp2455, ok := r.tmp1292.(*tmp2456)
 		if !ok {
-			tmp2429 = &tmp2430{}
-			r.tmp1284 = tmp2429
+			tmp2455 = &tmp2456{}
+			r.tmp1292 = tmp2455
 		}
-		_ = tmp2429 // to prevent unused warnings
-		tmp2429.TaskFinished = tmp2490
+		_ = tmp2455 // to prevent unused warnings
+		tmp2455.TaskFinished = tmp2495
 		return true
 	}
 	return false
@@ -2647,90 +2647,90 @@ func (r *RunnerMessage) TaskStarted() *TaskStarted {
 	if (RunnerMessageType_Hello == r.Kind) || (RunnerMessageType_TaskAccepted == r.Kind) {
 		return nil
 	} else if r.Kind == RunnerMessageType_TaskStarted {
-		tmp2431, ok := r.tmp1284.(*tmp2432)
+		tmp2457, ok := r.tmp1292.(*tmp2458)
 		if !ok {
 			return nil
 		}
-		_ = tmp2431 // to prevent unused warnings
-		return &tmp2431.TaskStarted
+		_ = tmp2457 // to prevent unused warnings
+		return &tmp2457.TaskStarted
 	}
 	return nil
 }
-func (r *RunnerMessage) SetTaskStarted(tmp2480 TaskStarted) bool {
+func (r *RunnerMessage) SetTaskStarted(tmp2490 TaskStarted) bool {
 	if (RunnerMessageType_Hello == r.Kind) || (RunnerMessageType_TaskAccepted == r.Kind) {
 		return false
 	} else if r.Kind == RunnerMessageType_TaskStarted {
-		tmp2431, ok := r.tmp1284.(*tmp2432)
+		tmp2457, ok := r.tmp1292.(*tmp2458)
 		if !ok {
-			tmp2431 = &tmp2432{}
-			r.tmp1284 = tmp2431
+			tmp2457 = &tmp2458{}
+			r.tmp1292 = tmp2457
 		}
-		_ = tmp2431 // to prevent unused warnings
-		tmp2431.TaskStarted = tmp2480
+		_ = tmp2457 // to prevent unused warnings
+		tmp2457.TaskStarted = tmp2490
 		return true
 	}
 	return false
 }
 
-func (r *RunnerMessage) Write(tmp316 io.Writer) error {
-	tmp316ByteIO, _ := tmp316.(io.ByteWriter)
-	_ = tmp316ByteIO
-	if tmp316ByteIO != nil {
-		if err := tmp316ByteIO.WriteByte(uint8(r.Kind)); err != nil {
+func (r *RunnerMessage) Write(tmp319 io.Writer) error {
+	tmp319ByteIO, _ := tmp319.(io.ByteWriter)
+	_ = tmp319ByteIO
+	if tmp319ByteIO != nil {
+		if err := tmp319ByteIO.WriteByte(uint8(r.Kind)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp316.Write([]byte{uint8(r.Kind)}); err != nil {
+		if _, err := tmp319.Write([]byte{uint8(r.Kind)}); err != nil {
 			return err
 		}
 	}
 	if r.Kind == RunnerMessageType_Hello {
-		tmp2435, ok := r.tmp1284.(*tmp2436)
+		tmp2422, ok := r.tmp1292.(*tmp2446)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2435 // to prevent unused warnings
-		tmp2372 := tmp2435.Hello.Write(tmp316)
-		if tmp2372 != nil {
-			return tmp2372
+		_ = tmp2422 // to prevent unused warnings
+		tmp2395 := tmp2422.Hello.Write(tmp319)
+		if tmp2395 != nil {
+			return tmp2395
 		}
 	} else if r.Kind == RunnerMessageType_TaskAccepted {
-		tmp2433, ok := r.tmp1284.(*tmp2434)
+		tmp2459, ok := r.tmp1292.(*tmp2442)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2433 // to prevent unused warnings
-		tmp2366 := tmp2433.TaskAccepted.Write(tmp316)
-		if tmp2366 != nil {
-			return tmp2366
+		_ = tmp2459 // to prevent unused warnings
+		tmp2389 := tmp2459.TaskAccepted.Write(tmp319)
+		if tmp2389 != nil {
+			return tmp2389
 		}
 	} else if r.Kind == RunnerMessageType_TaskStarted {
-		tmp2431, ok := r.tmp1284.(*tmp2432)
+		tmp2457, ok := r.tmp1292.(*tmp2458)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2431 // to prevent unused warnings
-		tmp2360 := tmp2431.TaskStarted.Write(tmp316)
-		if tmp2360 != nil {
-			return tmp2360
+		_ = tmp2457 // to prevent unused warnings
+		tmp2383 := tmp2457.TaskStarted.Write(tmp319)
+		if tmp2383 != nil {
+			return tmp2383
 		}
 	} else if r.Kind == RunnerMessageType_TaskFinished {
-		tmp2429, ok := r.tmp1284.(*tmp2430)
+		tmp2455, ok := r.tmp1292.(*tmp2456)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2429 // to prevent unused warnings
-		tmp2355 := tmp2429.TaskFinished.Write(tmp316)
-		if tmp2355 != nil {
-			return tmp2355
+		_ = tmp2455 // to prevent unused warnings
+		tmp2378 := tmp2455.TaskFinished.Write(tmp319)
+		if tmp2378 != nil {
+			return tmp2378
 		}
 	} else if r.Kind == RunnerMessageType_Heartbeat {
 	} else {
-		tmp2426, ok := r.tmp1284.(*tmp7151)
+		tmp2451, ok := r.tmp1292.(*tmp7317)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2426 // to prevent unused warnings
+		_ = tmp2451 // to prevent unused warnings
 		return errors.New("Unexpected message")
 	}
 	return nil
@@ -2750,61 +2750,61 @@ func (s *RunnerMessage) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerMessage) EncodeSlice(tmp316 []byte, tmp316Offset *int) error {
-	tmp2377 := []uint8{}
-	if len(tmp316)-*tmp316Offset < int(1) {
+func (r *RunnerMessage) EncodeSlice(tmp319 []byte, tmp319Offset *int) error {
+	tmp2400 := []uint8{}
+	if len(tmp319)-*tmp319Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerMessage::Kind\"")
 	}
-	tmp2377 = tmp316[*tmp316Offset : *tmp316Offset+int(1)]
-	tmp2377[0] = uint8(r.Kind)
-	*tmp316Offset += int(1)
+	tmp2400 = tmp319[*tmp319Offset : *tmp319Offset+int(1)]
+	tmp2400[0] = uint8(r.Kind)
+	*tmp319Offset += int(1)
 	if r.Kind == RunnerMessageType_Hello {
-		tmp2435, ok := r.tmp1284.(*tmp2436)
+		tmp2422, ok := r.tmp1292.(*tmp2446)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2435 // to prevent unused warnings
-		tmp2372 := tmp2435.Hello.EncodeSlice(tmp316, tmp316Offset)
-		if tmp2372 != nil {
-			return tmp2372
+		_ = tmp2422 // to prevent unused warnings
+		tmp2395 := tmp2422.Hello.EncodeSlice(tmp319, tmp319Offset)
+		if tmp2395 != nil {
+			return tmp2395
 		}
 	} else if r.Kind == RunnerMessageType_TaskAccepted {
-		tmp2433, ok := r.tmp1284.(*tmp2434)
+		tmp2459, ok := r.tmp1292.(*tmp2442)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2433 // to prevent unused warnings
-		tmp2366 := tmp2433.TaskAccepted.EncodeSlice(tmp316, tmp316Offset)
-		if tmp2366 != nil {
-			return tmp2366
+		_ = tmp2459 // to prevent unused warnings
+		tmp2389 := tmp2459.TaskAccepted.EncodeSlice(tmp319, tmp319Offset)
+		if tmp2389 != nil {
+			return tmp2389
 		}
 	} else if r.Kind == RunnerMessageType_TaskStarted {
-		tmp2431, ok := r.tmp1284.(*tmp2432)
+		tmp2457, ok := r.tmp1292.(*tmp2458)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2431 // to prevent unused warnings
-		tmp2360 := tmp2431.TaskStarted.EncodeSlice(tmp316, tmp316Offset)
-		if tmp2360 != nil {
-			return tmp2360
+		_ = tmp2457 // to prevent unused warnings
+		tmp2383 := tmp2457.TaskStarted.EncodeSlice(tmp319, tmp319Offset)
+		if tmp2383 != nil {
+			return tmp2383
 		}
 	} else if r.Kind == RunnerMessageType_TaskFinished {
-		tmp2429, ok := r.tmp1284.(*tmp2430)
+		tmp2455, ok := r.tmp1292.(*tmp2456)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2429 // to prevent unused warnings
-		tmp2355 := tmp2429.TaskFinished.EncodeSlice(tmp316, tmp316Offset)
-		if tmp2355 != nil {
-			return tmp2355
+		_ = tmp2455 // to prevent unused warnings
+		tmp2378 := tmp2455.TaskFinished.EncodeSlice(tmp319, tmp319Offset)
+		if tmp2378 != nil {
+			return tmp2378
 		}
 	} else if r.Kind == RunnerMessageType_Heartbeat {
 	} else {
-		tmp2426, ok := r.tmp1284.(*tmp7151)
+		tmp2451, ok := r.tmp1292.(*tmp7317)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2426 // to prevent unused warnings
+		_ = tmp2451 // to prevent unused warnings
 		return errors.New("Unexpected message")
 	}
 	return nil
@@ -2824,68 +2824,68 @@ func (s *RunnerMessage) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerMessage) Append(tmp316 []byte) ([]byte, error) {
-	tmp2377 := [1]uint8{}
-	tmp2377[0] = uint8(r.Kind)
-	tmp316 = append(tmp316, tmp2377[:1]...)
+func (r *RunnerMessage) Append(tmp319 []byte) ([]byte, error) {
+	tmp2400 := [1]uint8{}
+	tmp2400[0] = uint8(r.Kind)
+	tmp319 = append(tmp319, tmp2400[:1]...)
 	if r.Kind == RunnerMessageType_Hello {
-		tmp2435, ok := r.tmp1284.(*tmp2436)
+		tmp2422, ok := r.tmp1292.(*tmp2446)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2435 // to prevent unused warnings
-		var tmp2372 error
-		tmp316, tmp2372 = tmp2435.Hello.Append(tmp316)
+		_ = tmp2422 // to prevent unused warnings
+		var tmp2395 error
+		tmp319, tmp2395 = tmp2422.Hello.Append(tmp319)
 
-		if tmp2372 != nil {
-			return nil, tmp2372
+		if tmp2395 != nil {
+			return nil, tmp2395
 		}
 	} else if r.Kind == RunnerMessageType_TaskAccepted {
-		tmp2433, ok := r.tmp1284.(*tmp2434)
+		tmp2459, ok := r.tmp1292.(*tmp2442)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2433 // to prevent unused warnings
-		var tmp2366 error
-		tmp316, tmp2366 = tmp2433.TaskAccepted.Append(tmp316)
+		_ = tmp2459 // to prevent unused warnings
+		var tmp2389 error
+		tmp319, tmp2389 = tmp2459.TaskAccepted.Append(tmp319)
 
-		if tmp2366 != nil {
-			return nil, tmp2366
+		if tmp2389 != nil {
+			return nil, tmp2389
 		}
 	} else if r.Kind == RunnerMessageType_TaskStarted {
-		tmp2431, ok := r.tmp1284.(*tmp2432)
+		tmp2457, ok := r.tmp1292.(*tmp2458)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2431 // to prevent unused warnings
-		var tmp2360 error
-		tmp316, tmp2360 = tmp2431.TaskStarted.Append(tmp316)
+		_ = tmp2457 // to prevent unused warnings
+		var tmp2383 error
+		tmp319, tmp2383 = tmp2457.TaskStarted.Append(tmp319)
 
-		if tmp2360 != nil {
-			return nil, tmp2360
+		if tmp2383 != nil {
+			return nil, tmp2383
 		}
 	} else if r.Kind == RunnerMessageType_TaskFinished {
-		tmp2429, ok := r.tmp1284.(*tmp2430)
+		tmp2455, ok := r.tmp1292.(*tmp2456)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2429 // to prevent unused warnings
-		var tmp2355 error
-		tmp316, tmp2355 = tmp2429.TaskFinished.Append(tmp316)
+		_ = tmp2455 // to prevent unused warnings
+		var tmp2378 error
+		tmp319, tmp2378 = tmp2455.TaskFinished.Append(tmp319)
 
-		if tmp2355 != nil {
-			return nil, tmp2355
+		if tmp2378 != nil {
+			return nil, tmp2378
 		}
 	} else if r.Kind == RunnerMessageType_Heartbeat {
 	} else {
-		tmp2426, ok := r.tmp1284.(*tmp7151)
+		tmp2451, ok := r.tmp1292.(*tmp7317)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2426 // to prevent unused warnings
+		_ = tmp2451 // to prevent unused warnings
 		return nil, errors.New("Unexpected message")
 	}
-	return tmp316, nil
+	return tmp319, nil
 }
 func (s *RunnerMessage) MustAppend(buf []byte) []byte {
 	var err error
@@ -2896,13 +2896,13 @@ func (s *RunnerMessage) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (r *RunnerMessage) Read(tmp317 io.Reader) error {
-	tmp317ByteIO, _ := tmp317.(io.ByteReader)
-	_ = tmp317ByteIO
-	tmp104 := uint8(0)
-	if tmp317ByteIO != nil {
+func (r *RunnerMessage) Read(tmp320 io.Reader) error {
+	tmp320ByteIO, _ := tmp320.(io.ByteReader)
+	_ = tmp320ByteIO
+	tmp108 := uint8(0)
+	if tmp320ByteIO != nil {
 		var err error
-		tmp104, err = tmp317ByteIO.ReadByte()
+		tmp108, err = tmp320ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -2910,67 +2910,67 @@ func (r *RunnerMessage) Read(tmp317 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp317, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp320, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"RunnerMessage::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp104 = buf[0]
+		tmp108 = buf[0]
 	}
-	r.Kind = RunnerMessageType(tmp104)
+	r.Kind = RunnerMessageType(tmp108)
 	if r.Kind == RunnerMessageType_Hello {
-		tmp2435, ok := r.tmp1284.(*tmp2436)
+		tmp2422, ok := r.tmp1292.(*tmp2446)
 		if !ok {
-			tmp2435 = &tmp2436{}
-			r.tmp1284 = tmp2435
+			tmp2422 = &tmp2446{}
+			r.tmp1292 = tmp2422
 		}
-		_ = tmp2435 // to prevent unused warnings
-		tmp2408 := tmp2435.Hello.Read(tmp317)
-		if tmp2408 != nil {
-			return tmp2408
+		_ = tmp2422 // to prevent unused warnings
+		tmp2432 := tmp2422.Hello.Read(tmp320)
+		if tmp2432 != nil {
+			return tmp2432
 		}
 	} else if r.Kind == RunnerMessageType_TaskAccepted {
-		tmp2433, ok := r.tmp1284.(*tmp2434)
+		tmp2459, ok := r.tmp1292.(*tmp2442)
 		if !ok {
-			tmp2433 = &tmp2434{}
-			r.tmp1284 = tmp2433
+			tmp2459 = &tmp2442{}
+			r.tmp1292 = tmp2459
 		}
-		_ = tmp2433 // to prevent unused warnings
-		tmp2402 := tmp2433.TaskAccepted.Read(tmp317)
-		if tmp2402 != nil {
-			return tmp2402
+		_ = tmp2459 // to prevent unused warnings
+		tmp2426 := tmp2459.TaskAccepted.Read(tmp320)
+		if tmp2426 != nil {
+			return tmp2426
 		}
 	} else if r.Kind == RunnerMessageType_TaskStarted {
-		tmp2431, ok := r.tmp1284.(*tmp2432)
+		tmp2457, ok := r.tmp1292.(*tmp2458)
 		if !ok {
-			tmp2431 = &tmp2432{}
-			r.tmp1284 = tmp2431
+			tmp2457 = &tmp2458{}
+			r.tmp1292 = tmp2457
 		}
-		_ = tmp2431 // to prevent unused warnings
-		tmp2396 := tmp2431.TaskStarted.Read(tmp317)
-		if tmp2396 != nil {
-			return tmp2396
+		_ = tmp2457 // to prevent unused warnings
+		tmp2419 := tmp2457.TaskStarted.Read(tmp320)
+		if tmp2419 != nil {
+			return tmp2419
 		}
 	} else if r.Kind == RunnerMessageType_TaskFinished {
-		tmp2429, ok := r.tmp1284.(*tmp2430)
+		tmp2455, ok := r.tmp1292.(*tmp2456)
 		if !ok {
-			tmp2429 = &tmp2430{}
-			r.tmp1284 = tmp2429
+			tmp2455 = &tmp2456{}
+			r.tmp1292 = tmp2455
 		}
-		_ = tmp2429 // to prevent unused warnings
-		tmp2389 := tmp2429.TaskFinished.Read(tmp317)
-		if tmp2389 != nil {
-			return tmp2389
+		_ = tmp2455 // to prevent unused warnings
+		tmp2412 := tmp2455.TaskFinished.Read(tmp320)
+		if tmp2412 != nil {
+			return tmp2412
 		}
 	} else if r.Kind == RunnerMessageType_Heartbeat {
 	} else {
-		tmp2426, ok := r.tmp1284.(*tmp7151)
+		tmp2451, ok := r.tmp1292.(*tmp7317)
 		if !ok {
-			tmp2426 = &tmp7151{}
-			r.tmp1284 = tmp2426
+			tmp2451 = &tmp7317{}
+			r.tmp1292 = tmp2451
 		}
-		_ = tmp2426 // to prevent unused warnings
+		_ = tmp2451 // to prevent unused warnings
 		return errors.New("Unexpected message")
 	}
 	return nil
@@ -2993,68 +2993,68 @@ func (s *RunnerMessage) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (r *RunnerMessage) DecodeSlice(tmp317 []byte, tmp317Offset *int) error {
-	tmp104 := uint8(0)
-	tmp2413 := []uint8{}
-	if len(tmp317)-*tmp317Offset < 1 {
+func (r *RunnerMessage) DecodeSlice(tmp320 []byte, tmp320Offset *int) error {
+	tmp108 := uint8(0)
+	tmp2437 := []uint8{}
+	if len(tmp320)-*tmp320Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerMessage::Kind\"")
 	}
-	tmp2413 = tmp317[*tmp317Offset : *tmp317Offset+1]
-	*tmp317Offset += int(1)
-	tmp104 = tmp2413[0]
-	r.Kind = RunnerMessageType(tmp104)
+	tmp2437 = tmp320[*tmp320Offset : *tmp320Offset+1]
+	*tmp320Offset += int(1)
+	tmp108 = tmp2437[0]
+	r.Kind = RunnerMessageType(tmp108)
 	if r.Kind == RunnerMessageType_Hello {
-		tmp2435, ok := r.tmp1284.(*tmp2436)
+		tmp2422, ok := r.tmp1292.(*tmp2446)
 		if !ok {
-			tmp2435 = &tmp2436{}
-			r.tmp1284 = tmp2435
+			tmp2422 = &tmp2446{}
+			r.tmp1292 = tmp2422
 		}
-		_ = tmp2435 // to prevent unused warnings
-		tmp2408 := tmp2435.Hello.DecodeSlice(tmp317, tmp317Offset)
-		if tmp2408 != nil {
-			return tmp2408
+		_ = tmp2422 // to prevent unused warnings
+		tmp2432 := tmp2422.Hello.DecodeSlice(tmp320, tmp320Offset)
+		if tmp2432 != nil {
+			return tmp2432
 		}
 	} else if r.Kind == RunnerMessageType_TaskAccepted {
-		tmp2433, ok := r.tmp1284.(*tmp2434)
+		tmp2459, ok := r.tmp1292.(*tmp2442)
 		if !ok {
-			tmp2433 = &tmp2434{}
-			r.tmp1284 = tmp2433
+			tmp2459 = &tmp2442{}
+			r.tmp1292 = tmp2459
 		}
-		_ = tmp2433 // to prevent unused warnings
-		tmp2402 := tmp2433.TaskAccepted.DecodeSlice(tmp317, tmp317Offset)
-		if tmp2402 != nil {
-			return tmp2402
+		_ = tmp2459 // to prevent unused warnings
+		tmp2426 := tmp2459.TaskAccepted.DecodeSlice(tmp320, tmp320Offset)
+		if tmp2426 != nil {
+			return tmp2426
 		}
 	} else if r.Kind == RunnerMessageType_TaskStarted {
-		tmp2431, ok := r.tmp1284.(*tmp2432)
+		tmp2457, ok := r.tmp1292.(*tmp2458)
 		if !ok {
-			tmp2431 = &tmp2432{}
-			r.tmp1284 = tmp2431
+			tmp2457 = &tmp2458{}
+			r.tmp1292 = tmp2457
 		}
-		_ = tmp2431 // to prevent unused warnings
-		tmp2396 := tmp2431.TaskStarted.DecodeSlice(tmp317, tmp317Offset)
-		if tmp2396 != nil {
-			return tmp2396
+		_ = tmp2457 // to prevent unused warnings
+		tmp2419 := tmp2457.TaskStarted.DecodeSlice(tmp320, tmp320Offset)
+		if tmp2419 != nil {
+			return tmp2419
 		}
 	} else if r.Kind == RunnerMessageType_TaskFinished {
-		tmp2429, ok := r.tmp1284.(*tmp2430)
+		tmp2455, ok := r.tmp1292.(*tmp2456)
 		if !ok {
-			tmp2429 = &tmp2430{}
-			r.tmp1284 = tmp2429
+			tmp2455 = &tmp2456{}
+			r.tmp1292 = tmp2455
 		}
-		_ = tmp2429 // to prevent unused warnings
-		tmp2389 := tmp2429.TaskFinished.DecodeSlice(tmp317, tmp317Offset)
-		if tmp2389 != nil {
-			return tmp2389
+		_ = tmp2455 // to prevent unused warnings
+		tmp2412 := tmp2455.TaskFinished.DecodeSlice(tmp320, tmp320Offset)
+		if tmp2412 != nil {
+			return tmp2412
 		}
 	} else if r.Kind == RunnerMessageType_Heartbeat {
 	} else {
-		tmp2426, ok := r.tmp1284.(*tmp7151)
+		tmp2451, ok := r.tmp1292.(*tmp7317)
 		if !ok {
-			tmp2426 = &tmp7151{}
-			r.tmp1284 = tmp2426
+			tmp2451 = &tmp7317{}
+			r.tmp1292 = tmp2451
 		}
-		_ = tmp2426 // to prevent unused warnings
+		_ = tmp2451 // to prevent unused warnings
 		return errors.New("Unexpected message")
 	}
 	return nil
@@ -3078,65 +3078,65 @@ func (s *RunnerMessage) DecodeExact(buf []byte) error {
 	return nil
 }
 
-type tmp2335 struct {
+type tmp2353 struct {
 	AssignTask AssignTask
 }
 
-func (v *tmp2335) isVariant382() {}
+func (v *tmp2353) isVariant381() {}
 
-type tmp2333 struct {
+type tmp2351 struct {
 	CancelTask CancelTask
 }
 
-func (v *tmp2333) isVariant382() {}
+func (v *tmp2351) isVariant381() {}
 
-type tmp2331 struct {
+type tmp2349 struct {
 	OpenExec OpenExecRunnerRequest
 }
 
-func (v *tmp2331) isVariant382() {}
+func (v *tmp2349) isVariant381() {}
 
-type tmp2329 struct {
+type tmp2347 struct {
 	RunnerHelloResponse RunnerHelloResponse
 }
 
-func (v *tmp2329) isVariant382() {}
+func (v *tmp2347) isVariant381() {}
 
-type tmp2327 struct {
+type tmp2345 struct {
 	TaskWake TaskWakeRequest
 }
 
-func (v *tmp2327) isVariant382() {}
+func (v *tmp2345) isVariant381() {}
 
-type Variant382 interface {
-	isVariant382()
+type Variant381 interface {
+	isVariant381()
 }
 
 type RunnerRequest struct {
 	Kind    RunnerRequestType
-	tmp1261 Variant382
+	tmp1262 Variant381
 }
 
 func (r *RunnerRequest) AssignTask() *AssignTask {
 	if r.Kind == RunnerRequestType_AssignTask {
-		tmp2334, ok := r.tmp1261.(*tmp2335)
+		tmp2352, ok := r.tmp1262.(*tmp2353)
 		if !ok {
 			return nil
 		}
-		_ = tmp2334 // to prevent unused warnings
-		return &tmp2334.AssignTask
+		_ = tmp2352 // to prevent unused warnings
+		return &tmp2352.AssignTask
 	}
 	return nil
 }
-func (r *RunnerRequest) SetAssignTask(tmp2479 AssignTask) bool {
+func (r *RunnerRequest) SetAssignTask(tmp2502 AssignTask) bool {
 	if r.Kind == RunnerRequestType_AssignTask {
-		tmp2334, ok := r.tmp1261.(*tmp2335)
+		tmp2352, ok := r.tmp1262.(*tmp2353)
 		if !ok {
-			tmp2334 = &tmp2335{}
-			r.tmp1261 = tmp2334
+			tmp2352 = &tmp2353{}
+			r.tmp1262 = tmp2352
 		}
-		_ = tmp2334 // to prevent unused warnings
-		tmp2334.AssignTask = tmp2479
+		_ = tmp2352 // to prevent unused warnings
+		tmp2352.AssignTask = tmp2502
 		return true
 	}
 	return false
@@ -3146,26 +3146,26 @@ func (r *RunnerRequest) CancelTask() *CancelTask {
 	if r.Kind == RunnerRequestType_AssignTask {
 		return nil
 	} else if r.Kind == RunnerRequestType_CancelTask {
-		tmp2332, ok := r.tmp1261.(*tmp2333)
+		tmp2350, ok := r.tmp1262.(*tmp2351)
 		if !ok {
 			return nil
 		}
-		_ = tmp2332 // to prevent unused warnings
-		return &tmp2332.CancelTask
+		_ = tmp2350 // to prevent unused warnings
+		return &tmp2350.CancelTask
 	}
 	return nil
 }
-func (r *RunnerRequest) SetCancelTask(tmp2468 CancelTask) bool {
+func (r *RunnerRequest) SetCancelTask(tmp2481 CancelTask) bool {
 	if r.Kind == RunnerRequestType_AssignTask {
 		return false
 	} else if r.Kind == RunnerRequestType_CancelTask {
-		tmp2332, ok := r.tmp1261.(*tmp2333)
+		tmp2350, ok := r.tmp1262.(*tmp2351)
 		if !ok {
-			tmp2332 = &tmp2333{}
-			r.tmp1261 = tmp2332
+			tmp2350 = &tmp2351{}
+			r.tmp1262 = tmp2350
 		}
-		_ = tmp2332 // to prevent unused warnings
-		tmp2332.CancelTask = tmp2468
+		_ = tmp2350 // to prevent unused warnings
+		tmp2350.CancelTask = tmp2481
 		return true
 	}
 	return false
@@ -3175,26 +3175,26 @@ func (r *RunnerRequest) OpenExec() *OpenExecRunnerRequest {
 	if (RunnerRequestType_AssignTask == r.Kind) || (RunnerRequestType_CancelTask == r.Kind) {
 		return nil
 	} else if r.Kind == RunnerRequestType_OpenExec {
-		tmp2330, ok := r.tmp1261.(*tmp2331)
+		tmp2348, ok := r.tmp1262.(*tmp2349)
 		if !ok {
 			return nil
 		}
-		_ = tmp2330 // to prevent unused warnings
-		return &tmp2330.OpenExec
+		_ = tmp2348 // to prevent unused warnings
+		return &tmp2348.OpenExec
 	}
 	return nil
 }
-func (r *RunnerRequest) SetOpenExec(tmp2461 OpenExecRunnerRequest) bool {
+func (r *RunnerRequest) SetOpenExec(tmp2467 OpenExecRunnerRequest) bool {
 	if (RunnerRequestType_AssignTask == r.Kind) || (RunnerRequestType_CancelTask == r.Kind) {
 		return false
 	} else if r.Kind == RunnerRequestType_OpenExec {
-		tmp2330, ok := r.tmp1261.(*tmp2331)
+		tmp2348, ok := r.tmp1262.(*tmp2349)
 		if !ok {
-			tmp2330 = &tmp2331{}
-			r.tmp1261 = tmp2330
+			tmp2348 = &tmp2349{}
+			r.tmp1262 = tmp2348
 		}
-		_ = tmp2330 // to prevent unused warnings
-		tmp2330.OpenExec = tmp2461
+		_ = tmp2348 // to prevent unused warnings
+		tmp2348.OpenExec = tmp2467
 		return true
 	}
 	return false
@@ -3204,26 +3204,26 @@ func (r *RunnerRequest) RunnerHelloResponse() *RunnerHelloResponse {
 	if ((RunnerRequestType_AssignTask == r.Kind) || (RunnerRequestType_CancelTask == r.Kind)) || (RunnerRequestType_OpenExec == r.Kind) {
 		return nil
 	} else if r.Kind == RunnerRequestType_RunnerHelloResponse {
-		tmp2328, ok := r.tmp1261.(*tmp2329)
+		tmp2346, ok := r.tmp1262.(*tmp2347)
 		if !ok {
 			return nil
 		}
-		_ = tmp2328 // to prevent unused warnings
-		return &tmp2328.RunnerHelloResponse
+		_ = tmp2346 // to prevent unused warnings
+		return &tmp2346.RunnerHelloResponse
 	}
 	return nil
 }
-func (r *RunnerRequest) SetRunnerHelloResponse(tmp2452 RunnerHelloResponse) bool {
+func (r *RunnerRequest) SetRunnerHelloResponse(tmp2461 RunnerHelloResponse) bool {
 	if ((RunnerRequestType_AssignTask == r.Kind) || (RunnerRequestType_CancelTask == r.Kind)) || (RunnerRequestType_OpenExec == r.Kind) {
 		return false
 	} else if r.Kind == RunnerRequestType_RunnerHelloResponse {
-		tmp2328, ok := r.tmp1261.(*tmp2329)
+		tmp2346, ok := r.tmp1262.(*tmp2347)
 		if !ok {
-			tmp2328 = &tmp2329{}
-			r.tmp1261 = tmp2328
+			tmp2346 = &tmp2347{}
+			r.tmp1262 = tmp2346
 		}
-		_ = tmp2328 // to prevent unused warnings
-		tmp2328.RunnerHelloResponse = tmp2452
+		_ = tmp2346 // to prevent unused warnings
+		tmp2346.RunnerHelloResponse = tmp2461
 		return true
 	}
 	return false
@@ -3233,92 +3233,92 @@ func (r *RunnerRequest) TaskWake() *TaskWakeRequest {
 	if (((RunnerRequestType_AssignTask == r.Kind) || (RunnerRequestType_CancelTask == r.Kind)) || (RunnerRequestType_OpenExec == r.Kind)) || (RunnerRequestType_RunnerHelloResponse == r.Kind) {
 		return nil
 	} else if r.Kind == RunnerRequestType_TaskWake {
-		tmp2326, ok := r.tmp1261.(*tmp2327)
+		tmp2344, ok := r.tmp1262.(*tmp2345)
 		if !ok {
 			return nil
 		}
-		_ = tmp2326 // to prevent unused warnings
-		return &tmp2326.TaskWake
+		_ = tmp2344 // to prevent unused warnings
+		return &tmp2344.TaskWake
 	}
 	return nil
 }
-func (r *RunnerRequest) SetTaskWake(tmp2441 TaskWakeRequest) bool {
+func (r *RunnerRequest) SetTaskWake(tmp2254 TaskWakeRequest) bool {
 	if (((RunnerRequestType_AssignTask == r.Kind) || (RunnerRequestType_CancelTask == r.Kind)) || (RunnerRequestType_OpenExec == r.Kind)) || (RunnerRequestType_RunnerHelloResponse == r.Kind) {
 		return false
 	} else if r.Kind == RunnerRequestType_TaskWake {
-		tmp2326, ok := r.tmp1261.(*tmp2327)
+		tmp2344, ok := r.tmp1262.(*tmp2345)
 		if !ok {
-			tmp2326 = &tmp2327{}
-			r.tmp1261 = tmp2326
+			tmp2344 = &tmp2345{}
+			r.tmp1262 = tmp2344
 		}
-		_ = tmp2326 // to prevent unused warnings
-		tmp2326.TaskWake = tmp2441
+		_ = tmp2344 // to prevent unused warnings
+		tmp2344.TaskWake = tmp2254
 		return true
 	}
 	return false
 }
 
-func (r *RunnerRequest) Write(tmp291 io.Writer) error {
-	tmp291ByteIO, _ := tmp291.(io.ByteWriter)
-	_ = tmp291ByteIO
-	if tmp291ByteIO != nil {
-		if err := tmp291ByteIO.WriteByte(uint8(r.Kind)); err != nil {
+func (r *RunnerRequest) Write(tmp295 io.Writer) error {
+	tmp295ByteIO, _ := tmp295.(io.ByteWriter)
+	_ = tmp295ByteIO
+	if tmp295ByteIO != nil {
+		if err := tmp295ByteIO.WriteByte(uint8(r.Kind)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp291.Write([]byte{uint8(r.Kind)}); err != nil {
+		if _, err := tmp295.Write([]byte{uint8(r.Kind)}); err != nil {
 			return err
 		}
 	}
 	if r.Kind == RunnerRequestType_AssignTask {
-		tmp2334, ok := r.tmp1261.(*tmp2335)
+		tmp2352, ok := r.tmp1262.(*tmp2353)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2334 // to prevent unused warnings
-		tmp2295 := tmp2334.AssignTask.Write(tmp291)
+		_ = tmp2352 // to prevent unused warnings
+		tmp2299 := tmp2352.AssignTask.Write(tmp295)
+		if tmp2299 != nil {
+			return tmp2299
+		}
+	} else if r.Kind == RunnerRequestType_CancelTask {
+		tmp2350, ok := r.tmp1262.(*tmp2351)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp2350 // to prevent unused warnings
+		tmp2295 := tmp2350.CancelTask.Write(tmp295)
 		if tmp2295 != nil {
 			return tmp2295
 		}
-	} else if r.Kind == RunnerRequestType_CancelTask {
-		tmp2332, ok := r.tmp1261.(*tmp2333)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp2332 // to prevent unused warnings
-		tmp2289 := tmp2332.CancelTask.Write(tmp291)
-		if tmp2289 != nil {
-			return tmp2289
-		}
 	} else if r.Kind == RunnerRequestType_OpenExec {
-		tmp2330, ok := r.tmp1261.(*tmp2331)
+		tmp2348, ok := r.tmp1262.(*tmp2349)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2330 // to prevent unused warnings
-		tmp2284 := tmp2330.OpenExec.Write(tmp291)
-		if tmp2284 != nil {
-			return tmp2284
+		_ = tmp2348 // to prevent unused warnings
+		tmp2291 := tmp2348.OpenExec.Write(tmp295)
+		if tmp2291 != nil {
+			return tmp2291
 		}
 	} else if r.Kind == RunnerRequestType_RunnerHelloResponse {
-		tmp2328, ok := r.tmp1261.(*tmp2329)
+		tmp2346, ok := r.tmp1262.(*tmp2347)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2328 // to prevent unused warnings
-		tmp2278 := tmp2328.RunnerHelloResponse.Write(tmp291)
-		if tmp2278 != nil {
-			return tmp2278
+		_ = tmp2346 // to prevent unused warnings
+		tmp2286 := tmp2346.RunnerHelloResponse.Write(tmp295)
+		if tmp2286 != nil {
+			return tmp2286
 		}
 	} else if r.Kind == RunnerRequestType_TaskWake {
-		tmp2326, ok := r.tmp1261.(*tmp2327)
+		tmp2344, ok := r.tmp1262.(*tmp2345)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2326 // to prevent unused warnings
-		tmp2273 := tmp2326.TaskWake.Write(tmp291)
-		if tmp2273 != nil {
-			return tmp2273
+		_ = tmp2344 // to prevent unused warnings
+		tmp2281 := tmp2344.TaskWake.Write(tmp295)
+		if tmp2281 != nil {
+			return tmp2281
 		}
 	}
 	return nil
@@ -3338,63 +3338,63 @@ func (s *RunnerRequest) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerRequest) EncodeSlice(tmp291 []byte, tmp291Offset *int) error {
-	tmp2300 := []uint8{}
-	if len(tmp291)-*tmp291Offset < int(1) {
+func (r *RunnerRequest) EncodeSlice(tmp295 []byte, tmp295Offset *int) error {
+	tmp2304 := []uint8{}
+	if len(tmp295)-*tmp295Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerRequest::Kind\"")
 	}
-	tmp2300 = tmp291[*tmp291Offset : *tmp291Offset+int(1)]
-	tmp2300[0] = uint8(r.Kind)
-	*tmp291Offset += int(1)
+	tmp2304 = tmp295[*tmp295Offset : *tmp295Offset+int(1)]
+	tmp2304[0] = uint8(r.Kind)
+	*tmp295Offset += int(1)
 	if r.Kind == RunnerRequestType_AssignTask {
-		tmp2334, ok := r.tmp1261.(*tmp2335)
+		tmp2352, ok := r.tmp1262.(*tmp2353)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2334 // to prevent unused warnings
-		tmp2295 := tmp2334.AssignTask.EncodeSlice(tmp291, tmp291Offset)
+		_ = tmp2352 // to prevent unused warnings
+		tmp2299 := tmp2352.AssignTask.EncodeSlice(tmp295, tmp295Offset)
+		if tmp2299 != nil {
+			return tmp2299
+		}
+	} else if r.Kind == RunnerRequestType_CancelTask {
+		tmp2350, ok := r.tmp1262.(*tmp2351)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp2350 // to prevent unused warnings
+		tmp2295 := tmp2350.CancelTask.EncodeSlice(tmp295, tmp295Offset)
 		if tmp2295 != nil {
 			return tmp2295
 		}
-	} else if r.Kind == RunnerRequestType_CancelTask {
-		tmp2332, ok := r.tmp1261.(*tmp2333)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp2332 // to prevent unused warnings
-		tmp2289 := tmp2332.CancelTask.EncodeSlice(tmp291, tmp291Offset)
-		if tmp2289 != nil {
-			return tmp2289
-		}
 	} else if r.Kind == RunnerRequestType_OpenExec {
-		tmp2330, ok := r.tmp1261.(*tmp2331)
+		tmp2348, ok := r.tmp1262.(*tmp2349)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2330 // to prevent unused warnings
-		tmp2284 := tmp2330.OpenExec.EncodeSlice(tmp291, tmp291Offset)
-		if tmp2284 != nil {
-			return tmp2284
+		_ = tmp2348 // to prevent unused warnings
+		tmp2291 := tmp2348.OpenExec.EncodeSlice(tmp295, tmp295Offset)
+		if tmp2291 != nil {
+			return tmp2291
 		}
 	} else if r.Kind == RunnerRequestType_RunnerHelloResponse {
-		tmp2328, ok := r.tmp1261.(*tmp2329)
+		tmp2346, ok := r.tmp1262.(*tmp2347)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2328 // to prevent unused warnings
-		tmp2278 := tmp2328.RunnerHelloResponse.EncodeSlice(tmp291, tmp291Offset)
-		if tmp2278 != nil {
-			return tmp2278
+		_ = tmp2346 // to prevent unused warnings
+		tmp2286 := tmp2346.RunnerHelloResponse.EncodeSlice(tmp295, tmp295Offset)
+		if tmp2286 != nil {
+			return tmp2286
 		}
 	} else if r.Kind == RunnerRequestType_TaskWake {
-		tmp2326, ok := r.tmp1261.(*tmp2327)
+		tmp2344, ok := r.tmp1262.(*tmp2345)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2326 // to prevent unused warnings
-		tmp2273 := tmp2326.TaskWake.EncodeSlice(tmp291, tmp291Offset)
-		if tmp2273 != nil {
-			return tmp2273
+		_ = tmp2344 // to prevent unused warnings
+		tmp2281 := tmp2344.TaskWake.EncodeSlice(tmp295, tmp295Offset)
+		if tmp2281 != nil {
+			return tmp2281
 		}
 	}
 	return nil
@@ -3414,72 +3414,72 @@ func (s *RunnerRequest) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerRequest) Append(tmp291 []byte) ([]byte, error) {
-	tmp2300 := [1]uint8{}
-	tmp2300[0] = uint8(r.Kind)
-	tmp291 = append(tmp291, tmp2300[:1]...)
+func (r *RunnerRequest) Append(tmp295 []byte) ([]byte, error) {
+	tmp2304 := [1]uint8{}
+	tmp2304[0] = uint8(r.Kind)
+	tmp295 = append(tmp295, tmp2304[:1]...)
 	if r.Kind == RunnerRequestType_AssignTask {
-		tmp2334, ok := r.tmp1261.(*tmp2335)
+		tmp2352, ok := r.tmp1262.(*tmp2353)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2334 // to prevent unused warnings
+		_ = tmp2352 // to prevent unused warnings
+		var tmp2299 error
+		tmp295, tmp2299 = tmp2352.AssignTask.Append(tmp295)
+
+		if tmp2299 != nil {
+			return nil, tmp2299
+		}
+	} else if r.Kind == RunnerRequestType_CancelTask {
+		tmp2350, ok := r.tmp1262.(*tmp2351)
+		if !ok {
+			return nil, errors.New("invalid union type for encoding")
+		}
+		_ = tmp2350 // to prevent unused warnings
 		var tmp2295 error
-		tmp291, tmp2295 = tmp2334.AssignTask.Append(tmp291)
+		tmp295, tmp2295 = tmp2350.CancelTask.Append(tmp295)
 
 		if tmp2295 != nil {
 			return nil, tmp2295
 		}
-	} else if r.Kind == RunnerRequestType_CancelTask {
-		tmp2332, ok := r.tmp1261.(*tmp2333)
-		if !ok {
-			return nil, errors.New("invalid union type for encoding")
-		}
-		_ = tmp2332 // to prevent unused warnings
-		var tmp2289 error
-		tmp291, tmp2289 = tmp2332.CancelTask.Append(tmp291)
-
-		if tmp2289 != nil {
-			return nil, tmp2289
-		}
 	} else if r.Kind == RunnerRequestType_OpenExec {
-		tmp2330, ok := r.tmp1261.(*tmp2331)
+		tmp2348, ok := r.tmp1262.(*tmp2349)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2330 // to prevent unused warnings
-		var tmp2284 error
-		tmp291, tmp2284 = tmp2330.OpenExec.Append(tmp291)
+		_ = tmp2348 // to prevent unused warnings
+		var tmp2291 error
+		tmp295, tmp2291 = tmp2348.OpenExec.Append(tmp295)
 
-		if tmp2284 != nil {
-			return nil, tmp2284
+		if tmp2291 != nil {
+			return nil, tmp2291
 		}
 	} else if r.Kind == RunnerRequestType_RunnerHelloResponse {
-		tmp2328, ok := r.tmp1261.(*tmp2329)
+		tmp2346, ok := r.tmp1262.(*tmp2347)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2328 // to prevent unused warnings
-		var tmp2278 error
-		tmp291, tmp2278 = tmp2328.RunnerHelloResponse.Append(tmp291)
+		_ = tmp2346 // to prevent unused warnings
+		var tmp2286 error
+		tmp295, tmp2286 = tmp2346.RunnerHelloResponse.Append(tmp295)
 
-		if tmp2278 != nil {
-			return nil, tmp2278
+		if tmp2286 != nil {
+			return nil, tmp2286
 		}
 	} else if r.Kind == RunnerRequestType_TaskWake {
-		tmp2326, ok := r.tmp1261.(*tmp2327)
+		tmp2344, ok := r.tmp1262.(*tmp2345)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2326 // to prevent unused warnings
-		var tmp2273 error
-		tmp291, tmp2273 = tmp2326.TaskWake.Append(tmp291)
+		_ = tmp2344 // to prevent unused warnings
+		var tmp2281 error
+		tmp295, tmp2281 = tmp2344.TaskWake.Append(tmp295)
 
-		if tmp2273 != nil {
-			return nil, tmp2273
+		if tmp2281 != nil {
+			return nil, tmp2281
 		}
 	}
-	return tmp291, nil
+	return tmp295, nil
 }
 func (s *RunnerRequest) MustAppend(buf []byte) []byte {
 	var err error
@@ -3490,13 +3490,13 @@ func (s *RunnerRequest) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (r *RunnerRequest) Read(tmp292 io.Reader) error {
-	tmp292ByteIO, _ := tmp292.(io.ByteReader)
-	_ = tmp292ByteIO
-	tmp2319 := uint8(0)
-	if tmp292ByteIO != nil {
+func (r *RunnerRequest) Read(tmp296 io.Reader) error {
+	tmp296ByteIO, _ := tmp296.(io.ByteReader)
+	_ = tmp296ByteIO
+	tmp2337 := uint8(0)
+	if tmp296ByteIO != nil {
 		var err error
-		tmp2319, err = tmp292ByteIO.ReadByte()
+		tmp2337, err = tmp296ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -3504,69 +3504,69 @@ func (r *RunnerRequest) Read(tmp292 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp292, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp296, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"RunnerRequest::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp2319 = buf[0]
+		tmp2337 = buf[0]
 	}
-	r.Kind = RunnerRequestType(tmp2319)
+	r.Kind = RunnerRequestType(tmp2337)
 	if r.Kind == RunnerRequestType_AssignTask {
-		tmp2334, ok := r.tmp1261.(*tmp2335)
+		tmp2352, ok := r.tmp1262.(*tmp2353)
 		if !ok {
-			tmp2334 = &tmp2335{}
-			r.tmp1261 = tmp2334
+			tmp2352 = &tmp2353{}
+			r.tmp1262 = tmp2352
 		}
-		_ = tmp2334 // to prevent unused warnings
-		tmp2595 := tmp2334.AssignTask.Read(tmp292)
-		if tmp2595 != nil {
-			return tmp2595
+		_ = tmp2352 // to prevent unused warnings
+		tmp2331 := tmp2352.AssignTask.Read(tmp296)
+		if tmp2331 != nil {
+			return tmp2331
 		}
 	} else if r.Kind == RunnerRequestType_CancelTask {
-		tmp2332, ok := r.tmp1261.(*tmp2333)
+		tmp2350, ok := r.tmp1262.(*tmp2351)
 		if !ok {
-			tmp2332 = &tmp2333{}
-			r.tmp1261 = tmp2332
+			tmp2350 = &tmp2351{}
+			r.tmp1262 = tmp2350
 		}
-		_ = tmp2332 // to prevent unused warnings
-		tmp2697 := tmp2332.CancelTask.Read(tmp292)
-		if tmp2697 != nil {
-			return tmp2697
+		_ = tmp2350 // to prevent unused warnings
+		tmp2327 := tmp2350.CancelTask.Read(tmp296)
+		if tmp2327 != nil {
+			return tmp2327
 		}
 	} else if r.Kind == RunnerRequestType_OpenExec {
-		tmp2330, ok := r.tmp1261.(*tmp2331)
+		tmp2348, ok := r.tmp1262.(*tmp2349)
 		if !ok {
-			tmp2330 = &tmp2331{}
-			r.tmp1261 = tmp2330
+			tmp2348 = &tmp2349{}
+			r.tmp1262 = tmp2348
 		}
-		_ = tmp2330 // to prevent unused warnings
-		tmp2649 := tmp2330.OpenExec.Read(tmp292)
-		if tmp2649 != nil {
-			return tmp2649
+		_ = tmp2348 // to prevent unused warnings
+		tmp2322 := tmp2348.OpenExec.Read(tmp296)
+		if tmp2322 != nil {
+			return tmp2322
 		}
 	} else if r.Kind == RunnerRequestType_RunnerHelloResponse {
-		tmp2328, ok := r.tmp1261.(*tmp2329)
+		tmp2346, ok := r.tmp1262.(*tmp2347)
 		if !ok {
-			tmp2328 = &tmp2329{}
-			r.tmp1261 = tmp2328
+			tmp2346 = &tmp2347{}
+			r.tmp1262 = tmp2346
 		}
-		_ = tmp2328 // to prevent unused warnings
-		tmp2633 := tmp2328.RunnerHelloResponse.Read(tmp292)
-		if tmp2633 != nil {
-			return tmp2633
+		_ = tmp2346 // to prevent unused warnings
+		tmp2316 := tmp2346.RunnerHelloResponse.Read(tmp296)
+		if tmp2316 != nil {
+			return tmp2316
 		}
 	} else if r.Kind == RunnerRequestType_TaskWake {
-		tmp2326, ok := r.tmp1261.(*tmp2327)
+		tmp2344, ok := r.tmp1262.(*tmp2345)
 		if !ok {
-			tmp2326 = &tmp2327{}
-			r.tmp1261 = tmp2326
+			tmp2344 = &tmp2345{}
+			r.tmp1262 = tmp2344
 		}
-		_ = tmp2326 // to prevent unused warnings
-		tmp2632 := tmp2326.TaskWake.Read(tmp292)
-		if tmp2632 != nil {
-			return tmp2632
+		_ = tmp2344 // to prevent unused warnings
+		tmp2309 := tmp2344.TaskWake.Read(tmp296)
+		if tmp2309 != nil {
+			return tmp2309
 		}
 	}
 	return nil
@@ -3589,70 +3589,70 @@ func (s *RunnerRequest) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (r *RunnerRequest) DecodeSlice(tmp292 []byte, tmp292Offset *int) error {
-	tmp2319 := uint8(0)
-	tmp2318 := []uint8{}
-	if len(tmp292)-*tmp292Offset < 1 {
+func (r *RunnerRequest) DecodeSlice(tmp296 []byte, tmp296Offset *int) error {
+	tmp2337 := uint8(0)
+	tmp2336 := []uint8{}
+	if len(tmp296)-*tmp296Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerRequest::Kind\"")
 	}
-	tmp2318 = tmp292[*tmp292Offset : *tmp292Offset+1]
-	*tmp292Offset += int(1)
-	tmp2319 = tmp2318[0]
-	r.Kind = RunnerRequestType(tmp2319)
+	tmp2336 = tmp296[*tmp296Offset : *tmp296Offset+1]
+	*tmp296Offset += int(1)
+	tmp2337 = tmp2336[0]
+	r.Kind = RunnerRequestType(tmp2337)
 	if r.Kind == RunnerRequestType_AssignTask {
-		tmp2334, ok := r.tmp1261.(*tmp2335)
+		tmp2352, ok := r.tmp1262.(*tmp2353)
 		if !ok {
-			tmp2334 = &tmp2335{}
-			r.tmp1261 = tmp2334
+			tmp2352 = &tmp2353{}
+			r.tmp1262 = tmp2352
 		}
-		_ = tmp2334 // to prevent unused warnings
-		tmp2595 := tmp2334.AssignTask.DecodeSlice(tmp292, tmp292Offset)
-		if tmp2595 != nil {
-			return tmp2595
+		_ = tmp2352 // to prevent unused warnings
+		tmp2331 := tmp2352.AssignTask.DecodeSlice(tmp296, tmp296Offset)
+		if tmp2331 != nil {
+			return tmp2331
 		}
 	} else if r.Kind == RunnerRequestType_CancelTask {
-		tmp2332, ok := r.tmp1261.(*tmp2333)
+		tmp2350, ok := r.tmp1262.(*tmp2351)
 		if !ok {
-			tmp2332 = &tmp2333{}
-			r.tmp1261 = tmp2332
+			tmp2350 = &tmp2351{}
+			r.tmp1262 = tmp2350
 		}
-		_ = tmp2332 // to prevent unused warnings
-		tmp2697 := tmp2332.CancelTask.DecodeSlice(tmp292, tmp292Offset)
-		if tmp2697 != nil {
-			return tmp2697
+		_ = tmp2350 // to prevent unused warnings
+		tmp2327 := tmp2350.CancelTask.DecodeSlice(tmp296, tmp296Offset)
+		if tmp2327 != nil {
+			return tmp2327
 		}
 	} else if r.Kind == RunnerRequestType_OpenExec {
-		tmp2330, ok := r.tmp1261.(*tmp2331)
+		tmp2348, ok := r.tmp1262.(*tmp2349)
 		if !ok {
-			tmp2330 = &tmp2331{}
-			r.tmp1261 = tmp2330
+			tmp2348 = &tmp2349{}
+			r.tmp1262 = tmp2348
 		}
-		_ = tmp2330 // to prevent unused warnings
-		tmp2649 := tmp2330.OpenExec.DecodeSlice(tmp292, tmp292Offset)
-		if tmp2649 != nil {
-			return tmp2649
+		_ = tmp2348 // to prevent unused warnings
+		tmp2322 := tmp2348.OpenExec.DecodeSlice(tmp296, tmp296Offset)
+		if tmp2322 != nil {
+			return tmp2322
 		}
 	} else if r.Kind == RunnerRequestType_RunnerHelloResponse {
-		tmp2328, ok := r.tmp1261.(*tmp2329)
+		tmp2346, ok := r.tmp1262.(*tmp2347)
 		if !ok {
-			tmp2328 = &tmp2329{}
-			r.tmp1261 = tmp2328
+			tmp2346 = &tmp2347{}
+			r.tmp1262 = tmp2346
 		}
-		_ = tmp2328 // to prevent unused warnings
-		tmp2633 := tmp2328.RunnerHelloResponse.DecodeSlice(tmp292, tmp292Offset)
-		if tmp2633 != nil {
-			return tmp2633
+		_ = tmp2346 // to prevent unused warnings
+		tmp2316 := tmp2346.RunnerHelloResponse.DecodeSlice(tmp296, tmp296Offset)
+		if tmp2316 != nil {
+			return tmp2316
 		}
 	} else if r.Kind == RunnerRequestType_TaskWake {
-		tmp2326, ok := r.tmp1261.(*tmp2327)
+		tmp2344, ok := r.tmp1262.(*tmp2345)
 		if !ok {
-			tmp2326 = &tmp2327{}
-			r.tmp1261 = tmp2326
+			tmp2344 = &tmp2345{}
+			r.tmp1262 = tmp2344
 		}
-		_ = tmp2326 // to prevent unused warnings
-		tmp2632 := tmp2326.TaskWake.DecodeSlice(tmp292, tmp292Offset)
-		if tmp2632 != nil {
-			return tmp2632
+		_ = tmp2344 // to prevent unused warnings
+		tmp2309 := tmp2344.TaskWake.DecodeSlice(tmp296, tmp296Offset)
+		if tmp2309 != nil {
+			return tmp2309
 		}
 	}
 	return nil
@@ -3737,15 +3737,15 @@ type ClientHello struct {
 	Kind ClientKind
 }
 
-func (c *ClientHello) Write(tmp963 io.Writer) error {
-	tmp963ByteIO, _ := tmp963.(io.ByteWriter)
-	_ = tmp963ByteIO
-	if tmp963ByteIO != nil {
-		if err := tmp963ByteIO.WriteByte(uint8(c.Kind)); err != nil {
+func (c *ClientHello) Write(tmp1007 io.Writer) error {
+	tmp1007ByteIO, _ := tmp1007.(io.ByteWriter)
+	_ = tmp1007ByteIO
+	if tmp1007ByteIO != nil {
+		if err := tmp1007ByteIO.WriteByte(uint8(c.Kind)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp963.Write([]byte{uint8(c.Kind)}); err != nil {
+		if _, err := tmp1007.Write([]byte{uint8(c.Kind)}); err != nil {
 			return err
 		}
 	}
@@ -3766,14 +3766,14 @@ func (s *ClientHello) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClientHello) EncodeSlice(tmp963 []byte, tmp963Offset *int) error {
-	tmp2458 := []uint8{}
-	if len(tmp963)-*tmp963Offset < int(1) {
+func (c *ClientHello) EncodeSlice(tmp1007 []byte, tmp1007Offset *int) error {
+	tmp2665 := []uint8{}
+	if len(tmp1007)-*tmp1007Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"ClientHello::Kind\"")
 	}
-	tmp2458 = tmp963[*tmp963Offset : *tmp963Offset+int(1)]
-	tmp2458[0] = uint8(c.Kind)
-	*tmp963Offset += int(1)
+	tmp2665 = tmp1007[*tmp1007Offset : *tmp1007Offset+int(1)]
+	tmp2665[0] = uint8(c.Kind)
+	*tmp1007Offset += int(1)
 	return nil
 }
 func (s *ClientHello) Encode(buf []byte) ([]byte, error) {
@@ -3791,11 +3791,11 @@ func (s *ClientHello) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClientHello) Append(tmp963 []byte) ([]byte, error) {
-	tmp2458 := [1]uint8{}
-	tmp2458[0] = uint8(c.Kind)
-	tmp963 = append(tmp963, tmp2458[:1]...)
-	return tmp963, nil
+func (c *ClientHello) Append(tmp1007 []byte) ([]byte, error) {
+	tmp2665 := [1]uint8{}
+	tmp2665[0] = uint8(c.Kind)
+	tmp1007 = append(tmp1007, tmp2665[:1]...)
+	return tmp1007, nil
 }
 func (s *ClientHello) MustAppend(buf []byte) []byte {
 	var err error
@@ -3806,13 +3806,13 @@ func (s *ClientHello) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *ClientHello) Read(tmp981 io.Reader) error {
-	tmp981ByteIO, _ := tmp981.(io.ByteReader)
-	_ = tmp981ByteIO
-	tmp2453 := uint8(0)
-	if tmp981ByteIO != nil {
+func (c *ClientHello) Read(tmp1006 io.Reader) error {
+	tmp1006ByteIO, _ := tmp1006.(io.ByteReader)
+	_ = tmp1006ByteIO
+	tmp2615 := uint8(0)
+	if tmp1006ByteIO != nil {
 		var err error
-		tmp2453, err = tmp981ByteIO.ReadByte()
+		tmp2615, err = tmp1006ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -3820,15 +3820,15 @@ func (c *ClientHello) Read(tmp981 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp981, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp1006, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"ClientHello::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp2453 = buf[0]
+		tmp2615 = buf[0]
 	}
-	c.Kind = ClientKind(tmp2453)
+	c.Kind = ClientKind(tmp2615)
 	return nil
 }
 func (s *ClientHello) DecodeCopy(buf []byte) ([]byte, error) {
@@ -3849,16 +3849,16 @@ func (s *ClientHello) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *ClientHello) DecodeSlice(tmp981 []byte, tmp981Offset *int) error {
-	tmp2453 := uint8(0)
-	tmp2245 := []uint8{}
-	if len(tmp981)-*tmp981Offset < 1 {
+func (c *ClientHello) DecodeSlice(tmp1006 []byte, tmp1006Offset *int) error {
+	tmp2615 := uint8(0)
+	tmp2618 := []uint8{}
+	if len(tmp1006)-*tmp1006Offset < 1 {
 		return errors.New("not enough data to read for field \"ClientHello::Kind\"")
 	}
-	tmp2245 = tmp981[*tmp981Offset : *tmp981Offset+1]
-	*tmp981Offset += int(1)
-	tmp2453 = tmp2245[0]
-	c.Kind = ClientKind(tmp2453)
+	tmp2618 = tmp1006[*tmp1006Offset : *tmp1006Offset+1]
+	*tmp1006Offset += int(1)
+	tmp2615 = tmp2618[0]
+	c.Kind = ClientKind(tmp2615)
 	return nil
 }
 func (s *ClientHello) Decode(buf []byte) ([]byte, error) {
@@ -3899,15 +3899,15 @@ type ClientHelloResponse struct {
 	Status ClientHelloStatus
 }
 
-func (c *ClientHelloResponse) Write(tmp920 io.Writer) error {
-	tmp920ByteIO, _ := tmp920.(io.ByteWriter)
-	_ = tmp920ByteIO
-	if tmp920ByteIO != nil {
-		if err := tmp920ByteIO.WriteByte(uint8(c.Status)); err != nil {
+func (c *ClientHelloResponse) Write(tmp981 io.Writer) error {
+	tmp981ByteIO, _ := tmp981.(io.ByteWriter)
+	_ = tmp981ByteIO
+	if tmp981ByteIO != nil {
+		if err := tmp981ByteIO.WriteByte(uint8(c.Status)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp920.Write([]byte{uint8(c.Status)}); err != nil {
+		if _, err := tmp981.Write([]byte{uint8(c.Status)}); err != nil {
 			return err
 		}
 	}
@@ -3928,14 +3928,14 @@ func (s *ClientHelloResponse) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClientHelloResponse) EncodeSlice(tmp920 []byte, tmp920Offset *int) error {
-	tmp2231 := []uint8{}
-	if len(tmp920)-*tmp920Offset < int(1) {
+func (c *ClientHelloResponse) EncodeSlice(tmp981 []byte, tmp981Offset *int) error {
+	tmp2606 := []uint8{}
+	if len(tmp981)-*tmp981Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"ClientHelloResponse::Status\"")
 	}
-	tmp2231 = tmp920[*tmp920Offset : *tmp920Offset+int(1)]
-	tmp2231[0] = uint8(c.Status)
-	*tmp920Offset += int(1)
+	tmp2606 = tmp981[*tmp981Offset : *tmp981Offset+int(1)]
+	tmp2606[0] = uint8(c.Status)
+	*tmp981Offset += int(1)
 	return nil
 }
 func (s *ClientHelloResponse) Encode(buf []byte) ([]byte, error) {
@@ -3953,11 +3953,11 @@ func (s *ClientHelloResponse) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *ClientHelloResponse) Append(tmp920 []byte) ([]byte, error) {
-	tmp2231 := [1]uint8{}
-	tmp2231[0] = uint8(c.Status)
-	tmp920 = append(tmp920, tmp2231[:1]...)
-	return tmp920, nil
+func (c *ClientHelloResponse) Append(tmp981 []byte) ([]byte, error) {
+	tmp2606 := [1]uint8{}
+	tmp2606[0] = uint8(c.Status)
+	tmp981 = append(tmp981, tmp2606[:1]...)
+	return tmp981, nil
 }
 func (s *ClientHelloResponse) MustAppend(buf []byte) []byte {
 	var err error
@@ -3968,13 +3968,13 @@ func (s *ClientHelloResponse) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *ClientHelloResponse) Read(tmp923 io.Reader) error {
-	tmp923ByteIO, _ := tmp923.(io.ByteReader)
-	_ = tmp923ByteIO
-	tmp2239 := uint8(0)
-	if tmp923ByteIO != nil {
+func (c *ClientHelloResponse) Read(tmp986 io.Reader) error {
+	tmp986ByteIO, _ := tmp986.(io.ByteReader)
+	_ = tmp986ByteIO
+	tmp2576 := uint8(0)
+	if tmp986ByteIO != nil {
 		var err error
-		tmp2239, err = tmp923ByteIO.ReadByte()
+		tmp2576, err = tmp986ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -3982,15 +3982,15 @@ func (c *ClientHelloResponse) Read(tmp923 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp923, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp986, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"ClientHelloResponse::Status\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp2239 = buf[0]
+		tmp2576 = buf[0]
 	}
-	c.Status = ClientHelloStatus(tmp2239)
+	c.Status = ClientHelloStatus(tmp2576)
 	return nil
 }
 func (s *ClientHelloResponse) DecodeCopy(buf []byte) ([]byte, error) {
@@ -4011,16 +4011,16 @@ func (s *ClientHelloResponse) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *ClientHelloResponse) DecodeSlice(tmp923 []byte, tmp923Offset *int) error {
-	tmp2239 := uint8(0)
-	tmp2238 := []uint8{}
-	if len(tmp923)-*tmp923Offset < 1 {
+func (c *ClientHelloResponse) DecodeSlice(tmp986 []byte, tmp986Offset *int) error {
+	tmp2576 := uint8(0)
+	tmp2484 := []uint8{}
+	if len(tmp986)-*tmp986Offset < 1 {
 		return errors.New("not enough data to read for field \"ClientHelloResponse::Status\"")
 	}
-	tmp2238 = tmp923[*tmp923Offset : *tmp923Offset+1]
-	*tmp923Offset += int(1)
-	tmp2239 = tmp2238[0]
-	c.Status = ClientHelloStatus(tmp2239)
+	tmp2484 = tmp986[*tmp986Offset : *tmp986Offset+1]
+	*tmp986Offset += int(1)
+	tmp2576 = tmp2484[0]
+	c.Status = ClientHelloStatus(tmp2576)
 	return nil
 }
 func (s *ClientHelloResponse) Decode(buf []byte) ([]byte, error) {
@@ -4046,8 +4046,8 @@ type ListQuery struct {
 	Query []uint8
 }
 
-func (l *ListQuery) Write(tmp2220 io.Writer) error {
-	if _, err := tmp2220.Write(l.Query); err != nil {
+func (l *ListQuery) Write(tmp2247 io.Writer) error {
+	if _, err := tmp2247.Write(l.Query); err != nil {
 		return err
 	}
 	return nil
@@ -4067,12 +4067,12 @@ func (s *ListQuery) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (l *ListQuery) EncodeSlice(tmp2220 []byte, tmp2220Offset *int) error {
-	if len(tmp2220)-*tmp2220Offset < int(0+len(l.Query)) {
+func (l *ListQuery) EncodeSlice(tmp2247 []byte, tmp2247Offset *int) error {
+	if len(tmp2247)-*tmp2247Offset < int(0+len(l.Query)) {
 		return errors.New("not enough space to write for field \"ListQuery::Query\"")
 	}
-	copy(tmp2220[*tmp2220Offset:*tmp2220Offset+int(len(l.Query))], l.Query)
-	*tmp2220Offset += int(len(l.Query))
+	copy(tmp2247[*tmp2247Offset:*tmp2247Offset+int(len(l.Query))], l.Query)
+	*tmp2247Offset += int(len(l.Query))
 	return nil
 }
 func (s *ListQuery) Encode(buf []byte) ([]byte, error) {
@@ -4090,9 +4090,9 @@ func (s *ListQuery) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (l *ListQuery) Append(tmp2220 []byte) ([]byte, error) {
-	tmp2220 = append(tmp2220, l.Query...)
-	return tmp2220, nil
+func (l *ListQuery) Append(tmp2247 []byte) ([]byte, error) {
+	tmp2247 = append(tmp2247, l.Query...)
+	return tmp2247, nil
 }
 func (s *ListQuery) MustAppend(buf []byte) []byte {
 	var err error
@@ -4103,10 +4103,10 @@ func (s *ListQuery) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (l *ListQuery) Read(tmp1227 io.Reader) error {
+func (l *ListQuery) Read(tmp1237 io.Reader) error {
 	{
 		var readErr error
-		l.Query, readErr = io.ReadAll(tmp1227)
+		l.Query, readErr = io.ReadAll(tmp1237)
 		if readErr != nil {
 			return readErr
 		}
@@ -4131,9 +4131,9 @@ func (s *ListQuery) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (l *ListQuery) DecodeSlice(tmp1227 []byte, tmp1227Offset *int) error {
-	l.Query = tmp1227[*tmp1227Offset:]
-	*tmp1227Offset += len(l.Query)
+func (l *ListQuery) DecodeSlice(tmp1237 []byte, tmp1237Offset *int) error {
+	l.Query = tmp1237[*tmp1237Offset:]
+	*tmp1237Offset += len(l.Query)
 	return nil
 }
 func (s *ListQuery) Decode(buf []byte) ([]byte, error) {
@@ -4164,68 +4164,68 @@ type RunnerID struct {
 	UniqueNumber uint16
 }
 
-func (r *RunnerID) SetTransport(tmp2605 []uint8) bool {
+func (r *RunnerID) SetTransport(tmp2607 []uint8) bool {
+	if len(tmp2607) > int(255) {
+		return false
+	}
+	r.TransportLen = uint8(len(tmp2607))
+	r.Transport = tmp2607
+	return true
+}
+
+func (r *RunnerID) SetIpAddr(tmp2605 []uint8) bool {
 	if len(tmp2605) > int(255) {
 		return false
 	}
-	r.TransportLen = uint8(len(tmp2605))
-	r.Transport = tmp2605
+	r.IpAddrLen = uint8(len(tmp2605))
+	r.IpAddr = tmp2605
 	return true
 }
 
-func (r *RunnerID) SetIpAddr(tmp2494 []uint8) bool {
-	if len(tmp2494) > int(255) {
-		return false
-	}
-	r.IpAddrLen = uint8(len(tmp2494))
-	r.IpAddr = tmp2494
-	return true
-}
-
-func (r *RunnerID) Write(tmp184 io.Writer) error {
-	tmp184ByteIO, _ := tmp184.(io.ByteWriter)
-	_ = tmp184ByteIO
-	if tmp184ByteIO != nil {
-		if err := tmp184ByteIO.WriteByte(r.TransportLen); err != nil {
+func (r *RunnerID) Write(tmp185 io.Writer) error {
+	tmp185ByteIO, _ := tmp185.(io.ByteWriter)
+	_ = tmp185ByteIO
+	if tmp185ByteIO != nil {
+		if err := tmp185ByteIO.WriteByte(r.TransportLen); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp184.Write([]byte{r.TransportLen}); err != nil {
+		if _, err := tmp185.Write([]byte{r.TransportLen}); err != nil {
 			return err
 		}
 	}
 	if len(r.Transport) != int(r.TransportLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerID::Transport\": expected %d, got %d", int(r.TransportLen), len(r.Transport))
 	}
-	if _, err := tmp184.Write(r.Transport); err != nil {
+	if _, err := tmp185.Write(r.Transport); err != nil {
 		return err
 	}
-	if tmp184ByteIO != nil {
-		if err := tmp184ByteIO.WriteByte(r.IpAddrLen); err != nil {
+	if tmp185ByteIO != nil {
+		if err := tmp185ByteIO.WriteByte(r.IpAddrLen); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp184.Write([]byte{r.IpAddrLen}); err != nil {
+		if _, err := tmp185.Write([]byte{r.IpAddrLen}); err != nil {
 			return err
 		}
 	}
-	if !((r.IpAddrLen == 4) || (r.IpAddrLen == 16)) {
+	if !(((r.IpAddrLen == 0) || (r.IpAddrLen == 4)) || (r.IpAddrLen == 16)) {
 		return errors.New("Assertion failed")
 	}
 	if len(r.IpAddr) != int(r.IpAddrLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerID::IpAddr\": expected %d, got %d", int(r.IpAddrLen), len(r.IpAddr))
 	}
-	if _, err := tmp184.Write(r.IpAddr); err != nil {
+	if _, err := tmp185.Write(r.IpAddr); err != nil {
 		return err
 	}
-	tmp2588 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2588[:], uint16(r.Port))
-	if _, err := tmp184.Write(tmp2588[:2]); err != nil {
+	tmp2518 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2518[:], uint16(r.Port))
+	if _, err := tmp185.Write(tmp2518[:2]); err != nil {
 		return err
 	}
-	tmp2587 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2587[:], uint16(r.UniqueNumber))
-	if _, err := tmp184.Write(tmp2587[:2]); err != nil {
+	tmp2697 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2697[:], uint16(r.UniqueNumber))
+	if _, err := tmp185.Write(tmp2697[:2]); err != nil {
 		return err
 	}
 	return nil
@@ -4245,54 +4245,54 @@ func (s *RunnerID) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerID) EncodeSlice(tmp184 []byte, tmp184Offset *int) error {
-	tmp2553 := []uint8{}
-	if len(tmp184)-*tmp184Offset < int(1) {
+func (r *RunnerID) EncodeSlice(tmp185 []byte, tmp185Offset *int) error {
+	tmp2534 := []uint8{}
+	if len(tmp185)-*tmp185Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerID::TransportLen\"")
 	}
-	tmp2553 = tmp184[*tmp184Offset : *tmp184Offset+int(1)]
-	tmp2553[0] = r.TransportLen
-	*tmp184Offset += int(1)
+	tmp2534 = tmp185[*tmp185Offset : *tmp185Offset+int(1)]
+	tmp2534[0] = r.TransportLen
+	*tmp185Offset += int(1)
 	if len(r.Transport) != int(r.TransportLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerID::Transport\": expected %d, got %d", int(r.TransportLen), len(r.Transport))
 	}
-	if len(tmp184)-*tmp184Offset < int(0+r.TransportLen) {
+	if len(tmp185)-*tmp185Offset < int(0+r.TransportLen) {
 		return errors.New("not enough space to write for field \"RunnerID::Transport\"")
 	}
-	copy(tmp184[*tmp184Offset:*tmp184Offset+int(r.TransportLen)], r.Transport)
-	*tmp184Offset += int(r.TransportLen)
-	tmp2507 := []uint8{}
-	if len(tmp184)-*tmp184Offset < int(1) {
+	copy(tmp185[*tmp185Offset:*tmp185Offset+int(r.TransportLen)], r.Transport)
+	*tmp185Offset += int(r.TransportLen)
+	tmp2529 := []uint8{}
+	if len(tmp185)-*tmp185Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerID::IpAddrLen\"")
 	}
-	tmp2507 = tmp184[*tmp184Offset : *tmp184Offset+int(1)]
-	tmp2507[0] = r.IpAddrLen
-	*tmp184Offset += int(1)
-	if !((r.IpAddrLen == 4) || (r.IpAddrLen == 16)) {
+	tmp2529 = tmp185[*tmp185Offset : *tmp185Offset+int(1)]
+	tmp2529[0] = r.IpAddrLen
+	*tmp185Offset += int(1)
+	if !(((r.IpAddrLen == 0) || (r.IpAddrLen == 4)) || (r.IpAddrLen == 16)) {
 		return errors.New("Assertion failed")
 	}
 	if len(r.IpAddr) != int(r.IpAddrLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerID::IpAddr\": expected %d, got %d", int(r.IpAddrLen), len(r.IpAddr))
 	}
-	if len(tmp184)-*tmp184Offset < int(0+r.IpAddrLen) {
+	if len(tmp185)-*tmp185Offset < int(0+r.IpAddrLen) {
 		return errors.New("not enough space to write for field \"RunnerID::IpAddr\"")
 	}
-	copy(tmp184[*tmp184Offset:*tmp184Offset+int(r.IpAddrLen)], r.IpAddr)
-	*tmp184Offset += int(r.IpAddrLen)
-	tmp2588 := []uint8{}
-	if len(tmp184)-*tmp184Offset < int(2) {
+	copy(tmp185[*tmp185Offset:*tmp185Offset+int(r.IpAddrLen)], r.IpAddr)
+	*tmp185Offset += int(r.IpAddrLen)
+	tmp2518 := []uint8{}
+	if len(tmp185)-*tmp185Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"RunnerID::Port\"")
 	}
-	tmp2588 = tmp184[*tmp184Offset : *tmp184Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2588[:], uint16(r.Port))
-	*tmp184Offset += int(2)
-	tmp2587 := []uint8{}
-	if len(tmp184)-*tmp184Offset < int(2) {
+	tmp2518 = tmp185[*tmp185Offset : *tmp185Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2518[:], uint16(r.Port))
+	*tmp185Offset += int(2)
+	tmp2697 := []uint8{}
+	if len(tmp185)-*tmp185Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"RunnerID::UniqueNumber\"")
 	}
-	tmp2587 = tmp184[*tmp184Offset : *tmp184Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2587[:], uint16(r.UniqueNumber))
-	*tmp184Offset += int(2)
+	tmp2697 = tmp185[*tmp185Offset : *tmp185Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2697[:], uint16(r.UniqueNumber))
+	*tmp185Offset += int(2)
 	return nil
 }
 func (s *RunnerID) Encode(buf []byte) ([]byte, error) {
@@ -4310,31 +4310,31 @@ func (s *RunnerID) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerID) Append(tmp184 []byte) ([]byte, error) {
-	tmp2553 := [1]uint8{}
-	tmp2553[0] = r.TransportLen
-	tmp184 = append(tmp184, tmp2553[:1]...)
+func (r *RunnerID) Append(tmp185 []byte) ([]byte, error) {
+	tmp2534 := [1]uint8{}
+	tmp2534[0] = r.TransportLen
+	tmp185 = append(tmp185, tmp2534[:1]...)
 	if len(r.Transport) != int(r.TransportLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"RunnerID::Transport\": expected %d, got %d", int(r.TransportLen), len(r.Transport))
 	}
-	tmp184 = append(tmp184, r.Transport...)
-	tmp2507 := [1]uint8{}
-	tmp2507[0] = r.IpAddrLen
-	tmp184 = append(tmp184, tmp2507[:1]...)
-	if !((r.IpAddrLen == 4) || (r.IpAddrLen == 16)) {
+	tmp185 = append(tmp185, r.Transport...)
+	tmp2529 := [1]uint8{}
+	tmp2529[0] = r.IpAddrLen
+	tmp185 = append(tmp185, tmp2529[:1]...)
+	if !(((r.IpAddrLen == 0) || (r.IpAddrLen == 4)) || (r.IpAddrLen == 16)) {
 		return nil, errors.New("Assertion failed")
 	}
 	if len(r.IpAddr) != int(r.IpAddrLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"RunnerID::IpAddr\": expected %d, got %d", int(r.IpAddrLen), len(r.IpAddr))
 	}
-	tmp184 = append(tmp184, r.IpAddr...)
-	tmp2588 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2588[:], uint16(r.Port))
-	tmp184 = append(tmp184, tmp2588[:2]...)
-	tmp2587 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2587[:], uint16(r.UniqueNumber))
-	tmp184 = append(tmp184, tmp2587[:2]...)
-	return tmp184, nil
+	tmp185 = append(tmp185, r.IpAddr...)
+	tmp2518 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2518[:], uint16(r.Port))
+	tmp185 = append(tmp185, tmp2518[:2]...)
+	tmp2697 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2697[:], uint16(r.UniqueNumber))
+	tmp185 = append(tmp185, tmp2697[:2]...)
+	return tmp185, nil
 }
 func (s *RunnerID) MustAppend(buf []byte) []byte {
 	var err error
@@ -4345,12 +4345,12 @@ func (s *RunnerID) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (r *RunnerID) Read(tmp185 io.Reader) error {
-	tmp185ByteIO, _ := tmp185.(io.ByteReader)
-	_ = tmp185ByteIO
-	if tmp185ByteIO != nil {
+func (r *RunnerID) Read(tmp186 io.Reader) error {
+	tmp186ByteIO, _ := tmp186.(io.ByteReader)
+	_ = tmp186ByteIO
+	if tmp186ByteIO != nil {
 		var err error
-		r.TransportLen, err = tmp185ByteIO.ReadByte()
+		r.TransportLen, err = tmp186ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -4358,7 +4358,7 @@ func (r *RunnerID) Read(tmp185 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp185, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp186, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
@@ -4366,7 +4366,7 @@ func (r *RunnerID) Read(tmp185 io.Reader) error {
 		}
 		r.TransportLen = buf[0]
 	}
-	if seeker, ok := tmp185.(io.Seeker); ok {
+	if seeker, ok := tmp186.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -4383,21 +4383,21 @@ func (r *RunnerID) Read(tmp185 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(r.TransportLen)))
 		}
 		r.Transport = make([]byte, int(r.TransportLen))
-		if _, err := io.ReadFull(tmp185, r.Transport[0:0+int(r.TransportLen)]); err != nil {
+		if _, err := io.ReadFull(tmp186, r.Transport[0:0+int(r.TransportLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_7756 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_7756, tmp185, int64(int(r.TransportLen))); err != nil {
+		io_temp_7863 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_7863, tmp186, int64(int(r.TransportLen))); err != nil {
 			return err
 		}
-		r.Transport = io_temp_7756.Bytes()
+		r.Transport = io_temp_7863.Bytes()
 	}
-	if tmp185ByteIO != nil {
+	if tmp186ByteIO != nil {
 		var err error
-		r.IpAddrLen, err = tmp185ByteIO.ReadByte()
+		r.IpAddrLen, err = tmp186ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -4405,7 +4405,7 @@ func (r *RunnerID) Read(tmp185 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp185, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp186, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
@@ -4413,10 +4413,10 @@ func (r *RunnerID) Read(tmp185 io.Reader) error {
 		}
 		r.IpAddrLen = buf[0]
 	}
-	if !((r.IpAddrLen == 4) || (r.IpAddrLen == 16)) {
+	if !(((r.IpAddrLen == 0) || (r.IpAddrLen == 4)) || (r.IpAddrLen == 16)) {
 		return errors.New("Assertion failed")
 	}
-	if seeker, ok := tmp185.(io.Seeker); ok {
+	if seeker, ok := tmp186.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -4433,28 +4433,28 @@ func (r *RunnerID) Read(tmp185 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(r.IpAddrLen)))
 		}
 		r.IpAddr = make([]byte, int(r.IpAddrLen))
-		if _, err := io.ReadFull(tmp185, r.IpAddr[0:0+int(r.IpAddrLen)]); err != nil {
+		if _, err := io.ReadFull(tmp186, r.IpAddr[0:0+int(r.IpAddrLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_7722 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_7722, tmp185, int64(int(r.IpAddrLen))); err != nil {
+		io_temp_7809 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_7809, tmp186, int64(int(r.IpAddrLen))); err != nil {
 			return err
 		}
-		r.IpAddr = io_temp_7722.Bytes()
+		r.IpAddr = io_temp_7809.Bytes()
 	}
-	tmp2515 := [2]uint8{}
-	if _, err := io.ReadFull(tmp185, tmp2515[0:0+2]); err != nil {
+	tmp2536 := [2]uint8{}
+	if _, err := io.ReadFull(tmp186, tmp2536[0:0+2]); err != nil {
 		return err
 	}
-	r.Port = binary.BigEndian.Uint16(tmp2515[:])
-	tmp2491 := [2]uint8{}
-	if _, err := io.ReadFull(tmp185, tmp2491[0:0+2]); err != nil {
+	r.Port = binary.BigEndian.Uint16(tmp2536[:])
+	tmp2537 := [2]uint8{}
+	if _, err := io.ReadFull(tmp186, tmp2537[0:0+2]); err != nil {
 		return err
 	}
-	r.UniqueNumber = binary.BigEndian.Uint16(tmp2491[:])
+	r.UniqueNumber = binary.BigEndian.Uint16(tmp2537[:])
 	return nil
 }
 func (s *RunnerID) DecodeCopy(buf []byte) ([]byte, error) {
@@ -4475,48 +4475,48 @@ func (s *RunnerID) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (r *RunnerID) DecodeSlice(tmp185 []byte, tmp185Offset *int) error {
-	tmp2520 := []uint8{}
-	if len(tmp185)-*tmp185Offset < 1 {
+func (r *RunnerID) DecodeSlice(tmp186 []byte, tmp186Offset *int) error {
+	tmp2546 := []uint8{}
+	if len(tmp186)-*tmp186Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerID::TransportLen\"")
 	}
-	tmp2520 = tmp185[*tmp185Offset : *tmp185Offset+1]
-	*tmp185Offset += int(1)
-	r.TransportLen = tmp2520[0]
-	if len(tmp185)-*tmp185Offset < int(r.TransportLen) {
+	tmp2546 = tmp186[*tmp186Offset : *tmp186Offset+1]
+	*tmp186Offset += int(1)
+	r.TransportLen = tmp2546[0]
+	if len(tmp186)-*tmp186Offset < int(r.TransportLen) {
 		return errors.New("not enough data to read for field \"RunnerID::Transport\"")
 	}
-	r.Transport = tmp185[*tmp185Offset : *tmp185Offset+int(r.TransportLen)]
-	*tmp185Offset += int(int(r.TransportLen))
-	tmp2519 := []uint8{}
-	if len(tmp185)-*tmp185Offset < 1 {
+	r.Transport = tmp186[*tmp186Offset : *tmp186Offset+int(r.TransportLen)]
+	*tmp186Offset += int(int(r.TransportLen))
+	tmp2539 := []uint8{}
+	if len(tmp186)-*tmp186Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerID::IpAddrLen\"")
 	}
-	tmp2519 = tmp185[*tmp185Offset : *tmp185Offset+1]
-	*tmp185Offset += int(1)
-	r.IpAddrLen = tmp2519[0]
-	if !((r.IpAddrLen == 4) || (r.IpAddrLen == 16)) {
+	tmp2539 = tmp186[*tmp186Offset : *tmp186Offset+1]
+	*tmp186Offset += int(1)
+	r.IpAddrLen = tmp2539[0]
+	if !(((r.IpAddrLen == 0) || (r.IpAddrLen == 4)) || (r.IpAddrLen == 16)) {
 		return errors.New("Assertion failed")
 	}
-	if len(tmp185)-*tmp185Offset < int(r.IpAddrLen) {
+	if len(tmp186)-*tmp186Offset < int(r.IpAddrLen) {
 		return errors.New("not enough data to read for field \"RunnerID::IpAddr\"")
 	}
-	r.IpAddr = tmp185[*tmp185Offset : *tmp185Offset+int(r.IpAddrLen)]
-	*tmp185Offset += int(int(r.IpAddrLen))
-	tmp2515 := []uint8{}
-	if len(tmp185)-*tmp185Offset < 2 {
+	r.IpAddr = tmp186[*tmp186Offset : *tmp186Offset+int(r.IpAddrLen)]
+	*tmp186Offset += int(int(r.IpAddrLen))
+	tmp2536 := []uint8{}
+	if len(tmp186)-*tmp186Offset < 2 {
 		return errors.New("not enough data to read for field \"RunnerID::Port\"")
 	}
-	tmp2515 = tmp185[*tmp185Offset : *tmp185Offset+2]
-	*tmp185Offset += int(2)
-	r.Port = binary.BigEndian.Uint16(tmp2515[:])
-	tmp2491 := []uint8{}
-	if len(tmp185)-*tmp185Offset < 2 {
+	tmp2536 = tmp186[*tmp186Offset : *tmp186Offset+2]
+	*tmp186Offset += int(2)
+	r.Port = binary.BigEndian.Uint16(tmp2536[:])
+	tmp2537 := []uint8{}
+	if len(tmp186)-*tmp186Offset < 2 {
 		return errors.New("not enough data to read for field \"RunnerID::UniqueNumber\"")
 	}
-	tmp2491 = tmp185[*tmp185Offset : *tmp185Offset+2]
-	*tmp185Offset += int(2)
-	r.UniqueNumber = binary.BigEndian.Uint16(tmp2491[:])
+	tmp2537 = tmp186[*tmp186Offset : *tmp186Offset+2]
+	*tmp186Offset += int(2)
+	r.UniqueNumber = binary.BigEndian.Uint16(tmp2537[:])
 	return nil
 }
 func (s *RunnerID) Decode(buf []byte) ([]byte, error) {
@@ -4610,29 +4610,29 @@ type ActiveTaskRef struct {
 	RepoPath    []uint8
 }
 
-func (a *ActiveTaskRef) SetRepoPath(tmp2243 []uint8) bool {
-	if len(tmp2243) > int(65535) {
+func (a *ActiveTaskRef) SetRepoPath(tmp2252 []uint8) bool {
+	if len(tmp2252) > int(65535) {
 		return false
 	}
-	a.RepoPathLen = uint16(len(tmp2243))
-	a.RepoPath = tmp2243
+	a.RepoPathLen = uint16(len(tmp2252))
+	a.RepoPath = tmp2252
 	return true
 }
 
-func (a *ActiveTaskRef) Write(tmp458 io.Writer) error {
-	tmp2205 := a.TaskId.Write(tmp458)
-	if tmp2205 != nil {
-		return tmp2205
+func (a *ActiveTaskRef) Write(tmp462 io.Writer) error {
+	tmp2227 := a.TaskId.Write(tmp462)
+	if tmp2227 != nil {
+		return tmp2227
 	}
-	tmp2201 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2201[:], uint16(a.RepoPathLen))
-	if _, err := tmp458.Write(tmp2201[:2]); err != nil {
+	tmp2225 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2225[:], uint16(a.RepoPathLen))
+	if _, err := tmp462.Write(tmp2225[:2]); err != nil {
 		return err
 	}
 	if len(a.RepoPath) != int(a.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"ActiveTaskRef::RepoPath\": expected %d, got %d", int(a.RepoPathLen), len(a.RepoPath))
 	}
-	if _, err := tmp458.Write(a.RepoPath); err != nil {
+	if _, err := tmp462.Write(a.RepoPath); err != nil {
 		return err
 	}
 	return nil
@@ -4652,26 +4652,26 @@ func (s *ActiveTaskRef) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (a *ActiveTaskRef) EncodeSlice(tmp458 []byte, tmp458Offset *int) error {
-	tmp2205 := a.TaskId.EncodeSlice(tmp458, tmp458Offset)
-	if tmp2205 != nil {
-		return tmp2205
+func (a *ActiveTaskRef) EncodeSlice(tmp462 []byte, tmp462Offset *int) error {
+	tmp2227 := a.TaskId.EncodeSlice(tmp462, tmp462Offset)
+	if tmp2227 != nil {
+		return tmp2227
 	}
-	tmp2201 := []uint8{}
-	if len(tmp458)-*tmp458Offset < int(2) {
+	tmp2225 := []uint8{}
+	if len(tmp462)-*tmp462Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"ActiveTaskRef::RepoPathLen\"")
 	}
-	tmp2201 = tmp458[*tmp458Offset : *tmp458Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2201[:], uint16(a.RepoPathLen))
-	*tmp458Offset += int(2)
+	tmp2225 = tmp462[*tmp462Offset : *tmp462Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2225[:], uint16(a.RepoPathLen))
+	*tmp462Offset += int(2)
 	if len(a.RepoPath) != int(a.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"ActiveTaskRef::RepoPath\": expected %d, got %d", int(a.RepoPathLen), len(a.RepoPath))
 	}
-	if len(tmp458)-*tmp458Offset < int(0+a.RepoPathLen) {
+	if len(tmp462)-*tmp462Offset < int(0+a.RepoPathLen) {
 		return errors.New("not enough space to write for field \"ActiveTaskRef::RepoPath\"")
 	}
-	copy(tmp458[*tmp458Offset:*tmp458Offset+int(a.RepoPathLen)], a.RepoPath)
-	*tmp458Offset += int(a.RepoPathLen)
+	copy(tmp462[*tmp462Offset:*tmp462Offset+int(a.RepoPathLen)], a.RepoPath)
+	*tmp462Offset += int(a.RepoPathLen)
 	return nil
 }
 func (s *ActiveTaskRef) Encode(buf []byte) ([]byte, error) {
@@ -4689,21 +4689,21 @@ func (s *ActiveTaskRef) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (a *ActiveTaskRef) Append(tmp458 []byte) ([]byte, error) {
-	var tmp2205 error
-	tmp458, tmp2205 = a.TaskId.Append(tmp458)
+func (a *ActiveTaskRef) Append(tmp462 []byte) ([]byte, error) {
+	var tmp2227 error
+	tmp462, tmp2227 = a.TaskId.Append(tmp462)
 
-	if tmp2205 != nil {
-		return nil, tmp2205
+	if tmp2227 != nil {
+		return nil, tmp2227
 	}
-	tmp2201 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2201[:], uint16(a.RepoPathLen))
-	tmp458 = append(tmp458, tmp2201[:2]...)
+	tmp2225 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2225[:], uint16(a.RepoPathLen))
+	tmp462 = append(tmp462, tmp2225[:2]...)
 	if len(a.RepoPath) != int(a.RepoPathLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"ActiveTaskRef::RepoPath\": expected %d, got %d", int(a.RepoPathLen), len(a.RepoPath))
 	}
-	tmp458 = append(tmp458, a.RepoPath...)
-	return tmp458, nil
+	tmp462 = append(tmp462, a.RepoPath...)
+	return tmp462, nil
 }
 func (s *ActiveTaskRef) MustAppend(buf []byte) []byte {
 	var err error
@@ -4714,17 +4714,17 @@ func (s *ActiveTaskRef) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (a *ActiveTaskRef) Read(tmp459 io.Reader) error {
-	tmp2211 := a.TaskId.Read(tmp459)
-	if tmp2211 != nil {
-		return tmp2211
+func (a *ActiveTaskRef) Read(tmp463 io.Reader) error {
+	tmp2238 := a.TaskId.Read(tmp463)
+	if tmp2238 != nil {
+		return tmp2238
 	}
-	tmp2207 := [2]uint8{}
-	if _, err := io.ReadFull(tmp459, tmp2207[0:0+2]); err != nil {
+	tmp2235 := [2]uint8{}
+	if _, err := io.ReadFull(tmp463, tmp2235[0:0+2]); err != nil {
 		return err
 	}
-	a.RepoPathLen = binary.BigEndian.Uint16(tmp2207[:])
-	if seeker, ok := tmp459.(io.Seeker); ok {
+	a.RepoPathLen = binary.BigEndian.Uint16(tmp2235[:])
+	if seeker, ok := tmp463.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -4741,17 +4741,17 @@ func (a *ActiveTaskRef) Read(tmp459 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(a.RepoPathLen)))
 		}
 		a.RepoPath = make([]byte, int(a.RepoPathLen))
-		if _, err := io.ReadFull(tmp459, a.RepoPath[0:0+int(a.RepoPathLen)]); err != nil {
+		if _, err := io.ReadFull(tmp463, a.RepoPath[0:0+int(a.RepoPathLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_6486 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_6486, tmp459, int64(int(a.RepoPathLen))); err != nil {
+		io_temp_6606 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_6606, tmp463, int64(int(a.RepoPathLen))); err != nil {
 			return err
 		}
-		a.RepoPath = io_temp_6486.Bytes()
+		a.RepoPath = io_temp_6606.Bytes()
 	}
 	return nil
 }
@@ -4773,23 +4773,23 @@ func (s *ActiveTaskRef) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (a *ActiveTaskRef) DecodeSlice(tmp459 []byte, tmp459Offset *int) error {
-	tmp2211 := a.TaskId.DecodeSlice(tmp459, tmp459Offset)
-	if tmp2211 != nil {
-		return tmp2211
+func (a *ActiveTaskRef) DecodeSlice(tmp463 []byte, tmp463Offset *int) error {
+	tmp2238 := a.TaskId.DecodeSlice(tmp463, tmp463Offset)
+	if tmp2238 != nil {
+		return tmp2238
 	}
-	tmp2207 := []uint8{}
-	if len(tmp459)-*tmp459Offset < 2 {
+	tmp2235 := []uint8{}
+	if len(tmp463)-*tmp463Offset < 2 {
 		return errors.New("not enough data to read for field \"ActiveTaskRef::RepoPathLen\"")
 	}
-	tmp2207 = tmp459[*tmp459Offset : *tmp459Offset+2]
-	*tmp459Offset += int(2)
-	a.RepoPathLen = binary.BigEndian.Uint16(tmp2207[:])
-	if len(tmp459)-*tmp459Offset < int(a.RepoPathLen) {
+	tmp2235 = tmp463[*tmp463Offset : *tmp463Offset+2]
+	*tmp463Offset += int(2)
+	a.RepoPathLen = binary.BigEndian.Uint16(tmp2235[:])
+	if len(tmp463)-*tmp463Offset < int(a.RepoPathLen) {
 		return errors.New("not enough data to read for field \"ActiveTaskRef::RepoPath\"")
 	}
-	a.RepoPath = tmp459[*tmp459Offset : *tmp459Offset+int(a.RepoPathLen)]
-	*tmp459Offset += int(int(a.RepoPathLen))
+	a.RepoPath = tmp463[*tmp463Offset : *tmp463Offset+int(a.RepoPathLen)]
+	*tmp463Offset += int(int(a.RepoPathLen))
 	return nil
 }
 func (s *ActiveTaskRef) Decode(buf []byte) ([]byte, error) {
@@ -4825,39 +4825,39 @@ type RunnerInfo struct {
 	LastSeen        uint64
 }
 
-func (r *RunnerInfo) SetHostname(tmp2246 []uint8) bool {
-	if len(tmp2246) > int(255) {
+func (r *RunnerInfo) SetHostname(tmp2250 []uint8) bool {
+	if len(tmp2250) > int(255) {
 		return false
 	}
-	r.HostnameLen = uint8(len(tmp2246))
-	r.Hostname = tmp2246
+	r.HostnameLen = uint8(len(tmp2250))
+	r.Hostname = tmp2250
 	return true
 }
 
-func (r *RunnerInfo) SetAllowedRoots(tmp2233 []AllowedRoot) bool {
-	if len(tmp2233) > int(255) {
+func (r *RunnerInfo) SetAllowedRoots(tmp2245 []AllowedRoot) bool {
+	if len(tmp2245) > int(255) {
 		return false
 	}
-	r.AllowedRootsLen = uint8(len(tmp2233))
-	r.AllowedRoots = tmp2233
+	r.AllowedRootsLen = uint8(len(tmp2245))
+	r.AllowedRoots = tmp2245
 	return true
 }
 
-func (r *RunnerInfo) SetActiveTasks(tmp2228 []ActiveTaskRef) bool {
-	if len(tmp2228) > int(65535) {
+func (r *RunnerInfo) SetActiveTasks(tmp2243 []ActiveTaskRef) bool {
+	if len(tmp2243) > int(65535) {
 		return false
 	}
-	r.ActiveTasksLen = uint16(len(tmp2228))
-	r.ActiveTasks = tmp2228
+	r.ActiveTasksLen = uint16(len(tmp2243))
+	r.ActiveTasks = tmp2243
 	return true
 }
 
 func (r *RunnerInfo) Write(tmp80 io.Writer) error {
 	tmp80ByteIO, _ := tmp80.(io.ByteWriter)
 	_ = tmp80ByteIO
-	tmp2167 := r.Id.Write(tmp80)
-	if tmp2167 != nil {
-		return tmp2167
+	tmp2182 := r.Id.Write(tmp80)
+	if tmp2182 != nil {
+		return tmp2182
 	}
 	if tmp80ByteIO != nil {
 		if err := tmp80ByteIO.WriteByte(r.HostnameLen); err != nil {
@@ -4883,9 +4883,9 @@ func (r *RunnerInfo) Write(tmp80 io.Writer) error {
 			return err
 		}
 	}
-	tmp2156 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2156[:], uint16(r.MaxTasks))
-	if _, err := tmp80.Write(tmp2156[:2]); err != nil {
+	tmp2171 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2171[:], uint16(r.MaxTasks))
+	if _, err := tmp80.Write(tmp2171[:2]); err != nil {
 		return err
 	}
 	if tmp80ByteIO != nil {
@@ -4900,38 +4900,38 @@ func (r *RunnerInfo) Write(tmp80 io.Writer) error {
 	if len(r.AllowedRoots) != int(r.AllowedRootsLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerInfo::AllowedRoots\": expected %d, got %d", int(r.AllowedRootsLen), len(r.AllowedRoots))
 	}
-	tmp1207 := int(0)
-	for tmp1207 < int(r.AllowedRootsLen) {
-		tmp2149 := r.AllowedRoots[tmp1207].Write(tmp80)
-		if tmp2149 != nil {
-			return tmp2149
+	tmp1213 := int(0)
+	for tmp1213 < int(r.AllowedRootsLen) {
+		tmp2164 := r.AllowedRoots[tmp1213].Write(tmp80)
+		if tmp2164 != nil {
+			return tmp2164
 		}
-		tmp1207 = tmp1207 + int(1)
+		tmp1213 = tmp1213 + int(1)
 	}
-	tmp2145 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2145[:], uint16(r.ActiveTasksLen))
-	if _, err := tmp80.Write(tmp2145[:2]); err != nil {
+	tmp2160 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2160[:], uint16(r.ActiveTasksLen))
+	if _, err := tmp80.Write(tmp2160[:2]); err != nil {
 		return err
 	}
 	if len(r.ActiveTasks) != int(r.ActiveTasksLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerInfo::ActiveTasks\": expected %d, got %d", int(r.ActiveTasksLen), len(r.ActiveTasks))
 	}
-	tmp1205 := int(0)
-	for tmp1205 < int(r.ActiveTasksLen) {
-		tmp2140 := r.ActiveTasks[tmp1205].Write(tmp80)
-		if tmp2140 != nil {
-			return tmp2140
+	tmp1211 := int(0)
+	for tmp1211 < int(r.ActiveTasksLen) {
+		tmp2155 := r.ActiveTasks[tmp1211].Write(tmp80)
+		if tmp2155 != nil {
+			return tmp2155
 		}
-		tmp1205 = tmp1205 + int(1)
+		tmp1211 = tmp1211 + int(1)
 	}
-	tmp2136 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2136[:], uint64(r.ConnectedAt))
-	if _, err := tmp80.Write(tmp2136[:8]); err != nil {
+	tmp2151 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2151[:], uint64(r.ConnectedAt))
+	if _, err := tmp80.Write(tmp2151[:8]); err != nil {
 		return err
 	}
-	tmp2134 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2134[:], uint64(r.LastSeen))
-	if _, err := tmp80.Write(tmp2134[:8]); err != nil {
+	tmp2149 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2149[:], uint64(r.LastSeen))
+	if _, err := tmp80.Write(tmp2149[:8]); err != nil {
 		return err
 	}
 	return nil
@@ -4952,16 +4952,16 @@ func (s *RunnerInfo) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (r *RunnerInfo) EncodeSlice(tmp80 []byte, tmp80Offset *int) error {
-	tmp2167 := r.Id.EncodeSlice(tmp80, tmp80Offset)
-	if tmp2167 != nil {
-		return tmp2167
+	tmp2182 := r.Id.EncodeSlice(tmp80, tmp80Offset)
+	if tmp2182 != nil {
+		return tmp2182
 	}
-	tmp2165 := []uint8{}
+	tmp2180 := []uint8{}
 	if len(tmp80)-*tmp80Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerInfo::HostnameLen\"")
 	}
-	tmp2165 = tmp80[*tmp80Offset : *tmp80Offset+int(1)]
-	tmp2165[0] = r.HostnameLen
+	tmp2180 = tmp80[*tmp80Offset : *tmp80Offset+int(1)]
+	tmp2180[0] = r.HostnameLen
 	*tmp80Offset += int(1)
 	if len(r.Hostname) != int(r.HostnameLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerInfo::Hostname\": expected %d, got %d", int(r.HostnameLen), len(r.Hostname))
@@ -4971,69 +4971,69 @@ func (r *RunnerInfo) EncodeSlice(tmp80 []byte, tmp80Offset *int) error {
 	}
 	copy(tmp80[*tmp80Offset:*tmp80Offset+int(r.HostnameLen)], r.Hostname)
 	*tmp80Offset += int(r.HostnameLen)
-	tmp2159 := []uint8{}
+	tmp2174 := []uint8{}
 	if len(tmp80)-*tmp80Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerInfo::Status\"")
 	}
-	tmp2159 = tmp80[*tmp80Offset : *tmp80Offset+int(1)]
-	tmp2159[0] = uint8(r.Status)
+	tmp2174 = tmp80[*tmp80Offset : *tmp80Offset+int(1)]
+	tmp2174[0] = uint8(r.Status)
 	*tmp80Offset += int(1)
-	tmp2156 := []uint8{}
+	tmp2171 := []uint8{}
 	if len(tmp80)-*tmp80Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"RunnerInfo::MaxTasks\"")
 	}
-	tmp2156 = tmp80[*tmp80Offset : *tmp80Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2156[:], uint16(r.MaxTasks))
+	tmp2171 = tmp80[*tmp80Offset : *tmp80Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2171[:], uint16(r.MaxTasks))
 	*tmp80Offset += int(2)
-	tmp2154 := []uint8{}
+	tmp2169 := []uint8{}
 	if len(tmp80)-*tmp80Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerInfo::AllowedRootsLen\"")
 	}
-	tmp2154 = tmp80[*tmp80Offset : *tmp80Offset+int(1)]
-	tmp2154[0] = r.AllowedRootsLen
+	tmp2169 = tmp80[*tmp80Offset : *tmp80Offset+int(1)]
+	tmp2169[0] = r.AllowedRootsLen
 	*tmp80Offset += int(1)
 	if len(r.AllowedRoots) != int(r.AllowedRootsLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerInfo::AllowedRoots\": expected %d, got %d", int(r.AllowedRootsLen), len(r.AllowedRoots))
 	}
-	tmp1207 := int(0)
-	for tmp1207 < int(r.AllowedRootsLen) {
-		tmp2149 := r.AllowedRoots[tmp1207].EncodeSlice(tmp80, tmp80Offset)
-		if tmp2149 != nil {
-			return tmp2149
+	tmp1213 := int(0)
+	for tmp1213 < int(r.AllowedRootsLen) {
+		tmp2164 := r.AllowedRoots[tmp1213].EncodeSlice(tmp80, tmp80Offset)
+		if tmp2164 != nil {
+			return tmp2164
 		}
-		tmp1207 = tmp1207 + int(1)
+		tmp1213 = tmp1213 + int(1)
 	}
-	tmp2145 := []uint8{}
+	tmp2160 := []uint8{}
 	if len(tmp80)-*tmp80Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"RunnerInfo::ActiveTasksLen\"")
 	}
-	tmp2145 = tmp80[*tmp80Offset : *tmp80Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2145[:], uint16(r.ActiveTasksLen))
+	tmp2160 = tmp80[*tmp80Offset : *tmp80Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2160[:], uint16(r.ActiveTasksLen))
 	*tmp80Offset += int(2)
 	if len(r.ActiveTasks) != int(r.ActiveTasksLen) {
 		return fmt.Errorf("size mismatch when writing field \"RunnerInfo::ActiveTasks\": expected %d, got %d", int(r.ActiveTasksLen), len(r.ActiveTasks))
 	}
-	tmp1205 := int(0)
-	for tmp1205 < int(r.ActiveTasksLen) {
-		tmp2140 := r.ActiveTasks[tmp1205].EncodeSlice(tmp80, tmp80Offset)
-		if tmp2140 != nil {
-			return tmp2140
+	tmp1211 := int(0)
+	for tmp1211 < int(r.ActiveTasksLen) {
+		tmp2155 := r.ActiveTasks[tmp1211].EncodeSlice(tmp80, tmp80Offset)
+		if tmp2155 != nil {
+			return tmp2155
 		}
-		tmp1205 = tmp1205 + int(1)
+		tmp1211 = tmp1211 + int(1)
 	}
-	tmp2136 := []uint8{}
+	tmp2151 := []uint8{}
 	if len(tmp80)-*tmp80Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"RunnerInfo::ConnectedAt\"")
 	}
-	tmp2136 = tmp80[*tmp80Offset : *tmp80Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp2136[:], uint64(r.ConnectedAt))
+	tmp2151 = tmp80[*tmp80Offset : *tmp80Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp2151[:], uint64(r.ConnectedAt))
 	*tmp80Offset += int(8)
-	tmp2134 := []uint8{}
+	tmp2149 := []uint8{}
 	if len(tmp80)-*tmp80Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"RunnerInfo::LastSeen\"")
 	}
-	tmp2134 = tmp80[*tmp80Offset : *tmp80Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp2134[:], uint64(r.LastSeen))
+	tmp2149 = tmp80[*tmp80Offset : *tmp80Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp2149[:], uint64(r.LastSeen))
 	*tmp80Offset += int(8)
 	return nil
 }
@@ -5053,63 +5053,63 @@ func (s *RunnerInfo) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (r *RunnerInfo) Append(tmp80 []byte) ([]byte, error) {
-	var tmp2167 error
-	tmp80, tmp2167 = r.Id.Append(tmp80)
+	var tmp2182 error
+	tmp80, tmp2182 = r.Id.Append(tmp80)
 
-	if tmp2167 != nil {
-		return nil, tmp2167
+	if tmp2182 != nil {
+		return nil, tmp2182
 	}
-	tmp2165 := [1]uint8{}
-	tmp2165[0] = r.HostnameLen
-	tmp80 = append(tmp80, tmp2165[:1]...)
+	tmp2180 := [1]uint8{}
+	tmp2180[0] = r.HostnameLen
+	tmp80 = append(tmp80, tmp2180[:1]...)
 	if len(r.Hostname) != int(r.HostnameLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"RunnerInfo::Hostname\": expected %d, got %d", int(r.HostnameLen), len(r.Hostname))
 	}
 	tmp80 = append(tmp80, r.Hostname...)
-	tmp2159 := [1]uint8{}
-	tmp2159[0] = uint8(r.Status)
-	tmp80 = append(tmp80, tmp2159[:1]...)
-	tmp2156 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2156[:], uint16(r.MaxTasks))
-	tmp80 = append(tmp80, tmp2156[:2]...)
-	tmp2154 := [1]uint8{}
-	tmp2154[0] = r.AllowedRootsLen
-	tmp80 = append(tmp80, tmp2154[:1]...)
+	tmp2174 := [1]uint8{}
+	tmp2174[0] = uint8(r.Status)
+	tmp80 = append(tmp80, tmp2174[:1]...)
+	tmp2171 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2171[:], uint16(r.MaxTasks))
+	tmp80 = append(tmp80, tmp2171[:2]...)
+	tmp2169 := [1]uint8{}
+	tmp2169[0] = r.AllowedRootsLen
+	tmp80 = append(tmp80, tmp2169[:1]...)
 	if len(r.AllowedRoots) != int(r.AllowedRootsLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"RunnerInfo::AllowedRoots\": expected %d, got %d", int(r.AllowedRootsLen), len(r.AllowedRoots))
 	}
-	tmp1207 := int(0)
-	for tmp1207 < int(r.AllowedRootsLen) {
-		var tmp2149 error
-		tmp80, tmp2149 = r.AllowedRoots[tmp1207].Append(tmp80)
+	tmp1213 := int(0)
+	for tmp1213 < int(r.AllowedRootsLen) {
+		var tmp2164 error
+		tmp80, tmp2164 = r.AllowedRoots[tmp1213].Append(tmp80)
 
-		if tmp2149 != nil {
-			return nil, tmp2149
+		if tmp2164 != nil {
+			return nil, tmp2164
 		}
-		tmp1207 = tmp1207 + int(1)
+		tmp1213 = tmp1213 + int(1)
 	}
-	tmp2145 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2145[:], uint16(r.ActiveTasksLen))
-	tmp80 = append(tmp80, tmp2145[:2]...)
+	tmp2160 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2160[:], uint16(r.ActiveTasksLen))
+	tmp80 = append(tmp80, tmp2160[:2]...)
 	if len(r.ActiveTasks) != int(r.ActiveTasksLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"RunnerInfo::ActiveTasks\": expected %d, got %d", int(r.ActiveTasksLen), len(r.ActiveTasks))
 	}
-	tmp1205 := int(0)
-	for tmp1205 < int(r.ActiveTasksLen) {
-		var tmp2140 error
-		tmp80, tmp2140 = r.ActiveTasks[tmp1205].Append(tmp80)
+	tmp1211 := int(0)
+	for tmp1211 < int(r.ActiveTasksLen) {
+		var tmp2155 error
+		tmp80, tmp2155 = r.ActiveTasks[tmp1211].Append(tmp80)
 
-		if tmp2140 != nil {
-			return nil, tmp2140
+		if tmp2155 != nil {
+			return nil, tmp2155
 		}
-		tmp1205 = tmp1205 + int(1)
+		tmp1211 = tmp1211 + int(1)
 	}
-	tmp2136 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2136[:], uint64(r.ConnectedAt))
-	tmp80 = append(tmp80, tmp2136[:8]...)
-	tmp2134 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2134[:], uint64(r.LastSeen))
-	tmp80 = append(tmp80, tmp2134[:8]...)
+	tmp2151 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2151[:], uint64(r.ConnectedAt))
+	tmp80 = append(tmp80, tmp2151[:8]...)
+	tmp2149 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2149[:], uint64(r.LastSeen))
+	tmp80 = append(tmp80, tmp2149[:8]...)
 	return tmp80, nil
 }
 func (s *RunnerInfo) MustAppend(buf []byte) []byte {
@@ -5124,9 +5124,9 @@ func (s *RunnerInfo) MustAppend(buf []byte) []byte {
 func (r *RunnerInfo) Read(tmp81 io.Reader) error {
 	tmp81ByteIO, _ := tmp81.(io.ByteReader)
 	_ = tmp81ByteIO
-	tmp2192 := r.Id.Read(tmp81)
-	if tmp2192 != nil {
-		return tmp2192
+	tmp2211 := r.Id.Read(tmp81)
+	if tmp2211 != nil {
+		return tmp2211
 	}
 	if tmp81ByteIO != nil {
 		var err error
@@ -5169,16 +5169,16 @@ func (r *RunnerInfo) Read(tmp81 io.Reader) error {
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_6389 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_6389, tmp81, int64(int(r.HostnameLen))); err != nil {
+		io_temp_6489 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_6489, tmp81, int64(int(r.HostnameLen))); err != nil {
 			return err
 		}
-		r.Hostname = io_temp_6389.Bytes()
+		r.Hostname = io_temp_6489.Bytes()
 	}
-	tmp2187 := uint8(0)
+	tmp2206 := uint8(0)
 	if tmp81ByteIO != nil {
 		var err error
-		tmp2187, err = tmp81ByteIO.ReadByte()
+		tmp2206, err = tmp81ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -5192,14 +5192,14 @@ func (r *RunnerInfo) Read(tmp81 io.Reader) error {
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"RunnerInfo::Status\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp2187 = buf[0]
+		tmp2206 = buf[0]
 	}
-	r.Status = RunnerStatus(tmp2187)
-	tmp2184 := [2]uint8{}
-	if _, err := io.ReadFull(tmp81, tmp2184[0:0+2]); err != nil {
+	r.Status = RunnerStatus(tmp2206)
+	tmp2202 := [2]uint8{}
+	if _, err := io.ReadFull(tmp81, tmp2202[0:0+2]); err != nil {
 		return err
 	}
-	r.MaxTasks = binary.BigEndian.Uint16(tmp2184[:])
+	r.MaxTasks = binary.BigEndian.Uint16(tmp2202[:])
 	if tmp81ByteIO != nil {
 		var err error
 		r.AllowedRootsLen, err = tmp81ByteIO.ReadByte()
@@ -5218,41 +5218,41 @@ func (r *RunnerInfo) Read(tmp81 io.Reader) error {
 		}
 		r.AllowedRootsLen = buf[0]
 	}
-	tmp1213 := int(0)
-	for tmp1213 < int(r.AllowedRootsLen) {
-		tmp2181 := AllowedRoot{}
-		tmp2180 := tmp2181.Read(tmp81)
-		if tmp2180 != nil {
-			return tmp2180
+	tmp1220 := int(0)
+	for tmp1220 < int(r.AllowedRootsLen) {
+		tmp2199 := AllowedRoot{}
+		tmp2198 := tmp2199.Read(tmp81)
+		if tmp2198 != nil {
+			return tmp2198
 		}
-		r.AllowedRoots = append(r.AllowedRoots, tmp2181)
-		tmp1213 = tmp1213 + int(1)
+		r.AllowedRoots = append(r.AllowedRoots, tmp2199)
+		tmp1220 = tmp1220 + int(1)
 	}
-	tmp2176 := [2]uint8{}
-	if _, err := io.ReadFull(tmp81, tmp2176[0:0+2]); err != nil {
+	tmp2194 := [2]uint8{}
+	if _, err := io.ReadFull(tmp81, tmp2194[0:0+2]); err != nil {
 		return err
 	}
-	r.ActiveTasksLen = binary.BigEndian.Uint16(tmp2176[:])
-	tmp1211 := int(0)
-	for tmp1211 < int(r.ActiveTasksLen) {
-		tmp2175 := ActiveTaskRef{}
-		tmp2173 := tmp2175.Read(tmp81)
-		if tmp2173 != nil {
-			return tmp2173
+	r.ActiveTasksLen = binary.BigEndian.Uint16(tmp2194[:])
+	tmp1218 := int(0)
+	for tmp1218 < int(r.ActiveTasksLen) {
+		tmp2192 := ActiveTaskRef{}
+		tmp2190 := tmp2192.Read(tmp81)
+		if tmp2190 != nil {
+			return tmp2190
 		}
-		r.ActiveTasks = append(r.ActiveTasks, tmp2175)
-		tmp1211 = tmp1211 + int(1)
+		r.ActiveTasks = append(r.ActiveTasks, tmp2192)
+		tmp1218 = tmp1218 + int(1)
 	}
-	tmp2169 := [8]uint8{}
-	if _, err := io.ReadFull(tmp81, tmp2169[0:0+8]); err != nil {
+	tmp2186 := [8]uint8{}
+	if _, err := io.ReadFull(tmp81, tmp2186[0:0+8]); err != nil {
 		return err
 	}
-	r.ConnectedAt = binary.BigEndian.Uint64(tmp2169[:])
-	tmp2168 := [8]uint8{}
-	if _, err := io.ReadFull(tmp81, tmp2168[0:0+8]); err != nil {
+	r.ConnectedAt = binary.BigEndian.Uint64(tmp2186[:])
+	tmp2185 := [8]uint8{}
+	if _, err := io.ReadFull(tmp81, tmp2185[0:0+8]); err != nil {
 		return err
 	}
-	r.LastSeen = binary.BigEndian.Uint64(tmp2168[:])
+	r.LastSeen = binary.BigEndian.Uint64(tmp2185[:])
 	return nil
 }
 func (s *RunnerInfo) DecodeCopy(buf []byte) ([]byte, error) {
@@ -5274,86 +5274,86 @@ func (s *RunnerInfo) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (r *RunnerInfo) DecodeSlice(tmp81 []byte, tmp81Offset *int) error {
-	tmp2192 := r.Id.DecodeSlice(tmp81, tmp81Offset)
-	if tmp2192 != nil {
-		return tmp2192
+	tmp2211 := r.Id.DecodeSlice(tmp81, tmp81Offset)
+	if tmp2211 != nil {
+		return tmp2211
 	}
-	tmp2190 := []uint8{}
+	tmp2209 := []uint8{}
 	if len(tmp81)-*tmp81Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerInfo::HostnameLen\"")
 	}
-	tmp2190 = tmp81[*tmp81Offset : *tmp81Offset+1]
+	tmp2209 = tmp81[*tmp81Offset : *tmp81Offset+1]
 	*tmp81Offset += int(1)
-	r.HostnameLen = tmp2190[0]
+	r.HostnameLen = tmp2209[0]
 	if len(tmp81)-*tmp81Offset < int(r.HostnameLen) {
 		return errors.New("not enough data to read for field \"RunnerInfo::Hostname\"")
 	}
 	r.Hostname = tmp81[*tmp81Offset : *tmp81Offset+int(r.HostnameLen)]
 	*tmp81Offset += int(int(r.HostnameLen))
-	tmp2187 := uint8(0)
-	tmp2186 := []uint8{}
+	tmp2206 := uint8(0)
+	tmp2205 := []uint8{}
 	if len(tmp81)-*tmp81Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerInfo::Status\"")
 	}
-	tmp2186 = tmp81[*tmp81Offset : *tmp81Offset+1]
+	tmp2205 = tmp81[*tmp81Offset : *tmp81Offset+1]
 	*tmp81Offset += int(1)
-	tmp2187 = tmp2186[0]
-	r.Status = RunnerStatus(tmp2187)
-	tmp2184 := []uint8{}
+	tmp2206 = tmp2205[0]
+	r.Status = RunnerStatus(tmp2206)
+	tmp2202 := []uint8{}
 	if len(tmp81)-*tmp81Offset < 2 {
 		return errors.New("not enough data to read for field \"RunnerInfo::MaxTasks\"")
 	}
-	tmp2184 = tmp81[*tmp81Offset : *tmp81Offset+2]
+	tmp2202 = tmp81[*tmp81Offset : *tmp81Offset+2]
 	*tmp81Offset += int(2)
-	r.MaxTasks = binary.BigEndian.Uint16(tmp2184[:])
-	tmp2183 := []uint8{}
+	r.MaxTasks = binary.BigEndian.Uint16(tmp2202[:])
+	tmp2201 := []uint8{}
 	if len(tmp81)-*tmp81Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerInfo::AllowedRootsLen\"")
 	}
-	tmp2183 = tmp81[*tmp81Offset : *tmp81Offset+1]
+	tmp2201 = tmp81[*tmp81Offset : *tmp81Offset+1]
 	*tmp81Offset += int(1)
-	r.AllowedRootsLen = tmp2183[0]
-	tmp1213 := int(0)
-	for tmp1213 < int(r.AllowedRootsLen) {
-		tmp2181 := AllowedRoot{}
-		tmp2180 := tmp2181.DecodeSlice(tmp81, tmp81Offset)
-		if tmp2180 != nil {
-			return tmp2180
+	r.AllowedRootsLen = tmp2201[0]
+	tmp1220 := int(0)
+	for tmp1220 < int(r.AllowedRootsLen) {
+		tmp2199 := AllowedRoot{}
+		tmp2198 := tmp2199.DecodeSlice(tmp81, tmp81Offset)
+		if tmp2198 != nil {
+			return tmp2198
 		}
-		r.AllowedRoots = append(r.AllowedRoots, tmp2181)
-		tmp1213 = tmp1213 + int(1)
+		r.AllowedRoots = append(r.AllowedRoots, tmp2199)
+		tmp1220 = tmp1220 + int(1)
 	}
-	tmp2176 := []uint8{}
+	tmp2194 := []uint8{}
 	if len(tmp81)-*tmp81Offset < 2 {
 		return errors.New("not enough data to read for field \"RunnerInfo::ActiveTasksLen\"")
 	}
-	tmp2176 = tmp81[*tmp81Offset : *tmp81Offset+2]
+	tmp2194 = tmp81[*tmp81Offset : *tmp81Offset+2]
 	*tmp81Offset += int(2)
-	r.ActiveTasksLen = binary.BigEndian.Uint16(tmp2176[:])
-	tmp1211 := int(0)
-	for tmp1211 < int(r.ActiveTasksLen) {
-		tmp2175 := ActiveTaskRef{}
-		tmp2173 := tmp2175.DecodeSlice(tmp81, tmp81Offset)
-		if tmp2173 != nil {
-			return tmp2173
+	r.ActiveTasksLen = binary.BigEndian.Uint16(tmp2194[:])
+	tmp1218 := int(0)
+	for tmp1218 < int(r.ActiveTasksLen) {
+		tmp2192 := ActiveTaskRef{}
+		tmp2190 := tmp2192.DecodeSlice(tmp81, tmp81Offset)
+		if tmp2190 != nil {
+			return tmp2190
 		}
-		r.ActiveTasks = append(r.ActiveTasks, tmp2175)
-		tmp1211 = tmp1211 + int(1)
+		r.ActiveTasks = append(r.ActiveTasks, tmp2192)
+		tmp1218 = tmp1218 + int(1)
 	}
-	tmp2169 := []uint8{}
+	tmp2186 := []uint8{}
 	if len(tmp81)-*tmp81Offset < 8 {
 		return errors.New("not enough data to read for field \"RunnerInfo::ConnectedAt\"")
 	}
-	tmp2169 = tmp81[*tmp81Offset : *tmp81Offset+8]
+	tmp2186 = tmp81[*tmp81Offset : *tmp81Offset+8]
 	*tmp81Offset += int(8)
-	r.ConnectedAt = binary.BigEndian.Uint64(tmp2169[:])
-	tmp2168 := []uint8{}
+	r.ConnectedAt = binary.BigEndian.Uint64(tmp2186[:])
+	tmp2185 := []uint8{}
 	if len(tmp81)-*tmp81Offset < 8 {
 		return errors.New("not enough data to read for field \"RunnerInfo::LastSeen\"")
 	}
-	tmp2168 = tmp81[*tmp81Offset : *tmp81Offset+8]
+	tmp2185 = tmp81[*tmp81Offset : *tmp81Offset+8]
 	*tmp81Offset += int(8)
-	r.LastSeen = binary.BigEndian.Uint64(tmp2168[:])
+	r.LastSeen = binary.BigEndian.Uint64(tmp2185[:])
 	return nil
 }
 func (s *RunnerInfo) Decode(buf []byte) ([]byte, error) {
@@ -5391,110 +5391,132 @@ type TaskInfo struct {
 	ExitCode       int32
 	PromptLen      uint32
 	Prompt         []uint8
+	ErrorLen       uint32
+	ErrorMessage   []uint8
 }
 
-func (t *TaskInfo) SetRepoPath(tmp2236 []uint8) bool {
-	if len(tmp2236) > int(65535) {
+func (t *TaskInfo) SetRepoPath(tmp2230 []uint8) bool {
+	if len(tmp2230) > int(65535) {
 		return false
 	}
-	t.RepoPathLen = uint16(len(tmp2236))
-	t.RepoPath = tmp2236
+	t.RepoPathLen = uint16(len(tmp2230))
+	t.RepoPath = tmp2230
 	return true
 }
 
-func (t *TaskInfo) SetWorktreeDir(tmp2225 []uint8) bool {
-	if len(tmp2225) > int(65535) {
+func (t *TaskInfo) SetWorktreeDir(tmp2242 []uint8) bool {
+	if len(tmp2242) > int(65535) {
 		return false
 	}
-	t.WorktreeDirLen = uint16(len(tmp2225))
-	t.WorktreeDir = tmp2225
+	t.WorktreeDirLen = uint16(len(tmp2242))
+	t.WorktreeDir = tmp2242
 	return true
 }
 
-func (t *TaskInfo) SetPrompt(tmp2222 []uint8) bool {
-	if len(tmp2222) > int(4294967295) {
+func (t *TaskInfo) SetPrompt(tmp2229 []uint8) bool {
+	if len(tmp2229) > int(4294967295) {
 		return false
 	}
-	t.PromptLen = uint32(len(tmp2222))
-	t.Prompt = tmp2222
+	t.PromptLen = uint32(len(tmp2229))
+	t.Prompt = tmp2229
 	return true
 }
 
-func (t *TaskInfo) Write(tmp55 io.Writer) error {
-	tmp2106 := t.Id.Write(tmp55)
-	if tmp2106 != nil {
-		return tmp2106
+func (t *TaskInfo) SetErrorMessage(tmp2223 []uint8) bool {
+	if len(tmp2223) > int(4294967295) {
+		return false
 	}
-	tmp2103 := [1]uint8{}
-	tmp2103[0] = uint8(t.Status)
-	if _, err := tmp55.Write(tmp2103[:1]); err != nil {
+	t.ErrorLen = uint32(len(tmp2223))
+	t.ErrorMessage = tmp2223
+	return true
+}
+
+func (t *TaskInfo) Write(tmp50 io.Writer) error {
+	tmp2120 := t.Id.Write(tmp50)
+	if tmp2120 != nil {
+		return tmp2120
+	}
+	tmp2117 := [1]uint8{}
+	tmp2117[0] = uint8(t.Status)
+	if _, err := tmp50.Write(tmp2117[:1]); err != nil {
 		return err
 	}
-	tmp2099 := [1]uint8{}
-	tmp2099[0] = uint8(t.Kind)
-	if _, err := tmp55.Write(tmp2099[:1]); err != nil {
+	tmp2113 := [1]uint8{}
+	tmp2113[0] = uint8(t.Kind)
+	if _, err := tmp50.Write(tmp2113[:1]); err != nil {
 		return err
 	}
-	tmp2095 := [1]uint8{}
-	tmp2095[0] = uint8(t.OriginKind)
-	if _, err := tmp55.Write(tmp2095[:1]); err != nil {
+	tmp2109 := [1]uint8{}
+	tmp2109[0] = uint8(t.OriginKind)
+	if _, err := tmp50.Write(tmp2109[:1]); err != nil {
 		return err
 	}
-	tmp2092 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2092[:], uint16(t.RepoPathLen))
-	if _, err := tmp55.Write(tmp2092[:2]); err != nil {
+	tmp2106 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2106[:], uint16(t.RepoPathLen))
+	if _, err := tmp50.Write(tmp2106[:2]); err != nil {
 		return err
 	}
 	if len(t.RepoPath) != int(t.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskInfo::RepoPath\": expected %d, got %d", int(t.RepoPathLen), len(t.RepoPath))
 	}
-	if _, err := tmp55.Write(t.RepoPath); err != nil {
+	if _, err := tmp50.Write(t.RepoPath); err != nil {
 		return err
 	}
-	tmp2088 := t.AssignedTo.Write(tmp55)
-	if tmp2088 != nil {
-		return tmp2088
+	tmp2102 := t.AssignedTo.Write(tmp50)
+	if tmp2102 != nil {
+		return tmp2102
 	}
-	tmp2086 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2086[:], uint16(t.WorktreeDirLen))
-	if _, err := tmp55.Write(tmp2086[:2]); err != nil {
+	tmp2100 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2100[:], uint16(t.WorktreeDirLen))
+	if _, err := tmp50.Write(tmp2100[:2]); err != nil {
 		return err
 	}
 	if len(t.WorktreeDir) != int(t.WorktreeDirLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskInfo::WorktreeDir\": expected %d, got %d", int(t.WorktreeDirLen), len(t.WorktreeDir))
 	}
-	if _, err := tmp55.Write(t.WorktreeDir); err != nil {
+	if _, err := tmp50.Write(t.WorktreeDir); err != nil {
 		return err
 	}
-	tmp2082 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2082[:], uint64(t.CreatedAt))
-	if _, err := tmp55.Write(tmp2082[:8]); err != nil {
+	tmp2096 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2096[:], uint64(t.CreatedAt))
+	if _, err := tmp50.Write(tmp2096[:8]); err != nil {
 		return err
 	}
-	tmp2080 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2080[:], uint64(t.StartedAt))
-	if _, err := tmp55.Write(tmp2080[:8]); err != nil {
+	tmp2094 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2094[:], uint64(t.StartedAt))
+	if _, err := tmp50.Write(tmp2094[:8]); err != nil {
 		return err
 	}
-	tmp2078 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2078[:], uint64(t.EndedAt))
-	if _, err := tmp55.Write(tmp2078[:8]); err != nil {
+	tmp2092 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2092[:], uint64(t.EndedAt))
+	if _, err := tmp50.Write(tmp2092[:8]); err != nil {
 		return err
 	}
-	tmp2076 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp2076[:], uint32(uint32(t.ExitCode)))
-	if _, err := tmp55.Write(tmp2076[:4]); err != nil {
+	tmp2090 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2090[:], uint32(uint32(t.ExitCode)))
+	if _, err := tmp50.Write(tmp2090[:4]); err != nil {
 		return err
 	}
-	tmp2074 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp2074[:], uint32(t.PromptLen))
-	if _, err := tmp55.Write(tmp2074[:4]); err != nil {
+	tmp2088 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2088[:], uint32(t.PromptLen))
+	if _, err := tmp50.Write(tmp2088[:4]); err != nil {
 		return err
 	}
 	if len(t.Prompt) != int(t.PromptLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskInfo::Prompt\": expected %d, got %d", int(t.PromptLen), len(t.Prompt))
 	}
-	if _, err := tmp55.Write(t.Prompt); err != nil {
+	if _, err := tmp50.Write(t.Prompt); err != nil {
+		return err
+	}
+	tmp2084 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2084[:], uint32(t.ErrorLen))
+	if _, err := tmp50.Write(tmp2084[:4]); err != nil {
+		return err
+	}
+	if len(t.ErrorMessage) != int(t.ErrorLen) {
+		return fmt.Errorf("size mismatch when writing field \"TaskInfo::ErrorMessage\": expected %d, got %d", int(t.ErrorLen), len(t.ErrorMessage))
+	}
+	if _, err := tmp50.Write(t.ErrorMessage); err != nil {
 		return err
 	}
 	return nil
@@ -5514,109 +5536,124 @@ func (s *TaskInfo) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskInfo) EncodeSlice(tmp55 []byte, tmp55Offset *int) error {
-	tmp2106 := t.Id.EncodeSlice(tmp55, tmp55Offset)
-	if tmp2106 != nil {
-		return tmp2106
+func (t *TaskInfo) EncodeSlice(tmp50 []byte, tmp50Offset *int) error {
+	tmp2120 := t.Id.EncodeSlice(tmp50, tmp50Offset)
+	if tmp2120 != nil {
+		return tmp2120
 	}
-	tmp2103 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(1) {
+	tmp2117 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::Status\"")
 	}
-	tmp2103 = tmp55[*tmp55Offset : *tmp55Offset+int(1)]
-	tmp2103[0] = uint8(t.Status)
-	*tmp55Offset += int(1)
-	tmp2099 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(1) {
+	tmp2117 = tmp50[*tmp50Offset : *tmp50Offset+int(1)]
+	tmp2117[0] = uint8(t.Status)
+	*tmp50Offset += int(1)
+	tmp2113 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::Kind\"")
 	}
-	tmp2099 = tmp55[*tmp55Offset : *tmp55Offset+int(1)]
-	tmp2099[0] = uint8(t.Kind)
-	*tmp55Offset += int(1)
-	tmp2095 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(1) {
+	tmp2113 = tmp50[*tmp50Offset : *tmp50Offset+int(1)]
+	tmp2113[0] = uint8(t.Kind)
+	*tmp50Offset += int(1)
+	tmp2109 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::OriginKind\"")
 	}
-	tmp2095 = tmp55[*tmp55Offset : *tmp55Offset+int(1)]
-	tmp2095[0] = uint8(t.OriginKind)
-	*tmp55Offset += int(1)
-	tmp2092 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(2) {
+	tmp2109 = tmp50[*tmp50Offset : *tmp50Offset+int(1)]
+	tmp2109[0] = uint8(t.OriginKind)
+	*tmp50Offset += int(1)
+	tmp2106 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::RepoPathLen\"")
 	}
-	tmp2092 = tmp55[*tmp55Offset : *tmp55Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2092[:], uint16(t.RepoPathLen))
-	*tmp55Offset += int(2)
+	tmp2106 = tmp50[*tmp50Offset : *tmp50Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2106[:], uint16(t.RepoPathLen))
+	*tmp50Offset += int(2)
 	if len(t.RepoPath) != int(t.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskInfo::RepoPath\": expected %d, got %d", int(t.RepoPathLen), len(t.RepoPath))
 	}
-	if len(tmp55)-*tmp55Offset < int(0+t.RepoPathLen) {
+	if len(tmp50)-*tmp50Offset < int(0+t.RepoPathLen) {
 		return errors.New("not enough space to write for field \"TaskInfo::RepoPath\"")
 	}
-	copy(tmp55[*tmp55Offset:*tmp55Offset+int(t.RepoPathLen)], t.RepoPath)
-	*tmp55Offset += int(t.RepoPathLen)
-	tmp2088 := t.AssignedTo.EncodeSlice(tmp55, tmp55Offset)
-	if tmp2088 != nil {
-		return tmp2088
+	copy(tmp50[*tmp50Offset:*tmp50Offset+int(t.RepoPathLen)], t.RepoPath)
+	*tmp50Offset += int(t.RepoPathLen)
+	tmp2102 := t.AssignedTo.EncodeSlice(tmp50, tmp50Offset)
+	if tmp2102 != nil {
+		return tmp2102
 	}
-	tmp2086 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(2) {
+	tmp2100 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::WorktreeDirLen\"")
 	}
-	tmp2086 = tmp55[*tmp55Offset : *tmp55Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2086[:], uint16(t.WorktreeDirLen))
-	*tmp55Offset += int(2)
+	tmp2100 = tmp50[*tmp50Offset : *tmp50Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2100[:], uint16(t.WorktreeDirLen))
+	*tmp50Offset += int(2)
 	if len(t.WorktreeDir) != int(t.WorktreeDirLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskInfo::WorktreeDir\": expected %d, got %d", int(t.WorktreeDirLen), len(t.WorktreeDir))
 	}
-	if len(tmp55)-*tmp55Offset < int(0+t.WorktreeDirLen) {
+	if len(tmp50)-*tmp50Offset < int(0+t.WorktreeDirLen) {
 		return errors.New("not enough space to write for field \"TaskInfo::WorktreeDir\"")
 	}
-	copy(tmp55[*tmp55Offset:*tmp55Offset+int(t.WorktreeDirLen)], t.WorktreeDir)
-	*tmp55Offset += int(t.WorktreeDirLen)
-	tmp2082 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(8) {
+	copy(tmp50[*tmp50Offset:*tmp50Offset+int(t.WorktreeDirLen)], t.WorktreeDir)
+	*tmp50Offset += int(t.WorktreeDirLen)
+	tmp2096 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::CreatedAt\"")
 	}
-	tmp2082 = tmp55[*tmp55Offset : *tmp55Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp2082[:], uint64(t.CreatedAt))
-	*tmp55Offset += int(8)
-	tmp2080 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(8) {
+	tmp2096 = tmp50[*tmp50Offset : *tmp50Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp2096[:], uint64(t.CreatedAt))
+	*tmp50Offset += int(8)
+	tmp2094 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::StartedAt\"")
 	}
-	tmp2080 = tmp55[*tmp55Offset : *tmp55Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp2080[:], uint64(t.StartedAt))
-	*tmp55Offset += int(8)
-	tmp2078 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(8) {
+	tmp2094 = tmp50[*tmp50Offset : *tmp50Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp2094[:], uint64(t.StartedAt))
+	*tmp50Offset += int(8)
+	tmp2092 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::EndedAt\"")
 	}
-	tmp2078 = tmp55[*tmp55Offset : *tmp55Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp2078[:], uint64(t.EndedAt))
-	*tmp55Offset += int(8)
-	tmp2076 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(4) {
+	tmp2092 = tmp50[*tmp50Offset : *tmp50Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp2092[:], uint64(t.EndedAt))
+	*tmp50Offset += int(8)
+	tmp2090 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::ExitCode\"")
 	}
-	tmp2076 = tmp55[*tmp55Offset : *tmp55Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp2076[:], uint32(uint32(t.ExitCode)))
-	*tmp55Offset += int(4)
-	tmp2074 := []uint8{}
-	if len(tmp55)-*tmp55Offset < int(4) {
+	tmp2090 = tmp50[*tmp50Offset : *tmp50Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp2090[:], uint32(uint32(t.ExitCode)))
+	*tmp50Offset += int(4)
+	tmp2088 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"TaskInfo::PromptLen\"")
 	}
-	tmp2074 = tmp55[*tmp55Offset : *tmp55Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp2074[:], uint32(t.PromptLen))
-	*tmp55Offset += int(4)
+	tmp2088 = tmp50[*tmp50Offset : *tmp50Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp2088[:], uint32(t.PromptLen))
+	*tmp50Offset += int(4)
 	if len(t.Prompt) != int(t.PromptLen) {
 		return fmt.Errorf("size mismatch when writing field \"TaskInfo::Prompt\": expected %d, got %d", int(t.PromptLen), len(t.Prompt))
 	}
-	if len(tmp55)-*tmp55Offset < int(0+t.PromptLen) {
+	if len(tmp50)-*tmp50Offset < int(0+t.PromptLen) {
 		return errors.New("not enough space to write for field \"TaskInfo::Prompt\"")
 	}
-	copy(tmp55[*tmp55Offset:*tmp55Offset+int(t.PromptLen)], t.Prompt)
-	*tmp55Offset += int(t.PromptLen)
+	copy(tmp50[*tmp50Offset:*tmp50Offset+int(t.PromptLen)], t.Prompt)
+	*tmp50Offset += int(t.PromptLen)
+	tmp2084 := []uint8{}
+	if len(tmp50)-*tmp50Offset < int(4) {
+		return errors.New("not enough space to reserve data for field \"TaskInfo::ErrorLen\"")
+	}
+	tmp2084 = tmp50[*tmp50Offset : *tmp50Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp2084[:], uint32(t.ErrorLen))
+	*tmp50Offset += int(4)
+	if len(t.ErrorMessage) != int(t.ErrorLen) {
+		return fmt.Errorf("size mismatch when writing field \"TaskInfo::ErrorMessage\": expected %d, got %d", int(t.ErrorLen), len(t.ErrorMessage))
+	}
+	if len(tmp50)-*tmp50Offset < int(0+t.ErrorLen) {
+		return errors.New("not enough space to write for field \"TaskInfo::ErrorMessage\"")
+	}
+	copy(tmp50[*tmp50Offset:*tmp50Offset+int(t.ErrorLen)], t.ErrorMessage)
+	*tmp50Offset += int(t.ErrorLen)
 	return nil
 }
 func (s *TaskInfo) Encode(buf []byte) ([]byte, error) {
@@ -5634,62 +5671,69 @@ func (s *TaskInfo) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (t *TaskInfo) Append(tmp55 []byte) ([]byte, error) {
-	var tmp2106 error
-	tmp55, tmp2106 = t.Id.Append(tmp55)
+func (t *TaskInfo) Append(tmp50 []byte) ([]byte, error) {
+	var tmp2120 error
+	tmp50, tmp2120 = t.Id.Append(tmp50)
 
-	if tmp2106 != nil {
-		return nil, tmp2106
+	if tmp2120 != nil {
+		return nil, tmp2120
 	}
-	tmp2103 := [1]uint8{}
-	tmp2103[0] = uint8(t.Status)
-	tmp55 = append(tmp55, tmp2103[:1]...)
-	tmp2099 := [1]uint8{}
-	tmp2099[0] = uint8(t.Kind)
-	tmp55 = append(tmp55, tmp2099[:1]...)
-	tmp2095 := [1]uint8{}
-	tmp2095[0] = uint8(t.OriginKind)
-	tmp55 = append(tmp55, tmp2095[:1]...)
-	tmp2092 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2092[:], uint16(t.RepoPathLen))
-	tmp55 = append(tmp55, tmp2092[:2]...)
+	tmp2117 := [1]uint8{}
+	tmp2117[0] = uint8(t.Status)
+	tmp50 = append(tmp50, tmp2117[:1]...)
+	tmp2113 := [1]uint8{}
+	tmp2113[0] = uint8(t.Kind)
+	tmp50 = append(tmp50, tmp2113[:1]...)
+	tmp2109 := [1]uint8{}
+	tmp2109[0] = uint8(t.OriginKind)
+	tmp50 = append(tmp50, tmp2109[:1]...)
+	tmp2106 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2106[:], uint16(t.RepoPathLen))
+	tmp50 = append(tmp50, tmp2106[:2]...)
 	if len(t.RepoPath) != int(t.RepoPathLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"TaskInfo::RepoPath\": expected %d, got %d", int(t.RepoPathLen), len(t.RepoPath))
 	}
-	tmp55 = append(tmp55, t.RepoPath...)
-	var tmp2088 error
-	tmp55, tmp2088 = t.AssignedTo.Append(tmp55)
+	tmp50 = append(tmp50, t.RepoPath...)
+	var tmp2102 error
+	tmp50, tmp2102 = t.AssignedTo.Append(tmp50)
 
-	if tmp2088 != nil {
-		return nil, tmp2088
+	if tmp2102 != nil {
+		return nil, tmp2102
 	}
-	tmp2086 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2086[:], uint16(t.WorktreeDirLen))
-	tmp55 = append(tmp55, tmp2086[:2]...)
+	tmp2100 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2100[:], uint16(t.WorktreeDirLen))
+	tmp50 = append(tmp50, tmp2100[:2]...)
 	if len(t.WorktreeDir) != int(t.WorktreeDirLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"TaskInfo::WorktreeDir\": expected %d, got %d", int(t.WorktreeDirLen), len(t.WorktreeDir))
 	}
-	tmp55 = append(tmp55, t.WorktreeDir...)
-	tmp2082 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2082[:], uint64(t.CreatedAt))
-	tmp55 = append(tmp55, tmp2082[:8]...)
-	tmp2080 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2080[:], uint64(t.StartedAt))
-	tmp55 = append(tmp55, tmp2080[:8]...)
-	tmp2078 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp2078[:], uint64(t.EndedAt))
-	tmp55 = append(tmp55, tmp2078[:8]...)
-	tmp2076 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp2076[:], uint32(uint32(t.ExitCode)))
-	tmp55 = append(tmp55, tmp2076[:4]...)
-	tmp2074 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp2074[:], uint32(t.PromptLen))
-	tmp55 = append(tmp55, tmp2074[:4]...)
+	tmp50 = append(tmp50, t.WorktreeDir...)
+	tmp2096 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2096[:], uint64(t.CreatedAt))
+	tmp50 = append(tmp50, tmp2096[:8]...)
+	tmp2094 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2094[:], uint64(t.StartedAt))
+	tmp50 = append(tmp50, tmp2094[:8]...)
+	tmp2092 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp2092[:], uint64(t.EndedAt))
+	tmp50 = append(tmp50, tmp2092[:8]...)
+	tmp2090 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2090[:], uint32(uint32(t.ExitCode)))
+	tmp50 = append(tmp50, tmp2090[:4]...)
+	tmp2088 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2088[:], uint32(t.PromptLen))
+	tmp50 = append(tmp50, tmp2088[:4]...)
 	if len(t.Prompt) != int(t.PromptLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"TaskInfo::Prompt\": expected %d, got %d", int(t.PromptLen), len(t.Prompt))
 	}
-	tmp55 = append(tmp55, t.Prompt...)
-	return tmp55, nil
+	tmp50 = append(tmp50, t.Prompt...)
+	tmp2084 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp2084[:], uint32(t.ErrorLen))
+	tmp50 = append(tmp50, tmp2084[:4]...)
+	if len(t.ErrorMessage) != int(t.ErrorLen) {
+		return nil, fmt.Errorf("size mismatch when writing field \"TaskInfo::ErrorMessage\": expected %d, got %d", int(t.ErrorLen), len(t.ErrorMessage))
+	}
+	tmp50 = append(tmp50, t.ErrorMessage...)
+	return tmp50, nil
 }
 func (s *TaskInfo) MustAppend(buf []byte) []byte {
 	var err error
@@ -5700,38 +5744,38 @@ func (s *TaskInfo) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (t *TaskInfo) Read(tmp56 io.Reader) error {
-	tmp2130 := t.Id.Read(tmp56)
-	if tmp2130 != nil {
-		return tmp2130
+func (t *TaskInfo) Read(tmp51 io.Reader) error {
+	tmp2146 := t.Id.Read(tmp51)
+	if tmp2146 != nil {
+		return tmp2146
 	}
-	tmp2128 := uint8(0)
-	tmp2127 := [1]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2127[0:0+1]); err != nil {
+	tmp2144 := uint8(0)
+	tmp2143 := [1]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2143[0:0+1]); err != nil {
 		return err
 	}
-	tmp2128 = tmp2127[0]
-	t.Status = TaskStatus(tmp2128)
-	tmp2125 := uint8(0)
-	tmp2124 := [1]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2124[0:0+1]); err != nil {
+	tmp2144 = tmp2143[0]
+	t.Status = TaskStatus(tmp2144)
+	tmp2141 := uint8(0)
+	tmp2140 := [1]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2140[0:0+1]); err != nil {
 		return err
 	}
-	tmp2125 = tmp2124[0]
-	t.Kind = TaskKind(tmp2125)
-	tmp2122 := uint8(0)
-	tmp2121 := [1]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2121[0:0+1]); err != nil {
+	tmp2141 = tmp2140[0]
+	t.Kind = TaskKind(tmp2141)
+	tmp2138 := uint8(0)
+	tmp2137 := [1]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2137[0:0+1]); err != nil {
 		return err
 	}
-	tmp2122 = tmp2121[0]
-	t.OriginKind = ClientKind(tmp2122)
-	tmp2119 := [2]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2119[0:0+2]); err != nil {
+	tmp2138 = tmp2137[0]
+	t.OriginKind = ClientKind(tmp2138)
+	tmp2135 := [2]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2135[0:0+2]); err != nil {
 		return err
 	}
-	t.RepoPathLen = binary.BigEndian.Uint16(tmp2119[:])
-	if seeker, ok := tmp56.(io.Seeker); ok {
+	t.RepoPathLen = binary.BigEndian.Uint16(tmp2135[:])
+	if seeker, ok := tmp51.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -5748,28 +5792,28 @@ func (t *TaskInfo) Read(tmp56 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(t.RepoPathLen)))
 		}
 		t.RepoPath = make([]byte, int(t.RepoPathLen))
-		if _, err := io.ReadFull(tmp56, t.RepoPath[0:0+int(t.RepoPathLen)]); err != nil {
+		if _, err := io.ReadFull(tmp51, t.RepoPath[0:0+int(t.RepoPathLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_5984 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_5984, tmp56, int64(int(t.RepoPathLen))); err != nil {
+		io_temp_6061 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_6061, tmp51, int64(int(t.RepoPathLen))); err != nil {
 			return err
 		}
-		t.RepoPath = io_temp_5984.Bytes()
+		t.RepoPath = io_temp_6061.Bytes()
 	}
-	tmp2117 := t.AssignedTo.Read(tmp56)
-	if tmp2117 != nil {
-		return tmp2117
+	tmp2133 := t.AssignedTo.Read(tmp51)
+	if tmp2133 != nil {
+		return tmp2133
 	}
-	tmp2115 := [2]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2115[0:0+2]); err != nil {
+	tmp2131 := [2]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2131[0:0+2]); err != nil {
 		return err
 	}
-	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2115[:])
-	if seeker, ok := tmp56.(io.Seeker); ok {
+	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2131[:])
+	if seeker, ok := tmp51.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -5786,44 +5830,44 @@ func (t *TaskInfo) Read(tmp56 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(t.WorktreeDirLen)))
 		}
 		t.WorktreeDir = make([]byte, int(t.WorktreeDirLen))
-		if _, err := io.ReadFull(tmp56, t.WorktreeDir[0:0+int(t.WorktreeDirLen)]); err != nil {
+		if _, err := io.ReadFull(tmp51, t.WorktreeDir[0:0+int(t.WorktreeDirLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_5961 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_5961, tmp56, int64(int(t.WorktreeDirLen))); err != nil {
+		io_temp_6038 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_6038, tmp51, int64(int(t.WorktreeDirLen))); err != nil {
 			return err
 		}
-		t.WorktreeDir = io_temp_5961.Bytes()
+		t.WorktreeDir = io_temp_6038.Bytes()
 	}
-	tmp2113 := [8]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2113[0:0+8]); err != nil {
+	tmp2129 := [8]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2129[0:0+8]); err != nil {
 		return err
 	}
-	t.CreatedAt = binary.BigEndian.Uint64(tmp2113[:])
-	tmp2112 := [8]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2112[0:0+8]); err != nil {
+	t.CreatedAt = binary.BigEndian.Uint64(tmp2129[:])
+	tmp2128 := [8]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2128[0:0+8]); err != nil {
 		return err
 	}
-	t.StartedAt = binary.BigEndian.Uint64(tmp2112[:])
-	tmp2111 := [8]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2111[0:0+8]); err != nil {
+	t.StartedAt = binary.BigEndian.Uint64(tmp2128[:])
+	tmp2127 := [8]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2127[0:0+8]); err != nil {
 		return err
 	}
-	t.EndedAt = binary.BigEndian.Uint64(tmp2111[:])
-	tmp2110 := [4]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2110[0:0+4]); err != nil {
+	t.EndedAt = binary.BigEndian.Uint64(tmp2127[:])
+	tmp2126 := [4]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2126[0:0+4]); err != nil {
 		return err
 	}
-	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2110[:]))
-	tmp2109 := [4]uint8{}
-	if _, err := io.ReadFull(tmp56, tmp2109[0:0+4]); err != nil {
+	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2126[:]))
+	tmp2125 := [4]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2125[0:0+4]); err != nil {
 		return err
 	}
-	t.PromptLen = binary.BigEndian.Uint32(tmp2109[:])
-	if seeker, ok := tmp56.(io.Seeker); ok {
+	t.PromptLen = binary.BigEndian.Uint32(tmp2125[:])
+	if seeker, ok := tmp51.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -5840,17 +5884,51 @@ func (t *TaskInfo) Read(tmp56 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(t.PromptLen)))
 		}
 		t.Prompt = make([]byte, int(t.PromptLen))
-		if _, err := io.ReadFull(tmp56, t.Prompt[0:0+int(t.PromptLen)]); err != nil {
+		if _, err := io.ReadFull(tmp51, t.Prompt[0:0+int(t.PromptLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_5806 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_5806, tmp56, int64(int(t.PromptLen))); err != nil {
+		io_temp_5883 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_5883, tmp51, int64(int(t.PromptLen))); err != nil {
 			return err
 		}
-		t.Prompt = io_temp_5806.Bytes()
+		t.Prompt = io_temp_5883.Bytes()
+	}
+	tmp2123 := [4]uint8{}
+	if _, err := io.ReadFull(tmp51, tmp2123[0:0+4]); err != nil {
+		return err
+	}
+	t.ErrorLen = binary.BigEndian.Uint32(tmp2123[:])
+	if seeker, ok := tmp51.(io.Seeker); ok {
+		current, err := seeker.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return err
+		}
+		endOffset, err := seeker.Seek(0, io.SeekEnd)
+		if err != nil {
+			return err
+		}
+		_, err = seeker.Seek(current, io.SeekStart)
+		if err != nil {
+			return err
+		}
+		if (endOffset - current) < int64(int(t.ErrorLen)) {
+			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(t.ErrorLen)))
+		}
+		t.ErrorMessage = make([]byte, int(t.ErrorLen))
+		if _, err := io.ReadFull(tmp51, t.ErrorMessage[0:0+int(t.ErrorLen)]); err != nil {
+			return err
+		}
+	} else {
+		// To mitigate DoS attack, use incremental buffer allocation
+		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
+		io_temp_5861 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_5861, tmp51, int64(int(t.ErrorLen))); err != nil {
+			return err
+		}
+		t.ErrorMessage = io_temp_5861.Bytes()
 	}
 	return nil
 }
@@ -5872,106 +5950,118 @@ func (s *TaskInfo) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (t *TaskInfo) DecodeSlice(tmp56 []byte, tmp56Offset *int) error {
-	tmp2130 := t.Id.DecodeSlice(tmp56, tmp56Offset)
-	if tmp2130 != nil {
-		return tmp2130
+func (t *TaskInfo) DecodeSlice(tmp51 []byte, tmp51Offset *int) error {
+	tmp2146 := t.Id.DecodeSlice(tmp51, tmp51Offset)
+	if tmp2146 != nil {
+		return tmp2146
 	}
-	tmp2128 := uint8(0)
-	tmp2127 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 1 {
+	tmp2144 := uint8(0)
+	tmp2143 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskInfo::Status\"")
 	}
-	tmp2127 = tmp56[*tmp56Offset : *tmp56Offset+1]
-	*tmp56Offset += int(1)
-	tmp2128 = tmp2127[0]
-	t.Status = TaskStatus(tmp2128)
-	tmp2125 := uint8(0)
-	tmp2124 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 1 {
+	tmp2143 = tmp51[*tmp51Offset : *tmp51Offset+1]
+	*tmp51Offset += int(1)
+	tmp2144 = tmp2143[0]
+	t.Status = TaskStatus(tmp2144)
+	tmp2141 := uint8(0)
+	tmp2140 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskInfo::Kind\"")
 	}
-	tmp2124 = tmp56[*tmp56Offset : *tmp56Offset+1]
-	*tmp56Offset += int(1)
-	tmp2125 = tmp2124[0]
-	t.Kind = TaskKind(tmp2125)
-	tmp2122 := uint8(0)
-	tmp2121 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 1 {
+	tmp2140 = tmp51[*tmp51Offset : *tmp51Offset+1]
+	*tmp51Offset += int(1)
+	tmp2141 = tmp2140[0]
+	t.Kind = TaskKind(tmp2141)
+	tmp2138 := uint8(0)
+	tmp2137 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskInfo::OriginKind\"")
 	}
-	tmp2121 = tmp56[*tmp56Offset : *tmp56Offset+1]
-	*tmp56Offset += int(1)
-	tmp2122 = tmp2121[0]
-	t.OriginKind = ClientKind(tmp2122)
-	tmp2119 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 2 {
+	tmp2137 = tmp51[*tmp51Offset : *tmp51Offset+1]
+	*tmp51Offset += int(1)
+	tmp2138 = tmp2137[0]
+	t.OriginKind = ClientKind(tmp2138)
+	tmp2135 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 2 {
 		return errors.New("not enough data to read for field \"TaskInfo::RepoPathLen\"")
 	}
-	tmp2119 = tmp56[*tmp56Offset : *tmp56Offset+2]
-	*tmp56Offset += int(2)
-	t.RepoPathLen = binary.BigEndian.Uint16(tmp2119[:])
-	if len(tmp56)-*tmp56Offset < int(t.RepoPathLen) {
+	tmp2135 = tmp51[*tmp51Offset : *tmp51Offset+2]
+	*tmp51Offset += int(2)
+	t.RepoPathLen = binary.BigEndian.Uint16(tmp2135[:])
+	if len(tmp51)-*tmp51Offset < int(t.RepoPathLen) {
 		return errors.New("not enough data to read for field \"TaskInfo::RepoPath\"")
 	}
-	t.RepoPath = tmp56[*tmp56Offset : *tmp56Offset+int(t.RepoPathLen)]
-	*tmp56Offset += int(int(t.RepoPathLen))
-	tmp2117 := t.AssignedTo.DecodeSlice(tmp56, tmp56Offset)
-	if tmp2117 != nil {
-		return tmp2117
+	t.RepoPath = tmp51[*tmp51Offset : *tmp51Offset+int(t.RepoPathLen)]
+	*tmp51Offset += int(int(t.RepoPathLen))
+	tmp2133 := t.AssignedTo.DecodeSlice(tmp51, tmp51Offset)
+	if tmp2133 != nil {
+		return tmp2133
 	}
-	tmp2115 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 2 {
+	tmp2131 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 2 {
 		return errors.New("not enough data to read for field \"TaskInfo::WorktreeDirLen\"")
 	}
-	tmp2115 = tmp56[*tmp56Offset : *tmp56Offset+2]
-	*tmp56Offset += int(2)
-	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2115[:])
-	if len(tmp56)-*tmp56Offset < int(t.WorktreeDirLen) {
+	tmp2131 = tmp51[*tmp51Offset : *tmp51Offset+2]
+	*tmp51Offset += int(2)
+	t.WorktreeDirLen = binary.BigEndian.Uint16(tmp2131[:])
+	if len(tmp51)-*tmp51Offset < int(t.WorktreeDirLen) {
 		return errors.New("not enough data to read for field \"TaskInfo::WorktreeDir\"")
 	}
-	t.WorktreeDir = tmp56[*tmp56Offset : *tmp56Offset+int(t.WorktreeDirLen)]
-	*tmp56Offset += int(int(t.WorktreeDirLen))
-	tmp2113 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 8 {
+	t.WorktreeDir = tmp51[*tmp51Offset : *tmp51Offset+int(t.WorktreeDirLen)]
+	*tmp51Offset += int(int(t.WorktreeDirLen))
+	tmp2129 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 8 {
 		return errors.New("not enough data to read for field \"TaskInfo::CreatedAt\"")
 	}
-	tmp2113 = tmp56[*tmp56Offset : *tmp56Offset+8]
-	*tmp56Offset += int(8)
-	t.CreatedAt = binary.BigEndian.Uint64(tmp2113[:])
-	tmp2112 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 8 {
+	tmp2129 = tmp51[*tmp51Offset : *tmp51Offset+8]
+	*tmp51Offset += int(8)
+	t.CreatedAt = binary.BigEndian.Uint64(tmp2129[:])
+	tmp2128 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 8 {
 		return errors.New("not enough data to read for field \"TaskInfo::StartedAt\"")
 	}
-	tmp2112 = tmp56[*tmp56Offset : *tmp56Offset+8]
-	*tmp56Offset += int(8)
-	t.StartedAt = binary.BigEndian.Uint64(tmp2112[:])
-	tmp2111 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 8 {
+	tmp2128 = tmp51[*tmp51Offset : *tmp51Offset+8]
+	*tmp51Offset += int(8)
+	t.StartedAt = binary.BigEndian.Uint64(tmp2128[:])
+	tmp2127 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 8 {
 		return errors.New("not enough data to read for field \"TaskInfo::EndedAt\"")
 	}
-	tmp2111 = tmp56[*tmp56Offset : *tmp56Offset+8]
-	*tmp56Offset += int(8)
-	t.EndedAt = binary.BigEndian.Uint64(tmp2111[:])
-	tmp2110 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 4 {
+	tmp2127 = tmp51[*tmp51Offset : *tmp51Offset+8]
+	*tmp51Offset += int(8)
+	t.EndedAt = binary.BigEndian.Uint64(tmp2127[:])
+	tmp2126 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 4 {
 		return errors.New("not enough data to read for field \"TaskInfo::ExitCode\"")
 	}
-	tmp2110 = tmp56[*tmp56Offset : *tmp56Offset+4]
-	*tmp56Offset += int(4)
-	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2110[:]))
-	tmp2109 := []uint8{}
-	if len(tmp56)-*tmp56Offset < 4 {
+	tmp2126 = tmp51[*tmp51Offset : *tmp51Offset+4]
+	*tmp51Offset += int(4)
+	t.ExitCode = int32(binary.BigEndian.Uint32(tmp2126[:]))
+	tmp2125 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 4 {
 		return errors.New("not enough data to read for field \"TaskInfo::PromptLen\"")
 	}
-	tmp2109 = tmp56[*tmp56Offset : *tmp56Offset+4]
-	*tmp56Offset += int(4)
-	t.PromptLen = binary.BigEndian.Uint32(tmp2109[:])
-	if len(tmp56)-*tmp56Offset < int(t.PromptLen) {
+	tmp2125 = tmp51[*tmp51Offset : *tmp51Offset+4]
+	*tmp51Offset += int(4)
+	t.PromptLen = binary.BigEndian.Uint32(tmp2125[:])
+	if len(tmp51)-*tmp51Offset < int(t.PromptLen) {
 		return errors.New("not enough data to read for field \"TaskInfo::Prompt\"")
 	}
-	t.Prompt = tmp56[*tmp56Offset : *tmp56Offset+int(t.PromptLen)]
-	*tmp56Offset += int(int(t.PromptLen))
+	t.Prompt = tmp51[*tmp51Offset : *tmp51Offset+int(t.PromptLen)]
+	*tmp51Offset += int(int(t.PromptLen))
+	tmp2123 := []uint8{}
+	if len(tmp51)-*tmp51Offset < 4 {
+		return errors.New("not enough data to read for field \"TaskInfo::ErrorLen\"")
+	}
+	tmp2123 = tmp51[*tmp51Offset : *tmp51Offset+4]
+	*tmp51Offset += int(4)
+	t.ErrorLen = binary.BigEndian.Uint32(tmp2123[:])
+	if len(tmp51)-*tmp51Offset < int(t.ErrorLen) {
+		return errors.New("not enough data to read for field \"TaskInfo::ErrorMessage\"")
+	}
+	t.ErrorMessage = tmp51[*tmp51Offset : *tmp51Offset+int(t.ErrorLen)]
+	*tmp51Offset += int(int(t.ErrorLen))
 	return nil
 }
 func (s *TaskInfo) Decode(buf []byte) ([]byte, error) {
@@ -6000,56 +6090,56 @@ type ListResult struct {
 	Tasks      []TaskInfo
 }
 
-func (l *ListResult) SetRunners(tmp2218 []RunnerInfo) bool {
-	if len(tmp2218) > int(65535) {
+func (l *ListResult) SetRunners(tmp2231 []RunnerInfo) bool {
+	if len(tmp2231) > int(65535) {
 		return false
 	}
-	l.RunnersLen = uint16(len(tmp2218))
-	l.Runners = tmp2218
+	l.RunnersLen = uint16(len(tmp2231))
+	l.Runners = tmp2231
 	return true
 }
 
-func (l *ListResult) SetTasks(tmp2216 []TaskInfo) bool {
-	if len(tmp2216) > int(65535) {
+func (l *ListResult) SetTasks(tmp2239 []TaskInfo) bool {
+	if len(tmp2239) > int(65535) {
 		return false
 	}
-	l.TasksLen = uint16(len(tmp2216))
-	l.Tasks = tmp2216
+	l.TasksLen = uint16(len(tmp2239))
+	l.Tasks = tmp2239
 	return true
 }
 
-func (l *ListResult) Write(tmp275 io.Writer) error {
-	tmp2053 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2053[:], uint16(l.RunnersLen))
-	if _, err := tmp275.Write(tmp2053[:2]); err != nil {
+func (l *ListResult) Write(tmp278 io.Writer) error {
+	tmp2063 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2063[:], uint16(l.RunnersLen))
+	if _, err := tmp278.Write(tmp2063[:2]); err != nil {
 		return err
 	}
 	if len(l.Runners) != int(l.RunnersLen) {
 		return fmt.Errorf("size mismatch when writing field \"ListResult::Runners\": expected %d, got %d", int(l.RunnersLen), len(l.Runners))
 	}
-	tmp1192 := int(0)
-	for tmp1192 < int(l.RunnersLen) {
-		tmp2047 := l.Runners[tmp1192].Write(tmp275)
-		if tmp2047 != nil {
-			return tmp2047
+	tmp1199 := int(0)
+	for tmp1199 < int(l.RunnersLen) {
+		tmp2057 := l.Runners[tmp1199].Write(tmp278)
+		if tmp2057 != nil {
+			return tmp2057
 		}
-		tmp1192 = tmp1192 + int(1)
+		tmp1199 = tmp1199 + int(1)
 	}
-	tmp2043 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2043[:], uint16(l.TasksLen))
-	if _, err := tmp275.Write(tmp2043[:2]); err != nil {
+	tmp2053 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2053[:], uint16(l.TasksLen))
+	if _, err := tmp278.Write(tmp2053[:2]); err != nil {
 		return err
 	}
 	if len(l.Tasks) != int(l.TasksLen) {
 		return fmt.Errorf("size mismatch when writing field \"ListResult::Tasks\": expected %d, got %d", int(l.TasksLen), len(l.Tasks))
 	}
-	tmp1190 := int(0)
-	for tmp1190 < int(l.TasksLen) {
-		tmp2038 := l.Tasks[tmp1190].Write(tmp275)
-		if tmp2038 != nil {
-			return tmp2038
+	tmp1197 := int(0)
+	for tmp1197 < int(l.TasksLen) {
+		tmp2048 := l.Tasks[tmp1197].Write(tmp278)
+		if tmp2048 != nil {
+			return tmp2048
 		}
-		tmp1190 = tmp1190 + int(1)
+		tmp1197 = tmp1197 + int(1)
 	}
 	return nil
 }
@@ -6068,42 +6158,42 @@ func (s *ListResult) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (l *ListResult) EncodeSlice(tmp275 []byte, tmp275Offset *int) error {
-	tmp2053 := []uint8{}
-	if len(tmp275)-*tmp275Offset < int(2) {
+func (l *ListResult) EncodeSlice(tmp278 []byte, tmp278Offset *int) error {
+	tmp2063 := []uint8{}
+	if len(tmp278)-*tmp278Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"ListResult::RunnersLen\"")
 	}
-	tmp2053 = tmp275[*tmp275Offset : *tmp275Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2053[:], uint16(l.RunnersLen))
-	*tmp275Offset += int(2)
+	tmp2063 = tmp278[*tmp278Offset : *tmp278Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2063[:], uint16(l.RunnersLen))
+	*tmp278Offset += int(2)
 	if len(l.Runners) != int(l.RunnersLen) {
 		return fmt.Errorf("size mismatch when writing field \"ListResult::Runners\": expected %d, got %d", int(l.RunnersLen), len(l.Runners))
 	}
-	tmp1192 := int(0)
-	for tmp1192 < int(l.RunnersLen) {
-		tmp2047 := l.Runners[tmp1192].EncodeSlice(tmp275, tmp275Offset)
-		if tmp2047 != nil {
-			return tmp2047
+	tmp1199 := int(0)
+	for tmp1199 < int(l.RunnersLen) {
+		tmp2057 := l.Runners[tmp1199].EncodeSlice(tmp278, tmp278Offset)
+		if tmp2057 != nil {
+			return tmp2057
 		}
-		tmp1192 = tmp1192 + int(1)
+		tmp1199 = tmp1199 + int(1)
 	}
-	tmp2043 := []uint8{}
-	if len(tmp275)-*tmp275Offset < int(2) {
+	tmp2053 := []uint8{}
+	if len(tmp278)-*tmp278Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"ListResult::TasksLen\"")
 	}
-	tmp2043 = tmp275[*tmp275Offset : *tmp275Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp2043[:], uint16(l.TasksLen))
-	*tmp275Offset += int(2)
+	tmp2053 = tmp278[*tmp278Offset : *tmp278Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp2053[:], uint16(l.TasksLen))
+	*tmp278Offset += int(2)
 	if len(l.Tasks) != int(l.TasksLen) {
 		return fmt.Errorf("size mismatch when writing field \"ListResult::Tasks\": expected %d, got %d", int(l.TasksLen), len(l.Tasks))
 	}
-	tmp1190 := int(0)
-	for tmp1190 < int(l.TasksLen) {
-		tmp2038 := l.Tasks[tmp1190].EncodeSlice(tmp275, tmp275Offset)
-		if tmp2038 != nil {
-			return tmp2038
+	tmp1197 := int(0)
+	for tmp1197 < int(l.TasksLen) {
+		tmp2048 := l.Tasks[tmp1197].EncodeSlice(tmp278, tmp278Offset)
+		if tmp2048 != nil {
+			return tmp2048
 		}
-		tmp1190 = tmp1190 + int(1)
+		tmp1197 = tmp1197 + int(1)
 	}
 	return nil
 }
@@ -6122,40 +6212,40 @@ func (s *ListResult) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (l *ListResult) Append(tmp275 []byte) ([]byte, error) {
-	tmp2053 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2053[:], uint16(l.RunnersLen))
-	tmp275 = append(tmp275, tmp2053[:2]...)
+func (l *ListResult) Append(tmp278 []byte) ([]byte, error) {
+	tmp2063 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2063[:], uint16(l.RunnersLen))
+	tmp278 = append(tmp278, tmp2063[:2]...)
 	if len(l.Runners) != int(l.RunnersLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"ListResult::Runners\": expected %d, got %d", int(l.RunnersLen), len(l.Runners))
 	}
-	tmp1192 := int(0)
-	for tmp1192 < int(l.RunnersLen) {
-		var tmp2047 error
-		tmp275, tmp2047 = l.Runners[tmp1192].Append(tmp275)
+	tmp1199 := int(0)
+	for tmp1199 < int(l.RunnersLen) {
+		var tmp2057 error
+		tmp278, tmp2057 = l.Runners[tmp1199].Append(tmp278)
 
-		if tmp2047 != nil {
-			return nil, tmp2047
+		if tmp2057 != nil {
+			return nil, tmp2057
 		}
-		tmp1192 = tmp1192 + int(1)
+		tmp1199 = tmp1199 + int(1)
 	}
-	tmp2043 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp2043[:], uint16(l.TasksLen))
-	tmp275 = append(tmp275, tmp2043[:2]...)
+	tmp2053 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp2053[:], uint16(l.TasksLen))
+	tmp278 = append(tmp278, tmp2053[:2]...)
 	if len(l.Tasks) != int(l.TasksLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"ListResult::Tasks\": expected %d, got %d", int(l.TasksLen), len(l.Tasks))
 	}
-	tmp1190 := int(0)
-	for tmp1190 < int(l.TasksLen) {
-		var tmp2038 error
-		tmp275, tmp2038 = l.Tasks[tmp1190].Append(tmp275)
+	tmp1197 := int(0)
+	for tmp1197 < int(l.TasksLen) {
+		var tmp2048 error
+		tmp278, tmp2048 = l.Tasks[tmp1197].Append(tmp278)
 
-		if tmp2038 != nil {
-			return nil, tmp2038
+		if tmp2048 != nil {
+			return nil, tmp2048
 		}
-		tmp1190 = tmp1190 + int(1)
+		tmp1197 = tmp1197 + int(1)
 	}
-	return tmp275, nil
+	return tmp278, nil
 }
 func (s *ListResult) MustAppend(buf []byte) []byte {
 	var err error
@@ -6166,36 +6256,36 @@ func (s *ListResult) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (l *ListResult) Read(tmp276 io.Reader) error {
-	tmp2068 := [2]uint8{}
-	if _, err := io.ReadFull(tmp276, tmp2068[0:0+2]); err != nil {
+func (l *ListResult) Read(tmp279 io.Reader) error {
+	tmp2078 := [2]uint8{}
+	if _, err := io.ReadFull(tmp279, tmp2078[0:0+2]); err != nil {
 		return err
 	}
-	l.RunnersLen = binary.BigEndian.Uint16(tmp2068[:])
-	tmp1198 := int(0)
-	for tmp1198 < int(l.RunnersLen) {
-		tmp2067 := RunnerInfo{}
-		tmp2064 := tmp2067.Read(tmp276)
-		if tmp2064 != nil {
-			return tmp2064
+	l.RunnersLen = binary.BigEndian.Uint16(tmp2078[:])
+	tmp1205 := int(0)
+	for tmp1205 < int(l.RunnersLen) {
+		tmp2077 := RunnerInfo{}
+		tmp2074 := tmp2077.Read(tmp279)
+		if tmp2074 != nil {
+			return tmp2074
 		}
-		l.Runners = append(l.Runners, tmp2067)
-		tmp1198 = tmp1198 + int(1)
+		l.Runners = append(l.Runners, tmp2077)
+		tmp1205 = tmp1205 + int(1)
 	}
-	tmp2060 := [2]uint8{}
-	if _, err := io.ReadFull(tmp276, tmp2060[0:0+2]); err != nil {
+	tmp2070 := [2]uint8{}
+	if _, err := io.ReadFull(tmp279, tmp2070[0:0+2]); err != nil {
 		return err
 	}
-	l.TasksLen = binary.BigEndian.Uint16(tmp2060[:])
-	tmp1195 := int(0)
-	for tmp1195 < int(l.TasksLen) {
-		tmp2059 := TaskInfo{}
-		tmp2057 := tmp2059.Read(tmp276)
-		if tmp2057 != nil {
-			return tmp2057
+	l.TasksLen = binary.BigEndian.Uint16(tmp2070[:])
+	tmp1202 := int(0)
+	for tmp1202 < int(l.TasksLen) {
+		tmp2069 := TaskInfo{}
+		tmp2067 := tmp2069.Read(tmp279)
+		if tmp2067 != nil {
+			return tmp2067
 		}
-		l.Tasks = append(l.Tasks, tmp2059)
-		tmp1195 = tmp1195 + int(1)
+		l.Tasks = append(l.Tasks, tmp2069)
+		tmp1202 = tmp1202 + int(1)
 	}
 	return nil
 }
@@ -6217,40 +6307,40 @@ func (s *ListResult) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (l *ListResult) DecodeSlice(tmp276 []byte, tmp276Offset *int) error {
-	tmp2068 := []uint8{}
-	if len(tmp276)-*tmp276Offset < 2 {
+func (l *ListResult) DecodeSlice(tmp279 []byte, tmp279Offset *int) error {
+	tmp2078 := []uint8{}
+	if len(tmp279)-*tmp279Offset < 2 {
 		return errors.New("not enough data to read for field \"ListResult::RunnersLen\"")
 	}
-	tmp2068 = tmp276[*tmp276Offset : *tmp276Offset+2]
-	*tmp276Offset += int(2)
-	l.RunnersLen = binary.BigEndian.Uint16(tmp2068[:])
-	tmp1198 := int(0)
-	for tmp1198 < int(l.RunnersLen) {
-		tmp2067 := RunnerInfo{}
-		tmp2064 := tmp2067.DecodeSlice(tmp276, tmp276Offset)
-		if tmp2064 != nil {
-			return tmp2064
+	tmp2078 = tmp279[*tmp279Offset : *tmp279Offset+2]
+	*tmp279Offset += int(2)
+	l.RunnersLen = binary.BigEndian.Uint16(tmp2078[:])
+	tmp1205 := int(0)
+	for tmp1205 < int(l.RunnersLen) {
+		tmp2077 := RunnerInfo{}
+		tmp2074 := tmp2077.DecodeSlice(tmp279, tmp279Offset)
+		if tmp2074 != nil {
+			return tmp2074
 		}
-		l.Runners = append(l.Runners, tmp2067)
-		tmp1198 = tmp1198 + int(1)
+		l.Runners = append(l.Runners, tmp2077)
+		tmp1205 = tmp1205 + int(1)
 	}
-	tmp2060 := []uint8{}
-	if len(tmp276)-*tmp276Offset < 2 {
+	tmp2070 := []uint8{}
+	if len(tmp279)-*tmp279Offset < 2 {
 		return errors.New("not enough data to read for field \"ListResult::TasksLen\"")
 	}
-	tmp2060 = tmp276[*tmp276Offset : *tmp276Offset+2]
-	*tmp276Offset += int(2)
-	l.TasksLen = binary.BigEndian.Uint16(tmp2060[:])
-	tmp1195 := int(0)
-	for tmp1195 < int(l.TasksLen) {
-		tmp2059 := TaskInfo{}
-		tmp2057 := tmp2059.DecodeSlice(tmp276, tmp276Offset)
-		if tmp2057 != nil {
-			return tmp2057
+	tmp2070 = tmp279[*tmp279Offset : *tmp279Offset+2]
+	*tmp279Offset += int(2)
+	l.TasksLen = binary.BigEndian.Uint16(tmp2070[:])
+	tmp1202 := int(0)
+	for tmp1202 < int(l.TasksLen) {
+		tmp2069 := TaskInfo{}
+		tmp2067 := tmp2069.DecodeSlice(tmp279, tmp279Offset)
+		if tmp2067 != nil {
+			return tmp2067
 		}
-		l.Tasks = append(l.Tasks, tmp2059)
-		tmp1195 = tmp1195 + int(1)
+		l.Tasks = append(l.Tasks, tmp2069)
+		tmp1202 = tmp1202 + int(1)
 	}
 	return nil
 }
@@ -6302,31 +6392,31 @@ type Hostname struct {
 	Name    []uint8
 }
 
-func (h *Hostname) SetName(tmp2215 []uint8) bool {
-	if len(tmp2215) > int(255) {
+func (h *Hostname) SetName(tmp2234 []uint8) bool {
+	if len(tmp2234) > int(255) {
 		return false
 	}
-	h.NameLen = uint8(len(tmp2215))
-	h.Name = tmp2215
+	h.NameLen = uint8(len(tmp2234))
+	h.Name = tmp2234
 	return true
 }
 
-func (h *Hostname) Write(tmp872 io.Writer) error {
-	tmp872ByteIO, _ := tmp872.(io.ByteWriter)
-	_ = tmp872ByteIO
-	if tmp872ByteIO != nil {
-		if err := tmp872ByteIO.WriteByte(h.NameLen); err != nil {
+func (h *Hostname) Write(tmp879 io.Writer) error {
+	tmp879ByteIO, _ := tmp879.(io.ByteWriter)
+	_ = tmp879ByteIO
+	if tmp879ByteIO != nil {
+		if err := tmp879ByteIO.WriteByte(h.NameLen); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp872.Write([]byte{h.NameLen}); err != nil {
+		if _, err := tmp879.Write([]byte{h.NameLen}); err != nil {
 			return err
 		}
 	}
 	if len(h.Name) != int(h.NameLen) {
 		return fmt.Errorf("size mismatch when writing field \"Hostname::Name\": expected %d, got %d", int(h.NameLen), len(h.Name))
 	}
-	if _, err := tmp872.Write(h.Name); err != nil {
+	if _, err := tmp879.Write(h.Name); err != nil {
 		return err
 	}
 	return nil
@@ -6346,22 +6436,22 @@ func (s *Hostname) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (h *Hostname) EncodeSlice(tmp872 []byte, tmp872Offset *int) error {
-	tmp2027 := []uint8{}
-	if len(tmp872)-*tmp872Offset < int(1) {
+func (h *Hostname) EncodeSlice(tmp879 []byte, tmp879Offset *int) error {
+	tmp2037 := []uint8{}
+	if len(tmp879)-*tmp879Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"Hostname::NameLen\"")
 	}
-	tmp2027 = tmp872[*tmp872Offset : *tmp872Offset+int(1)]
-	tmp2027[0] = h.NameLen
-	*tmp872Offset += int(1)
+	tmp2037 = tmp879[*tmp879Offset : *tmp879Offset+int(1)]
+	tmp2037[0] = h.NameLen
+	*tmp879Offset += int(1)
 	if len(h.Name) != int(h.NameLen) {
 		return fmt.Errorf("size mismatch when writing field \"Hostname::Name\": expected %d, got %d", int(h.NameLen), len(h.Name))
 	}
-	if len(tmp872)-*tmp872Offset < int(0+h.NameLen) {
+	if len(tmp879)-*tmp879Offset < int(0+h.NameLen) {
 		return errors.New("not enough space to write for field \"Hostname::Name\"")
 	}
-	copy(tmp872[*tmp872Offset:*tmp872Offset+int(h.NameLen)], h.Name)
-	*tmp872Offset += int(h.NameLen)
+	copy(tmp879[*tmp879Offset:*tmp879Offset+int(h.NameLen)], h.Name)
+	*tmp879Offset += int(h.NameLen)
 	return nil
 }
 func (s *Hostname) Encode(buf []byte) ([]byte, error) {
@@ -6379,15 +6469,15 @@ func (s *Hostname) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (h *Hostname) Append(tmp872 []byte) ([]byte, error) {
-	tmp2027 := [1]uint8{}
-	tmp2027[0] = h.NameLen
-	tmp872 = append(tmp872, tmp2027[:1]...)
+func (h *Hostname) Append(tmp879 []byte) ([]byte, error) {
+	tmp2037 := [1]uint8{}
+	tmp2037[0] = h.NameLen
+	tmp879 = append(tmp879, tmp2037[:1]...)
 	if len(h.Name) != int(h.NameLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"Hostname::Name\": expected %d, got %d", int(h.NameLen), len(h.Name))
 	}
-	tmp872 = append(tmp872, h.Name...)
-	return tmp872, nil
+	tmp879 = append(tmp879, h.Name...)
+	return tmp879, nil
 }
 func (s *Hostname) MustAppend(buf []byte) []byte {
 	var err error
@@ -6398,12 +6488,12 @@ func (s *Hostname) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (h *Hostname) Read(tmp874 io.Reader) error {
-	tmp874ByteIO, _ := tmp874.(io.ByteReader)
-	_ = tmp874ByteIO
-	if tmp874ByteIO != nil {
+func (h *Hostname) Read(tmp881 io.Reader) error {
+	tmp881ByteIO, _ := tmp881.(io.ByteReader)
+	_ = tmp881ByteIO
+	if tmp881ByteIO != nil {
 		var err error
-		h.NameLen, err = tmp874ByteIO.ReadByte()
+		h.NameLen, err = tmp881ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -6411,7 +6501,7 @@ func (h *Hostname) Read(tmp874 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp874, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp881, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
@@ -6419,7 +6509,7 @@ func (h *Hostname) Read(tmp874 io.Reader) error {
 		}
 		h.NameLen = buf[0]
 	}
-	if seeker, ok := tmp874.(io.Seeker); ok {
+	if seeker, ok := tmp881.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -6436,17 +6526,17 @@ func (h *Hostname) Read(tmp874 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(h.NameLen)))
 		}
 		h.Name = make([]byte, int(h.NameLen))
-		if _, err := io.ReadFull(tmp874, h.Name[0:0+int(h.NameLen)]); err != nil {
+		if _, err := io.ReadFull(tmp881, h.Name[0:0+int(h.NameLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_5378 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_5378, tmp874, int64(int(h.NameLen))); err != nil {
+		io_temp_5402 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_5402, tmp881, int64(int(h.NameLen))); err != nil {
 			return err
 		}
-		h.Name = io_temp_5378.Bytes()
+		h.Name = io_temp_5402.Bytes()
 	}
 	return nil
 }
@@ -6468,19 +6558,19 @@ func (s *Hostname) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (h *Hostname) DecodeSlice(tmp874 []byte, tmp874Offset *int) error {
-	tmp2031 := []uint8{}
-	if len(tmp874)-*tmp874Offset < 1 {
+func (h *Hostname) DecodeSlice(tmp881 []byte, tmp881Offset *int) error {
+	tmp2041 := []uint8{}
+	if len(tmp881)-*tmp881Offset < 1 {
 		return errors.New("not enough data to read for field \"Hostname::NameLen\"")
 	}
-	tmp2031 = tmp874[*tmp874Offset : *tmp874Offset+1]
-	*tmp874Offset += int(1)
-	h.NameLen = tmp2031[0]
-	if len(tmp874)-*tmp874Offset < int(h.NameLen) {
+	tmp2041 = tmp881[*tmp881Offset : *tmp881Offset+1]
+	*tmp881Offset += int(1)
+	h.NameLen = tmp2041[0]
+	if len(tmp881)-*tmp881Offset < int(h.NameLen) {
 		return errors.New("not enough data to read for field \"Hostname::Name\"")
 	}
-	h.Name = tmp874[*tmp874Offset : *tmp874Offset+int(h.NameLen)]
-	*tmp874Offset += int(int(h.NameLen))
+	h.Name = tmp881[*tmp881Offset : *tmp881Offset+int(h.NameLen)]
+	*tmp881Offset += int(int(h.NameLen))
 	return nil
 }
 func (s *Hostname) Decode(buf []byte) ([]byte, error) {
@@ -6507,24 +6597,24 @@ type IPAddr struct {
 	Addr    []uint8
 }
 
-func (i *IPAddr) SetAddr(tmp2212 []uint8) bool {
-	if len(tmp2212) > int(255) {
+func (i *IPAddr) SetAddr(tmp2217 []uint8) bool {
+	if len(tmp2217) > int(255) {
 		return false
 	}
-	i.AddrLen = uint8(len(tmp2212))
-	i.Addr = tmp2212
+	i.AddrLen = uint8(len(tmp2217))
+	i.Addr = tmp2217
 	return true
 }
 
-func (i *IPAddr) Write(tmp868 io.Writer) error {
-	tmp868ByteIO, _ := tmp868.(io.ByteWriter)
-	_ = tmp868ByteIO
-	if tmp868ByteIO != nil {
-		if err := tmp868ByteIO.WriteByte(i.AddrLen); err != nil {
+func (i *IPAddr) Write(tmp875 io.Writer) error {
+	tmp875ByteIO, _ := tmp875.(io.ByteWriter)
+	_ = tmp875ByteIO
+	if tmp875ByteIO != nil {
+		if err := tmp875ByteIO.WriteByte(i.AddrLen); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp868.Write([]byte{i.AddrLen}); err != nil {
+		if _, err := tmp875.Write([]byte{i.AddrLen}); err != nil {
 			return err
 		}
 	}
@@ -6534,7 +6624,7 @@ func (i *IPAddr) Write(tmp868 io.Writer) error {
 	if len(i.Addr) != int(i.AddrLen) {
 		return fmt.Errorf("size mismatch when writing field \"IPAddr::Addr\": expected %d, got %d", int(i.AddrLen), len(i.Addr))
 	}
-	if _, err := tmp868.Write(i.Addr); err != nil {
+	if _, err := tmp875.Write(i.Addr); err != nil {
 		return err
 	}
 	return nil
@@ -6554,25 +6644,25 @@ func (s *IPAddr) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (i *IPAddr) EncodeSlice(tmp868 []byte, tmp868Offset *int) error {
-	tmp2013 := []uint8{}
-	if len(tmp868)-*tmp868Offset < int(1) {
+func (i *IPAddr) EncodeSlice(tmp875 []byte, tmp875Offset *int) error {
+	tmp2023 := []uint8{}
+	if len(tmp875)-*tmp875Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"IPAddr::AddrLen\"")
 	}
-	tmp2013 = tmp868[*tmp868Offset : *tmp868Offset+int(1)]
-	tmp2013[0] = i.AddrLen
-	*tmp868Offset += int(1)
+	tmp2023 = tmp875[*tmp875Offset : *tmp875Offset+int(1)]
+	tmp2023[0] = i.AddrLen
+	*tmp875Offset += int(1)
 	if !((i.AddrLen == 4) || (i.AddrLen == 16)) {
 		return errors.New("Assertion failed")
 	}
 	if len(i.Addr) != int(i.AddrLen) {
 		return fmt.Errorf("size mismatch when writing field \"IPAddr::Addr\": expected %d, got %d", int(i.AddrLen), len(i.Addr))
 	}
-	if len(tmp868)-*tmp868Offset < int(0+i.AddrLen) {
+	if len(tmp875)-*tmp875Offset < int(0+i.AddrLen) {
 		return errors.New("not enough space to write for field \"IPAddr::Addr\"")
 	}
-	copy(tmp868[*tmp868Offset:*tmp868Offset+int(i.AddrLen)], i.Addr)
-	*tmp868Offset += int(i.AddrLen)
+	copy(tmp875[*tmp875Offset:*tmp875Offset+int(i.AddrLen)], i.Addr)
+	*tmp875Offset += int(i.AddrLen)
 	return nil
 }
 func (s *IPAddr) Encode(buf []byte) ([]byte, error) {
@@ -6590,18 +6680,18 @@ func (s *IPAddr) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (i *IPAddr) Append(tmp868 []byte) ([]byte, error) {
-	tmp2013 := [1]uint8{}
-	tmp2013[0] = i.AddrLen
-	tmp868 = append(tmp868, tmp2013[:1]...)
+func (i *IPAddr) Append(tmp875 []byte) ([]byte, error) {
+	tmp2023 := [1]uint8{}
+	tmp2023[0] = i.AddrLen
+	tmp875 = append(tmp875, tmp2023[:1]...)
 	if !((i.AddrLen == 4) || (i.AddrLen == 16)) {
 		return nil, errors.New("Assertion failed")
 	}
 	if len(i.Addr) != int(i.AddrLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"IPAddr::Addr\": expected %d, got %d", int(i.AddrLen), len(i.Addr))
 	}
-	tmp868 = append(tmp868, i.Addr...)
-	return tmp868, nil
+	tmp875 = append(tmp875, i.Addr...)
+	return tmp875, nil
 }
 func (s *IPAddr) MustAppend(buf []byte) []byte {
 	var err error
@@ -6612,12 +6702,12 @@ func (s *IPAddr) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (i *IPAddr) Read(tmp870 io.Reader) error {
-	tmp870ByteIO, _ := tmp870.(io.ByteReader)
-	_ = tmp870ByteIO
-	if tmp870ByteIO != nil {
+func (i *IPAddr) Read(tmp877 io.Reader) error {
+	tmp877ByteIO, _ := tmp877.(io.ByteReader)
+	_ = tmp877ByteIO
+	if tmp877ByteIO != nil {
 		var err error
-		i.AddrLen, err = tmp870ByteIO.ReadByte()
+		i.AddrLen, err = tmp877ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -6625,7 +6715,7 @@ func (i *IPAddr) Read(tmp870 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp870, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp877, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
@@ -6636,7 +6726,7 @@ func (i *IPAddr) Read(tmp870 io.Reader) error {
 	if !((i.AddrLen == 4) || (i.AddrLen == 16)) {
 		return errors.New("Assertion failed")
 	}
-	if seeker, ok := tmp870.(io.Seeker); ok {
+	if seeker, ok := tmp877.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -6653,17 +6743,17 @@ func (i *IPAddr) Read(tmp870 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(i.AddrLen)))
 		}
 		i.Addr = make([]byte, int(i.AddrLen))
-		if _, err := io.ReadFull(tmp870, i.Addr[0:0+int(i.AddrLen)]); err != nil {
+		if _, err := io.ReadFull(tmp877, i.Addr[0:0+int(i.AddrLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_5346 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_5346, tmp870, int64(int(i.AddrLen))); err != nil {
+		io_temp_5370 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_5370, tmp877, int64(int(i.AddrLen))); err != nil {
 			return err
 		}
-		i.Addr = io_temp_5346.Bytes()
+		i.Addr = io_temp_5370.Bytes()
 	}
 	return nil
 }
@@ -6685,22 +6775,22 @@ func (s *IPAddr) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (i *IPAddr) DecodeSlice(tmp870 []byte, tmp870Offset *int) error {
-	tmp2019 := []uint8{}
-	if len(tmp870)-*tmp870Offset < 1 {
+func (i *IPAddr) DecodeSlice(tmp877 []byte, tmp877Offset *int) error {
+	tmp2029 := []uint8{}
+	if len(tmp877)-*tmp877Offset < 1 {
 		return errors.New("not enough data to read for field \"IPAddr::AddrLen\"")
 	}
-	tmp2019 = tmp870[*tmp870Offset : *tmp870Offset+1]
-	*tmp870Offset += int(1)
-	i.AddrLen = tmp2019[0]
+	tmp2029 = tmp877[*tmp877Offset : *tmp877Offset+1]
+	*tmp877Offset += int(1)
+	i.AddrLen = tmp2029[0]
 	if !((i.AddrLen == 4) || (i.AddrLen == 16)) {
 		return errors.New("Assertion failed")
 	}
-	if len(tmp870)-*tmp870Offset < int(i.AddrLen) {
+	if len(tmp877)-*tmp877Offset < int(i.AddrLen) {
 		return errors.New("not enough data to read for field \"IPAddr::Addr\"")
 	}
-	i.Addr = tmp870[*tmp870Offset : *tmp870Offset+int(i.AddrLen)]
-	*tmp870Offset += int(int(i.AddrLen))
+	i.Addr = tmp877[*tmp877Offset : *tmp877Offset+int(i.AddrLen)]
+	*tmp877Offset += int(int(i.AddrLen))
 	return nil
 }
 func (s *IPAddr) Decode(buf []byte) ([]byte, error) {
@@ -6722,62 +6812,62 @@ func (s *IPAddr) DecodeExact(buf []byte) error {
 	return nil
 }
 
-type tmp5326 struct {
+type tmp5351 struct {
 }
 
-func (v *tmp5326) isVariant437() {}
+func (v *tmp5351) isVariant439() {}
 
-type tmp2007 struct {
+type tmp2017 struct {
 	RunnerId RunnerID
 }
 
-func (v *tmp2007) isVariant437() {}
+func (v *tmp2017) isVariant439() {}
 
-type tmp2005 struct {
+type tmp2015 struct {
 	Hostname Hostname
 }
 
-func (v *tmp2005) isVariant437() {}
+func (v *tmp2015) isVariant439() {}
 
-type tmp2003 struct {
+type tmp2013 struct {
 	IpAddr IPAddr
 }
 
-func (v *tmp2003) isVariant437() {}
+func (v *tmp2013) isVariant439() {}
 
-type Variant437 interface {
-	isVariant437()
+type Variant439 interface {
+	isVariant439()
 }
 
 type RunnerSelector struct {
 	Kind    RunnerSelectorKind
-	tmp1188 Variant437
+	tmp1195 Variant439
 }
 
 func (r *RunnerSelector) Hostname() *Hostname {
 	if (RunnerSelectorKind_Any == r.Kind) || (RunnerSelectorKind_ByRunnerId == r.Kind) {
 		return nil
 	} else if r.Kind == RunnerSelectorKind_ByHostname {
-		tmp2004, ok := r.tmp1188.(*tmp2005)
+		tmp2014, ok := r.tmp1195.(*tmp2015)
 		if !ok {
 			return nil
 		}
-		_ = tmp2004 // to prevent unused warnings
-		return &tmp2004.Hostname
+		_ = tmp2014 // to prevent unused warnings
+		return &tmp2014.Hostname
 	}
 	return nil
 }
-func (r *RunnerSelector) SetHostname(tmp2448 Hostname) bool {
+func (r *RunnerSelector) SetHostname(tmp2447 Hostname) bool {
 	if (RunnerSelectorKind_Any == r.Kind) || (RunnerSelectorKind_ByRunnerId == r.Kind) {
 		return false
 	} else if r.Kind == RunnerSelectorKind_ByHostname {
-		tmp2004, ok := r.tmp1188.(*tmp2005)
+		tmp2014, ok := r.tmp1195.(*tmp2015)
 		if !ok {
-			tmp2004 = &tmp2005{}
-			r.tmp1188 = tmp2004
+			tmp2014 = &tmp2015{}
+			r.tmp1195 = tmp2014
 		}
-		_ = tmp2004 // to prevent unused warnings
-		tmp2004.Hostname = tmp2448
+		_ = tmp2014 // to prevent unused warnings
+		tmp2014.Hostname = tmp2447
 		return true
 	}
 	return false
@@ -6787,26 +6877,26 @@ func (r *RunnerSelector) IpAddr() *IPAddr {
 	if ((RunnerSelectorKind_Any == r.Kind) || (RunnerSelectorKind_ByRunnerId == r.Kind)) || (RunnerSelectorKind_ByHostname == r.Kind) {
 		return nil
 	} else if r.Kind == RunnerSelectorKind_ByIp {
-		tmp2002, ok := r.tmp1188.(*tmp2003)
+		tmp2012, ok := r.tmp1195.(*tmp2013)
 		if !ok {
 			return nil
 		}
-		_ = tmp2002 // to prevent unused warnings
-		return &tmp2002.IpAddr
+		_ = tmp2012 // to prevent unused warnings
+		return &tmp2012.IpAddr
 	}
 	return nil
 }
-func (r *RunnerSelector) SetIpAddr(tmp2379 IPAddr) bool {
+func (r *RunnerSelector) SetIpAddr(tmp2438 IPAddr) bool {
 	if ((RunnerSelectorKind_Any == r.Kind) || (RunnerSelectorKind_ByRunnerId == r.Kind)) || (RunnerSelectorKind_ByHostname == r.Kind) {
 		return false
 	} else if r.Kind == RunnerSelectorKind_ByIp {
-		tmp2002, ok := r.tmp1188.(*tmp2003)
+		tmp2012, ok := r.tmp1195.(*tmp2013)
 		if !ok {
-			tmp2002 = &tmp2003{}
-			r.tmp1188 = tmp2002
+			tmp2012 = &tmp2013{}
+			r.tmp1195 = tmp2012
 		}
-		_ = tmp2002 // to prevent unused warnings
-		tmp2002.IpAddr = tmp2379
+		_ = tmp2012 // to prevent unused warnings
+		tmp2012.IpAddr = tmp2438
 		return true
 	}
 	return false
@@ -6816,73 +6906,73 @@ func (r *RunnerSelector) RunnerId() *RunnerID {
 	if r.Kind == RunnerSelectorKind_Any {
 		return nil
 	} else if r.Kind == RunnerSelectorKind_ByRunnerId {
-		tmp2006, ok := r.tmp1188.(*tmp2007)
+		tmp2016, ok := r.tmp1195.(*tmp2017)
 		if !ok {
 			return nil
 		}
-		_ = tmp2006 // to prevent unused warnings
-		return &tmp2006.RunnerId
+		_ = tmp2016 // to prevent unused warnings
+		return &tmp2016.RunnerId
 	}
 	return nil
 }
-func (r *RunnerSelector) SetRunnerId(tmp2420 RunnerID) bool {
+func (r *RunnerSelector) SetRunnerId(tmp2362 RunnerID) bool {
 	if r.Kind == RunnerSelectorKind_Any {
 		return false
 	} else if r.Kind == RunnerSelectorKind_ByRunnerId {
-		tmp2006, ok := r.tmp1188.(*tmp2007)
+		tmp2016, ok := r.tmp1195.(*tmp2017)
 		if !ok {
-			tmp2006 = &tmp2007{}
-			r.tmp1188 = tmp2006
+			tmp2016 = &tmp2017{}
+			r.tmp1195 = tmp2016
 		}
-		_ = tmp2006 // to prevent unused warnings
-		tmp2006.RunnerId = tmp2420
+		_ = tmp2016 // to prevent unused warnings
+		tmp2016.RunnerId = tmp2362
 		return true
 	}
 	return false
 }
 
-func (r *RunnerSelector) Write(tmp359 io.Writer) error {
-	tmp359ByteIO, _ := tmp359.(io.ByteWriter)
-	_ = tmp359ByteIO
-	if tmp359ByteIO != nil {
-		if err := tmp359ByteIO.WriteByte(uint8(r.Kind)); err != nil {
+func (r *RunnerSelector) Write(tmp360 io.Writer) error {
+	tmp360ByteIO, _ := tmp360.(io.ByteWriter)
+	_ = tmp360ByteIO
+	if tmp360ByteIO != nil {
+		if err := tmp360ByteIO.WriteByte(uint8(r.Kind)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp359.Write([]byte{uint8(r.Kind)}); err != nil {
+		if _, err := tmp360.Write([]byte{uint8(r.Kind)}); err != nil {
 			return err
 		}
 	}
 	if r.Kind == RunnerSelectorKind_Any {
 	} else if r.Kind == RunnerSelectorKind_ByRunnerId {
-		tmp2006, ok := r.tmp1188.(*tmp2007)
+		tmp2016, ok := r.tmp1195.(*tmp2017)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2006 // to prevent unused warnings
-		tmp1967 := tmp2006.RunnerId.Write(tmp359)
-		if tmp1967 != nil {
-			return tmp1967
+		_ = tmp2016 // to prevent unused warnings
+		tmp1977 := tmp2016.RunnerId.Write(tmp360)
+		if tmp1977 != nil {
+			return tmp1977
 		}
 	} else if r.Kind == RunnerSelectorKind_ByHostname {
-		tmp2004, ok := r.tmp1188.(*tmp2005)
+		tmp2014, ok := r.tmp1195.(*tmp2015)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2004 // to prevent unused warnings
-		tmp1962 := tmp2004.Hostname.Write(tmp359)
-		if tmp1962 != nil {
-			return tmp1962
+		_ = tmp2014 // to prevent unused warnings
+		tmp1972 := tmp2014.Hostname.Write(tmp360)
+		if tmp1972 != nil {
+			return tmp1972
 		}
 	} else if r.Kind == RunnerSelectorKind_ByIp {
-		tmp2002, ok := r.tmp1188.(*tmp2003)
+		tmp2012, ok := r.tmp1195.(*tmp2013)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2002 // to prevent unused warnings
-		tmp1957 := tmp2002.IpAddr.Write(tmp359)
-		if tmp1957 != nil {
-			return tmp1957
+		_ = tmp2012 // to prevent unused warnings
+		tmp1967 := tmp2012.IpAddr.Write(tmp360)
+		if tmp1967 != nil {
+			return tmp1967
 		}
 	}
 	return nil
@@ -6902,44 +6992,44 @@ func (s *RunnerSelector) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerSelector) EncodeSlice(tmp359 []byte, tmp359Offset *int) error {
-	tmp1973 := []uint8{}
-	if len(tmp359)-*tmp359Offset < int(1) {
+func (r *RunnerSelector) EncodeSlice(tmp360 []byte, tmp360Offset *int) error {
+	tmp1983 := []uint8{}
+	if len(tmp360)-*tmp360Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerSelector::Kind\"")
 	}
-	tmp1973 = tmp359[*tmp359Offset : *tmp359Offset+int(1)]
-	tmp1973[0] = uint8(r.Kind)
-	*tmp359Offset += int(1)
+	tmp1983 = tmp360[*tmp360Offset : *tmp360Offset+int(1)]
+	tmp1983[0] = uint8(r.Kind)
+	*tmp360Offset += int(1)
 	if r.Kind == RunnerSelectorKind_Any {
 	} else if r.Kind == RunnerSelectorKind_ByRunnerId {
-		tmp2006, ok := r.tmp1188.(*tmp2007)
+		tmp2016, ok := r.tmp1195.(*tmp2017)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2006 // to prevent unused warnings
-		tmp1967 := tmp2006.RunnerId.EncodeSlice(tmp359, tmp359Offset)
-		if tmp1967 != nil {
-			return tmp1967
+		_ = tmp2016 // to prevent unused warnings
+		tmp1977 := tmp2016.RunnerId.EncodeSlice(tmp360, tmp360Offset)
+		if tmp1977 != nil {
+			return tmp1977
 		}
 	} else if r.Kind == RunnerSelectorKind_ByHostname {
-		tmp2004, ok := r.tmp1188.(*tmp2005)
+		tmp2014, ok := r.tmp1195.(*tmp2015)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2004 // to prevent unused warnings
-		tmp1962 := tmp2004.Hostname.EncodeSlice(tmp359, tmp359Offset)
-		if tmp1962 != nil {
-			return tmp1962
+		_ = tmp2014 // to prevent unused warnings
+		tmp1972 := tmp2014.Hostname.EncodeSlice(tmp360, tmp360Offset)
+		if tmp1972 != nil {
+			return tmp1972
 		}
 	} else if r.Kind == RunnerSelectorKind_ByIp {
-		tmp2002, ok := r.tmp1188.(*tmp2003)
+		tmp2012, ok := r.tmp1195.(*tmp2013)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp2002 // to prevent unused warnings
-		tmp1957 := tmp2002.IpAddr.EncodeSlice(tmp359, tmp359Offset)
-		if tmp1957 != nil {
-			return tmp1957
+		_ = tmp2012 // to prevent unused warnings
+		tmp1967 := tmp2012.IpAddr.EncodeSlice(tmp360, tmp360Offset)
+		if tmp1967 != nil {
+			return tmp1967
 		}
 	}
 	return nil
@@ -6959,49 +7049,49 @@ func (s *RunnerSelector) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerSelector) Append(tmp359 []byte) ([]byte, error) {
-	tmp1973 := [1]uint8{}
-	tmp1973[0] = uint8(r.Kind)
-	tmp359 = append(tmp359, tmp1973[:1]...)
+func (r *RunnerSelector) Append(tmp360 []byte) ([]byte, error) {
+	tmp1983 := [1]uint8{}
+	tmp1983[0] = uint8(r.Kind)
+	tmp360 = append(tmp360, tmp1983[:1]...)
 	if r.Kind == RunnerSelectorKind_Any {
 	} else if r.Kind == RunnerSelectorKind_ByRunnerId {
-		tmp2006, ok := r.tmp1188.(*tmp2007)
+		tmp2016, ok := r.tmp1195.(*tmp2017)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp2006 // to prevent unused warnings
+		_ = tmp2016 // to prevent unused warnings
+		var tmp1977 error
+		tmp360, tmp1977 = tmp2016.RunnerId.Append(tmp360)
+
+		if tmp1977 != nil {
+			return nil, tmp1977
+		}
+	} else if r.Kind == RunnerSelectorKind_ByHostname {
+		tmp2014, ok := r.tmp1195.(*tmp2015)
+		if !ok {
+			return nil, errors.New("invalid union type for encoding")
+		}
+		_ = tmp2014 // to prevent unused warnings
+		var tmp1972 error
+		tmp360, tmp1972 = tmp2014.Hostname.Append(tmp360)
+
+		if tmp1972 != nil {
+			return nil, tmp1972
+		}
+	} else if r.Kind == RunnerSelectorKind_ByIp {
+		tmp2012, ok := r.tmp1195.(*tmp2013)
+		if !ok {
+			return nil, errors.New("invalid union type for encoding")
+		}
+		_ = tmp2012 // to prevent unused warnings
 		var tmp1967 error
-		tmp359, tmp1967 = tmp2006.RunnerId.Append(tmp359)
+		tmp360, tmp1967 = tmp2012.IpAddr.Append(tmp360)
 
 		if tmp1967 != nil {
 			return nil, tmp1967
 		}
-	} else if r.Kind == RunnerSelectorKind_ByHostname {
-		tmp2004, ok := r.tmp1188.(*tmp2005)
-		if !ok {
-			return nil, errors.New("invalid union type for encoding")
-		}
-		_ = tmp2004 // to prevent unused warnings
-		var tmp1962 error
-		tmp359, tmp1962 = tmp2004.Hostname.Append(tmp359)
-
-		if tmp1962 != nil {
-			return nil, tmp1962
-		}
-	} else if r.Kind == RunnerSelectorKind_ByIp {
-		tmp2002, ok := r.tmp1188.(*tmp2003)
-		if !ok {
-			return nil, errors.New("invalid union type for encoding")
-		}
-		_ = tmp2002 // to prevent unused warnings
-		var tmp1957 error
-		tmp359, tmp1957 = tmp2002.IpAddr.Append(tmp359)
-
-		if tmp1957 != nil {
-			return nil, tmp1957
-		}
 	}
-	return tmp359, nil
+	return tmp360, nil
 }
 func (s *RunnerSelector) MustAppend(buf []byte) []byte {
 	var err error
@@ -7012,13 +7102,13 @@ func (s *RunnerSelector) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (r *RunnerSelector) Read(tmp363 io.Reader) error {
-	tmp363ByteIO, _ := tmp363.(io.ByteReader)
-	_ = tmp363ByteIO
-	tmp1996 := uint8(0)
-	if tmp363ByteIO != nil {
+func (r *RunnerSelector) Read(tmp364 io.Reader) error {
+	tmp364ByteIO, _ := tmp364.(io.ByteReader)
+	_ = tmp364ByteIO
+	tmp2006 := uint8(0)
+	if tmp364ByteIO != nil {
 		var err error
-		tmp1996, err = tmp363ByteIO.ReadByte()
+		tmp2006, err = tmp364ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -7026,48 +7116,48 @@ func (r *RunnerSelector) Read(tmp363 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp363, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp364, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"RunnerSelector::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp1996 = buf[0]
+		tmp2006 = buf[0]
 	}
-	r.Kind = RunnerSelectorKind(tmp1996)
+	r.Kind = RunnerSelectorKind(tmp2006)
 	if r.Kind == RunnerSelectorKind_Any {
 	} else if r.Kind == RunnerSelectorKind_ByRunnerId {
-		tmp2006, ok := r.tmp1188.(*tmp2007)
+		tmp2016, ok := r.tmp1195.(*tmp2017)
 		if !ok {
-			tmp2006 = &tmp2007{}
-			r.tmp1188 = tmp2006
+			tmp2016 = &tmp2017{}
+			r.tmp1195 = tmp2016
 		}
-		_ = tmp2006 // to prevent unused warnings
-		tmp1989 := tmp2006.RunnerId.Read(tmp363)
-		if tmp1989 != nil {
-			return tmp1989
+		_ = tmp2016 // to prevent unused warnings
+		tmp1999 := tmp2016.RunnerId.Read(tmp364)
+		if tmp1999 != nil {
+			return tmp1999
 		}
 	} else if r.Kind == RunnerSelectorKind_ByHostname {
-		tmp2004, ok := r.tmp1188.(*tmp2005)
+		tmp2014, ok := r.tmp1195.(*tmp2015)
 		if !ok {
-			tmp2004 = &tmp2005{}
-			r.tmp1188 = tmp2004
+			tmp2014 = &tmp2015{}
+			r.tmp1195 = tmp2014
 		}
-		_ = tmp2004 // to prevent unused warnings
-		tmp1983 := tmp2004.Hostname.Read(tmp363)
-		if tmp1983 != nil {
-			return tmp1983
+		_ = tmp2014 // to prevent unused warnings
+		tmp1993 := tmp2014.Hostname.Read(tmp364)
+		if tmp1993 != nil {
+			return tmp1993
 		}
 	} else if r.Kind == RunnerSelectorKind_ByIp {
-		tmp2002, ok := r.tmp1188.(*tmp2003)
+		tmp2012, ok := r.tmp1195.(*tmp2013)
 		if !ok {
-			tmp2002 = &tmp2003{}
-			r.tmp1188 = tmp2002
+			tmp2012 = &tmp2013{}
+			r.tmp1195 = tmp2012
 		}
-		_ = tmp2002 // to prevent unused warnings
-		tmp1977 := tmp2002.IpAddr.Read(tmp363)
-		if tmp1977 != nil {
-			return tmp1977
+		_ = tmp2012 // to prevent unused warnings
+		tmp1987 := tmp2012.IpAddr.Read(tmp364)
+		if tmp1987 != nil {
+			return tmp1987
 		}
 	}
 	return nil
@@ -7090,49 +7180,49 @@ func (s *RunnerSelector) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (r *RunnerSelector) DecodeSlice(tmp363 []byte, tmp363Offset *int) error {
-	tmp1996 := uint8(0)
-	tmp1995 := []uint8{}
-	if len(tmp363)-*tmp363Offset < 1 {
+func (r *RunnerSelector) DecodeSlice(tmp364 []byte, tmp364Offset *int) error {
+	tmp2006 := uint8(0)
+	tmp2005 := []uint8{}
+	if len(tmp364)-*tmp364Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerSelector::Kind\"")
 	}
-	tmp1995 = tmp363[*tmp363Offset : *tmp363Offset+1]
-	*tmp363Offset += int(1)
-	tmp1996 = tmp1995[0]
-	r.Kind = RunnerSelectorKind(tmp1996)
+	tmp2005 = tmp364[*tmp364Offset : *tmp364Offset+1]
+	*tmp364Offset += int(1)
+	tmp2006 = tmp2005[0]
+	r.Kind = RunnerSelectorKind(tmp2006)
 	if r.Kind == RunnerSelectorKind_Any {
 	} else if r.Kind == RunnerSelectorKind_ByRunnerId {
-		tmp2006, ok := r.tmp1188.(*tmp2007)
+		tmp2016, ok := r.tmp1195.(*tmp2017)
 		if !ok {
-			tmp2006 = &tmp2007{}
-			r.tmp1188 = tmp2006
+			tmp2016 = &tmp2017{}
+			r.tmp1195 = tmp2016
 		}
-		_ = tmp2006 // to prevent unused warnings
-		tmp1989 := tmp2006.RunnerId.DecodeSlice(tmp363, tmp363Offset)
-		if tmp1989 != nil {
-			return tmp1989
+		_ = tmp2016 // to prevent unused warnings
+		tmp1999 := tmp2016.RunnerId.DecodeSlice(tmp364, tmp364Offset)
+		if tmp1999 != nil {
+			return tmp1999
 		}
 	} else if r.Kind == RunnerSelectorKind_ByHostname {
-		tmp2004, ok := r.tmp1188.(*tmp2005)
+		tmp2014, ok := r.tmp1195.(*tmp2015)
 		if !ok {
-			tmp2004 = &tmp2005{}
-			r.tmp1188 = tmp2004
+			tmp2014 = &tmp2015{}
+			r.tmp1195 = tmp2014
 		}
-		_ = tmp2004 // to prevent unused warnings
-		tmp1983 := tmp2004.Hostname.DecodeSlice(tmp363, tmp363Offset)
-		if tmp1983 != nil {
-			return tmp1983
+		_ = tmp2014 // to prevent unused warnings
+		tmp1993 := tmp2014.Hostname.DecodeSlice(tmp364, tmp364Offset)
+		if tmp1993 != nil {
+			return tmp1993
 		}
 	} else if r.Kind == RunnerSelectorKind_ByIp {
-		tmp2002, ok := r.tmp1188.(*tmp2003)
+		tmp2012, ok := r.tmp1195.(*tmp2013)
 		if !ok {
-			tmp2002 = &tmp2003{}
-			r.tmp1188 = tmp2002
+			tmp2012 = &tmp2013{}
+			r.tmp1195 = tmp2012
 		}
-		_ = tmp2002 // to prevent unused warnings
-		tmp1977 := tmp2002.IpAddr.DecodeSlice(tmp363, tmp363Offset)
-		if tmp1977 != nil {
-			return tmp1977
+		_ = tmp2012 // to prevent unused warnings
+		tmp1987 := tmp2012.IpAddr.DecodeSlice(tmp364, tmp364Offset)
+		if tmp1987 != nil {
+			return tmp1987
 		}
 	}
 	return nil
@@ -7166,58 +7256,58 @@ type SubmitRequest struct {
 	ResumeTaskId TaskID
 }
 
-func (s *SubmitRequest) SetRepoPath(tmp2204 []uint8) bool {
-	if len(tmp2204) > int(65535) {
+func (s *SubmitRequest) SetRepoPath(tmp2212 []uint8) bool {
+	if len(tmp2212) > int(65535) {
 		return false
 	}
-	s.RepoPathLen = uint16(len(tmp2204))
-	s.RepoPath = tmp2204
+	s.RepoPathLen = uint16(len(tmp2212))
+	s.RepoPath = tmp2212
 	return true
 }
 
-func (s *SubmitRequest) SetPrompt(tmp2199 []uint8) bool {
-	if len(tmp2199) > int(4294967295) {
+func (s *SubmitRequest) SetPrompt(tmp2203 []uint8) bool {
+	if len(tmp2203) > int(4294967295) {
 		return false
 	}
-	s.PromptLen = uint32(len(tmp2199))
-	s.Prompt = tmp2199
+	s.PromptLen = uint32(len(tmp2203))
+	s.Prompt = tmp2203
 	return true
 }
 
-func (s *SubmitRequest) Write(tmp213 io.Writer) error {
-	tmp1927 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp1927[:], uint16(s.RepoPathLen))
-	if _, err := tmp213.Write(tmp1927[:2]); err != nil {
+func (s *SubmitRequest) Write(tmp215 io.Writer) error {
+	tmp1937 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp1937[:], uint16(s.RepoPathLen))
+	if _, err := tmp215.Write(tmp1937[:2]); err != nil {
 		return err
 	}
 	if len(s.RepoPath) != int(s.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"SubmitRequest::RepoPath\": expected %d, got %d", int(s.RepoPathLen), len(s.RepoPath))
 	}
-	if _, err := tmp213.Write(s.RepoPath); err != nil {
+	if _, err := tmp215.Write(s.RepoPath); err != nil {
 		return err
 	}
-	tmp1922 := s.Selector.Write(tmp213)
-	if tmp1922 != nil {
-		return tmp1922
+	tmp1932 := s.Selector.Write(tmp215)
+	if tmp1932 != nil {
+		return tmp1932
 	}
-	tmp1920 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1920[:], uint32(s.PromptLen))
-	if _, err := tmp213.Write(tmp1920[:4]); err != nil {
+	tmp1930 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1930[:], uint32(s.PromptLen))
+	if _, err := tmp215.Write(tmp1930[:4]); err != nil {
 		return err
 	}
 	if len(s.Prompt) != int(s.PromptLen) {
 		return fmt.Errorf("size mismatch when writing field \"SubmitRequest::Prompt\": expected %d, got %d", int(s.PromptLen), len(s.Prompt))
 	}
-	if _, err := tmp213.Write(s.Prompt); err != nil {
+	if _, err := tmp215.Write(s.Prompt); err != nil {
 		return err
 	}
-	tmp1916 := s.ExtraArgs.Write(tmp213)
-	if tmp1916 != nil {
-		return tmp1916
+	tmp1926 := s.ExtraArgs.Write(tmp215)
+	if tmp1926 != nil {
+		return tmp1926
 	}
-	tmp1914 := s.ResumeTaskId.Write(tmp213)
-	if tmp1914 != nil {
-		return tmp1914
+	tmp1924 := s.ResumeTaskId.Write(tmp215)
+	if tmp1924 != nil {
+		return tmp1924
 	}
 	return nil
 }
@@ -7236,48 +7326,48 @@ func (s *SubmitRequest) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (s *SubmitRequest) EncodeSlice(tmp213 []byte, tmp213Offset *int) error {
-	tmp1927 := []uint8{}
-	if len(tmp213)-*tmp213Offset < int(2) {
+func (s *SubmitRequest) EncodeSlice(tmp215 []byte, tmp215Offset *int) error {
+	tmp1937 := []uint8{}
+	if len(tmp215)-*tmp215Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"SubmitRequest::RepoPathLen\"")
 	}
-	tmp1927 = tmp213[*tmp213Offset : *tmp213Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp1927[:], uint16(s.RepoPathLen))
-	*tmp213Offset += int(2)
+	tmp1937 = tmp215[*tmp215Offset : *tmp215Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp1937[:], uint16(s.RepoPathLen))
+	*tmp215Offset += int(2)
 	if len(s.RepoPath) != int(s.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"SubmitRequest::RepoPath\": expected %d, got %d", int(s.RepoPathLen), len(s.RepoPath))
 	}
-	if len(tmp213)-*tmp213Offset < int(0+s.RepoPathLen) {
+	if len(tmp215)-*tmp215Offset < int(0+s.RepoPathLen) {
 		return errors.New("not enough space to write for field \"SubmitRequest::RepoPath\"")
 	}
-	copy(tmp213[*tmp213Offset:*tmp213Offset+int(s.RepoPathLen)], s.RepoPath)
-	*tmp213Offset += int(s.RepoPathLen)
-	tmp1922 := s.Selector.EncodeSlice(tmp213, tmp213Offset)
-	if tmp1922 != nil {
-		return tmp1922
+	copy(tmp215[*tmp215Offset:*tmp215Offset+int(s.RepoPathLen)], s.RepoPath)
+	*tmp215Offset += int(s.RepoPathLen)
+	tmp1932 := s.Selector.EncodeSlice(tmp215, tmp215Offset)
+	if tmp1932 != nil {
+		return tmp1932
 	}
-	tmp1920 := []uint8{}
-	if len(tmp213)-*tmp213Offset < int(4) {
+	tmp1930 := []uint8{}
+	if len(tmp215)-*tmp215Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"SubmitRequest::PromptLen\"")
 	}
-	tmp1920 = tmp213[*tmp213Offset : *tmp213Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp1920[:], uint32(s.PromptLen))
-	*tmp213Offset += int(4)
+	tmp1930 = tmp215[*tmp215Offset : *tmp215Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp1930[:], uint32(s.PromptLen))
+	*tmp215Offset += int(4)
 	if len(s.Prompt) != int(s.PromptLen) {
 		return fmt.Errorf("size mismatch when writing field \"SubmitRequest::Prompt\": expected %d, got %d", int(s.PromptLen), len(s.Prompt))
 	}
-	if len(tmp213)-*tmp213Offset < int(0+s.PromptLen) {
+	if len(tmp215)-*tmp215Offset < int(0+s.PromptLen) {
 		return errors.New("not enough space to write for field \"SubmitRequest::Prompt\"")
 	}
-	copy(tmp213[*tmp213Offset:*tmp213Offset+int(s.PromptLen)], s.Prompt)
-	*tmp213Offset += int(s.PromptLen)
-	tmp1916 := s.ExtraArgs.EncodeSlice(tmp213, tmp213Offset)
-	if tmp1916 != nil {
-		return tmp1916
+	copy(tmp215[*tmp215Offset:*tmp215Offset+int(s.PromptLen)], s.Prompt)
+	*tmp215Offset += int(s.PromptLen)
+	tmp1926 := s.ExtraArgs.EncodeSlice(tmp215, tmp215Offset)
+	if tmp1926 != nil {
+		return tmp1926
 	}
-	tmp1914 := s.ResumeTaskId.EncodeSlice(tmp213, tmp213Offset)
-	if tmp1914 != nil {
-		return tmp1914
+	tmp1924 := s.ResumeTaskId.EncodeSlice(tmp215, tmp215Offset)
+	if tmp1924 != nil {
+		return tmp1924
 	}
 	return nil
 }
@@ -7296,40 +7386,40 @@ func (s *SubmitRequest) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (s *SubmitRequest) Append(tmp213 []byte) ([]byte, error) {
-	tmp1927 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp1927[:], uint16(s.RepoPathLen))
-	tmp213 = append(tmp213, tmp1927[:2]...)
+func (s *SubmitRequest) Append(tmp215 []byte) ([]byte, error) {
+	tmp1937 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp1937[:], uint16(s.RepoPathLen))
+	tmp215 = append(tmp215, tmp1937[:2]...)
 	if len(s.RepoPath) != int(s.RepoPathLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"SubmitRequest::RepoPath\": expected %d, got %d", int(s.RepoPathLen), len(s.RepoPath))
 	}
-	tmp213 = append(tmp213, s.RepoPath...)
-	var tmp1922 error
-	tmp213, tmp1922 = s.Selector.Append(tmp213)
+	tmp215 = append(tmp215, s.RepoPath...)
+	var tmp1932 error
+	tmp215, tmp1932 = s.Selector.Append(tmp215)
 
-	if tmp1922 != nil {
-		return nil, tmp1922
+	if tmp1932 != nil {
+		return nil, tmp1932
 	}
-	tmp1920 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1920[:], uint32(s.PromptLen))
-	tmp213 = append(tmp213, tmp1920[:4]...)
+	tmp1930 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1930[:], uint32(s.PromptLen))
+	tmp215 = append(tmp215, tmp1930[:4]...)
 	if len(s.Prompt) != int(s.PromptLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"SubmitRequest::Prompt\": expected %d, got %d", int(s.PromptLen), len(s.Prompt))
 	}
-	tmp213 = append(tmp213, s.Prompt...)
-	var tmp1916 error
-	tmp213, tmp1916 = s.ExtraArgs.Append(tmp213)
+	tmp215 = append(tmp215, s.Prompt...)
+	var tmp1926 error
+	tmp215, tmp1926 = s.ExtraArgs.Append(tmp215)
 
-	if tmp1916 != nil {
-		return nil, tmp1916
+	if tmp1926 != nil {
+		return nil, tmp1926
 	}
-	var tmp1914 error
-	tmp213, tmp1914 = s.ResumeTaskId.Append(tmp213)
+	var tmp1924 error
+	tmp215, tmp1924 = s.ResumeTaskId.Append(tmp215)
 
-	if tmp1914 != nil {
-		return nil, tmp1914
+	if tmp1924 != nil {
+		return nil, tmp1924
 	}
-	return tmp213, nil
+	return tmp215, nil
 }
 func (s *SubmitRequest) MustAppend(buf []byte) []byte {
 	var err error
@@ -7340,13 +7430,13 @@ func (s *SubmitRequest) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (s *SubmitRequest) Read(tmp214 io.Reader) error {
-	tmp1938 := [2]uint8{}
-	if _, err := io.ReadFull(tmp214, tmp1938[0:0+2]); err != nil {
+func (s *SubmitRequest) Read(tmp216 io.Reader) error {
+	tmp1948 := [2]uint8{}
+	if _, err := io.ReadFull(tmp216, tmp1948[0:0+2]); err != nil {
 		return err
 	}
-	s.RepoPathLen = binary.BigEndian.Uint16(tmp1938[:])
-	if seeker, ok := tmp214.(io.Seeker); ok {
+	s.RepoPathLen = binary.BigEndian.Uint16(tmp1948[:])
+	if seeker, ok := tmp216.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -7363,28 +7453,28 @@ func (s *SubmitRequest) Read(tmp214 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(s.RepoPathLen)))
 		}
 		s.RepoPath = make([]byte, int(s.RepoPathLen))
-		if _, err := io.ReadFull(tmp214, s.RepoPath[0:0+int(s.RepoPathLen)]); err != nil {
+		if _, err := io.ReadFull(tmp216, s.RepoPath[0:0+int(s.RepoPathLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_5145 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_5145, tmp214, int64(int(s.RepoPathLen))); err != nil {
+		io_temp_5165 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_5165, tmp216, int64(int(s.RepoPathLen))); err != nil {
 			return err
 		}
-		s.RepoPath = io_temp_5145.Bytes()
+		s.RepoPath = io_temp_5165.Bytes()
 	}
-	tmp1935 := s.Selector.Read(tmp214)
-	if tmp1935 != nil {
-		return tmp1935
+	tmp1945 := s.Selector.Read(tmp216)
+	if tmp1945 != nil {
+		return tmp1945
 	}
-	tmp1933 := [4]uint8{}
-	if _, err := io.ReadFull(tmp214, tmp1933[0:0+4]); err != nil {
+	tmp1943 := [4]uint8{}
+	if _, err := io.ReadFull(tmp216, tmp1943[0:0+4]); err != nil {
 		return err
 	}
-	s.PromptLen = binary.BigEndian.Uint32(tmp1933[:])
-	if seeker, ok := tmp214.(io.Seeker); ok {
+	s.PromptLen = binary.BigEndian.Uint32(tmp1943[:])
+	if seeker, ok := tmp216.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -7401,25 +7491,25 @@ func (s *SubmitRequest) Read(tmp214 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(s.PromptLen)))
 		}
 		s.Prompt = make([]byte, int(s.PromptLen))
-		if _, err := io.ReadFull(tmp214, s.Prompt[0:0+int(s.PromptLen)]); err != nil {
+		if _, err := io.ReadFull(tmp216, s.Prompt[0:0+int(s.PromptLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_5113 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_5113, tmp214, int64(int(s.PromptLen))); err != nil {
+		io_temp_5133 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_5133, tmp216, int64(int(s.PromptLen))); err != nil {
 			return err
 		}
-		s.Prompt = io_temp_5113.Bytes()
+		s.Prompt = io_temp_5133.Bytes()
 	}
-	tmp1931 := s.ExtraArgs.Read(tmp214)
-	if tmp1931 != nil {
-		return tmp1931
+	tmp1941 := s.ExtraArgs.Read(tmp216)
+	if tmp1941 != nil {
+		return tmp1941
 	}
-	tmp1929 := s.ResumeTaskId.Read(tmp214)
-	if tmp1929 != nil {
-		return tmp1929
+	tmp1939 := s.ResumeTaskId.Read(tmp216)
+	if tmp1939 != nil {
+		return tmp1939
 	}
 	return nil
 }
@@ -7441,42 +7531,42 @@ func (s *SubmitRequest) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (s *SubmitRequest) DecodeSlice(tmp214 []byte, tmp214Offset *int) error {
-	tmp1938 := []uint8{}
-	if len(tmp214)-*tmp214Offset < 2 {
+func (s *SubmitRequest) DecodeSlice(tmp216 []byte, tmp216Offset *int) error {
+	tmp1948 := []uint8{}
+	if len(tmp216)-*tmp216Offset < 2 {
 		return errors.New("not enough data to read for field \"SubmitRequest::RepoPathLen\"")
 	}
-	tmp1938 = tmp214[*tmp214Offset : *tmp214Offset+2]
-	*tmp214Offset += int(2)
-	s.RepoPathLen = binary.BigEndian.Uint16(tmp1938[:])
-	if len(tmp214)-*tmp214Offset < int(s.RepoPathLen) {
+	tmp1948 = tmp216[*tmp216Offset : *tmp216Offset+2]
+	*tmp216Offset += int(2)
+	s.RepoPathLen = binary.BigEndian.Uint16(tmp1948[:])
+	if len(tmp216)-*tmp216Offset < int(s.RepoPathLen) {
 		return errors.New("not enough data to read for field \"SubmitRequest::RepoPath\"")
 	}
-	s.RepoPath = tmp214[*tmp214Offset : *tmp214Offset+int(s.RepoPathLen)]
-	*tmp214Offset += int(int(s.RepoPathLen))
-	tmp1935 := s.Selector.DecodeSlice(tmp214, tmp214Offset)
-	if tmp1935 != nil {
-		return tmp1935
+	s.RepoPath = tmp216[*tmp216Offset : *tmp216Offset+int(s.RepoPathLen)]
+	*tmp216Offset += int(int(s.RepoPathLen))
+	tmp1945 := s.Selector.DecodeSlice(tmp216, tmp216Offset)
+	if tmp1945 != nil {
+		return tmp1945
 	}
-	tmp1933 := []uint8{}
-	if len(tmp214)-*tmp214Offset < 4 {
+	tmp1943 := []uint8{}
+	if len(tmp216)-*tmp216Offset < 4 {
 		return errors.New("not enough data to read for field \"SubmitRequest::PromptLen\"")
 	}
-	tmp1933 = tmp214[*tmp214Offset : *tmp214Offset+4]
-	*tmp214Offset += int(4)
-	s.PromptLen = binary.BigEndian.Uint32(tmp1933[:])
-	if len(tmp214)-*tmp214Offset < int(s.PromptLen) {
+	tmp1943 = tmp216[*tmp216Offset : *tmp216Offset+4]
+	*tmp216Offset += int(4)
+	s.PromptLen = binary.BigEndian.Uint32(tmp1943[:])
+	if len(tmp216)-*tmp216Offset < int(s.PromptLen) {
 		return errors.New("not enough data to read for field \"SubmitRequest::Prompt\"")
 	}
-	s.Prompt = tmp214[*tmp214Offset : *tmp214Offset+int(s.PromptLen)]
-	*tmp214Offset += int(int(s.PromptLen))
-	tmp1931 := s.ExtraArgs.DecodeSlice(tmp214, tmp214Offset)
-	if tmp1931 != nil {
-		return tmp1931
+	s.Prompt = tmp216[*tmp216Offset : *tmp216Offset+int(s.PromptLen)]
+	*tmp216Offset += int(int(s.PromptLen))
+	tmp1941 := s.ExtraArgs.DecodeSlice(tmp216, tmp216Offset)
+	if tmp1941 != nil {
+		return tmp1941
 	}
-	tmp1929 := s.ResumeTaskId.DecodeSlice(tmp214, tmp214Offset)
-	if tmp1929 != nil {
-		return tmp1929
+	tmp1939 := s.ResumeTaskId.DecodeSlice(tmp216, tmp216Offset)
+	if tmp1939 != nil {
+		return tmp1939
 	}
 	return nil
 }
@@ -7539,34 +7629,34 @@ type SubmitResponse struct {
 	ErrorMsg    []uint8
 }
 
-func (s *SubmitResponse) SetErrorMsg(tmp2195 []uint8) bool {
-	if len(tmp2195) > int(65535) {
+func (s *SubmitResponse) SetErrorMsg(tmp2193 []uint8) bool {
+	if len(tmp2193) > int(65535) {
 		return false
 	}
-	s.ErrorMsgLen = uint16(len(tmp2195))
-	s.ErrorMsg = tmp2195
+	s.ErrorMsgLen = uint16(len(tmp2193))
+	s.ErrorMsg = tmp2193
 	return true
 }
 
-func (s *SubmitResponse) Write(tmp270 io.Writer) error {
-	tmp1893 := [1]uint8{}
-	tmp1893[0] = uint8(s.Status)
-	if _, err := tmp270.Write(tmp1893[:1]); err != nil {
+func (s *SubmitResponse) Write(tmp273 io.Writer) error {
+	tmp1903 := [1]uint8{}
+	tmp1903[0] = uint8(s.Status)
+	if _, err := tmp273.Write(tmp1903[:1]); err != nil {
 		return err
 	}
-	tmp1890 := s.TaskId.Write(tmp270)
-	if tmp1890 != nil {
-		return tmp1890
+	tmp1900 := s.TaskId.Write(tmp273)
+	if tmp1900 != nil {
+		return tmp1900
 	}
-	tmp1888 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp1888[:], uint16(s.ErrorMsgLen))
-	if _, err := tmp270.Write(tmp1888[:2]); err != nil {
+	tmp1898 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp1898[:], uint16(s.ErrorMsgLen))
+	if _, err := tmp273.Write(tmp1898[:2]); err != nil {
 		return err
 	}
 	if len(s.ErrorMsg) != int(s.ErrorMsgLen) {
 		return fmt.Errorf("size mismatch when writing field \"SubmitResponse::ErrorMsg\": expected %d, got %d", int(s.ErrorMsgLen), len(s.ErrorMsg))
 	}
-	if _, err := tmp270.Write(s.ErrorMsg); err != nil {
+	if _, err := tmp273.Write(s.ErrorMsg); err != nil {
 		return err
 	}
 	return nil
@@ -7586,33 +7676,33 @@ func (s *SubmitResponse) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (s *SubmitResponse) EncodeSlice(tmp270 []byte, tmp270Offset *int) error {
-	tmp1893 := []uint8{}
-	if len(tmp270)-*tmp270Offset < int(1) {
+func (s *SubmitResponse) EncodeSlice(tmp273 []byte, tmp273Offset *int) error {
+	tmp1903 := []uint8{}
+	if len(tmp273)-*tmp273Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"SubmitResponse::Status\"")
 	}
-	tmp1893 = tmp270[*tmp270Offset : *tmp270Offset+int(1)]
-	tmp1893[0] = uint8(s.Status)
-	*tmp270Offset += int(1)
-	tmp1890 := s.TaskId.EncodeSlice(tmp270, tmp270Offset)
-	if tmp1890 != nil {
-		return tmp1890
+	tmp1903 = tmp273[*tmp273Offset : *tmp273Offset+int(1)]
+	tmp1903[0] = uint8(s.Status)
+	*tmp273Offset += int(1)
+	tmp1900 := s.TaskId.EncodeSlice(tmp273, tmp273Offset)
+	if tmp1900 != nil {
+		return tmp1900
 	}
-	tmp1888 := []uint8{}
-	if len(tmp270)-*tmp270Offset < int(2) {
+	tmp1898 := []uint8{}
+	if len(tmp273)-*tmp273Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"SubmitResponse::ErrorMsgLen\"")
 	}
-	tmp1888 = tmp270[*tmp270Offset : *tmp270Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp1888[:], uint16(s.ErrorMsgLen))
-	*tmp270Offset += int(2)
+	tmp1898 = tmp273[*tmp273Offset : *tmp273Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp1898[:], uint16(s.ErrorMsgLen))
+	*tmp273Offset += int(2)
 	if len(s.ErrorMsg) != int(s.ErrorMsgLen) {
 		return fmt.Errorf("size mismatch when writing field \"SubmitResponse::ErrorMsg\": expected %d, got %d", int(s.ErrorMsgLen), len(s.ErrorMsg))
 	}
-	if len(tmp270)-*tmp270Offset < int(0+s.ErrorMsgLen) {
+	if len(tmp273)-*tmp273Offset < int(0+s.ErrorMsgLen) {
 		return errors.New("not enough space to write for field \"SubmitResponse::ErrorMsg\"")
 	}
-	copy(tmp270[*tmp270Offset:*tmp270Offset+int(s.ErrorMsgLen)], s.ErrorMsg)
-	*tmp270Offset += int(s.ErrorMsgLen)
+	copy(tmp273[*tmp273Offset:*tmp273Offset+int(s.ErrorMsgLen)], s.ErrorMsg)
+	*tmp273Offset += int(s.ErrorMsgLen)
 	return nil
 }
 func (s *SubmitResponse) Encode(buf []byte) ([]byte, error) {
@@ -7630,24 +7720,24 @@ func (s *SubmitResponse) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (s *SubmitResponse) Append(tmp270 []byte) ([]byte, error) {
-	tmp1893 := [1]uint8{}
-	tmp1893[0] = uint8(s.Status)
-	tmp270 = append(tmp270, tmp1893[:1]...)
-	var tmp1890 error
-	tmp270, tmp1890 = s.TaskId.Append(tmp270)
+func (s *SubmitResponse) Append(tmp273 []byte) ([]byte, error) {
+	tmp1903 := [1]uint8{}
+	tmp1903[0] = uint8(s.Status)
+	tmp273 = append(tmp273, tmp1903[:1]...)
+	var tmp1900 error
+	tmp273, tmp1900 = s.TaskId.Append(tmp273)
 
-	if tmp1890 != nil {
-		return nil, tmp1890
+	if tmp1900 != nil {
+		return nil, tmp1900
 	}
-	tmp1888 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp1888[:], uint16(s.ErrorMsgLen))
-	tmp270 = append(tmp270, tmp1888[:2]...)
+	tmp1898 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp1898[:], uint16(s.ErrorMsgLen))
+	tmp273 = append(tmp273, tmp1898[:2]...)
 	if len(s.ErrorMsg) != int(s.ErrorMsgLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"SubmitResponse::ErrorMsg\": expected %d, got %d", int(s.ErrorMsgLen), len(s.ErrorMsg))
 	}
-	tmp270 = append(tmp270, s.ErrorMsg...)
-	return tmp270, nil
+	tmp273 = append(tmp273, s.ErrorMsg...)
+	return tmp273, nil
 }
 func (s *SubmitResponse) MustAppend(buf []byte) []byte {
 	var err error
@@ -7658,24 +7748,24 @@ func (s *SubmitResponse) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (s *SubmitResponse) Read(tmp271 io.Reader) error {
-	tmp1901 := uint8(0)
-	tmp1900 := [1]uint8{}
-	if _, err := io.ReadFull(tmp271, tmp1900[0:0+1]); err != nil {
+func (s *SubmitResponse) Read(tmp274 io.Reader) error {
+	tmp1911 := uint8(0)
+	tmp1910 := [1]uint8{}
+	if _, err := io.ReadFull(tmp274, tmp1910[0:0+1]); err != nil {
 		return err
 	}
-	tmp1901 = tmp1900[0]
-	s.Status = SubmitStatus(tmp1901)
-	tmp1898 := s.TaskId.Read(tmp271)
-	if tmp1898 != nil {
-		return tmp1898
+	tmp1911 = tmp1910[0]
+	s.Status = SubmitStatus(tmp1911)
+	tmp1908 := s.TaskId.Read(tmp274)
+	if tmp1908 != nil {
+		return tmp1908
 	}
-	tmp1896 := [2]uint8{}
-	if _, err := io.ReadFull(tmp271, tmp1896[0:0+2]); err != nil {
+	tmp1906 := [2]uint8{}
+	if _, err := io.ReadFull(tmp274, tmp1906[0:0+2]); err != nil {
 		return err
 	}
-	s.ErrorMsgLen = binary.BigEndian.Uint16(tmp1896[:])
-	if seeker, ok := tmp271.(io.Seeker); ok {
+	s.ErrorMsgLen = binary.BigEndian.Uint16(tmp1906[:])
+	if seeker, ok := tmp274.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -7692,17 +7782,17 @@ func (s *SubmitResponse) Read(tmp271 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(s.ErrorMsgLen)))
 		}
 		s.ErrorMsg = make([]byte, int(s.ErrorMsgLen))
-		if _, err := io.ReadFull(tmp271, s.ErrorMsg[0:0+int(s.ErrorMsgLen)]); err != nil {
+		if _, err := io.ReadFull(tmp274, s.ErrorMsg[0:0+int(s.ErrorMsgLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_4965 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_4965, tmp271, int64(int(s.ErrorMsgLen))); err != nil {
+		io_temp_4985 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_4985, tmp274, int64(int(s.ErrorMsgLen))); err != nil {
 			return err
 		}
-		s.ErrorMsg = io_temp_4965.Bytes()
+		s.ErrorMsg = io_temp_4985.Bytes()
 	}
 	return nil
 }
@@ -7724,32 +7814,32 @@ func (s *SubmitResponse) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (s *SubmitResponse) DecodeSlice(tmp271 []byte, tmp271Offset *int) error {
-	tmp1901 := uint8(0)
-	tmp1900 := []uint8{}
-	if len(tmp271)-*tmp271Offset < 1 {
+func (s *SubmitResponse) DecodeSlice(tmp274 []byte, tmp274Offset *int) error {
+	tmp1911 := uint8(0)
+	tmp1910 := []uint8{}
+	if len(tmp274)-*tmp274Offset < 1 {
 		return errors.New("not enough data to read for field \"SubmitResponse::Status\"")
 	}
-	tmp1900 = tmp271[*tmp271Offset : *tmp271Offset+1]
-	*tmp271Offset += int(1)
-	tmp1901 = tmp1900[0]
-	s.Status = SubmitStatus(tmp1901)
-	tmp1898 := s.TaskId.DecodeSlice(tmp271, tmp271Offset)
-	if tmp1898 != nil {
-		return tmp1898
+	tmp1910 = tmp274[*tmp274Offset : *tmp274Offset+1]
+	*tmp274Offset += int(1)
+	tmp1911 = tmp1910[0]
+	s.Status = SubmitStatus(tmp1911)
+	tmp1908 := s.TaskId.DecodeSlice(tmp274, tmp274Offset)
+	if tmp1908 != nil {
+		return tmp1908
 	}
-	tmp1896 := []uint8{}
-	if len(tmp271)-*tmp271Offset < 2 {
+	tmp1906 := []uint8{}
+	if len(tmp274)-*tmp274Offset < 2 {
 		return errors.New("not enough data to read for field \"SubmitResponse::ErrorMsgLen\"")
 	}
-	tmp1896 = tmp271[*tmp271Offset : *tmp271Offset+2]
-	*tmp271Offset += int(2)
-	s.ErrorMsgLen = binary.BigEndian.Uint16(tmp1896[:])
-	if len(tmp271)-*tmp271Offset < int(s.ErrorMsgLen) {
+	tmp1906 = tmp274[*tmp274Offset : *tmp274Offset+2]
+	*tmp274Offset += int(2)
+	s.ErrorMsgLen = binary.BigEndian.Uint16(tmp1906[:])
+	if len(tmp274)-*tmp274Offset < int(s.ErrorMsgLen) {
 		return errors.New("not enough data to read for field \"SubmitResponse::ErrorMsg\"")
 	}
-	s.ErrorMsg = tmp271[*tmp271Offset : *tmp271Offset+int(s.ErrorMsgLen)]
-	*tmp271Offset += int(int(s.ErrorMsgLen))
+	s.ErrorMsg = tmp274[*tmp274Offset : *tmp274Offset+int(s.ErrorMsgLen)]
+	*tmp274Offset += int(int(s.ErrorMsgLen))
 	return nil
 }
 func (s *SubmitResponse) Decode(buf []byte) ([]byte, error) {
@@ -7775,10 +7865,10 @@ type PruneTasksRequest struct {
 	BeforeTs uint64
 }
 
-func (p *PruneTasksRequest) Write(tmp1165 io.Writer) error {
-	tmp1881 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1881[:], uint64(p.BeforeTs))
-	if _, err := tmp1165.Write(tmp1881[:8]); err != nil {
+func (p *PruneTasksRequest) Write(tmp1173 io.Writer) error {
+	tmp1891 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1891[:], uint64(p.BeforeTs))
+	if _, err := tmp1173.Write(tmp1891[:8]); err != nil {
 		return err
 	}
 	return nil
@@ -7798,14 +7888,14 @@ func (s *PruneTasksRequest) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (p *PruneTasksRequest) EncodeSlice(tmp1165 []byte, tmp1165Offset *int) error {
-	tmp1881 := []uint8{}
-	if len(tmp1165)-*tmp1165Offset < int(8) {
+func (p *PruneTasksRequest) EncodeSlice(tmp1173 []byte, tmp1173Offset *int) error {
+	tmp1891 := []uint8{}
+	if len(tmp1173)-*tmp1173Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"PruneTasksRequest::BeforeTs\"")
 	}
-	tmp1881 = tmp1165[*tmp1165Offset : *tmp1165Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp1881[:], uint64(p.BeforeTs))
-	*tmp1165Offset += int(8)
+	tmp1891 = tmp1173[*tmp1173Offset : *tmp1173Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp1891[:], uint64(p.BeforeTs))
+	*tmp1173Offset += int(8)
 	return nil
 }
 func (s *PruneTasksRequest) Encode(buf []byte) ([]byte, error) {
@@ -7823,11 +7913,11 @@ func (s *PruneTasksRequest) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (p *PruneTasksRequest) Append(tmp1165 []byte) ([]byte, error) {
-	tmp1881 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1881[:], uint64(p.BeforeTs))
-	tmp1165 = append(tmp1165, tmp1881[:8]...)
-	return tmp1165, nil
+func (p *PruneTasksRequest) Append(tmp1173 []byte) ([]byte, error) {
+	tmp1891 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1891[:], uint64(p.BeforeTs))
+	tmp1173 = append(tmp1173, tmp1891[:8]...)
+	return tmp1173, nil
 }
 func (s *PruneTasksRequest) MustAppend(buf []byte) []byte {
 	var err error
@@ -7838,12 +7928,12 @@ func (s *PruneTasksRequest) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (p *PruneTasksRequest) Read(tmp1166 io.Reader) error {
-	tmp1883 := [8]uint8{}
-	if _, err := io.ReadFull(tmp1166, tmp1883[0:0+8]); err != nil {
+func (p *PruneTasksRequest) Read(tmp1174 io.Reader) error {
+	tmp1893 := [8]uint8{}
+	if _, err := io.ReadFull(tmp1174, tmp1893[0:0+8]); err != nil {
 		return err
 	}
-	p.BeforeTs = binary.BigEndian.Uint64(tmp1883[:])
+	p.BeforeTs = binary.BigEndian.Uint64(tmp1893[:])
 	return nil
 }
 func (s *PruneTasksRequest) DecodeCopy(buf []byte) ([]byte, error) {
@@ -7864,14 +7954,14 @@ func (s *PruneTasksRequest) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (p *PruneTasksRequest) DecodeSlice(tmp1166 []byte, tmp1166Offset *int) error {
-	tmp1883 := []uint8{}
-	if len(tmp1166)-*tmp1166Offset < 8 {
+func (p *PruneTasksRequest) DecodeSlice(tmp1174 []byte, tmp1174Offset *int) error {
+	tmp1893 := []uint8{}
+	if len(tmp1174)-*tmp1174Offset < 8 {
 		return errors.New("not enough data to read for field \"PruneTasksRequest::BeforeTs\"")
 	}
-	tmp1883 = tmp1166[*tmp1166Offset : *tmp1166Offset+8]
-	*tmp1166Offset += int(8)
-	p.BeforeTs = binary.BigEndian.Uint64(tmp1883[:])
+	tmp1893 = tmp1174[*tmp1174Offset : *tmp1174Offset+8]
+	*tmp1174Offset += int(8)
+	p.BeforeTs = binary.BigEndian.Uint64(tmp1893[:])
 	return nil
 }
 func (s *PruneTasksRequest) Decode(buf []byte) ([]byte, error) {
@@ -7897,10 +7987,10 @@ type PruneTasksResponse struct {
 	Removed uint32
 }
 
-func (p *PruneTasksResponse) Write(tmp1163 io.Writer) error {
-	tmp1876 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1876[:], uint32(p.Removed))
-	if _, err := tmp1163.Write(tmp1876[:4]); err != nil {
+func (p *PruneTasksResponse) Write(tmp1171 io.Writer) error {
+	tmp1886 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1886[:], uint32(p.Removed))
+	if _, err := tmp1171.Write(tmp1886[:4]); err != nil {
 		return err
 	}
 	return nil
@@ -7920,14 +8010,14 @@ func (s *PruneTasksResponse) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (p *PruneTasksResponse) EncodeSlice(tmp1163 []byte, tmp1163Offset *int) error {
-	tmp1876 := []uint8{}
-	if len(tmp1163)-*tmp1163Offset < int(4) {
+func (p *PruneTasksResponse) EncodeSlice(tmp1171 []byte, tmp1171Offset *int) error {
+	tmp1886 := []uint8{}
+	if len(tmp1171)-*tmp1171Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"PruneTasksResponse::Removed\"")
 	}
-	tmp1876 = tmp1163[*tmp1163Offset : *tmp1163Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp1876[:], uint32(p.Removed))
-	*tmp1163Offset += int(4)
+	tmp1886 = tmp1171[*tmp1171Offset : *tmp1171Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp1886[:], uint32(p.Removed))
+	*tmp1171Offset += int(4)
 	return nil
 }
 func (s *PruneTasksResponse) Encode(buf []byte) ([]byte, error) {
@@ -7945,11 +8035,11 @@ func (s *PruneTasksResponse) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (p *PruneTasksResponse) Append(tmp1163 []byte) ([]byte, error) {
-	tmp1876 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1876[:], uint32(p.Removed))
-	tmp1163 = append(tmp1163, tmp1876[:4]...)
-	return tmp1163, nil
+func (p *PruneTasksResponse) Append(tmp1171 []byte) ([]byte, error) {
+	tmp1886 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1886[:], uint32(p.Removed))
+	tmp1171 = append(tmp1171, tmp1886[:4]...)
+	return tmp1171, nil
 }
 func (s *PruneTasksResponse) MustAppend(buf []byte) []byte {
 	var err error
@@ -7960,12 +8050,12 @@ func (s *PruneTasksResponse) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (p *PruneTasksResponse) Read(tmp1164 io.Reader) error {
-	tmp1878 := [4]uint8{}
-	if _, err := io.ReadFull(tmp1164, tmp1878[0:0+4]); err != nil {
+func (p *PruneTasksResponse) Read(tmp1172 io.Reader) error {
+	tmp1888 := [4]uint8{}
+	if _, err := io.ReadFull(tmp1172, tmp1888[0:0+4]); err != nil {
 		return err
 	}
-	p.Removed = binary.BigEndian.Uint32(tmp1878[:])
+	p.Removed = binary.BigEndian.Uint32(tmp1888[:])
 	return nil
 }
 func (s *PruneTasksResponse) DecodeCopy(buf []byte) ([]byte, error) {
@@ -7986,14 +8076,14 @@ func (s *PruneTasksResponse) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (p *PruneTasksResponse) DecodeSlice(tmp1164 []byte, tmp1164Offset *int) error {
-	tmp1878 := []uint8{}
-	if len(tmp1164)-*tmp1164Offset < 4 {
+func (p *PruneTasksResponse) DecodeSlice(tmp1172 []byte, tmp1172Offset *int) error {
+	tmp1888 := []uint8{}
+	if len(tmp1172)-*tmp1172Offset < 4 {
 		return errors.New("not enough data to read for field \"PruneTasksResponse::Removed\"")
 	}
-	tmp1878 = tmp1164[*tmp1164Offset : *tmp1164Offset+4]
-	*tmp1164Offset += int(4)
-	p.Removed = binary.BigEndian.Uint32(tmp1878[:])
+	tmp1888 = tmp1172[*tmp1172Offset : *tmp1172Offset+4]
+	*tmp1172Offset += int(4)
+	p.Removed = binary.BigEndian.Uint32(tmp1888[:])
 	return nil
 }
 func (s *PruneTasksResponse) Decode(buf []byte) ([]byte, error) {
@@ -8019,10 +8109,10 @@ type GetTaskLogRequest struct {
 	TaskId TaskID
 }
 
-func (g *GetTaskLogRequest) Write(tmp1161 io.Writer) error {
-	tmp1872 := g.TaskId.Write(tmp1161)
-	if tmp1872 != nil {
-		return tmp1872
+func (g *GetTaskLogRequest) Write(tmp1169 io.Writer) error {
+	tmp1882 := g.TaskId.Write(tmp1169)
+	if tmp1882 != nil {
+		return tmp1882
 	}
 	return nil
 }
@@ -8041,10 +8131,10 @@ func (s *GetTaskLogRequest) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (g *GetTaskLogRequest) EncodeSlice(tmp1161 []byte, tmp1161Offset *int) error {
-	tmp1872 := g.TaskId.EncodeSlice(tmp1161, tmp1161Offset)
-	if tmp1872 != nil {
-		return tmp1872
+func (g *GetTaskLogRequest) EncodeSlice(tmp1169 []byte, tmp1169Offset *int) error {
+	tmp1882 := g.TaskId.EncodeSlice(tmp1169, tmp1169Offset)
+	if tmp1882 != nil {
+		return tmp1882
 	}
 	return nil
 }
@@ -8063,14 +8153,14 @@ func (s *GetTaskLogRequest) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (g *GetTaskLogRequest) Append(tmp1161 []byte) ([]byte, error) {
-	var tmp1872 error
-	tmp1161, tmp1872 = g.TaskId.Append(tmp1161)
+func (g *GetTaskLogRequest) Append(tmp1169 []byte) ([]byte, error) {
+	var tmp1882 error
+	tmp1169, tmp1882 = g.TaskId.Append(tmp1169)
 
-	if tmp1872 != nil {
-		return nil, tmp1872
+	if tmp1882 != nil {
+		return nil, tmp1882
 	}
-	return tmp1161, nil
+	return tmp1169, nil
 }
 func (s *GetTaskLogRequest) MustAppend(buf []byte) []byte {
 	var err error
@@ -8081,10 +8171,10 @@ func (s *GetTaskLogRequest) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (g *GetTaskLogRequest) Read(tmp1162 io.Reader) error {
-	tmp1874 := g.TaskId.Read(tmp1162)
-	if tmp1874 != nil {
-		return tmp1874
+func (g *GetTaskLogRequest) Read(tmp1170 io.Reader) error {
+	tmp1884 := g.TaskId.Read(tmp1170)
+	if tmp1884 != nil {
+		return tmp1884
 	}
 	return nil
 }
@@ -8106,10 +8196,10 @@ func (s *GetTaskLogRequest) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (g *GetTaskLogRequest) DecodeSlice(tmp1162 []byte, tmp1162Offset *int) error {
-	tmp1874 := g.TaskId.DecodeSlice(tmp1162, tmp1162Offset)
-	if tmp1874 != nil {
-		return tmp1874
+func (g *GetTaskLogRequest) DecodeSlice(tmp1170 []byte, tmp1170Offset *int) error {
+	tmp1884 := g.TaskId.DecodeSlice(tmp1170, tmp1170Offset)
+	if tmp1884 != nil {
+		return tmp1884
 	}
 	return nil
 }
@@ -8137,15 +8227,15 @@ type GetTaskLogResponse struct {
 	StreamId uint64
 }
 
-func (g *GetTaskLogResponse) Write(tmp541 io.Writer) error {
-	tmp1864 := [1]uint8{}
-	tmp1864[0] = g.Found
-	if _, err := tmp541.Write(tmp1864[:1]); err != nil {
+func (g *GetTaskLogResponse) Write(tmp545 io.Writer) error {
+	tmp1874 := [1]uint8{}
+	tmp1874[0] = g.Found
+	if _, err := tmp545.Write(tmp1874[:1]); err != nil {
 		return err
 	}
-	tmp1861 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1861[:], uint64(g.StreamId))
-	if _, err := tmp541.Write(tmp1861[:8]); err != nil {
+	tmp1871 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1871[:], uint64(g.StreamId))
+	if _, err := tmp545.Write(tmp1871[:8]); err != nil {
 		return err
 	}
 	return nil
@@ -8165,21 +8255,21 @@ func (s *GetTaskLogResponse) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (g *GetTaskLogResponse) EncodeSlice(tmp541 []byte, tmp541Offset *int) error {
-	tmp1864 := []uint8{}
-	if len(tmp541)-*tmp541Offset < int(1) {
+func (g *GetTaskLogResponse) EncodeSlice(tmp545 []byte, tmp545Offset *int) error {
+	tmp1874 := []uint8{}
+	if len(tmp545)-*tmp545Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"GetTaskLogResponse::Found\"")
 	}
-	tmp1864 = tmp541[*tmp541Offset : *tmp541Offset+int(1)]
-	tmp1864[0] = g.Found
-	*tmp541Offset += int(1)
-	tmp1861 := []uint8{}
-	if len(tmp541)-*tmp541Offset < int(8) {
+	tmp1874 = tmp545[*tmp545Offset : *tmp545Offset+int(1)]
+	tmp1874[0] = g.Found
+	*tmp545Offset += int(1)
+	tmp1871 := []uint8{}
+	if len(tmp545)-*tmp545Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"GetTaskLogResponse::StreamId\"")
 	}
-	tmp1861 = tmp541[*tmp541Offset : *tmp541Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp1861[:], uint64(g.StreamId))
-	*tmp541Offset += int(8)
+	tmp1871 = tmp545[*tmp545Offset : *tmp545Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp1871[:], uint64(g.StreamId))
+	*tmp545Offset += int(8)
 	return nil
 }
 func (s *GetTaskLogResponse) Encode(buf []byte) ([]byte, error) {
@@ -8197,14 +8287,14 @@ func (s *GetTaskLogResponse) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (g *GetTaskLogResponse) Append(tmp541 []byte) ([]byte, error) {
-	tmp1864 := [1]uint8{}
-	tmp1864[0] = g.Found
-	tmp541 = append(tmp541, tmp1864[:1]...)
-	tmp1861 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1861[:], uint64(g.StreamId))
-	tmp541 = append(tmp541, tmp1861[:8]...)
-	return tmp541, nil
+func (g *GetTaskLogResponse) Append(tmp545 []byte) ([]byte, error) {
+	tmp1874 := [1]uint8{}
+	tmp1874[0] = g.Found
+	tmp545 = append(tmp545, tmp1874[:1]...)
+	tmp1871 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1871[:], uint64(g.StreamId))
+	tmp545 = append(tmp545, tmp1871[:8]...)
+	return tmp545, nil
 }
 func (s *GetTaskLogResponse) MustAppend(buf []byte) []byte {
 	var err error
@@ -8215,17 +8305,17 @@ func (s *GetTaskLogResponse) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (g *GetTaskLogResponse) Read(tmp542 io.Reader) error {
-	tmp1868 := [1]uint8{}
-	if _, err := io.ReadFull(tmp542, tmp1868[0:0+1]); err != nil {
+func (g *GetTaskLogResponse) Read(tmp546 io.Reader) error {
+	tmp1878 := [1]uint8{}
+	if _, err := io.ReadFull(tmp546, tmp1878[0:0+1]); err != nil {
 		return err
 	}
-	g.Found = tmp1868[0]
-	tmp1866 := [8]uint8{}
-	if _, err := io.ReadFull(tmp542, tmp1866[0:0+8]); err != nil {
+	g.Found = tmp1878[0]
+	tmp1876 := [8]uint8{}
+	if _, err := io.ReadFull(tmp546, tmp1876[0:0+8]); err != nil {
 		return err
 	}
-	g.StreamId = binary.BigEndian.Uint64(tmp1866[:])
+	g.StreamId = binary.BigEndian.Uint64(tmp1876[:])
 	return nil
 }
 func (s *GetTaskLogResponse) DecodeCopy(buf []byte) ([]byte, error) {
@@ -8246,21 +8336,21 @@ func (s *GetTaskLogResponse) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (g *GetTaskLogResponse) DecodeSlice(tmp542 []byte, tmp542Offset *int) error {
-	tmp1868 := []uint8{}
-	if len(tmp542)-*tmp542Offset < 1 {
+func (g *GetTaskLogResponse) DecodeSlice(tmp546 []byte, tmp546Offset *int) error {
+	tmp1878 := []uint8{}
+	if len(tmp546)-*tmp546Offset < 1 {
 		return errors.New("not enough data to read for field \"GetTaskLogResponse::Found\"")
 	}
-	tmp1868 = tmp542[*tmp542Offset : *tmp542Offset+1]
-	*tmp542Offset += int(1)
-	g.Found = tmp1868[0]
-	tmp1866 := []uint8{}
-	if len(tmp542)-*tmp542Offset < 8 {
+	tmp1878 = tmp546[*tmp546Offset : *tmp546Offset+1]
+	*tmp546Offset += int(1)
+	g.Found = tmp1878[0]
+	tmp1876 := []uint8{}
+	if len(tmp546)-*tmp546Offset < 8 {
 		return errors.New("not enough data to read for field \"GetTaskLogResponse::StreamId\"")
 	}
-	tmp1866 = tmp542[*tmp542Offset : *tmp542Offset+8]
-	*tmp542Offset += int(8)
-	g.StreamId = binary.BigEndian.Uint64(tmp1866[:])
+	tmp1876 = tmp546[*tmp546Offset : *tmp546Offset+8]
+	*tmp546Offset += int(8)
+	g.StreamId = binary.BigEndian.Uint64(tmp1876[:])
 	return nil
 }
 func (s *GetTaskLogResponse) Decode(buf []byte) ([]byte, error) {
@@ -8290,38 +8380,38 @@ type OpenInteractiveRequest struct {
 	ResumeTaskId TaskID
 }
 
-func (o *OpenInteractiveRequest) SetRepoPath(tmp2209 []uint8) bool {
-	if len(tmp2209) > int(65535) {
+func (o *OpenInteractiveRequest) SetRepoPath(tmp2183 []uint8) bool {
+	if len(tmp2183) > int(65535) {
 		return false
 	}
-	o.RepoPathLen = uint16(len(tmp2209))
-	o.RepoPath = tmp2209
+	o.RepoPathLen = uint16(len(tmp2183))
+	o.RepoPath = tmp2183
 	return true
 }
 
-func (o *OpenInteractiveRequest) Write(tmp355 io.Writer) error {
-	tmp1851 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp1851[:], uint16(o.RepoPathLen))
-	if _, err := tmp355.Write(tmp1851[:2]); err != nil {
+func (o *OpenInteractiveRequest) Write(tmp356 io.Writer) error {
+	tmp1861 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp1861[:], uint16(o.RepoPathLen))
+	if _, err := tmp356.Write(tmp1861[:2]); err != nil {
 		return err
 	}
 	if len(o.RepoPath) != int(o.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"OpenInteractiveRequest::RepoPath\": expected %d, got %d", int(o.RepoPathLen), len(o.RepoPath))
 	}
-	if _, err := tmp355.Write(o.RepoPath); err != nil {
+	if _, err := tmp356.Write(o.RepoPath); err != nil {
 		return err
 	}
-	tmp1847 := o.Selector.Write(tmp355)
-	if tmp1847 != nil {
-		return tmp1847
+	tmp1857 := o.Selector.Write(tmp356)
+	if tmp1857 != nil {
+		return tmp1857
 	}
-	tmp1845 := o.ExtraArgs.Write(tmp355)
-	if tmp1845 != nil {
-		return tmp1845
+	tmp1855 := o.ExtraArgs.Write(tmp356)
+	if tmp1855 != nil {
+		return tmp1855
 	}
-	tmp1843 := o.ResumeTaskId.Write(tmp355)
-	if tmp1843 != nil {
-		return tmp1843
+	tmp1853 := o.ResumeTaskId.Write(tmp356)
+	if tmp1853 != nil {
+		return tmp1853
 	}
 	return nil
 }
@@ -8340,33 +8430,33 @@ func (s *OpenInteractiveRequest) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (o *OpenInteractiveRequest) EncodeSlice(tmp355 []byte, tmp355Offset *int) error {
-	tmp1851 := []uint8{}
-	if len(tmp355)-*tmp355Offset < int(2) {
+func (o *OpenInteractiveRequest) EncodeSlice(tmp356 []byte, tmp356Offset *int) error {
+	tmp1861 := []uint8{}
+	if len(tmp356)-*tmp356Offset < int(2) {
 		return errors.New("not enough space to reserve data for field \"OpenInteractiveRequest::RepoPathLen\"")
 	}
-	tmp1851 = tmp355[*tmp355Offset : *tmp355Offset+int(2)]
-	binary.BigEndian.PutUint16(tmp1851[:], uint16(o.RepoPathLen))
-	*tmp355Offset += int(2)
+	tmp1861 = tmp356[*tmp356Offset : *tmp356Offset+int(2)]
+	binary.BigEndian.PutUint16(tmp1861[:], uint16(o.RepoPathLen))
+	*tmp356Offset += int(2)
 	if len(o.RepoPath) != int(o.RepoPathLen) {
 		return fmt.Errorf("size mismatch when writing field \"OpenInteractiveRequest::RepoPath\": expected %d, got %d", int(o.RepoPathLen), len(o.RepoPath))
 	}
-	if len(tmp355)-*tmp355Offset < int(0+o.RepoPathLen) {
+	if len(tmp356)-*tmp356Offset < int(0+o.RepoPathLen) {
 		return errors.New("not enough space to write for field \"OpenInteractiveRequest::RepoPath\"")
 	}
-	copy(tmp355[*tmp355Offset:*tmp355Offset+int(o.RepoPathLen)], o.RepoPath)
-	*tmp355Offset += int(o.RepoPathLen)
-	tmp1847 := o.Selector.EncodeSlice(tmp355, tmp355Offset)
-	if tmp1847 != nil {
-		return tmp1847
+	copy(tmp356[*tmp356Offset:*tmp356Offset+int(o.RepoPathLen)], o.RepoPath)
+	*tmp356Offset += int(o.RepoPathLen)
+	tmp1857 := o.Selector.EncodeSlice(tmp356, tmp356Offset)
+	if tmp1857 != nil {
+		return tmp1857
 	}
-	tmp1845 := o.ExtraArgs.EncodeSlice(tmp355, tmp355Offset)
-	if tmp1845 != nil {
-		return tmp1845
+	tmp1855 := o.ExtraArgs.EncodeSlice(tmp356, tmp356Offset)
+	if tmp1855 != nil {
+		return tmp1855
 	}
-	tmp1843 := o.ResumeTaskId.EncodeSlice(tmp355, tmp355Offset)
-	if tmp1843 != nil {
-		return tmp1843
+	tmp1853 := o.ResumeTaskId.EncodeSlice(tmp356, tmp356Offset)
+	if tmp1853 != nil {
+		return tmp1853
 	}
 	return nil
 }
@@ -8385,33 +8475,33 @@ func (s *OpenInteractiveRequest) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (o *OpenInteractiveRequest) Append(tmp355 []byte) ([]byte, error) {
-	tmp1851 := [2]uint8{}
-	binary.BigEndian.PutUint16(tmp1851[:], uint16(o.RepoPathLen))
-	tmp355 = append(tmp355, tmp1851[:2]...)
+func (o *OpenInteractiveRequest) Append(tmp356 []byte) ([]byte, error) {
+	tmp1861 := [2]uint8{}
+	binary.BigEndian.PutUint16(tmp1861[:], uint16(o.RepoPathLen))
+	tmp356 = append(tmp356, tmp1861[:2]...)
 	if len(o.RepoPath) != int(o.RepoPathLen) {
 		return nil, fmt.Errorf("size mismatch when writing field \"OpenInteractiveRequest::RepoPath\": expected %d, got %d", int(o.RepoPathLen), len(o.RepoPath))
 	}
-	tmp355 = append(tmp355, o.RepoPath...)
-	var tmp1847 error
-	tmp355, tmp1847 = o.Selector.Append(tmp355)
+	tmp356 = append(tmp356, o.RepoPath...)
+	var tmp1857 error
+	tmp356, tmp1857 = o.Selector.Append(tmp356)
 
-	if tmp1847 != nil {
-		return nil, tmp1847
+	if tmp1857 != nil {
+		return nil, tmp1857
 	}
-	var tmp1845 error
-	tmp355, tmp1845 = o.ExtraArgs.Append(tmp355)
+	var tmp1855 error
+	tmp356, tmp1855 = o.ExtraArgs.Append(tmp356)
 
-	if tmp1845 != nil {
-		return nil, tmp1845
+	if tmp1855 != nil {
+		return nil, tmp1855
 	}
-	var tmp1843 error
-	tmp355, tmp1843 = o.ResumeTaskId.Append(tmp355)
+	var tmp1853 error
+	tmp356, tmp1853 = o.ResumeTaskId.Append(tmp356)
 
-	if tmp1843 != nil {
-		return nil, tmp1843
+	if tmp1853 != nil {
+		return nil, tmp1853
 	}
-	return tmp355, nil
+	return tmp356, nil
 }
 func (s *OpenInteractiveRequest) MustAppend(buf []byte) []byte {
 	var err error
@@ -8422,13 +8512,13 @@ func (s *OpenInteractiveRequest) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (o *OpenInteractiveRequest) Read(tmp357 io.Reader) error {
-	tmp1859 := [2]uint8{}
-	if _, err := io.ReadFull(tmp357, tmp1859[0:0+2]); err != nil {
+func (o *OpenInteractiveRequest) Read(tmp358 io.Reader) error {
+	tmp1869 := [2]uint8{}
+	if _, err := io.ReadFull(tmp358, tmp1869[0:0+2]); err != nil {
 		return err
 	}
-	o.RepoPathLen = binary.BigEndian.Uint16(tmp1859[:])
-	if seeker, ok := tmp357.(io.Seeker); ok {
+	o.RepoPathLen = binary.BigEndian.Uint16(tmp1869[:])
+	if seeker, ok := tmp358.(io.Seeker); ok {
 		current, err := seeker.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return err
@@ -8445,29 +8535,29 @@ func (o *OpenInteractiveRequest) Read(tmp357 io.Reader) error {
 			return fmt.Errorf("Too large length requested: %d < %d", endOffset-current, int64(int(o.RepoPathLen)))
 		}
 		o.RepoPath = make([]byte, int(o.RepoPathLen))
-		if _, err := io.ReadFull(tmp357, o.RepoPath[0:0+int(o.RepoPathLen)]); err != nil {
+		if _, err := io.ReadFull(tmp358, o.RepoPath[0:0+int(o.RepoPathLen)]); err != nil {
 			return err
 		}
 	} else {
 		// To mitigate DoS attack, use incremental buffer allocation
 		// for more performance, use (assert on DSL or safe-len-limit option) and trust-input-len option
-		io_temp_4631 := bytes.NewBuffer(nil)
-		if _, err := io.CopyN(io_temp_4631, tmp357, int64(int(o.RepoPathLen))); err != nil {
+		io_temp_4651 := bytes.NewBuffer(nil)
+		if _, err := io.CopyN(io_temp_4651, tmp358, int64(int(o.RepoPathLen))); err != nil {
 			return err
 		}
-		o.RepoPath = io_temp_4631.Bytes()
+		o.RepoPath = io_temp_4651.Bytes()
 	}
-	tmp1857 := o.Selector.Read(tmp357)
-	if tmp1857 != nil {
-		return tmp1857
+	tmp1867 := o.Selector.Read(tmp358)
+	if tmp1867 != nil {
+		return tmp1867
 	}
-	tmp1855 := o.ExtraArgs.Read(tmp357)
-	if tmp1855 != nil {
-		return tmp1855
+	tmp1865 := o.ExtraArgs.Read(tmp358)
+	if tmp1865 != nil {
+		return tmp1865
 	}
-	tmp1853 := o.ResumeTaskId.Read(tmp357)
-	if tmp1853 != nil {
-		return tmp1853
+	tmp1863 := o.ResumeTaskId.Read(tmp358)
+	if tmp1863 != nil {
+		return tmp1863
 	}
 	return nil
 }
@@ -8489,30 +8579,30 @@ func (s *OpenInteractiveRequest) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (o *OpenInteractiveRequest) DecodeSlice(tmp357 []byte, tmp357Offset *int) error {
-	tmp1859 := []uint8{}
-	if len(tmp357)-*tmp357Offset < 2 {
+func (o *OpenInteractiveRequest) DecodeSlice(tmp358 []byte, tmp358Offset *int) error {
+	tmp1869 := []uint8{}
+	if len(tmp358)-*tmp358Offset < 2 {
 		return errors.New("not enough data to read for field \"OpenInteractiveRequest::RepoPathLen\"")
 	}
-	tmp1859 = tmp357[*tmp357Offset : *tmp357Offset+2]
-	*tmp357Offset += int(2)
-	o.RepoPathLen = binary.BigEndian.Uint16(tmp1859[:])
-	if len(tmp357)-*tmp357Offset < int(o.RepoPathLen) {
+	tmp1869 = tmp358[*tmp358Offset : *tmp358Offset+2]
+	*tmp358Offset += int(2)
+	o.RepoPathLen = binary.BigEndian.Uint16(tmp1869[:])
+	if len(tmp358)-*tmp358Offset < int(o.RepoPathLen) {
 		return errors.New("not enough data to read for field \"OpenInteractiveRequest::RepoPath\"")
 	}
-	o.RepoPath = tmp357[*tmp357Offset : *tmp357Offset+int(o.RepoPathLen)]
-	*tmp357Offset += int(int(o.RepoPathLen))
-	tmp1857 := o.Selector.DecodeSlice(tmp357, tmp357Offset)
-	if tmp1857 != nil {
-		return tmp1857
+	o.RepoPath = tmp358[*tmp358Offset : *tmp358Offset+int(o.RepoPathLen)]
+	*tmp358Offset += int(int(o.RepoPathLen))
+	tmp1867 := o.Selector.DecodeSlice(tmp358, tmp358Offset)
+	if tmp1867 != nil {
+		return tmp1867
 	}
-	tmp1855 := o.ExtraArgs.DecodeSlice(tmp357, tmp357Offset)
-	if tmp1855 != nil {
-		return tmp1855
+	tmp1865 := o.ExtraArgs.DecodeSlice(tmp358, tmp358Offset)
+	if tmp1865 != nil {
+		return tmp1865
 	}
-	tmp1853 := o.ResumeTaskId.DecodeSlice(tmp357, tmp357Offset)
-	if tmp1853 != nil {
-		return tmp1853
+	tmp1863 := o.ResumeTaskId.DecodeSlice(tmp358, tmp358Offset)
+	if tmp1863 != nil {
+		return tmp1863
 	}
 	return nil
 }
@@ -8577,19 +8667,19 @@ type OpenInteractiveResponse struct {
 	StreamId uint64
 }
 
-func (o *OpenInteractiveResponse) Write(tmp305 io.Writer) error {
-	tmp1834 := [1]uint8{}
-	tmp1834[0] = uint8(o.Status)
-	if _, err := tmp305.Write(tmp1834[:1]); err != nil {
+func (o *OpenInteractiveResponse) Write(tmp309 io.Writer) error {
+	tmp1844 := [1]uint8{}
+	tmp1844[0] = uint8(o.Status)
+	if _, err := tmp309.Write(tmp1844[:1]); err != nil {
 		return err
 	}
-	tmp1831 := o.TaskId.Write(tmp305)
-	if tmp1831 != nil {
-		return tmp1831
+	tmp1841 := o.TaskId.Write(tmp309)
+	if tmp1841 != nil {
+		return tmp1841
 	}
-	tmp1829 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1829[:], uint64(o.StreamId))
-	if _, err := tmp305.Write(tmp1829[:8]); err != nil {
+	tmp1839 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1839[:], uint64(o.StreamId))
+	if _, err := tmp309.Write(tmp1839[:8]); err != nil {
 		return err
 	}
 	return nil
@@ -8609,25 +8699,25 @@ func (s *OpenInteractiveResponse) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (o *OpenInteractiveResponse) EncodeSlice(tmp305 []byte, tmp305Offset *int) error {
-	tmp1834 := []uint8{}
-	if len(tmp305)-*tmp305Offset < int(1) {
+func (o *OpenInteractiveResponse) EncodeSlice(tmp309 []byte, tmp309Offset *int) error {
+	tmp1844 := []uint8{}
+	if len(tmp309)-*tmp309Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"OpenInteractiveResponse::Status\"")
 	}
-	tmp1834 = tmp305[*tmp305Offset : *tmp305Offset+int(1)]
-	tmp1834[0] = uint8(o.Status)
-	*tmp305Offset += int(1)
-	tmp1831 := o.TaskId.EncodeSlice(tmp305, tmp305Offset)
-	if tmp1831 != nil {
-		return tmp1831
+	tmp1844 = tmp309[*tmp309Offset : *tmp309Offset+int(1)]
+	tmp1844[0] = uint8(o.Status)
+	*tmp309Offset += int(1)
+	tmp1841 := o.TaskId.EncodeSlice(tmp309, tmp309Offset)
+	if tmp1841 != nil {
+		return tmp1841
 	}
-	tmp1829 := []uint8{}
-	if len(tmp305)-*tmp305Offset < int(8) {
+	tmp1839 := []uint8{}
+	if len(tmp309)-*tmp309Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"OpenInteractiveResponse::StreamId\"")
 	}
-	tmp1829 = tmp305[*tmp305Offset : *tmp305Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp1829[:], uint64(o.StreamId))
-	*tmp305Offset += int(8)
+	tmp1839 = tmp309[*tmp309Offset : *tmp309Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp1839[:], uint64(o.StreamId))
+	*tmp309Offset += int(8)
 	return nil
 }
 func (s *OpenInteractiveResponse) Encode(buf []byte) ([]byte, error) {
@@ -8645,20 +8735,20 @@ func (s *OpenInteractiveResponse) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (o *OpenInteractiveResponse) Append(tmp305 []byte) ([]byte, error) {
-	tmp1834 := [1]uint8{}
-	tmp1834[0] = uint8(o.Status)
-	tmp305 = append(tmp305, tmp1834[:1]...)
-	var tmp1831 error
-	tmp305, tmp1831 = o.TaskId.Append(tmp305)
+func (o *OpenInteractiveResponse) Append(tmp309 []byte) ([]byte, error) {
+	tmp1844 := [1]uint8{}
+	tmp1844[0] = uint8(o.Status)
+	tmp309 = append(tmp309, tmp1844[:1]...)
+	var tmp1841 error
+	tmp309, tmp1841 = o.TaskId.Append(tmp309)
 
-	if tmp1831 != nil {
-		return nil, tmp1831
+	if tmp1841 != nil {
+		return nil, tmp1841
 	}
-	tmp1829 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1829[:], uint64(o.StreamId))
-	tmp305 = append(tmp305, tmp1829[:8]...)
-	return tmp305, nil
+	tmp1839 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1839[:], uint64(o.StreamId))
+	tmp309 = append(tmp309, tmp1839[:8]...)
+	return tmp309, nil
 }
 func (s *OpenInteractiveResponse) MustAppend(buf []byte) []byte {
 	var err error
@@ -8669,23 +8759,23 @@ func (s *OpenInteractiveResponse) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (o *OpenInteractiveResponse) Read(tmp306 io.Reader) error {
-	tmp1841 := uint8(0)
-	tmp1840 := [1]uint8{}
-	if _, err := io.ReadFull(tmp306, tmp1840[0:0+1]); err != nil {
+func (o *OpenInteractiveResponse) Read(tmp310 io.Reader) error {
+	tmp1851 := uint8(0)
+	tmp1850 := [1]uint8{}
+	if _, err := io.ReadFull(tmp310, tmp1850[0:0+1]); err != nil {
 		return err
 	}
-	tmp1841 = tmp1840[0]
-	o.Status = OpenInteractiveStatus(tmp1841)
-	tmp1838 := o.TaskId.Read(tmp306)
-	if tmp1838 != nil {
-		return tmp1838
+	tmp1851 = tmp1850[0]
+	o.Status = OpenInteractiveStatus(tmp1851)
+	tmp1848 := o.TaskId.Read(tmp310)
+	if tmp1848 != nil {
+		return tmp1848
 	}
-	tmp1836 := [8]uint8{}
-	if _, err := io.ReadFull(tmp306, tmp1836[0:0+8]); err != nil {
+	tmp1846 := [8]uint8{}
+	if _, err := io.ReadFull(tmp310, tmp1846[0:0+8]); err != nil {
 		return err
 	}
-	o.StreamId = binary.BigEndian.Uint64(tmp1836[:])
+	o.StreamId = binary.BigEndian.Uint64(tmp1846[:])
 	return nil
 }
 func (s *OpenInteractiveResponse) DecodeCopy(buf []byte) ([]byte, error) {
@@ -8706,27 +8796,27 @@ func (s *OpenInteractiveResponse) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (o *OpenInteractiveResponse) DecodeSlice(tmp306 []byte, tmp306Offset *int) error {
-	tmp1841 := uint8(0)
-	tmp1840 := []uint8{}
-	if len(tmp306)-*tmp306Offset < 1 {
+func (o *OpenInteractiveResponse) DecodeSlice(tmp310 []byte, tmp310Offset *int) error {
+	tmp1851 := uint8(0)
+	tmp1850 := []uint8{}
+	if len(tmp310)-*tmp310Offset < 1 {
 		return errors.New("not enough data to read for field \"OpenInteractiveResponse::Status\"")
 	}
-	tmp1840 = tmp306[*tmp306Offset : *tmp306Offset+1]
-	*tmp306Offset += int(1)
-	tmp1841 = tmp1840[0]
-	o.Status = OpenInteractiveStatus(tmp1841)
-	tmp1838 := o.TaskId.DecodeSlice(tmp306, tmp306Offset)
-	if tmp1838 != nil {
-		return tmp1838
+	tmp1850 = tmp310[*tmp310Offset : *tmp310Offset+1]
+	*tmp310Offset += int(1)
+	tmp1851 = tmp1850[0]
+	o.Status = OpenInteractiveStatus(tmp1851)
+	tmp1848 := o.TaskId.DecodeSlice(tmp310, tmp310Offset)
+	if tmp1848 != nil {
+		return tmp1848
 	}
-	tmp1836 := []uint8{}
-	if len(tmp306)-*tmp306Offset < 8 {
+	tmp1846 := []uint8{}
+	if len(tmp310)-*tmp310Offset < 8 {
 		return errors.New("not enough data to read for field \"OpenInteractiveResponse::StreamId\"")
 	}
-	tmp1836 = tmp306[*tmp306Offset : *tmp306Offset+8]
-	*tmp306Offset += int(8)
-	o.StreamId = binary.BigEndian.Uint64(tmp1836[:])
+	tmp1846 = tmp310[*tmp310Offset : *tmp310Offset+8]
+	*tmp310Offset += int(8)
+	o.StreamId = binary.BigEndian.Uint64(tmp1846[:])
 	return nil
 }
 func (s *OpenInteractiveResponse) Decode(buf []byte) ([]byte, error) {
@@ -8748,87 +8838,87 @@ func (s *OpenInteractiveResponse) DecodeExact(buf []byte) error {
 	return nil
 }
 
-type tmp1826 struct {
+type tmp1836 struct {
 	Submit SubmitRequest
 }
 
-func (v *tmp1826) isVariant204() {}
+func (v *tmp1836) isVariant206() {}
 
-type tmp1824 struct {
+type tmp1834 struct {
 	List ListQuery
 }
 
-func (v *tmp1824) isVariant204() {}
+func (v *tmp1834) isVariant206() {}
 
-type tmp1822 struct {
+type tmp1832 struct {
 	Cancel CancelTask
 }
 
-func (v *tmp1822) isVariant204() {}
+func (v *tmp1832) isVariant206() {}
 
-type tmp1820 struct {
+type tmp1830 struct {
 	Prune PruneTasksRequest
 }
 
-func (v *tmp1820) isVariant204() {}
+func (v *tmp1830) isVariant206() {}
 
-type tmp1818 struct {
+type tmp1828 struct {
 	GetLog GetTaskLogRequest
 }
 
-func (v *tmp1818) isVariant204() {}
+func (v *tmp1828) isVariant206() {}
 
-type tmp1816 struct {
+type tmp1826 struct {
 	OpenInteractive OpenInteractiveRequest
 }
 
-func (v *tmp1816) isVariant204() {}
+func (v *tmp1826) isVariant206() {}
 
-type tmp1814 struct {
+type tmp1824 struct {
 	ClientHello ClientHello
 }
 
-func (v *tmp1814) isVariant204() {}
+func (v *tmp1824) isVariant206() {}
 
-type tmp4407 struct {
+type tmp4425 struct {
 }
 
-func (v *tmp4407) isVariant204() {}
+func (v *tmp4425) isVariant206() {}
 
-type Variant204 interface {
-	isVariant204()
+type Variant206 interface {
+	isVariant206()
 }
 
 type TaskControlRequest struct {
 	Kind      TaskControlKind
 	RequestId uint32
-	tmp1157   Variant204
+	tmp1165   Variant206
 }
 
 func (t *TaskControlRequest) Cancel() *CancelTask {
 	if (TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1821, ok := t.tmp1157.(*tmp1822)
+		tmp1831, ok := t.tmp1165.(*tmp1832)
 		if !ok {
 			return nil
 		}
-		_ = tmp1821 // to prevent unused warnings
-		return &tmp1821.Cancel
+		_ = tmp1831 // to prevent unused warnings
+		return &tmp1831.Cancel
 	}
 	return nil
 }
-func (t *TaskControlRequest) SetCancel(tmp1707 CancelTask) bool {
+func (t *TaskControlRequest) SetCancel(tmp1717 CancelTask) bool {
 	if (TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1821, ok := t.tmp1157.(*tmp1822)
+		tmp1831, ok := t.tmp1165.(*tmp1832)
 		if !ok {
-			tmp1821 = &tmp1822{}
-			t.tmp1157 = tmp1821
+			tmp1831 = &tmp1832{}
+			t.tmp1165 = tmp1831
 		}
-		_ = tmp1821 // to prevent unused warnings
-		tmp1821.Cancel = tmp1707
+		_ = tmp1831 // to prevent unused warnings
+		tmp1831.Cancel = tmp1717
 		return true
 	}
 	return false
@@ -8838,26 +8928,26 @@ func (t *TaskControlRequest) ClientHello() *ClientHello {
 	if (((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind)) || (TaskControlKind_OpenInteractive == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1813, ok := t.tmp1157.(*tmp1814)
+		tmp1823, ok := t.tmp1165.(*tmp1824)
 		if !ok {
 			return nil
 		}
-		_ = tmp1813 // to prevent unused warnings
-		return &tmp1813.ClientHello
+		_ = tmp1823 // to prevent unused warnings
+		return &tmp1823.ClientHello
 	}
 	return nil
 }
-func (t *TaskControlRequest) SetClientHello(tmp1690 ClientHello) bool {
+func (t *TaskControlRequest) SetClientHello(tmp1700 ClientHello) bool {
 	if (((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind)) || (TaskControlKind_OpenInteractive == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1813, ok := t.tmp1157.(*tmp1814)
+		tmp1823, ok := t.tmp1165.(*tmp1824)
 		if !ok {
-			tmp1813 = &tmp1814{}
-			t.tmp1157 = tmp1813
+			tmp1823 = &tmp1824{}
+			t.tmp1165 = tmp1823
 		}
-		_ = tmp1813 // to prevent unused warnings
-		tmp1813.ClientHello = tmp1690
+		_ = tmp1823 // to prevent unused warnings
+		tmp1823.ClientHello = tmp1700
 		return true
 	}
 	return false
@@ -8867,26 +8957,26 @@ func (t *TaskControlRequest) GetLog() *GetTaskLogRequest {
 	if (((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1817, ok := t.tmp1157.(*tmp1818)
+		tmp1827, ok := t.tmp1165.(*tmp1828)
 		if !ok {
 			return nil
 		}
-		_ = tmp1817 // to prevent unused warnings
-		return &tmp1817.GetLog
+		_ = tmp1827 // to prevent unused warnings
+		return &tmp1827.GetLog
 	}
 	return nil
 }
-func (t *TaskControlRequest) SetGetLog(tmp1677 GetTaskLogRequest) bool {
+func (t *TaskControlRequest) SetGetLog(tmp1687 GetTaskLogRequest) bool {
 	if (((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1817, ok := t.tmp1157.(*tmp1818)
+		tmp1827, ok := t.tmp1165.(*tmp1828)
 		if !ok {
-			tmp1817 = &tmp1818{}
-			t.tmp1157 = tmp1817
+			tmp1827 = &tmp1828{}
+			t.tmp1165 = tmp1827
 		}
-		_ = tmp1817 // to prevent unused warnings
-		tmp1817.GetLog = tmp1677
+		_ = tmp1827 // to prevent unused warnings
+		tmp1827.GetLog = tmp1687
 		return true
 	}
 	return false
@@ -8896,26 +8986,26 @@ func (t *TaskControlRequest) List() *ListQuery {
 	if t.Kind == TaskControlKind_Submit {
 		return nil
 	} else if t.Kind == TaskControlKind_List {
-		tmp1823, ok := t.tmp1157.(*tmp1824)
+		tmp1833, ok := t.tmp1165.(*tmp1834)
 		if !ok {
 			return nil
 		}
-		_ = tmp1823 // to prevent unused warnings
-		return &tmp1823.List
+		_ = tmp1833 // to prevent unused warnings
+		return &tmp1833.List
 	}
 	return nil
 }
-func (t *TaskControlRequest) SetList(tmp1674 ListQuery) bool {
+func (t *TaskControlRequest) SetList(tmp1684 ListQuery) bool {
 	if t.Kind == TaskControlKind_Submit {
 		return false
 	} else if t.Kind == TaskControlKind_List {
-		tmp1823, ok := t.tmp1157.(*tmp1824)
+		tmp1833, ok := t.tmp1165.(*tmp1834)
 		if !ok {
-			tmp1823 = &tmp1824{}
-			t.tmp1157 = tmp1823
+			tmp1833 = &tmp1834{}
+			t.tmp1165 = tmp1833
 		}
-		_ = tmp1823 // to prevent unused warnings
-		tmp1823.List = tmp1674
+		_ = tmp1833 // to prevent unused warnings
+		tmp1833.List = tmp1684
 		return true
 	}
 	return false
@@ -8925,26 +9015,26 @@ func (t *TaskControlRequest) OpenInteractive() *OpenInteractiveRequest {
 	if ((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1815, ok := t.tmp1157.(*tmp1816)
+		tmp1825, ok := t.tmp1165.(*tmp1826)
 		if !ok {
 			return nil
 		}
-		_ = tmp1815 // to prevent unused warnings
-		return &tmp1815.OpenInteractive
+		_ = tmp1825 // to prevent unused warnings
+		return &tmp1825.OpenInteractive
 	}
 	return nil
 }
-func (t *TaskControlRequest) SetOpenInteractive(tmp1659 OpenInteractiveRequest) bool {
+func (t *TaskControlRequest) SetOpenInteractive(tmp1669 OpenInteractiveRequest) bool {
 	if ((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1815, ok := t.tmp1157.(*tmp1816)
+		tmp1825, ok := t.tmp1165.(*tmp1826)
 		if !ok {
-			tmp1815 = &tmp1816{}
-			t.tmp1157 = tmp1815
+			tmp1825 = &tmp1826{}
+			t.tmp1165 = tmp1825
 		}
-		_ = tmp1815 // to prevent unused warnings
-		tmp1815.OpenInteractive = tmp1659
+		_ = tmp1825 // to prevent unused warnings
+		tmp1825.OpenInteractive = tmp1669
 		return true
 	}
 	return false
@@ -8954,26 +9044,26 @@ func (t *TaskControlRequest) Prune() *PruneTasksRequest {
 	if ((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1819, ok := t.tmp1157.(*tmp1820)
+		tmp1829, ok := t.tmp1165.(*tmp1830)
 		if !ok {
 			return nil
 		}
-		_ = tmp1819 // to prevent unused warnings
-		return &tmp1819.Prune
+		_ = tmp1829 // to prevent unused warnings
+		return &tmp1829.Prune
 	}
 	return nil
 }
-func (t *TaskControlRequest) SetPrune(tmp1648 PruneTasksRequest) bool {
+func (t *TaskControlRequest) SetPrune(tmp1658 PruneTasksRequest) bool {
 	if ((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1819, ok := t.tmp1157.(*tmp1820)
+		tmp1829, ok := t.tmp1165.(*tmp1830)
 		if !ok {
-			tmp1819 = &tmp1820{}
-			t.tmp1157 = tmp1819
+			tmp1829 = &tmp1830{}
+			t.tmp1165 = tmp1829
 		}
-		_ = tmp1819 // to prevent unused warnings
-		tmp1819.Prune = tmp1648
+		_ = tmp1829 // to prevent unused warnings
+		tmp1829.Prune = tmp1658
 		return true
 	}
 	return false
@@ -8981,24 +9071,24 @@ func (t *TaskControlRequest) SetPrune(tmp1648 PruneTasksRequest) bool {
 
 func (t *TaskControlRequest) Submit() *SubmitRequest {
 	if t.Kind == TaskControlKind_Submit {
-		tmp1825, ok := t.tmp1157.(*tmp1826)
+		tmp1835, ok := t.tmp1165.(*tmp1836)
 		if !ok {
 			return nil
 		}
-		_ = tmp1825 // to prevent unused warnings
-		return &tmp1825.Submit
+		_ = tmp1835 // to prevent unused warnings
+		return &tmp1835.Submit
 	}
 	return nil
 }
-func (t *TaskControlRequest) SetSubmit(tmp1645 SubmitRequest) bool {
+func (t *TaskControlRequest) SetSubmit(tmp1655 SubmitRequest) bool {
 	if t.Kind == TaskControlKind_Submit {
-		tmp1825, ok := t.tmp1157.(*tmp1826)
+		tmp1835, ok := t.tmp1165.(*tmp1836)
 		if !ok {
-			tmp1825 = &tmp1826{}
-			t.tmp1157 = tmp1825
+			tmp1835 = &tmp1836{}
+			t.tmp1165 = tmp1835
 		}
-		_ = tmp1825 // to prevent unused warnings
-		tmp1825.Submit = tmp1645
+		_ = tmp1835 // to prevent unused warnings
+		tmp1835.Submit = tmp1655
 		return true
 	}
 	return false
@@ -9016,87 +9106,87 @@ func (t *TaskControlRequest) Write(tmp129 io.Writer) error {
 			return err
 		}
 	}
-	tmp1750 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1750[:], uint32(t.RequestId))
-	if _, err := tmp129.Write(tmp1750[:4]); err != nil {
+	tmp1760 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1760[:], uint32(t.RequestId))
+	if _, err := tmp129.Write(tmp1760[:4]); err != nil {
 		return err
 	}
 	if t.Kind == TaskControlKind_Submit {
-		tmp1825, ok := t.tmp1157.(*tmp1826)
+		tmp1835, ok := t.tmp1165.(*tmp1836)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1835 // to prevent unused warnings
+		tmp1756 := tmp1835.Submit.Write(tmp129)
+		if tmp1756 != nil {
+			return tmp1756
+		}
+	} else if t.Kind == TaskControlKind_List {
+		tmp1833, ok := t.tmp1165.(*tmp1834)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1833 // to prevent unused warnings
+		tmp1751 := tmp1833.List.Write(tmp129)
+		if tmp1751 != nil {
+			return tmp1751
+		}
+	} else if t.Kind == TaskControlKind_Cancel {
+		tmp1831, ok := t.tmp1165.(*tmp1832)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1831 // to prevent unused warnings
+		tmp1747 := tmp1831.Cancel.Write(tmp129)
+		if tmp1747 != nil {
+			return tmp1747
+		}
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1829, ok := t.tmp1165.(*tmp1830)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1829 // to prevent unused warnings
+		tmp1742 := tmp1829.Prune.Write(tmp129)
+		if tmp1742 != nil {
+			return tmp1742
+		}
+	} else if t.Kind == TaskControlKind_GetTaskLog {
+		tmp1827, ok := t.tmp1165.(*tmp1828)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1827 // to prevent unused warnings
+		tmp1737 := tmp1827.GetLog.Write(tmp129)
+		if tmp1737 != nil {
+			return tmp1737
+		}
+	} else if t.Kind == TaskControlKind_OpenInteractive {
+		tmp1825, ok := t.tmp1165.(*tmp1826)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1825 // to prevent unused warnings
-		tmp1746 := tmp1825.Submit.Write(tmp129)
-		if tmp1746 != nil {
-			return tmp1746
+		tmp1732 := tmp1825.OpenInteractive.Write(tmp129)
+		if tmp1732 != nil {
+			return tmp1732
 		}
-	} else if t.Kind == TaskControlKind_List {
-		tmp1823, ok := t.tmp1157.(*tmp1824)
+	} else if t.Kind == TaskControlKind_ClientHello {
+		tmp1823, ok := t.tmp1165.(*tmp1824)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1823 // to prevent unused warnings
-		tmp1741 := tmp1823.List.Write(tmp129)
-		if tmp1741 != nil {
-			return tmp1741
-		}
-	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1821, ok := t.tmp1157.(*tmp1822)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1821 // to prevent unused warnings
-		tmp1737 := tmp1821.Cancel.Write(tmp129)
-		if tmp1737 != nil {
-			return tmp1737
-		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1819, ok := t.tmp1157.(*tmp1820)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1819 // to prevent unused warnings
-		tmp1732 := tmp1819.Prune.Write(tmp129)
-		if tmp1732 != nil {
-			return tmp1732
-		}
-	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1817, ok := t.tmp1157.(*tmp1818)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1817 // to prevent unused warnings
-		tmp1727 := tmp1817.GetLog.Write(tmp129)
+		tmp1727 := tmp1823.ClientHello.Write(tmp129)
 		if tmp1727 != nil {
 			return tmp1727
 		}
-	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1815, ok := t.tmp1157.(*tmp1816)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1815 // to prevent unused warnings
-		tmp1722 := tmp1815.OpenInteractive.Write(tmp129)
-		if tmp1722 != nil {
-			return tmp1722
-		}
-	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1813, ok := t.tmp1157.(*tmp1814)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1813 // to prevent unused warnings
-		tmp1717 := tmp1813.ClientHello.Write(tmp129)
-		if tmp1717 != nil {
-			return tmp1717
-		}
 	} else {
-		tmp1812, ok := t.tmp1157.(*tmp4407)
+		tmp1822, ok := t.tmp1165.(*tmp4425)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp1812 // to prevent unused warnings
+		_ = tmp1822 // to prevent unused warnings
 		return errors.New("Unexpected task")
 	}
 	return nil
@@ -9117,96 +9207,96 @@ func (s *TaskControlRequest) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (t *TaskControlRequest) EncodeSlice(tmp129 []byte, tmp129Offset *int) error {
-	tmp1753 := []uint8{}
+	tmp1763 := []uint8{}
 	if len(tmp129)-*tmp129Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskControlRequest::Kind\"")
 	}
-	tmp1753 = tmp129[*tmp129Offset : *tmp129Offset+int(1)]
-	tmp1753[0] = uint8(t.Kind)
+	tmp1763 = tmp129[*tmp129Offset : *tmp129Offset+int(1)]
+	tmp1763[0] = uint8(t.Kind)
 	*tmp129Offset += int(1)
-	tmp1750 := []uint8{}
+	tmp1760 := []uint8{}
 	if len(tmp129)-*tmp129Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"TaskControlRequest::RequestId\"")
 	}
-	tmp1750 = tmp129[*tmp129Offset : *tmp129Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp1750[:], uint32(t.RequestId))
+	tmp1760 = tmp129[*tmp129Offset : *tmp129Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp1760[:], uint32(t.RequestId))
 	*tmp129Offset += int(4)
 	if t.Kind == TaskControlKind_Submit {
-		tmp1825, ok := t.tmp1157.(*tmp1826)
+		tmp1835, ok := t.tmp1165.(*tmp1836)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1835 // to prevent unused warnings
+		tmp1756 := tmp1835.Submit.EncodeSlice(tmp129, tmp129Offset)
+		if tmp1756 != nil {
+			return tmp1756
+		}
+	} else if t.Kind == TaskControlKind_List {
+		tmp1833, ok := t.tmp1165.(*tmp1834)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1833 // to prevent unused warnings
+		tmp1751 := tmp1833.List.EncodeSlice(tmp129, tmp129Offset)
+		if tmp1751 != nil {
+			return tmp1751
+		}
+	} else if t.Kind == TaskControlKind_Cancel {
+		tmp1831, ok := t.tmp1165.(*tmp1832)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1831 // to prevent unused warnings
+		tmp1747 := tmp1831.Cancel.EncodeSlice(tmp129, tmp129Offset)
+		if tmp1747 != nil {
+			return tmp1747
+		}
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1829, ok := t.tmp1165.(*tmp1830)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1829 // to prevent unused warnings
+		tmp1742 := tmp1829.Prune.EncodeSlice(tmp129, tmp129Offset)
+		if tmp1742 != nil {
+			return tmp1742
+		}
+	} else if t.Kind == TaskControlKind_GetTaskLog {
+		tmp1827, ok := t.tmp1165.(*tmp1828)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1827 // to prevent unused warnings
+		tmp1737 := tmp1827.GetLog.EncodeSlice(tmp129, tmp129Offset)
+		if tmp1737 != nil {
+			return tmp1737
+		}
+	} else if t.Kind == TaskControlKind_OpenInteractive {
+		tmp1825, ok := t.tmp1165.(*tmp1826)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1825 // to prevent unused warnings
-		tmp1746 := tmp1825.Submit.EncodeSlice(tmp129, tmp129Offset)
-		if tmp1746 != nil {
-			return tmp1746
+		tmp1732 := tmp1825.OpenInteractive.EncodeSlice(tmp129, tmp129Offset)
+		if tmp1732 != nil {
+			return tmp1732
 		}
-	} else if t.Kind == TaskControlKind_List {
-		tmp1823, ok := t.tmp1157.(*tmp1824)
+	} else if t.Kind == TaskControlKind_ClientHello {
+		tmp1823, ok := t.tmp1165.(*tmp1824)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1823 // to prevent unused warnings
-		tmp1741 := tmp1823.List.EncodeSlice(tmp129, tmp129Offset)
-		if tmp1741 != nil {
-			return tmp1741
-		}
-	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1821, ok := t.tmp1157.(*tmp1822)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1821 // to prevent unused warnings
-		tmp1737 := tmp1821.Cancel.EncodeSlice(tmp129, tmp129Offset)
-		if tmp1737 != nil {
-			return tmp1737
-		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1819, ok := t.tmp1157.(*tmp1820)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1819 // to prevent unused warnings
-		tmp1732 := tmp1819.Prune.EncodeSlice(tmp129, tmp129Offset)
-		if tmp1732 != nil {
-			return tmp1732
-		}
-	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1817, ok := t.tmp1157.(*tmp1818)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1817 // to prevent unused warnings
-		tmp1727 := tmp1817.GetLog.EncodeSlice(tmp129, tmp129Offset)
+		tmp1727 := tmp1823.ClientHello.EncodeSlice(tmp129, tmp129Offset)
 		if tmp1727 != nil {
 			return tmp1727
 		}
-	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1815, ok := t.tmp1157.(*tmp1816)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1815 // to prevent unused warnings
-		tmp1722 := tmp1815.OpenInteractive.EncodeSlice(tmp129, tmp129Offset)
-		if tmp1722 != nil {
-			return tmp1722
-		}
-	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1813, ok := t.tmp1157.(*tmp1814)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1813 // to prevent unused warnings
-		tmp1717 := tmp1813.ClientHello.EncodeSlice(tmp129, tmp129Offset)
-		if tmp1717 != nil {
-			return tmp1717
-		}
 	} else {
-		tmp1812, ok := t.tmp1157.(*tmp4407)
+		tmp1822, ok := t.tmp1165.(*tmp4425)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
-		_ = tmp1812 // to prevent unused warnings
+		_ = tmp1822 // to prevent unused warnings
 		return errors.New("Unexpected task")
 	}
 	return nil
@@ -9227,102 +9317,102 @@ func (s *TaskControlRequest) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (t *TaskControlRequest) Append(tmp129 []byte) ([]byte, error) {
-	tmp1753 := [1]uint8{}
-	tmp1753[0] = uint8(t.Kind)
-	tmp129 = append(tmp129, tmp1753[:1]...)
-	tmp1750 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1750[:], uint32(t.RequestId))
-	tmp129 = append(tmp129, tmp1750[:4]...)
+	tmp1763 := [1]uint8{}
+	tmp1763[0] = uint8(t.Kind)
+	tmp129 = append(tmp129, tmp1763[:1]...)
+	tmp1760 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1760[:], uint32(t.RequestId))
+	tmp129 = append(tmp129, tmp1760[:4]...)
 	if t.Kind == TaskControlKind_Submit {
-		tmp1825, ok := t.tmp1157.(*tmp1826)
+		tmp1835, ok := t.tmp1165.(*tmp1836)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1825 // to prevent unused warnings
-		var tmp1746 error
-		tmp129, tmp1746 = tmp1825.Submit.Append(tmp129)
+		_ = tmp1835 // to prevent unused warnings
+		var tmp1756 error
+		tmp129, tmp1756 = tmp1835.Submit.Append(tmp129)
 
-		if tmp1746 != nil {
-			return nil, tmp1746
+		if tmp1756 != nil {
+			return nil, tmp1756
 		}
 	} else if t.Kind == TaskControlKind_List {
-		tmp1823, ok := t.tmp1157.(*tmp1824)
+		tmp1833, ok := t.tmp1165.(*tmp1834)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1823 // to prevent unused warnings
-		var tmp1741 error
-		tmp129, tmp1741 = tmp1823.List.Append(tmp129)
+		_ = tmp1833 // to prevent unused warnings
+		var tmp1751 error
+		tmp129, tmp1751 = tmp1833.List.Append(tmp129)
 
-		if tmp1741 != nil {
-			return nil, tmp1741
+		if tmp1751 != nil {
+			return nil, tmp1751
 		}
 	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1821, ok := t.tmp1157.(*tmp1822)
+		tmp1831, ok := t.tmp1165.(*tmp1832)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1821 // to prevent unused warnings
+		_ = tmp1831 // to prevent unused warnings
+		var tmp1747 error
+		tmp129, tmp1747 = tmp1831.Cancel.Append(tmp129)
+
+		if tmp1747 != nil {
+			return nil, tmp1747
+		}
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1829, ok := t.tmp1165.(*tmp1830)
+		if !ok {
+			return nil, errors.New("invalid union type for encoding")
+		}
+		_ = tmp1829 // to prevent unused warnings
+		var tmp1742 error
+		tmp129, tmp1742 = tmp1829.Prune.Append(tmp129)
+
+		if tmp1742 != nil {
+			return nil, tmp1742
+		}
+	} else if t.Kind == TaskControlKind_GetTaskLog {
+		tmp1827, ok := t.tmp1165.(*tmp1828)
+		if !ok {
+			return nil, errors.New("invalid union type for encoding")
+		}
+		_ = tmp1827 // to prevent unused warnings
 		var tmp1737 error
-		tmp129, tmp1737 = tmp1821.Cancel.Append(tmp129)
+		tmp129, tmp1737 = tmp1827.GetLog.Append(tmp129)
 
 		if tmp1737 != nil {
 			return nil, tmp1737
 		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1819, ok := t.tmp1157.(*tmp1820)
+	} else if t.Kind == TaskControlKind_OpenInteractive {
+		tmp1825, ok := t.tmp1165.(*tmp1826)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1819 // to prevent unused warnings
+		_ = tmp1825 // to prevent unused warnings
 		var tmp1732 error
-		tmp129, tmp1732 = tmp1819.Prune.Append(tmp129)
+		tmp129, tmp1732 = tmp1825.OpenInteractive.Append(tmp129)
 
 		if tmp1732 != nil {
 			return nil, tmp1732
 		}
-	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1817, ok := t.tmp1157.(*tmp1818)
+	} else if t.Kind == TaskControlKind_ClientHello {
+		tmp1823, ok := t.tmp1165.(*tmp1824)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1817 // to prevent unused warnings
+		_ = tmp1823 // to prevent unused warnings
 		var tmp1727 error
-		tmp129, tmp1727 = tmp1817.GetLog.Append(tmp129)
+		tmp129, tmp1727 = tmp1823.ClientHello.Append(tmp129)
 
 		if tmp1727 != nil {
 			return nil, tmp1727
 		}
-	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1815, ok := t.tmp1157.(*tmp1816)
-		if !ok {
-			return nil, errors.New("invalid union type for encoding")
-		}
-		_ = tmp1815 // to prevent unused warnings
-		var tmp1722 error
-		tmp129, tmp1722 = tmp1815.OpenInteractive.Append(tmp129)
-
-		if tmp1722 != nil {
-			return nil, tmp1722
-		}
-	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1813, ok := t.tmp1157.(*tmp1814)
-		if !ok {
-			return nil, errors.New("invalid union type for encoding")
-		}
-		_ = tmp1813 // to prevent unused warnings
-		var tmp1717 error
-		tmp129, tmp1717 = tmp1813.ClientHello.Append(tmp129)
-
-		if tmp1717 != nil {
-			return nil, tmp1717
-		}
 	} else {
-		tmp1812, ok := t.tmp1157.(*tmp4407)
+		tmp1822, ok := t.tmp1165.(*tmp4425)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1812 // to prevent unused warnings
+		_ = tmp1822 // to prevent unused warnings
 		return nil, errors.New("Unexpected task")
 	}
 	return tmp129, nil
@@ -9339,10 +9429,10 @@ func (s *TaskControlRequest) MustAppend(buf []byte) []byte {
 func (t *TaskControlRequest) Read(tmp130 io.Reader) error {
 	tmp130ByteIO, _ := tmp130.(io.ByteReader)
 	_ = tmp130ByteIO
-	tmp1803 := uint8(0)
+	tmp1813 := uint8(0)
 	if tmp130ByteIO != nil {
 		var err error
-		tmp1803, err = tmp130ByteIO.ReadByte()
+		tmp1813, err = tmp130ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -9356,98 +9446,98 @@ func (t *TaskControlRequest) Read(tmp130 io.Reader) error {
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"TaskControlRequest::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp1803 = buf[0]
+		tmp1813 = buf[0]
 	}
-	t.Kind = TaskControlKind(tmp1803)
-	tmp1800 := [4]uint8{}
-	if _, err := io.ReadFull(tmp130, tmp1800[0:0+4]); err != nil {
+	t.Kind = TaskControlKind(tmp1813)
+	tmp1810 := [4]uint8{}
+	if _, err := io.ReadFull(tmp130, tmp1810[0:0+4]); err != nil {
 		return err
 	}
-	t.RequestId = binary.BigEndian.Uint32(tmp1800[:])
+	t.RequestId = binary.BigEndian.Uint32(tmp1810[:])
 	if t.Kind == TaskControlKind_Submit {
-		tmp1825, ok := t.tmp1157.(*tmp1826)
+		tmp1835, ok := t.tmp1165.(*tmp1836)
 		if !ok {
-			tmp1825 = &tmp1826{}
-			t.tmp1157 = tmp1825
+			tmp1835 = &tmp1836{}
+			t.tmp1165 = tmp1835
 		}
-		_ = tmp1825 // to prevent unused warnings
-		tmp1796 := tmp1825.Submit.Read(tmp130)
+		_ = tmp1835 // to prevent unused warnings
+		tmp1806 := tmp1835.Submit.Read(tmp130)
+		if tmp1806 != nil {
+			return tmp1806
+		}
+	} else if t.Kind == TaskControlKind_List {
+		tmp1833, ok := t.tmp1165.(*tmp1834)
+		if !ok {
+			tmp1833 = &tmp1834{}
+			t.tmp1165 = tmp1833
+		}
+		_ = tmp1833 // to prevent unused warnings
+		tmp1800 := tmp1833.List.Read(tmp130)
+		if tmp1800 != nil {
+			return tmp1800
+		}
+	} else if t.Kind == TaskControlKind_Cancel {
+		tmp1831, ok := t.tmp1165.(*tmp1832)
+		if !ok {
+			tmp1831 = &tmp1832{}
+			t.tmp1165 = tmp1831
+		}
+		_ = tmp1831 // to prevent unused warnings
+		tmp1796 := tmp1831.Cancel.Read(tmp130)
 		if tmp1796 != nil {
 			return tmp1796
 		}
-	} else if t.Kind == TaskControlKind_List {
-		tmp1823, ok := t.tmp1157.(*tmp1824)
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1829, ok := t.tmp1165.(*tmp1830)
 		if !ok {
-			tmp1823 = &tmp1824{}
-			t.tmp1157 = tmp1823
+			tmp1829 = &tmp1830{}
+			t.tmp1165 = tmp1829
 		}
-		_ = tmp1823 // to prevent unused warnings
-		tmp1790 := tmp1823.List.Read(tmp130)
+		_ = tmp1829 // to prevent unused warnings
+		tmp1790 := tmp1829.Prune.Read(tmp130)
 		if tmp1790 != nil {
 			return tmp1790
 		}
-	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1821, ok := t.tmp1157.(*tmp1822)
-		if !ok {
-			tmp1821 = &tmp1822{}
-			t.tmp1157 = tmp1821
-		}
-		_ = tmp1821 // to prevent unused warnings
-		tmp1786 := tmp1821.Cancel.Read(tmp130)
-		if tmp1786 != nil {
-			return tmp1786
-		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1819, ok := t.tmp1157.(*tmp1820)
-		if !ok {
-			tmp1819 = &tmp1820{}
-			t.tmp1157 = tmp1819
-		}
-		_ = tmp1819 // to prevent unused warnings
-		tmp1780 := tmp1819.Prune.Read(tmp130)
-		if tmp1780 != nil {
-			return tmp1780
-		}
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1817, ok := t.tmp1157.(*tmp1818)
+		tmp1827, ok := t.tmp1165.(*tmp1828)
 		if !ok {
-			tmp1817 = &tmp1818{}
-			t.tmp1157 = tmp1817
+			tmp1827 = &tmp1828{}
+			t.tmp1165 = tmp1827
 		}
-		_ = tmp1817 // to prevent unused warnings
-		tmp1774 := tmp1817.GetLog.Read(tmp130)
-		if tmp1774 != nil {
-			return tmp1774
+		_ = tmp1827 // to prevent unused warnings
+		tmp1784 := tmp1827.GetLog.Read(tmp130)
+		if tmp1784 != nil {
+			return tmp1784
 		}
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1815, ok := t.tmp1157.(*tmp1816)
+		tmp1825, ok := t.tmp1165.(*tmp1826)
 		if !ok {
-			tmp1815 = &tmp1816{}
-			t.tmp1157 = tmp1815
+			tmp1825 = &tmp1826{}
+			t.tmp1165 = tmp1825
 		}
-		_ = tmp1815 // to prevent unused warnings
-		tmp1768 := tmp1815.OpenInteractive.Read(tmp130)
-		if tmp1768 != nil {
-			return tmp1768
+		_ = tmp1825 // to prevent unused warnings
+		tmp1778 := tmp1825.OpenInteractive.Read(tmp130)
+		if tmp1778 != nil {
+			return tmp1778
 		}
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1813, ok := t.tmp1157.(*tmp1814)
+		tmp1823, ok := t.tmp1165.(*tmp1824)
 		if !ok {
-			tmp1813 = &tmp1814{}
-			t.tmp1157 = tmp1813
+			tmp1823 = &tmp1824{}
+			t.tmp1165 = tmp1823
 		}
-		_ = tmp1813 // to prevent unused warnings
-		tmp1762 := tmp1813.ClientHello.Read(tmp130)
-		if tmp1762 != nil {
-			return tmp1762
+		_ = tmp1823 // to prevent unused warnings
+		tmp1772 := tmp1823.ClientHello.Read(tmp130)
+		if tmp1772 != nil {
+			return tmp1772
 		}
 	} else {
-		tmp1812, ok := t.tmp1157.(*tmp4407)
+		tmp1822, ok := t.tmp1165.(*tmp4425)
 		if !ok {
-			tmp1812 = &tmp4407{}
-			t.tmp1157 = tmp1812
+			tmp1822 = &tmp4425{}
+			t.tmp1165 = tmp1822
 		}
-		_ = tmp1812 // to prevent unused warnings
+		_ = tmp1822 // to prevent unused warnings
 		return errors.New("Unexpected task")
 	}
 	return nil
@@ -9471,106 +9561,106 @@ func (s *TaskControlRequest) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (t *TaskControlRequest) DecodeSlice(tmp130 []byte, tmp130Offset *int) error {
-	tmp1803 := uint8(0)
-	tmp1802 := []uint8{}
+	tmp1813 := uint8(0)
+	tmp1812 := []uint8{}
 	if len(tmp130)-*tmp130Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskControlRequest::Kind\"")
 	}
-	tmp1802 = tmp130[*tmp130Offset : *tmp130Offset+1]
+	tmp1812 = tmp130[*tmp130Offset : *tmp130Offset+1]
 	*tmp130Offset += int(1)
-	tmp1803 = tmp1802[0]
-	t.Kind = TaskControlKind(tmp1803)
-	tmp1800 := []uint8{}
+	tmp1813 = tmp1812[0]
+	t.Kind = TaskControlKind(tmp1813)
+	tmp1810 := []uint8{}
 	if len(tmp130)-*tmp130Offset < 4 {
 		return errors.New("not enough data to read for field \"TaskControlRequest::RequestId\"")
 	}
-	tmp1800 = tmp130[*tmp130Offset : *tmp130Offset+4]
+	tmp1810 = tmp130[*tmp130Offset : *tmp130Offset+4]
 	*tmp130Offset += int(4)
-	t.RequestId = binary.BigEndian.Uint32(tmp1800[:])
+	t.RequestId = binary.BigEndian.Uint32(tmp1810[:])
 	if t.Kind == TaskControlKind_Submit {
-		tmp1825, ok := t.tmp1157.(*tmp1826)
+		tmp1835, ok := t.tmp1165.(*tmp1836)
 		if !ok {
-			tmp1825 = &tmp1826{}
-			t.tmp1157 = tmp1825
+			tmp1835 = &tmp1836{}
+			t.tmp1165 = tmp1835
 		}
-		_ = tmp1825 // to prevent unused warnings
-		tmp1796 := tmp1825.Submit.DecodeSlice(tmp130, tmp130Offset)
+		_ = tmp1835 // to prevent unused warnings
+		tmp1806 := tmp1835.Submit.DecodeSlice(tmp130, tmp130Offset)
+		if tmp1806 != nil {
+			return tmp1806
+		}
+	} else if t.Kind == TaskControlKind_List {
+		tmp1833, ok := t.tmp1165.(*tmp1834)
+		if !ok {
+			tmp1833 = &tmp1834{}
+			t.tmp1165 = tmp1833
+		}
+		_ = tmp1833 // to prevent unused warnings
+		tmp1800 := tmp1833.List.DecodeSlice(tmp130, tmp130Offset)
+		if tmp1800 != nil {
+			return tmp1800
+		}
+	} else if t.Kind == TaskControlKind_Cancel {
+		tmp1831, ok := t.tmp1165.(*tmp1832)
+		if !ok {
+			tmp1831 = &tmp1832{}
+			t.tmp1165 = tmp1831
+		}
+		_ = tmp1831 // to prevent unused warnings
+		tmp1796 := tmp1831.Cancel.DecodeSlice(tmp130, tmp130Offset)
 		if tmp1796 != nil {
 			return tmp1796
 		}
-	} else if t.Kind == TaskControlKind_List {
-		tmp1823, ok := t.tmp1157.(*tmp1824)
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1829, ok := t.tmp1165.(*tmp1830)
 		if !ok {
-			tmp1823 = &tmp1824{}
-			t.tmp1157 = tmp1823
+			tmp1829 = &tmp1830{}
+			t.tmp1165 = tmp1829
 		}
-		_ = tmp1823 // to prevent unused warnings
-		tmp1790 := tmp1823.List.DecodeSlice(tmp130, tmp130Offset)
+		_ = tmp1829 // to prevent unused warnings
+		tmp1790 := tmp1829.Prune.DecodeSlice(tmp130, tmp130Offset)
 		if tmp1790 != nil {
 			return tmp1790
 		}
-	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1821, ok := t.tmp1157.(*tmp1822)
-		if !ok {
-			tmp1821 = &tmp1822{}
-			t.tmp1157 = tmp1821
-		}
-		_ = tmp1821 // to prevent unused warnings
-		tmp1786 := tmp1821.Cancel.DecodeSlice(tmp130, tmp130Offset)
-		if tmp1786 != nil {
-			return tmp1786
-		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1819, ok := t.tmp1157.(*tmp1820)
-		if !ok {
-			tmp1819 = &tmp1820{}
-			t.tmp1157 = tmp1819
-		}
-		_ = tmp1819 // to prevent unused warnings
-		tmp1780 := tmp1819.Prune.DecodeSlice(tmp130, tmp130Offset)
-		if tmp1780 != nil {
-			return tmp1780
-		}
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1817, ok := t.tmp1157.(*tmp1818)
+		tmp1827, ok := t.tmp1165.(*tmp1828)
 		if !ok {
-			tmp1817 = &tmp1818{}
-			t.tmp1157 = tmp1817
+			tmp1827 = &tmp1828{}
+			t.tmp1165 = tmp1827
 		}
-		_ = tmp1817 // to prevent unused warnings
-		tmp1774 := tmp1817.GetLog.DecodeSlice(tmp130, tmp130Offset)
-		if tmp1774 != nil {
-			return tmp1774
+		_ = tmp1827 // to prevent unused warnings
+		tmp1784 := tmp1827.GetLog.DecodeSlice(tmp130, tmp130Offset)
+		if tmp1784 != nil {
+			return tmp1784
 		}
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1815, ok := t.tmp1157.(*tmp1816)
+		tmp1825, ok := t.tmp1165.(*tmp1826)
 		if !ok {
-			tmp1815 = &tmp1816{}
-			t.tmp1157 = tmp1815
+			tmp1825 = &tmp1826{}
+			t.tmp1165 = tmp1825
 		}
-		_ = tmp1815 // to prevent unused warnings
-		tmp1768 := tmp1815.OpenInteractive.DecodeSlice(tmp130, tmp130Offset)
-		if tmp1768 != nil {
-			return tmp1768
+		_ = tmp1825 // to prevent unused warnings
+		tmp1778 := tmp1825.OpenInteractive.DecodeSlice(tmp130, tmp130Offset)
+		if tmp1778 != nil {
+			return tmp1778
 		}
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1813, ok := t.tmp1157.(*tmp1814)
+		tmp1823, ok := t.tmp1165.(*tmp1824)
 		if !ok {
-			tmp1813 = &tmp1814{}
-			t.tmp1157 = tmp1813
+			tmp1823 = &tmp1824{}
+			t.tmp1165 = tmp1823
 		}
-		_ = tmp1813 // to prevent unused warnings
-		tmp1762 := tmp1813.ClientHello.DecodeSlice(tmp130, tmp130Offset)
-		if tmp1762 != nil {
-			return tmp1762
+		_ = tmp1823 // to prevent unused warnings
+		tmp1772 := tmp1823.ClientHello.DecodeSlice(tmp130, tmp130Offset)
+		if tmp1772 != nil {
+			return tmp1772
 		}
 	} else {
-		tmp1812, ok := t.tmp1157.(*tmp4407)
+		tmp1822, ok := t.tmp1165.(*tmp4425)
 		if !ok {
-			tmp1812 = &tmp4407{}
-			t.tmp1157 = tmp1812
+			tmp1822 = &tmp4425{}
+			t.tmp1165 = tmp1822
 		}
-		_ = tmp1812 // to prevent unused warnings
+		_ = tmp1822 // to prevent unused warnings
 		return errors.New("Unexpected task")
 	}
 	return nil
@@ -9598,15 +9688,15 @@ type CancelStatus struct {
 	Status uint8
 }
 
-func (c *CancelStatus) Write(tmp1110 io.Writer) error {
-	tmp1110ByteIO, _ := tmp1110.(io.ByteWriter)
-	_ = tmp1110ByteIO
-	if tmp1110ByteIO != nil {
-		if err := tmp1110ByteIO.WriteByte(c.Status); err != nil {
+func (c *CancelStatus) Write(tmp1118 io.Writer) error {
+	tmp1118ByteIO, _ := tmp1118.(io.ByteWriter)
+	_ = tmp1118ByteIO
+	if tmp1118ByteIO != nil {
+		if err := tmp1118ByteIO.WriteByte(c.Status); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp1110.Write([]byte{c.Status}); err != nil {
+		if _, err := tmp1118.Write([]byte{c.Status}); err != nil {
 			return err
 		}
 	}
@@ -9627,14 +9717,14 @@ func (s *CancelStatus) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *CancelStatus) EncodeSlice(tmp1110 []byte, tmp1110Offset *int) error {
-	tmp1638 := []uint8{}
-	if len(tmp1110)-*tmp1110Offset < int(1) {
+func (c *CancelStatus) EncodeSlice(tmp1118 []byte, tmp1118Offset *int) error {
+	tmp1648 := []uint8{}
+	if len(tmp1118)-*tmp1118Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"CancelStatus::Status\"")
 	}
-	tmp1638 = tmp1110[*tmp1110Offset : *tmp1110Offset+int(1)]
-	tmp1638[0] = c.Status
-	*tmp1110Offset += int(1)
+	tmp1648 = tmp1118[*tmp1118Offset : *tmp1118Offset+int(1)]
+	tmp1648[0] = c.Status
+	*tmp1118Offset += int(1)
 	return nil
 }
 func (s *CancelStatus) Encode(buf []byte) ([]byte, error) {
@@ -9652,11 +9742,11 @@ func (s *CancelStatus) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (c *CancelStatus) Append(tmp1110 []byte) ([]byte, error) {
-	tmp1638 := [1]uint8{}
-	tmp1638[0] = c.Status
-	tmp1110 = append(tmp1110, tmp1638[:1]...)
-	return tmp1110, nil
+func (c *CancelStatus) Append(tmp1118 []byte) ([]byte, error) {
+	tmp1648 := [1]uint8{}
+	tmp1648[0] = c.Status
+	tmp1118 = append(tmp1118, tmp1648[:1]...)
+	return tmp1118, nil
 }
 func (s *CancelStatus) MustAppend(buf []byte) []byte {
 	var err error
@@ -9667,12 +9757,12 @@ func (s *CancelStatus) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (c *CancelStatus) Read(tmp1111 io.Reader) error {
-	tmp1111ByteIO, _ := tmp1111.(io.ByteReader)
-	_ = tmp1111ByteIO
-	if tmp1111ByteIO != nil {
+func (c *CancelStatus) Read(tmp1119 io.Reader) error {
+	tmp1119ByteIO, _ := tmp1119.(io.ByteReader)
+	_ = tmp1119ByteIO
+	if tmp1119ByteIO != nil {
 		var err error
-		c.Status, err = tmp1111ByteIO.ReadByte()
+		c.Status, err = tmp1119ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -9680,7 +9770,7 @@ func (c *CancelStatus) Read(tmp1111 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp1111, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp1119, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
@@ -9708,14 +9798,14 @@ func (s *CancelStatus) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (c *CancelStatus) DecodeSlice(tmp1111 []byte, tmp1111Offset *int) error {
-	tmp1641 := []uint8{}
-	if len(tmp1111)-*tmp1111Offset < 1 {
+func (c *CancelStatus) DecodeSlice(tmp1119 []byte, tmp1119Offset *int) error {
+	tmp1651 := []uint8{}
+	if len(tmp1119)-*tmp1119Offset < 1 {
 		return errors.New("not enough data to read for field \"CancelStatus::Status\"")
 	}
-	tmp1641 = tmp1111[*tmp1111Offset : *tmp1111Offset+1]
-	*tmp1111Offset += int(1)
-	c.Status = tmp1641[0]
+	tmp1651 = tmp1119[*tmp1119Offset : *tmp1119Offset+1]
+	*tmp1119Offset += int(1)
+	c.Status = tmp1651[0]
 	return nil
 }
 func (s *CancelStatus) Decode(buf []byte) ([]byte, error) {
@@ -9737,82 +9827,82 @@ func (s *CancelStatus) DecodeExact(buf []byte) error {
 	return nil
 }
 
-type tmp1635 struct {
+type tmp1645 struct {
 	Submit SubmitResponse
 }
 
-func (v *tmp1635) isVariant257() {}
+func (v *tmp1645) isVariant260() {}
 
-type tmp1633 struct {
+type tmp1643 struct {
 	List ListResult
 }
 
-func (v *tmp1633) isVariant257() {}
+func (v *tmp1643) isVariant260() {}
 
-type tmp1631 struct {
+type tmp1641 struct {
 	Cancel CancelStatus
 }
 
-func (v *tmp1631) isVariant257() {}
+func (v *tmp1641) isVariant260() {}
 
-type tmp1629 struct {
+type tmp1639 struct {
 	Prune PruneTasksResponse
 }
 
-func (v *tmp1629) isVariant257() {}
+func (v *tmp1639) isVariant260() {}
 
-type tmp1627 struct {
+type tmp1637 struct {
 	GetLog GetTaskLogResponse
 }
 
-func (v *tmp1627) isVariant257() {}
+func (v *tmp1637) isVariant260() {}
 
-type tmp1625 struct {
+type tmp1635 struct {
 	OpenInteractive OpenInteractiveResponse
 }
 
-func (v *tmp1625) isVariant257() {}
+func (v *tmp1635) isVariant260() {}
 
-type tmp1623 struct {
+type tmp1633 struct {
 	ClientHello ClientHelloResponse
 }
 
-func (v *tmp1623) isVariant257() {}
+func (v *tmp1633) isVariant260() {}
 
-type Variant257 interface {
-	isVariant257()
+type Variant260 interface {
+	isVariant260()
 }
 
 type TaskControlResponse struct {
 	Kind      TaskControlKind
 	RequestId uint32
-	tmp1109   Variant257
+	tmp1117   Variant260
 }
 
 func (t *TaskControlResponse) Cancel() *CancelStatus {
 	if (TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1630, ok := t.tmp1109.(*tmp1631)
+		tmp1640, ok := t.tmp1117.(*tmp1641)
 		if !ok {
 			return nil
 		}
-		_ = tmp1630 // to prevent unused warnings
-		return &tmp1630.Cancel
+		_ = tmp1640 // to prevent unused warnings
+		return &tmp1640.Cancel
 	}
 	return nil
 }
-func (t *TaskControlResponse) SetCancel(tmp1521 CancelStatus) bool {
+func (t *TaskControlResponse) SetCancel(tmp1531 CancelStatus) bool {
 	if (TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1630, ok := t.tmp1109.(*tmp1631)
+		tmp1640, ok := t.tmp1117.(*tmp1641)
 		if !ok {
-			tmp1630 = &tmp1631{}
-			t.tmp1109 = tmp1630
+			tmp1640 = &tmp1641{}
+			t.tmp1117 = tmp1640
 		}
-		_ = tmp1630 // to prevent unused warnings
-		tmp1630.Cancel = tmp1521
+		_ = tmp1640 // to prevent unused warnings
+		tmp1640.Cancel = tmp1531
 		return true
 	}
 	return false
@@ -9822,26 +9912,26 @@ func (t *TaskControlResponse) ClientHello() *ClientHelloResponse {
 	if (((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind)) || (TaskControlKind_OpenInteractive == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1622, ok := t.tmp1109.(*tmp1623)
+		tmp1632, ok := t.tmp1117.(*tmp1633)
 		if !ok {
 			return nil
 		}
-		_ = tmp1622 // to prevent unused warnings
-		return &tmp1622.ClientHello
+		_ = tmp1632 // to prevent unused warnings
+		return &tmp1632.ClientHello
 	}
 	return nil
 }
-func (t *TaskControlResponse) SetClientHello(tmp1504 ClientHelloResponse) bool {
+func (t *TaskControlResponse) SetClientHello(tmp1514 ClientHelloResponse) bool {
 	if (((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind)) || (TaskControlKind_OpenInteractive == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1622, ok := t.tmp1109.(*tmp1623)
+		tmp1632, ok := t.tmp1117.(*tmp1633)
 		if !ok {
-			tmp1622 = &tmp1623{}
-			t.tmp1109 = tmp1622
+			tmp1632 = &tmp1633{}
+			t.tmp1117 = tmp1632
 		}
-		_ = tmp1622 // to prevent unused warnings
-		tmp1622.ClientHello = tmp1504
+		_ = tmp1632 // to prevent unused warnings
+		tmp1632.ClientHello = tmp1514
 		return true
 	}
 	return false
@@ -9851,26 +9941,26 @@ func (t *TaskControlResponse) GetLog() *GetTaskLogResponse {
 	if (((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1626, ok := t.tmp1109.(*tmp1627)
+		tmp1636, ok := t.tmp1117.(*tmp1637)
 		if !ok {
 			return nil
 		}
-		_ = tmp1626 // to prevent unused warnings
-		return &tmp1626.GetLog
+		_ = tmp1636 // to prevent unused warnings
+		return &tmp1636.GetLog
 	}
 	return nil
 }
-func (t *TaskControlResponse) SetGetLog(tmp1491 GetTaskLogResponse) bool {
+func (t *TaskControlResponse) SetGetLog(tmp1501 GetTaskLogResponse) bool {
 	if (((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1626, ok := t.tmp1109.(*tmp1627)
+		tmp1636, ok := t.tmp1117.(*tmp1637)
 		if !ok {
-			tmp1626 = &tmp1627{}
-			t.tmp1109 = tmp1626
+			tmp1636 = &tmp1637{}
+			t.tmp1117 = tmp1636
 		}
-		_ = tmp1626 // to prevent unused warnings
-		tmp1626.GetLog = tmp1491
+		_ = tmp1636 // to prevent unused warnings
+		tmp1636.GetLog = tmp1501
 		return true
 	}
 	return false
@@ -9880,26 +9970,26 @@ func (t *TaskControlResponse) List() *ListResult {
 	if t.Kind == TaskControlKind_Submit {
 		return nil
 	} else if t.Kind == TaskControlKind_List {
-		tmp1632, ok := t.tmp1109.(*tmp1633)
+		tmp1642, ok := t.tmp1117.(*tmp1643)
 		if !ok {
 			return nil
 		}
-		_ = tmp1632 // to prevent unused warnings
-		return &tmp1632.List
+		_ = tmp1642 // to prevent unused warnings
+		return &tmp1642.List
 	}
 	return nil
 }
-func (t *TaskControlResponse) SetList(tmp1488 ListResult) bool {
+func (t *TaskControlResponse) SetList(tmp1498 ListResult) bool {
 	if t.Kind == TaskControlKind_Submit {
 		return false
 	} else if t.Kind == TaskControlKind_List {
-		tmp1632, ok := t.tmp1109.(*tmp1633)
+		tmp1642, ok := t.tmp1117.(*tmp1643)
 		if !ok {
-			tmp1632 = &tmp1633{}
-			t.tmp1109 = tmp1632
+			tmp1642 = &tmp1643{}
+			t.tmp1117 = tmp1642
 		}
-		_ = tmp1632 // to prevent unused warnings
-		tmp1632.List = tmp1488
+		_ = tmp1642 // to prevent unused warnings
+		tmp1642.List = tmp1498
 		return true
 	}
 	return false
@@ -9909,26 +9999,26 @@ func (t *TaskControlResponse) OpenInteractive() *OpenInteractiveResponse {
 	if ((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1624, ok := t.tmp1109.(*tmp1625)
+		tmp1634, ok := t.tmp1117.(*tmp1635)
 		if !ok {
 			return nil
 		}
-		_ = tmp1624 // to prevent unused warnings
-		return &tmp1624.OpenInteractive
+		_ = tmp1634 // to prevent unused warnings
+		return &tmp1634.OpenInteractive
 	}
 	return nil
 }
-func (t *TaskControlResponse) SetOpenInteractive(tmp1473 OpenInteractiveResponse) bool {
+func (t *TaskControlResponse) SetOpenInteractive(tmp1483 OpenInteractiveResponse) bool {
 	if ((((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind)) || (TaskControlKind_PruneTasks == t.Kind)) || (TaskControlKind_GetTaskLog == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1624, ok := t.tmp1109.(*tmp1625)
+		tmp1634, ok := t.tmp1117.(*tmp1635)
 		if !ok {
-			tmp1624 = &tmp1625{}
-			t.tmp1109 = tmp1624
+			tmp1634 = &tmp1635{}
+			t.tmp1117 = tmp1634
 		}
-		_ = tmp1624 // to prevent unused warnings
-		tmp1624.OpenInteractive = tmp1473
+		_ = tmp1634 // to prevent unused warnings
+		tmp1634.OpenInteractive = tmp1483
 		return true
 	}
 	return false
@@ -9938,26 +10028,26 @@ func (t *TaskControlResponse) Prune() *PruneTasksResponse {
 	if ((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind) {
 		return nil
 	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1628, ok := t.tmp1109.(*tmp1629)
+		tmp1638, ok := t.tmp1117.(*tmp1639)
 		if !ok {
 			return nil
 		}
-		_ = tmp1628 // to prevent unused warnings
-		return &tmp1628.Prune
+		_ = tmp1638 // to prevent unused warnings
+		return &tmp1638.Prune
 	}
 	return nil
 }
-func (t *TaskControlResponse) SetPrune(tmp1462 PruneTasksResponse) bool {
+func (t *TaskControlResponse) SetPrune(tmp1472 PruneTasksResponse) bool {
 	if ((TaskControlKind_Submit == t.Kind) || (TaskControlKind_List == t.Kind)) || (TaskControlKind_Cancel == t.Kind) {
 		return false
 	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1628, ok := t.tmp1109.(*tmp1629)
+		tmp1638, ok := t.tmp1117.(*tmp1639)
 		if !ok {
-			tmp1628 = &tmp1629{}
-			t.tmp1109 = tmp1628
+			tmp1638 = &tmp1639{}
+			t.tmp1117 = tmp1638
 		}
-		_ = tmp1628 // to prevent unused warnings
-		tmp1628.Prune = tmp1462
+		_ = tmp1638 // to prevent unused warnings
+		tmp1638.Prune = tmp1472
 		return true
 	}
 	return false
@@ -9965,24 +10055,24 @@ func (t *TaskControlResponse) SetPrune(tmp1462 PruneTasksResponse) bool {
 
 func (t *TaskControlResponse) Submit() *SubmitResponse {
 	if t.Kind == TaskControlKind_Submit {
-		tmp1634, ok := t.tmp1109.(*tmp1635)
+		tmp1644, ok := t.tmp1117.(*tmp1645)
 		if !ok {
 			return nil
 		}
-		_ = tmp1634 // to prevent unused warnings
-		return &tmp1634.Submit
+		_ = tmp1644 // to prevent unused warnings
+		return &tmp1644.Submit
 	}
 	return nil
 }
-func (t *TaskControlResponse) SetSubmit(tmp1459 SubmitResponse) bool {
+func (t *TaskControlResponse) SetSubmit(tmp1469 SubmitResponse) bool {
 	if t.Kind == TaskControlKind_Submit {
-		tmp1634, ok := t.tmp1109.(*tmp1635)
+		tmp1644, ok := t.tmp1117.(*tmp1645)
 		if !ok {
-			tmp1634 = &tmp1635{}
-			t.tmp1109 = tmp1634
+			tmp1644 = &tmp1645{}
+			t.tmp1117 = tmp1644
 		}
-		_ = tmp1634 // to prevent unused warnings
-		tmp1634.Submit = tmp1459
+		_ = tmp1644 // to prevent unused warnings
+		tmp1644.Submit = tmp1469
 		return true
 	}
 	return false
@@ -10000,80 +10090,80 @@ func (t *TaskControlResponse) Write(tmp127 io.Writer) error {
 			return err
 		}
 	}
-	tmp1564 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1564[:], uint32(t.RequestId))
-	if _, err := tmp127.Write(tmp1564[:4]); err != nil {
+	tmp1574 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1574[:], uint32(t.RequestId))
+	if _, err := tmp127.Write(tmp1574[:4]); err != nil {
 		return err
 	}
 	if t.Kind == TaskControlKind_Submit {
-		tmp1634, ok := t.tmp1109.(*tmp1635)
+		tmp1644, ok := t.tmp1117.(*tmp1645)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1644 // to prevent unused warnings
+		tmp1570 := tmp1644.Submit.Write(tmp127)
+		if tmp1570 != nil {
+			return tmp1570
+		}
+	} else if t.Kind == TaskControlKind_List {
+		tmp1642, ok := t.tmp1117.(*tmp1643)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1642 // to prevent unused warnings
+		tmp1565 := tmp1642.List.Write(tmp127)
+		if tmp1565 != nil {
+			return tmp1565
+		}
+	} else if t.Kind == TaskControlKind_Cancel {
+		tmp1640, ok := t.tmp1117.(*tmp1641)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1640 // to prevent unused warnings
+		tmp1560 := tmp1640.Cancel.Write(tmp127)
+		if tmp1560 != nil {
+			return tmp1560
+		}
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1638, ok := t.tmp1117.(*tmp1639)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1638 // to prevent unused warnings
+		tmp1555 := tmp1638.Prune.Write(tmp127)
+		if tmp1555 != nil {
+			return tmp1555
+		}
+	} else if t.Kind == TaskControlKind_GetTaskLog {
+		tmp1636, ok := t.tmp1117.(*tmp1637)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1636 // to prevent unused warnings
+		tmp1550 := tmp1636.GetLog.Write(tmp127)
+		if tmp1550 != nil {
+			return tmp1550
+		}
+	} else if t.Kind == TaskControlKind_OpenInteractive {
+		tmp1634, ok := t.tmp1117.(*tmp1635)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1634 // to prevent unused warnings
-		tmp1560 := tmp1634.Submit.Write(tmp127)
-		if tmp1560 != nil {
-			return tmp1560
+		tmp1545 := tmp1634.OpenInteractive.Write(tmp127)
+		if tmp1545 != nil {
+			return tmp1545
 		}
-	} else if t.Kind == TaskControlKind_List {
-		tmp1632, ok := t.tmp1109.(*tmp1633)
+	} else if t.Kind == TaskControlKind_ClientHello {
+		tmp1632, ok := t.tmp1117.(*tmp1633)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1632 // to prevent unused warnings
-		tmp1555 := tmp1632.List.Write(tmp127)
-		if tmp1555 != nil {
-			return tmp1555
-		}
-	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1630, ok := t.tmp1109.(*tmp1631)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1630 // to prevent unused warnings
-		tmp1550 := tmp1630.Cancel.Write(tmp127)
-		if tmp1550 != nil {
-			return tmp1550
-		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1628, ok := t.tmp1109.(*tmp1629)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1628 // to prevent unused warnings
-		tmp1545 := tmp1628.Prune.Write(tmp127)
-		if tmp1545 != nil {
-			return tmp1545
-		}
-	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1626, ok := t.tmp1109.(*tmp1627)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1626 // to prevent unused warnings
-		tmp1540 := tmp1626.GetLog.Write(tmp127)
+		tmp1540 := tmp1632.ClientHello.Write(tmp127)
 		if tmp1540 != nil {
 			return tmp1540
-		}
-	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1624, ok := t.tmp1109.(*tmp1625)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1624 // to prevent unused warnings
-		tmp1535 := tmp1624.OpenInteractive.Write(tmp127)
-		if tmp1535 != nil {
-			return tmp1535
-		}
-	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1622, ok := t.tmp1109.(*tmp1623)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1622 // to prevent unused warnings
-		tmp1530 := tmp1622.ClientHello.Write(tmp127)
-		if tmp1530 != nil {
-			return tmp1530
 		}
 	}
 	return nil
@@ -10094,89 +10184,89 @@ func (s *TaskControlResponse) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (t *TaskControlResponse) EncodeSlice(tmp127 []byte, tmp127Offset *int) error {
-	tmp1567 := []uint8{}
+	tmp1577 := []uint8{}
 	if len(tmp127)-*tmp127Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskControlResponse::Kind\"")
 	}
-	tmp1567 = tmp127[*tmp127Offset : *tmp127Offset+int(1)]
-	tmp1567[0] = uint8(t.Kind)
+	tmp1577 = tmp127[*tmp127Offset : *tmp127Offset+int(1)]
+	tmp1577[0] = uint8(t.Kind)
 	*tmp127Offset += int(1)
-	tmp1564 := []uint8{}
+	tmp1574 := []uint8{}
 	if len(tmp127)-*tmp127Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"TaskControlResponse::RequestId\"")
 	}
-	tmp1564 = tmp127[*tmp127Offset : *tmp127Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp1564[:], uint32(t.RequestId))
+	tmp1574 = tmp127[*tmp127Offset : *tmp127Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp1574[:], uint32(t.RequestId))
 	*tmp127Offset += int(4)
 	if t.Kind == TaskControlKind_Submit {
-		tmp1634, ok := t.tmp1109.(*tmp1635)
+		tmp1644, ok := t.tmp1117.(*tmp1645)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1644 // to prevent unused warnings
+		tmp1570 := tmp1644.Submit.EncodeSlice(tmp127, tmp127Offset)
+		if tmp1570 != nil {
+			return tmp1570
+		}
+	} else if t.Kind == TaskControlKind_List {
+		tmp1642, ok := t.tmp1117.(*tmp1643)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1642 // to prevent unused warnings
+		tmp1565 := tmp1642.List.EncodeSlice(tmp127, tmp127Offset)
+		if tmp1565 != nil {
+			return tmp1565
+		}
+	} else if t.Kind == TaskControlKind_Cancel {
+		tmp1640, ok := t.tmp1117.(*tmp1641)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1640 // to prevent unused warnings
+		tmp1560 := tmp1640.Cancel.EncodeSlice(tmp127, tmp127Offset)
+		if tmp1560 != nil {
+			return tmp1560
+		}
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1638, ok := t.tmp1117.(*tmp1639)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1638 // to prevent unused warnings
+		tmp1555 := tmp1638.Prune.EncodeSlice(tmp127, tmp127Offset)
+		if tmp1555 != nil {
+			return tmp1555
+		}
+	} else if t.Kind == TaskControlKind_GetTaskLog {
+		tmp1636, ok := t.tmp1117.(*tmp1637)
+		if !ok {
+			return errors.New("invalid union type for encoding")
+		}
+		_ = tmp1636 // to prevent unused warnings
+		tmp1550 := tmp1636.GetLog.EncodeSlice(tmp127, tmp127Offset)
+		if tmp1550 != nil {
+			return tmp1550
+		}
+	} else if t.Kind == TaskControlKind_OpenInteractive {
+		tmp1634, ok := t.tmp1117.(*tmp1635)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1634 // to prevent unused warnings
-		tmp1560 := tmp1634.Submit.EncodeSlice(tmp127, tmp127Offset)
-		if tmp1560 != nil {
-			return tmp1560
+		tmp1545 := tmp1634.OpenInteractive.EncodeSlice(tmp127, tmp127Offset)
+		if tmp1545 != nil {
+			return tmp1545
 		}
-	} else if t.Kind == TaskControlKind_List {
-		tmp1632, ok := t.tmp1109.(*tmp1633)
+	} else if t.Kind == TaskControlKind_ClientHello {
+		tmp1632, ok := t.tmp1117.(*tmp1633)
 		if !ok {
 			return errors.New("invalid union type for encoding")
 		}
 		_ = tmp1632 // to prevent unused warnings
-		tmp1555 := tmp1632.List.EncodeSlice(tmp127, tmp127Offset)
-		if tmp1555 != nil {
-			return tmp1555
-		}
-	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1630, ok := t.tmp1109.(*tmp1631)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1630 // to prevent unused warnings
-		tmp1550 := tmp1630.Cancel.EncodeSlice(tmp127, tmp127Offset)
-		if tmp1550 != nil {
-			return tmp1550
-		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1628, ok := t.tmp1109.(*tmp1629)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1628 // to prevent unused warnings
-		tmp1545 := tmp1628.Prune.EncodeSlice(tmp127, tmp127Offset)
-		if tmp1545 != nil {
-			return tmp1545
-		}
-	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1626, ok := t.tmp1109.(*tmp1627)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1626 // to prevent unused warnings
-		tmp1540 := tmp1626.GetLog.EncodeSlice(tmp127, tmp127Offset)
+		tmp1540 := tmp1632.ClientHello.EncodeSlice(tmp127, tmp127Offset)
 		if tmp1540 != nil {
 			return tmp1540
-		}
-	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1624, ok := t.tmp1109.(*tmp1625)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1624 // to prevent unused warnings
-		tmp1535 := tmp1624.OpenInteractive.EncodeSlice(tmp127, tmp127Offset)
-		if tmp1535 != nil {
-			return tmp1535
-		}
-	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1622, ok := t.tmp1109.(*tmp1623)
-		if !ok {
-			return errors.New("invalid union type for encoding")
-		}
-		_ = tmp1622 // to prevent unused warnings
-		tmp1530 := tmp1622.ClientHello.EncodeSlice(tmp127, tmp127Offset)
-		if tmp1530 != nil {
-			return tmp1530
 		}
 	}
 	return nil
@@ -10197,95 +10287,95 @@ func (s *TaskControlResponse) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (t *TaskControlResponse) Append(tmp127 []byte) ([]byte, error) {
-	tmp1567 := [1]uint8{}
-	tmp1567[0] = uint8(t.Kind)
-	tmp127 = append(tmp127, tmp1567[:1]...)
-	tmp1564 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1564[:], uint32(t.RequestId))
-	tmp127 = append(tmp127, tmp1564[:4]...)
+	tmp1577 := [1]uint8{}
+	tmp1577[0] = uint8(t.Kind)
+	tmp127 = append(tmp127, tmp1577[:1]...)
+	tmp1574 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1574[:], uint32(t.RequestId))
+	tmp127 = append(tmp127, tmp1574[:4]...)
 	if t.Kind == TaskControlKind_Submit {
-		tmp1634, ok := t.tmp1109.(*tmp1635)
+		tmp1644, ok := t.tmp1117.(*tmp1645)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1634 // to prevent unused warnings
+		_ = tmp1644 // to prevent unused warnings
+		var tmp1570 error
+		tmp127, tmp1570 = tmp1644.Submit.Append(tmp127)
+
+		if tmp1570 != nil {
+			return nil, tmp1570
+		}
+	} else if t.Kind == TaskControlKind_List {
+		tmp1642, ok := t.tmp1117.(*tmp1643)
+		if !ok {
+			return nil, errors.New("invalid union type for encoding")
+		}
+		_ = tmp1642 // to prevent unused warnings
+		var tmp1565 error
+		tmp127, tmp1565 = tmp1642.List.Append(tmp127)
+
+		if tmp1565 != nil {
+			return nil, tmp1565
+		}
+	} else if t.Kind == TaskControlKind_Cancel {
+		tmp1640, ok := t.tmp1117.(*tmp1641)
+		if !ok {
+			return nil, errors.New("invalid union type for encoding")
+		}
+		_ = tmp1640 // to prevent unused warnings
 		var tmp1560 error
-		tmp127, tmp1560 = tmp1634.Submit.Append(tmp127)
+		tmp127, tmp1560 = tmp1640.Cancel.Append(tmp127)
 
 		if tmp1560 != nil {
 			return nil, tmp1560
 		}
-	} else if t.Kind == TaskControlKind_List {
-		tmp1632, ok := t.tmp1109.(*tmp1633)
+	} else if t.Kind == TaskControlKind_PruneTasks {
+		tmp1638, ok := t.tmp1117.(*tmp1639)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1632 // to prevent unused warnings
+		_ = tmp1638 // to prevent unused warnings
 		var tmp1555 error
-		tmp127, tmp1555 = tmp1632.List.Append(tmp127)
+		tmp127, tmp1555 = tmp1638.Prune.Append(tmp127)
 
 		if tmp1555 != nil {
 			return nil, tmp1555
 		}
-	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1630, ok := t.tmp1109.(*tmp1631)
+	} else if t.Kind == TaskControlKind_GetTaskLog {
+		tmp1636, ok := t.tmp1117.(*tmp1637)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1630 // to prevent unused warnings
+		_ = tmp1636 // to prevent unused warnings
 		var tmp1550 error
-		tmp127, tmp1550 = tmp1630.Cancel.Append(tmp127)
+		tmp127, tmp1550 = tmp1636.GetLog.Append(tmp127)
 
 		if tmp1550 != nil {
 			return nil, tmp1550
 		}
-	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1628, ok := t.tmp1109.(*tmp1629)
+	} else if t.Kind == TaskControlKind_OpenInteractive {
+		tmp1634, ok := t.tmp1117.(*tmp1635)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1628 // to prevent unused warnings
+		_ = tmp1634 // to prevent unused warnings
 		var tmp1545 error
-		tmp127, tmp1545 = tmp1628.Prune.Append(tmp127)
+		tmp127, tmp1545 = tmp1634.OpenInteractive.Append(tmp127)
 
 		if tmp1545 != nil {
 			return nil, tmp1545
 		}
-	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1626, ok := t.tmp1109.(*tmp1627)
+	} else if t.Kind == TaskControlKind_ClientHello {
+		tmp1632, ok := t.tmp1117.(*tmp1633)
 		if !ok {
 			return nil, errors.New("invalid union type for encoding")
 		}
-		_ = tmp1626 // to prevent unused warnings
+		_ = tmp1632 // to prevent unused warnings
 		var tmp1540 error
-		tmp127, tmp1540 = tmp1626.GetLog.Append(tmp127)
+		tmp127, tmp1540 = tmp1632.ClientHello.Append(tmp127)
 
 		if tmp1540 != nil {
 			return nil, tmp1540
-		}
-	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1624, ok := t.tmp1109.(*tmp1625)
-		if !ok {
-			return nil, errors.New("invalid union type for encoding")
-		}
-		_ = tmp1624 // to prevent unused warnings
-		var tmp1535 error
-		tmp127, tmp1535 = tmp1624.OpenInteractive.Append(tmp127)
-
-		if tmp1535 != nil {
-			return nil, tmp1535
-		}
-	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1622, ok := t.tmp1109.(*tmp1623)
-		if !ok {
-			return nil, errors.New("invalid union type for encoding")
-		}
-		_ = tmp1622 // to prevent unused warnings
-		var tmp1530 error
-		tmp127, tmp1530 = tmp1622.ClientHello.Append(tmp127)
-
-		if tmp1530 != nil {
-			return nil, tmp1530
 		}
 	}
 	return tmp127, nil
@@ -10302,10 +10392,10 @@ func (s *TaskControlResponse) MustAppend(buf []byte) []byte {
 func (t *TaskControlResponse) Read(tmp128 io.Reader) error {
 	tmp128ByteIO, _ := tmp128.(io.ByteReader)
 	_ = tmp128ByteIO
-	tmp1614 := uint8(0)
+	tmp1624 := uint8(0)
 	if tmp128ByteIO != nil {
 		var err error
-		tmp1614, err = tmp128ByteIO.ReadByte()
+		tmp1624, err = tmp128ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -10319,90 +10409,90 @@ func (t *TaskControlResponse) Read(tmp128 io.Reader) error {
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"TaskControlResponse::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp1614 = buf[0]
+		tmp1624 = buf[0]
 	}
-	t.Kind = TaskControlKind(tmp1614)
-	tmp1611 := [4]uint8{}
-	if _, err := io.ReadFull(tmp128, tmp1611[0:0+4]); err != nil {
+	t.Kind = TaskControlKind(tmp1624)
+	tmp1621 := [4]uint8{}
+	if _, err := io.ReadFull(tmp128, tmp1621[0:0+4]); err != nil {
 		return err
 	}
-	t.RequestId = binary.BigEndian.Uint32(tmp1611[:])
+	t.RequestId = binary.BigEndian.Uint32(tmp1621[:])
 	if t.Kind == TaskControlKind_Submit {
-		tmp1634, ok := t.tmp1109.(*tmp1635)
+		tmp1644, ok := t.tmp1117.(*tmp1645)
 		if !ok {
-			tmp1634 = &tmp1635{}
-			t.tmp1109 = tmp1634
+			tmp1644 = &tmp1645{}
+			t.tmp1117 = tmp1644
 		}
-		_ = tmp1634 // to prevent unused warnings
-		tmp1607 := tmp1634.Submit.Read(tmp128)
-		if tmp1607 != nil {
-			return tmp1607
+		_ = tmp1644 // to prevent unused warnings
+		tmp1617 := tmp1644.Submit.Read(tmp128)
+		if tmp1617 != nil {
+			return tmp1617
 		}
 	} else if t.Kind == TaskControlKind_List {
-		tmp1632, ok := t.tmp1109.(*tmp1633)
+		tmp1642, ok := t.tmp1117.(*tmp1643)
 		if !ok {
-			tmp1632 = &tmp1633{}
-			t.tmp1109 = tmp1632
+			tmp1642 = &tmp1643{}
+			t.tmp1117 = tmp1642
 		}
-		_ = tmp1632 // to prevent unused warnings
-		tmp1601 := tmp1632.List.Read(tmp128)
-		if tmp1601 != nil {
-			return tmp1601
+		_ = tmp1642 // to prevent unused warnings
+		tmp1611 := tmp1642.List.Read(tmp128)
+		if tmp1611 != nil {
+			return tmp1611
 		}
 	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1630, ok := t.tmp1109.(*tmp1631)
+		tmp1640, ok := t.tmp1117.(*tmp1641)
 		if !ok {
-			tmp1630 = &tmp1631{}
-			t.tmp1109 = tmp1630
+			tmp1640 = &tmp1641{}
+			t.tmp1117 = tmp1640
 		}
-		_ = tmp1630 // to prevent unused warnings
-		tmp1595 := tmp1630.Cancel.Read(tmp128)
-		if tmp1595 != nil {
-			return tmp1595
+		_ = tmp1640 // to prevent unused warnings
+		tmp1605 := tmp1640.Cancel.Read(tmp128)
+		if tmp1605 != nil {
+			return tmp1605
 		}
 	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1628, ok := t.tmp1109.(*tmp1629)
+		tmp1638, ok := t.tmp1117.(*tmp1639)
 		if !ok {
-			tmp1628 = &tmp1629{}
-			t.tmp1109 = tmp1628
+			tmp1638 = &tmp1639{}
+			t.tmp1117 = tmp1638
 		}
-		_ = tmp1628 // to prevent unused warnings
-		tmp1589 := tmp1628.Prune.Read(tmp128)
-		if tmp1589 != nil {
-			return tmp1589
+		_ = tmp1638 // to prevent unused warnings
+		tmp1599 := tmp1638.Prune.Read(tmp128)
+		if tmp1599 != nil {
+			return tmp1599
 		}
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1626, ok := t.tmp1109.(*tmp1627)
+		tmp1636, ok := t.tmp1117.(*tmp1637)
 		if !ok {
-			tmp1626 = &tmp1627{}
-			t.tmp1109 = tmp1626
+			tmp1636 = &tmp1637{}
+			t.tmp1117 = tmp1636
 		}
-		_ = tmp1626 // to prevent unused warnings
-		tmp1583 := tmp1626.GetLog.Read(tmp128)
-		if tmp1583 != nil {
-			return tmp1583
+		_ = tmp1636 // to prevent unused warnings
+		tmp1593 := tmp1636.GetLog.Read(tmp128)
+		if tmp1593 != nil {
+			return tmp1593
 		}
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1624, ok := t.tmp1109.(*tmp1625)
+		tmp1634, ok := t.tmp1117.(*tmp1635)
 		if !ok {
-			tmp1624 = &tmp1625{}
-			t.tmp1109 = tmp1624
+			tmp1634 = &tmp1635{}
+			t.tmp1117 = tmp1634
 		}
-		_ = tmp1624 // to prevent unused warnings
-		tmp1577 := tmp1624.OpenInteractive.Read(tmp128)
-		if tmp1577 != nil {
-			return tmp1577
+		_ = tmp1634 // to prevent unused warnings
+		tmp1587 := tmp1634.OpenInteractive.Read(tmp128)
+		if tmp1587 != nil {
+			return tmp1587
 		}
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1622, ok := t.tmp1109.(*tmp1623)
+		tmp1632, ok := t.tmp1117.(*tmp1633)
 		if !ok {
-			tmp1622 = &tmp1623{}
-			t.tmp1109 = tmp1622
+			tmp1632 = &tmp1633{}
+			t.tmp1117 = tmp1632
 		}
-		_ = tmp1622 // to prevent unused warnings
-		tmp1571 := tmp1622.ClientHello.Read(tmp128)
-		if tmp1571 != nil {
-			return tmp1571
+		_ = tmp1632 // to prevent unused warnings
+		tmp1581 := tmp1632.ClientHello.Read(tmp128)
+		if tmp1581 != nil {
+			return tmp1581
 		}
 	}
 	return nil
@@ -10426,98 +10516,98 @@ func (s *TaskControlResponse) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (t *TaskControlResponse) DecodeSlice(tmp128 []byte, tmp128Offset *int) error {
-	tmp1614 := uint8(0)
-	tmp1613 := []uint8{}
+	tmp1624 := uint8(0)
+	tmp1623 := []uint8{}
 	if len(tmp128)-*tmp128Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskControlResponse::Kind\"")
 	}
-	tmp1613 = tmp128[*tmp128Offset : *tmp128Offset+1]
+	tmp1623 = tmp128[*tmp128Offset : *tmp128Offset+1]
 	*tmp128Offset += int(1)
-	tmp1614 = tmp1613[0]
-	t.Kind = TaskControlKind(tmp1614)
-	tmp1611 := []uint8{}
+	tmp1624 = tmp1623[0]
+	t.Kind = TaskControlKind(tmp1624)
+	tmp1621 := []uint8{}
 	if len(tmp128)-*tmp128Offset < 4 {
 		return errors.New("not enough data to read for field \"TaskControlResponse::RequestId\"")
 	}
-	tmp1611 = tmp128[*tmp128Offset : *tmp128Offset+4]
+	tmp1621 = tmp128[*tmp128Offset : *tmp128Offset+4]
 	*tmp128Offset += int(4)
-	t.RequestId = binary.BigEndian.Uint32(tmp1611[:])
+	t.RequestId = binary.BigEndian.Uint32(tmp1621[:])
 	if t.Kind == TaskControlKind_Submit {
-		tmp1634, ok := t.tmp1109.(*tmp1635)
+		tmp1644, ok := t.tmp1117.(*tmp1645)
 		if !ok {
-			tmp1634 = &tmp1635{}
-			t.tmp1109 = tmp1634
+			tmp1644 = &tmp1645{}
+			t.tmp1117 = tmp1644
 		}
-		_ = tmp1634 // to prevent unused warnings
-		tmp1607 := tmp1634.Submit.DecodeSlice(tmp128, tmp128Offset)
-		if tmp1607 != nil {
-			return tmp1607
+		_ = tmp1644 // to prevent unused warnings
+		tmp1617 := tmp1644.Submit.DecodeSlice(tmp128, tmp128Offset)
+		if tmp1617 != nil {
+			return tmp1617
 		}
 	} else if t.Kind == TaskControlKind_List {
-		tmp1632, ok := t.tmp1109.(*tmp1633)
+		tmp1642, ok := t.tmp1117.(*tmp1643)
 		if !ok {
-			tmp1632 = &tmp1633{}
-			t.tmp1109 = tmp1632
+			tmp1642 = &tmp1643{}
+			t.tmp1117 = tmp1642
 		}
-		_ = tmp1632 // to prevent unused warnings
-		tmp1601 := tmp1632.List.DecodeSlice(tmp128, tmp128Offset)
-		if tmp1601 != nil {
-			return tmp1601
+		_ = tmp1642 // to prevent unused warnings
+		tmp1611 := tmp1642.List.DecodeSlice(tmp128, tmp128Offset)
+		if tmp1611 != nil {
+			return tmp1611
 		}
 	} else if t.Kind == TaskControlKind_Cancel {
-		tmp1630, ok := t.tmp1109.(*tmp1631)
+		tmp1640, ok := t.tmp1117.(*tmp1641)
 		if !ok {
-			tmp1630 = &tmp1631{}
-			t.tmp1109 = tmp1630
+			tmp1640 = &tmp1641{}
+			t.tmp1117 = tmp1640
 		}
-		_ = tmp1630 // to prevent unused warnings
-		tmp1595 := tmp1630.Cancel.DecodeSlice(tmp128, tmp128Offset)
-		if tmp1595 != nil {
-			return tmp1595
+		_ = tmp1640 // to prevent unused warnings
+		tmp1605 := tmp1640.Cancel.DecodeSlice(tmp128, tmp128Offset)
+		if tmp1605 != nil {
+			return tmp1605
 		}
 	} else if t.Kind == TaskControlKind_PruneTasks {
-		tmp1628, ok := t.tmp1109.(*tmp1629)
+		tmp1638, ok := t.tmp1117.(*tmp1639)
 		if !ok {
-			tmp1628 = &tmp1629{}
-			t.tmp1109 = tmp1628
+			tmp1638 = &tmp1639{}
+			t.tmp1117 = tmp1638
 		}
-		_ = tmp1628 // to prevent unused warnings
-		tmp1589 := tmp1628.Prune.DecodeSlice(tmp128, tmp128Offset)
-		if tmp1589 != nil {
-			return tmp1589
+		_ = tmp1638 // to prevent unused warnings
+		tmp1599 := tmp1638.Prune.DecodeSlice(tmp128, tmp128Offset)
+		if tmp1599 != nil {
+			return tmp1599
 		}
 	} else if t.Kind == TaskControlKind_GetTaskLog {
-		tmp1626, ok := t.tmp1109.(*tmp1627)
+		tmp1636, ok := t.tmp1117.(*tmp1637)
 		if !ok {
-			tmp1626 = &tmp1627{}
-			t.tmp1109 = tmp1626
+			tmp1636 = &tmp1637{}
+			t.tmp1117 = tmp1636
 		}
-		_ = tmp1626 // to prevent unused warnings
-		tmp1583 := tmp1626.GetLog.DecodeSlice(tmp128, tmp128Offset)
-		if tmp1583 != nil {
-			return tmp1583
+		_ = tmp1636 // to prevent unused warnings
+		tmp1593 := tmp1636.GetLog.DecodeSlice(tmp128, tmp128Offset)
+		if tmp1593 != nil {
+			return tmp1593
 		}
 	} else if t.Kind == TaskControlKind_OpenInteractive {
-		tmp1624, ok := t.tmp1109.(*tmp1625)
+		tmp1634, ok := t.tmp1117.(*tmp1635)
 		if !ok {
-			tmp1624 = &tmp1625{}
-			t.tmp1109 = tmp1624
+			tmp1634 = &tmp1635{}
+			t.tmp1117 = tmp1634
 		}
-		_ = tmp1624 // to prevent unused warnings
-		tmp1577 := tmp1624.OpenInteractive.DecodeSlice(tmp128, tmp128Offset)
-		if tmp1577 != nil {
-			return tmp1577
+		_ = tmp1634 // to prevent unused warnings
+		tmp1587 := tmp1634.OpenInteractive.DecodeSlice(tmp128, tmp128Offset)
+		if tmp1587 != nil {
+			return tmp1587
 		}
 	} else if t.Kind == TaskControlKind_ClientHello {
-		tmp1622, ok := t.tmp1109.(*tmp1623)
+		tmp1632, ok := t.tmp1117.(*tmp1633)
 		if !ok {
-			tmp1622 = &tmp1623{}
-			t.tmp1109 = tmp1622
+			tmp1632 = &tmp1633{}
+			t.tmp1117 = tmp1632
 		}
-		_ = tmp1622 // to prevent unused warnings
-		tmp1571 := tmp1622.ClientHello.DecodeSlice(tmp128, tmp128Offset)
-		if tmp1571 != nil {
-			return tmp1571
+		_ = tmp1632 // to prevent unused warnings
+		tmp1581 := tmp1632.ClientHello.DecodeSlice(tmp128, tmp128Offset)
+		if tmp1581 != nil {
+			return tmp1581
 		}
 	}
 	return nil
@@ -10581,33 +10671,33 @@ type TaskStatusEvent struct {
 }
 
 func (t *TaskStatusEvent) Write(tmp119 io.Writer) error {
-	tmp1432 := [1]uint8{}
-	tmp1432[0] = uint8(t.Kind)
-	if _, err := tmp119.Write(tmp1432[:1]); err != nil {
+	tmp1442 := [1]uint8{}
+	tmp1442[0] = uint8(t.Kind)
+	if _, err := tmp119.Write(tmp1442[:1]); err != nil {
 		return err
 	}
-	tmp1429 := t.TaskId.Write(tmp119)
-	if tmp1429 != nil {
-		return tmp1429
+	tmp1439 := t.TaskId.Write(tmp119)
+	if tmp1439 != nil {
+		return tmp1439
 	}
-	tmp1427 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1427[:], uint64(t.Ts))
-	if _, err := tmp119.Write(tmp1427[:8]); err != nil {
+	tmp1437 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1437[:], uint64(t.Ts))
+	if _, err := tmp119.Write(tmp1437[:8]); err != nil {
 		return err
 	}
-	tmp1424 := [1]uint8{}
-	tmp1424[0] = uint8(t.TaskStatus)
-	if _, err := tmp119.Write(tmp1424[:1]); err != nil {
+	tmp1434 := [1]uint8{}
+	tmp1434[0] = uint8(t.TaskStatus)
+	if _, err := tmp119.Write(tmp1434[:1]); err != nil {
 		return err
 	}
-	tmp1420 := [1]uint8{}
-	tmp1420[0] = uint8(t.TaskKind)
-	if _, err := tmp119.Write(tmp1420[:1]); err != nil {
+	tmp1430 := [1]uint8{}
+	tmp1430[0] = uint8(t.TaskKind)
+	if _, err := tmp119.Write(tmp1430[:1]); err != nil {
 		return err
 	}
-	tmp1417 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1417[:], uint32(uint32(t.ExitCode)))
-	if _, err := tmp119.Write(tmp1417[:4]); err != nil {
+	tmp1427 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1427[:], uint32(uint32(t.ExitCode)))
+	if _, err := tmp119.Write(tmp1427[:4]); err != nil {
 		return err
 	}
 	return nil
@@ -10628,44 +10718,44 @@ func (s *TaskStatusEvent) MustEncodeCopy(reserved []byte) []byte {
 	return buf
 }
 func (t *TaskStatusEvent) EncodeSlice(tmp119 []byte, tmp119Offset *int) error {
-	tmp1432 := []uint8{}
+	tmp1442 := []uint8{}
 	if len(tmp119)-*tmp119Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskStatusEvent::Kind\"")
 	}
-	tmp1432 = tmp119[*tmp119Offset : *tmp119Offset+int(1)]
-	tmp1432[0] = uint8(t.Kind)
+	tmp1442 = tmp119[*tmp119Offset : *tmp119Offset+int(1)]
+	tmp1442[0] = uint8(t.Kind)
 	*tmp119Offset += int(1)
-	tmp1429 := t.TaskId.EncodeSlice(tmp119, tmp119Offset)
-	if tmp1429 != nil {
-		return tmp1429
+	tmp1439 := t.TaskId.EncodeSlice(tmp119, tmp119Offset)
+	if tmp1439 != nil {
+		return tmp1439
 	}
-	tmp1427 := []uint8{}
+	tmp1437 := []uint8{}
 	if len(tmp119)-*tmp119Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"TaskStatusEvent::Ts\"")
 	}
-	tmp1427 = tmp119[*tmp119Offset : *tmp119Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp1427[:], uint64(t.Ts))
+	tmp1437 = tmp119[*tmp119Offset : *tmp119Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp1437[:], uint64(t.Ts))
 	*tmp119Offset += int(8)
-	tmp1424 := []uint8{}
+	tmp1434 := []uint8{}
 	if len(tmp119)-*tmp119Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskStatusEvent::TaskStatus\"")
 	}
-	tmp1424 = tmp119[*tmp119Offset : *tmp119Offset+int(1)]
-	tmp1424[0] = uint8(t.TaskStatus)
+	tmp1434 = tmp119[*tmp119Offset : *tmp119Offset+int(1)]
+	tmp1434[0] = uint8(t.TaskStatus)
 	*tmp119Offset += int(1)
-	tmp1420 := []uint8{}
+	tmp1430 := []uint8{}
 	if len(tmp119)-*tmp119Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"TaskStatusEvent::TaskKind\"")
 	}
-	tmp1420 = tmp119[*tmp119Offset : *tmp119Offset+int(1)]
-	tmp1420[0] = uint8(t.TaskKind)
+	tmp1430 = tmp119[*tmp119Offset : *tmp119Offset+int(1)]
+	tmp1430[0] = uint8(t.TaskKind)
 	*tmp119Offset += int(1)
-	tmp1417 := []uint8{}
+	tmp1427 := []uint8{}
 	if len(tmp119)-*tmp119Offset < int(4) {
 		return errors.New("not enough space to reserve data for field \"TaskStatusEvent::ExitCode\"")
 	}
-	tmp1417 = tmp119[*tmp119Offset : *tmp119Offset+int(4)]
-	binary.BigEndian.PutUint32(tmp1417[:], uint32(uint32(t.ExitCode)))
+	tmp1427 = tmp119[*tmp119Offset : *tmp119Offset+int(4)]
+	binary.BigEndian.PutUint32(tmp1427[:], uint32(uint32(t.ExitCode)))
 	*tmp119Offset += int(4)
 	return nil
 }
@@ -10685,27 +10775,27 @@ func (s *TaskStatusEvent) MustEncode(reserved []byte) []byte {
 	return buf
 }
 func (t *TaskStatusEvent) Append(tmp119 []byte) ([]byte, error) {
-	tmp1432 := [1]uint8{}
-	tmp1432[0] = uint8(t.Kind)
-	tmp119 = append(tmp119, tmp1432[:1]...)
-	var tmp1429 error
-	tmp119, tmp1429 = t.TaskId.Append(tmp119)
+	tmp1442 := [1]uint8{}
+	tmp1442[0] = uint8(t.Kind)
+	tmp119 = append(tmp119, tmp1442[:1]...)
+	var tmp1439 error
+	tmp119, tmp1439 = t.TaskId.Append(tmp119)
 
-	if tmp1429 != nil {
-		return nil, tmp1429
+	if tmp1439 != nil {
+		return nil, tmp1439
 	}
-	tmp1427 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1427[:], uint64(t.Ts))
-	tmp119 = append(tmp119, tmp1427[:8]...)
-	tmp1424 := [1]uint8{}
-	tmp1424[0] = uint8(t.TaskStatus)
-	tmp119 = append(tmp119, tmp1424[:1]...)
-	tmp1420 := [1]uint8{}
-	tmp1420[0] = uint8(t.TaskKind)
-	tmp119 = append(tmp119, tmp1420[:1]...)
-	tmp1417 := [4]uint8{}
-	binary.BigEndian.PutUint32(tmp1417[:], uint32(uint32(t.ExitCode)))
-	tmp119 = append(tmp119, tmp1417[:4]...)
+	tmp1437 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1437[:], uint64(t.Ts))
+	tmp119 = append(tmp119, tmp1437[:8]...)
+	tmp1434 := [1]uint8{}
+	tmp1434[0] = uint8(t.TaskStatus)
+	tmp119 = append(tmp119, tmp1434[:1]...)
+	tmp1430 := [1]uint8{}
+	tmp1430[0] = uint8(t.TaskKind)
+	tmp119 = append(tmp119, tmp1430[:1]...)
+	tmp1427 := [4]uint8{}
+	binary.BigEndian.PutUint32(tmp1427[:], uint32(uint32(t.ExitCode)))
+	tmp119 = append(tmp119, tmp1427[:4]...)
 	return tmp119, nil
 }
 func (s *TaskStatusEvent) MustAppend(buf []byte) []byte {
@@ -10718,41 +10808,41 @@ func (s *TaskStatusEvent) MustAppend(buf []byte) []byte {
 }
 
 func (t *TaskStatusEvent) Read(tmp120 io.Reader) error {
-	tmp1446 := uint8(0)
-	tmp1445 := [1]uint8{}
-	if _, err := io.ReadFull(tmp120, tmp1445[0:0+1]); err != nil {
+	tmp1456 := uint8(0)
+	tmp1455 := [1]uint8{}
+	if _, err := io.ReadFull(tmp120, tmp1455[0:0+1]); err != nil {
 		return err
 	}
-	tmp1446 = tmp1445[0]
-	t.Kind = StatusEventKind(tmp1446)
-	tmp1443 := t.TaskId.Read(tmp120)
-	if tmp1443 != nil {
-		return tmp1443
+	tmp1456 = tmp1455[0]
+	t.Kind = StatusEventKind(tmp1456)
+	tmp1453 := t.TaskId.Read(tmp120)
+	if tmp1453 != nil {
+		return tmp1453
 	}
-	tmp1441 := [8]uint8{}
-	if _, err := io.ReadFull(tmp120, tmp1441[0:0+8]); err != nil {
+	tmp1451 := [8]uint8{}
+	if _, err := io.ReadFull(tmp120, tmp1451[0:0+8]); err != nil {
 		return err
 	}
-	t.Ts = binary.BigEndian.Uint64(tmp1441[:])
-	tmp1440 := uint8(0)
-	tmp1439 := [1]uint8{}
-	if _, err := io.ReadFull(tmp120, tmp1439[0:0+1]); err != nil {
+	t.Ts = binary.BigEndian.Uint64(tmp1451[:])
+	tmp1450 := uint8(0)
+	tmp1449 := [1]uint8{}
+	if _, err := io.ReadFull(tmp120, tmp1449[0:0+1]); err != nil {
 		return err
 	}
-	tmp1440 = tmp1439[0]
-	t.TaskStatus = TaskStatus(tmp1440)
-	tmp1437 := uint8(0)
-	tmp1436 := [1]uint8{}
-	if _, err := io.ReadFull(tmp120, tmp1436[0:0+1]); err != nil {
+	tmp1450 = tmp1449[0]
+	t.TaskStatus = TaskStatus(tmp1450)
+	tmp1447 := uint8(0)
+	tmp1446 := [1]uint8{}
+	if _, err := io.ReadFull(tmp120, tmp1446[0:0+1]); err != nil {
 		return err
 	}
-	tmp1437 = tmp1436[0]
-	t.TaskKind = TaskKind(tmp1437)
-	tmp1434 := [4]uint8{}
-	if _, err := io.ReadFull(tmp120, tmp1434[0:0+4]); err != nil {
+	tmp1447 = tmp1446[0]
+	t.TaskKind = TaskKind(tmp1447)
+	tmp1444 := [4]uint8{}
+	if _, err := io.ReadFull(tmp120, tmp1444[0:0+4]); err != nil {
 		return err
 	}
-	t.ExitCode = int32(binary.BigEndian.Uint32(tmp1434[:]))
+	t.ExitCode = int32(binary.BigEndian.Uint32(tmp1444[:]))
 	return nil
 }
 func (s *TaskStatusEvent) DecodeCopy(buf []byte) ([]byte, error) {
@@ -10774,51 +10864,51 @@ func (s *TaskStatusEvent) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (t *TaskStatusEvent) DecodeSlice(tmp120 []byte, tmp120Offset *int) error {
-	tmp1446 := uint8(0)
-	tmp1445 := []uint8{}
+	tmp1456 := uint8(0)
+	tmp1455 := []uint8{}
 	if len(tmp120)-*tmp120Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskStatusEvent::Kind\"")
 	}
-	tmp1445 = tmp120[*tmp120Offset : *tmp120Offset+1]
+	tmp1455 = tmp120[*tmp120Offset : *tmp120Offset+1]
 	*tmp120Offset += int(1)
-	tmp1446 = tmp1445[0]
-	t.Kind = StatusEventKind(tmp1446)
-	tmp1443 := t.TaskId.DecodeSlice(tmp120, tmp120Offset)
-	if tmp1443 != nil {
-		return tmp1443
+	tmp1456 = tmp1455[0]
+	t.Kind = StatusEventKind(tmp1456)
+	tmp1453 := t.TaskId.DecodeSlice(tmp120, tmp120Offset)
+	if tmp1453 != nil {
+		return tmp1453
 	}
-	tmp1441 := []uint8{}
+	tmp1451 := []uint8{}
 	if len(tmp120)-*tmp120Offset < 8 {
 		return errors.New("not enough data to read for field \"TaskStatusEvent::Ts\"")
 	}
-	tmp1441 = tmp120[*tmp120Offset : *tmp120Offset+8]
+	tmp1451 = tmp120[*tmp120Offset : *tmp120Offset+8]
 	*tmp120Offset += int(8)
-	t.Ts = binary.BigEndian.Uint64(tmp1441[:])
-	tmp1440 := uint8(0)
-	tmp1439 := []uint8{}
+	t.Ts = binary.BigEndian.Uint64(tmp1451[:])
+	tmp1450 := uint8(0)
+	tmp1449 := []uint8{}
 	if len(tmp120)-*tmp120Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskStatusEvent::TaskStatus\"")
 	}
-	tmp1439 = tmp120[*tmp120Offset : *tmp120Offset+1]
+	tmp1449 = tmp120[*tmp120Offset : *tmp120Offset+1]
 	*tmp120Offset += int(1)
-	tmp1440 = tmp1439[0]
-	t.TaskStatus = TaskStatus(tmp1440)
-	tmp1437 := uint8(0)
-	tmp1436 := []uint8{}
+	tmp1450 = tmp1449[0]
+	t.TaskStatus = TaskStatus(tmp1450)
+	tmp1447 := uint8(0)
+	tmp1446 := []uint8{}
 	if len(tmp120)-*tmp120Offset < 1 {
 		return errors.New("not enough data to read for field \"TaskStatusEvent::TaskKind\"")
 	}
-	tmp1436 = tmp120[*tmp120Offset : *tmp120Offset+1]
+	tmp1446 = tmp120[*tmp120Offset : *tmp120Offset+1]
 	*tmp120Offset += int(1)
-	tmp1437 = tmp1436[0]
-	t.TaskKind = TaskKind(tmp1437)
-	tmp1434 := []uint8{}
+	tmp1447 = tmp1446[0]
+	t.TaskKind = TaskKind(tmp1447)
+	tmp1444 := []uint8{}
 	if len(tmp120)-*tmp120Offset < 4 {
 		return errors.New("not enough data to read for field \"TaskStatusEvent::ExitCode\"")
 	}
-	tmp1434 = tmp120[*tmp120Offset : *tmp120Offset+4]
+	tmp1444 = tmp120[*tmp120Offset : *tmp120Offset+4]
 	*tmp120Offset += int(4)
-	t.ExitCode = int32(binary.BigEndian.Uint32(tmp1434[:]))
+	t.ExitCode = int32(binary.BigEndian.Uint32(tmp1444[:]))
 	return nil
 }
 func (s *TaskStatusEvent) Decode(buf []byte) ([]byte, error) {
@@ -10847,33 +10937,33 @@ type RunnerStatusEvent struct {
 	RunnerStatus RunnerStatus
 }
 
-func (r *RunnerStatusEvent) Write(tmp172 io.Writer) error {
-	tmp172ByteIO, _ := tmp172.(io.ByteWriter)
-	_ = tmp172ByteIO
-	if tmp172ByteIO != nil {
-		if err := tmp172ByteIO.WriteByte(uint8(r.Kind)); err != nil {
+func (r *RunnerStatusEvent) Write(tmp173 io.Writer) error {
+	tmp173ByteIO, _ := tmp173.(io.ByteWriter)
+	_ = tmp173ByteIO
+	if tmp173ByteIO != nil {
+		if err := tmp173ByteIO.WriteByte(uint8(r.Kind)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp172.Write([]byte{uint8(r.Kind)}); err != nil {
+		if _, err := tmp173.Write([]byte{uint8(r.Kind)}); err != nil {
 			return err
 		}
 	}
-	tmp1402 := r.RunnerId.Write(tmp172)
-	if tmp1402 != nil {
-		return tmp1402
+	tmp1412 := r.RunnerId.Write(tmp173)
+	if tmp1412 != nil {
+		return tmp1412
 	}
-	tmp1400 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1400[:], uint64(r.Ts))
-	if _, err := tmp172.Write(tmp1400[:8]); err != nil {
+	tmp1410 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1410[:], uint64(r.Ts))
+	if _, err := tmp173.Write(tmp1410[:8]); err != nil {
 		return err
 	}
-	if tmp172ByteIO != nil {
-		if err := tmp172ByteIO.WriteByte(uint8(r.RunnerStatus)); err != nil {
+	if tmp173ByteIO != nil {
+		if err := tmp173ByteIO.WriteByte(uint8(r.RunnerStatus)); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp172.Write([]byte{uint8(r.RunnerStatus)}); err != nil {
+		if _, err := tmp173.Write([]byte{uint8(r.RunnerStatus)}); err != nil {
 			return err
 		}
 	}
@@ -10894,32 +10984,32 @@ func (s *RunnerStatusEvent) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerStatusEvent) EncodeSlice(tmp172 []byte, tmp172Offset *int) error {
-	tmp1405 := []uint8{}
-	if len(tmp172)-*tmp172Offset < int(1) {
+func (r *RunnerStatusEvent) EncodeSlice(tmp173 []byte, tmp173Offset *int) error {
+	tmp1415 := []uint8{}
+	if len(tmp173)-*tmp173Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerStatusEvent::Kind\"")
 	}
-	tmp1405 = tmp172[*tmp172Offset : *tmp172Offset+int(1)]
-	tmp1405[0] = uint8(r.Kind)
-	*tmp172Offset += int(1)
-	tmp1402 := r.RunnerId.EncodeSlice(tmp172, tmp172Offset)
-	if tmp1402 != nil {
-		return tmp1402
+	tmp1415 = tmp173[*tmp173Offset : *tmp173Offset+int(1)]
+	tmp1415[0] = uint8(r.Kind)
+	*tmp173Offset += int(1)
+	tmp1412 := r.RunnerId.EncodeSlice(tmp173, tmp173Offset)
+	if tmp1412 != nil {
+		return tmp1412
 	}
-	tmp1400 := []uint8{}
-	if len(tmp172)-*tmp172Offset < int(8) {
+	tmp1410 := []uint8{}
+	if len(tmp173)-*tmp173Offset < int(8) {
 		return errors.New("not enough space to reserve data for field \"RunnerStatusEvent::Ts\"")
 	}
-	tmp1400 = tmp172[*tmp172Offset : *tmp172Offset+int(8)]
-	binary.BigEndian.PutUint64(tmp1400[:], uint64(r.Ts))
-	*tmp172Offset += int(8)
-	tmp1397 := []uint8{}
-	if len(tmp172)-*tmp172Offset < int(1) {
+	tmp1410 = tmp173[*tmp173Offset : *tmp173Offset+int(8)]
+	binary.BigEndian.PutUint64(tmp1410[:], uint64(r.Ts))
+	*tmp173Offset += int(8)
+	tmp1407 := []uint8{}
+	if len(tmp173)-*tmp173Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"RunnerStatusEvent::RunnerStatus\"")
 	}
-	tmp1397 = tmp172[*tmp172Offset : *tmp172Offset+int(1)]
-	tmp1397[0] = uint8(r.RunnerStatus)
-	*tmp172Offset += int(1)
+	tmp1407 = tmp173[*tmp173Offset : *tmp173Offset+int(1)]
+	tmp1407[0] = uint8(r.RunnerStatus)
+	*tmp173Offset += int(1)
 	return nil
 }
 func (s *RunnerStatusEvent) Encode(buf []byte) ([]byte, error) {
@@ -10937,23 +11027,23 @@ func (s *RunnerStatusEvent) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (r *RunnerStatusEvent) Append(tmp172 []byte) ([]byte, error) {
-	tmp1405 := [1]uint8{}
-	tmp1405[0] = uint8(r.Kind)
-	tmp172 = append(tmp172, tmp1405[:1]...)
-	var tmp1402 error
-	tmp172, tmp1402 = r.RunnerId.Append(tmp172)
+func (r *RunnerStatusEvent) Append(tmp173 []byte) ([]byte, error) {
+	tmp1415 := [1]uint8{}
+	tmp1415[0] = uint8(r.Kind)
+	tmp173 = append(tmp173, tmp1415[:1]...)
+	var tmp1412 error
+	tmp173, tmp1412 = r.RunnerId.Append(tmp173)
 
-	if tmp1402 != nil {
-		return nil, tmp1402
+	if tmp1412 != nil {
+		return nil, tmp1412
 	}
-	tmp1400 := [8]uint8{}
-	binary.BigEndian.PutUint64(tmp1400[:], uint64(r.Ts))
-	tmp172 = append(tmp172, tmp1400[:8]...)
-	tmp1397 := [1]uint8{}
-	tmp1397[0] = uint8(r.RunnerStatus)
-	tmp172 = append(tmp172, tmp1397[:1]...)
-	return tmp172, nil
+	tmp1410 := [8]uint8{}
+	binary.BigEndian.PutUint64(tmp1410[:], uint64(r.Ts))
+	tmp173 = append(tmp173, tmp1410[:8]...)
+	tmp1407 := [1]uint8{}
+	tmp1407[0] = uint8(r.RunnerStatus)
+	tmp173 = append(tmp173, tmp1407[:1]...)
+	return tmp173, nil
 }
 func (s *RunnerStatusEvent) MustAppend(buf []byte) []byte {
 	var err error
@@ -10964,13 +11054,13 @@ func (s *RunnerStatusEvent) MustAppend(buf []byte) []byte {
 	return buf
 }
 
-func (r *RunnerStatusEvent) Read(tmp173 io.Reader) error {
-	tmp173ByteIO, _ := tmp173.(io.ByteReader)
-	_ = tmp173ByteIO
-	tmp1415 := uint8(0)
-	if tmp173ByteIO != nil {
+func (r *RunnerStatusEvent) Read(tmp174 io.Reader) error {
+	tmp174ByteIO, _ := tmp174.(io.ByteReader)
+	_ = tmp174ByteIO
+	tmp1425 := uint8(0)
+	if tmp174ByteIO != nil {
 		var err error
-		tmp1415, err = tmp173ByteIO.ReadByte()
+		tmp1425, err = tmp174ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -10978,28 +11068,28 @@ func (r *RunnerStatusEvent) Read(tmp173 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp173, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp174, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"RunnerStatusEvent::Kind\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp1415 = buf[0]
+		tmp1425 = buf[0]
 	}
-	r.Kind = StatusEventKind(tmp1415)
-	tmp1412 := r.RunnerId.Read(tmp173)
-	if tmp1412 != nil {
-		return tmp1412
+	r.Kind = StatusEventKind(tmp1425)
+	tmp1422 := r.RunnerId.Read(tmp174)
+	if tmp1422 != nil {
+		return tmp1422
 	}
-	tmp1410 := [8]uint8{}
-	if _, err := io.ReadFull(tmp173, tmp1410[0:0+8]); err != nil {
+	tmp1420 := [8]uint8{}
+	if _, err := io.ReadFull(tmp174, tmp1420[0:0+8]); err != nil {
 		return err
 	}
-	r.Ts = binary.BigEndian.Uint64(tmp1410[:])
-	tmp1409 := uint8(0)
-	if tmp173ByteIO != nil {
+	r.Ts = binary.BigEndian.Uint64(tmp1420[:])
+	tmp1419 := uint8(0)
+	if tmp174ByteIO != nil {
 		var err error
-		tmp1409, err = tmp173ByteIO.ReadByte()
+		tmp1419, err = tmp174ByteIO.ReadByte()
 		if err != nil {
 			return err
 		}
@@ -11007,15 +11097,15 @@ func (r *RunnerStatusEvent) Read(tmp173 io.Reader) error {
 		var err error
 		var n int
 		buf := [1]byte{0}
-		if n, err = io.ReadFull(tmp173, buf[:]); err != nil {
+		if n, err = io.ReadFull(tmp174, buf[:]); err != nil {
 			return err
 		}
 		if n != 1 {
 			return fmt.Errorf("failed to read byte for field \"RunnerStatusEvent::RunnerStatus\": expected to read 1 byte, but read %d bytes", n)
 		}
-		tmp1409 = buf[0]
+		tmp1419 = buf[0]
 	}
-	r.RunnerStatus = RunnerStatus(tmp1409)
+	r.RunnerStatus = RunnerStatus(tmp1419)
 	return nil
 }
 func (s *RunnerStatusEvent) DecodeCopy(buf []byte) ([]byte, error) {
@@ -11036,36 +11126,36 @@ func (s *RunnerStatusEvent) DecodeExactCopy(buf []byte) error {
 	}
 	return nil
 }
-func (r *RunnerStatusEvent) DecodeSlice(tmp173 []byte, tmp173Offset *int) error {
-	tmp1415 := uint8(0)
-	tmp1414 := []uint8{}
-	if len(tmp173)-*tmp173Offset < 1 {
+func (r *RunnerStatusEvent) DecodeSlice(tmp174 []byte, tmp174Offset *int) error {
+	tmp1425 := uint8(0)
+	tmp1424 := []uint8{}
+	if len(tmp174)-*tmp174Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerStatusEvent::Kind\"")
 	}
-	tmp1414 = tmp173[*tmp173Offset : *tmp173Offset+1]
-	*tmp173Offset += int(1)
-	tmp1415 = tmp1414[0]
-	r.Kind = StatusEventKind(tmp1415)
-	tmp1412 := r.RunnerId.DecodeSlice(tmp173, tmp173Offset)
-	if tmp1412 != nil {
-		return tmp1412
+	tmp1424 = tmp174[*tmp174Offset : *tmp174Offset+1]
+	*tmp174Offset += int(1)
+	tmp1425 = tmp1424[0]
+	r.Kind = StatusEventKind(tmp1425)
+	tmp1422 := r.RunnerId.DecodeSlice(tmp174, tmp174Offset)
+	if tmp1422 != nil {
+		return tmp1422
 	}
-	tmp1410 := []uint8{}
-	if len(tmp173)-*tmp173Offset < 8 {
+	tmp1420 := []uint8{}
+	if len(tmp174)-*tmp174Offset < 8 {
 		return errors.New("not enough data to read for field \"RunnerStatusEvent::Ts\"")
 	}
-	tmp1410 = tmp173[*tmp173Offset : *tmp173Offset+8]
-	*tmp173Offset += int(8)
-	r.Ts = binary.BigEndian.Uint64(tmp1410[:])
-	tmp1409 := uint8(0)
-	tmp1408 := []uint8{}
-	if len(tmp173)-*tmp173Offset < 1 {
+	tmp1420 = tmp174[*tmp174Offset : *tmp174Offset+8]
+	*tmp174Offset += int(8)
+	r.Ts = binary.BigEndian.Uint64(tmp1420[:])
+	tmp1419 := uint8(0)
+	tmp1418 := []uint8{}
+	if len(tmp174)-*tmp174Offset < 1 {
 		return errors.New("not enough data to read for field \"RunnerStatusEvent::RunnerStatus\"")
 	}
-	tmp1408 = tmp173[*tmp173Offset : *tmp173Offset+1]
-	*tmp173Offset += int(1)
-	tmp1409 = tmp1408[0]
-	r.RunnerStatus = RunnerStatus(tmp1409)
+	tmp1418 = tmp174[*tmp174Offset : *tmp174Offset+1]
+	*tmp174Offset += int(1)
+	tmp1419 = tmp1418[0]
+	r.RunnerStatus = RunnerStatus(tmp1419)
 	return nil
 }
 func (s *RunnerStatusEvent) Decode(buf []byte) ([]byte, error) {
