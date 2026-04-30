@@ -121,6 +121,8 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ws endpoint: %w", err)
 	}
+	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+
 	pc, err := peer.Dial(ctx, ep, cid, peer.DialConfig{
 		Logger:       slog.Default(),
 		PingInterval: 30 * time.Second,

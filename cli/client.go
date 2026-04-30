@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
@@ -43,6 +44,8 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ws endpoint: %w", err)
 	}
+	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+
 	pc, err := peer.Dial(ctx, ep, peerCID, peer.DialConfig{
 		Logger: slog.Default(),
 	})

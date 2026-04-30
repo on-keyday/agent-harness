@@ -45,6 +45,8 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("ws endpoint: %w", err)
 	}
+	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+
 	pc, err := peer.Dial(ctx, ep, cfg.ServerCID, peer.DialConfig{
 		Logger:       cfg.Logger,
 		PingInterval: 30 * time.Second,
