@@ -295,9 +295,8 @@ function renderRunners(runners) {
 function renderTasks(tasks) {
   if (!tasks || tasks.length === 0) return "(none)";
   return tasks.map(t => {
-    const idShort = t.id.slice(0, 12);
     const promptShort = (t.prompt || "").slice(0, 60);
-    return `  ${idShort}  ${pad(t.status, 10)} ${pad(t.kind, 12)} repo=${t.repoPath}  prompt=${JSON.stringify(promptShort)}`;
+    return `  ${t.id}  ${pad(t.status, 10)} ${pad(t.kind, 12)} repo=${t.repoPath}  prompt=${JSON.stringify(promptShort)}`;
   }).join("\n");
 }
 
