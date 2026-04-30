@@ -33,6 +33,11 @@ type Config struct {
 	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
 	Logger        *slog.Logger
 
+	// PSK, when non-nil, requires every connecting client to present
+	// a matching PskAuthRequest before any other message is accepted.
+	// nil = no PSK enforcement (backward compatible).
+	PSK []byte
+
 	// WebUIFS, when non-nil, causes server.Run to register handlers on its
 	// internal mux for "/" (serving "<root>/index.html") and "/static/" (serving
 	// the directory tree). The fs.FS is expected to have index.html at its
@@ -362,6 +367,7 @@ func (s streamingConn) CreateBidirectionalStream() trsf.BidirectionalStream {
 
 // handleConnection manages a single active objproto connection for its lifetime.
 func (s *Server) handleConnection(ctx context.Context, session objproto.Connection) {
+	defer session.Close()
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	p := trsf.NewStreams(connCtx, true, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, session, s.cfg.Logger)
@@ -372,6 +378,8 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 
 	wrapped := streamingConn{Connection: session, trans: p}
 
+	gate := newPSKGate(s.cfg.PSK)
+
 	trsf.AutoReceive(connCtx, p, session, func(msg *objproto.Message, err error) {
 		if err != nil {
 			// Includes io.EOF on peer-sent Close; AutoReceive returns next.
@@ -381,7 +389,20 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		if msg == nil || len(msg.Data) == 0 {
 			return
 		}
+		// PSK gate: first message must be PskAuth when PSK is configured.
+		if isPSKMsg, shouldClose := gate.Check(msg.Data, func(resp []byte) {
+			session.SendMessage(resp) //nolint:errcheck
+		}); isPSKMsg || !gate.Authed() {
+			if shouldClose {
+				trsf.SendClose(session) //nolint:errcheck
+				cancel()
+			}
+			return
+		}
 		kind := wire.ApplicationPayloadKind(msg.Data[0])
+		if kind == wire.ApplicationPayloadKind_PskAuth {
+			return // stray PskAuth after auth complete — discard
+		}
 		if kind == wire.ApplicationPayloadKind_Pubsub {
 			// HandleMessage already returns the response wire-kind prefixed.
 			if resp := subscriber.HandleMessage(s.pubsub, msg.Data[1:]); resp != nil {

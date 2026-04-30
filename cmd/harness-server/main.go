@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
@@ -23,18 +28,65 @@ var (
 	agentboardTTL         = flag.Duration("agentboard-ttl", 30*time.Minute, "agentboard topic TTL after last publish")
 	agentboardMaxTopics   = flag.Int("agentboard-max-topics", 1024, "agentboard max active topics")
 	agentboardMaxPayload  = flag.Int("agentboard-max-payload", 64*1024, "agentboard max payload bytes per message")
+	psk                   = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
+	pskFile               = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
 )
+
+func resolvePSK(pskVal, pskFile string) ([]byte, error) {
+	// 1. Explicit value wins.
+	if pskVal != "" {
+		return []byte(pskVal), nil
+	}
+	// 2. No file requested → no PSK.
+	if pskFile == "" {
+		return nil, nil
+	}
+	// 3. Attempt to read existing file.
+	data, err := os.ReadFile(pskFile)
+	if err == nil {
+		v := strings.TrimSpace(string(data))
+		if v != "" {
+			return []byte(v), nil
+		}
+		// File exists but is blank — fall through to auto-generate.
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("psk-file read: %w", err)
+	}
+	// 4. File absent or blank → generate, write, return.
+	var raw [32]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return nil, fmt.Errorf("psk generate: %w", err)
+	}
+	encoded := hex.EncodeToString(raw[:])
+	if err := os.WriteFile(pskFile, []byte(encoded+"\n"), 0o600); err != nil {
+		return nil, fmt.Errorf("psk-file write: %w", err)
+	}
+	slog.Info("generated PSK", "path", pskFile)
+	return []byte(encoded), nil
+}
 
 func main() {
 	flag.Parse()
 	cli.WebSocketPath = *wsPath
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+
+	resolvedPSKVal := *psk
+	if resolvedPSKVal == "" {
+		resolvedPSKVal = os.Getenv("HARNESS_PSK")
+	}
+	pskBytes, err := resolvePSK(resolvedPSKVal, *pskFile)
+	if err != nil {
+		slog.Error("PSK setup failed", "err", err)
+		os.Exit(1)
+	}
+
 	s := server.New(server.Config{
 		Addr:          *listen,
 		DataDir:       *dataDir,
 		TaskRetention: *taskRetain,
 		Logger:        slog.Default(),
+		PSK:           pskBytes,
 		WebUIFS:       webui.FS,
 	})
 	board := agentboard.New(agentboard.Config{

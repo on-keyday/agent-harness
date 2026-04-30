@@ -123,6 +123,11 @@ func (c *Conn) Start(ctx context.Context) {
 	}()
 }
 
+// Done returns a channel that is closed when the AutoReceive goroutine exits
+// (peer sent Close, network error, or the connection was GC'd). Callers can
+// select on this to detect connection loss without blocking on Wait.
+func (c *Conn) Done() <-chan struct{} { return c.done }
+
 // Wait blocks until the AutoReceive goroutine returns OR ctx is cancelled.
 // Returns ctx.Err() in the latter case, nil in the former. If Start was
 // never called, returns immediately with nil — there is nothing to wait on.

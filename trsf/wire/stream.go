@@ -10,25 +10,25 @@ import (
 
 /* config.go.package("wire")*/
 func (v *Varint) Prefix() uint8 {
-	return uint8(((v.tmp211 >> uint64(62)) & uint64(3)))
+	return uint8(((v.tmp212 >> uint64(62)) & uint64(3)))
 }
 
-func (v *Varint) SetPrefix(tmp685 uint8) bool {
-	v.tmp211 = (v.tmp211 & (^(uint64(3) << uint64(62)))) | ((uint64(tmp685) & uint64(3)) << uint64(62))
+func (v *Varint) SetPrefix(tmp686 uint8) bool {
+	v.tmp212 = (v.tmp212 & (^(uint64(3) << uint64(62)))) | ((uint64(tmp686) & uint64(3)) << uint64(62))
 	return true
 }
 
 func (v *Varint) tmp708() uint64 {
-	return uint64(((v.tmp211 >> uint64(0)) & uint64(4611686018427387903)))
+	return uint64(((v.tmp212 >> uint64(0)) & uint64(4611686018427387903)))
 }
 
-func (v *Varint) settmp379(tmp706 uint64) bool {
-	v.tmp211 = (v.tmp211 & (^(uint64(4611686018427387903) << uint64(0)))) | ((uint64(tmp706) & uint64(4611686018427387903)) << uint64(0))
+func (v *Varint) settmp378(tmp706 uint64) bool {
+	v.tmp212 = (v.tmp212 & (^(uint64(4611686018427387903) << uint64(0)))) | ((uint64(tmp706) & uint64(4611686018427387903)) << uint64(0))
 	return true
 }
 
 type Varint struct {
-	tmp211 uint64
+	tmp212 uint64
 }
 
 func (v *Varint) Value() uint64 {
@@ -43,18 +43,18 @@ func (v *Varint) Value() uint64 {
 	}
 	return uint64(0)
 }
-func (v *Varint) SetValue(tmp634 uint64) bool {
+func (v *Varint) SetValue(tmp633 uint64) bool {
 	if v.Prefix() == uint8(0) {
-		v.settmp379(uint64(uint8(tmp634)))
+		v.settmp378(uint64(uint8(tmp633)))
 		return true
 	} else if v.Prefix() == uint8(1) {
-		v.settmp379(uint64(uint16(tmp634)))
+		v.settmp378(uint64(uint16(tmp633)))
 		return true
 	} else if v.Prefix() == 2 {
-		v.settmp379(uint64(uint32(tmp634)))
+		v.settmp378(uint64(uint32(tmp633)))
 		return true
 	} else if v.Prefix() == 3 {
-		v.settmp379(uint64(uint64(tmp634)))
+		v.settmp378(uint64(uint64(tmp633)))
 		return true
 	}
 	return false
@@ -215,38 +215,38 @@ func (s *Varint) MustAppend(buf []byte) []byte {
 }
 
 func (v *Varint) Read(tmp14 io.Reader) error {
-	tmp711 := [8]uint8{}
-	tmp716 := uint8(0)
-	if _, err := io.ReadFull(tmp14, tmp711[0:0+1]); err != nil {
+	tmp712 := [8]uint8{}
+	tmp727 := uint8(0)
+	if _, err := io.ReadFull(tmp14, tmp712[0:0+1]); err != nil {
 		return err
 	}
-	tmp716 = uint8(((tmp711[0] & 192) >> uint8(6)))
-	v.SetPrefix(tmp716)
+	tmp727 = uint8(((tmp712[0] & 192) >> uint8(6)))
+	v.SetPrefix(tmp727)
 	if v.Prefix() == uint8(0) {
-		tmp705 := uint8(0)
-		tmp705 = uint8((tmp711[0] & uint8(63)))
-		v.settmp379(uint64(tmp705))
+		tmp722 := uint8(0)
+		tmp722 = uint8((tmp712[0] & uint8(63)))
+		v.settmp378(uint64(tmp722))
 	} else if v.Prefix() == uint8(1) {
 		tmp691 := uint16(0)
-		if _, err := io.ReadFull(tmp14, tmp711[1:1+1]); err != nil {
+		if _, err := io.ReadFull(tmp14, tmp712[1:1+1]); err != nil {
 			return err
 		}
-		tmp691 = (uint16((tmp711[0] & uint8(63))) << uint16(8)) | uint16(tmp711[1])
-		v.settmp379(uint64(tmp691))
+		tmp691 = (uint16((tmp712[0] & uint8(63))) << uint16(8)) | uint16(tmp712[1])
+		v.settmp378(uint64(tmp691))
 	} else if v.Prefix() == 2 {
-		tmp684 := uint32(0)
-		if _, err := io.ReadFull(tmp14, tmp711[1:1+3]); err != nil {
+		tmp685 := uint32(0)
+		if _, err := io.ReadFull(tmp14, tmp712[1:1+3]); err != nil {
 			return err
 		}
-		tmp684 = (((uint32((tmp711[0] & uint8(63))) << uint32(24)) | (uint32(tmp711[1]) << uint32(16))) | (uint32(tmp711[2]) << uint32(8))) | uint32(tmp711[3])
-		v.settmp379(uint64(tmp684))
+		tmp685 = (((uint32((tmp712[0] & uint8(63))) << uint32(24)) | (uint32(tmp712[1]) << uint32(16))) | (uint32(tmp712[2]) << uint32(8))) | uint32(tmp712[3])
+		v.settmp378(uint64(tmp685))
 	} else if v.Prefix() == 3 {
 		tmp672 := uint64(0)
-		if _, err := io.ReadFull(tmp14, tmp711[1:1+7]); err != nil {
+		if _, err := io.ReadFull(tmp14, tmp712[1:1+7]); err != nil {
 			return err
 		}
-		tmp672 = (((((((uint64((tmp711[0] & uint8(63))) << uint64(56)) | (uint64(tmp711[1]) << uint64(48))) | (uint64(tmp711[2]) << uint64(40))) | (uint64(tmp711[3]) << uint64(32))) | (uint64(tmp711[4]) << uint64(24))) | (uint64(tmp711[5]) << uint64(16))) | (uint64(tmp711[6]) << uint64(8))) | uint64(tmp711[7])
-		v.settmp379(uint64(tmp672))
+		tmp672 = (((((((uint64((tmp712[0] & uint8(63))) << uint64(56)) | (uint64(tmp712[1]) << uint64(48))) | (uint64(tmp712[2]) << uint64(40))) | (uint64(tmp712[3]) << uint64(32))) | (uint64(tmp712[4]) << uint64(24))) | (uint64(tmp712[5]) << uint64(16))) | (uint64(tmp712[6]) << uint64(8))) | uint64(tmp712[7])
+		v.settmp378(uint64(tmp672))
 	}
 	return nil
 }
@@ -269,46 +269,46 @@ func (s *Varint) DecodeExactCopy(buf []byte) error {
 	return nil
 }
 func (v *Varint) DecodeSlice(tmp14 []byte, tmp14Offset *int) error {
-	tmp711 := []uint8{}
-	tmp716 := uint8(0)
+	tmp712 := []uint8{}
+	tmp727 := uint8(0)
 	if len(tmp14)-*tmp14Offset < 1 {
 		return errors.New("not enough data to read for field \"Varint::Prefix\"")
 	}
-	tmp711 = tmp14[*tmp14Offset : *tmp14Offset+1]
+	tmp712 = tmp14[*tmp14Offset : *tmp14Offset+1]
 	*tmp14Offset += int(1)
-	tmp716 = uint8(((tmp711[0] & 192) >> uint8(6)))
-	v.SetPrefix(tmp716)
+	tmp727 = uint8(((tmp712[0] & 192) >> uint8(6)))
+	v.SetPrefix(tmp727)
 	if v.Prefix() == uint8(0) {
-		tmp705 := uint8(0)
-		tmp705 = uint8((tmp711[0] & uint8(63)))
-		v.settmp379(uint64(tmp705))
+		tmp722 := uint8(0)
+		tmp722 = uint8((tmp712[0] & uint8(63)))
+		v.settmp378(uint64(tmp722))
 	} else if v.Prefix() == uint8(1) {
 		tmp691 := uint16(0)
 		if len(tmp14)-*tmp14Offset < 1 {
 			return errors.New("not enough data to read for field \"Varint::tmp383::Value\"")
 		}
-		tmp711 = tmp711[:1+1]
+		tmp712 = tmp712[:1+1]
 		*tmp14Offset += int(1)
-		tmp691 = (uint16((tmp711[0] & uint8(63))) << uint16(8)) | uint16(tmp711[1])
-		v.settmp379(uint64(tmp691))
+		tmp691 = (uint16((tmp712[0] & uint8(63))) << uint16(8)) | uint16(tmp712[1])
+		v.settmp378(uint64(tmp691))
 	} else if v.Prefix() == 2 {
-		tmp684 := uint32(0)
+		tmp685 := uint32(0)
 		if len(tmp14)-*tmp14Offset < 3 {
 			return errors.New("not enough data to read for field \"Varint::tmp383::Value\"")
 		}
-		tmp711 = tmp711[:1+3]
+		tmp712 = tmp712[:1+3]
 		*tmp14Offset += int(3)
-		tmp684 = (((uint32((tmp711[0] & uint8(63))) << uint32(24)) | (uint32(tmp711[1]) << uint32(16))) | (uint32(tmp711[2]) << uint32(8))) | uint32(tmp711[3])
-		v.settmp379(uint64(tmp684))
+		tmp685 = (((uint32((tmp712[0] & uint8(63))) << uint32(24)) | (uint32(tmp712[1]) << uint32(16))) | (uint32(tmp712[2]) << uint32(8))) | uint32(tmp712[3])
+		v.settmp378(uint64(tmp685))
 	} else if v.Prefix() == 3 {
 		tmp672 := uint64(0)
 		if len(tmp14)-*tmp14Offset < 7 {
 			return errors.New("not enough data to read for field \"Varint::tmp383::Value\"")
 		}
-		tmp711 = tmp711[:1+7]
+		tmp712 = tmp712[:1+7]
 		*tmp14Offset += int(7)
-		tmp672 = (((((((uint64((tmp711[0] & uint8(63))) << uint64(56)) | (uint64(tmp711[1]) << uint64(48))) | (uint64(tmp711[2]) << uint64(40))) | (uint64(tmp711[3]) << uint64(32))) | (uint64(tmp711[4]) << uint64(24))) | (uint64(tmp711[5]) << uint64(16))) | (uint64(tmp711[6]) << uint64(8))) | uint64(tmp711[7])
-		v.settmp379(uint64(tmp672))
+		tmp672 = (((((((uint64((tmp712[0] & uint8(63))) << uint64(56)) | (uint64(tmp712[1]) << uint64(48))) | (uint64(tmp712[2]) << uint64(40))) | (uint64(tmp712[3]) << uint64(32))) | (uint64(tmp712[4]) << uint64(24))) | (uint64(tmp712[5]) << uint64(16))) | (uint64(tmp712[6]) << uint64(8))) | uint64(tmp712[7])
+		v.settmp378(uint64(tmp672))
 	}
 	return nil
 }
@@ -367,7 +367,7 @@ func (v *StreamPacket) HasId() bool {
 	return intVal != 0
 }
 func (s *StreamPacket) hasId() uint8 {
-	return uint8(((s.tmp44 >> uint8(7)) & uint8(1)))
+	return uint8(((s.tmp45 >> uint8(7)) & uint8(1)))
 }
 
 func (s *StreamPacket) SetHasId(value bool) bool {
@@ -379,8 +379,8 @@ func (s *StreamPacket) SetHasId(value bool) bool {
 	}
 	return s.setHasId(intVal)
 }
-func (s *StreamPacket) setHasId(tmp635 uint8) bool {
-	s.tmp44 = (s.tmp44 & (^(uint8(1) << uint8(7)))) | ((uint8(tmp635) & uint8(1)) << uint8(7))
+func (s *StreamPacket) setHasId(tmp698 uint8) bool {
+	s.tmp45 = (s.tmp45 & (^(uint8(1) << uint8(7)))) | ((uint8(tmp698) & uint8(1)) << uint8(7))
 	return true
 }
 
@@ -389,7 +389,7 @@ func (s *StreamPacket) HasOffset() bool {
 	return intVal != 0
 }
 func (s *StreamPacket) hasOffset() uint8 {
-	return uint8(((s.tmp44 >> uint8(6)) & uint8(1)))
+	return uint8(((s.tmp45 >> uint8(6)) & uint8(1)))
 }
 
 func (s *StreamPacket) SetHasOffset(value bool) bool {
@@ -401,8 +401,8 @@ func (s *StreamPacket) SetHasOffset(value bool) bool {
 	}
 	return s.setHasOffset(intVal)
 }
-func (s *StreamPacket) setHasOffset(tmp636 uint8) bool {
-	s.tmp44 = (s.tmp44 & (^(uint8(1) << uint8(6)))) | ((uint8(tmp636) & uint8(1)) << uint8(6))
+func (s *StreamPacket) setHasOffset(tmp635 uint8) bool {
+	s.tmp45 = (s.tmp45 & (^(uint8(1) << uint8(6)))) | ((uint8(tmp635) & uint8(1)) << uint8(6))
 	return true
 }
 
@@ -411,7 +411,7 @@ func (s *StreamPacket) IsEof() bool {
 	return intVal != 0
 }
 func (s *StreamPacket) isEof() uint8 {
-	return uint8(((s.tmp44 >> uint8(5)) & uint8(1)))
+	return uint8(((s.tmp45 >> uint8(5)) & uint8(1)))
 }
 
 func (s *StreamPacket) SetIsEof(value bool) bool {
@@ -423,8 +423,8 @@ func (s *StreamPacket) SetIsEof(value bool) bool {
 	}
 	return s.setIsEof(intVal)
 }
-func (s *StreamPacket) setIsEof(tmp686 uint8) bool {
-	s.tmp44 = (s.tmp44 & (^(uint8(1) << uint8(5)))) | ((uint8(tmp686) & uint8(1)) << uint8(5))
+func (s *StreamPacket) setIsEof(tmp678 uint8) bool {
+	s.tmp45 = (s.tmp45 & (^(uint8(1) << uint8(5)))) | ((uint8(tmp678) & uint8(1)) << uint8(5))
 	return true
 }
 
@@ -433,7 +433,7 @@ func (s *StreamPacket) IsProbe() bool {
 	return intVal != 0
 }
 func (s *StreamPacket) isProbe() uint8 {
-	return uint8(((s.tmp44 >> uint8(4)) & uint8(1)))
+	return uint8(((s.tmp45 >> uint8(4)) & uint8(1)))
 }
 
 func (s *StreamPacket) SetIsProbe(value bool) bool {
@@ -445,52 +445,52 @@ func (s *StreamPacket) SetIsProbe(value bool) bool {
 	}
 	return s.setIsProbe(intVal)
 }
-func (s *StreamPacket) setIsProbe(tmp592 uint8) bool {
-	s.tmp44 = (s.tmp44 & (^(uint8(1) << uint8(4)))) | ((uint8(tmp592) & uint8(1)) << uint8(4))
+func (s *StreamPacket) setIsProbe(tmp577 uint8) bool {
+	s.tmp45 = (s.tmp45 & (^(uint8(1) << uint8(4)))) | ((uint8(tmp577) & uint8(1)) << uint8(4))
 	return true
 }
 
 func (s *StreamPacket) Reserved() uint8 {
-	return uint8(((s.tmp44 >> uint8(0)) & uint8(15)))
+	return uint8(((s.tmp45 >> uint8(0)) & uint8(15)))
 }
 
-func (s *StreamPacket) SetReserved(tmp585 uint8) bool {
-	s.tmp44 = (s.tmp44 & (^(uint8(15) << uint8(0)))) | ((uint8(tmp585) & uint8(15)) << uint8(0))
+func (s *StreamPacket) SetReserved(tmp584 uint8) bool {
+	s.tmp45 = (s.tmp45 & (^(uint8(15) << uint8(0)))) | ((uint8(tmp584) & uint8(15)) << uint8(0))
 	return true
 }
 
-type tmp596 struct {
+type tmp599 struct {
 	Id Varint
 }
 
 type Variant256 struct {
-	tmp596 tmp596
+	tmp599 tmp599
 }
 
-type tmp633 struct {
+type tmp634 struct {
 	Offset Varint
 }
 
-type Variant276 struct {
-	tmp633 tmp633
+type Variant273 struct {
+	tmp634 tmp634
 }
 
 type StreamPacket struct {
-	tmp44  uint8
-	tmp342 Variant256
-	tmp358 Variant276
+	tmp45  uint8
+	tmp335 Variant256
+	tmp339 Variant273
 	Data   []uint8
 }
 
 func (s *StreamPacket) Id() *Varint {
 	if s.hasId() == 1 {
-		return &s.tmp342.tmp596.Id
+		return &s.tmp335.tmp599.Id
 	}
 	return nil
 }
-func (s *StreamPacket) SetId(tmp551 Varint) bool {
+func (s *StreamPacket) SetId(tmp575 Varint) bool {
 	if s.hasId() == 1 {
-		s.tmp342.tmp596.Id = tmp551
+		s.tmp335.tmp599.Id = tmp575
 		return true
 	}
 	return false
@@ -498,50 +498,50 @@ func (s *StreamPacket) SetId(tmp551 Varint) bool {
 
 func (s *StreamPacket) Offset() *Varint {
 	if s.hasOffset() == 1 {
-		return &s.tmp358.tmp633.Offset
+		return &s.tmp339.tmp634.Offset
 	}
 	return nil
 }
-func (s *StreamPacket) SetOffset(tmp553 Varint) bool {
+func (s *StreamPacket) SetOffset(tmp552 Varint) bool {
 	if s.hasOffset() == 1 {
-		s.tmp358.tmp633.Offset = tmp553
+		s.tmp339.tmp634.Offset = tmp552
 		return true
 	}
 	return false
 }
 
-func (s *StreamPacket) Write(tmp49 io.Writer) error {
-	tmp49ByteIO, _ := tmp49.(io.ByteWriter)
-	_ = tmp49ByteIO
+func (s *StreamPacket) Write(tmp48 io.Writer) error {
+	tmp48ByteIO, _ := tmp48.(io.ByteWriter)
+	_ = tmp48ByteIO
 	/* config.go.union("noheap")*/
-	tmp726 := [1]uint8{}
-	tmp726[0] = uint8((s.hasId() & 1)) << uint8(7)
-	tmp726[0] = tmp726[0] | (uint8((s.hasOffset() & 1)) << uint8(6))
-	tmp726[0] = tmp726[0] | (uint8((s.isEof() & 1)) << uint8(5))
-	tmp726[0] = tmp726[0] | (uint8((s.isProbe() & 1)) << uint8(4))
-	tmp726[0] = tmp726[0] | uint8((s.Reserved() & 15))
-	if tmp49ByteIO != nil {
-		if err := tmp49ByteIO.WriteByte(tmp726[0]); err != nil {
+	tmp649 := [1]uint8{}
+	tmp649[0] = uint8((s.hasId() & 1)) << uint8(7)
+	tmp649[0] = tmp649[0] | (uint8((s.hasOffset() & 1)) << uint8(6))
+	tmp649[0] = tmp649[0] | (uint8((s.isEof() & 1)) << uint8(5))
+	tmp649[0] = tmp649[0] | (uint8((s.isProbe() & 1)) << uint8(4))
+	tmp649[0] = tmp649[0] | uint8((s.Reserved() & 15))
+	if tmp48ByteIO != nil {
+		if err := tmp48ByteIO.WriteByte(tmp649[0]); err != nil {
 			return err
 		}
 	} else {
-		if _, err := tmp49.Write([]byte{tmp726[0]}); err != nil {
+		if _, err := tmp48.Write([]byte{tmp649[0]}); err != nil {
 			return err
 		}
 	}
 	if s.hasId() == 1 {
-		tmp630 := s.tmp342.tmp596.Id.Write(tmp49)
+		tmp630 := s.tmp335.tmp599.Id.Write(tmp48)
 		if tmp630 != nil {
 			return tmp630
 		}
 	}
 	if s.hasOffset() == 1 {
-		tmp624 := s.tmp358.tmp633.Offset.Write(tmp49)
-		if tmp624 != nil {
-			return tmp624
+		tmp626 := s.tmp339.tmp634.Offset.Write(tmp48)
+		if tmp626 != nil {
+			return tmp626
 		}
 	}
-	if _, err := tmp49.Write(s.Data); err != nil {
+	if _, err := tmp48.Write(s.Data); err != nil {
 		return err
 	}
 	return nil
@@ -561,36 +561,36 @@ func (s *StreamPacket) MustEncodeCopy(reserved []byte) []byte {
 	}
 	return buf
 }
-func (s *StreamPacket) EncodeSlice(tmp49 []byte, tmp49Offset *int) error {
+func (s *StreamPacket) EncodeSlice(tmp48 []byte, tmp48Offset *int) error {
 	/* config.go.union("noheap")*/
-	tmp726 := []uint8{}
-	if len(tmp49)-*tmp49Offset < int(1) {
+	tmp649 := []uint8{}
+	if len(tmp48)-*tmp48Offset < int(1) {
 		return errors.New("not enough space to reserve data for field \"StreamPacket::Reserved\"")
 	}
-	tmp726 = tmp49[*tmp49Offset : *tmp49Offset+int(1)]
-	tmp726[0] = uint8((s.hasId() & 1)) << uint8(7)
-	tmp726[0] = tmp726[0] | (uint8((s.hasOffset() & 1)) << uint8(6))
-	tmp726[0] = tmp726[0] | (uint8((s.isEof() & 1)) << uint8(5))
-	tmp726[0] = tmp726[0] | (uint8((s.isProbe() & 1)) << uint8(4))
-	tmp726[0] = tmp726[0] | uint8((s.Reserved() & 15))
-	*tmp49Offset += int(1)
+	tmp649 = tmp48[*tmp48Offset : *tmp48Offset+int(1)]
+	tmp649[0] = uint8((s.hasId() & 1)) << uint8(7)
+	tmp649[0] = tmp649[0] | (uint8((s.hasOffset() & 1)) << uint8(6))
+	tmp649[0] = tmp649[0] | (uint8((s.isEof() & 1)) << uint8(5))
+	tmp649[0] = tmp649[0] | (uint8((s.isProbe() & 1)) << uint8(4))
+	tmp649[0] = tmp649[0] | uint8((s.Reserved() & 15))
+	*tmp48Offset += int(1)
 	if s.hasId() == 1 {
-		tmp630 := s.tmp342.tmp596.Id.EncodeSlice(tmp49, tmp49Offset)
+		tmp630 := s.tmp335.tmp599.Id.EncodeSlice(tmp48, tmp48Offset)
 		if tmp630 != nil {
 			return tmp630
 		}
 	}
 	if s.hasOffset() == 1 {
-		tmp624 := s.tmp358.tmp633.Offset.EncodeSlice(tmp49, tmp49Offset)
-		if tmp624 != nil {
-			return tmp624
+		tmp626 := s.tmp339.tmp634.Offset.EncodeSlice(tmp48, tmp48Offset)
+		if tmp626 != nil {
+			return tmp626
 		}
 	}
-	if len(tmp49)-*tmp49Offset < int(0+len(s.Data)) {
+	if len(tmp48)-*tmp48Offset < int(0+len(s.Data)) {
 		return errors.New("not enough space to write for field \"StreamPacket::Data\"")
 	}
-	copy(tmp49[*tmp49Offset:*tmp49Offset+int(len(s.Data))], s.Data)
-	*tmp49Offset += int(len(s.Data))
+	copy(tmp48[*tmp48Offset:*tmp48Offset+int(len(s.Data))], s.Data)
+	*tmp48Offset += int(len(s.Data))
 	return nil
 }
 func (s *StreamPacket) Encode(buf []byte) ([]byte, error) {
@@ -608,33 +608,33 @@ func (s *StreamPacket) MustEncode(reserved []byte) []byte {
 	}
 	return buf
 }
-func (s *StreamPacket) Append(tmp49 []byte) ([]byte, error) {
+func (s *StreamPacket) Append(tmp48 []byte) ([]byte, error) {
 	/* config.go.union("noheap")*/
-	tmp726 := [1]uint8{}
-	tmp726[0] = uint8((s.hasId() & 1)) << uint8(7)
-	tmp726[0] = tmp726[0] | (uint8((s.hasOffset() & 1)) << uint8(6))
-	tmp726[0] = tmp726[0] | (uint8((s.isEof() & 1)) << uint8(5))
-	tmp726[0] = tmp726[0] | (uint8((s.isProbe() & 1)) << uint8(4))
-	tmp726[0] = tmp726[0] | uint8((s.Reserved() & 15))
-	tmp49 = append(tmp49, tmp726[:1]...)
+	tmp649 := [1]uint8{}
+	tmp649[0] = uint8((s.hasId() & 1)) << uint8(7)
+	tmp649[0] = tmp649[0] | (uint8((s.hasOffset() & 1)) << uint8(6))
+	tmp649[0] = tmp649[0] | (uint8((s.isEof() & 1)) << uint8(5))
+	tmp649[0] = tmp649[0] | (uint8((s.isProbe() & 1)) << uint8(4))
+	tmp649[0] = tmp649[0] | uint8((s.Reserved() & 15))
+	tmp48 = append(tmp48, tmp649[:1]...)
 	if s.hasId() == 1 {
 		var tmp630 error
-		tmp49, tmp630 = s.tmp342.tmp596.Id.Append(tmp49)
+		tmp48, tmp630 = s.tmp335.tmp599.Id.Append(tmp48)
 
 		if tmp630 != nil {
 			return nil, tmp630
 		}
 	}
 	if s.hasOffset() == 1 {
-		var tmp624 error
-		tmp49, tmp624 = s.tmp358.tmp633.Offset.Append(tmp49)
+		var tmp626 error
+		tmp48, tmp626 = s.tmp339.tmp634.Offset.Append(tmp48)
 
-		if tmp624 != nil {
-			return nil, tmp624
+		if tmp626 != nil {
+			return nil, tmp626
 		}
 	}
-	tmp49 = append(tmp49, s.Data...)
-	return tmp49, nil
+	tmp48 = append(tmp48, s.Data...)
+	return tmp48, nil
 }
 func (s *StreamPacket) MustAppend(buf []byte) []byte {
 	var err error
@@ -674,23 +674,23 @@ func (s *StreamPacket) Read(tmp36 io.Reader) error {
 	tmp569 := uint8(0)
 	tmp569 = uint8(((tmp574[0] & uint8(64)) >> uint8(6)))
 	s.setHasOffset(tmp569)
-	tmp567 := uint8(0)
-	tmp567 = uint8(((tmp574[0] & uint8(32)) >> uint8(5)))
-	s.setIsEof(tmp567)
-	tmp565 := uint8(0)
-	tmp565 = uint8(((tmp574[0] & uint8(16)) >> uint8(4)))
-	s.setIsProbe(tmp565)
+	tmp566 := uint8(0)
+	tmp566 = uint8(((tmp574[0] & uint8(32)) >> uint8(5)))
+	s.setIsEof(tmp566)
+	tmp564 := uint8(0)
+	tmp564 = uint8(((tmp574[0] & uint8(16)) >> uint8(4)))
+	s.setIsProbe(tmp564)
 	tmp562 := uint8(0)
 	tmp562 = uint8((tmp574[0] & uint8(15)))
 	s.SetReserved(tmp562)
 	if s.hasId() == 1 {
-		tmp558 := s.tmp342.tmp596.Id.Read(tmp36)
-		if tmp558 != nil {
-			return tmp558
+		tmp559 := s.tmp335.tmp599.Id.Read(tmp36)
+		if tmp559 != nil {
+			return tmp559
 		}
 	}
 	if s.hasOffset() == 1 {
-		tmp555 := s.tmp358.tmp633.Offset.Read(tmp36)
+		tmp555 := s.tmp339.tmp634.Offset.Read(tmp36)
 		if tmp555 != nil {
 			return tmp555
 		}
@@ -736,23 +736,23 @@ func (s *StreamPacket) DecodeSlice(tmp36 []byte, tmp36Offset *int) error {
 	tmp569 := uint8(0)
 	tmp569 = uint8(((tmp574[0] & uint8(64)) >> uint8(6)))
 	s.setHasOffset(tmp569)
-	tmp567 := uint8(0)
-	tmp567 = uint8(((tmp574[0] & uint8(32)) >> uint8(5)))
-	s.setIsEof(tmp567)
-	tmp565 := uint8(0)
-	tmp565 = uint8(((tmp574[0] & uint8(16)) >> uint8(4)))
-	s.setIsProbe(tmp565)
+	tmp566 := uint8(0)
+	tmp566 = uint8(((tmp574[0] & uint8(32)) >> uint8(5)))
+	s.setIsEof(tmp566)
+	tmp564 := uint8(0)
+	tmp564 = uint8(((tmp574[0] & uint8(16)) >> uint8(4)))
+	s.setIsProbe(tmp564)
 	tmp562 := uint8(0)
 	tmp562 = uint8((tmp574[0] & uint8(15)))
 	s.SetReserved(tmp562)
 	if s.hasId() == 1 {
-		tmp558 := s.tmp342.tmp596.Id.DecodeSlice(tmp36, tmp36Offset)
-		if tmp558 != nil {
-			return tmp558
+		tmp559 := s.tmp335.tmp599.Id.DecodeSlice(tmp36, tmp36Offset)
+		if tmp559 != nil {
+			return tmp559
 		}
 	}
 	if s.hasOffset() == 1 {
-		tmp555 := s.tmp358.tmp633.Offset.DecodeSlice(tmp36, tmp36Offset)
+		tmp555 := s.tmp339.tmp634.Offset.DecodeSlice(tmp36, tmp36Offset)
 		if tmp555 != nil {
 			return tmp555
 		}
@@ -1411,6 +1411,7 @@ const (
 	ApplicationPayloadKind_RunnerControl      ApplicationPayloadKind = 9
 	ApplicationPayloadKind_Close              ApplicationPayloadKind = 10
 	ApplicationPayloadKind_AgentMessage       ApplicationPayloadKind = 11
+	ApplicationPayloadKind_PskAuth            ApplicationPayloadKind = 12
 )
 
 func (e ApplicationPayloadKind) String() string {
@@ -1439,6 +1440,8 @@ func (e ApplicationPayloadKind) String() string {
 		return "Close"
 	case ApplicationPayloadKind_AgentMessage:
 		return "AgentMessage"
+	case ApplicationPayloadKind_PskAuth:
+		return "PskAuth"
 	default:
 		return fmt.Sprintf("ApplicationPayloadKind(%d)", e)
 	}

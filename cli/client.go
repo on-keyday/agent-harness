@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
@@ -43,6 +44,8 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ws endpoint: %w", err)
 	}
+	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+
 	pc, err := peer.Dial(ctx, ep, peerCID, peer.DialConfig{
 		Logger: slog.Default(),
 	})
@@ -53,8 +56,37 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 		conn:    pc,
 		pending: map[uint32]chan *protocol.TaskControlResponse{},
 	}
-	pc.SetOnControl(c.dispatchControl)
+
+	psk := GetPSK()
+	pskRespCh := make(chan wire.PskAuthStatus, 1)
+
+	// Combined handler: PSK response during handshake, TaskControl after.
+	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+		if kind == wire.ApplicationPayloadKind_PskAuth && len(payload) > 0 {
+			select {
+			case pskRespCh <- wire.PskAuthStatus(payload[0]):
+			default:
+			}
+			return
+		}
+		c.dispatchControl(kind, payload)
+	})
 	pc.Start(ctx)
+
+	pskCtx, pskCancel := context.WithCancel(ctx)
+	go func() { defer pskCancel(); select { case <-pc.Done(): case <-pskCtx.Done(): } }()
+	pskErr := SendAndWaitPSK(pskCtx, func(b []byte) error {
+		_, _, err := pc.Connection().SendMessage(b)
+		return err
+	}, psk, pskRespCh)
+	pskCancel()
+	if pskErr != nil {
+		pc.Close()
+		return nil, pskErr
+	}
+
+	// PSK exchange complete — switch to the pure app handler.
+	pc.SetOnControl(c.dispatchControl)
 	return c, nil
 }
 

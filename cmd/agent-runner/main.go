@@ -15,6 +15,21 @@ import (
 	"github.com/on-keyday/agent-harness/runner"
 )
 
+func resolvePSK(pskVal, pskFile string) []byte {
+	if pskVal != "" {
+		return []byte(pskVal)
+	}
+	if pskFile != "" {
+		data, err := os.ReadFile(pskFile)
+		if err == nil {
+			if v := strings.TrimSpace(string(data)); v != "" {
+				return []byte(v)
+			}
+		}
+	}
+	return nil
+}
+
 var (
 	serverCID  = flag.String("server-cid", "ws:127.0.0.1:8539-*", "server ConnectionID (e.g. ws:host:port-id, * for random)")
 	roots      = flag.String("roots", ".", "comma-separated list of absolute repo root paths this runner serves")
@@ -23,6 +38,8 @@ var (
 	claudeArgs = flag.String("claude-args", "", "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
 	wsPath     = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
 	hostName   = flag.String("hostname", "", "hostname to report in Hello (default: os.Hostname())")
+	psk        = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK)")
+	pskFile    = flag.String("psk-file", "", "path to PSK file (env: HARNESS_PSK_FILE)")
 )
 
 func main() {
@@ -78,6 +95,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
+	pskVal := *psk
+	if pskVal == "" {
+		pskVal = os.Getenv("HARNESS_PSK")
+	}
+	resolvedPSK := resolvePSK(pskVal, *pskFile)
+
 	if err := runner.Run(ctx, runner.Config{
 		ServerCID:       peerCID,
 		AllowedRoots:    abs,
@@ -86,6 +109,7 @@ func main() {
 		ClaudeBin:       *claudeBin,
 		ExtraClaudeArgs: strings.Fields(*claudeArgs),
 		Logger:          slog.Default(),
+		PSK:             resolvedPSK,
 	}); err != nil {
 		slog.Error("runner exit", "err", err)
 		os.Exit(1)
