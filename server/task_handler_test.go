@@ -149,6 +149,7 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 		ActiveTasks:  map[string]struct{}{},
 		ConnectedAt:  time.Now(),
 		LastSeen:     time.Now(),
+		Conn:         stubConn{},
 	})
 
 	// Pre-populate TaskStore with 1 Queued task on "/x".
