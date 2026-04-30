@@ -53,8 +53,33 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 		conn:    pc,
 		pending: map[uint32]chan *protocol.TaskControlResponse{},
 	}
-	pc.SetOnControl(c.dispatchControl)
+
+	psk := GetPSK()
+	pskRespCh := make(chan wire.PskAuthStatus, 1)
+
+	// Combined handler: PSK response during handshake, TaskControl after.
+	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+		if kind == wire.ApplicationPayloadKind_PskAuth && len(payload) > 0 {
+			select {
+			case pskRespCh <- wire.PskAuthStatus(payload[0]):
+			default:
+			}
+			return
+		}
+		c.dispatchControl(kind, payload)
+	})
 	pc.Start(ctx)
+
+	if err := SendAndWaitPSK(ctx, func(b []byte) error {
+		_, _, err := pc.Connection().SendMessage(b)
+		return err
+	}, psk, pskRespCh); err != nil {
+		pc.Close()
+		return nil, err
+	}
+
+	// PSK exchange complete — switch to the pure app handler.
+	pc.SetOnControl(c.dispatchControl)
 	return c, nil
 }
 
