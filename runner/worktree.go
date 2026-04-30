@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -31,12 +32,30 @@ type WorktreeManager struct {
 // the user can then `--resume <session-uuid>` and have claude find its
 // stored conversation.
 //
+// Resume-idempotent: if <dir> is already a registered worktree for
+// `harness/<taskID>` (because the previous run's wm.Remove failed or the
+// runner crashed before cleanup), the existing dir is reused as-is —
+// re-running `git worktree add` would fail with "already exists", and
+// destructively wiping the dir would also drop any uncommitted work claude
+// left behind. Reuse preserves that work across the resume.
+//
 // Concurrent calls on the same WorktreeManager are serialized by an internal mutex.
 func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
 	dir := filepath.Join(wm.Repo, ".harness-worktrees", taskID)
 	branch := "harness/" + taskID
+
+	if wm.worktreeRegisteredLocked(dir, branch) {
+		return dir, nil
+	}
+
+	// If a previous registration is stale (dir gone but `.git/worktrees/<id>`
+	// still around), `git worktree add` would refuse with "missing but
+	// already registered". Prune is a no-op when nothing is stale.
+	pruneCmd := exec.Command("git", "worktree", "prune")
+	pruneCmd.Dir = wm.Repo
+	_ = pruneCmd.Run()
 
 	args := []string{"worktree", "add", "-b", branch, dir}
 	if wm.branchExistsLocked(branch) {
@@ -50,6 +69,47 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 		return "", fmt.Errorf("worktree add: %w (%s)", err, out)
 	}
 	return dir, nil
+}
+
+// worktreeRegisteredLocked reports whether <dir> is currently a non-prunable
+// worktree of wm.Repo checked out at refs/heads/<branch>. Caller must hold
+// wm.mu.
+//
+// Parses `git worktree list --porcelain`, whose record format is one block
+// per worktree (blocks separated by a blank line); each block starts with
+// "worktree <abs-path>" and may include "branch refs/heads/<name>",
+// "detached", and "prunable <reason>" lines.
+func (wm *WorktreeManager) worktreeRegisteredLocked(dir, branch string) bool {
+	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd.Dir = wm.Repo
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	wantRef := "refs/heads/" + branch
+	var curWT, curBranch string
+	var curPrunable bool
+	matches := func() bool {
+		return curWT == dir && curBranch == wantRef && !curPrunable
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if line == "" {
+			if matches() {
+				return true
+			}
+			curWT, curBranch, curPrunable = "", "", false
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			curWT = strings.TrimPrefix(line, "worktree ")
+		case strings.HasPrefix(line, "branch "):
+			curBranch = strings.TrimPrefix(line, "branch ")
+		case line == "prunable" || strings.HasPrefix(line, "prunable "):
+			curPrunable = true
+		}
+	}
+	return matches()
 }
 
 // branchExistsLocked reports whether the given branch ref exists in wm.Repo.

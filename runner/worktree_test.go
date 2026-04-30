@@ -74,6 +74,66 @@ func TestCreateWorktreeWithDirtyFile(t *testing.T) {
 	}
 }
 
+// TestCreateReusesExistingWorktreeOnResume verifies the resume-idempotent
+// path: when a previous run left both the worktree directory and its git
+// registration in place (because wm.Remove failed or the runner crashed
+// before cleanup), Create re-uses the existing dir instead of re-running
+// `git worktree add` (which would fail with "already exists") or wiping
+// the dir (which would drop any uncommitted work claude left behind).
+func TestCreateReusesExistingWorktreeOnResume(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+
+	dir, err := wm.Create("resume-task")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate uncommitted work the user wants preserved across resume.
+	uncommitted := filepath.Join(dir, "in-flight.txt")
+	if err := os.WriteFile(uncommitted, []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resume on the same task id — must NOT fail with "already exists" and
+	// MUST preserve the uncommitted file.
+	dir2, err := wm.Create("resume-task")
+	if err != nil {
+		t.Fatalf("resume Create failed: %v", err)
+	}
+	if dir2 != dir {
+		t.Errorf("resume returned different dir: got %q want %q", dir2, dir)
+	}
+	if data, err := os.ReadFile(uncommitted); err != nil || string(data) != "dirty\n" {
+		t.Errorf("uncommitted file not preserved: data=%q err=%v", data, err)
+	}
+}
+
+// TestCreateAfterStaleRegistration verifies that when the worktree dir is
+// gone but its git registration lingers (e.g., someone removed the dir
+// directly), Create prunes the stale entry and re-attaches successfully.
+func TestCreateAfterStaleRegistration(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+
+	dir, err := wm.Create("stale-reg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drop just the directory; leave git's registration behind.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	dir2, err := wm.Create("stale-reg")
+	if err != nil {
+		t.Fatalf("Create after stale registration failed: %v", err)
+	}
+	if _, err := os.Stat(dir2); err != nil {
+		t.Fatalf("worktree dir missing after re-create: %v", err)
+	}
+}
+
 // TestWorktreeManagerSerializesSameRepo verifies that concurrent Create/Remove
 // calls on the same WorktreeManager do not corrupt the git worktree list.
 // The -race flag + -count=10 catches any mutex regression.
