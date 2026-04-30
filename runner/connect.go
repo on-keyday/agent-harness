@@ -79,10 +79,29 @@ func Run(ctx context.Context, cfg Config) error {
 		Now:             time.Now,
 	}
 
+	psk := cli.GetPSK()
+	pskRespCh := make(chan wire.PskAuthStatus, 1)
+
+	// During PSK phase, only route PskAuth responses; runner control messages
+	// arrive only after the server has accepted the connection.
 	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+		if kind == wire.ApplicationPayloadKind_PskAuth && len(payload) > 0 {
+			select {
+			case pskRespCh <- wire.PskAuthStatus(payload[0]):
+			default:
+			}
+			return
+		}
 		dispatchRunnerRequest(ctx, session, cfg.Logger, kind, payload)
 	})
 	pc.Start(ctx)
+
+	if err := cli.SendAndWaitPSK(ctx, func(b []byte) error {
+		_, _, err := pc.Connection().SendMessage(b)
+		return err
+	}, psk, pskRespCh); err != nil {
+		return fmt.Errorf("psk: %w", err)
+	}
 
 	// Build and send Hello — the server's registry uses this to bind
 	// ConnectionID → allowed_roots / max_tasks / hostname.
