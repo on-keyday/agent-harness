@@ -33,6 +33,11 @@ type Config struct {
 	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
 	Logger        *slog.Logger
 
+	// PSK, when non-nil, requires every connecting client to present
+	// a matching PskAuthRequest before any other message is accepted.
+	// nil = no PSK enforcement (backward compatible).
+	PSK []byte
+
 	// WebUIFS, when non-nil, causes server.Run to register handlers on its
 	// internal mux for "/" (serving "<root>/index.html") and "/static/" (serving
 	// the directory tree). The fs.FS is expected to have index.html at its
