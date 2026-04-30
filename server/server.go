@@ -377,6 +377,8 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 
 	wrapped := streamingConn{Connection: session, trans: p}
 
+	gate := newPSKGate(s.cfg.PSK)
+
 	trsf.AutoReceive(connCtx, p, session, func(msg *objproto.Message, err error) {
 		if err != nil {
 			// Includes io.EOF on peer-sent Close; AutoReceive returns next.
@@ -384,6 +386,15 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 			return
 		}
 		if msg == nil || len(msg.Data) == 0 {
+			return
+		}
+		// PSK gate: first message must be PskAuth when PSK is configured.
+		if isPSKMsg, shouldClose := gate.Check(msg.Data, func(resp []byte) {
+			session.SendMessage(resp) //nolint:errcheck
+		}); isPSKMsg || !gate.Authed() {
+			if shouldClose {
+				cancel()
+			}
 			return
 		}
 		kind := wire.ApplicationPayloadKind(msg.Data[0])
