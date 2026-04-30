@@ -73,12 +73,16 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	})
 	pc.Start(ctx)
 
-	if err := SendAndWaitPSK(ctx, func(b []byte) error {
+	pskCtx, pskCancel := context.WithCancel(ctx)
+	go func() { defer pskCancel(); select { case <-pc.Done(): case <-pskCtx.Done(): } }()
+	pskErr := SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pskRespCh); err != nil {
+	}, psk, pskRespCh)
+	pskCancel()
+	if pskErr != nil {
 		pc.Close()
-		return nil, err
+		return nil, pskErr
 	}
 
 	// PSK exchange complete — switch to the pure app handler.

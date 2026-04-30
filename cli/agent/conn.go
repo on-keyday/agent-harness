@@ -165,12 +165,16 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	})
 	pc.Start(ctx)
 
-	if err := cli.SendAndWaitPSK(ctx, func(b []byte) error {
+	pskCtx, pskCancel := context.WithCancel(ctx)
+	go func() { defer pskCancel(); select { case <-pc.Done(): case <-pskCtx.Done(): } }()
+	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pskRespCh); err != nil {
+	}, psk, pskRespCh)
+	pskCancel()
+	if pskErr != nil {
 		pc.Close()
-		return nil, err
+		return nil, pskErr
 	}
 
 	hostname := cliopts.ResolveString(f.Hostname, "HARNESS_HOSTNAME")

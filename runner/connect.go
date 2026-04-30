@@ -98,11 +98,15 @@ func Run(ctx context.Context, cfg Config) error {
 	})
 	pc.Start(ctx)
 
-	if err := cli.SendAndWaitPSK(ctx, func(b []byte) error {
+	pskCtx, pskCancel := context.WithCancel(ctx)
+	go func() { defer pskCancel(); select { case <-pc.Done(): case <-pskCtx.Done(): } }()
+	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pskRespCh); err != nil {
-		return fmt.Errorf("psk: %w", err)
+	}, psk, pskRespCh)
+	pskCancel()
+	if pskErr != nil {
+		return fmt.Errorf("psk: %w", pskErr)
 	}
 
 	// Build and send Hello — the server's registry uses this to bind

@@ -394,6 +394,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 			session.SendMessage(resp) //nolint:errcheck
 		}); isPSKMsg || !gate.Authed() {
 			if shouldClose {
+				trsf.SendClose(session) //nolint:errcheck
 				cancel()
 			}
 			return
