@@ -406,6 +406,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	}
 
 	finishWithError := func(code int32, reason string) {
+		log.Error("handleOpenExec: "+reason, "task_id", taskIDHex, "repo", repoPath)
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
 		tf := protocol.TaskFinished{TaskId: oer.TaskId, ExitCode: code}
 		tf.DiffInfo = []byte(reason)
