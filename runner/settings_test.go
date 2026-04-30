@@ -70,20 +70,159 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 	}
 }
 
-func TestWriteAgentSettings_OverwritesExisting(t *testing.T) {
+// TestWriteAgentSettings_MergesWithExisting verifies the merge semantics:
+// pre-existing user keys/hooks/permissions survive the call, the runner's
+// own hooks and allow-entry are added, and a second call is a no-op
+// (idempotent) so repeated runs on a resumed worktree don't accumulate
+// duplicates.
+func TestWriteAgentSettings_MergesWithExisting(t *testing.T) {
 	dir := t.TempDir()
 	sub := filepath.Join(dir, ".claude")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(sub, "settings.json"), []byte("{}"), 0o644); err != nil {
+	existing := map[string]any{
+		"hooks": map[string]any{
+			"SessionStart": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "echo user-hook"},
+					},
+				},
+			},
+			"PostToolUse": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "echo user-post"},
+					},
+				},
+			},
+		},
+		"permissions": map[string]any{
+			"allow": []any{"Read(*)"},
+			"deny":  []any{"Bash(rm -rf *)"},
+		},
+		"customKey": "preserve me",
+	}
+	raw, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(filepath.Join(sub, "settings.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
 	}
+
 	if err := WriteAgentSettings(dir); err != nil {
 		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(filepath.Join(sub, "settings.json"))
-	if len(data) <= 2 {
-		t.Errorf("expected non-empty content, got %q", data)
+	first := readSettings(t, dir)
+
+	// Foreign keys preserved
+	if first["customKey"] != "preserve me" {
+		t.Errorf("customKey lost: got %v", first["customKey"])
 	}
+	hooks := first["hooks"].(map[string]any)
+	if _, ok := hooks["PostToolUse"]; !ok {
+		t.Error("foreign hook event PostToolUse lost")
+	}
+	perms := first["permissions"].(map[string]any)
+	allow := perms["allow"].([]any)
+	if !containsString(allow, "Read(*)") {
+		t.Error("foreign permissions.allow entry Read(*) lost")
+	}
+	if _, ok := perms["deny"]; !ok {
+		t.Error("foreign permissions.deny lost")
+	}
+
+	// Foreign SessionStart hook preserved alongside the harness hook
+	startGroups := hooks["SessionStart"].([]any)
+	if !groupCommandSearch(startGroups, "echo user-hook") {
+		t.Error("user SessionStart hook was overwritten")
+	}
+	if !groupCommandSearch(startGroups, "harness-cli agent subscribe --topic harness.hello") {
+		t.Error("harness SessionStart hook missing after merge")
+	}
+
+	// Harness allow entry was appended (not replacing user's Read(*))
+	if !containsString(allow, "Bash(harness-cli *)") {
+		t.Error("harness allow entry missing after merge")
+	}
+
+	// Idempotency: second call must not duplicate.
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	second := readSettings(t, dir)
+	secondHooks := second["hooks"].(map[string]any)["SessionStart"].([]any)
+	if countGroupCommand(secondHooks, "harness-cli agent subscribe --topic harness.hello") != 1 {
+		t.Errorf("harness SessionStart hook duplicated after second call: %v", secondHooks)
+	}
+	secondAllow := second["permissions"].(map[string]any)["allow"].([]any)
+	if countString(secondAllow, "Bash(harness-cli *)") != 1 {
+		t.Errorf("harness allow entry duplicated after second call: %v", secondAllow)
+	}
+}
+
+// TestWriteAgentSettings_RejectsMalformed asserts the merge code surfaces
+// a parse error rather than silently overwriting a corrupt user file.
+func TestWriteAgentSettings_RejectsMalformed(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, "settings.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSettings(dir); err == nil {
+		t.Fatal("expected error on malformed settings.json")
+	}
+}
+
+func readSettings(t *testing.T, dir string) map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(dir, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func containsString(xs []any, want string) bool {
+	for _, v := range xs {
+		if s, _ := v.(string); s == want {
+			return true
+		}
+	}
+	return false
+}
+
+func countString(xs []any, want string) int {
+	n := 0
+	for _, v := range xs {
+		if s, _ := v.(string); s == want {
+			n++
+		}
+	}
+	return n
+}
+
+func groupCommandSearch(groups []any, cmd string) bool {
+	return countGroupCommand(groups, cmd) > 0
+}
+
+func countGroupCommand(groups []any, cmd string) int {
+	n := 0
+	for _, g := range groups {
+		group, _ := g.(map[string]any)
+		hs, _ := group["hooks"].([]any)
+		for _, h := range hs {
+			hook, _ := h.(map[string]any)
+			if c, _ := hook["command"].(string); c == cmd {
+				n++
+			}
+		}
+	}
+	return n
 }

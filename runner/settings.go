@@ -2,30 +2,42 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
-// agentSettings is the schema written to <worktree>/.claude/settings.json.
-type agentSettings struct {
-	Hooks       map[string][]hookGroup `json:"hooks"`
-	Permissions agentPermissions       `json:"permissions"`
-}
-
-type agentPermissions struct {
-	Allow []string `json:"allow"`
-}
-
-type hookGroup struct {
-	Hooks []hookSpec `json:"hooks"`
-}
-
+// hookSpec describes one item under settings.json's
+// `hooks.<event>[].hooks[]`. The wider config can carry additional fields
+// the harness does not control; merge logic preserves those by working
+// against `map[string]any` rather than this typed view.
 type hookSpec struct {
 	Type    string `json:"type"`
 	Command string `json:"command"`
 }
 
-// WriteAgentSettings creates <dir>/.claude/settings.json with two hooks:
+// harnessHookEntries enumerates the hooks the runner injects. The merge
+// logic uses (event, command) as the de-duplication key — running
+// WriteAgentSettings repeatedly on the same dir adds nothing new after
+// the first call.
+var harnessHookEntries = []struct {
+	Event   string
+	Command string
+}{
+	{"SessionStart", "harness-cli agent subscribe --topic harness.hello"},
+	{"UserPromptSubmit", "harness-cli agent inbox --since-last --commit --json"},
+}
+
+// harnessAllowEntry is the single permissions.allow entry the runner
+// injects so the agent can call harness-cli freely.
+const harnessAllowEntry = "Bash(harness-cli *)"
+
+// WriteAgentSettings ensures <dir>/.claude/settings.json carries the
+// runner's hooks and permission allow-entry, merging into any existing
+// content rather than overwriting it.
+//
+// Hooks injected:
 //   - SessionStart: subscribes the agent to the reserved handshake topic
 //     `harness.hello` so the multi-agent meeting protocol works without the
 //     agent having to remember to subscribe. Subscriptions are keyed by
@@ -49,6 +61,18 @@ type hookSpec struct {
 // an awkward autonomous chain rather than in the context of a user turn.
 // WakeStdin alone is sufficient.
 //
+// Merge semantics: existing top-level keys (e.g. user-defined hooks under
+// other events, custom permissions, anything outside `hooks` and
+// `permissions`) are preserved. The runner's hookSpec is appended to
+// `hooks.<event>` only if no entry with the same command is already
+// present, and `permissions.allow` is treated the same way. Calling this
+// twice is a no-op the second time.
+//
+// On a malformed existing file, the call returns an error rather than
+// silently clobbering — the worktree is then resumable once the user fixes
+// the file by hand. Resume idempotency in WorktreeManager.Create means a
+// retry just picks up where this failure left off.
+//
 // The --since-last cursor at ~/.cache/harness/agent-cursor-<task>
 // prevents the same seq from being delivered twice. The UserPromptSubmit
 // hook passes --commit to advance the live cursor; manual
@@ -57,32 +81,95 @@ type hookSpec struct {
 // same batch the most recent hook just delivered, idempotently. See
 // cli/agent/cursor.go.
 func WriteAgentSettings(worktreeDir string) error {
-	s := agentSettings{
-		Permissions: agentPermissions{
-			Allow: []string{"Bash(harness-cli *)"},
-		},
-		Hooks: map[string][]hookGroup{
-			"SessionStart": {{
-				Hooks: []hookSpec{{
-					Type:    "command",
-					Command: "harness-cli agent subscribe --topic harness.hello",
-				}},
-			}},
-			"UserPromptSubmit": {{
-				Hooks: []hookSpec{{
-					Type:    "command",
-					Command: "harness-cli agent inbox --since-last --commit --json",
-				}},
-			}},
-		},
-	}
 	sub := filepath.Join(worktreeDir, ".claude")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(s, "", "  ")
+	path := filepath.Join(sub, "settings.json")
+
+	root := map[string]any{}
+	if data, err := os.ReadFile(path); err == nil {
+		if len(data) > 0 {
+			if err := json.Unmarshal(data, &root); err != nil {
+				return fmt.Errorf("settings.json malformed: %w", err)
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+
+	mergeHarnessHooks(root)
+	mergeHarnessAllow(root)
+
+	out, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(sub, "settings.json"), data, 0o644)
+	return os.WriteFile(path, out, 0o644)
+}
+
+// mergeHarnessHooks adds each harnessHookEntries item under root["hooks"],
+// creating intermediate maps/slices on the fly. An entry whose command
+// already appears anywhere under hooks.<event>[].hooks[] is treated as
+// already-installed and skipped, regardless of which group it lives in.
+// This makes repeated WriteAgentSettings calls idempotent and tolerates
+// users who hand-merged the runner's hook into their own group.
+func mergeHarnessHooks(root map[string]any) {
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	for _, entry := range harnessHookEntries {
+		groups, _ := hooks[entry.Event].([]any)
+		if hookCommandPresent(groups, entry.Command) {
+			hooks[entry.Event] = groups
+			continue
+		}
+		groups = append(groups, map[string]any{
+			"hooks": []any{
+				map[string]any{
+					"type":    "command",
+					"command": entry.Command,
+				},
+			},
+		})
+		hooks[entry.Event] = groups
+	}
+	root["hooks"] = hooks
+}
+
+// hookCommandPresent reports whether any hookSpec inside the given
+// settings.json hook-group list carries the given command string.
+func hookCommandPresent(groups []any, command string) bool {
+	for _, g := range groups {
+		group, _ := g.(map[string]any)
+		hs, _ := group["hooks"].([]any)
+		for _, h := range hs {
+			hook, _ := h.(map[string]any)
+			if cmd, _ := hook["command"].(string); cmd == command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// mergeHarnessAllow appends harnessAllowEntry to permissions.allow if not
+// already present. Other permission keys (deny, defaultMode, …) and other
+// allow-entries are preserved.
+func mergeHarnessAllow(root map[string]any) {
+	perms, _ := root["permissions"].(map[string]any)
+	if perms == nil {
+		perms = map[string]any{}
+	}
+	allow, _ := perms["allow"].([]any)
+	for _, v := range allow {
+		if s, _ := v.(string); s == harnessAllowEntry {
+			perms["allow"] = allow
+			root["permissions"] = perms
+			return
+		}
+	}
+	perms["allow"] = append(allow, harnessAllowEntry)
+	root["permissions"] = perms
 }
