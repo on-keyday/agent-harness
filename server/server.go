@@ -398,6 +398,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 			return
 		}
 		kind := wire.ApplicationPayloadKind(msg.Data[0])
+		if kind == wire.ApplicationPayloadKind_PskAuth {
+			return // stray PskAuth after auth complete — discard
+		}
 		if kind == wire.ApplicationPayloadKind_Pubsub {
 			// HandleMessage already returns the response wire-kind prefixed.
 			if resp := subscriber.HandleMessage(s.pubsub, msg.Data[1:]); resp != nil {
