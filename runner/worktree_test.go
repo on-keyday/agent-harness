@@ -134,6 +134,108 @@ func TestCreateAfterStaleRegistration(t *testing.T) {
 	}
 }
 
+// TestRemoveIfCleanRemovesWhenNothingDirty verifies the basic clean path:
+// a fresh worktree with no edits gets removed.
+func TestRemoveIfCleanRemovesWhenNothingDirty(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+	dir, err := wm.Create("clean")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := wm.RemoveIfClean("clean", HarnessInjectedPaths)
+	if !r.Removed {
+		t.Fatalf("expected Removed=true, got %+v", r)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("worktree dir should be gone, stat err=%v", err)
+	}
+}
+
+// TestRemoveIfCleanRemovesWhenOnlyInjectedDirty verifies that the runner's
+// own injected files (settings.json, skills, minimal CLAUDE.md) do not
+// count as user/agent work — the worktree is still removed.
+func TestRemoveIfCleanRemovesWhenOnlyInjectedDirty(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+	dir, err := wm.Create("inj-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate the runner's own writes.
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSkills(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	r := wm.RemoveIfClean("inj-only", HarnessInjectedPaths)
+	if !r.Removed {
+		t.Fatalf("expected Removed=true with only injected files dirty, got %+v", r)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("worktree dir should be gone, stat err=%v", err)
+	}
+}
+
+// TestRemoveIfCleanRetainsWhenRealWorkPresent verifies the safety net:
+// any non-injected uncommitted change keeps the worktree intact and is
+// reported back as DirtyPaths so the caller can log what was preserved.
+func TestRemoveIfCleanRetainsWhenRealWorkPresent(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+	dir, err := wm.Create("real-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	// The piece we want preserved.
+	if err := os.WriteFile(filepath.Join(dir, "in-flight.txt"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r := wm.RemoveIfClean("real-work", HarnessInjectedPaths)
+	if r.Removed {
+		t.Fatal("worktree was removed despite uncommitted in-flight.txt")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("worktree dir should survive, stat err=%v", err)
+	}
+	found := false
+	for _, p := range r.DirtyPaths {
+		if p == "in-flight.txt" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("DirtyPaths should report in-flight.txt, got %v", r.DirtyPaths)
+	}
+}
+
+// TestRemoveIfCleanReturnsStatusErrWhenDirGone covers the runtime edge:
+// if the worktree dir vanished between TaskFinished and cleanup, the
+// status command fails and the result reports it without panicking.
+func TestRemoveIfCleanReturnsStatusErrWhenDirGone(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+	dir, err := wm.Create("gone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	r := wm.RemoveIfClean("gone", HarnessInjectedPaths)
+	if r.StatusErr == nil {
+		t.Errorf("expected StatusErr when worktree dir vanished, got %+v", r)
+	}
+}
+
 // TestWorktreeManagerSerializesSameRepo verifies that concurrent Create/Remove
 // calls on the same WorktreeManager do not corrupt the git worktree list.
 // The -race flag + -count=10 catches any mutex regression.

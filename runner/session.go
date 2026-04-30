@@ -347,13 +347,19 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		_ = s.Sender.Send(data)
 	}
 
-	// Step 6: Clean up the worktree directory. The branch ref harness/<id>
-	// is intentionally retained so any commits claude made in the worktree
-	// are still reachable via `git checkout harness/<id>`. Failure to remove
-	// is logged but does not affect task lifecycle (TaskFinished already
-	// sent); a subsequent runner start can scan stale worktrees if needed.
-	if err := wm.Remove(taskIDHex); err != nil {
-		s.logger().Warn("worktree remove failed", "task_id", taskIDHex, "err", err)
+	// Step 6: Conditionally clean up the worktree directory. The branch ref
+	// harness/<id> is intentionally retained so any commits claude made are
+	// reachable via `git checkout harness/<id>`. The directory itself is
+	// removed only when `git status --porcelain` (excluding harness-injected
+	// paths) is empty — uncommitted in-flight work is preserved across the
+	// resume boundary, and the long-tail cleanup is left to `harness-cli
+	// prune-local`. Status / remove errors are logged but never bubble up:
+	// TaskFinished is already sent and the lifecycle must complete.
+	switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
+	case r.StatusErr != nil:
+		s.logger().Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
+	case !r.Removed:
+		s.logger().Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
 	}
 }
 
@@ -506,10 +512,14 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
 	}
 
-	// Step 6: Clean up the worktree directory. See handleAssign for the
-	// rationale on why the branch ref is retained.
-	if err := wm.Remove(taskIDHex); err != nil {
-		log.Warn("worktree remove failed", "task_id", taskIDHex, "err", err)
+	// Step 6: Conditionally clean up the worktree directory. See handleAssign
+	// for the rationale on why the branch ref is retained and why the dir is
+	// kept when `git status --porcelain` shows non-injected uncommitted work.
+	switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
+	case r.StatusErr != nil:
+		log.Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
+	case !r.Removed:
+		log.Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
 	}
 }
 

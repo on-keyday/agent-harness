@@ -128,6 +128,10 @@ func (wm *WorktreeManager) branchExistsLocked(branch string) bool {
 func (wm *WorktreeManager) Remove(taskID string) error {
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
+	return wm.removeLocked(taskID)
+}
+
+func (wm *WorktreeManager) removeLocked(taskID string) error {
 	dir := filepath.Join(wm.Repo, ".harness-worktrees", taskID)
 	cmd := exec.Command("git", "worktree", "remove", "--force", dir)
 	cmd.Dir = wm.Repo
@@ -135,4 +139,104 @@ func (wm *WorktreeManager) Remove(taskID string) error {
 		return fmt.Errorf("worktree remove: %w (%s)", err, out)
 	}
 	return nil
+}
+
+// RemoveCleanResult describes what RemoveIfClean decided.
+type RemoveCleanResult struct {
+	Removed       bool     // true if the worktree was actually deleted
+	DirtyPaths    []string // worktree-relative paths that prevented removal (empty when Removed)
+	StatusErr     error    // error from `git status --porcelain` (treated as "skip removal")
+}
+
+// RemoveIfClean removes the worktree only when `git status --porcelain`
+// inside it shows no entries outside `ignoredPaths`. Entries below an
+// `ignoredPaths` entry that ends with "/" are treated as a directory match.
+//
+// Use this from runner task-cleanup paths where a runner crash or wm.Remove
+// failure would otherwise destroy uncommitted in-flight work the user wants
+// preserved across resume — RemoveIfClean leaves the dir alone (returning
+// the dirty paths for logging) so the next OpenExec can re-attach via
+// Create's resume-idempotent path.
+//
+// A non-nil StatusErr (e.g. dir vanished, git not on PATH) is treated as
+// "skip removal" rather than escalated, since the cleanup path's caller
+// has already sent TaskFinished and cannot meaningfully react.
+//
+// Concurrent calls on the same WorktreeManager are serialized by the same
+// mutex as Create/Remove.
+func (wm *WorktreeManager) RemoveIfClean(taskID string, ignoredPaths []string) RemoveCleanResult {
+	wm.mu.Lock()
+	defer wm.mu.Unlock()
+
+	dir := filepath.Join(wm.Repo, ".harness-worktrees", taskID)
+	// --untracked-files=all expands a wholly-untracked directory entry like
+	// ".claude/" into its individual files, so prefix matching against
+	// ignoredPaths (e.g. ".claude/skills/") catches them. Default ("normal")
+	// would collapse the dir and our exclusion list would see only ".claude/".
+	cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=all", "-z")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return RemoveCleanResult{StatusErr: err}
+	}
+
+	dirty := filterDirtyPaths(out, ignoredPaths)
+	if len(dirty) > 0 {
+		return RemoveCleanResult{DirtyPaths: dirty}
+	}
+	if err := wm.removeLocked(taskID); err != nil {
+		return RemoveCleanResult{StatusErr: err}
+	}
+	return RemoveCleanResult{Removed: true}
+}
+
+// filterDirtyPaths parses `git status --porcelain -z` output and returns
+// the worktree-relative paths whose entries are NOT covered by ignoredPaths.
+//
+// Format note: `--porcelain -z` produces NUL-terminated records of the
+// form "XY <path>" (XY = 2-byte status). Renames carry an extra
+// NUL-terminated field for the original path; we read it and discard.
+//
+// ignoredPaths semantics: an entry that ends with "/" matches the prefix
+// of any path under that directory; otherwise the match is exact. This
+// lets the caller pass entries like ".claude/skills/" without enumerating
+// every file beneath it.
+func filterDirtyPaths(porcelainZ []byte, ignoredPaths []string) []string {
+	var dirty []string
+	records := strings.Split(string(porcelainZ), "\x00")
+	for i := 0; i < len(records); i++ {
+		rec := records[i]
+		if len(rec) < 4 {
+			// Either trailing empty record or malformed; skip.
+			continue
+		}
+		status := rec[:2]
+		path := rec[3:]
+		// Rename entries (status starts with R or C) carry the source path
+		// in the next NUL-terminated record. Consume it so it isn't parsed
+		// as its own status entry.
+		if status[0] == 'R' || status[0] == 'C' {
+			i++
+		}
+		if pathIgnored(path, ignoredPaths) {
+			continue
+		}
+		dirty = append(dirty, path)
+	}
+	return dirty
+}
+
+func pathIgnored(path string, ignoredPaths []string) bool {
+	for _, ig := range ignoredPaths {
+		if strings.HasSuffix(ig, "/") {
+			if strings.HasPrefix(path, ig) {
+				return true
+			}
+			continue
+		}
+		if path == ig {
+			return true
+		}
+	}
+	return false
 }
