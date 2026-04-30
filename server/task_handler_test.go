@@ -152,7 +152,7 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	})
 
 	// Pre-populate TaskStore with 1 Queued task on "/x".
-	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{})
+	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{})

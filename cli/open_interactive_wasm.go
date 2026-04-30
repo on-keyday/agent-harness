@@ -59,9 +59,30 @@ var (
 // The active session is stored in activeInteractiveSession; subsequent calls
 // to SendInteractive / ResizeInteractive / DetachInteractive operate on it.
 func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
+}
+
+// InteractiveWithSelector is the same as Interactive but accepts an explicit
+// runner selector. extraArgs default to none.
+func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
+}
+
+// InteractiveWithSelectorAndArgs is the full-featured form: selector pinning,
+// per-task extraArgs, and optional resumeTaskID (hex; "" = new task).
+func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
+	oi.Selector = sel
+	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
+	if resumeTaskID != "" {
+		tid, err := parseTaskIDHex(resumeTaskID)
+		if err != nil {
+			return "", fmt.Errorf("Interactive: parse resume id: %w", err)
+		}
+		oi.ResumeTaskId = tid
+	}
 	req.SetOpenInteractive(oi)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -81,6 +102,14 @@ func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
 		return "", fmt.Errorf("no idle runner for repo %q", repo)
 	case protocol.OpenInteractiveStatus_RunnerBusy:
 		return "", fmt.Errorf("runner busy")
+	case protocol.OpenInteractiveStatus_AmbiguousRunner:
+		return "", fmt.Errorf("ambiguous_runner: multiple runners match; pin one with host")
+	case protocol.OpenInteractiveStatus_PinnedNotFound:
+		return "", fmt.Errorf("pinned_not_found: the specified runner was not found")
+	case protocol.OpenInteractiveStatus_ResumeNotFound:
+		return "", fmt.Errorf("resume_not_found: the specified resume task id is unknown")
+	case protocol.OpenInteractiveStatus_ResumeNotTerminal:
+		return "", fmt.Errorf("resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
 	default:
 		return "", fmt.Errorf("server-side error opening interactive (status=%d)", oiResp.Status)
 	}
@@ -127,8 +156,6 @@ func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
 				if !errors.Is(err, io.EOF) {
 					slog.Info("interactive recv ended", "err", err)
 				}
-				// recv loop exit ⇒ implicitly detach so JS sees a
-				// clean state on next call.
 				activeInteractiveMu.Lock()
 				if activeInteractiveSession == session {
 					activeInteractiveSession = nil
@@ -152,103 +179,6 @@ func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
 			default:
 				// Stdin / Control frames going *back* to the client
 				// are not part of the contract. Ignore.
-			}
-		}
-	}()
-
-	return taskIDHex, nil
-}
-
-// InteractiveWithSelector is the same as Interactive but accepts an explicit
-// runner selector. Callers that want the Any-runner behaviour can use
-// Interactive directly.
-func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
-	oi := protocol.OpenInteractiveRequest{}
-	oi.SetRepoPath([]byte(repo))
-	oi.Selector = sel
-	req.SetOpenInteractive(oi)
-
-	resp, err := c.RoundTripTaskControl(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("OpenInteractive RPC: %w", err)
-	}
-	if resp.Kind != protocol.TaskControlKind_OpenInteractive {
-		return "", fmt.Errorf("unexpected response kind: %v", resp.Kind)
-	}
-	oiResp := resp.OpenInteractive()
-	if oiResp == nil {
-		return "", errors.New("empty OpenInteractive response")
-	}
-	switch oiResp.Status {
-	case protocol.OpenInteractiveStatus_Ok:
-	case protocol.OpenInteractiveStatus_NoRunnerForRepo:
-		return "", fmt.Errorf("no idle runner for repo %q", repo)
-	case protocol.OpenInteractiveStatus_RunnerBusy:
-		return "", fmt.Errorf("runner busy")
-	case protocol.OpenInteractiveStatus_AmbiguousRunner:
-		return "", fmt.Errorf("ambiguous_runner: multiple runners match; pin one with host")
-	case protocol.OpenInteractiveStatus_PinnedNotFound:
-		return "", fmt.Errorf("pinned_not_found: the specified runner was not found")
-	default:
-		return "", fmt.Errorf("server-side error opening interactive (status=%d)", oiResp.Status)
-	}
-
-	taskIDHex := hex.EncodeToString(oiResp.TaskId.Id[:])
-	streamID := trsf.StreamID(oiResp.StreamId)
-
-	stream := peer.WaitForBidirectionalStream(ctx, c.Transport(), streamID)
-	if stream == nil {
-		return taskIDHex, fmt.Errorf("stream %d not visible after OpenInteractive", streamID)
-	}
-
-	sessCtx, cancel := context.WithCancel(ctx)
-	session := &InteractiveSession{
-		stream:    stream,
-		taskIDHex: taskIDHex,
-		cancel:    cancel,
-	}
-
-	activeInteractiveMu.Lock()
-	if old := activeInteractiveSession; old != nil {
-		old.detach()
-	}
-	activeInteractiveSession = session
-	activeInteractiveMu.Unlock()
-
-	go func() {
-		for {
-			select {
-			case <-sessCtx.Done():
-				return
-			default:
-			}
-			f := &frame.Frame{}
-			if err := f.Read(stream); err != nil {
-				if !errors.Is(err, io.EOF) {
-					slog.Info("interactive recv ended", "err", err)
-				}
-				activeInteractiveMu.Lock()
-				if activeInteractiveSession == session {
-					activeInteractiveSession = nil
-				}
-				activeInteractiveMu.Unlock()
-				session.markClosed()
-				return
-			}
-			switch f.Header.Type {
-			case frame.FrameType_Stdout, frame.FrameType_Stderr:
-				if f.Header.Len == 0 {
-					continue
-				}
-				data := *f.Data()
-				if len(data) == 0 {
-					continue
-				}
-				arr := js.Global().Get("Uint8Array").New(len(data))
-				js.CopyBytesToJS(arr, data)
-				js.Global().Call("harness_xtermWrite", arr)
-			default:
 			}
 		}
 	}()

@@ -24,17 +24,33 @@ import (
 // calling RemoteShell (or Stdin/Stdout/Stderr individually) and Close.
 // The runner's exec.ExecuteCommand drives PTY lifecycle on the other side.
 func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentexec.CommandExecutionStream, string, error) {
-	return c.OpenInteractiveWithSelector(ctx, repoPath, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	return c.OpenInteractiveWithSelectorAndArgs(ctx, repoPath, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
 }
 
 // OpenInteractiveWithSelector is the same as OpenInteractive but accepts an
-// explicit runner selector. Callers that want the Any-runner behaviour can
-// use OpenInteractive directly.
+// explicit runner selector. extraArgs default to none; use the AndArgs form
+// to forward per-task CLI args to the spawned claude process.
 func (c *Client) OpenInteractiveWithSelector(ctx context.Context, repoPath string, sel protocol.RunnerSelector) (*agentexec.CommandExecutionStream, string, error) {
+	return c.OpenInteractiveWithSelectorAndArgs(ctx, repoPath, sel, nil, "")
+}
+
+// OpenInteractiveWithSelectorAndArgs is the full-featured form: selector
+// pinning, per-task extraArgs (forwarded verbatim), and an optional
+// resumeTaskID hex string that re-uses an existing terminal interactive task
+// id and worktree branch.
+func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (*agentexec.CommandExecutionStream, string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repoPath))
 	oi.Selector = sel
+	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
+	if resumeTaskID != "" {
+		tid, err := parseTaskIDHex(resumeTaskID)
+		if err != nil {
+			return nil, "", fmt.Errorf("OpenInteractive: parse resume id: %w", err)
+		}
+		oi.ResumeTaskId = tid
+	}
 	req.SetOpenInteractive(oi)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -75,6 +91,10 @@ func openInteractiveStatusError(repo string, status protocol.OpenInteractiveStat
 		return fmt.Errorf("interactive ambiguous_runner: multiple runners match; pin one with --runner/--host/--ip")
 	case protocol.OpenInteractiveStatus_PinnedNotFound:
 		return fmt.Errorf("interactive pinned_not_found: the specified runner was not found")
+	case protocol.OpenInteractiveStatus_ResumeNotFound:
+		return fmt.Errorf("interactive resume_not_found: the specified resume task id is unknown (was it pruned, or is the kind a mismatch?)")
+	case protocol.OpenInteractiveStatus_ResumeNotTerminal:
+		return fmt.Errorf("interactive resume_not_terminal: the resume target is still queued/running (or another resume is already in flight)")
 	case protocol.OpenInteractiveStatus_InternalError:
 		return fmt.Errorf("interactive internal_error")
 	default:
@@ -88,13 +108,20 @@ func openInteractiveStatusError(repo string, status protocol.OpenInteractiveStat
 // must be a real tty (RemoteShell flips it into raw mode). Returns the new
 // task's hex id even on error so the caller can surface it for cleanup.
 func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
-	return c.InteractiveWithSelector(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
 }
 
 // InteractiveWithSelector is the same as Interactive but accepts an explicit
-// runner selector.
+// runner selector. extraArgs default to none.
 func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
-	stream, taskIDHex, err := c.OpenInteractiveWithSelector(ctx, repo, sel)
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
+}
+
+// InteractiveWithSelectorAndArgs is the full-featured form: selector pinning,
+// per-task extraArgs, and optional resumeTaskID (hex) for reusing an
+// existing terminal interactive task.
+func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
+	stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repo, sel, extraArgs, resumeTaskID)
 	if err != nil {
 		return taskIDHex, err
 	}

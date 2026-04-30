@@ -34,19 +34,27 @@ type InteractiveDoneMsg struct {
 // happens in the App's Update when InteractiveReadyMsg arrives — Cmds run
 // outside the Update loop, but tea.Exec must be returned from Update.
 func DoOpenInteractive(c *cli.Client, repo string) tea.Cmd {
-	return DoOpenInteractiveWithHost(c, repo, "")
+	return DoOpenInteractiveWithOpts(c, repo, "", nil, "")
 }
 
 // DoOpenInteractiveWithHost is the same as DoOpenInteractive but accepts an
-// optional hostname pin. On AmbiguousRunner the error is surfaced in
-// InteractiveReadyMsg.Err with a hint to supply a host.
+// optional hostname pin.
 func DoOpenInteractiveWithHost(c *cli.Client, repo, host string) tea.Cmd {
+	return DoOpenInteractiveWithOpts(c, repo, host, nil, "")
+}
+
+// DoOpenInteractiveWithOpts is the full-featured form: optional hostname
+// pin, per-task extraArgs (forwarded verbatim), and optional resumeTaskID
+// (32-hex; "" = new task) for reusing an existing terminal interactive
+// task's id and worktree branch. On AmbiguousRunner the error is surfaced
+// in InteractiveReadyMsg.Err with a hint to supply a host.
+func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelector(context.Background(), repo, sel)
+		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }

@@ -21,6 +21,22 @@ format AllowedRoot:
     path_len :u16
     path :[path_len]u8
 
+# ClaudeArg is one CLI argument forwarded verbatim to the spawned claude process.
+# Per-arg length is u16 so individual flags / values can be up to 64KiB; in
+# practice they are short (`--resume <uuid>`, `--add-dir <path>`).
+format ClaudeArg:
+    arg_len :u16
+    arg :[arg_len]u8
+
+# ClaudeArgs is a length-prefixed list of per-task extra CLI arguments.
+# Inserted by clients (cli / tui / webui) at submit / open-interactive time;
+# carried through SubmitRequest / OpenInteractiveRequest to AssignTask /
+# OpenExecRunnerRequest so the runner can append them to the runner-global
+# --claude-args baseline before exec'ing claude.
+format ClaudeArgs:
+    args_len :u16
+    args :[args_len]ClaudeArg
+
 # RunnerHello replaces the old single-repo shape.
 # hostname is the runner's short hostname (for display / pinning).
 # max_tasks is the concurrency limit this runner enforces (>=1; 0 -> server rejects).
@@ -41,7 +57,9 @@ format AssignTask:
     auth_ticket :[16]u8
     repo_path_len :u16
     repo_path :[repo_path_len]u8
-    prompt :[..]u8
+    prompt_len :u32
+    prompt :[prompt_len]u8
+    extra_args :ClaudeArgs
 
 format CancelTask:
     task_id :TaskID
@@ -55,6 +73,7 @@ format OpenExecRunnerRequest:
                       # runner; runner looks it up via
                       # Transport.GetBidirectionalStream(id) and feeds it to
                       # exec.ExecuteCommand for an interactive PTY claude.
+    extra_args :ClaudeArgs
 
 format TaskWakeRequest:
     task_id :TaskID
@@ -251,15 +270,31 @@ format SubmitRequest:
     selector :RunnerSelector
     prompt_len :u32
     prompt :[prompt_len]u8
+    extra_args :ClaudeArgs
+    # resume_task_id, when all-zero, means "create a new task". When non-zero,
+    # the server looks up that TaskID, validates it is in a terminal state
+    # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
+    # the runner re-attaches its worktree to the retained `harness/<id>` branch
+    # — claude's project key (~/.claude/projects/<cwd-hash>/) therefore lines
+    # up with the previous run, which is what makes `--claude-arg --resume
+    # <session-uuid>` actually work after the 2.1.123 picker regression.
+    resume_task_id :TaskID
 
 # SubmitStatus indicates the outcome of a SubmitRequest.
 enum SubmitStatus:
     :u8
-    ok               = "ok"
-    no_runner        = "no_runner"
-    ambiguous_runner = "ambiguous_runner"
-    pinned_not_found = "pinned_not_found"
-    internal_error   = "internal_error"
+    ok                  = "ok"
+    no_runner           = "no_runner"
+    ambiguous_runner    = "ambiguous_runner"
+    pinned_not_found    = "pinned_not_found"
+    internal_error      = "internal_error"
+    # resume_not_found / resume_not_terminal are returned when resume_task_id
+    # is set but the target either doesn't exist or is still active (Queued /
+    # Running / already mid-resume). Concurrent resume attempts on the same
+    # ID land here — the second caller sees resume_not_terminal because the
+    # first transitioned the status back to Queued under TaskStore.mu.
+    resume_not_found    = "resume_not_found"
+    resume_not_terminal = "resume_not_terminal"
 
 # SubmitResponse replaces the old bare task_id with a status + optional error.
 format SubmitResponse:
@@ -288,6 +323,10 @@ format OpenInteractiveRequest:
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     selector :RunnerSelector
+    extra_args :ClaudeArgs
+    # See SubmitRequest.resume_task_id — same semantics, applied to the
+    # interactive path (PTY claude with empty prompt).
+    resume_task_id :TaskID
 
 enum OpenInteractiveStatus:
     :u8
@@ -297,6 +336,9 @@ enum OpenInteractiveStatus:
     ambiguous_runner    = "ambiguous_runner"
     pinned_not_found    = "pinned_not_found"
     internal_error      = "internal_error"
+    # See SubmitStatus — same resume semantics for the interactive path.
+    resume_not_found    = "resume_not_found"
+    resume_not_terminal = "resume_not_terminal"
 
 format OpenInteractiveResponse:
     status :OpenInteractiveStatus

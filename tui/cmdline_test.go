@@ -43,6 +43,46 @@ func TestParseSubmitMissingPrompt(t *testing.T) {
 	}
 }
 
+func TestParseSubmitWithClaudeArgs(t *testing.T) {
+	got, err := ParseCommand(`submit --claude-arg --resume --claude-arg deadbeef "do work"`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SubmitAction)
+	if a.Prompt != "do work" {
+		t.Errorf("Prompt=%q", a.Prompt)
+	}
+	want := []string{"--resume", "deadbeef"}
+	if len(a.ExtraArgs) != len(want) {
+		t.Fatalf("ExtraArgs=%v want %v", a.ExtraArgs, want)
+	}
+	for i := range want {
+		if a.ExtraArgs[i] != want[i] {
+			t.Errorf("ExtraArgs[%d]=%q want %q", i, a.ExtraArgs[i], want[i])
+		}
+	}
+}
+
+func TestParseInteractiveWithClaudeArgs(t *testing.T) {
+	got, err := ParseCommand(`interactive --repo /r --claude-arg --add-dir --claude-arg /other`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(InteractiveAction)
+	if a.Repo != "/r" {
+		t.Errorf("Repo=%q", a.Repo)
+	}
+	want := []string{"--add-dir", "/other"}
+	if len(a.ExtraArgs) != len(want) {
+		t.Fatalf("ExtraArgs=%v want %v", a.ExtraArgs, want)
+	}
+	for i := range want {
+		if a.ExtraArgs[i] != want[i] {
+			t.Errorf("ExtraArgs[%d]=%q want %q", i, a.ExtraArgs[i], want[i])
+		}
+	}
+}
+
 func TestParseCancel(t *testing.T) {
 	got, err := ParseCommand(`cancel ab12cd`, "/cwd")
 	if err != nil {

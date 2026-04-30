@@ -331,11 +331,14 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	})
 
 	// Step 4: Execute the process, publishing log lines to the task log topic.
+	// Args order: runner-global baseline first, per-task extras appended last
+	// so that a per-task --resume / --add-dir / etc. wins on conflict (claude
+	// flags are largely last-wins).
 	proc := &Process{
 		ClaudeBin: s.ClaudeBin,
 		CWD:       dir,
 		Timeout:   s.Timeout,
-		ExtraArgs: s.ExtraClaudeArgs,
+		ExtraArgs: mergeExtraArgs(s.ExtraClaudeArgs, req.ExtraArgs.AsStrings()),
 		Env:       env,
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
@@ -494,7 +497,9 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommandWithOption defers stream.CloseBoth() so we don't double-close here.
-	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, s.ClaudeBin, s.ExtraClaudeArgs, dir, true, env, agentexec.ExecuteOption{
+	// Args order matches handleAssign: runner-global baseline first, per-task extras appended.
+	mergedArgs := mergeExtraArgs(s.ExtraClaudeArgs, oer.ExtraArgs.AsStrings())
+	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, s.ClaudeBin, mergedArgs, dir, true, env, agentexec.ExecuteOption{
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
 			if e := s.tasks[taskIDHex]; e != nil {

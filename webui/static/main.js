@@ -44,8 +44,26 @@ const POLL_INTERVAL_MS = 5000;
   //    string-based renderer.
   const runnerSelect = document.getElementById("runner-select");
   const hostSelect   = document.getElementById("host-select");
+  const claudeArgs   = document.getElementById("claude-args-input");
+  const resumeInput  = document.getElementById("resume-task-input");
   const runnerList   = document.getElementById("runner-list");
   const taskList     = document.getElementById("task-list");
+
+  // currentClaudeArgs returns the shell-tokenised args from the input box.
+  // Reused by submit (cmdline) and Attach so the user only edits one field.
+  const currentClaudeArgs = () => {
+    if (!claudeArgs) return [];
+    const raw = claudeArgs.value.trim();
+    if (!raw) return [];
+    return tokenize(raw);
+  };
+
+  // currentResumeTaskID returns the trimmed resume input, or "" when blank.
+  // The wasm bridge translates "" to "no resume" before serializing.
+  const currentResumeTaskID = () => {
+    if (!resumeInput) return "";
+    return resumeInput.value.trim();
+  };
 
   const refreshSnapshot = async () => {
     let snap;
@@ -94,8 +112,11 @@ const POLL_INTERVAL_MS = 5000;
       switch (cmd) {
         case "submit": {
           const repo = runnerSelect.value || "";
-          if (!repo) {
-            throw new Error("no runner selected (pick one from the dropdown)");
+          const resumeTaskId = currentResumeTaskID();
+          // repo is optional on resume — server uses the existing task's
+          // RepoPath. Reject only when neither is supplied.
+          if (!repo && !resumeTaskId) {
+            throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
           }
           // Everything after `submit` is the task prompt. We join the
           // tokenize() result with single spaces — quoted segments have
@@ -104,7 +125,8 @@ const POLL_INTERVAL_MS = 5000;
           const task = tokens.slice(1).join(" ");
           if (!task) throw new Error("submit: missing task prompt");
           const host = hostSelect ? (hostSelect.value || "") : "";
-          out = await window.harness.submit({ repo, task, host });
+          const claudeArgsList = currentClaudeArgs();
+          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId });
           break;
         }
         case "list":
@@ -158,17 +180,21 @@ const POLL_INTERVAL_MS = 5000;
 
   document.getElementById("attach").addEventListener("click", async () => {
     const repo = runnerSelect.value || "";
-    if (!repo) {
+    const resumeTaskId = currentResumeTaskID();
+    // repo only required on fresh attach — resume reuses the existing task's
+    // worktree and ignores the dropdown.
+    if (!repo && !resumeTaskId) {
       attachedTask.textContent = "";
-      alert("select a runner from the dropdown first");
+      alert("select a runner from the dropdown first (or fill in Resume task id)");
       return;
     }
     const host = hostSelect ? (hostSelect.value || "") : "";
+    const claudeArgsList = currentClaudeArgs();
     // Reset xterm so the new session starts on a clean canvas (no leftover
     // output, escape state, or scrollback from the previous attach).
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({ repo, host });
+      const taskID = await window.harness.startInteractive({ repo, host, claudeArgs: claudeArgsList, resumeTaskId });
       attachedTask.textContent = `attached: ${taskID}`;
       term.focus();
     } catch (e) {

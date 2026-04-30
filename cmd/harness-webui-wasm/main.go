@@ -145,12 +145,18 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if hostVal.Type() == js.TypeString {
 				host = hostVal.String()
 			}
+			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
+			resumeVal := opts.Get("resumeTaskId")
+			resumeTaskID := ""
+			if resumeVal.Type() == js.TypeString {
+				resumeTaskID = resumeVal.String()
+			}
 			sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: selector: %w", err))
 				return
 			}
-			id, err := c.SubmitWithSelector(rootCtx, repo, task, sel)
+			id, err := c.SubmitWithSelectorAndArgs(rootCtx, repo, task, sel, extraArgs, resumeTaskID)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -400,8 +406,15 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			}
 			opts := args[0]
 			repo := opts.Get("repo").String()
-			if repo == "" {
-				rejectErr(reject, errors.New("startInteractive: opts.repo is required"))
+			resumeVal := opts.Get("resumeTaskId")
+			resumeTaskID := ""
+			if resumeVal.Type() == js.TypeString {
+				resumeTaskID = resumeVal.String()
+			}
+			// repo is only required when not resuming — on resume, the
+			// server uses the existing TaskEntry's RepoPath.
+			if repo == "" && resumeTaskID == "" {
+				rejectErr(reject, errors.New("startInteractive: opts.repo is required (unless opts.resumeTaskId is set)"))
 				return
 			}
 			hostVal := opts.Get("host")
@@ -409,12 +422,13 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if hostVal.Type() == js.TypeString {
 				host = hostVal.String()
 			}
+			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
 			sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
 				return
 			}
-			taskID, err := c.InteractiveWithSelector(rootCtx, repo, sel)
+			taskID, err := c.InteractiveWithSelectorAndArgs(rootCtx, repo, sel, extraArgs, resumeTaskID)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return
@@ -505,6 +519,38 @@ func (b *bytesBuffer) String() string { return string(b.buf) }
 // watchPipe wraps each line written by cli.Watch in a small JSON object and
 // forwards it to window.harness_onTaskEvent. cli.Watch emits one human-
 // readable line per event terminated with '\n' (see drainTaskEvents /
+// jsArrayToStringSlice converts a JS Array of strings (or undefined / null /
+// non-array) into a Go []string. Non-string entries are coerced via
+// String() so a value typed as e.g. a Number still produces sensible output;
+// nil / undefined / empty arrays yield nil so the wire ExtraArgs field stays
+// empty (no allocation, no length-prefix payload).
+func jsArrayToStringSlice(v js.Value) []string {
+	if v.IsUndefined() || v.IsNull() {
+		return nil
+	}
+	// Treat non-array (e.g. accidentally passed string) as nil rather than
+	// panicking on .Index — caller mistakes shouldn't drop the whole RPC.
+	if v.Type() != js.TypeObject {
+		return nil
+	}
+	n := v.Length()
+	if n <= 0 {
+		return nil
+	}
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		entry := v.Index(i)
+		if entry.IsUndefined() || entry.IsNull() {
+			continue
+		}
+		out = append(out, entry.String())
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // drainRunnerEvents in cli/watch.go). The JS side parses {"line": ...} and
 // can render or further parse as needed.
 type watchPipe struct {

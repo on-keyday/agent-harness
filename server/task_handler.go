@@ -210,6 +210,15 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 //
 // On Ok, the returned SubmitResponse carries the new TaskId.
 func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind) protocol.SubmitResponse {
+	// Resume branch: when ResumeTaskId is non-zero the server reuses that id
+	// (so the runner re-attaches the worktree to the retained `harness/<id>`
+	// branch) instead of allocating a fresh one. The repo on the request is
+	// ignored — the existing TaskEntry's RepoPath is authoritative because
+	// that's the directory claude's session storage is keyed under.
+	if !isZeroTaskID(req.ResumeTaskId) {
+		return h.handleSubmitResume(req)
+	}
+
 	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
 	// server stays OS-agnostic when matching runner-supplied roots.
 	repo := path.Clean(string(req.RepoPath))
@@ -230,11 +239,68 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 		return resp
 	}
 	bound := cands[0]
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, bound.ID, req.Selector)
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, bound.ID, req.Selector, req.ExtraArgs.AsStrings())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
 	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}
+}
+
+// handleSubmitResume implements the resume_task_id branch of handleSubmit.
+// Validation order:
+//  1. Existing TaskEntry must exist (else resume_not_found).
+//  2. Its TaskKind must be Oneshot — interactive resumes go through the
+//     OpenInteractive path; a Submit asking to resume an interactive task is
+//     a category mismatch that we reject up front (resume_not_found, since
+//     no Oneshot entry by that id exists from this handler's perspective).
+//  3. Runner candidates against the existing repo + the request's selector.
+//     Same NoRunner / Ambiguous / PinnedNotFound mapping as the fresh path.
+//  4. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
+//     resume_not_terminal / resume_not_found wire codes; the latter handles
+//     the (rare) race where the entry was pruned between steps 1 and 4.
+func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest) protocol.SubmitResponse {
+	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
+	repo, kind, ok := h.Tasks.PeekRepo(idHex)
+	if !ok || kind != protocol.TaskKind_Oneshot {
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
+	}
+	cands := h.Registry.Candidates(repo, req.Selector)
+	switch {
+	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}
+	case len(cands) == 0:
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
+	case len(cands) > 1:
+		hostnames := make([]string, len(cands))
+		for i, c := range cands {
+			hostnames[i] = c.Hostname
+		}
+		msg := []byte("ambiguous: " + strings.Join(hostnames, ", "))
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_AmbiguousRunner}
+		resp.SetErrorMsg(msg)
+		return resp
+	}
+	bound := cands[0]
+
+	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID); err != nil {
+		switch err {
+		case ResumeErrNotFound:
+			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
+		case ResumeErrNotTerminal:
+			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotTerminal}
+		default:
+			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_InternalError}
+			resp.SetErrorMsg([]byte(err.Error()))
+			return resp
+		}
+	}
+	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: req.ResumeTaskId}
+}
+
+// isZeroTaskID reports whether t is the all-zero sentinel used by the wire
+// to encode "no resume target — create a new task".
+func isZeroTaskID(t protocol.TaskID) bool {
+	return t.Id == [16]byte{}
 }
 
 // handleOpenInteractive resolves the runner selector, gates on capacity, and
@@ -263,7 +329,27 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return protocol.OpenInteractiveResponse{Status: status}
 	}
 
-	repo := path.Clean(string(req.RepoPath))
+	// Resume vs fresh: on resume we ignore req.RepoPath and use the existing
+	// TaskEntry's repo, then run the same candidate-resolution gate. The
+	// task entry is then transitioned via Tasks.Resume (atomic) instead of
+	// Tasks.Create. The downstream stream-allocation + open_exec block is
+	// shared between the two paths.
+	resuming := !isZeroTaskID(req.ResumeTaskId)
+	var repo string
+	var existingTaskIDHex string
+	if resuming {
+		idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
+		var kind protocol.TaskKind
+		var ok bool
+		repo, kind, ok = h.Tasks.PeekRepo(idHex)
+		if !ok || kind != protocol.TaskKind_Interactive {
+			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+		}
+		existingTaskIDHex = idHex
+	} else {
+		repo = path.Clean(string(req.RepoPath))
+	}
+
 	cands := h.Registry.Candidates(repo, req.Selector)
 	switch {
 	case len(cands) == 0 && req.Selector.Kind != protocol.RunnerSelectorKind_Any:
@@ -287,9 +373,25 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 
-	// Allocate the task entry. The TaskKind_Interactive value is the
-	// authoritative marker — empty prompt is incidental.
-	taskIDHex := h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, runner.ID, req.Selector)
+	// Allocate or revive the task entry.
+	var taskIDHex string
+	if resuming {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID); err != nil {
+			switch err {
+			case ResumeErrNotFound:
+				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+			case ResumeErrNotTerminal:
+				return errResp(protocol.OpenInteractiveStatus_ResumeNotTerminal)
+			default:
+				return errResp(protocol.OpenInteractiveStatus_InternalError)
+			}
+		}
+		taskIDHex = existingTaskIDHex
+	} else {
+		// The TaskKind_Interactive value is the authoritative marker — empty
+		// prompt is incidental.
+		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, runner.ID, req.Selector, req.ExtraArgs.AsStrings())
+	}
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
@@ -343,6 +445,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		TaskId:     tid,
 		StreamId:   uint64(runnerStream.ID()),
 		AuthTicket: ticket,
+		ExtraArgs:  req.ExtraArgs,
 	}
 	oer.SetRepoPath([]byte(repo))
 	rreq.SetOpenExec(oer)

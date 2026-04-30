@@ -15,8 +15,10 @@ import (
 type Action interface{ isAction() }
 
 type SubmitAction struct {
-	Repo   string
-	Prompt string
+	Repo         string
+	Prompt       string
+	ExtraArgs    []string
+	ResumeTaskID string
 }
 
 type CancelAction struct {
@@ -42,7 +44,9 @@ type RepoAction struct {
 // the slash-command equivalent of the 'i' key, useful when chaining
 // after /repo or when the user is already in cmdline focus.
 type InteractiveAction struct {
-	Repo string
+	Repo         string
+	ExtraArgs    []string
+	ResumeTaskID string
 }
 
 func (SubmitAction) isAction()      {}
@@ -91,13 +95,16 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	fs := flag.NewFlagSet("interactive", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", defaultRepo, "")
+	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume")
+	var extra repeatableStrings
+	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("interactive: %w", err)
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("interactive: unexpected positional argument %q", fs.Arg(0))
 	}
-	return InteractiveAction{Repo: *repo}, nil
+	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume}, nil
 }
 
 func parseRepo(args []string) (Action, error) {
@@ -114,6 +121,9 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	fs := flag.NewFlagSet("submit", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", defaultRepo, "")
+	resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch")
+	var extra repeatableStrings
+	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("submit: %w", err)
 	}
@@ -121,7 +131,25 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	if len(rest) == 0 {
 		return nil, fmt.Errorf("submit: prompt is required")
 	}
-	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " ")}, nil
+	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume}, nil
+}
+
+// repeatableStrings is a flag.Value that accumulates one entry per occurrence,
+// mirroring the same idiom used by cmd/harness-cli for --claude-arg. Local
+// definition because the cmdline parser uses its own flag.FlagSet and we
+// don't want a cross-package dependency from tui → cmd/harness-cli.
+type repeatableStrings []string
+
+func (r *repeatableStrings) String() string {
+	if r == nil {
+		return ""
+	}
+	return strings.Join([]string(*r), " ")
+}
+
+func (r *repeatableStrings) Set(v string) error {
+	*r = append(*r, v)
+	return nil
 }
 
 func parseCancel(args []string) (Action, error) {

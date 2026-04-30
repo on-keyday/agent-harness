@@ -19,6 +19,14 @@
       <select id="runner-select"><option value="">(no runners)</option></select>
       <label for="host-select">Host pin:</label>
       <select id="host-select"><option value="">(any host)</option></select>
+      <br>
+      <label for="claude-args-input">Extra claude args (shell-quoted):</label>
+      <input id="claude-args-input" type="text" size="60" placeholder='e.g. --resume <uuid> --add-dir "C:/path"'>
+      <small>appended after runner-global --claude-args; used by both Submit and Attach</small>
+      <br>
+      <label for="resume-task-input">Resume task id:</label>
+      <input id="resume-task-input" type="text" size="40" placeholder="32 hex chars; empty = new task" pattern="[0-9a-fA-F]*">
+      <small>reuses the task id + worktree branch so claude's --resume finds its session; repo dropdown is ignored on resume</small>
       <pre id="runner-list"></pre>
     </section>
     <section id="tasks">

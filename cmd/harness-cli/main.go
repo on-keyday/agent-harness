@@ -49,6 +49,19 @@ func main() {
 		return cid
 	}
 
+	// addClaudeArgFlag registers --claude-arg as a repeatable flag and returns
+	// the underlying slice (populated after fs.Parse). Each occurrence appends
+	// one CLI argument forwarded verbatim to the spawned claude process; e.g.
+	//   submit --claude-arg --resume --claude-arg <uuid>
+	// works around the 2.1.123 /resume picker regression that requires the
+	// caller to be in the original CWD by letting the user push --resume
+	// through harness-cli without an interactive picker.
+	addClaudeArgFlag := func(fs *flag.FlagSet) *[]string {
+		var args repeatableStrings
+		fs.Var(&args, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
+		return (*[]string)(&args)
+	}
+
 	// addSelectorFlags registers --runner/--host/--ip on fs and returns a
 	// function that resolves them to a RunnerSelector after fs.Parse.
 	addSelectorFlags := func(fs *flag.FlagSet) func() protocol.RunnerSelector {
@@ -74,15 +87,17 @@ func main() {
 		fs := flag.NewFlagSet("submit", flag.ExitOnError)
 		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		task := fs.String("task", "", "prompt text")
+		resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch so claude's project key matches the previous run; --repo is ignored")
 		resolveSelector := addSelectorFlags(fs)
+		extraArgs := addClaudeArgFlag(fs)
 		fs.Parse(args)
 		if *task == "" {
 			fmt.Fprintln(os.Stderr, "submit: --task is required")
 			os.Exit(2)
 		}
 		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
-		if repoVal == "" {
-			fmt.Fprintln(os.Stderr, "submit: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim)")
+		if repoVal == "" && *resume == "" {
+			fmt.Fprintln(os.Stderr, "submit: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -97,7 +112,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		id, err := c.SubmitWithSelector(ctx, repoVal, *task, sel)
+		id, err := c.SubmitWithSelectorAndArgs(ctx, repoVal, *task, sel, *extraArgs, *resume)
 		if err != nil {
 			die(err)
 		}
@@ -161,11 +176,13 @@ func main() {
 	case "interactive":
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
 		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
+		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume; --repo is ignored")
 		resolveSelector := addSelectorFlags(fs)
+		extraArgs := addClaudeArgFlag(fs)
 		fs.Parse(args)
 		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
-		if repoVal == "" {
-			fmt.Fprintln(os.Stderr, "interactive: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim)")
+		if repoVal == "" && *resume == "" {
+			fmt.Fprintln(os.Stderr, "interactive: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -179,7 +196,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.InteractiveWithSelector(ctx, repoVal, sel); err != nil {
+		if _, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, *extraArgs, *resume); err != nil {
 			die(err)
 		}
 
@@ -230,8 +247,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (default /ws)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
-	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR]")
+	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID]")
 	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
+	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--claude-arg --resume <uuid>` finds claude's stored session)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
@@ -239,8 +258,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
-	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR]")
+	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID]")
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
+	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal interactive task id + worktree branch")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
 }
@@ -267,4 +288,25 @@ func agentUsage() {
 func die(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+// repeatableStrings is a flag.Value that accumulates one entry per occurrence.
+// Used for --claude-arg so callers can write
+//
+//	harness-cli submit --claude-arg --resume --claude-arg <uuid> ...
+//
+// without shell-quoting concerns. The value is appended in the order the
+// flags appear, which is the order forwarded to claude.
+type repeatableStrings []string
+
+func (r *repeatableStrings) String() string {
+	if r == nil {
+		return ""
+	}
+	return fmt.Sprint([]string(*r))
+}
+
+func (r *repeatableStrings) Set(v string) error {
+	*r = append(*r, v)
+	return nil
 }

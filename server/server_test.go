@@ -24,7 +24,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 		ActiveTasks:  map[string]struct{}{},
 		Conn:         fc,
 	})
-	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{})
+	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
 	if err := s.sendAssign(fc.id.String(), taskID); err != nil {
 		t.Fatalf("send: %v", err)
 	}

@@ -44,7 +44,11 @@ type WALEvent struct {
 	BoundRunnerID string `json:"bound_runner_id,omitempty"`
 	// Reason holds a human-readable failure description (used by task_failed events).
 	Reason string `json:"reason,omitempty"`
-	Ts     int64  `json:"ts"` // unix nano
+	// ExtraArgs are per-task CLI arguments forwarded verbatim to the runner.
+	// Persisted on task_created so a server restart replaying the WAL re-creates
+	// the queued task with the same per-task arg list.
+	ExtraArgs []string `json:"extra_args,omitempty"`
+	Ts        int64    `json:"ts"` // unix nano
 
 	// Selector is the runner-selection constraint. It is not stored directly as
 	// a JSON struct — see the selectorB64 field for the serialized form.
@@ -56,19 +60,20 @@ type WALEvent struct {
 // MarshalJSON / UnmarshalJSON to add the base64 selector field alongside
 // the other plain JSON fields.
 type walEventJSON struct {
-	Type          string `json:"type"`
-	TaskID        string `json:"task_id,omitempty"`
-	RunnerID      string `json:"runner_id,omitempty"`
-	RepoPath      string `json:"repo_path,omitempty"`
-	Prompt        string `json:"prompt,omitempty"`
-	Kind          uint8  `json:"kind,omitempty"`
-	OriginKind    uint8  `json:"origin_kind,omitempty"`
-	WorktreeDir   string `json:"worktree_dir,omitempty"`
-	ExitCode      *int32 `json:"exit_code,omitempty"`
-	DiffInfo      []byte `json:"diff_info,omitempty"`
-	BoundRunnerID string `json:"bound_runner_id,omitempty"`
-	Reason        string `json:"reason,omitempty"`
-	Ts            int64  `json:"ts"`
+	Type          string   `json:"type"`
+	TaskID        string   `json:"task_id,omitempty"`
+	RunnerID      string   `json:"runner_id,omitempty"`
+	RepoPath      string   `json:"repo_path,omitempty"`
+	Prompt        string   `json:"prompt,omitempty"`
+	Kind          uint8    `json:"kind,omitempty"`
+	OriginKind    uint8    `json:"origin_kind,omitempty"`
+	WorktreeDir   string   `json:"worktree_dir,omitempty"`
+	ExitCode      *int32   `json:"exit_code,omitempty"`
+	DiffInfo      []byte   `json:"diff_info,omitempty"`
+	BoundRunnerID string   `json:"bound_runner_id,omitempty"`
+	Reason        string   `json:"reason,omitempty"`
+	ExtraArgs     []string `json:"extra_args,omitempty"`
+	Ts            int64    `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
 	SelectorB64 string `json:"selector_b64,omitempty"`
@@ -90,6 +95,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		DiffInfo:      e.DiffInfo,
 		BoundRunnerID: e.BoundRunnerID,
 		Reason:        e.Reason,
+		ExtraArgs:     e.ExtraArgs,
 		Ts:            e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
@@ -119,6 +125,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.DiffInfo = j.DiffInfo
 	e.BoundRunnerID = j.BoundRunnerID
 	e.Reason = j.Reason
+	e.ExtraArgs = j.ExtraArgs
 	e.Ts = j.Ts
 
 	if j.SelectorB64 != "" {

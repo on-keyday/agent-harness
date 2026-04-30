@@ -46,33 +46,56 @@ type LogHistoryMsg struct {
 
 // DoSubmit issues a Submit RPC over the existing persistent client.
 func DoSubmit(c *cli.Client, repo, prompt string) tea.Cmd {
-	return DoSubmitWithOpts(c, repo, prompt, "")
+	return DoSubmitWithOpts(c, repo, prompt, "", nil, "")
 }
 
-// DoSubmitWithOpts issues a Submit RPC with an optional hostname pin.
-// When host is non-empty, a ByHostname selector is built; otherwise Any is used.
-// On AmbiguousRunner the error is surfaced in SubmitResultMsg.Err with a hint
-// to use the popup's host selector.
-func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string) tea.Cmd {
+// DoSubmitWithOpts issues a Submit RPC with an optional hostname pin,
+// optional per-task extra claude args, and optional resume target id. When
+// host is non-empty a ByHostname selector is built; otherwise Any is used.
+// extraArgs are forwarded verbatim to the runner and appended to its
+// --claude-args baseline at exec time. resumeTaskID, when non-empty, asks
+// the server to reuse that terminal task's id and worktree branch.
+func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		var echo string
-		if host != "" {
-			echo = fmt.Sprintf("submit --repo %q --host %q %q", repo, host, prompt)
-		} else {
-			echo = fmt.Sprintf("submit --repo %q %q", repo, prompt)
-		}
+		echo := buildSubmitEcho(repo, prompt, host, extraArgs, resumeTaskID)
 		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 		if err != nil {
 			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
 		}
-		id, err := c.SubmitWithSelector(ctx, repo, prompt, sel)
+		id, err := c.SubmitWithSelectorAndArgs(ctx, repo, prompt, sel, extraArgs, resumeTaskID)
 		if err != nil {
 			return SubmitResultMsg{Err: err, Echo: echo}
 		}
 		return SubmitResultMsg{TaskID: id, Echo: echo}
 	}
+}
+
+// buildSubmitEcho formats the human-readable echo string for the cmdline
+// result panel. Annotations are added only when the corresponding option is
+// set so the common case (just repo + prompt) stays readable.
+func buildSubmitEcho(repo, prompt, host string, extraArgs []string, resumeTaskID string) string {
+	annot := ""
+	if host != "" {
+		annot += fmt.Sprintf(" --host %q", host)
+	}
+	if len(extraArgs) > 0 {
+		annot += fmt.Sprintf(" (+%d claude-args)", len(extraArgs))
+	}
+	if resumeTaskID != "" {
+		annot += fmt.Sprintf(" --resume %s", shortTaskID(resumeTaskID))
+	}
+	return fmt.Sprintf("submit --repo %q%s %q", repo, annot, prompt)
+}
+
+// shortTaskID truncates a 32-char hex task id to its first 12 for display.
+// Falls back to the original string when the input is shorter than expected.
+func shortTaskID(id string) string {
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
 }
 
 // DoCancel issues a Cancel RPC over the existing persistent client.

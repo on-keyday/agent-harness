@@ -18,9 +18,18 @@ type WorktreeManager struct {
 	mu   sync.Mutex
 }
 
-// Create creates a new worktree at <Repo>/.harness-worktrees/<taskID> on a fresh branch
-// `harness/<taskID>` based on the current HEAD of the main repo. Returns the absolute path
-// of the new worktree.
+// Create creates (or re-attaches) a worktree at <Repo>/.harness-worktrees/<taskID>.
+//
+// First-run: branch `harness/<taskID>` does not exist → `git worktree add -b
+// harness/<taskID> <dir>` creates it from the current HEAD.
+//
+// Resume: branch `harness/<taskID>` already exists from a previous run (the
+// runner intentionally retains it after Remove so the work is reachable) →
+// `git worktree add <dir> harness/<taskID>` attaches a new worktree to that
+// existing branch. The dir path is identical to the previous run, which is
+// what makes claude's project key (~/.claude/projects/<cwd-hash>/) match —
+// the user can then `--resume <session-uuid>` and have claude find its
+// stored conversation.
 //
 // Concurrent calls on the same WorktreeManager are serialized by an internal mutex.
 func (wm *WorktreeManager) Create(taskID string) (string, error) {
@@ -28,12 +37,28 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	defer wm.mu.Unlock()
 	dir := filepath.Join(wm.Repo, ".harness-worktrees", taskID)
 	branch := "harness/" + taskID
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, dir)
+
+	args := []string{"worktree", "add", "-b", branch, dir}
+	if wm.branchExistsLocked(branch) {
+		// Existing branch — drop -b so git attaches to the ref instead of
+		// trying to create a new one (which would fail with "already exists").
+		args = []string{"worktree", "add", dir, branch}
+	}
+	cmd := exec.Command("git", args...)
 	cmd.Dir = wm.Repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("worktree add: %w (%s)", err, out)
 	}
 	return dir, nil
+}
+
+// branchExistsLocked reports whether the given branch ref exists in wm.Repo.
+// Caller must hold wm.mu — this is only invoked from Create which already
+// owns the mutex.
+func (wm *WorktreeManager) branchExistsLocked(branch string) bool {
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	cmd.Dir = wm.Repo
+	return cmd.Run() == nil
 }
 
 // Remove deletes a previously-created worktree. Uses --force to drop dirty changes.

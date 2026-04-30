@@ -19,8 +19,8 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 	runnerID := fc.id.String()
 
 	// Create two tasks and manually set them to Running (simulating dispatch).
-	taskA := tasks.Create("/repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{})
-	taskB := tasks.Create("/repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{})
+	taskA := tasks.Create("/repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	taskB := tasks.Create("/repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
 	tasks.Assign(taskA, runnerID, "")
 	tasks.Assign(taskB, runnerID, "")
 
@@ -78,7 +78,7 @@ func TestOnRemoveMarks_AlreadyTerminalIsIdempotent(t *testing.T) {
 	runnerID := fc.id.String()
 
 	// Create a task and manually mark it Succeeded (terminal).
-	taskID := tasks.Create("/repo", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{})
+	taskID := tasks.Create("/repo", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
 	tasks.Assign(taskID, runnerID, "")
 	tasks.Finish(taskID, 0, nil) // exit 0 → Succeeded
 

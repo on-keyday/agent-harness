@@ -82,9 +82,13 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte) ([]byte, error) {
 	raw, _ := hex.DecodeString(task.ID)
 	copy(tid.Id[:], raw)
 
-	assign := protocol.AssignTask{TaskId: tid, AuthTicket: ticket}
+	assign := protocol.AssignTask{
+		TaskId:     tid,
+		AuthTicket: ticket,
+		ExtraArgs:  protocol.ClaudeArgsFromStrings(task.ExtraArgs),
+	}
 	assign.SetRepoPath([]byte(task.RepoPath))
-	assign.Prompt = []byte(task.Prompt)
+	assign.SetPrompt([]byte(task.Prompt))
 
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
 	req.SetAssignTask(assign)

@@ -4,8 +4,22 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/shlex"
+)
+
+// popupFocus tracks which sub-field of the submit popup currently receives
+// keystrokes. Cycled by Ctrl+E. The textarea (prompt) is the primary focus;
+// the args field is one shlex-parsed line of per-task --claude-arg values;
+// the resume field holds an optional 32-hex task id to revive.
+type popupFocus int
+
+const (
+	popupFocusPrompt popupFocus = iota
+	popupFocusArgs
+	popupFocusResume
 )
 
 type PopupModel struct {
@@ -16,15 +30,26 @@ type PopupModel struct {
 	hostChoices []string
 	hostIdx     int
 	ta          textarea.Model
+	args        textinput.Model
+	resume      textinput.Model
+	focus       popupFocus
 	open        bool
 }
 
 func NewPopup(defaultRepo string) PopupModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to submit, Tab to switch repo, Shift+Tab to cycle host pin, Esc to cancel."
+	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to submit, Tab to switch repo, Shift+Tab to cycle host pin, Ctrl+E to cycle through args/resume fields, Esc to cancel."
 	ta.SetWidth(60)
 	ta.SetHeight(10)
-	pm := PopupModel{ta: ta, hostChoices: []string{"(any)"}}
+	args := textinput.New()
+	args.Placeholder = "extra claude args (shell-quoted; e.g. --resume <uuid> --add-dir /repo)"
+	args.CharLimit = 4096
+	args.Width = 60
+	resume := textinput.New()
+	resume.Placeholder = "resume task id (32 hex; empty = new task)"
+	resume.CharLimit = 64
+	resume.Width = 60
+	pm := PopupModel{ta: ta, args: args, resume: resume, hostChoices: []string{"(any)"}}
 	if defaultRepo != "" {
 		pm.repoChoices = []string{defaultRepo}
 	}
@@ -37,12 +62,87 @@ func (m *PopupModel) Open() {
 	m.open = true
 	m.hostIdx = 0
 	m.ta.Reset()
+	m.args.SetValue("")
+	m.resume.SetValue("")
+	m.focus = popupFocusPrompt
 	m.ta.Focus()
+	m.args.Blur()
+	m.resume.Blur()
 }
 
 func (m *PopupModel) Close() {
 	m.open = false
 	m.ta.Blur()
+	m.args.Blur()
+	m.resume.Blur()
+}
+
+// ToggleFocus cycles the active editable field: prompt → args → resume →
+// prompt. Used by app.go on Ctrl+E so the user can edit each per-submit
+// option without leaving the popup.
+func (m *PopupModel) ToggleFocus() {
+	switch m.focus {
+	case popupFocusPrompt:
+		m.focus = popupFocusArgs
+		m.ta.Blur()
+		m.args.Focus()
+		m.resume.Blur()
+	case popupFocusArgs:
+		m.focus = popupFocusResume
+		m.ta.Blur()
+		m.args.Blur()
+		m.resume.Focus()
+	default:
+		m.focus = popupFocusPrompt
+		m.ta.Focus()
+		m.args.Blur()
+		m.resume.Blur()
+	}
+}
+
+// ResumeTaskID returns the trimmed resume task id input, or "" when the user
+// did not type one (which the cli layer treats as "new task").
+func (m *PopupModel) ResumeTaskID() string {
+	v := m.resume.Value()
+	// strings.TrimSpace would pull in another import; the input is small so
+	// inline trim is fine.
+	for len(v) > 0 && (v[0] == ' ' || v[0] == '\t') {
+		v = v[1:]
+	}
+	for len(v) > 0 && (v[len(v)-1] == ' ' || v[len(v)-1] == '\t') {
+		v = v[:len(v)-1]
+	}
+	return v
+}
+
+// ExtraArgs returns the current args input, parsed via shlex so quoted values
+// survive (e.g. `--add-dir "C:/Program Files/x"`). On parse error returns the
+// best-effort whitespace split so the user still gets something.
+func (m *PopupModel) ExtraArgs() []string {
+	raw := m.args.Value()
+	if raw == "" {
+		return nil
+	}
+	if parsed, err := shlex.Split(raw); err == nil {
+		return parsed
+	}
+	// Fallback: simple whitespace split so a bad quote doesn't drop user input.
+	out := []string{}
+	cur := ""
+	for _, r := range raw {
+		if r == ' ' || r == '\t' {
+			if cur != "" {
+				out = append(out, cur)
+				cur = ""
+			}
+			continue
+		}
+		cur += string(r)
+	}
+	if cur != "" {
+		out = append(out, cur)
+	}
+	return out
 }
 
 func (m *PopupModel) Repo() string {
@@ -130,7 +230,14 @@ func (m PopupModel) Update(msg tea.Msg) (PopupModel, tea.Cmd) {
 		return m, nil
 	}
 	var cmd tea.Cmd
-	m.ta, cmd = m.ta.Update(msg)
+	switch m.focus {
+	case popupFocusArgs:
+		m.args, cmd = m.args.Update(msg)
+	case popupFocusResume:
+		m.resume, cmd = m.resume.Update(msg)
+	default:
+		m.ta, cmd = m.ta.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -158,6 +265,23 @@ func (m PopupModel) View() string {
 	if n := len(m.hostChoices); n > 1 {
 		header += fmt.Sprintf("  [Shift+Tab: cycle (%d/%d)]", m.hostIdx+1, n)
 	}
-	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Esc: cancel")
-	return box.Render(header + "\n\n" + m.ta.View() + "\n\n" + footer)
+	argsLabel := "args:"
+	switch {
+	case m.focus == popupFocusArgs:
+		argsLabel = "args (editing — Ctrl+E to advance):"
+	case m.args.Value() == "":
+		argsLabel = "args (Ctrl+E to edit):"
+	}
+	resumeLabel := "resume:"
+	switch {
+	case m.focus == popupFocusResume:
+		resumeLabel = "resume (editing — Ctrl+E to advance):"
+	case m.resume.Value() == "":
+		resumeLabel = "resume (Ctrl+E to edit; empty = new task):"
+	}
+	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Ctrl+E: cycle args/resume  ·  Esc: cancel")
+	return box.Render(header + "\n\n" + m.ta.View() +
+		"\n\n" + argsLabel + "\n" + m.args.View() +
+		"\n\n" + resumeLabel + "\n" + m.resume.View() +
+		"\n\n" + footer)
 }

@@ -39,6 +39,12 @@ type TaskEntry struct {
 	// (the registry's string key). Populated by the scheduler or submit handler
 	// when the caller supplies a ByRunnerId selector.
 	BoundRunnerID string
+	// ExtraArgs are per-task CLI arguments that the runner appends to its
+	// runner-global --claude-args baseline before exec'ing claude.
+	// Sourced from SubmitRequest.ExtraArgs / OpenInteractiveRequest.ExtraArgs
+	// at task creation time and forwarded verbatim through AssignTask /
+	// OpenExecRunnerRequest to the runner.
+	ExtraArgs []string
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -92,7 +98,9 @@ func newTaskID() string {
 //
 // boundRunnerID pins the task to a specific runner (empty = no pinning).
 // selector is the runner-selection constraint; use a zero value for "any".
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, boundRunnerID string, selector protocol.RunnerSelector) string {
+// extraArgs are forwarded verbatim to the runner and appended to
+// --claude-args at exec time; pass nil for none.
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
@@ -105,6 +113,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		CreatedAt:     time.Now(),
 		BoundRunnerID: boundRunnerID,
 		Selector:      selector,
+		ExtraArgs:     extraArgs,
 	}
 	s.order = append(s.order, id)
 	if s.wal != nil {
@@ -117,6 +126,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			OriginKind:    uint8(origin),
 			BoundRunnerID: boundRunnerID,
 			Selector:      selector,
+			ExtraArgs:     extraArgs,
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
@@ -127,6 +137,118 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		onCreate(id)
 	}
 	return id
+}
+
+// ResumeError is the typed error TaskStore.Resume returns when the resume
+// preconditions fail. The handler maps these to wire-level
+// SubmitStatus_ResumeNotFound / SubmitStatus_ResumeNotTerminal codes.
+type ResumeError uint8
+
+const (
+	ResumeErrNotFound ResumeError = iota + 1
+	ResumeErrNotTerminal
+)
+
+func (e ResumeError) Error() string {
+	switch e {
+	case ResumeErrNotFound:
+		return "resume_not_found"
+	case ResumeErrNotTerminal:
+		return "resume_not_terminal"
+	default:
+		return "resume_unknown_error"
+	}
+}
+
+// Resume re-queues an existing terminal TaskEntry under the SAME id with a
+// fresh prompt + extra-args + selector + bound-runner. The transition is
+// performed under s.mu so two concurrent Resume calls cannot both observe
+// the task as terminal — the second caller sees ResumeErrNotTerminal because
+// the first has already flipped Status back to Queued. This is the
+// multi-resume guard.
+//
+// Repo path is intentionally NOT mutable on resume: the whole point of
+// reusing the id is that the runner re-attaches its worktree to the retained
+// `harness/<id>` branch under the original repo, so claude's project key
+// matches the previous run. Callers that pass a mismatching repo are wrong;
+// the handler validates that before reaching this method.
+//
+// PeekRepo returns the existing entry's repo so the handler can resolve
+// runner candidates without first holding the lock. Use it before Resume.
+//
+// Returns the post-reset TaskEntry snapshot on success.
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string) (TaskEntry, error) {
+	s.mu.Lock()
+	e, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return TaskEntry{}, ResumeErrNotFound
+	}
+	switch e.Status {
+	case protocol.TaskStatus_Succeeded,
+		protocol.TaskStatus_Failed,
+		protocol.TaskStatus_Cancelled:
+		// terminal — proceed
+	default:
+		s.mu.Unlock()
+		return TaskEntry{}, ResumeErrNotTerminal
+	}
+
+	// Reset the per-run fields. CreatedAt is preserved (first submission
+	// time stays meaningful in List output); StartedAt/EndedAt/ExitCode/
+	// DiffInfo/AssignedTo/WorktreeDir all become "fresh run" defaults.
+	e.Status = protocol.TaskStatus_Queued
+	e.AssignedTo = ""
+	e.WorktreeDir = ""
+	e.StartedAt = nil
+	e.EndedAt = nil
+	e.ExitCode = nil
+	e.DiffInfo = nil
+	e.Prompt = prompt
+	e.ExtraArgs = extraArgs
+	e.Selector = selector
+	e.BoundRunnerID = boundRunnerID
+
+	if s.wal != nil {
+		if err := s.wal.Write(WALEvent{
+			Type:          "task_resumed",
+			TaskID:        id,
+			Prompt:        prompt,
+			ExtraArgs:     extraArgs,
+			Selector:      selector,
+			BoundRunnerID: boundRunnerID,
+		}); err != nil {
+			slog.Error("WAL write failed", "op", "task_resumed", "task_id", id, "err", err)
+		}
+	}
+
+	snapshot := *e
+	onCreate := s.OnCreate
+	s.mu.Unlock()
+
+	// Reuse OnCreate so downstream wiring (pubsub task_queued, log store
+	// taps) treats the resumed task like a fresh queue arrival. The task is
+	// already in s.tasks under the original id, so any per-id state these
+	// hooks set up is idempotent (re-tap the same log topic, etc.).
+	if onCreate != nil {
+		onCreate(id)
+	}
+	return snapshot, nil
+}
+
+// PeekRepo returns the RepoPath + Kind for an existing TaskEntry without
+// transitioning it. Used by the resume path in handleSubmit/handleOpenInteractive
+// so candidate resolution runs against the original repo (the request's
+// RepoPath is ignored on resume — only the original worktree is meaningful).
+// Returns ok=false if the id does not exist.
+func (s *TaskStore) PeekRepo(id string) (repo string, kind protocol.TaskKind, ok bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	e, exists := s.tasks[id]
+	if !exists {
+		return "", 0, false
+	}
+	return e.RepoPath, e.Kind, true
 }
 
 // Get returns a value snapshot of the TaskEntry for id.
@@ -310,6 +432,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				CreatedAt:     time.Unix(0, ev.Ts),
 				BoundRunnerID: ev.BoundRunnerID,
 				Selector:      ev.Selector,
+				ExtraArgs:     ev.ExtraArgs,
 			}
 			s.order = append(s.order, ev.TaskID)
 		case "task_assigned":
@@ -346,6 +469,26 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				ts := time.Unix(0, ev.Ts)
 				t.EndedAt = &ts
 				t.DiffInfo = []byte(ev.Reason)
+			}
+		case "task_resumed":
+			// Resume on replay: reset the existing TaskEntry to Queued under
+			// the same id, picking up the new prompt + extra args + selector
+			// + bound runner from the event. If the entry doesn't exist
+			// (corrupt WAL ordering), drop the event silently — the
+			// task_created that should precede this would have already failed
+			// to apply too.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Status = protocol.TaskStatus_Queued
+				t.AssignedTo = ""
+				t.WorktreeDir = ""
+				t.StartedAt = nil
+				t.EndedAt = nil
+				t.ExitCode = nil
+				t.DiffInfo = nil
+				t.Prompt = ev.Prompt
+				t.ExtraArgs = ev.ExtraArgs
+				t.Selector = ev.Selector
+				t.BoundRunnerID = ev.BoundRunnerID
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {

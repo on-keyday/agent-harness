@@ -282,21 +282,28 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				repo := a.popup.Repo()
 				prompt := a.popup.Prompt()
 				host := a.popup.Host()
+				extraArgs := a.popup.ExtraArgs()
+				resumeID := a.popup.ResumeTaskID()
 				a.popup.Close()
 				if prompt == "" {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
 					return a, nil
 				}
-				if repo == "" {
+				// repo is irrelevant on resume — server uses the existing
+				// task's RepoPath. Only require it for fresh submits.
+				if repo == "" && resumeID == "" {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
 			case tea.KeyShiftTab:
 				a.popup.CycleHost(+1)
+				return a, nil
+			case tea.KeyCtrlE:
+				a.popup.ToggleFocus()
 				return a, nil
 			}
 			var pcmd tea.Cmd
@@ -605,9 +612,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
 		return a, nil
 	case InteractiveAction:
-		return a, DoOpenInteractive(a.client, v.Repo)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID)
 	case SubmitAction:
-		return a, DoSubmit(a.client, v.Repo, v.Prompt)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
