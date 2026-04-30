@@ -26,6 +26,8 @@ type Config struct {
 	ClaudeBin       string                // path to the claude binary
 	ExtraClaudeArgs []string              // forwarded to every claude invocation (before -p)
 	Logger          *slog.Logger
+	// PSK, when non-nil, overrides the HARNESS_PSK / HARNESS_PSK_FILE env vars.
+	PSK []byte
 }
 
 // Run dials the server, registers via Hello, processes RunnerRequests until
@@ -81,7 +83,10 @@ func Run(ctx context.Context, cfg Config) error {
 		Now:             time.Now,
 	}
 
-	psk := cli.GetPSK()
+	psk := cfg.PSK
+	if psk == nil {
+		psk = cli.GetPSK()
+	}
 	pskRespCh := make(chan wire.PskAuthStatus, 1)
 
 	// During PSK phase, only route PskAuth responses; runner control messages
