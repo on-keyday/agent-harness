@@ -129,27 +129,47 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		return nil, err
 	}
 
+	psk := cli.GetPSK()
+	pskRespCh := make(chan wire.PskAuthStatus, 1)
 	helloRespCh := make(chan agentboard.HelloStatus, 1)
+
+	// Combined handler: routes PskAuth responses during PSK phase,
+	// then AgentMessage HelloResponse during Hello phase.
 	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-		if kind != wire.ApplicationPayloadKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(payload); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_HelloResponse {
-			resp := msg.HelloResponse()
-			if resp == nil {
+		switch kind {
+		case wire.ApplicationPayloadKind_PskAuth:
+			if len(payload) > 0 {
+				select {
+				case pskRespCh <- wire.PskAuthStatus(payload[0]):
+				default:
+				}
+			}
+		case wire.ApplicationPayloadKind_AgentMessage:
+			msg := &agentboard.AgentMessage{}
+			if _, err := msg.Decode(payload); err != nil {
 				return
 			}
-			select {
-			case helloRespCh <- resp.Status:
-			default:
+			if msg.Kind == agentboard.AgentMessageKind_HelloResponse {
+				resp := msg.HelloResponse()
+				if resp == nil {
+					return
+				}
+				select {
+				case helloRespCh <- resp.Status:
+				default:
+				}
 			}
 		}
 	})
 	pc.Start(ctx)
+
+	if err := cli.SendAndWaitPSK(ctx, func(b []byte) error {
+		_, _, err := pc.Connection().SendMessage(b)
+		return err
+	}, psk, pskRespCh); err != nil {
+		pc.Close()
+		return nil, err
+	}
 
 	hostname := cliopts.ResolveString(f.Hostname, "HARNESS_HOSTNAME")
 	hello := agentboard.AgentBridgeHello{
