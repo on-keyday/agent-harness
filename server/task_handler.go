@@ -326,6 +326,7 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // (exit code from claude) over the regular RunnerControl path.
 func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind) protocol.OpenInteractiveResponse {
 	errResp := func(status protocol.OpenInteractiveStatus) protocol.OpenInteractiveResponse {
+		slog.Error("handleOpenInteractive: rejecting request", "status", status.String(), "repo", string(req.RepoPath), "selector", req.Selector)
 		return protocol.OpenInteractiveResponse{Status: status}
 	}
 
@@ -403,6 +404,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	finishWithError := func(reason string) {
+		slog.Error("handleOpenInteractive: "+reason, "task", taskIDHex, "runner", runner.Hostname)
 		h.Tasks.Finish(taskIDHex, -1, []byte("server: "+reason))
 		h.Registry.UnbindTask(runner.ID, taskIDHex)
 		if h.Board != nil {
