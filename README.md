@@ -101,9 +101,13 @@ bin/harness-cli interactive --repo /abs/path/to/repo
 ```
 
 `scripts/runner.sh` and `scripts/server.sh` wrap the binaries as
-`nohup`-detached daemons (state under `bin/.run/<name>.{pid,log}`); use
-`scripts/restart.sh <name>` to restart a daemon while inheriting its
-flags + CWD from `/proc/<pid>`.
+`nohup`-detached daemons (state under `bin/.run/<slot>.{pid,log}`); use
+`scripts/restart.sh <slot>` to restart a daemon while inheriting its
+flags + CWD from `/proc/<pid>`. Pass `--as <tag>` to `up` / `down` to
+run multiple instances of the same daemon side by side
+(e.g. `scripts/runner.sh up --as 2 --max-tasks 2 ...` registers an
+extra runner alongside the primary one, with its own
+`bin/.run/agent-runner-2.{pid,log}` slot).
 
 ## TUI
 
