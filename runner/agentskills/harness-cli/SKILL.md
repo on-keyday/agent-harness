@@ -61,7 +61,19 @@ harness-cli agent subscribe   --topic build.events
 harness-cli agent unsubscribe --topic build.events
 harness-cli agent subscriptions   # JSON Lines: this agent's patterns
 harness-cli agent topics          # JSON Lines: every topic on the board
+
+# Shorthand for "subscribe to my own inbound topic" — derives
+# chat.<first-8-hex-of-HARNESS_TASK_ID>. Used by the SessionStart hook
+# below; rarely needed by hand.
+harness-cli agent subscribe   --self
+harness-cli agent unsubscribe --self
 ```
+
+The runner installs two `SessionStart` hooks: one subscribes to
+`harness.hello` and one runs `subscribe --self`. So the conventional
+inbound topic `chat.<short-id>` is already live by the time your first
+turn starts — you only need to **announce** it as `reply_topic` in
+outbound messages, not subscribe to it yourself.
 
 ## Handshake on `harness.hello`
 
@@ -120,8 +132,9 @@ reach you.
 
 ### Full handshake flow
 
-1. **Subscribe** to `harness.hello` and your own inbound topic before
-   sending anything.
+1. Both `harness.hello` and your inbound topic are **already subscribed**
+   by the runner's SessionStart hooks (see Subscriptions). You do not need
+   to subscribe by hand.
 2. **Post to `harness.hello`** with at minimum:
    ```json
    {

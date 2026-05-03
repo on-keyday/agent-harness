@@ -9,6 +9,7 @@ import (
 	"math/rand"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -18,11 +19,23 @@ func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind
 	taskID := fs.String("task-id", "", "")
 	runnerID := fs.String("runner-id", "", "")
 	pattern := fs.String("topic", "", "topic to subscribe (exact match in v1)")
+	self := fs.Bool("self", false, "subscribe to this agent's inbound topic (chat.<first-8-hex-of-task-id>); mutually exclusive with --topic")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	if *self && *pattern != "" {
+		return errors.New("--self and --topic are mutually exclusive")
+	}
+	if *self {
+		tid, err := cliopts.ResolveTaskID(*taskID)
+		if err != nil {
+			return err
+		}
+		t := SelfTopic(tid)
+		pattern = &t
+	}
 	if *pattern == "" {
-		return errors.New("--topic required")
+		return errors.New("--topic or --self required")
 	}
 
 	conn, err := ConnectAgent(ctx, Flags{

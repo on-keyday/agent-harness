@@ -34,18 +34,29 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 		t.Fatal("SessionStart hook not present")
 	}
 	{
-		g0, _ := startGroups[0].(map[string]any)
-		hs, _ := g0["hooks"].([]any)
-		if len(hs) == 0 {
-			t.Fatal("SessionStart hook group has no hooks")
+		// Both SessionStart hooks (harness.hello + --self) must be present
+		// and shell-portable. --self is a CLI flag rather than a shell
+		// expansion of $HARNESS_TASK_ID precisely so it works on
+		// PowerShell/cmd as well as POSIX shells.
+		if !groupCommandSearch(startGroups, "harness-cli agent subscribe --topic harness.hello") {
+			t.Errorf("SessionStart hook missing harness.hello subscription: %v", startGroups)
 		}
-		h0, _ := hs[0].(map[string]any)
-		cmd, _ := h0["command"].(string)
-		if !strings.Contains(cmd, "agent subscribe") || !strings.Contains(cmd, "harness.hello") {
-			t.Errorf("SessionStart hook command missing expected pieces: %q", cmd)
+		if !groupCommandSearch(startGroups, "harness-cli agent subscribe --self") {
+			t.Errorf("SessionStart hook missing --self subscription: %v", startGroups)
 		}
-		if strings.Contains(cmd, "/dev/null") {
-			t.Errorf("SessionStart hook uses POSIX-only redirect; breaks on Windows shells: %q", cmd)
+		for _, g := range startGroups {
+			group, _ := g.(map[string]any)
+			hs, _ := group["hooks"].([]any)
+			for _, h := range hs {
+				hook, _ := h.(map[string]any)
+				cmd, _ := hook["command"].(string)
+				if strings.Contains(cmd, "/dev/null") {
+					t.Errorf("SessionStart hook uses POSIX-only redirect; breaks on Windows shells: %q", cmd)
+				}
+				if strings.Contains(cmd, "$HARNESS_TASK_ID") || strings.Contains(cmd, "%HARNESS_TASK_ID%") {
+					t.Errorf("SessionStart hook does shell-side env expansion; relies on shell syntax: %q", cmd)
+				}
+			}
 		}
 	}
 	if _, ok := hooks["Stop"]; ok {
@@ -153,6 +164,9 @@ func TestWriteAgentSettings_MergesWithExisting(t *testing.T) {
 	secondHooks := second["hooks"].(map[string]any)["SessionStart"].([]any)
 	if countGroupCommand(secondHooks, "harness-cli agent subscribe --topic harness.hello") != 1 {
 		t.Errorf("harness SessionStart hook duplicated after second call: %v", secondHooks)
+	}
+	if countGroupCommand(secondHooks, "harness-cli agent subscribe --self") != 1 {
+		t.Errorf("harness --self SessionStart hook duplicated after second call: %v", secondHooks)
 	}
 	secondAllow := second["permissions"].(map[string]any)["allow"].([]any)
 	if countString(secondAllow, "Bash(harness-cli *)") != 1 {

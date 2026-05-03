@@ -26,6 +26,7 @@ var harnessHookEntries = []struct {
 	Command string
 }{
 	{"SessionStart", "harness-cli agent subscribe --topic harness.hello"},
+	{"SessionStart", "harness-cli agent subscribe --self"},
 	{"UserPromptSubmit", "harness-cli agent inbox --since-last --commit --json"},
 }
 
@@ -38,15 +39,20 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 // content rather than overwriting it.
 //
 // Hooks injected:
-//   - SessionStart: subscribes the agent to the reserved handshake topic
-//     `harness.hello` so the multi-agent meeting protocol works without the
-//     agent having to remember to subscribe. Subscriptions are keyed by
-//     (rid, tid) on the broker and de-duplicated via a map, so re-firing
-//     this hook on /clear or /resume is a no-op. The command is left bare
-//     (no shell redirect) for cross-OS portability — `>/dev/null` is not
-//     valid in PowerShell / cmd, and the runner OS is not pinned. The
-//     resulting `{"status":"ok"}` line is injected as additionalContext at
-//     session start; the noise is negligible (17 bytes, once per session).
+//   - SessionStart × 2: subscribes the agent to (a) the reserved handshake
+//     topic `harness.hello` for multi-agent discovery, and (b) the agent's
+//     own inbound topic `chat.<first-8-hex-of-task-id>` (resolved by
+//     `harness-cli agent subscribe --self` from HARNESS_TASK_ID). Both
+//     follow the SKILL.md convention so the agent does not need to
+//     remember to subscribe. Subscriptions are keyed by (rid, tid) on the
+//     broker and de-duplicated via a map, so re-firing this hook on
+//     /clear or /resume is a no-op. The commands are left bare (no shell
+//     redirect or expansion) for cross-OS portability — `>/dev/null` is
+//     not valid in PowerShell / cmd, and the runner OS is not pinned;
+//     this is also why --self is resolved by the CLI rather than by
+//     shell-substituting $HARNESS_TASK_ID, whose syntax differs per
+//     shell. The resulting `{"status":"ok"}` lines are injected as
+//     additionalContext at session start; the noise is negligible.
 //   - UserPromptSubmit: injects pending agentboard messages on each user
 //     prompt submission. This covers both normal user turns and the
 //     synthetic wake prompt written by Session.WakeStdin when the runner
