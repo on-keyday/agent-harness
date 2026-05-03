@@ -29,25 +29,29 @@ ROOT="$(cd "$HERE/.." && pwd)"
 
 name="${1:-}"
 if [[ -z "$name" ]]; then
-    echo "usage: $0 <name>   (e.g. agent-runner, harness-server)" >&2
+    echo "usage: $0 <name>   (binary name: agent-runner, harness-server, ...)" >&2
     exit 2
 fi
 
-helper="$HERE/$name.sh"
-if [[ ! -x "$helper" ]]; then
-    echo "[$name] no helper at $helper" >&2
+# We don't depend on a per-daemon helper script (scripts/runner.sh,
+# scripts/server.sh, etc.) because the binary-name → helper-name mapping
+# is asymmetric (agent-runner ↔ runner.sh, harness-server ↔ server.sh).
+# Source _daemon.sh directly and use daemon_down / daemon_up — the same
+# primitives the helper scripts wrap.
+if [[ ! -r "$HERE/_daemon.sh" ]]; then
+    echo "[$name] missing $HERE/_daemon.sh" >&2
     exit 1
 fi
 
 pid_file="$ROOT/bin/.run/$name.pid"
 if [[ ! -f "$pid_file" ]]; then
-    echo "[$name] no pid file at $pid_file (daemon not currently managed); use $helper up <args> to start fresh" >&2
+    echo "[$name] no pid file at $pid_file (daemon not currently managed); start it via the per-daemon helper first" >&2
     exit 1
 fi
 
 pid="$(cat "$pid_file")"
 if ! kill -0 "$pid" 2>/dev/null; then
-    echo "[$name] pid file present but pid=$pid not running; use $helper up <args> to start fresh" >&2
+    echo "[$name] pid file present but pid=$pid not running; clean up bin/.run/$name.pid and start fresh" >&2
     exit 1
 fi
 
@@ -72,20 +76,22 @@ mkdir -p "$(dirname "$log")"
 # down/up sequence after this script (and possibly its caller) is gone.
 nohup setsid bash -c '
     set -u
-    helper="$1"; shift
+    here="$1"; shift
     name="$1"; shift
     log="$1"; shift
     orig_cwd="$1"; shift
     cd "$orig_cwd"
+    # shellcheck source=_daemon.sh
+    . "$here/_daemon.sh"
     {
         printf "[%s] restart %s begin (cwd=%s flags=%s)\n" \
             "$(date -Iseconds)" "$name" "$orig_cwd" "$*"
-        "$helper" down
+        daemon_down "$name"
         sleep 1
-        "$helper" up "$@"
+        daemon_up "$name" "$@"
         printf "[%s] restart %s end\n" "$(date -Iseconds)" "$name"
     } >> "$log" 2>&1
-' _ "$helper" "$name" "$log" "$orig_cwd" "${flags[@]}" \
+' _ "$HERE" "$name" "$log" "$orig_cwd" "${flags[@]}" \
     >/dev/null 2>&1 < /dev/null & disown
 
 echo "[$name] detached restart kicked off (subshell pid=$!, log=$log)"
