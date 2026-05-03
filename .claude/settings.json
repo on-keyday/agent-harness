@@ -4,18 +4,16 @@
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "harness-cli agent subscribe --topic harness.hello"
+            "command": "harness-cli agent subscribe --topic harness.hello",
+            "type": "command"
           }
         ]
-      }
-    ],
-    "Stop": [
+      },
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "harness-cli agent inbox --since-last --stop-hook"
+            "command": "harness-cli agent subscribe --self",
+            "type": "command"
           }
         ]
       }
@@ -24,11 +22,16 @@
       {
         "hooks": [
           {
-            "type": "command",
-            "command": "harness-cli agent inbox --since-last --json"
+            "command": "harness-cli agent inbox --since-last --commit --json",
+            "type": "command"
           }
         ]
       }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(harness-cli *)"
     ]
   }
 }

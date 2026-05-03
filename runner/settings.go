@@ -6,7 +6,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// harnessHookPrefix marks any hook command the runner has ever injected.
+// The runner is the only producer of hook commands starting with
+// "harness-cli " — single-user dogfood deployment, no other source ever
+// writes such hooks. pruneStaleHarnessHooks uses this prefix to identify
+// hooks the runner once injected so it can drop the ones no longer in
+// harnessHookEntries (e.g. a Stop hook that an older runner installed but
+// the current code has retired).
+const harnessHookPrefix = "harness-cli "
 
 // hookSpec describes one item under settings.json's
 // `hooks.<event>[].hooks[]`. The wider config can carry additional fields
@@ -69,8 +79,11 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 //
 // Merge semantics: existing top-level keys (e.g. user-defined hooks under
 // other events, custom permissions, anything outside `hooks` and
-// `permissions`) are preserved. The runner's hookSpec is appended to
-// `hooks.<event>` only if no entry with the same command is already
+// `permissions`) are preserved. Hooks whose command starts with
+// `harness-cli ` but is not in the current harnessHookEntries list are
+// pruned (see pruneStaleHarnessHooks) so retired hooks from older runner
+// versions don't linger forever. The runner's hookSpec is then appended
+// to `hooks.<event>` only if no entry with the same command is already
 // present, and `permissions.allow` is treated the same way. Calling this
 // twice is a no-op the second time.
 //
@@ -104,6 +117,7 @@ func WriteAgentSettings(worktreeDir string) error {
 		return err
 	}
 
+	pruneStaleHarnessHooks(root)
 	mergeHarnessHooks(root)
 	mergeHarnessAllow(root)
 
@@ -112,6 +126,63 @@ func WriteAgentSettings(worktreeDir string) error {
 		return err
 	}
 	return os.WriteFile(path, out, 0o644)
+}
+
+// pruneStaleHarnessHooks removes hooks whose command starts with
+// harnessHookPrefix but is no longer listed in harnessHookEntries. This
+// covers the case where an older runner installed a hook (e.g. a Stop
+// hook) that the current code has retired: mergeHarnessHooks alone only
+// adds, so without prune the legacy entry would persist for the lifetime
+// of the worktree and keep firing. Empty hook groups and empty event
+// arrays are deleted as a side effect so the resulting settings.json
+// stays clean.
+//
+// Match policy: prefix-only (`harness-cli ...`). False positives (a user
+// adding a `harness-cli` hook by hand for some reason) are tolerated
+// because the runner is the only documented producer of such hooks in
+// this single-user dogfood deployment; if that ever changes, switch to
+// an explicit allow-list of retired commands and key on exact match.
+func pruneStaleHarnessHooks(root map[string]any) {
+	current := make(map[string]struct{}, len(harnessHookEntries))
+	for _, e := range harnessHookEntries {
+		current[e.Command] = struct{}{}
+	}
+	hooks, _ := root["hooks"].(map[string]any)
+	if hooks == nil {
+		return
+	}
+	for event, raw := range hooks {
+		groups, _ := raw.([]any)
+		var keptGroups []any
+		for _, g := range groups {
+			group, _ := g.(map[string]any)
+			hs, _ := group["hooks"].([]any)
+			var keptHooks []any
+			for _, h := range hs {
+				hook, _ := h.(map[string]any)
+				cmd, _ := hook["command"].(string)
+				if strings.HasPrefix(cmd, harnessHookPrefix) {
+					if _, ok := current[cmd]; !ok {
+						continue // drop: harness-managed but no longer current
+					}
+				}
+				keptHooks = append(keptHooks, h)
+			}
+			if len(keptHooks) == 0 {
+				continue
+			}
+			group["hooks"] = keptHooks
+			keptGroups = append(keptGroups, group)
+		}
+		if len(keptGroups) == 0 {
+			delete(hooks, event)
+		} else {
+			hooks[event] = keptGroups
+		}
+	}
+	if len(hooks) == 0 {
+		delete(root, "hooks")
+	}
 }
 
 // mergeHarnessHooks adds each harnessHookEntries item under root["hooks"],

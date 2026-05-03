@@ -174,6 +174,137 @@ func TestWriteAgentSettings_MergesWithExisting(t *testing.T) {
 	}
 }
 
+// TestWriteAgentSettings_PrunesRetiredHarnessHooks verifies that a hook
+// command starting with the harness prefix but no longer present in
+// harnessHookEntries is removed on the next WriteAgentSettings call.
+// Concretely covers the legacy Stop hook (retired when WakeStdin replaced
+// the Stop-based re-entry) and the older UserPromptSubmit variant without
+// --commit (superseded by the --commit form). Without prune, both would
+// persist forever in any worktree initialised by an older runner and
+// re-fire on every turn, redelivering the same seqs.
+func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "harness-cli agent inbox --since-last --stop-hook",
+						},
+					},
+				},
+			},
+			"UserPromptSubmit": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "harness-cli agent inbox --since-last --json",
+						},
+					},
+				},
+			},
+			"PostToolUse": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{"type": "command", "command": "echo user-post"},
+					},
+				},
+			},
+		},
+	}
+	raw, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(filepath.Join(sub, "settings.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := readSettings(t, dir)
+	hooks, _ := got["hooks"].(map[string]any)
+	if hooks == nil {
+		t.Fatal("hooks key missing after prune+merge")
+	}
+
+	// Retired Stop event group should be gone entirely (no current entries
+	// repopulate it, so the empty event is removed).
+	if _, ok := hooks["Stop"]; ok {
+		t.Errorf("Stop event should be pruned, got %v", hooks["Stop"])
+	}
+
+	// UserPromptSubmit: legacy `--json` (no --commit) gone, current
+	// `--commit --json` added by mergeHarnessHooks.
+	upGroups, _ := hooks["UserPromptSubmit"].([]any)
+	if groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --json") {
+		t.Errorf("legacy UserPromptSubmit hook (no --commit) should be pruned")
+	}
+	if !groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --commit --json") {
+		t.Errorf("current UserPromptSubmit hook missing after merge")
+	}
+
+	// User-authored hook in a foreign event must survive.
+	postGroups, _ := hooks["PostToolUse"].([]any)
+	if !groupCommandSearch(postGroups, "echo user-post") {
+		t.Errorf("user PostToolUse hook lost: %v", postGroups)
+	}
+}
+
+// TestWriteAgentSettings_PrunePreservesUserAuthoredHarnessLikeHooks: even if
+// a user manually adds a `harness-cli ...` command that matches the prefix
+// but happens to also be in the current harnessHookEntries (e.g. by
+// hand-merging), we must not double-delete it. Conversely, a non-prefix
+// user hook that *coexists in the same group* as a stale harness hook must
+// be preserved.
+func TestWriteAgentSettings_PrunePreservesGroupSiblings(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, ".claude")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "harness-cli agent inbox --since-last --stop-hook",
+						},
+						map[string]any{
+							"type":    "command",
+							"command": "echo user-stop-hook",
+						},
+					},
+				},
+			},
+		},
+	}
+	raw, _ := json.MarshalIndent(existing, "", "  ")
+	if err := os.WriteFile(filepath.Join(sub, "settings.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := WriteAgentSettings(dir); err != nil {
+		t.Fatal(err)
+	}
+	got := readSettings(t, dir)
+	hooks, _ := got["hooks"].(map[string]any)
+	stopGroups, _ := hooks["Stop"].([]any)
+	if !groupCommandSearch(stopGroups, "echo user-stop-hook") {
+		t.Errorf("user-authored Stop hook lost when its sibling was pruned: %v", stopGroups)
+	}
+	if groupCommandSearch(stopGroups, "harness-cli agent inbox --since-last --stop-hook") {
+		t.Errorf("retired harness hook should have been pruned: %v", stopGroups)
+	}
+}
+
 // TestWriteAgentSettings_RejectsMalformed asserts the merge code surfaces
 // a parse error rather than silently overwriting a corrupt user file.
 func TestWriteAgentSettings_RejectsMalformed(t *testing.T) {
