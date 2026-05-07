@@ -30,6 +30,8 @@ var (
 	agentboardMaxPayload  = flag.Int("agentboard-max-payload", 64*1024, "agentboard max payload bytes per message")
 	psk                   = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
 	pskFile               = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
+	ringSize              = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
+	idleTimeout           = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
 )
 
 func resolvePSK(pskVal, pskFile string) ([]byte, error) {
@@ -82,12 +84,14 @@ func main() {
 	}
 
 	s := server.New(server.Config{
-		Addr:          *listen,
-		DataDir:       *dataDir,
-		TaskRetention: *taskRetain,
-		Logger:        slog.Default(),
-		PSK:           pskBytes,
-		WebUIFS:       webui.FS,
+		Addr:                 *listen,
+		DataDir:              *dataDir,
+		TaskRetention:        *taskRetain,
+		Logger:               slog.Default(),
+		PSK:                  pskBytes,
+		WebUIFS:              webui.FS,
+		DetachRingBufferSize: *ringSize,
+		DetachIdleTimeout:    *idleTimeout,
 	})
 	board := agentboard.New(agentboard.Config{
 		RingN:      *agentboardRing,
