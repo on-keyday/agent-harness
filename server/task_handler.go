@@ -418,6 +418,9 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
 	h.Tasks.Assign(taskIDHex, runner.ID, "")
+	if req.Detachable == 1 {
+		h.Tasks.SetDetachableFlag(taskIDHex, true)
+	}
 	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	finishWithError := func(reason string) {
@@ -500,8 +503,6 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 			ringSize = 1 << 20 // 1 MiB default
 		}
 
-		h.Tasks.SetDetachableFlag(taskIDHex, true)
-
 		hooks := SessionHooks{
 			OnAttach: func(id string) { h.Tasks.MarkAttached(id, true) },
 			OnDetach: func(id string) { _ = h.Tasks.SetDetached(id) },
@@ -528,6 +529,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		// state and registry binding — same defensive cleanup as the legacy path.
 		go func() {
 			<-mux.Wait()
+			h.Sessions.Remove(taskIDHex)  // NEW: defensive — handles race where OnStop fired before Sessions.Add
 			if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
 				h.Tasks.Cancel(taskIDHex)
 			}
