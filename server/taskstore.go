@@ -47,9 +47,10 @@ type TaskEntry struct {
 	// OpenExecRunnerRequest to the runner.
 	ExtraArgs []string
 
-	// Detachable records whether this task was submitted as detachable (i.e.
-	// the runner was instructed to keep running after client disconnect).
-	// Set at Create time from the OpenExecRunnerRequest.Detachable flag.
+	// Detachable is true for sessions started via session new (detach-on-disconnect).
+	// Set immediately after Create via SetDetachableFlag — Create's signature is
+	// not extended to keep call sites narrow (matches existing SetWorktreeDir
+	// pattern).
 	Detachable bool
 	// IsAttached tracks whether a client is currently attached to the session.
 	// True while a client holds the interactive channel; false after
@@ -305,12 +306,19 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 		e.DetachedAt = 0
 		e.IsAttached = true
 	}
-	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runnerID, WorktreeDir: worktreeDir, Ts: now.UnixNano()}); err != nil {
-			slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
+	var onAssign func(string, string, string)
+	if !wasDetached {
+		// Initial dispatch only: persist to WAL and fire the pubsub hook.
+		// Re-attach (Detached→Running) is a runtime-only state flip; emitting
+		// task_assigned would overwrite StartedAt on WAL replay, and the
+		// OnAssign hook would publish a duplicate TaskAssigned pubsub event.
+		if s.wal != nil {
+			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runnerID, WorktreeDir: worktreeDir, Ts: now.UnixNano()}); err != nil {
+				slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
+			}
 		}
+		onAssign = s.OnAssign
 	}
-	onAssign := s.OnAssign
 	s.mu.Unlock()
 	if onAssign != nil {
 		onAssign(id, runnerID, worktreeDir)
@@ -474,6 +482,11 @@ func (s *TaskStore) SetDetached(id string) error {
 // If attached==true and the task is currently Detached, the status is
 // transitioned back to Running and DetachedAt is cleared.
 // Returns false if the task is not present.
+//
+// Note: no OnAssign hook fires. The pubsub TaskAssigned event is reserved
+// for initial dispatch; re-attach is a runtime-only state change that
+// SessionMux owns. Callers expecting pubsub parity with Assign should not
+// use this path for the initial Queued→Running transition.
 func (s *TaskStore) MarkAttached(id string, attached bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

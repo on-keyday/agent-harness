@@ -680,7 +680,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	if t.ExitCode != nil {
 		info.ExitCode = *t.ExitCode
 	}
-	// Populate detach-related fields introduced in Task 1.
+	// Detach/reattach fields.
 	info.SetDetachable(t.Detachable)
 	info.SetIsAttached(t.IsAttached)
 	info.RingBufferBytes = t.RingBufferBytes
