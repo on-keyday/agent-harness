@@ -178,6 +178,13 @@ const POLL_INTERVAL_MS = 5000;
 
   const attachedTask = document.getElementById("attached-task");
 
+  const detachableCheckbox = document.getElementById("detachable");
+
+  // showError appends an error into attachedTask for inline feedback.
+  const showError = (err) => {
+    attachedTask.textContent = `error: ${err.message || err}`;
+  };
+
   document.getElementById("attach").addEventListener("click", async () => {
     const repo = runnerSelect.value || "";
     const resumeTaskId = currentResumeTaskID();
@@ -190,12 +197,13 @@ const POLL_INTERVAL_MS = 5000;
     }
     const host = hostSelect ? (hostSelect.value || "") : "";
     const claudeArgsList = currentClaudeArgs();
+    const detachable = detachableCheckbox ? detachableCheckbox.checked : false;
     // Reset xterm so the new session starts on a clean canvas (no leftover
     // output, escape state, or scrollback from the previous attach).
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({ repo, host, claudeArgs: claudeArgsList, resumeTaskId });
-      attachedTask.textContent = `attached: ${taskID}`;
+      const taskID = await window.harness.startInteractive({ repo, host, claudeArgs: claudeArgsList, resumeTaskId, detachable });
+      attachedTask.textContent = `attached: ${taskID}${detachable ? " (detachable)" : ""}`;
       term.focus();
     } catch (e) {
       attachedTask.textContent = "";
@@ -207,6 +215,24 @@ const POLL_INTERVAL_MS = 5000;
   document.getElementById("detach").addEventListener("click", () => {
     window.harness.detachInteractive();
     attachedTask.textContent = "";
+  });
+  document.getElementById("reattach").addEventListener("click", async () => {
+    const id = document.getElementById("session-id").value.trim();
+    if (!id) {
+      attachedTask.textContent = "(session id required)";
+      return;
+    }
+    term.reset();
+    try {
+      const taskID = await window.harness.attachSession(id);
+      attachedTask.textContent = `attached: ${taskID} (reattached)`;
+      term.focus();
+    } catch (err) {
+      attachedTask.textContent = "";
+      showError(err);
+    }
+    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   });
 })();
 

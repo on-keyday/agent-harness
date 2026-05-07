@@ -43,7 +43,13 @@
       <h2>Interactive</h2>
       <button id="attach">Attach selected runner</button>
       <button id="detach">Detach</button>
+      <label><input type="checkbox" id="detachable"> Detachable</label>
       <div id="attached-task"></div>
+      <div id="reattach-panel">
+        <h3>Reattach to existing session</h3>
+        <input type="text" id="session-id" placeholder="task id (hex)" size="40">
+        <button id="reattach">Reattach</button>
+      </div>
       <div id="terminal"></div>
     </section>
   </main>
