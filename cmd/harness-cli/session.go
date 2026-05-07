@@ -46,6 +46,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	runner := fs.String("runner", "", "pin to runner by ConnectionID hex")
 	host := fs.String("host", "", "pin to runner by hostname")
 	ip := fs.String("ip", "", "pin to runner by IP address")
+	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,8 +55,8 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	if repoVal == "" {
 		repoVal = os.Getenv("HARNESS_REPO_PATH")
 	}
-	if repoVal == "" {
-		return fmt.Errorf("session new: --repo required (or set HARNESS_REPO_PATH)")
+	if repoVal == "" && *resume == "" {
+		return fmt.Errorf("session new: --repo required (or set HARNESS_REPO_PATH) — except when --resume is set, which uses the existing task's repo")
 	}
 
 	opts := cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}
@@ -78,7 +79,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 
-	id, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, nil, "", true /*detachable*/)
+	id, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, nil, *resume, true /*detachable*/)
 	if err != nil {
 		return err
 	}

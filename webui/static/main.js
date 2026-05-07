@@ -179,6 +179,7 @@ const POLL_INTERVAL_MS = 5000;
   const attachedTask = document.getElementById("attached-task");
 
   const detachableCheckbox = document.getElementById("detachable");
+  const resumeTaskIdInput  = document.getElementById("resume-task-id");
 
   // showError appends an error into attachedTask for inline feedback.
   const showError = (err) => {
@@ -187,7 +188,7 @@ const POLL_INTERVAL_MS = 5000;
 
   document.getElementById("attach").addEventListener("click", async () => {
     const repo = runnerSelect.value || "";
-    const resumeTaskId = currentResumeTaskID();
+    const resumeTaskId = resumeTaskIdInput ? resumeTaskIdInput.value.trim() : "";
     // repo only required on fresh attach — resume reuses the existing task's
     // worktree and ignores the dropdown.
     if (!repo && !resumeTaskId) {

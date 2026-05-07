@@ -35,7 +35,8 @@ type HelpAction struct{}
 
 // SessionNewAction opens a new detachable interactive PTY session.
 type SessionNewAction struct {
-	Repo string
+	Repo         string
+	ResumeTaskID string
 }
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
@@ -208,11 +209,16 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 	rest := args[1:]
 	switch verb {
 	case "new":
-		repo := defaultRepo
-		if len(rest) > 0 {
-			return nil, fmt.Errorf("session new: unexpected argument %q (use /repo or --repo flag on submit to change default)", rest[0])
+		fs := flag.NewFlagSet("session new", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
+		if err := fs.Parse(rest); err != nil {
+			return nil, fmt.Errorf("session new: %w", err)
 		}
-		return SessionNewAction{Repo: repo}, nil
+		if fs.NArg() > 0 {
+			return nil, fmt.Errorf("session new: unexpected argument %q", fs.Arg(0))
+		}
+		return SessionNewAction{Repo: defaultRepo, ResumeTaskID: *resume}, nil
 	case "attach":
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("session attach: task id required")
