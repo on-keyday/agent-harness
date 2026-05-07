@@ -40,6 +40,8 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 
 // runSessionNew opens a new detachable interactive PTY session on a runner
 // and blocks until the session ends (Ctrl+D / exit / detach).
+// With -d / --detach the stream is closed immediately after open and the task
+// id is printed — mirroring `docker run -d`.
 func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	fs := flag.NewFlagSet("session new", flag.ExitOnError)
 	repo := fs.String("repo", "", "repo path (required; env: HARNESS_REPO_PATH)")
@@ -49,6 +51,9 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
 	var extraArgs repeatableStrings
 	fs.Var(&extraArgs, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
+	detach := false
+	fs.BoolVar(&detach, "detach", false, "start the session and immediately detach (run in background, print task id, exit)")
+	fs.BoolVar(&detach, "d", false, "shorthand for --detach")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -79,6 +84,16 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	defer c.Close()
 	if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 		return err
+	}
+
+	if detach {
+		stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repoVal, sel, []string(extraArgs), *resume, true)
+		if err != nil {
+			return err
+		}
+		_ = stream.Close() // immediately detach → server transitions Running -> Detached
+		fmt.Println(taskIDHex)
+		return nil
 	}
 
 	id, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/)

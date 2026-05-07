@@ -90,6 +90,31 @@ func DoAttachSession(c *cli.Client, taskIDHex string) tea.Cmd {
 	}
 }
 
+// SessionStartedMsg is the result of `session new --detach`.
+// On success TaskID holds the new task's hex id. On failure Err is non-nil.
+type SessionStartedMsg struct {
+	TaskID string
+	Err    error
+}
+
+// DoStartDetachedSession opens a detachable interactive session, immediately
+// closes the local stream, and returns SessionStartedMsg with the task id.
+// Equivalent to `harness-cli session new -d`.
+func DoStartDetachedSession(c *cli.Client, repo string, extraArgs []string, resumeTaskID string) tea.Cmd {
+	return func() tea.Msg {
+		sel, err := cli.BuildSelector(cli.SelectorOpts{})
+		if err != nil {
+			return SessionStartedMsg{Err: fmt.Errorf("selector: %w", err)}
+		}
+		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, true)
+		if err != nil {
+			return SessionStartedMsg{Err: err}
+		}
+		_ = stream.Close()
+		return SessionStartedMsg{TaskID: taskID}
+	}
+}
+
 // interactiveExec adapts CommandExecutionStream.RemoteShell to bubbletea's
 // ExecCommand interface. SetStdin/Stdout/Stderr are no-ops because
 // RemoteShell uses os.Stdin / os.Stdout directly (bubbletea's tea.Exec has

@@ -244,6 +244,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return InteractiveDoneMsg{TaskID: msg.TaskID, Err: err}
 		})
 
+	case SessionStartedMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("session start failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		short := msg.TaskID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		a.cmdresult.Append(OKStyle.Render("started detached: ") + short)
+		return a, RefreshSnapshot(a.client)
+
 	case InteractiveDoneMsg:
 		short := msg.TaskID
 		if len(short) > 12 {
@@ -618,7 +630,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, nil
 	case HelpAction:
 		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / prune [--before=DUR] / repo <path> / clear / help / quit")
-		a.cmdresult.Append("session new                - open detachable interactive session")
+		a.cmdresult.Append("session new [--detach]      - open detachable interactive session (--detach: background, print id)")
 		a.cmdresult.Append("session attach <id>         - reattach to a session")
 		a.cmdresult.Append("session ls                  - list detachable sessions")
 		a.cmdresult.Append("session kill <id>           - terminate a session")
@@ -665,6 +677,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		repo := v.Repo
 		if repo == "" {
 			repo = a.defaultRepo
+		}
+		if v.Detach {
+			return a, DoStartDetachedSession(a.client, repo, v.ExtraArgs, v.ResumeTaskID)
 		}
 		return a, DoOpenDetachableSession(a.client, repo, v.ExtraArgs, v.ResumeTaskID)
 	case SessionAttachAction:

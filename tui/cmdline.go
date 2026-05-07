@@ -34,10 +34,14 @@ type QuitAction struct{}
 type HelpAction struct{}
 
 // SessionNewAction opens a new detachable interactive PTY session.
+// When Detach is true the session is opened and the local stream is closed
+// immediately (Docker-style background start); the task id is printed to
+// cmdresult and the TUI is not suspended.
 type SessionNewAction struct {
 	Repo         string
 	ExtraArgs    []string
 	ResumeTaskID string
+	Detach       bool
 }
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
@@ -213,6 +217,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		fs := flag.NewFlagSet("session new", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
+		detach := fs.Bool("detach", false, "start the session and immediately detach (run in background, print task id)")
 		var extra repeatableStrings
 		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 		if err := fs.Parse(rest); err != nil {
@@ -221,7 +226,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		if fs.NArg() > 0 {
 			return nil, fmt.Errorf("session new: unexpected argument %q", fs.Arg(0))
 		}
-		return SessionNewAction{Repo: defaultRepo, ExtraArgs: []string(extra), ResumeTaskID: *resume}, nil
+		return SessionNewAction{Repo: defaultRepo, ExtraArgs: []string(extra), ResumeTaskID: *resume, Detach: *detach}, nil
 	case "attach":
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("session attach: task id required")
