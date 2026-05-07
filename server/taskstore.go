@@ -614,13 +614,10 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			}
 		}
 	}
-	// Any task still Running or Detached after full replay had no Finished event.
-	// Server restart loses the runner connection; both states are forced to Failed.
-	// Detached state is ephemeral by design (see spec §9) — no WAL event is written
-	// for task_detached, so Detached never appears here after a clean restart, but
-	// handle it defensively.
+	// Any task still Running after full replay had no Finished event.
+	// Server restart loses the runner connection; Running tasks are forced to Failed.
 	for _, t := range s.tasks {
-		if t.Status == protocol.TaskStatus_Running || t.Status == protocol.TaskStatus_Detached {
+		if t.Status == protocol.TaskStatus_Running {
 			t.Status = protocol.TaskStatus_Failed
 			now := time.Now()
 			t.EndedAt = &now
