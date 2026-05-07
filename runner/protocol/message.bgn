@@ -74,6 +74,9 @@ format OpenExecRunnerRequest:
                       # Transport.GetBidirectionalStream(id) and feeds it to
                       # exec.ExecuteCommand for an interactive PTY claude.
     extra_args :ClaudeArgs
+    detachable :u1    # 1 = stream EOF → keep claude alive,
+                      # 0 = stream EOF → SIGHUP ladder (legacy)
+    reserved :u7
 
 format TaskWakeRequest:
     task_id :TaskID
@@ -130,6 +133,7 @@ enum TaskControlKind:
     get_task_log
     open_interactive
     client_hello
+    attach_session
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # Sent once right after handshake via TaskControlRequest{client_hello,...} so
@@ -171,6 +175,7 @@ enum TaskStatus:
     Succeeded
     Failed
     Cancelled
+    Detached
 
 # TaskKind distinguishes how the task was requested.
 #  - oneshot:     submitted via SubmitRequest, claude runs with -p prompt and exits
@@ -228,8 +233,12 @@ format TaskInfo:
     exit_code :i32
     prompt_len :u32
     prompt :[prompt_len]u8
-    error_len :u32 
+    error_len :u32
     error_message :[error_len]u8
+    detachable :u1        # immutable, set at OpenInteractive time
+    is_attached :u1       # client tuiStream is currently spliced
+    reserved :u6
+    ring_buffer_bytes :u64    # current bytes buffered (0 for non-detachable)
 
 format ListResult:
     runners_len :u16
@@ -329,6 +338,9 @@ format OpenInteractiveRequest:
     # See SubmitRequest.resume_task_id — same semantics, applied to the
     # interactive path (PTY claude with empty prompt).
     resume_task_id :TaskID
+    detachable :u1    # 1 = session new (detach on disconnect),
+                      # 0 = legacy interactive (kill on disconnect)
+    reserved :u7
 
 enum OpenInteractiveStatus:
     :u8
@@ -355,6 +367,24 @@ format OpenInteractiveResponse:
                        # feeds it to exec.ExecuteCommand for an interactive
                        # PTY claude session.
 
+format AttachSessionRequest:
+    task_id :TaskID
+
+enum AttachSessionStatus:
+    :u8
+    ok                  = "ok"
+    not_found           = "not_found"
+    not_interactive     = "not_interactive"
+    not_detachable      = "not_detachable"
+    already_terminal    = "already_terminal"
+    runner_unreachable  = "runner_unreachable"
+    internal_error      = "internal_error"
+
+format AttachSessionResponse:
+    status :AttachSessionStatus
+    stream_id :u64
+    replay_bytes :u64
+
 format TaskControlRequest:
     kind :TaskControlKind
     request_id :u32
@@ -366,6 +396,7 @@ format TaskControlRequest:
         TaskControlKind.get_task_log => get_log :GetTaskLogRequest
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveRequest
         TaskControlKind.client_hello => client_hello :ClientHello
+        TaskControlKind.attach_session => attach :AttachSessionRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -382,6 +413,7 @@ format TaskControlResponse:
         TaskControlKind.get_task_log => get_log :GetTaskLogResponse
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveResponse
         TaskControlKind.client_hello => client_hello :ClientHelloResponse
+        TaskControlKind.attach_session => attach :AttachSessionResponse
 
 # Pubsub event payloads
 enum StatusEventKind:
