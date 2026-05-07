@@ -48,10 +48,23 @@ input, select {
 #runner-select option:disabled {
   color: #777;
 }
-#runners label {
+#compose label {
   font-size: 0.85rem;
   color: #aaa;
   margin-right: 0.4rem;
+}
+#compose small {
+  display: block;
+  font-size: 0.78rem;
+  color: #777;
+  margin-top: 0.3rem;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
 }
 button {
   background: #444;

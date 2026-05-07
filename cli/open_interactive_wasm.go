@@ -59,18 +59,20 @@ var (
 // The active session is stored in activeInteractiveSession; subsequent calls
 // to SendInteractive / ResizeInteractive / DetachInteractive operate on it.
 func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "", false)
 }
 
 // InteractiveWithSelector is the same as Interactive but accepts an explicit
 // runner selector. extraArgs default to none.
 func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "", false)
 }
 
 // InteractiveWithSelectorAndArgs is the full-featured form: selector pinning,
-// per-task extraArgs, and optional resumeTaskID (hex; "" = new task).
-func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
+// per-task extraArgs, optional resumeTaskID (hex; "" = new task), and a
+// detachable flag (true for session-new-style detachable sessions; false for
+// legacy kill-on-disconnect).
+func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
@@ -82,6 +84,9 @@ func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string
 			return "", fmt.Errorf("Interactive: parse resume id: %w", err)
 		}
 		oi.ResumeTaskId = tid
+	}
+	if detachable {
+		oi.SetDetachable(true)
 	}
 	req.SetOpenInteractive(oi)
 

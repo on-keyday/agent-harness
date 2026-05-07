@@ -2,6 +2,7 @@ package server
 
 import (
 	"testing"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -53,5 +54,86 @@ func TestSendAssignDisconnected(t *testing.T) {
 	err := s.sendAssign("nonexistent-runner", "00000000")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+// TestSweepIdleDetached_CancelsExpiredSessions verifies that sweepIdleDetached
+// cancels a Detached task whose DetachedAt timestamp is past the cutoff.
+func TestSweepIdleDetached_CancelsExpiredSessions(t *testing.T) {
+	s := New(Config{DetachIdleTimeout: time.Minute})
+
+	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	// Transition through Running → Detached manually.
+	s.tasks.Assign(taskID, "runner-1", "/wt")
+	if err := s.tasks.SetDetached(taskID); err != nil {
+		t.Fatalf("SetDetached: %v", err)
+	}
+
+	// Back-date DetachedAt so the task appears idle beyond the timeout.
+	func() {
+		s.tasks.mu.Lock()
+		defer s.tasks.mu.Unlock()
+		e := s.tasks.tasks[taskID]
+		e.DetachedAt = uint64(time.Now().Add(-2 * time.Minute).UnixNano())
+	}()
+
+	s.sweepIdleDetached(time.Now())
+
+	got, ok := s.tasks.Get(taskID)
+	if !ok {
+		t.Fatal("task disappeared")
+	}
+	if got.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("want Cancelled, got %v", got.Status)
+	}
+}
+
+// TestSweepIdleDetached_KeepsRecentSessions verifies that sweepIdleDetached
+// does NOT cancel a Detached task whose DetachedAt is within the idle timeout.
+func TestSweepIdleDetached_KeepsRecentSessions(t *testing.T) {
+	s := New(Config{DetachIdleTimeout: time.Hour})
+
+	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	s.tasks.Assign(taskID, "runner-1", "/wt")
+	if err := s.tasks.SetDetached(taskID); err != nil {
+		t.Fatalf("SetDetached: %v", err)
+	}
+	// DetachedAt is just-now (set by SetDetached), well within the 1-hour timeout.
+
+	s.sweepIdleDetached(time.Now())
+
+	got, ok := s.tasks.Get(taskID)
+	if !ok {
+		t.Fatal("task disappeared")
+	}
+	if got.Status != protocol.TaskStatus_Detached {
+		t.Fatalf("want Detached, got %v", got.Status)
+	}
+}
+
+// TestRestartCancelsDetached verifies that the restart loop marks Detached
+// tasks as Cancelled (simulating what Run does after WAL replay).
+func TestRestartCancelsDetached(t *testing.T) {
+	s := New(Config{})
+
+	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	s.tasks.Assign(taskID, "runner-1", "/wt")
+	if err := s.tasks.SetDetached(taskID); err != nil {
+		t.Fatalf("SetDetached: %v", err)
+	}
+
+	// Simulate the restart loop from Run.
+	for _, task := range s.tasks.List(0) {
+		if task.Status == protocol.TaskStatus_Detached {
+			s.tasks.Cancel(task.ID)
+		}
+	}
+
+	got, ok := s.tasks.Get(taskID)
+	if !ok {
+		t.Fatal("task disappeared")
+	}
+	if got.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("want Cancelled, got %v", got.Status)
 	}
 }

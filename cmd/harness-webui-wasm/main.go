@@ -53,6 +53,7 @@ func main() {
 		"sendInteractive":   js.FuncOf(harnessSendInteractive),
 		"resizeInteractive": js.FuncOf(harnessResizeInteractive),
 		"detachInteractive": js.FuncOf(harnessDetachInteractive),
+		"attachSession":     js.FuncOf(harnessAttachSession),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -423,12 +424,17 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				host = hostVal.String()
 			}
 			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
+			detachableVal := opts.Get("detachable")
+			detachable := false
+			if detachableVal.Type() == js.TypeBoolean {
+				detachable = detachableVal.Bool()
+			}
 			sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
 				return
 			}
-			taskID, err := c.InteractiveWithSelectorAndArgs(rootCtx, repo, sel, extraArgs, resumeTaskID)
+			taskID, err := c.InteractiveWithSelectorAndArgs(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return
@@ -499,6 +505,44 @@ func harnessResizeInteractive(this js.Value, args []js.Value) any {
 func harnessDetachInteractive(this js.Value, args []js.Value) any {
 	cli.DetachInteractive()
 	return js.Undefined()
+}
+
+// harnessAttachSession re-attaches the browser xterm to an existing detachable
+// interactive session. The stream is acquired via AttachSession RPC and installed
+// as the singleton activeInteractiveSession; replayed bytes + live output flow
+// through harness_xtermWrite automatically.
+//
+//	harness.attachSession(taskIDHex) -> Promise<taskIDHex>
+func harnessAttachSession(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("attachSession: missing taskIDHex arg"))
+				return
+			}
+			taskIDHex := args[0].String()
+			if taskIDHex == "" {
+				rejectErr(reject, errors.New("attachSession: taskIDHex is empty"))
+				return
+			}
+			resultID, err := c.AttachSession(rootCtx, taskIDHex)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("attachSession: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(resultID))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
 }
 
 // bytesBuffer is a minimal io.Writer used for collecting cli output before

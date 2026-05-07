@@ -24,21 +24,22 @@ import (
 // calling RemoteShell (or Stdin/Stdout/Stderr individually) and Close.
 // The runner's exec.ExecuteCommand drives PTY lifecycle on the other side.
 func (c *Client) OpenInteractive(ctx context.Context, repoPath string) (*agentexec.CommandExecutionStream, string, error) {
-	return c.OpenInteractiveWithSelectorAndArgs(ctx, repoPath, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
+	return c.OpenInteractiveWithSelectorAndArgs(ctx, repoPath, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "", false)
 }
 
 // OpenInteractiveWithSelector is the same as OpenInteractive but accepts an
 // explicit runner selector. extraArgs default to none; use the AndArgs form
 // to forward per-task CLI args to the spawned claude process.
 func (c *Client) OpenInteractiveWithSelector(ctx context.Context, repoPath string, sel protocol.RunnerSelector) (*agentexec.CommandExecutionStream, string, error) {
-	return c.OpenInteractiveWithSelectorAndArgs(ctx, repoPath, sel, nil, "")
+	return c.OpenInteractiveWithSelectorAndArgs(ctx, repoPath, sel, nil, "", false)
 }
 
 // OpenInteractiveWithSelectorAndArgs is the full-featured form: selector
-// pinning, per-task extraArgs (forwarded verbatim), and an optional
-// resumeTaskID hex string that re-uses an existing terminal interactive task
-// id and worktree branch.
-func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (*agentexec.CommandExecutionStream, string, error) {
+// pinning, per-task extraArgs (forwarded verbatim), an optional
+// resumeTaskID hex string that re-uses an existing terminal interactive
+// task id and worktree branch, and a detachable flag (true for
+// session-new-style detachable sessions; false for legacy kill-on-disconnect).
+func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (*agentexec.CommandExecutionStream, string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repoPath))
@@ -50,6 +51,9 @@ func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPat
 			return nil, "", fmt.Errorf("OpenInteractive: parse resume id: %w", err)
 		}
 		oi.ResumeTaskId = tid
+	}
+	if detachable {
+		oi.SetDetachable(true)
 	}
 	req.SetOpenInteractive(oi)
 
@@ -108,20 +112,21 @@ func openInteractiveStatusError(repo string, status protocol.OpenInteractiveStat
 // must be a real tty (RemoteShell flips it into raw mode). Returns the new
 // task's hex id even on error so the caller can surface it for cleanup.
 func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "", false)
 }
 
 // InteractiveWithSelector is the same as Interactive but accepts an explicit
 // runner selector. extraArgs default to none.
 func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "", false)
 }
 
 // InteractiveWithSelectorAndArgs is the full-featured form: selector pinning,
-// per-task extraArgs, and optional resumeTaskID (hex) for reusing an
-// existing terminal interactive task.
-func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
-	stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repo, sel, extraArgs, resumeTaskID)
+// per-task extraArgs, optional resumeTaskID (hex) for reusing an existing
+// terminal interactive task, and a detachable flag (true for session-new-style
+// detachable sessions; false for legacy kill-on-disconnect).
+func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (string, error) {
+	stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repo, sel, extraArgs, resumeTaskID, detachable)
 	if err != nil {
 		return taskIDHex, err
 	}

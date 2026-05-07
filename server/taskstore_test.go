@@ -439,3 +439,235 @@ func TestTaskStoreMarkFailedIdempotentOnTerminal(t *testing.T) {
 		t.Fatalf("MarkFailed should be no-op on terminal state, got %v", got.Status)
 	}
 }
+
+// createDetachableTask is a helper that creates a task, marks it detachable,
+// and assigns it to a runner (transitioning it to Running).
+func createDetachableTask(ts *TaskStore) string {
+	id := ts.Create("/repo", "detach-test", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
+		"", protocol.RunnerSelector{}, nil)
+	ts.SetDetachableFlag(id, true)
+	ts.Assign(id, "runner-det", "/wt/det")
+	return id
+}
+
+func TestTaskStore_DetachedTransitions(t *testing.T) {
+	t.Run("Running_to_Detached", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := createDetachableTask(ts)
+
+		if err := ts.SetDetached(id); err != nil {
+			t.Fatalf("SetDetached: %v", err)
+		}
+		info, ok := ts.Get(id)
+		if !ok {
+			t.Fatal("Get returned ok=false after SetDetached")
+		}
+		if info.Status != protocol.TaskStatus_Detached {
+			t.Fatalf("expected Detached, got %v", info.Status)
+		}
+		if info.DetachedAt == 0 {
+			t.Fatal("DetachedAt should be set after SetDetached")
+		}
+		if info.IsAttached {
+			t.Fatal("IsAttached should be false after SetDetached")
+		}
+	})
+
+	t.Run("SetDetached_requires_Running", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := ts.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
+			"", protocol.RunnerSelector{}, nil)
+		// Task is Queued, not Running — must fail.
+		if err := ts.SetDetached(id); err == nil {
+			t.Fatal("SetDetached on Queued task should return error, got nil")
+		}
+	})
+
+	t.Run("SetDetached_unknown_task", func(t *testing.T) {
+		ts := NewTaskStore()
+		if err := ts.SetDetached("nonexistent"); err == nil {
+			t.Fatal("SetDetached on unknown task should return error, got nil")
+		}
+	})
+
+	t.Run("Detached_to_Running_via_Assign", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := createDetachableTask(ts)
+		ts.SetDetached(id) //nolint:errcheck
+
+		// Re-attach: Assign from Detached state.
+		ts.Assign(id, "runner-det", "/wt/det")
+		info, ok := ts.Get(id)
+		if !ok {
+			t.Fatal("Get returned ok=false")
+		}
+		if info.Status != protocol.TaskStatus_Running {
+			t.Fatalf("expected Running after re-attach, got %v", info.Status)
+		}
+		if info.DetachedAt != 0 {
+			t.Fatalf("DetachedAt should be cleared on re-attach, got %d", info.DetachedAt)
+		}
+		if !info.IsAttached {
+			t.Fatal("IsAttached should be true after re-attach via Assign")
+		}
+	})
+
+	t.Run("MarkAttached_Detached_to_Running", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := createDetachableTask(ts)
+		ts.SetDetached(id) //nolint:errcheck
+
+		// MarkAttached on a Detached task transitions it to Running.
+		if !ts.MarkAttached(id, true) {
+			t.Fatal("MarkAttached returned false for existing task")
+		}
+		info, _ := ts.Get(id)
+		if info.Status != protocol.TaskStatus_Running {
+			t.Fatalf("expected Running after MarkAttached, got %v", info.Status)
+		}
+		if info.DetachedAt != 0 {
+			t.Fatalf("DetachedAt should be cleared, got %d", info.DetachedAt)
+		}
+	})
+
+	t.Run("Detached_to_Cancelled", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := createDetachableTask(ts)
+		ts.SetDetached(id) //nolint:errcheck
+
+		ts.Cancel(id)
+		info, _ := ts.Get(id)
+		if info.Status != protocol.TaskStatus_Cancelled {
+			t.Fatalf("expected Cancelled, got %v", info.Status)
+		}
+		if info.EndedAt == nil {
+			t.Fatal("EndedAt should be set after Cancel")
+		}
+	})
+
+	t.Run("Detached_to_Succeeded", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := createDetachableTask(ts)
+		ts.SetDetached(id) //nolint:errcheck
+
+		ts.Finish(id, 0, nil)
+		info, _ := ts.Get(id)
+		if info.Status != protocol.TaskStatus_Succeeded {
+			t.Fatalf("expected Succeeded, got %v", info.Status)
+		}
+	})
+
+	t.Run("Detached_to_Failed_via_Finish", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := createDetachableTask(ts)
+		ts.SetDetached(id) //nolint:errcheck
+
+		ts.Finish(id, 1, []byte("timeout"))
+		info, _ := ts.Get(id)
+		if info.Status != protocol.TaskStatus_Failed {
+			t.Fatalf("expected Failed, got %v", info.Status)
+		}
+	})
+
+	t.Run("Detached_to_Failed_via_MarkFailed", func(t *testing.T) {
+		ts := NewTaskStore()
+		id := createDetachableTask(ts)
+		ts.SetDetached(id) //nolint:errcheck
+
+		ts.MarkFailed(id, "runner_unreachable")
+		info, _ := ts.Get(id)
+		if info.Status != protocol.TaskStatus_Failed {
+			t.Fatalf("expected Failed, got %v", info.Status)
+		}
+		if string(info.ErrorMsg) != "runner_unreachable" {
+			t.Fatalf("ErrorMsg=%q want runner_unreachable", string(info.ErrorMsg))
+		}
+	})
+}
+
+func TestTaskStore_DetachableFlag(t *testing.T) {
+	ts := NewTaskStore()
+	id := ts.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
+		"", protocol.RunnerSelector{}, nil)
+
+	// Default: not detachable.
+	got, _ := ts.Get(id)
+	if got.Detachable {
+		t.Fatal("new task should not be detachable by default")
+	}
+
+	// Set detachable.
+	if !ts.SetDetachableFlag(id, true) {
+		t.Fatal("SetDetachableFlag returned false for existing task")
+	}
+	got, _ = ts.Get(id)
+	if !got.Detachable {
+		t.Fatal("Detachable should be true after SetDetachableFlag")
+	}
+
+	// Unknown task returns false.
+	if ts.SetDetachableFlag("nope", true) {
+		t.Fatal("SetDetachableFlag should return false for unknown task")
+	}
+}
+
+func TestTaskStore_SetRingBufferBytes(t *testing.T) {
+	ts := NewTaskStore()
+	id := ts.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
+		"", protocol.RunnerSelector{}, nil)
+
+	if !ts.SetRingBufferBytes(id, 4096) {
+		t.Fatal("SetRingBufferBytes returned false for existing task")
+	}
+	got, _ := ts.Get(id)
+	if got.RingBufferBytes != 4096 {
+		t.Fatalf("RingBufferBytes=%d want 4096", got.RingBufferBytes)
+	}
+
+	if ts.SetRingBufferBytes("nope", 100) {
+		t.Fatal("SetRingBufferBytes should return false for unknown task")
+	}
+}
+
+func TestTaskStore_MarkAttached(t *testing.T) {
+	ts := NewTaskStore()
+	id := createDetachableTask(ts)
+
+	// Default: not attached (task just assigned, no explicit mark).
+	got, _ := ts.Get(id)
+	if got.IsAttached {
+		t.Fatal("IsAttached should be false by default")
+	}
+
+	// Mark attached.
+	if !ts.MarkAttached(id, true) {
+		t.Fatal("MarkAttached returned false")
+	}
+	got, _ = ts.Get(id)
+	if !got.IsAttached {
+		t.Fatal("IsAttached should be true after MarkAttached(true)")
+	}
+	// Status must remain Running (was already Running, not Detached).
+	if got.Status != protocol.TaskStatus_Running {
+		t.Fatalf("status should stay Running, got %v", got.Status)
+	}
+
+	// Mark detached via MarkAttached (does NOT change status from Running).
+	if !ts.MarkAttached(id, false) {
+		t.Fatal("MarkAttached(false) returned false")
+	}
+	got, _ = ts.Get(id)
+	if got.IsAttached {
+		t.Fatal("IsAttached should be false after MarkAttached(false)")
+	}
+	// Status stays Running — MarkAttached(false) does not transition to Detached;
+	// use SetDetached for that.
+	if got.Status != protocol.TaskStatus_Running {
+		t.Fatalf("status should still be Running after MarkAttached(false), got %v", got.Status)
+	}
+
+	// Unknown task.
+	if ts.MarkAttached("nope", true) {
+		t.Fatal("MarkAttached should return false for unknown task")
+	}
+}

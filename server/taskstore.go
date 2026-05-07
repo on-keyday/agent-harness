@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -45,6 +46,24 @@ type TaskEntry struct {
 	// at task creation time and forwarded verbatim through AssignTask /
 	// OpenExecRunnerRequest to the runner.
 	ExtraArgs []string
+
+	// Detachable is true for sessions started via session new (detach-on-disconnect).
+	// Set immediately after Create via SetDetachableFlag — Create's signature is
+	// not extended to keep call sites narrow (matches existing SetWorktreeDir
+	// pattern).
+	Detachable bool
+	// IsAttached tracks whether a client is currently attached to the session.
+	// True while a client holds the interactive channel; false after
+	// SetDetached or before first attach. Updated by MarkAttached.
+	IsAttached bool
+	// DetachedAt is the unix-nanosecond timestamp of the most recent
+	// Running → Detached transition. Zero means the task has never been
+	// detached (or has re-attached since). Cleared on Detached → Running.
+	DetachedAt uint64
+	// RingBufferBytes is the most-recent cached size of the session's ring
+	// buffer as reported by the SessionMux owner. Used for informational
+	// display in task listings. Updated via SetRingBufferBytes.
+	RingBufferBytes uint64
 }
 
 // TaskStore is the in-memory authority for task lifecycle.
@@ -264,6 +283,9 @@ func (s *TaskStore) Get(id string) (TaskEntry, bool) {
 }
 
 // Assign transitions the task to Running, recording the runner and worktree.
+// Allowed source states: Queued (initial dispatch) and Detached (re-attach).
+// For a Detached → Running transition, DetachedAt is cleared and IsAttached
+// is set to true (a new client has taken the session).
 func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 	now := time.Now()
 	s.mu.Lock()
@@ -272,16 +294,31 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 		s.mu.Unlock()
 		return
 	}
+	wasDetached := e.Status == protocol.TaskStatus_Detached
 	e.Status = protocol.TaskStatus_Running
 	e.AssignedTo = runnerID
 	e.WorktreeDir = worktreeDir
-	e.StartedAt = &now
-	if s.wal != nil {
-		if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runnerID, WorktreeDir: worktreeDir, Ts: now.UnixNano()}); err != nil {
-			slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
-		}
+	if !wasDetached {
+		// Initial dispatch: record StartedAt.
+		e.StartedAt = &now
+	} else {
+		// Re-attach: clear the detached-at timestamp and mark as attached.
+		e.DetachedAt = 0
+		e.IsAttached = true
 	}
-	onAssign := s.OnAssign
+	var onAssign func(string, string, string)
+	if !wasDetached {
+		// Initial dispatch only: persist to WAL and fire the pubsub hook.
+		// Re-attach (Detached→Running) is a runtime-only state flip; emitting
+		// task_assigned would overwrite StartedAt on WAL replay, and the
+		// OnAssign hook would publish a duplicate TaskAssigned pubsub event.
+		if s.wal != nil {
+			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runnerID, WorktreeDir: worktreeDir, Ts: now.UnixNano()}); err != nil {
+				slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
+			}
+		}
+		onAssign = s.OnAssign
+	}
 	s.mu.Unlock()
 	if onAssign != nil {
 		onAssign(id, runnerID, worktreeDir)
@@ -290,6 +327,8 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 
 // Finish marks the task terminal. exit==0 → Succeeded; non-zero → Failed.
 // It records ExitCode, DiffInfo, and EndedAt.
+// Allowed source states: Running and Detached (the runner process finishes
+// regardless of whether a client is attached).
 func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 	now := time.Now()
 	s.mu.Lock()
@@ -323,6 +362,7 @@ func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 
 // Cancel sets the task to Cancelled and records EndedAt. Idempotent: if the
 // task is already in a terminal state, the call is a no-op.
+// Allowed source states: Queued, Running, and Detached (non-terminal states).
 func (s *TaskStore) Cancel(id string) {
 	now := time.Now()
 	s.mu.Lock()
@@ -356,6 +396,7 @@ func (s *TaskStore) Cancel(id string) {
 // the call is a no-op. Emits a "task_failed" WAL event with the reason string.
 // This is the preferred path for server-internal failures (e.g. runner disconnected)
 // where there is no meaningful exit code.
+// Allowed source states: Queued, Running, and Detached (non-terminal states).
 func (s *TaskStore) MarkFailed(id, reason string) {
 	now := time.Now()
 	s.mu.Lock()
@@ -391,6 +432,88 @@ func (s *TaskStore) SetWorktreeDir(id, wt string) bool {
 		return false
 	}
 	t.WorktreeDir = wt
+	return true
+}
+
+// SetDetachableFlag marks a task as detachable (or not). Should be called
+// immediately after Create when the caller knows the task is being launched
+// with detach support (e.g. OpenInteractiveRequest.Detachable == true).
+// Returns false if the task is not present.
+func (s *TaskStore) SetDetachableFlag(id string, detachable bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return false
+	}
+	t.Detachable = detachable
+	return true
+}
+
+// SetDetached transitions a task from Running → Detached. It records the
+// detach timestamp and clears IsAttached.
+//
+// Detached state is ephemeral (lost on server restart by design — see spec §9).
+// No WAL event is written for this transition.
+//
+// Returns an error if the task is not found or not currently Running.
+func (s *TaskStore) SetDetached(id string) error {
+	now := time.Now()
+	s.mu.Lock()
+	t, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("task %q not found", id)
+	}
+	if t.Status != protocol.TaskStatus_Running {
+		status := t.Status
+		s.mu.Unlock()
+		return fmt.Errorf("SetDetached: task %q status is %v, want Running", id, status)
+	}
+	t.Status = protocol.TaskStatus_Detached
+	t.IsAttached = false
+	t.DetachedAt = uint64(now.UnixNano())
+	s.mu.Unlock()
+	return nil
+}
+
+// MarkAttached updates the IsAttached field for a task. Called by SessionMux
+// hooks when a client attaches or detaches from the interactive session.
+// If attached==true and the task is currently Detached, the status is
+// transitioned back to Running and DetachedAt is cleared.
+// Returns false if the task is not present.
+//
+// Note: no OnAssign hook fires. The pubsub TaskAssigned event is reserved
+// for initial dispatch; re-attach is a runtime-only state change that
+// SessionMux owns. Callers expecting pubsub parity with Assign should not
+// use this path for the initial Queued→Running transition.
+func (s *TaskStore) MarkAttached(id string, attached bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return false
+	}
+	t.IsAttached = attached
+	if attached && t.Status == protocol.TaskStatus_Detached {
+		t.Status = protocol.TaskStatus_Running
+		t.DetachedAt = 0
+	}
+	return true
+}
+
+// SetRingBufferBytes updates the cached ring-buffer size for a task.
+// Called by the SessionMux owner whenever the ring buffer is trimmed or
+// resized. Purely informational — used in task-list display.
+// Returns false if the task is not present.
+func (s *TaskStore) SetRingBufferBytes(id string, n uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return false
+	}
+	t.RingBufferBytes = n
 	return true
 }
 
@@ -504,7 +627,8 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			}
 		}
 	}
-	// Any task still Running after full replay had no Finished event — restart killed it.
+	// Any task still Running after full replay had no Finished event.
+	// Server restart loses the runner connection; Running tasks are forced to Failed.
 	for _, t := range s.tasks {
 		if t.Status == protocol.TaskStatus_Running {
 			t.Status = protocol.TaskStatus_Failed

@@ -33,6 +33,31 @@ type ClearAction struct{}
 type QuitAction struct{}
 type HelpAction struct{}
 
+// SessionNewAction opens a new detachable interactive PTY session.
+// When Detach is true the session is opened and the local stream is closed
+// immediately (Docker-style background start); the task id is printed to
+// cmdresult and the TUI is not suspended.
+type SessionNewAction struct {
+	Repo         string
+	ExtraArgs    []string
+	ResumeTaskID string
+	Detach       bool
+}
+
+// SessionAttachAction re-attaches to an existing detachable session by ID.
+type SessionAttachAction struct {
+	TaskID string
+}
+
+// SessionLsAction lists interactive+detachable tasks in the cmdresult area.
+type SessionLsAction struct{}
+
+// SessionKillAction is an alias for CancelAction targeting a session.
+// It reuses CancelAction so app.go's existing cancel dispatch handles it.
+type SessionKillAction struct {
+	IDPrefix string
+}
+
 // RepoAction switches the TUI session's default repo. Subsequent submit
 // popups, interactive opens, and slash-command --repo defaults all use the
 // new value. Per-action --repo overrides still win on a single call.
@@ -49,14 +74,18 @@ type InteractiveAction struct {
 	ResumeTaskID string
 }
 
-func (SubmitAction) isAction()      {}
-func (CancelAction) isAction()      {}
-func (PruneAction) isAction()       {}
-func (ClearAction) isAction()       {}
-func (QuitAction) isAction()        {}
-func (HelpAction) isAction()        {}
-func (RepoAction) isAction()        {}
-func (InteractiveAction) isAction() {}
+func (SubmitAction) isAction()        {}
+func (CancelAction) isAction()        {}
+func (PruneAction) isAction()         {}
+func (ClearAction) isAction()         {}
+func (QuitAction) isAction()          {}
+func (HelpAction) isAction()          {}
+func (RepoAction) isAction()          {}
+func (InteractiveAction) isAction()   {}
+func (SessionNewAction) isAction()    {}
+func (SessionAttachAction) isAction() {}
+func (SessionLsAction) isAction()     {}
+func (SessionKillAction) isAction()   {}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -86,6 +115,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseRepo(tokens[1:])
 	case "interactive":
 		return parseInteractive(tokens[1:], defaultRepo)
+	case "session":
+		return parseSession(tokens[1:], defaultRepo)
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
 	}
@@ -172,4 +203,49 @@ func parsePrune(args []string) (Action, error) {
 		return nil, fmt.Errorf("prune: %w", err)
 	}
 	return PruneAction{Before: *before}, nil
+}
+
+// parseSession dispatches session sub-verbs: new / attach / ls / kill.
+func parseSession(args []string, defaultRepo string) (Action, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("session: sub-verb required (new | attach <id> | ls | kill <id>)")
+	}
+	verb := args[0]
+	rest := args[1:]
+	switch verb {
+	case "new":
+		fs := flag.NewFlagSet("session new", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
+		detach := fs.Bool("detach", false, "start the session and immediately detach (run in background, print task id)")
+		var extra repeatableStrings
+		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
+		if err := fs.Parse(rest); err != nil {
+			return nil, fmt.Errorf("session new: %w", err)
+		}
+		if fs.NArg() > 0 {
+			return nil, fmt.Errorf("session new: unexpected argument %q", fs.Arg(0))
+		}
+		return SessionNewAction{Repo: defaultRepo, ExtraArgs: []string(extra), ResumeTaskID: *resume, Detach: *detach}, nil
+	case "attach":
+		if len(rest) == 0 {
+			return nil, fmt.Errorf("session attach: task id required")
+		}
+		if len(rest) > 1 {
+			return nil, fmt.Errorf("session attach: too many arguments (got %d, want 1)", len(rest))
+		}
+		return SessionAttachAction{TaskID: rest[0]}, nil
+	case "ls":
+		return SessionLsAction{}, nil
+	case "kill":
+		if len(rest) == 0 {
+			return nil, fmt.Errorf("session kill: task id required")
+		}
+		if len(rest) > 1 {
+			return nil, fmt.Errorf("session kill: too many arguments (got %d, want 1)", len(rest))
+		}
+		return SessionKillAction{IDPrefix: rest[0]}, nil
+	default:
+		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id>)", verb)
+	}
 }

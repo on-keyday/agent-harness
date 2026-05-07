@@ -44,6 +44,16 @@ type Config struct {
 	// root and static/* below. Typically supplied via //go:embed from
 	// cmd/harness-server.
 	WebUIFS fs.FS
+
+	// DetachRingBufferSize is the byte capacity of the per-session scrollback
+	// ring buffer for detachable sessions. 0 means use the TaskHandler default
+	// (1 MiB).
+	DetachRingBufferSize int64
+
+	// DetachIdleTimeout, when > 0, causes Detached sessions that have been
+	// idle for longer than this duration to be automatically cancelled. 0
+	// disables idle cancellation (default).
+	DetachIdleTimeout time.Duration
 }
 
 // Server wires all components together and manages the main accept loop.
@@ -51,6 +61,7 @@ type Server struct {
 	cfg           Config
 	registry      *Registry
 	tasks         *TaskStore
+	sessions      *SessionRegistry
 	pubsub        *pubsub.PubSub
 	scheduler     *Scheduler
 	runnerHandler *RunnerHandler
@@ -75,6 +86,7 @@ func New(cfg Config) *Server {
 		cfg:      cfg,
 		registry: NewRegistry(),
 		tasks:    NewTaskStore(),
+		sessions: NewSessionRegistry(),
 		pubsub:   pubsub.NewPubSub(cfg.Logger),
 	}
 	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
@@ -89,10 +101,12 @@ func New(cfg Config) *Server {
 		logsDir = filepath.Join(s.cfg.DataDir, "logs")
 	}
 	s.taskHandler = &TaskHandler{
-		Tasks:    s.tasks,
-		Registry: s.registry,
-		OnChange: s.scheduler.Tick,
-		LogsDir:  logsDir,
+		Tasks:          s.tasks,
+		Registry:       s.registry,
+		Sessions:       s.sessions,
+		OnChange:       s.scheduler.Tick,
+		LogsDir:        logsDir,
+		RingBufferSize: int(cfg.DetachRingBufferSize),
 		PruneFn: func(cutoff time.Time) int {
 			return s.tasks.PruneTerminal(cutoff, logsDir)
 		},
@@ -192,6 +206,10 @@ func New(cfg Config) *Server {
 // If cfg.DataDir is empty, WAL setup is skipped entirely (safe for tests that
 // do not need persistence).
 func (s *Server) Run(ctx context.Context) error {
+	// Wire the server root context into the task handler so that SessionMux
+	// instances created for detachable sessions are cancelled when the server shuts down.
+	s.taskHandler.Ctx = ctx
+
 	if s.cfg.DataDir != "" {
 		if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
 			return fmt.Errorf("create data dir: %w", err)
@@ -204,6 +222,13 @@ func (s *Server) Run(ctx context.Context) error {
 			s.cfg.Logger.Error("WAL replay failed", "path", walPath, "err", rerr)
 		} else if events != nil {
 			s.tasks.ReplayEvents(events)
+		}
+		// Detached survivors cannot be restored: SessionMux state was in-memory.
+		// Per spec §9, mark them Cancelled.
+		for _, t := range s.tasks.List(0) {
+			if t.Status == protocol.TaskStatus_Detached {
+				s.tasks.Cancel(t.ID)
+			}
 		}
 		wal, err := OpenWAL(walPath)
 		if err != nil {
@@ -272,6 +297,12 @@ func (s *Server) Run(ctx context.Context) error {
 			}()
 		}
 	}
+
+	// Start idle-detach sweeper when a timeout is configured.
+	if s.cfg.DetachIdleTimeout > 0 {
+		go s.runDetachIdleSweeper(ctx)
+	}
+
 	const shutdownGracePeriod = 2 * time.Second
 
 	mux := http.NewServeMux()
@@ -472,4 +503,41 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	}
 	_, _, err = entry.Conn.SendMessage(msg)
 	return err
+}
+
+// runDetachIdleSweeper cancels any session that has been Detached longer than
+// DetachIdleTimeout. Runs until ctx is canceled. The sweep interval is set
+// to a fraction of the timeout, with a sensible floor.
+func (s *Server) runDetachIdleSweeper(ctx context.Context) {
+	interval := s.cfg.DetachIdleTimeout / 4
+	if interval < 30*time.Second {
+		interval = 30 * time.Second
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			s.sweepIdleDetached(now)
+		}
+	}
+}
+
+// sweepIdleDetached cancels Detached tasks whose DetachedAt timestamp is older
+// than cfg.DetachIdleTimeout relative to now.
+func (s *Server) sweepIdleDetached(now time.Time) {
+	cutoff := uint64(now.Add(-s.cfg.DetachIdleTimeout).UnixNano())
+	for _, info := range s.tasks.List(0) {
+		if info.Status != protocol.TaskStatus_Detached {
+			continue
+		}
+		if info.DetachedAt > 0 && info.DetachedAt < cutoff {
+			if mux := s.sessions.Get(info.ID); mux != nil {
+				mux.Stop()
+			}
+			s.tasks.Cancel(info.ID)
+		}
+	}
 }

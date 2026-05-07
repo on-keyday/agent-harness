@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // --- tea.Cmd factories using the persistent cli.Client ---
@@ -150,5 +151,32 @@ func RefreshSnapshot(c *cli.Client) tea.Cmd {
 			return SnapshotMsg{Err: err}
 		}
 		return SnapshotMsg{Runners: lr.Runners, Tasks: lr.Tasks}
+	}
+}
+
+// SessionListMsg carries the result of a session ls command: a slice of
+// interactive+detachable tasks, or an error if the snapshot failed.
+type SessionListMsg struct {
+	Tasks []protocol.TaskInfo
+	Err   error
+}
+
+// DoSessionList fetches a snapshot and returns only interactive+detachable
+// tasks in a SessionListMsg.
+func DoSessionList(c *cli.Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		lr, err := c.Snapshot(ctx)
+		if err != nil {
+			return SessionListMsg{Err: err}
+		}
+		var sessions []protocol.TaskInfo
+		for _, t := range lr.Tasks {
+			if t.Kind == protocol.TaskKind_Interactive && t.Detachable() {
+				sessions = append(sessions, t)
+			}
+		}
+		return SessionListMsg{Tasks: sessions}
 	}
 }

@@ -66,7 +66,7 @@ type Config struct {
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / interactive / cancel / prune / repo / clear / help / quit"
+	cmd.Placeholder = "submit / interactive / session / cancel / prune / repo / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -244,6 +244,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return InteractiveDoneMsg{TaskID: msg.TaskID, Err: err}
 		})
 
+	case SessionStartedMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("session start failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		short := msg.TaskID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		a.cmdresult.Append(OKStyle.Render("started detached: ") + short)
+		return a, RefreshSnapshot(a.client)
+
 	case InteractiveDoneMsg:
 		short := msg.TaskID
 		if len(short) > 12 {
@@ -255,6 +267,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(OKStyle.Render("interactive ended: ") + short)
 		}
 		return a, RefreshSnapshot(a.client)
+
+	case SessionListMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("session ls: " + msg.Err.Error()))
+			return a, nil
+		}
+		if len(msg.Tasks) == 0 {
+			a.cmdresult.Append("session ls: no detachable sessions")
+			return a, nil
+		}
+		for _, t := range msg.Tasks {
+			id := FormatTaskID(t.Id)
+			short := id
+			if len(short) > 12 {
+				short = short[:12]
+			}
+			attached := ""
+			if t.IsAttached() {
+				attached = " [attached]"
+			}
+			a.cmdresult.Append(fmt.Sprintf("%s  %-10s%s  %s", short, t.Status.String(), attached, string(t.RepoPath)))
+		}
+		return a, nil
 
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -339,12 +374,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.popup.Open()
 			return a, nil
 		}
-		// `i` opens an interactive PTY claude session in the default repo.
-		// The RPC + tea.Exec dance is two-stage: the Cmd dispatches the RPC,
-		// the response arrives as InteractiveReadyMsg, and Update returns
-		// tea.Exec then to actually suspend the program and run the shell.
+		// `i` attaches to a Detached+Detachable task when one is selected in
+		// the tasks panel, otherwise opens a new interactive PTY session in
+		// the default repo. The RPC + tea.Exec dance is two-stage: the Cmd
+		// dispatches the RPC, the response arrives as InteractiveReadyMsg,
+		// and Update returns tea.Exec then to actually suspend the TUI.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
+			if a.focus == focusTasks {
+				if t := a.tasks.SelectedTask(); t != nil &&
+					t.Status == protocol.TaskStatus_Detached && t.Detachable() {
+					return a, DoAttachSession(a.client, a.tasks.SelectedID())
+				}
+			}
 			return a, DoOpenInteractive(a.client, a.defaultRepo)
+		}
+		// `S` (capital) opens a new detachable interactive PTY session in the
+		// default repo (equivalent to `harness-cli session new`).
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo, nil, "")
 		}
 		// `d` opens the detail popup for the focused row (runners or tasks).
 		if !logsEditing && msg.String() == "d" {
@@ -473,10 +520,7 @@ func (a *App) View() string {
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, runnersView, tasksView)
 
-	logHeight := a.height - 22
-	if logHeight < 5 {
-		logHeight = 5
-	}
+	logHeight := max(a.height-22, 5)
 	a.logs.SetSize(a.width-4, logHeight-2) // -2 for the panel border rows
 	logBorder := PanelStyle
 	if a.logs.IsFocused() {
@@ -496,7 +540,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · i interactive · d detail · c cancel · q quit"
+		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · S session · i interactive/attach · d detail · c cancel · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -586,6 +630,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, nil
 	case HelpAction:
 		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / prune [--before=DUR] / repo <path> / clear / help / quit")
+		a.cmdresult.Append("session new [--detach]      - open detachable interactive session (--detach: background, print id)")
+		a.cmdresult.Append("session attach <id>         - reattach to a session")
+		a.cmdresult.Append("session ls                  - list detachable sessions")
+		a.cmdresult.Append("session kill <id>           - terminate a session")
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server
@@ -625,6 +673,26 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	case PruneAction:
 		a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
 		return a, DoPruneTasks(a.client, v.Before)
+	case SessionNewAction:
+		repo := v.Repo
+		if repo == "" {
+			repo = a.defaultRepo
+		}
+		if v.Detach {
+			return a, DoStartDetachedSession(a.client, repo, v.ExtraArgs, v.ResumeTaskID)
+		}
+		return a, DoOpenDetachableSession(a.client, repo, v.ExtraArgs, v.ResumeTaskID)
+	case SessionAttachAction:
+		return a, DoAttachSession(a.client, v.TaskID)
+	case SessionLsAction:
+		return a, DoSessionList(a.client)
+	case SessionKillAction:
+		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoCancel(a.client, v.IDPrefix, full)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil

@@ -63,8 +63,9 @@ type Sender interface {
 // taskEntry holds the per-task cancellation function, the repo it runs
 // under, and the (debounced) stdin-wake state.
 type taskEntry struct {
-	cancel   context.CancelFunc
-	repoPath string
+	cancel     context.CancelFunc
+	repoPath   string
+	detachable bool
 
 	// wakeWrite is the closure handed to OnStdinWriter — writes bytes
 	// directly to the running claude's stdin pipe. nil until the agent
@@ -389,6 +390,8 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
 	}
 
+	log.Info("handleOpenExec", "task_id", taskIDHex, "repo", repoPath, "detachable", oer.Detachable())
+
 	finishWithError := func(code int32, reason string) {
 		log.Error("handleOpenExec: "+reason, "task_id", taskIDHex, "repo", repoPath)
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
@@ -431,7 +434,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	taskCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.initMaps()
-	s.tasks[taskIDHex] = &taskEntry{cancel: cancel, repoPath: repoPath}
+	s.tasks[taskIDHex] = &taskEntry{cancel: cancel, repoPath: repoPath, detachable: oer.Detachable()}
 	s.mu.Unlock()
 	defer func() {
 		cancel()
