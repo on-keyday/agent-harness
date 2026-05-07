@@ -284,16 +284,32 @@ type CommandExecutionStream struct {
 	stderrPipe *io.PipeReader
 }
 
+// openRshellDebugLog returns a *slog.Logger that writes to ./harness-rshell.log
+// in CWD, bypassing slog.Default (which in harness-tui routes into bubbletea
+// and breaks tea.Exec rendering). On open failure, falls back to io.Discard.
+// File handle is intentionally leaked — debug-only, removed after diagnosis.
+func openRshellDebugLog() *slog.Logger {
+	if logF, fileErr := os.OpenFile("harness-rshell.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); fileErr == nil {
+		return slog.New(slog.NewTextHandler(logF, nil))
+	}
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 func NewCommandExecutionStream(stream trsf.BidirectionalStream) *CommandExecutionStream {
 	stdoutPipeR, stdoutPipeW := io.Pipe()
 	stderrPipeR, stderrPipeW := io.Pipe()
+	dbg := openRshellDebugLog()
 	go func() {
 		defer stdoutPipeW.Close()
 		defer stderrPipeW.Close()
+		dbg.Info("CmdExecStream: receiver goroutine started")
+		defer dbg.Info("CmdExecStream: receiver goroutine returning")
+		frameCount := 0
 		for {
 			hdr := &frame.Frame{}
 			err := hdr.Read(stream)
 			if err != nil {
+				dbg.Info("CmdExecStream: hdr.Read returned error", "err", err, "isEOF", errors.Is(err, io.EOF), "framesProcessed", frameCount)
 				if errors.Is(err, io.EOF) {
 					return
 				}
@@ -301,6 +317,7 @@ func NewCommandExecutionStream(stream trsf.BidirectionalStream) *CommandExecutio
 				stderrPipeW.CloseWithError(err)
 				return
 			}
+			frameCount++
 			switch hdr.Header.Type {
 			case frame.FrameType_Stdout:
 				if hdr.Header.Len == 0 {
@@ -443,15 +460,7 @@ func (w *CommandExecutionStream) RemoteShell() error {
 
 	stdin := w.Stdin()
 	stdout := w.Stdout()
-	// Debug instrumentation: harness-tui's slog.Default routes to bubbletea
-	// via SlogTailHandler, which corrupts the screen during tea.Exec. Write
-	// directly to a file in CWD instead.
-	var dbg *slog.Logger
-	if logF, fileErr := os.OpenFile("harness-rshell.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); fileErr == nil {
-		dbg = slog.New(slog.NewTextHandler(logF, nil))
-	} else {
-		dbg = slog.New(slog.NewTextHandler(io.Discard, nil))
-	}
+	dbg := openRshellDebugLog()
 	dbg.Info("RemoteShell: entered, starting copy goroutines")
 	go func() {
 		_, copyErr := io.Copy(stdin, os.Stdin)
