@@ -66,7 +66,7 @@ type Config struct {
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / interactive / cancel / prune / repo / clear / help / quit"
+	cmd.Placeholder = "submit / interactive / session / cancel / prune / repo / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -255,6 +255,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(OKStyle.Render("interactive ended: ") + short)
 		}
 		return a, RefreshSnapshot(a.client)
+
+	case SessionListMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("session ls: " + msg.Err.Error()))
+			return a, nil
+		}
+		if len(msg.Tasks) == 0 {
+			a.cmdresult.Append("session ls: no detachable sessions")
+			return a, nil
+		}
+		for _, t := range msg.Tasks {
+			id := FormatTaskID(t.Id)
+			short := id
+			if len(short) > 12 {
+				short = short[:12]
+			}
+			attached := ""
+			if t.IsAttached() {
+				attached = " [attached]"
+			}
+			a.cmdresult.Append(fmt.Sprintf("%s  %-10s%s  %s", short, t.Status.String(), attached, string(t.RepoPath)))
+		}
+		return a, nil
 
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
@@ -598,6 +621,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, nil
 	case HelpAction:
 		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / prune [--before=DUR] / repo <path> / clear / help / quit")
+		a.cmdresult.Append("session new                - open detachable interactive session")
+		a.cmdresult.Append("session attach <id>         - reattach to a session")
+		a.cmdresult.Append("session ls                  - list detachable sessions")
+		a.cmdresult.Append("session kill <id>           - terminate a session")
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server
@@ -637,6 +664,23 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	case PruneAction:
 		a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
 		return a, DoPruneTasks(a.client, v.Before)
+	case SessionNewAction:
+		repo := v.Repo
+		if repo == "" {
+			repo = a.defaultRepo
+		}
+		return a, DoOpenDetachableSession(a.client, repo)
+	case SessionAttachAction:
+		return a, DoAttachSession(a.client, v.TaskID)
+	case SessionLsAction:
+		return a, DoSessionList(a.client)
+	case SessionKillAction:
+		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoCancel(a.client, v.IDPrefix, full)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil
