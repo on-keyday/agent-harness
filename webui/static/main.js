@@ -50,7 +50,7 @@ const POLL_INTERVAL_MS = 5000;
   const taskList     = document.getElementById("task-list");
 
   // currentClaudeArgs returns the shell-tokenised args from the input box.
-  // Reused by submit (cmdline) and Attach so the user only edits one field.
+  // Reused by submit (cmdline) and Open buttons so the user only edits one field.
   const currentClaudeArgs = () => {
     if (!claudeArgs) return [];
     const raw = claudeArgs.value.trim();
@@ -178,33 +178,32 @@ const POLL_INTERVAL_MS = 5000;
 
   const attachedTask = document.getElementById("attached-task");
 
-  const detachableCheckbox = document.getElementById("detachable");
-  const resumeTaskIdInput  = document.getElementById("resume-task-id");
-
   // showError appends an error into attachedTask for inline feedback.
   const showError = (err) => {
     attachedTask.textContent = `error: ${err.message || err}`;
   };
 
-  document.getElementById("attach").addEventListener("click", async () => {
-    const repo = runnerSelect.value || "";
-    const resumeTaskId = resumeTaskIdInput ? resumeTaskIdInput.value.trim() : "";
-    // repo only required on fresh attach — resume reuses the existing task's
-    // worktree and ignores the dropdown.
-    if (!repo && !resumeTaskId) {
-      attachedTask.textContent = "";
-      alert("select a runner from the dropdown first (or fill in Resume task id)");
+  // composeRequest assembles the shared fields from the Compose section.
+  const composeRequest = () => {
+    return {
+      repo: runnerSelect.value || "",
+      host: hostSelect ? (hostSelect.value || "") : "",
+      claudeArgs: currentClaudeArgs(),
+      resumeTaskId: currentResumeTaskID(),
+    };
+  };
+
+  // openInteractive is the shared helper for one-shot and detachable opens.
+  const openInteractive = async (detachable, label) => {
+    const req = composeRequest();
+    if (!req.repo && !req.resumeTaskId) {
+      alert("select a repo or fill in Resume task id");
       return;
     }
-    const host = hostSelect ? (hostSelect.value || "") : "";
-    const claudeArgsList = currentClaudeArgs();
-    const detachable = detachableCheckbox ? detachableCheckbox.checked : false;
-    // Reset xterm so the new session starts on a clean canvas (no leftover
-    // output, escape state, or scrollback from the previous attach).
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({ repo, host, claudeArgs: claudeArgsList, resumeTaskId, detachable });
-      attachedTask.textContent = `attached: ${taskID}${detachable ? " (detachable)" : ""}`;
+      const taskID = await window.harness.startInteractive({...req, detachable});
+      attachedTask.textContent = `attached: ${taskID} (${label})`;
       term.focus();
     } catch (e) {
       attachedTask.textContent = "";
@@ -212,13 +211,18 @@ const POLL_INTERVAL_MS = 5000;
     }
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
-  });
-  document.getElementById("detach").addEventListener("click", () => {
+  };
+
+  document.getElementById("open-oneshot").addEventListener("click", () => openInteractive(false, "one-shot"));
+  document.getElementById("open-detachable").addEventListener("click", () => openInteractive(true, "detachable"));
+
+  document.getElementById("stop-streaming").addEventListener("click", () => {
     window.harness.detachInteractive();
     attachedTask.textContent = "";
   });
+
   document.getElementById("reattach").addEventListener("click", async () => {
-    const id = document.getElementById("session-id").value.trim();
+    const id = document.getElementById("reattach-session-id").value.trim();
     if (!id) {
       attachedTask.textContent = "(session id required)";
       return;

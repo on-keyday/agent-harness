@@ -15,23 +15,25 @@
   <main>
     <section id="runners">
       <h2>Runners</h2>
+      <pre id="runner-list"></pre>
+    </section>
+    <section id="tasks">
+      <h2>Tasks</h2>
+      <pre id="task-list"></pre>
+    </section>
+    <section id="compose">
+      <h2>Compose</h2>
       <label for="runner-select">Repo:</label>
       <select id="runner-select"><option value="">(no runners)</option></select>
       <label for="host-select">Host pin:</label>
       <select id="host-select"><option value="">(any host)</option></select>
       <br>
       <label for="claude-args-input">Extra claude args (shell-quoted):</label>
-      <input id="claude-args-input" type="text" size="60" placeholder='e.g. --resume <uuid> --add-dir "C:/path"'>
-      <small>appended after runner-global --claude-args; used by both Submit and Attach</small>
+      <input id="claude-args-input" type="text" size="60" placeholder='e.g. --add-dir "C:/path"'>
       <br>
-      <label for="resume-task-input">Resume task id:</label>
+      <label for="resume-task-input">Resume task id (optional):</label>
       <input id="resume-task-input" type="text" size="40" placeholder="32 hex chars; empty = new task" pattern="[0-9a-fA-F]*">
-      <small>reuses the task id + worktree branch so claude's --resume finds its session; repo dropdown is ignored on resume</small>
-      <pre id="runner-list"></pre>
-    </section>
-    <section id="tasks">
-      <h2>Tasks</h2>
-      <pre id="task-list"></pre>
+      <small>Used by Submit, Open one-shot, and Open detachable to reuse a terminal task's id + worktree branch. Repo is ignored on resume.</small>
     </section>
     <section id="cmdline">
       <h2>Command</h2>
@@ -41,16 +43,16 @@
     </section>
     <section id="interactive">
       <h2>Interactive</h2>
-      <button id="attach">Attach selected runner</button>
-      <button id="detach">Detach</button>
-      <label><input type="checkbox" id="detachable"> Detachable</label>
-      <label>Resume task id (optional): <input type="text" id="resume-task-id" placeholder="32 hex" size="36"></label>
-      <div id="attached-task"></div>
-      <div id="reattach-panel">
-        <h3>Reattach to existing session</h3>
-        <input type="text" id="session-id" placeholder="task id (hex)" size="40">
-        <button id="reattach">Reattach</button>
+      <div class="actions">
+        <button id="open-oneshot">Open one-shot interactive</button>
+        <button id="open-detachable">Open detachable session</button>
+        <button id="stop-streaming">Stop streaming</button>
       </div>
+      <div class="actions">
+        <input type="text" id="reattach-session-id" placeholder="session id (hex)" size="40">
+        <button id="reattach">Reattach to session</button>
+      </div>
+      <div id="attached-task"></div>
       <div id="terminal"></div>
     </section>
   </main>
