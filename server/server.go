@@ -51,6 +51,7 @@ type Server struct {
 	cfg           Config
 	registry      *Registry
 	tasks         *TaskStore
+	sessions      *SessionRegistry
 	pubsub        *pubsub.PubSub
 	scheduler     *Scheduler
 	runnerHandler *RunnerHandler
@@ -75,6 +76,7 @@ func New(cfg Config) *Server {
 		cfg:      cfg,
 		registry: NewRegistry(),
 		tasks:    NewTaskStore(),
+		sessions: NewSessionRegistry(),
 		pubsub:   pubsub.NewPubSub(cfg.Logger),
 	}
 	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
@@ -91,6 +93,7 @@ func New(cfg Config) *Server {
 	s.taskHandler = &TaskHandler{
 		Tasks:    s.tasks,
 		Registry: s.registry,
+		Sessions: s.sessions,
 		OnChange: s.scheduler.Tick,
 		LogsDir:  logsDir,
 		PruneFn: func(cutoff time.Time) int {
@@ -192,6 +195,10 @@ func New(cfg Config) *Server {
 // If cfg.DataDir is empty, WAL setup is skipped entirely (safe for tests that
 // do not need persistence).
 func (s *Server) Run(ctx context.Context) error {
+	// Wire the server root context into the task handler so that SessionMux
+	// instances created for detachable sessions are cancelled when the server shuts down.
+	s.taskHandler.Ctx = ctx
+
 	if s.cfg.DataDir != "" {
 		if err := os.MkdirAll(s.cfg.DataDir, 0o755); err != nil {
 			return fmt.Errorf("create data dir: %w", err)

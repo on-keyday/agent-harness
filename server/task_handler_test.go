@@ -499,3 +499,139 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 		t.Fatalf("OpenExec.StreamId=%d want 42 (runner-side stream)", oer.StreamId)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 6: Detachable branch of handleOpenInteractive
+// ---------------------------------------------------------------------------
+
+// TestHandleOpenInteractive_Detachable_RegistersSessionMux verifies that a
+// Detachable=1 request creates and registers a SessionMux, sets the
+// Detachable flag on the task, and returns Ok with the TUI stream ID.
+func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+	now := time.Now()
+
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9200-1"), nextStreamID: 55}
+	h.Registry.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/repo"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+		Conn: runnerConn,
+	})
+
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9201-2"), nextStreamID: 11}
+
+	req := &protocol.OpenInteractiveRequest{Detachable: 1}
+	req.SetRepoPath([]byte("/repo"))
+
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+
+	// TUI stream ID should match the tuiConn's stream.
+	if resp.StreamId != 11 {
+		t.Fatalf("StreamId=%d want 11 (tui-side stream)", resp.StreamId)
+	}
+
+	// Task ID must be non-zero.
+	taskIDHex := hex.EncodeToString(resp.TaskId.Id[:])
+	if taskIDHex == "00000000000000000000000000000000" {
+		t.Fatal("expected non-zero TaskId")
+	}
+
+	// SessionMux must be registered in Sessions.
+	mux := h.Sessions.Get(taskIDHex)
+	if mux == nil {
+		t.Fatalf("Sessions.Get(%q) = nil, want non-nil SessionMux", taskIDHex)
+	}
+
+	// Task must have Detachable flag set.
+	entry, ok := h.Tasks.Get(taskIDHex)
+	if !ok {
+		t.Fatalf("task %q not found in store", taskIDHex)
+	}
+	if !entry.Detachable {
+		t.Errorf("task.Detachable=false, want true")
+	}
+
+	// Task status should be Running (Assign was called).
+	if entry.Status != protocol.TaskStatus_Running {
+		t.Errorf("task.Status=%v want Running", entry.Status)
+	}
+
+	// OpenExec to runner must have Detachable flag set.
+	if len(runnerConn.sent) != 1 {
+		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
+	}
+	raw := runnerConn.sent[0]
+	rr := &protocol.RunnerRequest{}
+	if _, err := rr.Decode(raw[1:]); err != nil {
+		t.Fatalf("decode RunnerRequest: %v", err)
+	}
+	oer := rr.OpenExec()
+	if oer == nil {
+		t.Fatal("OpenExec variant nil")
+	}
+	if !oer.Detachable() {
+		t.Errorf("OpenExecRunnerRequest.Detachable()=false, want true")
+	}
+}
+
+// TestHandleOpenInteractive_Legacy_NoSessionMux verifies that a Detachable=0
+// request does NOT register a SessionMux (the legacy spliceBidi path is used).
+func TestHandleOpenInteractive_Legacy_NoSessionMux(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+	now := time.Now()
+
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-1"), nextStreamID: 77}
+	h.Registry.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/repo"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+		Conn: runnerConn,
+	})
+
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9301-2"), nextStreamID: 22}
+
+	req := &protocol.OpenInteractiveRequest{} // Detachable zero value == 0
+	req.SetRepoPath([]byte("/repo"))
+
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+
+	taskIDHex := hex.EncodeToString(resp.TaskId.Id[:])
+
+	// Sessions registry must remain empty — legacy path does not register a SessionMux.
+	if mux := h.Sessions.Get(taskIDHex); mux != nil {
+		t.Errorf("Sessions.Get(%q) != nil for legacy (Detachable=0) path", taskIDHex)
+	}
+
+	// Task should NOT have Detachable flag set.
+	entry, ok := h.Tasks.Get(taskIDHex)
+	if !ok {
+		t.Fatalf("task %q not found in store", taskIDHex)
+	}
+	if entry.Detachable {
+		t.Errorf("task.Detachable=true for legacy path, want false")
+	}
+
+	// OpenExec to runner must NOT have Detachable flag set.
+	if len(runnerConn.sent) != 1 {
+		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
+	}
+	raw := runnerConn.sent[0]
+	rr := &protocol.RunnerRequest{}
+	if _, err := rr.Decode(raw[1:]); err != nil {
+		t.Fatalf("decode RunnerRequest: %v", err)
+	}
+	oer := rr.OpenExec()
+	if oer == nil {
+		t.Fatal("OpenExec variant nil")
+	}
+	if oer.Detachable() {
+		t.Errorf("OpenExecRunnerRequest.Detachable()=true for legacy path, want false")
+	}
+}
