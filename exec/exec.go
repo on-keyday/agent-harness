@@ -443,12 +443,21 @@ func (w *CommandExecutionStream) RemoteShell() error {
 
 	stdin := w.Stdin()
 	stdout := w.Stdout()
-	slog.Default().Info("RemoteShell: entered, starting copy goroutines")
+	// Debug instrumentation: harness-tui's slog.Default routes to bubbletea
+	// via SlogTailHandler, which corrupts the screen during tea.Exec. Write
+	// directly to a file in CWD instead.
+	var dbg *slog.Logger
+	if logF, fileErr := os.OpenFile("harness-rshell.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); fileErr == nil {
+		dbg = slog.New(slog.NewTextHandler(logF, nil))
+	} else {
+		dbg = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	dbg.Info("RemoteShell: entered, starting copy goroutines")
 	go func() {
 		_, copyErr := io.Copy(stdin, os.Stdin)
-		slog.Default().Info("RemoteShell: stdin copy returned", "err", copyErr)
+		dbg.Info("RemoteShell: stdin copy returned", "err", copyErr)
 	}()
 	_, err = io.Copy(os.Stdout, stdout)
-	slog.Default().Info("RemoteShell: stdout copy returned", "err", err)
+	dbg.Info("RemoteShell: stdout copy returned", "err", err)
 	return err
 }
