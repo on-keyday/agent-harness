@@ -176,8 +176,9 @@ func (r *sendStream) AppendDataContext(ctx context.Context, eof bool, data ...[]
 			return io.EOF
 		}
 		if r.dataInBuffer-r.offset >= r.bufferLimit { // wait for buffer to drain
+			buffered := r.dataInBuffer - r.offset // capture under lock before releasing
 			r.m.Unlock()
-			r.logger.Debug("send stream buffer full, waiting for drain", "stream_id", r.id, "buffered", r.dataInBuffer-r.offset, "buffer_limit", r.bufferLimit)
+			r.logger.Debug("send stream buffer full, waiting for drain", "stream_id", r.id, "buffered", buffered, "buffer_limit", r.bufferLimit)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
