@@ -83,7 +83,20 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 	if err != nil {
 		return nil, fmt.Errorf("ecdh: %w", err)
 	}
-	p := trsf.NewStreams(ctx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, cfg.Logger)
+	// Derive a stream-lifetime ctx that fires either when caller cancels
+	// or when the underlying objproto.Connection signals Done (peer Close,
+	// network error, local Close). trsf.Streams only watches the ctx it
+	// was constructed with, so without this bridge a connection death
+	// would leave blocked recvStream.Read calls hanging forever.
+	streamCtx, streamCancel := context.WithCancel(ctx)
+	go func() {
+		select {
+		case <-conn.Done():
+		case <-ctx.Done():
+		}
+		streamCancel()
+	}()
+	p := trsf.NewStreams(streamCtx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, cfg.Logger)
 
 	c := &Conn{
 		conn:      conn,
@@ -93,8 +106,8 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 		done:      make(chan struct{}),
 		pubTopics: map[string]*pubTopic{},
 	}
-	go trsf.AutoSend(ctx, p, conn, nil)
-	go trsf.AutoPing(ctx, conn, cfg.PingInterval)
+	go trsf.AutoSend(streamCtx, p, conn, nil)
+	go trsf.AutoPing(streamCtx, conn, cfg.PingInterval)
 	return c, nil
 }
 

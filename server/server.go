@@ -370,6 +370,18 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	defer session.Close()
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Bridge objproto.Connection lifetime into connCtx so trsf.Streams
+	// (and the AutoSend / AutoReceive loops) cancel the moment the
+	// connection dies, instead of waiting for AutoReceive's natural
+	// return. Without this, blocked recvStream.Read on any sub-stream
+	// would only unblock once AutoReceive itself has exited.
+	go func() {
+		select {
+		case <-session.Done():
+		case <-connCtx.Done():
+		}
+		cancel()
+	}()
 	p := trsf.NewStreams(connCtx, true, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, session, s.cfg.Logger)
 	subscriber := pubsub.NewSubscriber(session.ConnectionID(), p)
 	defer subscriber.LeaveAll(s.pubsub)
