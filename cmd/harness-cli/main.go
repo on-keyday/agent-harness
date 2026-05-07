@@ -200,6 +200,11 @@ func main() {
 			die(err)
 		}
 
+	case "session":
+		if err := runSession(parseCID(), args); err != nil {
+			die(err)
+		}
+
 	case "agent":
 		if len(args) == 0 {
 			agentUsage()
@@ -262,6 +267,11 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal interactive task id + worktree branch")
+	fmt.Fprintln(os.Stderr, "  session new --repo REPO [--runner HEX | --host NAME | --ip ADDR]")
+	fmt.Fprintln(os.Stderr, "                                      open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "  session attach TASK_ID              reattach to a detached/running session")
+	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: detachable interactive sessions only")
+	fmt.Fprintln(os.Stderr, "  session kill TASK_ID                cancel a session (alias of cancel)")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
 }
