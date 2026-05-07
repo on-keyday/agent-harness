@@ -773,21 +773,32 @@ func TestHandleAttachSession_RunnerUnreachable(t *testing.T) {
 	}
 }
 
-// TestHandleAttachSession_Ok_FromDetached: detachable, Running state, SessionMux present → Ok.
+// TestHandleAttachSession_Ok_FromDetached: detachable, Detached state, SessionMux present → Ok.
+// The task is created as Running then transitioned to Detached via SetDetached,
+// which matches the canonical reattach-from-detached scenario (client disconnect
+// fires onDetach → Tasks.SetDetached).
 func TestHandleAttachSession_Ok_FromDetached(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = NewSessionRegistry()
 
 	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Running)
+	if err := h.Tasks.SetDetached(id); err != nil {
+		t.Fatalf("SetDetached: %v", err)
+	}
 
-	// Build a minimal SessionMux with a noopBidiStream as the runner side.
-	runnerStream := &noopBidiStream{streamID: 99}
+	// Build a minimal SessionMux with a fakeBidiStream as the runner side so
+	// that runnerPump blocks (noopBidiStream returns EOF immediately, which
+	// would race with Attach and report "session_mux: stopped").
+	runnerStream := newFakeStream(t)
 	ring := NewRingBuffer(4096)
 	// Pre-populate the ring with some data so replay_bytes is non-zero.
 	ring.Append([]byte("hello from runner"))
 	mux := NewSessionMux(context.Background(), id, runnerStream, ring, SessionHooks{})
 	h.Sessions.Add(id, mux)
-	defer mux.Stop()
+	defer func() {
+		runnerStream.CloseRead()
+		mux.Stop()
+	}()
 
 	tuiConn := &fakeConn{
 		id:           objproto.MustParseConnectionID("ws:127.0.0.1:9400-1"),

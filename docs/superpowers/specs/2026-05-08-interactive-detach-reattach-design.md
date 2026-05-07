@@ -176,10 +176,10 @@ client          server                       runner
      repo_path :[repo_path_len]u8
      selector :RunnerSelector
      extra_args :ClaudeArgs
-     resume_task_id :TaskID
 +    detachable :u1   # 1 = session new (detach on disconnect),
 +                     # 0 = legacy interactive (kill on disconnect)
 +    reserved :u7
+     resume_task_id :TaskID
 ```
 
 ```diff
