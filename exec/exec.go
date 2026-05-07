@@ -443,7 +443,12 @@ func (w *CommandExecutionStream) RemoteShell() error {
 
 	stdin := w.Stdin()
 	stdout := w.Stdout()
-	go io.Copy(stdin, os.Stdin)
+	slog.Default().Info("RemoteShell: entered, starting copy goroutines")
+	go func() {
+		_, copyErr := io.Copy(stdin, os.Stdin)
+		slog.Default().Info("RemoteShell: stdin copy returned", "err", copyErr)
+	}()
 	_, err = io.Copy(os.Stdout, stdout)
+	slog.Default().Info("RemoteShell: stdout copy returned", "err", err)
 	return err
 }
