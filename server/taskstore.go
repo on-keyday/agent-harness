@@ -329,11 +329,21 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 // It records ExitCode, DiffInfo, and EndedAt.
 // Allowed source states: Running and Detached (the runner process finishes
 // regardless of whether a client is attached).
+// Idempotent: if the task is already terminal, the call is a no-op. This
+// prevents the cancel-then-runner-finishes race from overwriting the
+// user-intent Cancelled status with Succeeded (when SIGTERM caused a clean
+// exit) or Failed.
 func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	// Idempotent: skip if already terminal.
+	switch e.Status {
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
 		s.mu.Unlock()
 		return
 	}
@@ -344,6 +354,7 @@ func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 		finalStatus = protocol.TaskStatus_Failed
 	}
 	e.Status = finalStatus
+	e.IsAttached = false
 	exitCopy := exit
 	e.ExitCode = &exitCopy
 	e.ErrorMsg = errorMsg
@@ -378,6 +389,7 @@ func (s *TaskStore) Cancel(id string) {
 		return
 	}
 	e.Status = protocol.TaskStatus_Cancelled
+	e.IsAttached = false
 	e.EndedAt = &now
 	if s.wal != nil {
 		if err := s.wal.Write(WALEvent{Type: "task_cancelled", TaskID: id, Ts: now.UnixNano()}); err != nil {
@@ -412,6 +424,7 @@ func (s *TaskStore) MarkFailed(id, reason string) {
 		return
 	}
 	e.Status = protocol.TaskStatus_Failed
+	e.IsAttached = false
 	e.EndedAt = &now
 	e.ErrorMsg = []byte(reason)
 	if s.wal != nil {
