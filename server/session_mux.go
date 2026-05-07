@@ -8,6 +8,17 @@ import (
 	"github.com/on-keyday/agent-harness/trsf"
 )
 
+// SessionHooks lets the controller observe SessionMux state transitions.
+// Any field may be nil. Hooks fire from goroutines other than the caller's,
+// so callbacks must be safe to call concurrently with other SessionMux
+// methods (do not call back into the same SessionMux's Stop()/Attach()
+// synchronously without expecting reentrancy).
+type SessionHooks struct {
+	OnAttach func(taskID string)
+	OnDetach func(taskID string)
+	OnStop   func(taskID string)
+}
+
 // SessionMux owns the runner-side bidi stream for a detachable interactive
 // session. It pumps runner output into a RingBuffer, forwards to whatever
 // tuiStream is currently attached, and accepts new client tuiStreams that
@@ -33,28 +44,23 @@ type SessionMux struct {
 }
 
 // NewSessionMux creates a SessionMux and starts the runner pump goroutine.
-// parentCtx cancellation propagates to Stop.
-func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.BidirectionalStream, ring *RingBuffer) *SessionMux {
+// parentCtx cancellation propagates to Stop. Hooks are installed before
+// runnerPump starts, eliminating any race window.
+func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.BidirectionalStream, ring *RingBuffer, hooks SessionHooks) *SessionMux {
 	ctx, cancel := context.WithCancel(parentCtx)
 	m := &SessionMux{
-		ctx:     ctx,
-		cancel:  cancel,
-		taskID:  taskID,
-		runner:  runner,
-		ring:    ring,
-		stopped: make(chan struct{}),
+		ctx:      ctx,
+		cancel:   cancel,
+		taskID:   taskID,
+		runner:   runner,
+		ring:     ring,
+		stopped:  make(chan struct{}),
+		onAttach: hooks.OnAttach,
+		onDetach: hooks.OnDetach,
+		onStop:   hooks.OnStop,
 	}
 	go m.runnerPump()
 	return m
-}
-
-// SetHooks registers lifecycle callbacks (called outside the mutex).
-func (m *SessionMux) SetHooks(onAttach, onDetach, onStop func(taskID string)) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.onAttach = onAttach
-	m.onDetach = onDetach
-	m.onStop = onStop
 }
 
 // runnerPump reads from the runner stream, appends to the ring, and
@@ -103,7 +109,6 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 	m.tui = tui
 	tuiCtx, tuiCancel := context.WithCancel(m.ctx)
 	m.tuiCancel = tuiCancel
-	onAttach := m.onAttach
 	m.mu.Unlock()
 
 	// Force-close the previous tui (takeover).
@@ -126,8 +131,8 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 		}
 	}
 
-	if onAttach != nil {
-		onAttach(m.taskID)
+	if m.onAttach != nil {
+		m.onAttach(m.taskID)
 	}
 
 	go m.tuiPump(tuiCtx, tui)
@@ -144,6 +149,12 @@ func (m *SessionMux) tuiPump(ctx context.Context, tui trsf.BidirectionalStream) 
 		}
 		data, eof, err := tui.ReadDirect(maxRead)
 		if len(data) > 0 {
+			// tuiPump: client → runner forward.
+			// On runner write failure, the entire session is unrecoverable (peer runner
+			// gone or wire error), so we Stop the whole mux. We do NOT fire onDetach
+			// here — onDetach is for "client left, runner alive" transitions only.
+			// onStop will fire from Stop() and the controller's transition rule will
+			// move the task to a terminal state (Failed via runner_unreachable etc).
 			if werr := m.runner.AppendData(false, data); werr != nil {
 				m.Stop()
 				return
@@ -191,9 +202,6 @@ func (m *SessionMux) IsAttached() bool {
 // RingBufferLen returns the number of bytes currently stored in the ring buffer.
 func (m *SessionMux) RingBufferLen() int { return m.ring.Len() }
 
-// RingBufferBytes returns a snapshot of the ring buffer contents.
-func (m *SessionMux) RingBufferBytes() []byte { return m.ring.Snapshot() }
-
 // Stop shuts down the mux: cancels the context, closes both the tui (if any)
 // and the runner stream, and fires onStop. Idempotent.
 func (m *SessionMux) Stop() {
@@ -206,14 +214,13 @@ func (m *SessionMux) Stop() {
 			m.tuiCancel()
 			m.tuiCancel = nil
 		}
-		onStop := m.onStop
 		m.mu.Unlock()
 		if tui != nil {
 			_ = tui.CloseBoth()
 		}
 		_ = m.runner.CloseBoth()
-		if onStop != nil {
-			onStop(m.taskID)
+		if m.onStop != nil {
+			m.onStop(m.taskID)
 		}
 		close(m.stopped)
 	})

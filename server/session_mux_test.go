@@ -12,6 +12,8 @@ import (
 	"github.com/on-keyday/agent-harness/trsf"
 )
 
+var _ trsf.BidirectionalStream = (*fakeBidiStream)(nil)
+
 // fakeBidiStream is a test double for trsf.BidirectionalStream.
 // It supports queuing bytes for ReadDirect, capturing writes, and
 // simulating client-side EOF via CloseRead.
@@ -24,18 +26,16 @@ type fakeBidiStream struct {
 	readCond *sync.Cond
 	readEOF  bool // set by CloseRead
 
-	writeMu  sync.Mutex
-	written  []byte
-	writeCh  chan struct{} // closed or signalled on each Write
+	writeMu sync.Mutex
+	written []byte
 
 	closed atomic.Bool
 }
 
-func newFakeStream(t *testing.T, _ int) *fakeBidiStream {
+func newFakeStream(t *testing.T) *fakeBidiStream {
 	t.Helper()
 	f := &fakeBidiStream{
-		t:       t,
-		writeCh: make(chan struct{}, 256),
+		t: t,
 	}
 	f.readCond = sync.NewCond(&f.mu)
 	return f
@@ -97,10 +97,6 @@ func (f *fakeBidiStream) Write(p []byte) (int, error) {
 	f.writeMu.Lock()
 	f.written = append(f.written, p...)
 	f.writeMu.Unlock()
-	select {
-	case f.writeCh <- struct{}{}:
-	default:
-	}
 	return len(p), nil
 }
 
@@ -208,13 +204,13 @@ func TestSessionMux_AttachReplaysRingBuffer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	runnerStream := newFakeStream(t, 100)
-	mux := NewSessionMux(ctx, "task-abc", runnerStream, NewRingBuffer(32))
+	runnerStream := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task-abc", runnerStream, NewRingBuffer(32), SessionHooks{})
 
 	runnerStream.QueueRead([]byte("preattach payload"))
 	waitFor(t, func() bool { return mux.RingBufferLen() == len("preattach payload") })
 
-	tui := newFakeStream(t, 100)
+	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -229,10 +225,10 @@ func TestSessionMux_DetachKeepsRunnerStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	runnerStream := newFakeStream(t, 100)
-	mux := NewSessionMux(ctx, "task", runnerStream, NewRingBuffer(64))
+	runnerStream := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runnerStream, NewRingBuffer(64), SessionHooks{})
 
-	tui := newFakeStream(t, 100)
+	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
@@ -252,15 +248,15 @@ func TestSessionMux_AttachTakeover(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	runner := newFakeStream(t, 100)
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(32))
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(32), SessionHooks{})
 
-	first := newFakeStream(t, 100)
+	first := newFakeStream(t)
 	if err := mux.Attach(ctx, first); err != nil {
 		t.Fatalf("first Attach: %v", err)
 	}
 
-	second := newFakeStream(t, 100)
+	second := newFakeStream(t)
 	if err := mux.Attach(ctx, second); err != nil {
 		t.Fatalf("second Attach: %v", err)
 	}
