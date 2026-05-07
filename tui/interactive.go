@@ -43,6 +43,20 @@ func DoOpenInteractiveWithHost(c *cli.Client, repo, host string) tea.Cmd {
 	return DoOpenInteractiveWithOpts(c, repo, host, nil, "")
 }
 
+// DoOpenDetachableSession opens a new detachable interactive session (equivalent
+// to `harness-cli session new`). The session persists after the TUI detaches and
+// can be re-attached via DoAttachSession / `i` on a Detached task.
+func DoOpenDetachableSession(c *cli.Client, repo string) tea.Cmd {
+	return func() tea.Msg {
+		sel, err := cli.BuildSelector(cli.SelectorOpts{})
+		if err != nil {
+			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
+		}
+		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, nil, "", true)
+		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
+	}
+}
+
 // DoOpenInteractiveWithOpts is the full-featured form: optional hostname
 // pin, per-task extraArgs (forwarded verbatim), and optional resumeTaskID
 // (32-hex; "" = new task) for reusing an existing terminal interactive
@@ -56,6 +70,20 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 		}
 		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, false)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
+	}
+}
+
+// DoAttachSession re-attaches to an existing detachable interactive task. It
+// calls client.AttachSession, then posts InteractiveReadyMsg so the existing
+// tea.Exec path in App.Update can suspend the TUI and run the PTY splice
+// (identical flow to DoOpenInteractiveWithOpts).
+func DoAttachSession(c *cli.Client, taskIDHex string) tea.Cmd {
+	return func() tea.Msg {
+		stream, _, err := c.AttachSession(context.Background(), taskIDHex)
+		if err != nil {
+			return InteractiveReadyMsg{Err: fmt.Errorf("attach session: %w", err)}
+		}
+		return InteractiveReadyMsg{Stream: stream, TaskID: taskIDHex}
 	}
 }
 

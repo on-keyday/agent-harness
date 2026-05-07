@@ -339,12 +339,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.popup.Open()
 			return a, nil
 		}
-		// `i` opens an interactive PTY claude session in the default repo.
-		// The RPC + tea.Exec dance is two-stage: the Cmd dispatches the RPC,
-		// the response arrives as InteractiveReadyMsg, and Update returns
-		// tea.Exec then to actually suspend the program and run the shell.
+		// `i` attaches to a Detached+Detachable task when one is selected in
+		// the tasks panel, otherwise opens a new interactive PTY session in
+		// the default repo. The RPC + tea.Exec dance is two-stage: the Cmd
+		// dispatches the RPC, the response arrives as InteractiveReadyMsg,
+		// and Update returns tea.Exec then to actually suspend the TUI.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
+			if a.focus == focusTasks {
+				if t := a.tasks.SelectedTask(); t != nil &&
+					t.Status == protocol.TaskStatus_Detached && t.Detachable() {
+					return a, DoAttachSession(a.client, a.tasks.SelectedID())
+				}
+			}
 			return a, DoOpenInteractive(a.client, a.defaultRepo)
+		}
+		// `S` (capital) opens a new detachable interactive PTY session in the
+		// default repo (equivalent to `harness-cli session new`).
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo)
 		}
 		// `d` opens the detail popup for the focused row (runners or tasks).
 		if !logsEditing && msg.String() == "d" {
@@ -496,7 +508,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · i interactive · d detail · c cancel · q quit"
+		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · S session · i interactive/attach · d detail · c cancel · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
