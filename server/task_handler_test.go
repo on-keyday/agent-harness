@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -521,7 +522,8 @@ func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
 
 	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9201-2"), nextStreamID: 11}
 
-	req := &protocol.OpenInteractiveRequest{Detachable: 1}
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetDetachable(true)
 	req.SetRepoPath([]byte("/repo"))
 
 	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
@@ -633,5 +635,183 @@ func TestHandleOpenInteractive_Legacy_NoSessionMux(t *testing.T) {
 	}
 	if oer.Detachable() {
 		t.Errorf("OpenExecRunnerRequest.Detachable()=true for legacy path, want false")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 7: handleAttachSession error paths and Ok path
+// ---------------------------------------------------------------------------
+
+// makeDetachableTask is a helper that injects a task entry directly into the
+// TaskStore with the given status, Kind=Interactive, and Detachable=true.
+// Returns the hex task ID.
+func makeDetachableTask(t *testing.T, tasks *TaskStore, status protocol.TaskStatus) string {
+	t.Helper()
+	var rawID [16]byte
+	rawID[0] = 0xDE
+	rawID[1] = 0x7A
+	rawID[14] = byte(status)
+	rawID[15] = 0xCC
+	id := hex.EncodeToString(rawID[:])
+	tasks.mu.Lock()
+	tasks.tasks[id] = &TaskEntry{
+		ID:         id,
+		RepoPath:   "/repo",
+		Status:     status,
+		Kind:       protocol.TaskKind_Interactive,
+		Detachable: true,
+	}
+	tasks.order = append(tasks.order, id)
+	tasks.mu.Unlock()
+	return id
+}
+
+// taskIDFromHexStr converts a hex string to protocol.TaskID for test requests.
+func taskIDFromHexStr(t *testing.T, idHex string) protocol.TaskID {
+	t.Helper()
+	var tid protocol.TaskID
+	raw, err := hex.DecodeString(idHex)
+	if err != nil {
+		t.Fatalf("hex.DecodeString(%q): %v", idHex, err)
+	}
+	copy(tid.Id[:], raw)
+	return tid
+}
+
+// TestHandleAttachSession_NotFound: unknown task ID → NotFound.
+func TestHandleAttachSession_NotFound(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	var rawID [16]byte
+	rawID[0] = 0xFF
+	req := &protocol.AttachSessionRequest{TaskId: protocol.TaskID{Id: rawID}}
+
+	resp := h.handleAttachSession(&fakeConn{}, req)
+	if resp.Status != protocol.AttachSessionStatus_NotFound {
+		t.Fatalf("status=%v want NotFound", resp.Status)
+	}
+}
+
+// TestHandleAttachSession_NotInteractive: oneshot task → NotInteractive.
+func TestHandleAttachSession_NotInteractive(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	var rawID [16]byte
+	rawID[0] = 0xA1
+	id := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[id] = &TaskEntry{
+		ID:       id,
+		RepoPath: "/repo",
+		Status:   protocol.TaskStatus_Running,
+		Kind:     protocol.TaskKind_Oneshot,
+	}
+	h.Tasks.order = append(h.Tasks.order, id)
+	h.Tasks.mu.Unlock()
+
+	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
+	resp := h.handleAttachSession(&fakeConn{}, req)
+	if resp.Status != protocol.AttachSessionStatus_NotInteractive {
+		t.Fatalf("status=%v want NotInteractive", resp.Status)
+	}
+}
+
+// TestHandleAttachSession_NotDetachable: interactive but Detachable=false → NotDetachable.
+func TestHandleAttachSession_NotDetachable(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	var rawID [16]byte
+	rawID[0] = 0xA2
+	id := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[id] = &TaskEntry{
+		ID:         id,
+		RepoPath:   "/repo",
+		Status:     protocol.TaskStatus_Running,
+		Kind:       protocol.TaskKind_Interactive,
+		Detachable: false,
+	}
+	h.Tasks.order = append(h.Tasks.order, id)
+	h.Tasks.mu.Unlock()
+
+	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
+	resp := h.handleAttachSession(&fakeConn{}, req)
+	if resp.Status != protocol.AttachSessionStatus_NotDetachable {
+		t.Fatalf("status=%v want NotDetachable", resp.Status)
+	}
+}
+
+// TestHandleAttachSession_AlreadyTerminal: Cancelled task → AlreadyTerminal.
+func TestHandleAttachSession_AlreadyTerminal(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Cancelled)
+
+	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
+	resp := h.handleAttachSession(&fakeConn{}, req)
+	if resp.Status != protocol.AttachSessionStatus_AlreadyTerminal {
+		t.Fatalf("status=%v want AlreadyTerminal", resp.Status)
+	}
+}
+
+// TestHandleAttachSession_RunnerUnreachable: detachable session but no SessionMux → RunnerUnreachable.
+func TestHandleAttachSession_RunnerUnreachable(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Running)
+	// Do NOT register a SessionMux for this task.
+
+	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
+	resp := h.handleAttachSession(&fakeConn{}, req)
+	if resp.Status != protocol.AttachSessionStatus_RunnerUnreachable {
+		t.Fatalf("status=%v want RunnerUnreachable", resp.Status)
+	}
+}
+
+// TestHandleAttachSession_Ok_FromDetached: detachable, Running state, SessionMux present → Ok.
+func TestHandleAttachSession_Ok_FromDetached(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Running)
+
+	// Build a minimal SessionMux with a noopBidiStream as the runner side.
+	runnerStream := &noopBidiStream{streamID: 99}
+	ring := NewRingBuffer(4096)
+	// Pre-populate the ring with some data so replay_bytes is non-zero.
+	ring.Append([]byte("hello from runner"))
+	mux := NewSessionMux(context.Background(), id, runnerStream, ring, SessionHooks{})
+	h.Sessions.Add(id, mux)
+	defer mux.Stop()
+
+	tuiConn := &fakeConn{
+		id:           objproto.MustParseConnectionID("ws:127.0.0.1:9400-1"),
+		nextStreamID: trsf.StreamID(33),
+	}
+
+	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
+	resp := h.handleAttachSession(tuiConn, req)
+	if resp.Status != protocol.AttachSessionStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+
+	// StreamId must match the stream allocated by tuiConn.
+	if resp.StreamId != 33 {
+		t.Fatalf("StreamId=%d want 33", resp.StreamId)
+	}
+
+	// ReplayBytes must reflect the ring content written before Attach.
+	if resp.ReplayBytes == 0 {
+		t.Errorf("ReplayBytes=0, want >0 (ring had data before Attach)")
+	}
+
+	// tuiConn should have had its stream consumed (nextStreamID reset to 0).
+	if tuiConn.nextStreamID != 0 {
+		t.Errorf("nextStreamID=%d want 0 (stream was allocated)", tuiConn.nextStreamID)
 	}
 }

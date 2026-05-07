@@ -337,10 +337,10 @@ format OpenInteractiveRequest:
     extra_args :ClaudeArgs
     # See SubmitRequest.resume_task_id — same semantics, applied to the
     # interactive path (PTY claude with empty prompt).
-    resume_task_id :TaskID
     detachable :u1    # 1 = session new (detach on disconnect),
                       # 0 = legacy interactive (kill on disconnect)
     reserved :u7
+    resume_task_id :TaskID
 
 enum OpenInteractiveStatus:
     :u8

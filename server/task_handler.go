@@ -187,6 +187,18 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_AttachSession:
+		a := req.Attach()
+		if a == nil {
+			slog.Error("TaskHandler: AttachSession variant nil")
+			return
+		}
+		aresp := h.handleAttachSession(conn, a)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AttachSession, RequestId: req.RequestId}
+		resp.SetAttach(aresp)
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_ClientHello:
 		hello := req.ClientHello()
 		if hello == nil {
@@ -418,7 +430,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
 	h.Tasks.Assign(taskIDHex, runner.ID, "")
-	if req.Detachable == 1 {
+	if req.Detachable() {
 		h.Tasks.SetDetachableFlag(taskIDHex, true)
 	}
 	h.Registry.BindTask(runner.ID, taskIDHex)
@@ -470,7 +482,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		ExtraArgs:  req.ExtraArgs,
 	}
 	oer.SetRepoPath([]byte(repo))
-	if req.Detachable == 1 {
+	if req.Detachable() {
 		oer.SetDetachable(true)
 	}
 	rreq.SetOpenExec(oer)
@@ -482,7 +494,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 
-	if req.Detachable == 1 {
+	if req.Detachable() {
 		// Detachable path: spawn a SessionMux that owns the runner stream and
 		// supports attach/detach of successive TUI streams. The initial TUI
 		// stream (tuiStream) is attached after registration.
@@ -576,6 +588,72 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		Status:   protocol.OpenInteractiveStatus_Ok,
 		TaskId:   tid,
 		StreamId: uint64(tuiStream.ID()),
+	}
+}
+
+// handleAttachSession re-attaches a client to an existing detachable interactive
+// session identified by req.TaskId. It validates that the task exists, is
+// interactive, is detachable, is non-terminal, and has a live SessionMux.
+// On success it allocates a new bidi stream toward the client and calls
+// mux.Attach, which replays the ring buffer and resumes the splice.
+func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachSessionRequest) protocol.AttachSessionResponse {
+	errResp := func(s protocol.AttachSessionStatus) protocol.AttachSessionResponse {
+		return protocol.AttachSessionResponse{Status: s}
+	}
+	idHex := hex.EncodeToString(req.TaskId.Id[:])
+
+	info, ok := h.Tasks.Get(idHex)
+	if !ok {
+		slog.Warn("AttachSession: task_not_found", "task", idHex)
+		return errResp(protocol.AttachSessionStatus_NotFound)
+	}
+	if info.Kind != protocol.TaskKind_Interactive {
+		return errResp(protocol.AttachSessionStatus_NotInteractive)
+	}
+	if !info.Detachable {
+		return errResp(protocol.AttachSessionStatus_NotDetachable)
+	}
+	switch info.Status {
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+		return errResp(protocol.AttachSessionStatus_AlreadyTerminal)
+	}
+	if h.Sessions == nil {
+		slog.Error("AttachSession: handler missing Sessions registry")
+		return errResp(protocol.AttachSessionStatus_InternalError)
+	}
+	mux := h.Sessions.Get(idHex)
+	if mux == nil {
+		return errResp(protocol.AttachSessionStatus_RunnerUnreachable)
+	}
+
+	if conn == nil {
+		slog.Error("AttachSession: nil conn")
+		return errResp(protocol.AttachSessionStatus_InternalError)
+	}
+	tuiStream := conn.CreateBidirectionalStream()
+	if tuiStream == nil {
+		slog.Error("AttachSession: open client stream failed", "task", idHex)
+		return errResp(protocol.AttachSessionStatus_InternalError)
+	}
+
+	// Capture replay size BEFORE Attach. Informational for the client UI.
+	replayBytes := uint64(mux.RingBufferLen())
+
+	parentCtx := h.Ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
+	if err := mux.Attach(parentCtx, tuiStream); err != nil {
+		slog.Error("AttachSession: mux.Attach", "task", idHex, "err", err)
+		_ = tuiStream.CloseBoth()
+		return errResp(protocol.AttachSessionStatus_InternalError)
+	}
+
+	return protocol.AttachSessionResponse{
+		Status:      protocol.AttachSessionStatus_Ok,
+		StreamId:    uint64(tuiStream.ID()),
+		ReplayBytes: replayBytes,
 	}
 }
 
