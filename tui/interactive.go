@@ -46,15 +46,16 @@ func DoOpenInteractiveWithHost(c *cli.Client, repo, host string) tea.Cmd {
 // DoOpenDetachableSession opens a new detachable interactive session (equivalent
 // to `harness-cli session new`). The session persists after the TUI detaches and
 // can be re-attached via DoAttachSession / `i` on a Detached task.
+// extraArgs are forwarded verbatim to claude (appended after runner-global args).
 // resumeTaskID may be "" for a fresh session, or a 32-hex task id to resume
 // an existing terminal interactive task's worktree and branch.
-func DoOpenDetachableSession(c *cli.Client, repo, resumeTaskID string) tea.Cmd {
+func DoOpenDetachableSession(c *cli.Client, repo string, extraArgs []string, resumeTaskID string) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(cli.SelectorOpts{})
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, nil, resumeTaskID, true)
+		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, true)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }

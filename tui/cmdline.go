@@ -36,6 +36,7 @@ type HelpAction struct{}
 // SessionNewAction opens a new detachable interactive PTY session.
 type SessionNewAction struct {
 	Repo         string
+	ExtraArgs    []string
 	ResumeTaskID string
 }
 
@@ -212,13 +213,15 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		fs := flag.NewFlagSet("session new", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
+		var extra repeatableStrings
+		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 		if err := fs.Parse(rest); err != nil {
 			return nil, fmt.Errorf("session new: %w", err)
 		}
 		if fs.NArg() > 0 {
 			return nil, fmt.Errorf("session new: unexpected argument %q", fs.Arg(0))
 		}
-		return SessionNewAction{Repo: defaultRepo, ResumeTaskID: *resume}, nil
+		return SessionNewAction{Repo: defaultRepo, ExtraArgs: []string(extra), ResumeTaskID: *resume}, nil
 	case "attach":
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("session attach: task id required")

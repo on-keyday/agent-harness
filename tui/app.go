@@ -379,7 +379,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `S` (capital) opens a new detachable interactive PTY session in the
 		// default repo (equivalent to `harness-cli session new`).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
-			return a, DoOpenDetachableSession(a.client, a.defaultRepo, "")
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo, nil, "")
 		}
 		// `d` opens the detail popup for the focused row (runners or tasks).
 		if !logsEditing && msg.String() == "d" {
@@ -666,7 +666,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		if repo == "" {
 			repo = a.defaultRepo
 		}
-		return a, DoOpenDetachableSession(a.client, repo, v.ResumeTaskID)
+		return a, DoOpenDetachableSession(a.client, repo, v.ExtraArgs, v.ResumeTaskID)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID)
 	case SessionLsAction:

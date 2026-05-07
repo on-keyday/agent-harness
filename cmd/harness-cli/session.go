@@ -47,6 +47,8 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	host := fs.String("host", "", "pin to runner by hostname")
 	ip := fs.String("ip", "", "pin to runner by IP address")
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
+	var extraArgs repeatableStrings
+	fs.Var(&extraArgs, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -79,7 +81,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 
-	id, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, nil, *resume, true /*detachable*/)
+	id, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/)
 	if err != nil {
 		return err
 	}
@@ -111,7 +113,7 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 }
 
 // runSessionLs lists detachable interactive sessions as JSON Lines.
-func runSessionLs(cid objproto.ConnectionID, args []string) error {
+func runSessionLs(cid objproto.ConnectionID, _ []string) error {
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid)
 	if err != nil {
