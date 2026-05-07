@@ -196,7 +196,7 @@ func main() {
 		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, *extraArgs, *resume); err != nil {
+		if _, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, *extraArgs, *resume, false); err != nil {
 			die(err)
 		}
 

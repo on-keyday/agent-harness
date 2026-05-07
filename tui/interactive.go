@@ -54,7 +54,7 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID)
+		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, false)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }

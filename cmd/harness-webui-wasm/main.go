@@ -428,7 +428,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
 				return
 			}
-			taskID, err := c.InteractiveWithSelectorAndArgs(rootCtx, repo, sel, extraArgs, resumeTaskID)
+			taskID, err := c.InteractiveWithSelectorAndArgs(rootCtx, repo, sel, extraArgs, resumeTaskID, false)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return
