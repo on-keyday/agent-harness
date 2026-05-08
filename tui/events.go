@@ -46,6 +46,13 @@ type ConnectionMsg struct {
 	Err          error
 }
 
+// BindClientMsg carries a fresh *cli.Client into the App via the bubbletea
+// Update loop, so client-pointer reads/writes stay on a single goroutine
+// (see persist-reconnect spec §6).
+type BindClientMsg struct {
+	Client *cli.Client
+}
+
 // DecodeTaskStatus decodes a TaskStatusEvent payload.
 func DecodeTaskStatus(payload []byte) (protocol.TaskStatusEvent, error) {
 	var ev protocol.TaskStatusEvent

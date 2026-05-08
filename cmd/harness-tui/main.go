@@ -72,7 +72,7 @@ func main() {
 				if err := handle.C.SayHello(runCtx, protocol.ClientKind_Tui); err != nil {
 					return err
 				}
-				app.BindClient(handle.C)
+				program.Send(tui.BindClientMsg{Client: handle.C})
 				program.Send(tui.RefreshSnapshot(handle.C)())
 				go tui.SubscribeTaskStatus(runCtx, handle.C, program)
 				go tui.SubscribeRunnerStatus(runCtx, handle.C, program)

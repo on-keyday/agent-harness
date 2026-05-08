@@ -91,11 +91,10 @@ func New(cfg Config) *App {
 // BindContext stores the application-level context for spawning per-task subscriptions.
 func (a *App) BindContext(ctx context.Context) { a.appCtx = ctx }
 
-// BindClient stores the active *cli.Client. Re-entrant: callers may call
-// BindClient repeatedly across reconnects. The previous client's pubsub
-// goroutines have already been torn down by cli.PersistLoop's runCtx
-// cancellation by the time this fires, so all we need to do is swap the
-// pointer.
+// BindClient stores the active *cli.Client. Safe ONLY when called before
+// the bubbletea program has started. Once the program is running, callers
+// must send a BindClientMsg via program.Send instead so writes happen on
+// the Update thread.
 func (a *App) BindClient(c *cli.Client) {
 	a.client = c
 }
@@ -183,6 +182,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Prepend history before any live chunks that may have already arrived.
 		a.logs.Prepend(msg.Content)
+		return a, nil
+
+	case BindClientMsg:
+		a.client = msg.Client
 		return a, nil
 
 	case ConnectionMsg:
