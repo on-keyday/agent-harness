@@ -619,10 +619,8 @@ func TestHandleAssign_NoWorktree_NoGitDir(t *testing.T) {
 	// wm.Create would fail because there is no git repo. With NoWorktree=true
 	// the worktree-create step is entirely skipped, so the plain dir works.
 	repo := t.TempDir()
-	// Script echoes cwd and creates a sentinel file. The multi-step body
-	// ensures the process takes a few milliseconds before exiting, reducing
-	// the chance of a goroutine-scheduling race in Process.Run's stdin-pipe
-	// teardown (a pre-existing issue shared with other handleAssign tests).
+	// Script echoes cwd and creates a sentinel file to verify the process ran
+	// with the correct working directory.
 	fake := writeFakeClaude(t, `echo "cwd=$(pwd)"
 touch harness_nw_sentinel.txt
 echo "done"`)

@@ -87,6 +87,11 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	// cmd.Wait call reads the cached exit status instead of issuing a second
 	// waitpid.
 	var stdinPipeW *io.PipeWriter
+	// watcherExitCode holds the exit code captured by the watcher goroutine when
+	// it wins the waitpid race against cmd.Wait. Protected by watcherDone being
+	// closed before it is read.
+	watcherExitCode := -1
+	watcherDone := make(chan struct{})
 	if p.OnStdinWriter != nil {
 		var stdinPipeR *io.PipeReader
 		stdinPipeR, stdinPipeW = io.Pipe()
@@ -97,6 +102,7 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 		if stdinPipeW != nil {
 			stdinPipeW.Close()
 		}
+		close(watcherDone)
 		return -1, fmt.Errorf("start: %w", err)
 	}
 
@@ -110,7 +116,14 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 		procDone := make(chan struct{})
 		proc := cmd.Process
 		go func() {
-			proc.Wait() //nolint:errcheck // only used to detect exit
+			defer close(watcherDone)
+			// proc.Wait races with cmd.Wait's internal waitpid. Capture the exit
+			// code here so that if cmd.Wait gets ECHILD (because we reaped first),
+			// we can return the correct exit code rather than -1.
+			state, err := proc.Wait()
+			if err == nil && state != nil {
+				watcherExitCode = state.ExitCode()
+			}
 			close(procDone)
 		}()
 		go func() {
@@ -120,6 +133,8 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 			}
 			stdinPipeW.Close()
 		}()
+	} else {
+		close(watcherDone)
 	}
 
 	var wg sync.WaitGroup
@@ -145,18 +160,35 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 
 	waitErr := cmd.Wait()
 	wg.Wait()
+	// Ensure the watcher goroutine has finished capturing its exit code before
+	// we potentially use watcherExitCode below.
+	<-watcherDone
 
 	exit := 0
 	if waitErr != nil {
 		if ee, ok := waitErr.(*exec.ExitError); ok {
 			exit = ee.ExitCode()
-			if exit == -1 {
-				// killed by signal (e.g., SIGKILL after timeout)
-				exit = -1
-			}
+			// exit == -1 means killed by signal (e.g., SIGKILL after timeout)
+		} else if isSyscallECHILD(waitErr) {
+			// The watcher goroutine's proc.Wait() won the waitpid race against
+			// cmd.Wait's internal waitpid, leaving cmd.Wait with ECHILD. Use the
+			// exit code captured by the watcher goroutine instead.
+			exit = watcherExitCode
 		} else {
 			exit = -1
 		}
 	}
 	return exit, nil
+}
+
+// isSyscallECHILD reports whether err is an *os.SyscallError wrapping ECHILD.
+// This occurs when the watcher goroutine's proc.Wait() reaps the child before
+// cmd.Wait's internal waitpid can, causing cmd.Wait to see "no child processes".
+func isSyscallECHILD(err error) bool {
+	if se, ok := err.(*os.SyscallError); ok {
+		if errno, ok := se.Err.(syscall.Errno); ok {
+			return errno == syscall.ECHILD
+		}
+	}
+	return false
 }
