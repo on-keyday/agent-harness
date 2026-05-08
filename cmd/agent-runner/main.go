@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
@@ -43,6 +44,12 @@ var (
 
 	noWorktree                 = flag.Bool("no-worktree", false, "skip per-task git worktree creation; run agent processes directly in the bound repo path. Disables .claude/settings.json and .claude/skills/ injection by default (see --force-inject-harness-settings).")
 	forceInjectHarnessSettings = flag.Bool("force-inject-harness-settings", false, "only meaningful with --no-worktree: re-enable .claude/settings.json and .claude/skills/ injection at the bound repo path.")
+
+	persist       = flag.Bool("persist", true, "auto-reconnect on disconnect (set --no-persist to disable)")
+	noPersist     = flag.Bool("no-persist", false, "shortcut for --persist=false")
+	pingInterval  = flag.Duration("ping-interval", 15*time.Second, "underlying ping cadence; also bounds disconnect detection delay")
+	reconnectInit = flag.Duration("reconnect-initial", 500*time.Millisecond, "first backoff after a disconnect")
+	reconnectMax  = flag.Duration("reconnect-max", 30*time.Second, "backoff cap")
 )
 
 func main() {
@@ -104,7 +111,7 @@ func main() {
 	}
 	resolvedPSK := resolvePSK(pskVal, *pskFile)
 
-	if err := runner.Run(ctx, runner.Config{
+	runCfg := runner.Config{
 		ServerCID:                  peerCID,
 		AllowedRoots:               abs,
 		MaxTasks:                   *maxTasks,
@@ -115,7 +122,31 @@ func main() {
 		PSK:                        resolvedPSK,
 		NoWorktree:                 *noWorktree,
 		ForceInjectHarnessSettings: *forceInjectHarnessSettings,
-	}); err != nil {
+		PingInterval:               *pingInterval,
+	}
+
+	enabled := *persist && !*noPersist
+
+	err = cli.PersistLoop(ctx,
+		func(dialCtx context.Context) (cli.PersistHandle, error) {
+			return runner.Connect(dialCtx, runCfg)
+		},
+		func(runCtx context.Context, h cli.PersistHandle) error {
+			rh := h.(*runner.RunHandle)
+			return runner.OnConnect(runCtx, rh)
+		},
+		cli.PersistConfig{
+			Enabled:        enabled,
+			InitialBackoff: *reconnectInit,
+			MaxBackoff:     *reconnectMax,
+			Logger:         slog.Default(),
+			OnState: func(s cli.PersistState) {
+				slog.Info("runner persist state",
+					"phase", s.Phase, "attempt", s.Attempt,
+					"next_retry", s.NextRetry, "err", s.LastError)
+			},
+		})
+	if err != nil {
 		slog.Error("runner exit", "err", err)
 		os.Exit(1)
 	}
