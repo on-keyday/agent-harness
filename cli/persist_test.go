@@ -104,6 +104,97 @@ func TestPersistLoop_OnConnectErrorTriggersReconnect(t *testing.T) {
 	}
 }
 
+func TestPersistLoop_ExponentialBackoffOnDialError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var attempts int32
+	var sleepDurations []time.Duration
+	var sleepMu sync.Mutex
+
+	dial := func(_ context.Context) (PersistHandle, error) {
+		n := atomic.AddInt32(&attempts, 1)
+		if n >= 5 {
+			cancel()
+			return nil, errors.New("done")
+		}
+		return nil, errors.New("dial fail")
+	}
+	onConnect := func(_ context.Context, _ PersistHandle) error { return nil }
+
+	cfg := PersistConfig{
+		Enabled:        true,
+		InitialBackoff: 100 * time.Millisecond,
+		MaxBackoff:     1 * time.Second,
+		BackoffFactor:  2.0,
+		Jitter:         0,
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			sleepMu.Lock()
+			sleepDurations = append(sleepDurations, d)
+			sleepMu.Unlock()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return nil
+		},
+	}
+
+	_ = PersistLoop(ctx, dial, onConnect, cfg)
+	sleepMu.Lock()
+	defer sleepMu.Unlock()
+	if len(sleepDurations) < 4 {
+		t.Fatalf("got %d sleeps, want >= 4: %v", len(sleepDurations), sleepDurations)
+	}
+	want := []time.Duration{
+		100 * time.Millisecond,
+		200 * time.Millisecond,
+		400 * time.Millisecond,
+		800 * time.Millisecond,
+	}
+	for i, w := range want {
+		if sleepDurations[i] != w {
+			t.Errorf("sleep[%d] = %v, want %v", i, sleepDurations[i], w)
+		}
+	}
+}
+
+func TestPersistLoop_DisabledStopsAfterFirstError(t *testing.T) {
+	ctx := context.Background()
+	wantErr := errors.New("nope")
+	dial := func(_ context.Context) (PersistHandle, error) { return nil, wantErr }
+	onConnect := func(_ context.Context, _ PersistHandle) error { return nil }
+
+	err := PersistLoop(ctx, dial, onConnect, PersistConfig{
+		Enabled: false,
+		Sleep:   instantSleep,
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("PersistLoop err = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPersistLoop_DisabledRunsOneIterationAndReturnsOnConnectError(t *testing.T) {
+	ctx := context.Background()
+	wantErr := errors.New("oc nope")
+	dial := func(_ context.Context) (PersistHandle, error) { return newFakeHandle(), nil }
+	var calls int32
+	onConnect := func(_ context.Context, _ PersistHandle) error {
+		atomic.AddInt32(&calls, 1)
+		return wantErr
+	}
+
+	err := PersistLoop(ctx, dial, onConnect, PersistConfig{
+		Enabled: false,
+		Sleep:   instantSleep,
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("PersistLoop err = %v, want %v", err, wantErr)
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("onConnect calls = %d, want 1", calls)
+	}
+}
+
 func TestPersistLoop_DisabledReturnsErrConnectionClosedOnPeerDrop(t *testing.T) {
 	ctx := context.Background()
 	dial := func(_ context.Context) (PersistHandle, error) {
