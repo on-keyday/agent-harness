@@ -152,3 +152,96 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 		t.Log("runner did not exit within 2s of cancel — leaking goroutine")
 	}
 }
+
+// TestSubmitFakeClaudeE2E_NoWorktree mirrors TestSubmitFakeClaudeE2E but starts
+// the runner with NoWorktree=true over a non-git tempdir. Verifies the full
+// server↔runner↔CLI flow works end-to-end without git worktree machinery.
+func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+
+	// Plain tempdir — no git init.
+	repo := t.TempDir()
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18540" // distinct port from TestSubmitFakeClaudeE2E
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	s := server.New(server.Config{
+		Addr:    addr,
+		DataDir: t.TempDir(),
+	})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			ClaudeBin:    fakeClaude,
+			NoWorktree:   true,
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "nw-e2e")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	t.Logf("submitted task %s", taskID)
+
+	// fake-claude.sh creates hello.txt in cwd. With NoWorktree, cwd == repo.
+	helloPath := filepath.Join(repo, "hello.txt")
+	if !waitForFile(t, helloPath, 15*time.Second) {
+		t.Fatalf("hello.txt did not appear at %s within timeout", helloPath)
+	}
+	t.Logf("artifact present at %s", helloPath)
+
+	// Verify task reached Succeeded.
+	deadline := time.Now().Add(10 * time.Second)
+	var lastOutput string
+	for time.Now().Before(deadline) {
+		var buf bytes.Buffer
+		if err := cli.List(ctx, peerCID, &buf); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		lastOutput = buf.String()
+		if strings.Contains(lastOutput, "Succeeded") {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !strings.Contains(lastOutput, "Succeeded") {
+		t.Fatalf("task never reached Succeeded; last list output:\n%s", lastOutput)
+	}
+
+	// .harness-worktrees must not exist.
+	if _, err := os.Stat(filepath.Join(repo, ".harness-worktrees")); !os.IsNotExist(err) {
+		t.Errorf(".harness-worktrees should not exist in NoWorktree mode; stat err=%v", err)
+	}
+
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Log("server did not exit within 2s of cancel")
+	}
+	select {
+	case <-runnerDone:
+	case <-time.After(2 * time.Second):
+		t.Log("runner did not exit within 2s of cancel")
+	}
+}
