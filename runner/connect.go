@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
@@ -53,10 +54,11 @@ type RunHandle struct {
 	cfg     Config
 
 	pskRespCh chan wire.PskAuthStatus
+	closeOnce sync.Once
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.pc.Done() }
-func (h *RunHandle) Close()                { h.pc.Close() }
+func (h *RunHandle) Close()                { h.closeOnce.Do(func() { h.pc.Close() }) }
 
 // Connect performs the WS dial, ECDH handshake, PSK exchange, and session
 // scaffolding. The caller drives the rest of the lifecycle via OnConnect.
@@ -303,41 +305,3 @@ func (s *peerSender) Publish(topic string, data []byte) error {
 	return s.pc.Publish(s.ctx, "runner", topic, data)
 }
 
-// runHooks is a test seam used by TestRun_RunCtxCancelsOnPeerDone to inject
-// a handleAssign-shaped goroutine without spinning up real claude processes.
-type runHooks struct {
-	spawnTask func(ctx context.Context)
-	kicker    chan struct{}
-}
-
-func (h *runHooks) kickoff() { close(h.kicker) }
-
-// fakeRunHandle implements PersistHandle for runner unit tests.
-type fakeRunHandle struct {
-	done chan struct{}
-}
-
-func (h *fakeRunHandle) Done() <-chan struct{} { return h.done }
-func (h *fakeRunHandle) Close()                {}
-
-// runConnected is the test-facing core of OnConnect: derive runCtx, fire a
-// spawn callback when the kicker channel triggers, then block on Done.
-func runConnected(parent context.Context, h *fakeRunHandle, hooks runHooks) error {
-	runCtx, runCancel := context.WithCancel(parent)
-	defer runCancel()
-	if hooks.kicker == nil {
-		hooks.kicker = make(chan struct{})
-	}
-	go func() {
-		<-hooks.kicker
-		if hooks.spawnTask != nil {
-			hooks.spawnTask(runCtx)
-		}
-	}()
-	select {
-	case <-h.Done():
-		return nil
-	case <-parent.Done():
-		return nil
-	}
-}
