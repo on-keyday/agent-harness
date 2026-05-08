@@ -34,7 +34,20 @@ var (
 	clientMu sync.Mutex
 	client   *cli.Client
 	peerCID  objproto.ConnectionID
+
+	connStateHandler  js.Value
+	connStateHandlerM sync.Mutex
 )
+
+type webuiHandle struct {
+	c        *cli.Client
+	doneOnce sync.Once
+}
+
+func (h *webuiHandle) Done() <-chan struct{} { return h.c.Peer().Done() }
+func (h *webuiHandle) Close() {
+	h.doneOnce.Do(func() { h.c.Close() })
+}
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -53,7 +66,8 @@ func main() {
 		"sendInteractive":   js.FuncOf(harnessSendInteractive),
 		"resizeInteractive": js.FuncOf(harnessResizeInteractive),
 		"detachInteractive": js.FuncOf(harnessDetachInteractive),
-		"attachSession":     js.FuncOf(harnessAttachSession),
+		"attachSession":        js.FuncOf(harnessAttachSession),
+		"onConnectionChange":   js.FuncOf(harnessOnConnectionChange),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -81,7 +95,9 @@ func currentClient() (*cli.Client, error) {
 
 // harnessConnect parses the CID string and dials the server.
 //
-//	harness.connect("ws:127.0.0.1:8539-*") -> Promise<{}>
+//	harness.connect("ws:127.0.0.1:8539-*"):                 one-shot, persist=false (compat)
+//	harness.connect("ws:...", { persist: true, pingInterval: "15s" }):
+//	                                                         options bag, persist defaults to true
 func harnessConnect(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -98,26 +114,116 @@ func harnessConnect(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("parse cid: %w", err))
 				return
 			}
-			c, err := cli.Dial(rootCtx, cid)
-			if err != nil {
-				rejectErr(reject, fmt.Errorf("dial: %w", err))
-				return
+
+			persist := false
+			pingInterval := 15 * time.Second
+			if len(args) >= 2 && args[1].Type() == js.TypeObject {
+				persist = true // options-bag form defaults to persist:true
+				if v := args[1].Get("persist"); v.Type() == js.TypeBoolean {
+					persist = v.Bool()
+				}
+				if v := args[1].Get("pingInterval"); v.Type() == js.TypeString {
+					if d, err := time.ParseDuration(v.String()); err == nil {
+						pingInterval = d
+					}
+				}
 			}
-			if err := c.SayHello(rootCtx, protocol.ClientKind_Webui); err != nil {
-				c.Close()
-				rejectErr(reject, fmt.Errorf("client hello: %w", err))
-				return
+			_ = pingInterval // peer.DialConfig.PingInterval default (15s) is used; future hook for override
+
+			started := make(chan struct{})
+			var startedOnce sync.Once
+			peerCIDLocal := cid
+
+			go func() {
+				err := cli.PersistLoop(rootCtx,
+					func(dialCtx context.Context) (cli.PersistHandle, error) {
+						c, derr := cli.Dial(dialCtx, peerCIDLocal)
+						if derr != nil {
+							return nil, derr
+						}
+						return &webuiHandle{c: c}, nil
+					},
+					func(runCtx context.Context, h cli.PersistHandle) error {
+						handle := h.(*webuiHandle)
+						if err := handle.c.SayHello(runCtx, protocol.ClientKind_Webui); err != nil {
+							return err
+						}
+						clientMu.Lock()
+						client = handle.c
+						peerCID = peerCIDLocal
+						clientMu.Unlock()
+						startedOnce.Do(func() { close(started) })
+						<-runCtx.Done()
+						clientMu.Lock()
+						client = nil
+						clientMu.Unlock()
+						return nil
+					},
+					cli.PersistConfig{
+						Enabled: persist,
+						OnState: func(s cli.PersistState) {
+							notifyConnState(s)
+						},
+					})
+				if err != nil && !errors.Is(err, context.Canceled) {
+					notifyConnState(cli.PersistState{Phase: cli.PersistPhaseClosed, LastError: err})
+				}
+			}()
+
+			select {
+			case <-started:
+				resolve.Invoke(js.ValueOf(map[string]any{}))
+			case <-rootCtx.Done():
+				rejectErr(reject, rootCtx.Err())
+			case <-time.After(30 * time.Second):
+				rejectErr(reject, errors.New("connect: initial dial timed out (still retrying in background if persist=true)"))
 			}
-			clientMu.Lock()
-			client = c
-			peerCID = cid
-			clientMu.Unlock()
-			resolve.Invoke(js.ValueOf(map[string]any{}))
 		}()
 		return nil
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+func notifyConnState(s cli.PersistState) {
+	connStateHandlerM.Lock()
+	h := connStateHandler
+	connStateHandlerM.Unlock()
+	if h.IsUndefined() || h.IsNull() {
+		return
+	}
+	phaseStr := "connecting"
+	switch s.Phase {
+	case cli.PersistPhaseConnected:
+		phaseStr = "connected"
+	case cli.PersistPhaseReconnecting:
+		phaseStr = "reconnecting"
+	case cli.PersistPhaseClosed:
+		phaseStr = "closed"
+	}
+	payload := map[string]any{
+		"phase":   phaseStr,
+		"attempt": s.Attempt,
+	}
+	if s.NextRetry > 0 {
+		payload["nextRetryMs"] = s.NextRetry.Milliseconds()
+	}
+	if s.LastError != nil {
+		payload["error"] = s.LastError.Error()
+	}
+	h.Invoke(js.ValueOf(payload))
+}
+
+// harnessOnConnectionChange registers a JS callback for connection state changes.
+//
+//	harness.onConnectionChange((state) => { ... })
+func harnessOnConnectionChange(this js.Value, args []js.Value) any {
+	if len(args) >= 1 && args[0].Type() == js.TypeFunction {
+		connStateHandlerM.Lock()
+		connStateHandler = args[0]
+		connStateHandlerM.Unlock()
+	}
+	return nil
 }
 
 // harnessSubmit submits a task and resolves with the server-assigned task id.
