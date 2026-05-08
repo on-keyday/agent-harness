@@ -261,3 +261,85 @@ func TestRegistryCandidatesSelectorByHostname(t *testing.T) {
 		t.Fatalf("expected only A (gmkhost), got %v", cs)
 	}
 }
+
+// Longest-prefix-match: when several runners' roots all contain the repo,
+// only the runner(s) whose matching root is the most specific (longest) are
+// returned. A broad fallback root must not collide with a focused root.
+func TestRegistryCandidatesLongestPrefixMatch(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: "broad", Hostname: "h", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "focused", Hostname: "h", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+
+	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 1 || cs[0].ID != "focused" {
+		t.Fatalf("expected only focused runner via longest-prefix-match, got %v", cs)
+	}
+
+	// A repo that only the broad runner covers still resolves to it.
+	cs = r.Candidates("/a/other", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 1 || cs[0].ID != "broad" {
+		t.Fatalf("expected only broad runner for non-overlapping repo, got %v", cs)
+	}
+}
+
+// Tie at the most-specific level remains ambiguous (caller's job to reject).
+func TestRegistryCandidatesLongestPrefixTieAmbiguous(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/a/b"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "broad", Hostname: "h3", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+
+	cs := r.Candidates("/a/b/c", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 2 {
+		t.Fatalf("expected 2 candidates at the most-specific tier (A,B); broad must drop, got %v", cs)
+	}
+	gotIDs := map[string]bool{cs[0].ID: true, cs[1].ID: true}
+	if !gotIDs["A"] || !gotIDs["B"] {
+		t.Fatalf("expected A and B at the most-specific tier, got %v", cs)
+	}
+}
+
+// A runner with multiple roots is ranked by its longest matching root, so a
+// runner whose specific root matches beats one that only catches the repo via
+// a generic fallback root.
+func TestRegistryCandidatesLongestPrefixPerRunnerMaxRoot(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{
+		ID: "multi", Hostname: "h1",
+		AllowedRoots: []string{"/a", "/a/b/c"},
+		MaxTasks:     1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+	})
+	r.Add(&RunnerEntry{
+		ID: "broad", Hostname: "h2",
+		AllowedRoots: []string{"/a/b"},
+		MaxTasks:     1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+	})
+
+	cs := r.Candidates("/a/b/c/x", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	if len(cs) != 1 || cs[0].ID != "multi" {
+		t.Fatalf("expected multi (its longest matching root wins over broad), got %v", cs)
+	}
+}
+
+// Selector pinning is independent of longest-match arithmetic: a pinned
+// runner with a shorter root still wins when other runners are filtered out
+// by the selector.
+func TestRegistryCandidatesLongestPrefixScopedToSelector(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{ID: "A", Hostname: "specific-host", AllowedRoots: []string{"/a/b/c"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+	r.Add(&RunnerEntry{ID: "B", Hostname: "broad-host", AllowedRoots: []string{"/a"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now})
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
+	h := protocol.Hostname{}
+	h.SetName([]byte("broad-host"))
+	sel.SetHostname(h)
+
+	cs := r.Candidates("/a/b/c", sel)
+	if len(cs) != 1 || cs[0].ID != "B" {
+		t.Fatalf("selector pin to broad-host must return B even though A has a more specific root, got %v", cs)
+	}
+}

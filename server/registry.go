@@ -157,11 +157,17 @@ func (r *Registry) UnbindTask(id, taskID string) {
 	e.LastSeen = time.Now()
 }
 
-// Candidates returns runner snapshots whose AllowedRoots contain repo
-// (directory-boundary-aware via protocol.IsUnderRoot) and which match the
-// selector (or any runner if Kind == Any). The returned slice is
-// capacity-agnostic: at-capacity runners are still listed so callers can
-// detect ambiguity even when matching runners are all busy.
+// Candidates returns runner snapshots that can serve repo, restricted to
+// the most specific tier of matching roots (longest-prefix-match) and
+// further filtered by the selector (or any runner if Kind == Any).
+//
+// Specificity per runner is the length of its longest matching root
+// (protocol.MatchLen). Across selector-matched runners, only those whose
+// score equals the global maximum survive — so a focused per-repo runner
+// shadows a broad fallback runner that would otherwise also match.
+//
+// The slice is capacity-agnostic: at-capacity runners are still listed so
+// callers can detect ambiguity even when matching runners are all busy.
 //
 // The result is sorted by ConnectedAt asc then ID asc for deterministic
 // behavior in tests and dispatch.
@@ -169,15 +175,30 @@ func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []Runner
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var out []RunnerEntry
+	type scored struct {
+		entry RunnerEntry
+		score int
+	}
+	var matches []scored
+	maxScore := 0
 	for _, e := range r.runners {
-		if !rootsContain(e.AllowedRoots, repo) {
-			continue
-		}
 		if !selectorMatches(sel, e) {
 			continue
 		}
-		out = append(out, *e)
+		score := bestRootScore(e.AllowedRoots, repo)
+		if score == 0 {
+			continue
+		}
+		if score > maxScore {
+			maxScore = score
+		}
+		matches = append(matches, scored{entry: *e, score: score})
+	}
+	var out []RunnerEntry
+	for _, m := range matches {
+		if m.score == maxScore {
+			out = append(out, m.entry)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].ConnectedAt.Equal(out[j].ConnectedAt) {
@@ -188,13 +209,16 @@ func (r *Registry) Candidates(repo string, sel protocol.RunnerSelector) []Runner
 	return out
 }
 
-func rootsContain(roots []string, repo string) bool {
+// bestRootScore returns the largest protocol.MatchLen across roots, or 0 if
+// none contain repo.
+func bestRootScore(roots []string, repo string) int {
+	best := 0
 	for _, root := range roots {
-		if protocol.IsUnderRoot(root, repo) {
-			return true
+		if s := protocol.MatchLen(root, repo); s > best {
+			best = s
 		}
 	}
-	return false
+	return best
 }
 
 func selectorMatches(sel protocol.RunnerSelector, e *RunnerEntry) bool {

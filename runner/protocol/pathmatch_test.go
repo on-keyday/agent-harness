@@ -42,3 +42,35 @@ func TestIsUnderRoot(t *testing.T) {
 		})
 	}
 }
+
+// MatchLen is the specificity score backing longest-prefix-match runner
+// selection. 0 means no match; non-zero is len(path.Clean(root)) so deeper
+// roots score higher and shadow shallower fallbacks.
+func TestMatchLen(t *testing.T) {
+	cases := []struct {
+		name string
+		root string
+		repo string
+		want int
+	}{
+		{"no match", "/a", "/b/c", 0},
+		{"sibling lookalike scores 0", "/a/b", "/a/b-evil", 0},
+		{"relative refused", "a/b", "/a/b/c", 0},
+
+		{"exact match scores root len", "/a/b", "/a/b", 4},
+		{"child scores root len, not repo len", "/a/b", "/a/b/c/d", 4},
+		{"deeper root scores higher", "/a/b/c", "/a/b/c/d", 6},
+		{"posix root scores 1", "/", "/anything/here", 1},
+
+		{"trailing slash on root collapses", "/a/b/", "/a/b/c", 4},
+		{"redundant slashes in repo collapse", "/a/b", "/a//b//c", 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := MatchLen(tc.root, tc.repo)
+			if got != tc.want {
+				t.Fatalf("MatchLen(%q,%q)=%d want %d", tc.root, tc.repo, got, tc.want)
+			}
+		})
+	}
+}
