@@ -815,6 +815,56 @@ func TestHandleAssign_NoWorktree_ConcurrentTasks(t *testing.T) {
 	}
 }
 
+// TestHandleAssign_NoWorktree_Resume verifies that running the same task_id
+// twice in NoWorktree mode does not break (no worktree state to reuse, no
+// branch to re-attach — both runs simply use cwd=repoPath).
+func TestHandleAssign_NoWorktree_Resume(t *testing.T) {
+	repo := t.TempDir()
+	fake := writeFakeClaude(t, `echo run`)
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+		NoWorktree:   true,
+	}
+	taskID := protocol.TaskID{Id: [16]byte{0x99}}
+	for i := 0; i < 2; i++ {
+		req := &protocol.AssignTask{
+			TaskId: taskID,
+			Prompt: []byte("nw-resume"),
+		}
+		req.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), req)
+	}
+
+	ms.mu.Lock()
+	sentCopy := append([][]byte{}, ms.sent...)
+	ms.mu.Unlock()
+
+	// Count TaskFinished messages for this task — expect exactly 2, both ExitCode 0.
+	var finishedCount, okCount int
+	for _, raw := range sentCopy {
+		m := decodeRunnerMsg(t, raw)
+		if m.Kind != protocol.RunnerMessageType_TaskFinished {
+			continue
+		}
+		tf := m.TaskFinished()
+		if tf == nil || tf.TaskId.Id != taskID.Id {
+			continue
+		}
+		finishedCount++
+		if tf.ExitCode == 0 {
+			okCount++
+		}
+	}
+	if finishedCount != 2 || okCount != 2 {
+		t.Fatalf("expected 2 successful TaskFinished, got finished=%d ok=%d", finishedCount, okCount)
+	}
+}
+
 // TestHandleOpenExec_NoWorktree_NoGitDir mirrors TestHandleAssign_NoWorktree_NoGitDir
 // but for the interactive PTY path. Uses /bin/true as ClaudeBin and the existing
 // noopBidiStream so the exec terminates immediately; we only verify the
