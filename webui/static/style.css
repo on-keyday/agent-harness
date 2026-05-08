@@ -168,3 +168,17 @@ button:hover { background: #555; }
     /* Terminal: taller so claude has room. */
     #terminal { height: 70vh; min-height: 280px; }
 }
+
+#harness-conn-banner {
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+  padding: 6px 12px;
+  background: #fff3cd;
+  color: #5c4400;
+  border-bottom: 1px solid #e0c97a;
+  font-family: monospace;
+  font-size: 13px;
+}
+#harness-conn-banner.error  { background: #f8d7da; color: #6e1b22; border-bottom-color: #cd8a8e; }
+#harness-conn-banner.online { background: #d4edda; color: #1e4628; border-bottom-color: #8ec39c; }

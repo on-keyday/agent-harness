@@ -29,10 +29,50 @@ const POLL_INTERVAL_MS = 5000;
     await new Promise(r => setTimeout(r, 50));
   }
 
-  // 3. Connect.
+  // 3. Connect (options-bag form; persist=true enables auto-reconnect loop).
+  const connectedHandlers = [];
+  function registerOnConnected(fn) { connectedHandlers.push(fn); }
+
+  function paintBanner(state) {
+    const el = document.getElementById('harness-conn-banner');
+    if (!el) return;
+    el.classList.remove('error', 'online');
+    if (state.phase === 'connected') {
+      el.textContent = 'connected';
+      el.classList.add('online');
+      el.hidden = false;
+      setTimeout(() => { el.hidden = true; }, 1500);
+    } else if (state.phase === 'reconnecting') {
+      const secs = state.nextRetryMs ? Math.round(state.nextRetryMs / 1000) : '?';
+      el.textContent = `reconnecting (attempt ${state.attempt}, next try in ${secs}s)`;
+      el.hidden = false;
+    } else if (state.phase === 'closed') {
+      el.textContent = state.error ? `disconnected: ${state.error}` : 'disconnected';
+      el.classList.add('error');
+      el.hidden = false;
+    } else {
+      el.textContent = `connecting (attempt ${state.attempt})…`;
+      el.hidden = false;
+    }
+  }
+
+  window.harness.onConnectionChange((state) => {
+    paintBanner(state);
+    if (state.phase === 'connected') {
+      setStatus("connected", "connected");
+      for (const fn of connectedHandlers) {
+        try { fn(); } catch (e) { console.error('connected handler', e); }
+      }
+    } else if (state.phase === 'closed') {
+      setStatus("disconnected", "error");
+    } else if (state.phase === 'reconnecting') {
+      setStatus("reconnecting…");
+    }
+  });
+
   setStatus("connecting…");
   try {
-    await window.harness.connect(SERVER_CID);
+    await window.harness.connect(SERVER_CID, { persist: true });
     setStatus("connected", "connected");
   } catch (e) {
     setStatus(`connect failed: ${e.message}`, "error");
@@ -90,6 +130,8 @@ const POLL_INTERVAL_MS = 5000;
   //    handler can append into it. On any push we trigger an extra snapshot
   //    refresh so the UI reflects the latest state without waiting for the
   //    next poll tick.
+  //    Re-registered via registerOnConnected so the watch re-attaches to the
+  //    new live client each time the persist loop reconnects.
   window.harness_onTaskEvent = (jsonStr) => {
     try {
       const evt = JSON.parse(jsonStr);
@@ -98,7 +140,9 @@ const POLL_INTERVAL_MS = 5000;
     } catch (e) { /* ignore */ }
     refreshSnapshot();
   };
-  window.harness.watch().catch(e => console.error("watch:", e));
+  registerOnConnected(() => {
+    window.harness.watch().catch(e => console.error("watch:", e));
+  });
 
   const runCmd = async () => {
     const line = cmdInput.value.trim();
