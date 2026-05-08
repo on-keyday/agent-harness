@@ -62,6 +62,7 @@ For each step of `handleAssign` and `handleOpenExec`, the difference between cur
 | 4a. `WriteAgentSettings(dir)` | merge into `<dir>/.claude/settings.json` | **skipped by default**; runs if `ForceInjectHarnessSettings=true` (target = `<repoPath>/.claude/settings.json`) |
 | 4b. `WriteAgentSkills(dir)` | inject `<dir>/.claude/skills/<harness>/` | **skipped by default**; runs if `ForceInjectHarnessSettings=true` (target = `<repoPath>/.claude/skills/`) |
 | 5. claude exec | `cwd = <worktree dir>` | `cwd = repoPath` |
+| 5a. `BuildAgentEnv` (HARNESS_* env vars) | always injected | **always injected** (unchanged regardless of mode) |
 | 6. `TaskFinished` | sent | sent |
 | 7. `wm.RemoveIfClean` | run; remove if clean | **skipped** (do not remove user's repo) |
 
@@ -103,6 +104,10 @@ if !s.NoWorktree || s.ForceInjectHarnessSettings {
     if err := WriteAgentSkills(dir); err != nil { /* warn */ }
 }
 ```
+
+## Environment variables (always injected)
+
+`BuildAgentEnv(AgentEnvSpec{...})` runs unconditionally between TaskStarted and claude exec, in both modes and regardless of `ForceInjectHarnessSettings`. The agent subprocess always receives `HARNESS_SERVER_CID`, `HARNESS_RUNNER_ID`, `HARNESS_TASK_ID`, `HARNESS_REPO_PATH`, `HARNESS_HOSTNAME`, `HARNESS_WS_PATH`, `HARNESS_AUTH_TICKET`, `HARNESS_PSK` (when set), and the runner-bin-prefixed `PATH`. This is the contract every harness-cli invocation from inside an agent depends on; weakening it in `--no-worktree` mode would silently break `harness-cli agent inbox / publish / wake` for users who manually wire hooks (or who simply call harness-cli from a script the agent runs). Keep it always on.
 
 ## Concurrency
 
