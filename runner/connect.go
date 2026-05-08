@@ -28,6 +28,17 @@ type Config struct {
 	Logger          *slog.Logger
 	// PSK, when non-nil, overrides the HARNESS_PSK / HARNESS_PSK_FILE env vars.
 	PSK []byte
+
+	// NoWorktree disables the per-task git worktree creation. Tasks run with
+	// cwd = AssignTask.RepoPath. Settings/skills injection and worktree
+	// cleanup are skipped by default. See spec
+	// docs/superpowers/specs/2026-05-08-runner-no-worktree-mode-design.md.
+	NoWorktree bool
+
+	// ForceInjectHarnessSettings is only meaningful with NoWorktree=true:
+	// it re-enables WriteAgentSettings / WriteAgentSkills (target = RepoPath).
+	// Worktree cleanup remains disabled in NoWorktree mode regardless.
+	ForceInjectHarnessSettings bool
 }
 
 // Run dials the server, registers via Hello, processes RunnerRequests until
@@ -38,6 +49,9 @@ func Run(ctx context.Context, cfg Config) error {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	cfg.Logger.Info("runner config",
+		"no_worktree", cfg.NoWorktree,
+		"force_inject_harness_settings", cfg.ForceInjectHarnessSettings)
 
 	ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
 		Logger: cfg.Logger,
@@ -83,10 +97,12 @@ func Run(ctx context.Context, cfg Config) error {
 		WSPath:          cli.WebSocketPath,
 		BinDir:          binDir,
 		PSK:             psk,
-		Sender:          sender,
-		Streams:         pc.Transport(),
-		Logger:          cfg.Logger,
-		Now:             time.Now,
+		Sender:                     sender,
+		Streams:                    pc.Transport(),
+		Logger:                     cfg.Logger,
+		Now:                        time.Now,
+		NoWorktree:                 cfg.NoWorktree,
+		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 	}
 	pskRespCh := make(chan wire.PskAuthStatus, 1)
 

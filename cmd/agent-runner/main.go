@@ -40,6 +40,9 @@ var (
 	hostName   = flag.String("hostname", "", "hostname to report in Hello (default: os.Hostname())")
 	psk        = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK)")
 	pskFile    = flag.String("psk-file", "", "path to PSK file (env: HARNESS_PSK_FILE)")
+
+	noWorktree                 = flag.Bool("no-worktree", false, "skip per-task git worktree creation; run agent processes directly in the bound repo path. Disables .claude/settings.json and .claude/skills/ injection by default (see --force-inject-harness-settings).")
+	forceInjectHarnessSettings = flag.Bool("force-inject-harness-settings", false, "only meaningful with --no-worktree: re-enable .claude/settings.json and .claude/skills/ injection at the bound repo path.")
 )
 
 func main() {
@@ -107,9 +110,11 @@ func main() {
 		MaxTasks:        *maxTasks,
 		Hostname:        hostname,
 		ClaudeBin:       *claudeBin,
-		ExtraClaudeArgs: strings.Fields(*claudeArgs),
-		Logger:          slog.Default(),
-		PSK:             resolvedPSK,
+		ExtraClaudeArgs:            strings.Fields(*claudeArgs),
+		Logger:                     slog.Default(),
+		PSK:                        resolvedPSK,
+		NoWorktree:                 *noWorktree,
+		ForceInjectHarnessSettings: *forceInjectHarnessSettings,
 	}); err != nil {
 		slog.Error("runner exit", "err", err)
 		os.Exit(1)
