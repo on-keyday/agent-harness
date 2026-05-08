@@ -480,7 +480,15 @@ func (w *CommandExecutionStream) RemoteShell() error {
 					_ = w.BidirectionalStream.Close()
 					return
 				}
-				_, _ = stdin.Write(buf[:n])
+				// On normal session termination the server CloseBoths the
+				// stream; the next stdin.Write returns an error. Return so
+				// this goroutine doesn't outlive RemoteShell and race
+				// bubbletea (which reclaims stdin after tea.Exec) for
+				// subsequent keystrokes — pre-f18919c the io.Copy form had
+				// this exit on write error implicitly.
+				if _, werr := stdin.Write(buf[:n]); werr != nil {
+					return
+				}
 			}
 			if err != nil {
 				return
