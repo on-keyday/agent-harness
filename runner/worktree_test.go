@@ -364,6 +364,49 @@ func TestCreateWorktree_RecoversOrphanDir(t *testing.T) {
 	}
 }
 
+// TestCreateWorktree_RecoversStaleRegistration verifies the inverse orphan
+// case: dir is gone from disk but git's `.git/worktrees/<id>` registration
+// survives. Without `--expire=now` on prune, git's default 3-month prune
+// expiry would let the registration survive, causing `git worktree add` to
+// fail with "missing but already registered". This test simulates a recently
+// killed session followed by --resume.
+func TestCreateWorktree_RecoversStaleRegistration(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+
+	// First-run to create the branch + registration.
+	dir, err := wm.Create("stale-reg-task")
+	if err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	// Simulate the dir being deleted out-of-band (e.g. user rm -rf, or a
+	// half-completed cleanup) WITHOUT going through wm.Remove so the
+	// `.git/worktrees/<id>` registration stays intact.
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatalf("rm dir: %v", err)
+	}
+	// Sanity: registration should still be there.
+	regParent := filepath.Join(repo, ".git", "worktrees")
+	entries, err := os.ReadDir(regParent)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected stale registration in %s, entries=%v err=%v", regParent, entries, err)
+	}
+
+	// Create must succeed: prune --expire=now clears the stale registration,
+	// then `git worktree add` proceeds normally.
+	got, err := wm.Create("stale-reg-task")
+	if err != nil {
+		t.Fatalf("Create with stale registration: %v", err)
+	}
+	if got != dir {
+		t.Fatalf("dir drift: %q vs %q", got, dir)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("worktree dir missing after recovery: %v", err)
+	}
+}
+
 // TestWorktreeManagerSerializesSameRepo verifies that concurrent Create/Remove
 // calls on the same WorktreeManager do not corrupt the git worktree list.
 // The -race flag + -count=10 catches any mutex regression.

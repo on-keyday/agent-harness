@@ -54,8 +54,12 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 
 	// If a previous registration is stale (dir gone but `.git/worktrees/<id>`
 	// still around), `git worktree add` would refuse with "missing but
-	// already registered". Prune is a no-op when nothing is stale.
-	pruneCmd := exec.Command("git", "worktree", "prune")
+	// already registered". `--expire=now` is required because the default
+	// prune expiry (`gc.worktreePruneExpire`, 3 months by default) means a
+	// recently-removed dir's registration would survive plain `prune`. The
+	// per-repo mutex (wm.mu) ensures no concurrent task is racing us, so a
+	// repo-wide prune is safe.
+	pruneCmd := exec.Command("git", "worktree", "prune", "--expire=now")
 	pruneCmd.Dir = wm.Repo
 	_ = pruneCmd.Run()
 
