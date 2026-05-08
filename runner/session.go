@@ -119,6 +119,12 @@ type Session struct {
 	// HARNESS_* env vars are still injected. Set from runner.Config.NoWorktree.
 	NoWorktree bool
 
+	// ForceInjectHarnessSettings, when true, causes WriteAgentSettings /
+	// WriteAgentSkills to run even in NoWorktree mode (target = repoPath).
+	// No-op when NoWorktree=false (worktree mode always injects regardless).
+	// Set from runner.Config.ForceInjectHarnessSettings.
+	ForceInjectHarnessSettings bool
+
 	mu    sync.Mutex
 	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
 	wms   map[string]*WorktreeManager // repoPath → WorktreeManager
@@ -302,8 +308,8 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	// Write .claude/settings.json into the worktree so the inbox hook fires.
 	// Non-fatal: task continues even if settings file can't be written.
 	// In NoWorktree mode this is skipped by default to avoid polluting the
-	// user's repo; ForceInjectHarnessSettings re-enables it (later task).
-	if !s.NoWorktree {
+	// user's repo; ForceInjectHarnessSettings re-enables it.
+	if !s.NoWorktree || s.ForceInjectHarnessSettings {
 		if err := WriteAgentSettings(dir); err != nil {
 			s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
 		}
@@ -492,8 +498,8 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	// Write .claude/settings.json into the worktree so the inbox hook fires.
 	// Non-fatal: task continues even if settings file can't be written.
-	// Skipped in NoWorktree mode by default; ForceInjectHarnessSettings overrides (later task).
-	if !s.NoWorktree {
+	// Skipped in NoWorktree mode by default; ForceInjectHarnessSettings overrides.
+	if !s.NoWorktree || s.ForceInjectHarnessSettings {
 		if err := WriteAgentSettings(dir); err != nil {
 			log.Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
 		}

@@ -936,3 +936,57 @@ func TestHandleOpenExec_NoWorktree_NoGitDir(t *testing.T) {
 		t.Errorf(".claude/ should not exist in NoWorktree without force-inject; stat err=%v", err)
 	}
 }
+
+// TestHandleAssign_NoWorktree_ForceInject verifies that with both
+// NoWorktree=true and ForceInjectHarnessSettings=true, the runner writes
+// .claude/settings.json (with harness-cli hooks) and .claude/skills/
+// directly into repoPath. Cleanup is still skipped — the injected files
+// persist past task end.
+func TestHandleAssign_NoWorktree_ForceInject(t *testing.T) {
+	repo := t.TempDir()
+	fake := writeFakeClaude(t, `echo force-inject`)
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots:               []string{repo},
+		ClaudeBin:                  fake,
+		Timeout:                    5 * time.Second,
+		Sender:                     ms,
+		Now:                        time.Now,
+		NoWorktree:                 true,
+		ForceInjectHarnessSettings: true,
+	}
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xEE
+	req := &protocol.AssignTask{
+		TaskId: protocol.TaskID{Id: taskIDBytes},
+		Prompt: []byte("nw-force-inject"),
+	}
+	req.SetRepoPath([]byte(repo))
+	s.handleAssign(context.Background(), req)
+
+	// (1) settings.json exists in repoPath.
+	settingsPath := filepath.Join(repo, ".claude", "settings.json")
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("expected settings.json at %s, got err=%v", settingsPath, err)
+	}
+	// settings.json carries the harness-cli command prefix (any matching hook is fine).
+	if !strings.Contains(string(data), "harness-cli ") {
+		t.Errorf("settings.json missing harness-cli hook commands; content=%s", data)
+	}
+
+	// (2) skills dir exists with at least one entry.
+	skillsDir := filepath.Join(repo, ".claude", "skills")
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		t.Fatalf("expected skills dir at %s, got err=%v", skillsDir, err)
+	}
+	if len(entries) == 0 {
+		t.Errorf("skills dir is empty; expected at least one harness skill")
+	}
+
+	// (3) No worktree dir despite force-inject.
+	if _, err := os.Stat(filepath.Join(repo, ".harness-worktrees")); !os.IsNotExist(err) {
+		t.Errorf(".harness-worktrees should not exist in NoWorktree mode; stat err=%v", err)
+	}
+}
