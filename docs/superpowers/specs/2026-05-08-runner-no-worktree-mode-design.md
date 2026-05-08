@@ -17,11 +17,17 @@ This spec adds a runner-level operating mode flag, `--no-worktree`, that turns o
 
 ## Configuration surface
 
-### CLI flag (`cmd/agent-runner/main.go`)
+### CLI flags (`cmd/agent-runner/main.go`)
 
 ```
---no-worktree    bool, default false
+--no-worktree                     bool, default false
+--force-inject-harness-settings   bool, default false
 ```
+
+`--force-inject-harness-settings` is orthogonal to `--no-worktree`:
+- Default mode (worktree on): always injects regardless of this flag — flag is effectively no-op.
+- `--no-worktree` alone: skips injection (default for that mode).
+- `--no-worktree --force-inject-harness-settings`: skips worktree but still writes `<repoPath>/.claude/settings.json` and `<repoPath>/.claude/skills/`. For users who want agentboard hooks active when running real `claude` in their main checkout.
 
 ### Config plumbing
 
@@ -29,17 +35,19 @@ This spec adds a runner-level operating mode flag, `--no-worktree`, that turns o
 // runner/connect.go
 type Config struct {
     // ... existing fields ...
-    NoWorktree bool
+    NoWorktree                  bool
+    ForceInjectHarnessSettings  bool
 }
 
 // runner/session.go
 type Session struct {
     // ... existing fields ...
-    NoWorktree bool
+    NoWorktree                  bool
+    ForceInjectHarnessSettings  bool
 }
 ```
 
-`runner.Run` propagates `cfg.NoWorktree` into the `Session` it constructs.
+`runner.Run` propagates both fields from `cfg` into the `Session` it constructs.
 
 ## Behavior matrix
 
@@ -51,8 +59,8 @@ For each step of `handleAssign` and `handleOpenExec`, the difference between cur
 | 2a. worktree create | `wm.Create(taskID)` → `<repo>/.harness-worktrees/<id>` | **skipped**; `dir = repoPath` |
 | 2b. branch `harness/<id>` | created (or reused on resume) | **skipped**; HEAD untouched |
 | 3. `TaskStarted.WorktreeDir` | worktree dir | `repoPath` (sent as-is) |
-| 4a. `WriteAgentSettings(dir)` | merge into `<dir>/.claude/settings.json` | **skipped** (do not pollute the user's repo) |
-| 4b. `WriteAgentSkills(dir)` | inject `<dir>/.claude/skills/<harness>/` | **skipped** |
+| 4a. `WriteAgentSettings(dir)` | merge into `<dir>/.claude/settings.json` | **skipped by default**; runs if `ForceInjectHarnessSettings=true` (target = `<repoPath>/.claude/settings.json`) |
+| 4b. `WriteAgentSkills(dir)` | inject `<dir>/.claude/skills/<harness>/` | **skipped by default**; runs if `ForceInjectHarnessSettings=true` (target = `<repoPath>/.claude/skills/`) |
 | 5. claude exec | `cwd = <worktree dir>` | `cwd = repoPath` |
 | 6. `TaskFinished` | sent | sent |
 | 7. `wm.RemoveIfClean` | run; remove if clean | **skipped** (do not remove user's repo) |
@@ -85,7 +93,16 @@ if !s.NoWorktree {
 }
 ```
 
-The `WriteAgentSettings` / `WriteAgentSkills` calls are wrapped the same way.
+`RemoveIfClean` is **never** called in `NoWorktree=true`, even with `ForceInjectHarnessSettings=true` — calling `git worktree remove` on the user's main checkout would be destructive. Injected `.claude/settings.json` / `.claude/skills/` persist after task end; users clean up manually if desired.
+
+The `WriteAgentSettings` / `WriteAgentSkills` calls are wrapped on the **inverse** condition:
+
+```go
+if !s.NoWorktree || s.ForceInjectHarnessSettings {
+    if err := WriteAgentSettings(dir); err != nil { /* warn */ }
+    if err := WriteAgentSkills(dir); err != nil { /* warn */ }
+}
+```
 
 ## Concurrency
 
@@ -129,11 +146,11 @@ Independent flag. `NoWorktree=true` + `OpenInteractive(Detachable=1)` is support
 
 `WriteAgentSettings` is what installs the runner's hooks (`SessionStart` × 2 for `harness.hello` / `--self` subscriptions, `UserPromptSubmit` for inbox flush). Skipping it in `NoWorktree=true` means an agent in this mode is not auto-subscribed to agentboard topics and does not auto-flush its inbox.
 
-For the target use case (`--claude-bin bash` etc.), this does not matter — bash does not read `.claude/settings.json`. For users who want both `NoWorktree` and agentboard integration with real claude, they must either (a) maintain `.claude/settings.json` themselves at the repo root, or (b) use the default worktree mode. README notes this.
+For the target use case (`--claude-bin bash` etc.), this does not matter — bash does not read `.claude/settings.json`. For users who want both `NoWorktree` and agentboard integration with real `claude`, the escape hatch is `--force-inject-harness-settings`: the runner will then merge its hooks into `<repoPath>/.claude/settings.json` and write `<repoPath>/.claude/skills/<harness>/`. The merge logic is idempotent (deduplicated by command prefix) so re-running is safe; user-defined hooks under other keys are preserved. README notes this.
 
 ## Logging
 
-- At runner startup (after `Config` is parsed): `slog.Info("runner config", ..., "no_worktree", cfg.NoWorktree)`.
+- At runner startup (after `Config` is parsed): `slog.Info("runner config", ..., "no_worktree", cfg.NoWorktree, "force_inject_harness_settings", cfg.ForceInjectHarnessSettings)`.
 - At each `handleAssign` / `handleOpenExec` Step 2 in `NoWorktree=true`: `s.logger().Info("no-worktree mode: using repo path as cwd", "task_id", taskIDHex, "repo", repoPath)`.
 
 ## Testing
@@ -159,6 +176,11 @@ For the target use case (`--claude-bin bash` etc.), this does not matter — bas
 
 5. `TestHandleAssign_NoWorktree_Resume` — same `task_id` assigned twice. Second run also completes successfully; cwd identical (verified via a probe — e.g. a marker file written by the test process and observed unchanged).
 
+6. `TestHandleAssign_NoWorktree_ForceInject` — `Session{NoWorktree:true, ForceInjectHarnessSettings:true}` over an empty temp dir. Expectations:
+   - `<repo>/.claude/settings.json` exists and contains the runner's `harness-cli` hook entries (verified by parsing JSON and asserting the expected commands are present).
+   - `<repo>/.claude/skills/` exists (non-empty, at least one harness skill dir).
+   - `<repo>` itself still exists; no `<repo>/.harness-worktrees/` (worktree skip is independent).
+
 ### Integration test (`integration/e2e_test.go`)
 
 One additional scenario: launch `agent-runner --no-worktree`, submit a task, tail the log, observe completion. Mirrors the existing minimal e2e but with the flag set.
@@ -177,6 +199,8 @@ Expected output: `cwd == /tmp/scratch`, no `.harness-worktrees/` created, no `.c
 Short addition under the existing operating-modes section (or equivalent location):
 
 > `--no-worktree`: skip worktree creation and run each task directly in the bound repo path. Intended for generic-process workloads (`--claude-bin bash`, etc.). Disables `.claude/settings.json` and `.claude/skills/` injection — agentboard hooks are not auto-installed in this mode. The user's repo is left untouched on task end.
+>
+> `--force-inject-harness-settings`: only meaningful with `--no-worktree`. Re-enables `.claude/settings.json` / `.claude/skills/` injection at the bound repo path, so agentboard hooks fire even without a per-task worktree. Files persist after task end (no auto-cleanup); manage them manually if desired.
 
 ## Out of scope
 
