@@ -109,6 +109,28 @@ run multiple instances of the same daemon side by side
 extra runner alongside the primary one, with its own
 `bin/.run/agent-runner-2.{pid,log}` slot).
 
+## Operating modes
+
+By default the runner creates a `git worktree` per task under
+`<repo>/.harness-worktrees/<task-id>/` and runs the agent in that
+isolated checkout. Two flags adjust this:
+
+- `--no-worktree`: skip worktree creation and run each task directly
+  in the bound repo path (the request's `--repo`, which must match
+  `--roots`). Intended for generic-process workloads (e.g.
+  `--claude-bin bash`). Disables `.claude/settings.json` and
+  `.claude/skills/` injection by default — agentboard hooks are not
+  auto-installed in this mode. The user's repo is left untouched on
+  task end (no `git worktree remove` is ever called). `HARNESS_*`
+  environment variables are still injected into every spawned process.
+
+- `--force-inject-harness-settings`: only meaningful with
+  `--no-worktree`. Re-enables `.claude/settings.json` and
+  `.claude/skills/` injection at the bound repo path, so agentboard
+  hooks fire even without a per-task worktree. The injected files
+  persist after task end (no auto-cleanup); manage them manually if
+  desired.
+
 ## TUI
 
 `cmd/harness-tui` is an interactive Bubble Tea frontend that bundles
