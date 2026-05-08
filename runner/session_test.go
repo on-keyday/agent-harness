@@ -700,3 +700,75 @@ echo "done"`)
 		t.Fatalf("repo dir disappeared: %v", err)
 	}
 }
+
+// TestHandleOpenExec_NoWorktree_NoGitDir mirrors TestHandleAssign_NoWorktree_NoGitDir
+// but for the interactive PTY path. Uses /bin/true as ClaudeBin and the existing
+// noopBidiStream so the exec terminates immediately; we only verify the
+// runner-side wiring (no worktree create error, WorktreeDir == repoPath, no
+// .harness-worktrees/, no .claude/).
+func TestHandleOpenExec_NoWorktree_NoGitDir(t *testing.T) {
+	repo := t.TempDir() // non-git on purpose
+	ms := &mockSender{}
+	const streamID trsf.StreamID = 100
+	stream := &noopBidiStream{streamID: streamID}
+	lookup := &fakeBidiLookup{streams: map[trsf.StreamID]trsf.BidirectionalStream{streamID: stream}}
+
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    "/bin/true",
+		Sender:       ms,
+		Streams:      lookup,
+		Now:          time.Now,
+		NoWorktree:   true,
+	}
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xBE
+	oer := &protocol.OpenExecRunnerRequest{
+		TaskId:   protocol.TaskID{Id: taskIDBytes},
+		StreamId: uint64(streamID),
+	}
+	oer.SetRepoPath([]byte(repo))
+
+	s.handleOpenExec(context.Background(), oer)
+
+	// (1) Last message is TaskFinished (success or non-zero — both mean "we got past worktree create").
+	if len(ms.sent) < 3 {
+		t.Fatalf("expected ≥3 messages, got %d", len(ms.sent))
+	}
+	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
+	if last.Kind != protocol.RunnerMessageType_TaskFinished {
+		t.Fatalf("last msg kind: %v", last.Kind)
+	}
+	tf := last.TaskFinished()
+	if tf == nil {
+		t.Fatal("TaskFinished missing payload")
+	}
+	if bytes.Contains(tf.ErrorMessage, []byte("worktree_error")) {
+		t.Errorf("got worktree_error in NoWorktree mode: %q", tf.ErrorMessage)
+	}
+
+	// (2) TaskStarted.WorktreeDir == repoPath.
+	var startedDir string
+	for _, raw := range ms.sent {
+		m := decodeRunnerMsg(t, raw)
+		if m.Kind == protocol.RunnerMessageType_TaskStarted {
+			ts := m.TaskStarted()
+			if ts != nil {
+				startedDir = string(ts.WorktreeDir)
+			}
+		}
+	}
+	if startedDir != repo {
+		t.Errorf("TaskStarted.WorktreeDir: got %q, want %q", startedDir, repo)
+	}
+
+	// (3) No worktree dir created.
+	if _, err := os.Stat(filepath.Join(repo, ".harness-worktrees")); !os.IsNotExist(err) {
+		t.Errorf(".harness-worktrees should not exist; stat err=%v", err)
+	}
+
+	// (4) No .claude/ injection.
+	if _, err := os.Stat(filepath.Join(repo, ".claude")); !os.IsNotExist(err) {
+		t.Errorf(".claude/ should not exist in NoWorktree without force-inject; stat err=%v", err)
+	}
+}

@@ -464,13 +464,21 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		s.mu.Unlock()
 	}()
 
-	// Step 2: worktree.
-	wm := s.getWorktreeManager(repoPath)
-	dir, err := wm.Create(taskIDHex)
-	if err != nil {
-		_ = stream.CloseBoth()
-		finishWithError(-1, "worktree_error: "+err.Error())
-		return
+	// Step 2: worktree (skipped in NoWorktree mode — agent runs in repoPath directly).
+	var dir string
+	var wm *WorktreeManager
+	if s.NoWorktree {
+		dir = repoPath
+		log.Info("no-worktree mode: using repo path as cwd", "task_id", taskIDHex, "repo", repoPath)
+	} else {
+		wm = s.getWorktreeManager(repoPath)
+		d, err := wm.Create(taskIDHex)
+		if err != nil {
+			_ = stream.CloseBoth()
+			finishWithError(-1, "worktree_error: "+err.Error())
+			return
+		}
+		dir = d
 	}
 
 	// Step 3: TaskStarted.
@@ -484,11 +492,14 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	// Write .claude/settings.json into the worktree so the inbox hook fires.
 	// Non-fatal: task continues even if settings file can't be written.
-	if err := WriteAgentSettings(dir); err != nil {
-		log.Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
-	}
-	if err := WriteAgentSkills(dir); err != nil {
-		log.Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
+	// Skipped in NoWorktree mode by default; ForceInjectHarnessSettings overrides (later task).
+	if !s.NoWorktree {
+		if err := WriteAgentSettings(dir); err != nil {
+			log.Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
+		}
+		if err := WriteAgentSkills(dir); err != nil {
+			log.Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
+		}
 	}
 
 	// Build HARNESS_* env vars for the subprocess. See handleAssign comment.
@@ -539,11 +550,13 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// Step 6: Conditionally clean up the worktree directory. See handleAssign
 	// for the rationale on why the branch ref is retained and why the dir is
 	// kept when `git status --porcelain` shows non-injected uncommitted work.
-	switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
-	case r.StatusErr != nil:
-		log.Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
-	case !r.Removed:
-		log.Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
+	if !s.NoWorktree {
+		switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
+		case r.StatusErr != nil:
+			log.Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
+		case !r.Removed:
+			log.Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
+		}
 	}
 }
 
