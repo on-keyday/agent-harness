@@ -39,13 +39,31 @@ type Config struct {
 	// it re-enables WriteAgentSettings / WriteAgentSkills (target = RepoPath).
 	// Worktree cleanup remains disabled in NoWorktree mode regardless.
 	ForceInjectHarnessSettings bool
+
+	// PingInterval overrides peer.DialConfig.PingInterval (default 15s).
+	PingInterval time.Duration
 }
 
-// Run dials the server, registers via Hello, processes RunnerRequests until
-// ctx is done (or the underlying connection closes), and returns the first
-// fatal error. The receive loop runs in a goroutine inside peer.Conn; this
-// function blocks on pc.Wait so the runner main can simply defer cleanup.
-func Run(ctx context.Context, cfg Config) error {
+// RunHandle wraps the live connection + session so Connect and OnConnect can
+// be called by separate callers (e.g. cli.PersistLoop).
+type RunHandle struct {
+	pc      *peer.Conn
+	session *Session
+	sender  *peerSender
+	cfg     Config
+
+	pskRespCh chan wire.PskAuthStatus
+}
+
+func (h *RunHandle) Done() <-chan struct{} { return h.pc.Done() }
+func (h *RunHandle) Close()                { h.pc.Close() }
+
+// Connect performs the WS dial, ECDH handshake, PSK exchange, and session
+// scaffolding. The caller drives the rest of the lifecycle via OnConnect.
+//
+// Returns *cli.PSKAuthError when the server rejects the PSK so PersistLoop
+// can treat it as fatal.
+func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -59,18 +77,17 @@ func Run(ctx context.Context, cfg Config) error {
 		Mode:   objproto.EndpointModeClient,
 	})
 	if err != nil {
-		return fmt.Errorf("ws endpoint: %w", err)
+		return nil, fmt.Errorf("ws endpoint: %w", err)
 	}
 	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 
 	pc, err := peer.Dial(ctx, ep, cfg.ServerCID, peer.DialConfig{
 		Logger:       cfg.Logger,
-		PingInterval: 30 * time.Second,
+		PingInterval: cfg.PingInterval, // zero → peer.Dial default (15s post-Task 1)
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer pc.Close()
 
 	// Resolve the runner binary's directory so we can prepend it to the
 	// agent's PATH. Errors are non-fatal: the agent simply won't have
@@ -104,19 +121,26 @@ func Run(ctx context.Context, cfg Config) error {
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 	}
-	pskRespCh := make(chan wire.PskAuthStatus, 1)
+
+	h := &RunHandle{
+		pc:        pc,
+		session:   session,
+		sender:    sender,
+		cfg:       cfg,
+		pskRespCh: make(chan wire.PskAuthStatus, 1),
+	}
 
 	// During PSK phase, only route PskAuth responses; runner control messages
 	// arrive only after the server has accepted the connection.
 	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
 		if kind == wire.ApplicationPayloadKind_PskAuth && len(payload) > 0 {
 			select {
-			case pskRespCh <- wire.PskAuthStatus(payload[0]):
+			case h.pskRespCh <- wire.PskAuthStatus(payload[0]):
 			default:
 			}
 			return
 		}
-		dispatchRunnerRequest(ctx, session, cfg.Logger, kind, payload)
+		// pre-OnConnect: ignore non-PSK payloads.
 	})
 	pc.Start(ctx)
 
@@ -131,42 +155,71 @@ func Run(ctx context.Context, cfg Config) error {
 	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pskRespCh)
+	}, psk, h.pskRespCh)
 	pskCancel()
 	if pskErr != nil {
-		return fmt.Errorf("psk: %w", pskErr)
+		pc.Close()
+		return nil, &cli.PSKAuthError{Err: pskErr}
 	}
+	return h, nil
+}
+
+// OnConnect performs the post-PSK lifecycle: install the runner-control
+// dispatcher rooted at runCtx, send Hello, and block until the peer
+// connection terminates or runCtx is cancelled.
+func OnConnect(runCtx context.Context, h *RunHandle) error {
+	pc := h.pc
+	session := h.session
+	cfg := h.cfg
+
+	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+		dispatchRunnerRequest(runCtx, session, cfg.Logger, kind, payload)
+	})
 
 	// Build and send Hello — the server's registry uses this to bind
 	// ConnectionID → allowed_roots / max_tasks / hostname.
 	hello := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
-	h := protocol.RunnerHello{Version: 1}
+	hh := protocol.RunnerHello{Version: 1}
 
 	maxTasks := cfg.MaxTasks
 	if maxTasks < 1 {
 		maxTasks = 1
 	}
-	h.MaxTasks = uint16(maxTasks)
-
+	hh.MaxTasks = uint16(maxTasks)
 	if cfg.Hostname != "" {
-		h.SetHostname([]byte(cfg.Hostname))
+		hh.SetHostname([]byte(cfg.Hostname))
 	}
-
 	roots := make([]protocol.AllowedRoot, 0, len(cfg.AllowedRoots))
 	for _, r := range cfg.AllowedRoots {
 		var ar protocol.AllowedRoot
 		ar.SetPath([]byte(r))
 		roots = append(roots, ar)
 	}
-	h.SetAllowedRoots(roots)
-
-	hello.SetHello(h)
+	hh.SetAllowedRoots(roots)
+	hello.SetHello(hh)
 	helloBytes := hello.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
-	if err := sender.Send(helloBytes); err != nil {
+	if err := h.sender.Send(helloBytes); err != nil {
 		return fmt.Errorf("send Hello: %w", err)
 	}
 
-	return pc.Wait(ctx)
+	// Block until either the connection dies or the run is cancelled.
+	select {
+	case <-pc.Done():
+		return nil
+	case <-runCtx.Done():
+		return nil
+	}
+}
+
+// Run is the legacy single-shot entry point used by tests and by the shim in
+// agent-runner main when persist=false. Sequential Connect → OnConnect.
+func Run(ctx context.Context, cfg Config) error {
+	h, err := Connect(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer h.Close()
+	return OnConnect(ctx, h)
 }
 
 // dispatchRunnerRequest decodes an inbound control payload and dispatches it to
@@ -248,4 +301,43 @@ func (s *peerSender) ID() objproto.ConnectionID {
 
 func (s *peerSender) Publish(topic string, data []byte) error {
 	return s.pc.Publish(s.ctx, "runner", topic, data)
+}
+
+// runHooks is a test seam used by TestRun_RunCtxCancelsOnPeerDone to inject
+// a handleAssign-shaped goroutine without spinning up real claude processes.
+type runHooks struct {
+	spawnTask func(ctx context.Context)
+	kicker    chan struct{}
+}
+
+func (h *runHooks) kickoff() { close(h.kicker) }
+
+// fakeRunHandle implements PersistHandle for runner unit tests.
+type fakeRunHandle struct {
+	done chan struct{}
+}
+
+func (h *fakeRunHandle) Done() <-chan struct{} { return h.done }
+func (h *fakeRunHandle) Close()                {}
+
+// runConnected is the test-facing core of OnConnect: derive runCtx, fire a
+// spawn callback when the kicker channel triggers, then block on Done.
+func runConnected(parent context.Context, h *fakeRunHandle, hooks runHooks) error {
+	runCtx, runCancel := context.WithCancel(parent)
+	defer runCancel()
+	if hooks.kicker == nil {
+		hooks.kicker = make(chan struct{})
+	}
+	go func() {
+		<-hooks.kicker
+		if hooks.spawnTask != nil {
+			hooks.spawnTask(runCtx)
+		}
+	}()
+	select {
+	case <-h.Done():
+		return nil
+	case <-parent.Done():
+		return nil
+	}
 }

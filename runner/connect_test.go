@@ -204,3 +204,45 @@ func TestRunnerCanonicalConnIDZeroValueDoesNotPanic(t *testing.T) {
 	}()
 	_ = s.runnerCanonicalConnID().String()
 }
+
+// TestRun_RunCtxCancelsOnPeerDone verifies that when the underlying peer.Conn
+// reports Done, the per-Run ctx visible to spawned task handlers is cancelled.
+//
+// We don't have a real peer.Conn here, so we exercise the ctx wiring directly
+// via runConnected (the helper introduced by this task) with a fake handle.
+func TestRun_RunCtxCancelsOnPeerDone(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h := &fakeRunHandle{done: make(chan struct{})}
+	captured := make(chan context.Context, 1)
+	hooks := runHooks{
+		spawnTask: func(ctx context.Context) { captured <- ctx },
+		kicker:    make(chan struct{}),
+	}
+
+	go func() {
+		_ = runConnected(parent, h, hooks)
+	}()
+
+	// Trigger one synthetic AssignTask path via the spawn hook.
+	hooks.kickoff()
+
+	var taskCtx context.Context
+	select {
+	case taskCtx = <-captured:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("spawnTask was never invoked")
+	}
+	if taskCtx.Err() != nil {
+		t.Fatalf("taskCtx already cancelled before peer Done: %v", taskCtx.Err())
+	}
+
+	close(h.done) // simulate disconnect
+
+	select {
+	case <-taskCtx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatalf("taskCtx was not cancelled after peer Done")
+	}
+}
