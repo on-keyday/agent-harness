@@ -239,7 +239,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(short) > 12 {
 			short = short[:12]
 		}
-		a.cmdresult.Append(OKStyle.Render("attaching ") + short + " — Ctrl+D / `exit` to detach")
+		a.cmdresult.Append(OKStyle.Render("attaching ") + short + " — Ctrl+] to detach client; Ctrl+D / `exit` ends the session")
 		return a, tea.Exec(&interactiveExec{stream: msg.Stream}, func(err error) tea.Msg {
 			return InteractiveDoneMsg{TaskID: msg.TaskID, Err: err}
 		})

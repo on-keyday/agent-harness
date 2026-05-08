@@ -135,7 +135,7 @@ func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string
 	// stderr because stdout is owned by the remote PTY's output once
 	// RemoteShell starts. Printing before MakeRaw keeps the message in
 	// cooked mode so the trailing newline behaves.
-	fmt.Fprintf(os.Stderr, "harness-cli: attached to task %s (Ctrl+D / `exit` to detach)\n", taskIDHex)
+	fmt.Fprintf(os.Stderr, "harness-cli: attached to task %s (Ctrl+] to detach client; Ctrl+D / `exit` ends the session)\n", taskIDHex)
 
 	if err := stream.RemoteShell(); err != nil {
 		return taskIDHex, err

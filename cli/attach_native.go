@@ -38,7 +38,7 @@ func (c *Client) SessionAttach(ctx context.Context, taskIDHex string) (string, e
 	defer stream.Close()
 
 	// stderr: stdout is owned by the remote PTY once RemoteShell starts.
-	fmt.Fprintf(os.Stderr, "harness-cli: attached to task %s (replay %d bytes; Ctrl+D / `exit` to detach)\n", taskIDHex, replayBytes)
+	fmt.Fprintf(os.Stderr, "harness-cli: attached to task %s (replay %d bytes; Ctrl+] to detach client; Ctrl+D / `exit` ends the session)\n", taskIDHex, replayBytes)
 
 	if err := stream.RemoteShell(); err != nil {
 		return taskIDHex, err

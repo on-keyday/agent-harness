@@ -3,6 +3,7 @@
 package exec
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -443,7 +444,49 @@ func (w *CommandExecutionStream) RemoteShell() error {
 
 	stdin := w.Stdin()
 	stdout := w.Stdout()
-	go io.Copy(stdin, os.Stdin)
+
+	// Stdin → runner forward, with client-side detach key interception.
+	//
+	// detachByte = 0x1d (Ctrl+]) is swallowed at the client and triggers a
+	// half-close of the bidi stream's send side via w.BidirectionalStream.Close().
+	// The server's SessionMux.tuiPump sees ReadDirect return eof=true and
+	// calls detachOnly, which CloseBoths the tui stream from the server side
+	// but leaves the runner stream alive — for Detachable sessions the agent
+	// (claude / bash / etc.) survives and is re-attachable. For
+	// non-Detachable sessions the server has no SessionMux, so the half-close
+	// cascades to runner teardown via the existing kill-on-disconnect path
+	// — semantically equivalent to typing `exit` / Ctrl+D, which is fine.
+	//
+	// Why not stdinWrapper.Close()? That sends a 0-length Stdin frame, which
+	// the runner forwards to the agent's stdin as EOF — bash exits, agent
+	// dies even when the session was Detachable. The bidi-stream Close()
+	// cuts at the transport layer instead.
+	//
+	// Choice of 0x1d: Ctrl+] is GS, used by telnet's escape and almost
+	// nothing else in modern TUIs. In particular it is NOT 0x1b (Ctrl+[ =
+	// ESC), which is the prefix of every terminal escape sequence and must
+	// be passed through unmolested.
+	const detachByte = 0x1d
+
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				if i := bytes.IndexByte(buf[:n], detachByte); i >= 0 {
+					if i > 0 {
+						_, _ = stdin.Write(buf[:i])
+					}
+					_ = w.BidirectionalStream.Close()
+					return
+				}
+				_, _ = stdin.Write(buf[:n])
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	_, err = io.Copy(os.Stdout, stdout)
 	return err
 }
