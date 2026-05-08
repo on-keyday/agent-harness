@@ -765,6 +765,56 @@ func branchExists(t *testing.T, repo, name string) bool {
 	return cmd.Run() == nil
 }
 
+// TestHandleAssign_NoWorktree_ConcurrentTasks verifies that two tasks assigned
+// concurrently to the same Session in NoWorktree mode both reach TaskFinished
+// without serializing on each other (no shared worktree mutex).
+func TestHandleAssign_NoWorktree_ConcurrentTasks(t *testing.T) {
+	repo := t.TempDir()
+	fake := writeFakeClaude(t, `sleep 0.1; echo done`)
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+		NoWorktree:   true,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := byte(1); i <= 2; i++ {
+		i := i
+		go func() {
+			defer wg.Done()
+			req := &protocol.AssignTask{
+				TaskId: protocol.TaskID{Id: [16]byte{i}},
+				Prompt: []byte("nw-concurrent"),
+			}
+			req.SetRepoPath([]byte(repo))
+			s.handleAssign(context.Background(), req)
+		}()
+	}
+	wg.Wait()
+
+	ms.mu.Lock()
+	sentCopy := append([][]byte{}, ms.sent...)
+	ms.mu.Unlock()
+	finished := collectTaskFinished(t, sentCopy)
+
+	for _, id := range []byte{1, 2} {
+		key := [16]byte{id}
+		tf, ok := finished[key]
+		if !ok {
+			t.Errorf("no TaskFinished for task %d", id)
+			continue
+		}
+		if tf.ExitCode != 0 {
+			t.Errorf("task %d: ExitCode=%d (want 0); err=%q", id, tf.ExitCode, tf.ErrorMessage)
+		}
+	}
+}
+
 // TestHandleOpenExec_NoWorktree_NoGitDir mirrors TestHandleAssign_NoWorktree_NoGitDir
 // but for the interactive PTY path. Uses /bin/true as ClaudeBin and the existing
 // noopBidiStream so the exec terminates immediately; we only verify the
