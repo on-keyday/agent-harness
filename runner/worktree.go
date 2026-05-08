@@ -2,6 +2,8 @@ package runner
 
 import (
 	"fmt"
+	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -56,6 +58,29 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	pruneCmd := exec.Command("git", "worktree", "prune")
 	pruneCmd.Dir = wm.Repo
 	_ = pruneCmd.Run()
+
+	// Orphan-dir recovery: dir exists on disk but is not registered as a
+	// worktree (e.g., server restarted while a worktree was active and the
+	// runner cleanup never ran, or the registration was pruned but the dir
+	// remained). `git worktree add` would fail with "already exists". Try
+	// `git worktree repair` first — if the .git pointer is intact it will
+	// re-establish registration without losing uncommitted work. If that
+	// also fails to register the expected (dir, branch) pair, fall back to
+	// rm -rf so the subsequent add can succeed (the user explicitly resumed
+	// so they have accepted that uncommitted state in this dir is gone;
+	// committed work is preserved on the branch).
+	if _, err := os.Stat(dir); err == nil {
+		repairCmd := exec.Command("git", "worktree", "repair", dir)
+		repairCmd.Dir = wm.Repo
+		_ = repairCmd.Run()
+		if wm.worktreeRegisteredLocked(dir, branch) {
+			return dir, nil
+		}
+		slog.Warn("worktree dir present without matching registration; removing for re-add", "dir", dir, "branch", branch)
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			return "", fmt.Errorf("worktree orphan dir removal: %w", rmErr)
+		}
+	}
 
 	args := []string{"worktree", "add", "-b", branch, dir}
 	if wm.branchExistsLocked(branch) {

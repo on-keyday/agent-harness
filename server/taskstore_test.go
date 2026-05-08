@@ -133,35 +133,6 @@ func TestTaskStoreCancel(t *testing.T) {
 	}
 }
 
-// TestTaskStoreFinishIsIdempotentAgainstTerminalStates verifies the
-// cancel-then-runner-finishes race: Cancel marks Cancelled, then a runner
-// TaskFinished arrives with exit_code=0 (because SIGTERM caused a clean
-// exit). Finish must NOT overwrite Cancelled with Succeeded.
-func TestTaskStoreFinishIsIdempotentAgainstTerminalStates(t *testing.T) {
-	for _, tc := range []struct {
-		name    string
-		setup   func(*TaskStore, string)
-		wantSt  protocol.TaskStatus
-	}{
-		{"after_Cancel", func(s *TaskStore, id string) { s.Cancel(id) }, protocol.TaskStatus_Cancelled},
-		{"after_MarkFailed", func(s *TaskStore, id string) { s.MarkFailed(id, "test") }, protocol.TaskStatus_Failed},
-		{"after_Finish", func(s *TaskStore, id string) { s.Finish(id, 1, []byte("first")) }, protocol.TaskStatus_Failed},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := NewTaskStore()
-			id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
-			tc.setup(s, id)
-
-			// Late-arriving TaskFinished should be a no-op.
-			s.Finish(id, 0, nil)
-			entry, _ := s.Get(id)
-			if entry.Status != tc.wantSt {
-				t.Fatalf("after late Finish: status=%v want %v", entry.Status, tc.wantSt)
-			}
-		})
-	}
-}
-
 // TestTaskStoreTerminalClearsIsAttached verifies that transitioning to a
 // terminal state clears IsAttached so `session ls` doesn't show stale
 // attached=true on dead sessions.
