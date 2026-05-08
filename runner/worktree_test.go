@@ -284,6 +284,86 @@ func TestRemoveIfCleanReturnsStatusErrWhenDirGone(t *testing.T) {
 	}
 }
 
+// TestCreateWorktree_RecoversOrphanDir verifies the resume-after-restart case
+// where a worktree dir is left on disk without a matching git registration
+// (e.g., server restart while a worktree was active and runner cleanup never
+// ran, then the user resumed). Without recovery, `git worktree add` fails
+// with "already exists". Create must succeed and the branch's committed work
+// must be preserved. Uncommitted state in the orphan dir is acceptable to
+// lose because the user explicitly chose --resume and the branch is the
+// authoritative source of preserved work.
+func TestCreateWorktree_RecoversOrphanDir(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+
+	// First-run to create the branch.
+	dir, err := wm.Create("rm-orphan-task")
+	if err != nil {
+		t.Fatalf("first Create: %v", err)
+	}
+
+	// Add and commit a file on the branch so we can verify it's preserved.
+	committedPath := filepath.Join(dir, "committed.txt")
+	if err := os.WriteFile(committedPath, []byte("committed content\n"), 0o644); err != nil {
+		t.Fatalf("write committed: %v", err)
+	}
+	cmd := exec.Command("git", "add", "committed.txt")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v (%s)", err, out)
+	}
+	cmd = exec.Command("git", "commit", "-m", "commit on branch")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v (%s)", err, out)
+	}
+
+	// Cleanly remove the worktree (registration + dir).
+	if err := wm.Remove("rm-orphan-task"); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+
+	// Simulate orphan dir without registration: re-create the dir with
+	// non-git junk so `git worktree repair` cannot recover it (no .git
+	// pointer). This mimics the post-server-restart scenario where the dir
+	// survived but git's metadata was lost.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir orphan: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "stale.txt"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatalf("write stale: %v", err)
+	}
+
+	// Create must fall back to rm + add and succeed.
+	got, err := wm.Create("rm-orphan-task")
+	if err != nil {
+		t.Fatalf("Create after rm-orphan: %v", err)
+	}
+	if got != dir {
+		t.Fatalf("dir drift: %q vs %q", got, dir)
+	}
+	// Stale (uncommitted) content gone.
+	if _, err := os.Stat(filepath.Join(dir, "stale.txt")); !os.IsNotExist(err) {
+		t.Fatalf("stale.txt should have been removed, got err=%v", err)
+	}
+	// Committed content (from the branch) still there.
+	if data, err := os.ReadFile(committedPath); err != nil {
+		t.Fatalf("committed file missing on resumed branch: %v", err)
+	} else if string(data) != "committed content\n" {
+		t.Fatalf("committed file corrupted: %q", data)
+	}
+}
+
 // TestWorktreeManagerSerializesSameRepo verifies that concurrent Create/Remove
 // calls on the same WorktreeManager do not corrupt the git worktree list.
 // The -race flag + -count=10 catches any mutex regression.
@@ -295,7 +375,7 @@ func TestWorktreeManagerSerializesSameRepo(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
