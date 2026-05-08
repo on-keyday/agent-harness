@@ -146,10 +146,10 @@ func TestPersistLoop_ExponentialBackoffOnDialError(t *testing.T) {
 		t.Fatalf("got %d sleeps, want >= 4: %v", len(sleepDurations), sleepDurations)
 	}
 	want := []time.Duration{
-		100 * time.Millisecond,
 		200 * time.Millisecond,
 		400 * time.Millisecond,
 		800 * time.Millisecond,
+		1000 * time.Millisecond, // capped at MaxBackoff
 	}
 	for i, w := range want {
 		if sleepDurations[i] != w {

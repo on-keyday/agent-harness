@@ -168,7 +168,7 @@ func PersistLoop(
 			if ctx.Err() != nil {
 				return nil
 			}
-			if !sleepBackoff(ctx, &cfg, attempt, err) {
+			if !sleepBackoff(ctx, &cfg, attempt+1, err) {
 				return nil
 			}
 			continue
