@@ -115,3 +115,56 @@ button:hover { background: #555; }
         font-size: 1.1rem;
     }
 }
+
+/* Mobile-friendly layout. Goals:
+ *  - viewport-width inputs (no horizontal scroll from size="60" etc.)
+ *  - >=16px input font (prevents iOS auto-zoom on focus)
+ *  - stacked label/input pairs
+ *  - reduced page padding to maximise real estate
+ *  - terminal taller so it dominates the viewport
+ */
+@media (max-width: 600px) {
+    body { padding: 0.5rem; }
+    section { margin-bottom: 1rem; }
+    section h2 { font-size: 0.95rem; margin: 0.4rem 0 0.3rem; }
+
+    /* Form rows stack vertically; labels above inputs full-width. */
+    #compose label, #cmdline label {
+        display: block;
+        margin: 0.3rem 0 0.15rem;
+    }
+    #compose select,
+    #compose input,
+    #cmdline input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        font-size: 16px;       /* >= 16px to disable iOS auto-zoom */
+        padding: 0.5rem;
+        min-width: 0;
+    }
+    #compose br { display: none; } /* labels already block-level */
+
+    /* Override the desktop wide min-width that overflowed phones. */
+    #runner-select { min-width: 0; margin: 0; }
+
+    /* Buttons easier to tap. */
+    button {
+        padding: 0.5rem 0.9rem;
+        font-size: 1rem;
+        min-height: 2.4rem;
+    }
+    /* Reattach input + button row remains horizontal but wraps if needed. */
+    .actions input[type="text"] {
+        flex: 1 1 14rem;
+        min-width: 0;
+        font-size: 16px;
+    }
+
+    /* Logs / lists: keep monospace pre but shrink slightly and let it
+       scroll instead of forcing 200px tall on every section. */
+    pre { font-size: 0.8rem; max-height: 160px; }
+
+    /* Terminal: taller so claude has room. */
+    #terminal { height: 70vh; min-height: 280px; }
+}
