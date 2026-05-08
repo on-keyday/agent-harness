@@ -82,7 +82,7 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
-		return nil, pskErr
+		return nil, &PSKAuthError{Err: pskErr}
 	}
 
 	// PSK exchange complete — switch to the pure app handler.
