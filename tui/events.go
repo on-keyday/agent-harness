@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
@@ -32,9 +33,17 @@ type LogChunkMsg struct {
 	Chunk  []byte
 }
 
+// ConnectionMsg notifies the App of a connection state change driven by
+// cli.PersistLoop. Connected and Reconnecting are mutually exclusive.
+//   - Connected=true             → freshly bound to a live client
+//   - Reconnecting=true          → between attempts, NextRetry counts down
+//   - Connected=false, Reconnecting=false → terminal disconnect (Err set)
 type ConnectionMsg struct {
-	Connected bool
-	Err       error
+	Connected    bool
+	Reconnecting bool
+	Attempt      int
+	NextRetry    time.Duration
+	Err          error
 }
 
 // DecodeTaskStatus decodes a TaskStatusEvent payload.
