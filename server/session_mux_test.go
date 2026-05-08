@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"io"
 	"sync"
 	"sync/atomic"
@@ -123,7 +124,11 @@ func (f *fakeBidiStream) AppendDataContext(_ context.Context, eof bool, data ...
 }
 
 // ReadDirect blocks until a chunk is queued or CloseRead is called.
-// It returns (data, eof, err) matching the trsf.ReceiveStream contract.
+// It returns (data, eof, err) matching the trsf.ReceiveStream contract:
+// at most maxN bytes are returned, with any leftover left at the head of
+// the queue so a subsequent Read picks it up. Without this, an io.ReadFull
+// asking for 5 bytes against a 30-byte queued chunk would silently
+// discard the trailing 25 bytes.
 func (f *fakeBidiStream) ReadDirect(maxN uint64) ([]byte, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -138,6 +143,11 @@ func (f *fakeBidiStream) ReadDirect(maxN uint64) ([]byte, bool, error) {
 		return nil, true, nil
 	}
 	chunk := f.readQ[0]
+	if uint64(len(chunk)) > maxN {
+		out := chunk[:maxN]
+		f.readQ[0] = chunk[maxN:]
+		return out, false, nil
+	}
 	f.readQ = f.readQ[1:]
 	eof := f.readEOF && len(f.readQ) == 0
 	return chunk, eof, nil
@@ -200,24 +210,36 @@ func waitFor(t *testing.T, cond func() bool) {
 
 // --- Tests ---
 
+// makeWireFrame builds a wire-encoded exec/frame frame: 1 byte Type + 4
+// byte big-endian Len + payload. Type value is opaque from the server's
+// perspective; SessionMux only cares about boundaries.
+func makeWireFrame(typ byte, payload []byte) []byte {
+	out := make([]byte, frameHeaderSize+len(payload))
+	out[0] = typ
+	binary.BigEndian.PutUint32(out[1:5], uint32(len(payload)))
+	copy(out[frameHeaderSize:], payload)
+	return out
+}
+
 func TestSessionMux_AttachReplaysRingBuffer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	runnerStream := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task-abc", runnerStream, NewRingBuffer(32), SessionHooks{})
+	mux := NewSessionMux(ctx, "task-abc", runnerStream, NewRingBuffer(64), SessionHooks{})
 
-	runnerStream.QueueRead([]byte("preattach payload"))
-	waitFor(t, func() bool { return mux.RingBufferLen() == len("preattach payload") })
+	wire := makeWireFrame(1, []byte("preattach payload"))
+	runnerStream.QueueRead(wire)
+	waitFor(t, func() bool { return mux.RingBufferLen() == len(wire) })
 
 	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	got := tui.WaitWritten(t, len("preattach payload"))
-	if !bytes.Equal(got, []byte("preattach payload")) {
-		t.Fatalf("replay got %q want %q", got, "preattach payload")
+	got := tui.WaitWritten(t, len(wire))
+	if !bytes.Equal(got, wire) {
+		t.Fatalf("replay got %q want %q", got, wire)
 	}
 }
 
@@ -226,7 +248,7 @@ func TestSessionMux_DetachKeepsRunnerStream(t *testing.T) {
 	defer cancel()
 
 	runnerStream := newFakeStream(t)
-	mux := NewSessionMux(ctx, "task", runnerStream, NewRingBuffer(64), SessionHooks{})
+	mux := NewSessionMux(ctx, "task", runnerStream, NewRingBuffer(128), SessionHooks{})
 
 	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {
@@ -240,8 +262,9 @@ func TestSessionMux_DetachKeepsRunnerStream(t *testing.T) {
 		t.Fatal("runnerStream must NOT be closed on client detach")
 	}
 
-	runnerStream.QueueRead([]byte("post-detach"))
-	waitFor(t, func() bool { return mux.RingBufferLen() == len("post-detach") })
+	wire := makeWireFrame(1, []byte("post-detach"))
+	runnerStream.QueueRead(wire)
+	waitFor(t, func() bool { return mux.RingBufferLen() == len(wire) })
 }
 
 func TestSessionMux_AttachTakeover(t *testing.T) {

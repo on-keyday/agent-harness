@@ -150,9 +150,16 @@ func TestSessionDetachReattach(t *testing.T) {
 	stream2.Close()
 }
 
-// TestSessionDetach_RingBufferWrap verifies that when the process emits more
-// data than the ring buffer capacity, AttachSession reports ReplayBytes equal
-// to the ring capacity (the oldest bytes were silently dropped).
+// TestSessionDetach_RingBufferWrap verifies that when the process emits
+// far more data than the ring's byte budget, AttachSession's replay is
+// bounded — the oldest *whole frames* are dropped on overflow. The exact
+// replay size depends on frame boundaries, not on the byte budget alone:
+// the ring keeps frames intact (a single frame larger than cap is kept
+// alone, exceeding cap; smaller frames are evicted whole until total fits)
+// because a byte-level truncation would corrupt the consumer's frame
+// parser. The test asserts (a) the runner generated more than cap bytes
+// of work, and (b) the replay is still bounded near cap rather than
+// exposing the full multi-MB burst.
 func TestSessionDetach_RingBufferWrap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("integration test skipped in -short mode")
@@ -224,10 +231,18 @@ func TestSessionDetach_RingBufferWrap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}
-	t.Logf("AttachSession ok, replayBytes=%d (want %d)", replayBytes, uint64(ringSize))
+	t.Logf("AttachSession ok, replayBytes=%d (cap=%d, total runner output=~5MiB)", replayBytes, uint64(ringSize))
 
-	if replayBytes != uint64(ringSize) {
-		t.Errorf("replayBytes=%d, want %d (ring capacity)", replayBytes, ringSize)
+	if replayBytes == 0 {
+		t.Errorf("replayBytes=0 — expected the ring to hold at least the most recent frame")
+	}
+	// Upper bound: cap + one max-frame-size headroom. PTY reads are bounded
+	// by the kernel TTY buffer (typically 4 KiB), so a single frame from
+	// the runner won't exceed that plus the 5-byte header. Allow generous
+	// slack (64 KiB) to keep this test robust against PTY tuning.
+	const maxFrameHeadroom = 64 * 1024
+	if replayBytes > uint64(ringSize+maxFrameHeadroom) {
+		t.Errorf("replayBytes=%d exceeds soft cap %d + headroom %d — ring failed to bound 5 MiB burst", replayBytes, ringSize, maxFrameHeadroom)
 	}
 
 	// Drain replayed output and close.

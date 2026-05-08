@@ -2,11 +2,41 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
+	"io"
 	"sync"
 
 	"github.com/on-keyday/agent-harness/trsf"
 )
+
+// frameHeaderSize is the wire size of exec/frame.FrameHeader: 1-byte Type
+// followed by 4-byte big-endian Len. Hard-coded here rather than imported
+// from exec/frame because SessionMux only needs the *boundary*, not the
+// frame's semantic content. Keep in sync with exec/frame/frame.bgn.
+const frameHeaderSize = 5
+
+// readOneFrame reads exactly one wire-encoded frame (header + payload)
+// from r and returns the concatenated bytes. Used by runnerPump to keep
+// ring-buffer entries aligned to frame boundaries: a byte-level ring that
+// wraps mid-frame would feed the client's parser a bogus header and
+// deadlock it on a fake Len. Returns the read error verbatim — callers
+// should stop the session on any non-nil error.
+func readOneFrame(r io.Reader) ([]byte, error) {
+	hdr := make([]byte, frameHeaderSize)
+	if _, err := io.ReadFull(r, hdr); err != nil {
+		return nil, err
+	}
+	payloadLen := binary.BigEndian.Uint32(hdr[1:5])
+	out := make([]byte, frameHeaderSize+int(payloadLen))
+	copy(out, hdr)
+	if payloadLen > 0 {
+		if _, err := io.ReadFull(r, out[frameHeaderSize:]); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
 
 // SessionHooks lets the controller observe SessionMux state transitions.
 // Any field may be nil. Hooks fire from goroutines other than the caller's,
@@ -63,32 +93,33 @@ func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.Bidirec
 	return m
 }
 
-// runnerPump reads from the runner stream, appends to the ring, and
-// forwards live data to the attached tui (if any). It calls Stop on exit
-// so that a runner-side EOF/error tears everything down.
+// runnerPump reads ONE frame at a time from the runner stream, appends the
+// wire-encoded frame to the ring, and forwards it to the attached tui
+// (if any). Reading per-frame (instead of per-arbitrary-byte-chunk) is
+// what keeps the ring's drop policy aligned to frame boundaries: when a
+// future Append wraps around, the dropped entry is one or more *whole*
+// frames, never a partial header. It calls Stop on exit so that a
+// runner-side EOF/error tears everything down.
 func (m *SessionMux) runnerPump() {
 	defer m.Stop()
-	const maxRead = 32 * 1024
 	for {
 		if m.ctx.Err() != nil {
 			return
 		}
-		data, eof, err := m.runner.ReadDirect(maxRead)
-		if len(data) > 0 {
-			m.ring.Append(data)
-			m.mu.Lock()
-			tui := m.tui
-			m.mu.Unlock()
-			if tui != nil {
-				if werr := tui.AppendData(false, data); werr != nil {
-					m.mu.Lock()
-					m.detachLocked(tui)
-					m.mu.Unlock()
-				}
-			}
-		}
-		if eof || err != nil {
+		frameBytes, err := readOneFrame(m.runner)
+		if err != nil {
 			return
+		}
+		m.ring.Append(frameBytes)
+		m.mu.Lock()
+		tui := m.tui
+		m.mu.Unlock()
+		if tui != nil {
+			if werr := tui.AppendData(false, frameBytes); werr != nil {
+				m.mu.Lock()
+				m.detachLocked(tui)
+				m.mu.Unlock()
+			}
 		}
 	}
 }

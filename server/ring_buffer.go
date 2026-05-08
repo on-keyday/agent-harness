@@ -2,67 +2,67 @@ package server
 
 import "sync"
 
-// RingBuffer is a fixed-size raw-byte ring. Appends past capacity overwrite
-// the oldest bytes. Safe for concurrent use.
+// RingBuffer holds up to a soft byte budget of wire-encoded frames in
+// append order. Drops always happen on a *frame boundary*: when an Append
+// pushes the total past cap, the oldest whole frames are evicted until the
+// new total fits, or until only the just-pushed frame remains. A single
+// frame larger than cap is stored alone (cap is exceeded for that one
+// entry) — the alternative would be silently dropping data the caller
+// already considered atomic.
+//
+// Each Append() must receive exactly one complete wire-encoded frame
+// (header + payload). Truncation at arbitrary byte offsets would corrupt
+// the consumer's frame parser when the ring later wraps mid-frame; the
+// API is shaped to make that mistake impossible at the type level.
 type RingBuffer struct {
-	mu       sync.Mutex
-	buf      []byte
-	cap      int
-	writeIdx int  // next write position
-	full     bool // true once buf has wrapped at least once
+	mu     sync.Mutex
+	frames [][]byte
+	cap    int // soft byte budget
+	bytes  int // sum of len(frames[i])
 }
 
 func NewRingBuffer(capacity int) *RingBuffer {
 	if capacity <= 0 {
 		capacity = 1
 	}
-	return &RingBuffer{buf: make([]byte, capacity), cap: capacity}
+	return &RingBuffer{cap: capacity}
 }
 
+// Append stores p as one ring entry. The caller MUST pass exactly one
+// complete wire-encoded frame; passing partial or multi-frame slices will
+// corrupt replay. The bytes are copied — caller may reuse its buffer.
 func (r *RingBuffer) Append(p []byte) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if len(p) >= r.cap {
-		// only the last `cap` bytes survive
-		copy(r.buf, p[len(p)-r.cap:])
-		r.writeIdx = 0
-		r.full = true
+	if len(p) == 0 {
 		return
 	}
-	tail := r.cap - r.writeIdx
-	if len(p) <= tail {
-		copy(r.buf[r.writeIdx:], p)
-	} else {
-		copy(r.buf[r.writeIdx:], p[:tail])
-		copy(r.buf[0:], p[tail:])
-		r.full = true
-	}
-	r.writeIdx = (r.writeIdx + len(p)) % r.cap
-	if r.writeIdx == 0 && len(p) > 0 {
-		r.full = true
+	frame := append([]byte(nil), p...)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.frames = append(r.frames, frame)
+	r.bytes += len(frame)
+	for r.bytes > r.cap && len(r.frames) > 1 {
+		r.bytes -= len(r.frames[0])
+		r.frames = r.frames[1:]
 	}
 }
 
-// Snapshot returns the buffer content in oldest-to-newest order.
+// Snapshot returns all stored frames concatenated, oldest first.
 func (r *RingBuffer) Snapshot() []byte {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !r.full {
-		out := make([]byte, r.writeIdx)
-		copy(out, r.buf[:r.writeIdx])
-		return out
+	if r.bytes == 0 {
+		return nil
 	}
-	out := make([]byte, r.cap)
-	copy(out, r.buf[r.writeIdx:])
-	copy(out[r.cap-r.writeIdx:], r.buf[:r.writeIdx])
+	out := make([]byte, 0, r.bytes)
+	for _, f := range r.frames {
+		out = append(out, f...)
+	}
 	return out
 }
 
+// Len returns the current total byte size of all stored frames.
 func (r *RingBuffer) Len() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.full {
-		return r.cap
-	}
-	return r.writeIdx
+	return r.bytes
 }
