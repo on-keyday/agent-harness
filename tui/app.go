@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -90,8 +91,11 @@ func New(cfg Config) *App {
 // BindContext stores the application-level context for spawning per-task subscriptions.
 func (a *App) BindContext(ctx context.Context) { a.appCtx = ctx }
 
-// BindClient stores the persistent cli.Client used for both pubsub
-// subscriptions and TaskControl RPCs. Called by main.go after cli.Dial succeeds.
+// BindClient stores the active *cli.Client. Re-entrant: callers may call
+// BindClient repeatedly across reconnects. The previous client's pubsub
+// goroutines have already been torn down by cli.PersistLoop's runCtx
+// cancellation by the time this fires, so all we need to do is swap the
+// pointer.
 func (a *App) BindClient(c *cli.Client) {
 	a.client = c
 }
@@ -183,8 +187,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConnectionMsg:
 		a.connected = msg.Connected
-		if !msg.Connected && msg.Err != nil {
-			a.cmdresult.Append(ErrorStyle.Render("disconnected: " + msg.Err.Error()))
+		switch {
+		case msg.Connected:
+			// fresh attach; logs are re-followed by the main goroutine on reconnect.
+		case msg.Reconnecting:
+			txt := fmt.Sprintf("reconnecting (attempt %d, next try in %s)",
+				msg.Attempt, msg.NextRetry.Truncate(time.Second))
+			if msg.Err != nil {
+				txt += ": " + msg.Err.Error()
+			}
+			a.cmdresult.Append(FooterStyle.Render(txt))
+		default:
+			if msg.Err != nil {
+				a.cmdresult.Append(ErrorStyle.Render("disconnected: " + msg.Err.Error()))
+			} else {
+				a.cmdresult.Append(ErrorStyle.Render("disconnected"))
+			}
 		}
 		return a, nil
 
@@ -560,6 +578,11 @@ func (a *App) View() string {
 	}
 	return view
 }
+
+// FollowingTaskID returns the task id whose log is being streamed into the
+// log pane, or "" if no task is followed. Used by the persist-loop wiring
+// to re-issue SubscribeTaskLog after a reconnect.
+func (a *App) FollowingTaskID() string { return a.logs.TaskID() }
 
 // followTask LEAVEs the previous log subscription (if any), kicks off both a
 // historical fetch (GetTaskLog) and a live subscribe (task.<taskID>.log).
