@@ -219,3 +219,115 @@ func TestPersistLoop_DisabledReturnsErrConnectionClosedOnPeerDrop(t *testing.T) 
 		t.Fatalf("PersistLoop err = %v, want ErrConnectionClosed", err)
 	}
 }
+
+func TestPersistLoop_PSKAuthIsFatal(t *testing.T) {
+	ctx := context.Background()
+	pskErr := &PSKAuthError{Err: errors.New("rejected")}
+	dial := func(_ context.Context) (PersistHandle, error) { return nil, pskErr }
+	onConnect := func(_ context.Context, _ PersistHandle) error { return nil }
+
+	err := PersistLoop(ctx, dial, onConnect, PersistConfig{
+		Enabled: true, // even with persist on, PSK is fatal
+		Sleep:   instantSleep,
+	})
+	var got *PSKAuthError
+	if !errors.As(err, &got) {
+		t.Fatalf("PersistLoop err = %v, want *PSKAuthError", err)
+	}
+}
+
+func TestPersistLoop_CtxCancelDuringBackoff(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	dial := func(_ context.Context) (PersistHandle, error) {
+		return nil, errors.New("transient")
+	}
+	onConnect := func(_ context.Context, _ PersistHandle) error { return nil }
+
+	cfg := PersistConfig{
+		Enabled:        true,
+		InitialBackoff: 50 * time.Millisecond,
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			cancel()
+			return ctx.Err()
+		},
+	}
+
+	if err := PersistLoop(ctx, dial, onConnect, cfg); err != nil {
+		t.Fatalf("PersistLoop err = %v, want nil", err)
+	}
+}
+
+func TestPersistLoop_StableResetClearsAttemptCounter(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var (
+		mu             sync.Mutex
+		sleepDurations []time.Duration
+		now            = time.Unix(1_700_000_000, 0)
+		dialCount      int
+	)
+	advance := func(d time.Duration) {
+		mu.Lock()
+		now = now.Add(d)
+		mu.Unlock()
+	}
+
+	handle := newFakeHandle()
+	dial := func(_ context.Context) (PersistHandle, error) {
+		mu.Lock()
+		dialCount++
+		mu.Unlock()
+		switch dialCount {
+		case 1:
+			return handle, nil // success #1; we'll close after StableReset elapses
+		case 2, 3:
+			return nil, errors.New("flap")
+		default:
+			cancel()
+			return nil, errors.New("done")
+		}
+	}
+	onConnect := func(runCtx context.Context, h PersistHandle) error {
+		// Simulate a long-stable connection: advance virtual time past
+		// StableReset (60s), then close.
+		advance(2 * time.Minute)
+		h.Close()
+		<-runCtx.Done()
+		return nil
+	}
+
+	cfg := PersistConfig{
+		Enabled:        true,
+		InitialBackoff: 100 * time.Millisecond,
+		MaxBackoff:     10 * time.Second,
+		BackoffFactor:  2.0,
+		Jitter:         0,
+		StableReset:    60 * time.Second,
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
+		Sleep: func(ctx context.Context, d time.Duration) error {
+			mu.Lock()
+			sleepDurations = append(sleepDurations, d)
+			mu.Unlock()
+			return ctx.Err()
+		},
+	}
+
+	_ = PersistLoop(ctx, dial, onConnect, cfg)
+
+	mu.Lock()
+	defer mu.Unlock()
+	// First post-success sleep should be at attempt=1 (counter reset),
+	// i.e. == InitialBackoff, not 200ms or 400ms.
+	if len(sleepDurations) == 0 {
+		t.Fatalf("no sleeps recorded")
+	}
+	if sleepDurations[0] != 100*time.Millisecond {
+		t.Errorf("first sleep after stable success = %v, want 100ms (counter reset)",
+			sleepDurations[0])
+	}
+}
