@@ -87,3 +87,31 @@ button:hover { background: #555; }
   min-height: 200px;
   border-radius: 4px;
 }
+.touch-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0.5rem 0;
+}
+.touch-keys button {
+    min-width: 3rem;
+    min-height: 2.4rem;
+    padding: 0.4rem 0.6rem;
+    font-family: monospace;
+    font-size: 1rem;
+    cursor: pointer;
+    user-select: none;
+}
+.touch-keys button.active {
+    background: #ffe066;
+    border-color: #b58900;
+    color: #000;
+    font-weight: bold;
+}
+@media (max-width: 600px) {
+    .touch-keys button {
+        min-width: 3.5rem;
+        min-height: 3rem;
+        font-size: 1.1rem;
+    }
+}

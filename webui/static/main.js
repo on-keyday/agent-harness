@@ -165,7 +165,90 @@ const POLL_INTERVAL_MS = 5000;
   term.open(document.getElementById("terminal"));
   fit.fit();
   window.harness_xtermWrite = (uint8Array) => term.write(uint8Array);
-  term.onData((data) => window.harness.sendInteractive(data));
+
+  // Touch-keys: virtual modifier toggles + special-key buttons for soft keyboards.
+  const mods = { ctrl: false, shift: false };
+
+  const setMod = (name, on) => {
+      mods[name] = on;
+      const btn = document.getElementById(`tk-${name}`);
+      if (btn) btn.classList.toggle("active", on);
+  };
+
+  const sendSeq = (seq) => {
+      window.harness.sendInteractive(seq);
+      term.focus();
+  };
+
+  // Apply Ctrl/Shift modifiers to a CSI base sequence (Esc Tab arrows).
+  // Standard xterm-style modifier encoding:
+  //   modVal = 1 + (Shift?1:0) + (Alt?2:0) + (Ctrl?4:0)
+  // Shift+Tab is the special case: xterm sends ESC [ Z (BackTab).
+  const KEY_BASE = {
+      esc:   "\x1b",
+      tab:   "\t",
+      up:    "\x1b[A",
+      down:  "\x1b[B",
+      left:  "\x1b[D",
+      right: "\x1b[C",
+  };
+
+  const applyMods = (key) => {
+      const base = KEY_BASE[key];
+      if (!base) return null;
+      // Shift+Tab → BackTab
+      if (key === "tab" && mods.shift && !mods.ctrl) return "\x1b[Z";
+      // Esc has no modifier encoding; send as-is.
+      if (key === "esc") return base;
+      // Tab with Ctrl only or Ctrl+Shift: no widely-supported sequence, send Tab.
+      if (key === "tab") return base;
+      // Arrow keys: use CSI 1;<mod><letter> when modifiers set.
+      const m = /^\x1b\[([A-Z])$/.exec(base);
+      if (m) {
+          const modVal = 1 + (mods.shift ? 1 : 0) + (mods.ctrl ? 4 : 0);
+          if (modVal === 1) return base;
+          return `\x1b[1;${modVal}${m[1]}`;
+      }
+      return base;
+  };
+
+  document.querySelectorAll("#touch-keys button[data-mod]").forEach(btn => {
+      btn.addEventListener("click", () => {
+          const name = btn.getAttribute("data-mod");
+          setMod(name, !mods[name]);
+      });
+  });
+
+  document.querySelectorAll("#touch-keys button[data-key]").forEach(btn => {
+      btn.addEventListener("click", () => {
+          const key = btn.getAttribute("data-key");
+          const seq = applyMods(key);
+          if (seq != null) sendSeq(seq);
+          // Auto-clear shift after a special key press (one-shot semantics).
+          if (mods.shift) setMod("shift", false);
+          if (mods.ctrl) setMod("ctrl", false);
+      });
+  });
+
+  term.onData((data) => {
+      // If Ctrl is armed and the data is a single ASCII letter, transform to
+      // Ctrl+<letter> (control code = letter AND 0x1f). Auto-clear Ctrl after.
+      if (mods.ctrl && data.length === 1) {
+          const c = data.charCodeAt(0);
+          if (c >= 0x40 && c <= 0x7e) {
+              window.harness.sendInteractive(String.fromCharCode(c & 0x1f));
+              setMod("ctrl", false);
+              // Note: Shift on a letter is already applied by the OS
+              // (uppercase comes through as the char itself), so we don't
+              // touch shift state here.
+              return;
+          }
+      }
+      // Shift modifier doesn't apply to free-typed characters (the OS sends
+      // the already-shifted character). Only the special-key buttons consult
+      // mods.shift.
+      window.harness.sendInteractive(data);
+  });
   const ro = new ResizeObserver(() => {
     // ResizeObserver gives us pixel-size changes on the container. xterm
     // does not recompute its grid on its own, so call fit.fit() to derive
