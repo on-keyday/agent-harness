@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -699,6 +700,69 @@ echo "done"`)
 	if _, err := os.Stat(repo); err != nil {
 		t.Fatalf("repo dir disappeared: %v", err)
 	}
+}
+
+// TestHandleAssign_NoWorktree_GitDir_HEADUntouched verifies that running a task
+// in NoWorktree mode against a real git repo does not modify the user's HEAD,
+// does not create the harness/<id> branch, and does not create a worktree dir.
+func TestHandleAssign_NoWorktree_GitDir_HEADUntouched(t *testing.T) {
+	repo := initRepo(t) // git repo on branch "main"
+	headBefore := readHEADRef(t, repo)
+
+	fake := writeFakeClaude(t, `echo nw-git-test`)
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+		NoWorktree:   true,
+	}
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xCD
+	req := &protocol.AssignTask{
+		TaskId: protocol.TaskID{Id: taskIDBytes},
+		Prompt: []byte("nw-git"),
+	}
+	req.SetRepoPath([]byte(repo))
+	s.handleAssign(context.Background(), req)
+
+	// HEAD ref unchanged.
+	if got := readHEADRef(t, repo); got != headBefore {
+		t.Errorf("HEAD changed: before=%q after=%q", headBefore, got)
+	}
+
+	// No harness/<id> branch.
+	taskHex := hex.EncodeToString(taskIDBytes[:])
+	if branchExists(t, repo, "harness/"+taskHex) {
+		t.Errorf("branch harness/%s should not exist in NoWorktree mode", taskHex)
+	}
+
+	// No worktree dir.
+	if _, err := os.Stat(filepath.Join(repo, ".harness-worktrees", taskHex)); !os.IsNotExist(err) {
+		t.Errorf(".harness-worktrees/%s should not exist; stat err=%v", taskHex, err)
+	}
+}
+
+// readHEADRef returns the current symbolic HEAD value of repo (e.g. "refs/heads/main").
+func readHEADRef(t *testing.T, repo string) string {
+	t.Helper()
+	cmd := exec.Command("git", "symbolic-ref", "HEAD")
+	cmd.Dir = repo
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("symbolic-ref HEAD: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// branchExists reports whether refs/heads/<name> is a valid ref in repo.
+func branchExists(t *testing.T, repo, name string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+name)
+	cmd.Dir = repo
+	return cmd.Run() == nil
 }
 
 // TestHandleOpenExec_NoWorktree_NoGitDir mirrors TestHandleAssign_NoWorktree_NoGitDir
