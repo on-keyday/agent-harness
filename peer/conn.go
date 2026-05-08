@@ -57,7 +57,7 @@ type Conn struct {
 type DialConfig struct {
 	// Logger; defaults to slog.Default() when nil.
 	Logger *slog.Logger
-	// PingInterval; defaults to 30s when zero.
+	// PingInterval; defaults to 15s when zero.
 	PingInterval time.Duration
 }
 
@@ -74,7 +74,11 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 		cfg.Logger = slog.Default()
 	}
 	if cfg.PingInterval <= 0 {
-		cfg.PingInterval = 30 * time.Second
+		// 15s strikes a balance between idle-disconnect detection latency
+		// (worst case ≈ PingInterval after a silent WS underlay drop) and
+		// wire chatter. Persist mode relies on this for responsive reconnects;
+		// see docs/superpowers/specs/2026-05-09-persist-reconnect-design.md §3.1.
+		cfg.PingInterval = 15 * time.Second
 	}
 
 	conn, err := objproto.DoECDHHandshake(ctx, ep,
