@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -605,5 +606,99 @@ func TestHandleOpenExecGateFailureClosesStream(t *testing.T) {
 	}
 	if !bytes.Contains(tf.ErrorMessage, []byte("repo_not_allowed")) {
 		t.Fatalf("ErrorMessage=%q want repo_not_allowed reason", tf.ErrorMessage)
+	}
+}
+
+// TestHandleAssign_NoWorktree_NoGitDir verifies that with Session.NoWorktree=true
+// the runner executes claude with cwd=repoPath, does not create a git worktree,
+// does not inject .claude/settings.json or .claude/skills/, and does not delete
+// the repo dir on cleanup. The repoPath in this test is a non-git tempdir, which
+// would otherwise fail the worktree create step.
+func TestHandleAssign_NoWorktree_NoGitDir(t *testing.T) {
+	// repo is a plain tempdir (non-git). In normal (NoWorktree=false) mode,
+	// wm.Create would fail because there is no git repo. With NoWorktree=true
+	// the worktree-create step is entirely skipped, so the plain dir works.
+	repo := t.TempDir()
+	// Script echoes cwd and creates a sentinel file. The multi-step body
+	// ensures the process takes a few milliseconds before exiting, reducing
+	// the chance of a goroutine-scheduling race in Process.Run's stdin-pipe
+	// teardown (a pre-existing issue shared with other handleAssign tests).
+	fake := writeFakeClaude(t, `echo "cwd=$(pwd)"
+touch harness_nw_sentinel.txt
+echo "done"`)
+
+	ms := &mockSender{}
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+		NoWorktree:   true,
+	}
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xBB
+	req := &protocol.AssignTask{
+		TaskId: protocol.TaskID{Id: taskIDBytes},
+		Prompt: []byte("nw-no-git"),
+	}
+	req.SetRepoPath([]byte(repo))
+	s.handleAssign(context.Background(), req)
+
+	// (1) Last message is TaskFinished, ExitCode 0.
+	if len(ms.sent) < 3 {
+		t.Fatalf("expected ≥3 messages, got %d", len(ms.sent))
+	}
+	last := decodeRunnerMsg(t, ms.sent[len(ms.sent)-1])
+	if last.Kind != protocol.RunnerMessageType_TaskFinished {
+		t.Fatalf("last msg kind: %v", last.Kind)
+	}
+	if tf := last.TaskFinished(); tf == nil || tf.ExitCode != 0 {
+		t.Fatalf("finished: %+v", tf)
+	}
+
+	// (2) TaskStarted carries WorktreeDir == repoPath.
+	var startedDir string
+	for _, raw := range ms.sent {
+		m := decodeRunnerMsg(t, raw)
+		if m.Kind == protocol.RunnerMessageType_TaskStarted {
+			ts := m.TaskStarted()
+			if ts != nil {
+				startedDir = string(ts.WorktreeDir)
+			}
+		}
+	}
+	if startedDir != repo {
+		t.Fatalf("TaskStarted.WorktreeDir: got %q, want %q", startedDir, repo)
+	}
+
+	// (3) claude ran with cwd=repoPath: echo "cwd=$(pwd)" output contains repo, and
+	// touch harness_nw_sentinel.txt was created in the repo directory.
+	var combined []byte
+	ms.mu.Lock()
+	for _, p := range ms.publishes {
+		combined = append(combined, p.data...)
+	}
+	ms.mu.Unlock()
+	if !strings.Contains(string(combined), repo) {
+		t.Fatalf("expected cwd output to contain %q; got %q", repo, combined)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "harness_nw_sentinel.txt")); err != nil {
+		t.Fatalf("sentinel file not created in repo (claude cwd was not repoPath): %v", err)
+	}
+
+	// (4) No worktree dir created.
+	if _, err := os.Stat(filepath.Join(repo, ".harness-worktrees")); !os.IsNotExist(err) {
+		t.Fatalf(".harness-worktrees should not exist; stat err=%v", err)
+	}
+
+	// (5) No .claude/ injection happened.
+	if _, err := os.Stat(filepath.Join(repo, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf(".claude/ should not exist in no-worktree mode without force-inject; stat err=%v", err)
+	}
+
+	// (6) repo dir itself survives the run.
+	if _, err := os.Stat(repo); err != nil {
+		t.Fatalf("repo dir disappeared: %v", err)
 	}
 }

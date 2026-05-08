@@ -112,6 +112,13 @@ type Session struct {
 	// happens-before.
 	runnerCanonicalID protocol.RunnerID
 
+	// NoWorktree, when true, makes handleAssign / handleOpenExec skip the
+	// worktree create / branch / cleanup steps and run the agent process
+	// directly in the request's RepoPath. Settings/skills injection is also
+	// skipped by default (use ForceInjectHarnessSettings to override).
+	// HARNESS_* env vars are still injected. Set from runner.Config.NoWorktree.
+	NoWorktree bool
+
 	mu    sync.Mutex
 	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
 	wms   map[string]*WorktreeManager // repoPath → WorktreeManager
@@ -266,12 +273,20 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		s.mu.Unlock()
 	}()
 
-	// Step 2: Create worktree.
-	wm := s.getWorktreeManager(repoPath)
-	dir, err := wm.Create(taskIDHex)
-	if err != nil {
-		finishWithError(-1, "worktree_error: "+err.Error())
-		return
+	// Step 2: Create worktree (skipped in NoWorktree mode — agent runs in repoPath directly).
+	var dir string
+	var wm *WorktreeManager
+	if s.NoWorktree {
+		dir = repoPath
+		s.logger().Info("no-worktree mode: using repo path as cwd", "task_id", taskIDHex, "repo", repoPath)
+	} else {
+		wm = s.getWorktreeManager(repoPath)
+		d, err := wm.Create(taskIDHex)
+		if err != nil {
+			finishWithError(-1, "worktree_error: "+err.Error())
+			return
+		}
+		dir = d
 	}
 
 	// Step 3: Send TaskStarted.
@@ -286,11 +301,15 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 
 	// Write .claude/settings.json into the worktree so the inbox hook fires.
 	// Non-fatal: task continues even if settings file can't be written.
-	if err := WriteAgentSettings(dir); err != nil {
-		s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
-	}
-	if err := WriteAgentSkills(dir); err != nil {
-		s.logger().Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
+	// In NoWorktree mode this is skipped by default to avoid polluting the
+	// user's repo; ForceInjectHarnessSettings re-enables it (later task).
+	if !s.NoWorktree {
+		if err := WriteAgentSettings(dir); err != nil {
+			s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
+		}
+		if err := WriteAgentSkills(dir); err != nil {
+			s.logger().Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
+		}
 	}
 
 	// Build HARNESS_* env vars for the subprocess. RunnerID is the canonical
@@ -356,11 +375,13 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	// resume boundary, and the long-tail cleanup is left to `harness-cli
 	// prune-local`. Status / remove errors are logged but never bubble up:
 	// TaskFinished is already sent and the lifecycle must complete.
-	switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
-	case r.StatusErr != nil:
-		s.logger().Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
-	case !r.Removed:
-		s.logger().Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
+	if !s.NoWorktree {
+		switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
+		case r.StatusErr != nil:
+			s.logger().Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
+		case !r.Removed:
+			s.logger().Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
+		}
 	}
 }
 
