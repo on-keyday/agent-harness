@@ -566,6 +566,20 @@ integration/persist_test.go     (new; build tag: integration)
    Y) as a final commit on top of the feature, and amend this spec
    with the verdict.
 
+   **Verdict (executed 2026-05-09):**
+
+   - Extracted `cli.ClientHandle` (wraps `*cli.Client` as a `PersistHandle`).
+     Used by `cmd/harness-tui/main.go` and `cmd/harness-webui-wasm/main.go`;
+     `agent-runner` does not use it because `runner.RunHandle` already
+     satisfies `PersistHandle` directly (its `Done()` comes from the embedded
+     `*peer.Conn` rather than via `*cli.Client.Peer()`).
+   - Did **not** extract a shared "OnConnect recipe" — the three call sites
+     diverge enough (runner sends RunnerHello then blocks; TUI does
+     SayHello + BindClient + 2-3 Subscribes + RefreshSnapshot; WebUI does
+     SayHello + cross-goroutine client-pointer publish + initial-resolve
+     signalling) that any abstraction would require more opt-out parameters
+     than the duplication it would remove.
+
 ## 11. Open questions
 
 (none — defaults and scope confirmed during brainstorming.)

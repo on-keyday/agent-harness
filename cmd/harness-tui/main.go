@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -66,19 +65,19 @@ func main() {
 				if err != nil {
 					return nil, err
 				}
-				return &cliClientHandle{c: c}, nil
+				return cli.NewClientHandle(c), nil
 			},
 			func(runCtx context.Context, h cli.PersistHandle) error {
-				handle := h.(*cliClientHandle)
-				if err := handle.c.SayHello(runCtx, protocol.ClientKind_Tui); err != nil {
+				handle := h.(*cli.ClientHandle)
+				if err := handle.C.SayHello(runCtx, protocol.ClientKind_Tui); err != nil {
 					return err
 				}
-				app.BindClient(handle.c)
-				program.Send(tui.RefreshSnapshot(handle.c)())
-				go tui.SubscribeTaskStatus(runCtx, handle.c, program)
-				go tui.SubscribeRunnerStatus(runCtx, handle.c, program)
+				app.BindClient(handle.C)
+				program.Send(tui.RefreshSnapshot(handle.C)())
+				go tui.SubscribeTaskStatus(runCtx, handle.C, program)
+				go tui.SubscribeRunnerStatus(runCtx, handle.C, program)
 				if id := app.FollowingTaskID(); id != "" {
-					go tui.SubscribeTaskLog(runCtx, handle.c, program, id)
+					go tui.SubscribeTaskLog(runCtx, handle.C, program, id)
 				}
 				<-runCtx.Done()
 				return nil
@@ -109,14 +108,3 @@ func main() {
 	time.Sleep(50 * time.Millisecond) // brief drain for goroutines
 }
 
-// cliClientHandle wraps *cli.Client and implements cli.PersistHandle.
-// Close is guarded by sync.Once to make it idempotent.
-type cliClientHandle struct {
-	c        *cli.Client
-	doneOnce sync.Once
-}
-
-func (h *cliClientHandle) Done() <-chan struct{} { return h.c.Peer().Done() }
-func (h *cliClientHandle) Close() {
-	h.doneOnce.Do(func() { h.c.Close() })
-}

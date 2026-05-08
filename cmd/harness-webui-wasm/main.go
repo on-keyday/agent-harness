@@ -39,16 +39,6 @@ var (
 	connStateHandlerM sync.Mutex
 )
 
-type webuiHandle struct {
-	c        *cli.Client
-	doneOnce sync.Once
-}
-
-func (h *webuiHandle) Done() <-chan struct{} { return h.c.Peer().Done() }
-func (h *webuiHandle) Close() {
-	h.doneOnce.Do(func() { h.c.Close() })
-}
-
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -141,15 +131,15 @@ func harnessConnect(this js.Value, args []js.Value) any {
 						if derr != nil {
 							return nil, derr
 						}
-						return &webuiHandle{c: c}, nil
+						return cli.NewClientHandle(c), nil
 					},
 					func(runCtx context.Context, h cli.PersistHandle) error {
-						handle := h.(*webuiHandle)
-						if err := handle.c.SayHello(runCtx, protocol.ClientKind_Webui); err != nil {
+						handle := h.(*cli.ClientHandle)
+						if err := handle.C.SayHello(runCtx, protocol.ClientKind_Webui); err != nil {
 							return err
 						}
 						clientMu.Lock()
-						client = handle.c
+						client = handle.C
 						peerCID = peerCIDLocal
 						clientMu.Unlock()
 						startedOnce.Do(func() { close(started) })

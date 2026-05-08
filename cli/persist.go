@@ -6,9 +6,26 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"time"
 )
+
+// ClientHandle wraps a *Client as a PersistHandle. Done() comes from the
+// embedded peer.Conn; Close is idempotent. Used by long-lived clients (TUI,
+// WebUI WASM) to plug a *cli.Client into PersistLoop without redefining the
+// adapter inline. The runner has its own RunHandle (in package runner) that
+// implements PersistHandle directly via *peer.Conn, so it does not use this.
+type ClientHandle struct {
+	C        *Client
+	doneOnce sync.Once
+}
+
+// NewClientHandle wraps a *Client.
+func NewClientHandle(c *Client) *ClientHandle { return &ClientHandle{C: c} }
+
+func (h *ClientHandle) Done() <-chan struct{} { return h.C.Peer().Done() }
+func (h *ClientHandle) Close()                { h.doneOnce.Do(func() { h.C.Close() }) }
 
 // ErrConnectionClosed is returned by PersistLoop when Enabled=false and the
 // peer closed the underlying connection (rather than the caller cancelling
