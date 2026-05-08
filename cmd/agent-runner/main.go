@@ -105,11 +105,11 @@ func main() {
 	resolvedPSK := resolvePSK(pskVal, *pskFile)
 
 	if err := runner.Run(ctx, runner.Config{
-		ServerCID:       peerCID,
-		AllowedRoots:    abs,
-		MaxTasks:        *maxTasks,
-		Hostname:        hostname,
-		ClaudeBin:       *claudeBin,
+		ServerCID:                  peerCID,
+		AllowedRoots:               abs,
+		MaxTasks:                   *maxTasks,
+		Hostname:                   hostname,
+		ClaudeBin:                  *claudeBin,
 		ExtraClaudeArgs:            strings.Fields(*claudeArgs),
 		Logger:                     slog.Default(),
 		PSK:                        resolvedPSK,

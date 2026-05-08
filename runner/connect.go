@@ -89,14 +89,14 @@ func Run(ctx context.Context, cfg Config) error {
 
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
-		AllowedRoots:    cfg.AllowedRoots,
-		ClaudeBin:       cfg.ClaudeBin,
-		ExtraClaudeArgs: cfg.ExtraClaudeArgs,
-		ServerCID:       cfg.ServerCID,
-		Hostname:        cfg.Hostname,
-		WSPath:          cli.WebSocketPath,
-		BinDir:          binDir,
-		PSK:             psk,
+		AllowedRoots:               cfg.AllowedRoots,
+		ClaudeBin:                  cfg.ClaudeBin,
+		ExtraClaudeArgs:            cfg.ExtraClaudeArgs,
+		ServerCID:                  cfg.ServerCID,
+		Hostname:                   cfg.Hostname,
+		WSPath:                     cli.WebSocketPath,
+		BinDir:                     binDir,
+		PSK:                        psk,
 		Sender:                     sender,
 		Streams:                    pc.Transport(),
 		Logger:                     cfg.Logger,
@@ -121,7 +121,13 @@ func Run(ctx context.Context, cfg Config) error {
 	pc.Start(ctx)
 
 	pskCtx, pskCancel := context.WithCancel(ctx)
-	go func() { defer pskCancel(); select { case <-pc.Done(): case <-pskCtx.Done(): } }()
+	go func() {
+		defer pskCancel()
+		select {
+		case <-pc.Done():
+		case <-pskCtx.Done():
+		}
+	}()
 	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
