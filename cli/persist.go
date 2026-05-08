@@ -6,8 +6,15 @@ import (
 	"log/slog"
 	"math"
 	"math/rand"
+	"sync/atomic"
 	"time"
 )
+
+// ErrConnectionClosed is returned by PersistLoop when Enabled=false and the
+// peer closed the underlying connection (rather than the caller cancelling
+// ctx). Callers that map this to a non-zero exit code should test with
+// errors.Is(err, cli.ErrConnectionClosed).
+var ErrConnectionClosed = errors.New("persist: connection closed by peer")
 
 // PersistPhase is the current state of a PersistLoop.
 type PersistPhase int
@@ -56,12 +63,16 @@ type PersistConfig struct {
 	InitialBackoff time.Duration // default 500ms
 	MaxBackoff     time.Duration // default 30s
 	BackoffFactor  float64       // default 2.0
-	Jitter         float64       // default 0.25 (±25%)
-	StableReset    time.Duration // connection alive ≥ this resets attempt counter (default 60s)
-	Logger         *slog.Logger  // default slog.Default
-	OnState        func(PersistState)
-	Now            func() time.Time
-	Sleep          func(ctx context.Context, d time.Duration) error
+	// Jitter is the ±fraction applied to each backoff sleep. Set to a positive
+	// value (e.g. 0.25) for ±25% jitter; set to 0 to disable jitter
+	// (deterministic backoff, useful for tests); leave negative or unset to
+	// use the default 0.25.
+	Jitter      float64
+	StableReset time.Duration // connection alive ≥ this resets attempt counter (default 60s)
+	Logger      *slog.Logger  // default slog.Default
+	OnState     func(PersistState)
+	Now         func() time.Time
+	Sleep       func(ctx context.Context, d time.Duration) error
 }
 
 func (c *PersistConfig) defaults() {
@@ -75,11 +86,9 @@ func (c *PersistConfig) defaults() {
 		c.BackoffFactor = 2.0
 	}
 	if c.Jitter < 0 {
-		c.Jitter = 0
-	}
-	if c.Jitter == 0 {
 		c.Jitter = 0.25
 	}
+	// c.Jitter == 0 is honoured literally (no jitter, deterministic backoff).
 	if c.StableReset <= 0 {
 		c.StableReset = 60 * time.Second
 	}
@@ -133,6 +142,7 @@ func PersistLoop(
 		if err != nil {
 			var pskErr *PSKAuthError
 			if errors.As(err, &pskErr) {
+				cfg.Logger.Error("persist: psk auth failed", "err", err)
 				return err
 			}
 			if !cfg.Enabled {
@@ -147,9 +157,16 @@ func PersistLoop(
 			continue
 		}
 
+		cfg.Logger.Info("persist: connected", "attempt", attempt)
+
 		runCtx, runCancel := context.WithCancel(ctx)
 		connectedAt := cfg.Now()
 		cfg.emit(PersistState{Phase: PersistPhaseConnected, Attempt: attempt})
+
+		// peerClosed is set by the watcher when h.Done() fires first,
+		// allowing Enabled=false callers to distinguish peer-drop from clean
+		// cancellation.
+		var peerClosed atomic.Bool
 
 		// Run onConnect in a goroutine so we can cancel runCtx independently
 		// when h.Done() fires (connection died). This lets onConnect wait on
@@ -161,6 +178,7 @@ func PersistLoop(
 		go func() {
 			select {
 			case <-h.Done():
+				peerClosed.Store(true)
 				runCancel()
 			case <-ctx.Done():
 				runCancel()
@@ -178,7 +196,13 @@ func PersistLoop(
 			return nil
 		}
 		if !cfg.Enabled {
-			return ocErr
+			if ocErr != nil {
+				return ocErr
+			}
+			if peerClosed.Load() {
+				return ErrConnectionClosed
+			}
+			return nil
 		}
 		// Stable-connection reset: if we held the conn long enough, the next
 		// failure starts backoff from scratch instead of inheriting the
@@ -202,6 +226,7 @@ func sleepBackoff(ctx context.Context, cfg *PersistConfig, attempt int, lastErr 
 		NextRetry: d,
 		LastError: lastErr,
 	})
+	cfg.Logger.Info("persist: reconnecting", "attempt", attempt, "next_retry", d, "err", lastErr)
 	if err := cfg.Sleep(ctx, d); err != nil {
 		return false
 	}

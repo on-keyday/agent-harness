@@ -103,3 +103,28 @@ func TestPersistLoop_OnConnectErrorTriggersReconnect(t *testing.T) {
 		t.Fatalf("attempts = %d, want 2", got)
 	}
 }
+
+func TestPersistLoop_DisabledReturnsErrConnectionClosedOnPeerDrop(t *testing.T) {
+	ctx := context.Background()
+	dial := func(_ context.Context) (PersistHandle, error) {
+		h := newFakeHandle()
+		// Simulate peer dropping the connection asynchronously.
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			h.Close()
+		}()
+		return h, nil
+	}
+	onConnect := func(runCtx context.Context, _ PersistHandle) error {
+		<-runCtx.Done()
+		return nil
+	}
+
+	err := PersistLoop(ctx, dial, onConnect, PersistConfig{
+		Enabled: false,
+		Sleep:   instantSleep,
+	})
+	if !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("PersistLoop err = %v, want ErrConnectionClosed", err)
+	}
+}
