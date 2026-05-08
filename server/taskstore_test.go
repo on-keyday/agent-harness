@@ -133,6 +133,51 @@ func TestTaskStoreCancel(t *testing.T) {
 	}
 }
 
+// TestTaskStoreFinishAsymmetricIdempotency captures the intentional
+// asymmetric idempotency of Finish: Cancelled IS overwritten (because
+// Cancel is just a "SIGTERM in flight" marker — the runner's actual
+// exit code is the real outcome), but Succeeded/Failed are NOT
+// overwritten (those are final outcomes set by a prior Finish, and a
+// duplicate or late-arriving Finish must not corrupt them).
+func TestTaskStoreFinishAsymmetricIdempotency(t *testing.T) {
+	t.Run("overwrites_Cancelled", func(t *testing.T) {
+		s := NewTaskStore()
+		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+		s.Cancel(id)
+		s.Finish(id, 0, nil)
+		entry, _ := s.Get(id)
+		if entry.Status != protocol.TaskStatus_Succeeded {
+			t.Fatalf("Cancelled→Finish(0): want Succeeded, got %v", entry.Status)
+		}
+	})
+
+	t.Run("noop_after_Succeeded", func(t *testing.T) {
+		s := NewTaskStore()
+		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+		s.Finish(id, 0, nil)
+		// Late-arriving Finish with non-zero exit must NOT corrupt the real outcome.
+		s.Finish(id, 1, []byte("late"))
+		entry, _ := s.Get(id)
+		if entry.Status != protocol.TaskStatus_Succeeded {
+			t.Fatalf("Succeeded→Finish(1): want Succeeded, got %v", entry.Status)
+		}
+		if entry.ExitCode == nil || *entry.ExitCode != 0 {
+			t.Fatalf("ExitCode should still be 0, got %v", entry.ExitCode)
+		}
+	})
+
+	t.Run("noop_after_Failed", func(t *testing.T) {
+		s := NewTaskStore()
+		id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+		s.Finish(id, 1, []byte("first"))
+		s.Finish(id, 0, nil)
+		entry, _ := s.Get(id)
+		if entry.Status != protocol.TaskStatus_Failed {
+			t.Fatalf("Failed→Finish(0): want Failed, got %v", entry.Status)
+		}
+	})
+}
+
 // TestTaskStoreTerminalClearsIsAttached verifies that transitioning to a
 // terminal state clears IsAttached so `session ls` doesn't show stale
 // attached=true on dead sessions.

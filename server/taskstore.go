@@ -327,13 +327,26 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 
 // Finish marks the task terminal. exit==0 → Succeeded; non-zero → Failed.
 // It records ExitCode, DiffInfo, and EndedAt.
-// Allowed source states: Running and Detached (the runner process finishes
-// regardless of whether a client is attached).
+//
+// Allowed source states: Running, Detached, AND Cancelled. Cancelled is a
+// "user intent / SIGTERM-in-flight" marker, not a final outcome — when the
+// runner's TaskFinished arrives later, that exit code IS the real outcome
+// and should overwrite Cancelled so the task list reflects what claude
+// actually did. Already-Succeeded/Failed states are skipped (no-op):
+// those are real terminal outcomes set by an earlier Finish, and a
+// duplicate or late-arriving Finish must not corrupt them.
 func (s *TaskStore) Finish(id string, exit int32, errorMsg []byte) {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	switch e.Status {
+	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed:
+		// Already in a real terminal state — keep it. (Cancelled is
+		// intentionally NOT in this list; see the doc comment above.)
 		s.mu.Unlock()
 		return
 	}
