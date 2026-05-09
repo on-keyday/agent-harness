@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math"
@@ -424,6 +425,21 @@ func (w *CommandExecutionStream) RemoteShell() error {
 		return err
 	}
 	defer term.Restore(int(os.Stdin.Fd()), old)
+
+	// Reset terminal-emulator-level input modes that the runner-side ConPTY
+	// may have enabled at attach time (`\x1b[?9001h` Win32 Input Mode and
+	// `\x1b[>4;1m` modifyOtherKeys). When the runner is Windows and the
+	// local terminal supports those modes (Windows Terminal, conhost,
+	// recent mintty), without this defer a *detach* would leave the local
+	// terminal stuck in those modes — every subsequent keystroke encoded as
+	// a multi-byte CSI even when the user later attaches to a Linux runner
+	// whose bash readline can't parse them, making lowercase input "vanish".
+	// The natural-`exit` path is unaffected because closing the ConPTY emits
+	// these resets itself; we only need to cover the detach path, but
+	// emitting unconditionally is idempotent on terminals not in those modes.
+	// LIFO order: this fires *before* term.Restore so the escape goes out
+	// while stdout is still flushing in raw mode without line buffering.
+	defer fmt.Fprint(os.Stdout, "\x1b[?9001l\x1b[>4;0m")
 
 	// sendSize re-queries the local terminal dimensions and forwards them
 	// over the control frame channel. Used both for the initial size and
