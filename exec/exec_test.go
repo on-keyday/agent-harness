@@ -79,3 +79,59 @@ func TestExecuteCommandWithOption_OnStdinWriter(t *testing.T) {
 	// error. Context cancellation terminates /bin/cat.
 	_ = ExecuteCommandWithOption(ctx, stream, logger, "/bin/cat", nil, "", false, nil, opt)
 }
+
+func TestDetachIndex_RawCtrlBracket(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		buf       []byte
+		wantStart int
+		wantEnd   int
+	}{
+		{"alone", []byte{0x1d}, 0, 1},
+		{"after prefix", []byte("hello\x1d"), 5, 6},
+		{"middle of buffer", []byte("a\x1db"), 1, 2},
+		{"absent", []byte("hello"), -1, -1},
+		{"empty", []byte{}, -1, -1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStart, gotEnd := detachIndex(tc.buf)
+			if gotStart != tc.wantStart || gotEnd != tc.wantEnd {
+				t.Fatalf("detachIndex(%q) = (%d,%d), want (%d,%d)",
+					tc.buf, gotStart, gotEnd, tc.wantStart, tc.wantEnd)
+			}
+		})
+	}
+}
+
+func TestDetachIndex_Win32InputModeCtrlBracket(t *testing.T) {
+	// Real Win32 Input Mode keydown for Ctrl+] captured from Windows
+	// Terminal: Vk=221 (VK_OEM_6), Sc=43, Uc=29 (0x1d), Kd=1, Cs=8 (Ctrl), Rc=1.
+	keydown := []byte("\x1b[221;43;29;1;8;1_")
+	keyup := []byte("\x1b[221;43;29;0;8;1_") // Kd=0; must NOT trigger
+	ctrlOnly := []byte("\x1b[17;29;0;1;8;1_") // Vk=VK_CONTROL, Uc=0; must NOT trigger
+	noise := []byte("\x1b[?9001h")            // mode-set; not Win32 Input Mode
+
+	for _, tc := range []struct {
+		name      string
+		buf       []byte
+		wantStart int
+		wantEnd   int
+	}{
+		{"keydown alone", keydown, 0, len(keydown)},
+		{"keyup ignored", keyup, -1, -1},
+		{"ctrl-only ignored", ctrlOnly, -1, -1},
+		{"unrelated CSI ignored", noise, -1, -1},
+		{"keydown after legit input", append([]byte("ls -la\r"), keydown...), len("ls -la\r"), len("ls -la\r") + len(keydown)},
+		{"keyup then keydown picks keydown", append(append([]byte{}, keyup...), keydown...), len(keyup), len(keyup) + len(keydown)},
+		{"raw 0x1d wins if earlier", append([]byte{0x1d}, keydown...), 0, 1},
+		{"win32 wins if earlier", append([]byte("\x1b[221;43;29;1;8;1_x"), 0x1d), 0, len(keydown)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gotStart, gotEnd := detachIndex(tc.buf)
+			if gotStart != tc.wantStart || gotEnd != tc.wantEnd {
+				t.Fatalf("detachIndex(%x) = (%d,%d), want (%d,%d)",
+					tc.buf, gotStart, gotEnd, tc.wantStart, tc.wantEnd)
+			}
+		})
+	}
+}
