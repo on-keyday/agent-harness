@@ -366,13 +366,32 @@ deployments only**; mixed UDP+WS dualstack lets WS-using clients
 handle the large payloads while UDP-using clients still benefit for
 small RPCs (Hello / TaskAccepted / Heartbeat).
 
-### 12.2 Surface MTU drops at the transport layer
+### 12.2 Surface oversize *application* messages (not transport EMSGSIZE)
 
 `transport/udp.go` currently `slog.Debug`-logs EMSGSIZE on send and
-continues. Bumping this to `slog.Warn` with the originating
-ApplicationPayloadKind (decoded from `pkt.Data[0]`) would make the
-silent-drop pattern visible in operator logs and accelerate the
-migration in §12.1.
+continues. **This is the right level**: probe-mode PLPMTUD
+intentionally sends oversize datagrams to discover path MTU, so
+EMSGSIZE is the *normal* feedback signal during probing — bumping it
+to `Warn` would spam the log on every healthy MTU search.
+
+By the time bytes reach `transport/udp.go`, the packet has already
+been encrypted and packed into a `*objproto.PacketData`; the
+`IsMTUProbe` bit that `trsf` set on its `SendingPacket` (see
+`trsf/ack_handler.go:53`, `trsf/conn.go:548`) does not survive into
+the `PacketKind`, which is just `Application` for both probes and
+real data. Transport cannot tell them apart.
+
+The right place to warn is **the application send site** —
+`objproto.activeConnection.SendMessage` (or its callers), where we
+know the bytes are real application data, not a probe. A pre-encrypt
+size check against a configurable "safe payload" threshold (e.g.
+1200 bytes — well under typical 1500 Ethernet MTU minus IP/UDP/AES
+overhead) emitting `slog.Warn` with the decoded
+`wire.ApplicationPayloadKind` (the first byte of the message)
+preserves probe-quietness while surfacing the LLM-pattern. This
+diagnostic is independent of UDP / WS — it warns on WS too where the
+bytes will go through fine, but the message is still a hint that the
+caller should consider a stream.
 
 ### 12.3 Other items
 
