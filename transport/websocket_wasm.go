@@ -21,7 +21,7 @@ import (
 // listen for incoming WS connections.
 func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoint, error) {
 	rawSess := objproto.NewEndpoint(cfg.Logger, cfg.Mode)
-	if err := WebSocketEndpointEx(rawSess, mux, cfg); err != nil {
+	if err := WebSocketEndpointEx(rawSess, mux, cfg, nil); err != nil {
 		return nil, err
 	}
 	return rawSess, nil
@@ -29,7 +29,11 @@ func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoi
 
 // WebSocketEndpointEx is the lower-level variant for callers that already
 // own a RawEndpoint. wasm build supports Client mode only.
-func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig) error {
+//
+// sendTo mirrors the native variant: nil ⇒ rawSess.GetSenderChannel(),
+// non-nil ⇒ dedicated channel (not used in WASM since dualstack with UDP
+// is unreachable from the browser, but accepted for signature symmetry).
+func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig, sendTo <-chan *objproto.PacketData) error {
 	if cfg.Mode != objproto.EndpointModeClient {
 		return fmt.Errorf("websocket_wasm: only Client mode is supported (got %v)", cfg.Mode)
 	}
@@ -49,12 +53,16 @@ func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg W
 		logger = slog.Default()
 	}
 
-	// sender goroutine: drain rawSess.GetSenderChannel and route packets to
+	// sender goroutine: drain sendTo (the dedicated channel or, when
+	// caller passed nil, rawSess.GetSenderChannel()) and route packets to
 	// the right connection. Handshake packets to unknown peers trigger a
 	// fresh dial (only Client/Mutual reach this branch per upstream
 	// SendHandshake invariant).
+	if sendTo == nil {
+		sendTo = rawSess.GetSenderChannel()
+	}
 	go func() {
-		for pkt := range rawSess.GetSenderChannel() {
+		for pkt := range sendTo {
 			connsMu.Lock()
 			conn, ok := conns[pkt.To.Addr]
 			connsMu.Unlock()

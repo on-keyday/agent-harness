@@ -235,7 +235,7 @@ func transportName(tlsConf *tls.Config) string {
 // (or equivalent) on a *http.Server bound to mux.
 func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoint, error) {
 	rawSess := objproto.NewEndpoint(cfg.Logger, cfg.Mode)
-	if err := WebSocketEndpointEx(rawSess, mux, cfg); err != nil {
+	if err := WebSocketEndpointEx(rawSess, mux, cfg, nil); err != nil {
 		return nil, err
 	}
 	return rawSess, nil
@@ -245,12 +245,13 @@ func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoi
 // own a RawEndpoint (e.g. dualstack). It enforces the same mux contract
 // as WebSocketEndpoint.
 //
-// Unlike UDPEndpointEx, this constructor does not accept a sendTo channel
-// override; it always reads rawSess.GetSenderChannel() directly. dualstack
-// callers that share a RawEndpoint between UDP and WS legs need to be
-// aware of this asymmetry — see transport/dualstack.go for the documented
-// consequence.
-func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig) error {
+// sendTo is the channel from which this endpoint's WS sender loop pulls
+// outbound PacketData. Pass nil to use rawSess.GetSenderChannel() (the
+// default — single-stack callers want this). Pass a dedicated channel
+// when sharing rawSess with another transport leg (UDP), so dualstack
+// can fan-out by pkt.To.Transport without two readers racing on the
+// same source channel; see transport/dualstack.go.
+func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig, sendTo <-chan *objproto.PacketData) error {
 	switch cfg.Mode {
 	case objproto.EndpointModeClient:
 		if mux != nil {
@@ -282,7 +283,10 @@ func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg W
 		dialPath = cfg.Path
 	}
 
+	if sendTo == nil {
+		sendTo = rawSess.GetSenderChannel()
+	}
 	startTransportLoops(rawSess, transportName(cfg.TLS), connChan, connMap,
-		rawSess.GetSenderChannel(), cfg.TLS, dialPath, cfg.Logger)
+		sendTo, cfg.TLS, dialPath, cfg.Logger)
 	return nil
 }

@@ -23,7 +23,7 @@ func ClientEndpoint(logger *slog.Logger, addr string, udpPort uint16) (objproto.
 		err = WebSocketEndpointEx(sess, nil, WebSocketConfig{
 			Logger: logger,
 			Mode:   objproto.EndpointModeClient,
-		})
+		}, nil)
 		if err != nil {
 			return objproto.ConnectionID{}, nil, err
 		}
@@ -68,7 +68,7 @@ func UDPWebsocketDualStackEndpoint(cfg UDPWebsocketDualStackConfig) (UDPWebsocke
 		return UDPWebsocketDualStack{}, err
 	}
 
-	if err := WebSocketEndpointEx(rawSess, cfg.Mux, cfg.WS); err != nil {
+	if err := WebSocketEndpointEx(rawSess, cfg.Mux, cfg.WS, nil); err != nil {
 		return UDPWebsocketDualStack{}, err
 	}
 
