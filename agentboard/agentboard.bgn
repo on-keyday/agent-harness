@@ -52,8 +52,13 @@ format SendRequest:
     request_id :u32
     topic_len :u16
     topic :[topic_len]u8
-    payload_len :u32
-    payload :[payload_len]u8
+    # payload_stream_id references a client-initiated trsf send-stream
+    # carrying the message payload; the server reads from the matching
+    # receive stream until EOF and decodes the bytes as the publish body.
+    # Streamed instead of inline so multi-KB payloads don't blow path MTU
+    # on UDP. See docs/superpowers/specs/2026-05-09-udp-dualstack-design.md
+    # §12.1.
+    payload_stream_id :u64
 
 enum SendStatus:
     :u8
@@ -90,8 +95,11 @@ format DeliveredMessage:
     seq :u64
     topic_len :u16
     topic :[topic_len]u8
-    payload_len :u32
-    payload :[payload_len]u8
+    # payload_stream_id references a server-initiated trsf send-stream
+    # carrying the delivered payload; agent reads from the matching
+    # receive stream until EOF. See SendRequest.payload_stream_id for the
+    # rationale (UDP MTU; streamed instead of inline).
+    payload_stream_id :u64
     from_runner_id :RunnerID
     from_task_id :TaskID
     from_hostname_len :u8

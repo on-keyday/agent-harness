@@ -157,7 +157,10 @@ func TestTryDispatch_SendError(t *testing.T) {
 	d, reg, tasks := newTestDispatcher()
 
 	fc := &errConnHandle{
-		fakeConn: fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-12")},
+		fakeConn: fakeConn{
+			id:               objproto.MustParseConnectionID("ws:127.0.0.1:8539-12"),
+			nextSendStreamID: 13, // dispatcher allocates body stream before SendMessage
+		},
 	}
 	runnerID := fc.id.String()
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)

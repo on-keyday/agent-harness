@@ -70,9 +70,24 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 		}
 	})
 
-	req := agentboard.SendRequest{RequestId: reqID}
+	// Allocate a client-initiated send-stream for the payload; the server
+	// reads from the matching receive stream until EOF and treats those
+	// bytes as the publish body. Streaming the payload (instead of stuffing
+	// it into the SendRequest envelope) keeps the envelope inside path MTU
+	// on UDP transport.
+	stream := conn.PC().Transport().CreateSendStream()
+	if stream == nil {
+		return errors.New("agent: failed to allocate payload stream")
+	}
+	if werr := stream.AppendData(false, payload); werr != nil {
+		return fmt.Errorf("agent: payload stream write: %w", werr)
+	}
+	if werr := stream.AppendData(true); werr != nil {
+		return fmt.Errorf("agent: payload stream EOF: %w", werr)
+	}
+
+	req := agentboard.SendRequest{RequestId: reqID, PayloadStreamId: uint64(stream.ID())}
 	req.SetTopic([]byte(*topic))
-	req.SetPayload(payload)
 
 	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Send}
 	if !msg.SetSend(req) {

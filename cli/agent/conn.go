@@ -15,8 +15,12 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
+
+// trsfStreamID converts a uint64 wire id to trsf.StreamID.
+func trsfStreamID(id uint64) trsf.StreamID { return trsf.StreamID(id) }
 
 // Flags is the common flag set for all `harness-cli agent ...` subcommands.
 // All fields except AuthTicket fall back to env (HARNESS_*); AuthTicket is env-only.
@@ -69,6 +73,57 @@ func (c *Conn) SendRaw(msg *agentboard.AgentMessage) error {
 		return errors.Join(errors.New("agent: send failed"), err)
 	}
 	return nil
+}
+
+// FetchDeliveredPayload resolves the server-initiated send-stream
+// referenced by DeliveredMessage.PayloadStreamId, reads the full body to
+// EOF, and returns the bytes. Mirrors waitForReceiveStream / runner's
+// waitForAssignTaskBody — the trsf stream-creation frame may not be
+// visible by the time the agentboard response envelope arrives, so we
+// poll briefly before reading.
+func (c *Conn) FetchDeliveredPayload(ctx context.Context, streamID uint64) ([]byte, error) {
+	if streamID == 0 {
+		return nil, fmt.Errorf("delivered message stream_id is 0")
+	}
+	id := trsfStreamID(streamID)
+	tr := c.pc.Transport()
+	st := tr.GetReceiveStream(id)
+	if st == nil {
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+	wait:
+		for st == nil {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-deadline.C:
+				return nil, fmt.Errorf("payload stream %d not visible after 2s", id)
+			case <-tick.C:
+				st = tr.GetReceiveStream(id)
+				if st != nil {
+					break wait
+				}
+			}
+		}
+	}
+	var raw []byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, eof, err := st.ReadDirect(64 * 1024)
+		if err != nil {
+			return nil, fmt.Errorf("payload stream read: %w", err)
+		}
+		if len(data) > 0 {
+			raw = append(raw, data...)
+		}
+		if eof {
+			return raw, nil
+		}
+	}
 }
 
 // protoToBoardRunnerID copies field-by-field (same shape, distinct Go types).

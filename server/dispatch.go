@@ -31,6 +31,7 @@ type ConnHandle interface {
 	SendMessage(b []byte) (int, uint64, error)
 	CreateSendStream() trsf.SendStream
 	CreateBidirectionalStream() trsf.BidirectionalStream
+	GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream
 }
 
 type Dispatcher struct {

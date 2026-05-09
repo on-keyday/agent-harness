@@ -85,10 +85,19 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		}
 	})
 
-	// Send
-	sr := agentboard.SendRequest{RequestId: sendID}
+	// Send: payload travels on a client-initiated send-stream (UDP MTU fix).
+	sendStream := conn.PC().Transport().CreateSendStream()
+	if sendStream == nil {
+		return errors.New("agent: failed to allocate payload stream")
+	}
+	if werr := sendStream.AppendData(false, payload); werr != nil {
+		return fmt.Errorf("agent: payload stream write: %w", werr)
+	}
+	if werr := sendStream.AppendData(true); werr != nil {
+		return fmt.Errorf("agent: payload stream EOF: %w", werr)
+	}
+	sr := agentboard.SendRequest{RequestId: sendID, PayloadStreamId: uint64(sendStream.ID())}
 	sr.SetTopic([]byte(*topic))
-	sr.SetPayload(payload)
 	sendMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Send}
 	if !sendMsg.SetSend(sr) {
 		return errors.New("agent: SetSend failed")
@@ -122,7 +131,11 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	select {
 	case r := <-waitCh:
 		for _, m := range r.Msgs {
-			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
+			payload, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
+			if perr != nil {
+				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+			}
+			emitMessageLine(stdout, m.Seq, string(m.Topic), payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 		}
 		if r.TimedOut == 1 && len(r.Msgs) == 0 {
 			return errors.New("dispatch reply timeout")

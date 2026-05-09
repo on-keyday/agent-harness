@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"flag"
+	"fmt"
 	"io"
 	"math/rand"
 
@@ -97,15 +98,25 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 
 	select {
 	case r := <-respCh:
+		// Fetch all payloads up front so a write-time decode error doesn't
+		// leave half the inbox emitted.
+		payloads := make([][]byte, len(r.Msgs))
+		for i, m := range r.Msgs {
+			p, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
+			if perr != nil {
+				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+			}
+			payloads[i] = p
+		}
 		if *stopHook {
 			var reason bytes.Buffer
-			for _, m := range r.Msgs {
-				emitMessageLine(&reason, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
+			for i, m := range r.Msgs {
+				emitMessageLine(&reason, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 			}
 			emitStopHookOutput(stdout, reason.String())
 		} else {
-			for _, m := range r.Msgs {
-				emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
+			for i, m := range r.Msgs {
+				emitMessageLine(stdout, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 			}
 		}
 		if *sinceLast && *commit {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"math/rand"
 	"time"
@@ -90,7 +91,11 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 	select {
 	case r := <-respCh:
 		for _, m := range r.Msgs {
-			emitMessageLine(stdout, m.Seq, string(m.Topic), m.Payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
+			payload, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
+			if perr != nil {
+				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
+			}
+			emitMessageLine(stdout, m.Seq, string(m.Topic), payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
 		}
 		if *sinceLast {
 			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor, oldLive)

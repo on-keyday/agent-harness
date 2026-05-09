@@ -489,6 +489,10 @@ func (s streamingConn) CreateBidirectionalStream() trsf.BidirectionalStream {
 	return s.trans.CreateBidirectionalStream()
 }
 
+func (s streamingConn) GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream {
+	return s.trans.GetReceiveStream(id)
+}
+
 // handleConnection manages a single active objproto connection for its lifetime.
 func (s *Server) handleConnection(ctx context.Context, session objproto.Connection) {
 	defer session.Close()

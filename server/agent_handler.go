@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -115,22 +117,92 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 	if !ac.helloed || r == nil {
 		return
 	}
-	fromRid, fromTid, fromHost := ac.state.Identity()
-	seq, err := s.Board.Send(string(r.Topic), r.Payload, fromRid, fromTid, fromHost)
-	var status agentboard.SendStatus
-	switch err {
-	case nil:
-		status = agentboard.SendStatus_Ok
-	case agentboard.ErrPayloadTooLarge:
-		status = agentboard.SendStatus_PayloadTooLarge
-	case agentboard.ErrTooManyTopics:
-		status = agentboard.SendStatus_TooManyTopics
-	default:
-		status = agentboard.SendStatus_BadFrame
+	// Payload arrives on a client-initiated send-stream; read it before
+	// publishing. Spawn a goroutine so the receive loop stays responsive.
+	go func() {
+		payload, err := readAgentPayloadStream(conn, r.PayloadStreamId)
+		if err != nil {
+			slog.Warn("agent_handler: read payload stream failed", "request_id", r.RequestId, "err", err)
+			resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
+			resp.SetSendResponse(agentboard.SendResponse{RequestId: r.RequestId, Status: agentboard.SendStatus_BadFrame})
+			s.sendAgent(conn, resp)
+			return
+		}
+		fromRid, fromTid, fromHost := ac.state.Identity()
+		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost)
+		var status agentboard.SendStatus
+		switch sendErr {
+		case nil:
+			status = agentboard.SendStatus_Ok
+		case agentboard.ErrPayloadTooLarge:
+			status = agentboard.SendStatus_PayloadTooLarge
+		case agentboard.ErrTooManyTopics:
+			status = agentboard.SendStatus_TooManyTopics
+		default:
+			status = agentboard.SendStatus_BadFrame
+		}
+		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
+		resp.SetSendResponse(agentboard.SendResponse{RequestId: r.RequestId, Status: status, Seq: seq})
+		s.sendAgent(conn, resp)
+	}()
+}
+
+// readAgentPayloadStream resolves the receive stream by id and reads the
+// full body to EOF. Mirrors cli/agent/conn.go::FetchDeliveredPayload.
+func readAgentPayloadStream(conn ConnHandle, id uint64) ([]byte, error) {
+	if id == 0 {
+		return nil, fmt.Errorf("payload stream id is 0")
 	}
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
-	resp.SetSendResponse(agentboard.SendResponse{RequestId: r.RequestId, Status: status, Seq: seq})
-	s.sendAgent(conn, resp)
+	sid := trsf.StreamID(id)
+	st := conn.GetReceiveStream(sid)
+	if st == nil {
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+	wait:
+		for st == nil {
+			select {
+			case <-deadline.C:
+				return nil, fmt.Errorf("payload stream %d not visible after 2s", sid)
+			case <-tick.C:
+				st = conn.GetReceiveStream(sid)
+				if st != nil {
+					break wait
+				}
+			}
+		}
+	}
+	var raw []byte
+	for {
+		data, eof, err := st.ReadDirect(64 * 1024)
+		if err != nil {
+			return nil, fmt.Errorf("payload stream %d read: %w", sid, err)
+		}
+		if len(data) > 0 {
+			raw = append(raw, data...)
+		}
+		if eof {
+			return raw, nil
+		}
+	}
+}
+
+// writeDeliveredPayloadStream allocates a server-initiated send-stream,
+// writes payload + EOF, returns the stream id (or 0 + error). Used by
+// Wait/Inbox responders.
+func writeDeliveredPayloadStream(conn ConnHandle, payload []byte) (uint64, error) {
+	stream := conn.CreateSendStream()
+	if stream == nil {
+		return 0, fmt.Errorf("CreateSendStream returned nil")
+	}
+	if werr := stream.AppendData(false, payload); werr != nil {
+		return 0, fmt.Errorf("payload stream write: %w", werr)
+	}
+	if werr := stream.AppendData(true); werr != nil {
+		return 0, fmt.Errorf("payload stream EOF: %w", werr)
+	}
+	return uint64(stream.ID()), nil
 }
 
 func (s *Server) agentHandleSubscribe(conn ConnHandle, ac *agentConn, r *agentboard.SubscribeRequest) {
@@ -191,13 +263,18 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 	msgs, timedOut, _ := s.Board.Wait(ctx, ac.state, string(r.Pattern), r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
+		streamID, werr := writeDeliveredPayloadStream(conn, m.Payload)
+		if werr != nil {
+			slog.Warn("agent_handler: wait deliver stream", "seq", m.Seq, "err", werr)
+			continue
+		}
 		dm := agentboard.DeliveredMessage{
-			Seq:          m.Seq,
-			FromRunnerId: protoToAgentboardRunnerID(m),
-			FromTaskId:   protoToAgentboardTaskID(m),
+			Seq:             m.Seq,
+			PayloadStreamId: streamID,
+			FromRunnerId:    protoToAgentboardRunnerID(m),
+			FromTaskId:      protoToAgentboardTaskID(m),
 		}
 		dm.SetTopic([]byte(m.Topic))
-		dm.SetPayload(m.Payload)
 		dm.SetFromHostname([]byte(m.FromHostname))
 		delivered = append(delivered, dm)
 	}
@@ -229,13 +306,18 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	msgs, next := s.Board.Inbox(ac.state, r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
 	for _, m := range msgs {
+		streamID, werr := writeDeliveredPayloadStream(conn, m.Payload)
+		if werr != nil {
+			slog.Warn("agent_handler: inbox deliver stream", "seq", m.Seq, "err", werr)
+			continue
+		}
 		dm := agentboard.DeliveredMessage{
-			Seq:          m.Seq,
-			FromRunnerId: protoToAgentboardRunnerID(m),
-			FromTaskId:   protoToAgentboardTaskID(m),
+			Seq:             m.Seq,
+			PayloadStreamId: streamID,
+			FromRunnerId:    protoToAgentboardRunnerID(m),
+			FromTaskId:      protoToAgentboardTaskID(m),
 		}
 		dm.SetTopic([]byte(m.Topic))
-		dm.SetPayload(m.Payload)
 		dm.SetFromHostname([]byte(m.FromHostname))
 		delivered = append(delivered, dm)
 	}

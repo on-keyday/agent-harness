@@ -27,8 +27,12 @@ func TestClaudeArgsRoundTripStrings(t *testing.T) {
 	}
 }
 
-func TestAssignTaskRoundTripWithExtraArgs(t *testing.T) {
-	orig := AssignTask{
+func TestAssignTaskBodyRoundTripWithExtraArgs(t *testing.T) {
+	// AssignTask envelope only carries TaskID + StreamId after the
+	// streamed-body migration. The actual fields (auth_ticket / repo_path /
+	// prompt / extra_args) live on AssignTaskBody, which is what this
+	// round-trip exercises.
+	orig := AssignTaskBody{
 		AuthTicket: [16]byte{0xab, 0xcd},
 	}
 	orig.SetRepoPath([]byte("/repo/foo"))
@@ -37,7 +41,7 @@ func TestAssignTaskRoundTripWithExtraArgs(t *testing.T) {
 
 	wire := orig.MustAppend(nil)
 
-	var got AssignTask
+	var got AssignTaskBody
 	if err := got.DecodeExact(wire); err != nil {
 		t.Fatalf("DecodeExact: %v", err)
 	}

@@ -94,6 +94,10 @@ func (f *fakeConn) CreateBidirectionalStream() trsf.BidirectionalStream {
 	return s
 }
 
+// GetReceiveStream returns nil; tests that need a non-nil receive stream
+// (agentboard payload-stream paths) wire a different stub.
+func (f *fakeConn) GetReceiveStream(_ trsf.StreamID) trsf.ReceiveStream { return nil }
+
 // noopBidiStream is a minimal trsf.BidirectionalStream stub. Reads return EOF
 // immediately, writes are dropped, and CloseBoth flips a flag so tests can
 // assert teardown happened. Sufficient for unit tests that drive the splice

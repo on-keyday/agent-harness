@@ -16,8 +16,11 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
+
+func trsfStreamIDForTest(id uint64) trsf.StreamID { return trsf.StreamID(id) }
 
 // freePort finds an available TCP port on loopback and returns the full addr
 // "127.0.0.1:<port>".  The socket is closed before returning — there is a
@@ -274,11 +277,21 @@ func TestAgentboardE2E_HelloSendWait(t *testing.T) {
 		t.Fatal("timed out waiting for SubscribeResponse from B")
 	}
 
-	// Agent A sends a message to "topic/foo".
+	// Agent A sends a message to "topic/foo". Payload travels on a
+	// client-initiated send-stream; envelope carries only the stream id.
+	payloadStream := connA.Transport().CreateSendStream()
+	if payloadStream == nil {
+		t.Fatal("CreateSendStream returned nil")
+	}
+	if err := payloadStream.AppendData(false, []byte("hello-from-A")); err != nil {
+		t.Fatalf("payload write: %v", err)
+	}
+	if err := payloadStream.AppendData(true); err != nil {
+		t.Fatalf("payload EOF: %v", err)
+	}
 	sendMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Send}
-	req := agentboard.SendRequest{RequestId: 2}
+	req := agentboard.SendRequest{RequestId: 2, PayloadStreamId: uint64(payloadStream.ID())}
 	req.SetTopic([]byte("topic/foo"))
-	req.SetPayload([]byte("hello-from-A"))
 	if !sendMsg.SetSend(req) {
 		t.Fatal("SetSend failed")
 	}
@@ -323,8 +336,39 @@ func TestAgentboardE2E_HelloSendWait(t *testing.T) {
 		if len(resp.Msgs) == 0 {
 			t.Fatal("WaitResponse has no messages")
 		}
-		got := string(resp.Msgs[0].Payload)
-		if got != "hello-from-A" {
+		// Read payload from the server-allocated send-stream.
+		streamID := resp.Msgs[0].PayloadStreamId
+		if streamID == 0 {
+			t.Fatal("DeliveredMessage has no PayloadStreamId")
+		}
+		var rs interface {
+			ReadDirect(uint64) ([]byte, bool, error)
+		}
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			if r := connB.Transport().GetReceiveStream(trsfStreamIDForTest(streamID)); r != nil {
+				rs = r
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if rs == nil {
+			t.Fatalf("payload stream %d not visible after 2s", streamID)
+		}
+		var got []byte
+		for {
+			data, eof, err := rs.ReadDirect(64 * 1024)
+			if err != nil {
+				t.Fatalf("payload read: %v", err)
+			}
+			if len(data) > 0 {
+				got = append(got, data...)
+			}
+			if eof {
+				break
+			}
+		}
+		if string(got) != "hello-from-A" {
 			t.Fatalf("WaitResponse payload = %q, want %q", got, "hello-from-A")
 		}
 	case <-time.After(4 * time.Second):
