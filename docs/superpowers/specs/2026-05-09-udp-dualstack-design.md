@@ -330,7 +330,7 @@ Each step is a self-contained commit (atomic).
 
 ## 12. Future work
 
-### 12.1 Migrate large control messages to trsf streams (priority)
+### 12.1 Migrate large control messages to trsf streams (status)
 
 The harness was authored with WS-bias: many control messages go through
 `objproto.Connection.SendMessage` (single application-kind packet)
@@ -339,32 +339,36 @@ size limit, so this works there. **UDP delivers each `SendMessage` as
 one datagram and silently drops anything exceeding path MTU**
 (`transport/udp.go:43-46`: EMSGSIZE → debug log + `continue`).
 
-Known offenders that will fail under UDP once the system holds
-non-trivial state:
+Migration pattern: allocate a per-request trsf send-stream, write the
+payload + EOF, send only the small envelope (carrying the stream id)
+via SendMessage. The peer reads the stream until EOF. Same shape as
+the pre-existing `GetTaskLog` flow (`cli/get_log.go::waitForReceiveStream`).
 
-| Site | Path | Why it gets large |
+#### Done
+
+| Site | Commit | Wire change |
 |---|---|---|
-| Snapshot response | `server/task_handler.go::TaskControlKind_List` | Up to 100 TaskInfo + all RunnerInfo packed into one TaskControlResponse — ~20 KB+ on a busy server |
-| AssignTask | `server/dispatch.go::sendAssign` | Carries repo path + prompt + extra-args; long prompts blow MTU |
-| Agentboard agent_message | `cli/agent/conn.go::Send` and `server/agent_handler.go` | Configurable up to 64 KB payload by default |
-| Various TaskControl responses with embedded variable-length fields | `server/task_handler.go` | TaskInfo / event payloads |
+| **Snapshot** (`TaskControlKind_List` response) | `bce2af8` | `ListResult` envelope reduced to `stream_id`; new `ListResultBody` carries runners + tasks on the stream |
+| **AssignTask** (server → runner) | `0237990` | `AssignTask` envelope = `task_id + stream_id`; new `AssignTaskBody` carries auth_ticket / repo_path / prompt / extra_args |
+| **agentboard agent_message payload** (both directions: SendRequest publish + DeliveredMessage in Wait/Inbox) | `7e42988` | `SendRequest` and `DeliveredMessage` lose inline `payload`; both gain `payload_stream_id`; per-message stream allocation on the deliver path |
 
-The integration tests in §9.2 pass because they only exercise small
-state (1–2 tasks, short prompts) — they do NOT catch this edge.
+After these three commits the integration suite passes end-to-end under
+both WS and UDP dualstack.
 
-Migration approach (per-offender):
+#### Remaining theoretical offenders (low priority)
 
-1. Allocate a server-initiated bidi stream when responding to a
-   request that may exceed MTU. Send the payload as framed data on
-   the stream, send only the small "stream_id" via SendMessage so the
-   client knows where to read.
-2. The existing `GetTaskLog` flow already follows this pattern and
-   works under UDP (see `cli/get_log.go:87`-style comments).
+| Site | Default cap | Worst case |
+|---|---|---|
+| `ListTopicsResponse` (`server/agent_handler.go::agentHandleListTopics`) | `--agentboard-max-topics` default **1024** topics, ~60 byte summary each | ~60 KB at cap; **over MTU**. Typical dogfood < 50 topics ⇒ no real-world hit. |
+| `WaitResponse` / `InboxResponse` envelope (after payload migration) | RingN default **64** msgs × ~80 byte envelope | ~5 KB at default — fits MTU. Risky only if RingN is raised significantly. |
+| `ListSubscriptionsResponse` | per-agent patterns | <1 KB in practice. |
+| `RunnerHello` | allowed_roots × path bytes | <1 KB in practice. |
 
-Until these are migrated, **UDP is operational for small-state
-deployments only**; mixed UDP+WS dualstack lets WS-using clients
-handle the large payloads while UDP-using clients still benefit for
-small RPCs (Hello / TaskAccepted / Heartbeat).
+These remain inline because (a) they fit MTU under the default config
+and (b) the migration pattern requires another schema-and-callsite
+sweep that is not load-bearing for current dogfood usage. Apply the
+same Snapshot/AssignTask/agent_message recipe when one of them
+actually starts exceeding MTU.
 
 ### 12.2 Surface oversize *application* messages (not transport EMSGSIZE)
 
