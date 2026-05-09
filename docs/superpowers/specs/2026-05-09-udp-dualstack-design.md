@@ -1,7 +1,7 @@
 # UDP / WebSocket Dualstack — Design
 
 - Date: 2026-05-09
-- Status: Draft
+- Status: Implemented (feat/udp-dualstack)
 - Scope: `transport/`, `cmd/harness-server`, `cli`, `runner`
 
 ## 1. Goal
@@ -157,61 +157,26 @@ go func() {
 
 Remove the "BROKEN AS-IS" warning. Add a unit test.
 
-### 5.3 `cmd/harness-server/main.go`
+### 5.3 `cmd/harness-server/main.go` and `server.Run`
 
-```go
-var (
-    listenAddr    = flag.String("listen", "", "WebSocket listen address (host:port). Empty unless paired with --udp-listen.")
-    udpListenAddr = flag.String("udp-listen", "", "UDP listen address (host:port).")
-    ...
-)
+**Implemented as committed (5f5fedc):** the entry-point split `Run` /
+`RunWithEndpoint` in the original draft was dropped — there are no
+external callers to preserve and a single `Server.Run` is cleaner.
 
-if *listenAddr == "" && *udpListenAddr == "" {
-    fatal("at least one of --listen or --udp-listen is required")
-}
+`Config` gains a `UDPAddr` field. `Server.Run` inspects `cfg.Addr` /
+`cfg.UDPAddr` and dispatches inline:
 
-var ep objproto.Endpoint
-switch {
-case *listenAddr != "" && *udpListenAddr != "":
-    // Dualstack
-    udpPort := mustParsePort(*udpListenAddr)
-    mux := http.NewServeMux()
-    ds, err := transport.UDPWebsocketDualStackEndpoint(transport.UDPWebsocketDualStackConfig{
-        Logger:  slog.Default(),
-        UDPPort: udpPort,
-        Mux:     mux,
-        WS: transport.WebSocketConfig{
-            Logger: slog.Default(),
-            Path:   cli.WebSocketPath,
-            Mode:   objproto.EndpointModeServer,
-        },
-    })
-    fatal(err)
-    ep = ds.Endpoint
-    go startHTTPServer(*listenAddr, mux)
-case *listenAddr != "":
-    // WS only (current path; refactored into a helper)
-    ep, err = newWSServer(*listenAddr)
-    fatal(err)
-case *udpListenAddr != "":
-    // UDP only
-    udpPort := mustParsePort(*udpListenAddr)
-    ep, err = transport.UDPEndpoint(slog.Default(), udpPort, objproto.EndpointModeServer)
-    fatal(err)
-}
+- `Addr` only      → single-stack WebSocket on `cfg.Addr` (current behaviour)
+- `UDPAddr` only   → single-stack UDP on `cfg.UDPAddr`; webui not served
+- both             → ws+udp dualstack via `UDPWebsocketDualStackEndpoint`
+- neither          → error
 
-s := server.New(server.Config{Addr: bestAddr(*listenAddr, *udpListenAddr), DataDir: ...})
-s.RunWithEndpoint(ctx, ep)
-```
+`buildEndpoint` is an unexported helper next to `Run` that returns
+`(ep, mux, httpAddr)`. `parseListenPort` is a small string→port
+helper for `:port` / `host:port` syntax.
 
-`server.Run` currently constructs the endpoint internally via WS-only.
-This refactor splits `Run` into:
-
-- `Run(ctx)` — back-compat; constructs WS endpoint from `cfg.Addr`.
-- `RunWithEndpoint(ctx, ep)` — accepts a caller-built endpoint.
-
-The first delegates to the second. `cmd/harness-server/main.go` uses
-`RunWithEndpoint` for the dualstack/UDP-only paths.
+`cmd/harness-server/main.go` adds `--udp-listen` alongside `--listen`,
+both passed verbatim into `server.Config{Addr, UDPAddr}`.
 
 ### 5.4 `cli/client.go` — transport-aware Dial
 
@@ -343,9 +308,25 @@ bin/harness-cli --server-cid 'udp:127.0.0.1:8540-*' submit --repo /tmp/x --task 
 
 Each step is a self-contained commit (atomic).
 
-## 11. Open questions
+## 11. Implementation notes (post-merge)
 
-(none; all addressed in §4.1, §5, §7.)
+- The original draft proposed splitting `server.Run` into `Run`
+  (back-compat) and `RunWithEndpoint` (new). Per individual-dogfood
+  policy (no external callers), this was dropped during step 3 in
+  favour of a single `Server.Run` that dispatches by `cfg.UDPAddr` /
+  `cfg.Addr`. The `RunWithEndpoint` symbol does not exist in the
+  landed code.
+- `transport/dualstack.go::fanOutByTransport` was extracted as an
+  unexported helper to make the routing testable without binding a
+  real UDP port. Three regression tests cover it.
+- `cli/dial_endpoint_native.go` (build !js) and
+  `cli/dial_endpoint_js.go` (build js) split the transport selection
+  so the WASM build doesn't try to link `transport.UDPEndpoint`.
+- `runner/connect.go::buildRunnerEndpoint` is a private mirror; runner
+  is native-only so no build-tag split is needed.
+- All 4 + 16 unit/integration tests pass; the only failing test in
+  the suite (`TestSubmitWakeE2E`) is a pre-existing flake unrelated to
+  this work.
 
 ## 12. Future work
 
