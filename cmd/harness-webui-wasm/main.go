@@ -341,7 +341,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"kind":       t.Kind.String(),
 					"repoPath":   string(t.RepoPath),
 					"prompt":     string(t.Prompt),
-					"assignedTo": shortHexBytes(t.AssignedTo.IpAddr),
+					"assignedTo": protocol.RunnerIDToConnID(t.AssignedTo).String(),
 					"exitCode":   float64(t.ExitCode),
 					"createdAt":  float64(t.CreatedAt),
 					"startedAt":  float64(t.StartedAt),
@@ -357,28 +357,6 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
-}
-
-// shortHexBytes returns "-" for an all-zero slice, else the first 12 hex chars.
-// Mirrors cli/list.go shortHex but lives here so the wasm side does not have
-// to import an internal helper.
-func shortHexBytes(b []byte) string {
-	allZero := true
-	for _, v := range b {
-		if v != 0 {
-			allZero = false
-			break
-		}
-	}
-	if allZero {
-		return "-"
-	}
-	const tab = "0123456789abcdef"
-	out := make([]byte, 0, 12)
-	for i := 0; i < 6 && i < len(b); i++ {
-		out = append(out, tab[b[i]>>4], tab[b[i]&0xf])
-	}
-	return string(out)
 }
 
 // harnessCancel cancels a queued/running task.

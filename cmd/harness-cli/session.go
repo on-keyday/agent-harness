@@ -151,7 +151,7 @@ func runSessionLs(cid objproto.ConnectionID, _ []string) error {
 			"status":            t.Status.String(),
 			"is_attached":       t.IsAttached(),
 			"repo":              string(t.RepoPath),
-			"runner":            hex.EncodeToString(t.AssignedTo.IpAddr[:t.AssignedTo.IpAddrLen]),
+			"runner":            protocol.RunnerIDToConnID(t.AssignedTo).String(),
 			"created_at":        t.CreatedAt,
 			"started_at":        t.StartedAt,
 			"ring_buffer_bytes": t.RingBufferBytes,

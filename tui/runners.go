@@ -106,26 +106,6 @@ func truncateLeft(s string, max int) string {
 	return "…" + s[len(s)-(max-1):]
 }
 
-// shortHexNonZero renders the first 12 hex chars of b, or "-" if b is all-zero.
-func shortHexNonZero(b []byte) string {
-	allZero := true
-	for _, v := range b {
-		if v != 0 {
-			allZero = false
-			break
-		}
-	}
-	if allZero {
-		return "-"
-	}
-	const tab = "0123456789abcdef"
-	out := make([]byte, 0, 12)
-	for i := 0; i < 6 && i < len(b); i++ {
-		out = append(out, tab[b[i]>>4], tab[b[i]&0xf])
-	}
-	return string(out)
-}
-
 // formatTaskID is a small helper used by tests / debug.
 func formatTaskID(b []byte) string { return fmt.Sprintf("%x", b) }
 
