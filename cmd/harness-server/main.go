@@ -20,7 +20,8 @@ import (
 )
 
 var (
-	listen                = flag.String("listen", "127.0.0.1:8539", "listen host:port (use :8539 to dual-stack on all interfaces; loopback by default)")
+	listen                = flag.String("listen", "127.0.0.1:8539", "WebSocket listen host:port (use :8539 to dual-stack on all interfaces; loopback by default; empty disables WS leg, requires --udp-listen)")
+	udpListen             = flag.String("udp-listen", "", "UDP listen host:port (empty = disabled). Combine with --listen for ws+udp dualstack.")
 	dataDir               = flag.String("data-dir", "./harness-data", "persistent data dir")
 	taskRetain            = flag.Duration("task-retain", 0, "auto-prune terminal tasks older than this (0 = keep forever)")
 	wsPath                = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
@@ -84,7 +85,8 @@ func main() {
 	}
 
 	s := server.New(server.Config{
-		Addr:                 *listen,
+		Addr:                 strings.TrimSpace(*listen),
+		UDPAddr:              strings.TrimSpace(*udpListen),
 		DataDir:              *dataDir,
 		TaskRetention:        *taskRetain,
 		Logger:               slog.Default(),
@@ -101,6 +103,7 @@ func main() {
 	})
 	defer board.Close()
 	s.SetBoard(board)
+
 	if err := s.Run(ctx); err != nil && err != context.Canceled {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)

@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -27,7 +29,8 @@ import (
 
 // Config holds the configuration for a Server instance.
 type Config struct {
-	Addr          string        // host:port for the WebSocket listener
+	Addr          string        // host:port for the WebSocket listener; empty disables the WS leg (UDPAddr must then be set)
+	UDPAddr       string        // host:port for the UDP listener; empty disables the UDP leg. Combine with Addr for ws+udp dualstack.
 	DataDir       string        // reserved for WAL/log persistence (Tasks 2.8 / 2.9 / 2.9b)
 	TaskRetention time.Duration // if > 0, terminal tasks older than this are pruned at startup and every hour
 	PruneInterval time.Duration // overrides the default 1h prune cadence (only used when TaskRetention > 0)
@@ -198,7 +201,15 @@ func New(cfg Config) *Server {
 	return s
 }
 
-// Run listens on cfg.Addr until ctx is done. Returns the first fatal error.
+// Run builds the transport stack from cfg.Addr / cfg.UDPAddr and runs the
+// server until ctx is cancelled or a listener errors. Returns the first
+// fatal error.
+//
+// Transport selection:
+//   - cfg.Addr only      → single-stack WebSocket on cfg.Addr.
+//   - cfg.UDPAddr only   → single-stack UDP on cfg.UDPAddr; webui is not served.
+//   - both set           → ws+udp dualstack via UDPWebsocketDualStackEndpoint.
+//   - neither set        → error.
 //
 // If cfg.DataDir is non-empty, Run creates the directory, replays any existing
 // WAL into the TaskStore (rebuilding Queued tasks and marking interrupted
@@ -206,6 +217,89 @@ func New(cfg Config) *Server {
 // If cfg.DataDir is empty, WAL setup is skipped entirely (safe for tests that
 // do not need persistence).
 func (s *Server) Run(ctx context.Context) error {
+	ep, mux, httpAddr, err := s.buildEndpoint()
+	if err != nil {
+		return err
+	}
+	return s.serve(ctx, ep, mux, httpAddr)
+}
+
+// buildEndpoint picks a transport stack based on cfg.Addr / cfg.UDPAddr.
+// Returns the endpoint, the http.ServeMux to mount webui on (nil for
+// UDP-only), and the http listen address (empty for UDP-only).
+func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, error) {
+	wsAddr := s.cfg.Addr
+	udpAddr := s.cfg.UDPAddr
+
+	switch {
+	case wsAddr == "" && udpAddr == "":
+		return nil, nil, "", fmt.Errorf("server: at least one of Config.Addr or Config.UDPAddr must be set")
+
+	case wsAddr != "" && udpAddr == "":
+		mux := http.NewServeMux()
+		ep, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
+			Logger: s.cfg.Logger,
+			Path:   cli.WebSocketPath,
+			Mode:   objproto.EndpointModeServer,
+		})
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("websocket session: %w", err)
+		}
+		return ep, mux, wsAddr, nil
+
+	case wsAddr == "" && udpAddr != "":
+		port, err := parseListenPort(udpAddr)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("server: udp listen %q: %w", udpAddr, err)
+		}
+		ep, err := transport.UDPEndpoint(s.cfg.Logger, port, objproto.EndpointModeServer)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("udp endpoint: %w", err)
+		}
+		return ep, nil, "", nil
+
+	default:
+		port, err := parseListenPort(udpAddr)
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("server: udp listen %q: %w", udpAddr, err)
+		}
+		mux := http.NewServeMux()
+		ds, err := transport.UDPWebsocketDualStackEndpoint(transport.UDPWebsocketDualStackConfig{
+			Logger:  s.cfg.Logger,
+			UDPPort: port,
+			Mux:     mux,
+			WS: transport.WebSocketConfig{
+				Logger: s.cfg.Logger,
+				Path:   cli.WebSocketPath,
+				Mode:   objproto.EndpointModeServer,
+			},
+		})
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("dualstack endpoint: %w", err)
+		}
+		return ds.Endpoint, mux, wsAddr, nil
+	}
+}
+
+// parseListenPort accepts "host:port" or ":port" and returns the port
+// number. The host is currently informational; UDPEndpoint listens on
+// IPv6 unspecified per transport/udp.go.
+func parseListenPort(addr string) (uint16, error) {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0, fmt.Errorf("expected host:port (got %q): %w", addr, err)
+	}
+	port, err := strconv.ParseUint(portStr, 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("port %q: %w", portStr, err)
+	}
+	return uint16(port), nil
+}
+
+// serve runs the WAL / log-store / sweeper / accept loop against ep.
+// Mux + httpAddr drive the webui+HTTP listener; both nil/empty for
+// UDP-only setups.
+func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.ServeMux, httpAddr string) error {
 	// Wire the server root context into the task handler so that SessionMux
 	// instances created for detachable sessions are cancelled when the server shuts down.
 	s.taskHandler.Ctx = ctx
@@ -305,12 +399,9 @@ func (s *Server) Run(ctx context.Context) error {
 
 	const shutdownGracePeriod = 2 * time.Second
 
-	mux := http.NewServeMux()
-
-	// Register web UI handlers (index.html at "/" and embedded static tree at
-	// "/static/") before the WebSocket handler so all failures here happen
-	// fast — before any background goroutine is spawned.
-	if s.cfg.WebUIFS != nil {
+	// Mount webui handlers when the caller supplied a mux and an embed FS
+	// is configured. UDP-only callers skip both.
+	if mux != nil && s.cfg.WebUIFS != nil {
 		indexBytes, err := fs.ReadFile(s.cfg.WebUIFS, "index.html")
 		if err != nil {
 			return fmt.Errorf("webui: index.html not in embed.FS: %w", err)
@@ -333,35 +424,41 @@ func (s *Server) Run(ctx context.Context) error {
 		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	}
 
-	sess, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
-		Logger: s.cfg.Logger,
-		Path:   cli.WebSocketPath,
-		Mode:   objproto.EndpointModeServer,
-	})
-	if err != nil {
-		return fmt.Errorf("websocket session: %w", err)
+	// Spin the HTTP server only when both mux and httpAddr are present.
+	// UDP-only servers skip this entirely; the connection-accept loop
+	// below still runs against ep.
+	var (
+		httpServer *http.Server
+		serverDone chan error
+	)
+	if mux != nil && httpAddr != "" {
+		httpServer = &http.Server{Addr: httpAddr, Handler: mux}
+		serverDone = make(chan error, 1)
+		go func() {
+			if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				serverDone <- err
+				return
+			}
+			serverDone <- nil
+		}()
 	}
 
-	httpServer := &http.Server{Addr: s.cfg.Addr, Handler: mux}
-	serverDone := make(chan error, 1)
-	go func() {
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serverDone <- err
+	shutdownHTTP := func() {
+		if httpServer == nil {
 			return
 		}
-		serverDone <- nil
-	}()
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
+		_ = httpServer.Shutdown(shutdownCtx)
+		shutdownCancel()
+		<-serverDone
+	}
 
-	go objproto.AutoGarbageCollect(sess, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-	ch := sess.GetNewActiveConnectionChannel()
+	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+	ch := ep.GetNewActiveConnectionChannel()
 	for {
 		select {
 		case <-ctx.Done():
-			// explicit cancel: tear down the timeout ctx before draining serverDone
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
-			_ = httpServer.Shutdown(shutdownCtx)
-			shutdownCancel()
-			<-serverDone
+			shutdownHTTP()
 			return ctx.Err()
 		case serveErr := <-serverDone:
 			if serveErr != nil {
@@ -370,11 +467,7 @@ func (s *Server) Run(ctx context.Context) error {
 			return nil
 		case session, ok := <-ch:
 			if !ok {
-				// explicit cancel: tear down the timeout ctx before draining serverDone
-				shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), shutdownGracePeriod)
-				_ = httpServer.Shutdown(shutdownCtx)
-				shutdownCancel()
-				<-serverDone
+				shutdownHTTP()
 				return nil
 			}
 			go s.handleConnection(ctx, session)
