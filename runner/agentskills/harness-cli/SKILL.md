@@ -1,6 +1,6 @@
 ---
 name: harness-cli
-description: Use when sending messages to other agents, waiting for replies, dispatching request/response, or managing topic subscriptions on the agentboard. Provides reference for the `harness-cli agent` subcommands available inside this task.
+description: Use when sending messages to other agents on the agentboard or managing topic subscriptions. Reply delivery is asynchronous via the inbox hook — `send` and end the turn; replies arrive on a later turn. Provides reference for the `harness-cli agent` subcommands available inside this task.
 ---
 
 # harness-cli (agent runtime)
@@ -32,7 +32,38 @@ because peek reads from the prev-cursor snapshot, not the live cursor.
 suppresses the next hook's delivery of those seqs. `--commit` is for the
 hooks only.
 
-## Sending and receiving
+## Async by default — never block on a reply
+
+Reply delivery to your context is **always asynchronous**, via the inbox
+hook described above. The correct pattern for any request/response flow,
+**including the initial `harness.hello` handshake**, is:
+
+1. `send` to the peer.
+2. End the turn (or do other unrelated work). Do **not** invoke `wait`
+   or `dispatch` to "block until the reply".
+3. The peer's reply arrives on a later turn through the inbox hook —
+   either when the user types a prompt, or when the runner injects a
+   synthetic `<harness:agentboard-wake>` prompt because a new message
+   landed while you were idle.
+
+Why this rule exists:
+
+- `wait` / `dispatch` block the agent's bash process for the full
+  timeout. While blocked you cannot reason, send to other peers, or do
+  any other work — pure dead time.
+- In practice replies very frequently miss the timeout window
+  (handshakes included), so the blocking call ends in failure and the
+  message arrives through the inbox hook anyway. The synchronous form
+  has no payoff and a real cost.
+- State that needs to survive across turns ("I'm waiting on a reply
+  from peer X about Y") belongs in `TodoWrite` or memory, not in a
+  blocking wait.
+
+`harness-cli agent wait` and `harness-cli agent dispatch` exist as
+shell-level escape hatches for scripting **outside** the agent's turn
+loop. The agent itself must not call them.
+
+## Sending
 
 Topics in v1 are **exact match** — no wildcards.
 
@@ -41,15 +72,14 @@ Topics in v1 are **exact match** — no wildcards.
 harness-cli agent send --topic T --data 'hello'
 # Or read --data from stdin with `-`:
 echo 'hello' | harness-cli agent send --topic T --data -
-
-# Block until the next message arrives on topic T.
-harness-cli agent wait --topic T --timeout 30s
-# Use --since-last to honour the shared cursor (skip already-seen seqs):
-harness-cli agent wait --topic T --since-last --timeout 30s
-
-# Request/response sugar: publish on T, block on R for the reply.
-harness-cli agent dispatch --topic T --reply-topic R --data 'q' --timeout 30s
 ```
+
+That is the only command an agent normally runs to talk to peers. End
+the turn after sending; replies arrive through the inbox hook.
+
+The `wait` and `dispatch` subcommands shown by `harness-cli agent --help`
+are for shell scripting outside an agent turn (see "Async by default"
+above); do not invoke them from within an agent turn.
 
 ## Subscriptions
 
@@ -146,8 +176,11 @@ reach you.
      "reply_topic": "chat.<short-id>"
    }
    ```
-3. **Peer replies** on your `reply_topic`. Switch all further conversation
-   to the pair topics — stop using `harness.hello` for ongoing chat.
+3. **End the turn after step 2.** Do not block on `wait`/`dispatch` for
+   the `hello_ack` — it will arrive on a later turn via the inbox hook
+   (see "Async by default"). When it does, switch all further
+   conversation to the pair topics; stop using `harness.hello` for
+   ongoing chat.
 4. Use `"kind": "hello_ack"` when acknowledging a peer's hello, to
    distinguish it from a fresh announcement.
 
@@ -162,9 +195,8 @@ harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
 
 ## Other conventions
 
-- For request/response, prefer `dispatch` over manual `send` + `wait`.
 - Long-lived subscriptions: register once with `subscribe`, then rely on the
-  inbox hook to deliver. Don't `wait` in a loop.
+  inbox hook to deliver. Don't `wait` in a loop. (See also "Async by default".)
 - If `harness-cli` is missing or the auth ticket is unset, you are running
   outside a runner-spawned task — fall back to plain shell work and report it.
 
