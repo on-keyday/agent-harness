@@ -40,11 +40,9 @@ func ClientEndpoint(logger *slog.Logger, addr string, udpPort uint16) (objproto.
 
 // UDPWebsocketDualStackConfig configures a UDP+WebSocket dual stack
 // Endpoint that shares a single objproto RawEndpoint across both
-// transports. This is template code: there are no callers in this repo,
-// but the wiring pattern (one rawSess fed by two transports, sender
-// channel split by pkt.To.Transport) is preserved as a reference for
-// future UDP-on-harness work. If this code has bit-rotted by the time you
-// need it, prefer fixing it over deleting it.
+// transports. The fan-out goroutine is the *single* reader of
+// rawSess.GetSenderChannel(); UDP / WS legs each read from a dedicated
+// bounded channel that the fan-out feeds based on pkt.To.Transport.
 //
 // WS.Mode selects the WS leg behaviour (Client / Server / Mutual). Mux
 // must be non-nil for Server / Mutual; nil for Client.
@@ -68,34 +66,45 @@ func UDPWebsocketDualStackEndpoint(cfg UDPWebsocketDualStackConfig) (UDPWebsocke
 		return UDPWebsocketDualStack{}, err
 	}
 
-	if err := WebSocketEndpointEx(rawSess, cfg.Mux, cfg.WS, nil); err != nil {
+	if err := WebSocketEndpointEx(rawSess, cfg.Mux, cfg.WS, wsChan); err != nil {
 		return UDPWebsocketDualStack{}, err
 	}
 
-	// BROKEN AS-IS: this loop and WebSocketEndpointEx's internal sender loop
-	// both range over rawSess.GetSenderChannel(), so packets are split
-	// non-deterministically between the two readers. Calling
-	// UDPWebsocketDualStackEndpoint today will lose roughly half the WS-bound
-	// traffic. UDPEndpointEx accepts an explicit sendTo channel arg
-	// (UDPEndpointEx(sess, logger, port, sendTo)); WebSocketEndpointEx
-	// dropped the equivalent sendTo override during the WebSocketConfig
-	// refactor and now always reads rawSess.GetSenderChannel() directly.
-	// Preserved per plan as a template for future re-wiring (likely fix:
-	// re-introduce a sendTo override on WebSocketEndpointEx mirroring
-	// UDPEndpointEx, then route through this fan-out). If you need
-	// dualstack today, fix the asymmetry first — do not delete this code.
-	go func() {
-		for pkt := range rawSess.GetSenderChannel() {
-			switch pkt.To.Transport {
-			case "udp":
-				udpChan <- pkt
-			case "ws", "wss":
-				wsChan <- pkt
-			default:
-				cfg.Logger.Error("unsupported transport for udp-websocket session", slog.String("transport", pkt.To.Transport))
-			}
-		}
-	}()
+	// Fan-out: the single reader of rawSess.GetSenderChannel() routes
+	// packets to the per-transport sender channel. Both UDP and WS legs
+	// were constructed with explicit sendTo, so they do not race against
+	// this loop on the source channel.
+	go fanOutByTransport(rawSess, rawSess.GetSenderChannel(), udpChan, wsChan, cfg.Logger)
 
 	return UDPWebsocketDualStack{Endpoint: rawSess}, nil
+}
+
+// fanOutByTransport reads packets from src and routes them by
+// pkt.To.Transport. Extracted so dualstack_test.go can drive it without
+// binding a real UDP port. cancelSink is invoked for packets whose
+// transport is unknown so the upper layer can mark them as undeliverable.
+func fanOutByTransport(
+	cancelSink interface {
+		CannotSend(*objproto.PacketData)
+	},
+	src <-chan *objproto.PacketData,
+	udpDst, wsDst chan<- *objproto.PacketData,
+	logger *slog.Logger,
+) {
+	for pkt := range src {
+		switch pkt.To.Transport {
+		case "udp":
+			udpDst <- pkt
+		case "ws", "wss":
+			wsDst <- pkt
+		default:
+			if logger != nil {
+				logger.Error("unsupported transport for udp-websocket session",
+					slog.String("transport", pkt.To.Transport))
+			}
+			if cancelSink != nil {
+				cancelSink.CannotSend(pkt)
+			}
+		}
+	}
 }
