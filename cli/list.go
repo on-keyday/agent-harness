@@ -90,7 +90,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			len(r.ActiveTasks),
 			r.MaxTasks,
 			strings.Join(roots, ","),
-			shortHex(r.Id.IpAddr),
+			protocol.RunnerIDToConnID(r.Id).String(),
 		)
 	}
 
