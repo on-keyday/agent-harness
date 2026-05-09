@@ -41,7 +41,7 @@ func makeRunnerInfo(hostname string, status protocol.RunnerStatus, maxTasks int,
 func TestLsRunnerColumnsHostTasksRoots(t *testing.T) {
 	roots := []string{"/home/user/project"}
 	r := makeRunnerInfo("gmkhost", protocol.RunnerStatus_Idle, 4, roots, 2)
-	lr := &protocol.ListResult{
+	lr := &protocol.ListResultBody{
 		Runners: []protocol.RunnerInfo{r},
 	}
 	lr.RunnersLen = 1
@@ -86,7 +86,7 @@ func TestLsRunnerStatusStrings(t *testing.T) {
 func TestLsMultipleRoots(t *testing.T) {
 	roots := []string{"/repo/a", "/repo/b"}
 	r := makeRunnerInfo("srv", protocol.RunnerStatus_Idle, 2, roots, 0)
-	lr := &protocol.ListResult{
+	lr := &protocol.ListResultBody{
 		Runners:    []protocol.RunnerInfo{r},
 		RunnersLen: 1,
 	}
@@ -102,7 +102,7 @@ func TestLsMultipleRoots(t *testing.T) {
 
 // TestLsNoRunners verifies the "(none)" placeholder.
 func TestLsNoRunners(t *testing.T) {
-	lr := &protocol.ListResult{}
+	lr := &protocol.ListResultBody{}
 
 	var out strings.Builder
 	renderList(lr, &out)
@@ -126,7 +126,7 @@ func TestLsTaskRow(t *testing.T) {
 	task.RepoPathLen = uint16(len(task.RepoPath))
 	task.PromptLen = uint32(len(task.Prompt))
 
-	lr := &protocol.ListResult{
+	lr := &protocol.ListResultBody{
 		Tasks:    []protocol.TaskInfo{task},
 		TasksLen: 1,
 	}

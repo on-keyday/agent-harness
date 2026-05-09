@@ -131,6 +131,10 @@ func TestSubmitCreatesTaskAndReplies(t *testing.T) {
 
 func TestListReturnsRunnersAndTasks(t *testing.T) {
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9001-2")}
+	// Allocate a fake send stream so handleList can write its body onto it
+	// and the test can decode and verify.
+	fc.nextSendStreamID = 42
+
 	tasks := NewTaskStore()
 	reg := NewRegistry()
 	changeCalled := 0
@@ -178,17 +182,33 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	if listResult == nil {
 		t.Fatal("expected non-nil List() in response")
 	}
-	if listResult.RunnersLen != 1 {
-		t.Errorf("expected RunnersLen=1, got %d", listResult.RunnersLen)
+	if listResult.StreamId != 42 {
+		t.Errorf("expected StreamId=42, got %d", listResult.StreamId)
 	}
-	if listResult.TasksLen != 1 {
-		t.Errorf("expected TasksLen=1, got %d", listResult.TasksLen)
+
+	// Body is on the recorded send stream, not in the SendMessage payload.
+	if len(fc.sendStreams) != 1 {
+		t.Fatalf("expected 1 send stream, got %d", len(fc.sendStreams))
 	}
-	if len(listResult.Runners) > 0 && string(listResult.Runners[0].Hostname) != "h1" {
-		t.Errorf("expected runner Hostname h1, got %q", string(listResult.Runners[0].Hostname))
+	ss := fc.sendStreams[0]
+	if !ss.eofSent {
+		t.Errorf("expected EOF on list stream")
 	}
-	if len(listResult.Tasks) > 0 && string(listResult.Tasks[0].Prompt) != "list-prompt" {
-		t.Errorf("expected task Prompt 'list-prompt', got %q", string(listResult.Tasks[0].Prompt))
+	var body protocol.ListResultBody
+	if err := body.DecodeExact(ss.bytes); err != nil {
+		t.Fatalf("decode ListResultBody (%d bytes): %v", len(ss.bytes), err)
+	}
+	if body.RunnersLen != 1 {
+		t.Errorf("expected RunnersLen=1, got %d", body.RunnersLen)
+	}
+	if body.TasksLen != 1 {
+		t.Errorf("expected TasksLen=1, got %d", body.TasksLen)
+	}
+	if len(body.Runners) > 0 && string(body.Runners[0].Hostname) != "h1" {
+		t.Errorf("expected runner Hostname h1, got %q", string(body.Runners[0].Hostname))
+	}
+	if len(body.Tasks) > 0 && string(body.Tasks[0].Prompt) != "list-prompt" {
+		t.Errorf("expected task Prompt 'list-prompt', got %q", string(body.Tasks[0].Prompt))
 	}
 
 	// OnChange must NOT be called for List.

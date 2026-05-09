@@ -106,28 +106,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 
 	case protocol.TaskControlKind_List:
-		runners := h.Registry.List()
-		tasks := h.Tasks.List(100)
-
-		runnerInfos := make([]protocol.RunnerInfo, len(runners))
-		for i, r := range runners {
-			runnerInfos[i] = toRunnerInfo(r)
-		}
-
-		taskInfos := make([]protocol.TaskInfo, len(tasks))
-		for i, t := range tasks {
-			taskInfos[i] = toTaskInfo(t)
-		}
-
-		var list protocol.ListResult
-		list.SetRunners(runnerInfos)
-		list.SetTasks(taskInfos)
-
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: req.RequestId}
-		resp.SetList(list)
-
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
-		conn.SendMessage(out) //nolint:errcheck
+		h.handleList(conn, req.RequestId)
 
 	case protocol.TaskControlKind_Cancel:
 		can := req.Cancel()
@@ -704,6 +683,62 @@ func relayBytes(src, dst trsf.BidirectionalStream) {
 			return
 		}
 	}
+}
+
+// handleList streams the snapshot (runners + tasks) over a server-initiated
+// trsf send-stream. The TaskControlResponse{List} carries only the stream
+// id; the actual ListResultBody is encoded onto the stream so the response
+// fits in any path MTU on UDP.
+//
+// Body is written synchronously (full payload already in memory, no I/O
+// like GetTaskLog has). On stream-creation failure (test stub or
+// non-streaming connection) the response carries StreamId=0; client treats
+// that as an error.
+func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32) {
+	respond := func(streamID uint64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
+		resp.SetList(protocol.ListResult{StreamId: streamID})
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+	}
+
+	runners := h.Registry.List()
+	tasks := h.Tasks.List(100)
+	runnerInfos := make([]protocol.RunnerInfo, len(runners))
+	for i, r := range runners {
+		runnerInfos[i] = toRunnerInfo(r)
+	}
+	taskInfos := make([]protocol.TaskInfo, len(tasks))
+	for i, t := range tasks {
+		taskInfos[i] = toTaskInfo(t)
+	}
+	var body protocol.ListResultBody
+	body.SetRunners(runnerInfos)
+	body.SetTasks(taskInfos)
+
+	bodyBytes, err := body.EncodeCopy(nil)
+	if err != nil {
+		slog.Error("List: encode body failed", "err", err)
+		respond(0)
+		return
+	}
+
+	stream := conn.CreateSendStream()
+	if stream == nil {
+		respond(0)
+		return
+	}
+	if werr := stream.AppendData(false, bodyBytes); werr != nil {
+		slog.Warn("List: stream write failed", "err", werr)
+		respond(0)
+		return
+	}
+	if werr := stream.AppendData(true); werr != nil {
+		slog.Warn("List: stream EOF failed", "err", werr)
+		respond(0)
+		return
+	}
+	respond(uint64(stream.ID()))
 }
 
 // handleGetTaskLog responds to a GetTaskLog request by opening the per-task

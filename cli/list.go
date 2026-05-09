@@ -8,13 +8,18 @@ import (
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf"
 )
 
 // Snapshot queries the server for all runners + recent tasks and returns the
-// structured ListResult. Both the human-readable List and the TUI/webui code
-// paths share this helper so the RoundTripTaskControl + decode logic exists in
-// exactly one place.
-func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResult, error) {
+// decoded ListResultBody. The wire response carries only a stream id; the
+// body is read from the trsf send-stream the server opens (so the payload
+// fits within UDP path MTU regardless of how many tasks the server holds).
+//
+// Both the human-readable List and the TUI/webui code paths share this
+// helper so the RoundTripTaskControl + stream-decode logic exists in exactly
+// one place.
+func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResultBody, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{Query: nil})
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -23,9 +28,36 @@ func (c *Client) Snapshot(ctx context.Context) (*protocol.ListResult, error) {
 	}
 	lr := resp.List()
 	if lr == nil {
-		return nil, fmt.Errorf("empty list response")
+		return nil, fmt.Errorf("expected List response, got kind=%v", resp.Kind)
 	}
-	return lr, nil
+	if lr.StreamId == 0 {
+		return nil, fmt.Errorf("server returned no stream id (could not allocate)")
+	}
+	st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(lr.StreamId))
+	if st == nil {
+		return nil, fmt.Errorf("list stream %d not visible after response", lr.StreamId)
+	}
+	var raw []byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, eof, err := st.ReadDirect(64 * 1024)
+		if err != nil {
+			return nil, fmt.Errorf("list stream read: %w", err)
+		}
+		if len(data) > 0 {
+			raw = append(raw, data...)
+		}
+		if eof {
+			break
+		}
+	}
+	body := &protocol.ListResultBody{}
+	if err := body.DecodeExact(raw); err != nil {
+		return nil, fmt.Errorf("decode ListResultBody (%d bytes): %w", len(raw), err)
+	}
+	return body, nil
 }
 
 // List queries the server for all runners + recent tasks and writes a human-
@@ -42,7 +74,7 @@ func (c *Client) List(ctx context.Context, out io.Writer) error {
 // renderList writes a human-readable summary of a ListResult to out.
 // Extracted for testability: tests can construct a ListResult directly without
 // a live server and call renderList to verify the rendered columns.
-func renderList(lr *protocol.ListResult, out io.Writer) {
+func renderList(lr *protocol.ListResultBody, out io.Writer) {
 	fmt.Fprintln(out, "RUNNERS")
 	if len(lr.Runners) == 0 {
 		fmt.Fprintln(out, "  (none)")

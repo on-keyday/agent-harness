@@ -241,6 +241,19 @@ format TaskInfo:
     ring_buffer_bytes :u64    # current bytes buffered (0 for non-detachable)
 
 format ListResult:
+    # Server-initiated send-stream id; client reads ListResultBody bytes
+    # from this stream until EOF, then decodes. 0 = no stream available
+    # (e.g. server too constrained to allocate); client treats as error.
+    #
+    # Streamed instead of inline so the response fits comfortably in any
+    # path MTU on UDP transport — see
+    # docs/superpowers/specs/2026-05-09-udp-dualstack-design.md §12.1.
+    stream_id :u64
+
+# ListResultBody carries the actual runners + tasks payload. Server
+# encodes this and writes it to the trsf send-stream referenced by
+# ListResult.stream_id; client decodes after reading the full stream.
+format ListResultBody:
     runners_len :u16
     runners :[runners_len]RunnerInfo
     tasks_len :u16

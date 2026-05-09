@@ -19,6 +19,13 @@ type fakeConn struct {
 	// bidiStreams collects every non-nil stream returned, so tests can assert
 	// that they were torn down via CloseBoth.
 	bidiStreams []*noopBidiStream
+
+	// nextSendStreamID is the StreamID to assign to the next CreateSendStream
+	// result. When zero, CreateSendStream returns nil (legacy behaviour).
+	nextSendStreamID trsf.StreamID
+	// sendStreams collects every non-nil send stream so tests can assert
+	// the streamed body was written + EOF'd.
+	sendStreams []*recordingSendStream
 }
 
 func (f *fakeConn) ConnectionID() objproto.ConnectionID { return f.id }
@@ -27,9 +34,52 @@ func (f *fakeConn) SendMessage(b []byte) (int, uint64, error) {
 	return len(b), 0, nil
 }
 
-// CreateSendStream returns nil; tests that rely on streamed responses
-// (GetTaskLog) wire a real connection or skip the assertion.
-func (f *fakeConn) CreateSendStream() trsf.SendStream { return nil }
+// CreateSendStream returns a recordingSendStream when nextSendStreamID is
+// set, otherwise nil. Tests exercising the streamed-response path
+// (handleList, handleGetTaskLog) set nextSendStreamID before calling
+// the handler so the body is captured.
+func (f *fakeConn) CreateSendStream() trsf.SendStream {
+	if f.nextSendStreamID == 0 {
+		return nil
+	}
+	s := &recordingSendStream{streamID: f.nextSendStreamID}
+	f.sendStreams = append(f.sendStreams, s)
+	f.nextSendStreamID = 0
+	return s
+}
+
+// recordingSendStream captures AppendData calls so tests can decode and
+// assert on the streamed body.
+type recordingSendStream struct {
+	streamID trsf.StreamID
+	bytes    []byte
+	eofSent  bool
+}
+
+func (s *recordingSendStream) ID() trsf.StreamID         { return s.streamID }
+func (s *recordingSendStream) Write(p []byte) (int, error) {
+	s.bytes = append(s.bytes, p...)
+	return len(p), nil
+}
+func (s *recordingSendStream) WriteContext(_ context.Context, p []byte) (int, error) {
+	return s.Write(p)
+}
+func (s *recordingSendStream) Close() error    { s.eofSent = true; return nil }
+func (s *recordingSendStream) Cancel()         {}
+func (s *recordingSendStream) HasSendData() bool { return len(s.bytes) > 0 }
+func (s *recordingSendStream) Completed() bool   { return s.eofSent }
+func (s *recordingSendStream) AppendData(eof bool, payloads ...[]byte) error {
+	for _, p := range payloads {
+		s.bytes = append(s.bytes, p...)
+	}
+	if eof {
+		s.eofSent = true
+	}
+	return nil
+}
+func (s *recordingSendStream) AppendDataContext(_ context.Context, eof bool, payloads ...[]byte) error {
+	return s.AppendData(eof, payloads...)
+}
 
 // CreateBidirectionalStream returns a noopBidiStream when nextStreamID is set,
 // otherwise nil. Tests that exercise OpenInteractive's Ok path set nextStreamID
