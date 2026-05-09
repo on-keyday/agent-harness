@@ -316,7 +316,7 @@ func (s *peerSender) Publish(topic string, data []byte) error {
 }
 
 // buildRunnerEndpoint constructs a Client-mode objproto.Endpoint matching
-// cfg.ServerCID.Transport. Mirrors cli.buildClientEndpoint but lives here
+// cfg.ServerCID.Transport. Mirrors cli.BuildClientEndpoint but lives here
 // because runner is native-only (no WASM build).
 func buildRunnerEndpoint(cfg Config) (objproto.Endpoint, error) {
 	switch cfg.ServerCID.Transport {

@@ -35,7 +35,7 @@ type Client struct {
 // kind responses are handled by peer.Conn directly (it routes them to its
 // pubsub.Client); TaskControl-kind responses land in c.dispatchControl below.
 func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
-	ep, err := buildClientEndpoint(peerCID)
+	ep, err := BuildClientEndpoint(peerCID)
 	if err != nil {
 		return nil, err
 	}

@@ -10,10 +10,10 @@ import (
 	"github.com/on-keyday/agent-harness/transport"
 )
 
-// buildClientEndpoint constructs a Client-mode objproto.Endpoint for the
+// BuildClientEndpoint constructs a Client-mode objproto.Endpoint for the
 // transport selected by peerCID.Transport. The wasm build supports
 // WebSocket only — UDP is not reachable from the browser.
-func buildClientEndpoint(peerCID objproto.ConnectionID) (objproto.Endpoint, error) {
+func BuildClientEndpoint(peerCID objproto.ConnectionID) (objproto.Endpoint, error) {
 	switch peerCID.Transport {
 	case "ws", "wss":
 		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{

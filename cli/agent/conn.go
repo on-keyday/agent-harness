@@ -14,7 +14,6 @@ import (
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
@@ -168,13 +167,9 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		cli.WebSocketPath = wsPath
 	}
 
-	ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
-		Logger: slog.Default(),
-		Path:   wsPath,
-		Mode:   objproto.EndpointModeClient,
-	})
+	ep, err := cli.BuildClientEndpoint(cid)
 	if err != nil {
-		return nil, fmt.Errorf("ws endpoint: %w", err)
+		return nil, fmt.Errorf("client endpoint: %w", err)
 	}
 	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 
