@@ -73,13 +73,9 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 		"no_worktree", cfg.NoWorktree,
 		"force_inject_harness_settings", cfg.ForceInjectHarnessSettings)
 
-	ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
-		Logger: cfg.Logger,
-		Path:   cli.WebSocketPath,
-		Mode:   objproto.EndpointModeClient,
-	})
+	ep, err := buildRunnerEndpoint(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("ws endpoint: %w", err)
+		return nil, err
 	}
 	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 
@@ -303,5 +299,31 @@ func (s *peerSender) ID() objproto.ConnectionID {
 
 func (s *peerSender) Publish(topic string, data []byte) error {
 	return s.pc.Publish(s.ctx, "runner", topic, data)
+}
+
+// buildRunnerEndpoint constructs a Client-mode objproto.Endpoint matching
+// cfg.ServerCID.Transport. Mirrors cli.buildClientEndpoint but lives here
+// because runner is native-only (no WASM build).
+func buildRunnerEndpoint(cfg Config) (objproto.Endpoint, error) {
+	switch cfg.ServerCID.Transport {
+	case "ws", "wss":
+		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
+			Logger: cfg.Logger,
+			Path:   cli.WebSocketPath,
+			Mode:   objproto.EndpointModeClient,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("ws endpoint: %w", err)
+		}
+		return ep, nil
+	case "udp":
+		ep, err := transport.UDPEndpoint(cfg.Logger, 0, objproto.EndpointModeClient)
+		if err != nil {
+			return nil, fmt.Errorf("udp endpoint: %w", err)
+		}
+		return ep, nil
+	default:
+		return nil, fmt.Errorf("unsupported transport %q in --server-cid", cfg.ServerCID.Transport)
+	}
 }
 
