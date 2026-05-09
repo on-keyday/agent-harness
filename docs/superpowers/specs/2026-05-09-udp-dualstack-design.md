@@ -330,7 +330,57 @@ Each step is a self-contained commit (atomic).
 
 ## 12. Future work
 
+### 12.1 Migrate large control messages to trsf streams (priority)
+
+The harness was authored with WS-bias: many control messages go through
+`objproto.Connection.SendMessage` (single application-kind packet)
+rather than via `trsf` bidirectional streams. WS has no per-message
+size limit, so this works there. **UDP delivers each `SendMessage` as
+one datagram and silently drops anything exceeding path MTU**
+(`transport/udp.go:43-46`: EMSGSIZE → debug log + `continue`).
+
+Known offenders that will fail under UDP once the system holds
+non-trivial state:
+
+| Site | Path | Why it gets large |
+|---|---|---|
+| Snapshot response | `server/task_handler.go::TaskControlKind_List` | Up to 100 TaskInfo + all RunnerInfo packed into one TaskControlResponse — ~20 KB+ on a busy server |
+| AssignTask | `server/dispatch.go::sendAssign` | Carries repo path + prompt + extra-args; long prompts blow MTU |
+| Agentboard agent_message | `cli/agent/conn.go::Send` and `server/agent_handler.go` | Configurable up to 64 KB payload by default |
+| Various TaskControl responses with embedded variable-length fields | `server/task_handler.go` | TaskInfo / event payloads |
+
+The integration tests in §9.2 pass because they only exercise small
+state (1–2 tasks, short prompts) — they do NOT catch this edge.
+
+Migration approach (per-offender):
+
+1. Allocate a server-initiated bidi stream when responding to a
+   request that may exceed MTU. Send the payload as framed data on
+   the stream, send only the small "stream_id" via SendMessage so the
+   client knows where to read.
+2. The existing `GetTaskLog` flow already follows this pattern and
+   works under UDP (see `cli/get_log.go:87`-style comments).
+
+Until these are migrated, **UDP is operational for small-state
+deployments only**; mixed UDP+WS dualstack lets WS-using clients
+handle the large payloads while UDP-using clients still benefit for
+small RPCs (Hello / TaskAccepted / Heartbeat).
+
+### 12.2 Surface MTU drops at the transport layer
+
+`transport/udp.go` currently `slog.Debug`-logs EMSGSIZE on send and
+continues. Bumping this to `slog.Warn` with the originating
+ApplicationPayloadKind (decoded from `pkt.Data[0]`) would make the
+silent-drop pattern visible in operator logs and accelerate the
+migration in §12.1.
+
+### 12.3 Other items
+
 - Transport auto-fallback (probe UDP, fall back to WS).
 - DTLS over UDP if a non-objproto auth boundary is ever wanted.
 - A `harness-server --listen url1,url2,...` form that takes a comma list of `<scheme>://host:port` and dispatches dynamically.
 - Configurable UDP local source port on client/runner (instead of OS-assigned 0) to ease firewall whitelisting.
+- objproto-layer application-message fragmentation, so SendMessage
+  callers don't need to know about MTU at all. This is a deeper
+  protocol change (sequence number space, reassembly buffer, drop
+  semantics) and intentionally deferred per §2 toy-scope.
