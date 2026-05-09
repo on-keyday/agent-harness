@@ -16,6 +16,7 @@ func mustParseCID(t *testing.T, s string) objproto.ConnectionID {
 
 func TestSendAssignReachesRunner(t *testing.T) {
 	fc := &fakeConn{id: mustParseCID(t, "ws:127.0.0.1:8539-9")}
+	fc.nextSendStreamID = 7 // sendAssign opens a body stream; allow it.
 	s := New(Config{Addr: "localhost:0"})
 	s.registry.Add(&RunnerEntry{
 		ID:           fc.id.String(),
@@ -35,7 +36,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 	if fc.sent[0][0] != byte(wire.ApplicationPayloadKind_RunnerControl) {
 		t.Fatalf("want kind=RunnerControl byte, got %d", fc.sent[0][0])
 	}
-	// Decode the runner request
+	// Decode the runner request — envelope only carries TaskID + StreamId.
 	rr := &protocol.RunnerRequest{}
 	if _, err := rr.Decode(fc.sent[0][1:]); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -44,8 +45,22 @@ func TestSendAssignReachesRunner(t *testing.T) {
 		t.Fatalf("kind: %v", rr.Kind)
 	}
 	at := rr.AssignTask()
-	if at == nil || string(at.Prompt) != "do-the-thing" {
-		t.Fatalf("assign-task: %+v", at)
+	if at == nil {
+		t.Fatalf("assign-task envelope nil")
+	}
+	if at.StreamId != 7 {
+		t.Fatalf("envelope StreamId=%d want 7", at.StreamId)
+	}
+	// Body (incl. Prompt) is on the recorded send stream.
+	if len(fc.sendStreams) != 1 {
+		t.Fatalf("expected 1 send stream, got %d", len(fc.sendStreams))
+	}
+	body := &protocol.AssignTaskBody{}
+	if err := body.DecodeExact(fc.sendStreams[0].bytes); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if string(body.Prompt) != "do-the-thing" {
+		t.Fatalf("body.Prompt=%q want do-the-thing", body.Prompt)
 	}
 }
 

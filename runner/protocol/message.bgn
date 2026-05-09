@@ -53,7 +53,24 @@ format TaskID:
     id :[16]u8
 
 format AssignTask:
+    # Server-initiated send-stream id; runner reads AssignTaskBody bytes
+    # from this stream until EOF, then decodes. 0 = no stream available
+    # (server too constrained to allocate); runner should NACK / drop.
+    #
+    # Streamed instead of inline so long prompts don't blow path MTU on
+    # UDP transport — see
+    # docs/superpowers/specs/2026-05-09-udp-dualstack-design.md §12.1.
+    #
+    # task_id is also kept inline so the runner can correlate the
+    # incoming stream-id with a TaskID without round-tripping through
+    # a partial AssignTaskBody read.
     task_id :TaskID
+    stream_id :u64
+
+# AssignTaskBody carries the actual assignment payload. Server encodes
+# this and writes it to the trsf send-stream referenced by
+# AssignTask.stream_id; runner decodes after reading the full stream.
+format AssignTaskBody:
     auth_ticket :[16]u8
     repo_path_len :u16
     repo_path :[repo_path_len]u8

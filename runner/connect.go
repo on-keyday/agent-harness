@@ -15,6 +15,7 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -239,7 +240,20 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		// Spawn the task handler so the receive loop stays responsive.
-		go session.handleAssign(ctx, at)
+		// The body (auth_ticket / repo_path / prompt / extra_args) is on
+		// a server-initiated send-stream — fetch+decode here so handleAssign
+		// receives a fully-resolved request.
+		go func() {
+			body, err := waitForAssignTaskBody(ctx, session.Streams, trsf.StreamID(at.StreamId))
+			if err != nil {
+				log.Error("AssignTask body fetch failed",
+					"task_id", hex.EncodeToString(at.TaskId.Id[:]),
+					"stream_id", at.StreamId,
+					"err", err)
+				return
+			}
+			session.handleAssign(ctx, at.TaskId, body)
+		}()
 	case protocol.RunnerRequestType_CancelTask:
 		ct := req.CancelTask()
 		if ct == nil {
@@ -325,5 +339,59 @@ func buildRunnerEndpoint(cfg Config) (objproto.Endpoint, error) {
 	default:
 		return nil, fmt.Errorf("unsupported transport %q in --server-cid", cfg.ServerCID.Transport)
 	}
+}
+
+// waitForAssignTaskBody resolves the server-initiated send-stream
+// referenced by AssignTask.StreamId, reads the full body to EOF, and
+// decodes it as a protocol.AssignTaskBody. Mirrors cli/get_log.go's
+// waitForReceiveStream pattern: the trsf stream-creation frame may not
+// have arrived by the time the AssignTask envelope is dispatched, so
+// we poll Transport.GetReceiveStream briefly before reading.
+func waitForAssignTaskBody(ctx context.Context, p peer.BidirectionalStreamLookup, id trsf.StreamID) (*protocol.AssignTaskBody, error) {
+	if id == 0 {
+		return nil, fmt.Errorf("AssignTask stream_id is 0 (server failed to allocate)")
+	}
+	st := p.GetReceiveStream(id)
+	if st == nil {
+		deadline := time.NewTimer(2 * time.Second)
+		defer deadline.Stop()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+	wait:
+		for st == nil {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-deadline.C:
+				return nil, fmt.Errorf("AssignTask stream %d not visible after 2s", id)
+			case <-tick.C:
+				st = p.GetReceiveStream(id)
+				if st != nil {
+					break wait
+				}
+			}
+		}
+	}
+	var raw []byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		data, eof, err := st.ReadDirect(64 * 1024)
+		if err != nil {
+			return nil, fmt.Errorf("AssignTask stream %d read: %w", id, err)
+		}
+		if len(data) > 0 {
+			raw = append(raw, data...)
+		}
+		if eof {
+			break
+		}
+	}
+	body := &protocol.AssignTaskBody{}
+	if err := body.DecodeExact(raw); err != nil {
+		return nil, fmt.Errorf("decode AssignTaskBody (%d bytes): %w", len(raw), err)
+	}
+	return body, nil
 }
 

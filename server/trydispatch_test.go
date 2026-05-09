@@ -51,6 +51,7 @@ func registerRunner(reg *Registry, id string, conn ConnHandle, roots []string, m
 func TestTryDispatch_HappyPath(t *testing.T) {
 	d, reg, tasks := newTestDispatcher()
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-10")}
+	fc.nextSendStreamID = 11 // dispatcher opens body stream
 	runnerID := fc.id.String()
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
@@ -97,11 +98,20 @@ func TestTryDispatch_HappyPath(t *testing.T) {
 	if at == nil {
 		t.Fatal("AssignTask() returned nil")
 	}
-	if string(at.Prompt) != "do work" {
-		t.Errorf("prompt mismatch: got %q", at.Prompt)
+	// Body (incl. Prompt + RepoPath) is on the recorded send stream now;
+	// envelope only carries TaskID + StreamId.
+	if len(fc.sendStreams) != 1 {
+		t.Fatalf("expected 1 send stream, got %d", len(fc.sendStreams))
 	}
-	if string(at.RepoPath) != "/repo" {
-		t.Errorf("repo_path mismatch: got %q", at.RepoPath)
+	body := &protocol.AssignTaskBody{}
+	if err := body.DecodeExact(fc.sendStreams[0].bytes); err != nil {
+		t.Fatalf("decode AssignTaskBody: %v", err)
+	}
+	if string(body.Prompt) != "do work" {
+		t.Errorf("prompt mismatch: got %q", body.Prompt)
+	}
+	if string(body.RepoPath) != "/repo" {
+		t.Errorf("repo_path mismatch: got %q", body.RepoPath)
 	}
 }
 
@@ -222,6 +232,7 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 	}
 
 	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-20")}
+	fc.nextSendStreamID = 21 // dispatcher opens body stream
 	runnerID := fc.id.String()
 	registerRunner(reg, runnerID, fc, []string{"/repo"}, 2)
 
@@ -246,16 +257,23 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 		t.Fatal("AssignTask() returned nil")
 	}
 
-	// 2. The AuthTicket in the message must be non-zero.
+	// 2. AuthTicket lives on the streamed body now, not the envelope.
+	if len(fc.sendStreams) != 1 {
+		t.Fatalf("expected 1 send stream, got %d", len(fc.sendStreams))
+	}
+	body := &protocol.AssignTaskBody{}
+	if err := body.DecodeExact(fc.sendStreams[0].bytes); err != nil {
+		t.Fatalf("decode AssignTaskBody: %v", err)
+	}
 	var zero [16]byte
-	if at.AuthTicket == zero {
-		t.Error("expected non-zero AuthTicket in AssignTask, got all-zero")
+	if body.AuthTicket == zero {
+		t.Error("expected non-zero AuthTicket in AssignTaskBody, got all-zero")
 	}
 
 	// 3. board.Registry().Validate must return HelloStatusOk for the registered ticket.
 	brid := boardRunnerID(t, runnerID)
 	btid := boardTaskID(taskIDHex)
-	status := board.Registry().Validate(brid, btid, at.AuthTicket)
+	status := board.Registry().Validate(brid, btid, body.AuthTicket)
 	if status != agentboard.HelloStatusOk {
 		t.Errorf("expected HelloStatusOk after TryDispatch, got %v", status)
 	}
@@ -280,7 +298,7 @@ func TestTryDispatch_RegistersTicket(t *testing.T) {
 	rh.Handle(fc, payload)
 
 	// After revocation, Validate must return HelloStatusUnknownTask.
-	status = board.Registry().Validate(brid, btid, at.AuthTicket)
+	status = board.Registry().Validate(brid, btid, body.AuthTicket)
 	if status != agentboard.HelloStatusUnknownTask {
 		t.Errorf("expected HelloStatusUnknownTask after TaskFinished, got %v", status)
 	}

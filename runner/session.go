@@ -211,17 +211,25 @@ func (s *Session) logger() *slog.Logger {
 //
 // A per-task context derived from ctx is used so CancelTask can cancel individual
 // tasks without affecting others. Panics are recovered and reported as TaskFinished.
-func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
-	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
+// handleAssign drives one assigned task through its full lifecycle.
+//
+// taskID is the wire-level TaskID (carried inline in the AssignTask
+// envelope so the runner can correlate immediately, even before the body
+// stream is drained). body holds the rest of the assignment payload —
+// auth_ticket, repo_path, prompt, extra_args — read from a server-
+// initiated trsf send-stream by dispatchRunnerRequest before this
+// function is invoked.
+func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body *protocol.AssignTaskBody) {
+	taskIDHex := hex.EncodeToString(taskID.Id[:])
 	topic := topics.TaskLog(taskIDHex)
 
-	// Validate repo path from the request.
-	repoPath := string(req.RepoPath)
+	// Validate repo path from the body.
+	repoPath := string(body.RepoPath)
 
 	// Step 1: Send TaskAccepted — signals we are committed even if worktree fails.
 	{
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskAccepted}
-		m.SetTaskAccepted(protocol.TaskAccepted{TaskId: req.TaskId})
+		m.SetTaskAccepted(protocol.TaskAccepted{TaskId: taskID})
 		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 		_ = s.Sender.Send(data)
 	}
@@ -229,7 +237,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	finishWithError := func(code int32, reason string) {
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
 		tf := protocol.TaskFinished{
-			TaskId:       req.TaskId,
+			TaskId:       taskID,
 			ExitCode:     code,
 			ErrorMessage: []byte(reason),
 		}
@@ -260,8 +268,8 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		return
 	}
 
-	// If the request didn't provide a RepoPath, fall back to AllowedRoots[0]
-	// (for backward compatibility with tests that don't set req.RepoPath).
+	// If the body didn't provide a RepoPath, fall back to AllowedRoots[0]
+	// (for backward compatibility with tests that don't set body.RepoPath).
 	if repoPath == "" && len(s.AllowedRoots) > 0 {
 		repoPath = s.AllowedRoots[0]
 	}
@@ -298,7 +306,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	// Step 3: Send TaskStarted.
 	{
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskStarted}
-		ts := protocol.TaskStarted{TaskId: req.TaskId}
+		ts := protocol.TaskStarted{TaskId: taskID}
 		ts.SetWorktreeDir([]byte(dir))
 		m.SetTaskStarted(ts)
 		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
@@ -325,11 +333,11 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	env := BuildAgentEnv(AgentEnvSpec{
 		ServerCID:  s.ServerCID,
 		RunnerID:   s.runnerCanonicalConnID(),
-		TaskID:     req.TaskId,
+		TaskID:     taskID,
 		RepoPath:   repoPath,
 		Hostname:   s.Hostname,
 		WSPath:     s.WSPath,
-		AuthTicket: req.AuthTicket,
+		AuthTicket: body.AuthTicket,
 		BinDir:     s.BinDir,
 		PSK:        s.PSK,
 	})
@@ -342,7 +350,7 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 		ClaudeBin: s.ClaudeBin,
 		CWD:       dir,
 		Timeout:   s.Timeout,
-		ExtraArgs: mergeExtraArgs(s.ExtraClaudeArgs, req.ExtraArgs.AsStrings()),
+		ExtraArgs: mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
 		Env:       env,
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
@@ -355,13 +363,13 @@ func (s *Session) handleAssign(ctx context.Context, req *protocol.AssignTask) {
 	logSink := func(data []byte) {
 		_ = s.Sender.Publish(topic, data)
 	}
-	exit, runErr := proc.Run(taskCtx, string(req.Prompt), logSink)
+	exit, runErr := proc.Run(taskCtx, string(body.Prompt), logSink)
 
 	// Step 5: Send TaskFinished.
 	{
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
 		tf := protocol.TaskFinished{
-			TaskId:   req.TaskId,
+			TaskId:   taskID,
 			ExitCode: int32(exit),
 		}
 		if runErr != nil {

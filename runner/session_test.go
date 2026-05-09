@@ -59,12 +59,10 @@ func TestHandleAssignSuccessSequence(t *testing.T) {
 	}
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xAB
-	req := &protocol.AssignTask{
-		TaskId: protocol.TaskID{Id: taskIDBytes},
-		Prompt: []byte("hello"),
-	}
-	req.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), req)
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{Prompt: []byte("hello")}
+	body.SetRepoPath([]byte(repo))
+	s.handleAssign(context.Background(), taskID, body)
 
 	// Should have sent at least 3 control messages: Accepted, Started, Finished.
 	if len(ms.sent) < 3 {
@@ -129,9 +127,9 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 		Sender:       ms,
 		Now:          time.Now,
 	}
-	req := &protocol.AssignTask{TaskId: protocol.TaskID{}, Prompt: []byte("x")}
-	req.SetRepoPath([]byte("/no/such/repo"))
-	s.handleAssign(context.Background(), req)
+	body := &protocol.AssignTaskBody{Prompt: []byte("x")}
+	body.SetRepoPath([]byte("/no/such/repo"))
+	s.handleAssign(context.Background(), protocol.TaskID{}, body)
 
 	// Should have sent: TaskAccepted, then TaskFinished with error info.
 	if len(ms.sent) < 2 {
@@ -168,14 +166,12 @@ func TestHandleAssignPanicSendsTaskFinished(t *testing.T) {
 
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xCC
-	req := &protocol.AssignTask{
-		TaskId: protocol.TaskID{Id: taskIDBytes},
-		Prompt: []byte("test"),
-	}
-	req.SetRepoPath([]byte("/some/repo"))
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{Prompt: []byte("test")}
+	body.SetRepoPath([]byte("/some/repo"))
 
 	// handleAssign should not re-panic; it should send Accepted then Finished.
-	s.handleAssign(context.Background(), req)
+	s.handleAssign(context.Background(), taskID, body)
 
 	// Must have sent at least TaskAccepted + TaskFinished.
 	if len(ms.sent) < 2 {
@@ -291,24 +287,18 @@ func TestSessionPanicIsolatesSiblingTask(t *testing.T) {
 	// Task 0x01 — panics.
 	go func() {
 		defer wg.Done()
-		req := &protocol.AssignTask{
-			TaskId: protocol.TaskID{Id: [16]byte{0x01}},
-			Prompt: []byte("task-a"),
-		}
-		req.SetRepoPath([]byte(repo))
-		s.handleAssign(context.Background(), req)
+		body := &protocol.AssignTaskBody{Prompt: []byte("task-a")}
+		body.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), protocol.TaskID{Id: [16]byte{0x01}}, body)
 	}()
 
 	// Task 0x02 — runs normally. Small delay to allow 0x01 to fire the once.Do first.
 	go func() {
 		defer wg.Done()
 		time.Sleep(80 * time.Millisecond)
-		req := &protocol.AssignTask{
-			TaskId: protocol.TaskID{Id: [16]byte{0x02}},
-			Prompt: []byte("task-b"),
-		}
-		req.SetRepoPath([]byte(repo))
-		s.handleAssign(context.Background(), req)
+		body := &protocol.AssignTaskBody{Prompt: []byte("task-b")}
+		body.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), protocol.TaskID{Id: [16]byte{0x02}}, body)
 	}()
 
 	wg.Wait()
@@ -367,14 +357,14 @@ echo "TASK=$HARNESS_TASK_ID"`)
 	var ticket [16]byte
 	ticket[0] = 0xCD
 	ticket[15] = 0xEF
-	req := &protocol.AssignTask{
-		TaskId:     protocol.TaskID{Id: taskIDBytes},
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{
 		AuthTicket: ticket,
 		Prompt:     []byte("env-test"),
 	}
-	req.SetRepoPath([]byte(repo))
+	body.SetRepoPath([]byte(repo))
 
-	sess.handleAssign(context.Background(), req)
+	sess.handleAssign(context.Background(), taskID, body)
 
 	// Collect all published log data.
 	ms.mu.Lock()
@@ -414,10 +404,15 @@ func decodeRunnerMsg(t *testing.T, raw []byte) *protocol.RunnerMessage {
 // that returns pre-registered streams for the requested StreamID.
 type fakeBidiLookup struct {
 	streams map[trsf.StreamID]trsf.BidirectionalStream
+	recv    map[trsf.StreamID]trsf.ReceiveStream
 }
 
 func (l *fakeBidiLookup) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
 	return l.streams[id]
+}
+
+func (l *fakeBidiLookup) GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream {
+	return l.recv[id]
 }
 
 // noopBidiStream is a minimal trsf.BidirectionalStream stub. Reads return EOF
@@ -472,13 +467,11 @@ func TestHandleAssign_OmitsEmptyHostname(t *testing.T) {
 
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xEE
-	req := &protocol.AssignTask{
-		TaskId: protocol.TaskID{Id: taskIDBytes},
-		Prompt: []byte("test-empty-hostname"),
-	}
-	req.SetRepoPath([]byte(repo))
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{Prompt: []byte("test-empty-hostname")}
+	body.SetRepoPath([]byte(repo))
 
-	sess.handleAssign(context.Background(), req)
+	sess.handleAssign(context.Background(), taskID, body)
 
 	// Collect all published log data.
 	ms.mu.Lock()
@@ -524,14 +517,14 @@ echo "TICKET=$HARNESS_AUTH_TICKET"`)
 	ticket[0] = 0xFE
 	ticket[15] = 0xED
 
-	req := &protocol.AssignTask{
-		TaskId:     protocol.TaskID{Id: taskIDBytes},
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{
 		AuthTicket: ticket,
 		Prompt:     []byte("settings-smoke"),
 	}
-	req.SetRepoPath([]byte(repo))
+	body.SetRepoPath([]byte(repo))
 
-	sess.handleAssign(context.Background(), req)
+	sess.handleAssign(context.Background(), taskID, body)
 
 	// Collect all published log data.
 	ms.mu.Lock()
@@ -637,12 +630,10 @@ echo "done"`)
 	}
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xBB
-	req := &protocol.AssignTask{
-		TaskId: protocol.TaskID{Id: taskIDBytes},
-		Prompt: []byte("nw-no-git"),
-	}
-	req.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), req)
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{Prompt: []byte("nw-no-git")}
+	body.SetRepoPath([]byte(repo))
+	s.handleAssign(context.Background(), taskID, body)
 
 	// (1) Last message is TaskFinished, ExitCode 0.
 	if len(ms.sent) < 3 {
@@ -721,12 +712,10 @@ func TestHandleAssign_NoWorktree_GitDir_HEADUntouched(t *testing.T) {
 	}
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xCD
-	req := &protocol.AssignTask{
-		TaskId: protocol.TaskID{Id: taskIDBytes},
-		Prompt: []byte("nw-git"),
-	}
-	req.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), req)
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{Prompt: []byte("nw-git")}
+	body.SetRepoPath([]byte(repo))
+	s.handleAssign(context.Background(), taskID, body)
 
 	// HEAD ref unchanged.
 	if got := readHEADRef(t, repo); got != headBefore {
@@ -787,12 +776,9 @@ func TestHandleAssign_NoWorktree_ConcurrentTasks(t *testing.T) {
 		i := i
 		go func() {
 			defer wg.Done()
-			req := &protocol.AssignTask{
-				TaskId: protocol.TaskID{Id: [16]byte{i}},
-				Prompt: []byte("nw-concurrent"),
-			}
-			req.SetRepoPath([]byte(repo))
-			s.handleAssign(context.Background(), req)
+			body := &protocol.AssignTaskBody{Prompt: []byte("nw-concurrent")}
+			body.SetRepoPath([]byte(repo))
+			s.handleAssign(context.Background(), protocol.TaskID{Id: [16]byte{i}}, body)
 		}()
 	}
 	wg.Wait()
@@ -832,12 +818,9 @@ func TestHandleAssign_NoWorktree_Resume(t *testing.T) {
 	}
 	taskID := protocol.TaskID{Id: [16]byte{0x99}}
 	for i := 0; i < 2; i++ {
-		req := &protocol.AssignTask{
-			TaskId: taskID,
-			Prompt: []byte("nw-resume"),
-		}
-		req.SetRepoPath([]byte(repo))
-		s.handleAssign(context.Background(), req)
+		body := &protocol.AssignTaskBody{Prompt: []byte("nw-resume")}
+		body.SetRepoPath([]byte(repo))
+		s.handleAssign(context.Background(), taskID, body)
 	}
 
 	ms.mu.Lock()
@@ -957,12 +940,10 @@ func TestHandleAssign_NoWorktree_ForceInject(t *testing.T) {
 	}
 	var taskIDBytes [16]byte
 	taskIDBytes[0] = 0xEE
-	req := &protocol.AssignTask{
-		TaskId: protocol.TaskID{Id: taskIDBytes},
-		Prompt: []byte("nw-force-inject"),
-	}
-	req.SetRepoPath([]byte(repo))
-	s.handleAssign(context.Background(), req)
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{Prompt: []byte("nw-force-inject")}
+	body.SetRepoPath([]byte(repo))
+	s.handleAssign(context.Background(), taskID, body)
 
 	// (1) settings.json exists in repoPath.
 	settingsPath := filepath.Join(repo, ".claude", "settings.json")

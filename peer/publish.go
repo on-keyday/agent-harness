@@ -90,12 +90,18 @@ func (c *Conn) Publish(ctx context.Context, nick, topic string, data []byte) err
 	return t.stream.AppendData(false, data)
 }
 
-// BidirectionalStreamLookup is the narrow subset of trsf.Transport
-// WaitForBidirectionalStream needs. trsf.Transport satisfies it; callers
-// that have a smaller surface (e.g. tests, runner.Session) can implement
-// it directly without taking a dep on the whole transport interface.
+// BidirectionalStreamLookup is the narrow subset of trsf.Transport that
+// callers needing per-stream lookup use. trsf.Transport satisfies it;
+// callers with a smaller surface (e.g. tests, runner.Session) can
+// implement it directly without taking a dep on the whole transport
+// interface.
+//
+// GetReceiveStream is included for callers that resolve server-initiated
+// send-streams (e.g. AssignTask body fetch) — these are receive-only on
+// the runner side, not bidi.
 type BidirectionalStreamLookup interface {
 	GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream
+	GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream
 }
 
 // WaitForBidirectionalStream returns lookup.GetBidirectionalStream(id),

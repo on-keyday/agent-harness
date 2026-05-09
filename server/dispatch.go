@@ -74,26 +74,42 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 	}
 }
 
-// buildAssignMsg constructs the wire bytes for a RunnerControl/AssignTask message.
-// ticket is included verbatim in AssignTask.AuthTicket; pass [16]byte{} when no
-// ticket is available (e.g. Scheduler path that does not yet generate tickets).
-func buildAssignMsg(task TaskEntry, ticket [16]byte) ([]byte, error) {
+// buildAssignMsg constructs the wire bytes for a RunnerControl/AssignTask
+// message that carries only TaskID + StreamID. The actual body
+// (auth_ticket / repo_path / prompt / extra_args) is encoded separately
+// and written to the trsf send-stream with the returned ID; the runner
+// reads from that stream and decodes AssignTaskBody.
+//
+// Streamed via trsf instead of inline so long prompts don't exceed path
+// MTU on UDP transport.
+func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, []byte, error) {
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(task.ID)
 	copy(tid.Id[:], raw)
 
 	assign := protocol.AssignTask{
-		TaskId:     tid,
-		AuthTicket: ticket,
-		ExtraArgs:  protocol.ClaudeArgsFromStrings(task.ExtraArgs),
+		TaskId:   tid,
+		StreamId: streamID,
 	}
-	assign.SetRepoPath([]byte(task.RepoPath))
-	assign.SetPrompt([]byte(task.Prompt))
 
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
 	req.SetAssignTask(assign)
 	data, err := req.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
-	return data, err
+	if err != nil {
+		return nil, nil, err
+	}
+
+	body := protocol.AssignTaskBody{
+		AuthTicket: ticket,
+		ExtraArgs:  protocol.ClaudeArgsFromStrings(task.ExtraArgs),
+	}
+	body.SetRepoPath([]byte(task.RepoPath))
+	body.SetPrompt([]byte(task.Prompt))
+	bodyBytes, err := body.EncodeCopy(nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return data, bodyBytes, nil
 }
 
 // runnerIDFromConnID parses a runner's string ID (objproto.ConnectionID.String() format:
@@ -166,7 +182,20 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			d.Board.Registry().Register(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID), ticket)
 		}
 
-		msg, err := buildAssignMsg(task, ticket)
+		// Allocate the body stream up-front so the AssignTask envelope
+		// can carry its id. On stream-creation failure (e.g. test stub),
+		// rollback and try the next candidate.
+		stream := runner.Conn.CreateSendStream()
+		if stream == nil {
+			slog.Error("dispatcher: CreateSendStream returned nil", "runner", runner.ID, "task", task.ID)
+			if d.Board != nil {
+				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
+			}
+			d.Registry.UnbindTask(runner.ID, task.ID)
+			continue
+		}
+
+		envelope, body, err := buildAssignMsg(task, ticket, uint64(stream.ID()))
 		if err != nil {
 			slog.Error("dispatcher: buildAssignMsg failed", "task", task.ID, "err", err)
 			if d.Board != nil {
@@ -176,7 +205,28 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			continue
 		}
 
-		if _, _, err := runner.Conn.SendMessage(msg); err != nil {
+		// Write body + EOF to the stream FIRST so it is available the
+		// moment the runner receives the envelope and looks up the
+		// receive stream. Both legs are synchronous; total payload is
+		// already in memory.
+		if werr := stream.AppendData(false, body); werr != nil {
+			slog.Error("dispatcher: stream body write failed", "runner", runner.ID, "task", task.ID, "err", werr)
+			if d.Board != nil {
+				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
+			}
+			d.Registry.UnbindTask(runner.ID, task.ID)
+			continue
+		}
+		if werr := stream.AppendData(true); werr != nil {
+			slog.Error("dispatcher: stream EOF failed", "runner", runner.ID, "task", task.ID, "err", werr)
+			if d.Board != nil {
+				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))
+			}
+			d.Registry.UnbindTask(runner.ID, task.ID)
+			continue
+		}
+
+		if _, _, err := runner.Conn.SendMessage(envelope); err != nil {
 			slog.Error("dispatcher: SendMessage failed, rolling back", "runner", runner.ID, "task", task.ID, "err", err)
 			if d.Board != nil {
 				d.Board.Revoke(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID))

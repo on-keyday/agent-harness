@@ -590,12 +590,24 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 	if s.Board != nil {
 		s.Board.Registry().Register(runnerIDFromConnID(runnerID), taskIDFromHex(taskID), ticket)
 	}
-	msg, err := buildAssignMsg(task, ticket)
+	stream := entry.Conn.CreateSendStream()
+	if stream == nil {
+		return fmt.Errorf("CreateSendStream returned nil")
+	}
+	envelope, body, err := buildAssignMsg(task, ticket, uint64(stream.ID()))
 	if err != nil {
 		return fmt.Errorf("buildAssignMsg: %w", err)
 	}
-	_, _, err = entry.Conn.SendMessage(msg)
-	return err
+	if werr := stream.AppendData(false, body); werr != nil {
+		return fmt.Errorf("stream body write: %w", werr)
+	}
+	if werr := stream.AppendData(true); werr != nil {
+		return fmt.Errorf("stream EOF: %w", werr)
+	}
+	if _, _, err := entry.Conn.SendMessage(envelope); err != nil {
+		return err
+	}
+	return nil
 }
 
 // runDetachIdleSweeper cancels any session that has been Detached longer than
