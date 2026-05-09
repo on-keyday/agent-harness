@@ -3,3 +3,5 @@ harness-data/
 harness-tui.log
 server.log
 bin/
+scripts/.venv/
+scripts/__pycache__/
