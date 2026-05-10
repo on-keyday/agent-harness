@@ -1,7 +1,9 @@
 package runner
 
 import (
+	"archive/tar"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -177,6 +179,8 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 		s.runPush(stream, full, req.Force())
 	case protocol.FileTransferDirection_Delete:
 		s.runDelete(stream, full)
+	case protocol.FileTransferDirection_DirPush:
+		s.runDirPush(stream, worktreeDir, full, req.Force())
 	default:
 		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 	}
@@ -362,4 +366,133 @@ func writeListing(st trsf.BidirectionalStream, entries []protocol.FileEntry) err
 		return err
 	}
 	return st.AppendData(true)
+}
+
+// stagingRoot is the on-disk dir under which dir_push stages incoming trees.
+// Lives inside the worktree so rename(2) into the final dest stays on the
+// same filesystem.
+const stagingRoot = ".harness-staging"
+
+// runDirPush extracts a tar stream into <worktree>/<rel_path>, staging via
+// a sibling directory and renaming atomically on success. Refuses to clobber
+// an existing dest unless force is set.
+func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest string, force bool) {
+	// Reject existing dest when !force; reject when dest is a regular file
+	// (we won't replace a file with a directory regardless of force).
+	if fi, err := os.Lstat(dest); err == nil {
+		if !fi.IsDir() {
+			_ = writeAck(stream, protocol.FileTransferStatus_IsDirectory, 0)
+			return
+		}
+		if !force {
+			_ = writeAck(stream, protocol.FileTransferStatus_AlreadyExists, 0)
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		return
+	}
+
+	staging, err := mkStagingDir(worktreeDir)
+	if err != nil {
+		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		return
+	}
+	cleanupStaging := true
+	defer func() {
+		if cleanupStaging {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+
+	tr := tar.NewReader(streamReader2{stream})
+	bytesIn := uint64(0)
+	for {
+		hdr, terr := tr.Next()
+		if terr == io.EOF {
+			break
+		}
+		if terr != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeDir {
+			_ = writeAck(stream, protocol.FileTransferStatus_PathInvalid, 0)
+			return
+		}
+		entryFull, perr := ValidateRelPath(staging, hdr.Name)
+		if perr != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_PathInvalid, 0)
+			return
+		}
+		if hdr.Typeflag == tar.TypeDir {
+			if err := os.MkdirAll(entryFull, 0o755); err != nil {
+				_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+				return
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(entryFull), 0o755); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		mode := os.FileMode(hdr.Mode & 0o777)
+		if mode == 0 {
+			mode = 0o644
+		}
+		f, oerr := os.OpenFile(entryFull, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if oerr != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		n, cerr := io.Copy(f, tr)
+		if cerr != nil {
+			_ = f.Close()
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		if err := f.Close(); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		bytesIn += uint64(n)
+	}
+
+	if force {
+		if err := os.RemoveAll(dest); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+	}
+	if err := os.Rename(staging, dest); err != nil {
+		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		return
+	}
+	cleanupStaging = false
+	_ = writeAck(stream, protocol.FileTransferStatus_Ok, bytesIn)
+}
+
+// mkStagingDir creates <worktreeDir>/.harness-staging/<random>/ and returns
+// its absolute path. The parent .harness-staging/ is created as needed and
+// left in place after success/failure for future transfers (and for prune
+// cleanup on runner crash).
+func mkStagingDir(worktreeDir string) (string, error) {
+	parent := filepath.Join(worktreeDir, stagingRoot)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", err
+	}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(parent, hex.EncodeToString(id[:]))
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
 }
