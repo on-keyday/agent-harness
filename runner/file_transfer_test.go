@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"os"
@@ -320,13 +319,8 @@ func TestHandleOpenFileTransfer_PushRejectSymlinkParent(t *testing.T) {
 // readAck reads a u32-BE-length-prefixed FileTransferAck from the stream.
 func readAck(t *testing.T, st trsf.BidirectionalStream) *protocol.FileTransferAck {
 	t.Helper()
-	var lenBuf [4]byte
-	if _, err := io.ReadFull(streamReader(st), lenBuf[:]); err != nil {
-		t.Fatalf("read ack length: %v", err)
-	}
-	n := binary.BigEndian.Uint32(lenBuf[:])
-	body := make([]byte, n)
-	if _, err := io.ReadFull(streamReader(st), body); err != nil {
+	body := make([]byte, protocol.FileTransferAckSize)
+	if _, err := io.ReadFull(st, body); err != nil {
 		t.Fatalf("read ack body: %v", err)
 	}
 	ack := &protocol.FileTransferAck{}

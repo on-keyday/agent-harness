@@ -49,7 +49,7 @@ func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath s
 		return fmt.Errorf("file pull: open local: %w", err)
 	}
 	defer dst.Close()
-	n, err := io.Copy(dst, streamReadAll{stream})
+	n, err := io.Copy(dst, stream)
 	if err != nil {
 		return fmt.Errorf("file pull: stream read: %w", err)
 	}
@@ -101,7 +101,7 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 		}
 	}()
 
-	tr := tar.NewReader(streamReadAll{stream})
+	tr := tar.NewReader(stream)
 	for {
 		hdr, terr := tr.Next()
 		if terr == io.EOF {

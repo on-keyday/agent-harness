@@ -4,7 +4,6 @@ import (
 	"archive/tar"
 	"context"
 	"crypto/rand"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
@@ -120,17 +119,20 @@ func (s *Session) worktreeDirFor(taskIDHex string) string {
 	return filepath.Join(te.repoPath, ".harness-worktrees", taskIDHex)
 }
 
-// writeAck encodes ack with a 4-byte BE length prefix and writes it to the
-// stream. Used by push/pull only.
+// writeAck encodes ack and writes it to the stream. FileTransferAck is a
+// fixed-size payload (protocol.FileTransferAckSize bytes); the reader pulls
+// exactly that many bytes off the stream and decodes — no in-band length
+// prefix needed.
 func writeAck(st trsf.BidirectionalStream, status protocol.FileTransferStatus, size uint64) error {
 	ack := protocol.FileTransferAck{Status: status, ActualSize: size}
 	body, err := ack.Append(nil)
 	if err != nil {
 		return err
 	}
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(body)))
-	return st.AppendData(false, hdr[:], body)
+	if _, err := st.Write(body); err != nil {
+		return err
+	}
+	return nil
 }
 
 // handleOpenFileTransfer is the runner-side dispatcher for push/pull. It
@@ -241,7 +243,7 @@ func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
 	}
 	// Stream the file body to the client. Errors are silent; the client
 	// will see a short read.
-	_, _ = io.Copy(streamWriter{stream}, f)
+	_, _ = io.Copy(stream, f)
 	_ = stream.AppendData(true)
 }
 
@@ -260,7 +262,7 @@ func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force bo
 		}
 		return
 	}
-	written, copyErr := io.Copy(f, streamReader2{stream})
+	written, copyErr := io.Copy(f, stream)
 	if copyErr != nil {
 		_ = f.Close()
 		_ = os.Remove(full)
@@ -277,43 +279,6 @@ func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force bo
 		return
 	}
 	_ = writeAck(stream, protocol.FileTransferStatus_Ok, uint64(written))
-}
-
-// streamWriter / streamReader2 adapt a trsf.BidirectionalStream to the
-// io.Writer / io.Reader interfaces (without involving CloseBoth).
-type streamWriter struct{ s trsf.BidirectionalStream }
-
-func (w streamWriter) Write(p []byte) (int, error) {
-	// AppendData does not copy its arguments; tar.Writer (and similar
-	// buffered producers) reuses its internal block buffer between Write
-	// calls, so handing p directly to AppendData would let later writes
-	// mutate bytes that haven't been flushed onto the wire yet. Copy.
-	if len(p) == 0 {
-		return 0, nil
-	}
-	buf := make([]byte, len(p))
-	copy(buf, p)
-	if err := w.s.AppendData(false, buf); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
-
-type streamReader2 struct{ s trsf.BidirectionalStream }
-
-func (r streamReader2) Read(p []byte) (int, error) {
-	data, eof, err := r.s.ReadDirect(uint64(len(p)))
-	if err != nil {
-		return 0, err
-	}
-	n := copy(p, data)
-	if eof && n == len(data) {
-		if n == 0 {
-			return 0, io.EOF
-		}
-		return n, io.EOF
-	}
-	return n, nil
 }
 
 // handleListFiles is the runner-side dispatcher for ls. It writes a single
@@ -374,10 +339,10 @@ func writeListing(st trsf.BidirectionalStream, entries []protocol.FileEntry) err
 	if err != nil {
 		return err
 	}
-	if err := st.AppendData(false, body); err != nil {
+	if _, err := st.Write(body); err != nil {
 		return err
 	}
-	return st.AppendData(true)
+	return st.Close()
 }
 
 // stagingRoot is the on-disk dir under which dir_push stages incoming trees.
@@ -417,7 +382,7 @@ func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest 
 		}
 	}()
 
-	tr := tar.NewReader(streamReader2{stream})
+	tr := tar.NewReader(stream)
 	bytesIn := uint64(0)
 	for {
 		hdr, terr := tr.Next()
@@ -511,7 +476,7 @@ func (s *Session) runDirPull(stream trsf.BidirectionalStream, full string) {
 		return
 	}
 
-	tw := tar.NewWriter(streamWriter{stream})
+	tw := tar.NewWriter(stream)
 	walkErr := filepath.WalkDir(full, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
 			return werr

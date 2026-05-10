@@ -30,7 +30,7 @@ func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel s
 		return err
 	}
 	defer stream.CloseBoth()
-	if _, err := io.Copy(streamWriter{stream}, src); err != nil {
+	if _, err := io.Copy(stream, src); err != nil {
 		return fmt.Errorf("file push: stream write: %w", err)
 	}
 	if err := stream.AppendData(true); err != nil {
@@ -60,7 +60,7 @@ func (c *Client) FilePushDir(ctx context.Context, taskIDHex, localDir, remoteRel
 	}
 	defer stream.CloseBoth()
 
-	tw := tar.NewWriter(streamWriter{s: stream})
+	tw := tar.NewWriter(stream)
 	walkErr := filepath.WalkDir(localDir, func(path string, d fs.DirEntry, werr error) error {
 		if werr != nil {
 			return werr
@@ -142,26 +142,3 @@ func ackError(op string, ack *protocol.FileTransferAck) error {
 	}
 }
 
-// streamWriter adapts a trsf.BidirectionalStream's send side to io.Writer.
-// Kept private to the cli package.
-type streamWriter struct {
-	s interface {
-		AppendData(eof bool, data ...[]byte) error
-	}
-}
-
-func (w streamWriter) Write(p []byte) (int, error) {
-	// AppendData does not copy its arguments; tar.Writer (and similar
-	// buffered producers) reuses its internal block buffer between Write
-	// calls, so handing p directly to AppendData would let later writes
-	// mutate bytes that haven't been flushed onto the wire yet. Copy.
-	if len(p) == 0 {
-		return 0, nil
-	}
-	buf := make([]byte, len(p))
-	copy(buf, p)
-	if err := w.s.AppendData(false, buf); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
