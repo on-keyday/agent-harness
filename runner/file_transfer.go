@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -181,6 +182,8 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 		s.runDelete(stream, full)
 	case protocol.FileTransferDirection_DirPush:
 		s.runDirPush(stream, worktreeDir, full, req.Force())
+	case protocol.FileTransferDirection_DirPull:
+		s.runDirPull(stream, full)
 	default:
 		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 	}
@@ -475,6 +478,80 @@ func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest 
 	}
 	cleanupStaging = false
 	_ = writeAck(stream, protocol.FileTransferStatus_Ok, bytesIn)
+}
+
+// runDirPull walks the directory at full and writes a tar stream of its
+// contents to the client. Symlinks, hard links, and special files are
+// silently skipped (only regular files and directories are emitted).
+func (s *Session) runDirPull(stream trsf.BidirectionalStream, full string) {
+	fi, err := os.Stat(full)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		default:
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	if !fi.IsDir() {
+		_ = writeAck(stream, protocol.FileTransferStatus_NotADirectory, 0)
+		return
+	}
+	if err := writeAck(stream, protocol.FileTransferStatus_Ok, 0); err != nil {
+		return
+	}
+
+	tw := tar.NewWriter(streamWriter{stream})
+	walkErr := filepath.WalkDir(full, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if path == full {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return ierr
+		}
+		// Skip symlinks, hard links, devices, FIFOs.
+		if info.Mode()&os.ModeType != 0 && !info.IsDir() {
+			return nil
+		}
+		hdr, herr := tar.FileInfoHeader(info, "")
+		if herr != nil {
+			return herr
+		}
+		rel, rerr := filepath.Rel(full, path)
+		if rerr != nil {
+			return rerr
+		}
+		hdr.Name = filepath.ToSlash(rel)
+		if d.IsDir() {
+			hdr.Name += "/"
+			hdr.Typeflag = tar.TypeDir
+			hdr.Size = 0
+			return tw.WriteHeader(hdr)
+		}
+		hdr.Typeflag = tar.TypeReg
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(tw, f)
+		_ = f.Close()
+		return err
+	})
+	if walkErr != nil {
+		// Mid-stream error after ack: best we can do is close prematurely.
+		// Client surfaces this as io.ErrUnexpectedEOF on tar.Reader.Next.
+		return
+	}
+	_ = tw.Close()
+	_ = stream.AppendData(true)
 }
 
 // mkStagingDir creates <worktreeDir>/.harness-staging/<random>/ and returns

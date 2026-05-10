@@ -790,6 +790,97 @@ func TestHandleOpenFileTransfer_DirPushRejectSymlinkEntry(t *testing.T) {
 	}
 }
 
+func TestHandleOpenFileTransfer_DirPullOK(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "outgoing")
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("AA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sub", "b.txt"), []byte("BBB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000050"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPull,
+	}
+	req.SetRelPath([]byte("outgoing"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	body, err := io.ReadAll(streamReader(clientEnd))
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	tr := tar.NewReader(bytes.NewReader(body))
+	files := map[string][]byte{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			b, _ := io.ReadAll(tr)
+			files[hdr.Name] = b
+		}
+	}
+	if string(files["a.txt"]) != "AA" {
+		t.Errorf("a.txt = %q want AA", files["a.txt"])
+	}
+	if string(files["sub/b.txt"]) != "BBB" {
+		t.Errorf("sub/b.txt = %q want BBB", files["sub/b.txt"])
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPullNotADirectory(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "afile"), []byte("X"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000051"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPull,
+	}
+	req.SetRelPath([]byte("afile"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_NotADirectory {
+		t.Fatalf("ack status = %v want not_a_directory", ack.Status)
+	}
+}
+
 func TestHandleOpenFileTransfer_DirPushRejectPathTraversal(t *testing.T) {
 	tmp := t.TempDir()
 	taskIDHex := "00000000000000000000000000000044"
