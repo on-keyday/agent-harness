@@ -100,7 +100,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 	}
 	for _, t := range lr.Tasks {
 		fmt.Fprintf(out, "  %s  %s  repo=%s  from=%s  prompt=%q\n",
-			shortHex(t.Id.Id[:]),
+			taskIDStr(t.Id.Id[:]),
 			taskStatusStr(t.Status),
 			string(t.RepoPath),
 			originStr(t.OriginKind),
@@ -158,8 +158,10 @@ func taskStatusStr(s protocol.TaskStatus) string {
 	return "?"
 }
 
-// shortHex returns a 12-char hex prefix; if the slice is all zero, returns "-".
-func shortHex(b []byte) string {
+// taskIDStr returns the full hex encoding of b, or "-" if every byte is zero.
+// Full length is required so the printed value can be copy-pasted directly
+// into harness-cli subcommands (cancel / logs / file push / file pull / ...).
+func taskIDStr(b []byte) string {
 	allZero := true
 	for _, v := range b {
 		if v != 0 {
@@ -171,9 +173,9 @@ func shortHex(b []byte) string {
 		return "-"
 	}
 	const tab = "0123456789abcdef"
-	out := make([]byte, 0, 12)
-	for i := 0; i < 6 && i < len(b); i++ {
-		out = append(out, tab[b[i]>>4], tab[b[i]&0xf])
+	out := make([]byte, 0, 2*len(b))
+	for _, v := range b {
+		out = append(out, tab[v>>4], tab[v&0xf])
 	}
 	return string(out)
 }

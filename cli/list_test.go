@@ -29,7 +29,7 @@ func makeRunnerInfo(hostname string, status protocol.RunnerStatus, maxTasks int,
 	r.ActiveTasks = active
 	r.ActiveTasksLen = uint16(activeCount)
 
-	// Use a placeholder IPv4 so shortHex doesn't render "-"
+	// Use a placeholder IPv4 so taskIDStr doesn't render "-"
 	r.Id.SetIpAddr([]byte{127, 0, 0, 1})
 	r.Id.IpAddrLen = 4
 
@@ -143,15 +143,22 @@ func TestLsTaskRow(t *testing.T) {
 	}
 }
 
-// TestLsShortHex verifies shortHex behaviour.
-func TestLsShortHex(t *testing.T) {
-	// All zero = "-"
-	if got := shortHex([]byte{0, 0, 0, 0}); got != "-" {
-		t.Errorf("shortHex(zeros) = %q, want -", got)
+// TestTaskIDStr verifies taskIDStr behaviour: full-length hex with "-" for
+// the all-zero placeholder.
+func TestTaskIDStr(t *testing.T) {
+	if got := taskIDStr([]byte{0, 0, 0, 0}); got != "-" {
+		t.Errorf("taskIDStr(zeros) = %q, want -", got)
 	}
-	// Non-zero = hex prefix
-	got := shortHex([]byte{0xde, 0xad, 0xbe, 0xef})
+	got := taskIDStr([]byte{0xde, 0xad, 0xbe, 0xef})
 	if got != "deadbeef" {
-		t.Errorf("shortHex = %q, want deadbeef", got)
+		t.Errorf("taskIDStr(4 bytes) = %q, want deadbeef", got)
+	}
+	// Full 16-byte task id renders 32 hex chars.
+	full := make([]byte, 16)
+	for i := range full {
+		full[i] = byte(i)
+	}
+	if got := taskIDStr(full); got != "000102030405060708090a0b0c0d0e0f" {
+		t.Errorf("taskIDStr(16 bytes) = %q", got)
 	}
 }
