@@ -240,6 +240,80 @@ func TestHandleListFiles_OK(t *testing.T) {
 	}
 }
 
+// TestHandleOpenFileTransfer_PullRejectSymlink covers the runner-side defense
+// against symlink traversal: a worktree containing a symlink such as
+// `secret → /etc` must NOT let the client pull `secret/passwd`. Lexical
+// ValidateRelPath cannot detect this; the symlink prefix walk in
+// rejectIfSymlinkInPath is what blocks it.
+func TestHandleOpenFileTransfer_PullRejectSymlink(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Symlink("/etc", filepath.Join(tmp, "secret")); err != nil {
+		t.Skipf("symlink create failed (filesystem may not support): %v", err)
+	}
+	taskIDHex := "00000000000000000000000000000010"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Pull,
+	}
+	req.SetRelPath([]byte("secret/passwd"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_PathInvalid {
+		t.Fatalf("symlink traversal must be rejected, got status=%v", ack.Status)
+	}
+}
+
+// TestHandleOpenFileTransfer_PushRejectSymlinkParent covers the symmetric
+// push case: a symlinked intermediate directory must reject the write so
+// data is never landed outside the worktree.
+func TestHandleOpenFileTransfer_PushRejectSymlinkParent(t *testing.T) {
+	tmp := t.TempDir()
+	outsideDir := t.TempDir() // real dir; the symlink points here so a misdirected write would land outside `tmp`
+	if err := os.Symlink(outsideDir, filepath.Join(tmp, "outside")); err != nil {
+		t.Skipf("symlink create failed: %v", err)
+	}
+	taskIDHex := "00000000000000000000000000000011"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Push,
+	}
+	req.SetRelPath([]byte("outside/new.txt"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	// Close client send so a hypothetical (broken) push that did open the
+	// file would EOF and complete; we still expect PathInvalid below.
+	_ = clientEnd.AppendData(true)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_PathInvalid {
+		t.Fatalf("push under symlinked parent must be rejected, got status=%v", ack.Status)
+	}
+	// Defense in depth: confirm nothing actually landed in the symlink target.
+	if _, err := os.Stat(filepath.Join(outsideDir, "new.txt")); err == nil {
+		t.Fatalf("file leaked outside the worktree at %s/new.txt", outsideDir)
+	}
+}
+
 // readAck reads a u32-BE-length-prefixed FileTransferAck from the stream.
 func readAck(t *testing.T, st trsf.BidirectionalStream) *protocol.FileTransferAck {
 	t.Helper()

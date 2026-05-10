@@ -54,6 +54,51 @@ func ValidateRelPath(worktreeRoot, rel string) (string, error) {
 	return full, nil
 }
 
+// rejectIfSymlinkInPath returns ErrPathInvalid if any existing prefix of
+// fullPath (after worktreeRoot) is a symlink. Non-existent leaf is fine
+// (push creates new files); a symlinked intermediate dir is rejected.
+//
+// This is the runner-side defense: lexical ValidateRelPath cannot detect
+// symlinks because they only manifest at filesystem traversal time.
+// Without this, a worktree symlink such as `evil → /etc` would let a pull
+// of `evil/passwd` exfiltrate `/etc/passwd`, and a push under `evil/` would
+// write outside the worktree.
+//
+// os.Lstat (NOT os.Stat) is mandatory: Stat follows symlinks and would
+// return the target's mode, defeating the check.
+func rejectIfSymlinkInPath(worktreeRoot, fullPath string) error {
+	rootClean := filepath.Clean(worktreeRoot)
+	rel, err := filepath.Rel(rootClean, fullPath)
+	if err != nil {
+		return ErrPathInvalid
+	}
+	if rel == "." {
+		return nil
+	}
+	// Walk component by component.
+	cur := rootClean
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" {
+			continue
+		}
+		cur = filepath.Join(cur, part)
+		fi, err := os.Lstat(cur)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// We've reached a component that doesn't exist yet (push of
+				// a new file under a real directory). The remaining tail
+				// cannot be a symlink because it doesn't exist. Done.
+				return nil
+			}
+			return ErrPathInvalid
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return ErrPathInvalid
+		}
+	}
+	return nil
+}
+
 // worktreeDirFor returns the on-disk worktree path for taskIDHex, mirroring
 // the logic in handleOpenExec / handleAssign. Returns "" if the task is
 // unknown to this session. The lock is released before returning so callers
@@ -113,6 +158,14 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 
 	full, err := ValidateRelPath(worktreeDir, string(req.RelPath))
 	if err != nil {
+		_ = writeAck(stream, protocol.FileTransferStatus_PathInvalid, 0)
+		return
+	}
+	// Defense against symlink traversal: ValidateRelPath is lexical only.
+	// A worktree containing a symlink (e.g. `evil → /etc`) would otherwise
+	// let `pull evil/passwd` exfiltrate /etc/passwd or `push evil/foo`
+	// write outside the worktree.
+	if err := rejectIfSymlinkInPath(worktreeDir, full); err != nil {
 		_ = writeAck(stream, protocol.FileTransferStatus_PathInvalid, 0)
 		return
 	}
@@ -230,6 +283,13 @@ func (s *Session) handleListFiles(ctx context.Context, req *protocol.RunnerListF
 	}
 	full, err := ValidateRelPath(worktreeDir, string(req.RelPath))
 	if err != nil {
+		_ = writeListing(stream, nil)
+		return
+	}
+	// Same symlink-traversal defense as handleOpenFileTransfer; matches the
+	// existing failure-degradation pattern (empty FileListing on any path
+	// validation failure rather than a typed error code).
+	if err := rejectIfSymlinkInPath(worktreeDir, full); err != nil {
 		_ = writeListing(stream, nil)
 		return
 	}

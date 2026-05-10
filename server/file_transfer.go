@@ -22,7 +22,11 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 	}
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	task, ok := h.Tasks.Get(taskIDHex)
-	if !ok || task.Status != protocol.TaskStatus_Running {
+	// Detached is a non-terminal state for detachable interactive tasks
+	// (the TUI/CLI client disconnected but the runner-side worktree is
+	// still reachable). File ops must remain available so the user can
+	// pull/push/ls without first re-attaching.
+	if !ok || (task.Status != protocol.TaskStatus_Running && task.Status != protocol.TaskStatus_Detached) {
 		return errResp(protocol.OpenFileTransferStatus_NoSuchTask)
 	}
 	runner, ok := h.Registry.Get(task.AssignedTo)
@@ -75,7 +79,11 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 	}
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	task, ok := h.Tasks.Get(taskIDHex)
-	if !ok || task.Status != protocol.TaskStatus_Running {
+	// Detached is a non-terminal state for detachable interactive tasks
+	// (the TUI/CLI client disconnected but the runner-side worktree is
+	// still reachable). File ops must remain available so the user can
+	// pull/push/ls without first re-attaching. See handleOpenFileTransfer.
+	if !ok || (task.Status != protocol.TaskStatus_Running && task.Status != protocol.TaskStatus_Detached) {
 		return errResp(protocol.ListFilesStatus_NoSuchTask)
 	}
 	runner, ok := h.Registry.Get(task.AssignedTo)
