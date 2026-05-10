@@ -15,6 +15,8 @@ enum RunnerRequestType:
     open_exec
     runner_hello_response
     task_wake
+    open_file_transfer
+    list_files
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -123,6 +125,8 @@ format RunnerRequest:
         RunnerRequestType.open_exec   => open_exec   :OpenExecRunnerRequest
         RunnerRequestType.runner_hello_response => runner_hello_response :RunnerHelloResponse
         RunnerRequestType.task_wake => task_wake :TaskWakeRequest
+        RunnerRequestType.open_file_transfer => open_file_transfer :RunnerOpenFileTransferRequest
+        RunnerRequestType.list_files         => list_files         :RunnerListFilesRequest
 
 enum TaskControlKind:
     :u8
@@ -134,6 +138,8 @@ enum TaskControlKind:
     open_interactive
     client_hello
     attach_session
+    open_file_transfer
+    list_files
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # Sent once right after handshake via TaskControlRequest{client_hello,...} so
@@ -397,6 +403,8 @@ format TaskControlRequest:
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveRequest
         TaskControlKind.client_hello => client_hello :ClientHello
         TaskControlKind.attach_session => attach :AttachSessionRequest
+        TaskControlKind.open_file_transfer => open_file_transfer :OpenFileTransferRequest
+        TaskControlKind.list_files         => list_files         :ListFilesRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -414,6 +422,8 @@ format TaskControlResponse:
         TaskControlKind.open_interactive => open_interactive :OpenInteractiveResponse
         TaskControlKind.client_hello => client_hello :ClientHelloResponse
         TaskControlKind.attach_session => attach :AttachSessionResponse
+        TaskControlKind.open_file_transfer => open_file_transfer :OpenFileTransferResponse
+        TaskControlKind.list_files         => list_files         :ListFilesResponse
 
 # Pubsub event payloads
 enum StatusEventKind:
@@ -441,3 +451,87 @@ format RunnerStatusEvent:
     runner_id :RunnerID
     ts :u64
     runner_status :RunnerStatus
+
+# === File transfer (client ↔ runner; see specs/2026-05-10-file-transfer-design.md) ===
+
+enum FileTransferDirection:
+    :u8
+    push
+    pull
+
+enum FileTransferStatus:
+    :u8
+    ok             = "ok"
+    path_invalid   = "path_invalid"
+    not_found      = "not_found"
+    already_exists = "already_exists"
+    io_error       = "io_error"
+    canceled       = "canceled"
+
+format FileTransferAck:
+    status      :FileTransferStatus
+    actual_size :u64
+
+format FileEntry:
+    name_len :u16
+    name     :[name_len]u8
+    size     :u64
+    mode     :u32
+    is_dir   :u1
+    reserved :u7
+
+format FileListing:
+    count   :u32
+    entries :[count]FileEntry
+
+format OpenFileTransferRequest:
+    task_id       :TaskID
+    direction     :FileTransferDirection
+    rel_path_len  :u16
+    rel_path      :[rel_path_len]u8
+    expected_size :u64
+
+enum OpenFileTransferStatus:
+    :u8
+    ok             = "ok"
+    no_such_task   = "no_such_task"
+    runner_offline = "runner_offline"
+    internal_error = "internal_error"
+
+format OpenFileTransferResponse:
+    status    :OpenFileTransferStatus
+    stream_id :u64
+
+format ListFilesRequest:
+    task_id      :TaskID
+    rel_path_len :u16
+    rel_path     :[rel_path_len]u8
+
+enum ListFilesStatus:
+    :u8
+    ok              = "ok"
+    no_such_task    = "no_such_task"
+    runner_offline  = "runner_offline"
+    path_invalid    = "path_invalid"
+    not_found       = "not_found"
+    not_a_directory = "not_a_directory"
+    io_error        = "io_error"
+    internal_error  = "internal_error"
+
+format ListFilesResponse:
+    status    :ListFilesStatus
+    stream_id :u64
+
+format RunnerOpenFileTransferRequest:
+    task_id       :TaskID
+    stream_id     :u64
+    direction     :FileTransferDirection
+    rel_path_len  :u16
+    rel_path      :[rel_path_len]u8
+    expected_size :u64
+
+format RunnerListFilesRequest:
+    task_id      :TaskID
+    stream_id    :u64
+    rel_path_len :u16
+    rel_path     :[rel_path_len]u8
