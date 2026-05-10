@@ -154,3 +154,135 @@ func TestFileTransferE2E(t *testing.T) {
 		t.Log("runner did not exit within 2s of cancel")
 	}
 }
+
+func TestFileDirTransferE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18546"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			ClaudeBin:    fakeClaude,
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "long-running")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+
+	c, err := cli.Dial(ctx, peerCID)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	// 1. Build a local source directory tree.
+	localSrc := filepath.Join(t.TempDir(), "src-tree")
+	if err := os.MkdirAll(filepath.Join(localSrc, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localSrc, "a.txt"), []byte("AA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localSrc, "sub", "b.txt"), []byte("BBB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Push the directory.
+	if err := c.FilePushDir(ctx, taskID, localSrc, "incoming", false); err != nil {
+		t.Fatalf("dir push: %v", err)
+	}
+
+	// 3. Verify it landed.
+	if got, err := os.ReadFile(filepath.Join(worktree, "incoming", "a.txt")); err != nil || string(got) != "AA" {
+		t.Errorf("incoming/a.txt = %q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(worktree, "incoming", "sub", "b.txt")); err != nil || string(got) != "BBB" {
+		t.Errorf("incoming/sub/b.txt = %q err=%v", got, err)
+	}
+
+	// 4. Push again without --force: must fail.
+	if err := c.FilePushDir(ctx, taskID, localSrc, "incoming", false); err == nil {
+		t.Errorf("second push without --force should fail")
+	}
+
+	// 5. Push with --force: must replace.
+	localSrc2 := filepath.Join(t.TempDir(), "src-tree-2")
+	if err := os.MkdirAll(localSrc2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(localSrc2, "fresh.txt"), []byte("NEW"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.FilePushDir(ctx, taskID, localSrc2, "incoming", true); err != nil {
+		t.Fatalf("force push: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(worktree, "incoming", "a.txt")); !os.IsNotExist(err) {
+		t.Errorf("old a.txt should be gone after force replace; err=%v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(worktree, "incoming", "fresh.txt")); string(got) != "NEW" {
+		t.Errorf("fresh.txt = %q", got)
+	}
+
+	// 6. Pull the directory back.
+	localDst := filepath.Join(t.TempDir(), "pulled-tree")
+	if err := c.FilePullDir(ctx, taskID, "incoming", localDst, false); err != nil {
+		t.Fatalf("dir pull: %v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(localDst, "fresh.txt")); string(got) != "NEW" {
+		t.Errorf("pulled fresh.txt = %q", got)
+	}
+
+	// 7. Pull again without --force: must fail (dest exists).
+	if err := c.FilePullDir(ctx, taskID, "incoming", localDst, false); err == nil {
+		t.Errorf("second pull without --force should fail")
+	}
+
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+	}
+	select {
+	case <-runnerDone:
+	case <-time.After(2 * time.Second):
+	}
+}

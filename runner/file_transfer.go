@@ -284,7 +284,16 @@ func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force bo
 type streamWriter struct{ s trsf.BidirectionalStream }
 
 func (w streamWriter) Write(p []byte) (int, error) {
-	if err := w.s.AppendData(false, p); err != nil {
+	// AppendData does not copy its arguments; tar.Writer (and similar
+	// buffered producers) reuses its internal block buffer between Write
+	// calls, so handing p directly to AppendData would let later writes
+	// mutate bytes that haven't been flushed onto the wire yet. Copy.
+	if len(p) == 0 {
+		return 0, nil
+	}
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	if err := w.s.AppendData(false, buf); err != nil {
 		return 0, err
 	}
 	return len(p), nil
