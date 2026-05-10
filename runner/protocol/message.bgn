@@ -501,7 +501,7 @@ enum FileTransferStatus:
     io_error       = "io_error"
     canceled       = "canceled"
     is_directory   = "is_directory"   # delete only: rel_path resolved to a directory.
-    not_a_directory = "not_a_directory"  # dir_pull only: rel_path resolved to a regular file.
+    not_a_directory = "not_a_directory"  # dir_push: dest exists but is a regular file. dir_pull: source is a regular file (not a directory).
 
 format FileTransferAck:
     status      :FileTransferStatus

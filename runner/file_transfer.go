@@ -393,7 +393,7 @@ func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest 
 	// (we won't replace a file with a directory regardless of force).
 	if fi, err := os.Lstat(dest); err == nil {
 		if !fi.IsDir() {
-			_ = writeAck(stream, protocol.FileTransferStatus_IsDirectory, 0)
+			_ = writeAck(stream, protocol.FileTransferStatus_NotADirectory, 0)
 			return
 		}
 		if !force {
