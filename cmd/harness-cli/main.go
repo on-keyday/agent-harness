@@ -200,6 +200,55 @@ func main() {
 			die(err)
 		}
 
+	case "file":
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "usage: harness-cli file {push|pull|ls} ...")
+			os.Exit(2)
+		}
+		fsub := args[0]
+		rest := args[1:]
+		c, err := cli.Dial(ctx, parseCID())
+		if err != nil {
+			die(err)
+		}
+		defer c.Close()
+		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+			die(err)
+		}
+		switch fsub {
+		case "push":
+			if len(rest) != 3 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file push <task-id> <local-src> <worktree-rel-dst>")
+				os.Exit(2)
+			}
+			if err := c.FilePush(ctx, rest[0], rest[1], rest[2]); err != nil {
+				die(err)
+			}
+		case "pull":
+			if len(rest) != 3 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull <task-id> <worktree-rel-src> <local-dst>")
+				os.Exit(2)
+			}
+			if err := c.FilePull(ctx, rest[0], rest[1], rest[2]); err != nil {
+				die(err)
+			}
+		case "ls":
+			if len(rest) < 1 || len(rest) > 2 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file ls <task-id> [<worktree-rel-dir>]")
+				os.Exit(2)
+			}
+			rel := ""
+			if len(rest) == 2 {
+				rel = rest[1]
+			}
+			if err := c.FileLs(ctx, rest[0], rel, os.Stdout); err != nil {
+				die(err)
+			}
+		default:
+			fmt.Fprintf(os.Stderr, "unknown file subcommand: %s\n", fsub)
+			os.Exit(2)
+		}
+
 	case "session":
 		if err := runSession(parseCID(), args); err != nil {
 			die(err)
