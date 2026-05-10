@@ -187,6 +187,30 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_OpenFileTransfer:
+		oft := req.OpenFileTransfer()
+		if oft == nil {
+			slog.Error("TaskHandler: OpenFileTransfer variant is nil")
+			return
+		}
+		oresp := h.handleOpenFileTransfer(conn, oft)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.RequestId}
+		resp.SetOpenFileTransfer(oresp)
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_ListFiles:
+		lf := req.ListFiles()
+		if lf == nil {
+			slog.Error("TaskHandler: ListFiles variant is nil")
+			return
+		}
+		lresp := h.handleListFiles(conn, lf)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.RequestId}
+		resp.SetListFiles(lresp)
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_AttachSession:
 		a := req.Attach()
 		if a == nil {
