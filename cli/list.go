@@ -154,6 +154,8 @@ func taskStatusStr(s protocol.TaskStatus) string {
 		return "Failed   "
 	case protocol.TaskStatus_Cancelled:
 		return "Cancelled"
+	case protocol.TaskStatus_Detached:
+		return "Detached "
 	}
 	return "?"
 }
