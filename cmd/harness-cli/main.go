@@ -217,20 +217,46 @@ func main() {
 		}
 		switch fsub {
 		case "push":
-			if len(rest) != 3 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file push <task-id> <local-src> <worktree-rel-dst>")
+			fs := flag.NewFlagSet("file push", flag.ExitOnError)
+			recursive := fs.Bool("recursive", false, "transfer a directory tree")
+			fs.BoolVar(recursive, "r", false, "alias for --recursive")
+			force := fs.Bool("force", false, "overwrite existing destination")
+			fs.BoolVar(force, "f", false, "alias for --force")
+			fs.Parse(rest)
+			pargs := fs.Args()
+			if len(pargs) != 3 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file push [-r] [-f] <task-id> <local-src> <worktree-rel-dst>")
 				os.Exit(2)
 			}
-			if err := c.FilePush(ctx, rest[0], rest[1], rest[2], false); err != nil {
-				die(err)
+			if *recursive {
+				if err := c.FilePushDir(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
+					die(err)
+				}
+			} else {
+				if err := c.FilePush(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
+					die(err)
+				}
 			}
 		case "pull":
-			if len(rest) != 3 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull <task-id> <worktree-rel-src> <local-dst>")
+			fs := flag.NewFlagSet("file pull", flag.ExitOnError)
+			recursive := fs.Bool("recursive", false, "transfer a directory tree")
+			fs.BoolVar(recursive, "r", false, "alias for --recursive")
+			force := fs.Bool("force", false, "overwrite existing destination")
+			fs.BoolVar(force, "f", false, "alias for --force")
+			fs.Parse(rest)
+			pargs := fs.Args()
+			if len(pargs) != 3 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull [-r] [-f] <task-id> <worktree-rel-src> <local-dst>")
 				os.Exit(2)
 			}
-			if err := c.FilePull(ctx, rest[0], rest[1], rest[2], false); err != nil {
-				die(err)
+			if *recursive {
+				if err := c.FilePullDir(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
+					die(err)
+				}
+			} else {
+				if err := c.FilePull(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
+					die(err)
+				}
 			}
 		case "ls":
 			if len(rest) < 1 || len(rest) > 2 {
@@ -333,10 +359,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  session kill TASK_ID                cancel a session (alias of cancel)")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
-	fmt.Fprintln(os.Stderr, "  file push TASK_ID LOCAL_SRC WORKTREE_REL_DST")
-	fmt.Fprintln(os.Stderr, "                                      copy a local file into the task's worktree (O_EXCL — refuses to overwrite)")
-	fmt.Fprintln(os.Stderr, "  file pull TASK_ID WORKTREE_REL_SRC LOCAL_DST")
-	fmt.Fprintln(os.Stderr, "                                      copy a file out of the task's worktree to a local path")
+	fmt.Fprintln(os.Stderr, "  file push [-r|--recursive] [-f|--force] TASK_ID LOCAL_SRC WORKTREE_REL_DST")
+	fmt.Fprintln(os.Stderr, "                                      copy a local file (or directory tree with -r) into the worktree")
+	fmt.Fprintln(os.Stderr, "                                      default: O_EXCL refuses to overwrite; -f permits replacement")
+	fmt.Fprintln(os.Stderr, "  file pull [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_SRC LOCAL_DST")
+	fmt.Fprintln(os.Stderr, "                                      copy a worktree file (or directory tree with -r) to a local path")
+	fmt.Fprintln(os.Stderr, "                                      default: O_EXCL refuses to overwrite local; -f permits replacement")
 	fmt.Fprintln(os.Stderr, "  file ls   TASK_ID [WORKTREE_REL_DIR]")
 	fmt.Fprintln(os.Stderr, "                                      list a single directory under the worktree (default: worktree root)")
 	fmt.Fprintln(os.Stderr, "  file delete TASK_ID WORKTREE_REL_PATH")
