@@ -166,6 +166,30 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_OpenFileTransfer:
+		oft := req.OpenFileTransfer()
+		if oft == nil {
+			slog.Error("TaskHandler: OpenFileTransfer variant is nil")
+			return
+		}
+		oresp := h.handleOpenFileTransfer(conn, oft)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.RequestId}
+		resp.SetOpenFileTransfer(oresp)
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_ListFiles:
+		lf := req.ListFiles()
+		if lf == nil {
+			slog.Error("TaskHandler: ListFiles variant is nil")
+			return
+		}
+		lresp := h.handleListFiles(conn, lf)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.RequestId}
+		resp.SetListFiles(lresp)
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_AttachSession:
 		a := req.Attach()
 		if a == nil {
@@ -661,6 +685,26 @@ func spliceBidi(a, b trsf.BidirectionalStream, taskIDHex string) {
 	go func() { defer wg.Done(); defer teardown(); relayBytes(b, a) }()
 	wg.Wait()
 	slog.Info("OpenInteractive: splice ended", "task_id", taskIDHex)
+}
+
+// spliceBidiHalfClose is a non-tear-down variant of spliceBidi for request /
+// response patterns over a bidi stream — like file_transfer push (client EOFs
+// → runner ACKs back) and pull / list_files (runner EOFs → client closes its
+// idle send side). Both relays complete on natural EOF; the streams are
+// CloseBoth'd only after both have returned.
+//
+// Use this when the application protocol on top of the stream guarantees that
+// both directions will EOF on their own. For interactive PTY (where one side
+// going away should kill the other), use spliceBidi.
+func spliceBidiHalfClose(a, b trsf.BidirectionalStream, taskIDHex string) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); relayBytes(a, b) }()
+	go func() { defer wg.Done(); relayBytes(b, a) }()
+	wg.Wait()
+	_ = a.CloseBoth()
+	_ = b.CloseBoth()
+	slog.Info("file_transfer: splice ended", "task_id", taskIDHex)
 }
 
 // relayBytes copies bytes from src to dst, propagating EOF. Returns on the

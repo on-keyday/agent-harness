@@ -289,6 +289,18 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 		}
 		taskIDHex := hex.EncodeToString(tw.TaskId.Id[:])
 		session.WakeStdin(taskIDHex)
+	case protocol.RunnerRequestType_OpenFileTransfer:
+		oft := req.OpenFileTransfer()
+		if oft == nil {
+			return
+		}
+		go session.handleOpenFileTransfer(ctx, oft)
+	case protocol.RunnerRequestType_ListFiles:
+		lf := req.ListFiles()
+		if lf == nil {
+			return
+		}
+		go session.handleListFiles(ctx, lf)
 	}
 }
 
