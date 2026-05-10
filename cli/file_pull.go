@@ -17,6 +17,11 @@ func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath s
 		return err
 	}
 	defer stream.CloseBoth()
+	// Pull is read-only on the client side. Signal "no data coming" so the
+	// server-side splice's client→runner relay can EOF and unblock.
+	if err := stream.AppendData(true); err != nil {
+		return fmt.Errorf("file pull: half-close: %w", err)
+	}
 	ack, err := ReadFileTransferAck(stream)
 	if err != nil {
 		return fmt.Errorf("file pull: read ack: %w", err)

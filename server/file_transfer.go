@@ -59,7 +59,7 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 		slog.Error("file_transfer: send to runner failed", "task_id", taskIDHex, "err", err)
 		return errResp(protocol.OpenFileTransferStatus_InternalError)
 	}
-	go spliceBidi(clientStream, runnerStream, taskIDHex)
+	go spliceBidiHalfClose(clientStream, runnerStream, taskIDHex)
 	return protocol.OpenFileTransferResponse{
 		Status:   protocol.OpenFileTransferStatus_Ok,
 		StreamId: uint64(clientStream.ID()),
@@ -110,7 +110,7 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 		slog.Error("list_files: send to runner failed", "task_id", taskIDHex, "err", err)
 		return errResp(protocol.ListFilesStatus_InternalError)
 	}
-	go spliceBidi(clientStream, runnerStream, taskIDHex)
+	go spliceBidiHalfClose(clientStream, runnerStream, taskIDHex)
 	return protocol.ListFilesResponse{
 		Status:   protocol.ListFilesStatus_Ok,
 		StreamId: uint64(clientStream.ID()),

@@ -97,6 +97,9 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string) ([]Fi
 		return nil, fmt.Errorf("file ls: stream %d not visible", r.StreamId)
 	}
 	defer st.CloseBoth()
+	if err := st.AppendData(true); err != nil {
+		return nil, fmt.Errorf("file ls: half-close: %w", err)
+	}
 	body2, err := io.ReadAll(streamReadAll{st})
 	if err != nil {
 		return nil, fmt.Errorf("file ls: read listing: %w", err)
