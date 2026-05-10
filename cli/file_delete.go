@@ -12,7 +12,7 @@ import (
 // stream — the runner writes a FileTransferAck immediately after performing
 // the unlink, then closes; no payload bytes flow either direction.
 func (c *Client) FileDelete(ctx context.Context, taskIDHex, remoteRel string) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Delete, remoteRel, 0)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Delete, remoteRel, 0, false)
 	if err != nil {
 		return err
 	}

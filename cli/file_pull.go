@@ -11,8 +11,11 @@ import (
 
 // FilePull copies remoteRel from the task's worktree to localPath. If the
 // runner reports a non-ok ack, no local file is created.
-func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0)
+func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string, force bool) error {
+	// Runner ignores the force flag for pull (it's a read-only op on the
+	// runner side); the client-side force controls the LOCAL file open mode
+	// below. Pass false on the wire to make the intent explicit.
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, false)
 	if err != nil {
 		return err
 	}
@@ -29,8 +32,15 @@ func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath s
 	if err := ackError("pull", ack); err != nil {
 		return err
 	}
-	dst, err := os.OpenFile(localPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	dst, err := os.OpenFile(localPath, flags, 0o644)
 	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("file pull: %s already exists (use --force to overwrite)", localPath)
+		}
 		return fmt.Errorf("file pull: open local: %w", err)
 	}
 	defer dst.Close()

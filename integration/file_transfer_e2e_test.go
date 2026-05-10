@@ -91,7 +91,7 @@ func TestFileTransferE2E(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("hello world"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin"); err != nil {
+	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin", false); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(worktree, "uploaded.bin"))
@@ -113,7 +113,7 @@ func TestFileTransferE2E(t *testing.T) {
 
 	// 3. PULL: copy the file back; verify content matches.
 	dstPath := filepath.Join(t.TempDir(), "dst.bin")
-	if err := c.FilePull(ctx, taskID, "uploaded.bin", dstPath); err != nil {
+	if err := c.FilePull(ctx, taskID, "uploaded.bin", dstPath, false); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
 	pulled, err := os.ReadFile(dstPath)
@@ -125,19 +125,19 @@ func TestFileTransferE2E(t *testing.T) {
 	}
 
 	// 4. PUSH AGAIN: same path → already_exists.
-	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin"); err == nil {
+	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin", false); err == nil {
 		t.Errorf("second push should fail with already_exists")
 	} else if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("second push error mismatch: %v", err)
 	}
 
 	// 5. PULL MISSING: not_found.
-	if err := c.FilePull(ctx, taskID, "nope.bin", dstPath); err == nil {
+	if err := c.FilePull(ctx, taskID, "nope.bin", dstPath, false); err == nil {
 		t.Errorf("pull of missing file should fail")
 	}
 
 	// 6. PATH ESCAPE: push with .. → path_invalid.
-	if err := c.FilePush(ctx, taskID, srcPath, "../escape.bin"); err == nil {
+	if err := c.FilePush(ctx, taskID, srcPath, "../escape.bin", false); err == nil {
 		t.Errorf("escape push should fail")
 	}
 

@@ -509,6 +509,46 @@ func TestHandleOpenFileTransfer_DeleteNotFound(t *testing.T) {
 	}
 }
 
+func TestHandleOpenFileTransfer_PushForceOverwrites(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "x.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000030"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Push,
+	}
+	req.SetRelPath([]byte("x.txt"))
+	req.SetForce(true)
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	if err := clientEnd.AppendData(false, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientEnd.AppendData(true); err != nil {
+		t.Fatal(err)
+	}
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	got, _ := os.ReadFile(filepath.Join(tmp, "x.txt"))
+	if string(got) != "new" {
+		t.Errorf("file = %q want %q", got, "new")
+	}
+}
+
 func TestHandleOpenFileTransfer_DeleteRejectDirectory(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.Mkdir(filepath.Join(tmp, "subdir"), 0o755); err != nil {

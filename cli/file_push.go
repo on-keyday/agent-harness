@@ -12,7 +12,7 @@ import (
 // FilePush copies localPath into the worktree of taskIDHex at remoteRel.
 // Returns an error if the runner rejects (already_exists, path_invalid)
 // or the local file cannot be read.
-func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel string) error {
+func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel string, force bool) error {
 	src, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("file push: open local: %w", err)
@@ -22,7 +22,7 @@ func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel s
 	if err != nil {
 		return fmt.Errorf("file push: stat local: %w", err)
 	}
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, uint64(st.Size()))
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, uint64(st.Size()), force)
 	if err != nil {
 		return err
 	}

@@ -174,7 +174,7 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 	case protocol.FileTransferDirection_Pull:
 		s.runPull(stream, full)
 	case protocol.FileTransferDirection_Push:
-		s.runPush(stream, full)
+		s.runPush(stream, full, req.Force())
 	case protocol.FileTransferDirection_Delete:
 		s.runDelete(stream, full)
 	default:
@@ -238,8 +238,12 @@ func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
 	_ = stream.AppendData(true)
 }
 
-func (s *Session) runPush(stream trsf.BidirectionalStream, full string) {
-	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force bool) {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	f, err := os.OpenFile(full, flags, 0o644)
 	if err != nil {
 		switch {
 		case os.IsExist(err):

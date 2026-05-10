@@ -31,6 +31,7 @@ func (c *Client) OpenFileTransfer(
 	direction protocol.FileTransferDirection,
 	relPath string,
 	expectedSize uint64,
+	force bool,
 ) (trsf.BidirectionalStream, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
@@ -43,6 +44,7 @@ func (c *Client) OpenFileTransfer(
 		ExpectedSize: expectedSize,
 	}
 	body.SetRelPath([]byte(relPath))
+	body.SetForce(force)
 	req.SetOpenFileTransfer(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

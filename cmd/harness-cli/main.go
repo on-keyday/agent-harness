@@ -221,7 +221,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli file push <task-id> <local-src> <worktree-rel-dst>")
 				os.Exit(2)
 			}
-			if err := c.FilePush(ctx, rest[0], rest[1], rest[2]); err != nil {
+			if err := c.FilePush(ctx, rest[0], rest[1], rest[2], false); err != nil {
 				die(err)
 			}
 		case "pull":
@@ -229,7 +229,7 @@ func main() {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull <task-id> <worktree-rel-src> <local-dst>")
 				os.Exit(2)
 			}
-			if err := c.FilePull(ctx, rest[0], rest[1], rest[2]); err != nil {
+			if err := c.FilePull(ctx, rest[0], rest[1], rest[2], false); err != nil {
 				die(err)
 			}
 		case "ls":
