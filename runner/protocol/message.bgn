@@ -488,6 +488,7 @@ enum FileTransferDirection:
     :u8
     push
     pull
+    delete       # remove a file from the worktree (rejects directories in v1).
 
 enum FileTransferStatus:
     :u8
@@ -497,6 +498,7 @@ enum FileTransferStatus:
     already_exists = "already_exists"
     io_error       = "io_error"
     canceled       = "canceled"
+    is_directory   = "is_directory"   # delete only: rel_path resolved to a directory.
 
 format FileTransferAck:
     status      :FileTransferStatus

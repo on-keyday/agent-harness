@@ -447,3 +447,97 @@ func (m *memBidi) Completed() bool   { return false }
 func (m *memBidi) HasRecvData() bool { return false }
 func (m *memBidi) EOF() bool         { return false }
 func (m *memBidi) Cancel()           { _ = m.CloseBoth() }
+
+func TestHandleOpenFileTransfer_DeleteOK(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "doomed.txt")
+	if err := os.WriteFile(target, []byte("bye"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000020"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Delete,
+	}
+	req.SetRelPath([]byte("doomed.txt"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true) // half-close: delete sends no client bytes
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("file was not removed: stat err=%v", err)
+	}
+}
+
+func TestHandleOpenFileTransfer_DeleteNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000021"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Delete,
+	}
+	req.SetRelPath([]byte("absent.txt"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_NotFound {
+		t.Fatalf("ack status = %v want not_found", ack.Status)
+	}
+}
+
+func TestHandleOpenFileTransfer_DeleteRejectDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000022"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Delete,
+	}
+	req.SetRelPath([]byte("subdir"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_IsDirectory {
+		t.Fatalf("ack status = %v want is_directory", ack.Status)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "subdir")); err != nil {
+		t.Fatalf("dir should still exist: %v", err)
+	}
+}

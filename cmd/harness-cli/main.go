@@ -244,6 +244,14 @@ func main() {
 			if err := c.FileLs(ctx, rest[0], rel, os.Stdout); err != nil {
 				die(err)
 			}
+		case "delete":
+			if len(rest) != 2 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file delete <task-id> <worktree-rel-path>")
+				os.Exit(2)
+			}
+			if err := c.FileDelete(ctx, rest[0], rest[1]); err != nil {
+				die(err)
+			}
 		default:
 			fmt.Fprintf(os.Stderr, "unknown file subcommand: %s\n", fsub)
 			os.Exit(2)
@@ -331,6 +339,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      copy a file out of the task's worktree to a local path")
 	fmt.Fprintln(os.Stderr, "  file ls   TASK_ID [WORKTREE_REL_DIR]")
 	fmt.Fprintln(os.Stderr, "                                      list a single directory under the worktree (default: worktree root)")
+	fmt.Fprintln(os.Stderr, "  file delete TASK_ID WORKTREE_REL_PATH")
+	fmt.Fprintln(os.Stderr, "                                      remove a file from the task's worktree (refuses directories)")
 }
 
 func agentUsage() {

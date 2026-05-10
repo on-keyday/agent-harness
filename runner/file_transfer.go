@@ -175,9 +175,41 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 		s.runPull(stream, full)
 	case protocol.FileTransferDirection_Push:
 		s.runPush(stream, full)
+	case protocol.FileTransferDirection_Delete:
+		s.runDelete(stream, full)
 	default:
 		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 	}
+}
+
+// runDelete unlinks the file at full and acks the result. Directories are
+// rejected (use a recursive variant in v2 if needed). Symlink check has
+// already been performed by handleOpenFileTransfer.
+func (s *Session) runDelete(stream trsf.BidirectionalStream, full string) {
+	fi, err := os.Lstat(full)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		default:
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	if fi.IsDir() {
+		_ = writeAck(stream, protocol.FileTransferStatus_IsDirectory, 0)
+		return
+	}
+	if err := os.Remove(full); err != nil {
+		switch {
+		case os.IsNotExist(err):
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		default:
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	_ = writeAck(stream, protocol.FileTransferStatus_Ok, 0)
 }
 
 func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {

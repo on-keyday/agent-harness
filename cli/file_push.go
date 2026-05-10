@@ -54,6 +54,8 @@ func ackError(op string, ack *protocol.FileTransferAck) error {
 		return fmt.Errorf("file %s: runner I/O error", op)
 	case protocol.FileTransferStatus_Canceled:
 		return fmt.Errorf("file %s: canceled", op)
+	case protocol.FileTransferStatus_IsDirectory:
+		return fmt.Errorf("file %s: is a directory (recursive delete not supported)", op)
 	default:
 		return fmt.Errorf("file %s: unknown status %d", op, ack.Status)
 	}
