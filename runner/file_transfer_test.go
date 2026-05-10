@@ -1,12 +1,15 @@
 package runner
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -447,3 +450,461 @@ func (m *memBidi) Completed() bool   { return false }
 func (m *memBidi) HasRecvData() bool { return false }
 func (m *memBidi) EOF() bool         { return false }
 func (m *memBidi) Cancel()           { _ = m.CloseBoth() }
+
+func TestHandleOpenFileTransfer_DeleteOK(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "doomed.txt")
+	if err := os.WriteFile(target, []byte("bye"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000020"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Delete,
+	}
+	req.SetRelPath([]byte("doomed.txt"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true) // half-close: delete sends no client bytes
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("file was not removed: stat err=%v", err)
+	}
+}
+
+func TestHandleOpenFileTransfer_DeleteNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000021"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Delete,
+	}
+	req.SetRelPath([]byte("absent.txt"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_NotFound {
+		t.Fatalf("ack status = %v want not_found", ack.Status)
+	}
+}
+
+func TestHandleOpenFileTransfer_PushForceOverwrites(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "x.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000030"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Push,
+	}
+	req.SetRelPath([]byte("x.txt"))
+	req.SetForce(true)
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	if err := clientEnd.AppendData(false, []byte("new")); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientEnd.AppendData(true); err != nil {
+		t.Fatal(err)
+	}
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	got, _ := os.ReadFile(filepath.Join(tmp, "x.txt"))
+	if string(got) != "new" {
+		t.Errorf("file = %q want %q", got, "new")
+	}
+}
+
+func TestHandleOpenFileTransfer_DeleteRejectDirectory(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000022"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_Delete,
+	}
+	req.SetRelPath([]byte("subdir"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_IsDirectory {
+		t.Fatalf("ack status = %v want is_directory", ack.Status)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "subdir")); err != nil {
+		t.Fatalf("dir should still exist: %v", err)
+	}
+}
+
+// pushTar packs the entries map (rel name → bytes; "/" suffix marks a dir)
+// and feeds the bytes into the client end of the bidi pair as a tar stream.
+// The actual write happens in a background goroutine so the caller can
+// concurrently read the runner's ack — required because the runner may
+// reject the stream mid-flight (e.g. symlink entry, path traversal) and
+// then block writing its ack until the client drains it. Best-effort write
+// errors after rejection are ignored.
+func pushTar(t *testing.T, clientEnd trsf.BidirectionalStream, entries map[string][]byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	for name, body := range entries {
+		hdr := &tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}
+		if strings.HasSuffix(name, "/") {
+			hdr.Typeflag = tar.TypeDir
+			hdr.Size = 0
+			hdr.Mode = 0o755
+		} else {
+			hdr.Typeflag = tar.TypeReg
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			t.Fatalf("WriteHeader(%q): %v", name, err)
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			if _, err := tw.Write(body); err != nil {
+				t.Fatalf("Write(%q): %v", name, err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("tw.Close: %v", err)
+	}
+	go func(payload []byte) {
+		_ = clientEnd.AppendData(false, payload)
+		_ = clientEnd.AppendData(true)
+	}(buf.Bytes())
+}
+
+func pushSymlinkTar(t *testing.T, clientEnd trsf.BidirectionalStream, name, target string) {
+	t.Helper()
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	hdr := &tar.Header{Name: name, Linkname: target, Typeflag: tar.TypeSymlink, Mode: 0o644}
+	if err := tw.WriteHeader(hdr); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	go func(payload []byte) {
+		_ = clientEnd.AppendData(false, payload)
+		_ = clientEnd.AppendData(true)
+	}(buf.Bytes())
+}
+
+func TestHandleOpenFileTransfer_DirPushOK(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000040"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPush,
+	}
+	req.SetRelPath([]byte("incoming"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	pushTar(t, clientEnd, map[string][]byte{
+		"a.txt":     []byte("AA"),
+		"sub/":      nil,
+		"sub/b.txt": []byte("BBB"),
+	})
+
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	if got, _ := os.ReadFile(filepath.Join(tmp, "incoming", "a.txt")); string(got) != "AA" {
+		t.Errorf("a.txt = %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(tmp, "incoming", "sub", "b.txt")); string(got) != "BBB" {
+		t.Errorf("sub/b.txt = %q", got)
+	}
+	entries, _ := os.ReadDir(filepath.Join(tmp, ".harness-staging"))
+	if len(entries) != 0 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		t.Errorf("staging not cleaned: %v", names)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPushRejectExisting(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmp, "incoming"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000041"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPush,
+	}
+	req.SetRelPath([]byte("incoming"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true)
+
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_AlreadyExists {
+		t.Fatalf("ack status = %v want already_exists", ack.Status)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPushForceOverwrites(t *testing.T) {
+	tmp := t.TempDir()
+	old := filepath.Join(tmp, "incoming")
+	if err := os.MkdirAll(old, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, "stale.txt"), []byte("OLD"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000042"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPush,
+	}
+	req.SetRelPath([]byte("incoming"))
+	req.SetForce(true)
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	pushTar(t, clientEnd, map[string][]byte{"fresh.txt": []byte("NEW")})
+
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	if _, err := os.Stat(filepath.Join(old, "stale.txt")); !os.IsNotExist(err) {
+		t.Errorf("stale.txt should have been replaced; err=%v", err)
+	}
+	if got, _ := os.ReadFile(filepath.Join(old, "fresh.txt")); string(got) != "NEW" {
+		t.Errorf("fresh.txt = %q", got)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPushRejectSymlinkEntry(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000043"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPush,
+	}
+	req.SetRelPath([]byte("incoming"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	pushSymlinkTar(t, clientEnd, "evil", "/etc/passwd")
+
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_PathInvalid {
+		t.Fatalf("ack status = %v want path_invalid", ack.Status)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "incoming")); !os.IsNotExist(err) {
+		t.Errorf("dest must not exist after rejected push; err=%v", err)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPullOK(t *testing.T) {
+	tmp := t.TempDir()
+	src := filepath.Join(tmp, "outgoing")
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("AA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "sub", "b.txt"), []byte("BBB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000050"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPull,
+	}
+	req.SetRelPath([]byte("outgoing"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	body, err := io.ReadAll(streamReader(clientEnd))
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	tr := tar.NewReader(bytes.NewReader(body))
+	files := map[string][]byte{}
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr.Typeflag == tar.TypeReg {
+			b, _ := io.ReadAll(tr)
+			files[hdr.Name] = b
+		}
+	}
+	if string(files["a.txt"]) != "AA" {
+		t.Errorf("a.txt = %q want AA", files["a.txt"])
+	}
+	if string(files["sub/b.txt"]) != "BBB" {
+		t.Errorf("sub/b.txt = %q want BBB", files["sub/b.txt"])
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPullNotADirectory(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmp, "afile"), []byte("X"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "00000000000000000000000000000051"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPull,
+	}
+	req.SetRelPath([]byte("afile"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_NotADirectory {
+		t.Fatalf("ack status = %v want not_a_directory", ack.Status)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPushRejectPathTraversal(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000044"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirPush,
+	}
+	req.SetRelPath([]byte("incoming"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	pushTar(t, clientEnd, map[string][]byte{"../escape": []byte("X")})
+
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_PathInvalid {
+		t.Fatalf("ack status = %v want path_invalid", ack.Status)
+	}
+}

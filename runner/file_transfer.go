@@ -1,11 +1,14 @@
 package runner
 
 import (
+	"archive/tar"
 	"context"
+	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -174,10 +177,46 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 	case protocol.FileTransferDirection_Pull:
 		s.runPull(stream, full)
 	case protocol.FileTransferDirection_Push:
-		s.runPush(stream, full)
+		s.runPush(stream, full, req.Force())
+	case protocol.FileTransferDirection_Delete:
+		s.runDelete(stream, full)
+	case protocol.FileTransferDirection_DirPush:
+		s.runDirPush(stream, worktreeDir, full, req.Force())
+	case protocol.FileTransferDirection_DirPull:
+		s.runDirPull(stream, full)
 	default:
 		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 	}
+}
+
+// runDelete unlinks the file at full and acks the result. Directories are
+// rejected (use a recursive variant in v2 if needed). Symlink check has
+// already been performed by handleOpenFileTransfer.
+func (s *Session) runDelete(stream trsf.BidirectionalStream, full string) {
+	fi, err := os.Lstat(full)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		default:
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	if fi.IsDir() {
+		_ = writeAck(stream, protocol.FileTransferStatus_IsDirectory, 0)
+		return
+	}
+	if err := os.Remove(full); err != nil {
+		switch {
+		case os.IsNotExist(err):
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		default:
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	_ = writeAck(stream, protocol.FileTransferStatus_Ok, 0)
 }
 
 func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
@@ -206,8 +245,12 @@ func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
 	_ = stream.AppendData(true)
 }
 
-func (s *Session) runPush(stream trsf.BidirectionalStream, full string) {
-	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force bool) {
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if force {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+	f, err := os.OpenFile(full, flags, 0o644)
 	if err != nil {
 		switch {
 		case os.IsExist(err):
@@ -241,7 +284,16 @@ func (s *Session) runPush(stream trsf.BidirectionalStream, full string) {
 type streamWriter struct{ s trsf.BidirectionalStream }
 
 func (w streamWriter) Write(p []byte) (int, error) {
-	if err := w.s.AppendData(false, p); err != nil {
+	// AppendData does not copy its arguments; tar.Writer (and similar
+	// buffered producers) reuses its internal block buffer between Write
+	// calls, so handing p directly to AppendData would let later writes
+	// mutate bytes that haven't been flushed onto the wire yet. Copy.
+	if len(p) == 0 {
+		return 0, nil
+	}
+	buf := make([]byte, len(p))
+	copy(buf, p)
+	if err := w.s.AppendData(false, buf); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -326,4 +378,207 @@ func writeListing(st trsf.BidirectionalStream, entries []protocol.FileEntry) err
 		return err
 	}
 	return st.AppendData(true)
+}
+
+// stagingRoot is the on-disk dir under which dir_push stages incoming trees.
+// Lives inside the worktree so rename(2) into the final dest stays on the
+// same filesystem.
+const stagingRoot = ".harness-staging"
+
+// runDirPush extracts a tar stream into <worktree>/<rel_path>, staging via
+// a sibling directory and renaming atomically on success. Refuses to clobber
+// an existing dest unless force is set.
+func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest string, force bool) {
+	// Reject existing dest when !force; reject when dest is a regular file
+	// (we won't replace a file with a directory regardless of force).
+	if fi, err := os.Lstat(dest); err == nil {
+		if !fi.IsDir() {
+			_ = writeAck(stream, protocol.FileTransferStatus_NotADirectory, 0)
+			return
+		}
+		if !force {
+			_ = writeAck(stream, protocol.FileTransferStatus_AlreadyExists, 0)
+			return
+		}
+	} else if !os.IsNotExist(err) {
+		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		return
+	}
+
+	staging, err := mkStagingDir(worktreeDir)
+	if err != nil {
+		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		return
+	}
+	cleanupStaging := true
+	defer func() {
+		if cleanupStaging {
+			_ = os.RemoveAll(staging)
+		}
+	}()
+
+	tr := tar.NewReader(streamReader2{stream})
+	bytesIn := uint64(0)
+	for {
+		hdr, terr := tr.Next()
+		if terr == io.EOF {
+			break
+		}
+		if terr != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeDir {
+			_ = writeAck(stream, protocol.FileTransferStatus_PathInvalid, 0)
+			return
+		}
+		entryFull, perr := ValidateRelPath(staging, hdr.Name)
+		if perr != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_PathInvalid, 0)
+			return
+		}
+		if hdr.Typeflag == tar.TypeDir {
+			if err := os.MkdirAll(entryFull, 0o755); err != nil {
+				_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+				return
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(entryFull), 0o755); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		mode := os.FileMode(hdr.Mode & 0o777)
+		if mode == 0 {
+			mode = 0o644
+		}
+		f, oerr := os.OpenFile(entryFull, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+		if oerr != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		n, cerr := io.Copy(f, tr)
+		if cerr != nil {
+			_ = f.Close()
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		if err := f.Sync(); err != nil {
+			_ = f.Close()
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		if err := f.Close(); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+		bytesIn += uint64(n)
+	}
+
+	if force {
+		if err := os.RemoveAll(dest); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+	}
+	if err := os.Rename(staging, dest); err != nil {
+		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		return
+	}
+	cleanupStaging = false
+	_ = writeAck(stream, protocol.FileTransferStatus_Ok, bytesIn)
+}
+
+// runDirPull walks the directory at full and writes a tar stream of its
+// contents to the client. Symlinks, hard links, and special files are
+// silently skipped (only regular files and directories are emitted).
+func (s *Session) runDirPull(stream trsf.BidirectionalStream, full string) {
+	fi, err := os.Stat(full)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		default:
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	if !fi.IsDir() {
+		_ = writeAck(stream, protocol.FileTransferStatus_NotADirectory, 0)
+		return
+	}
+	if err := writeAck(stream, protocol.FileTransferStatus_Ok, 0); err != nil {
+		return
+	}
+
+	tw := tar.NewWriter(streamWriter{stream})
+	walkErr := filepath.WalkDir(full, func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if path == full {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return ierr
+		}
+		// Skip symlinks, hard links, devices, FIFOs.
+		if info.Mode()&os.ModeType != 0 && !info.IsDir() {
+			return nil
+		}
+		hdr, herr := tar.FileInfoHeader(info, "")
+		if herr != nil {
+			return herr
+		}
+		rel, rerr := filepath.Rel(full, path)
+		if rerr != nil {
+			return rerr
+		}
+		hdr.Name = filepath.ToSlash(rel)
+		if d.IsDir() {
+			hdr.Name += "/"
+			hdr.Typeflag = tar.TypeDir
+			hdr.Size = 0
+			return tw.WriteHeader(hdr)
+		}
+		hdr.Typeflag = tar.TypeReg
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, err = io.Copy(tw, f)
+		_ = f.Close()
+		return err
+	})
+	if walkErr != nil {
+		// Mid-stream error after ack: best we can do is close prematurely.
+		// Client surfaces this as io.ErrUnexpectedEOF on tar.Reader.Next.
+		return
+	}
+	_ = tw.Close()
+	_ = stream.AppendData(true)
+}
+
+// mkStagingDir creates <worktreeDir>/.harness-staging/<random>/ and returns
+// its absolute path. The parent .harness-staging/ is created as needed and
+// left in place after success/failure for future transfers (and for prune
+// cleanup on runner crash).
+func mkStagingDir(worktreeDir string) (string, error) {
+	parent := filepath.Join(worktreeDir, stagingRoot)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return "", err
+	}
+	var id [8]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	dir := filepath.Join(parent, hex.EncodeToString(id[:]))
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
 }

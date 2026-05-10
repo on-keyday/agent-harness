@@ -488,6 +488,9 @@ enum FileTransferDirection:
     :u8
     push
     pull
+    delete       # remove a file from the worktree (rejects directories in v1).
+    dir_push     # client → runner; body is a tar stream of the source dir.
+    dir_pull     # runner → client; body is a tar stream of the source dir.
 
 enum FileTransferStatus:
     :u8
@@ -497,6 +500,8 @@ enum FileTransferStatus:
     already_exists = "already_exists"
     io_error       = "io_error"
     canceled       = "canceled"
+    is_directory   = "is_directory"   # delete only: rel_path resolved to a directory.
+    not_a_directory = "not_a_directory"  # dir_push: dest exists but is a regular file. dir_pull: source is a regular file (not a directory).
 
 format FileTransferAck:
     status      :FileTransferStatus
@@ -520,6 +525,8 @@ format OpenFileTransferRequest:
     rel_path_len  :u16
     rel_path      :[rel_path_len]u8
     expected_size :u64
+    force         :u1
+    reserved      :u7
 
 enum OpenFileTransferStatus:
     :u8
@@ -559,6 +566,8 @@ format RunnerOpenFileTransferRequest:
     rel_path_len  :u16
     rel_path      :[rel_path_len]u8
     expected_size :u64
+    force         :u1
+    reserved      :u7
 
 format RunnerListFilesRequest:
     task_id      :TaskID

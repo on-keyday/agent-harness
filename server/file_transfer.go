@@ -55,6 +55,7 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 		ExpectedSize: req.ExpectedSize,
 	}
 	body.SetRelPath(req.RelPath)
+	body.SetForce(req.Force())
 	rreq.SetOpenFileTransfer(body)
 	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
