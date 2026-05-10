@@ -325,6 +325,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  session kill TASK_ID                cancel a session (alias of cancel)")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
+	fmt.Fprintln(os.Stderr, "  file push TASK_ID LOCAL_SRC WORKTREE_REL_DST")
+	fmt.Fprintln(os.Stderr, "                                      copy a local file into the task's worktree (O_EXCL — refuses to overwrite)")
+	fmt.Fprintln(os.Stderr, "  file pull TASK_ID WORKTREE_REL_SRC LOCAL_DST")
+	fmt.Fprintln(os.Stderr, "                                      copy a file out of the task's worktree to a local path")
+	fmt.Fprintln(os.Stderr, "  file ls   TASK_ID [WORKTREE_REL_DIR]")
+	fmt.Fprintln(os.Stderr, "                                      list a single directory under the worktree (default: worktree root)")
 }
 
 func agentUsage() {
