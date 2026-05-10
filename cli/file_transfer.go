@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -102,7 +101,7 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string) ([]Fi
 	if err := st.AppendData(true); err != nil {
 		return nil, fmt.Errorf("file ls: half-close: %w", err)
 	}
-	body2, err := io.ReadAll(streamReadAll{st})
+	body2, err := io.ReadAll(st)
 	if err != nil {
 		return nil, fmt.Errorf("file ls: read listing: %w", err)
 	}
@@ -122,17 +121,12 @@ func (c *Client) ListFiles(ctx context.Context, taskIDHex, relPath string) ([]Fi
 	return out, nil
 }
 
-// ReadFileTransferAck reads a length-prefixed FileTransferAck from the stream.
-// Used by file push (after sending bytes + EOF) and file pull (before reading
-// bytes).
+// ReadFileTransferAck reads a fixed-size FileTransferAck (protocol.FileTransferAckSize
+// bytes) from the stream. Used by file push (after sending bytes + EOF) and
+// file pull (before reading bytes).
 func ReadFileTransferAck(st trsf.BidirectionalStream) (*protocol.FileTransferAck, error) {
-	var lenBuf [4]byte
-	if _, err := io.ReadFull(streamReadAll{st}, lenBuf[:]); err != nil {
-		return nil, err
-	}
-	n := binary.BigEndian.Uint32(lenBuf[:])
-	body := make([]byte, n)
-	if _, err := io.ReadFull(streamReadAll{st}, body); err != nil {
+	body := make([]byte, protocol.FileTransferAckSize)
+	if _, err := io.ReadFull(st, body); err != nil {
 		return nil, err
 	}
 	ack := &protocol.FileTransferAck{}
@@ -174,18 +168,3 @@ func listFilesStatusError(s protocol.ListFilesStatus) error {
 	}
 }
 
-// streamReadAll adapts a trsf.BidirectionalStream's recv side to io.Reader,
-// translating EOF (eof flag from ReadDirect) into io.EOF.
-type streamReadAll struct{ s trsf.BidirectionalStream }
-
-func (r streamReadAll) Read(p []byte) (int, error) {
-	data, eof, err := r.s.ReadDirect(uint64(len(p)))
-	if err != nil {
-		return 0, err
-	}
-	n := copy(p, data)
-	if eof && n == len(data) {
-		return n, io.EOF
-	}
-	return n, nil
-}

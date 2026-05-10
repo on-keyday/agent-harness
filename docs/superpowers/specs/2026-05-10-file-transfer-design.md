@@ -219,9 +219,10 @@ Rationale for ack-first on pull / ack-last on push:
 - push: success implies bytes have been durably written. Ack must follow
   fsync so the client knows the file is on disk.
 
-`FileTransferAck` is encoded with its on-the-wire byte length as a `u32` BE
-length prefix on the stream (the `.bgn` `format` does not self-delimit), so
-the reader can buffer exactly the ack and then switch to raw byte reads.
+`FileTransferAck` is fixed-size on the wire (1 byte status + 8 byte
+`actual_size` = 9 bytes). The reader pulls exactly `protocol.FileTransferAckSize`
+bytes off the stream and decodes — no in-band length prefix needed. The
+constant is generated from the schema via `FileTransferAckSize ::= sizeof(FileTransferAck)`.
 
 ### ls
 

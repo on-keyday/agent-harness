@@ -507,6 +507,11 @@ format FileTransferAck:
     status      :FileTransferStatus
     actual_size :u64
 
+# FileTransferAck is fixed-size; expose its on-the-wire byte length so
+# readers can pre-allocate and consume exactly that many bytes from the
+# stream without an in-band length prefix.
+FileTransferAckSize ::= sizeof(FileTransferAck)
+
 format FileEntry:
     name_len :u16
     name     :[name_len]u8
