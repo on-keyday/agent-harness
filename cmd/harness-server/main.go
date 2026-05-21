@@ -34,6 +34,8 @@ var (
 	pskFile               = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
 	ringSize              = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
 	idleTimeout           = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
+
+	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the server polls every 250ms; when it appears the server triggers a graceful shutdown. daemon.py injects this automatically when the server is spawned via scripts/server.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close WS connections cleanly instead of being TerminateProcess'd cold.")
 )
 
 func resolvePSK(pskVal, pskFile string) ([]byte, error) {
@@ -76,9 +78,12 @@ func main() {
 	// (the default Linux down path used by server.sh / server.py) closes
 	// active WS connections gracefully instead of being killed by the
 	// Go default handler. SIGTERM is a no-op on Windows; daemon.py uses
-	// TerminateProcess there, which is unsignalable from user space.
+	// TerminateProcess there, which is unsignalable from user space —
+	// the sentinel-file watcher started below covers that gap.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	cli.WatchShutdownFile(ctx, *shutdownFile, cancel, 250*time.Millisecond, slog.Default())
 
 	resolvedPSKVal := *psk
 	if resolvedPSKVal == "" {

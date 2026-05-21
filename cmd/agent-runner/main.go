@@ -51,6 +51,8 @@ var (
 	pingInterval  = flag.Duration("ping-interval", 15*time.Second, "underlying ping cadence; also bounds disconnect detection delay")
 	reconnectInit = flag.Duration("reconnect-initial", 500*time.Millisecond, "first backoff after a disconnect")
 	reconnectMax  = flag.Duration("reconnect-max", 30*time.Second, "backoff cap")
+
+	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the runner polls every 250ms; when it appears the runner triggers a graceful shutdown. daemon.py injects this automatically when the runner is spawned via scripts/runner.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close the WS cleanly instead of waiting for ping timeout.")
 )
 
 func main() {
@@ -110,9 +112,11 @@ func main() {
 	// gone after the ping interval (~15s) elapses. On Windows
 	// syscall.SIGTERM is a no-op — daemon.py uses TerminateProcess for
 	// DETACHED_PROCESS children, which is unsignalable from user space;
-	// the ping-timeout path remains the only fallback there.
+	// the sentinel-file watcher started below covers that gap.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	cli.WatchShutdownFile(ctx, *shutdownFile, cancel, 250*time.Millisecond, slog.Default())
 
 	pskVal := *psk
 	if pskVal == "" {
