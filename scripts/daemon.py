@@ -269,7 +269,21 @@ def daemon_down(slot: str, bin_name: str, *, timeout: float = 5.0) -> None:
     except OSError:
         pass
 
-    _graceful_terminate(p)
+    # Windows: give the --shutdown-file watcher (250ms poll) a brief
+    # window to detect the sentinel and exit cleanly *before* we fall
+    # back to _graceful_terminate. Without this delay TerminateProcess
+    # races the watcher and almost always wins, killing the runner
+    # before it can send the WS Close frame — which is exactly the
+    # behavior the sentinel was added to avoid. On Linux SIGTERM is
+    # reliable and fast, so we skip the grace window there.
+    if os.name == "nt":
+        try:
+            p.wait(timeout=2.0)
+        except (psutil.TimeoutExpired, psutil.NoSuchProcess):
+            pass
+
+    if p.is_running():
+        _graceful_terminate(p)
     try:
         p.wait(timeout=timeout)
     except psutil.TimeoutExpired:
