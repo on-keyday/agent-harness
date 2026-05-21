@@ -1,6 +1,8 @@
 """Cross-platform daemon control: detached up/down/owner-verify.
 
-Mirrors the Bash ``_daemon.sh`` primitives:
+Canonical implementation of the up/down/restart primitives used by
+``runner.py`` / ``server.py`` / ``restart.py`` (and, transitively, by
+the matching ``.sh`` thin wrappers):
 
   - ``daemon_up(slot, bin_name, *args)``   spawn ``bin/<bin_name>`` detached,
                                            record state under <slot>
@@ -13,10 +15,6 @@ State files live under ``<repo>/bin/.run/<slot>.{pid,log}``. The slot is the
 *instance* identity (single-instance daemons use slot == bin_name; multi-
 instance daemons use a tagged slot like "agent-runner-2"). ``bin/`` is
 gitignored, so pid/log artefacts don't pollute the working tree.
-
-This module is interchangeable with the Bash version: pid/log files have
-the same paths and semantics, so a daemon started via ``runner.sh`` can be
-stopped via ``runner.py`` and vice versa.
 """
 
 from __future__ import annotations
@@ -182,19 +180,27 @@ def _graceful_terminate(p: psutil.Process) -> None:
     """Send a "please exit" signal that the target can catch.
 
     - Unix: ``SIGTERM`` via ``psutil.Process.terminate()``.
-    - Windows: ``CTRL_BREAK_EVENT`` (works because the daemon was started
-      with ``CREATE_NEW_PROCESS_GROUP``). Falls back to ``TerminateProcess``
-      if delivery fails.
+    - Windows: ``CTRL_BREAK_EVENT`` first (the daemon was started with
+      ``CREATE_NEW_PROCESS_GROUP``), then ``TerminateProcess`` as a
+      fallback. Note that a daemon spawned with ``DETACHED_PROCESS`` has
+      no attached console, so ``GenerateConsoleCtrlEvent`` may return
+      success while the event is never delivered to the child — the
+      timeout-then-hard-kill path in ``daemon_down`` covers that case.
     """
+    if os.name == "nt":
+        try:
+            p.send_signal(signal.CTRL_BREAK_EVENT)
+            return
+        except (OSError, ValueError, AttributeError, psutil.AccessDenied):
+            # CTRL_BREAK couldn't be delivered (most common cause: the
+            # child was started with DETACHED_PROCESS and has no
+            # console). Fall through to TerminateProcess via terminate().
+            pass
+        except psutil.NoSuchProcess:
+            return
     try:
-        if os.name == "nt":
-            try:
-                p.send_signal(signal.CTRL_BREAK_EVENT)
-                return
-            except (OSError, ValueError, AttributeError):
-                pass
         p.terminate()
-    except psutil.NoSuchProcess:
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
         return
 
 
@@ -243,9 +249,18 @@ def daemon_down(slot: str, bin_name: str, *, timeout: float = 5.0) -> None:
         )
         try:
             p.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+        try:
             p.wait(timeout=2.0)
         except (psutil.NoSuchProcess, psutil.TimeoutExpired):
             pass
+    except psutil.NoSuchProcess:
+        # Process exited before we could observe it — that's success,
+        # not a failure. Common on Windows where TerminateProcess is
+        # synchronous enough that the handle is gone by the time
+        # wait() runs.
+        pass
     try:
         pf.unlink()
     except FileNotFoundError:
