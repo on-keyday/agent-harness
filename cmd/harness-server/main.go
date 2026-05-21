@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
@@ -71,7 +72,12 @@ func resolvePSK(pskVal, pskFile string) ([]byte, error) {
 func main() {
 	flag.Parse()
 	cli.WebSocketPath = *wsPath
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Catch SIGTERM in addition to SIGINT so daemon.py's `p.terminate()`
+	// (the default Linux down path used by server.sh / server.py) closes
+	// active WS connections gracefully instead of being killed by the
+	// Go default handler. SIGTERM is a no-op on Windows; daemon.py uses
+	// TerminateProcess there, which is unsignalable from user space.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	resolvedPSKVal := *psk

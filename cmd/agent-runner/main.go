@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
@@ -102,7 +103,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Catch SIGTERM in addition to SIGINT so daemon.py's `p.terminate()`
+	// (the default Linux down path; runner.py / runner.sh both route
+	// through it) triggers a clean WS Close on shutdown instead of the
+	// Go default-kill. Without this the server only notices the runner is
+	// gone after the ping interval (~15s) elapses. On Windows
+	// syscall.SIGTERM is a no-op — daemon.py uses TerminateProcess for
+	// DETACHED_PROCESS children, which is unsignalable from user space;
+	// the ping-timeout path remains the only fallback there.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	pskVal := *psk
