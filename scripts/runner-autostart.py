@@ -25,7 +25,10 @@ Usage::
     scripts/runner-autostart.py register [--tag TAG] [runner.py flags...]
     scripts/runner-autostart.py unregister [--tag TAG]
     scripts/runner-autostart.py status [--tag TAG]
-    scripts/runner-autostart.py list
+
+``status`` without ``--tag`` lists every registered entry with its
+current state (summary form); with ``--tag`` it prints detail for the
+single entry.
 
 Examples::
 
@@ -300,10 +303,11 @@ def main(argv: list[str]) -> int:
     p_unreg = sub.add_parser("unregister", help="remove autostart entry")
     p_unreg.add_argument("--tag", default="")
 
-    p_status = sub.add_parser("status", help="show autostart entry status")
+    p_status = sub.add_parser(
+        "status",
+        help="show autostart entry state (no --tag: summary of all entries)",
+    )
     p_status.add_argument("--tag", default=None)
-
-    sub.add_parser("list", help="list all registered autostart entries")
 
     args, rest = ap.parse_known_args(argv)
 
@@ -321,10 +325,6 @@ def main(argv: list[str]) -> int:
         if os.name == "nt":
             return _status_windows(args.tag)
         return _status_linux(args.tag)
-    if args.cmd == "list":
-        if os.name == "nt":
-            return _status_windows(None)
-        return _status_linux(None)
     return 2
 
 
