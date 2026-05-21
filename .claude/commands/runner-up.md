@@ -5,7 +5,7 @@ allowed-tools: Bash
 ---
 
 Spawn an agent-runner background slot using `scripts/runner.sh up --as $1 [...]`.
-This is the canonical wrapper — do not hand-roll `nohup setsid bin/agent-runner ...`. The script (via `scripts/_daemon.sh`) handles slot identity, detach, `bin/.run/<slot>.{pid,log}` state, pid-reuse safety, and shutdown escalation.
+This is the canonical wrapper — do not hand-roll `nohup setsid bin/agent-runner ...`. The shell script is a thin shim over `scripts/runner.py` (which delegates to `scripts/daemon.py`); together they handle slot identity, detach, `bin/.run/<slot>.{pid,log}` state, pid-reuse safety, and shutdown escalation.
 
 Arguments: $ARGUMENTS
 
