@@ -171,3 +171,84 @@ func TestParseUnknown(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestParseSessionNewNoFlags(t *testing.T) {
+	got, err := ParseCommand(`session new`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if a.Repo != "/cwd" {
+		t.Errorf("Repo=%q want /cwd", a.Repo)
+	}
+	if a.Host != "" || a.Runner != "" || a.IP != "" {
+		t.Errorf("expected empty selector, got Host=%q Runner=%q IP=%q", a.Host, a.Runner, a.IP)
+	}
+	if a.Detach {
+		t.Errorf("Detach should default to false")
+	}
+}
+
+func TestParseSessionNewWithHost(t *testing.T) {
+	got, err := ParseCommand(`session new --host raspi`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if a.Host != "raspi" {
+		t.Errorf("Host=%q want raspi", a.Host)
+	}
+	if a.Runner != "" || a.IP != "" {
+		t.Errorf("expected only Host set, got Runner=%q IP=%q", a.Runner, a.IP)
+	}
+}
+
+func TestParseSessionNewWithRunner(t *testing.T) {
+	hex32 := "00112233445566778899aabbccddeeff"
+	got, err := ParseCommand(`session new --runner `+hex32, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if a.Runner != hex32 {
+		t.Errorf("Runner=%q want %s", a.Runner, hex32)
+	}
+}
+
+func TestParseSessionNewWithIP(t *testing.T) {
+	got, err := ParseCommand(`session new --ip 192.168.1.10`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if a.IP != "192.168.1.10" {
+		t.Errorf("IP=%q want 192.168.1.10", a.IP)
+	}
+}
+
+func TestParseSessionNewDetachAndHost(t *testing.T) {
+	got, err := ParseCommand(`session new --detach --host gmkhost-pdf2md`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if !a.Detach {
+		t.Errorf("Detach=false want true")
+	}
+	if a.Host != "gmkhost-pdf2md" {
+		t.Errorf("Host=%q", a.Host)
+	}
+}
+
+func TestParseSessionNewSelectorMutualExclusion(t *testing.T) {
+	cases := []string{
+		`session new --host A --runner deadbeef`,
+		`session new --host A --ip 10.0.0.1`,
+		`session new --runner deadbeef --ip 10.0.0.1`,
+	}
+	for _, in := range cases {
+		if _, err := ParseCommand(in, "/cwd"); err == nil {
+			t.Errorf("input %q: expected mutual-exclusion error", in)
+		}
+	}
+}

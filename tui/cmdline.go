@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/shlex"
+	"github.com/on-keyday/agent-harness/cli"
 )
 
 // Action is the typed result of parsing one cmdline input.
@@ -37,11 +38,17 @@ type HelpAction struct{}
 // When Detach is true the session is opened and the local stream is closed
 // immediately (Docker-style background start); the task id is printed to
 // cmdresult and the TUI is not suspended.
+//
+// Host / Runner / IP carry the runner pin selector, mutually exclusive and
+// validated at parse time via cli.SelectorOpts.ValidateSelector.
 type SessionNewAction struct {
 	Repo         string
 	ExtraArgs    []string
 	ResumeTaskID string
 	Detach       bool
+	Host         string
+	Runner       string
+	IP           string
 }
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
@@ -218,6 +225,9 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		fs.SetOutput(io.Discard)
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
 		detach := fs.Bool("detach", false, "start the session and immediately detach (run in background, print task id)")
+		host := fs.String("host", "", "pin to a runner by reported hostname (mutually exclusive with --runner / --ip)")
+		runner := fs.String("runner", "", "pin to a runner by 32-hex RunnerID (mutually exclusive with --host / --ip)")
+		ip := fs.String("ip", "", "pin to a runner by IP address (mutually exclusive with --host / --runner)")
 		var extra repeatableStrings
 		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 		if err := fs.Parse(rest); err != nil {
@@ -226,7 +236,18 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		if fs.NArg() > 0 {
 			return nil, fmt.Errorf("session new: unexpected argument %q", fs.Arg(0))
 		}
-		return SessionNewAction{Repo: defaultRepo, ExtraArgs: []string(extra), ResumeTaskID: *resume, Detach: *detach}, nil
+		if err := (cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}).ValidateSelector(); err != nil {
+			return nil, fmt.Errorf("session new: %w", err)
+		}
+		return SessionNewAction{
+			Repo:         defaultRepo,
+			ExtraArgs:    []string(extra),
+			ResumeTaskID: *resume,
+			Detach:       *detach,
+			Host:         *host,
+			Runner:       *runner,
+			IP:           *ip,
+		}, nil
 	case "attach":
 		if len(rest) == 0 {
 			return nil, fmt.Errorf("session attach: task id required")
