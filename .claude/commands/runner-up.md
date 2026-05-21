@@ -1,6 +1,6 @@
 ---
-description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env)
-argument-hint: "<tag> [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [server-cid=CID]"
+description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -32,24 +32,44 @@ Arguments: $ARGUMENTS
      3. **Change `roots`** — if the user actually meant a narrower / different repo set.
    - Proceed only after the user picks (2) or (3). Never silently override `--hostname` without confirmation.
 
-5. **Build the command** (must run from `$HARNESS_REPO_PATH` — `scripts/runner.sh` resolves `bin/.run` relative to itself):
+5. **Choose path: ephemeral vs persistent**.
 
-   ```
-   cd "$HARNESS_REPO_PATH" && scripts/runner.sh up --as <tag> \
-       --server-cid <resolved-cid> \
-       [--roots <csv>] \
-       --max-tasks <N> \
-       [--hostname <label>] \
-       [--no-worktree] \
-       [--claude-bin <path>] \
-       [--psk-file <path>] \
-       [--claude-args "<...>"]
-   ```
+   - **Default (ephemeral)** — runner survives only this login. Build:
 
-   Defaults applied when not given:
+     ```
+     cd "$HARNESS_REPO_PATH" && scripts/runner.sh up --as <tag> \
+         --server-cid <resolved-cid> \
+         [--roots <csv>] \
+         --max-tasks <N> \
+         [--hostname <label>] \
+         [--no-worktree] \
+         [--claude-bin <path>] \
+         [--psk-file <path>] \
+         [--claude-args "<...>"]
+     ```
+
+   - **`persist` in `$ARGUMENTS`** — runner is also registered with the OS login-autostart (Linux systemd user unit / Windows Task Scheduler) so it comes back after reboot / sign-out. Build instead:
+
+     ```
+     cd "$HARNESS_REPO_PATH" && scripts/runner-autostart.py register --tag <tag> \
+         --server-cid <resolved-cid> \
+         [--roots <csv>] \
+         --max-tasks <N> \
+         [--hostname <label>] \
+         [--no-worktree] \
+         [--claude-bin <path>] \
+         [--psk-file <path>] \
+         [--claude-args "<...>"]
+     ```
+
+     `runner-autostart.py register` writes the autostart entry, then starts the slot immediately by default (same as `--now` semantics), so a single invocation registers + brings it up.
+
+   Defaults applied when not given (apply to both paths):
    - `--max-tasks 8` (observed convention across all live slots)
    - `--roots` omitted ⇒ agent-runner uses `.` (the repo path itself); usually you want to specify
    - `--hostname` only injected when the user picked path (2) in step 4
+
+   Strip the literal `persist` token from `$ARGUMENTS` before forwarding the remaining flags — it is a slash-command keyword, not a runner.py flag.
 
 6. **Verify** after spawn:
    - `harness-cli ls` — confirm a new RUNNERS row with matching roots (and matching `host=` if `--hostname` was set) appears. If not visible immediately, retry once after ~2s.
@@ -61,3 +81,8 @@ Arguments: $ARGUMENTS
 
 - Before spawning a *new* slot, consider whether the workload can be folded into an existing slot's `--roots` (comma-separated). One runner per host/config is usually preferable to many narrow slots, unless `--max-tasks` parallelism is the bottleneck.
 - `--server-cid` accepts a wildcard suffix (`-*`) so the runner reconnects across server restarts. Locking to a specific instance id is only useful for short-lived debugging.
+
+### Corner cases for `persist`
+
+- **Convert a running ephemeral slot to persist**: the pre-flight collision check (step 4) will block `/runner-up <same-tag> persist` because the slot is already running. Use the manual flow instead — run `scripts/runner-autostart.py register --tag <tag> --no-start <same flags>` directly. `--no-start` skips the immediate spawn (slot is already running), but the autostart entry is registered for the next reboot.
+- **Stop the daemon but keep the autostart entry**: there is no built-in flag for this. Use the symmetric two-step — `scripts/runner-autostart.py unregister --tag <tag>` (kills daemon + removes entry), then `scripts/runner-autostart.py register --tag <tag> --no-start <same flags>` to re-add the entry without starting.
