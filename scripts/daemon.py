@@ -54,6 +54,14 @@ def log_file(slot: str) -> Path:
     return RUN_DIR / f"{slot}.log"
 
 
+def shutdown_file(slot: str) -> Path:
+    """Sentinel file watched by agent-runner / harness-server's
+    ``--shutdown-file`` poller. Touching it requests a graceful exit —
+    used on platforms (Windows) where SIGTERM can't reach the spawned
+    DETACHED_PROCESS child."""
+    return RUN_DIR / f"{slot}.shutdown"
+
+
 def restart_log(slot: str) -> Path:
     return RUN_DIR / f"{slot}.restart.log"
 
@@ -153,7 +161,18 @@ def daemon_up(slot: str, bin_name: str, *args: str) -> int:
         sys.stderr.write("        run 'make build' first\n")
         raise FileNotFoundError(str(bp))
 
-    pid = _spawn_detached([str(bp), *args], lf)
+    # Clean up any stale shutdown sentinel from a previous unclean exit
+    # before injecting --shutdown-file. Otherwise the freshly spawned
+    # binary would observe the leftover file on its first poll and
+    # exit immediately.
+    sf = shutdown_file(slot)
+    try:
+        sf.unlink()
+    except FileNotFoundError:
+        pass
+    spawn_args = ["--shutdown-file", str(sf), *args]
+
+    pid = _spawn_detached([str(bp), *spawn_args], lf)
     pf.write_text(str(pid))
 
     # Catch immediate crashes (bad flag, port already bound, ...).
@@ -239,6 +258,16 @@ def daemon_down(slot: str, bin_name: str, *, timeout: float = 5.0) -> None:
             pass
         print(f"[{slot}] not running (vanished before signal)")
         return
+
+    # Touch the shutdown sentinel before sending OS-level signals.
+    # On Windows this is the only graceful path (CTRL_BREAK_EVENT
+    # can't reach a DETACHED_PROCESS child); on Linux SIGTERM still
+    # arrives first and the watcher just races with it, harmless
+    # either way (cancel is idempotent on the runner side).
+    try:
+        shutdown_file(slot).touch()
+    except OSError:
+        pass
 
     _graceful_terminate(p)
     try:
