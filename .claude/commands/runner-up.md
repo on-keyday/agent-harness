@@ -20,7 +20,15 @@ Arguments: $ARGUMENTS
    - Else: read `$HARNESS_SERVER_CID` and rewrite the trailing `-<digits>` to `-*` so the runner reconnects across server restarts. Example: `ws:192.168.3.234:8549-12982` → `ws:192.168.3.234:8549-*`.
    - If env unset AND no flag given, abort with a clear error.
 
-3. **Preset for tag `bash`**: if the user didn't supply `roots=` or `no-worktree`, default to `--no-worktree --claude-bin bash --roots $HOME/workspace` (matches the existing bash sandbox slot). Any user-supplied flag overrides the corresponding default.
+3. **Shell-sandbox presets** — when the tag matches one of the well-known shell names and the user didn't supply `roots=` or `no-worktree`, fill in defaults. Any user-supplied flag overrides the matching default. The presets are OS-specific in intent — invoke them from a runner / host where the named shell actually exists; mismatched invocations will fail at spawn time.
+
+   | tag          | default flags                                                                  | target |
+   |--------------|--------------------------------------------------------------------------------|--------|
+   | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace`                      | Linux / macOS (existing sandbox slot) |
+   | `cmd`        | `--no-worktree --claude-bin cmd.exe --roots C:\workspace`                      | Windows command prompt |
+   | `powershell` | `--no-worktree --claude-bin powershell.exe --roots C:\workspace`               | Windows PowerShell 5.1 (built-in) |
+
+   For PowerShell 7+ (`pwsh.exe`) override explicitly: `/runner-up powershell claude-bin=pwsh.exe`. The Windows roots default `C:\workspace` matches the user's observed convention; override with `roots=` if the actual workspace is elsewhere.
 
 4. **Pre-flight: detect dispatch-ambiguity collision**. Before spawning, run `harness-cli ls` and scan the RUNNERS section. The server uses longest-prefix-match across `AllowedRoots` plus selector to pick a runner; when two runners on the *same reported hostname* serve the *same exact roots string*, dispatch (`submit` / `session new` / `interactive`) with the default `Any` selector returns `AmbiguousRunner`, and a `--host <name>` pin cannot disambiguate them either.
 
