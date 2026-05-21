@@ -26,10 +26,16 @@ Usage::
     scripts/runner-autostart.py unregister [--tag TAG]
     scripts/runner-autostart.py status [--tag TAG]
 
-``register`` also starts the entry immediately (Linux:
+``register`` also brings the entry up immediately (Linux:
 ``systemctl --user enable --now``; Windows: ``Start-ScheduledTask``),
-so you don't have to sign out/in or reboot just to bring up the
-runner you just configured.
+so you don't have to sign out/in or reboot just to test the new
+autostart entry. Pass ``--no-start`` to register the trigger only.
+
+``unregister`` symmetrically stops the running runner before
+removing the trigger (Linux: ``systemctl --user disable --now``
+fires ExecStop = ``runner.py down``; Windows: explicit
+``runner.py down`` then ``Unregister-ScheduledTask``). Pass
+``--no-stop`` to leave the running runner alone.
 
 ``status`` without ``--tag`` lists every registered entry with its
 current state (summary form); with ``--tag`` it prints detail for the
@@ -127,13 +133,21 @@ def _powershell(script: str) -> int:
     return r.returncode
 
 
-def _register_windows(tag: str, args: list[str]) -> int:
+def _register_windows(tag: str, args: list[str], start_now: bool) -> int:
     task = _slot_name(tag)
     python_exe = sys.executable or "python.exe"
     runner_args = ["up", *_runner_tag_flags(tag), *args]
     # Windows-style cmdline for the -Argument property (single string
     # that python.exe will reparse via CommandLineToArgvW).
     cmdline = subprocess.list2cmdline([str(_runner_py()), *runner_args])
+    start_block = (
+        f"Start-ScheduledTask -TaskName {_ps_quote(task)}\n"
+        if start_now
+        else ""
+    )
+    final_msg = (
+        "registered + started: " if start_now else "registered (not started): "
+    )
 
     ps = f"""
 $action = New-ScheduledTaskAction `
@@ -156,15 +170,27 @@ Register-ScheduledTask `
     -Action $action -Trigger $trigger -Settings $settings `
     -Force | Out-Null
 
-Start-ScheduledTask -TaskName {_ps_quote(task)}
-
-Write-Output ("registered + started: " + {_ps_quote(task)})
+{start_block}Write-Output ({_ps_quote(final_msg)} + {_ps_quote(task)})
 """
     return _powershell(ps)
 
 
-def _unregister_windows(tag: str) -> int:
+def _unregister_windows(tag: str, stop_first: bool) -> int:
+    """Remove the scheduled task; optionally `runner.py down` the daemon first.
+
+    Task Scheduler doesn't manage the spawned agent-runner directly
+    (the action is "fire-and-forget" — Task Scheduler considers itself
+    done once runner.py up returns), so to actually stop the daemon
+    we have to invoke runner.py down ourselves. Without --no-stop,
+    that's the default symmetry with Linux's ``systemctl --user
+    disable --now`` (which fires ExecStop = runner.py down).
+    """
     task = _slot_name(tag)
+    if stop_first:
+        subprocess.run(
+            [sys.executable, str(_runner_py()), "down",
+             *_runner_tag_flags(tag)]
+        )
     ps = (
         f"Unregister-ScheduledTask -TaskName {_ps_quote(task)} "
         f"-Confirm:$false; Write-Output ('unregistered: ' + {_ps_quote(task)})"
@@ -199,7 +225,7 @@ def _systemd_unit_name(tag: str) -> str:
     return f"{_slot_name(tag)}.service"
 
 
-def _register_linux(tag: str, args: list[str]) -> int:
+def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
     """Write a systemd user service and enable it.
 
     Type=oneshot + RemainAfterExit=yes is intentional: runner.py up
@@ -242,13 +268,16 @@ def _register_linux(tag: str, args: list[str]) -> int:
     rc = subprocess.run(["systemctl", "--user", "daemon-reload"]).returncode
     if rc != 0:
         return rc
-    rc = subprocess.run(
-        ["systemctl", "--user", "enable", "--now", unit_name]
-    ).returncode
+    enable_cmd = ["systemctl", "--user", "enable"]
+    if start_now:
+        enable_cmd.append("--now")
+    enable_cmd.append(unit_name)
+    rc = subprocess.run(enable_cmd).returncode
     if rc != 0:
         return rc
 
-    print(f"registered: {unit_name}")
+    state = "registered + started" if start_now else "registered (not started)"
+    print(f"{state}: {unit_name}")
     print(
         "note: if this host has no persistent login session "
         "(headless / laptop closed at boot), run\n"
@@ -258,12 +287,21 @@ def _register_linux(tag: str, args: list[str]) -> int:
     return 0
 
 
-def _unregister_linux(tag: str) -> int:
+def _unregister_linux(tag: str, stop_first: bool) -> int:
+    """Disable + remove the systemd user unit.
+
+    Default (stop_first=True): ``systemctl --user disable --now``
+    runs ExecStop = ``runner.py down`` so the agent-runner exits.
+    With --no-stop the ``--now`` is dropped, so the unit is detached
+    from auto-start triggers but the running runner is untouched
+    (use ``runner.py down`` later if you want it gone).
+    """
     unit_name = _systemd_unit_name(tag)
-    subprocess.run(
-        ["systemctl", "--user", "disable", "--now", unit_name],
-        stderr=subprocess.DEVNULL,
-    )
+    disable_cmd = ["systemctl", "--user", "disable"]
+    if stop_first:
+        disable_cmd.append("--now")
+    disable_cmd.append(unit_name)
+    subprocess.run(disable_cmd, stderr=subprocess.DEVNULL)
     unit_path = _systemd_unit_dir() / unit_name
     try:
         unit_path.unlink()
@@ -271,7 +309,8 @@ def _unregister_linux(tag: str) -> int:
     except FileNotFoundError:
         pass
     subprocess.run(["systemctl", "--user", "daemon-reload"])
-    print(f"unregistered: {unit_name}")
+    state = "unregistered + stopped" if stop_first else "unregistered (left running)"
+    print(f"{state}: {unit_name}")
     return 0
 
 
@@ -306,9 +345,20 @@ def main(argv: list[str]) -> int:
     p_reg = sub.add_parser("register", help="register autostart entry")
     p_reg.add_argument("--tag", default="",
                        help="slot tag (default: primary slot, no tag)")
+    p_reg.add_argument(
+        "--no-start", action="store_true",
+        help="register only; don't bring the runner up right now "
+        "(wait for the next login / reboot to trigger it)",
+    )
 
     p_unreg = sub.add_parser("unregister", help="remove autostart entry")
     p_unreg.add_argument("--tag", default="")
+    p_unreg.add_argument(
+        "--no-stop", action="store_true",
+        help="remove the autostart trigger only; leave the running "
+        "agent-runner alone (use `runner.py down` later if you want it "
+        "gone)",
+    )
 
     p_status = sub.add_parser(
         "status",
@@ -321,13 +371,15 @@ def main(argv: list[str]) -> int:
     if args.cmd == "register":
         cid = _resolve_server_cid(rest)
         rest_with_cid = _ensure_server_cid_in_args(rest, cid)
+        start_now = not args.no_start
         if os.name == "nt":
-            return _register_windows(args.tag, rest_with_cid)
-        return _register_linux(args.tag, rest_with_cid)
+            return _register_windows(args.tag, rest_with_cid, start_now)
+        return _register_linux(args.tag, rest_with_cid, start_now)
     if args.cmd == "unregister":
+        stop_first = not args.no_stop
         if os.name == "nt":
-            return _unregister_windows(args.tag)
-        return _unregister_linux(args.tag)
+            return _unregister_windows(args.tag, stop_first)
+        return _unregister_linux(args.tag, stop_first)
     if args.cmd == "status":
         if os.name == "nt":
             return _status_windows(args.tag)
