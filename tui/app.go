@@ -20,7 +20,9 @@ const (
 	focusRunners focus = iota
 	focusTasks
 	focusLogs
+	focusCmdresult
 	focusCmdline
+	numFocus = iota
 )
 
 // App is the top-level Bubble Tea Model.
@@ -476,6 +478,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.tasks, cmd = a.tasks.Update(msg)
 	case focusLogs:
 		a.logs, cmd = a.logs.Update(msg)
+	case focusCmdresult:
+		a.cmdresult, cmd = a.cmdresult.Update(msg)
 	case focusCmdline:
 		a.cmdline, cmd = a.cmdline.Update(msg)
 	}
@@ -486,9 +490,10 @@ func (a *App) cycleFocus(delta int) {
 	a.runners.Blur()
 	a.tasks.Blur()
 	a.logs.Blur()
+	a.cmdresult.Blur()
 	a.cmdline.Blur()
 
-	a.focus = focus((int(a.focus) + delta + 4) % 4)
+	a.focus = focus((int(a.focus) + delta + numFocus) % numFocus)
 
 	switch a.focus {
 	case focusRunners:
@@ -497,6 +502,8 @@ func (a *App) cycleFocus(delta int) {
 		a.tasks.Focus()
 	case focusLogs:
 		a.logs.Focus()
+	case focusCmdresult:
+		a.cmdresult.Focus()
 	case focusCmdline:
 		a.cmdline.Focus()
 	}
@@ -552,7 +559,11 @@ func (a *App) View() string {
 		Height(logHeight).
 		Render(a.logs.View())
 
-	cmdresultView := PanelStyle.Width(a.width - 2).Render(a.cmdresult.View())
+	cmdresultBorder := PanelStyle
+	if a.cmdresult.IsFocused() {
+		cmdresultBorder = PanelStyleFocused
+	}
+	cmdresultView := cmdresultBorder.Width(a.width - 2).Render(a.cmdresult.View())
 	cmdlineView := a.cmdline.View()
 	var hint string
 	switch {

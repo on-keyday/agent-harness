@@ -8,8 +8,9 @@ import (
 )
 
 type CmdResultModel struct {
-	vp    viewport.Model
-	lines []string
+	vp      viewport.Model
+	lines   []string
+	focused bool
 }
 
 func NewCmdResult() CmdResultModel {
@@ -17,6 +18,10 @@ func NewCmdResult() CmdResultModel {
 	vp.SetContent("(no command yet)")
 	return CmdResultModel{vp: vp}
 }
+
+func (m *CmdResultModel) Focus()         { m.focused = true }
+func (m *CmdResultModel) Blur()          { m.focused = false }
+func (m CmdResultModel) IsFocused() bool { return m.focused }
 
 func (m *CmdResultModel) SetSize(w, h int) {
 	m.vp.Width = w
@@ -40,9 +45,14 @@ func (m *CmdResultModel) Clear() {
 // View renders the viewport (the caller adds the panel border).
 func (m CmdResultModel) View() string { return m.vp.View() }
 
-// Update lets the viewport handle scroll keys when needed (we don't focus
-// cmdresult in v1, so this is rarely exercised — but keep it parity-clean).
+// Update forwards key/mouse events to the embedded viewport when focused, so
+// scroll bindings (up/down, pgup/pgdn) reach the result log only while the
+// panel holds focus. Unfocused, the viewport ignores keys but still re-renders
+// when Append/Clear mutate state.
 func (m CmdResultModel) Update(msg tea.Msg) (CmdResultModel, tea.Cmd) {
+	if !m.focused {
+		return m, nil
+	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
 	return m, cmd
