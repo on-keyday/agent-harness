@@ -49,9 +49,10 @@ func DoOpenInteractiveWithHost(c *cli.Client, repo, host string) tea.Cmd {
 // extraArgs are forwarded verbatim to claude (appended after runner-global args).
 // resumeTaskID may be "" for a fresh session, or a 32-hex task id to resume
 // an existing terminal interactive task's worktree and branch.
-func DoOpenDetachableSession(c *cli.Client, repo string, extraArgs []string, resumeTaskID string) tea.Cmd {
+// selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
+func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string) tea.Cmd {
 	return func() tea.Msg {
-		sel, err := cli.BuildSelector(cli.SelectorOpts{})
+		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
@@ -100,9 +101,10 @@ type SessionStartedMsg struct {
 // DoStartDetachedSession opens a detachable interactive session, immediately
 // closes the local stream, and returns SessionStartedMsg with the task id.
 // Equivalent to `harness-cli session new -d`.
-func DoStartDetachedSession(c *cli.Client, repo string, extraArgs []string, resumeTaskID string) tea.Cmd {
+// selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
+func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string) tea.Cmd {
 	return func() tea.Msg {
-		sel, err := cli.BuildSelector(cli.SelectorOpts{})
+		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return SessionStartedMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
