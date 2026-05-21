@@ -166,8 +166,17 @@ func (c *Conn) Wait(ctx context.Context) error {
 // connection. The owning objproto.Endpoint is owned by the caller and is
 // NOT torn down here — peer.Dial accepts an externally constructed Endpoint
 // and does not assume ownership.
+//
+// The brief sleep between SendClose and conn.Close gives the endpoint's
+// sender goroutine (which reads from objproto's pktQueue and issues the
+// actual UDP / WS write) a scheduling window to drain the just-enqueued
+// Close packet before the calling process tears down. Without it the
+// process can exit between push-to-queue and write-to-socket, in which
+// case the Close never leaves the host and the peer falls back to its
+// ping-timeout disconnect path (~15s on the default --ping-interval).
 func (c *Conn) Close() {
 	_ = trsf.SendClose(c.conn)
+	time.Sleep(50 * time.Millisecond)
 	_ = c.conn.Close()
 }
 
