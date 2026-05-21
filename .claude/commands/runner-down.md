@@ -1,12 +1,12 @@
 ---
-description: Stop an agent-runner slot via scripts/runner.sh down — refuses if tasks are assigned or if it would self-terminate
+description: Stop an agent-runner slot. Auto-detects whether it was launched via runner-autostart.py register and routes to `unregister` if so. Refuses if tasks are assigned or if it would self-terminate.
 argument-hint: "<tag>"
 allowed-tools: Bash
 ---
 
 Gracefully stop an agent-runner slot. **Refuses if the runner has any task currently assigned, or if downing it would terminate this very session.**
 
-Use the canonical script — do not invoke `kill` directly. `scripts/runner.sh down` handles SIGTERM → SIGKILL escalation and state cleanup.
+Use the canonical scripts — do not invoke `kill` directly. `scripts/runner.sh down` handles SIGTERM → SIGKILL escalation and state cleanup; `scripts/runner-autostart.py unregister` additionally removes the OS-level autostart entry (systemd user unit / Task Scheduler task) so the slot does not come back at next login.
 
 Arguments: $ARGUMENTS
 
@@ -32,15 +32,32 @@ Arguments: $ARGUMENTS
    - **If X > 0**: cross-reference the TASKS section, listing each task whose `repo=` lies under the runner's roots, then **abort**. Tell the user to wait for the tasks to finish, cancel them (`harness-cli cancel <id>`), or migrate them; do not force.
    - Note: the runner state label (`Idle` / `Busy`) is informational — the authoritative signal is the `tasks=X/Y` count. `Idle` only means "available to accept more"; it does NOT mean "no work in flight".
 
-5. **Execute `down`** only after steps 3 and 4 both pass clean:
+5. **Detect autostart registration** — was this slot launched via `/runner-up <tag> persist` (i.e., does an OS-level autostart entry exist for it)?
 
-   ```
-   cd "$HARNESS_REPO_PATH" && scripts/runner.sh down${tag:+ --as $tag}
-   ```
+   - **Linux**: `test -f "$HOME/.config/systemd/user/harness-agent-runner${tag:+-$tag}.service"`
+   - **Windows**: `Get-ScheduledTask -TaskName harness-agent-runner${tag:+-$tag} -ErrorAction SilentlyContinue` returns a task object
+   - If either matches → take the **autostart** branch in step 6; else take the **ephemeral** branch.
 
-   (`scripts/runner.sh` resolves `bin/.run` relative to itself, so it must run from `$HARNESS_REPO_PATH`, not a worktree.)
+6. **Execute the shutdown** only after steps 3 and 4 both pass clean:
 
-6. **Verify shutdown**:
+   - **Ephemeral branch** (no autostart entry):
+
+     ```
+     cd "$HARNESS_REPO_PATH" && scripts/runner.sh down${tag:+ --as $tag}
+     ```
+
+   - **Autostart branch** (entry detected in step 5):
+
+     ```
+     cd "$HARNESS_REPO_PATH" && scripts/runner-autostart.py unregister --tag <tag>
+     ```
+
+     `runner-autostart.py unregister` stops the daemon (via `runner.py down`) AND removes the OS autostart entry in one step, so the slot will not come back at next login. If you intended to keep the autostart entry and only stop the daemon for now, follow the manual flow noted in `/runner-up`'s "Corner cases" section.
+
+   (`scripts/runner.sh` / `scripts/runner-autostart.py` both resolve `bin/.run` relative to themselves, so they must run from `$HARNESS_REPO_PATH`, not a worktree.)
+
+7. **Verify shutdown**:
    - The pid file should be gone (or no longer reference a live process).
    - `harness-cli ls` no longer lists a RUNNERS row with that roots / RunnerID.
+   - If the autostart branch was taken, also confirm the OS-level entry is gone (Linux: `test ! -f $HOME/.config/systemd/user/harness-agent-runner${tag:+-$tag}.service`; Windows: `Get-ScheduledTask -TaskName harness-agent-runner${tag:+-$tag}` errors / returns nothing).
    - If either still shows the slot after a few seconds, surface `tail -n 50 $HARNESS_REPO_PATH/bin/.run/<slot>.log` and stop; do not escalate to `kill` manually.
