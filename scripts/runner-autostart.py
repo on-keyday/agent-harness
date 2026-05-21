@@ -26,6 +26,11 @@ Usage::
     scripts/runner-autostart.py unregister [--tag TAG]
     scripts/runner-autostart.py status [--tag TAG]
 
+``register`` also starts the entry immediately (Linux:
+``systemctl --user enable --now``; Windows: ``Start-ScheduledTask``),
+so you don't have to sign out/in or reboot just to bring up the
+runner you just configured.
+
 ``status`` without ``--tag`` lists every registered entry with its
 current state (summary form); with ``--tag`` it prints detail for the
 single entry.
@@ -151,7 +156,9 @@ Register-ScheduledTask `
     -Action $action -Trigger $trigger -Settings $settings `
     -Force | Out-Null
 
-Write-Output ("registered: " + {_ps_quote(task)})
+Start-ScheduledTask -TaskName {_ps_quote(task)}
+
+Write-Output ("registered + started: " + {_ps_quote(task)})
 """
     return _powershell(ps)
 
