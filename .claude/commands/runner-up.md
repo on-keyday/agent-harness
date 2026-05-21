@@ -25,12 +25,14 @@ Arguments: $ARGUMENTS
    | tag          | default flags                                                                                                              | target |
    |--------------|----------------------------------------------------------------------------------------------------------------------------|--------|
    | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace`                                                                  | Linux / macOS (existing sandbox slot) |
-   | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:\workspace`                                              | Windows command prompt |
-   | `powershell` | `--no-worktree --claude-bin C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe --roots C:\workspace`                | Windows PowerShell 5.1 (built-in) |
+   | `cmd`        | `--no-worktree --claude-bin C:/Windows/System32/cmd.exe --roots C:/workspace`                                              | Windows command prompt |
+   | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
 
-   **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:\Program Files\PowerShell\7\pwsh.exe`), so look it up before passing.
+   **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 
-   The Windows roots default `C:\workspace` matches the user's observed convention; override with `roots=` if the actual workspace is elsewhere.
+   **Use forward slashes (`/`) in Windows paths**, not backslashes. The agent (claude) sometimes executes shell commands via git-bash on Windows, where backslashes in path literals get interpreted as escape sequences and produce subtly broken commands. Forward slashes are accepted by every Windows shell (cmd, powershell, git-bash) and every Windows API that takes a path string, so they are the safe portable form. Do not "normalize" the slashes back to `\` when writing into this file or into command lines.
+
+   The Windows roots default `C:/workspace` matches the user's observed convention; override with `roots=` if the actual workspace is elsewhere.
 
 4. **Pre-flight: detect dispatch-ambiguity collision**. Before spawning, run `harness-cli ls` and scan the RUNNERS section. The server uses longest-prefix-match across `AllowedRoots` plus selector to pick a runner; when two runners on the *same reported hostname* serve the *same exact roots string*, dispatch (`submit` / `session new` / `interactive`) with the default `Any` selector returns `AmbiguousRunner`, and a `--host <name>` pin cannot disambiguate them either.
 
