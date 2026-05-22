@@ -294,6 +294,27 @@ func parseConnIDForIP(id string) (netip.Addr, error) {
 	return cid.Addr.Addr(), nil
 }
 
+// GetByConnectionID returns a pointer to the registered RunnerEntry whose
+// stringified ConnectionID matches cid, or nil/false on no match.
+//
+// Unlike Get (which keys by the same canonical string but returns a value
+// snapshot), this accessor returns the live pointer so the via-relay path
+// can read the live ConnHandle and Addr without an extra lookup. The map
+// stores *RunnerEntry, so the returned pointer is the same one mutations
+// race against — callers must treat it as read-only.
+//
+// Used by the dial-runner via-relay path (DialRunnerHandler.ResolveVia) to
+// resolve a CLI-supplied via=<cid> against the live registered runners.
+func (r *Registry) GetByConnectionID(cid objproto.ConnectionID) (*RunnerEntry, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entry, ok := r.runners[cid.String()]
+	if !ok {
+		return nil, false
+	}
+	return entry, true
+}
+
 // List returns value snapshots of all entries in arbitrary order.
 // The returned slice is independent of the internal map.
 func (r *Registry) List() []RunnerEntry {

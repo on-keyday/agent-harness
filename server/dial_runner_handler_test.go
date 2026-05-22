@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"testing"
 	"time"
 
@@ -13,6 +14,127 @@ import (
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
+
+// TestDialRunnerViaInvalidTarget covers the early-return guard on the via-relay
+// path: an empty-transport target should produce InvalidTarget BEFORE we ever
+// attempt via resolution or any handshake setup.
+func TestDialRunnerViaInvalidTarget(t *testing.T) {
+	resolved := false
+	h := &DialRunnerHandler{
+		Logger: slog.Default(),
+		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+			resolved = true
+			return nil, false
+		},
+		ViaSendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
+			t.Fatal("ViaSendEstablishRelay must not be called on InvalidTarget path")
+			return protocol.EstablishRelayResponse{}, nil
+		},
+	}
+	var target protocol.RunnerID // empty Transport
+	var via protocol.RunnerID
+	via.SetTransport([]byte("ws"))
+	via.SetIpAddr([]byte{1, 2, 3, 4})
+	via.Port = 1234
+	via.UniqueNumber = 12345
+
+	resp := h.HandleWithVia(context.Background(), target, via)
+	if resp.Status != protocol.DialRunnerStatus_InvalidTarget {
+		t.Errorf("status: got %v want InvalidTarget", resp.Status)
+	}
+	if resolved {
+		t.Error("ResolveVia must not be called when target is invalid")
+	}
+}
+
+// TestDialRunnerViaNotFound: when via CID doesn't match any registered runner,
+// the handler returns ViaNotFound without attempting any relay setup.
+func TestDialRunnerViaNotFound(t *testing.T) {
+	sentRelay := false
+	h := &DialRunnerHandler{
+		Logger:   slog.Default(),
+		Endpoint: nil, // not reached
+		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+			return nil, false
+		},
+		ViaSendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
+			sentRelay = true
+			return protocol.EstablishRelayResponse{}, nil
+		},
+	}
+	var target protocol.RunnerID
+	target.SetTransport([]byte("ws"))
+	target.SetIpAddr([]byte{10, 0, 0, 5})
+	target.Port = 8540
+
+	var via protocol.RunnerID
+	via.SetTransport([]byte("ws"))
+	via.SetIpAddr([]byte{1, 2, 3, 4})
+	via.Port = 9999
+	via.UniqueNumber = 12345
+
+	resp := h.HandleWithVia(context.Background(), target, via)
+	if resp.Status != protocol.DialRunnerStatus_ViaNotFound {
+		t.Errorf("status: got %v want ViaNotFound", resp.Status)
+	}
+	if sentRelay {
+		t.Error("ViaSendEstablishRelay must not be called when via is unresolved")
+	}
+}
+
+// TestDialRunnerViaRelayFailed: when proxy_runner returns non-Ok
+// EstablishRelayResponse, the handler returns ViaRelayFailed without
+// attempting any handshake.
+func TestDialRunnerViaRelayFailed(t *testing.T) {
+	fakeEntry := &RunnerEntry{
+		ID: objproto.NewConnectionID("ws",
+			netip.MustParseAddrPort("192.168.1.10:8540"), 12345).String(),
+	}
+	h := &DialRunnerHandler{
+		Logger:   slog.Default(),
+		Endpoint: nil, // not reached because we short-circuit before SendHandshake
+		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+			return fakeEntry, true
+		},
+		ViaSendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
+			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_SlotCollision}, nil
+		},
+	}
+	var target protocol.RunnerID
+	target.SetTransport([]byte("ws"))
+	target.SetIpAddr([]byte{10, 0, 0, 5})
+	target.Port = 8540
+
+	var via protocol.RunnerID
+	via.SetTransport([]byte("ws"))
+	via.SetIpAddr([]byte{192, 168, 1, 10})
+	via.Port = 8540
+	via.UniqueNumber = 12345
+
+	resp := h.HandleWithVia(context.Background(), target, via)
+	if resp.Status != protocol.DialRunnerStatus_ViaRelayFailed {
+		t.Errorf("status: got %v want ViaRelayFailed", resp.Status)
+	}
+}
+
+// TestDialRunnerViaEmptyVia: when via.transport_len == 0, HandleWithVia must
+// fall through to the direct-dial path (Handle). This is the "via not
+// specified" case from the CLI side, where the same envelope can carry both
+// direct and relay dials.
+func TestDialRunnerViaEmptyVia(t *testing.T) {
+	h := &DialRunnerHandler{
+		Logger:   slog.Default(),
+		Endpoint: nil, // not reached: target.Transport empty triggers InvalidTarget first
+	}
+	var target protocol.RunnerID // empty Transport → InvalidTarget via Handle
+	var via protocol.RunnerID    // empty Transport — triggers direct fallback
+
+	resp := h.HandleWithVia(context.Background(), target, via)
+	if resp.Status != protocol.DialRunnerStatus_InvalidTarget {
+		t.Errorf("status: got %v want InvalidTarget (direct path)", resp.Status)
+	}
+}
+
 
 // TestDialRunnerInvalidTargetTransport covers empty-transport early return.
 func TestDialRunnerInvalidTargetTransport(t *testing.T) {

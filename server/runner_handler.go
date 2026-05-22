@@ -23,6 +23,14 @@ type RunnerHandler struct {
 	// Board is the agentboard instance for ticket lifecycle management.
 	// When nil, ticket revocation is skipped (safe for tests that do not wire a Board).
 	Board *agentboard.Board
+
+	// OnEstablishRelayResponse, when non-nil, is invoked with the runner's
+	// stringified ConnectionID and the decoded EstablishRelayResponse. Server.New
+	// wires this to Server.deliverEstablishRelayResponse, which routes the reply
+	// to the goroutine that sent the corresponding EstablishRelayRequest.
+	//
+	// Nil-safe: tests that do not exercise the via-relay path leave it unwired.
+	OnEstablishRelayResponse func(conn ConnHandle, resp protocol.EstablishRelayResponse)
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -137,6 +145,22 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("RunnerHandler: Heartbeat from unknown runner", "runnerID", runnerID)
 			return
 		}
+
+	case protocol.RunnerMessageType_EstablishRelayResponse:
+		er := msg.EstablishRelayResponse()
+		if er == nil {
+			slog.Error("RunnerHandler: EstablishRelayResponse variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnEstablishRelayResponse != nil {
+			h.OnEstablishRelayResponse(conn, *er)
+		} else {
+			slog.Warn("RunnerHandler: EstablishRelayResponse arrived but no handler wired",
+				"runnerID", runnerID, "status", er.Status)
+		}
+		// EstablishRelayResponse does not mutate Registry/Tasks; suppress the
+		// trailing OnChange so we don't run a spurious Scheduler.Tick.
+		return
 
 	default:
 		slog.Error("RunnerHandler: unhandled message kind", "runnerID", runnerID, "kind", msg.Kind)
