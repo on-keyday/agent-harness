@@ -259,12 +259,16 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 			m.cursor++
 		}
 		return m, nil
-	case "enter":
+	case "enter", "right", "l":
 		if m.cursor < 0 || m.cursor >= len(m.entries) {
 			return m, nil
 		}
 		e := m.entries[m.cursor]
 		if !e.IsDir {
+			// Enter / → on a regular file is an inert select in the
+			// remote browser — actions (u push, g pull, d delete) are
+			// explicit keys. This keeps navigation key presses from
+			// silently triggering file ops on misclick.
 			return m, nil
 		}
 		newDir := joinRel(m.curDir, e.Name)
@@ -273,7 +277,7 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 		m.cursor = 0
 		m.msg = "loading..."
 		return m, DoListFilesFor(m.client, m.taskID, newDir)
-	case "backspace":
+	case "backspace", "left", "h":
 		if m.curDir == "" {
 			return m, nil
 		}
@@ -345,12 +349,22 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 
 func (m FilePickerModel) handleInputKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
 	// Tab toggles between the typing prompt and the local file browser.
-	// Typed text and cursor positions are preserved across the toggle so
-	// users can browse to find a starting point and then refine the
-	// exact path by typing.
+	// When returning to typing, if the local cursor is on a regular
+	// file, the full path is pre-filled in the input so the user can
+	// review and Enter to commit — this is the deliberate
+	// confirmation step that replaces the old auto-commit-on-Enter
+	// behavior. When the cursor is on a directory (or nothing is
+	// selected), the typed text is left untouched.
 	if k.Type == tea.KeyTab {
 		if m.localBrowseActive {
 			m.localBrowseActive = false
+			if m.localCursor >= 0 && m.localCursor < len(m.localEntries) {
+				if e := m.localEntries[m.localCursor]; !e.IsDir {
+					full := joinLocal(m.localCurDir, e.Name)
+					m.input.SetValue(full)
+					m.input.SetCursor(len(full))
+				}
+			}
 			m.input.Focus()
 			return m, nil
 		}
@@ -475,15 +489,13 @@ func (m FilePickerModel) handleLocalBrowseKey(k tea.KeyMsg) (FilePickerModel, te
 			m.localCursor++
 		}
 		return m, nil
-	case "enter":
+	case "enter", "right", "l":
 		if m.localCursor < 0 || m.localCursor >= len(m.localEntries) {
 			return m, nil
 		}
 		e := m.localEntries[m.localCursor]
 		full := joinLocal(m.localCurDir, e.Name)
 		if e.IsDir {
-			// For push, Enter on a dir descends. For pull, Enter on a
-			// dir descends too (use the next selection or type a path).
 			m.localCurDir = full
 			entries, lerr := readLocalDirEntries(full)
 			m.localEntries = entries
@@ -495,10 +507,14 @@ func (m FilePickerModel) handleLocalBrowseKey(k tea.KeyMsg) (FilePickerModel, te
 			}
 			return m, nil
 		}
-		// Enter on a file commits the action using that file's full
-		// path as the local side.
-		return m.commitInputPath(full)
-	case "backspace":
+		// Enter / → on a regular file is an inert select. To commit
+		// the file as the local side of push / pull, the user presses
+		// Tab back to the typing prompt (which pre-fills the input
+		// with the selected file's path), reviews, and then presses
+		// Enter in typing mode. This separation prevents misclick on
+		// navigation keys from kicking off a transfer.
+		return m, nil
+	case "backspace", "left", "h":
 		parent := localParent(m.localCurDir)
 		if parent == m.localCurDir {
 			return m, nil
@@ -706,9 +722,9 @@ func (m FilePickerModel) View() string {
 	var header strings.Builder
 	fmt.Fprintf(&header, "File picker · task %s · /%s\n", m.taskShort, m.curDir)
 	if !m.localBrowseActive {
-		header.WriteString("↑↓ nav · Enter enter dir · Backspace back · u push · g pull · d delete · D rm -rf · r reload · Esc close\n")
+		header.WriteString("↑↓ nav · → / Enter descend · ← / Backspace back · u push · g pull · d delete · D rm -rf · r reload · Esc close\n")
 	} else {
-		header.WriteString("Tab → typing · ↑↓ nav · Enter enter dir / file=use · Backspace back · . use this dir · d/D delete · r reload · Esc cancel\n")
+		header.WriteString("Tab → typing (pre-fills selected file) · ↑↓ → / Enter descend · ← / Backspace back · . use this dir · d/D delete · r reload · Esc cancel\n")
 	}
 	if m.msg != "" {
 		header.WriteString(m.msg + "\n")
