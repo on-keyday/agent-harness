@@ -199,6 +199,13 @@ func (s *Session) logger() *slog.Logger {
 	return slog.Default()
 }
 
+// ServerCIDForProxyAllocate returns the ConnectionID the runner uses for its
+// server peer.Conn. SetProxy's "allocate" CID for a proxied agent uses this
+// transport + addr and the agent-chosen connection_id; see Phase B spec.
+func (s *Session) ServerCIDForProxyAllocate() objproto.ConnectionID {
+	return s.ServerCID
+}
+
 // handleAssign performs the full lifecycle for one assigned task:
 //  1. TaskAccepted control message
 //  2. Worktree creation (failure → TaskFinished with error info)
