@@ -104,6 +104,10 @@ type Session struct {
 	// authenticate against the PSK-protected server.
 	PSK []byte
 
+	// ProxyVia, when non-empty, is propagated into spawned agent env as
+	// HARNESS_PROXY_VIA_RUNNER (Phase B). Set by ListenAndServe in listen mode.
+	ProxyVia string
+
 	// runnerCanonicalID is the RunnerID the server keys this runner as in
 	// its registry / agentboard ticket store. Filled from RunnerHelloResponse
 	// (server → runner) before any AssignTask. Reads/writes are guarded by
@@ -356,6 +360,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		AuthTicket: body.AuthTicket,
 		BinDir:     s.BinDir,
 		PSK:        s.PSK,
+		ProxyVia:   s.ProxyVia,
 	})
 
 	// Step 4: Execute the process, publishing log lines to the task log topic.
@@ -543,6 +548,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		AuthTicket: oer.AuthTicket,
 		BinDir:     s.BinDir,
 		PSK:        s.PSK,
+		ProxyVia:   s.ProxyVia,
 	})
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.

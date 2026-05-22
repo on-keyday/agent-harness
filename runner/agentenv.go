@@ -27,6 +27,12 @@ type AgentEnvSpec struct {
 	// (e.g. agentboard send/recv) can authenticate against the
 	// PSK-protected server.
 	PSK []byte
+
+	// ProxyVia, when non-empty, is the runner's listen-side ConnectionID
+	// string (e.g. "ws:127.0.0.1:8540-*"). Set in listen mode. Injected as
+	// HARNESS_PROXY_VIA_RUNNER so agent processes use the objproto
+	// negotiated-proxy path (Phase B) instead of dialing the server directly.
+	ProxyVia string
 }
 
 // BuildAgentEnv returns "KEY=VAL" entries to merge with os.Environ() in Process.Env.
@@ -59,6 +65,9 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 	}
 	if len(s.PSK) > 0 {
 		env = append(env, "HARNESS_PSK="+string(s.PSK))
+	}
+	if s.ProxyVia != "" {
+		env = append(env, "HARNESS_PROXY_VIA_RUNNER="+s.ProxyVia)
 	}
 	return env
 }

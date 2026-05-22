@@ -82,6 +82,18 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 		"udp", cfg.UDPListen,
 		"path", wsPath)
 
+	// Phase B: tell driveAfterConn (and through it, BuildAgentEnv) where agents
+	// should dial for the proxy. Prefer WSListen if set; UDP-only listen uses
+	// the UDPListen addr with "udp" transport.
+	if cfg.Config.ProxyVia == "" {
+		switch {
+		case cfg.WSListen != "":
+			cfg.Config.ProxyVia = "ws:" + cfg.WSListen + "-*"
+		case cfg.UDPListen != "":
+			cfg.Config.ProxyVia = "udp:" + cfg.UDPListen + "-*"
+		}
+	}
+
 	// sessionRef is shared across all accepted conns so the agent-proxy
 	// handler (for agent dials) can look up the live server-conn session
 	// (set by the server-dial handler). atomic.Pointer is sufficient: at

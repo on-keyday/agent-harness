@@ -44,6 +44,11 @@ type Config struct {
 
 	// PingInterval overrides peer.DialConfig.PingInterval (default 15s).
 	PingInterval time.Duration
+
+	// ProxyVia, when non-empty, is propagated into spawned agent env as
+	// HARNESS_PROXY_VIA_RUNNER (Phase B). ListenAndServe sets this from its
+	// listen addr; dial mode leaves it empty.
+	ProxyVia string
 }
 
 // RunHandle wraps the live connection + session so Connect and OnConnect can
@@ -128,6 +133,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		WSPath:                     cli.WebSocketPath,
 		BinDir:                     binDir,
 		PSK:                        psk,
+		ProxyVia:                   cfg.ProxyVia,
 		Sender:                     sender,
 		Streams:                    pc.Transport(),
 		Logger:                     cfg.Logger,
