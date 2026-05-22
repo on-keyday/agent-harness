@@ -167,3 +167,37 @@ func TestBuildAgentEnv_BinDirWithEmptyParentPATH(t *testing.T) {
 		t.Errorf("PATH = %q, want %q (no separator when parent PATH empty)", got["PATH"], "/opt/harness/bin")
 	}
 }
+
+func TestBuildAgentEnvIncludesProxyVia(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:127.0.0.1:8540-2"),
+		ProxyVia:  "ws:127.0.0.1:8540-*",
+	}
+	env := BuildAgentEnv(spec)
+	want := "HARNESS_PROXY_VIA_RUNNER=ws:127.0.0.1:8540-*"
+	found := false
+	for _, e := range env {
+		if e == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("env missing %q; got %v", want, env)
+	}
+}
+
+func TestBuildAgentEnvOmitsProxyViaWhenEmpty(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:127.0.0.1:8540-2"),
+		// ProxyVia intentionally empty
+	}
+	env := BuildAgentEnv(spec)
+	for _, e := range env {
+		if strings.HasPrefix(e, "HARNESS_PROXY_VIA_RUNNER=") {
+			t.Errorf("env should not contain HARNESS_PROXY_VIA_RUNNER, got %q", e)
+		}
+	}
+}

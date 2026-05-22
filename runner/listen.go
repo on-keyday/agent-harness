@@ -8,12 +8,15 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // ListenConfig extends Config with listen-side fields. WSListen / UDPListen
@@ -79,6 +82,26 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 		"udp", cfg.UDPListen,
 		"path", wsPath)
 
+	// Phase B: tell driveAfterConn (and through it, BuildAgentEnv) where agents
+	// should dial for the proxy. Prefer WSListen if set; UDP-only listen uses
+	// the UDPListen addr with "udp" transport.
+	if cfg.Config.ProxyVia == "" {
+		switch {
+		case cfg.WSListen != "":
+			cfg.Config.ProxyVia = "ws:" + cfg.WSListen + "-*"
+		case cfg.UDPListen != "":
+			cfg.Config.ProxyVia = "udp:" + cfg.UDPListen + "-*"
+		}
+	}
+
+	// sessionRef is shared across all accepted conns so the agent-proxy
+	// handler (for agent dials) can look up the live server-conn session
+	// (set by the server-dial handler). atomic.Pointer is sufficient: at
+	// most one server conn is alive at a time, and agent conns only read.
+	// Backed by lastListenSession (package-scope) so test hooks can read
+	// the established Session — see runner/test_hooks.go.
+	sessionRef := &lastListenSession
+
 	connCh := ep.GetNewActiveConnectionChannel()
 	for {
 		select {
@@ -99,28 +122,137 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 				Logger:       cfg.Logger,
 				PingInterval: cfg.PingInterval,
 			})
-			go handleAcceptedConn(ctx, cfg.Config, pc)
+			go handleAcceptedConn(ctx, cfg.Config, sessionRef, ep, pc)
 		}
 	}
 }
 
-// handleAcceptedConn drives a freshly-accepted peer.Conn through the same
-// PSK + Hello + dispatch lifecycle as the outbound Connect/OnConnect path.
-// Errors are logged and the conn is closed; the listen loop continues.
-func handleAcceptedConn(ctx context.Context, cfg Config, pc *peer.Conn) {
+// firstMsgT is the first inbound app payload captured by the OnControl
+// shim installed in handleAcceptedConn, used to dispatch by wire kind.
+type firstMsgT struct {
+	kind    wire.ApplicationPayloadKind
+	payload []byte
+}
+
+// lastListenSession holds the most recently established Session from
+// ListenAndServe's accept path. Updated when a server conn completes
+// driveAfterConn + OnConnect; cleared via CompareAndSwap on disconnect.
+// Test-only access point (see runner/test_hooks.go). Production code does
+// not depend on this — it's read by the agent-proxy handler via the
+// sessionRef parameter passed into handleAcceptedConn.
+var lastListenSession atomic.Pointer[Session]
+
+// handleAcceptedConn peeks the first inbound payload on a freshly-accepted
+// peer.Conn and routes to the server-dial path (DialGreeting) or the
+// agent-proxy path (AgentProxyControl). Other kinds are logged and the
+// conn closed. peer.Conn.Start is idempotent so driveAfterConn (server
+// path) re-calling it is a no-op.
+func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], ep objproto.Endpoint, pc *peer.Conn) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+
+	firstMsg := make(chan firstMsgT, 1)
+	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+		// Copy: peer.Conn does not promise the slice is retained beyond
+		// this callback (it sits over a pooled receive buffer).
+		select {
+		case firstMsg <- firstMsgT{kind: kind, payload: append([]byte(nil), payload...)}:
+		default:
+		}
+	})
+	pc.Start(ctx)
+
+	select {
+	case <-ctx.Done():
+		pc.Close()
+		return
+	case msg := <-firstMsg:
+		switch msg.kind {
+		case wire.ApplicationPayloadKind_DialGreeting:
+			// Best-effort: log the greeting version. Decode failure is
+			// non-fatal — server-conn path proceeds regardless.
+			var g protocol.DialGreeting
+			if _, err := g.Decode(msg.payload); err == nil {
+				cfg.Logger.Info("server greeting received", "version", g.Version)
+			}
+			handleServerConn(ctx, cfg, sessionRef, pc)
+		case wire.ApplicationPayloadKind_AgentProxyControl:
+			handleAgentProxyConn(ctx, cfg, sessionRef, ep, pc, msg)
+		default:
+			cfg.Logger.Warn("accepted conn sent unexpected first payload",
+				"kind", msg.kind,
+				"remote", pc.Connection().ConnectionID().String())
+			pc.Close()
+		}
+	}
+}
+
+// handleServerConn drives the server-dial path (DialGreeting first). It
+// invokes driveAfterConn — which replaces the OnControl shim, re-calls
+// Start (no-op due to idempotence), and performs the PSK exchange — then
+// publishes the resulting session to sessionRef so concurrent agent-proxy
+// dials can read it.
+func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], pc *peer.Conn) {
 	h, err := driveAfterConn(ctx, cfg, pc)
 	if err != nil {
 		// driveAfterConn already closes pc on PSK failure; do not double-close
 		// (peer.Conn.Close re-sends a wire Close + sleeps 50ms each call).
-		cfg.Logger.Error("accepted conn: PSK/setup failed", "err", err)
+		cfg.Logger.Error("server conn: PSK/setup failed", "err", err)
 		return
 	}
-	defer h.Close()
+	sessionRef.Store(h.session)
+	defer func() {
+		sessionRef.CompareAndSwap(h.session, nil)
+		h.Close()
+	}()
 	if err := OnConnect(ctx, h); err != nil {
-		cfg.Logger.Error("accepted conn: OnConnect failed", "err", err)
+		cfg.Logger.Error("server conn: OnConnect failed", "err", err)
+	}
+}
+
+// handleAgentProxyConn drives the agent-proxy ceremony for an agent-dialed
+// peer.Conn. Closes pc unconditionally on return (per spec ordering: SetProxy
+// → ack → Close, all inside runAgentProxyCeremony, then this defer fires).
+func handleAgentProxyConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], ep objproto.Endpoint, pc *peer.Conn, first firstMsgT) {
+	defer pc.Close()
+
+	var envelope protocol.ProxyControl
+	if _, err := envelope.Decode(first.payload); err != nil {
+		cfg.Logger.Warn("agent proxy: decode ProxyControl failed", "err", err)
+		return
+	}
+	if envelope.Kind != protocol.ProxyControlKind_Request {
+		cfg.Logger.Warn("agent proxy: first message is not Request", "kind", envelope.Kind)
+		return
+	}
+	req := envelope.Request()
+	if req == nil {
+		cfg.Logger.Warn("agent proxy: Request variant nil")
+		return
+	}
+
+	sess := sessionRef.Load()
+	var serverCID objproto.ConnectionID
+	hasServerConn := sess != nil
+	if hasServerConn {
+		serverCID = sess.ServerCIDForProxyAllocate()
+	}
+	taskExists := func(t protocol.TaskID) bool {
+		if sess == nil {
+			return false
+		}
+		return sess.HasTask(t)
+	}
+
+	st := &proxyHandlerState{
+		serverCID:     serverCID,
+		hasServerConn: hasServerConn,
+		taskExists:    taskExists,
+	}
+
+	if err := runAgentProxyCeremony(ctx, cfg.Logger, st, ep, pc, *req); err != nil {
+		cfg.Logger.Error("agent proxy ceremony failed", "err", err)
 	}
 }
 

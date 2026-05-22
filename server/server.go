@@ -568,6 +568,14 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	s.scheduler.Tick()
 }
 
+// RegisteredRunners returns a snapshot of currently registered runners.
+// Test-only accessor; production code reads via the publishRunnerEvent
+// hooks. Delegates to Registry.List, which already returns value snapshots
+// independent of the internal map.
+func (s *Server) RegisteredRunners() []RunnerEntry {
+	return s.registry.List()
+}
+
 // SetBoard wires an agentboard.Board into all handlers that participate in the
 // ticket lifecycle (Dispatcher, TaskHandler, RunnerHandler). Call this after
 // New and before Run. Task 9 (cmd/harness-server/main.go) is responsible for

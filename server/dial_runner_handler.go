@@ -9,6 +9,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // DialRunnerHandler handles a single TaskControlKind_DialRunner request:
@@ -76,6 +77,23 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner: ECDH handshake failed", "target", fmt.Sprintf("%v", cid), "err", err)
 		}
+		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
+	}
+
+	// Emit a DialGreeting so the runner's accept handler can identify this
+	// as a server-dialed conn (vs an agent-dialed conn that would send
+	// ProxyControl). The greeting carries a version byte for forward
+	// compatibility; runner ignores unknown versions.
+	greeting := protocol.DialGreeting{Version: 1}
+	greetingPayload := greeting.MustAppend([]byte{byte(wire.ApplicationPayloadKind_DialGreeting)})
+	if _, _, err := conn.SendMessage(greetingPayload); err != nil {
+		if h.Logger != nil {
+			h.Logger.Warn("dial-runner: failed to send greeting", "err", err)
+		}
+		// Close the conn so the runner's accept-side goroutine (blocked
+		// in handleAcceptedConn waiting for the first inbound payload)
+		// unblocks via pc.Done() instead of leaking until ctx cancellation.
+		_ = conn.Close()
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
 	}
 
