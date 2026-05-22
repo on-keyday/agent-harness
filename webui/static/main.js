@@ -143,7 +143,7 @@ const POLL_INTERVAL_MS = 5000;
     try {
       const evt = JSON.parse(jsonStr);
       const banner = `[${new Date().toISOString()}] ${evt.line}`;
-      cmdOutput.textContent = `${banner}\n` + cmdOutput.textContent;
+      appendCmdOutput(banner);
     } catch (e) { /* ignore */ }
     refreshSnapshot();
   };
@@ -151,11 +151,31 @@ const POLL_INTERVAL_MS = 5000;
     window.harness.watch().catch(e => console.error("watch:", e));
   });
 
+  // appendCmdOutput appends a line to the cmd-output history pane
+  // (newest at the bottom, terminal-style) and scrolls the pane / page
+  // so the new entry is visible. Caps the buffer at MAX_OUTPUT_LINES
+  // by dropping the oldest entries.
+  const MAX_OUTPUT_LINES = 2000;
+  const appendCmdOutput = (text) => {
+    const cur = cmdOutput.textContent;
+    let next = cur === "" ? text : cur + "\n" + text;
+    const lines = next.split("\n");
+    if (lines.length > MAX_OUTPUT_LINES) {
+      next = lines.slice(lines.length - MAX_OUTPUT_LINES).join("\n");
+    }
+    cmdOutput.textContent = next;
+    // If the pane itself is scrollable, keep its tail visible; either
+    // way, scroll the element bottom into the viewport so the user
+    // does not have to scroll the page to find the new line.
+    cmdOutput.scrollTop = cmdOutput.scrollHeight;
+    cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
+  };
+
   const runCmd = async () => {
     const line = cmdInput.value.trim();
     if (!line) return;
     cmdInput.value = "";
-    cmdOutput.textContent = `> ${line}\n` + cmdOutput.textContent;
+    appendCmdOutput(`> ${line}`);
     try {
       const tokens = tokenize(line);   // quote-aware
       const cmd = tokens[0];
@@ -219,10 +239,10 @@ const POLL_INTERVAL_MS = 5000;
         default:
           out = `unknown command: ${cmd} (type 'help' for the list)`;
       }
-      cmdOutput.textContent = `${out}\n` + cmdOutput.textContent;
+      appendCmdOutput(out);
       refreshSnapshot();
     } catch (e) {
-      cmdOutput.textContent = `error: ${e.message}\n` + cmdOutput.textContent;
+      appendCmdOutput(`error: ${e.message}`);
     }
   };
   cmdRun.addEventListener("click", runCmd);
