@@ -113,9 +113,16 @@ const POLL_INTERVAL_MS = 5000;
       taskList.textContent = `snapshot error: ${e.message}`;
       return;
     }
-    renderRunnerSelect(runnerSelect, snap.runners);
-    renderHostSelect(hostSelect, snap.runners);
-    runnerList.textContent = renderRunners(snap.runners);
+    // The server-side snapshot iterates a registry map whose Go iteration
+    // order is randomized, so consecutive polls return the same runners in
+    // a different sequence — visibly shuffling the list / dropdown options
+    // on every refresh. Sort once here on a stable key composed of
+    // (hostname asc, connectedAt asc, joined roots asc) so the three
+    // render functions below all observe the same stable ordering.
+    const sortedRunners = sortRunners(snap.runners || []);
+    renderRunnerSelect(runnerSelect, sortedRunners);
+    renderHostSelect(hostSelect, sortedRunners);
+    runnerList.textContent = renderRunners(sortedRunners);
     taskList.textContent   = renderTasks(snap.tasks);
   };
   await refreshSnapshot();
@@ -367,6 +374,29 @@ const POLL_INTERVAL_MS = 5000;
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   });
 })();
+
+// sortRunners returns a new array sorted by (hostname asc, connectedAt
+// asc, joined-roots asc). Used by refreshSnapshot to stabilise the UI
+// against Go-map iteration randomness on the server side. The keys are
+// chosen so the typical case (a handful of hosts, each with a few slots)
+// renders as host-grouped blocks whose order does not change as long as
+// no runner re-registers.
+function sortRunners(runners) {
+  const key = (r) => [
+    r.hostname || "",
+    Number(r.connectedAt || 0),
+    Array.isArray(r.roots) ? r.roots.join(",") : "",
+  ];
+  return [...runners].sort((a, b) => {
+    const ka = key(a);
+    const kb = key(b);
+    for (let i = 0; i < ka.length; i++) {
+      if (ka[i] < kb[i]) return -1;
+      if (ka[i] > kb[i]) return  1;
+    }
+    return 0;
+  });
+}
 
 // renderRunnerSelect rebuilds the repo <select> options from the snapshot.
 // Each option value is a root path. We de-duplicate across runners and
