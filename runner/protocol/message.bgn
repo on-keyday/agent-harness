@@ -7,6 +7,7 @@ enum RunnerMessageType:
     task_started
     task_finished
     heartbeat
+    establish_relay_response
 
 enum RunnerRequestType:
     :u8
@@ -17,6 +18,7 @@ enum RunnerRequestType:
     task_wake
     open_file_transfer
     list_files
+    establish_relay
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -132,6 +134,7 @@ format RunnerMessage:
         RunnerMessageType.task_started => task_started :TaskStarted
         RunnerMessageType.task_finished => task_finished :TaskFinished
         RunnerMessageType.heartbeat => ..
+        RunnerMessageType.establish_relay_response => establish_relay_response :EstablishRelayResponse
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -144,6 +147,7 @@ format RunnerRequest:
         RunnerRequestType.task_wake => task_wake :TaskWakeRequest
         RunnerRequestType.open_file_transfer => open_file_transfer :RunnerOpenFileTransferRequest
         RunnerRequestType.list_files         => list_files         :RunnerListFilesRequest
+        RunnerRequestType.establish_relay   => establish_relay   :EstablishRelayRequest
 
 enum TaskControlKind:
     :u8
@@ -185,6 +189,7 @@ format ClientHelloResponse:
 # the TCP/UDP connect instead.
 format DialRunnerRequest:
     target :RunnerID
+    via    :RunnerID
 
 enum DialRunnerStatus:
     :u8
@@ -193,9 +198,28 @@ enum DialRunnerStatus:
     psk_failed     = "psk_failed"
     hello_timeout  = "hello_timeout"
     invalid_target = "invalid_target"
+    via_not_found      = "via_not_found"
+    via_relay_failed   = "via_relay_failed"
 
 format DialRunnerResponse:
     status :DialRunnerStatus
+
+# server → proxy_runner: please prepare to relay between me and target at slot_id.
+# Sent on the existing PSK-validated server↔proxy_runner registered conn.
+format EstablishRelayRequest:
+    target  :RunnerID
+    slot_id :u16
+
+enum EstablishRelayStatus:
+    :u8
+    ok                       = "ok"
+    target_dial_failed       = "target_dial_failed"
+    slot_collision           = "slot_collision"
+    set_proxy_failed         = "set_proxy_failed"
+    invalid_target           = "invalid_target"
+
+format EstablishRelayResponse:
+    status :EstablishRelayStatus
 
 # Phase B: agent ↔ runner negotiated-proxy ceremony.
 # Agent sends ProxyRequest as the first app message after peer.Dial-ing the
