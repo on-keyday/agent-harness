@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -197,7 +196,6 @@ func startFakeProxyRunner(t *testing.T, listenAddr string, respond func(protocol
 						time.Sleep(100 * time.Millisecond)
 						pc.Close()
 					}
-					_ = hex.EncodeToString // silence import if needed
 				}(pc)
 			}
 		}

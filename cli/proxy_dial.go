@@ -135,10 +135,12 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 	// with the actual server (handshake packets are forwarded by the runner).
 	newKey, newHS, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
+		localConn.Close()
 		return nil, fmt.Errorf("new ECDH handshake: %w", err)
 	}
 	rh, err := localConn.Connection().RehandshakeForProxy(newKey, newHS)
 	if err != nil {
+		localConn.Close()
 		return nil, fmt.Errorf("RehandshakeForProxy: %w", err)
 	}
 	rhCtx, rhCancel := context.WithTimeout(ctx, 10*time.Second)
