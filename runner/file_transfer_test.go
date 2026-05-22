@@ -902,3 +902,114 @@ func TestHandleOpenFileTransfer_DirPushRejectPathTraversal(t *testing.T) {
 		t.Fatalf("ack status = %v want path_invalid", ack.Status)
 	}
 }
+
+// --- dir_delete -----------------------------------------------------------
+
+// dirDeleteRequest builds the boilerplate Session + stream pair used by the
+// dir_delete tests below. Returns the ack-reader half of the bidi pair.
+func dirDeleteRequest(t *testing.T, tmp, taskIDHex, rel string, force bool) *memBidi {
+	t.Helper()
+	taskID := mustParseTaskID(t, taskIDHex)
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: protocol.FileTransferDirection_DirDelete,
+	}
+	req.SetRelPath([]byte(rel))
+	req.SetForce(force)
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	_ = clientEnd.AppendData(true)
+	return clientEnd
+}
+
+func TestHandleOpenFileTransfer_DirDeleteEmpty(t *testing.T) {
+	tmp := t.TempDir()
+	if err := os.Mkdir(filepath.Join(tmp, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	client := dirDeleteRequest(t, tmp, "00000000000000000000000000000040", "empty", false)
+	ack := readAck(t, client)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "empty")); !os.IsNotExist(err) {
+		t.Fatalf("dir should be gone: stat err=%v", err)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirDeleteNonEmptyWithoutForce(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "notempty")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "inside.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client := dirDeleteRequest(t, tmp, "00000000000000000000000000000041", "notempty", false)
+	ack := readAck(t, client)
+	if ack.Status != protocol.FileTransferStatus_NotEmpty {
+		t.Fatalf("ack status = %v want not_empty", ack.Status)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("dir should still exist: %v", err)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirDeleteNonEmptyWithForce(t *testing.T) {
+	tmp := t.TempDir()
+	dir := filepath.Join(tmp, "tree")
+	if err := os.MkdirAll(filepath.Join(dir, "nested", "deep"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "nested", "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client := dirDeleteRequest(t, tmp, "00000000000000000000000000000042", "tree", true)
+	ack := readAck(t, client)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("tree should be gone recursively: stat err=%v", err)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirDeleteRejectsFile(t *testing.T) {
+	tmp := t.TempDir()
+	target := filepath.Join(tmp, "leaf.txt")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Both force values should be rejected — dir_delete is dirs only.
+	for _, force := range []bool{false, true} {
+		client := dirDeleteRequest(t, tmp, "00000000000000000000000000000043", "leaf.txt", force)
+		ack := readAck(t, client)
+		if ack.Status != protocol.FileTransferStatus_NotADirectory {
+			t.Fatalf("force=%v: ack status = %v want not_a_directory", force, ack.Status)
+		}
+		if _, err := os.Stat(target); err != nil {
+			t.Fatalf("force=%v: file should still exist: %v", force, err)
+		}
+	}
+}
+
+func TestHandleOpenFileTransfer_DirDeleteNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	client := dirDeleteRequest(t, tmp, "00000000000000000000000000000044", "absent", false)
+	ack := readAck(t, client)
+	if ack.Status != protocol.FileTransferStatus_NotFound {
+		t.Fatalf("ack status = %v want not_found", ack.Status)
+	}
+}

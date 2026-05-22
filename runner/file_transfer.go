@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -186,14 +187,62 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 		s.runDirPush(stream, worktreeDir, full, req.Force())
 	case protocol.FileTransferDirection_DirPull:
 		s.runDirPull(stream, full)
+	case protocol.FileTransferDirection_DirDelete:
+		s.runDirDelete(stream, full, req.Force())
 	default:
 		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 	}
 }
 
+// runDirDelete removes the directory at full. force=false uses os.Remove
+// (succeeds only when the directory is empty — ENOTEMPTY is mapped to
+// FileTransferStatus_NotEmpty). force=true uses os.RemoveAll (recursive,
+// includes non-empty trees and regular-file children but still refuses
+// to traverse a symlink — rejectIfSymlinkInPath has already been called
+// for the leaf, but interior symlinks within the tree are followed by
+// RemoveAll only when removing them as ordinary directory entries, never
+// as targets, so this is safe). Regular files at the leaf are rejected
+// with NotADirectory; use `delete` for those.
+func (s *Session) runDirDelete(stream trsf.BidirectionalStream, full string, force bool) {
+	fi, err := os.Lstat(full)
+	if err != nil {
+		switch {
+		case os.IsNotExist(err):
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		default:
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	if !fi.IsDir() {
+		_ = writeAck(stream, protocol.FileTransferStatus_NotADirectory, 0)
+		return
+	}
+	if force {
+		if err := os.RemoveAll(full); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+	} else {
+		if err := os.Remove(full); err != nil {
+			switch {
+			case os.IsNotExist(err):
+				_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+			case errors.Is(err, syscall.ENOTEMPTY):
+				_ = writeAck(stream, protocol.FileTransferStatus_NotEmpty, 0)
+			default:
+				_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			}
+			return
+		}
+	}
+	_ = writeAck(stream, protocol.FileTransferStatus_Ok, 0)
+}
+
 // runDelete unlinks the file at full and acks the result. Directories are
-// rejected (use a recursive variant in v2 if needed). Symlink check has
-// already been performed by handleOpenFileTransfer.
+// rejected (use `dir_delete` for those — files-only is intentional here
+// to keep the delete semantics narrow). Symlink check has already been
+// performed by handleOpenFileTransfer.
 func (s *Session) runDelete(stream trsf.BidirectionalStream, full string) {
 	fi, err := os.Lstat(full)
 	if err != nil {
