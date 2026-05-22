@@ -1,4 +1,4 @@
-////go:build integration
+//go:build integration
 
 // Reverse-dial E2E for harness-cli server dial-runner.
 //

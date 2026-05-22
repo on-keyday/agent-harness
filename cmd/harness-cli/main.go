@@ -314,7 +314,8 @@ func main() {
 				fmt.Fprintln(os.Stderr, "usage: harness-cli server dial-runner <runner-cid>")
 				os.Exit(2)
 			}
-			targetCID, err := cliopts.ResolveServerCID(rest[0])
+			targetCID, err := objproto.ParseConnectionID(rest[0],
+				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 			if err != nil {
 				die(fmt.Errorf("parse runner-cid: %w", err))
 			}
@@ -419,7 +420,7 @@ func serverUsage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli server <subcommand> [flags]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
-	fmt.Fprintln(os.Stderr, "  dial-runner RUNNER_CID              ask the server to ECDH-dial RUNNER_CID")
+	fmt.Fprintln(os.Stderr, "  dial-runner RUNNER_CID              ask the server to reverse-dial RUNNER_CID (Phase A)")
 	fmt.Fprintln(os.Stderr, "                                      (runner must be running in --listen / --udp-listen mode)")
 	fmt.Fprintln(os.Stderr, "                                      prints the DialRunnerStatus and exits non-zero on non-Ok")
 }

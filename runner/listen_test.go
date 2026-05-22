@@ -17,7 +17,7 @@ import (
 // PSK — that would require the client to know the runner's PSK byte,
 // which is covered by Task 7's integration test.
 func TestListenAcceptsIncomingDial(t *testing.T) {
-	const listenAddr = "127.0.0.1:18540"
+	const listenAddr = "127.0.0.1:18542"
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
