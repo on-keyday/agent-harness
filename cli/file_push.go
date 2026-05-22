@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -25,7 +26,24 @@ func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel s
 	if err != nil {
 		return fmt.Errorf("file push: stat local: %w", err)
 	}
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, uint64(st.Size()), force)
+	return c.filePushFromReader(ctx, taskIDHex, src, uint64(st.Size()), remoteRel, force)
+}
+
+// FilePushBytes is the bytes-in variant of FilePush. Used by the WebUI
+// wasm bridge to push file contents that the browser obtained via the
+// FileReader / File.arrayBuffer() APIs — there is no local fs path on
+// that side, so the runner-facing protocol is driven directly from a
+// byte slice.
+func (c *Client) FilePushBytes(ctx context.Context, taskIDHex string, data []byte, remoteRel string, force bool) error {
+	return c.filePushFromReader(ctx, taskIDHex, bytes.NewReader(data), uint64(len(data)), remoteRel, force)
+}
+
+// filePushFromReader is the shared protocol path: open the push stream,
+// copy size bytes from src into it, EOF, and wait for the ack. Both the
+// file-backed FilePush and the bytes-backed FilePushBytes go through
+// here so the wire side has one well-tested code path.
+func (c *Client) filePushFromReader(ctx context.Context, taskIDHex string, src io.Reader, size uint64, remoteRel string, force bool) error {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, force)
 	if err != nil {
 		return err
 	}
