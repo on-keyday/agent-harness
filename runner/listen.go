@@ -152,6 +152,20 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 		cfg.Logger = slog.Default()
 	}
 
+	// Server-via-relay: if this conn's CID's slot matches an expectedRelays
+	// entry, this is the server's slot_id dial setting up a SetProxy
+	// forward toward the relay target. Short-circuit before installing the
+	// OnControl peek / Start ceremony: completeRelaySetup calls SetProxy
+	// then closes pc, leaving the proxy entry in place. Take() is one-shot
+	// so re-dials on the same slot fall through to the normal dispatch.
+	if sess := sessionRef.Load(); sess != nil && sess.ExpectedRelays != nil {
+		slotID := pc.Connection().ConnectionID().ID
+		if target, ok := sess.ExpectedRelays.Take(slotID); ok {
+			completeRelaySetup(cfg.Logger, ep, pc, target, slotID)
+			return
+		}
+	}
+
 	firstMsg := make(chan firstMsgT, 1)
 	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
 		// Copy: peer.Conn does not promise the slice is retained beyond
