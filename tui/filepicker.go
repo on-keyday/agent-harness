@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -48,15 +49,36 @@ type FilePickerModel struct {
 	entries   []cli.FileEntryView
 	cursor    int
 
-	inputMode       pickerInputMode
-	input           textinput.Model
-	deleteTarget    string
-	deleteRecursive bool
-	deleteForce     bool
+	inputMode        pickerInputMode
+	input            textinput.Model
+	deleteTarget     string
+	deleteRecursive  bool
+	deleteForce      bool
+	deleteIsLocal    bool            // true when the pending confirm is for a local fs delete
+	deleteReturnMode pickerInputMode // inputMode to restore after confirm (so local-delete from inside push/pull subpopup returns to that subpopup)
+
+	// Local file browser state, active when inputMode is
+	// pickerAskPushSrc / pickerAskPullDst AND localBrowseActive is on.
+	// Tab in the typing input toggles into this mode; Tab here toggles
+	// back. Esc cancels the whole input flow.
+	localBrowseActive bool
+	localCurDir       string
+	localEntries      []localEntry
+	localCursor       int
+	localErr          string
 
 	msg    string // ephemeral status / error line in the header
 	width  int
 	height int
+}
+
+// localEntry is the local-fs equivalent of cli.FileEntryView used by
+// the picker's local browser. Kept independent so the local mode does
+// not pretend to be a wire-side listing.
+type localEntry struct {
+	Name  string
+	IsDir bool
+	Size  int64
 }
 
 // NewFilePicker constructs an idle picker.
@@ -103,6 +125,13 @@ func (m *FilePickerModel) Close() {
 	m.deleteTarget = ""
 	m.deleteRecursive = false
 	m.deleteForce = false
+	m.deleteIsLocal = false
+	m.deleteReturnMode = pickerNone
+	m.localBrowseActive = false
+	m.localCurDir = ""
+	m.localEntries = nil
+	m.localCursor = 0
+	m.localErr = ""
 	m.msg = ""
 }
 
@@ -247,6 +276,8 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 		m.deleteTarget = e.Name
 		m.deleteRecursive = false
 		m.deleteForce = false
+		m.deleteIsLocal = false
+		m.deleteReturnMode = pickerNone
 		m.inputMode = pickerConfirmDelete
 		return m, nil
 	case "D":
@@ -261,6 +292,8 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 		m.deleteTarget = e.Name
 		m.deleteRecursive = true
 		m.deleteForce = true
+		m.deleteIsLocal = false
+		m.deleteReturnMode = pickerNone
 		m.inputMode = pickerConfirmDelete
 		return m, nil
 	}
@@ -268,6 +301,39 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 }
 
 func (m FilePickerModel) handleInputKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
+	// Tab toggles between the typing prompt and the local file browser.
+	// Typed text and cursor positions are preserved across the toggle so
+	// users can browse to find a starting point and then refine the
+	// exact path by typing.
+	if k.Type == tea.KeyTab {
+		if m.localBrowseActive {
+			m.localBrowseActive = false
+			m.input.Focus()
+			return m, nil
+		}
+		m.localBrowseActive = true
+		m.input.Blur()
+		if m.localCurDir == "" {
+			if cwd, err := os.Getwd(); err == nil {
+				m.localCurDir = cwd
+			} else {
+				m.localCurDir = "."
+			}
+		}
+		entries, lerr := readLocalDirEntries(m.localCurDir)
+		m.localEntries = entries
+		m.localCursor = 0
+		if lerr != nil {
+			m.localErr = lerr.Error()
+		} else {
+			m.localErr = ""
+		}
+		return m, nil
+	}
+	if m.localBrowseActive {
+		return m.handleLocalBrowseKey(k)
+	}
+
 	if k.Type == tea.KeyEsc {
 		m.inputMode = pickerNone
 		m.input.Reset()
@@ -281,55 +347,213 @@ func (m FilePickerModel) handleInputKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd)
 			m.input.Blur()
 			return m, nil
 		}
-		switch m.inputMode {
-		case pickerAskPushSrc:
-			destDir := m.curDir
-			if m.cursor >= 0 && m.cursor < len(m.entries) {
-				if e := m.entries[m.cursor]; e.IsDir {
-					destDir = joinRel(m.curDir, e.Name)
-				}
-			}
-			base := localBase(path)
-			dest := joinRel(destDir, base)
-			recursive := isLocalDir(path)
-			m.inputMode = pickerNone
-			m.input.Blur()
-			return m, DoFilePush(m.client, m.taskID, path, dest, recursive, true)
-		case pickerAskPullDst:
-			if m.cursor < 0 || m.cursor >= len(m.entries) {
-				m.inputMode = pickerNone
-				m.input.Blur()
-				return m, nil
-			}
-			e := m.entries[m.cursor]
-			src := joinRel(m.curDir, e.Name)
-			recursive := e.IsDir
-			m.inputMode = pickerNone
-			m.input.Blur()
-			return m, DoFilePull(m.client, m.taskID, src, path, recursive, true)
-		}
+		return m.commitInputPath(path)
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(k)
 	return m, cmd
 }
 
+// commitInputPath fires the push or pull with the supplied local path.
+// Used by both the typing-input Enter handler and the local-browser
+// Enter-on-file handler so the two converge on the same dispatch logic.
+func (m FilePickerModel) commitInputPath(path string) (FilePickerModel, tea.Cmd) {
+	switch m.inputMode {
+	case pickerAskPushSrc:
+		destDir := m.curDir
+		if m.cursor >= 0 && m.cursor < len(m.entries) {
+			if e := m.entries[m.cursor]; e.IsDir {
+				destDir = joinRel(m.curDir, e.Name)
+			}
+		}
+		base := localBase(path)
+		dest := joinRel(destDir, base)
+		recursive := isLocalDir(path)
+		m.inputMode = pickerNone
+		m.localBrowseActive = false
+		m.input.Blur()
+		return m, DoFilePush(m.client, m.taskID, path, dest, recursive, true)
+	case pickerAskPullDst:
+		if m.cursor < 0 || m.cursor >= len(m.entries) {
+			m.inputMode = pickerNone
+			m.localBrowseActive = false
+			m.input.Blur()
+			return m, nil
+		}
+		e := m.entries[m.cursor]
+		src := joinRel(m.curDir, e.Name)
+		recursive := e.IsDir
+		m.inputMode = pickerNone
+		m.localBrowseActive = false
+		m.input.Blur()
+		return m, DoFilePull(m.client, m.taskID, src, path, recursive, true)
+	}
+	return m, nil
+}
+
+// handleLocalBrowseKey handles keys while the local file browser is
+// active inside the push/pull input subpopup.
+func (m FilePickerModel) handleLocalBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
+	switch k.String() {
+	case "esc":
+		// Exit the input flow entirely.
+		m.inputMode = pickerNone
+		m.localBrowseActive = false
+		m.input.Reset()
+		m.input.Blur()
+		return m, nil
+	case "up", "k":
+		if m.localCursor > 0 {
+			m.localCursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.localCursor < len(m.localEntries)-1 {
+			m.localCursor++
+		}
+		return m, nil
+	case "enter", "right", "l":
+		if m.localCursor < 0 || m.localCursor >= len(m.localEntries) {
+			return m, nil
+		}
+		e := m.localEntries[m.localCursor]
+		full := joinLocal(m.localCurDir, e.Name)
+		if e.IsDir {
+			// For push, Enter on a dir descends. For pull, Enter on a
+			// dir descends too (use the next selection or type a path).
+			m.localCurDir = full
+			entries, lerr := readLocalDirEntries(full)
+			m.localEntries = entries
+			m.localCursor = 0
+			if lerr != nil {
+				m.localErr = lerr.Error()
+			} else {
+				m.localErr = ""
+			}
+			return m, nil
+		}
+		// Enter on a file commits the action using that file's full
+		// path as the local side.
+		return m.commitInputPath(full)
+	case "backspace", "left", "h":
+		parent := localParent(m.localCurDir)
+		if parent == m.localCurDir {
+			return m, nil
+		}
+		m.localCurDir = parent
+		entries, lerr := readLocalDirEntries(parent)
+		m.localEntries = entries
+		m.localCursor = 0
+		if lerr != nil {
+			m.localErr = lerr.Error()
+		} else {
+			m.localErr = ""
+		}
+		return m, nil
+	case "r":
+		entries, lerr := readLocalDirEntries(m.localCurDir)
+		m.localEntries = entries
+		if lerr != nil {
+			m.localErr = lerr.Error()
+		} else {
+			m.localErr = ""
+		}
+		return m, nil
+	case ".":
+		// '.' commits the action with the current dir as the local
+		// path. Useful for pull-into-this-dir without descending into
+		// a specific file.
+		return m.commitInputPath(m.localCurDir)
+	case "d":
+		if m.localCursor < 0 || m.localCursor >= len(m.localEntries) {
+			return m, nil
+		}
+		e := m.localEntries[m.localCursor]
+		if e.IsDir {
+			m.localErr = "use D for directory delete"
+			return m, nil
+		}
+		m.deleteTarget = joinLocal(m.localCurDir, e.Name)
+		m.deleteRecursive = false
+		m.deleteForce = false
+		m.deleteIsLocal = true
+		m.deleteReturnMode = m.inputMode // restore push/pull subpopup after confirm
+		m.inputMode = pickerConfirmDelete
+		return m, nil
+	case "D":
+		if m.localCursor < 0 || m.localCursor >= len(m.localEntries) {
+			return m, nil
+		}
+		e := m.localEntries[m.localCursor]
+		if !e.IsDir {
+			m.localErr = "use d for file delete"
+			return m, nil
+		}
+		m.deleteTarget = joinLocal(m.localCurDir, e.Name)
+		m.deleteRecursive = true
+		m.deleteForce = true
+		m.deleteIsLocal = true
+		m.deleteReturnMode = m.inputMode
+		m.inputMode = pickerConfirmDelete
+		return m, nil
+	}
+	return m, nil
+}
+
 func (m FilePickerModel) handleConfirmKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
 	switch k.String() {
 	case "y", "Y":
-		target := joinRel(m.curDir, m.deleteTarget)
+		target := m.deleteTarget
 		rec := m.deleteRecursive
 		force := m.deleteForce
-		m.inputMode = pickerNone
+		isLocal := m.deleteIsLocal
+		returnMode := m.deleteReturnMode
+		// Reset the pending-delete fields up front so the state is
+		// clean whether we dispatch a Cmd (remote) or run synchronously
+		// (local) below.
 		m.deleteTarget = ""
 		m.deleteRecursive = false
 		m.deleteForce = false
-		return m, DoFileDelete(m.client, m.taskID, target, rec, force)
+		m.deleteIsLocal = false
+		m.deleteReturnMode = pickerNone
+
+		if isLocal {
+			var err error
+			if rec {
+				err = os.RemoveAll(target)
+			} else {
+				err = os.Remove(target)
+			}
+			if err != nil {
+				m.msg = "local delete error: " + err.Error()
+			} else {
+				m.msg = "local delete ok: " + target
+				// Refresh the local listing in place so the picker
+				// reflects the change without an explicit reload key.
+				entries, lerr := readLocalDirEntries(m.localCurDir)
+				m.localEntries = entries
+				if m.localCursor >= len(entries) && len(entries) > 0 {
+					m.localCursor = len(entries) - 1
+				}
+				if lerr != nil {
+					m.localErr = lerr.Error()
+				}
+			}
+			m.inputMode = returnMode
+			return m, nil
+		}
+		// Remote delete dispatch.
+		m.inputMode = returnMode
+		return m, DoFileDelete(m.client, m.taskID, joinRel(m.curDir, target), rec, force)
+
 	case "n", "N", "esc":
-		m.inputMode = pickerNone
+		returnMode := m.deleteReturnMode
 		m.deleteTarget = ""
 		m.deleteRecursive = false
 		m.deleteForce = false
+		m.deleteIsLocal = false
+		m.deleteReturnMode = pickerNone
+		m.inputMode = returnMode
 		m.msg = "delete cancelled"
 		return m, nil
 	}
@@ -371,24 +595,60 @@ func (m FilePickerModel) View() string {
 	}
 
 	switch m.inputMode {
-	case pickerAskPushSrc:
-		fmt.Fprintf(&b, "\npush source (local): %s\n(Esc to cancel)\n", m.input.View())
-	case pickerAskPullDst:
-		fmt.Fprintf(&b, "\npull destination (local): %s\n(Esc to cancel)\n", m.input.View())
+	case pickerAskPushSrc, pickerAskPullDst:
+		var label string
+		if m.inputMode == pickerAskPushSrc {
+			label = "push source (local)"
+		} else {
+			label = "pull destination (local)"
+		}
+		b.WriteString("\n")
+		if m.localBrowseActive {
+			fmt.Fprintf(&b, "[%s] local browser · %s\n", label, m.localCurDir)
+			b.WriteString("Tab back to typing · ↑↓ nav · → enter · ← back · Enter file = use · . use this dir · d/D delete · r reload · Esc cancel\n")
+			if m.localErr != "" {
+				b.WriteString("err: " + m.localErr + "\n")
+			}
+			if len(m.localEntries) == 0 {
+				b.WriteString("(empty)\n")
+			} else {
+				for i, e := range m.localEntries {
+					prefix := "  "
+					if i == m.localCursor {
+						prefix = "> "
+					}
+					name := e.Name
+					if e.IsDir {
+						name += "/"
+					}
+					sz := strings.Repeat(" ", 10)
+					if !e.IsDir {
+						sz = fmt.Sprintf("%10d", e.Size)
+					}
+					fmt.Fprintf(&b, "%s%s %s\n", prefix, sz, name)
+				}
+			}
+		} else {
+			fmt.Fprintf(&b, "%s: %s\n(Tab: browse local fs · Esc: cancel)\n", label, m.input.View())
+		}
 	case pickerConfirmDelete:
 		mode := "rm"
 		if m.deleteRecursive {
 			mode = "rm -rf"
 		}
-		fmt.Fprintf(&b, "\n%s %s  ? (y/n)\n", mode, m.deleteTarget)
+		scope := "remote"
+		if m.deleteIsLocal {
+			scope = "local"
+		}
+		fmt.Fprintf(&b, "\n%s (%s) %s  ? (y/n)\n", mode, scope, m.deleteTarget)
 	}
 
+	// Width follows the terminal — only enforce a floor for very narrow
+	// windows so the box stays readable. No upper cap, so long file
+	// names / paths on wide terminals don't get truncated by the box.
 	w := m.width - 4
 	if w < 40 {
 		w = 40
-	}
-	if w > 100 {
-		w = 100
 	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -457,4 +717,48 @@ func isLocalDir(p string) bool {
 		return false
 	}
 	return fi.IsDir()
+}
+
+// readLocalDirEntries lists the local filesystem directory at dir and
+// returns the entries sorted dirs-first / alphabetic within group. Size
+// is best-effort (0 when Stat fails — typically because of permission
+// or a broken symlink); the picker tolerates this rather than refusing
+// to display the directory.
+func readLocalDirEntries(dir string) ([]localEntry, error) {
+	es, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]localEntry, 0, len(es))
+	for _, e := range es {
+		entry := localEntry{Name: e.Name(), IsDir: e.IsDir()}
+		if fi, err := e.Info(); err == nil {
+			entry.Size = fi.Size()
+		}
+		out = append(out, entry)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].IsDir != out[j].IsDir {
+			return out[i].IsDir
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out, nil
+}
+
+// joinLocal joins two local-fs path components using filepath.Join so
+// cross-OS separators are handled correctly.
+func joinLocal(a, b string) string {
+	return filepath.Join(a, b)
+}
+
+// localParent returns the parent directory of a local path. At the
+// filesystem root (or for "."), returns the input unchanged so the
+// picker treats a no-op Backspace at the root as inert.
+func localParent(p string) string {
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p
+	}
+	return parent
 }

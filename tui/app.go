@@ -737,6 +737,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
 		a.cmdresult.Append("F (tasks focus): open file picker — browse the focused task's worktree; u push / g pull / d delete / D rm -rf, Esc closes")
+		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser (↑↓ enter / d delete / D rm -rf local files / . use current dir / Esc cancel)")
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server
