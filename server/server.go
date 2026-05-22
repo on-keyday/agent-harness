@@ -221,6 +221,10 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.taskHandler.Endpoint = ep
+	s.taskHandler.OnDialed = func(dialCtx context.Context, conn objproto.Connection) {
+		go s.handleConnection(dialCtx, conn)
+	}
 	return s.serve(ctx, ep, mux, httpAddr)
 }
 

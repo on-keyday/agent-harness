@@ -57,6 +57,18 @@ type TaskHandler struct {
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
 	RingBufferSize int
 
+	// Endpoint is the server's objproto Endpoint, used by the DialRunner
+	// handler to initiate outbound ECDH handshakes. Required only when
+	// handling TaskControlKind_DialRunner; safe to leave nil in tests that
+	// don't exercise that path.
+	Endpoint objproto.Endpoint
+
+	// OnDialed is called by the DialRunner handler on a successful dial with
+	// the server root context and the newly-active objproto.Connection.
+	// Server.New wires this to: func(ctx, conn) { go s.handleConnection(ctx, conn) }
+	// Safe to leave nil in tests.
+	OnDialed func(ctx context.Context, conn objproto.Connection)
+
 	// clientKinds maps connection ID → the kind of client that announced
 	// itself via ClientHello on that connection. Submit / OpenInteractive
 	// look it up to attribute task origin (ClientKind_Cli / Tui / Webui).
@@ -226,6 +238,27 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_DialRunner:
+		dr := req.DialRunner()
+		if dr == nil {
+			slog.Error("TaskHandler: DialRunner variant is nil")
+			return
+		}
+		dialCtx := h.Ctx
+		if dialCtx == nil {
+			dialCtx = context.Background()
+		}
+		handler := &DialRunnerHandler{
+			Logger:   slog.Default(),
+			Endpoint: h.Endpoint,
+			OnDialed: h.OnDialed,
+		}
+		dialResp := handler.Handle(dialCtx, dr.Target)
+		out := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_DialRunner, RequestId: req.RequestId}
+		out.SetDialRunner(dialResp)
+		bytes := out.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(bytes) //nolint:errcheck
 
 	default:
 		slog.Error("TaskHandler: unhandled kind", "kind", req.Kind)
