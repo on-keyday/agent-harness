@@ -148,6 +148,10 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 	var newConn objproto.Connection
 	select {
 	case <-rhCtx.Done():
+		// SetProxy is already in effect on the runner — closing localConn
+		// here also cleans up the activeConnection state. Without this the
+		// orphaned conn sits until AutoGarbageCollect's 30s/5min sweeps.
+		localConn.Close()
 		return nil, fmt.Errorf("waiting for rehandshake: %w", rhCtx.Err())
 	case newConn = <-rh.C:
 	}

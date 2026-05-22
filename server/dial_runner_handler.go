@@ -90,6 +90,10 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner: failed to send greeting", "err", err)
 		}
+		// Close the conn so the runner's accept-side goroutine (blocked
+		// in handleAcceptedConn waiting for the first inbound payload)
+		// unblocks via pc.Done() instead of leaking until ctx cancellation.
+		_ = conn.Close()
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
 	}
 
