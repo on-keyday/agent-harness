@@ -87,7 +87,13 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 	if err != nil {
 		return nil, err
 	}
+	return driveAfterConn(ctx, cfg, pc)
+}
 
+// driveAfterConn is the half of Connect that runs after the peer.Conn is
+// established (regardless of who dialed). PSK send, session build, and
+// handle wrap-up. Returns the RunHandle ready for OnConnect.
+func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle, error) {
 	// Resolve the runner binary's directory so we can prepend it to the
 	// agent's PATH. Errors are non-fatal: the agent simply won't have
 	// harness-cli on its PATH (legacy behaviour).
