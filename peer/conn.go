@@ -87,6 +87,24 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 	if err != nil {
 		return nil, fmt.Errorf("ecdh: %w", err)
 	}
+	return WrapAcceptedConn(ctx, conn, cfg), nil
+}
+
+// WrapAcceptedConn wraps an objproto.Connection produced by an Endpoint's
+// accept path (GetNewActiveConnectionChannel) into a *peer.Conn ready for
+// PSK and application-layer message exchange. Mirrors the post-handshake
+// portion of Dial; does not initiate ECDH (the endpoint did that already
+// when it produced the conn).
+//
+// The caller must call (*Conn).Start once any SetOnControl wiring is in
+// place, identical to the post-Dial protocol.
+func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialConfig) *Conn {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	if cfg.PingInterval <= 0 {
+		cfg.PingInterval = 15 * time.Second
+	}
 	// Derive a stream-lifetime ctx that fires either when caller cancels
 	// or when the underlying objproto.Connection signals Done (peer Close,
 	// network error, local Close). trsf.Streams only watches the ctx it
@@ -112,7 +130,7 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 	}
 	go trsf.AutoSend(streamCtx, p, conn, nil)
 	go trsf.AutoPing(streamCtx, conn, cfg.PingInterval)
-	return c, nil
+	return c
 }
 
 // SetOnControl registers (or replaces) the handler invoked from the receive

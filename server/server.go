@@ -221,6 +221,13 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	s.taskHandler.Endpoint = ep
+	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection) {
+		// connCtx is the server root context (long-lived). The ECDH-timeout
+		// context lives only inside DialRunnerHandler.Handle and is already
+		// cancelled by the time OnDialed fires.
+		go s.handleConnection(connCtx, conn)
+	}
 	return s.serve(ctx, ep, mux, httpAddr)
 }
 
@@ -240,7 +247,7 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 		ep, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
 			Logger: s.cfg.Logger,
 			Path:   cli.WebSocketPath,
-			Mode:   objproto.EndpointModeServer,
+			Mode:   objproto.EndpointModeMutual,
 		})
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("websocket session: %w", err)
@@ -252,7 +259,7 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("server: udp listen %q: %w", udpAddr, err)
 		}
-		ep, err := transport.UDPEndpoint(s.cfg.Logger, port, objproto.EndpointModeServer)
+		ep, err := transport.UDPEndpoint(s.cfg.Logger, port, objproto.EndpointModeMutual)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("udp endpoint: %w", err)
 		}
@@ -271,7 +278,7 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 			WS: transport.WebSocketConfig{
 				Logger: s.cfg.Logger,
 				Path:   cli.WebSocketPath,
-				Mode:   objproto.EndpointModeServer,
+				Mode:   objproto.EndpointModeMutual,
 			},
 		})
 		if err != nil {

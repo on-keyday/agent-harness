@@ -32,39 +32,125 @@ func resolvePSK(pskVal, pskFile string) []byte {
 	return nil
 }
 
-var (
-	serverCID  = flag.String("server-cid", "ws:127.0.0.1:8539-*", "server ConnectionID (e.g. ws:host:port-id, * for random)")
-	roots      = flag.String("roots", ".", "comma-separated list of absolute repo root paths this runner serves")
-	maxTasks   = flag.Int("max-tasks", 1, "maximum number of concurrent tasks (>= 1)")
-	claudeBin  = flag.String("claude-bin", "claude", "path to the claude binary")
-	claudeArgs = flag.String("claude-args", "", "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
-	wsPath     = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
-	hostName   = flag.String("hostname", "", "hostname to report in Hello (default: os.Hostname())")
-	psk        = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK)")
-	pskFile    = flag.String("psk-file", "", "path to PSK file (env: HARNESS_PSK_FILE)")
+// mainConfig holds all flag-derived state for agent-runner. Using a struct
+// instead of package-level flag vars makes validate() and bindFlags()
+// testable without touching the global flag.CommandLine.
+type mainConfig struct {
+	ServerCID    string
+	Roots        string
+	MaxTasks     int
+	ClaudeBin    string
+	ClaudeArgs   string
+	WSPath       string
+	Hostname     string
+	PSK          string
+	PSKFile      string
+	NoWorktree   bool
+	ForceInjectHarnessSettings bool
+	Persist      bool
+	NoPersist    bool
+	PingInterval  time.Duration
+	ReconnectInit time.Duration
+	ReconnectMax  time.Duration
 
-	noWorktree                 = flag.Bool("no-worktree", false, "skip per-task git worktree creation; run agent processes directly in the bound repo path. Disables .claude/settings.json and .claude/skills/ injection by default (see --force-inject-harness-settings).")
-	forceInjectHarnessSettings = flag.Bool("force-inject-harness-settings", false, "only meaningful with --no-worktree: re-enable .claude/settings.json and .claude/skills/ injection at the bound repo path.")
+	// Phase A reverse-dial:
+	WSListen  string
+	UDPListen string
 
-	persist       = flag.Bool("persist", true, "auto-reconnect on disconnect (set --no-persist to disable)")
-	noPersist     = flag.Bool("no-persist", false, "shortcut for --persist=false")
-	pingInterval  = flag.Duration("ping-interval", 15*time.Second, "underlying ping cadence; also bounds disconnect detection delay")
-	reconnectInit = flag.Duration("reconnect-initial", 500*time.Millisecond, "first backoff after a disconnect")
-	reconnectMax  = flag.Duration("reconnect-max", 30*time.Second, "backoff cap")
+	// Whether --server-cid was set on the command line (vs default value).
+	// Used by validate to distinguish "user set --server-cid AND --listen"
+	// (which is an error) from "default --server-cid + --listen" (fine).
+	serverCIDExplicit bool
 
-	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the runner polls every 250ms; when it appears the runner triggers a graceful shutdown. daemon.py injects this automatically when the runner is spawned via scripts/runner.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close the WS cleanly instead of waiting for ping timeout.")
-)
+	// ShutdownFile, when non-empty, is polled by cli.WatchShutdownFile every
+	// 250ms; once the file appears the runner triggers a graceful shutdown.
+	// daemon.py injects this automatically when the runner is spawned via
+	// scripts/runner.py up, so Windows downs (where SIGTERM can't reach a
+	// DETACHED_PROCESS child) can still close the WS cleanly instead of
+	// waiting for ping timeout.
+	ShutdownFile string
+}
+
+// newMainConfig returns a *mainConfig with all flag defaults pre-populated.
+func newMainConfig() *mainConfig {
+	return &mainConfig{
+		ServerCID:     "ws:127.0.0.1:8539-*",
+		Roots:         ".",
+		MaxTasks:      1,
+		ClaudeBin:     "claude",
+		WSPath:        "/ws",
+		Persist:       true,
+		PingInterval:  15 * time.Second,
+		ReconnectInit: 500 * time.Millisecond,
+		ReconnectMax:  30 * time.Second,
+	}
+}
+
+// bindFlags registers all flags on fs, using cfg's current values as defaults.
+func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
+	fs.StringVar(&c.ServerCID, "server-cid", c.ServerCID, "server ConnectionID (e.g. ws:host:port-id, * for random); mutually exclusive with --listen/--udp-listen")
+	fs.StringVar(&c.Roots, "roots", c.Roots, "comma-separated list of absolute repo root paths this runner serves")
+	fs.IntVar(&c.MaxTasks, "max-tasks", c.MaxTasks, "maximum number of concurrent tasks (>= 1)")
+	fs.StringVar(&c.ClaudeBin, "claude-bin", c.ClaudeBin, "path to the claude binary")
+	fs.StringVar(&c.ClaudeArgs, "claude-args", c.ClaudeArgs, "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
+	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
+	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
+	fs.StringVar(&c.PSK, "psk", c.PSK, "PSK passphrase (env: HARNESS_PSK)")
+	fs.StringVar(&c.PSKFile, "psk-file", c.PSKFile, "path to PSK file (env: HARNESS_PSK_FILE)")
+	fs.BoolVar(&c.NoWorktree, "no-worktree", c.NoWorktree, "skip per-task git worktree creation; run agent processes directly in the bound repo path. Disables .claude/settings.json and .claude/skills/ injection by default (see --force-inject-harness-settings).")
+	fs.BoolVar(&c.ForceInjectHarnessSettings, "force-inject-harness-settings", c.ForceInjectHarnessSettings, "only meaningful with --no-worktree: re-enable .claude/settings.json and .claude/skills/ injection at the bound repo path.")
+	fs.BoolVar(&c.Persist, "persist", c.Persist, "auto-reconnect on disconnect (set --no-persist to disable)")
+	fs.BoolVar(&c.NoPersist, "no-persist", c.NoPersist, "shortcut for --persist=false")
+	fs.DurationVar(&c.PingInterval, "ping-interval", c.PingInterval, "underlying ping cadence; also bounds disconnect detection delay")
+	fs.DurationVar(&c.ReconnectInit, "reconnect-initial", c.ReconnectInit, "first backoff after a disconnect")
+	fs.DurationVar(&c.ReconnectMax, "reconnect-max", c.ReconnectMax, "backoff cap")
+	fs.StringVar(&c.ShutdownFile, "shutdown-file", c.ShutdownFile, "path to a sentinel file the runner polls every 250ms; when it appears the runner triggers a graceful shutdown. daemon.py injects this automatically when the runner is spawned via scripts/runner.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close the WS cleanly instead of waiting for ping timeout.")
+	fs.StringVar(&c.WSListen, "listen", c.WSListen, "WebSocket listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid; mirrors harness-server's --listen)")
+	fs.StringVar(&c.UDPListen, "udp-listen", c.UDPListen, "UDP listen host:port for server-initiated reverse-dial mode (mutually exclusive with --server-cid). Combine with --listen for ws+udp dualstack.")
+}
+
+// isListenMode reports whether either --listen or --udp-listen was set.
+func (c *mainConfig) isListenMode() bool {
+	return strings.TrimSpace(c.WSListen) != "" || strings.TrimSpace(c.UDPListen) != ""
+}
+
+// validate checks mutual-exclusion and required-one-of rules.
+func (c *mainConfig) validate() error {
+	if c.isListenMode() && c.serverCIDExplicit {
+		return fmt.Errorf("--server-cid and --listen/--udp-listen are mutually exclusive")
+	}
+	if !c.isListenMode() && strings.TrimSpace(c.ServerCID) == "" {
+		return fmt.Errorf("must provide either --server-cid (dial mode) or --listen/--udp-listen (reverse-dial mode)")
+	}
+	if c.MaxTasks < 1 {
+		return fmt.Errorf("--max-tasks must be >= 1, got %d", c.MaxTasks)
+	}
+	return nil
+}
 
 func main() {
+	fs := flag.CommandLine
+	cfg := newMainConfig()
+	cfg.bindFlags(fs)
 	flag.Parse()
-	cli.WebSocketPath = *wsPath
 
-	if *maxTasks < 1 {
-		fmt.Fprintf(os.Stderr, "agent-runner: --max-tasks must be >= 1, got %d\n", *maxTasks)
+	// Detect whether --server-cid was explicitly set on the command line
+	// (as opposed to retaining its default value). fs.Visit only visits
+	// flags that were explicitly set.
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "server-cid" {
+			cfg.serverCIDExplicit = true
+		}
+	})
+
+	if err := cfg.validate(); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
 		os.Exit(1)
 	}
 
-	rawRoots := strings.Split(*roots, ",")
+	cli.WebSocketPath = cfg.WSPath
+
+	rawRoots := strings.Split(cfg.Roots, ",")
 	var abs []string
 	for _, r := range rawRoots {
 		r = strings.TrimSpace(r)
@@ -88,7 +174,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	hostname := *hostName
+	hostname := cfg.Hostname
 	if hostname == "" {
 		nativeHostname, err := os.Hostname()
 		if err != nil {
@@ -96,13 +182,6 @@ func main() {
 		} else {
 			hostname = nativeHostname
 		}
-	}
-
-	peerCID, err := objproto.ParseConnectionID(*serverCID,
-		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
-	if err != nil {
-		slog.Error("server-cid", "err", err)
-		os.Exit(1)
 	}
 
 	// Catch SIGTERM in addition to SIGINT so daemon.py's `p.terminate()`
@@ -116,29 +195,58 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cli.WatchShutdownFile(ctx, *shutdownFile, cancel, 250*time.Millisecond, slog.Default())
+	cli.WatchShutdownFile(ctx, cfg.ShutdownFile, cancel, 250*time.Millisecond, slog.Default())
 
-	pskVal := *psk
+	pskVal := cfg.PSK
 	if pskVal == "" {
 		pskVal = os.Getenv("HARNESS_PSK")
 	}
-	resolvedPSK := resolvePSK(pskVal, *pskFile)
+	resolvedPSK := resolvePSK(pskVal, cfg.PSKFile)
 
 	runCfg := runner.Config{
-		ServerCID:                  peerCID,
 		AllowedRoots:               abs,
-		MaxTasks:                   *maxTasks,
+		MaxTasks:                   cfg.MaxTasks,
 		Hostname:                   hostname,
-		ClaudeBin:                  *claudeBin,
-		ExtraClaudeArgs:            strings.Fields(*claudeArgs),
+		ClaudeBin:                  cfg.ClaudeBin,
+		ExtraClaudeArgs:            strings.Fields(cfg.ClaudeArgs),
 		Logger:                     slog.Default(),
 		PSK:                        resolvedPSK,
-		NoWorktree:                 *noWorktree,
-		ForceInjectHarnessSettings: *forceInjectHarnessSettings,
-		PingInterval:               *pingInterval,
+		NoWorktree:                 cfg.NoWorktree,
+		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
+		PingInterval:               cfg.PingInterval,
 	}
 
-	enabled := *persist && !*noPersist
+	if cfg.isListenMode() {
+		// Reverse-dial mode: server connects inbound to the runner.
+		// runCfg.ServerCID is intentionally left as the zero ConnectionID here
+		// — the listen branch never parses cfg.ServerCID into an objproto.ConnectionID
+		// because the runner doesn't know the server's CID at startup.
+		// driveAfterConn populates session.ServerCID from the accepted peer.Conn's
+		// ConnectionID once the server dials in, so HARNESS_SERVER_CID injected into
+		// agent subprocesses points to the actual server endpoint.
+		lcfg := runner.ListenConfig{
+			Config:    runCfg,
+			WSListen:  cfg.WSListen,
+			UDPListen: cfg.UDPListen,
+			WSPath:    cfg.WSPath,
+		}
+		if err := runner.ListenAndServe(ctx, lcfg); err != nil && err != context.Canceled {
+			slog.Error("runner listen exit", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Dial mode (legacy): parse --server-cid and connect outbound.
+	peerCID, err := objproto.ParseConnectionID(cfg.ServerCID,
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		slog.Error("server-cid", "err", err)
+		os.Exit(1)
+	}
+	runCfg.ServerCID = peerCID
+
+	enabled := cfg.Persist && !cfg.NoPersist
 
 	err = cli.PersistLoop(ctx,
 		func(dialCtx context.Context) (cli.PersistHandle, error) {
@@ -150,8 +258,8 @@ func main() {
 		},
 		cli.PersistConfig{
 			Enabled:        enabled,
-			InitialBackoff: *reconnectInit,
-			MaxBackoff:     *reconnectMax,
+			InitialBackoff: cfg.ReconnectInit,
+			MaxBackoff:     cfg.ReconnectMax,
 			Logger:         slog.Default(),
 			OnState: func(s cli.PersistState) {
 				slog.Info("runner persist state",
