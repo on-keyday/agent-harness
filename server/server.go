@@ -240,7 +240,7 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 		ep, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
 			Logger: s.cfg.Logger,
 			Path:   cli.WebSocketPath,
-			Mode:   objproto.EndpointModeServer,
+			Mode:   objproto.EndpointModeMutual,
 		})
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("websocket session: %w", err)
@@ -252,7 +252,7 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("server: udp listen %q: %w", udpAddr, err)
 		}
-		ep, err := transport.UDPEndpoint(s.cfg.Logger, port, objproto.EndpointModeServer)
+		ep, err := transport.UDPEndpoint(s.cfg.Logger, port, objproto.EndpointModeMutual)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("udp endpoint: %w", err)
 		}
@@ -271,7 +271,7 @@ func (s *Server) buildEndpoint() (objproto.Endpoint, *http.ServeMux, string, err
 			WS: transport.WebSocketConfig{
 				Logger: s.cfg.Logger,
 				Path:   cli.WebSocketPath,
-				Mode:   objproto.EndpointModeServer,
+				Mode:   objproto.EndpointModeMutual,
 			},
 		})
 		if err != nil {
