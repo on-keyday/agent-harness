@@ -2,6 +2,7 @@ package cli
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -12,21 +13,74 @@ import (
 	"strings"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf"
 )
 
 // FilePull copies remoteRel from the task's worktree to localPath. If the
 // runner reports a non-ok ack, no local file is created.
 func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string, force bool) error {
-	// Runner ignores the force flag for pull (it's a read-only op on the
-	// runner side); the client-side force controls the LOCAL file open mode
-	// below. Pass false on the wire to make the intent explicit.
+	return c.filePullDo(ctx, taskIDHex, remoteRel, func(stream trsf.BidirectionalStream, expectedSize uint64) error {
+		flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+		if force {
+			flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		}
+		dst, err := os.OpenFile(localPath, flags, 0o644)
+		if err != nil {
+			if os.IsExist(err) {
+				return fmt.Errorf("file pull: %s already exists (use --force to overwrite)", localPath)
+			}
+			return fmt.Errorf("file pull: open local: %w", err)
+		}
+		defer dst.Close()
+		n, err := io.Copy(dst, stream)
+		if err != nil {
+			return fmt.Errorf("file pull: stream read: %w", err)
+		}
+		if uint64(n) != expectedSize {
+			return fmt.Errorf("file pull: short read (got %d, expected %d)", n, expectedSize)
+		}
+		return nil
+	})
+}
+
+// FilePullBytes is the bytes-out variant of FilePull. Used by the WebUI
+// wasm bridge to deliver file contents into a browser-side Blob — there
+// is no local fs to write into on that side. Returns the file contents
+// in a freshly allocated slice; the caller is responsible for whatever
+// download / save flow it needs to drive next.
+func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := c.filePullDo(ctx, taskIDHex, remoteRel, func(stream trsf.BidirectionalStream, expectedSize uint64) error {
+		buf.Grow(int(expectedSize))
+		n, err := io.Copy(&buf, stream)
+		if err != nil {
+			return fmt.Errorf("file pull: stream read: %w", err)
+		}
+		if uint64(n) != expectedSize {
+			return fmt.Errorf("file pull: short read (got %d, expected %d)", n, expectedSize)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// filePullDo opens the pull stream, validates the runner's ack, and
+// then invokes body with the live stream and the announced size so the
+// caller can route bytes wherever it needs (local file, Buffer for
+// WebUI, etc.). Centralises the protocol handshake so the two public
+// variants share one tested code path.
+//
+// Runner ignores the protocol-level force flag for pull (it's a
+// read-only op on the runner side); body decides what client-side
+// "force" means (overwrite vs. always-new-buffer).
+func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, body func(stream trsf.BidirectionalStream, expectedSize uint64) error) error {
 	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, false)
 	if err != nil {
 		return err
 	}
 	defer stream.CloseBoth()
-	// Pull is read-only on the client side. Signal "no data coming" so the
-	// server-side splice's client→runner relay can EOF and unblock.
 	if err := stream.AppendData(true); err != nil {
 		return fmt.Errorf("file pull: half-close: %w", err)
 	}
@@ -37,26 +91,7 @@ func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath s
 	if err := ackError("pull", ack); err != nil {
 		return err
 	}
-	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
-	if force {
-		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
-	}
-	dst, err := os.OpenFile(localPath, flags, 0o644)
-	if err != nil {
-		if os.IsExist(err) {
-			return fmt.Errorf("file pull: %s already exists (use --force to overwrite)", localPath)
-		}
-		return fmt.Errorf("file pull: open local: %w", err)
-	}
-	defer dst.Close()
-	n, err := io.Copy(dst, stream)
-	if err != nil {
-		return fmt.Errorf("file pull: stream read: %w", err)
-	}
-	if uint64(n) != ack.ActualSize {
-		return fmt.Errorf("file pull: short read (got %d, expected %d)", n, ack.ActualSize)
-	}
-	return nil
+	return body(stream, ack.ActualSize)
 }
 
 // FilePullDir pulls the worktree directory at remoteRel into localDir. Stages

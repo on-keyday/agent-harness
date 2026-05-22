@@ -2,7 +2,9 @@ package cli
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -25,7 +27,24 @@ func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel s
 	if err != nil {
 		return fmt.Errorf("file push: stat local: %w", err)
 	}
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, uint64(st.Size()), force)
+	return c.filePushFromReader(ctx, taskIDHex, src, uint64(st.Size()), remoteRel, force)
+}
+
+// FilePushBytes is the bytes-in variant of FilePush. Used by the WebUI
+// wasm bridge to push file contents that the browser obtained via the
+// FileReader / File.arrayBuffer() APIs — there is no local fs path on
+// that side, so the runner-facing protocol is driven directly from a
+// byte slice.
+func (c *Client) FilePushBytes(ctx context.Context, taskIDHex string, data []byte, remoteRel string, force bool) error {
+	return c.filePushFromReader(ctx, taskIDHex, bytes.NewReader(data), uint64(len(data)), remoteRel, force)
+}
+
+// filePushFromReader is the shared protocol path: open the push stream,
+// copy size bytes from src into it, EOF, and wait for the ack. Both the
+// file-backed FilePush and the bytes-backed FilePushBytes go through
+// here so the wire side has one well-tested code path.
+func (c *Client) filePushFromReader(ctx context.Context, taskIDHex string, src io.Reader, size uint64, remoteRel string, force bool) error {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, force)
 	if err != nil {
 		return err
 	}
@@ -119,28 +138,52 @@ func (c *Client) FilePushDir(ctx context.Context, taskIDHex, localDir, remoteRel
 	return ackError("push --recursive", ack)
 }
 
+// FileAckError wraps a runner-returned FileTransferAck error so callers
+// (e.g., the TUI picker, the WebUI bridge) can branch on the specific
+// failure mode — most importantly to ask the user before retrying with
+// --force in the AlreadyExists case. The plain Error() string is still
+// human-readable for direct display.
+type FileAckError struct {
+	Op     string
+	Status protocol.FileTransferStatus
+	Msg    string
+}
+
+func (e *FileAckError) Error() string { return e.Msg }
+
+// IsAlreadyExists reports whether err originated as a
+// FileTransferStatus_AlreadyExists from the runner. Used by interactive
+// callers that want to prompt before retrying with force=true.
+func IsAlreadyExists(err error) bool {
+	var fe *FileAckError
+	return errors.As(err, &fe) && fe.Status == protocol.FileTransferStatus_AlreadyExists
+}
+
 func ackError(op string, ack *protocol.FileTransferAck) error {
-	switch ack.Status {
-	case protocol.FileTransferStatus_Ok:
+	if ack.Status == protocol.FileTransferStatus_Ok {
 		return nil
-	case protocol.FileTransferStatus_PathInvalid:
-		return fmt.Errorf("file %s: path invalid (escapes worktree or empty)", op)
-	case protocol.FileTransferStatus_NotFound:
-		return fmt.Errorf("file %s: not found", op)
-	case protocol.FileTransferStatus_AlreadyExists:
-		return fmt.Errorf("file %s: destination already exists (use --force to overwrite)", op)
-	case protocol.FileTransferStatus_IoError:
-		return fmt.Errorf("file %s: runner I/O error", op)
-	case protocol.FileTransferStatus_Canceled:
-		return fmt.Errorf("file %s: canceled", op)
-	case protocol.FileTransferStatus_IsDirectory:
-		return fmt.Errorf("file %s: is a directory", op)
-	case protocol.FileTransferStatus_NotADirectory:
-		return fmt.Errorf("file %s: not a directory", op)
-	case protocol.FileTransferStatus_NotEmpty:
-		return fmt.Errorf("file %s: directory not empty (use --force to remove recursively)", op)
-	default:
-		return fmt.Errorf("file %s: unknown status %d", op, ack.Status)
 	}
+	var msg string
+	switch ack.Status {
+	case protocol.FileTransferStatus_PathInvalid:
+		msg = fmt.Sprintf("file %s: path invalid (escapes worktree or empty)", op)
+	case protocol.FileTransferStatus_NotFound:
+		msg = fmt.Sprintf("file %s: not found", op)
+	case protocol.FileTransferStatus_AlreadyExists:
+		msg = fmt.Sprintf("file %s: destination already exists (use --force to overwrite)", op)
+	case protocol.FileTransferStatus_IoError:
+		msg = fmt.Sprintf("file %s: runner I/O error", op)
+	case protocol.FileTransferStatus_Canceled:
+		msg = fmt.Sprintf("file %s: canceled", op)
+	case protocol.FileTransferStatus_IsDirectory:
+		msg = fmt.Sprintf("file %s: is a directory", op)
+	case protocol.FileTransferStatus_NotADirectory:
+		msg = fmt.Sprintf("file %s: not a directory", op)
+	case protocol.FileTransferStatus_NotEmpty:
+		msg = fmt.Sprintf("file %s: directory not empty (use --force to remove recursively)", op)
+	default:
+		msg = fmt.Sprintf("file %s: unknown status %d", op, ack.Status)
+	}
+	return &FileAckError{Op: op, Status: ack.Status, Msg: msg}
 }
 
