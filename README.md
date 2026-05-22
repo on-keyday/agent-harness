@@ -32,36 +32,56 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
                         │      └──────────────────────┘
 ```
 
-- **Server** (`cmd/harness-server`): hub. Listens on WebSocket; accepts
-  connections from clients (CLI / TUI / WebUI WASM) and runners. Queues
-  tasks, dispatches them to idle runners by repo affinity, persists task
-  state via JSONL WAL, appends per-task logs to
-  `<data-dir>/logs/<task-id>.log`. Hosts two distinct brokers: `pubsub`
-  for task-log and runner/task-status fanout, and `agentboard` for
-  agent-to-agent messaging keyed by `(runner_id, task_id)`.
+- **Server** (`cmd/harness-server`): hub. Listens on WebSocket (and
+  optionally UDP via `--udp-listen`); accepts connections from clients
+  (CLI / TUI / WebUI WASM) and runners. Queues tasks, dispatches them
+  to idle runners by repo affinity, persists task state via JSONL WAL,
+  appends per-task logs to `<data-dir>/logs/<task-id>.log`. Hosts two
+  distinct brokers: `pubsub` for task-log and runner/task-status
+  fanout, and `agentboard` for agent-to-agent messaging keyed by
+  `(runner_id, task_id)`. Buffers per-session scrollback for detached
+  interactive tasks so `session attach` can replay context on
+  reconnect.
 - **Runner** (`cmd/agent-runner`): worker. Started with a list of repo
   roots (`--roots`) it is allowed to serve and a per-process concurrency
   cap (`--max-tasks`). For each assigned task, creates a `git worktree`
   under `<repo>/.harness-worktrees/<task-id>/`, runs `claude` (or PTY
-  for `interactive`) in it, streams stdout/stderr through the server,
-  reports the exit code. Injects `HARNESS_*` env vars into the agent
-  subprocess so the agent can reach back via `harness-cli agent ...`.
+  for `interactive` / `session new`) in it, streams stdout/stderr
+  through the server, reports the exit code. Injects `HARNESS_*` env
+  vars into the agent subprocess so the agent can reach back via
+  `harness-cli agent ...`.
 - **Clients**:
-  - `cmd/harness-cli` (`submit`, `ls`, `logs`, `cancel`, `prune`,
-    `prune-local`, `watch`, `interactive`, plus the `agent {send | wait
-    | inbox | dispatch | subscribe | unsubscribe | topics |
-    subscriptions}` family used from inside agent sessions).
+  - `cmd/harness-cli` — request/control surface:
+    - Task lifecycle: `submit`, `ls`, `logs`, `cancel`, `prune`,
+      `prune-local`, `watch`.
+    - Interactive: `interactive` (PTY spliced to the client; client
+      disconnect kills claude — legacy), `session new` (detachable PTY:
+      client disconnect leaves claude running on the runner),
+      `session attach <id>`, `session ls`, `session kill <id>`.
+    - File transfer: `file ls`, `file push`, `file pull`, `file delete`
+      against a task's worktree (recursive variants via `-r`, force
+      overwrite via `-f`; paths are confined to the worktree root).
+    - Agent runtime (called from inside agent sessions):
+      `agent {send | wait | inbox | dispatch | subscribe | unsubscribe
+      | topics | subscriptions}`. See `runner/agentskills/harness-cli/
+      SKILL.md` for conventions.
   - `cmd/harness-tui`: Bubble Tea interactive frontend (sections below).
   - `cmd/harness-webui-wasm`: in-browser WebUI compiled to WASM, served
     by `harness-server`.
 
 Connections use the in-tree `objproto` secure transport (ECDH +
-AES-128-GCM) over WebSocket, with the `trsf` stream-multiplexing layer
-carrying control frames. PSK pre-authentication (`--psk` /
-`--psk-file`, env `HARNESS_PSK` / `HARNESS_PSK_FILE`) gates incoming
-connections before the secure session starts. Server and runner can run
-on different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
-ConnectionID (`ws:host:port-id`) that the runner / clients dial.
+AES-128-GCM) on top of one of two underlays — **WebSocket**
+(default, `--listen host:port` on the server) and **UDP**
+(`--udp-listen host:port`, which uses the project's own
+QUIC-like layering in `trsf`). Both can run simultaneously
+(WS+UDP dualstack) on a single server. The `trsf`
+stream-multiplexing layer carries control / data frames on top of
+either. PSK pre-authentication (`--psk` / `--psk-file`, env
+`HARNESS_PSK` / `HARNESS_PSK_FILE`) gates incoming connections
+before the secure session starts. Server and runner can run on
+different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
+ConnectionID (`ws:host:port-id` or `udp:host:port-id`) that the
+runner / clients dial; the transport prefix selects the underlay.
 
 ## Quick start
 
@@ -71,8 +91,12 @@ binaries under `bin/`; the examples below assume that.
 ```bash
 # 1. Start the server. --listen accepts host:port (use :8539 to dual-stack on
 # all interfaces; loopback by default). PSK file is auto-generated on first
-# run if --psk-file is unset.
+# run if --psk-file is unset. The WebUI is mounted on the same HTTP listener,
+# so http://<server-host>:8539/ in a browser gives you the WASM frontend.
 bin/harness-server --listen :8539 --data-dir ./harness-data
+# Optional: add UDP underlay alongside WS (or use UDP only by leaving --listen
+# empty — but UDP-only disables the WebUI).
+# bin/harness-server --listen :8539 --udp-listen :8540 --data-dir ./harness-data
 
 # 2. Start a runner. --roots is a comma-separated list of repo paths this
 # runner is allowed to serve (matched verbatim against submit --repo).
@@ -95,19 +119,54 @@ bin/harness-cli cancel <task-id>
 bin/harness-cli prune --before 168h     # forget terminal tasks older than 7d
 bin/harness-cli prune-local --before 168h   # remove old local worktrees
 
-# 5. Attach interactively (allocates a PTY claude on an idle runner, splices
-# your terminal stdin / stdout / SIGWINCH to it).
+# 5a. Attach interactively (legacy: PTY claude on an idle runner, spliced
+# to your terminal stdin / stdout / SIGWINCH; client disconnect kills claude).
 bin/harness-cli interactive --repo /abs/path/to/repo
+
+# 5b. Open a detachable session instead (claude survives disconnect; reattach
+# from any client via `session attach <id>`). `-d` returns immediately
+# without splicing the local terminal — useful when you only want to spawn.
+bin/harness-cli session new --repo /abs/path/to/repo
+bin/harness-cli session ls                       # detachable sessions only
+bin/harness-cli session attach <task-id>
+bin/harness-cli session kill   <task-id>
+
+# 6. File transfer against a running task's worktree (paths are confined
+# to the worktree root; `..` escapes are rejected).
+bin/harness-cli file ls     <task-id> [subdir]
+bin/harness-cli file push   <task-id> ./local.txt rel/path.txt
+bin/harness-cli file pull   <task-id> rel/path.txt ./local.txt
+bin/harness-cli file delete <task-id> rel/path.txt
+# Recursive directory transfer (tar over the wire) and force overwrite:
+bin/harness-cli file push -r -f <task-id> ./local-dir/ rel/dir
+bin/harness-cli file pull -r -f <task-id> rel/dir ./local-dir/
 ```
 
-`scripts/runner.sh` and `scripts/server.sh` wrap the binaries as
-`nohup`-detached daemons (state under `bin/.run/<slot>.{pid,log}`); use
-`scripts/restart.sh <slot>` to restart a daemon while inheriting its
-flags + CWD from `/proc/<pid>`. Pass `--as <tag>` to `up` / `down` to
-run multiple instances of the same daemon side by side
-(e.g. `scripts/runner.sh up --as 2 --max-tasks 2 ...` registers an
-extra runner alongside the primary one, with its own
+### Daemon lifecycle helpers
+
+`scripts/{runner,server,restart}.sh` are thin shims over the
+canonical Python implementations `scripts/{runner,server,restart}.py`
+(`bootstrap.py` provisions `scripts/.venv` with psutil on first call,
+so the .py side runs cross-platform). State files
+(`bin/.run/<slot>.{pid,log}`) are shared between the bash and python
+entry points, so a daemon started via one can be controlled by the
+other. Pass `--as <tag>` to `up` / `down` to run multiple instances
+of the same daemon side by side (e.g.
+`scripts/runner.sh up --as 2 --max-tasks 2 ...` registers an extra
+runner alongside the primary one, with its own
 `bin/.run/agent-runner-2.{pid,log}` slot).
+
+For boot/login persistence, `scripts/runner-autostart.py register
+--tag <tag> [runner.py flags...]` registers an OS-level autostart
+entry — a systemd user service on Linux
+(`~/.config/systemd/user/harness-agent-runner[-<tag>].service`,
+`Type=oneshot` + `RemainAfterExit=yes`), or a Task Scheduler task
+on Windows (AtLogOn trigger, `RestartCount=3 RestartInterval=PT5M`).
+The action calls `runner.py up`, so the runner's actual lifecycle
+is still owned by `daemon.py` and the pid/log invariants are
+unchanged. Symmetric `unregister` removes the entry and stops the
+daemon; `--no-start` / `--no-stop` opt out of the immediate
+spawn / shutdown.
 
 ## Operating modes
 
@@ -134,8 +193,8 @@ isolated checkout. Two flags adjust this:
 ## TUI
 
 `cmd/harness-tui` is an interactive Bubble Tea frontend that bundles
-`submit / ls / logs / cancel / prune / watch / interactive` into one
-screen.
+`submit / ls / logs / cancel / prune / watch / interactive / session`
+into one screen.
 
 ```bash
 bin/harness-tui --server-cid 'ws:HOSTNAME:8539-*' --repo /abs/path/to/repo
@@ -164,19 +223,46 @@ Keys:
 
 | Key | Action |
 |---|---|
-| `Tab` / `Shift+Tab` | Cycle focus runners → tasks → cmdline |
+| `Tab` / `Shift+Tab` | Cycle focus runners → tasks → logs → cmdresult → cmdline |
 | `s` | Open the multi-line submit popup (`Ctrl+J` / `Ctrl+Enter` to send, `Esc` to cancel) |
+| `S` | Open a detachable session in the default repo (equivalent to `harness-cli session new`) |
+| `i` (tasks focus) | Attach interactively to the focused task, or open a new interactive session in the default repo if no task is focused. On a Detached row, reattaches via `session attach`. |
+| `d` | Detail popup for the focused row (runners or tasks) |
 | `Enter` (tasks focus) | Follow the selected task's log |
 | `c` (tasks focus) | Cancel the selected task |
+| `/` (logs focus) | Enter/edit filter; `Esc` clears |
 | `q`, `Ctrl+C` | Quit |
 
-The cmdline accepts `submit / cancel / prune / clear / help / quit` (use
-`harness-cli prune-local` for local-only worktree cleanup; the TUI's
-`prune` command is server-only). slog output (transport / pubsub / etc.)
-is folded into the cmdresult pane with a `[log]` prefix so it never
-scribbles over the alt screen.
+The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
+/ cancel / prune / repo / clear / help / quit`. `session new` supports
+`--host NAME | --runner HEX | --ip ADDR` for runner-pinning (mutually
+exclusive), plus `--detach` to spawn-and-exit without splicing the
+local terminal. Use `harness-cli prune-local` for local-only worktree
+cleanup; the TUI's `prune` command is server-only. slog output
+(transport / pubsub / etc.) is folded into the cmdresult pane with a
+`[log]` prefix so it never scribbles over the alt screen.
 
-## Non-goals / current limitations
+## WebUI
+
+`cmd/harness-webui-wasm` compiles to WASM (`make webui-build`) and is
+embedded into the server binary via `webui.FS` (an `embed.FS`). When
+`harness-server` is running with a WebSocket listener (default
+`--listen host:port`), it serves the WebUI itself at:
+
+- `GET /` — `index.html` (Bubble-Tea-like list of runners / tasks)
+- `GET /static/*` — JS / WASM / xterm assets
+- `GET /ws` — the WebSocket endpoint the WASM client dials over
+  `objproto`
+
+So pointing a browser at `http://server-host:port/` gives you the
+same submit / list / cancel / interactive surface as the CLI and TUI,
+plus a **Host pin** dropdown for routing to a specific runner by
+hostname. The xterm-based interactive view splices the runner's PTY
+into the browser tab the same way the TUI does into its terminal.
+
+UDP-only servers (when `--listen` is empty and only `--udp-listen` is
+configured) **do not serve the WebUI** — there is no HTTP listener.
+Run WS+UDP dualstack if you want both.
 
 - **No auto-commit.** The runner creates a worktree under
   `<repo>/.harness-worktrees/<task-id>/` and leaves any changes
@@ -190,8 +276,16 @@ scribbles over the alt screen.
   not a chroot. Single-user dogfood deployments only; do not point the
   broker at networks you do not control. See the trust model section in
   `runner/agentskills/harness-cli/SKILL.md`.
-- **Claude Code only.** No support for other agents; the runner shells
-  out to `claude` (configurable via `--claude-bin`).
+- **Built around Claude Code.** The runner spawns `claude` by default
+  and the integration assumes its CLI surface (worktree →
+  `--resume` / `--continue`, session storage keyed by cwd hash, etc.).
+  `--claude-bin` accepts any executable, and `--no-worktree
+  --claude-bin {bash,cmd.exe,powershell.exe}` is a supported pattern
+  for generic-process sandbox slots — but you trade away the
+  claude-specific niceties (worktree-based isolation, session resume
+  across runner restart). No protocol-level integration with other
+  agent CLIs (Aider, Cursor, etc.); they would have to be treated as
+  opaque `--claude-bin` targets the same way.
 
 ## Testing
 
@@ -234,7 +328,13 @@ cmd/
   harness-cli/          CLI binary (user + agent)
   harness-tui/          TUI binary
   harness-webui-wasm/   WASM build target served by harness-server
-scripts/              up/down/restart wrappers around the daemons
+scripts/              {runner,server,restart}.{py,sh} daemon lifecycle helpers (sh
+                      is a thin shim over py); daemon.py + bootstrap.py provide
+                      the cross-platform up/down/respawn primitives via psutil.
+                      runner-autostart.py wraps register/unregister of systemd
+                      user units (Linux) / Task Scheduler tasks (Windows) for
+                      boot/login persistence. build_and_restart_all.py rebuilds
+                      and restarts every alive runner, self last.
 testdata/             fake-claude.sh used by tests
 integration/          end-to-end smoke test (build tag: integration)
 docs/superpowers/     specs/ and plans/ for design history
