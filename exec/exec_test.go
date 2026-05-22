@@ -12,9 +12,22 @@ import (
 )
 
 // eofBidiStream is a minimal trsf.BidirectionalStream stub for tests.
-// Its Read side returns io.EOF immediately (via a closed pipe) so handleInput
-// exits cleanly. AppendData and CloseBoth are no-ops. All other interface
-// methods are stubs that satisfy the compiler.
+//
+// Its Read side blocks on an io.Pipe until SignalEOF() is called; only then
+// does Read return io.EOF and let handleInput exit. This ordering matters
+// because ExecuteCommandWithOption runs handleInput concurrently with
+// OnStdinWriter, and handleInput's `defer pipeIn.Close()` closes the child's
+// stdin write side as soon as it returns. If Read returned EOF immediately
+// (closing the pipe before OnStdinWriter ran), the OnStdinWriter's write would
+// race against stdin pipe close and intermittently fail with "io: read/write
+// on closed pipe".
+//
+// Cannot use Cancel() to trigger EOF: cmd.Wait() inside ExecuteCommandWithOption
+// blocks on the os/exec stdin copy goroutine, which waits for pipeIn to close,
+// which only happens after handleInput's deferred close — so triggering EOF
+// only from cmd.Wait's defer creates a circular dependency. The test must
+// explicitly signal EOF after OnStdinWriter completes, letting /bin/cat see
+// stdin EOF and exit normally.
 type eofBidiStream struct {
 	r *io.PipeReader
 	w *io.PipeWriter
@@ -22,10 +35,12 @@ type eofBidiStream struct {
 
 func newEOFBidiStream() *eofBidiStream {
 	r, w := io.Pipe()
-	// Close write end immediately so reads return io.EOF.
-	w.Close()
 	return &eofBidiStream{r: r, w: w}
 }
+
+// SignalEOF closes the write end of the internal pipe so subsequent Reads
+// return io.EOF. Tests call this after OnStdinWriter has completed its writes.
+func (s *eofBidiStream) SignalEOF() { _ = s.w.Close() }
 
 // SendStream methods.
 func (s *eofBidiStream) ID() trsf.StreamID                                                     { return 0 }
@@ -69,14 +84,18 @@ func TestExecuteCommandWithOption_OnStdinWriter(t *testing.T) {
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
 		<-captured
-		cancel()
+		// Signal EOF on the input stream so handleInput returns and closes
+		// the child's stdin write side. /bin/cat reads "test\n", sees stdin
+		// EOF, and exits cleanly — letting cmd.Wait complete naturally.
+		stream.SignalEOF()
 	}()
 	logger := slog.Default()
 	// Run /bin/cat which echoes stdin to stdout; we only verify that
 	// OnStdinWriter is invoked and the returned writer accepts bytes without
-	// error. Context cancellation terminates /bin/cat.
+	// error.
 	_ = ExecuteCommandWithOption(ctx, stream, logger, "/bin/cat", nil, "", false, nil, opt)
 }
 
