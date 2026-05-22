@@ -74,6 +74,10 @@ enum ApplicationPayloadKind:
     close          # peer is going away; AutoReceive returns after dispatching
     agent_message  # NEW
     psk_auth       # PSK authentication handshake
+    agent_proxy_control   # Phase B: agent↔runner negotiated-proxy ceremony
+    dial_greeting         # Phase B: server→runner marker, sent right after DoECDHHandshake
+                          # so the runner's accept handler can identify a server-dialed
+                          # conn (vs an agent-dialed conn) without timing heuristics.
 
 
 format PacketHeader:

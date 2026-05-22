@@ -197,6 +197,43 @@ enum DialRunnerStatus:
 format DialRunnerResponse:
     status :DialRunnerStatus
 
+# Phase B: agent ↔ runner negotiated-proxy ceremony.
+# Agent sends ProxyRequest as the first app message after peer.Dial-ing the
+# runner; runner replies with ProxyEstablishResponse. See spec
+# docs/superpowers/specs/2026-05-22-server-mode-runner-reverse-dial-design.md Phase B.
+
+format ProxyRequest:
+    task_id :TaskID
+
+enum ProxyEstablishStatus:
+    :u8
+    ok                  = "ok"
+    id_collision        = "id_collision"
+    server_not_connected = "server_not_connected"
+    unknown_task         = "unknown_task"
+
+format ProxyEstablishResponse:
+    status :ProxyEstablishStatus
+
+enum ProxyControlKind:
+    :u8
+    request
+    establish_response
+
+format ProxyControl:
+    kind :ProxyControlKind
+    match kind:
+        ProxyControlKind.request              => request              :ProxyRequest
+        ProxyControlKind.establish_response   => establish_response   :ProxyEstablishResponse
+
+# Phase B: server → runner marker sent immediately after server-side
+# DoECDHHandshake completes (reverse-dial path). Lets the runner's accept
+# handler discriminate "server conn" vs "agent conn" without timing heuristics.
+# version is reserved for forward-compatible feature negotiation; the runner
+# logs unknown versions and proceeds.
+format DialGreeting:
+    version :u8
+
 format ListQuery:
     query :[..]u8 # currently opaque
 
