@@ -96,6 +96,7 @@ enum DialRunnerStatus:
     DialFailed       # transport-level dial failed (timeout, conn refused, etc.)
     PskFailed        # ECDH ok but PSK validation failed
     HelloTimeout     # PSK ok but no Hello arrived within timeout
+    InvalidTarget    # target RunnerID malformed (empty transport, etc.)
 
 format DialRunnerResponse:
     status :DialRunnerStatus
