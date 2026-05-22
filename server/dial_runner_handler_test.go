@@ -3,12 +3,15 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // TestDialRunnerInvalidTargetTransport covers empty-transport early return.
@@ -195,6 +198,120 @@ func TestTaskControlDialRunnerResponseRoundTrip(t *testing.T) {
 	}
 	if dr.Status != protocol.DialRunnerStatus_Ok {
 		t.Errorf("status: got %v", dr.Status)
+	}
+}
+
+// TestDialRunnerSendsGreeting verifies that after a successful ECDH
+// handshake the server emits a DialGreeting payload as the first outbound
+// app message on the new conn.
+func TestDialRunnerSendsGreeting(t *testing.T) {
+	listenAddr := "127.0.0.1:18570"
+	firstKind := make(chan wire.ApplicationPayloadKind, 1)
+	firstPayload := make(chan []byte, 1)
+	stop := startFakeListenRunner(t, listenAddr, firstKind, firstPayload)
+	defer stop()
+
+	ep := buildTestClientEndpoint(t)
+	dialedCh := make(chan struct{}, 1)
+	h := &DialRunnerHandler{
+		Logger:      slog.Default(),
+		Endpoint:    ep,
+		DialTimeout: 2 * time.Second,
+		OnDialed: func(_ context.Context, conn objproto.Connection) {
+			// Drop the conn — we only care that the greeting reached
+			// the fake listener.
+			_ = conn.Close()
+			dialedCh <- struct{}{}
+		},
+	}
+	var target protocol.RunnerID
+	target.SetTransport([]byte("ws"))
+	target.SetIpAddr([]byte{127, 0, 0, 1})
+	target.Port = 18570
+
+	resp := h.Handle(context.Background(), target)
+	if resp.Status != protocol.DialRunnerStatus_Ok {
+		t.Fatalf("dial status: got %v want Ok", resp.Status)
+	}
+
+	select {
+	case k := <-firstKind:
+		if k != wire.ApplicationPayloadKind_DialGreeting {
+			t.Fatalf("first inbound kind: got %v want DialGreeting", k)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no inbound message at the fake listener within 2s")
+	}
+
+	payload := <-firstPayload
+	var g protocol.DialGreeting
+	if _, err := g.Decode(payload); err != nil {
+		t.Fatalf("decode DialGreeting: %v", err)
+	}
+	if g.Version != 1 {
+		t.Errorf("greeting version: got %d want 1", g.Version)
+	}
+}
+
+// startFakeListenRunner builds a Mutual WS endpoint on listenAddr, accepts
+// one peer.Conn via GetNewActiveConnectionChannel, wraps it, and records
+// the first inbound app-payload kind + payload-body bytes (i.e. excluding
+// the kind byte prefix). Returns a cleanup function.
+//
+// Mirrors the pattern in runner/listen.go (buildListenEndpoint, WS-only).
+func startFakeListenRunner(t *testing.T, listenAddr string, firstKind chan<- wire.ApplicationPayloadKind, firstPayload chan<- []byte) (cleanup func()) {
+	t.Helper()
+	mux := http.NewServeMux()
+	ep, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
+		Logger: slog.Default(),
+		Path:   "/ws",
+		Mode:   objproto.EndpointModeMutual,
+	})
+	if err != nil {
+		t.Fatalf("ws endpoint: %v", err)
+	}
+
+	srv := &http.Server{Addr: listenAddr, Handler: mux}
+	go func() { _ = srv.ListenAndServe() }()
+	// Allow the listener to bind.
+	time.Sleep(150 * time.Millisecond)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case conn := <-ep.GetNewActiveConnectionChannel():
+			if conn == nil {
+				return
+			}
+			// Wrap into peer.Conn so we can SetOnControl + Start.
+			pc := peer.WrapAcceptedConn(ctx, conn, peer.DialConfig{
+				Logger: slog.Default(),
+			})
+			pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+				select {
+				case firstKind <- kind:
+				default:
+				}
+				// peer.Conn.dispatch already stripped the kind prefix byte;
+				// payload is the raw body after the kind byte.
+				select {
+				case firstPayload <- append([]byte(nil), payload...):
+				default:
+				}
+			})
+			pc.Start(ctx)
+			<-ctx.Done()
+			pc.Close()
+		}
+	}()
+
+	return func() {
+		cancel()
+		shutdownCtx, c := context.WithTimeout(context.Background(), 1*time.Second)
+		defer c()
+		_ = srv.Shutdown(shutdownCtx)
 	}
 }
 
