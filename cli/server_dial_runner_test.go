@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"net/netip"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -56,7 +58,7 @@ func TestServerDialRunnerSendsRequestAndDecodesResponse(t *testing.T) {
 	target := makeTestTarget(t)
 	fc := &fakeTaskControlClient{responseStatus: protocol.DialRunnerStatus_Ok}
 
-	resp, err := ServerDialRunnerWith(context.Background(), fc, target)
+	resp, err := ServerDialRunnerWith(context.Background(), fc, target, protocol.RunnerID{})
 	if err != nil {
 		t.Fatalf("ServerDialRunnerWith: %v", err)
 	}
@@ -86,7 +88,7 @@ func TestServerDialRunnerSendsRequestAndDecodesResponse(t *testing.T) {
 
 func TestServerDialRunnerPropagatesNonOkStatus(t *testing.T) {
 	fc := &fakeTaskControlClient{responseStatus: protocol.DialRunnerStatus_DialFailed}
-	resp, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t))
+	resp, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t), protocol.RunnerID{})
 	if err != nil {
 		t.Fatalf("ServerDialRunnerWith: %v", err)
 	}
@@ -98,7 +100,7 @@ func TestServerDialRunnerPropagatesNonOkStatus(t *testing.T) {
 func TestServerDialRunnerPropagatesRoundTripErr(t *testing.T) {
 	wantErr := errors.New("boom")
 	fc := &fakeTaskControlClient{responseErr: wantErr}
-	_, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t))
+	_, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t), protocol.RunnerID{})
 	if !errors.Is(err, wantErr) {
 		t.Errorf("err: got %v want %v", err, wantErr)
 	}
@@ -107,7 +109,7 @@ func TestServerDialRunnerPropagatesRoundTripErr(t *testing.T) {
 func TestServerDialRunnerRejectsUnexpectedKind(t *testing.T) {
 	kind := protocol.TaskControlKind_Submit
 	fc := &fakeTaskControlClient{forceKind: &kind}
-	_, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t))
+	_, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t), protocol.RunnerID{})
 	if err == nil {
 		t.Fatal("expected error for non-DialRunner response kind")
 	}
@@ -115,8 +117,71 @@ func TestServerDialRunnerRejectsUnexpectedKind(t *testing.T) {
 
 func TestServerDialRunnerRejectsMissingVariant(t *testing.T) {
 	fc := &fakeTaskControlClient{dropDialRunner: true}
-	_, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t))
+	_, err := ServerDialRunnerWith(context.Background(), fc, makeTestTarget(t), protocol.RunnerID{})
 	if err == nil {
 		t.Fatal("expected error when DialRunner variant is nil")
+	}
+}
+
+// TestServerDialRunnerWithVia: verifies that a non-zero viaCID populates
+// DialRunnerRequest.Via in the wire payload.
+func TestServerDialRunnerWithVia(t *testing.T) {
+	fakeServerCID := objproto.NewConnectionID("ws",
+		netip.MustParseAddrPort("192.168.1.10:8540"), 12345)
+	fakeViaCID := objproto.NewConnectionID("ws",
+		netip.MustParseAddrPort("192.168.1.20:8550"), 51357)
+
+	fc := &fakeTaskControlClient{responseStatus: protocol.DialRunnerStatus_Ok}
+
+	resp, err := ServerDialRunnerWith(context.Background(), fc,
+		protocol.ConnIDToRunnerID(fakeServerCID),
+		protocol.ConnIDToRunnerID(fakeViaCID))
+	if err != nil {
+		t.Fatalf("ServerDialRunnerWith: %v", err)
+	}
+	if resp.Status != protocol.DialRunnerStatus_Ok {
+		t.Errorf("status: got %v want Ok", resp.Status)
+	}
+	if fc.lastRequest == nil {
+		t.Fatal("client did not see a DialRunner request")
+	}
+	dr := fc.lastRequest.DialRunner()
+	if dr == nil {
+		t.Fatal("DialRunner variant nil")
+	}
+	if string(dr.Via.Transport) != "ws" {
+		t.Errorf("via.transport: got %q", dr.Via.Transport)
+	}
+	if dr.Via.Port != 8550 {
+		t.Errorf("via.port: got %d want 8550", dr.Via.Port)
+	}
+	if dr.Via.UniqueNumber != 51357 {
+		t.Errorf("via.unique_number: got %d want 51357", dr.Via.UniqueNumber)
+	}
+}
+
+// TestServerDialRunnerWithoutVia: zero viaCID should leave DialRunnerRequest.Via
+// with empty Transport (the "no via" marker for backward compat).
+func TestServerDialRunnerWithoutVia(t *testing.T) {
+	fakeServerCID := objproto.NewConnectionID("ws",
+		netip.MustParseAddrPort("192.168.1.10:8540"), 12345)
+
+	fc := &fakeTaskControlClient{responseStatus: protocol.DialRunnerStatus_Ok}
+
+	_, err := ServerDialRunnerWith(context.Background(), fc,
+		protocol.ConnIDToRunnerID(fakeServerCID),
+		protocol.RunnerID{})
+	if err != nil {
+		t.Fatalf("ServerDialRunnerWith: %v", err)
+	}
+	if fc.lastRequest == nil {
+		t.Fatal("client did not see a DialRunner request")
+	}
+	dr := fc.lastRequest.DialRunner()
+	if dr == nil {
+		t.Fatal("DialRunner variant nil")
+	}
+	if len(dr.Via.Transport) != 0 {
+		t.Errorf("via.transport should be empty for direct dial, got %q", dr.Via.Transport)
 	}
 }

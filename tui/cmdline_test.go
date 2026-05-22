@@ -372,3 +372,34 @@ func TestParseFileUsageErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestParseServerDialRunnerWithVia(t *testing.T) {
+	got, err := ParseCommand(`server dial-runner ws:192.168.3.10:8540-* --via ws:192.168.3.14:52036-51357`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := got.(ServerDialRunnerAction)
+	if !ok {
+		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
+	}
+	if a.RunnerCID != "ws:192.168.3.10:8540-*" {
+		t.Errorf("RunnerCID: got %q", a.RunnerCID)
+	}
+	if a.Via != "ws:192.168.3.14:52036-51357" {
+		t.Errorf("Via: got %q", a.Via)
+	}
+}
+
+func TestParseServerDialRunnerWithoutVia(t *testing.T) {
+	got, err := ParseCommand(`server dial-runner ws:192.168.3.10:8540-*`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := got.(ServerDialRunnerAction)
+	if !ok {
+		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
+	}
+	if a.Via != "" {
+		t.Errorf("Via should be empty, got %q", a.Via)
+	}
+}

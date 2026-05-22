@@ -122,10 +122,13 @@ type InteractiveAction struct {
 }
 
 // ServerDialRunnerAction asks the server to dial out to a Listen-mode
-// runner (Phase A reverse-dial). Used in ACL environments where the
-// runner cannot dial the server directly.
+// runner (Phase A reverse-dial / Phase B relayed-dial). Used in ACL
+// environments where the runner cannot dial the server directly.
+// Via, when non-empty, requests a relay through the named runner CID
+// (Phase B: objproto EstablishRelay).
 type ServerDialRunnerAction struct {
 	RunnerCID string // e.g. "ws:192.168.3.10:8540-*"
+	Via       string // empty = direct dial; non-empty = relay via this CID
 }
 
 func (SubmitAction) isAction()           {}
@@ -186,17 +189,52 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 }
 
 // parseServer handles the `server <sub>` family. Currently only
-// `server dial-runner <runner-cid>` is supported.
+// `server dial-runner [--via <cid>] <runner-cid>` is supported.
 func parseServer(args []string) (Action, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("server: usage: server dial-runner <runner-cid>")
+		return nil, fmt.Errorf("server: usage: server dial-runner [--via <cid>] <runner-cid>")
 	}
 	switch args[0] {
 	case "dial-runner":
-		if len(args) != 2 {
-			return nil, fmt.Errorf("server dial-runner: usage: server dial-runner <runner-cid>")
+		// Manually scan args to support --via both before and after the
+		// positional CID argument. Go's flag.FlagSet stops at the first
+		// non-flag token, so mixed order (cid --via cid) would not work
+		// with flag.Parse alone.
+		var via, runnerCID string
+		rest := args[1:]
+		for i := 0; i < len(rest); i++ {
+			t := rest[i]
+			if t == "--via" {
+				i++
+				if i >= len(rest) {
+					return nil, fmt.Errorf("server dial-runner: --via: missing CID value")
+				}
+				via = rest[i]
+			} else if strings.HasPrefix(t, "--via=") {
+				via = t[len("--via="):]
+			} else if t == "--" {
+				// everything after -- is positional
+				i++
+				if i >= len(rest) {
+					break
+				}
+				if runnerCID != "" {
+					return nil, fmt.Errorf("server dial-runner: usage: server dial-runner [--via <cid>] <runner-cid>")
+				}
+				runnerCID = rest[i]
+			} else if strings.HasPrefix(t, "-") {
+				return nil, fmt.Errorf("server dial-runner: unknown flag %q", t)
+			} else {
+				if runnerCID != "" {
+					return nil, fmt.Errorf("server dial-runner: usage: server dial-runner [--via <cid>] <runner-cid>")
+				}
+				runnerCID = t
+			}
 		}
-		return ServerDialRunnerAction{RunnerCID: args[1]}, nil
+		if runnerCID == "" {
+			return nil, fmt.Errorf("server dial-runner: usage: server dial-runner [--via <cid>] <runner-cid>")
+		}
+		return ServerDialRunnerAction{RunnerCID: runnerCID, Via: via}, nil
 	default:
 		return nil, fmt.Errorf("server: unknown subcommand %q (try: dial-runner)", args[0])
 	}
