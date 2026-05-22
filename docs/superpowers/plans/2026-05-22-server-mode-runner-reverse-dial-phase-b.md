@@ -1437,17 +1437,17 @@ package integration
 
 import (
 	"context"
-	"encoding/hex"
+	"crypto/rand"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
+	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 func TestAgentProxyE2E(t *testing.T) {
@@ -1461,8 +1461,12 @@ func TestAgentProxyE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 1. Start server (Mutual mode by Phase A).
+	// 1. Start server (Mutual mode by Phase A). Wire an agentboard so
+	//    we can register a ticket manually below.
+	board := agentboard.New(nil)
 	srv := server.New(server.Config{Addr: serverAddr})
+	srv.SetBoard(board) // exposes the Board field used by agent_handler
+
 	srvDone := make(chan error, 1)
 	go func() { srvDone <- srv.Run(ctx) }()
 	defer func() {
@@ -1473,7 +1477,12 @@ func TestAgentProxyE2E(t *testing.T) {
 		}
 	}()
 
-	// 2. Start runner in --listen mode.
+	// 2. Start runner in --listen mode. We need the runner to have an
+	//    active task in its session.tasks map so the agent-proxy handler
+	//    accepts the ProxyRequest. The simplest way: pre-register a fake
+	//    task on the session via an exported test hook OR use real
+	//    Submit+Assign. We do the latter to exercise the full Phase A
+	//    path under Phase B's nose.
 	listenDone := make(chan error, 1)
 	go func() {
 		listenDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
@@ -1485,10 +1494,9 @@ func TestAgentProxyE2E(t *testing.T) {
 			WSListen: runnerListen,
 		})
 	}()
-
 	time.Sleep(500 * time.Millisecond)
 
-	// 3. Trigger reverse-dial.
+	// 3. Trigger reverse-dial (Phase A).
 	serverCID := mustParseCID(t, "ws:"+serverAddr+"-*")
 	runnerCID := mustParseCID(t, "ws:"+runnerListen+"-*")
 	dialResp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID)
@@ -1499,48 +1507,137 @@ func TestAgentProxyE2E(t *testing.T) {
 		t.Fatalf("dial-runner status: %v", dialResp.Status)
 	}
 
-	// 4. Submit a task to register a task_id on the runner.
-	c, err := cli.Dial(ctx, serverCID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
-		t.Fatal(err)
-	}
-	taskHex, err := c.SubmitWithSelectorAndArgs(ctx, t.TempDir(), "echo proxy-e2e",
-		protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// 4. Fabricate a task entry on the runner side AND a matching ticket on
+	//    the server's agentboard registry. We bypass real Submit+Assign
+	//    because that flow drives claude (spawning an agent process), which
+	//    is outside what Phase B needs to verify. The proxy mechanism only
+	//    cares about: runner has task in s.tasks AND server has a
+	//    (runner_id, task_id, ticket) entry on its agentboard Registry.
+	//
+	//    Implementation: we expose a test hook on Session to inject a task
+	//    entry. See `runner.Session.AddFakeTaskForTest` added below.
+
 	var taskID protocol.TaskID
-	raw, _ := hex.DecodeString(taskHex)
-	copy(taskID.Id[:], raw)
+	if _, err := rand.Read(taskID.Id[:]); err != nil {
+		t.Fatal(err)
+	}
+	var ticket [16]byte
+	if _, err := rand.Read(ticket[:]); err != nil {
+		t.Fatal(err)
+	}
 
-	// Give the runner a moment to receive AssignTask and register the task.
-	time.Sleep(500 * time.Millisecond)
+	// Inject the task into the runner's session. (Test hook — see Task 7 Step 2.)
+	if err := runner.AddFakeTaskForListenServer(ctx, taskID); err != nil {
+		t.Fatalf("AddFakeTaskForListenServer: %v", err)
+	}
 
-	// 5. Call DialViaProxy and run a tiny round-trip via the agentboard.
+	// Register the ticket with the server's agentboard. The runner ID we
+	// pass must match what the agent-proxy ceremony causes the server to
+	// see — the proxied conn's CID equals the agent's chosen CID (which
+	// arrives at the server with src=runner.Addr from server's POV), so
+	// the server's view of the runner is the Phase A runner conn. Use
+	// that as the runner_id for ticket registration.
+	//
+	// (Pull the runner-as-seen-by-server CID out of srv's registry; the
+	// only registered runner is ours.)
+	registeredRunners := srv.RegisteredRunners()  // small test accessor
+	if len(registeredRunners) != 1 {
+		t.Fatalf("expected 1 registered runner, got %d", len(registeredRunners))
+	}
+	runnerIDOnServer := registeredRunners[0].ID
+	board.Registry().Register(runnerIDOnServer, taskID, ticket)
+
+	// 5. Call DialViaProxy to establish the agent↔server end-to-end conn.
 	proxyConn, err := cli.DialViaProxy(ctx, runnerCID, taskID)
 	if err != nil {
 		t.Fatalf("DialViaProxy: %v", err)
 	}
 	defer proxyConn.Close()
 
-	// 6. Validate end-to-end: send AgentBridgeHello (synthesises ConnectAgent's
-	//    payload manually because env-driven dispatch is tested separately).
-	//    Confirm the server responds with HelloStatus_Ok.
+	// 6. Drive PSK + AgentBridgeHello on the proxied conn. This is the
+	//    same shape that cli/agent/conn.go ConnectAgent runs after its
+	//    own peer.Dial — pasted inline here so the test does not depend
+	//    on agent package internals.
+	pskRespCh := make(chan wire.PskAuthStatus, 1)
+	helloRespCh := make(chan agentboard.HelloStatus, 1)
+	proxyConn.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+		switch kind {
+		case wire.ApplicationPayloadKind_PskAuth:
+			if len(payload) > 0 {
+				select {
+				case pskRespCh <- wire.PskAuthStatus(payload[0]):
+				default:
+				}
+			}
+		case wire.ApplicationPayloadKind_AgentMessage:
+			msg := &agentboard.AgentMessage{}
+			if _, err := msg.Decode(payload); err != nil {
+				return
+			}
+			if msg.Kind == agentboard.AgentMessageKind_HelloResponse {
+				if resp := msg.HelloResponse(); resp != nil {
+					select {
+					case helloRespCh <- resp.Status:
+					default:
+					}
+				}
+			}
+		}
+	})
+	proxyConn.Start(ctx)
+
+	// PSK exchange.
+	pskCtx, pskCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer pskCancel()
+	if err := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
+		_, _, err := proxyConn.Connection().SendMessage(b)
+		return err
+	}, nil /* no PSK configured in this test */, pskRespCh); err != nil {
+		t.Fatalf("SendAndWaitPSK: %v", err)
+	}
+
+	// AgentBridgeHello + AuthTicket validation.
+	var boardRunnerID agentboard.RunnerID
+	boardRunnerID.SetTransport([]byte(runnerIDOnServer.Transport))
+	boardRunnerID.SetIpAddr(addrBytes(runnerIDOnServer.Addr))
+	boardRunnerID.Port = runnerIDOnServer.Addr.Port()
+	boardRunnerID.UniqueNumber = runnerIDOnServer.ID
+
+	var boardTaskID agentboard.TaskID
+	boardTaskID.Id = taskID.Id
 
 	hello := agentboard.AgentBridgeHello{
-		// Fill RunnerId, TaskId, AuthTicket — get the ticket from the
-		// agentboard for this taskID:
+		RunnerId:   boardRunnerID,
+		TaskId:     boardTaskID,
+		AuthTicket: ticket,
 	}
-	_ = hello
-	// (Implementation: drive the existing agent Hello+Ack code path against
-	// proxyConn. See cli/agent/conn.go ConnectAgent post-PSK section for the
-	// exact AgentMessage shape; mirror that here.)
+	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Hello}
+	msg.SetHello(hello)
+	data := msg.MustAppend([]byte{byte(wire.ApplicationPayloadKind_AgentMessage)})
+	if _, _, err := proxyConn.Connection().SendMessage(data); err != nil {
+		t.Fatalf("send AgentBridgeHello: %v", err)
+	}
+
+	select {
+	case status := <-helloRespCh:
+		if status != agentboard.HelloStatusOk {
+			t.Fatalf("hello rejected: %v", status)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for HelloResponse")
+	}
 
 	t.Log("Phase B proxy round-trip success")
+}
+
+// addrBytes returns the 4- or 16-byte representation of a netip.Addr.
+func addrBytes(addrPort netip.AddrPort) []byte {
+	if addrPort.Addr().Is4() {
+		b := addrPort.Addr().As4()
+		return b[:]
+	}
+	b := addrPort.Addr().As16()
+	return b[:]
 }
 
 func mustParseCID(t *testing.T, s string) objproto.ConnectionID {
@@ -1554,9 +1651,69 @@ func mustParseCID(t *testing.T, s string) objproto.ConnectionID {
 }
 ```
 
-(The Hello payload synthesis section is best filled in by reading
-`cli/agent/conn.go:230-258` and reproducing the same SendMessage + waitForHelloResponse
-pattern against proxyConn.)
+- [ ] **Step 2: Add test hooks needed by the e2e**
+
+The test above relies on two new test-only helpers. Add them now, in production
+code, behind clear "test only" docstrings (cheap, since they are simple
+read-modify-write of state that already exists):
+
+**a. `runner.AddFakeTaskForListenServer(ctx, taskID)`** in `runner/listen.go` or a
+new `runner/test_hooks.go`:
+
+```go
+// AddFakeTaskForListenServer injects a task entry into the session that
+// ListenAndServe most recently created. Test-only: the listen accept loop
+// stores its Session in a package-level atomic.Pointer (the same one used
+// by the agent proxy handler to look up serverCID); this hook reads that
+// pointer and inserts a taskEntry so the proxy ceremony's HasTask check
+// passes without needing a full Submit+Assign flow.
+//
+// Returns an error if no listen-mode session exists yet.
+func AddFakeTaskForListenServer(ctx context.Context, taskID protocol.TaskID) error {
+	sess := lastListenSession.Load()
+	if sess == nil {
+		return errors.New("no listen session")
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.tasks == nil {
+		sess.tasks = make(map[string]*taskEntry)
+	}
+	sess.tasks[hex.EncodeToString(taskID.Id[:])] = &taskEntry{
+		cancel: func() {}, // no-op
+	}
+	return nil
+}
+
+// lastListenSession is the same atomic.Pointer ListenAndServe stores into
+// (move the variable to package scope when implementing).
+```
+
+**b. `server.Server.RegisteredRunners() []RunnerEntry`** in `server/server.go`:
+
+```go
+// RegisteredRunners returns a snapshot of currently registered runners.
+// Test-only accessor; production code reads via the publishRunnerEvent
+// hooks.
+func (s *Server) RegisteredRunners() []RunnerEntry {
+	return s.registry.Snapshot()
+}
+```
+
+(`s.registry.Snapshot()` presumably exists; if not, write a one-liner that
+takes `s.registry.mu` and returns a copy of the entries map's values.)
+
+- [ ] **Step 3: Run the E2E test**
+
+Run: `go test -tags integration ./integration/ -run TestAgentProxyE2E -v -count=1`
+Expected: PASS — DialViaProxy completes the proxy ceremony, the rehandshake derives
+end-to-end keys with the server, PSK passes (no PSK configured), and the
+AgentBridgeHello round-trip succeeds with HelloStatus_Ok.
+
+- [ ] **Step 4: Run full integration suite to confirm no regression**
+
+Run: `go test -tags integration ./integration/ -count=1`
+Expected: all PASS.
 
 - [ ] **Step 2: Run the E2E test**
 
@@ -1569,10 +1726,10 @@ end-to-end keys with the server, and the AgentBridgeHello round-trip succeeds.
 Run: `go test -tags integration ./integration/ -count=1`
 Expected: all PASS.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add integration/agent_proxy_e2e_test.go
+git add integration/agent_proxy_e2e_test.go runner/test_hooks.go runner/listen.go server/server.go
 git commit -m "test(integration): end-to-end Phase B proxy ceremony with agentboard Hello"
 ```
 
