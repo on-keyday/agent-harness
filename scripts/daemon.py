@@ -131,6 +131,29 @@ def _spawn_detached(args: list[str], log_path: Path) -> int:
     return p.pid
 
 
+def _strip_flag(args: list[str], name: str) -> list[str]:
+    """Remove all occurrences of ``--<name> <value>`` and ``--<name>=<value>``
+    from *args*. Used to dedup flags daemon_up injects (currently just
+    ``--shutdown-file``) when re-spawning a process whose previous argv
+    already contained the same flag from a prior daemon_up. Trailing
+    ``--<name>`` with no value is also dropped silently."""
+    out: list[str] = []
+    long = f"--{name}"
+    long_eq = f"--{name}="
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == long:
+            i += 2  # skip flag + (possibly missing) value
+            continue
+        if a.startswith(long_eq):
+            i += 1
+            continue
+        out.append(a)
+        i += 1
+    return out
+
+
 def daemon_up(slot: str, bin_name: str, *args: str) -> int:
     """Start *bin_name* detached, recording state under *slot*.
 
@@ -170,6 +193,14 @@ def daemon_up(slot: str, bin_name: str, *args: str) -> int:
         sf.unlink()
     except FileNotFoundError:
         pass
+
+    # Strip any existing --shutdown-file from args before injecting our
+    # own. restart.py inherits the running process's full argv via
+    # /proc/<pid>/cmdline and passes it back through daemon_up, which
+    # would otherwise double-inject (two --shutdown-file flags pointing
+    # at the same path — harmless under Go's last-write-wins flag
+    # parsing, but ugly in ps output and confusing to debug).
+    args = _strip_flag(list(args), "shutdown-file")
     spawn_args = ["--shutdown-file", str(sf), *args]
 
     pid = _spawn_detached([str(bp), *spawn_args], lf)
