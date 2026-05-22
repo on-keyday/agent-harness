@@ -30,13 +30,14 @@ type App struct {
 	server      string
 	defaultRepo string
 
-	runners   RunnersModel
-	tasks     TasksModel
-	logs      LogsModel
-	cmdresult CmdResultModel
-	cmdline   textinput.Model
-	popup     PopupModel
-	detail    DetailPopup
+	runners    RunnersModel
+	tasks      TasksModel
+	logs       LogsModel
+	cmdresult  CmdResultModel
+	cmdline    textinput.Model
+	popup      PopupModel
+	detail     DetailPopup
+	filepicker FilePickerModel
 
 	focus  focus
 	width  int
@@ -81,6 +82,7 @@ func New(cfg Config) *App {
 		cmdresult:   NewCmdResult(),
 		cmdline:     cmd,
 		popup:       NewPopup(cfg.DefaultRepo),
+		filepicker:  NewFilePicker(),
 		focus:       focusTasks,
 		connected:   false,
 		status:      "connecting…",
@@ -258,24 +260,32 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if len(short) > 12 {
 			short = short[:12]
 		}
+		// Tee to picker first so it can refresh its listing in-place.
+		var pcmd tea.Cmd
+		if a.filepicker.IsOpen() {
+			a.filepicker, pcmd = a.filepicker.Update(msg)
+		}
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("file %s %s: %s", msg.Op, short, msg.Err.Error())))
-			return a, nil
+			return a, pcmd
 		}
 		if msg.Op == "ls" {
 			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("file ls %s %s", short, msg.Detail)))
-			// Listing can be multi-line; append the runner's output verbatim
-			// after the header so it lands as a block in cmdresult.
 			for _, line := range strings.Split(strings.TrimRight(msg.Output, "\n"), "\n") {
 				if line == "" {
 					continue
 				}
 				a.cmdresult.Append("  " + line)
 			}
-			return a, nil
+			return a, pcmd
 		}
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("file %s %s ok ", msg.Op, short)) + msg.Detail)
-		return a, nil
+		return a, pcmd
+
+	case FilePickerListingMsg:
+		var pcmd tea.Cmd
+		a.filepicker, pcmd = a.filepicker.Update(msg)
+		return a, pcmd
 
 	case InteractiveReadyMsg:
 		if msg.Err != nil {
@@ -342,6 +352,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.width = msg.Width
 		a.height = msg.Height
 		a.layout()
+		a.filepicker.SetSize(a.width, a.height)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -352,6 +363,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail.Close()
 			}
 			return a, nil
+		}
+		// File picker intercepts ALL keys when open.
+		if a.filepicker.IsOpen() {
+			var pcmd tea.Cmd
+			a.filepicker, pcmd = a.filepicker.Update(msg)
+			return a, pcmd
 		}
 		// Submit popup intercepts ALL keys when open.
 		if a.popup.IsOpen() {
@@ -439,6 +456,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// default repo (equivalent to `harness-cli session new`).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
 			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "")
+		}
+		// `F` opens the file picker for the task currently focused in the
+		// tasks pane. No-op when the tasks pane is not focused or no task
+		// is selected (the cmdresult line explains).
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "F" {
+			if a.focus != focusTasks {
+				a.cmdresult.Append(WarnStyle.Render("file picker: focus the tasks pane first"))
+				return a, nil
+			}
+			taskID := a.tasks.SelectedID()
+			if taskID == "" {
+				a.cmdresult.Append(WarnStyle.Render("file picker: no task selected"))
+				return a, nil
+			}
+			cmd := a.filepicker.OpenFor(a.client, taskID)
+			a.filepicker.SetSize(a.width, a.height)
+			return a, cmd
 		}
 		// `d` opens the detail popup for the focused row (runners or tasks).
 		if !logsEditing && msg.String() == "d" {
@@ -596,7 +630,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · shift+←/→ page · 0/$ edge · / filter · s submit · S session · i interactive/attach · d detail · c cancel · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · F file picker · d detail · c cancel · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -608,6 +642,9 @@ func (a *App) View() string {
 		cmdlineView,
 		footer,
 	}, "\n")
+	if a.filepicker.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.filepicker.View())
+	}
 	if a.popup.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.popup.View())
 	}
@@ -699,6 +736,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file push [-r] [-f] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite)")
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
+		a.cmdresult.Append("F (tasks focus): open file picker — browse the focused task's worktree; u push / g pull / d delete / D rm -rf, Esc closes")
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server
