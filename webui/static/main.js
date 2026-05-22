@@ -105,6 +105,26 @@ const POLL_INTERVAL_MS = 5000;
     return resumeInput.value.trim();
   };
 
+  // File picker DOM refs + state need to exist BEFORE refreshSnapshot()
+  // is first awaited, because the very first invocation calls
+  // renderFileTaskSelect, which reads fileTaskSelect — a `const` whose
+  // temporal dead zone would otherwise be violated. Declaring them up
+  // here also lets the setInterval-driven refreshes use the same
+  // closures.
+  const fileTaskSelect    = document.getElementById("file-task-select");
+  const fileCurPathSpan   = document.getElementById("file-cur-path");
+  const fileUpBtn         = document.getElementById("file-up-btn");
+  const fileRefreshBtn    = document.getElementById("file-refresh-btn");
+  const fileEntriesUL     = document.getElementById("file-entries");
+  const filePushBtn       = document.getElementById("file-push-btn");
+  const filePullBtn       = document.getElementById("file-pull-btn");
+  const fileDeleteBtn     = document.getElementById("file-delete-btn");
+  const fileResultPre     = document.getElementById("file-result");
+
+  let filePickerCurDir   = "";
+  let filePickerEntries  = [];
+  let filePickerSelected = null; // {name, size, mode, isDir} or null
+
   const refreshSnapshot = async () => {
     let snap;
     try {
@@ -128,23 +148,6 @@ const POLL_INTERVAL_MS = 5000;
   };
   await refreshSnapshot();
   setInterval(refreshSnapshot, POLL_INTERVAL_MS);
-
-  // File picker section — browse the worktree of a selected task,
-  // push / pull / delete with click ops. Sits in #files in
-  // index.html; cmdline `file ...` still works for typing-only flows.
-  const fileTaskSelect    = document.getElementById("file-task-select");
-  const fileCurPathSpan   = document.getElementById("file-cur-path");
-  const fileUpBtn         = document.getElementById("file-up-btn");
-  const fileRefreshBtn    = document.getElementById("file-refresh-btn");
-  const fileEntriesUL     = document.getElementById("file-entries");
-  const filePushBtn       = document.getElementById("file-push-btn");
-  const filePullBtn       = document.getElementById("file-pull-btn");
-  const fileDeleteBtn     = document.getElementById("file-delete-btn");
-  const fileResultPre     = document.getElementById("file-result");
-
-  let filePickerCurDir   = "";
-  let filePickerEntries  = [];
-  let filePickerSelected = null; // {name, size, mode, isDir} or null
 
   function renderFileTaskSelect(tasks) {
     const prev = fileTaskSelect.value;
