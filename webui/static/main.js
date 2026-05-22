@@ -197,8 +197,27 @@ const POLL_INTERVAL_MS = 5000;
           out = await window.harness.prune({ before: flags.before || "168h" });
           break;
         }
+        case "file": {
+          out = await runFileCmd(tokens.slice(1));
+          break;
+        }
+        case "help":
+          out = [
+            "commands:",
+            "  submit <prompt...>        submit task (use repo dropdown / Resume task id)",
+            "  list                      refresh the snapshot",
+            "  cancel <task-id>          cancel a task",
+            "  prune [--before=DUR]      forget terminal tasks older than DUR",
+            "  file ls <task> [rel]      list a worktree directory",
+            "  file delete [-r] [-f] <task> <rel>",
+            "                            remove a file (no -r) or directory (-r [-f])",
+            "  file push <task> <rel>    upload a local file (file picker opens)",
+            "  file pull <task> <rel>    download a remote file (browser save dialog)",
+            "  help                      this list",
+          ].join("\n");
+          break;
         default:
-          out = `unknown command: ${cmd}`;
+          out = `unknown command: ${cmd} (type 'help' for the list)`;
       }
       cmdOutput.textContent = `${out}\n` + cmdOutput.textContent;
       refreshSnapshot();
@@ -537,4 +556,155 @@ function parseFlags(tokens) {
     }
   }
   return out;
+}
+
+// --- file ops dispatch -------------------------------------------------
+
+// runFileCmd handles the `file <verb> ...` family from the cmd-input.
+// Returns a string to be appended to cmd-output. Throws on usage error;
+// non-fatal "Cancelled by user" outcomes return a short string instead.
+async function runFileCmd(rest) {
+  if (rest.length === 0) {
+    throw new Error("file: sub-verb required (ls | delete | push | pull)");
+  }
+  const verb = rest[0];
+  const args = rest.slice(1);
+  switch (verb) {
+    case "ls":
+      return fileLsCmd(args);
+    case "delete":
+      return fileDeleteCmd(args);
+    case "push":
+      return filePushCmd(args);
+    case "pull":
+      return filePullCmd(args);
+    default:
+      throw new Error(`file: unknown sub-verb ${verb}`);
+  }
+}
+
+async function fileLsCmd(args) {
+  if (args.length < 1 || args.length > 2) {
+    throw new Error("usage: file ls <task-id> [<worktree-rel-dir>]");
+  }
+  const taskID = args[0];
+  const rel = args[1] || "";
+  const entries = await window.harness.fileLs(taskID, rel);
+  if (entries.length === 0) return "(empty)";
+  return entries.map(e => {
+    const name = e.isDir ? `${e.name}/` : e.name;
+    const sz = e.isDir ? "" : String(e.size);
+    return `${sz.padStart(10)} ${name}`;
+  }).join("\n");
+}
+
+async function fileDeleteCmd(args) {
+  // Parse flags before positional args.
+  let recursive = false, force = false;
+  const pos = [];
+  for (const a of args) {
+    if (a === "-r" || a === "--recursive") { recursive = true; continue; }
+    if (a === "-f" || a === "--force")     { force = true; continue; }
+    pos.push(a);
+  }
+  if (pos.length !== 2) {
+    throw new Error("usage: file delete [-r [-f]] <task-id> <rel>");
+  }
+  const [taskID, rel] = pos;
+  // Confirm before destructive action. Browser native dialog.
+  const verb = recursive ? (force ? "rm -rf" : "rmdir") : "rm";
+  if (!window.confirm(`${verb} ${rel} on task ${taskID.slice(0, 12)} — proceed?`)) {
+    return "delete cancelled";
+  }
+  await window.harness.fileDelete(taskID, rel, recursive, force);
+  return `${verb} ok: ${rel}`;
+}
+
+async function filePushCmd(args) {
+  if (args.length !== 2) {
+    throw new Error("usage: file push <task-id> <worktree-rel-dst>");
+  }
+  const [taskID, remoteRel] = args;
+  // Open the hidden file picker; abort if the user closes it without
+  // selecting anything.
+  const file = await pickLocalFile();
+  if (!file) return "push cancelled (no file selected)";
+  const buf = new Uint8Array(await file.arrayBuffer());
+  try {
+    await window.harness.filePushBytes(taskID, remoteRel, buf, false);
+    return `push ok: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
+  } catch (e) {
+    if (e && e.code === "already_exists") {
+      if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
+        return "push cancelled (overwrite declined)";
+      }
+      await window.harness.filePushBytes(taskID, remoteRel, buf, true);
+      return `push ok (overwritten): ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
+    }
+    throw e;
+  }
+}
+
+async function filePullCmd(args) {
+  if (args.length !== 2) {
+    throw new Error("usage: file pull <task-id> <worktree-rel-src>");
+  }
+  const [taskID, remoteRel] = args;
+  const bytes = await window.harness.filePullBytes(taskID, remoteRel);
+  triggerDownload(bytes, basename(remoteRel));
+  return `pull ok: ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;
+}
+
+// pickLocalFile programmatically opens the hidden <input type="file">
+// in index.html, returning the File the user selected (or null when
+// they dismissed the dialog).
+function pickLocalFile() {
+  const input = document.getElementById("hidden-file-input");
+  if (!input) {
+    return Promise.reject(new Error("hidden-file-input element missing from index.html"));
+  }
+  return new Promise((resolve) => {
+    input.value = ""; // clear any prior selection so onchange re-fires
+    const onChange = () => {
+      input.removeEventListener("change", onChange);
+      input.removeEventListener("cancel", onCancel);
+      resolve(input.files && input.files[0] ? input.files[0] : null);
+    };
+    const onCancel = () => {
+      input.removeEventListener("change", onChange);
+      input.removeEventListener("cancel", onCancel);
+      resolve(null);
+    };
+    input.addEventListener("change", onChange);
+    input.addEventListener("cancel", onCancel);
+    input.click();
+  });
+}
+
+// triggerDownload wraps bytes (Uint8Array) in a Blob and programmatically
+// clicks an anchor with the download attribute. The browser shows its
+// native save dialog (which handles overwrite confirmation per its own
+// rules — Firefox prompts every time, Chrome's behavior depends on the
+// "ask where to save each file" preference).
+function triggerDownload(bytes, filename) {
+  const blob = new Blob([bytes], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "download";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Defer revoke so the download has started before we drop the object
+  // URL. 1s is generous; modern browsers detach the download from the
+  // URL once the navigation begins, but revoking too eagerly has been
+  // observed to truncate large downloads on some configurations.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// basename returns the last component of a forward-slash path (the
+// wire side uses POSIX paths regardless of host OS).
+function basename(p) {
+  const i = p.lastIndexOf("/");
+  return i >= 0 ? p.slice(i + 1) : p;
 }

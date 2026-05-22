@@ -58,6 +58,10 @@ func main() {
 		"detachInteractive": js.FuncOf(harnessDetachInteractive),
 		"attachSession":        js.FuncOf(harnessAttachSession),
 		"onConnectionChange":   js.FuncOf(harnessOnConnectionChange),
+		"fileLs":               js.FuncOf(harnessFileLs),
+		"fileDelete":           js.FuncOf(harnessFileDelete),
+		"filePushBytes":        js.FuncOf(harnessFilePushBytes),
+		"filePullBytes":        js.FuncOf(harnessFilePullBytes),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -695,4 +699,204 @@ func (w *watchPipe) Write(p []byte) (int, error) {
 		js.Global().Call("harness_onTaskEvent", string(blob))
 	}
 	return len(p), nil
+}
+
+// rejectFileErr is the file-ops sibling of rejectErr: in addition to the
+// Error.message, it stamps a `code` property on the rejection so the JS
+// side can branch on the underlying FileTransferStatus without having
+// to string-match the error message. Recognised codes:
+//
+//   already_exists  – push destination present, retry with force=true
+//   not_found       – source missing on the runner side
+//   path_invalid    – worktree-escape attempt or empty path
+//   not_a_directory – delete/dir-delete called on a wrong kind of path
+//   not_empty       – dir_delete without recursive on a non-empty dir
+//
+// All other ack codes (io_error / canceled / internal / etc.) reject
+// with code="error" so the JS catch can fall through to a generic
+// failure path. Non-FileAckError errors also use code="error".
+func rejectFileErr(reject js.Value, err error) {
+	code := "error"
+	var fe *cli.FileAckError
+	if errors.As(err, &fe) {
+		switch fe.Status {
+		case protocol.FileTransferStatus_AlreadyExists:
+			code = "already_exists"
+		case protocol.FileTransferStatus_NotFound:
+			code = "not_found"
+		case protocol.FileTransferStatus_PathInvalid:
+			code = "path_invalid"
+		case protocol.FileTransferStatus_NotADirectory:
+			code = "not_a_directory"
+		case protocol.FileTransferStatus_IsDirectory:
+			code = "is_directory"
+		case protocol.FileTransferStatus_NotEmpty:
+			code = "not_empty"
+		}
+	}
+	errObj := js.Global().Get("Error").New(err.Error())
+	errObj.Set("code", code)
+	reject.Invoke(errObj)
+}
+
+// harnessFileLs lists entries directly under taskID's worktree at
+// relPath. Returns the same shape harness.snapshot() runners use for
+// roots: a plain JS array of {name, size, mode, isDir}.
+//
+//	harness.fileLs(taskID, relPath) -> Promise<Array<{name, size, mode, isDir}>>
+func harnessFileLs(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("fileLs: missing taskID / relPath args"))
+				return
+			}
+			taskID := args[0].String()
+			rel := args[1].String()
+			entries, err := c.ListFiles(rootCtx, taskID, rel)
+			if err != nil {
+				rejectFileErr(reject, err)
+				return
+			}
+			out := make([]any, 0, len(entries))
+			for _, e := range entries {
+				out = append(out, map[string]any{
+					"name":  e.Name,
+					"size":  float64(e.Size), // js Number; fine for files <2^53
+					"mode":  float64(e.Mode),
+					"isDir": e.IsDir,
+				})
+			}
+			resolve.Invoke(js.ValueOf(out))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFileDelete removes a path from taskID's worktree. recursive=true
+// switches to the dir_delete direction (empty-dir or rm-rf depending on
+// force). For files leave recursive=false; force is ignored on the
+// single-file delete path.
+//
+//	harness.fileDelete(taskID, relPath, recursive, force) -> Promise<void>
+func harnessFileDelete(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("fileDelete: missing taskID / relPath args"))
+				return
+			}
+			taskID := args[0].String()
+			rel := args[1].String()
+			recursive := len(args) >= 3 && args[2].Truthy()
+			force := len(args) >= 4 && args[3].Truthy()
+			if recursive {
+				err = c.FileDeleteDir(rootCtx, taskID, rel, force)
+			} else {
+				err = c.FileDelete(rootCtx, taskID, rel)
+			}
+			if err != nil {
+				rejectFileErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFilePushBytes uploads data (a Uint8Array of file contents)
+// into taskID's worktree at remoteRel. force=true overwrites; false
+// rejects with code="already_exists" if the destination is present,
+// letting the JS layer drive a confirm() prompt before retrying.
+//
+//	harness.filePushBytes(taskID, remoteRel, data, force) -> Promise<void>
+func harnessFilePushBytes(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		// Copy bytes out of the Uint8Array on the JS heap into a Go
+		// []byte while we're still on the main thread; the goroutine
+		// below cannot reach JS values directly.
+		if len(args) < 4 {
+			rejectErr(reject, errors.New("filePushBytes: missing taskID / remoteRel / data / force args"))
+			return nil
+		}
+		taskID := args[0].String()
+		remoteRel := args[1].String()
+		dataJS := args[2]
+		force := args[3].Truthy()
+		length := dataJS.Length()
+		data := make([]byte, length)
+		js.CopyBytesToGo(data, dataJS)
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if err := c.FilePushBytes(rootCtx, taskID, data, remoteRel, force); err != nil {
+				rejectFileErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFilePullBytes fetches remoteRel from taskID's worktree and
+// resolves with a Uint8Array of the file contents. The JS layer wraps
+// the bytes in a Blob and triggers a download to save them.
+//
+//	harness.filePullBytes(taskID, remoteRel) -> Promise<Uint8Array>
+func harnessFilePullBytes(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("filePullBytes: missing taskID / remoteRel args"))
+				return
+			}
+			taskID := args[0].String()
+			remoteRel := args[1].String()
+			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel)
+			if err != nil {
+				rejectFileErr(reject, err)
+				return
+			}
+			out := js.Global().Get("Uint8Array").New(len(data))
+			js.CopyBytesToJS(out, data)
+			resolve.Invoke(out)
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
 }
