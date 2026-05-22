@@ -488,9 +488,12 @@ enum FileTransferDirection:
     :u8
     push
     pull
-    delete       # remove a file from the worktree (rejects directories in v1).
+    delete       # remove a file from the worktree (rejects directories).
     dir_push     # client → runner; body is a tar stream of the source dir.
     dir_pull     # runner → client; body is a tar stream of the source dir.
+    dir_delete   # remove a directory from the worktree. force=0 → empty
+                 # dir only (fails on non-empty); force=1 → recursive
+                 # (os.RemoveAll). Rejects regular files (use `delete`).
 
 enum FileTransferStatus:
     :u8
@@ -501,7 +504,8 @@ enum FileTransferStatus:
     io_error       = "io_error"
     canceled       = "canceled"
     is_directory   = "is_directory"   # delete only: rel_path resolved to a directory.
-    not_a_directory = "not_a_directory"  # dir_push: dest exists but is a regular file. dir_pull: source is a regular file (not a directory).
+    not_a_directory = "not_a_directory"  # dir_push: dest exists but is a regular file. dir_pull / dir_delete: source is a regular file (not a directory).
+    not_empty       = "not_empty"     # dir_delete: target directory is non-empty and force=0 (recursive not requested).
 
 format FileTransferAck:
     status      :FileTransferStatus

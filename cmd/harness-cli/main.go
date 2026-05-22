@@ -271,12 +271,25 @@ func main() {
 				die(err)
 			}
 		case "delete":
-			if len(rest) != 2 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file delete <task-id> <worktree-rel-path>")
+			fs := flag.NewFlagSet("file delete", flag.ExitOnError)
+			recursive := fs.Bool("recursive", false, "target a directory tree instead of a single file (uses dir_delete)")
+			fs.BoolVar(recursive, "r", false, "alias for --recursive")
+			force := fs.Bool("force", false, "with -r: delete non-empty directory contents recursively (os.RemoveAll). Ignored without -r.")
+			fs.BoolVar(force, "f", false, "alias for --force")
+			fs.Parse(rest)
+			pargs := fs.Args()
+			if len(pargs) != 2 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file delete [-r [-f]] <task-id> <worktree-rel-path>")
 				os.Exit(2)
 			}
-			if err := c.FileDelete(ctx, rest[0], rest[1]); err != nil {
-				die(err)
+			if *recursive {
+				if err := c.FileDeleteDir(ctx, pargs[0], pargs[1], *force); err != nil {
+					die(err)
+				}
+			} else {
+				if err := c.FileDelete(ctx, pargs[0], pargs[1]); err != nil {
+					die(err)
+				}
 			}
 		default:
 			fmt.Fprintf(os.Stderr, "unknown file subcommand: %s\n", fsub)

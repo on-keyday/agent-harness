@@ -137,6 +137,8 @@ func ackError(op string, ack *protocol.FileTransferAck) error {
 		return fmt.Errorf("file %s: is a directory", op)
 	case protocol.FileTransferStatus_NotADirectory:
 		return fmt.Errorf("file %s: not a directory", op)
+	case protocol.FileTransferStatus_NotEmpty:
+		return fmt.Errorf("file %s: directory not empty (use --force to remove recursively)", op)
 	default:
 		return fmt.Errorf("file %s: unknown status %d", op, ack.Status)
 	}
