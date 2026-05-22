@@ -1285,6 +1285,9 @@ Expected: PASS.
 
 - [ ] **Step 6: Write the integration test**
 
+Existing `integration/e2e_test.go` drives `server.Run` and `runner.Run` as
+in-process Go calls — no binaries built. Follow the same pattern.
+
 Create `integration/server_dial_runner_e2e_test.go`:
 
 ```go
@@ -1294,11 +1297,13 @@ package integration
 
 import (
 	"context"
-	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/runner"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 )
 
@@ -1313,101 +1318,83 @@ func TestReverseDialRunnerE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 1. Start the server.
+	// 1. Server in-process.
+	serverCID, err := objproto.ParseConnectionID("ws:"+serverAddr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
 	srvDone := make(chan error, 1)
 	go func() {
 		srvDone <- server.Run(ctx, server.Config{
-			Logger:    testLogger(t),
-			ListenWS:  serverAddr,
-			ListenUDP: "",
+			Addr:   serverAddr,
+			Logger: nil, // server default
 		})
 	}()
-	waitForListen(t, serverAddr, 3*time.Second)
 
-	// 2. Start the runner in --listen mode (via the binary).
-	binPath := buildBinary(t, "../bin/agent-runner")
-	runnerCmd := exec.CommandContext(ctx, binPath,
-		"--listen", runnerListen,
-		"--max-tasks", "1",
-		"--hostname", "test-runner",
-		"--roots", t.TempDir(),
-	)
-	if err := runnerCmd.Start(); err != nil {
-		t.Fatalf("start runner: %v", err)
-	}
-	defer func() {
-		_ = runnerCmd.Process.Kill()
-		_ = runnerCmd.Wait()
+	// 2. Runner in --listen mode in-process.
+	listenDone := make(chan error, 1)
+	go func() {
+		listenDone <- runner.ListenAndServe(ctx, runner.ListenConfig{
+			Config: runner.Config{
+				AllowedRoots: []string{t.TempDir()},
+				MaxTasks:     1,
+				Hostname:     "test-runner",
+			},
+			WSListen: runnerListen,
+		})
 	}()
-	waitForListen(t, runnerListen, 3*time.Second)
 
-	// 3. Invoke harness-cli server dial-runner against server.
-	cliBin := buildBinary(t, "../bin/harness-cli")
-	out, err := exec.CommandContext(ctx, cliBin,
-		"--server-cid", "ws:"+serverAddr+"-*",
-		"server", "dial-runner", "ws:"+runnerListen+"-*",
-	).CombinedOutput()
+	// Give both a moment to bind.
+	time.Sleep(500 * time.Millisecond)
+
+	// 3. Invoke ServerDialRunner directly (no binary spawn — same as how
+	//    existing e2e_test.go drives Submit etc).
+	runnerCID, err := objproto.ParseConnectionID("ws:"+runnerListen+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 	if err != nil {
-		t.Fatalf("dial-runner: %v\n%s", err, out)
+		t.Fatalf("parse runner cid: %v", err)
 	}
-	if !strings.Contains(string(out), "ok") {
-		t.Fatalf("expected 'ok' in output, got: %s", out)
-	}
-
-	// 4. Verify runner is registered: harness-cli ls should list it.
-	out, err = exec.CommandContext(ctx, cliBin,
-		"--server-cid", "ws:"+serverAddr+"-*",
-		"ls",
-	).CombinedOutput()
+	resp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID)
 	if err != nil {
-		t.Fatalf("ls: %v\n%s", err, out)
+		t.Fatalf("ServerDialRunner: %v", err)
 	}
-	if !strings.Contains(string(out), "test-runner") {
-		t.Fatalf("expected runner 'test-runner' in ls output, got: %s", out)
+	if resp.Status != protocol.DialRunnerStatus_Ok {
+		t.Fatalf("dial-runner status: got %v want Ok", resp.Status)
 	}
-}
 
-// buildBinary go-builds the named target into a tempdir and returns the path.
-func buildBinary(t *testing.T, target string) string {
-	t.Helper()
-	dir := t.TempDir()
-	out := filepath.Join(dir, filepath.Base(target))
-	cmd := exec.Command("go", "build", "-o", out, "github.com/on-keyday/agent-harness/"+target)
-	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build %s: %v\n%s", target, err, b)
-	}
-	return out
-}
-
-func waitForListen(t *testing.T, addr string, d time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(d)
+	// 4. Verify registration via List (the data structure populated by
+	//    runner Hello). Reuse the pattern in existing e2e tests; the
+	//    runner appears in the response's Runners slice once Hello lands.
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		runners, err := cli.List(ctx, serverCID)
 		if err == nil {
-			_ = c.Close()
-			return
+			for _, r := range runners.Runners {
+				if string(r.Hostname) == "test-runner" {
+					return // success
+				}
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("waitForListen: %s never came up within %v", addr, d)
+	t.Fatal("runner 'test-runner' did not appear in List within 3s")
 }
 ```
 
-Note: e2e helpers (`buildBinary`, `waitForListen`, `testLogger`) follow the
-pattern in `integration/e2e_test.go`. If those helpers are unexported there,
-extract them to `integration/helpers_test.go`.
+(If `cli.List` returns a different shape, adapt the access pattern — check
+existing usage in TUI / WebUI code paths.)
 
 - [ ] **Step 7: Run the integration test**
 
 Run: `go test ./integration/ -tags=integration -run TestReverseDialRunnerE2E -v -count=1`
-Expected: PASS — `dial-runner` returns ok, runner appears in `ls`.
+Expected: PASS — `ServerDialRunner` returns `Ok`, runner appears in `cli.List` output within 3s.
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add cli/server_dial_runner.go cli/server_dial_runner_test.go cli/client.go \
-        cmd/harness-cli/main.go integration/server_dial_runner_e2e_test.go integration/helpers_test.go
+        cmd/harness-cli/main.go integration/server_dial_runner_e2e_test.go
 git commit -m "feat(cli): add 'server dial-runner' subcommand + reverse-dial e2e"
 ```
 
@@ -1425,17 +1412,20 @@ Expected: all PASS.
 Run: `go test ./integration/ -tags=integration -count=1`
 Expected: all PASS.
 
-- [ ] **Verify the binaries**
+- [ ] **Verify the binaries build**
 
 Run: `make build`
 Expected: success.
 
-Smoke run:
-1. `./bin/harness-server --listen 127.0.0.1:18555 &`
-2. `./bin/agent-runner --listen 127.0.0.1:18556 --hostname smoke --roots /tmp &`
-3. `./bin/harness-cli --server-cid ws:127.0.0.1:18555-* server dial-runner ws:127.0.0.1:18556-*`
-4. `./bin/harness-cli --server-cid ws:127.0.0.1:18555-* ls`
+- [ ] **Smoke run (manual)**
 
-Expected (3): `ok`. (4): runner `smoke` listed.
+```sh
+./bin/harness-server --listen 127.0.0.1:18555 &
+./bin/agent-runner --listen 127.0.0.1:18556 --hostname smoke --roots /tmp &
+./bin/harness-cli --server-cid ws:127.0.0.1:18555-* server dial-runner ws:127.0.0.1:18556-*
+./bin/harness-cli --server-cid ws:127.0.0.1:18555-* ls
+```
 
-Tear down with kill.
+Expected (3rd line): `ok`. (4th line): runner `smoke` listed.
+
+Tear down with `kill %1 %2`.
