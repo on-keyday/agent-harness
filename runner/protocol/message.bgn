@@ -207,10 +207,11 @@ format ProxyRequest:
 
 enum ProxyEstablishStatus:
     :u8
-    ok                  = "ok"
-    id_collision        = "id_collision"
+    ok                   = "ok"
+    id_collision         = "id_collision"
     server_not_connected = "server_not_connected"
     unknown_task         = "unknown_task"
+    internal_error       = "internal_error"     # runner-side SetProxy or other internal failure; agent should NOT retry
 
 format ProxyEstablishResponse:
     status :ProxyEstablishStatus

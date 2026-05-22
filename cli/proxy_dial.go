@@ -21,6 +21,7 @@ var (
 	ErrProxyIdCollision        = errors.New("proxy: connection_id collision with runner's server conn (retry with different id)")
 	ErrProxyServerNotConnected = errors.New("proxy: runner has no live server conn")
 	ErrProxyUnknownTask        = errors.New("proxy: runner does not have this task")
+	ErrProxyInternalError      = errors.New("proxy: runner-side internal error (e.g. SetProxy failed); do not retry")
 	ErrProxyUnexpectedStatus   = errors.New("proxy: runner returned unexpected status")
 )
 
@@ -122,6 +123,9 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 	case protocol.ProxyEstablishStatus_UnknownTask:
 		localConn.Close()
 		return nil, ErrProxyUnknownTask
+	case protocol.ProxyEstablishStatus_InternalError:
+		localConn.Close()
+		return nil, ErrProxyInternalError
 	default:
 		localConn.Close()
 		return nil, fmt.Errorf("%w: %v", ErrProxyUnexpectedStatus, resp.Status)

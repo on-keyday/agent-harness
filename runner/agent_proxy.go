@@ -70,13 +70,17 @@ func runAgentProxyCeremony(
 					"alloc_cid", alloc.String(),
 					"err", err)
 			}
-			return fmt.Errorf("SetProxy: %w", err)
-		}
-		if logger != nil {
-			logger.Info("agent proxy: established",
-				"agent_cid", agentCID.String(),
-				"alloc_cid", alloc.String(),
-				"task_id", fmt.Sprintf("%x", req.TaskId.Id))
+			// Convert the validation success → InternalError so the agent
+			// gets an explicit signal (rather than just observing the conn
+			// close). Fall through to the SendMessage path below.
+			resp = protocol.ProxyEstablishResponse{Status: protocol.ProxyEstablishStatus_InternalError}
+		} else {
+			if logger != nil {
+				logger.Info("agent proxy: established",
+					"agent_cid", agentCID.String(),
+					"alloc_cid", alloc.String(),
+					"task_id", fmt.Sprintf("%x", req.TaskId.Id))
+			}
 		}
 	}
 

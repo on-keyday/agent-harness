@@ -95,6 +95,32 @@ func TestDialViaProxyUnknownTask(t *testing.T) {
 	}
 }
 
+// TestDialViaProxyInternalError: runner replies InternalError (e.g. SetProxy
+// failed); DialViaProxy returns ErrProxyInternalError without retry.
+func TestDialViaProxyInternalError(t *testing.T) {
+	const listenAddr = "127.0.0.1:18583"
+	stop := startFakeProxyRunner(t, listenAddr, func(req protocol.ProxyRequest) protocol.ProxyEstablishResponse {
+		return protocol.ProxyEstablishResponse{Status: protocol.ProxyEstablishStatus_InternalError}
+	})
+	defer stop()
+
+	proxyCID, err := objproto.ParseConnectionID("ws:"+listenAddr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse CID: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var taskID protocol.TaskID
+	taskID.Id[0] = 0x42
+	_, err = DialViaProxy(ctx, proxyCID, taskID)
+	if !errors.Is(err, ErrProxyInternalError) {
+		t.Errorf("got %v want ErrProxyInternalError", err)
+	}
+}
+
 // startFakeProxyRunner builds a Mutual WS endpoint, accepts ONE peer.Conn,
 // waits for the first agent_proxy_control payload, calls respond(req), then
 // sends back ProxyControl{EstablishResponse{respond's status}}.
