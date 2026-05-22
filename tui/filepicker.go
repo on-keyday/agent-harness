@@ -84,9 +84,11 @@ type FilePickerModel struct {
 	localCursor       int
 	localErr          string
 
-	msg    string // ephemeral status / error line in the header
-	width  int
-	height int
+	msg         string // ephemeral status line (loading / hint / cancel)
+	opResult    string // sticky push/pull/delete result line; stays visible across listing refreshes until the next op
+	opResultErr bool   // true when opResult should render in ErrorStyle, false for OKStyle
+	width       int
+	height      int
 }
 
 // localEntry is the local-fs equivalent of cli.FileEntryView used by
@@ -156,6 +158,8 @@ func (m *FilePickerModel) Close() {
 	m.localCursor = 0
 	m.localErr = ""
 	m.msg = ""
+	m.opResult = ""
+	m.opResultErr = false
 }
 
 // DoListFilesFor is the tea.Cmd that fetches a worktree directory
@@ -191,7 +195,13 @@ func (m FilePickerModel) Update(msg tea.Msg) (FilePickerModel, tea.Cmd) {
 		if m.cursor >= len(m.entries) {
 			m.cursor = 0
 		}
-		m.msg = ""
+		// Clear only transient "loading..." style placeholders. Sticky
+		// op results (opResult) live in their own field and are
+		// preserved across listing refreshes so the user still sees
+		// the push/pull/delete outcome after the auto-refresh runs.
+		if strings.HasPrefix(m.msg, "loading") || strings.HasPrefix(m.msg, "refreshing") {
+			m.msg = ""
+		}
 		return m, nil
 	case FileResultMsg:
 		// Surface the action's result in the header and refresh the
@@ -202,15 +212,19 @@ func (m FilePickerModel) Update(msg tea.Msg) (FilePickerModel, tea.Cmd) {
 			// AlreadyExists on push (force=false first try) means we
 			// should ask the user before retrying with force=true.
 			// Recognise it here and switch into the confirm mode
-			// instead of just rendering the raw error string.
+			// instead of just rendering the raw error string as a
+			// terminal failure.
 			if x.Op == "push" && cli.IsAlreadyExists(x.Err) && m.pendingPushLocal != "" {
 				m.inputMode = pickerConfirmPushOverwrite
-				m.msg = "push destination exists; overwrite?"
+				m.opResult = "push: destination exists, awaiting overwrite confirm"
+				m.opResultErr = false
 				return m, nil
 			}
-			m.msg = fmt.Sprintf("%s error: %s", x.Op, x.Err.Error())
+			m.opResult = fmt.Sprintf("%s error: %s", x.Op, x.Err.Error())
+			m.opResultErr = true
 		} else {
-			m.msg = fmt.Sprintf("%s ok: %s", x.Op, x.Detail)
+			m.opResult = fmt.Sprintf("%s ok: %s", x.Op, x.Detail)
+			m.opResultErr = false
 			// Successful push: clear pending args so a stale retry
 			// can't fire from a later, unrelated FileResultMsg.
 			if x.Op == "push" {
@@ -358,12 +372,18 @@ func (m FilePickerModel) handleInputKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd)
 	if k.Type == tea.KeyTab {
 		if m.localBrowseActive {
 			m.localBrowseActive = false
+			filled := false
 			if m.localCursor >= 0 && m.localCursor < len(m.localEntries) {
 				if e := m.localEntries[m.localCursor]; !e.IsDir {
 					full := joinLocal(m.localCurDir, e.Name)
 					m.input.SetValue(full)
 					m.input.SetCursor(len(full))
+					m.msg = "pre-filled: " + full + " — Enter to commit, edit first if needed"
+					filled = true
 				}
+			}
+			if !filled {
+				m.msg = "typing (no pre-fill — local cursor was on a dir or empty)"
 			}
 			m.input.Focus()
 			return m, nil
@@ -385,6 +405,7 @@ func (m FilePickerModel) handleInputKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd)
 		} else {
 			m.localErr = ""
 		}
+		m.msg = "" // clear any stale pre-fill notice when entering browser
 		return m, nil
 	}
 	if m.localBrowseActive {
@@ -604,9 +625,11 @@ func (m FilePickerModel) handleConfirmKey(k tea.KeyMsg) (FilePickerModel, tea.Cm
 				err = os.Remove(target)
 			}
 			if err != nil {
-				m.msg = "local delete error: " + err.Error()
+				m.opResult = "local delete error: " + err.Error()
+				m.opResultErr = true
 			} else {
-				m.msg = "local delete ok: " + target
+				m.opResult = "local delete ok: " + target
+				m.opResultErr = false
 				// Refresh the local listing in place so the picker
 				// reflects the change without an explicit reload key.
 				entries, lerr := readLocalDirEntries(m.localCurDir)
@@ -726,6 +749,13 @@ func (m FilePickerModel) View() string {
 	} else {
 		header.WriteString("Tab → typing (pre-fills selected file) · ↑↓ → / Enter descend · ← / Backspace back · . use this dir · d/D delete · r reload · Esc cancel\n")
 	}
+	if m.opResult != "" {
+		if m.opResultErr {
+			header.WriteString(ErrorStyle.Render(m.opResult) + "\n")
+		} else {
+			header.WriteString(OKStyle.Render(m.opResult) + "\n")
+		}
+	}
 	if m.msg != "" {
 		header.WriteString(m.msg + "\n")
 	}
@@ -744,6 +774,22 @@ func (m FilePickerModel) View() string {
 		}
 		if m.localBrowseActive {
 			fmt.Fprintf(&footer, "\n[%s] local browser · %s\n", label, m.localCurDir)
+			// Status line: tell the user up-front what Tab will do
+			// from the current cursor position. Files pre-fill the
+			// typing prompt with their full path; directories don't
+			// (you'd descend into them with Enter / →).
+			footer.WriteString("Tab→ ")
+			if m.localCursor >= 0 && m.localCursor < len(m.localEntries) {
+				e := m.localEntries[m.localCursor]
+				if e.IsDir {
+					footer.WriteString("typing (no pre-fill — cursor is on a directory)\n")
+				} else {
+					full := joinLocal(m.localCurDir, e.Name)
+					fmt.Fprintf(&footer, "typing (will pre-fill: %s)\n", full)
+				}
+			} else {
+				footer.WriteString("typing (no pre-fill — empty selection)\n")
+			}
 			if m.localErr != "" {
 				footer.WriteString("err: " + m.localErr + "\n")
 			}
