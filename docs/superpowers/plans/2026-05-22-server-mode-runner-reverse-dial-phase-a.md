@@ -729,7 +729,9 @@ func parsePort(hostPort string) (uint16, error) {
 ```
 
 Add `WrapAcceptedConn` to `peer/conn.go` as a sibling of `peer.Dial` (verified
-absent at plan-writing time — `grep -n "^func " peer/conn.go` shows only `Dial`):
+absent at plan-writing time — `grep -n "^func " peer/conn.go` shows only `Dial`).
+Refactor `Dial` to also use `WrapAcceptedConn` for its post-ECDH portion so the
+two paths share the same wrap code (behaviour identical, just DRY):
 
 ```go
 // WrapAcceptedConn wraps an objproto.Connection produced by an Endpoint's
@@ -766,6 +768,20 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 	return c
 }
 ```
+
+Then in `Dial`, replace the post-ECDH section (the body from
+`streamCtx, streamCancel := context.WithCancel(ctx)` through
+`go trsf.AutoPing(...)` and `return c, nil`) with:
+
+```go
+conn, err := objproto.DoECDHHandshake(ctx, ep, peerCID, ecdh.P521(), objproto.AES128GCM)
+if err != nil {
+    return nil, fmt.Errorf("ecdh: %w", err)
+}
+return WrapAcceptedConn(ctx, conn, cfg), nil
+```
+
+Confirm `go test ./peer/... -count=1` still passes after this refactor.
 
 - [ ] **Step 4: Run the listen test**
 
@@ -853,10 +869,17 @@ Expected: FAIL — `mainConfig`/`bindFlags`/`validate` undefined.
 
 - [ ] **Step 3: Refactor `cmd/agent-runner/main.go` to support listen mode**
 
-Introduce a `mainConfig` struct that holds all flag-derived fields plus
-`WSListen`, `UDPListen`. Move flag binding into `bindFlags(*flag.FlagSet)` and
-validation into `validate()`. Then in `main()`, after `flag.Parse()` and
-`config.validate()`:
+`cmd/agent-runner/main.go` currently does all flag binding inline in `main()`,
+which makes the validation logic (mutual exclusion, required-one-of) untestable.
+Refactor with no behavioural change:
+
+- Extract all flag-derived state into a `mainConfig` struct
+- Move flag binding to `(*mainConfig).bindFlags(*flag.FlagSet)`
+- Move validation to `(*mainConfig).validate() error`
+- Add a `(*mainConfig).toRunnerConfig() runner.Config` adapter so the existing
+  `runner.Run` call site is one line: `runner.Run(ctx, config.toRunnerConfig())`
+
+Then in `main()`, after `flag.Parse()` and `config.validate()`:
 
 ```go
 if config.WSListen != "" || config.UDPListen != "" {
@@ -1067,7 +1090,39 @@ func runnerIDToConnectionID(r protocol.RunnerID) (objproto.ConnectionID, error) 
 }
 ```
 
-In `server/task_handler.go`, add the case before `default:` (around line 230):
+**Endpoint plumbing (concrete, verified against current code)**:
+
+`TaskHandler` (server/task_handler.go:26-69) currently has no Endpoint field.
+`Server.Run` (server/server.go:220) builds the endpoint via `buildEndpoint()`
+and passes it to `serve()` — but TaskHandler doesn't see it. Wire it through:
+
+1. In `server/task_handler.go`, add field to the struct:
+
+```go
+type TaskHandler struct {
+    ...existing fields...
+
+    // Endpoint is the server's objproto Endpoint, used by the dial_runner
+    // handler to peer.Dial outward. Required only when handling
+    // TaskControlKind_DialRunner; safe to leave nil in tests that don't
+    // exercise that path.
+    Endpoint objproto.Endpoint
+}
+```
+
+2. In `server/server.go`, between `buildEndpoint()` and `serve()` (currently
+   server.go:220→224), set the field:
+
+```go
+ep, mux, httpAddr, err := s.buildEndpoint()
+if err != nil {
+    return err
+}
+s.taskHandler.Endpoint = ep   // <-- add this line
+return s.serve(ctx, ep, mux, httpAddr)
+```
+
+3. In `server/task_handler.go`, add the case before `default:` (around line 230):
 
 ```go
 case protocol.TaskControlKind_DialRunner:
@@ -1078,7 +1133,7 @@ case protocol.TaskControlKind_DialRunner:
     }
     handler := &DialRunnerHandler{
         Logger:   slog.Default(),
-        Endpoint: h.endpoint, // assumes h.endpoint exists; if not, plumb it in
+        Endpoint: h.Endpoint,
     }
     resp := handler.Handle(ctx, dr.Target)
     out := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_DialRunner, RequestId: req.RequestId}
@@ -1086,10 +1141,6 @@ case protocol.TaskControlKind_DialRunner:
     bytes := out.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
     conn.SendMessage(bytes) //nolint:errcheck
 ```
-
-If `h.endpoint` doesn't exist on `TaskHandler`, plumb it through in `NewTaskHandler`
-and in `server/server.go` where the handler is constructed. (Look at how the
-existing fields like `h.taskStore` are wired and follow that pattern.)
 
 - [ ] **Step 4: Run the handler tests**
 
