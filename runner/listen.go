@@ -98,7 +98,9 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 	// handler (for agent dials) can look up the live server-conn session
 	// (set by the server-dial handler). atomic.Pointer is sufficient: at
 	// most one server conn is alive at a time, and agent conns only read.
-	var sessionRef atomic.Pointer[Session]
+	// Backed by lastListenSession (package-scope) so test hooks can read
+	// the established Session — see runner/test_hooks.go.
+	sessionRef := &lastListenSession
 
 	connCh := ep.GetNewActiveConnectionChannel()
 	for {
@@ -120,7 +122,7 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 				Logger:       cfg.Logger,
 				PingInterval: cfg.PingInterval,
 			})
-			go handleAcceptedConn(ctx, cfg.Config, &sessionRef, ep, pc)
+			go handleAcceptedConn(ctx, cfg.Config, sessionRef, ep, pc)
 		}
 	}
 }
@@ -131,6 +133,14 @@ type firstMsgT struct {
 	kind    wire.ApplicationPayloadKind
 	payload []byte
 }
+
+// lastListenSession holds the most recently established Session from
+// ListenAndServe's accept path. Updated when a server conn completes
+// driveAfterConn + OnConnect; cleared via CompareAndSwap on disconnect.
+// Test-only access point (see runner/test_hooks.go). Production code does
+// not depend on this — it's read by the agent-proxy handler via the
+// sessionRef parameter passed into handleAcceptedConn.
+var lastListenSession atomic.Pointer[Session]
 
 // handleAcceptedConn peeks the first inbound payload on a freshly-accepted
 // peer.Conn and routes to the server-dial path (DialGreeting) or the
