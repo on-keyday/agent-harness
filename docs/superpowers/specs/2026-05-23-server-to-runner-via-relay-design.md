@@ -174,22 +174,25 @@ format DialRunnerRequest:
 ```bgn
 format DialRunnerRequest:
     target :RunnerID
-    via    :RunnerSelector    # Any = 直接 dial (Phase A 既存挙動)
-                              # それ以外 = registered runner を選択して relay 経由
+    via    :RunnerID    # transport が空文字列なら未指定 = 直接 dial (Phase A 既存挙動)
+                        # 非空なら registered runner の CID として relay 経由
 ```
 
-`RunnerSelector` は `submit` / `interactive` で既に使われている tagged union
-(`Any` / `ByRunnerId` / `ByHostname` / `ByIP`)。`via.Kind == Any` を「via 未指定」の
-マーカーとして使う (Phase A の直接 dial と完全 backward compatible)。
+`via.transport_len == 0` (ゼロ値) を「via 未指定」のマーカーとして使う (Phase A の
+直接 dial と完全 backward compatible)。
 
-**RunnerSelector を使う利点**:
-- Admin は registered runner の **server-side ConnectionID** (ephemeral port を含む)
-  を知らなくても良い。`--via host=mybox` のような hostname 指定で済む
-- Server 側で selector → registered entry → そのエントリの **生 peer.Conn** を取得し、
-  conn の **本物の addr** (= `transport.connMap` の key) を使って SendHandshake する
-- これで listen-mode (server が runner の listen addr に dial) でも dial-mode legacy
-  (runner が ephemeral src port で dial してきた) でも、transport の既存 conn を
-  確実に再利用できる
+**RunnerID を直接使う利点**:
+- `harness-cli ls` 出力の `id=ws:host:port-id` がそのまま server-side
+  `transport.connMap` の key になっている。Admin はそれをコピペして
+  `--via <cid>` に渡すだけで良い
+- Server 側は registry で **CID exact match** で entry 検索 → 見つからなければ
+  `via_not_found`。Selector 解決の中間 layer 不要
+- 一致した entry の `peer.Conn` の CID から直接 addr を取り、`SendHandshake` に使う
+
+**dial-mode legacy proxy_runner との互換性**: server-side ConnectionID には
+runner の outbound src ephemeral port が含まれる。`ls` で見えるのも同じ ephemeral
+port なので、admin がコピペすれば addr 不一致は起きない (admin が手書きで
+listen port を入れた場合のみ問題)。
 
 `DialRunnerStatus` に **via 関連の新 status を追加**:
 ```bgn
@@ -213,16 +216,15 @@ admin                    server                proxy_runner            target_ru
   │                         │                       │                       │
   │ DialRunnerRequest{      │                       │                       │
   │   target=C,             │                       │                       │
-  │   via=ByHostname("B")}  │                       │                       │
+  │   via=B-cid             │                       │                       │
+  │   (ls 由来の CID)}      │                       │                       │
   ├────────────────────────►│                       │                       │
   │                         │                       │                       │
-  │                         │ via selector を       │                       │
-  │                         │ registry で resolve   │                       │
+  │                         │ via CID で registry   │                       │
+  │                         │ を exact-match 検索   │                       │
   │                         │ → RunnerEntry (B)     │                       │
-  │                         │  → 0 件なら           │                       │
+  │                         │  → 見つからなければ   │                       │
   │                         │    via_not_found       │                       │
-  │                         │ entry.Conn の addr を │                       │
-  │                         │ 控える (connMap key)   │                       │
   │                         │                       │                       │
   │                         │ slot_id := random u16  │                       │
   │                         │ (proxy_runner の既存   │                       │
@@ -309,26 +311,23 @@ DialGreeting を Step 3 で proxy_runner が send することで、target_runne
 ## CLI surface
 
 ```
-harness-cli server dial-runner <target-cid> [--via-host NAME | --via-runner HEX | --via-ip ADDR] [--server-cid <server-cid>]
-  # via 系 flag 未指定 → Phase A の直接 reverse-dial (既存挙動、不変)
-  # via 指定 → registered runner を selector で resolve、proxy_runner 経由で relay
-  # Selector flag は submit / interactive の --host / --runner / --ip と同じ規約
+harness-cli server dial-runner <target-cid> [--via <proxy-cid>] [--server-cid <server-cid>]
+  # --via 未指定 → Phase A の直接 reverse-dial (既存挙動、不変)
+  # --via <proxy-cid> → 指定された registered runner を経由
+  # <proxy-cid> は `harness-cli ls` 出力の id= 欄をコピペする想定
 ```
 
 例:
 ```
-# proxy_runner を hostname で指定
-harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via-host raspberrypi
-
-# proxy_runner を registered RunnerID (hex) で指定
-harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via-runner 192.168.3.14:52014:52762
+# ls で見えた id をそのまま via に渡す
+harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via ws:192.168.3.14:52036-51357
 ```
 
 ### TUI / WebUI
 
-既存の `server dial-runner` 拡張で via 系を受ける。
-- TUI: `server dial-runner <target> [--via-host NAME | --via-runner HEX | --via-ip ADDR]`
-- WebUI: `harness.serverDialRunner(target, { viaHost?, viaRunner?, viaIP? })` (2nd arg は selector object)
+既存の `server dial-runner` 拡張で `--via` を受ける。
+- TUI: `server dial-runner <target> [--via <proxy-cid>]`
+- WebUI: `harness.serverDialRunner(target, via?)` (2nd arg は optional CID 文字列)
 
 ---
 
@@ -341,11 +340,11 @@ harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via-runner
 - `RunnerRequestType` に `establish_relay` 追加 + match
 
 ### `server/dial_runner_handler.go`
-- `DialRunnerRequest.via.Kind != Any` なら relay 経路へ:
-  1. `via` selector を `registry` で resolve (ByRunnerID / ByHostname / ByIP のいずれか) → 0 件なら `via_not_found`
-  2. Resolved RunnerEntry の peer.Conn から **conn の生 addr** (= `transport.connMap` の key) を取得
-  3. その addr に対し slot_id (random u16) を選び、proxy_runner conn 上に `RunnerRequest{establish_relay, target, slot_id}` を送出
-  4. proxy_runner からの `EstablishRelayResponse` を待つ (`RunnerMessage` 系の応答チャネル経由、`open_file_transfer` 等と同じパターン)
+- `DialRunnerRequest.via.transport_len != 0` なら relay 経路へ:
+  1. `via` を `RunnerID → ConnectionID` 変換、`registry` で exact-match 検索 → 見つからなければ `via_not_found`
+  2. Resolved RunnerEntry の peer.Conn から CID を取得 (= via で渡された CID と同じ addr)
+  3. slot_id (random u16) を選び、proxy_runner conn 上に `RunnerRequest{establish_relay, target, slot_id}` を送出
+  4. proxy_runner からの `EstablishRelayResponse` を待つ (`RunnerMessage` 系の応答チャネル経由)
   5. 応答が Ok なら、`(transport, proxy_runner_addr, slot_id)` 宛に `SendHandshake` で新 ECDH 開始。transport は connMap の既存 entry を再利用して packet を送る
   6. Phase A 既存 flow に合流 (server endpoint が新 activeConn を pickup する)
 
@@ -396,6 +395,6 @@ harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via-runner
 
 1. **proxy_runner が target dial に失敗した時の通信**: `EstablishRelayResponse{target_dial_failed}` を返すが、その後 proxy_runner が target に何度かリトライするかは未決定。MVP は「1 回だけ試して fail で即返す」で OK 想定
 2. **slot_id 衝突回避の retry**: server が slot_id をランダム生成、proxy_runner で衝突なら `slot_collision` 返す。server が retry (Phase B の DialViaProxy パターンと同型) で 3 回まで再試行
-3. **TUI / WebUI の via selector 表現**: CLI は submit と同じ `--via-host / --via-runner / --via-ip` 3 flag style に揃える。TUI cmdline では同じ flag 構文を受け付ける。WebUI cmd-input は flag 構文 (`--via-host=NAME` 形式) を parse する形。Plan で具体実装を確定
+3. **CLI / TUI / WebUI の via 引数構文**: 単一 `--via <cid>` flag。TUI も同形。WebUI cmd-input は `--via=<cid>` 形式で parse。Plan で具体実装を確定
 4. **proxy_runner の disconnect 時の挙動**: 確立した relay 越しの server↔target conn は、proxy_runner が落ちると当然死ぬ (transport conn 消滅で packet flow が途絶える)。server / target は通常の disconnect detection (ping timeout) で気づく。本 spec は明示的な disconnect notification を実装しない
 5. **target_runner が listen mode じゃない時のエラー**: target が dial mode の場合、ECDH 自体は完了するが PSK 送出方向が想定と違う。proxy_runner の DoECDHHandshake は成功するが、target 側で Phase A の listen-mode 経路に乗らない。spec 範囲外として「target は listen mode であること」を前提に

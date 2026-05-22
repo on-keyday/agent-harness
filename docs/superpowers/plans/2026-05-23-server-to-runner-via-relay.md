@@ -2,8 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Allow `harness-cli server dial-runner <target-cid> --via-host <proxy>`
-(or `--via-runner` / `--via-ip`) to register a target_runner that the server
+**Goal:** Allow `harness-cli server dial-runner <target-cid> --via <proxy-cid>`
+to register a target_runner that the server
 cannot reach directly, by routing the registration handshake through an already
 registered relay-runner using objproto's SetProxy + RehandshakeForProxy primitives.
 
@@ -28,7 +28,7 @@ Connection.RehandshakeForProxy, peer.WrapAcceptedConn (Phase A).
 |---|---|---|
 | `integration/relay_poc_test.go` | Create (Task 0) | Standalone POC: 3 in-process endpoints verifying SetProxy + rehandshake + DialGreeting forwarding work as a unit |
 | `trsf/wire/stream.bgn` / `.go` | No change | All Phase B wire kinds already exist |
-| `runner/protocol/message.bgn` | Modify (Task 1) | Add `EstablishRelayRequest` / `EstablishRelayStatus` / `EstablishRelayResponse`; `RunnerRequestType.establish_relay`; `DialRunnerRequest.via :RunnerSelector`; `DialRunnerStatus_{ViaNotFound,ViaRelayFailed}` |
+| `runner/protocol/message.bgn` | Modify (Task 1) | Add `EstablishRelayRequest` / `EstablishRelayStatus` / `EstablishRelayResponse`; `RunnerRequestType.establish_relay`; `DialRunnerRequest.via :RunnerID`; `DialRunnerStatus_{ViaNotFound,ViaRelayFailed}` |
 | `runner/protocol/message.go` | Regenerated | Output of protoregen |
 | `runner/protocol/relay_test.go` | Create (Task 1) | Round-trip tests for the new wire types |
 | `runner/relay_handler.go` | Create (Task 2) | Runner side: receive EstablishRelay → expect a slot_id dial → dial target → SetProxy → DialGreeting → ack |
@@ -39,12 +39,12 @@ Connection.RehandshakeForProxy, peer.WrapAcceptedConn (Phase A).
 | `server/dial_runner_handler.go` | Modify (Task 3) | If `DialRunnerRequest.via.Kind != Any`: resolve selector → registry entry → send EstablishRelay → wait response → SendHandshake → RehandshakeForProxy → DialGreeting → handleConnection |
 | `server/server.go` | Modify (Task 3) | Wire any new accessors needed (e.g. registry resolve helper) |
 | `cli/server_dial_runner.go` | Modify (Task 4) | `ServerDialRunner` signature extension to accept via selector |
-| `cmd/harness-cli/main.go` | Modify (Task 4) | `--via-host` / `--via-runner` / `--via-ip` flags on `server dial-runner` |
-| `tui/cmdline.go` | Modify (Task 4) | Extend `parseServer` to accept via flags; extend `ServerDialRunnerAction` with Via fields |
+| `cmd/harness-cli/main.go` | Modify (Task 4) | `--via <proxy-cid>` flag on `server dial-runner` |
+| `tui/cmdline.go` | Modify (Task 4) | Extend `parseServer` to accept `--via`; extend `ServerDialRunnerAction` with `Via string` |
 | `tui/app.go` | Modify (Task 4) | Plumb via into DoServerDialRunner |
-| `tui/server_dial.go` | Modify (Task 4) | DoServerDialRunner takes via selector |
-| `cmd/harness-webui-wasm/main.go` | Modify (Task 4) | `harnessServerDialRunner` accepts a selector object as 2nd arg |
-| `webui/static/main.js` | Modify (Task 4) | Parse `--via-host=` / `--via-runner=` / `--via-ip=` from cmd-input |
+| `tui/server_dial.go` | Modify (Task 4) | DoServerDialRunner takes optional via CID string |
+| `cmd/harness-webui-wasm/main.go` | Modify (Task 4) | `harnessServerDialRunner` accepts optional `via` CID as 2nd arg |
+| `webui/static/main.js` | Modify (Task 4) | Parse `--via=<cid>` from cmd-input |
 | `integration/relay_e2e_test.go` | Create (Task 5) | End-to-end: server + proxy_runner (registered) + target_runner (listen mode) → dial-runner via proxy succeeds, target appears in registry |
 
 ---
@@ -350,10 +350,10 @@ func TestDialRunnerRequestWithViaRoundTrip(t *testing.T) {
 	req.Target.SetTransport([]byte("ws"))
 	req.Target.SetIpAddr([]byte{10, 0, 0, 9})
 	req.Target.Port = 8540
-	req.Via.Kind = RunnerSelectorKind_ByHostname
-	hn := Hostname{}
-	hn.SetName([]byte("proxy-runner"))
-	req.Via.SetHostname(hn)
+	req.Via.SetTransport([]byte("ws"))
+	req.Via.SetIpAddr([]byte{192, 168, 3, 14})
+	req.Via.Port = 52036
+	req.Via.UniqueNumber = 51357
 
 	buf, err := req.Append(nil)
 	if err != nil {
@@ -363,11 +363,32 @@ func TestDialRunnerRequestWithViaRoundTrip(t *testing.T) {
 	if _, err := got.Decode(buf); err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if got.Via.Kind != RunnerSelectorKind_ByHostname {
-		t.Errorf("via.kind: got %v", got.Via.Kind)
+	if string(got.Via.Transport) != "ws" {
+		t.Errorf("via.transport: got %q", got.Via.Transport)
 	}
-	if h := got.Via.Hostname(); h == nil || string(h.Name) != "proxy-runner" {
-		t.Errorf("via.hostname: got %v", h)
+	if got.Via.Port != 52036 || got.Via.UniqueNumber != 51357 {
+		t.Errorf("via fields: got port=%d uniq=%d", got.Via.Port, got.Via.UniqueNumber)
+	}
+}
+
+func TestDialRunnerRequestViaEmptyRoundTrip(t *testing.T) {
+	// transport_len == 0 → "via 未指定" のマーカー
+	var req DialRunnerRequest
+	req.Target.SetTransport([]byte("ws"))
+	req.Target.SetIpAddr([]byte{10, 0, 0, 9})
+	req.Target.Port = 8540
+	// Via 全フィールド zero (transport_len=0 含む)
+
+	buf, err := req.Append(nil)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	var got DialRunnerRequest
+	if _, err := got.Decode(buf); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if len(got.Via.Transport) != 0 {
+		t.Errorf("via.transport should be empty, got %q", got.Via.Transport)
 	}
 }
 ```
@@ -386,14 +407,14 @@ Find the `DialRunnerRequest` definition (around line 184 if Phase A's spec lande
 
 ```bgn
 # admin → server: dial out to this runner endpoint and complete registration.
-# When via.kind == Any, server does direct DoECDHHandshake (Phase A flow).
-# When via.kind != Any, server resolves the selector against its registry,
-# and instead of dialing target directly, sends EstablishRelay to the
+# When via.transport_len == 0, server does direct DoECDHHandshake (Phase A flow).
+# When via.transport_len != 0, server looks up via in its registry (exact match
+# by CID), and instead of dialing target directly, sends EstablishRelay to the
 # resolved runner over its existing registered conn. See spec
 # docs/superpowers/specs/2026-05-23-server-to-runner-via-relay-design.md.
 format DialRunnerRequest:
     target :RunnerID
-    via    :RunnerSelector
+    via    :RunnerID
 ```
 
 Find `DialRunnerStatus` and add two new values:
@@ -501,10 +522,10 @@ Expected: success; `runner/protocol/message.go` updates. Confirm via `git diff -
 - [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
-go test ./runner/protocol/ -run "TestEstablishRelay|TestDialRunnerRequestWithVia" -v -count=1
+go test ./runner/protocol/ -run "TestEstablishRelay|TestDialRunnerRequest" -v -count=1
 ```
 
-Expected: 3 tests PASS.
+Expected: 4 tests PASS (2 EstablishRelay + 2 DialRunnerRequest variants).
 
 - [ ] **Step 6: Run full package test**
 
@@ -878,13 +899,13 @@ git commit -m "feat(runner): relay handler for server-via-relay (Phase A extensi
 Add to `server/dial_runner_handler_test.go`:
 
 ```go
-// TestDialRunnerViaSelectorNotFound: when via selector resolves to no
-// registered runner, status=ViaNotFound is returned.
-func TestDialRunnerViaSelectorNotFound(t *testing.T) {
+// TestDialRunnerViaNotFound: when via CID doesn't match any registered runner,
+// status=ViaNotFound is returned.
+func TestDialRunnerViaNotFound(t *testing.T) {
     h := &DialRunnerHandler{
         Logger:   slog.Default(),
         Endpoint: nil, // not reached
-        ResolveVia: func(_ protocol.RunnerSelector) (*RunnerEntry, bool) {
+        ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
             return nil, false
         },
     }
@@ -893,11 +914,11 @@ func TestDialRunnerViaSelectorNotFound(t *testing.T) {
     target.SetIpAddr([]byte{10, 0, 0, 5})
     target.Port = 8540
 
-    var via protocol.RunnerSelector
-    via.Kind = protocol.RunnerSelectorKind_ByHostname
-    hn := protocol.Hostname{}
-    hn.SetName([]byte("nonexistent"))
-    via.SetHostname(hn)
+    var via protocol.RunnerID
+    via.SetTransport([]byte("ws"))
+    via.SetIpAddr([]byte{1, 2, 3, 4})
+    via.Port = 9999
+    via.UniqueNumber = 12345
 
     resp := h.HandleWithVia(context.Background(), target, via)
     if resp.Status != protocol.DialRunnerStatus_ViaNotFound {
@@ -909,7 +930,7 @@ func TestDialRunnerViaSelectorNotFound(t *testing.T) {
 - [ ] **Step 2: Run, verify fail**
 
 ```bash
-go test ./server/ -run TestDialRunnerViaSelectorNotFound -v
+go test ./server/ -run TestDialRunnerViaNotFound -v
 ```
 
 Expected: FAIL — undefined ResolveVia / HandleWithVia.
@@ -925,9 +946,11 @@ type DialRunnerHandler struct {
     DialTimeout time.Duration
     OnDialed    func(ctx context.Context, conn objproto.Connection)
 
-    // ResolveVia, when non-nil, is called when DialRunnerRequest.via.Kind != Any
-    // to look up the registered runner that should act as the relay.
-    ResolveVia func(selector protocol.RunnerSelector) (*RunnerEntry, bool)
+    // ResolveVia, when non-nil, is called when DialRunnerRequest.via has a
+    // non-empty transport (i.e. relay path requested) to look up the
+    // registered runner that should act as the relay. Lookup is exact-match
+    // by ConnectionID against the registry.
+    ResolveVia func(cid objproto.ConnectionID) (*RunnerEntry, bool)
 
     // ViaSendEstablishRelay, when non-nil, sends an EstablishRelayRequest
     // over the given RunnerEntry's conn and blocks until the response
@@ -935,16 +958,21 @@ type DialRunnerHandler struct {
     ViaSendEstablishRelay func(ctx context.Context, entry *RunnerEntry, req protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error)
 }
 
-// HandleWithVia is the via-aware path. Mirrors Handle but resolves selector
-// first and routes through EstablishRelay + RehandshakeForProxy.
-func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target protocol.RunnerID, via protocol.RunnerSelector) protocol.DialRunnerResponse {
-    if via.Kind == protocol.RunnerSelectorKind_Any {
+// HandleWithVia is the via-aware path. Mirrors Handle but uses the via CID
+// to look up an existing registered runner and route through EstablishRelay +
+// RehandshakeForProxy.
+func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via protocol.RunnerID) protocol.DialRunnerResponse {
+    if len(via.Transport) == 0 {
         return h.Handle(ctx, target) // direct dial
     }
     if h.ResolveVia == nil || h.ViaSendEstablishRelay == nil {
         return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_InvalidTarget} // unconfigured
     }
-    entry, ok := h.ResolveVia(via)
+    viaCID, err := runnerIDToConnectionID(via)
+    if err != nil {
+        return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_InvalidTarget}
+    }
+    entry, ok := h.ResolveVia(viaCID)
     if !ok {
         return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaNotFound}
     }
@@ -1037,9 +1065,11 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target protocol.R
 In `server/server.go` where `s.taskHandler.Endpoint = ep` is set today (after `buildEndpoint`), also wire:
 
 ```go
-s.taskHandler.dialRunnerHandler.ResolveVia = s.registry.ResolveSelector
+s.taskHandler.dialRunnerHandler.ResolveVia = s.registry.GetByConnectionID
 s.taskHandler.dialRunnerHandler.ViaSendEstablishRelay = s.sendEstablishRelayRequest
 ```
+
+Add `Registry.GetByConnectionID(cid objproto.ConnectionID) (*RunnerEntry, bool)` (lookup the registered entry whose peer.Conn ConnectionID exactly matches).
 
 (Field naming and indirection adjust to your actual code; if `DialRunnerHandler`
 is constructed inline in task_handler.go's case dispatch today, refactor to
@@ -1089,17 +1119,18 @@ In `cli/server_dial_runner.go`:
 
 ```go
 // ServerDialRunner is the high-level helper invoked by
-// `harness-cli server dial-runner <cid>`.
-func ServerDialRunner(ctx context.Context, serverCID, targetCID objproto.ConnectionID, via protocol.RunnerSelector) (protocol.DialRunnerResponse, error) {
+// `harness-cli server dial-runner <cid>`. via is optional: when its
+// Transport is empty, behaves like Phase A direct dial.
+func ServerDialRunner(ctx context.Context, serverCID, targetCID objproto.ConnectionID, viaCID objproto.ConnectionID) (protocol.DialRunnerResponse, error) {
     client, err := Dial(ctx, serverCID)
     if err != nil {
         return protocol.DialRunnerResponse{}, fmt.Errorf("dial server: %w", err)
     }
     defer client.Close()
-    return ServerDialRunnerWith(ctx, client, protocol.ConnIDToRunnerID(targetCID), via)
+    return ServerDialRunnerWith(ctx, client, protocol.ConnIDToRunnerID(targetCID), protocol.ConnIDToRunnerID(viaCID))
 }
 
-func ServerDialRunnerWith(ctx context.Context, c taskControlClient, target protocol.RunnerID, via protocol.RunnerSelector) (protocol.DialRunnerResponse, error) {
+func ServerDialRunnerWith(ctx context.Context, c taskControlClient, target, via protocol.RunnerID) (protocol.DialRunnerResponse, error) {
     req := &protocol.TaskControlRequest{
         Kind:      protocol.TaskControlKind_DialRunner,
         RequestId: nextRequestID(),
@@ -1109,7 +1140,9 @@ func ServerDialRunnerWith(ctx context.Context, c taskControlClient, target proto
 }
 ```
 
-Existing callers can pass `protocol.RunnerSelector{Kind: RunnerSelectorKind_Any}` for backward compat (direct dial).
+Existing callers can pass zero `objproto.ConnectionID` for `viaCID` (direct
+dial, backward compat). `ConnIDToRunnerID` of a zero ConnectionID produces a
+RunnerID with empty Transport — the marker for "no via".
 
 - [ ] **Step 2: Add flags to harness-cli**
 
@@ -1118,12 +1151,10 @@ In `cmd/harness-cli/main.go` `case "server"` block:
 ```go
 case "dial-runner":
     fs := flag.NewFlagSet("server dial-runner", flag.ExitOnError)
-    viaHost := fs.String("via-host", "", "relay through registered runner with this hostname")
-    viaRunner := fs.String("via-runner", "", "relay through registered runner with this RunnerID hex")
-    viaIP := fs.String("via-ip", "", "relay through registered runner with this IP address")
+    viaCIDStr := fs.String("via", "", "relay through this registered runner CID (copy from `ls` output)")
     fs.Parse(rest)
     if fs.NArg() != 1 {
-        fmt.Fprintln(os.Stderr, "usage: harness-cli server dial-runner [--via-host NAME | --via-runner HEX | --via-ip ADDR] <runner-cid>")
+        fmt.Fprintln(os.Stderr, "usage: harness-cli server dial-runner [--via <runner-cid>] <runner-cid>")
         os.Exit(2)
     }
     targetCID, err := objproto.ParseConnectionID(fs.Arg(0),
@@ -1131,49 +1162,53 @@ case "dial-runner":
     if err != nil {
         die(fmt.Errorf("parse runner-cid: %w", err))
     }
-    via, err := buildViaSelector(*viaHost, *viaRunner, *viaIP)
-    if err != nil {
-        die(fmt.Errorf("via selector: %w", err))
+    var viaCID objproto.ConnectionID
+    if strings.TrimSpace(*viaCIDStr) != "" {
+        viaCID, err = objproto.ParseConnectionID(*viaCIDStr,
+            objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+        if err != nil {
+            die(fmt.Errorf("parse --via: %w", err))
+        }
     }
-    resp, err := cli.ServerDialRunner(ctx, parseCID(), targetCID, via)
+    resp, err := cli.ServerDialRunner(ctx, parseCID(), targetCID, viaCID)
     // ... rest unchanged ...
-```
-
-Add `buildViaSelector`:
-
-```go
-func buildViaSelector(host, runner, ip string) (protocol.RunnerSelector, error) {
-    n := 0
-    if host != "" { n++ }
-    if runner != "" { n++ }
-    if ip != "" { n++ }
-    var sel protocol.RunnerSelector
-    if n == 0 {
-        sel.Kind = protocol.RunnerSelectorKind_Any
-        return sel, nil
-    }
-    if n > 1 {
-        return sel, fmt.Errorf("--via-host / --via-runner / --via-ip are mutually exclusive")
-    }
-    // ... populate sel based on which is set, mirroring `cli.BuildSelector` ...
-    return sel, nil
-}
 ```
 
 - [ ] **Step 3: Extend TUI cmdline**
 
 In `tui/cmdline.go`:
 
-- `ServerDialRunnerAction` gets `ViaHost`, `ViaRunner`, `ViaIP` string fields
-- `parseServer` reads `--via-host` / `--via-runner` / `--via-ip` flags from args
+- `ServerDialRunnerAction` gets `Via string` field (the CID string, or "" for direct dial)
+- `parseServer` reads `--via <cid>` flag from args
 
 - [ ] **Step 4: Extend `DoServerDialRunner`**
 
 In `tui/server_dial.go`:
 
 ```go
-func DoServerDialRunner(serverCID objproto.ConnectionID, runnerCIDStr string, via protocol.RunnerSelector) tea.Cmd {
-    // ... same as before, just pass via to cli.ServerDialRunner ...
+func DoServerDialRunner(serverCID objproto.ConnectionID, runnerCIDStr, viaCIDStr string) tea.Cmd {
+    return func() tea.Msg {
+        ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+        defer cancel()
+        targetCID, err := objproto.ParseConnectionID(runnerCIDStr,
+            objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+        if err != nil {
+            return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
+        }
+        var viaCID objproto.ConnectionID
+        if strings.TrimSpace(viaCIDStr) != "" {
+            viaCID, err = objproto.ParseConnectionID(viaCIDStr,
+                objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+            if err != nil {
+                return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: fmt.Errorf("--via: %w", err)}
+            }
+        }
+        resp, err := cli.ServerDialRunner(ctx, serverCID, targetCID, viaCID)
+        if err != nil {
+            return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
+        }
+        return ServerDialResultMsg{RunnerCID: runnerCIDStr, Status: resp.Status}
+    }
 }
 ```
 
@@ -1183,8 +1218,17 @@ In `cmd/harness-webui-wasm/main.go` `harnessServerDialRunner`:
 
 ```go
 func harnessServerDialRunner(this js.Value, args []js.Value) any {
-    // args[0] = runnerCID string
-    // args[1] = optional selector object {host?, runner?, ip?}
+    // args[0] = target runner CID string
+    // args[1] = optional via runner CID string (or undefined/empty for direct dial)
+    // ...
+    var viaCID objproto.ConnectionID
+    if len(args) >= 2 && args[1].Type() == js.TypeString {
+        if s := strings.TrimSpace(args[1].String()); s != "" {
+            viaCID, err = objproto.ParseConnectionID(s, objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+            if err != nil { rejectErr(...); return nil }
+        }
+    }
+    resp, err := cli.ServerDialRunner(rootCtx, peerCID, targetCID, viaCID)
     // ...
 }
 ```
@@ -1196,20 +1240,25 @@ In `webui/static/main.js`:
 ```js
 case "server": {
     if (tokens[1] !== "dial-runner") { throw new Error("server: unknown subcommand"); }
-    // parse flags from remaining tokens; build selector object
-    let host = null, runner = null, ip = null, target = null;
+    let via = null, target = null;
     for (let i = 2; i < tokens.length; i++) {
         const t = tokens[i];
-        if (t.startsWith("--via-host=")) host = t.slice("--via-host=".length);
-        else if (t.startsWith("--via-runner=")) runner = t.slice("--via-runner=".length);
-        else if (t.startsWith("--via-ip=")) ip = t.slice("--via-ip=".length);
-        else if (!target) target = t;
-        else throw new Error(`unexpected arg: ${t}`);
+        if (t === "--via") {
+            // next token
+            i++;
+            if (i >= tokens.length) throw new Error("--via: missing CID");
+            via = tokens[i];
+        } else if (t.startsWith("--via=")) {
+            via = t.slice("--via=".length);
+        } else if (!target) {
+            target = t;
+        } else {
+            throw new Error(`unexpected arg: ${t}`);
+        }
     }
     if (!target) throw new Error("server dial-runner: missing runner CID");
-    const selector = (host || runner || ip) ? { host, runner, ip } : null;
-    const status = await window.harness.serverDialRunner(target, selector);
-    out = `server dial-runner ${target}${host?` --via-host=${host}`:''}: ${status}`;
+    const status = await window.harness.serverDialRunner(target, via || undefined);
+    out = `server dial-runner ${target}${via ? ` --via=${via}` : ''}: ${status}`;
     break;
 }
 ```
@@ -1304,24 +1353,18 @@ func TestRelayE2E(t *testing.T) {
     serverCID := mustParseCID(t, "ws:"+serverAddr+"-*")
 
     // 4. Reverse-dial proxy_runner (direct, Phase A).
-    proxyCID := mustParseCID(t, "ws:"+proxyListen+"-*")
-    var noVia protocol.RunnerSelector
-    noVia.Kind = protocol.RunnerSelectorKind_Any
-    if resp, err := cli.ServerDialRunner(ctx, serverCID, proxyCID, noVia); err != nil || resp.Status != protocol.DialRunnerStatus_Ok {
+    proxyDialCID := mustParseCID(t, "ws:"+proxyListen+"-*")
+    var noVia objproto.ConnectionID // zero = no via
+    if resp, err := cli.ServerDialRunner(ctx, serverCID, proxyDialCID, noVia); err != nil || resp.Status != protocol.DialRunnerStatus_Ok {
         t.Fatalf("dial proxy_runner: err=%v status=%v", err, resp.Status)
     }
 
-    // 5. Wait for proxy_runner to appear in registry as host=proxy-runner-host.
-    waitForRunnerInRegistry(t, srv, "proxy-runner-host", 5*time.Second)
+    // 5. Wait for proxy_runner to appear in registry, capture its CID.
+    proxyRegisteredCID := waitForRunnerCID(t, srv, "proxy-runner-host", 5*time.Second)
 
-    // 6. Now dial target_runner --via proxy-runner-host.
+    // 6. Now dial target_runner --via proxyRegisteredCID.
     targetCID := mustParseCID(t, "ws:"+targetListen+"-*")
-    var via protocol.RunnerSelector
-    via.Kind = protocol.RunnerSelectorKind_ByHostname
-    hn := protocol.Hostname{}
-    hn.SetName([]byte("proxy-runner-host"))
-    via.SetHostname(hn)
-    resp, err := cli.ServerDialRunner(ctx, serverCID, targetCID, via)
+    resp, err := cli.ServerDialRunner(ctx, serverCID, targetCID, proxyRegisteredCID)
     if err != nil {
         t.Fatalf("dial target via proxy: %v", err)
     }
@@ -1333,19 +1376,23 @@ func TestRelayE2E(t *testing.T) {
     waitForRunnerInRegistry(t, srv, "target-runner-host", 5*time.Second)
 }
 
-func waitForRunnerInRegistry(t *testing.T, srv *server.Server, hostname string, timeout time.Duration) {
+func waitForRunnerCID(t *testing.T, srv *server.Server, hostname string, timeout time.Duration) objproto.ConnectionID {
     t.Helper()
     deadline := time.Now().Add(timeout)
     for time.Now().Before(deadline) {
         for _, r := range srv.RegisteredRunners() {
-            // RunnerEntry's hostname field — check actual field name
             if r.Hostname == hostname {
-                return
+                return r.ID // peer.Conn's CID, exact value used by --via
             }
         }
         time.Sleep(100 * time.Millisecond)
     }
     t.Fatalf("runner %q did not appear in registry within %v", hostname, timeout)
+    return objproto.ConnectionID{}
+}
+
+func waitForRunnerInRegistry(t *testing.T, srv *server.Server, hostname string, timeout time.Duration) {
+    waitForRunnerCID(t, srv, hostname, timeout)
 }
 ```
 
@@ -1384,8 +1431,11 @@ git commit -m "test(integration): end-to-end server→proxy_runner→target_runn
 # Register proxy
 ./bin/harness-cli --server-cid ws:127.0.0.1:18600-* server dial-runner ws:127.0.0.1:18601-*
 
+# Capture proxy's registered CID
+PROXY_CID=$(./bin/harness-cli --server-cid ws:127.0.0.1:18600-* ls | awk '/host=proxy-smoke/ {for(i=1;i<=NF;i++) if($i ~ /^id=/) {sub("^id=","",$i); print $i}}')
+
 # Register target via proxy
-./bin/harness-cli --server-cid ws:127.0.0.1:18600-* server dial-runner ws:127.0.0.1:18602-* --via-host proxy-smoke
+./bin/harness-cli --server-cid ws:127.0.0.1:18600-* server dial-runner ws:127.0.0.1:18602-* --via "$PROXY_CID"
 
 # Verify
 ./bin/harness-cli --server-cid ws:127.0.0.1:18600-* ls
