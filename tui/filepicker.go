@@ -562,38 +562,44 @@ func (m FilePickerModel) handleConfirmKey(k tea.KeyMsg) (FilePickerModel, tea.Cm
 
 // View renders the picker box. Caller composes it into the screen via
 // lipgloss.Place (matching the existing PopupModel pattern).
+//
+// The box height is clamped to the terminal height (minus a margin
+// for borders / outer placement) so the popup never overflows beyond
+// the visible area. Entry lists scroll internally to keep the cursor
+// in view. When the local file browser subpopup is active, the
+// remote entry list is hidden to free vertical space for the local
+// browser.
 func (m FilePickerModel) View() string {
 	if !m.open {
 		return ""
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "File picker · task %s · /%s\n", m.taskShort, m.curDir)
-	b.WriteString("↑↓ nav · → enter · ← back · u push · g pull · d delete · D rm -rf · r reload · Esc close\n")
-	if m.msg != "" {
-		b.WriteString(m.msg + "\n")
+	// Box budget: terminal rows minus a small margin for the outer
+	// border + lipgloss.Place padding. innerH is the number of lines
+	// available for content INSIDE the box (after subtracting the
+	// border rows lipgloss draws around the Render).
+	const boxBorderRows = 2 // top and bottom border
+	const outerMargin = 2   // breathing room from Place's edges
+	innerH := m.height - boxBorderRows - outerMargin
+	if innerH < 8 {
+		innerH = 8
 	}
-	b.WriteString(strings.Repeat("─", 60) + "\n")
 
-	if len(m.entries) == 0 {
-		b.WriteString("(empty)\n")
+	// Compose header (always shown).
+	var header strings.Builder
+	fmt.Fprintf(&header, "File picker · task %s · /%s\n", m.taskShort, m.curDir)
+	if !m.localBrowseActive {
+		header.WriteString("↑↓ nav · → enter · ← back · u push · g pull · d delete · D rm -rf · r reload · Esc close\n")
 	} else {
-		for i, e := range m.entries {
-			prefix := "  "
-			if i == m.cursor {
-				prefix = "> "
-			}
-			name := e.Name
-			if e.IsDir {
-				name += "/"
-			}
-			sz := strings.Repeat(" ", 10)
-			if !e.IsDir {
-				sz = fmt.Sprintf("%10d", e.Size)
-			}
-			fmt.Fprintf(&b, "%s%s %s\n", prefix, sz, name)
-		}
+		header.WriteString("Tab → typing · ↑↓ nav · → enter · ← back · Enter file = use · . use this dir · d/D delete · r reload · Esc cancel\n")
 	}
+	if m.msg != "" {
+		header.WriteString(m.msg + "\n")
+	}
+	header.WriteString(strings.Repeat("─", 60) + "\n")
+	headerLines := lineCount(header.String())
 
+	// Compose footer / subpopup (varies by inputMode).
+	var footer strings.Builder
 	switch m.inputMode {
 	case pickerAskPushSrc, pickerAskPullDst:
 		var label string
@@ -602,34 +608,13 @@ func (m FilePickerModel) View() string {
 		} else {
 			label = "pull destination (local)"
 		}
-		b.WriteString("\n")
 		if m.localBrowseActive {
-			fmt.Fprintf(&b, "[%s] local browser · %s\n", label, m.localCurDir)
-			b.WriteString("Tab back to typing · ↑↓ nav · → enter · ← back · Enter file = use · . use this dir · d/D delete · r reload · Esc cancel\n")
+			fmt.Fprintf(&footer, "\n[%s] local browser · %s\n", label, m.localCurDir)
 			if m.localErr != "" {
-				b.WriteString("err: " + m.localErr + "\n")
-			}
-			if len(m.localEntries) == 0 {
-				b.WriteString("(empty)\n")
-			} else {
-				for i, e := range m.localEntries {
-					prefix := "  "
-					if i == m.localCursor {
-						prefix = "> "
-					}
-					name := e.Name
-					if e.IsDir {
-						name += "/"
-					}
-					sz := strings.Repeat(" ", 10)
-					if !e.IsDir {
-						sz = fmt.Sprintf("%10d", e.Size)
-					}
-					fmt.Fprintf(&b, "%s%s %s\n", prefix, sz, name)
-				}
+				footer.WriteString("err: " + m.localErr + "\n")
 			}
 		} else {
-			fmt.Fprintf(&b, "%s: %s\n(Tab: browse local fs · Esc: cancel)\n", label, m.input.View())
+			fmt.Fprintf(&footer, "\n%s: %s\n(Tab: browse local fs · Esc: cancel)\n", label, m.input.View())
 		}
 	case pickerConfirmDelete:
 		mode := "rm"
@@ -640,12 +625,44 @@ func (m FilePickerModel) View() string {
 		if m.deleteIsLocal {
 			scope = "local"
 		}
-		fmt.Fprintf(&b, "\n%s (%s) %s  ? (y/n)\n", mode, scope, m.deleteTarget)
+		fmt.Fprintf(&footer, "\n%s (%s) %s  ? (y/n)\n", mode, scope, m.deleteTarget)
+	}
+	footerLines := lineCount(footer.String())
+
+	// Remaining rows for entries.
+	entryCapacity := innerH - headerLines - footerLines
+	if entryCapacity < 3 {
+		entryCapacity = 3
 	}
 
-	// Width follows the terminal — only enforce a floor for very narrow
-	// windows so the box stays readable. No upper cap, so long file
-	// names / paths on wide terminals don't get truncated by the box.
+	// Render entries — either remote (default) or local (when local
+	// browser is active). We don't show both at once; the local
+	// browser intentionally takes the whole entry area so the user
+	// has maximum vertical room while picking.
+	var entries strings.Builder
+	if m.localBrowseActive {
+		renderEntryList(&entries, len(m.localEntries), m.localCursor, entryCapacity,
+			func(i int) (name string, size uint64, isDir bool) {
+				e := m.localEntries[i]
+				return e.Name, uint64(e.Size), e.IsDir
+			})
+	} else {
+		renderEntryList(&entries, len(m.entries), m.cursor, entryCapacity,
+			func(i int) (name string, size uint64, isDir bool) {
+				e := m.entries[i]
+				return e.Name, e.Size, e.IsDir
+			})
+	}
+
+	// Pad entries area to fill the remaining rows so the footer sticks
+	// to the bottom of the clamped box rather than floating just below
+	// the entries when the list is short.
+	body := entries.String()
+	bodyLines := lineCount(body)
+	if pad := entryCapacity - bodyLines; pad > 0 {
+		body += strings.Repeat("\n", pad)
+	}
+
 	w := m.width - 4
 	if w < 40 {
 		w = 40
@@ -653,8 +670,72 @@ func (m FilePickerModel) View() string {
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		Padding(0, 1).
-		Width(w)
-	return box.Render(b.String())
+		Width(w).
+		Height(innerH)
+	return box.Render(header.String() + body + footer.String())
+}
+
+// renderEntryList renders up to capacity lines of entries into b,
+// scrolling so cursor is visible. The accessor returns the per-entry
+// fields without forcing the caller to use a single concrete type.
+func renderEntryList(b *strings.Builder, total, cursor, capacity int, accessor func(i int) (name string, size uint64, isDir bool)) {
+	if total == 0 {
+		b.WriteString("(empty)\n")
+		return
+	}
+	if capacity < 1 {
+		capacity = 1
+	}
+	start := 0
+	if total > capacity {
+		// Center the cursor in the visible window when possible.
+		start = cursor - capacity/2
+		if start < 0 {
+			start = 0
+		}
+		if start+capacity > total {
+			start = total - capacity
+		}
+	}
+	end := start + capacity
+	if end > total {
+		end = total
+	}
+	if start > 0 {
+		fmt.Fprintf(b, "  ... %d more above\n", start)
+	}
+	for i := start; i < end; i++ {
+		name, size, isDir := accessor(i)
+		prefix := "  "
+		if i == cursor {
+			prefix = "> "
+		}
+		if isDir {
+			name += "/"
+		}
+		sz := strings.Repeat(" ", 10)
+		if !isDir {
+			sz = fmt.Sprintf("%10d", size)
+		}
+		fmt.Fprintf(b, "%s%s %s\n", prefix, sz, name)
+	}
+	if end < total {
+		fmt.Fprintf(b, "  ... %d more below\n", total-end)
+	}
+}
+
+// lineCount returns the number of newline-terminated rows a string
+// occupies in the rendered output. Trailing strings without a final
+// newline count as one extra row.
+func lineCount(s string) int {
+	if s == "" {
+		return 0
+	}
+	n := strings.Count(s, "\n")
+	if !strings.HasSuffix(s, "\n") {
+		n++
+	}
+	return n
 }
 
 // --- helpers ---
