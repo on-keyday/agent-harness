@@ -157,6 +157,7 @@ enum TaskControlKind:
     attach_session
     open_file_transfer
     list_files
+    dial_runner
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # Sent once right after handshake via TaskControlRequest{client_hello,...} so
@@ -178,6 +179,23 @@ enum ClientHelloStatus:
 
 format ClientHelloResponse:
     status :ClientHelloStatus
+
+# admin → server: dial out to this runner endpoint and complete registration.
+# Used in environments where ACL blocks runner→server outbound; server initiates
+# the TCP/UDP connect instead.
+format DialRunnerRequest:
+    target :RunnerID
+
+enum DialRunnerStatus:
+    :u8
+    ok             = "ok"
+    dial_failed    = "dial_failed"
+    psk_failed     = "psk_failed"
+    hello_timeout  = "hello_timeout"
+    invalid_target = "invalid_target"
+
+format DialRunnerResponse:
+    status :DialRunnerStatus
 
 format ListQuery:
     query :[..]u8 # currently opaque
@@ -435,6 +453,7 @@ format TaskControlRequest:
         TaskControlKind.attach_session => attach :AttachSessionRequest
         TaskControlKind.open_file_transfer => open_file_transfer :OpenFileTransferRequest
         TaskControlKind.list_files         => list_files         :ListFilesRequest
+        TaskControlKind.dial_runner        => dial_runner        :DialRunnerRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -454,6 +473,7 @@ format TaskControlResponse:
         TaskControlKind.attach_session => attach :AttachSessionResponse
         TaskControlKind.open_file_transfer => open_file_transfer :OpenFileTransferResponse
         TaskControlKind.list_files         => list_files         :ListFilesResponse
+        TaskControlKind.dial_runner        => dial_runner        :DialRunnerResponse
 
 # Pubsub event payloads
 enum StatusEventKind:
