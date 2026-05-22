@@ -472,7 +472,8 @@ const POLL_INTERVAL_MS = 5000;
             "                            remove a file (no -r) or directory (-r [-f])",
             "  file push <task> <rel>    upload a local file (file picker opens)",
             "  file pull <task> <rel>    download a remote file (browser save dialog)",
-            "  server dial-runner <cid>  ask the server to reverse-dial a Listen-mode runner",
+            "  server dial-runner <cid> [--via <cid>]",
+            "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
             "  help                      this list",
           ].join("\n");
           break;
