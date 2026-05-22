@@ -109,12 +109,21 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		psk = cli.GetPSK()
 	}
 
+	// Use the actual peer.Conn's ConnectionID as the server CID so that
+	// HARNESS_SERVER_CID injected into spawned agent processes points to
+	// the live server endpoint. In dial mode this equals cfg.ServerCID
+	// (peer.Dial uses that CID verbatim, including any random-ID
+	// resolution done by cliopts.ResolveServerCID). In listen mode
+	// cfg.ServerCID is the zero ConnectionID and `pc.Connection().ConnectionID()`
+	// is the only source of the server-side identity.
+	serverCID := pc.Connection().ConnectionID()
+
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
 		AllowedRoots:               cfg.AllowedRoots,
 		ClaudeBin:                  cfg.ClaudeBin,
 		ExtraClaudeArgs:            cfg.ExtraClaudeArgs,
-		ServerCID:                  cfg.ServerCID,
+		ServerCID:                  serverCID,
 		Hostname:                   cfg.Hostname,
 		WSPath:                     cli.WebSocketPath,
 		BinDir:                     binDir,
