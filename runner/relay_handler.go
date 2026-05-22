@@ -113,10 +113,12 @@ func handleEstablishRelay(
 //  1. SetProxy(owned=activeConn.CID, allocate=synthetic (target.Transport,
 //     target.Addr, slot_id)) — allocate-side is purely synthetic because
 //     proxy_runner does not have an activeConn for target.
-//  2. Close pc — the peerConn wrapper exits, the underlying objproto
-//     activeConn is removed from activeConnections, but the proxySettings
-//     entry persists, so subsequent packets at this CID get forwarded raw
-//     to target.Addr.
+//  2. Close the underlying objproto connection silently (NOT via peer.Conn.Close,
+//     which would send a trsf.Close wire message to the server and cause
+//     the server's endToEndConn to receive EOF prematurely). Using
+//     pc.Connection().Close() removes the activeConn entry from the endpoint
+//     and leaves the proxySettings entry in place so subsequent packets at
+//     this CID are forwarded raw to target.Addr.
 //
 // proxy_runner does NOT ECDH target and does NOT send DialGreeting — those
 // are the server's responsibility after RehandshakeForProxy (Task 3).
@@ -127,7 +129,11 @@ func completeRelaySetup(
 	target objproto.ConnectionID,
 	slotID uint16,
 ) {
-	defer pc.Close()
+	// Close the raw connection without sending a trsf.Close wire message.
+	// peer.Conn.Close() would send Close (causing server's endToEndConn to
+	// receive EOF). We only need to release the activeConn slot; the
+	// proxySettings entry must survive.
+	defer pc.Connection().Close() //nolint:errcheck
 
 	ownedCID := pc.Connection().ConnectionID()
 	allocCID := objproto.NewConnectionID(target.Transport, target.Addr, slotID)

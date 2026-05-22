@@ -117,7 +117,7 @@ func TestAgentProxyE2E(t *testing.T) {
 		t.Fatalf("parse runner cid: %v", err)
 	}
 
-	dialResp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID)
+	dialResp, err := cli.ServerDialRunner(ctx, serverCID, runnerCID, objproto.ConnectionID{})
 	if err != nil {
 		t.Fatalf("ServerDialRunner: %v", err)
 	}
