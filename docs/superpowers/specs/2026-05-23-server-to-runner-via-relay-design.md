@@ -383,6 +383,30 @@ harness-cli --server-cid ws:A:8549-* server dial-runner ws:C:8540-* --via ws:192
 - proxy_runner は packet を復号できない (ECDH は target↔server で derived)
 - proxy_runner は packet drop / 遅延は可能だが、改竄不可 (AEAD で server / target 側が検出)
 
+#### PSK 認証の具体動作 (Phase A の挙動が relay 越しでも維持)
+
+両端 (server / target_runner) で同じ `HARNESS_PSK` / `--psk-file` を設定する想定:
+
+1. proxy_runner ↔ target ECDH 後、proxy_runner が target に DialGreeting を送出 (proxy↔target 鍵で暗号化)
+2. server が rehandshake → **server↔target で新規 ECDH 完了** (proxy_runner は鍵 derive 不可)
+3. target 側 driveAfterConn が **`cli.SendAndWaitPSK` で HARNESS_PSK を送出** (server↔target 鍵で暗号化、proxy_runner は復号不可)
+4. server の `pskGate.Check` が **subtle.ConstantTimeCompare で validate**
+   - 一致 → `PskAuthStatus_Ok` を返す → target 続行
+   - 不一致 → `PskAuthStatus_BadPsk` を返す → target は `cli.PSKAuthError` で conn 切断
+5. PSK ok なら target が RunnerHello → server が registry insert
+
+設定の組み合わせ:
+
+| server PSK | target PSK | 結果 |
+|---|---|---|
+| 設定 | 同じ値で設定 | 認証成立、registry insert |
+| 設定 | 異なる値で設定 | `BadPsk` で切断、registry insert 失敗 |
+| 設定 | 未設定 | target が空 PSK を送出 → server が異なる値として `BadPsk` で切断 |
+| 未設定 | 設定 | server の `pskGate.authed = true` (初期状態) で target の PSK 送出を受けるが、validate しないため Hello 受け付け → registry insert |
+| 未設定 | 未設定 | PSK 交換スキップ → registry insert |
+
+つまり Phase A 既存挙動と完全一致。relay 経路でも PSK 認証は **end-to-end で encrypted** に走り、proxy_runner が compromised でも server/target の PSK secret は守られる。
+
 ### 攻撃モデル
 
 - **Compromised proxy_runner**: target_runner の handshake を見ることはできるが、ECDH の secret key は持たないので AEAD の forge は不可。最大限できるのは「target との conn を切断する」「relay を承諾せず無視する」だけ
