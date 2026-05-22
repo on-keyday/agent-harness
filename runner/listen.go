@@ -113,8 +113,9 @@ func handleAcceptedConn(ctx context.Context, cfg Config, pc *peer.Conn) {
 	}
 	h, err := driveAfterConn(ctx, cfg, pc)
 	if err != nil {
+		// driveAfterConn already closes pc on PSK failure; do not double-close
+		// (peer.Conn.Close re-sends a wire Close + sleeps 50ms each call).
 		cfg.Logger.Error("accepted conn: PSK/setup failed", "err", err)
-		pc.Close()
 		return
 	}
 	defer h.Close()
