@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""build_and_restart_all.py — make build, then restart every alive
+"""build_and_restart_all.py -- make build, then restart every alive
 agent-runner slot, restarting the slot that owns the calling process LAST.
 
 Why "self last": when this script is invoked from inside a claude-code agent
@@ -118,7 +118,7 @@ def main(argv: list[str]) -> int:
     order = others + ([self_slot] if self_slot else [])
 
     print(f"==> alive slots:    {sorted(pid_to_slot.values())}")
-    print(f"==> self slot:      {self_slot or '(none — running outside a runner)'}")
+    print(f"==> self slot:      {self_slot or '(none -- running outside a runner)'}")
     print(f"==> restart order:  {order}")
 
     if args.dry_run:
@@ -130,7 +130,7 @@ def main(argv: list[str]) -> int:
 
     for i, slot in enumerate(order):
         is_self = slot == self_slot
-        print(f"==> restarting {slot}{' (self — caller will likely die after this)' if is_self else ''}")
+        print(f"==> restarting {slot}{' (self -- caller will likely die after this)' if is_self else ''}")
         _restart_slot(slot)
         # Brief pause between non-self restarts so the previous one has time
         # to deregister + re-register on the server. Skipped after self
