@@ -218,11 +218,12 @@ func main() {
 
 	if cfg.isListenMode() {
 		// Reverse-dial mode: server connects inbound to the runner.
-		// ServerCID in runCfg is intentionally zero here — in listen mode the
-		// runner does not know the server's CID at startup. driveAfterConn
-		// will populate session.ServerCID from cfg.ServerCID (zero), so
-		// HARNESS_SERVER_CID in agent subprocesses will be empty for Phase A.
-		// Task 6 will wire in the actual server CID from the accepted connection.
+		// runCfg.ServerCID is intentionally left as the zero ConnectionID here
+		// — the listen branch never parses cfg.ServerCID into an objproto.ConnectionID
+		// because the runner doesn't know the server's CID at startup. session.ServerCID
+		// inherits this zero value, so HARNESS_SERVER_CID in agent subprocesses will be
+		// empty / invalid during Phase A. Task 6 will populate ServerCID from the
+		// accepted connection's peer identity.
 		lcfg := runner.ListenConfig{
 			Config:    runCfg,
 			WSListen:  cfg.WSListen,
