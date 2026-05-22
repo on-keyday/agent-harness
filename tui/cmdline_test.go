@@ -252,3 +252,95 @@ func TestParseSessionNewSelectorMutualExclusion(t *testing.T) {
 		}
 	}
 }
+
+func TestParseFileLs(t *testing.T) {
+	got, err := ParseCommand(`file ls deadbeef0011 src/`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FileLsAction)
+	if a.TaskID != "deadbeef0011" || a.RelPath != "src/" {
+		t.Errorf("got %+v", a)
+	}
+}
+
+func TestParseFileLsRootDefault(t *testing.T) {
+	got, err := ParseCommand(`file ls deadbeef`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FileLsAction)
+	if a.TaskID != "deadbeef" || a.RelPath != "" {
+		t.Errorf("got %+v", a)
+	}
+}
+
+func TestParseFilePush(t *testing.T) {
+	got, err := ParseCommand(`file push -r -f deadbeef ./local-dir rel/dir`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FilePushAction)
+	if a.TaskID != "deadbeef" || a.LocalSrc != "./local-dir" || a.RemoteDst != "rel/dir" {
+		t.Errorf("paths: %+v", a)
+	}
+	if !a.Recursive || !a.Force {
+		t.Errorf("flags: %+v", a)
+	}
+}
+
+func TestParseFilePullSingle(t *testing.T) {
+	got, err := ParseCommand(`file pull deadbeef rel/file.txt ./local.txt`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FilePullAction)
+	if a.Recursive || a.Force {
+		t.Errorf("expected non-recursive non-force, got %+v", a)
+	}
+	if a.RemoteSrc != "rel/file.txt" || a.LocalDst != "./local.txt" {
+		t.Errorf("paths: %+v", a)
+	}
+}
+
+func TestParseFileDeleteRecursive(t *testing.T) {
+	got, err := ParseCommand(`file delete -r -f deadbeef rel/dir`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FileDeleteAction)
+	if !a.Recursive || !a.Force {
+		t.Errorf("flags: %+v", a)
+	}
+	if a.TaskID != "deadbeef" || a.RelPath != "rel/dir" {
+		t.Errorf("paths: %+v", a)
+	}
+}
+
+func TestParseFileDeleteSingle(t *testing.T) {
+	got, err := ParseCommand(`file delete deadbeef rel/file.txt`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FileDeleteAction)
+	if a.Recursive || a.Force {
+		t.Errorf("expected non-recursive, got %+v", a)
+	}
+}
+
+func TestParseFileUsageErrors(t *testing.T) {
+	cases := []string{
+		`file`,                             // no sub-verb
+		`file unknown`,                     // unknown sub-verb
+		`file ls`,                          // missing task id
+		`file push deadbeef onlyone`,       // missing remote
+		`file pull deadbeef onlyone`,       // missing local
+		`file delete deadbeef`,             // missing rel
+		`file ls deadbeef sub extra-trailing`, // too many positionals
+	}
+	for _, in := range cases {
+		if _, err := ParseCommand(in, "/cwd"); err == nil {
+			t.Errorf("input %q: expected error", in)
+		}
+	}
+}

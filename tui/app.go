@@ -253,6 +253,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))
 		return a, RefreshSnapshot(a.client)
 
+	case FileResultMsg:
+		short := msg.TaskID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("file %s %s: %s", msg.Op, short, msg.Err.Error())))
+			return a, nil
+		}
+		if msg.Op == "ls" {
+			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("file ls %s %s", short, msg.Detail)))
+			// Listing can be multi-line; append the runner's output verbatim
+			// after the header so it lands as a block in cmdresult.
+			for _, line := range strings.Split(strings.TrimRight(msg.Output, "\n"), "\n") {
+				if line == "" {
+					continue
+				}
+				a.cmdresult.Append("  " + line)
+			}
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("file %s %s ok ", msg.Op, short)) + msg.Detail)
+		return a, nil
+
 	case InteractiveReadyMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("open interactive failed: " + msg.Err.Error()))
@@ -671,6 +695,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("session attach <id>         - reattach to a session")
 		a.cmdresult.Append("session ls                  - list detachable sessions")
 		a.cmdresult.Append("session kill <id>           - terminate a session")
+		a.cmdresult.Append("file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)")
+		a.cmdresult.Append("file push [-r] [-f] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite)")
+		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
+		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server
@@ -731,6 +759,34 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoCancel(a.client, v.IDPrefix, full)
+	case FileLsAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoFileLs(a.client, full, v.RelPath)
+	case FilePushAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force)
+	case FilePullAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force)
+	case FileDeleteAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil

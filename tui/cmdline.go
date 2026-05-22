@@ -72,6 +72,46 @@ type RepoAction struct {
 	Path string
 }
 
+// FileLsAction lists a directory under a task's worktree. RelPath empty
+// means the worktree root.
+type FileLsAction struct {
+	TaskID  string
+	RelPath string
+}
+
+// FilePushAction copies a local source into a task's worktree.
+// Recursive=true uses dir_push (tar over the wire). Force overwrites an
+// existing destination (push) or replaces an existing directory tree
+// (dir_push).
+type FilePushAction struct {
+	TaskID    string
+	LocalSrc  string
+	RemoteDst string
+	Recursive bool
+	Force     bool
+}
+
+// FilePullAction copies from a task's worktree to a local destination.
+// Recursive uses dir_pull. Force permits overwriting the local path.
+type FilePullAction struct {
+	TaskID    string
+	RemoteSrc string
+	LocalDst  string
+	Recursive bool
+	Force     bool
+}
+
+// FileDeleteAction removes a path from a task's worktree. Recursive uses
+// dir_delete; Force on Recursive removes a non-empty directory tree via
+// os.RemoveAll on the runner side. Force without Recursive is a no-op
+// (single-file delete has no force semantics).
+type FileDeleteAction struct {
+	TaskID    string
+	RelPath   string
+	Recursive bool
+	Force     bool
+}
+
 // InteractiveAction opens an interactive PTY claude session in Repo —
 // the slash-command equivalent of the 'i' key, useful when chaining
 // after /repo or when the user is already in cmdline focus.
@@ -93,6 +133,10 @@ func (SessionNewAction) isAction()    {}
 func (SessionAttachAction) isAction() {}
 func (SessionLsAction) isAction()     {}
 func (SessionKillAction) isAction()   {}
+func (FileLsAction) isAction()        {}
+func (FilePushAction) isAction()      {}
+func (FilePullAction) isAction()      {}
+func (FileDeleteAction) isAction()    {}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -124,6 +168,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseInteractive(tokens[1:], defaultRepo)
 	case "session":
 		return parseSession(tokens[1:], defaultRepo)
+	case "file":
+		return parseFile(tokens[1:])
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
 	}
@@ -268,5 +314,86 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		return SessionKillAction{IDPrefix: rest[0]}, nil
 	default:
 		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id>)", verb)
+	}
+}
+
+// parseFile dispatches file sub-verbs: ls / push / pull / delete. All
+// paths use the same -r / --recursive and -f / --force aliases as the
+// CLI so the typing is interchangeable between `harness-cli file ...`
+// and the TUI cmdline. Local paths are resolved on the host running
+// the TUI; remote paths are interpreted relative to the task's
+// worktree by the runner and confined to it (no `..` escape).
+func parseFile(args []string) (Action, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("file: sub-verb required (ls | push | pull | delete)")
+	}
+	verb := args[0]
+	rest := args[1:]
+	switch verb {
+	case "ls":
+		if len(rest) < 1 || len(rest) > 2 {
+			return nil, fmt.Errorf("file ls: usage: file ls <task-id> [<worktree-rel-dir>]")
+		}
+		rel := ""
+		if len(rest) == 2 {
+			rel = rest[1]
+		}
+		return FileLsAction{TaskID: rest[0], RelPath: rel}, nil
+	case "push":
+		fs := flag.NewFlagSet("file push", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		recursive := fs.Bool("recursive", false, "")
+		fs.BoolVar(recursive, "r", false, "")
+		force := fs.Bool("force", false, "")
+		fs.BoolVar(force, "f", false, "")
+		if err := fs.Parse(rest); err != nil {
+			return nil, fmt.Errorf("file push: %w", err)
+		}
+		pargs := fs.Args()
+		if len(pargs) != 3 {
+			return nil, fmt.Errorf("file push: usage: file push [-r] [-f] <task-id> <local-src> <worktree-rel-dst>")
+		}
+		return FilePushAction{
+			TaskID: pargs[0], LocalSrc: pargs[1], RemoteDst: pargs[2],
+			Recursive: *recursive, Force: *force,
+		}, nil
+	case "pull":
+		fs := flag.NewFlagSet("file pull", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		recursive := fs.Bool("recursive", false, "")
+		fs.BoolVar(recursive, "r", false, "")
+		force := fs.Bool("force", false, "")
+		fs.BoolVar(force, "f", false, "")
+		if err := fs.Parse(rest); err != nil {
+			return nil, fmt.Errorf("file pull: %w", err)
+		}
+		pargs := fs.Args()
+		if len(pargs) != 3 {
+			return nil, fmt.Errorf("file pull: usage: file pull [-r] [-f] <task-id> <worktree-rel-src> <local-dst>")
+		}
+		return FilePullAction{
+			TaskID: pargs[0], RemoteSrc: pargs[1], LocalDst: pargs[2],
+			Recursive: *recursive, Force: *force,
+		}, nil
+	case "delete":
+		fs := flag.NewFlagSet("file delete", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		recursive := fs.Bool("recursive", false, "")
+		fs.BoolVar(recursive, "r", false, "")
+		force := fs.Bool("force", false, "")
+		fs.BoolVar(force, "f", false, "")
+		if err := fs.Parse(rest); err != nil {
+			return nil, fmt.Errorf("file delete: %w", err)
+		}
+		pargs := fs.Args()
+		if len(pargs) != 2 {
+			return nil, fmt.Errorf("file delete: usage: file delete [-r [-f]] <task-id> <worktree-rel-path>")
+		}
+		return FileDeleteAction{
+			TaskID: pargs[0], RelPath: pargs[1],
+			Recursive: *recursive, Force: *force,
+		}, nil
+	default:
+		return nil, fmt.Errorf("file: unknown sub-verb %q (ls | push | pull | delete)", verb)
 	}
 }
