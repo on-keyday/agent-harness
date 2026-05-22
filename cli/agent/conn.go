@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,20 @@ import (
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
+
+// shouldUseProxy reports whether the agent should dial the harness server
+// indirectly through a runner-mediated objproto proxy (Phase B) instead of
+// directly. Decision is purely env-based:
+//
+//	HARNESS_PROXY_VIA_RUNNER=<cid-string> → proxy mode, addr = env value
+//	unset / empty / whitespace-only       → direct mode
+//
+// The returned addr is the runner's listen-side ConnectionID string (e.g.
+// "ws:127.0.0.1:8540-*"); cli.DialViaProxy parses it via ResolveServerCID.
+func shouldUseProxy() (bool, string) {
+	v := strings.TrimSpace(os.Getenv("HARNESS_PROXY_VIA_RUNNER"))
+	return v != "", v
+}
 
 // trsfStreamID converts a uint64 wire id to trsf.StreamID.
 func trsfStreamID(id uint64) trsf.StreamID { return trsf.StreamID(id) }
@@ -167,18 +183,30 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		cli.WebSocketPath = wsPath
 	}
 
-	ep, err := cli.BuildClientEndpoint(cid)
-	if err != nil {
-		return nil, fmt.Errorf("client endpoint: %w", err)
-	}
-	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+	var pc *peer.Conn
+	if useProxy, proxyAddr := shouldUseProxy(); useProxy {
+		proxyCID, perr := cliopts.ResolveServerCID(proxyAddr)
+		if perr != nil {
+			return nil, fmt.Errorf("HARNESS_PROXY_VIA_RUNNER: %w", perr)
+		}
+		pc, err = cli.DialViaProxy(ctx, proxyCID, tid)
+		if err != nil {
+			return nil, fmt.Errorf("DialViaProxy: %w", err)
+		}
+	} else {
+		ep, eperr := cli.BuildClientEndpoint(cid)
+		if eperr != nil {
+			return nil, fmt.Errorf("client endpoint: %w", eperr)
+		}
+		go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 
-	pc, err := peer.Dial(ctx, ep, cid, peer.DialConfig{
-		Logger:       slog.Default(),
-		PingInterval: 30 * time.Second,
-	})
-	if err != nil {
-		return nil, err
+		pc, err = peer.Dial(ctx, ep, cid, peer.DialConfig{
+			Logger:       slog.Default(),
+			PingInterval: 30 * time.Second,
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	psk := cli.GetPSK()
