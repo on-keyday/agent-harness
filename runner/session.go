@@ -206,6 +206,15 @@ func (s *Session) ServerCIDForProxyAllocate() objproto.ConnectionID {
 	return s.ServerCID
 }
 
+// HasTask reports whether t is currently an active task on this session.
+// Used by the agent proxy handler to validate ProxyRequest.task_id.
+func (s *Session) HasTask(t protocol.TaskID) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.tasks[hex.EncodeToString(t.Id[:])]
+	return ok
+}
+
 // handleAssign performs the full lifecycle for one assigned task:
 //  1. TaskAccepted control message
 //  2. Worktree creation (failure → TaskFinished with error info)
