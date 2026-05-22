@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"log/slog"
-	"net/http"
 	"testing"
 	"time"
 
@@ -119,9 +118,12 @@ func TestDialRunnerTaskHandlerCase(t *testing.T) {
 	}
 }
 
-// TestDialRunnerRequestRoundTrip verifies wire encode/decode symmetry for
-// DialRunnerRequest embedded in TaskControlRequest.
-func TestDialRunnerRequestRoundTrip(t *testing.T) {
+// TestTaskControlDialRunnerRequestRoundTrip verifies wire encode/decode of
+// DialRunnerRequest when wrapped in a TaskControlRequest envelope. The bare
+// DialRunnerRequest round-trip is in runner/protocol/dial_runner_test.go;
+// this test specifically exercises the TaskControlKind_DialRunner match-arm
+// codegen.
+func TestTaskControlDialRunnerRequestRoundTrip(t *testing.T) {
 	var req protocol.TaskControlRequest
 	req.Kind = protocol.TaskControlKind_DialRunner
 	req.RequestId = 42
@@ -162,9 +164,11 @@ func TestDialRunnerRequestRoundTrip(t *testing.T) {
 	}
 }
 
-// TestDialRunnerResponseRoundTrip verifies wire encode/decode for TaskControlResponse
-// with DialRunner payload.
-func TestDialRunnerResponseRoundTrip(t *testing.T) {
+// TestTaskControlDialRunnerResponseRoundTrip verifies wire encode/decode of
+// DialRunnerResponse when wrapped in a TaskControlResponse envelope. See
+// the TestTaskControlDialRunnerRequestRoundTrip note for the layering
+// rationale.
+func TestTaskControlDialRunnerResponseRoundTrip(t *testing.T) {
 	var resp protocol.TaskControlResponse
 	resp.Kind = protocol.TaskControlKind_DialRunner
 	resp.RequestId = 99
@@ -194,5 +198,3 @@ func TestDialRunnerResponseRoundTrip(t *testing.T) {
 	}
 }
 
-// Ensure unused http import is used (for Client endpoint test helper).
-var _ = http.DefaultServeMux

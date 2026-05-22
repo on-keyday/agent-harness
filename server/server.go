@@ -222,8 +222,11 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 	s.taskHandler.Endpoint = ep
-	s.taskHandler.OnDialed = func(dialCtx context.Context, conn objproto.Connection) {
-		go s.handleConnection(dialCtx, conn)
+	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection) {
+		// connCtx is the server root context (long-lived). The ECDH-timeout
+		// context lives only inside DialRunnerHandler.Handle and is already
+		// cancelled by the time OnDialed fires.
+		go s.handleConnection(connCtx, conn)
 	}
 	return s.serve(ctx, ep, mux, httpAddr)
 }
