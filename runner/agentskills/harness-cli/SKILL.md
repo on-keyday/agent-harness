@@ -32,6 +32,15 @@ because peek reads from the prev-cursor snapshot, not the live cursor.
 suppresses the next hook's delivery of those seqs. `--commit` is for the
 hooks only.
 
+**Known issue — `--since-last` can desync.** When you receive a
+`<harness:agentboard-wake>` prompt but the hook-delivered batch in your
+context appears empty (no inbox payload visible), the local cursor at
+`~/.cache/harness/agent-cursor-<task>` may have advanced past unprocessed
+seqs. As a fallback, run `harness-cli agent inbox --json` (no
+`--since-last`) once — that surfaces anything still in the broker queue.
+If it returns content, treat it as the missed batch and act on it.
+Do not add `--commit` to the fallback call; it remains hook-only.
+
 ## Async by default — never block on a reply
 
 Reply delivery to your context is **always asynchronous**, via the inbox
