@@ -124,9 +124,221 @@ const POLL_INTERVAL_MS = 5000;
     renderHostSelect(hostSelect, sortedRunners);
     runnerList.textContent = renderRunners(sortedRunners);
     taskList.textContent   = renderTasks(snap.tasks);
+    renderFileTaskSelect(snap.tasks);
   };
   await refreshSnapshot();
   setInterval(refreshSnapshot, POLL_INTERVAL_MS);
+
+  // File picker section — browse the worktree of a selected task,
+  // push / pull / delete with click ops. Sits in #files in
+  // index.html; cmdline `file ...` still works for typing-only flows.
+  const fileTaskSelect    = document.getElementById("file-task-select");
+  const fileCurPathSpan   = document.getElementById("file-cur-path");
+  const fileUpBtn         = document.getElementById("file-up-btn");
+  const fileRefreshBtn    = document.getElementById("file-refresh-btn");
+  const fileEntriesUL     = document.getElementById("file-entries");
+  const filePushBtn       = document.getElementById("file-push-btn");
+  const filePullBtn       = document.getElementById("file-pull-btn");
+  const fileDeleteBtn     = document.getElementById("file-delete-btn");
+  const fileResultPre     = document.getElementById("file-result");
+
+  let filePickerCurDir   = "";
+  let filePickerEntries  = [];
+  let filePickerSelected = null; // {name, size, mode, isDir} or null
+
+  function renderFileTaskSelect(tasks) {
+    const prev = fileTaskSelect.value;
+    fileTaskSelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "(select task)";
+    fileTaskSelect.appendChild(placeholder);
+    if (!tasks) return;
+    for (const t of tasks) {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      const short = (t.id || "").slice(0, 12);
+      opt.textContent = `${short}  ${t.status}  ${t.repoPath}`;
+      fileTaskSelect.appendChild(opt);
+    }
+    if (prev) fileTaskSelect.value = prev; // preserve selection across refresh
+    updateFilePickerButtons();
+  }
+
+  function updateFilePickerButtons() {
+    const hasTask = !!fileTaskSelect.value;
+    const hasSel = filePickerSelected !== null;
+    fileUpBtn.disabled = !hasTask || filePickerCurDir === "";
+    fileRefreshBtn.disabled = !hasTask;
+    filePushBtn.disabled = !hasTask;
+    filePullBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
+    fileDeleteBtn.disabled = !hasTask || !hasSel;
+  }
+
+  async function refreshFilePicker() {
+    if (!fileTaskSelect.value) {
+      filePickerEntries = [];
+      filePickerSelected = null;
+      fileCurPathSpan.textContent = "/";
+      fileEntriesUL.innerHTML = "";
+      updateFilePickerButtons();
+      return;
+    }
+    const taskID = fileTaskSelect.value;
+    fileCurPathSpan.textContent = "/" + filePickerCurDir;
+    try {
+      const entries = await window.harness.fileLs(taskID, filePickerCurDir);
+      filePickerEntries = entries.slice().sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+      });
+      filePickerSelected = null;
+      renderFileEntries();
+      updateFilePickerButtons();
+    } catch (e) {
+      fileResultPre.textContent = `ls error: ${e.message}`;
+    }
+  }
+
+  function renderFileEntries() {
+    fileEntriesUL.innerHTML = "";
+    if (filePickerEntries.length === 0) {
+      const li = document.createElement("li");
+      li.textContent = "(empty)";
+      li.style.color = "#888";
+      li.style.padding = "0.25em 0.5em";
+      fileEntriesUL.appendChild(li);
+      return;
+    }
+    for (const e of filePickerEntries) {
+      const li = document.createElement("li");
+      const sz = e.isDir ? "" : String(e.size).padStart(10);
+      const name = e.isDir ? `${e.name}/` : e.name;
+      li.textContent = `${sz}  ${name}`;
+      li.style.padding = "0.15em 0.5em";
+      li.style.cursor = "pointer";
+      if (e.isDir) li.style.color = "#06c";
+      li.addEventListener("click", () => {
+        if (e.isDir) {
+          // Descend
+          filePickerCurDir = joinFsPath(filePickerCurDir, e.name);
+          refreshFilePicker();
+          return;
+        }
+        // Select (clear prior highlight, set this one)
+        for (const c of fileEntriesUL.children) {
+          c.style.backgroundColor = "";
+        }
+        li.style.backgroundColor = "#ffeb3b";
+        filePickerSelected = e;
+        updateFilePickerButtons();
+      });
+      fileEntriesUL.appendChild(li);
+    }
+  }
+
+  function joinFsPath(a, b) {
+    a = (a || "").replace(/\/+$/, "");
+    b = (b || "").replace(/^\/+/, "");
+    if (!a) return b;
+    if (!b) return a;
+    return `${a}/${b}`;
+  }
+
+  function parentFsPath(p) {
+    p = (p || "").replace(/\/+$/, "");
+    const i = p.lastIndexOf("/");
+    if (i < 0) return "";
+    return p.slice(0, i);
+  }
+
+  fileTaskSelect.addEventListener("change", () => {
+    filePickerCurDir = "";
+    filePickerSelected = null;
+    refreshFilePicker();
+  });
+  fileUpBtn.addEventListener("click", () => {
+    if (!filePickerCurDir) return;
+    filePickerCurDir = parentFsPath(filePickerCurDir);
+    refreshFilePicker();
+  });
+  fileRefreshBtn.addEventListener("click", refreshFilePicker);
+
+  filePushBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID) return;
+    const file = await pickLocalFile();
+    if (!file) {
+      fileResultPre.textContent = "push cancelled (no file)";
+      return;
+    }
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const remoteRel = joinFsPath(filePickerCurDir, file.name);
+    try {
+      await window.harness.filePushBytes(taskID, remoteRel, buf, false);
+      fileResultPre.textContent = `push ok: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
+    } catch (e) {
+      if (e && e.code === "already_exists") {
+        if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
+          fileResultPre.textContent = "push cancelled (overwrite declined)";
+          return;
+        }
+        try {
+          await window.harness.filePushBytes(taskID, remoteRel, buf, true);
+          fileResultPre.textContent = `push ok (overwritten): ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
+        } catch (e2) {
+          fileResultPre.textContent = `push error: ${e2.message}`;
+          return;
+        }
+      } else {
+        fileResultPre.textContent = `push error: ${e.message}`;
+        return;
+      }
+    }
+    refreshFilePicker();
+  });
+
+  filePullBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID || !filePickerSelected || filePickerSelected.isDir) return;
+    const rel = joinFsPath(filePickerCurDir, filePickerSelected.name);
+    try {
+      const bytes = await window.harness.filePullBytes(taskID, rel);
+      triggerDownload(bytes, filePickerSelected.name);
+      fileResultPre.textContent = `pull ok: ${rel} (${bytes.byteLength} bytes) — browser save dialog`;
+    } catch (e) {
+      fileResultPre.textContent = `pull error: ${e.message}`;
+    }
+  });
+
+  fileDeleteBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID || !filePickerSelected) return;
+    const rel = joinFsPath(filePickerCurDir, filePickerSelected.name);
+    const isDir = filePickerSelected.isDir;
+    let recursive = false, force = false;
+    if (isDir) {
+      if (!window.confirm(`Delete directory ${rel} recursively (rm -rf)?`)) {
+        fileResultPre.textContent = "delete cancelled";
+        return;
+      }
+      recursive = true;
+      force = true;
+    } else {
+      if (!window.confirm(`Delete ${rel}?`)) {
+        fileResultPre.textContent = "delete cancelled";
+        return;
+      }
+    }
+    try {
+      await window.harness.fileDelete(taskID, rel, recursive, force);
+      fileResultPre.textContent = `delete ok: ${rel}`;
+      filePickerSelected = null;
+      refreshFilePicker();
+    } catch (e) {
+      fileResultPre.textContent = `delete error: ${e.message}`;
+    }
+  });
 
   // 5. Cmdline submit / cancel / prune.
   const cmdInput  = document.getElementById("cmd-input");

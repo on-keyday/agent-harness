@@ -44,6 +44,24 @@
       <input id="hidden-file-input" type="file" style="display:none">
       <pre id="cmd-output"></pre>
     </section>
+    <section id="files">
+      <h2>Files</h2>
+      <div class="actions">
+        <label>Task: <select id="file-task-select"><option value="">(select task)</option></select></label>
+      </div>
+      <div class="actions">
+        <span>Path: <code id="file-cur-path">/</code></span>
+        <button id="file-up-btn" disabled>↑ Up</button>
+        <button id="file-refresh-btn" disabled>↻ Refresh</button>
+      </div>
+      <ul id="file-entries" style="list-style:none;padding-left:0;font-family:monospace;max-height:300px;overflow:auto;border:1px solid #ccc"></ul>
+      <div class="actions">
+        <button id="file-push-btn" disabled>Push (upload local file into current dir)</button>
+        <button id="file-pull-btn" disabled>Pull (download selected file)</button>
+        <button id="file-delete-btn" disabled>Delete</button>
+      </div>
+      <pre id="file-result"></pre>
+    </section>
     <section id="interactive">
       <h2>Interactive</h2>
       <div class="actions">
