@@ -119,16 +119,32 @@ func TestProxyControlEstablishResponseRoundTrip(t *testing.T) {
 		t.Errorf("status: got %v", er.Status)
 	}
 }
+
+func TestDialGreetingRoundTrip(t *testing.T) {
+	orig := DialGreeting{Version: 1}
+	buf, err := orig.Append(nil)
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	var got DialGreeting
+	if _, err := got.Decode(buf); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got.Version != orig.Version {
+		t.Errorf("version: got %d want %d", got.Version, orig.Version)
+	}
+}
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `go test ./runner/protocol/ -run TestProxyControl -v`
-Expected: FAIL — `undefined: ProxyRequest` / `ProxyControlKind_Request` etc.
+Run: `go test ./runner/protocol/ -run "TestProxyControl|TestDialGreeting" -v`
+Expected: FAIL — `undefined: ProxyRequest` / `ProxyControlKind_Request` / `DialGreeting` etc.
 
-- [ ] **Step 3: Add wire kind for ProxyControl**
+- [ ] **Step 3: Add wire kinds for proxy + dial greeting**
 
-In `trsf/wire/stream.bgn`, append `agent_proxy_control` to the `ApplicationPayloadKind` enum (after `psk_auth`):
+In `trsf/wire/stream.bgn`, append `agent_proxy_control` and `dial_greeting` to the
+`ApplicationPayloadKind` enum (after `psk_auth`):
 
 ```bgn
 enum ApplicationPayloadKind:
@@ -147,9 +163,12 @@ enum ApplicationPayloadKind:
     agent_message
     psk_auth
     agent_proxy_control   # Phase B: agent↔runner negotiated-proxy ceremony
+    dial_greeting         # Phase B: server→runner marker, sent right after DoECDHHandshake
+                          # so the runner's accept handler can identify a server-dialed
+                          # conn (vs an agent-dialed conn) without timing heuristics.
 ```
 
-- [ ] **Step 4: Add ProxyControl schema to message.bgn**
+- [ ] **Step 4: Add proxy + greeting schemas to message.bgn**
 
 In `runner/protocol/message.bgn`, insert this block immediately after the existing
 `DialRunnerResponse` block (which is around line 197-198):
@@ -183,6 +202,14 @@ format ProxyControl:
     match kind:
         ProxyControlKind.request              => request              :ProxyRequest
         ProxyControlKind.establish_response   => establish_response   :ProxyEstablishResponse
+
+# Phase B: server → runner marker sent immediately after server-side
+# DoECDHHandshake completes (reverse-dial path). Lets the runner's accept
+# handler discriminate "server conn" vs "agent conn" without timing heuristics.
+# version is reserved for forward-compatible feature negotiation; the runner
+# logs unknown versions and proceeds.
+format DialGreeting:
+    version :u8
 ```
 
 - [ ] **Step 5: Regenerate Go code**
@@ -193,8 +220,8 @@ Expected: success; `trsf/wire/stream.go` and `runner/protocol/message.go` update
 
 - [ ] **Step 6: Run the test**
 
-Run: `go test ./runner/protocol/ -run TestProxyControl -v`
-Expected: both subtests PASS.
+Run: `go test ./runner/protocol/ -run "TestProxyControl|TestDialGreeting" -v`
+Expected: 3 tests PASS (ProxyControlRequest, ProxyControlEstablishResponse, DialGreeting).
 
 - [ ] **Step 7: Run full package tests**
 
@@ -205,7 +232,7 @@ Expected: all PASS (additive changes).
 
 ```bash
 git add trsf/wire/stream.bgn trsf/wire/stream.go runner/protocol/message.bgn runner/protocol/message.go runner/protocol/proxy_test.go
-git commit -m "feat(protocol): add ProxyControl wire (ProxyRequest/EstablishResponse) for Phase B"
+git commit -m "feat(protocol): add ProxyControl + DialGreeting wire kinds for Phase B"
 ```
 
 ---
@@ -263,6 +290,126 @@ git commit -m "refactor(runner): add Session.ServerCIDForProxyAllocate accessor 
 
 ---
 
+## Task 2b: Server sends DialGreeting after DoECDHHandshake
+
+**Files:**
+- Modify: `server/dial_runner_handler.go`
+
+**Background:** As described under "Discrimination strategy", the server-side
+dial path must emit a `DialGreeting{version=1}` payload immediately after
+`DoECDHHandshake` completes (before invoking `OnDialed`, which forwards the
+conn to `handleConnection`). This single message acts as the marker the
+runner's accept handler uses to identify a server-dialed conn.
+
+- [ ] **Step 1: Write the failing test**
+
+Extend `server/dial_runner_handler_test.go` with a test that captures the
+greeting being sent on a successful dial. Use the existing fake endpoint
+infrastructure if available; otherwise drive `DialRunnerHandler.Handle`
+against a real localhost listener that records the first inbound payload
+kind:
+
+```go
+// TestDialRunnerSendsGreeting verifies that after a successful ECDH
+// handshake the server sends exactly one DialGreeting payload as the
+// first outbound app message.
+func TestDialRunnerSendsGreeting(t *testing.T) {
+	// Start a tiny localhost listener that accepts a peer.Conn and
+	// records the first inbound payload via OnControl.
+	listenAddr := "127.0.0.1:18570"
+	firstMsg := make(chan struct {
+		kind    wire.ApplicationPayloadKind
+		payload []byte
+	}, 1)
+	stopFakeRunner := startFakeListenRunner(t, listenAddr, firstMsg)
+	defer stopFakeRunner()
+
+	ep := buildTestClientEndpoint(t)
+	h := &DialRunnerHandler{
+		Logger:      slog.Default(),
+		Endpoint:    ep,
+		DialTimeout: 2 * time.Second,
+		OnDialed: func(_ context.Context, _ objproto.Connection) {
+			// no-op for this test; we only care about the greeting.
+		},
+	}
+	var target protocol.RunnerID
+	target.SetTransport([]byte("ws"))
+	target.SetIpAddr([]byte{127, 0, 0, 1})
+	target.Port = 18570
+
+	resp := h.Handle(context.Background(), target)
+	if resp.Status != protocol.DialRunnerStatus_Ok {
+		t.Fatalf("dial status: %v", resp.Status)
+	}
+
+	select {
+	case msg := <-firstMsg:
+		if msg.kind != wire.ApplicationPayloadKind_DialGreeting {
+			t.Fatalf("first inbound kind: got %v want DialGreeting", msg.kind)
+		}
+		var g protocol.DialGreeting
+		if _, err := g.Decode(msg.payload[1:]); err != nil {
+			t.Fatalf("decode DialGreeting: %v", err)
+		}
+		if g.Version != 1 {
+			t.Errorf("version: got %d want 1", g.Version)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no inbound message received within 2s")
+	}
+}
+
+// startFakeListenRunner: helper that builds a Mutual WS endpoint on
+// listenAddr, accepts one conn, installs OnControl that sends every
+// inbound payload to firstMsg, returns a cleanup function. Mirrors the
+// existing test helpers in this package.
+```
+
+- [ ] **Step 2: Run test, verify fail**
+
+Run: `go test ./server/ -run TestDialRunnerSendsGreeting -v`
+Expected: FAIL — handler doesn't send greeting yet.
+
+- [ ] **Step 3: Implement greeting emission**
+
+In `server/dial_runner_handler.go`, after `objproto.DoECDHHandshake(...)`
+returns the conn and BEFORE invoking `OnDialed`:
+
+```go
+// Emit a DialGreeting so the runner's accept handler can identify this
+// as a server-dialed conn (vs an agent-dialed conn that would send
+// ProxyControl). The greeting carries a version byte for forward
+// compatibility; runner ignores unknown versions.
+greeting := protocol.DialGreeting{Version: 1}
+payload := greeting.MustAppend([]byte{byte(wire.ApplicationPayloadKind_DialGreeting)})
+if _, _, err := conn.SendMessage(payload); err != nil {
+    h.Logger.Warn("dial-runner: failed to send greeting", "err", err)
+    // Continue — the runner will probably timeout and we'll see the
+    // error there; surfacing it here gives the admin an immediate hint.
+    return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
+}
+```
+
+- [ ] **Step 4: Run test**
+
+Run: `go test ./server/ -run TestDialRunnerSendsGreeting -v -count=1`
+Expected: PASS.
+
+- [ ] **Step 5: Run all server tests**
+
+Run: `go test ./server/... -count=1`
+Expected: all PASS (the greeting is additive — existing tests don't observe it).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/dial_runner_handler.go server/dial_runner_handler_test.go
+git commit -m "feat(server): emit DialGreeting after DoECDHHandshake (Phase B discrim marker)"
+```
+
+---
+
 ## Task 3: Runner agent-proxy handler
 
 **Files:**
@@ -277,40 +424,29 @@ Phase B, agent processes also dial into the same endpoint. The runner needs to
 discriminate between server conns (Phase A reverse-dial) and agent conns (Phase B
 proxy ceremony) BEFORE proceeding.
 
-**Discrimination strategy — timing-based peek:**
+**Discrimination strategy — wire-kind-based via `dial_greeting`:**
 
-Reading Phase A's flow:
-- Server dials runner → runner accepts → `driveAfterConn` calls `SendAndWaitPSK`
-  which SENDS PskAuth out. Server's `pskGate.Check` validates and replies. So on a
-  server conn, the first INBOUND message arrives only AFTER the runner sends PSK.
-- Agent dials runner (Phase B) → agent sends `ProxyRequest` immediately as its first
-  outbound message. So on an agent conn, the first INBOUND message arrives
-  proactively without runner needing to send anything.
+To eliminate any timing-based heuristic, the SERVER, when it dials the runner
+(Phase A reverse-dial path), sends a single `DialGreeting{version=1}` message
+immediately after `DoECDHHandshake` completes — before runner's PSK send.
 
-Addr-based discrimination fails for localhost-only dev setups (both server and agent
-appear from `127.0.0.1`). Source-port differs but is not deterministically tied to
-role. So use timing:
+This makes accept-side discrimination purely wire-kind based:
+- First inbound is `dial_greeting` → server conn → proceed with existing
+  `driveAfterConn` (which sends PSK out as before)
+- First inbound is `agent_proxy_control` → agent conn → proxy ceremony
+- Anything else → unexpected, log + close
 
-1. Accept conn → wrap with `peer.WrapAcceptedConn`
-2. Install OnControl that pushes first inbound payload to a channel
-3. Start AutoReceive
-4. Wait up to 300ms for an inbound message:
-   - If `agent_proxy_control` arrives → agent path (runAgentProxyCeremony with the
-     payload already in hand)
-   - If 300ms timeout → server path (driveAfterConn — re-installs its own OnControl
-     and proceeds with PSK send)
-   - If `PskAuth` arrives (unexpected — would mean someone is dialing in and sending
-     PSK proactively, which neither Phase A nor Phase B does) → log warning, close
+The DialGreeting message is intentionally tiny (1-byte version) and stateless on
+the server side — it's purely a discrimination marker. The version byte gives
+forward-compat room if we later want to negotiate features in the greeting.
 
-The 300ms threshold is comfortably larger than localhost ECDH+app-message latency
-(typically <10ms) and well below typical user-facing timeouts. If an agent fails to
-send ProxyRequest within 300ms (e.g., network glitch on a real remote agent), the
-runner falls through to server-conn handling and the PSK timeout will eventually
-clean up.
+PSK direction is unchanged — runner still SENDS PSK out, server validates. The
+greeting just precedes the existing flow.
 
 After discrimination, the chosen handler proceeds:
-- Server path: `driveAfterConn` runs normally; if it succeeds, store its session
-  in a runner-wide reference so subsequent agent-proxy handlers can read serverCID.
+- Server path: `driveAfterConn` runs normally (PSK send, Hello send); on success,
+  store its session in a runner-wide `atomic.Pointer[Session]` so subsequent
+  agent-proxy handlers can read serverCID.
 - Agent path: decode the captured `ProxyControl{kind=Request}`; run the proxy
   ceremony (SetProxy → ack → caller closes pc).
 
@@ -581,31 +717,37 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 	})
 	pc.Start(ctx)
 
-	const discrimTimeout = 300 * time.Millisecond
 	select {
 	case <-ctx.Done():
 		pc.Close()
 		return
 	case msg := <-firstMsg:
-		if msg.kind == wire.ApplicationPayloadKind_AgentProxyControl {
+		switch msg.kind {
+		case wire.ApplicationPayloadKind_DialGreeting:
+			// Server-dialed conn (Phase A). The greeting itself carries
+			// no actionable state for us beyond the discrimination; the
+			// version byte is logged but does not gate behaviour today.
+			handleServerConn(ctx, cfg, sessionRef, pc, msg)
+		case wire.ApplicationPayloadKind_AgentProxyControl:
 			handleAgentProxyConn(ctx, cfg, sessionRef, ep, pc, msg)
-			return
+		default:
+			cfg.Logger.Warn("accepted conn sent unexpected first payload",
+				"kind", msg.kind,
+				"remote", pc.Connection().ConnectionID().String())
+			pc.Close()
 		}
-		cfg.Logger.Warn("accepted conn sent unexpected first payload",
-			"kind", msg.kind,
-			"remote", pc.Connection().ConnectionID().String())
-		pc.Close()
-		return
-	case <-time.After(discrimTimeout):
-		// Timeout → server conn path (no proactive inbound, server is
-		// waiting for our PSK). Fall through to driveAfterConn-style
-		// handling. driveAfterConn re-installs its own OnControl handler
-		// (replacing the peek handler) before sending PSK.
-		handleServerConn(ctx, cfg, sessionRef, pc)
 	}
 }
 
-func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], pc *peer.Conn) {
+func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], pc *peer.Conn, greeting firstMsgT) {
+	// Optionally inspect greeting.payload for version negotiation; today
+	// we just log and continue.
+	var g protocol.DialGreeting
+	if len(greeting.payload) >= 2 {
+		if _, err := g.Decode(greeting.payload[1:]); err == nil {
+			cfg.Logger.Info("server greeting received", "version", g.Version)
+		}
+	}
 	h, err := driveAfterConn(ctx, cfg, pc)
 	if err != nil {
 		cfg.Logger.Error("server conn: PSK/setup failed", "err", err)

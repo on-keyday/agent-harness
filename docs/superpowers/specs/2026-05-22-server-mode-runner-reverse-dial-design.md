@@ -78,6 +78,7 @@ ACL 環境で実用化。
 | harness-cli | 新サブコマンド `harness-cli server dial-runner <runner-cid>` (既存 `--server-cid` と同じ CID 書式、uniqueid は `-*` でランダム指定可) |
 | PSK 方向 | 不変 — runner が PSK 送出、server が validate。Reverse-dial で listener 側になっても runner 自身が `SendAndWaitPSK` を駆動する |
 | Hello 方向 | 不変 — runner→Hello→server、server→HelloResponse→runner |
+| DialGreeting | **Phase B 用の前置**: server は `DoECDHHandshake` 完了直後に `DialGreeting{version=1}` を 1 message 送る。Runner 側 accept handler が server-dial vs agent-dial を first inbound kind で deterministic に判別するための marker。Phase A 単独動作には不要だが、Phase B が wire kind に依存するため Phase A 改修として一緒に入れる |
 
 ### Wire schema 追加 (`runner/protocol/message.bgn`)
 
@@ -100,6 +101,12 @@ enum DialRunnerStatus:
 
 format DialRunnerResponse:
     status :DialRunnerStatus
+
+# Phase B 用の前置メッセージ。server が DoECDHHandshake 完了直後に 1 message 送る。
+# Runner accept handler が「server-dialed conn か agent-dialed conn か」を first
+# inbound kind だけで判別できるようにする marker。version は forward-compat 用。
+format DialGreeting:
+    version :u8
 ```
 
 `DialRunnerRequest` / `DialRunnerResponse` は既存 `ClientRequest` enum の一エントリ
