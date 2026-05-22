@@ -31,6 +31,8 @@ const (
 	pickerAskPushSrc
 	pickerAskPullDst
 	pickerConfirmDelete
+	pickerConfirmPullOverwrite
+	pickerConfirmPushOverwrite
 )
 
 // FilePickerModel is the file-picker popup state. The picker takes
@@ -56,6 +58,21 @@ type FilePickerModel struct {
 	deleteForce      bool
 	deleteIsLocal    bool            // true when the pending confirm is for a local fs delete
 	deleteReturnMode pickerInputMode // inputMode to restore after confirm (so local-delete from inside push/pull subpopup returns to that subpopup)
+
+	// Pending pull args queued behind a pickerConfirmPullOverwrite
+	// prompt. Populated by commitInputPath when the local destination
+	// already exists; consumed by the confirm handler on y.
+	pendingPullSrc       string
+	pendingPullDst       string
+	pendingPullRecursive bool
+
+	// Pending push args queued behind a pickerConfirmPushOverwrite
+	// prompt. Populated when the first send with force=false comes
+	// back as AlreadyExists from the runner; consumed by the confirm
+	// handler on y for the force=true retry.
+	pendingPushLocal     string
+	pendingPushRemote    string
+	pendingPushRecursive bool
 
 	// Local file browser state, active when inputMode is
 	// pickerAskPushSrc / pickerAskPullDst AND localBrowseActive is on.
@@ -127,6 +144,12 @@ func (m *FilePickerModel) Close() {
 	m.deleteForce = false
 	m.deleteIsLocal = false
 	m.deleteReturnMode = pickerNone
+	m.pendingPullSrc = ""
+	m.pendingPullDst = ""
+	m.pendingPullRecursive = false
+	m.pendingPushLocal = ""
+	m.pendingPushRemote = ""
+	m.pendingPushRecursive = false
 	m.localBrowseActive = false
 	m.localCurDir = ""
 	m.localEntries = nil
@@ -176,9 +199,25 @@ func (m FilePickerModel) Update(msg tea.Msg) (FilePickerModel, tea.Cmd) {
 		// open for one task at a time; messages for other taskIDs
 		// won't be generated while the picker is up.
 		if x.Err != nil {
+			// AlreadyExists on push (force=false first try) means we
+			// should ask the user before retrying with force=true.
+			// Recognise it here and switch into the confirm mode
+			// instead of just rendering the raw error string.
+			if x.Op == "push" && cli.IsAlreadyExists(x.Err) && m.pendingPushLocal != "" {
+				m.inputMode = pickerConfirmPushOverwrite
+				m.msg = "push destination exists; overwrite?"
+				return m, nil
+			}
 			m.msg = fmt.Sprintf("%s error: %s", x.Op, x.Err.Error())
 		} else {
 			m.msg = fmt.Sprintf("%s ok: %s", x.Op, x.Detail)
+			// Successful push: clear pending args so a stale retry
+			// can't fire from a later, unrelated FileResultMsg.
+			if x.Op == "push" {
+				m.pendingPushLocal = ""
+				m.pendingPushRemote = ""
+				m.pendingPushRecursive = false
+			}
 		}
 		if m.client != nil && m.taskID != "" {
 			return m, DoListFilesFor(m.client, m.taskID, m.curDir)
@@ -196,6 +235,10 @@ func (m FilePickerModel) handleKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
 		return m.handleInputKey(k)
 	case pickerConfirmDelete:
 		return m.handleConfirmKey(k)
+	case pickerConfirmPullOverwrite:
+		return m.handlePullOverwriteKey(k)
+	case pickerConfirmPushOverwrite:
+		return m.handlePushOverwriteKey(k)
 	default:
 		return m.handleBrowseKey(k)
 	}
@@ -216,7 +259,7 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 			m.cursor++
 		}
 		return m, nil
-	case "enter", "right", "l":
+	case "enter":
 		if m.cursor < 0 || m.cursor >= len(m.entries) {
 			return m, nil
 		}
@@ -230,7 +273,7 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 		m.cursor = 0
 		m.msg = "loading..."
 		return m, DoListFilesFor(m.client, m.taskID, newDir)
-	case "backspace", "left", "h":
+	case "backspace":
 		if m.curDir == "" {
 			return m, nil
 		}
@@ -372,7 +415,15 @@ func (m FilePickerModel) commitInputPath(path string) (FilePickerModel, tea.Cmd)
 		m.inputMode = pickerNone
 		m.localBrowseActive = false
 		m.input.Blur()
-		return m, DoFilePush(m.client, m.taskID, path, dest, recursive, true)
+		// Save pending args so the picker can retry with force=true
+		// behind a confirm prompt if the runner refuses with
+		// AlreadyExists. First send uses force=false; the runner-side
+		// O_EXCL guarantees we never silently overwrite without the
+		// user's explicit yes.
+		m.pendingPushLocal = path
+		m.pendingPushRemote = dest
+		m.pendingPushRecursive = recursive
+		return m, DoFilePush(m.client, m.taskID, path, dest, recursive, false)
 	case pickerAskPullDst:
 		if m.cursor < 0 || m.cursor >= len(m.entries) {
 			m.inputMode = pickerNone
@@ -383,9 +434,21 @@ func (m FilePickerModel) commitInputPath(path string) (FilePickerModel, tea.Cmd)
 		e := m.entries[m.cursor]
 		src := joinRel(m.curDir, e.Name)
 		recursive := e.IsDir
+		m.input.Blur()
+		// If the local destination already exists, queue the pull
+		// behind an overwrite-confirm prompt instead of clobbering
+		// silently. The picker passes force=true on the wire (so the
+		// runner side overwrites) — that's only safe AFTER the user
+		// has explicitly said yes.
+		if _, statErr := os.Lstat(path); statErr == nil {
+			m.pendingPullSrc = src
+			m.pendingPullDst = path
+			m.pendingPullRecursive = recursive
+			m.inputMode = pickerConfirmPullOverwrite
+			return m, nil
+		}
 		m.inputMode = pickerNone
 		m.localBrowseActive = false
-		m.input.Blur()
 		return m, DoFilePull(m.client, m.taskID, src, path, recursive, true)
 	}
 	return m, nil
@@ -412,7 +475,7 @@ func (m FilePickerModel) handleLocalBrowseKey(k tea.KeyMsg) (FilePickerModel, te
 			m.localCursor++
 		}
 		return m, nil
-	case "enter", "right", "l":
+	case "enter":
 		if m.localCursor < 0 || m.localCursor >= len(m.localEntries) {
 			return m, nil
 		}
@@ -435,7 +498,7 @@ func (m FilePickerModel) handleLocalBrowseKey(k tea.KeyMsg) (FilePickerModel, te
 		// Enter on a file commits the action using that file's full
 		// path as the local side.
 		return m.commitInputPath(full)
-	case "backspace", "left", "h":
+	case "backspace":
 		parent := localParent(m.localCurDir)
 		if parent == m.localCurDir {
 			return m, nil
@@ -560,6 +623,61 @@ func (m FilePickerModel) handleConfirmKey(k tea.KeyMsg) (FilePickerModel, tea.Cm
 	return m, nil
 }
 
+// handlePushOverwriteKey handles the y/n prompt for "the remote push
+// destination already exists — overwrite?". Triggered when the first
+// push send (with force=false) comes back as AlreadyExists from the
+// runner. On y, the pending push args are retried with force=true;
+// on n they are cleared and the picker returns to browse mode.
+func (m FilePickerModel) handlePushOverwriteKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
+	switch k.String() {
+	case "y", "Y":
+		local := m.pendingPushLocal
+		remote := m.pendingPushRemote
+		rec := m.pendingPushRecursive
+		m.pendingPushLocal = ""
+		m.pendingPushRemote = ""
+		m.pendingPushRecursive = false
+		m.inputMode = pickerNone
+		return m, DoFilePush(m.client, m.taskID, local, remote, rec, true)
+	case "n", "N", "esc":
+		m.pendingPushLocal = ""
+		m.pendingPushRemote = ""
+		m.pendingPushRecursive = false
+		m.inputMode = pickerNone
+		m.msg = "push cancelled"
+		return m, nil
+	}
+	return m, nil
+}
+
+// handlePullOverwriteKey handles the y/n prompt for "the local pull
+// destination already exists — overwrite?". On y the pending pull is
+// dispatched with force=true; on n the pending fields are cleared and
+// the user lands back in browse mode without any wire activity.
+func (m FilePickerModel) handlePullOverwriteKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
+	switch k.String() {
+	case "y", "Y":
+		src := m.pendingPullSrc
+		dst := m.pendingPullDst
+		rec := m.pendingPullRecursive
+		m.pendingPullSrc = ""
+		m.pendingPullDst = ""
+		m.pendingPullRecursive = false
+		m.inputMode = pickerNone
+		m.localBrowseActive = false
+		return m, DoFilePull(m.client, m.taskID, src, dst, rec, true)
+	case "n", "N", "esc":
+		m.pendingPullSrc = ""
+		m.pendingPullDst = ""
+		m.pendingPullRecursive = false
+		m.inputMode = pickerNone
+		m.localBrowseActive = false
+		m.msg = "pull cancelled"
+		return m, nil
+	}
+	return m, nil
+}
+
 // View renders the picker box. Caller composes it into the screen via
 // lipgloss.Place (matching the existing PopupModel pattern).
 //
@@ -588,9 +706,9 @@ func (m FilePickerModel) View() string {
 	var header strings.Builder
 	fmt.Fprintf(&header, "File picker · task %s · /%s\n", m.taskShort, m.curDir)
 	if !m.localBrowseActive {
-		header.WriteString("↑↓ nav · → enter · ← back · u push · g pull · d delete · D rm -rf · r reload · Esc close\n")
+		header.WriteString("↑↓ nav · Enter enter dir · Backspace back · u push · g pull · d delete · D rm -rf · r reload · Esc close\n")
 	} else {
-		header.WriteString("Tab → typing · ↑↓ nav · → enter · ← back · Enter file = use · . use this dir · d/D delete · r reload · Esc cancel\n")
+		header.WriteString("Tab → typing · ↑↓ nav · Enter enter dir / file=use · Backspace back · . use this dir · d/D delete · r reload · Esc cancel\n")
 	}
 	if m.msg != "" {
 		header.WriteString(m.msg + "\n")
@@ -626,6 +744,10 @@ func (m FilePickerModel) View() string {
 			scope = "local"
 		}
 		fmt.Fprintf(&footer, "\n%s (%s) %s  ? (y/n)\n", mode, scope, m.deleteTarget)
+	case pickerConfirmPullOverwrite:
+		fmt.Fprintf(&footer, "\nlocal file %s already exists. overwrite? (y/n)\n", m.pendingPullDst)
+	case pickerConfirmPushOverwrite:
+		fmt.Fprintf(&footer, "\nremote destination %s already exists. overwrite? (y/n)\n", m.pendingPushRemote)
 	}
 	footerLines := lineCount(footer.String())
 
