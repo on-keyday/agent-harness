@@ -62,6 +62,7 @@ func main() {
 		"fileDelete":           js.FuncOf(harnessFileDelete),
 		"filePushBytes":        js.FuncOf(harnessFilePushBytes),
 		"filePullBytes":        js.FuncOf(harnessFilePullBytes),
+		"serverDialRunner":     js.FuncOf(harnessServerDialRunner),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -386,6 +387,44 @@ func harnessCancel(this js.Value, args []js.Value) any {
 				return
 			}
 			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessServerDialRunner asks the connected server to reverse-dial a
+// Listen-mode runner (Phase A). Used in ACL environments where the runner
+// cannot dial the server directly.
+//
+//	harness.serverDialRunner(runnerCID) -> Promise<string>  // status as text
+func harnessServerDialRunner(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if _, err := currentClient(); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("serverDialRunner: missing runnerCID arg"))
+				return
+			}
+			runnerCIDStr := args[0].String()
+			targetCID, err := objproto.ParseConnectionID(runnerCIDStr,
+				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("serverDialRunner: parse runner CID: %w", err))
+				return
+			}
+			resp, err := cli.ServerDialRunner(rootCtx, peerCID, targetCID)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("serverDialRunner: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(resp.Status.String()))
 		}()
 		return nil
 	})

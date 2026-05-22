@@ -328,6 +328,34 @@ func TestParseFileDeleteSingle(t *testing.T) {
 	}
 }
 
+func TestParseServerDialRunner(t *testing.T) {
+	got, err := ParseCommand(`server dial-runner ws:192.168.3.10:8540-*`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := got.(ServerDialRunnerAction)
+	if !ok {
+		t.Fatalf("expected ServerDialRunnerAction, got %T", got)
+	}
+	if a.RunnerCID != "ws:192.168.3.10:8540-*" {
+		t.Errorf("RunnerCID: got %q", a.RunnerCID)
+	}
+}
+
+func TestParseServerUsageErrors(t *testing.T) {
+	cases := []string{
+		`server`,                            // missing sub-verb
+		`server unknown`,                    // unknown sub-verb
+		`server dial-runner`,                // missing CID
+		`server dial-runner one two-extra`,  // too many positionals
+	}
+	for _, in := range cases {
+		if _, err := ParseCommand(in, "/cwd"); err == nil {
+			t.Errorf("input %q: expected error", in)
+		}
+	}
+}
+
 func TestParseFileUsageErrors(t *testing.T) {
 	cases := []string{
 		`file`,                             // no sub-verb
