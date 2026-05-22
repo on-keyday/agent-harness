@@ -121,22 +121,30 @@ type InteractiveAction struct {
 	ResumeTaskID string
 }
 
-func (SubmitAction) isAction()        {}
-func (CancelAction) isAction()        {}
-func (PruneAction) isAction()         {}
-func (ClearAction) isAction()         {}
-func (QuitAction) isAction()          {}
-func (HelpAction) isAction()          {}
-func (RepoAction) isAction()          {}
-func (InteractiveAction) isAction()   {}
-func (SessionNewAction) isAction()    {}
-func (SessionAttachAction) isAction() {}
-func (SessionLsAction) isAction()     {}
-func (SessionKillAction) isAction()   {}
-func (FileLsAction) isAction()        {}
-func (FilePushAction) isAction()      {}
-func (FilePullAction) isAction()      {}
-func (FileDeleteAction) isAction()    {}
+// ServerDialRunnerAction asks the server to dial out to a Listen-mode
+// runner (Phase A reverse-dial). Used in ACL environments where the
+// runner cannot dial the server directly.
+type ServerDialRunnerAction struct {
+	RunnerCID string // e.g. "ws:192.168.3.10:8540-*"
+}
+
+func (SubmitAction) isAction()           {}
+func (CancelAction) isAction()           {}
+func (PruneAction) isAction()            {}
+func (ClearAction) isAction()            {}
+func (QuitAction) isAction()             {}
+func (HelpAction) isAction()             {}
+func (RepoAction) isAction()             {}
+func (InteractiveAction) isAction()      {}
+func (SessionNewAction) isAction()       {}
+func (SessionAttachAction) isAction()    {}
+func (SessionLsAction) isAction()        {}
+func (SessionKillAction) isAction()      {}
+func (FileLsAction) isAction()           {}
+func (FilePushAction) isAction()         {}
+func (FilePullAction) isAction()         {}
+func (FileDeleteAction) isAction()       {}
+func (ServerDialRunnerAction) isAction() {}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -170,8 +178,27 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseSession(tokens[1:], defaultRepo)
 	case "file":
 		return parseFile(tokens[1:])
+	case "server":
+		return parseServer(tokens[1:])
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
+	}
+}
+
+// parseServer handles the `server <sub>` family. Currently only
+// `server dial-runner <runner-cid>` is supported.
+func parseServer(args []string) (Action, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("server: usage: server dial-runner <runner-cid>")
+	}
+	switch args[0] {
+	case "dial-runner":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("server dial-runner: usage: server dial-runner <runner-cid>")
+		}
+		return ServerDialRunnerAction{RunnerCID: args[1]}, nil
+	default:
+		return nil, fmt.Errorf("server: unknown subcommand %q (try: dial-runner)", args[0])
 	}
 }
 

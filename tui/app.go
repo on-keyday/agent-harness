@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -70,7 +71,7 @@ type Config struct {
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / interactive / session / cancel / prune / repo / clear / help / quit"
+	cmd.Placeholder = "submit / interactive / session / file / server / cancel / prune / repo / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -281,6 +282,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("file %s %s ok ", msg.Op, short)) + msg.Detail)
 		return a, pcmd
+
+	case ServerDialResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err)))
+			return a, nil
+		}
+		if msg.Status == protocol.DialRunnerStatus_Ok {
+			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("server dial-runner %s: ok", msg.RunnerCID)))
+		} else {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %s", msg.RunnerCID, msg.Status.String())))
+		}
+		return a, RefreshSnapshot(a.client)
 
 	case FilePickerListingMsg:
 		var pcmd tea.Cmd
@@ -736,6 +749,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file push [-r] [-f] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite)")
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
+		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
 		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. u push / g pull / d delete / D rm -rf. Esc closes.")
 		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.")
 		a.cmdresult.Append("  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.")
@@ -827,6 +841,13 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
+	case ServerDialRunnerAction:
+		serverCID, err := cliopts.ResolveServerCID(a.server)
+		if err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner: parse --server-cid: %v", err)))
+			return a, nil
+		}
+		return a, DoServerDialRunner(serverCID, v.RunnerCID)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil

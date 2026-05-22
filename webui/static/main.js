@@ -436,6 +436,17 @@ const POLL_INTERVAL_MS = 5000;
           out = await runFileCmd(tokens.slice(1));
           break;
         }
+        case "server": {
+          // Currently only `server dial-runner <cid>` is supported.
+          if (tokens[1] !== "dial-runner") {
+            throw new Error(`server: unknown subcommand ${tokens[1] || "(empty)"} (try: dial-runner)`);
+          }
+          if (!tokens[2]) throw new Error("server dial-runner: missing runner CID");
+          if (tokens.length > 3) throw new Error("server dial-runner: too many arguments");
+          const status = await window.harness.serverDialRunner(tokens[2]);
+          out = `server dial-runner ${tokens[2]}: ${status}`;
+          break;
+        }
         case "help":
           out = [
             "commands:",
@@ -448,6 +459,7 @@ const POLL_INTERVAL_MS = 5000;
             "                            remove a file (no -r) or directory (-r [-f])",
             "  file push <task> <rel>    upload a local file (file picker opens)",
             "  file pull <task> <rel>    download a remote file (browser save dialog)",
+            "  server dial-runner <cid>  ask the server to reverse-dial a Listen-mode runner",
             "  help                      this list",
           ].join("\n");
           break;
