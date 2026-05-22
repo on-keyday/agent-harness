@@ -39,8 +39,9 @@
     </section>
     <section id="cmdline">
       <h2>Command</h2>
-      <input id="cmd-input" type="text" placeholder='submit "echo hi"   |   cancel <id>   |   prune --before 168h' size="80">
+      <input id="cmd-input" type="text" placeholder='submit "task..."  ·  cancel <id>  ·  file ls <task> [sub]  ·  file push|pull <task> <rel>  ·  help' size="80">
       <button id="cmd-run">Run</button>
+      <input id="hidden-file-input" type="file" style="display:none">
       <pre id="cmd-output"></pre>
     </section>
     <section id="interactive">
