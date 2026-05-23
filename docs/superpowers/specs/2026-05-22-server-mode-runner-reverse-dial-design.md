@@ -8,12 +8,14 @@ Status: Design
 ACL によって runner → server 方向の TCP connect が遮断されるネットワーク環境で、
 harness を稼働可能にする。許容する方向は server → runner のみ。
 
-具体的に解く問題:
-1. **Runner registration leg**: 現状 runner が `peer.Dial(server)` で登録 → ACL で SYN ブロック。
-2. **Agent leg**: claude-code hook 経由で呼ばれる `harness-cli agent {send,wait,...}` は
-   毎回 `peer.Dial(server)` で新 outbound conn を張る → 同じく ACL でブロック。
-   さらに `harness-cli` のあらゆるサブコマンド (`submit`, `file *`, `logs`, ...) も
-   runner host 上で実行されれば同様にブロックされる。
+具体的に解く問題 — どちらも「runner host から server への新規 outbound 接続が
+ACL でブロック」状況:
+
+1. **Runner registration**: 現状 runner が `peer.Dial(server)` で登録 → ACL で SYN ブロック。
+2. **Runner host で実行される全 `harness-cli` 呼び出し**: claude-code hook 経由の
+   `harness-cli agent {send,wait,...}` も、claude が普通に叩く `harness-cli ls`
+   / `submit` / `file *` / `logs` 等も、全部毎回 `peer.Dial(server)` で新 outbound
+   を張るので同じく ACL でブロックされる。
 
 両方を「runner 側ホストから新規 outbound を一切張らない」状態で動かす。
 
@@ -49,7 +51,8 @@ client ──dial──> server ──dial──> runner (listening)
 - 一度 conn が確立すれば peer.Conn は両方向データを流せるので、PSK・Hello・タスク制御
   などのアプリ層方向は **すべて現状維持** (runner→server に Hello、server→runner に
   task assignment、など)。
-- Agent leg は objproto の既存 (未使用) proxy API で、runner を透過 packet relay
+- Runner host 上の全 `harness-cli` の outbound を、objproto の既存 (未使用)
+  proxy API で runner を透過 packet relay する形に統一
   として使う。Agent ↔ server で end-to-end ECDH + PSK + AuthTicket。Runner は復号せず。
 
 ## Phase 分割
@@ -58,7 +61,8 @@ Spec は 1 本にまとめるが (schema 一括決定 / no-split-schemas memory)
 独立に 2 本に分ける:
 
 - **Phase A**: Runner registration leg だけ reverse-dial 化。動作確認は ACL 不要環境でも可。
-- **Phase B**: Agent leg を runner-proxy 化。Phase A の上に乗る。
+- **Phase B**: Runner host 上の全 `harness-cli` (admin tools / agent helpers
+  すべて) を runner-proxy 経由に統一。Phase A の上に乗る。
 
 Phase A 単体でも動くが、ACL 環境では agent コマンドが死ぬ。Phase B まで揃って初めて
 ACL 環境で実用化。
@@ -181,7 +185,7 @@ harness-cli server dial-runner <runner-cid> [--server-cid <server-cid>]
 
 ---
 
-## Phase B: Agent leg = objproto negotiated proxy
+## Phase B: Runner host 上の `harness-cli` outbound = objproto negotiated proxy
 
 ### 原理
 

@@ -4,9 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
@@ -34,16 +37,15 @@ type Client struct {
 // which server peer to ECDH with (e.g. parsed from --server-cid). Pubsub-
 // kind responses are handled by peer.Conn directly (it routes them to its
 // pubsub.Client); TaskControl-kind responses land in c.dispatchControl below.
+//
+// When HARNESS_PROXY_VIA_RUNNER is set in the env, Dial routes through the
+// Phase B objproto negotiated-proxy path (DialViaProxy) instead of dialing
+// the server directly. HARNESS_TASK_ID is read for the proxy ceremony's
+// task-binding check; if proxy_via is set but task_id is missing/invalid,
+// Dial returns an error (no silent fall-back). Admin invocations from a
+// laptop without HARNESS_PROXY_VIA_RUNNER keep dialing directly.
 func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
-	ep, err := BuildClientEndpoint(peerCID)
-	if err != nil {
-		return nil, err
-	}
-	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-
-	pc, err := peer.Dial(ctx, ep, peerCID, peer.DialConfig{
-		Logger: slog.Default(),
-	})
+	pc, err := DialPeerConn(ctx, peerCID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,4 +165,45 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 // same *Client for the lifetime of the program.
 func (c *Client) Close() {
 	c.conn.Close()
+}
+
+// DialPeerConn establishes a peer.Conn to the server, transparently routing
+// through a runner proxy when HARNESS_PROXY_VIA_RUNNER is set in the env.
+//
+// All harness-cli subcommands — admin tools (ls, submit, cancel, ...) AND
+// agent-side helpers (agent send, file push from inside claude, ...) — go
+// through here. Detection is purely env-based:
+//
+//   - HARNESS_PROXY_VIA_RUNNER unset/empty → direct dial peer.Dial(peerCID)
+//   - HARNESS_PROXY_VIA_RUNNER set         → DialViaProxy(parsed, taskID)
+//
+// On the proxy path HARNESS_TASK_ID is required (Phase B ceremony binds the
+// proxy_request to a task running on the proxy_runner). The env always sets
+// it inside runner-spawned processes; missing it surfaces as a loud error
+// rather than a silent direct-dial fall-back.
+func DialPeerConn(ctx context.Context, peerCID objproto.ConnectionID) (*peer.Conn, error) {
+	proxyVia := strings.TrimSpace(os.Getenv("HARNESS_PROXY_VIA_RUNNER"))
+	if proxyVia == "" {
+		ep, err := BuildClientEndpoint(peerCID)
+		if err != nil {
+			return nil, err
+		}
+		go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+		return peer.Dial(ctx, ep, peerCID, peer.DialConfig{
+			Logger: slog.Default(),
+		})
+	}
+
+	proxyCID, err := cliopts.ResolveServerCID(proxyVia)
+	if err != nil {
+		return nil, fmt.Errorf("HARNESS_PROXY_VIA_RUNNER parse: %w", err)
+	}
+	taskID, err := cliopts.ResolveTaskID("")
+	if err != nil {
+		return nil, fmt.Errorf("HARNESS_PROXY_VIA_RUNNER set but HARNESS_TASK_ID missing: %w", err)
+	}
+	slog.Info("cli: dialing server via runner proxy (Phase B)",
+		"proxy_cid", proxyCID.String(),
+		"server_cid", peerCID.String())
+	return DialViaProxy(ctx, proxyCID, taskID)
 }

@@ -2,38 +2,19 @@ package agent
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"log/slog"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
-	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
-
-// shouldUseProxy reports whether the agent should dial the harness server
-// indirectly through a runner-mediated objproto proxy (Phase B) instead of
-// directly. Decision is purely env-based:
-//
-//	HARNESS_PROXY_VIA_RUNNER=<cid-string> → proxy mode, addr = env value
-//	unset / empty / whitespace-only       → direct mode
-//
-// The returned addr is the runner's listen-side ConnectionID string (e.g.
-// "ws:127.0.0.1:8540-*"); cli.DialViaProxy parses it via ResolveServerCID.
-func shouldUseProxy() (bool, string) {
-	v := strings.TrimSpace(os.Getenv("HARNESS_PROXY_VIA_RUNNER"))
-	return v != "", v
-}
 
 // trsfStreamID converts a uint64 wire id to trsf.StreamID.
 func trsfStreamID(id uint64) trsf.StreamID { return trsf.StreamID(id) }
@@ -184,37 +165,15 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		cli.WebSocketPath = wsPath
 	}
 
-	var pc *peer.Conn
-	if useProxy, proxyAddr := shouldUseProxy(); useProxy {
-		proxyCID, perr := cliopts.ResolveServerCID(proxyAddr)
-		if perr != nil {
-			return nil, fmt.Errorf("HARNESS_PROXY_VIA_RUNNER: %w", perr)
-		}
-		slog.Info("agent: dialing server via runner proxy (Phase B)",
-			"proxy_cid", proxyCID.String(),
-			"server_cid", cid.String(),
-			"task_id", hex.EncodeToString(tid.Id[:]))
-		pc, err = cli.DialViaProxy(ctx, proxyCID, tid)
-		if err != nil {
-			return nil, fmt.Errorf("DialViaProxy: %w", err)
-		}
-	} else {
-		slog.Debug("agent: dialing server directly (no proxy)",
-			"server_cid", cid.String(),
-			"task_id", hex.EncodeToString(tid.Id[:]))
-		ep, eperr := cli.BuildClientEndpoint(cid)
-		if eperr != nil {
-			return nil, fmt.Errorf("client endpoint: %w", eperr)
-		}
-		go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
-
-		pc, err = peer.Dial(ctx, ep, cid, peer.DialConfig{
-			Logger:       slog.Default(),
-			PingInterval: 30 * time.Second,
-		})
-		if err != nil {
-			return nil, err
-		}
+	// Proxy detection lives in cli.DialPeerConn — env-based, shared by every
+	// harness-cli subcommand. The agent path historically had its own copy
+	// of the env check; that was a design miss (admin tools and agent tools
+	// are the same binary and should share the dial strategy). tid resolved
+	// above is still used for the AgentBridgeHello below; DialPeerConn reads
+	// HARNESS_TASK_ID itself for the proxy ceremony.
+	pc, err := cli.DialPeerConn(ctx, cid)
+	if err != nil {
+		return nil, fmt.Errorf("agent dial: %w", err)
 	}
 
 	psk := cli.GetPSK()

@@ -79,8 +79,9 @@ target_runner との end-to-end peer.Conn (proxy_runner は中身復号せず)
 
 ### Auth: 「proxy_runner = 既に registered」を信頼の根拠にする
 
-Phase B (agent leg) では agent↔runner 間に PSK 無く、localhost 信頼に依存していた。
-本 spec の relay-runner では、proxy_runner は **server に既に PSK 検証通過した
+Phase B (agent process が runner-proxy 経由で server に到達する経路) では
+agent↔runner 間に PSK 無く、localhost 信頼に依存していた。本 spec の
+relay-runner では、proxy_runner は **server に既に PSK 検証通過した
 peer.Conn** を持っているので、追加の認証無しでその conn 経由で relay 設定要求を
 受け取って良い。新 wire-level PSK / token は不要。
 
