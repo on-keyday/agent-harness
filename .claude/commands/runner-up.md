@@ -25,7 +25,7 @@ Arguments: $ARGUMENTS
    | tag          | default flags                                                                                                              | target |
    |--------------|----------------------------------------------------------------------------------------------------------------------------|--------|
    | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace`                                                                  | Linux / macOS (existing sandbox slot) |
-   | `cmd`        | `--no-worktree --claude-bin C:/Windows/System32/cmd.exe --roots C:/workspace`                                              | Windows command prompt |
+   | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
 
    **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
