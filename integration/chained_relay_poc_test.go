@@ -354,10 +354,67 @@ func TestChainedRelayPOC_4hop(t *testing.T) {
 // pc.Connection().ConnectionID() values, with no synthetic shortcuts.
 
 // hopInfo captures the post-registration state of one hop in the chain.
+//
+// Knowledge-domain note:
+//
+//   - `serverCID` is the hop's OWN view of its upstream peer (= what its
+//     `runner.Session.serverCID` would be in production). Only the hop
+//     itself reads this directly. Server-side orchestrator code MUST NOT
+//     access this field — it has no production way to know the value.
+//
+//   - `dialedAddr` is what server passed when registering this hop (= the
+//     CLI argument to `dial-runner`, = the LISTEN_ADDR the upstream proxy
+//     dialed). Server stores this in `RunnerEntry.DialedAddr` per the spec.
+//     Server-side orchestrator code CAN read this — it's server's own state.
+//
+// To enforce the boundary in code, we wrap each role's logic in dedicated
+// helpers (`hopComputeSetProxy` for hop-side, the test bodies for server-side
+// orchestration). The hopInfo struct itself is shared, but cross-role
+// access is restricted by which helper reads which field.
 type hopInfo struct {
 	endpoint   chainEndpoint
-	serverCID  objproto.ConnectionID // the hop's Session.serverCID equivalent
-	dialedAddr netip.AddrPort        // the listen addr the upstream dialed this hop at (= DialedAddr in registry)
+	serverCID  objproto.ConnectionID // HOP-PRIVATE — only the hop itself reads
+	dialedAddr netip.AddrPort        // SERVER-VISIBLE — DialedAddr in RunnerEntry
+}
+
+// hopComputeSetProxy is the hop-side role: simulates what
+// `handleEstablishRelay` does on a runner when it receives an
+// EstablishRelay (or chained-relay) request from server. The hop reads its
+// OWN serverCID, combines with the slot + target.DialedAddr received over
+// the wire (= passed as targetDialedAddr here), and calls SetProxy on its
+// own endpoint.
+//
+// Inputs that match the production `handleEstablishRelay` signature:
+//   - self: the hop running the handler (reads self.serverCID, self.endpoint.ep)
+//   - slot: from the request wire
+//   - targetDialedAddr: from the request wire (= server-passed target.DialedAddr)
+//
+// Server-side code passes targetDialedAddr but does NOT touch self.serverCID.
+func hopComputeSetProxy(t *testing.T, self *hopInfo, slot uint16, targetDialedAddr netip.AddrPort) {
+	t.Helper()
+	// self.serverCID.Addr is hop's OWN view of upstream — known to hop only.
+	owned := objproto.NewConnectionID("ws", self.serverCID.Addr, slot)
+	allocate := objproto.NewConnectionID("ws", targetDialedAddr, slot)
+	if err := self.endpoint.ep.SetProxy(owned, allocate); err != nil {
+		t.Fatalf("hopComputeSetProxy on %s: %v", self.endpoint.name, err)
+	}
+	t.Logf("hop %s computed SetProxy: slot=%d owned=%v allocate=%v",
+		self.endpoint.name, slot, owned, allocate)
+}
+
+// leafComputeAgentProxySetProxy is the leaf-side role: what
+// `runAgentProxyCeremony` does after an agent's initial ECDH lands and the
+// ProxyRequest is received. Leaf reads its OWN serverCID + the live incoming
+// activeConn's CID, then SetProxy. Matches Phase B's pattern.
+func leafComputeAgentProxySetProxy(t *testing.T, leaf *hopInfo, agentSlot uint16, incomingConn objproto.Connection) {
+	t.Helper()
+	owned := incomingConn.ConnectionID()                                           // leaf knows from the accepted conn
+	allocate := objproto.NewConnectionID("ws", leaf.serverCID.Addr, agentSlot)     // leaf knows own serverCID
+	if err := leaf.endpoint.ep.SetProxy(owned, allocate); err != nil {
+		t.Fatalf("leafComputeAgentProxySetProxy on %s: %v", leaf.endpoint.name, err)
+	}
+	t.Logf("leaf %s agent-proxy SetProxy: owned=%v allocate=%v",
+		leaf.endpoint.name, owned, allocate)
 }
 
 // chainRegister walks an existing chain (server → intermediates... → target)
@@ -382,36 +439,49 @@ type hopInfo struct {
 //     pubkey, activeConn appears on newActiveSess.
 //   - Read pc.Connection().ConnectionID() from target's side; that's the
 //     real serverCID the runner would record in production.
+// chainRegister drives a runner registration through (possibly empty) chain.
+// Role separation:
+//   - SERVER role: orchestrate per-hop EstablishRelay (each intermediate is
+//     told the next downstream's DialedAddr), then SendHandshake to top.
+//     Server NEVER reads hop.serverCID directly.
+//   - HOP role: each intermediate's SetProxy is computed via
+//     hopComputeSetProxy(self, ...), where the hop reads its OWN serverCID.
+//   - TARGET role: receives the forwarded handshake, ECDHs with server's
+//     pubkey, captures pc.Connection().ConnectionID() as its new serverCID.
 func chainRegister(
 	t *testing.T,
 	server chainEndpoint,
-	chainAbove []hopInfo,
+	chainAbove []*hopInfo,
 	target chainEndpoint,
 	regSlot uint16,
-) hopInfo {
+) *hopInfo {
 	t.Helper()
 
+	// SERVER role: iterate the chain, for each intermediate compute downstream's
+	// DialedAddr (= server's own knowledge from CLI / RunnerEntry.DialedAddr),
+	// then ask that hop to run its handler. Server passes ONLY targetDialedAddr.
 	for i, hop := range chainAbove {
-		var downstreamAddr netip.AddrPort
+		var downstreamDialedAddr netip.AddrPort
 		if i == len(chainAbove)-1 {
-			downstreamAddr = netip.MustParseAddrPort(target.addr)
+			// Last intermediate's downstream is the target being registered now.
+			// Server knows target's listen addr from the CLI's dial-runner arg.
+			downstreamDialedAddr = netip.MustParseAddrPort(target.addr)
 		} else {
-			downstreamAddr = chainAbove[i+1].dialedAddr
+			// Server reads next hop's DialedAddr from its own RunnerEntry registry.
+			downstreamDialedAddr = chainAbove[i+1].dialedAddr
 		}
-		owned := objproto.NewConnectionID("ws", hop.serverCID.Addr, regSlot)
-		allocate := objproto.NewConnectionID("ws", downstreamAddr, regSlot)
-		if err := hop.endpoint.ep.SetProxy(owned, allocate); err != nil {
-			t.Fatalf("chainRegister: SetProxy on %s: %v", hop.endpoint.name, err)
-		}
-		t.Logf("chainRegister: %s.SetProxy regSlot=%d owned=%v allocate=%v",
-			hop.endpoint.name, regSlot, owned, allocate)
+		hopComputeSetProxy(t, hop, regSlot, downstreamDialedAddr)
 	}
 
+	// SERVER role: determine SendHandshake destination.
+	//   - With intermediates: send to the top intermediate's LISTEN_ADDR (= server's
+	//     knowledge of its first hop, the direct-registered runner's DialedAddr).
+	//   - Without intermediates: send directly to target's LISTEN_ADDR.
 	var sendAddr string
 	if len(chainAbove) == 0 {
-		sendAddr = target.addr
+		sendAddr = target.addr // = target.DialedAddr from server's perspective
 	} else {
-		sendAddr = chainAbove[0].endpoint.addr
+		sendAddr = chainAbove[0].dialedAddr.String() // = top-hop.DialedAddr
 	}
 	destCID := objproto.NewConnectionID("ws", netip.MustParseAddrPort(sendAddr), regSlot)
 	priv, hs, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
@@ -428,20 +498,22 @@ func chainRegister(
 		t.Fatalf("chainRegister: server-side completion timeout for %s", target.name)
 	}
 
+	// TARGET role: the new runner accepts the forwarded handshake and reads its
+	// own activeConn's CID as its serverCID. This is exactly what driveAfterConn
+	// does on the runner side: serverCID = pc.Connection().ConnectionID().
 	var targetConn objproto.Connection
 	select {
 	case targetConn = <-target.ep.GetNewActiveConnectionChannel():
 	case <-time.After(10 * time.Second):
 		t.Fatalf("chainRegister: target-side accept timeout for %s", target.name)
 	}
-
-	result := hopInfo{
+	result := &hopInfo{
 		endpoint:   target,
-		serverCID:  targetConn.ConnectionID(),
-		dialedAddr: netip.MustParseAddrPort(target.addr),
+		serverCID:  targetConn.ConnectionID(),                    // TARGET's own knowledge
+		dialedAddr: netip.MustParseAddrPort(target.addr),          // SERVER stores this (= what server dialed)
 	}
-	t.Logf("chainRegister: %s registered, serverCID=%v dialedAddr=%v",
-		target.name, result.serverCID, result.dialedAddr)
+	t.Logf("chainRegister: %s registered, serverCID=%v (private to %s) dialedAddr=%v (server-visible)",
+		target.name, result.serverCID, target.name, result.dialedAddr)
 	return result
 }
 
@@ -462,16 +534,24 @@ func chainRegister(
 //
 // Pre-condition: chained relay setup has already been applied at every
 // intermediate hop for agentSlot.
+// chainedRelayPhaseB drives Phase B from the agent's perspective with full role
+// separation:
+//   - AGENT role: knows only leaf's LISTEN_ADDR (= HARNESS_PROXY_VIA_RUNNER env)
+//     + its own crypto material. Does NOT read leaf.serverCID. Calls SendHandshake
+//     then RehandshakeForProxy on its own endpoint.
+//   - LEAF role: accepts the incoming conn, computes SetProxy using its own
+//     serverCID (via leafComputeAgentProxySetProxy).
 func chainedRelayPhaseB(
 	t *testing.T,
 	initiator chainEndpoint,
-	leaf hopInfo,
+	leaf *hopInfo,
 	agentSlot uint16,
 ) objproto.Connection {
 	t.Helper()
 
-	leafDestCID := objproto.NewConnectionID("ws",
-		netip.MustParseAddrPort(leaf.endpoint.addr), agentSlot)
+	// AGENT role: initial ECDH to leaf's LISTEN_ADDR (= env value).
+	leafListenAddr := leaf.dialedAddr // = LISTEN_ADDR (server-visible field; agent knows from env injection)
+	leafDestCID := objproto.NewConnectionID("ws", leafListenAddr, agentSlot)
 	priv1, hs1, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
 		t.Fatalf("phaseB: NewECDHHandshake initial: %v", err)
@@ -486,22 +566,20 @@ func chainedRelayPhaseB(
 	case <-time.After(5 * time.Second):
 		t.Fatal("phaseB: initiator-side initial ECDH timeout")
 	}
+
+	// LEAF role: accept the incoming conn, compute SetProxy. Reads its OWN
+	// serverCID via leafComputeAgentProxySetProxy (which lives in the
+	// hop-side knowledge domain).
 	var leafIncomingConn objproto.Connection
 	select {
 	case leafIncomingConn = <-leaf.endpoint.ep.GetNewActiveConnectionChannel():
 	case <-time.After(5 * time.Second):
 		t.Fatal("phaseB: leaf-side initial ECDH accept timeout")
 	}
+	leafComputeAgentProxySetProxy(t, leaf, agentSlot, leafIncomingConn)
+	_ = leafIncomingConn.Close() // proxySettings persists; agent rehandshake will forward
 
-	leafOwned := leafIncomingConn.ConnectionID()
-	leafAlloc := objproto.NewConnectionID("ws", leaf.serverCID.Addr, agentSlot)
-	if err := leaf.endpoint.ep.SetProxy(leafOwned, leafAlloc); err != nil {
-		t.Fatalf("phaseB: leaf SetProxy: %v", err)
-	}
-	t.Logf("phaseB: leaf %s SetProxy owned=%v allocate=%v",
-		leaf.endpoint.name, leafOwned, leafAlloc)
-	_ = leafIncomingConn.Close() // proxySettings persists, agent rehandshake will forward
-
+	// AGENT role: rehandshake with fresh key. Goes through the SetProxy chain.
 	priv2, hs2, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
 		t.Fatalf("phaseB: NewECDHHandshake rehandshake: %v", err)
@@ -549,19 +627,14 @@ func TestChainedRelayPOC_Realistic_3hop(t *testing.T) {
 	// 1. P registered direct with server (Phase A reverse-dial analog).
 	pInfo := chainRegister(t, server, nil, p, regSlotP)
 	// 2. L registered via P (Phase C).
-	lInfo := chainRegister(t, server, []hopInfo{pInfo}, l, regSlotL)
+	lInfo := chainRegister(t, server, []*hopInfo{pInfo}, l, regSlotL)
 
 	// 3. Chained-relay setup for agent slot.
-	//    Server walk: L.Via=P, P.Via=nil. Issue EstablishRelay only to P.
-	//    Per spec, target.addr = L.DialedAddr (= L's LISTEN_ADDR stored at
-	//    registration time). owned uses P's REAL serverCID.Addr (= the addr
-	//    P sees server at, captured during P's own registration).
-	pAgentOwned := objproto.NewConnectionID("ws", pInfo.serverCID.Addr, agentSlot)
-	pAgentAlloc := objproto.NewConnectionID("ws", lInfo.dialedAddr, agentSlot)
-	if err := p.ep.SetProxy(pAgentOwned, pAgentAlloc); err != nil {
-		t.Fatalf("P chained-relay SetProxy: %v", err)
-	}
-	t.Logf("P chained-relay SetProxy: owned=%v allocate=%v", pAgentOwned, pAgentAlloc)
+	//    SERVER role: walk L.Via=P, P.Via=nil. Send "EstablishRelay" to P
+	//    with target=L.DialedAddr (server's own knowledge).
+	//    HOP role: hopComputeSetProxy reads P's own serverCID internally.
+	//    Server never accesses pInfo.serverCID.
+	hopComputeSetProxy(t, pInfo, agentSlot, lInfo.dialedAddr)
 
 	// 4. Initiator runs Phase B agent ceremony at L.
 	initE2EConn := chainedRelayPhaseB(t, initiator, lInfo, agentSlot)
@@ -621,28 +694,16 @@ func TestChainedRelayPOC_Realistic_4hop(t *testing.T) {
 
 	// Topology: server → Q (direct) → P (via Q) → L (via P-via-Q).
 	qInfo := chainRegister(t, server, nil, q, regSlotQ)
-	pInfo := chainRegister(t, server, []hopInfo{qInfo}, p, regSlotP)
-	lInfo := chainRegister(t, server, []hopInfo{qInfo, pInfo}, l, regSlotL)
+	pInfo := chainRegister(t, server, []*hopInfo{qInfo}, p, regSlotP)
+	lInfo := chainRegister(t, server, []*hopInfo{qInfo, pInfo}, l, regSlotL)
 
 	// Chained-relay setup: walk L.Via=P, P.Via=Q, Q.Via=nil.
-	// Intermediates [Q, P], dispatched concurrently in production. Here
-	// sequential for test simplicity (no functional difference — both are
-	// independent SetProxy calls on different endpoints).
-	for _, setup := range []struct {
-		name           string
-		hop            hopInfo
-		downstreamAddr netip.AddrPort
-	}{
-		{"Q", qInfo, pInfo.dialedAddr},
-		{"P", pInfo, lInfo.dialedAddr},
-	} {
-		owned := objproto.NewConnectionID("ws", setup.hop.serverCID.Addr, agentSlot)
-		alloc := objproto.NewConnectionID("ws", setup.downstreamAddr, agentSlot)
-		if err := setup.hop.endpoint.ep.SetProxy(owned, alloc); err != nil {
-			t.Fatalf("%s chained-relay SetProxy: %v", setup.name, err)
-		}
-		t.Logf("%s chained-relay SetProxy: owned=%v allocate=%v", setup.name, owned, alloc)
-	}
+	// SERVER role: for each intermediate, pass downstream's DialedAddr.
+	// Server reads only its own knowledge (dialedAddr fields from registry).
+	// In production these are dispatched concurrently; the test does them
+	// sequentially for clarity — same SetProxy outcome at each hop.
+	hopComputeSetProxy(t, qInfo, agentSlot, pInfo.dialedAddr)
+	hopComputeSetProxy(t, pInfo, agentSlot, lInfo.dialedAddr)
 
 	initE2EConn := chainedRelayPhaseB(t, initiator, lInfo, agentSlot)
 
