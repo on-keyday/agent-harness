@@ -5,7 +5,6 @@ import (
 	"crypto/ecdh"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
@@ -186,11 +185,13 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaNotFound}
 	}
 
-	// Step 3: pick slot_id and request relay setup. The slot_id must not
-	// collide with the registered conn's UniqueNumber (proxy_runner enforces
-	// this and returns SlotCollision); rand on uint16 makes that exceedingly
-	// rare for individual-dogfood scale.
-	slotID := uint16(rand.Uint32()) //nolint:gosec // not crypto
+	// Step 3: use target.UniqueNumber as slot_id and request relay setup.
+	// target.UniqueNumber is generated at admin's CLI by ParseConnectionID's
+	// `*` wildcard (random uint16) — equivalent in randomness to rand.Uint32
+	// truncated. Reusing it stops orphaning the field and removes a second
+	// randomness source. The proxy still enforces "slot_id != serverCID.ID"
+	// via SlotCollision response on rare collision.
+	slotID := target.UniqueNumber
 
 	relayReq := protocol.EstablishRelayRequest{
 		Target: target,
