@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test + vet + wasm-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # cmd/harness-server embeds webui/static/main.wasm via go:embed, so the
+      # wasm must exist before `go build ./...` or the embed fails.
+      - name: webui-build
+        run: make webui-build
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./... -count=1
+
+      - name: wasm-check (cli + transport + harness-webui-wasm under GOOS=js)
+        run: make wasm-check
+
+      - name: go build ./... (compile-check everything)
+        run: go build ./...

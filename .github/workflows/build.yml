@@ -1,0 +1,99 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed for the release job to publish on tag push
+
+jobs:
+  build:
+    name: build ${{ matrix.target.os }}/${{ matrix.target.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { os: linux,   arch: amd64, archive: tar.gz }
+          - { os: linux,   arch: arm64, archive: tar.gz }
+          - { os: windows, arch: amd64, archive: zip    }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # webui-build runs once per matrix shard. Cheap (~1s) and necessary
+      # because cmd/harness-server uses //go:embed for webui/static/main.wasm.
+      - name: webui-build
+        run: make webui-build
+
+      - name: build native binaries
+        env:
+          GOOS: ${{ matrix.target.os }}
+          GOARCH: ${{ matrix.target.arch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euxo pipefail
+          mkdir -p dist/bin
+          EXE=""
+          if [ "$GOOS" = "windows" ]; then EXE=".exe"; fi
+          for cmd in agent-runner harness-cli harness-server harness-tui; do
+            go build -trimpath -ldflags="-s -w" -o "dist/bin/${cmd}${EXE}" "./cmd/${cmd}"
+          done
+          # Bundle the webui static dir alongside binaries so a downloader
+          # can host /static/ + main.wasm without rebuilding.
+          mkdir -p dist/webui/static
+          cp webui/static/main.wasm dist/webui/static/
+          cp webui/static/wasm_exec.js dist/webui/static/
+          # README pointer
+          cp README.md dist/ 2>/dev/null || true
+
+      - name: pack archive
+        env:
+          ARCHIVE: ${{ matrix.target.archive }}
+        run: |
+          set -euxo pipefail
+          NAME="agent-harness-${{ matrix.target.os }}-${{ matrix.target.arch }}"
+          cd dist
+          if [ "$ARCHIVE" = "zip" ]; then
+            zip -r "../${NAME}.zip" .
+          else
+            tar -czf "../${NAME}.tar.gz" .
+          fi
+          cd ..
+          ls -lh "${NAME}".*
+
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-harness-${{ matrix.target.os }}-${{ matrix.target.arch }}
+          path: agent-harness-${{ matrix.target.os }}-${{ matrix.target.arch }}.*
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: list artifacts
+        run: ls -lh dist/
+
+      - name: create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
