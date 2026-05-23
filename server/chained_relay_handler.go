@@ -95,6 +95,9 @@ func (h *ChainedRelayHandler) Handle(
 	for cur.Via != nil {
 		if _, dup := seen[cur.Via.ID]; dup {
 			// Loop detected.
+			h.Logger.Warn("chained-relay: loop detected in Via chain",
+				"runner", runnerID,
+				"loop_at", cur.Via.ID)
 			return protocol.ChainedRelayResponse{Status: protocol.ChainedRelayStatus_ChainUnwalkable}
 		}
 		hops = append(hops, hopSetup{
@@ -114,8 +117,10 @@ func (h *ChainedRelayHandler) Handle(
 	defer hopCancel()
 
 	type result struct {
-		ok  bool
-		err error
+		ok        bool
+		err       error
+		hopID     string
+		hopStatus protocol.EstablishRelayStatus
 	}
 	results := make(chan result, len(hops))
 	for _, hp := range hops {
@@ -127,8 +132,10 @@ func (h *ChainedRelayHandler) Handle(
 			}
 			resp, err := h.SendEstablishRelay(hopCtx, hp.hop, establishReq)
 			results <- result{
-				ok:  err == nil && resp.Status == protocol.EstablishRelayStatus_Ok,
-				err: err,
+				ok:        err == nil && resp.Status == protocol.EstablishRelayStatus_Ok,
+				err:       err,
+				hopID:     hp.hop.ID,
+				hopStatus: resp.Status,
 			}
 		}()
 	}
@@ -139,7 +146,9 @@ func (h *ChainedRelayHandler) Handle(
 		r := <-results
 		if !r.ok {
 			allOk = false
-			h.Logger.Warn("chained-relay: hop setup failed", "runner", runnerID, "slotId", req.SlotId, "err", r.err)
+			h.Logger.Warn("chained-relay: hop setup failed",
+				"runner", runnerID, "slotId", req.SlotId,
+				"hop", r.hopID, "hopStatus", r.hopStatus, "err", r.err)
 		}
 	}
 
