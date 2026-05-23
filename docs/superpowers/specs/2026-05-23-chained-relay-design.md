@@ -127,11 +127,23 @@ Conclusion: every `activeConnections[owned]` reference post-`SetProxy` is in a c
 
 Phase C's existing handler keeps working with the relaxed contract: it happens to call `SetProxy` after the server's initial ECDH has already created owned, satisfying the precondition as a special case. The relaxation makes the strict precondition optional, not required.
 
-### Prerequisite: record the via relationship in `RunnerEntry`
+### Prerequisite: record the via relationship + dialed addr in `RunnerEntry`
 
-Currently `server.RunnerEntry` does NOT track which proxy_runner (if any) a given runner was registered through. Phase C registration completes, the resulting `RunnerEntry.ID` holds a CID whose addr happens to be the proxy_runner's addr, but the relationship is not stored explicitly. Chain reconstruction by addr-matching the registry would be fragile (two unrelated runners could coincidentally share addrs in edge cases).
+Currently `server.RunnerEntry` does NOT track:
+1. Which proxy_runner (if any) a given runner was registered through.
+2. The address server originally dialed (or asked a proxy to dial) to reach this runner.
 
-Spec change: add `Via *RunnerEntry` (or `ViaID string`) to `RunnerEntry`:
+Both pieces of information are erased after registration completes. Chained relay setup requires both:
+
+**(1)** is needed to walk the chain (`L.Via.Via.Via...` to find the intermediate proxy hops).
+
+**(2)** is needed because the addr server passes as `EstablishRelay.target` to each hop must be **the addr that hop knows the downstream by** — not server's-view-ephemeral. Due to TCP's directional asymmetry, the addrs differ:
+- Server view of L: (P.ephemeral-to-server, slot) — embedded in `L.ID` as the CID from server's POV.
+- P's view of L: (L.LISTEN_ADDR, slot) — the addr P originally dialed when forwarding server's rehandshake to L during L's Phase C registration.
+
+`P` was given L's LISTEN_ADDR via the original `EstablishRelay.target` when L was registered, but server then forgot the addr after registration completed. For chained relay setup, server must replay this addr.
+
+Spec change: add two fields to `RunnerEntry`:
 
 ```go
 // server/registry.go
@@ -140,14 +152,22 @@ type RunnerEntry struct {
 
     // Via, when non-nil, is the proxy_runner that this runner was registered
     // through via Phase C (--via). nil for directly-registered runners.
-    // Walking Via.Via.Via... terminates at a directly-registered entry
-    // whose Via is nil (= that entry is reachable from the server without
-    // any proxy hop).
+    // Walking Via.Via.Via... terminates at an entry whose Via is nil (= a
+    // hop reachable from server without any proxy).
     Via *RunnerEntry
+
+    // DialedAddr is the address server originally dialed (Phase A) or
+    // passed to a proxy as EstablishRelay.target (Phase C) to reach this
+    // runner. For chained relay, this is the addr each upstream proxy uses
+    // for its SetProxy.allocate when forwarding traffic to this runner. It
+    // is NOT the server-side CID (which encodes the proxy ephemeral).
+    // Empty for dial-mode (legacy) runners that connected to server
+    // themselves; such runners cannot be chained-relay downstream.
+    DialedAddr objproto.ConnectionID
 }
 ```
 
-Populated by `server/dial_runner_handler.go`'s `HandleWithVia` at registration time: when the via path succeeds and the target runner sends its `RunnerHello`, the newly-created RunnerEntry's `Via` field is set to the resolved proxy_runner's entry.
+Populated by `server/dial_runner_handler.go`'s `Handle` (Phase A direct) and `HandleWithVia` (Phase C via). Both have the dialed target CID in hand at registration time. Set DialedAddr = the target CID server constructed from admin's CLI argument.
 
 The `Via` field also serves diagnostic / UX purposes (`harness-cli ls` can show "via X" annotation), independent of chained relay.
 
@@ -188,21 +208,24 @@ On `RunnerMessage{RequestChainedRelay{slot_id}}` from runner L:
 2. If `L.Via == nil` → L is directly registered; reply `ChainedRelayResponse{Direct}` and stop. No chain setup needed; L's local SetProxy already points at server's actual addr.
 3. Otherwise walk `L.Via.Via....` until hitting a `Via == nil` terminator. Each non-nil entry on the walk is an intermediate proxy_runner that needs an `EstablishRelay`. (Loop detection: if the walk visits the same entry twice — bug condition; abort with `ChainUnwalkable`.)
 4. For each hop `H` on the walk, compute `target := H_downstream` — the entry one step closer to L. Concretely: `L.Via`'s downstream is L itself; `L.Via.Via`'s downstream is `L.Via`; etc.
-5. Issue every hop's `EstablishRelayRequest{slot_id, target=H_downstream.ID-as-RunnerID}` to its respective H, over the server's direct registered conn to that hop, **concurrently**. Each hop's SetProxy is independent (synthetic owned + allocate, no precondition between hops), so parallel dispatch is safe and minimizes setup latency.
+5. Issue every hop's `EstablishRelayRequest{slot_id, target=H_downstream.DialedAddr-as-RunnerID}` to its respective H. **The `target` addr is the downstream's `DialedAddr`, NOT its `ID`** — because `H` knows downstream by the addr it (or its upstream) originally dialed, not by server-side CID ephemeral. Dispatch to all hops **concurrently** over server's existing registered conns; SetProxy at each hop is independent (synthetic owned + allocate, no precondition between hops), so parallel dispatch is safe and minimizes setup latency.
+
+   For the top hop (the one whose `Via == nil`, directly registered), server sends EstablishRelay over its direct conn to that hop. For deeper hops (registered via further-up proxies), server sends over the existing relayed conn (the e2e conn established during that hop's Phase C registration, forwarded by its own upstream proxy at the registration slot — opaque ciphertext through the proxy, decrypted at the destination hop).
 6. Collect all responses (per-hop 10s timeout, all in flight in parallel).
    - All Ok → reply `ChainedRelayResponse{Ok}` to L over L's e2e conn.
    - Any hop returns non-Ok or times out → reply `ChainedRelayResponse{HopSetupFailed}`. Already-Ok'd hops' SetProxy entries are NOT actively rolled back (see Decision 4).
 
 Concrete 2-hop example (chain = L → P → server):
 - Walk: L.Via = P, P.Via = nil. Chain = [P].
-- Issue: `EstablishRelay{slot, target=L}` to P. P sets up SetProxy(server.Addr↔L.Addr at slot).
+- Issue: `EstablishRelay{slot, target=L.DialedAddr}` to P (over server↔P direct conn). P sets up SetProxy(owned=(P.Session.serverCID.Addr, slot), allocate=(L.DialedAddr-as-CID, slot)).
+  - L.DialedAddr is the address server passed when registering L through P — = L's LISTEN_ADDR. P first dialed this addr to forward server's rehandshake during L's registration, so P.transport.connMap already has an outbound WS conn to L.DialedAddr (= the existing P↔L conn).
 - One hop, one EstablishRelay.
 
 Concrete 3-hop example (chain = L → P → Q → server):
 - Walk: L.Via = P, P.Via = Q, Q.Via = nil. Two intermediate hops: P and Q.
-- `EstablishRelay{slot, target=P}` to Q (dispatched in parallel with the other below). Q sets up SetProxy(owned=(server.Addr, slot), allocate=(P.Addr, slot)).
-- `EstablishRelay{slot, target=L}` to P. P sets up SetProxy(owned=(Session.serverCID.Addr, slot), allocate=(L.Addr, slot)).
-  - The owned side at P uses `P.Session.serverCID` directly — that's P's own view of its upstream, populated by `driveAfterConn` from `pc.Connection().ConnectionID()` when P was registered. After Phase C through Q, this resolves to `(Q.Addr-as-seen-from-P, slot)`. The Phase C handler `handleEstablishRelay` already computes owned this way; no chain-specific code needed in the handler.
+- `EstablishRelay{slot, target=P.DialedAddr}` to Q (over server↔Q direct conn, dispatched in parallel with the other below). Q sets up SetProxy(owned=(server.LISTEN_ADDR-from-Q, slot), allocate=(P.DialedAddr, slot)).
+- `EstablishRelay{slot, target=L.DialedAddr}` to P (over server↔P virtual conn = forwarded by Q at P's registration slot). P sets up SetProxy(owned=(P.Session.serverCID.Addr, slot), allocate=(L.DialedAddr, slot)).
+  - The owned side at P uses `P.Session.serverCID` directly — that's P's own view of its upstream, populated by `driveAfterConn` from `pc.Connection().ConnectionID()` when P was registered. After Phase C through Q, this resolves to `(Q.LISTEN_ADDR-from-P-view, slot)`. The Phase C handler `handleEstablishRelay` already computes owned this way; no chain-specific code needed in the handler.
 
 Total round-trip from L's view: one `RequestChainedRelay` → server → max(per-hop RT for parallel EstablishRelays) → response → done.
 
@@ -319,9 +342,9 @@ Loop detection: server-side. If the walk visits the same hop twice, abort with `
 |---|---|
 | `objproto/objproto.go` | Remove `owned must exist in activeConnections` precondition in `SetProxy`. |
 | `objproto/objproto_test.go` | Unit test: synthetic-owned SetProxy + receive() forwards via proxySettings without prior ECDH. |
-| `server/registry.go` | Add `Via *RunnerEntry` field. |
-| `server/registry_test.go` | Tests covering Via population + walk. |
-| `server/dial_runner_handler.go` | Set `Via = resolvedEntry` on the new RunnerEntry constructed for the registered target. Drop `RehandshakeForProxy` step (no longer needed with eager SetProxy on proxy side). |
+| `server/registry.go` | Add `Via *RunnerEntry` and `DialedAddr objproto.ConnectionID` fields. |
+| `server/registry_test.go` | Tests covering Via population + walk, DialedAddr population for Phase A and Phase C registrations. |
+| `server/dial_runner_handler.go` | Set `Via = resolvedEntry` and `DialedAddr = target CID` on the new RunnerEntry constructed for the registered target (both `Handle` for Phase A and `HandleWithVia` for Phase C). Drop `RehandshakeForProxy` step (no longer needed with eager SetProxy on proxy side). |
 | `runner/protocol/message.bgn` | Add `RequestChainedRelay` / `ChainedRelayResponse` / `ChainedRelayStatus`. Variants on `RunnerMessage` and `RunnerRequest`. |
 | `runner/protocol/message.go` | Regenerated. |
 | `runner/relay_handler.go` | Convert `handleEstablishRelay` from lazy (expectedRelays + completeRelaySetup) to eager `SetProxy` (synthetic-owned). Remove `expectedRelays`, `completeRelaySetup`, and the `Session.ExpectedRelays` field entirely — dead code in the new design. |
@@ -350,7 +373,7 @@ Loop detection: server-side. If the walk visits the same hop twice, abort with `
 ## Order of implementation
 
 1. `objproto.SetProxy` synthetic-owned relaxation + unit test (commit 1).
-2. `RunnerEntry.Via` field + population in `dial_runner_handler.go` (commit 2). Existing Phase A direct tests + Phase C tests must stay green; new test asserts Via is populated correctly post-Phase-C registration and remains nil for direct registration.
+2. `RunnerEntry.Via` and `RunnerEntry.DialedAddr` fields + population in `dial_runner_handler.go` (commit 2). Both Phase A (`Handle`) and Phase C (`HandleWithVia`) paths populate `DialedAddr = target CID` at registration time. `Via` is set only by `HandleWithVia` (the via path); `Handle` leaves it nil. Existing Phase A direct + Phase C tests must stay green; new tests assert Via is populated correctly post-Phase-C registration and remains nil for direct registration, and DialedAddr equals the dial-runner CLI argument in both paths.
 3. Schema additions for `RequestChainedRelay` / response (commit 3).
 4. Phase C handler refactor: `handleEstablishRelay` eager SetProxy (commit 4). Existing Phase C E2E must stay green.
 5. Server `RequestChainedRelay` handler + chain walk over `Via` (commit 5).
