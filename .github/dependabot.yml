@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Bump SHA-pinned GitHub Actions in .github/workflows/*. Dependabot rewrites
+  # the SHA and preserves the trailing "# vX.Y.Z" comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  # Bump Go module dependencies in go.mod / go.sum.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      gomod-minor-and-patch:
+        update-types:
+          - minor
+          - patch
