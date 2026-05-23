@@ -9,7 +9,13 @@
 **Tech Stack:** Go, brgen `.bgn` schema, objproto SetProxy + sendRehandshakeForProxy, peer.WrapAcceptedConn (Phase B prerequisite).
 
 **Spec:** `docs/superpowers/specs/2026-05-23-chained-relay-design.md`.
-**Prereq:** Phase A (reverse-dial) + Phase B (agent_proxy ceremony) + Phase C (`server-to-runner-via-relay`) all merged on main. Commit 0 of the spec (`HandleWithVia` slot_id from `target.UniqueNumber`) already landed as `d31b5c9` on this branch.
+**Prereq:** Phase A (reverse-dial) + Phase B (agent_proxy ceremony) + Phase C (`server-to-runner-via-relay`) all merged on main.
+
+Already landed on this branch (so not in Task scope):
+- Commit `f2b0f5c`: `objproto.SetProxy` synthetic-owned relaxation (Task 1 code change).
+- Commit `d31b5c9`: `HandleWithVia` sources slot_id from `target.UniqueNumber` (spec's "commit 0").
+- POC test (`integration/chained_relay_poc_test.go`): wire-level mechanics for 3-hop and 4-hop chains, role-boundary enforced. Green.
+- RED e2e (`integration/chained_relay_e2e_test.go`): pins the missing-feature failure mode. RED — will be flipped in Task 8.
 
 ---
 
@@ -17,8 +23,8 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `objproto/objproto.go` | Modify (Task 1) | Drop `owned must exist in activeConnections` precondition in `SetProxy` |
-| `objproto/objproto_test.go` | Modify (Task 1) | Add unit test: synthetic-owned SetProxy + `receive()` forwards via proxySettings without prior ECDH |
+| `objproto/objproto.go` | Already landed (`f2b0f5c`) | `owned` precondition dropped in `SetProxy`; POC test exercises end-to-end |
+| `objproto/objproto_test.go` | Optional (Task 1) | Package-level unit test for synthetic-owned `SetProxy`; skip if POC coverage is judged sufficient |
 | `server/registry.go` | Modify (Task 2) | Add `Via *RunnerEntry` + `ViaDialAddr objproto.ConnectionID` fields to `RunnerEntry` |
 | `server/registry_test.go` | Modify (Task 2) | Tests populating Via + ViaDialAddr; walk Via chain; verify zero for Phase A direct + reverse-dial |
 | `server/dial_runner_handler.go` | Modify (Tasks 2 + 7) | (T2) Extend `OnDialed` signature to carry `ViaRegistrationInfo`; `HandleWithVia` constructs and passes it. (T7) Drop `RehandshakeForProxy` ceremony — server's first `SendHandshake` IS the e2e ECDH with target |
@@ -41,15 +47,18 @@
 
 ---
 
-## Task 1: `objproto.SetProxy` synthetic-owned relaxation
+## Task 1: `objproto.SetProxy` synthetic-owned relaxation — package-level unit test
 
 **Files:**
-- Modify: `objproto/objproto.go` (function `SetProxy`)
 - Modify: `objproto/objproto_test.go`
 
-**Why:** Eager `SetProxy` (Task 4) needs to install proxySettings before any activeConn exists. Current `SetProxy` enforces `owned ∈ activeConnections`; this precondition has no functional value (`owned` is never dereferenced by the forward path — `receive()` keys proxySettings by full CID and forwards raw bytes) but blocks the eager pattern. Spec line 95-128 lays out the audit.
+**Status:** The code relaxation is ALREADY LANDED on this branch as commit `f2b0f5c` — `objproto.SetProxy` no longer rejects synthetic `owned`. The POC test in `integration/chained_relay_poc_test.go` exercises the synthetic-owned path end-to-end and is green. This Task only adds an `objproto`-package-level unit test for closer coverage (so a future refactor that re-adds the precondition fails fast inside the package, not just at integration time).
 
-- [ ] **Step 1: Write the failing test**
+If you decide the POC coverage is sufficient, this Task can be skipped — note that in the commit message and move on to Task 2.
+
+**Why (if pursued):** Provides a minimal regression gate inside the `objproto` package. The integration POC requires the `integration` build tag and spins up multiple endpoints; a unit test that drives a single endpoint's `receive()` directly is faster to run and clearer to debug.
+
+- [ ] **Step 1: Add the unit test**
 
 Add to `objproto/objproto_test.go`:
 
@@ -58,55 +67,25 @@ func TestSetProxy_SyntheticOwned_ForwardsViaProxySettings(t *testing.T) {
     // Two in-process WS endpoints A ↔ B; configure A's SetProxy with a
     // synthetic owned (no preceding handshake), send a packet at the
     // synthetic CID, observe that B sees the packet at the allocate CID.
-    // Verifies the eager-SetProxy pattern that Task 4 depends on.
+    // Verifies the synthetic-owned SetProxy contract that Task 4's eager
+    // handler depends on.
     ...
 }
 ```
 
-The test should fail on current `SetProxy` with `"allocate connection already exists"` or `"owned connection not found"` (depending on which check fires first). Reference: existing `objproto` tests show endpoint setup pattern.
+Reference: existing `objproto` tests show endpoint setup pattern. The POC test in `integration/chained_relay_poc_test.go` shows the synthetic-owned setup if you need a working template.
 
-- [ ] **Step 2: Modify `SetProxy`**
-
-```go
-// objproto.go — SetProxy after edit
-func (s *endpoint) SetProxy(owned, allocate ConnectionID) error {
-    s.endpointLock.Lock()
-    defer s.endpointLock.Unlock()
-    if _, exists := s.activeConnections[allocate]; exists {
-        return fmt.Errorf("allocate connection already exists")
-    }
-    // Removed: owned-existence check. owned may be synthetic — it's only
-    // used as a proxySettings map key, never dereferenced for activeConn data.
-    s.proxySettings[owned] = &proxySetting{
-        peer1: owned, peer2: allocate, lastUsed: time.Now(),
-    }
-    s.proxySettings[allocate] = &proxySetting{
-        peer1: owned, peer2: allocate, lastUsed: time.Now(),
-    }
-    return nil
-}
-```
-
-(Exact diff verified by re-reading `objproto.go` `SetProxy` and `receive` to confirm no other `owned` consumer.)
-
-- [ ] **Step 3: Run the test**
+- [ ] **Step 2: Run the test + the full objproto suite**
 
 ```sh
 go test ./objproto/ -run TestSetProxy_SyntheticOwned -count=1 -v
-```
-
-Must pass.
-
-- [ ] **Step 4: Run full objproto test suite**
-
-```sh
 go test ./objproto/ -count=1
 ```
 
-All existing tests must stay green.
+Must pass; existing tests must stay green.
 
 **Green criteria:**
-- New synthetic-owned test passes.
+- New synthetic-owned unit test passes (if added).
 - All existing `objproto` tests pass.
 - `go build ./...` clean.
 
