@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -141,6 +142,14 @@ type Session struct {
 	// testHookHandleAssign is called at the start of handleAssign in tests to
 	// inject faults (e.g. panics). It is nil in production.
 	testHookHandleAssign func()
+
+	// chainedRelayPendingMu guards chainedRelayPendingCh. One-at-a-time
+	// invariant: at most one RequestChainedRelay may be in flight per
+	// session at any time (spec Decision 2). BeginChainedRelay returns an
+	// error if another is already pending; DeliverChainedRelayResponse
+	// sends to the channel and clears it.
+	chainedRelayPendingMu sync.Mutex
+	chainedRelayPendingCh chan protocol.ChainedRelayResponse // nil when none pending
 }
 
 // SetRunnerCanonicalID stores the RunnerID the server reports for this
@@ -222,6 +231,37 @@ func (s *Session) HasTask(t protocol.TaskID) bool {
 	defer s.mu.Unlock()
 	_, ok := s.tasks[hex.EncodeToString(t.Id[:])]
 	return ok
+}
+
+// BeginChainedRelay registers a pending chained-relay request on this session
+// and returns a buffered channel that will receive the ChainedRelayResponse
+// when the server replies. Returns an error if another chained-relay request
+// is already in flight (one-at-a-time invariant, spec Decision 2).
+// The caller must either receive from the returned channel or give up; in both
+// cases the channel is consumed/dropped naturally when DeliverChainedRelayResponse
+// fires or the session is torn down.
+func (s *Session) BeginChainedRelay() (chan protocol.ChainedRelayResponse, error) {
+	s.chainedRelayPendingMu.Lock()
+	defer s.chainedRelayPendingMu.Unlock()
+	if s.chainedRelayPendingCh != nil {
+		return nil, fmt.Errorf("chained relay already in flight")
+	}
+	s.chainedRelayPendingCh = make(chan protocol.ChainedRelayResponse, 1)
+	return s.chainedRelayPendingCh, nil
+}
+
+// DeliverChainedRelayResponse delivers resp to the waiting BeginChainedRelay
+// caller and clears the pending slot. Returns false if no waiter is registered
+// (stale or spurious message from server).
+func (s *Session) DeliverChainedRelayResponse(resp protocol.ChainedRelayResponse) bool {
+	s.chainedRelayPendingMu.Lock()
+	defer s.chainedRelayPendingMu.Unlock()
+	if s.chainedRelayPendingCh == nil {
+		return false
+	}
+	s.chainedRelayPendingCh <- resp
+	s.chainedRelayPendingCh = nil
+	return true
 }
 
 // handleAssign performs the full lifecycle for one assigned task:

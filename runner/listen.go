@@ -258,7 +258,7 @@ func handleAgentProxyConn(ctx context.Context, cfg Config, sessionRef *atomic.Po
 		taskExists:    taskExists,
 	}
 
-	if err := runAgentProxyCeremony(ctx, cfg.Logger, st, ep, pc, *req); err != nil {
+	if err := runAgentProxyCeremony(ctx, cfg.Logger, st, ep, pc, *req, sess); err != nil {
 		cfg.Logger.Error("agent proxy ceremony failed", "err", err)
 	}
 }

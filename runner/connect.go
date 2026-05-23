@@ -344,6 +344,15 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			payload := rm.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 			return session.Sender.Send(payload)
 		})
+	case protocol.RunnerRequestType_ChainedRelayResponse:
+		rcr := req.ChainedRelayResponse()
+		if rcr == nil {
+			log.Error("dispatch: ChainedRelayResponse nil")
+			return
+		}
+		if !session.DeliverChainedRelayResponse(*rcr) {
+			log.Warn("dispatch: ChainedRelayResponse without waiter", "status", rcr.Status)
+		}
 	}
 }
 
