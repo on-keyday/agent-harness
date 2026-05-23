@@ -75,10 +75,8 @@ func handleEstablishRelay(
 					"allocate", allocCID.String(),
 					"err", err)
 			}
-			// No perfect-fit status exists for SetProxy failure. Reuse
-			// InvalidTarget: it is distinguishable in logs and no external
-			// users depend on a richer error model (feedback_individual_dogfood).
-			resp.Status = protocol.EstablishRelayStatus_InvalidTarget
+			// SetProxyFailed is the schema-defined status for this case (message.bgn:222).
+			resp.Status = protocol.EstablishRelayStatus_SetProxyFailed
 		} else {
 			if logger != nil {
 				logger.Info("relay: eager SetProxy installed",
