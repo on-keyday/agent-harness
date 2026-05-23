@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -189,11 +190,18 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		if perr != nil {
 			return nil, fmt.Errorf("HARNESS_PROXY_VIA_RUNNER: %w", perr)
 		}
+		slog.Info("agent: dialing server via runner proxy (Phase B)",
+			"proxy_cid", proxyCID.String(),
+			"server_cid", cid.String(),
+			"task_id", hex.EncodeToString(tid.Id[:]))
 		pc, err = cli.DialViaProxy(ctx, proxyCID, tid)
 		if err != nil {
 			return nil, fmt.Errorf("DialViaProxy: %w", err)
 		}
 	} else {
+		slog.Debug("agent: dialing server directly (no proxy)",
+			"server_cid", cid.String(),
+			"task_id", hex.EncodeToString(tid.Id[:]))
 		ep, eperr := cli.BuildClientEndpoint(cid)
 		if eperr != nil {
 			return nil, fmt.Errorf("client endpoint: %w", eperr)

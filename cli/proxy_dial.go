@@ -91,6 +91,8 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 	})
 	localConn.Start(ctx)
 
+	slog.Debug("proxy: dialed runner, sending ProxyRequest", "proxy_cid", proxyCID.String())
+
 	// Send ProxyRequest.
 	var req protocol.ProxyControl
 	req.Kind = protocol.ProxyControlKind_Request
@@ -110,6 +112,7 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 		return nil, fmt.Errorf("waiting for EstablishResponse: %w", respCtx.Err())
 	case resp = <-respCh:
 	}
+	slog.Debug("proxy: received EstablishResponse", "status", resp.Status)
 
 	switch resp.Status {
 	case protocol.ProxyEstablishStatus_Ok:
@@ -155,6 +158,8 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 		return nil, fmt.Errorf("waiting for rehandshake: %w", rhCtx.Err())
 	case newConn = <-rh.C:
 	}
+	slog.Debug("proxy: rehandshake complete; end-to-end conn to server ready",
+		"end_to_end_cid", newConn.ConnectionID().String())
 
 	// Wrap the new objproto.Connection in a peer.Conn ready for PSK +
 	// AgentBridgeHello. The old localConn is auto-closed via the

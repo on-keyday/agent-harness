@@ -201,3 +201,63 @@ func TestBuildAgentEnvOmitsProxyViaWhenEmpty(t *testing.T) {
 		}
 	}
 }
+
+// TestRewriteProxyViaForLocalDial covers the bind-addr → loopback rewrite
+// applied to HARNESS_PROXY_VIA_RUNNER. Listen-side bind addresses
+// (0.0.0.0, ::, empty host) must become loopback (127.0.0.1, ::1) so the
+// agent — same host as the runner — can dial portably (Linux accepts
+// 0.0.0.0 dial as localhost, Windows / macOS do not).
+func TestRewriteProxyViaForLocalDial(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		// Bind-only IPv4 → loopback
+		{"ws:0.0.0.0:8540-*", "ws:127.0.0.1:8540-*"},
+		// Empty host (--listen :8540) → loopback
+		{"ws::8540-*", "ws:127.0.0.1:8540-*"},
+		// IPv6 unspecified → loopback v6
+		{"ws:[::]:8540-*", "ws:[::1]:8540-*"},
+		// Already loopback IPv4 → unchanged
+		{"ws:127.0.0.1:8540-*", "ws:127.0.0.1:8540-*"},
+		// Concrete IP → unchanged
+		{"ws:192.168.3.14:8540-*", "ws:192.168.3.14:8540-*"},
+		// Concrete IPv6 → unchanged
+		{"ws:[fe80::1]:8540-*", "ws:[fe80::1]:8540-*"},
+		// Hostname → unchanged (DNS resolves at dial time)
+		{"ws:proxy-runner.local:8540-*", "ws:proxy-runner.local:8540-*"},
+		// UDP transport variant — same rewrite rules
+		{"udp:0.0.0.0:8541-*", "udp:127.0.0.1:8541-*"},
+		{"udp::8541-*", "udp:127.0.0.1:8541-*"},
+		// Random-ID suffix preserved (lifetime-bound conn_id, not "*")
+		{"ws:0.0.0.0:8540-12345", "ws:127.0.0.1:8540-12345"},
+	}
+	for _, c := range cases {
+		got := rewriteProxyViaForLocalDial(c.in)
+		if got != c.want {
+			t.Errorf("rewriteProxyViaForLocalDial(%q) = %q; want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestBuildAgentEnvAppliesRewrite confirms the env-injection path actually
+// passes ProxyVia through the rewrite (regression guard).
+func TestBuildAgentEnvAppliesRewrite(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:9001-1"),
+		RunnerID:  mustParseCID(t, "ws:127.0.0.1:9002-2"),
+		TaskID:    protocol.TaskID{},
+		ProxyVia:  "ws:0.0.0.0:8540-*",
+	}
+	env := BuildAgentEnv(spec)
+	want := "HARNESS_PROXY_VIA_RUNNER=ws:127.0.0.1:8540-*"
+	found := false
+	for _, e := range env {
+		if e == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("env did not contain rewritten %q; full env:\n%s", want, strings.Join(env, "\n"))
+	}
+}
