@@ -133,3 +133,44 @@ When dispatching an implementer or reviewer subagent in this project, include in
 - BEFORE running `superpowers:subagent-driven-development` for any task on this project
 - BEFORE dispatching a fresh implementer or reviewer subagent
 - BEFORE writing new code that touches: `cli.Dial*`, `peer.Conn.Close`, `transport.WebSocketEndpoint` mode handling, env injection for spawned processes, `HARNESS_PROXY_VIA_RUNNER`, `make clean`, or any helper that has `*With(client)` long-lived and `X(serverCID)` short-lived variants
+
+---
+
+# Project principles (from user-level memory)
+
+These are user-driven feedback rules from past sessions, baked into project-local form so subagents on this repo see them. Each one was triggered by a specific past incident; the one-liner is enough to remember the rule, expand by reading the named memory file if needed.
+
+## Scope / sizing
+- **Individual dogfood scope** (`feedback_individual_dogfood`): No external users. Don't inflate breaking-change / migration concerns. Renames, subcommand splits, schema field additions are quality fixes — just do them. Don't add migration shims, deprecation periods, or backward-compat layers "for users" that don't exist.
+- **Don't split schema/spec across plan tasks** (`feedback_no_split_schemas`): When a plan adds new wire types or config fields, put the FULL schema/interface in ONE plan task. No "also add this in Task N" follow-ups — the schema becomes harder to review and easier to diverge against. Same for spec docs: keep the authoritative byte layout in one place.
+
+## Protocol / schema discipline
+- **Schema describes every byte on the wire** (`feedback_no_schema_invisible_bytes`): The `.bgn` files are the single source of truth. Any byte sent on the wire MUST be described in the schema. "Convention puts this byte here" is worse than "schema doesn't mention it" — schema becomes a lie.
+- **Protocol explicit over convention** (`feedback_protocol_explicit_over_convention`): If a field is needed, extend the schema. Don't write code that "by convention puts X in this position of the payload". LLMs lose convention context across sessions; explicit schema fields survive.
+
+## Reading before writing
+- **Read harness code before architectural speculation** (`feedback_read_code_before_arch_speculation`): Don't reason from 1-line memory summaries or vague impressions. When proposing a structural change, first check README + relevant `main.go` + handler implementation. Memories can drift; code is authoritative.
+- **Jargon masks confusion** (`feedback_jargon_masks_confusion`): When unsure of how a layer behaves, the next step is reading the schema / handler. Not constructing "design intent" / "state precondition" / "[X]-axis" prose. Treat invented framing words as tells that you don't fully understand yet. (See also Pitfall 2 above for the spec-writing variant.)
+
+## Verification discipline
+- **Verify fix in symptom env BEFORE writing memory** (`feedback_verify_before_memory_writes`): Hypotheses codified as memory mislead future sessions when wrong. Push the code fix freely, but hold the explanatory memory until you've actually seen the original symptom go away with your change applied. This catalog file is bound by the same rule.
+
+## Harness / runtime
+- **Harness worktree paths route to parent repo** (`feedback_worktree_path_routing`): Inside a harness task, `/home/.../remote-agent-harness/<rel>` resolves to the parent's main checkout, not the per-task worktree. Anchor edits explicitly to the worktree when needed; bash commands `cd <abs path>` land on the parent.
+- **Spawn runners via `scripts/runner.sh up --as TAG`** (`feedback_use_runner_scripts`): Never hand-roll `nohup setsid bin/agent-runner ...`. The script handles slot allocation, pid/log files, detach, restart. Bypassing it leaks state under `bin/.run/`.
+- **Bundle related repos via `--roots`** (`feedback_runner_roots_bundle`): "Add repo B to runner A" = extend A's `--roots`, not a new `--as` slot per repo. One runner can serve multiple roots.
+- **harness-cli never sync wait/dispatch from agent turn** (`feedback_no_sync_wait_dispatch`): `send` only and end the turn. Replies arrive via inbox hook on a later turn. Applies to the initial `harness.hello` handshake too. Synchronous wait stalls the entire conversation.
+
+## Naming / labels
+- **Invented labels in specs become implicit constraints** (`feedback_invented_terms_become_implicit_constraints` — see also Pitfall 1 & 2): Vague labels in specs (e.g. "Agent leg", "X-axis", "design intent") feel rigorous but harden into narrow implementations. Describe the mechanism in plain terms. If a label is unavoidable, state IN/OUT scope explicitly right after introducing it.
+
+## Layer consistency
+- **Reuse long-lived `*cli.Client` in TUI/WebUI** (`feedback_reuse_long_lived_client` — see also Pitfall 3): When adding a new helper, expose both `X(serverCID)` (short-lived: dial+close) and `XWith(client)` (reuse). TUI/WebUI MUST call the `*With` variant against their existing `a.client` / `currentClient()` — never the high-level fresh-dial form.
+- **Check existing patterns before extending a layer** (`feedback_check_existing_patterns_before_extend` — see also Pitfall 3): Before adding a new TUI / WebUI / server-handler entry, grep how sibling code in the same layer invokes the same helper category. Subagents copy what they see first (often a test pattern or CLI pattern) which is usually wrong for production. Controller must show them the forest.
+
+---
+
+# Sources
+
+- Project-local incidents (Pitfalls section) — commit refs on `main`
+- User-level memory (`~/.claude/projects/.../memory/feedback_*.md`) — accumulated across sessions, mirrored above
