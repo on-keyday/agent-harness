@@ -95,16 +95,37 @@ This also subsumes N-hop naturally: server walks the chain by chasing the addr f
 
 ### Prerequisite: `objproto.SetProxy` accepts synthetic `owned`
 
-Current `objproto.SetProxy(owned, allocate)` requires `owned` to exist in `activeConnections`. This is a leftover from the ksdk pattern where the proxy first ECDH's with the initiator, then `SetProxy`s, then closes the activeConn. After Close, the proxySettings entry persists and forwarding still works (verified in Phase C's `completeRelaySetup`).
+Current `objproto.SetProxy(owned, allocate)` (`objproto/objproto.go:429`) requires `owned` to exist in `activeConnections`. This is a leftover from the ksdk pattern where the proxy first ECDH's with the initiator, then `SetProxy`s, then closes the activeConn. After Close, the proxySettings entry persists and forwarding still works (verified in Phase C's `completeRelaySetup`).
 
 For chained relay, we need to set up proxySettings BEFORE any handshake arrives at a hop. The bootstrap initial-ECDH at each hop is unnecessary friction. Spec change: remove the `owned must exist` check.
 
-Safety:
-- The activeConn at `owned` was never used post-`SetProxy` (Phase C's `completeRelaySetup` Closes it).
-- `allocate must NOT exist` check preserved — prevents ambiguous routing.
-- No new attack surface: `SetProxy` is called only by runner code.
+#### Audit: where `activeConnections[owned]` is referenced post-`SetProxy`
 
-Phase C's existing handler keeps working: it happens to call `SetProxy` after the server's initial ECDH creates owned, so it satisfies the relaxed contract as a special case.
+Direct verification by `grep -n "activeConnections\[\|proxySettings\[\|getPeer\|peer1\|peer2" objproto/objproto.go` (re-run when re-validating this claim — line numbers may drift):
+
+| Call site | What it does | Affected by synthetic `owned`? |
+|---|---|---|
+| `SetProxy` precondition `activeConnections[owned]` (line 432) | Rejects if owned is not an existing activeConn. | **YES — this is the check we are removing.** |
+| `SetProxy` precondition `activeConnections[allocate]` (line 435) | Rejects if allocate IS an existing activeConn. | No — keep this check, prevents ambiguous routing when an inbound activeConn would compete with the synthetic SetProxy entry. |
+| `receive()` proxy forward (lines 1018-1039) | Looks up `proxySettings[cid]` FIRST. On hit, calls `sendPacket(peer, kind, data)` and `return nil` — never reaches activeConn lookup. | No — proxied packets short-circuit before any activeConn reference. |
+| `sendPacket` (line 533) | Enqueues a `PacketData` on `pktQueue`. No activeConn use. | No. |
+| `mayCloseProxy` (lines 486-496) → `closeCannotSend` (lines 498-) | Tries `proxySettings[pkt.To]` first, only falls through to `activeConnections[pkt.To]` cleanup if no proxy entry. | No — for proxied paths, the proxy branch handles cleanup before activeConn cleanup runs. |
+| `receiveApplication` (lines 943-) | Looks up `activeConnections[cid]` to decrypt application data. | No — only runs when `receive()` falls through to non-proxy processing (i.e. cid is NOT in proxySettings). For SetProxy'd cids this is unreachable. |
+| `receiveHandshake` and `receiveHandshakeAck` (collision checks at lines 645, 868) | `activeConnections[cid]` existing-entry check before creating a new activeConn. | No — same as receiveApplication; only runs on non-proxy paths. For proxied cids, receive() short-circuits to forwarding before reaching these. |
+| `closeConnection(a *activeConnection)` (lines 475-484) | Closes an activeConn by reference. | No — it operates on an existing `*activeConnection` value; if no activeConn was ever created at owned (synthetic case), no one holds a reference to close. |
+| `GetConnection(cid)` (line 563) | Public lookup. | No — callers don't call this on synthetic owned cids (they have no `*Connection` to reach for). |
+| `sendRehandshakeForProxy(a, ...)` (lines 627-636) | Requires `activeConnections[a.cid]` to exist and match `a`. | No — this is called by the INITIATOR (the dialer doing RehandshakeForProxy), operating on its OWN endpoint's activeConn. The proxy_runner's owned does not enter this code path. Phase C's existing `server.dial_runner_handler.go` RehandshakeForProxy step runs against the server's own activeConn, unrelated to the proxy's owned. |
+| `deleteActiveConnection` / `AutoGarbageCollect` (proxy TTL at line 695) | Iterates `proxySettings`, not `activeConnections`, for proxy expiry. | No — proxy lifecycle is independent of owned activeConn lifecycle. |
+
+Conclusion: every `activeConnections[owned]` reference post-`SetProxy` is in a code path that is either (a) the precondition check we're removing, (b) reserved for non-proxy traffic and unreachable for SetProxy'd cids, or (c) on the dialer's endpoint (not the proxy's).
+
+#### Safety of removing the check
+
+- The activeConn at `owned` is referenced only by the precondition check itself. After Phase C's `completeRelaySetup` Closes it, the activeConn is gone — yet forwarding via `proxySettings` continues to work. This is empirically proven by Phase C E2E tests (`TestRelayE2E`, `TestRelayE2E_DialModeProxy`) green on main.
+- `allocate must NOT exist` check is preserved — prevents ambiguous routing.
+- No new attack surface: `SetProxy` is called only by runner code (no public client API).
+
+Phase C's existing handler keeps working with the relaxed contract: it happens to call `SetProxy` after the server's initial ECDH has already created owned, satisfying the precondition as a special case. The relaxation makes the strict precondition optional, not required.
 
 ### Wire schema additions
 
