@@ -6,7 +6,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -78,81 +77,21 @@ func (h *ChainedRelayHandler) Handle(
 		return protocol.ChainedRelayResponse{Status: protocol.ChainedRelayStatus_Direct}
 	}
 
-	// --- 3. Walk Via chain, collecting (hop, downstream.ViaDialAddr) pairs ---
-	// Each iteration: cur is the downstream entry whose ViaDialAddr is the
-	// address cur.Via (the hop) will use for its SetProxy.allocate.
-	type hopSetup struct {
-		hop             *RunnerEntry
-		downViaDialAddr objproto.ConnectionID
+	// --- 3-5. Walk Via chain and dispatch EstablishRelay to all hops in parallel ---
+	allOk, walkErr, hopErrs := walkAndDispatchUpstreamHops(
+		ctx, &entry, req.SlotId, h.HopTimeout, h.SendEstablishRelay, h.Logger,
+	)
+	if walkErr != nil {
+		h.Logger.Warn("chained-relay: loop detected in Via chain",
+			"runner", runnerID, "err", walkErr)
+		return protocol.ChainedRelayResponse{Status: protocol.ChainedRelayStatus_ChainUnwalkable}
 	}
-
-	var hops []hopSetup
-	// Start walk from L itself. cur.Via is the first intermediate hop;
-	// cur.ViaDialAddr is what that hop needs for SetProxy.allocate.
-	cur := &entry
-	seen := map[string]struct{}{entry.ID: {}}
-
-	for cur.Via != nil {
-		if _, dup := seen[cur.Via.ID]; dup {
-			// Loop detected.
-			h.Logger.Warn("chained-relay: loop detected in Via chain",
-				"runner", runnerID,
-				"loop_at", cur.Via.ID)
-			return protocol.ChainedRelayResponse{Status: protocol.ChainedRelayStatus_ChainUnwalkable}
-		}
-		hops = append(hops, hopSetup{
-			hop:             cur.Via,
-			downViaDialAddr: cur.ViaDialAddr,
-		})
-		seen[cur.Via.ID] = struct{}{}
-		cur = cur.Via
-	}
-
-	// --- 4. Dispatch EstablishRelayRequest to all hops in parallel ---
-	timeout := h.HopTimeout
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
-	hopCtx, hopCancel := context.WithTimeout(ctx, timeout)
-	defer hopCancel()
-
-	type result struct {
-		ok        bool
-		err       error
-		hopID     string
-		hopStatus protocol.EstablishRelayStatus
-	}
-	results := make(chan result, len(hops))
-	for _, hp := range hops {
-		hp := hp
-		go func() {
-			establishReq := protocol.EstablishRelayRequest{
-				Target: protocol.ConnIDToRunnerID(hp.downViaDialAddr),
-				SlotId: req.SlotId,
-			}
-			resp, err := h.SendEstablishRelay(hopCtx, hp.hop, establishReq)
-			results <- result{
-				ok:        err == nil && resp.Status == protocol.EstablishRelayStatus_Ok,
-				err:       err,
-				hopID:     hp.hop.ID,
-				hopStatus: resp.Status,
-			}
-		}()
-	}
-
-	// --- 5. Collect all responses ---
-	allOk := true
-	for i := 0; i < len(hops); i++ {
-		r := <-results
-		if !r.ok {
-			allOk = false
+	if !allOk {
+		for _, he := range hopErrs {
 			h.Logger.Warn("chained-relay: hop setup failed",
 				"runner", runnerID, "slotId", req.SlotId,
-				"hop", r.hopID, "hopStatus", r.hopStatus, "err", r.err)
+				"hop", he.HopID, "hopStatus", he.Status, "err", he.Err)
 		}
-	}
-
-	if !allOk {
 		return protocol.ChainedRelayResponse{Status: protocol.ChainedRelayStatus_HopSetupFailed}
 	}
 	return protocol.ChainedRelayResponse{Status: protocol.ChainedRelayStatus_Ok}

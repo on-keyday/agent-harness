@@ -237,71 +237,24 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 	// along the same path as the relay chain. Each hop from entry.Via upward must have
 	// a SetProxy entry for slotID so the Handshake is forwarded rather than accepted
 	// locally.
-	//
-	// For each hop H in the chain above entry (i.e. entry.Via, entry.Via.Via, …),
-	// target = H's downstream's ViaDialAddr (= the listen addr H previously dialed
-	// for the downstream hop's Phase C registration — the same addr it would dial
-	// for chained relay forwarding).
 	if entry.Via != nil {
-		type hopSetup struct {
-			hop  *RunnerEntry
-			addr objproto.ConnectionID
-		}
-		var upstreamHops []hopSetup
-		seen := map[string]struct{}{entry.ID: {}}
-		cur := entry
-		for cur.Via != nil {
-			if _, dup := seen[cur.Via.ID]; dup {
-				// Loop detected — bail out; registration cannot succeed.
-				if h.Logger != nil {
-					h.Logger.Warn("dial-runner via: loop in Via chain, aborting registration",
-						"loop_at", cur.Via.ID)
-				}
-				return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaRelayFailed}
+		allOk, walkErr, hopErrs := walkAndDispatchUpstreamHops(
+			relayCtx, entry, slotID, h.DialTimeout, h.ViaSendEstablishRelay, h.Logger,
+		)
+		if walkErr != nil {
+			if h.Logger != nil {
+				h.Logger.Warn("dial-runner via: loop in Via chain, aborting registration",
+					"err", walkErr)
 			}
-			upstreamHops = append(upstreamHops, hopSetup{
-				hop:  cur.Via,
-				addr: cur.ViaDialAddr,
-			})
-			seen[cur.Via.ID] = struct{}{}
-			cur = cur.Via
-		}
-
-		type hopResult struct {
-			ok        bool
-			err       error
-			hopID     string
-			hopStatus protocol.EstablishRelayStatus
-		}
-		results := make(chan hopResult, len(upstreamHops))
-		for _, hp := range upstreamHops {
-			hp := hp
-			go func() {
-				req := protocol.EstablishRelayRequest{
-					Target: protocol.ConnIDToRunnerID(hp.addr),
-					SlotId: slotID,
-				}
-				resp, err := h.ViaSendEstablishRelay(relayCtx, hp.hop, req)
-				results <- hopResult{
-					ok:        err == nil && resp.Status == protocol.EstablishRelayStatus_Ok,
-					err:       err,
-					hopID:     hp.hop.ID,
-					hopStatus: resp.Status,
-				}
-			}()
-		}
-		allOk := true
-		for i := 0; i < len(upstreamHops); i++ {
-			r := <-results
-			if !r.ok {
-				allOk = false
-				if h.Logger != nil {
-					h.Logger.Warn("dial-runner via: upstream hop EstablishRelay non-Ok",
-						"slot_id", slotID, "hop", r.hopID, "status", r.hopStatus, "err", r.err)
-				}
-			}
+			return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaRelayFailed}
 		}
 		if !allOk {
+			if h.Logger != nil {
+				for _, he := range hopErrs {
+					h.Logger.Warn("dial-runner via: upstream hop EstablishRelay non-Ok",
+						"slot_id", slotID, "hop", he.HopID, "status", he.Status, "err", he.Err)
+				}
+			}
 			return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaRelayFailed}
 		}
 	}

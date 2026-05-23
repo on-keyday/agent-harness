@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -372,6 +375,193 @@ func TestDialRunnerSendsGreeting(t *testing.T) {
 	}
 	if g.Version != 1 {
 		t.Errorf("greeting version: got %d want 1", g.Version)
+	}
+}
+
+// TestDialRunnerViaWithUpstreamChain verifies the N-hop chain walk in Step 3b
+// of HandleWithVia. Topology:
+//
+//	server → Q (direct) → P (via Q) → L (target, being registered via P)
+//
+// ViaSendEstablishRelay must be called exactly twice:
+//  1. Step 3: entry=P, Target=L_addr (target RunnerID), SlotId=slotID
+//  2. Step 3b: entry=Q, Target=P.ViaDialAddr, SlotId=slotID
+//
+// After both calls succeed, h.Endpoint==nil triggers DialFailed — the test
+// verifies the chain walk, not the final dial.
+func TestDialRunnerViaWithUpstreamChain(t *testing.T) {
+	reg := NewRegistry()
+
+	// Q: directly registered (no Via).
+	qCID := buildTestCID("ws:127.0.0.1:9100-1")
+	qEntry := addEntry(reg, qCID.String(), nil, objproto.ConnectionID{})
+
+	// P: registered via Q. P.ViaDialAddr is the addr Q uses for SetProxy.allocate → P.
+	pViaDialAddr := buildTestCID("ws:10.0.0.20:8540-0")
+	pCID := buildTestCID("ws:127.0.0.1:9100-2")
+	pEntry := addEntry(reg, pCID.String(), qEntry, pViaDialAddr)
+
+	// Build the RunnerIDs for via=P and target=L.
+	var pRunnerID protocol.RunnerID
+	pRunnerID.SetTransport([]byte("ws"))
+	pRunnerID.SetIpAddr([]byte{127, 0, 0, 1})
+	pRunnerID.Port = 9100
+	pRunnerID.UniqueNumber = 2
+
+	const slotID uint16 = 77 // = target.UniqueNumber below
+	var targetRunnerID protocol.RunnerID
+	targetRunnerID.SetTransport([]byte("ws"))
+	targetRunnerID.SetIpAddr([]byte{10, 0, 0, 99})
+	targetRunnerID.Port = 8541
+	targetRunnerID.UniqueNumber = slotID
+
+	type callRecord struct {
+		entry  *RunnerEntry
+		target protocol.RunnerID
+		slotID uint16
+	}
+	var (
+		mu      sync.Mutex
+		calls   []callRecord
+		callCnt int32
+	)
+
+	h := &DialRunnerHandler{
+		Logger:   slog.Default(),
+		Endpoint: nil, // intentionally nil — causes DialFailed after Step 3b succeeds
+		ResolveVia: func(cid objproto.ConnectionID) (*RunnerEntry, bool) {
+			if cid.String() == pCID.String() {
+				return pEntry, true
+			}
+			return nil, false
+		},
+		ViaSendEstablishRelay: func(_ context.Context, entry *RunnerEntry, req protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
+			mu.Lock()
+			calls = append(calls, callRecord{
+				entry:  entry,
+				target: req.Target,
+				slotID: req.SlotId,
+			})
+			mu.Unlock()
+			atomic.AddInt32(&callCnt, 1)
+			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
+		},
+	}
+
+	resp := h.HandleWithVia(context.Background(), targetRunnerID, pRunnerID)
+	// DialFailed is expected: Endpoint is nil, which the handler returns
+	// after all EstablishRelay calls succeed. Any other status means the
+	// chain walk didn't complete.
+	if resp.Status != protocol.DialRunnerStatus_DialFailed {
+		t.Fatalf("expected DialFailed (endpoint nil after successful chain walk), got %v", resp.Status)
+	}
+
+	mu.Lock()
+	gotCalls := make([]callRecord, len(calls))
+	copy(gotCalls, calls)
+	mu.Unlock()
+
+	if n := len(gotCalls); n != 2 {
+		t.Fatalf("expected ViaSendEstablishRelay called 2 times, got %d", n)
+	}
+
+	// Verify slot IDs.
+	for i, c := range gotCalls {
+		if c.slotID != slotID {
+			t.Errorf("call[%d]: SlotId = %d, want %d", i, c.slotID, slotID)
+		}
+	}
+
+	// Identify which call was for P (Step 3) and which for Q (Step 3b).
+	// Step 3 is synchronous and fires before Step 3b's goroutines, so calls[0] = P,
+	// calls[1] = Q. Verify by entry pointer.
+	if gotCalls[0].entry != pEntry {
+		t.Errorf("call[0]: entry = %v, want pEntry", gotCalls[0].entry.ID)
+	}
+	if gotCalls[1].entry != qEntry {
+		t.Errorf("call[1]: entry = %v, want qEntry", gotCalls[1].entry.ID)
+	}
+
+	// call[0] target must equal targetRunnerID (L's address).
+	targetBytes, _ := targetRunnerID.Append(nil)
+	call0Bytes, _ := gotCalls[0].target.Append(nil)
+	if !bytes.Equal(targetBytes, call0Bytes) {
+		t.Errorf("call[0]: Target = %v, want targetRunnerID", gotCalls[0].target)
+	}
+
+	// call[1] target must equal ConnIDToRunnerID(pViaDialAddr) (P's ViaDialAddr).
+	wantQ := protocol.ConnIDToRunnerID(pViaDialAddr)
+	wantQBytes, _ := wantQ.Append(nil)
+	call1Bytes, _ := gotCalls[1].target.Append(nil)
+	if !bytes.Equal(wantQBytes, call1Bytes) {
+		t.Errorf("call[1]: Target = %v, want ConnIDToRunnerID(pViaDialAddr)", gotCalls[1].target)
+	}
+}
+
+// TestDialRunnerViaLoopDetected verifies that a cyclic Via chain is detected
+// in Step 3b and causes HandleWithVia to return ViaRelayFailed.
+//
+// Topology: P.Via = Q, Q.Via = P (cycle).
+// ViaSendEstablishRelay is called exactly once (Step 3, for P with the
+// target address) before Step 3b detects the cycle and short-circuits.
+// No upstream-hop dispatch goroutine is ever launched.
+func TestDialRunnerViaLoopDetected(t *testing.T) {
+	// Build the cyclic entries without using the registry helper (we need
+	// to wire Via pointers before insertion).
+	pCID := buildTestCID("ws:127.0.0.1:9101-1")
+	qCID := buildTestCID("ws:127.0.0.1:9101-2")
+
+	pEntry := &RunnerEntry{
+		ID:          pCID.String(),
+		ActiveTasks: make(map[string]struct{}),
+		ViaDialAddr: buildTestCID("ws:10.0.0.30:8550-0"),
+	}
+	qEntry := &RunnerEntry{
+		ID:          qCID.String(),
+		ActiveTasks: make(map[string]struct{}),
+		ViaDialAddr: buildTestCID("ws:10.0.0.31:8551-0"),
+	}
+	// Create the cycle: P → Q → P.
+	pEntry.Via = qEntry
+	qEntry.Via = pEntry
+
+	// Build the RunnerID for via=P.
+	var pRunnerID protocol.RunnerID
+	pRunnerID.SetTransport([]byte("ws"))
+	pRunnerID.SetIpAddr([]byte{127, 0, 0, 1})
+	pRunnerID.Port = 9101
+	pRunnerID.UniqueNumber = 1
+
+	var targetRunnerID protocol.RunnerID
+	targetRunnerID.SetTransport([]byte("ws"))
+	targetRunnerID.SetIpAddr([]byte{10, 0, 0, 50})
+	targetRunnerID.Port = 8542
+	targetRunnerID.UniqueNumber = 55
+
+	var callCnt int32
+
+	h := &DialRunnerHandler{
+		Logger:   slog.Default(),
+		Endpoint: nil,
+		ResolveVia: func(_ objproto.ConnectionID) (*RunnerEntry, bool) {
+			return pEntry, true
+		},
+		ViaSendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
+			atomic.AddInt32(&callCnt, 1)
+			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
+		},
+	}
+
+	resp := h.HandleWithVia(context.Background(), targetRunnerID, pRunnerID)
+	if resp.Status != protocol.DialRunnerStatus_ViaRelayFailed {
+		t.Errorf("expected ViaRelayFailed on cyclic Via chain, got %v", resp.Status)
+	}
+
+	// Step 3 calls ViaSendEstablishRelay once for the direct via (P).
+	// Step 3b detects the loop before dispatching any goroutine (zero additional calls).
+	// Total = 1.
+	if n := atomic.LoadInt32(&callCnt); n != 1 {
+		t.Errorf("expected ViaSendEstablishRelay called 1 time (Step 3 only, Step 3b loop-detected), got %d", n)
 	}
 }
 
