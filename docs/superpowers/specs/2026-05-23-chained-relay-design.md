@@ -286,6 +286,18 @@ The existing direct Phase C flow (server-initiated dial-runner --via) still work
 
 This is a behavior change for Phase C: server-side `HandleWithVia` in `server/dial_runner_handler.go` can drop the `RehandshakeForProxy` step. Server's first `SendHandshake` at slot_id IS the agent-side ECDH-with-target. Simpler, fewer round trips.
 
+### Registration-time chain walk in `HandleWithVia`
+
+For an N-hop registration topology (admin runs `dial-runner L --via P` where `P` itself was registered via `dial-runner P --via Q`), `HandleWithVia`'s single `EstablishRelay` to the direct via runner is insufficient. The registration `SendHandshake` to `(P.Addr, slotID)` is forwarded by `Q`'s proxySettings entry only if `Q` already has an entry for `slotID` → `(P.Addr, slotID)`; without it, `Q` accepts the handshake locally and `L` never registers. The 3-hop e2e test (`TestChainedRelay_3Hop_E2E`) exposes this.
+
+`HandleWithVia` therefore walks `via_entry.Via.Via...` (loop detection applies) and dispatches `EstablishRelay{slotID, target=H_downstream.ViaDialAddr}` to every upstream hop in parallel BEFORE issuing the registration `SendHandshake`. This is structurally the same walk that `ChainedRelayHandler.Handle` performs at runtime for agent-initiated relay requests — both should call a shared helper (see "Files touched"). Concretely for 3-hop registration of L via P-via-Q at slot S:
+
+1. EstablishRelay{S, target=L.LISTEN_ADDR} → P (over server↔P virtual conn via Q)
+2. EstablishRelay{S, target=P.ViaDialAddr} → Q (over server↔Q direct conn) — added by Step 3b walk
+3. SendHandshake to (P.Addr, S): packet → Q's eager SetProxy for slot S → P's eager SetProxy for slot S → L. ECDH e2e with L.
+
+This is the REGISTRATION path; the RUNTIME path (agent on L initiating a relay request) is handled separately by `ChainedRelayHandler`. The two paths use the same chain-walk algorithm but are triggered by different events (admin CLI vs runner-initiated `RequestChainedRelay`).
+
 ### local_runner-side change (agent_proxy ceremony)
 
 `runner/agent_proxy.go`'s `runAgentProxyCeremony` adds a step BEFORE local SetProxy:
