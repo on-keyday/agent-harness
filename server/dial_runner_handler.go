@@ -297,7 +297,7 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 				allOk = false
 				if h.Logger != nil {
 					h.Logger.Warn("dial-runner via: upstream hop EstablishRelay non-Ok",
-						"hop", r.hopID, "status", r.hopStatus, "err", r.err)
+						"slot_id", slotID, "hop", r.hopID, "status", r.hopStatus, "err", r.err)
 				}
 			}
 		}

@@ -144,8 +144,24 @@ func TestChainedRelay_2Hop_E2E(t *testing.T) {
 	if _, err := rand.Read(taskID.Id[:]); err != nil {
 		t.Fatal(err)
 	}
-	if err := runner.AddFakeTaskForListenServer(ctx, taskID); err != nil {
-		t.Fatalf("AddFakeTaskForListenServer: %v", err)
+	// Poll briefly in case target_runner registration is racing with the
+	// lastListenSession update (driveAfterConn stores the session only after
+	// the server-conn completes).
+	{
+		deadline := time.Now().Add(3 * time.Second)
+		var lastErr error
+		for time.Now().Before(deadline) {
+			if err := runner.AddFakeTaskForListenServer(ctx, taskID); err == nil {
+				lastErr = nil
+				break
+			} else {
+				lastErr = err
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if lastErr != nil {
+			t.Fatalf("AddFakeTaskForListenServer (after 3s): %v", lastErr)
+		}
 	}
 
 	// 8. Simulate the agent process running on target_runner host doing a
