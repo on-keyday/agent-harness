@@ -524,7 +524,17 @@ func (s streamingConn) GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream {
 
 // handleConnection manages a single active objproto connection for its lifetime.
 func (s *Server) handleConnection(ctx context.Context, session objproto.Connection) {
-	defer session.Close()
+	// Defer close announcement so peers (runners / clients) see an explicit
+	// trsf Close instead of waiting for ping-timeout (~15s) on server
+	// shutdown / connection teardown. Symmetric with peer.Conn.Close on the
+	// runner side; the 50ms drain matches project_peer_close_send_drain —
+	// without scheduling slack the async pktQueue may exit before the Close
+	// packet leaves the wire.
+	defer func() {
+		_ = trsf.SendClose(session)
+		time.Sleep(50 * time.Millisecond)
+		_ = session.Close()
+	}()
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	// Bridge objproto.Connection lifetime into connCtx so trsf.Streams
