@@ -122,11 +122,12 @@ format RequestChainedRelay:
 
 enum ChainedRelayStatus:
     :u8
-    ok                = "ok"                  # all hops set up, runner may proceed
-    direct            = "direct"              # runner is registered direct (no chain), no setup needed
-    slot_collision    = "slot_collision"      # collision on some hop's slot_id
-    hop_setup_failed  = "hop_setup_failed"    # an intermediate EstablishRelay was rejected
-    chain_unwalkable  = "chain_unwalkable"    # server couldn't trace the chain (bug condition)
+    ok                  = "ok"                    # all hops set up, runner may proceed
+    direct              = "direct"                # runner is registered direct (no chain), no setup needed
+    slot_collision      = "slot_collision"        # collision on some hop's slot_id
+    hop_setup_failed    = "hop_setup_failed"      # an intermediate EstablishRelay was rejected
+    chain_unwalkable    = "chain_unwalkable"      # server couldn't trace the chain (bug condition)
+    another_in_flight   = "another_in_flight"     # a previous RequestChainedRelay from this runner is still being processed
 
 format ChainedRelayResponse:
     status :ChainedRelayStatus
@@ -205,7 +206,7 @@ With the synthetic-owned `SetProxy` change (Prerequisite above), the handler can
 // 5. Reply EstablishRelayResponse{Ok}
 ```
 
-`expectedRelays` and `completeRelaySetup` become unnecessary for this path and can be removed (or kept as dead code temporarily — implementer's choice for one-commit-per-step ordering).
+`expectedRelays` and `completeRelaySetup` become unused after the refactor. **Remove them entirely** in commit 4 — dead code rots, and the new path doesn't need either. The `listen.go` shortcut that consults `expectedRelays` (added for Phase C) is also removed; with eager SetProxy, the rehandshake packet hits `proxySettings` in `objproto.receive` and is forwarded without ever creating a local activeConn.
 
 The existing direct Phase C flow (server-initiated dial-runner --via) still works with eager SetProxy because:
 - Server's `SendHandshake` at slot would now hit the proxySettings entry created eagerly at EstablishRelay time
@@ -229,7 +230,7 @@ This is a behavior change for Phase C: server-side `HandleWithVia` in `server/di
 
 Server needs to correlate `RunnerMessage{RequestChainedRelay}` with the runner that sent it. Use the conn's `ConnectionID()` directly — every registered runner has one. No request_id field needed in the wire because there is at-most-one outstanding chain setup per runner conn at a time (per the non-goals constraints).
 
-If a runner sends a second `RequestChainedRelay` before the first completes, server replies to the second with the previous in-flight's response when it arrives (or, simpler MVP: server rejects the second with a status — implementer decision).
+If a runner sends a second `RequestChainedRelay` before the first completes, server rejects the second with a new status `ChainedRelayStatus_AnotherInFlight`. Reason: the wire schema has no `request_id` field; queueing would require correlation infrastructure. The "agent_proxy ceremony" code path on the runner side is synchronous (one ProxyRequest per ceremony), so concurrent in-flight requests from the same runner are an error condition, not a normal-load case.
 
 ### Ceremony (full 2-hop case)
 
@@ -307,7 +308,7 @@ Loop detection: server-side. If the walk visits the same hop twice, abort with `
 | `server/dial_runner_handler.go` | Set `Via = resolvedEntry` on the new RunnerEntry constructed for the registered target. Drop `RehandshakeForProxy` step (no longer needed with eager SetProxy on proxy side). |
 | `runner/protocol/message.bgn` | Add `RequestChainedRelay` / `ChainedRelayResponse` / `ChainedRelayStatus`. Variants on `RunnerMessage` and `RunnerRequest`. |
 | `runner/protocol/message.go` | Regenerated. |
-| `runner/relay_handler.go` | Convert `handleEstablishRelay` from lazy (expectedRelays + completeRelaySetup) to eager `SetProxy` (synthetic-owned). Remove or deprecate `expectedRelays` / `completeRelaySetup`. |
+| `runner/relay_handler.go` | Convert `handleEstablishRelay` from lazy (expectedRelays + completeRelaySetup) to eager `SetProxy` (synthetic-owned). Remove `expectedRelays`, `completeRelaySetup`, and the `Session.ExpectedRelays` field entirely — dead code in the new design. |
 | `runner/listen.go` | Remove the expectedRelays shortcut in `handleAcceptedConn` (it's now dead; eager SetProxy means the rehandshake packet hits proxySettings directly via objproto.receive). |
 | `runner/connect.go` | Add `dispatchRunnerRequest` arm for `ChainedRelayResponse`. |
 | `runner/agent_proxy.go` | Add `RequestChainedRelay` send + response wait BEFORE local `SetProxy`. |
@@ -339,7 +340,7 @@ Loop detection: server-side. If the walk visits the same hop twice, abort with `
 7. Drop `RehandshakeForProxy` from `server/dial_runner_handler.go` (commit 7). Phase C tests adjusted to expect the simpler flow.
 8. Flip red E2E + add 3-hop test (commit 8).
 
-The red test (`TestChainedRelayMissing`) stays red until commit 6 lands. Commit 7 is a cleanup of Phase C that becomes possible once eager SetProxy is the rule; could be deferred to a separate change if scope creeps.
+The red test (`TestChainedRelayMissing`) stays red until commit 6 lands. Commit 7 is part of this spec's scope — Phase C's `RehandshakeForProxy` is redundant once proxy-side SetProxy is eager (server's first `SendHandshake` IS the end-to-end ECDH, forwarded raw to target). No deferral; ship together.
 
 ## Trust model
 
@@ -347,9 +348,14 @@ The red test (`TestChainedRelayMissing`) stays red until commit 6 lands. Commit 
 - End-to-end ECDH between agent and server survives the chain — `objproto.SetProxy` at each hop is opaque packet relay (no decrypt).
 - PSK exchange happens agent ↔ server end-to-end after the rehandshake; hops cannot validate or forge.
 
-## Open questions
+## Decisions taken (formerly open questions)
 
-1. **Phase C `dial-runner --via` `RehandshakeForProxy` removal**: with eager-SetProxy at the proxy, server's first `SendHandshake` at slot_id IS the end-to-end ECDH (forwarded raw to target, target ECDHs with server). The current `RehandshakeForProxy` in `server/dial_runner_handler.go` becomes redundant. Need to confirm this doesn't break the existing flow under all conditions (DialGreeting send order, target's `handleAcceptedConn` discrimination, etc.).
-2. **Concurrent RequestChainedRelay**: spec says "at most one in flight per runner conn", but the wire has no request_id. Implementer must decide between (a) reject second-in-flight (simplest), (b) queue, or (c) add a request_id field (cleanest but wider wire change).
-3. ~~**Chain walk authoritativeness**~~ — resolved by adding `RunnerEntry.Via` (see Prerequisite above). Server walks the explicit Via field instead of addr-matching.
-4. **Cleanup on broken chain mid-setup**: if hop 2 of a 3-hop chain rejects, the SetProxy set up at hop 1 dangles. Add an opportunistic `DeleteProxy` rollback in the server handler? Or leave the entries to AutoGarbageCollect's idle sweep? (TTL approximately 5min default.)
+1. **Phase C `RehandshakeForProxy` removal**: drop it as commit 7 of this spec. With eager-SetProxy on the proxy side, server's first `SendHandshake` at slot_id is forwarded raw to target; target ECDHs with server directly. `RehandshakeForProxy` was an artifact of the lazy SetProxy + initial-ECDH dance that no longer applies. If a regression is found in Phase C E2E during the migration, it indicates the eager-SetProxy refactor itself has a bug that must be fixed, not preserved by re-adding RehandshakeForProxy.
+
+2. **Concurrent `RequestChainedRelay`**: server rejects with `ChainedRelayStatus_AnotherInFlight` (decided above in "Server `RequestChainedRelay` correlation"). No request_id field on the wire; in-flight is keyed by runner conn CID.
+
+3. ~~Chain walk authoritativeness~~ — resolved by `RunnerEntry.Via`.
+
+4. **Cleanup on broken chain mid-setup**: leave dangling SetProxy entries to `AutoGarbageCollect`'s idle TTL sweep (default 5min). Reason: explicit per-hop rollback adds complexity (server tracks which hops succeeded, issues `DeleteProxy` to each on failure) for a rare failure case. AutoGC already handles abandoned proxySettings entries safely. If chain setup is reliable in steady-state (target use case), this code path rarely runs; the 5min stale entry is benign because the slot_id was randomly chosen and won't collide in practice.
+
+5. **Target self-match policy on server's `RequestChainedRelay` handler**: this used to be open question 1 in the prior revision; collapsed into the walk-via-Via design — server does NOT do target self-match. The walk terminates at `Via == nil`, which is the source of truth for "directly registered" status, independent of any addr comparison.
