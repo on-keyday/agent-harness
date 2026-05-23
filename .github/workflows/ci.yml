@@ -25,8 +25,12 @@ jobs:
       - name: webui-build
         run: make webui-build
 
-      - name: go vet
-        run: go vet ./...
+      # `make vet` excludes brgen-generated-only packages (currently
+      # exec/frame) so future regenerations producing benign vet warnings
+      # (e.g. unreachable code from generated switches) don't block CI.
+      # Mixed packages like runner/protocol stay in scope.
+      - name: make vet
+        run: make vet
 
       - name: go test
         run: go test ./... -count=1
