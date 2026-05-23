@@ -32,6 +32,21 @@ type RunnerEntry struct {
 	ConnectedAt  time.Time
 	LastSeen     time.Time
 	Conn         ConnHandle // set by server.go on registration; nil in zero-value / test stubs
+
+	// Via, when non-nil, is the proxy_runner this runner was registered
+	// through via Phase C (--via). nil for Phase A direct and reverse-dial
+	// (runner.Connect) registrations. Walking Via.Via.Via... terminates at an
+	// entry whose Via is nil (= a hop reachable from server without any proxy).
+	Via *RunnerEntry
+
+	// ViaDialAddr = protocol.RunnerIDToConnID(target) captured at Phase C
+	// HandleWithVia time. Only Transport + Addr are load-bearing — the ID
+	// portion happens to carry admin's UniqueNumber but no consumer reads it.
+	// Zero for Phase A direct + reverse-dial registrations.
+	//
+	// For chained relay setup, this is the addr each upstream hop uses for its
+	// SetProxy.allocate when forwarding traffic to this runner.
+	ViaDialAddr objproto.ConnectionID
 }
 
 // Status derives the wire-visible status from connection + slot occupancy.

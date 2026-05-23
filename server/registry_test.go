@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -321,6 +322,125 @@ func TestRegistryCandidatesLongestPrefixPerRunnerMaxRoot(t *testing.T) {
 	cs := r.Candidates("/a/b/c/x", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
 	if len(cs) != 1 || cs[0].ID != "multi" {
 		t.Fatalf("expected multi (its longest matching root wins over broad), got %v", cs)
+	}
+}
+
+// TestRegistry_PhaseAEntry_NoVia verifies that a Phase A (direct-dial)
+// registration leaves Via nil and ViaDialAddr at the zero value.
+func TestRegistry_PhaseAEntry_NoVia(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	r.Add(&RunnerEntry{
+		ID:          "ws:127.0.0.1:8540-1",
+		Hostname:    "direct-runner",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:    1,
+		ActiveTasks: map[string]struct{}{},
+		ConnectedAt: now,
+		LastSeen:    now,
+		// Via and ViaDialAddr intentionally left zero (Phase A direct).
+	})
+	entry, ok := r.Get("ws:127.0.0.1:8540-1")
+	if !ok {
+		t.Fatal("expected Get ok=true")
+	}
+	if entry.Via != nil {
+		t.Errorf("Phase A entry should have Via=nil, got %+v", entry.Via)
+	}
+	var zeroConnID objproto.ConnectionID
+	if entry.ViaDialAddr != zeroConnID {
+		t.Errorf("Phase A entry should have ViaDialAddr zero, got %v", entry.ViaDialAddr)
+	}
+}
+
+// TestRegistry_PhaseCEntry_ViaPopulated verifies that a Phase C (via-relay)
+// registration stores the Via pointer and ViaDialAddr correctly and that
+// walking Via reaches the parent entry.
+func TestRegistry_PhaseCEntry_ViaPopulated(t *testing.T) {
+	r := NewRegistry()
+	now := time.Now()
+	proxyEntry := &RunnerEntry{
+		ID:           "ws:127.0.0.1:8541-1",
+		Hostname:     "proxy-runner",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  now,
+		LastSeen:     now,
+	}
+	r.Add(proxyEntry)
+
+	// Use ParseConnectionID for a valid CID value representing L's LISTEN_ADDR.
+	parsedViaAddr, err := objproto.ParseConnectionID("ws:10.0.0.1:9000-42", 0)
+	if err != nil {
+		t.Fatalf("ParseConnectionID: %v", err)
+	}
+
+	childEntry := &RunnerEntry{
+		ID:           "ws:10.0.0.1:9000-42",
+		Hostname:     "child-runner",
+		AllowedRoots: []string{"/x"},
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  now,
+		LastSeen:     now,
+		Via:          proxyEntry,
+		ViaDialAddr:  parsedViaAddr,
+	}
+	r.Add(childEntry)
+
+	got, ok := r.Get("ws:10.0.0.1:9000-42")
+	if !ok {
+		t.Fatal("expected Get ok=true for child entry")
+	}
+	if got.Via == nil {
+		t.Fatal("expected Via non-nil for Phase C entry")
+	}
+	if got.Via.ID != "ws:127.0.0.1:8541-1" {
+		t.Errorf("Via.ID: got %q, want %q", got.Via.ID, "ws:127.0.0.1:8541-1")
+	}
+	if got.ViaDialAddr != parsedViaAddr {
+		t.Errorf("ViaDialAddr: got %v, want %v", got.ViaDialAddr, parsedViaAddr)
+	}
+	// Walk terminates: proxy's Via is nil.
+	if got.Via.Via != nil {
+		t.Errorf("proxy entry Via should be nil, got %+v", got.Via.Via)
+	}
+}
+
+// TestRegistry_ViaWalk_TerminatesAtNil verifies that walking a 3-hop chain
+// (L.Via=P, P.Via=Q, Q.Via=nil) terminates at the nil sentinel.
+func TestRegistry_ViaWalk_TerminatesAtNil(t *testing.T) {
+	now := time.Now()
+	makeEntry := func(id string) *RunnerEntry {
+		return &RunnerEntry{
+			ID: id, Hostname: id, AllowedRoots: []string{"/x"},
+			MaxTasks: 1, ActiveTasks: map[string]struct{}{},
+			ConnectedAt: now, LastSeen: now,
+		}
+	}
+	q := makeEntry("Q")
+	p := makeEntry("P")
+	p.Via = q
+	l := makeEntry("L")
+	l.Via = p
+
+	// Walk from L following Via pointers; collect visited IDs.
+	var visited []string
+	cur := l
+	for cur != nil {
+		visited = append(visited, cur.ID)
+		cur = cur.Via
+	}
+
+	want := []string{"L", "P", "Q"}
+	if len(visited) != len(want) {
+		t.Fatalf("walk length: got %d (%v), want %d (%v)", len(visited), visited, len(want), want)
+	}
+	for i, id := range want {
+		if visited[i] != id {
+			t.Errorf("walk[%d]: got %q, want %q", i, visited[i], id)
+		}
 	}
 }
 

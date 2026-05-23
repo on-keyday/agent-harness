@@ -12,6 +12,19 @@ import (
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
+// ViaRegistrationInfo carries the Phase C registration metadata that must travel
+// from HandleWithVia (where target and the resolved proxy entry are in scope) to
+// the Hello handler (where RunnerEntry is constructed). Handle (Phase A direct)
+// passes nil; HandleWithVia (Phase C) passes a populated struct.
+type ViaRegistrationInfo struct {
+	// Via is the proxy_runner entry through which the target was registered.
+	Via *RunnerEntry
+	// ViaDialAddr = protocol.RunnerIDToConnID(target), the addr the proxy_runner
+	// actually dialed to reach the target during EstablishRelay. Only Transport +
+	// Addr are load-bearing; ID happens to carry admin's UniqueNumber.
+	ViaDialAddr objproto.ConnectionID
+}
+
 // DialRunnerHandler handles a single TaskControlKind_DialRunner request:
 // converts the embedded RunnerID into an objproto.ConnectionID, calls
 // objproto.DoECDHHandshake on the server's existing Endpoint, and reports
@@ -36,11 +49,13 @@ type DialRunnerHandler struct {
 	Endpoint    objproto.Endpoint
 	DialTimeout time.Duration // 0 → 10s default
 
-	// OnDialed, when non-nil, is called with the server root context and the
-	// raw objproto.Connection produced by a successful ECDH handshake.
+	// OnDialed, when non-nil, is called with the server root context, the
+	// raw objproto.Connection produced by a successful ECDH handshake, and
+	// optional via-registration metadata. viaInfo is non-nil only for Phase C
+	// (HandleWithVia) registrations; nil for Phase A direct (Handle).
 	// If nil, the connection is closed immediately (useful in tests that only
 	// check status codes without wanting a live connection).
-	OnDialed func(ctx context.Context, conn objproto.Connection)
+	OnDialed func(ctx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo)
 
 	// ResolveVia, when non-nil, is called for via-relay dispatch to look up
 	// the registered proxy_runner by exact ConnectionID match. Returns the
@@ -111,7 +126,7 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID
 	}
 
 	if h.OnDialed != nil {
-		h.OnDialed(ctx, conn)
+		h.OnDialed(ctx, conn, nil)
 	} else {
 		conn.Close() //nolint:errcheck
 	}
@@ -313,9 +328,14 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 	}
 
 	// Step 7: hand off to OnDialed so handleConnection drives the standard
-	// PSK + RunnerHello + Registry-insert flow.
+	// PSK + RunnerHello + Registry-insert flow. Pass ViaRegistrationInfo so the
+	// Hello handler can populate entry.Via + entry.ViaDialAddr on the RunnerEntry.
+	viaInfo := &ViaRegistrationInfo{
+		Via:         entry,
+		ViaDialAddr: protocol.RunnerIDToConnID(target),
+	}
 	if h.OnDialed != nil {
-		h.OnDialed(ctx, endToEndConn)
+		h.OnDialed(ctx, endToEndConn, viaInfo)
 	} else {
 		// Tests / callers without OnDialed see a clean close — matches Handle.
 		_ = endToEndConn.Close()

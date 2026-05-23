@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
@@ -31,6 +32,13 @@ type RunnerHandler struct {
 	//
 	// Nil-safe: tests that do not exercise the via-relay path leave it unwired.
 	OnEstablishRelayResponse func(conn ConnHandle, resp protocol.EstablishRelayResponse)
+
+	// TakePendingViaInfo, when non-nil, retrieves and removes the
+	// ViaRegistrationInfo stashed by the OnDialed callback for the given
+	// ConnectionID. Populated on Phase C (HandleWithVia) dials; nil return
+	// means Phase A direct or reverse-dial — leave entry.Via + entry.ViaDialAddr zero.
+	// Server.Run wires this to Server.takePendingViaInfo.
+	TakePendingViaInfo func(cid objproto.ConnectionID) *ViaRegistrationInfo
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -74,6 +82,15 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			LastSeen:     now,
 		}
 		entry.Conn = conn
+		// Populate Via + ViaDialAddr from the pending info stashed by OnDialed
+		// for Phase C (HandleWithVia) registrations. nil means Phase A direct or
+		// reverse-dial — leave both fields at zero value.
+		if h.TakePendingViaInfo != nil {
+			if info := h.TakePendingViaInfo(conn.ConnectionID()); info != nil {
+				entry.Via = info.Via
+				entry.ViaDialAddr = info.ViaDialAddr
+			}
+		}
 		h.Registry.Add(entry)
 
 		// Tell the runner what canonical RunnerID the server keys it as.

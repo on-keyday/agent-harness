@@ -339,7 +339,7 @@ func TestDialRunnerSendsGreeting(t *testing.T) {
 		Logger:      slog.Default(),
 		Endpoint:    ep,
 		DialTimeout: 2 * time.Second,
-		OnDialed: func(_ context.Context, conn objproto.Connection) {
+		OnDialed: func(_ context.Context, conn objproto.Connection, _ *ViaRegistrationInfo) {
 			// Drop the conn — we only care that the greeting reached
 			// the fake listener.
 			_ = conn.Close()

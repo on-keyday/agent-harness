@@ -92,6 +92,14 @@ type Server struct {
 	// without extending the protocol.
 	relayRespChMu sync.Mutex
 	relayRespCh   map[objproto.ConnectionID]chan protocol.EstablishRelayResponse
+
+	// pendingViaInfoMu / pendingViaInfo carry Phase C registration metadata from
+	// DialRunnerHandler.HandleWithVia (where the via entry + target addr are in
+	// scope) to RunnerHandler.Handle's Hello case (where RunnerEntry is built).
+	// Keyed by the end-to-end conn's ConnectionID; consumed (deleted) when the
+	// Hello arrives or when the connection closes before Hello.
+	pendingViaInfoMu sync.Mutex
+	pendingViaInfo   map[objproto.ConnectionID]*ViaRegistrationInfo
 }
 
 // New constructs a Server with all components wired but NOT yet listening.
@@ -106,7 +114,8 @@ func New(cfg Config) *Server {
 		tasks:       NewTaskStore(),
 		sessions:    NewSessionRegistry(),
 		pubsub:      pubsub.NewPubSub(cfg.Logger),
-		relayRespCh: make(map[objproto.ConnectionID]chan protocol.EstablishRelayResponse),
+		relayRespCh:    make(map[objproto.ConnectionID]chan protocol.EstablishRelayResponse),
+		pendingViaInfo: make(map[objproto.ConnectionID]*ViaRegistrationInfo),
 	}
 	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
 	s.runnerHandler = &RunnerHandler{
@@ -244,12 +253,18 @@ func (s *Server) Run(ctx context.Context) error {
 		return err
 	}
 	s.taskHandler.Endpoint = ep
-	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection) {
+	s.taskHandler.OnDialed = func(connCtx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo) {
 		// connCtx is the server root context (long-lived). The ECDH-timeout
 		// context lives only inside DialRunnerHandler.Handle and is already
 		// cancelled by the time OnDialed fires.
+		if viaInfo != nil {
+			s.pendingViaInfoMu.Lock()
+			s.pendingViaInfo[conn.ConnectionID()] = viaInfo
+			s.pendingViaInfoMu.Unlock()
+		}
 		go s.handleConnection(connCtx, conn)
 	}
+	s.runnerHandler.TakePendingViaInfo = s.takePendingViaInfo
 	return s.serve(ctx, ep, mux, httpAddr)
 }
 
@@ -595,6 +610,9 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	// Connection closed: clean up agent state, deregister runner, and trigger rescheduling.
 	cid := session.ConnectionID().String()
 	s.cfg.Logger.Info("server: connection closed, deregistering", "cid", cid)
+	// Clean up any pending via-info that was stashed at OnDialed time but not yet
+	// consumed by the Hello handler (connection closed before Hello arrived).
+	s.takePendingViaInfo(session.ConnectionID())
 	s.removeAgentConn(session.ConnectionID())
 	s.registry.Remove(cid)
 	s.scheduler.Tick()
@@ -659,6 +677,19 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 		return err
 	}
 	return nil
+}
+
+// takePendingViaInfo removes and returns the ViaRegistrationInfo stashed for the
+// given conn CID. Returns nil if none was stashed (Phase A direct or reverse-dial
+// registrations). Called by RunnerHandler's Hello case to populate Via + ViaDialAddr,
+// and from handleConnection's defer to clean up any info that was not consumed
+// (conn closed before Hello arrived).
+func (s *Server) takePendingViaInfo(cid objproto.ConnectionID) *ViaRegistrationInfo {
+	s.pendingViaInfoMu.Lock()
+	defer s.pendingViaInfoMu.Unlock()
+	info := s.pendingViaInfo[cid]
+	delete(s.pendingViaInfo, cid)
+	return info
 }
 
 // deliverEstablishRelayResponse routes an inbound EstablishRelayResponse to

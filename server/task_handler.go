@@ -64,10 +64,11 @@ type TaskHandler struct {
 	Endpoint objproto.Endpoint
 
 	// OnDialed is called by the DialRunner handler on a successful dial with
-	// the server root context and the newly-active objproto.Connection.
-	// Server.New wires this to: func(ctx, conn) { go s.handleConnection(ctx, conn) }
+	// the server root context, the newly-active objproto.Connection, and optional
+	// via-registration metadata (non-nil only for Phase C HandleWithVia calls).
+	// Server.New wires this to: func(ctx, conn, viaInfo) { stash viaInfo; go s.handleConnection(ctx, conn) }
 	// Safe to leave nil in tests.
-	OnDialed func(ctx context.Context, conn objproto.Connection)
+	OnDialed func(ctx context.Context, conn objproto.Connection, viaInfo *ViaRegistrationInfo)
 
 	// ResolveVia resolves a via-relay CID against the registered runners.
 	// Server.Run wires this to Registry.GetByConnectionID. Tests that exercise
