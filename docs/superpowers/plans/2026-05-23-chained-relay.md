@@ -2,6 +2,44 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Subagent dispatch protocol (READ BEFORE DELEGATING)
+
+Every implementer / reviewer subagent prompt for this plan **MUST** include the following two clauses verbatim. They exist because this branch already burned 148 commits of divergence on a harness-worktree routing bug — see "Why this is non-negotiable" below.
+
+### Clause 1: Working directory + branch
+
+> **Work in the parent repo at `/home/kforfk/workspace/remote-agent-harness/`, NOT in any harness worktree under `.harness-worktrees/`.** Verify with `git -C /home/kforfk/workspace/remote-agent-harness rev-parse --abbrev-ref HEAD` — must report `feature/chained-relay-spec` (or whatever the active impl branch is per the controller). All file paths in your tool calls should be absolute under `/home/kforfk/workspace/remote-agent-harness/...`. Do not `cd` into a harness worktree.
+
+### Clause 2: Required reading
+
+> **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing any code.** That file is the project-local failure catalog — 7 pitfalls + a controller dispatch checklist + project principles ported from user-level memory. Each entry was triggered by a real prior incident; the rules apply to this task too. If a section feels irrelevant, read it anyway — irrelevance is your judgment, and prior agents on this project misjudged the same way (that's why the catalog exists).
+
+### Why this is non-negotiable
+
+The harness runner spawns each task inside `/home/.../remote-agent-harness/.harness-worktrees/<hash>/`. The Edit / Write tools, when called with absolute paths under `/home/.../remote-agent-harness/<rel>`, **resolve to the parent repo's main checkout**, not the worktree. The worktree's HEAD points at an auto-generated `harness/<hash>` branch that does NOT track `feature/chained-relay-spec`. Result: writes silently land on the parent's branch while the worktree stays stale. A subagent that uses relative paths from a worktree cwd will diverge from the controller's view; a subagent that uses absolute paths to the worktree will silently land on the parent.
+
+The defensive posture: **be explicit about the parent repo path everywhere**, and reference the pitfalls catalog so the next confusion has a precedent it can recognize.
+
+### Sample dispatch prompt skeleton
+
+```
+You are implementing Task <N> of docs/superpowers/plans/2026-05-23-chained-relay.md.
+
+Before you start:
+1. Verify cwd is /home/kforfk/workspace/remote-agent-harness/ (parent repo). Do NOT operate in any harness worktree.
+2. Run: git rev-parse --abbrev-ref HEAD — expect feature/chained-relay-spec.
+3. Read .claude/skills/implementation-pitfalls/SKILL.md in full. Note the entries about worktree routing, sibling-code grep, peer.Conn.Close semantics, and the controller dispatch checklist.
+
+Task: <Task N text verbatim from the plan>
+
+Context:
+<context relevant to this task — files, tests already in place, etc.>
+
+When you're done, report DONE / DONE_WITH_CONCERNS / NEEDS_CONTEXT / BLOCKED per the subagent-driven-development skill, with the commit SHA(s) you produced.
+```
+
+---
+
 **Goal:** Allow an agent running on a runner that was itself registered via Phase C (chained-relay-pending bug) to successfully `cli.Dial` the server. Currently agent dials fail because target_runner's Phase B `SetProxy` allocate-side points at target's `serverCID.Addr` (= proxy_runner after Phase C), and proxy_runner has no SetProxy entry for the new agent-chosen slot, so the rehandshake packet is rejected. This plan implements server-orchestrated chained relay so each intermediate hop gets the right SetProxy entry before the rehandshake flies.
 
 **Architecture:** runner L sends `RequestChainedRelay{slot_id}` to server before its local Phase B SetProxy. Server walks L's `Via` chain in the registry, dispatches an `EstablishRelayRequest{slot_id, target=H_downstream.ViaDialAddr}` to each intermediate hop in parallel. Each hop does eager synthetic-owned `SetProxy` on receipt. After all hops ack, server replies `ChainedRelayResponse{Ok}` and L proceeds with its own SetProxy. Agent's rehandshake then flies through every SetProxy entry transparently, reaches server, end-to-end AEAD validates.

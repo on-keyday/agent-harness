@@ -140,9 +140,39 @@ For each, ask: "What would I do if I were implementing this right now?" Write th
 
 ---
 
+## Pitfall 8 — Harness worktree silently diverges from parent's branch
+
+**What went wrong (2026-05-24)**: All 21 commits of chained-relay spec / plan / code work landed on the parent repo's `feature/chained-relay-spec` branch, while the harness task worktree's actual branch (`harness/<hash>`) stayed at its old HEAD. User caught it when `ls .claude/skills` from the worktree showed only `harness-cli` (missing `implementation-pitfalls`), while `ls` from the parent repo showed both. By then the worktree's branch was 148 commits behind the work the controller "thought" it had done. Controller had also incorrectly claimed "the 2 worktree-unique commits are already on origin/main" based on commit-message matching alone — content diff showed they were different code.
+
+Root mechanism:
+- Harness spawns the task with cwd = `/home/.../remote-agent-harness/.harness-worktrees/<hash>/` on branch `harness/<hash>`.
+- Edit / Write tools called with absolute paths under `/home/.../remote-agent-harness/<rel>` resolve to the PARENT repo's main checkout — not the worktree (`feedback_worktree_path_routing`).
+- `git -C /home/.../remote-agent-harness <op>` similarly operates on the parent's `.git` and the parent's currently-checked-out branch.
+- Result: controller does `Edit ... && git add ... && git commit ...` from the worktree session, but everything actually lands on the parent. Worktree stays frozen. Controller's `git log` (which also routes to parent) reports the new commits, so the divergence is invisible until someone `ls` from the worktree side.
+
+**Mitigation — when controlling a harness task on this repo**:
+
+1. **Decide upfront where work lands**, and stick to it for the entire task:
+   - **Parent repo** (default): explicitly tell every subagent to operate in `/home/kforfk/workspace/remote-agent-harness/` and verify branch. See "Subagent dispatch checklist" below.
+   - **Fresh non-harness worktree**: user creates a worktree outside `.harness-worktrees/` (e.g. `/home/kforfk/workspace/remote-agent-harness-impl/`) and you operate there. Avoids routing entirely.
+   - **The harness worktree itself**: only OK for read-only work (verifying state, running tests). Do NOT commit from inside — commits route to parent unpredictably.
+
+2. **Verify before claiming "commits are on the right branch"**:
+   - `git -C <path> log --oneline -5` to confirm
+   - `git worktree list` to map directories ↔ branches
+   - Never assume two same-name commits across branches are the same content — `git diff <sha1> <sha2>` or `git cherry` is the only way to know.
+
+3. **When the user asks "is the branch up to date with origin/main?"**, run `git fetch && git log origin/main..HEAD && git log HEAD..origin/main` AND `git worktree list` AND `git -C <worktree> rev-parse --abbrev-ref HEAD`. The single-source-of-truth answer is the worktree HEAD's actual branch's relationship to origin/main, NOT the parent repo's checkout state.
+
+---
+
 ## Subagent dispatch checklist (controller-side)
 
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:
+
+### Hard preconditions (every subagent prompt — non-optional)
+- [ ] **Parent repo, not harness worktree**: `Work in /home/kforfk/workspace/remote-agent-harness/, NOT in any .harness-worktrees/<hash>/ directory. Verify branch with git rev-parse --abbrev-ref HEAD before writing code. Use absolute paths under the parent repo for all tool calls.` Past incident: 148 commits diverged silently because writes via absolute path routed to parent while the worktree HEAD stayed on an unrelated `harness/<hash>` branch.
+- [ ] **Read this file first**: `Read .claude/skills/implementation-pitfalls/SKILL.md in full before writing code.` The catalog is short; each entry was triggered by a prior incident. Subagents that skip it tend to recreate the same failure mode.
 
 ### Implementer prompt augmentations
 - [ ] Quote the spec's **Problem statement** verbatim. Report which bullets the diff addresses; justify omissions.
