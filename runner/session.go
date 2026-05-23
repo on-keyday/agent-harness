@@ -250,6 +250,17 @@ func (s *Session) BeginChainedRelay() (chan protocol.ChainedRelayResponse, error
 	return s.chainedRelayPendingCh, nil
 }
 
+// AbortChainedRelay clears the pending chained-relay slot without delivering a
+// response. Called when the ceremony is abandoned (timeout or context cancel)
+// so that a future BeginChainedRelay on the same session can proceed. If a
+// late-arriving DeliverChainedRelayResponse fires after AbortChainedRelay, it
+// sees a nil slot and returns false (warn-logged by the caller) — correct.
+func (s *Session) AbortChainedRelay() {
+	s.chainedRelayPendingMu.Lock()
+	defer s.chainedRelayPendingMu.Unlock()
+	s.chainedRelayPendingCh = nil
+}
+
 // DeliverChainedRelayResponse delivers resp to the waiting BeginChainedRelay
 // caller and clears the pending slot. Returns false if no waiter is registered
 // (stale or spurious message from server).

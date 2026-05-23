@@ -98,9 +98,7 @@ func runAgentProxyCeremony(
 						logger.Error("chained-relay: send RequestChainedRelay failed", "err", err)
 					}
 					// Clear the pending slot so a future ceremony can proceed.
-					sess.DeliverChainedRelayResponse(protocol.ChainedRelayResponse{
-						Status: protocol.ChainedRelayStatus_HopSetupFailed,
-					})
+					sess.AbortChainedRelay()
 					resp = protocol.ProxyEstablishResponse{Status: protocol.ProxyEstablishStatus_InternalError}
 				} else {
 					// Wait for the server's ChainedRelayResponse (or timeout/cancel).
@@ -111,15 +109,15 @@ func runAgentProxyCeremony(
 						if logger != nil {
 							logger.Warn("chained-relay: context cancelled waiting for response")
 						}
+						// Clear the pending slot so a future ceremony can proceed.
+						sess.AbortChainedRelay()
 						resp = protocol.ProxyEstablishResponse{Status: protocol.ProxyEstablishStatus_InternalError}
 					case <-timer.C:
 						if logger != nil {
 							logger.Warn("chained-relay: timeout waiting for ChainedRelayResponse", "slot_id", slotID)
 						}
 						// Clear the pending slot so a future ceremony can proceed.
-						sess.DeliverChainedRelayResponse(protocol.ChainedRelayResponse{
-							Status: protocol.ChainedRelayStatus_HopSetupFailed,
-						})
+						sess.AbortChainedRelay()
 						resp = protocol.ProxyEstablishResponse{Status: protocol.ProxyEstablishStatus_InternalError}
 					case cr := <-ch:
 						switch cr.Status {

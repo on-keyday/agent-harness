@@ -534,4 +534,14 @@ func TestCeremonyChainedRelayTimeout(t *testing.T) {
 			t.Errorf("expected no local SetProxy on timeout; found proxy entry")
 		}
 	}
+
+	// Spec Decision 2: after a cancelled ceremony the pending slot must be
+	// cleared so a future BeginChainedRelay on the same session can proceed.
+	ch2, err2 := sess.BeginChainedRelay()
+	if err2 != nil {
+		t.Errorf("BeginChainedRelay after cancelled ceremony: expected nil error, got %v", err2)
+	}
+	if ch2 == nil {
+		t.Error("BeginChainedRelay after cancelled ceremony: returned nil channel")
+	}
 }
