@@ -4,11 +4,65 @@ import (
 	"context"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
+
+// watchIncomingActiveConns is the dial-mode counterpart to listen.go's
+// handleAcceptedConn for the relay-setup path. Dial-mode runners now use
+// EndpointModeMutual at objproto so the server can SendHandshake at a fresh
+// slot_id over the existing reused WS/UDP conn; the resulting activeConn is
+// pushed to ep.GetNewActiveConnectionChannel() but no listener loop reads it.
+// This goroutine fills that gap: it polls the channel and, when the new conn's
+// connection_id matches an expectedRelays entry, drives completeRelaySetup.
+// Non-matching new conns are unexpected in dial mode (the runner is not
+// listening for fresh handshakes from arbitrary peers) and are closed with a
+// warning.
+//
+// Listen-mode runners still use ListenAndServe's accept loop and do NOT spawn
+// this goroutine — they would double-consume the channel.
+//
+// Exits when ctx is canceled.
+func watchIncomingActiveConns(
+	ctx context.Context,
+	ep objproto.Endpoint,
+	expected *expectedRelays,
+	pingInterval time.Duration,
+	logger *slog.Logger,
+) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	ch := ep.GetNewActiveConnectionChannel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case conn, ok := <-ch:
+			if !ok {
+				return
+			}
+			slotID := conn.ConnectionID().ID
+			target, hit := expected.Take(slotID)
+			if !hit {
+				logger.Warn("dial-mode runner: unexpected incoming activeConn (no expectedRelays hit), closing",
+					"cid", conn.ConnectionID().String())
+				_ = conn.Close()
+				continue
+			}
+			pc := peer.WrapAcceptedConn(ctx, conn, peer.DialConfig{
+				Logger:       logger,
+				PingInterval: pingInterval,
+			})
+			// Run synchronously: SetProxy + Close is fast and we want any
+			// configuration error to be surfaced before the next conn arrives.
+			completeRelaySetup(logger, ep, pc, target, slotID)
+		}
+	}
+}
 
 // relayHandlerState bundles the inputs needed by EstablishRelay validation.
 // Extracted as a struct so the validation logic is pure-function-testable

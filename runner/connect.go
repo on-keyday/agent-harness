@@ -92,7 +92,18 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 	if err != nil {
 		return nil, err
 	}
-	return driveAfterConn(ctx, cfg, pc)
+	h, err := driveAfterConn(ctx, cfg, pc)
+	if err != nil {
+		return nil, err
+	}
+	// Dial-mode runner uses EndpointModeMutual so server-initiated Handshakes
+	// (at fresh slot_ids — Phase C relay setup) create activeConns that land
+	// on ep.GetNewActiveConnectionChannel(). Listen mode's accept loop reads
+	// that channel; dial mode has no such loop, so spawn a dedicated watcher
+	// that drives completeRelaySetup when the new conn matches an
+	// expectedRelays entry. Exits when ctx cancels.
+	go watchIncomingActiveConns(ctx, ep, h.session.ExpectedRelays, cfg.PingInterval, cfg.Logger)
+	return h, nil
 }
 
 // driveAfterConn is the half of Connect that runs after the peer.Conn is
@@ -362,23 +373,32 @@ func (s *peerSender) Publish(topic string, data []byte) error {
 	return s.pc.Publish(s.ctx, "runner", topic, data)
 }
 
-// buildRunnerEndpoint constructs a Client-mode objproto.Endpoint matching
-// cfg.ServerCID.Transport. Mirrors cli.BuildClientEndpoint but lives here
-// because runner is native-only (no WASM build).
+// buildRunnerEndpoint constructs an objproto.Endpoint for dial-mode runner.
+//
+// Mode is Mutual at the objproto layer: the runner dials the server outbound,
+// but once the WS / UDP socket is established, incoming Handshake packets
+// (from the server at a fresh connection_id) are accepted instead of dropped.
+// This lets a dial-mode runner serve as a Phase C relay proxy when the server
+// uses it as a --via target. The WS transport stays dial-only (nil mux, no
+// HTTP listener registered) — this is the new "Mutual + nil mux" configuration
+// that the transport layer accepts.
+//
+// UDP transport was already symmetric (binds a socket regardless of mode), so
+// the mode bump there only affects objproto-level handshake acceptance.
 func buildRunnerEndpoint(cfg Config) (objproto.Endpoint, error) {
 	switch cfg.ServerCID.Transport {
 	case "ws", "wss":
 		ep, err := transport.WebSocketEndpoint(nil, transport.WebSocketConfig{
 			Logger: cfg.Logger,
 			Path:   cli.WebSocketPath,
-			Mode:   objproto.EndpointModeClient,
+			Mode:   objproto.EndpointModeMutual,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("ws endpoint: %w", err)
 		}
 		return ep, nil
 	case "udp":
-		ep, err := transport.UDPEndpoint(cfg.Logger, 0, objproto.EndpointModeClient)
+		ep, err := transport.UDPEndpoint(cfg.Logger, 0, objproto.EndpointModeMutual)
 		if err != nil {
 			return nil, fmt.Errorf("udp endpoint: %w", err)
 		}

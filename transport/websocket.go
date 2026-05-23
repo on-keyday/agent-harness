@@ -252,17 +252,27 @@ func WebSocketEndpoint(mux *http.ServeMux, cfg WebSocketConfig) (objproto.Endpoi
 // can fan-out by pkt.To.Transport without two readers racing on the
 // same source channel; see transport/dualstack.go.
 func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg WebSocketConfig, sendTo <-chan *objproto.PacketData) error {
+	// Transport mux contract is now independent of cfg.Mode (objproto mode).
+	// mux non-nil  → register WS accept handler on cfg.Path (incoming TCP→WS).
+	// mux nil      → dial-only at transport layer; we still accept incoming
+	//                objproto Handshake packets on existing connMap entries if
+	//                cfg.Mode permits (Mutual). This lets a runner that dials
+	//                out to the server still serve as a Phase C relay proxy:
+	//                the server can SendHandshake at a new connection_id over
+	//                the existing reused WS conn, and the runner's endpoint
+	//                will create a new activeConn instead of dropping the
+	//                Handshake (which is what EndpointModeClient does).
 	switch cfg.Mode {
-	case objproto.EndpointModeClient:
-		if mux != nil {
-			return errors.New("mux must be nil for Client mode")
-		}
-	case objproto.EndpointModeServer, objproto.EndpointModeMutual:
-		if mux == nil {
-			return fmt.Errorf("mux is required for %v mode", cfg.Mode)
-		}
+	case objproto.EndpointModeClient, objproto.EndpointModeServer, objproto.EndpointModeMutual:
+		// all three accepted
 	default:
 		return fmt.Errorf("unknown EndpointMode: %v", cfg.Mode)
+	}
+	if cfg.Mode == objproto.EndpointModeClient && mux != nil {
+		return errors.New("mux must be nil for Client mode (Client cannot accept incoming handshakes)")
+	}
+	if cfg.Mode == objproto.EndpointModeServer && mux == nil {
+		return errors.New("mux is required for Server mode (Server only accepts incoming, never dials)")
 	}
 
 	connChan := make(chan *WebSocketConn, 10)
@@ -270,8 +280,10 @@ func WebSocketEndpointEx(rawSess objproto.RawEndpoint, mux *http.ServeMux, cfg W
 		connMap: make(map[netip.AddrPort]*WebSocketConn),
 	}
 
-	// Server/Mutual: register accept handler on caller-owned mux.
-	if cfg.Mode != objproto.EndpointModeClient {
+	// Register accept handler only when caller provided a mux. Mutual mode with
+	// no mux is now a valid "dial-only transport + bidirectional objproto"
+	// configuration used by dial-mode runners.
+	if mux != nil {
 		mux.Handle(cfg.Path, newAcceptHandler(connChan, connMap, cfg.TLS, cfg.Logger))
 	}
 
