@@ -112,6 +112,34 @@ Distinguish bind addr (server-side, "listen on every interface" = 0.0.0.0) from 
 
 ---
 
+## Pitfall 7 — Specs that punt decisions to "implementer's choice"
+
+**What went wrong**: While writing the chained-relay spec, I left four design points unresolved with phrases like "implementer's choice", "or kept as dead code temporarily", "could be deferred to a separate change if scope creeps", "Implementer must decide between (a) ... (b) ... (c) ...". User caught it: "implementer decision的なところが残るのは何でなん?".
+
+Fixed in commit `3c99b39` — each punt converted to an explicit decision in the spec body. Open questions section renamed to "Decisions taken".
+
+**Why it slipped**: When the spec author is unsure between two paths, deferring "to the implementer" feels collaborative. It isn't. The implementer doesn't know which to pick either, will either freeze on it or default to the easiest path without recording rationale (cf. Pitfall 1, scope contraction). A "could be deferred" line in a spec means: the spec is incomplete and pretending to be complete.
+
+**Mitigation — when writing specs:**
+
+If you find yourself writing any of these phrases, STOP and decide before committing:
+
+- "implementer's choice"
+- "could be deferred to a separate change"
+- "remove or deprecate" (pick one)
+- "or kept as dead code temporarily"
+- "Implementer must decide between (a)... (b)... (c)..."
+- "TBD", "TODO" inside the spec body (open questions section is fine, but they should be USER decisions, not implementer's)
+
+For each, ask: "What would I do if I were implementing this right now?" Write that as the decision. If the spec genuinely needs the user's input on a tradeoff, mark it as an explicit open question for the USER, not the implementer.
+
+**Difference from a legitimate open question**:
+
+- Legitimate open question = user must make a tradeoff call (e.g. "do we want SSO support in v1 or v2?"). Spec waits for user.
+- Implementer-punted decision = author doesn't want to pick (e.g. "remove or keep as dead code"). Both options are author-decidable; user shouldn't have to.
+
+---
+
 ## Subagent dispatch checklist (controller-side)
 
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:
@@ -125,6 +153,11 @@ When dispatching an implementer or reviewer subagent in this project, include in
 - [ ] Read BOTH the Problem statement AND the Implementation section. Flag uncovered problem-statement bullets.
 - [ ] Check layer-internal consistency: does this diff's caller pattern match adjacent code in the same layer?
 - [ ] Check for silent fallback paths: if a config / env is set, does any combination cause it to be ignored without log?
+
+### Spec-writing checklist (controller-side, before commiting a spec)
+- [ ] Grep the draft for "implementer's choice", "could be deferred", "remove or", "TBD", "TODO". Decide each before committing.
+- [ ] Grep for "Wait —", "hmm", "let me think" — these are author-uncertainty markers that don't belong in a spec body. Verify the underlying logic and rewrite confidently or mark as an explicit open question.
+- [ ] Problem statement and Implementation section must cover the same scope. If the Implementation section silently narrows scope, the rationale must be written in the spec body (not just left as a label change).
 
 ---
 
