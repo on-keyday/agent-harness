@@ -325,3 +325,346 @@ func TestChainedRelayPOC_4hop(t *testing.T) {
 	}
 	t.Log("4-hop chained relay: end-to-end roundtrip CONFIRMED")
 }
+
+// ============================================================================
+// Realistic-addr variants below
+// ============================================================================
+//
+// The two tests above (3hop / 4hop) use throwawayDial to learn inter-hop
+// ephemeral addrs. That's artificial — in production, each hop's serverCID
+// (= the addr the upstream uses for SetProxy.owned in chained-relay setup)
+// is derived from the activeConn established during the hop's Phase C
+// registration, NOT from a separate throwaway. The two tests below
+// reproduce the full production-shaped sequence:
+//
+//   1. Register each hop via real Phase C ceremony (server-driven ECDH
+//      forwarded through the chain, each hop's serverCID populated from
+//      pc.Connection().ConnectionID() like driveAfterConn does).
+//   2. Set up chained-relay SetProxy at each hop using the REAL
+//      serverCID.Addr that registration captured. Allocate.addr =
+//      target's DialedAddr (= the LISTEN_ADDR that server passed as the
+//      target field when registering the runner; in production, this is
+//      stored in RunnerEntry.DialedAddr per the spec's prerequisite).
+//   3. Initiator does full Phase B agent-proxy ceremony with the leaf
+//      runner (real initial ECDH, real SetProxy via the leaf's
+//      runAgentProxyCeremony pattern, real RehandshakeForProxy).
+//   4. Verify end-to-end roundtrip.
+//
+// What this validates: the addr-propagation chain works through real
+// pc.Connection().ConnectionID() values, with no synthetic shortcuts.
+
+// hopInfo captures the post-registration state of one hop in the chain.
+type hopInfo struct {
+	endpoint   chainEndpoint
+	serverCID  objproto.ConnectionID // the hop's Session.serverCID equivalent
+	dialedAddr netip.AddrPort        // the listen addr the upstream dialed this hop at (= DialedAddr in registry)
+}
+
+// chainRegister walks an existing chain (server → intermediates... → target)
+// and sets up the per-hop SetProxy + drives server's SendHandshake so the
+// target gets registered via the chain. After completion, target.serverCID
+// is populated from the real activeConn at target's end.
+//
+// chainAbove contains the existing intermediates from server-side to
+// target-adjacent. Each must already be registered (serverCID populated).
+//
+// regSlot is the slot_id to use for the registration handshake.
+//
+// Wire-level flow:
+//   - For each intermediate above target, set up SetProxy at regSlot:
+//       owned    = (intermediate.serverCID.Addr, regSlot)
+//       allocate = (next-hop-down.dialedAddr, regSlot)
+//     The last intermediate's allocate.addr = target's listen-addr.
+//   - server.SendHandshake to (top-intermediate.LISTEN_ADDR, regSlot).
+//     With synthetic-owned + eager SetProxy, the Handshake is forwarded
+//     raw through every hop's proxySettings to target.
+//   - target.ep accepts the Handshake (Mutual mode), ECDHs with server's
+//     pubkey, activeConn appears on newActiveSess.
+//   - Read pc.Connection().ConnectionID() from target's side; that's the
+//     real serverCID the runner would record in production.
+func chainRegister(
+	t *testing.T,
+	server chainEndpoint,
+	chainAbove []hopInfo,
+	target chainEndpoint,
+	regSlot uint16,
+) hopInfo {
+	t.Helper()
+
+	for i, hop := range chainAbove {
+		var downstreamAddr netip.AddrPort
+		if i == len(chainAbove)-1 {
+			downstreamAddr = netip.MustParseAddrPort(target.addr)
+		} else {
+			downstreamAddr = chainAbove[i+1].dialedAddr
+		}
+		owned := objproto.NewConnectionID("ws", hop.serverCID.Addr, regSlot)
+		allocate := objproto.NewConnectionID("ws", downstreamAddr, regSlot)
+		if err := hop.endpoint.ep.SetProxy(owned, allocate); err != nil {
+			t.Fatalf("chainRegister: SetProxy on %s: %v", hop.endpoint.name, err)
+		}
+		t.Logf("chainRegister: %s.SetProxy regSlot=%d owned=%v allocate=%v",
+			hop.endpoint.name, regSlot, owned, allocate)
+	}
+
+	var sendAddr string
+	if len(chainAbove) == 0 {
+		sendAddr = target.addr
+	} else {
+		sendAddr = chainAbove[0].endpoint.addr
+	}
+	destCID := objproto.NewConnectionID("ws", netip.MustParseAddrPort(sendAddr), regSlot)
+	priv, hs, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
+	if err != nil {
+		t.Fatalf("chainRegister: NewECDHHandshake: %v", err)
+	}
+	ch, err := server.ep.SendHandshake(destCID, priv, hs)
+	if err != nil {
+		t.Fatalf("chainRegister: server.SendHandshake: %v", err)
+	}
+	select {
+	case <-ch.C:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("chainRegister: server-side completion timeout for %s", target.name)
+	}
+
+	var targetConn objproto.Connection
+	select {
+	case targetConn = <-target.ep.GetNewActiveConnectionChannel():
+	case <-time.After(10 * time.Second):
+		t.Fatalf("chainRegister: target-side accept timeout for %s", target.name)
+	}
+
+	result := hopInfo{
+		endpoint:   target,
+		serverCID:  targetConn.ConnectionID(),
+		dialedAddr: netip.MustParseAddrPort(target.addr),
+	}
+	t.Logf("chainRegister: %s registered, serverCID=%v dialedAddr=%v",
+		target.name, result.serverCID, result.dialedAddr)
+	return result
+}
+
+// chainedRelayPhaseB simulates the leaf runner's runAgentProxyCeremony
+// for an incoming agent dial, then drives the agent-side RehandshakeForProxy.
+// Returns the initiator-side end-to-end Connection.
+//
+// Realistic sequence:
+//   1. initiator.SendHandshake to (leaf.LISTEN_ADDR, agentSlot) — initial
+//      ECDH agent↔leaf. leaf has activeConn with cid=(initiator.SRC-from-leaf, agentSlot).
+//   2. leaf.runAgentProxyCeremony equivalent: SetProxy(
+//        owned = leafIncomingConn.CID,
+//        allocate = (leaf.serverCID.Addr, agentSlot),
+//      ). Close leafIncomingConn.
+//   3. initiator.RehandshakeForProxy(newKey) — packet flows through leaf's
+//      proxySettings → all intermediates → server. server ECDHs with initiator.
+//   4. Both ends have end-to-end peer.Conn.
+//
+// Pre-condition: chained relay setup has already been applied at every
+// intermediate hop for agentSlot.
+func chainedRelayPhaseB(
+	t *testing.T,
+	initiator chainEndpoint,
+	leaf hopInfo,
+	agentSlot uint16,
+) objproto.Connection {
+	t.Helper()
+
+	leafDestCID := objproto.NewConnectionID("ws",
+		netip.MustParseAddrPort(leaf.endpoint.addr), agentSlot)
+	priv1, hs1, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
+	if err != nil {
+		t.Fatalf("phaseB: NewECDHHandshake initial: %v", err)
+	}
+	ch1, err := initiator.ep.SendHandshake(leafDestCID, priv1, hs1)
+	if err != nil {
+		t.Fatalf("phaseB: initiator.SendHandshake: %v", err)
+	}
+	var initLeafConn objproto.Connection
+	select {
+	case initLeafConn = <-ch1.C:
+	case <-time.After(5 * time.Second):
+		t.Fatal("phaseB: initiator-side initial ECDH timeout")
+	}
+	var leafIncomingConn objproto.Connection
+	select {
+	case leafIncomingConn = <-leaf.endpoint.ep.GetNewActiveConnectionChannel():
+	case <-time.After(5 * time.Second):
+		t.Fatal("phaseB: leaf-side initial ECDH accept timeout")
+	}
+
+	leafOwned := leafIncomingConn.ConnectionID()
+	leafAlloc := objproto.NewConnectionID("ws", leaf.serverCID.Addr, agentSlot)
+	if err := leaf.endpoint.ep.SetProxy(leafOwned, leafAlloc); err != nil {
+		t.Fatalf("phaseB: leaf SetProxy: %v", err)
+	}
+	t.Logf("phaseB: leaf %s SetProxy owned=%v allocate=%v",
+		leaf.endpoint.name, leafOwned, leafAlloc)
+	_ = leafIncomingConn.Close() // proxySettings persists, agent rehandshake will forward
+
+	priv2, hs2, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
+	if err != nil {
+		t.Fatalf("phaseB: NewECDHHandshake rehandshake: %v", err)
+	}
+	rh, err := initLeafConn.RehandshakeForProxy(priv2, hs2)
+	if err != nil {
+		t.Fatalf("phaseB: RehandshakeForProxy: %v", err)
+	}
+	var initE2EConn objproto.Connection
+	select {
+	case initE2EConn = <-rh.C:
+	case <-time.After(10 * time.Second):
+		t.Fatal("phaseB: rehandshake completion timeout (chain broken)")
+	}
+	return initE2EConn
+}
+
+func TestChainedRelayPOC_Realistic_3hop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("POC")
+	}
+	const (
+		serverAddr = "127.0.0.1:18800"
+		pAddr      = "127.0.0.1:18801"
+		lAddr      = "127.0.0.1:18802"
+		regSlotP   = uint16(0x1001)
+		regSlotL   = uint16(0x1002)
+		agentSlot  = uint16(0xA001)
+		wsPath     = "/ws"
+	)
+
+	// Server is Mutual: it both accepts (initiator end-to-end) and dials
+	// (Phase C reverse-dial via SendHandshake).
+	server := startMutualEndpoint(t, "server", serverAddr, wsPath)
+	defer server.cancel()
+	p := startMutualEndpoint(t, "P", pAddr, wsPath)
+	defer p.cancel()
+	l := startMutualEndpoint(t, "L", lAddr, wsPath)
+	defer l.cancel()
+	initiator := startClientEndpoint(t, "initiator", wsPath)
+	defer initiator.cancel()
+
+	time.Sleep(300 * time.Millisecond)
+
+	// 1. P registered direct with server (Phase A reverse-dial analog).
+	pInfo := chainRegister(t, server, nil, p, regSlotP)
+	// 2. L registered via P (Phase C).
+	lInfo := chainRegister(t, server, []hopInfo{pInfo}, l, regSlotL)
+
+	// 3. Chained-relay setup for agent slot.
+	//    Server walk: L.Via=P, P.Via=nil. Issue EstablishRelay only to P.
+	//    Per spec, target.addr = L.DialedAddr (= L's LISTEN_ADDR stored at
+	//    registration time). owned uses P's REAL serverCID.Addr (= the addr
+	//    P sees server at, captured during P's own registration).
+	pAgentOwned := objproto.NewConnectionID("ws", pInfo.serverCID.Addr, agentSlot)
+	pAgentAlloc := objproto.NewConnectionID("ws", lInfo.dialedAddr, agentSlot)
+	if err := p.ep.SetProxy(pAgentOwned, pAgentAlloc); err != nil {
+		t.Fatalf("P chained-relay SetProxy: %v", err)
+	}
+	t.Logf("P chained-relay SetProxy: owned=%v allocate=%v", pAgentOwned, pAgentAlloc)
+
+	// 4. Initiator runs Phase B agent ceremony at L.
+	initE2EConn := chainedRelayPhaseB(t, initiator, lInfo, agentSlot)
+
+	var serverE2EConn objproto.Connection
+	select {
+	case serverE2EConn = <-server.ep.GetNewActiveConnectionChannel():
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive end-to-end conn (3-hop chain broken)")
+	}
+	t.Logf("server end-to-end conn: cid=%v", serverE2EConn.ConnectionID())
+
+	payload := []byte{byte(wire.ApplicationPayloadKind_AgentMessage), 0xAA, 0xBB, 0xCC, 0xDD}
+	if _, _, err := initE2EConn.SendMessage(payload); err != nil {
+		t.Fatalf("initiator SendMessage: %v", err)
+	}
+	msg, err := serverE2EConn.ReceiveMessage()
+	if err != nil {
+		t.Fatalf("server ReceiveMessage: %v", err)
+	}
+	if len(msg.Data) < 5 ||
+		msg.Data[0] != byte(wire.ApplicationPayloadKind_AgentMessage) ||
+		msg.Data[1] != 0xAA || msg.Data[2] != 0xBB || msg.Data[3] != 0xCC || msg.Data[4] != 0xDD {
+		t.Fatalf("unexpected payload at server: % x", msg.Data)
+	}
+	t.Log("3-hop realistic-addr chained relay: end-to-end roundtrip CONFIRMED")
+}
+
+func TestChainedRelayPOC_Realistic_4hop(t *testing.T) {
+	if testing.Short() {
+		t.Skip("POC")
+	}
+	const (
+		serverAddr = "127.0.0.1:18810"
+		qAddr      = "127.0.0.1:18811"
+		pAddr      = "127.0.0.1:18812"
+		lAddr      = "127.0.0.1:18813"
+		regSlotQ   = uint16(0x2001)
+		regSlotP   = uint16(0x2002)
+		regSlotL   = uint16(0x2003)
+		agentSlot  = uint16(0xA002)
+		wsPath     = "/ws"
+	)
+
+	server := startMutualEndpoint(t, "server", serverAddr, wsPath)
+	defer server.cancel()
+	q := startMutualEndpoint(t, "Q", qAddr, wsPath)
+	defer q.cancel()
+	p := startMutualEndpoint(t, "P", pAddr, wsPath)
+	defer p.cancel()
+	l := startMutualEndpoint(t, "L", lAddr, wsPath)
+	defer l.cancel()
+	initiator := startClientEndpoint(t, "initiator", wsPath)
+	defer initiator.cancel()
+
+	time.Sleep(300 * time.Millisecond)
+
+	// Topology: server → Q (direct) → P (via Q) → L (via P-via-Q).
+	qInfo := chainRegister(t, server, nil, q, regSlotQ)
+	pInfo := chainRegister(t, server, []hopInfo{qInfo}, p, regSlotP)
+	lInfo := chainRegister(t, server, []hopInfo{qInfo, pInfo}, l, regSlotL)
+
+	// Chained-relay setup: walk L.Via=P, P.Via=Q, Q.Via=nil.
+	// Intermediates [Q, P], dispatched concurrently in production. Here
+	// sequential for test simplicity (no functional difference — both are
+	// independent SetProxy calls on different endpoints).
+	for _, setup := range []struct {
+		name           string
+		hop            hopInfo
+		downstreamAddr netip.AddrPort
+	}{
+		{"Q", qInfo, pInfo.dialedAddr},
+		{"P", pInfo, lInfo.dialedAddr},
+	} {
+		owned := objproto.NewConnectionID("ws", setup.hop.serverCID.Addr, agentSlot)
+		alloc := objproto.NewConnectionID("ws", setup.downstreamAddr, agentSlot)
+		if err := setup.hop.endpoint.ep.SetProxy(owned, alloc); err != nil {
+			t.Fatalf("%s chained-relay SetProxy: %v", setup.name, err)
+		}
+		t.Logf("%s chained-relay SetProxy: owned=%v allocate=%v", setup.name, owned, alloc)
+	}
+
+	initE2EConn := chainedRelayPhaseB(t, initiator, lInfo, agentSlot)
+
+	var serverE2EConn objproto.Connection
+	select {
+	case serverE2EConn = <-server.ep.GetNewActiveConnectionChannel():
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not receive end-to-end conn (4-hop chain broken)")
+	}
+
+	payload := []byte{byte(wire.ApplicationPayloadKind_AgentMessage), 0x11, 0x22, 0x33, 0x44}
+	if _, _, err := initE2EConn.SendMessage(payload); err != nil {
+		t.Fatalf("initiator SendMessage: %v", err)
+	}
+	msg, err := serverE2EConn.ReceiveMessage()
+	if err != nil {
+		t.Fatalf("server ReceiveMessage: %v", err)
+	}
+	if len(msg.Data) < 5 ||
+		msg.Data[0] != byte(wire.ApplicationPayloadKind_AgentMessage) ||
+		msg.Data[1] != 0x11 || msg.Data[2] != 0x22 || msg.Data[3] != 0x33 || msg.Data[4] != 0x44 {
+		t.Fatalf("unexpected payload at server: % x", msg.Data)
+	}
+	t.Log("4-hop realistic-addr chained relay: end-to-end roundtrip CONFIRMED")
+}
