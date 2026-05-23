@@ -231,6 +231,81 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaRelayFailed}
 	}
 
+	// Step 3b: if the direct via is itself a via-registered runner (entry.Via != nil),
+	// walk up the chain and set up EstablishRelay at each upstream hop in parallel.
+	// This is required for N-hop registration: the Handshake sent in Step 4 travels
+	// along the same path as the relay chain. Each hop from entry.Via upward must have
+	// a SetProxy entry for slotID so the Handshake is forwarded rather than accepted
+	// locally.
+	//
+	// For each hop H in the chain above entry (i.e. entry.Via, entry.Via.Via, …),
+	// target = H's downstream's ViaDialAddr (= the listen addr H previously dialed
+	// for the downstream hop's Phase C registration — the same addr it would dial
+	// for chained relay forwarding).
+	if entry.Via != nil {
+		type hopSetup struct {
+			hop  *RunnerEntry
+			addr objproto.ConnectionID
+		}
+		var upstreamHops []hopSetup
+		seen := map[string]struct{}{entry.ID: {}}
+		cur := entry
+		for cur.Via != nil {
+			if _, dup := seen[cur.Via.ID]; dup {
+				// Loop detected — bail out; registration cannot succeed.
+				if h.Logger != nil {
+					h.Logger.Warn("dial-runner via: loop in Via chain, aborting registration",
+						"loop_at", cur.Via.ID)
+				}
+				return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaRelayFailed}
+			}
+			upstreamHops = append(upstreamHops, hopSetup{
+				hop:  cur.Via,
+				addr: cur.ViaDialAddr,
+			})
+			seen[cur.Via.ID] = struct{}{}
+			cur = cur.Via
+		}
+
+		type hopResult struct {
+			ok        bool
+			err       error
+			hopID     string
+			hopStatus protocol.EstablishRelayStatus
+		}
+		results := make(chan hopResult, len(upstreamHops))
+		for _, hp := range upstreamHops {
+			hp := hp
+			go func() {
+				req := protocol.EstablishRelayRequest{
+					Target: protocol.ConnIDToRunnerID(hp.addr),
+					SlotId: slotID,
+				}
+				resp, err := h.ViaSendEstablishRelay(relayCtx, hp.hop, req)
+				results <- hopResult{
+					ok:        err == nil && resp.Status == protocol.EstablishRelayStatus_Ok,
+					err:       err,
+					hopID:     hp.hop.ID,
+					hopStatus: resp.Status,
+				}
+			}()
+		}
+		allOk := true
+		for i := 0; i < len(upstreamHops); i++ {
+			r := <-results
+			if !r.ok {
+				allOk = false
+				if h.Logger != nil {
+					h.Logger.Warn("dial-runner via: upstream hop EstablishRelay non-Ok",
+						"hop", r.hopID, "status", r.hopStatus, "err", r.err)
+				}
+			}
+		}
+		if !allOk {
+			return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_ViaRelayFailed}
+		}
+	}
+
 	if h.Endpoint == nil {
 		// Hooks wired but no endpoint — only reachable in misconfigured tests.
 		if h.Logger != nil {
