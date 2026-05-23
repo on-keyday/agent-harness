@@ -69,6 +69,18 @@ type TaskHandler struct {
 	// Safe to leave nil in tests.
 	OnDialed func(ctx context.Context, conn objproto.Connection)
 
+	// ResolveVia resolves a via-relay CID against the registered runners.
+	// Server.Run wires this to Registry.GetByConnectionID. Tests that exercise
+	// the via-relay branch (TaskControlKind_DialRunner with non-empty Via)
+	// wire a stub directly.
+	ResolveVia func(cid objproto.ConnectionID) (*RunnerEntry, bool)
+
+	// ViaSendEstablishRelay sends an EstablishRelayRequest to the resolved
+	// proxy_runner and blocks for the EstablishRelayResponse. Server.Run wires
+	// this to Server.sendEstablishRelayRequest, which uses a per-conn response
+	// channel registered before send.
+	ViaSendEstablishRelay func(ctx context.Context, entry *RunnerEntry, req protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error)
+
 	// clientKinds maps connection ID → the kind of client that announced
 	// itself via ClientHello on that connection. Submit / OpenInteractive
 	// look it up to attribute task origin (ClientKind_Cli / Tui / Webui).
@@ -250,11 +262,18 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			dialCtx = context.Background()
 		}
 		handler := &DialRunnerHandler{
-			Logger:   slog.Default(),
-			Endpoint: h.Endpoint,
-			OnDialed: h.OnDialed,
+			Logger:                slog.Default(),
+			Endpoint:              h.Endpoint,
+			OnDialed:              h.OnDialed,
+			ResolveVia:            h.ResolveVia,
+			ViaSendEstablishRelay: h.ViaSendEstablishRelay,
 		}
-		dialResp := handler.Handle(dialCtx, dr.Target)
+		var dialResp protocol.DialRunnerResponse
+		if dr.Via.TransportLen == 0 {
+			dialResp = handler.Handle(dialCtx, dr.Target)
+		} else {
+			dialResp = handler.HandleWithVia(dialCtx, dr.Target, dr.Via)
+		}
 		out := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_DialRunner, RequestId: req.RequestId}
 		out.SetDialRunner(dialResp)
 		bytes := out.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})

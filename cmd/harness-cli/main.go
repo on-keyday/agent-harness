@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
@@ -310,16 +311,29 @@ func main() {
 		rest := args[1:]
 		switch ssub {
 		case "dial-runner":
-			if len(rest) != 1 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli server dial-runner <runner-cid>")
+			fs := flag.NewFlagSet("server dial-runner", flag.ExitOnError)
+			viaCIDStr := fs.String("via", "", "relay through this registered runner CID (copy from `harness-cli ls` output)")
+			if err := fs.Parse(rest); err != nil {
+				die(err)
+			}
+			if fs.NArg() != 1 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli server dial-runner [--via <runner-cid>] <runner-cid>")
 				os.Exit(2)
 			}
-			targetCID, err := objproto.ParseConnectionID(rest[0],
+			targetCID, err := objproto.ParseConnectionID(fs.Arg(0),
 				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 			if err != nil {
 				die(fmt.Errorf("parse runner-cid: %w", err))
 			}
-			resp, err := cli.ServerDialRunner(ctx, parseCID(), targetCID)
+			var viaCID objproto.ConnectionID
+			if v := strings.TrimSpace(*viaCIDStr); v != "" {
+				viaCID, err = objproto.ParseConnectionID(v,
+					objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+				if err != nil {
+					die(fmt.Errorf("parse --via: %w", err))
+				}
+			}
+			resp, err := cli.ServerDialRunner(ctx, parseCID(), targetCID, viaCID)
 			if err != nil {
 				die(err)
 			}
@@ -401,7 +415,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  session attach TASK_ID              reattach to a detached/running session")
 	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: detachable interactive sessions only")
 	fmt.Fprintln(os.Stderr, "  session kill TASK_ID                cancel a session (alias of cancel)")
-	fmt.Fprintln(os.Stderr, "  server dial-runner RUNNER_CID       ask the server to reverse-dial a Listen-mode runner")
+	fmt.Fprintln(os.Stderr, "  server dial-runner [--via CID] RUNNER_CID  ask the server to reverse-dial a Listen-mode runner")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
 	fmt.Fprintln(os.Stderr, "  file push [-r|--recursive] [-f|--force] TASK_ID LOCAL_SRC WORKTREE_REL_DST")
@@ -420,7 +434,9 @@ func serverUsage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli server <subcommand> [flags]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
-	fmt.Fprintln(os.Stderr, "  dial-runner RUNNER_CID              ask the server to reverse-dial RUNNER_CID (Phase A)")
+	fmt.Fprintln(os.Stderr, "  dial-runner [--via RUNNER_CID] RUNNER_CID")
+	fmt.Fprintln(os.Stderr, "                                      ask the server to reverse-dial RUNNER_CID (Phase A/B)")
+	fmt.Fprintln(os.Stderr, "                                      --via relays through an already-connected runner (Phase B)")
 	fmt.Fprintln(os.Stderr, "                                      (runner must be running in --listen / --udp-listen mode)")
 	fmt.Fprintln(os.Stderr, "                                      prints the DialRunnerStatus and exits non-zero on non-Ok")
 }

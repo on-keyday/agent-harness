@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,8 +22,9 @@ type ServerDialResultMsg struct {
 }
 
 // DoServerDialRunner asks the server to dial out to runnerCIDStr (a Listen-mode
-// runner) via the existing TUI-server connection.
-func DoServerDialRunner(serverCID objproto.ConnectionID, runnerCIDStr string) tea.Cmd {
+// runner) via the existing TUI-server connection. viaCIDStr, when non-empty,
+// requests the server to relay through the named runner (Phase B).
+func DoServerDialRunner(serverCID objproto.ConnectionID, runnerCIDStr, viaCIDStr string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -30,7 +33,15 @@ func DoServerDialRunner(serverCID objproto.ConnectionID, runnerCIDStr string) te
 		if err != nil {
 			return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
 		}
-		resp, err := cli.ServerDialRunner(ctx, serverCID, targetCID)
+		var viaCID objproto.ConnectionID
+		if v := strings.TrimSpace(viaCIDStr); v != "" {
+			viaCID, err = objproto.ParseConnectionID(v,
+				objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+			if err != nil {
+				return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: fmt.Errorf("--via: %w", err)}
+			}
+		}
+		resp, err := cli.ServerDialRunner(ctx, serverCID, targetCID, viaCID)
 		if err != nil {
 			return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
 		}

@@ -847,7 +847,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner: parse --server-cid: %v", err)))
 			return a, nil
 		}
-		return a, DoServerDialRunner(serverCID, v.RunnerCID)
+		return a, DoServerDialRunner(serverCID, v.RunnerCID, v.Via)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil

@@ -31,21 +31,21 @@ type taskControlClient interface {
 // Short-lived processes (harness-cli) should use this form; long-lived
 // embedders that already hold a *Client should call ServerDialRunnerWith
 // directly to skip the redundant Dial/Close.
-func ServerDialRunner(ctx context.Context, serverCID objproto.ConnectionID, targetCID objproto.ConnectionID) (protocol.DialRunnerResponse, error) {
+func ServerDialRunner(ctx context.Context, serverCID objproto.ConnectionID, targetCID objproto.ConnectionID, viaCID objproto.ConnectionID) (protocol.DialRunnerResponse, error) {
 	c, err := Dial(ctx, serverCID)
 	if err != nil {
 		return protocol.DialRunnerResponse{}, fmt.Errorf("dial server: %w", err)
 	}
 	defer c.Close()
-	return ServerDialRunnerWith(ctx, c, protocol.ConnIDToRunnerID(targetCID))
+	return ServerDialRunnerWith(ctx, c, protocol.ConnIDToRunnerID(targetCID), protocol.ConnIDToRunnerID(viaCID))
 }
 
 // ServerDialRunnerWith is the lower-level form that operates on an already-
 // connected taskControlClient. Exposed for callers that hold a long-lived
 // *Client and want to avoid re-dialing.
-func ServerDialRunnerWith(ctx context.Context, c taskControlClient, target protocol.RunnerID) (protocol.DialRunnerResponse, error) {
+func ServerDialRunnerWith(ctx context.Context, c taskControlClient, target protocol.RunnerID, via protocol.RunnerID) (protocol.DialRunnerResponse, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_DialRunner}
-	req.SetDialRunner(protocol.DialRunnerRequest{Target: target})
+	req.SetDialRunner(protocol.DialRunnerRequest{Target: target, Via: via})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

@@ -140,6 +140,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		Now:                        time.Now,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
+		ExpectedRelays:             newExpectedRelays(),
 	}
 
 	h := &RunHandle{
@@ -322,6 +323,19 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleListFiles(ctx, lf)
+	case protocol.RunnerRequestType_EstablishRelay:
+		er := req.EstablishRelay()
+		if er == nil {
+			return
+		}
+		st := &relayHandlerState{serverCID: session.ServerCID}
+		handleEstablishRelay(ctx, log, st, session.ExpectedRelays, *er, func(resp protocol.EstablishRelayResponse) error {
+			var rm protocol.RunnerMessage
+			rm.Kind = protocol.RunnerMessageType_EstablishRelayResponse
+			rm.SetEstablishRelayResponse(resp)
+			payload := rm.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+			return session.Sender.Send(payload)
+		})
 	}
 }
 

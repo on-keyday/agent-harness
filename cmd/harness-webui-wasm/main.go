@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"syscall/js"
 	"time"
@@ -395,10 +396,11 @@ func harnessCancel(this js.Value, args []js.Value) any {
 }
 
 // harnessServerDialRunner asks the connected server to reverse-dial a
-// Listen-mode runner (Phase A). Used in ACL environments where the runner
-// cannot dial the server directly.
+// Listen-mode runner (Phase A / Phase B relay). Used in ACL environments
+// where the runner cannot dial the server directly.
 //
-//	harness.serverDialRunner(runnerCID) -> Promise<string>  // status as text
+//	harness.serverDialRunner(runnerCID)              -> Promise<string>  // direct dial
+//	harness.serverDialRunner(runnerCID, viaCIDStr)   -> Promise<string>  // relayed via
 func harnessServerDialRunner(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -419,7 +421,18 @@ func harnessServerDialRunner(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("serverDialRunner: parse runner CID: %w", err))
 				return
 			}
-			resp, err := cli.ServerDialRunner(rootCtx, peerCID, targetCID)
+			var viaCID objproto.ConnectionID
+			if len(args) >= 2 && args[1].Type() == js.TypeString {
+				if v := strings.TrimSpace(args[1].String()); v != "" {
+					viaCID, err = objproto.ParseConnectionID(v,
+						objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+					if err != nil {
+						rejectErr(reject, fmt.Errorf("serverDialRunner: parse --via: %w", err))
+						return
+					}
+				}
+			}
+			resp, err := cli.ServerDialRunner(rootCtx, peerCID, targetCID, viaCID)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("serverDialRunner: %w", err))
 				return

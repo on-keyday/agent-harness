@@ -77,6 +77,21 @@ type Server struct {
 
 	agentConnsMu sync.Mutex
 	agentConns   map[objproto.ConnectionID]*agentConn
+
+	// relayRespChMu / relayRespCh correlate inbound
+	// RunnerMessageType_EstablishRelayResponse messages back to the goroutine
+	// that sent the original EstablishRelayRequest. Keyed by the proxy_runner's
+	// ConnectionID — at individual-dogfood scale we treat this as
+	// at-most-one outstanding relay setup per proxy_runner; concurrent admin
+	// dial-runner --via against the SAME proxy_runner would race and the
+	// later request would replace the earlier waiter (the earlier blocks
+	// until timeout).
+	//
+	// This is the simplest correlation that lines up with the wire schema:
+	// EstablishRelayResponse carries no request_id, so we cannot multiplex
+	// without extending the protocol.
+	relayRespChMu sync.Mutex
+	relayRespCh   map[objproto.ConnectionID]chan protocol.EstablishRelayResponse
 }
 
 // New constructs a Server with all components wired but NOT yet listening.
@@ -86,18 +101,20 @@ func New(cfg Config) *Server {
 		cfg.Logger = slog.Default()
 	}
 	s := &Server{
-		cfg:      cfg,
-		registry: NewRegistry(),
-		tasks:    NewTaskStore(),
-		sessions: NewSessionRegistry(),
-		pubsub:   pubsub.NewPubSub(cfg.Logger),
+		cfg:         cfg,
+		registry:    NewRegistry(),
+		tasks:       NewTaskStore(),
+		sessions:    NewSessionRegistry(),
+		pubsub:      pubsub.NewPubSub(cfg.Logger),
+		relayRespCh: make(map[objproto.ConnectionID]chan protocol.EstablishRelayResponse),
 	}
 	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
 	s.runnerHandler = &RunnerHandler{
-		Registry: s.registry,
-		Tasks:    s.tasks,
-		Now:      time.Now,
-		OnChange: s.scheduler.Tick,
+		Registry:                 s.registry,
+		Tasks:                    s.tasks,
+		Now:                      time.Now,
+		OnChange:                 s.scheduler.Tick,
+		OnEstablishRelayResponse: s.deliverEstablishRelayResponse,
 	}
 	logsDir := ""
 	if s.cfg.DataDir != "" {
@@ -113,6 +130,11 @@ func New(cfg Config) *Server {
 		PruneFn: func(cutoff time.Time) int {
 			return s.tasks.PruneTerminal(cutoff, logsDir)
 		},
+		// Via-relay hooks for dial-runner --via path. Endpoint + OnDialed are
+		// wired later in Run (they need the constructed Endpoint), but these
+		// two don't depend on the transport so we set them here.
+		ResolveVia:            s.registry.GetByConnectionID,
+		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
 	}
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,
@@ -627,6 +649,98 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 		return err
 	}
 	return nil
+}
+
+// deliverEstablishRelayResponse routes an inbound EstablishRelayResponse to
+// the goroutine that sent the matching request. Called from
+// RunnerHandler.Handle (case EstablishRelayResponse) on the runner's
+// registered ConnHandle. Drops the message silently if no waiter is
+// registered (e.g. the request timed out before the response arrived, or
+// the runner sent an unsolicited reply).
+func (s *Server) deliverEstablishRelayResponse(conn ConnHandle, resp protocol.EstablishRelayResponse) {
+	cid := conn.ConnectionID()
+	s.relayRespChMu.Lock()
+	ch, ok := s.relayRespCh[cid]
+	s.relayRespChMu.Unlock()
+	if !ok {
+		s.cfg.Logger.Warn("server: EstablishRelayResponse without waiter",
+			"runner", cid.String(), "status", resp.Status)
+		return
+	}
+	select {
+	case ch <- resp:
+	default:
+		// Buffer is size 1; full means the waiter already consumed and we
+		// somehow saw a duplicate, OR the channel was closed by a replacement
+		// (already drained by the close-path). Either way: log + drop.
+		s.cfg.Logger.Warn("server: dropped EstablishRelayResponse (channel full or closed)",
+			"runner", cid.String(), "status", resp.Status)
+	}
+}
+
+// sendEstablishRelayRequest is the ViaSendEstablishRelay hook wired into
+// TaskHandler / DialRunnerHandler. It sends an EstablishRelayRequest over
+// entry.Conn (the proxy_runner's already-registered ConnHandle) and waits
+// for the matching EstablishRelayResponse, routed to the per-entry response
+// channel by RunnerHandler.Handle (case EstablishRelayResponse).
+//
+// Concurrency note: only one outstanding EstablishRelay per proxy_runner is
+// supported (see relayRespCh field comment). A second concurrent dial-runner
+// --via against the same proxy_runner will overwrite the first waiter; the
+// first ends up blocking until ctx times out. Acceptable for individual
+// dogfood; revisit if the protocol grows a request_id.
+func (s *Server) sendEstablishRelayRequest(ctx context.Context, entry *RunnerEntry, req protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
+	if entry == nil || entry.Conn == nil {
+		return protocol.EstablishRelayResponse{}, fmt.Errorf("nil entry / Conn")
+	}
+	connCID := entry.Conn.ConnectionID()
+
+	// Register the per-conn response channel BEFORE sending so we cannot miss
+	// a fast reply that arrives between SendMessage return and the select below.
+	respCh := make(chan protocol.EstablishRelayResponse, 1)
+	s.relayRespChMu.Lock()
+	prev, hadPrev := s.relayRespCh[connCID]
+	s.relayRespCh[connCID] = respCh
+	s.relayRespChMu.Unlock()
+	if hadPrev {
+		// Earlier waiter is shadowed; signal it via close so its select unblocks
+		// (it'll see the zero-value status and surface as ViaRelayFailed).
+		// This is a defensive path — at dogfood scale we expect no overlap.
+		close(prev)
+		s.cfg.Logger.Warn("server: replacing in-flight relay waiter (concurrent dial-runner --via)",
+			"via", connCID.String())
+	}
+	defer func() {
+		s.relayRespChMu.Lock()
+		// Only delete if our own channel is still the registered one; a later
+		// call may have already replaced it.
+		if cur, ok := s.relayRespCh[connCID]; ok && cur == respCh {
+			delete(s.relayRespCh, connCID)
+		}
+		s.relayRespChMu.Unlock()
+	}()
+
+	var rr protocol.RunnerRequest
+	rr.Kind = protocol.RunnerRequestType_EstablishRelay
+	rr.SetEstablishRelay(req)
+	payload, err := rr.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	if err != nil {
+		return protocol.EstablishRelayResponse{}, fmt.Errorf("encode EstablishRelayRequest: %w", err)
+	}
+	if _, _, err := entry.Conn.SendMessage(payload); err != nil {
+		return protocol.EstablishRelayResponse{}, fmt.Errorf("send EstablishRelayRequest: %w", err)
+	}
+
+	select {
+	case <-ctx.Done():
+		return protocol.EstablishRelayResponse{}, ctx.Err()
+	case resp, ok := <-respCh:
+		if !ok {
+			// Channel was closed by a later replacement.
+			return protocol.EstablishRelayResponse{}, fmt.Errorf("relay waiter superseded")
+		}
+		return resp, nil
+	}
 }
 
 // runDetachIdleSweeper cancels any session that has been Detached longer than

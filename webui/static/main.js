@@ -437,14 +437,27 @@ const POLL_INTERVAL_MS = 5000;
           break;
         }
         case "server": {
-          // Currently only `server dial-runner <cid>` is supported.
           if (tokens[1] !== "dial-runner") {
             throw new Error(`server: unknown subcommand ${tokens[1] || "(empty)"} (try: dial-runner)`);
           }
-          if (!tokens[2]) throw new Error("server dial-runner: missing runner CID");
-          if (tokens.length > 3) throw new Error("server dial-runner: too many arguments");
-          const status = await window.harness.serverDialRunner(tokens[2]);
-          out = `server dial-runner ${tokens[2]}: ${status}`;
+          let via = null, target = null;
+          for (let i = 2; i < tokens.length; i++) {
+            const t = tokens[i];
+            if (t === "--via") {
+              i++;
+              if (i >= tokens.length) throw new Error("--via: missing CID");
+              via = tokens[i];
+            } else if (t.startsWith("--via=")) {
+              via = t.slice("--via=".length);
+            } else if (!target) {
+              target = t;
+            } else {
+              throw new Error(`unexpected arg: ${t}`);
+            }
+          }
+          if (!target) throw new Error("server dial-runner: missing runner CID");
+          const status = await window.harness.serverDialRunner(target, via || undefined);
+          out = `server dial-runner ${target}${via ? ` --via=${via}` : ""}: ${status}`;
           break;
         }
         case "help":
@@ -459,7 +472,8 @@ const POLL_INTERVAL_MS = 5000;
             "                            remove a file (no -r) or directory (-r [-f])",
             "  file push <task> <rel>    upload a local file (file picker opens)",
             "  file pull <task> <rel>    download a remote file (browser save dialog)",
-            "  server dial-runner <cid>  ask the server to reverse-dial a Listen-mode runner",
+            "  server dial-runner <cid> [--via <cid>]",
+            "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
             "  help                      this list",
           ].join("\n");
           break;
