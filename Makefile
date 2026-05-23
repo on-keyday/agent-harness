@@ -58,7 +58,12 @@ vet:
 	@go list ./... | grep -v -F -x $(addprefix -e ,$(VET_GENERATED_PKGS)) | xargs go vet
 
 clean:
-	rm -rf bin
+	# Remove only the binaries; leave bin/.run/ alone so scripts/runner.sh
+	# state (pid / log / shutdown sentinels) survives. `rm -rf bin` was the
+	# old form; it nuked the runtime dir, leaving live processes pointing
+	# at a deleted shutdown-file path that the orchestrator could no longer
+	# discover (build_and_restart_all.py reports "no alive agent-runner slots").
+	rm -f $(BIN_TARGETS)
 	rm -f webui/static/main.wasm
 	go clean ./...
 
