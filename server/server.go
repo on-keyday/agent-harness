@@ -100,6 +100,10 @@ type Server struct {
 	// Hello arrives or when the connection closes before Hello.
 	pendingViaInfoMu sync.Mutex
 	pendingViaInfo   map[objproto.ConnectionID]*ViaRegistrationInfo
+
+	// chainedRelay handles RunnerMessage{RequestChainedRelay} from runners
+	// registered via Phase C. Wired in New; referenced by runnerHandler.ChainedRelay.
+	chainedRelay *ChainedRelayHandler
 }
 
 // New constructs a Server with all components wired but NOT yet listening.
@@ -125,6 +129,12 @@ func New(cfg Config) *Server {
 		OnChange:                 s.scheduler.Tick,
 		OnEstablishRelayResponse: s.deliverEstablishRelayResponse,
 	}
+	s.chainedRelay = &ChainedRelayHandler{
+		Logger:             cfg.Logger,
+		Registry:           s.registry,
+		SendEstablishRelay: s.sendEstablishRelayRequest,
+	}
+	s.runnerHandler.ChainedRelay = s.chainedRelay
 	logsDir := ""
 	if s.cfg.DataDir != "" {
 		logsDir = filepath.Join(s.cfg.DataDir, "logs")

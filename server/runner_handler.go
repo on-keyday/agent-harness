@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"log/slog"
 	"path"
@@ -39,6 +40,12 @@ type RunnerHandler struct {
 	// means Phase A direct or reverse-dial — leave entry.Via + entry.ViaDialAddr zero.
 	// Server.Run wires this to Server.takePendingViaInfo.
 	TakePendingViaInfo func(cid objproto.ConnectionID) *ViaRegistrationInfo
+
+	// ChainedRelay, when non-nil, handles RunnerMessage{RequestChainedRelay}
+	// from runners that were registered via Phase C. Wired to
+	// Server.chainedRelay in Server.New.
+	// Nil-safe: tests that do not exercise the chained-relay path leave it unwired.
+	ChainedRelay *ChainedRelayHandler
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -176,6 +183,29 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 				"runnerID", runnerID, "status", er.Status)
 		}
 		// EstablishRelayResponse does not mutate Registry/Tasks; suppress the
+		// trailing OnChange so we don't run a spurious Scheduler.Tick.
+		return
+
+	case protocol.RunnerMessageType_RequestChainedRelay:
+		rcr := msg.RequestChainedRelay()
+		if rcr == nil {
+			slog.Error("RunnerHandler: RequestChainedRelay variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.ChainedRelay == nil {
+			slog.Warn("RunnerHandler: RequestChainedRelay arrived but no handler wired",
+				"runnerID", runnerID)
+			return
+		}
+		resp := h.ChainedRelay.Handle(context.Background(), conn, *rcr)
+		rrResp := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ChainedRelayResponse}
+		rrResp.SetChainedRelayResponse(resp)
+		if rrBytes, err := rrResp.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}); err != nil {
+			slog.Error("RunnerHandler: encode ChainedRelayResponse failed", "runner", runnerID, "err", err)
+		} else if _, _, err := conn.SendMessage(rrBytes); err != nil {
+			slog.Error("RunnerHandler: send ChainedRelayResponse failed", "runner", runnerID, "err", err)
+		}
+		// RequestChainedRelay does not mutate Registry/Tasks; suppress the
 		// trailing OnChange so we don't run a spurious Scheduler.Tick.
 		return
 
