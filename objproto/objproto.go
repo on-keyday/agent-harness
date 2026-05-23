@@ -426,12 +426,21 @@ func NewEndpoint(logger *slog.Logger, mode EndpointMode) RawEndpoint {
 	}
 }
 
+// SetProxy registers a forwarding rule: any packet whose CID matches owned
+// is rewritten to be sent toward allocate (and vice versa). owned and
+// allocate are pure routing keys — neither needs to be an existing
+// activeConnection at the call time. Post-SetProxy, the matching activeConn
+// (if any) is referenced only by user code that holds a `*Connection`
+// pointer; forwarding paths in receive() do not consult activeConnections.
+// See docs/superpowers/specs/2026-05-23-chained-relay-design.md "Audit"
+// section for the full trace.
+//
+// The `allocate must NOT exist as an activeConn` check is preserved to
+// prevent ambiguous routing where an inbound activeConn would compete with
+// the synthetic SetProxy entry.
 func (s *endpoint) SetProxy(owned, allocate ConnectionID) error {
 	s.endpointLock.Lock()
 	defer s.endpointLock.Unlock()
-	if _, exists := s.activeConnections[owned]; !exists {
-		return fmt.Errorf("owned connection not found")
-	}
 	if _, exists := s.activeConnections[allocate]; exists {
 		return fmt.Errorf("allocate connection already exists")
 	}
