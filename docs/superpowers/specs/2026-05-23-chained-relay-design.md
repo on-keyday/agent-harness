@@ -165,15 +165,15 @@ On `RunnerMessage{RequestChainedRelay{slot_id}}` from runner L:
 1. Look up L's `RunnerEntry` in the registry (keyed by L's conn CID).
 2. Walk `L.Via` (the new field) upward, collecting each intermediate proxy_runner. Stop when an entry's `Via` is nil — that hop is directly registered with the server; the walk ends.
    - If `L.Via == nil` → L is direct, reply `ChainedRelayResponse{Direct}`. No setup needed.
-3. For each intermediate hop H (= every entry along the walk INCLUDING L's immediate upstream, but EXCLUDING the directly-registered terminus which IS the server's direct conn):
-   - Wait — clarification: every entry on `L.Via.Via....` chain that is non-nil up to and including the last non-nil. The hop just before the nil-terminator is the one with a direct conn to server; THAT hop is the one that needs Phase C EstablishRelay set up first (because it's the first non-trivial relay layer adjacent to server).
-   - Walk order: server's "natural" issue order is server-adjacent hop FIRST, then working downward toward L. Each hop's EstablishRelay tells the hop "forward slot_id to your downstream" — downstream is the next entry in the walk going toward L.
-4. For each hop H in server-to-L order:
-   a. `target := H_downstream` (= the entry whose `Via == H`, or L itself for the bottom-most relay)
-   b. Send `EstablishRelayRequest{slot_id, target=target.ID-as-RunnerID}` over server's direct registered conn to H (`server.sendEstablishRelayRequest` from Phase C, reused verbatim).
-   c. Wait for response (10s).
-5. If all hops reply Ok, reply `ChainedRelayResponse{Ok}` to L over its e2e conn.
-6. On any hop error: reply with the appropriate status (`HopSetupFailed`). Note open question 4 about rollback of already-Ok'd hops.
+3. Collect the chain: walk `L.Via.Via....` until hitting a nil terminator. Each non-nil entry visited is an intermediate hop that needs an `EstablishRelay` setup. (If L.Via is nil, L is directly registered — no setup needed, reply `Direct`.)
+
+4. For each hop H in the chain, compute `target := H_downstream` — that is, the entry one step closer to L. Concretely: traversing the walk from `L.Via` upward, the immediate downstream of `L.Via` is L itself; the downstream of `L.Via.Via` is `L.Via`; etc.
+
+5. Issue all hops' `EstablishRelayRequest{slot_id, target=H_downstream}` over the server's direct registered conn to each H, **concurrently**. Each hop's SetProxy is independent (synthetic owned + allocate, no precondition between hops), so parallel dispatch is safe and minimizes setup latency.
+
+6. Collect all responses (10s timeout each, applied in parallel).
+   - All Ok → reply `ChainedRelayResponse{Ok}` to L over its e2e conn.
+   - Any hop returns non-Ok or times out → reply `HopSetupFailed`. See open question 4 for rollback of already-Ok'd hops.
 
 Concrete 2-hop example (chain = L → P → server):
 - Walk: L.Via = P, P.Via = nil. Chain = [P].
@@ -182,10 +182,12 @@ Concrete 2-hop example (chain = L → P → server):
 
 Concrete 3-hop example (chain = L → P → Q → server):
 - Walk: L.Via = P, P.Via = Q, Q.Via = nil. Chain = [Q, P] (server-to-L order).
-- Issue 1: `EstablishRelay{slot, target=P}` to Q. Q sets up SetProxy(server.Addr↔P.Addr at slot).
-- Issue 2: `EstablishRelay{slot, target=L}` to P. P sets up SetProxy(Q.Addr↔L.Addr at slot).
-   - Wait — `Q.Addr` from P's view? P's view of Q is P.serverCID.Addr — which equals Q's addr in the server's-view-of-P registry. The `target` field in EstablishRelay names the DOWNSTREAM peer for SetProxy. For P, downstream is L, upstream is Q. P's SetProxy is (upstream side, downstream side) — owned=(Q.Addr-as-from-P, slot), allocate=(L.Addr-as-from-P, slot). The Phase C handler already handles this: it computes owned = (Session.serverCID.Transport, Session.serverCID.Addr, slot_id), i.e. P's own view of its upstream (= Q), which is correct.
-- Two hops, two EstablishRelays, sent in server-to-L order so each upstream is "ready" before its downstream tries to send through.
+- Issue 1: `EstablishRelay{slot, target=P}` to Q. Q sets up SetProxy(owned=(server.Addr, slot), allocate=(P.Addr, slot)).
+- Issue 2: `EstablishRelay{slot, target=L}` to P. P sets up SetProxy(owned=(Session.serverCID.Addr, slot), allocate=(L.Addr, slot)).
+  - The owned side at P uses `P.Session.serverCID` directly — that's P's own view of its upstream, populated by `driveAfterConn` from the `pc.Connection().ConnectionID()` when P was registered. After Phase C through Q, this resolves to `(Q.Addr-as-seen-from-P, slot)`. The Phase C handler `handleEstablishRelay` already computes owned this way; no chain-specific code needed in the handler.
+- Two hops, two EstablishRelays.
+
+The hops can be issued in parallel — each hop's SetProxy uses synthetic owned + allocate and has no dependency on other hops being ready first. Server issues all EstablishRelays concurrently, collects responses, and replies to L once all succeed. Total round-trip from L's view: one `RequestChainedRelay` → server → max(per-hop RT) → response → done.
 
 ### Phase C handler revision (proxy_runner side)
 
