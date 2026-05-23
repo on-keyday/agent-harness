@@ -8,6 +8,7 @@ enum RunnerMessageType:
     task_finished
     heartbeat
     establish_relay_response
+    request_chained_relay
 
 enum RunnerRequestType:
     :u8
@@ -19,6 +20,7 @@ enum RunnerRequestType:
     open_file_transfer
     list_files
     establish_relay
+    chained_relay_response
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -135,6 +137,7 @@ format RunnerMessage:
         RunnerMessageType.task_finished => task_finished :TaskFinished
         RunnerMessageType.heartbeat => ..
         RunnerMessageType.establish_relay_response => establish_relay_response :EstablishRelayResponse
+        RunnerMessageType.request_chained_relay => request_chained_relay :RequestChainedRelay
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -147,7 +150,8 @@ format RunnerRequest:
         RunnerRequestType.task_wake => task_wake :TaskWakeRequest
         RunnerRequestType.open_file_transfer => open_file_transfer :RunnerOpenFileTransferRequest
         RunnerRequestType.list_files         => list_files         :RunnerListFilesRequest
-        RunnerRequestType.establish_relay   => establish_relay   :EstablishRelayRequest
+        RunnerRequestType.establish_relay    => establish_relay    :EstablishRelayRequest
+        RunnerRequestType.chained_relay_response => chained_relay_response :ChainedRelayResponse
 
 enum TaskControlKind:
     :u8
@@ -220,6 +224,24 @@ enum EstablishRelayStatus:
 
 format EstablishRelayResponse:
     status :EstablishRelayStatus
+
+# runner → server: "before I install my local SetProxy for an agent Phase B
+# ceremony, walk my chain on your side and make sure every upstream hop
+# has the right SetProxy entry for slot_id."
+format RequestChainedRelay:
+    slot_id :u16
+
+enum ChainedRelayStatus:
+    :u8
+    ok                  = "ok"
+    direct              = "direct"             # no chain — runner is registered direct
+    slot_collision      = "slot_collision"
+    hop_setup_failed    = "hop_setup_failed"
+    chain_unwalkable    = "chain_unwalkable"
+    another_in_flight   = "another_in_flight"
+
+format ChainedRelayResponse:
+    status :ChainedRelayStatus
 
 # Phase B: agent ↔ runner negotiated-proxy ceremony.
 # Agent sends ProxyRequest as the first app message after peer.Dial-ing the
