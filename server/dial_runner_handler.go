@@ -139,21 +139,21 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID
 // req.Via.TransportLen != 0; an empty via short-circuits to Handle here so the
 // caller only needs to invoke this single entry point.
 //
-// Ceremony (mirrors integration/relay_poc_test.go steps 1-7):
+// Ceremony (eager-SetProxy path, Task 4):
 //
 //  1. Validate target.Transport (InvalidTarget on empty).
 //  2. Resolve via against the registry (ViaNotFound on miss).
 //  3. Send EstablishRelay(target, slot_id) to proxy_runner over its existing
-//     registered conn; wait for EstablishRelayResponse (ViaRelayFailed on non-Ok).
-//  4. SendHandshake to (proxy_runner.Addr, slot_id) — initial ECDH server↔proxy
-//     reusing the live registered conn (Endpoint connMap is keyed by addr, so
-//     no new dial happens). Server's activeConn is delivered via ch1.C.
-//  5. RehandshakeForProxy on that activeConn with a fresh ECDH key. proxy_runner
-//     forwards the new Handshake through its already-installed SetProxy entry;
-//     target ECDH's it and a new activeConn appears at the server via rh.C.
-//  6. Send DialGreeting{Version:1} as the first app message on the end-to-end
+//     registered conn; proxy installs eager SetProxy(owned=(proxy.addr,slot),
+//     allocate=(target.addr,slot)); wait for EstablishRelayResponse (ViaRelayFailed
+//     on non-Ok).
+//  4. SendHandshake to (proxy_runner.Addr, slot_id) — proxy_runner's eager
+//     proxySettings entry forwards the Handshake raw to target; target ECDH's it;
+//     the ACK flows back through proxy's SetProxy to server. Resulting activeConn
+//     IS the end-to-end conn with target. No RehandshakeForProxy step needed.
+//  5. Send DialGreeting{Version:1} as the first app message on the end-to-end
 //     conn so target's listen handler discriminates this as a server-dial.
-//  7. Hand off to OnDialed; PSK + RunnerHello + Registry insert run in the
+//  6. Hand off to OnDialed; PSK + RunnerHello + Registry insert run in the
 //     normal handleConnection goroutine — identical to the direct-dial path.
 //
 // All wait points respect the dial timeout (DialTimeout, default 10s).
@@ -239,83 +239,51 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
 	}
 
-	// Step 4: initial ECDH server↔proxy_runner at slot_id. The Endpoint's
-	// connMap is keyed by addr — the underlying transport reuses the live
-	// registered conn to proxy_runner, no new TCP/UDP dial fires here.
+	// Step 4: ECDH server↔target at slot_id. With eager SetProxy installed at
+	// proxy_runner (Task 4), the Handshake packet is forwarded raw by
+	// proxy_runner's proxySettings entry to target's listen addr. target ECDH's
+	// it; the ACK travels back through proxy's SetProxy to server. The resulting
+	// activeConn IS the end-to-end conn — no rehandshake needed.
 	//
 	// entry.Conn is the ConnHandle registered at RunnerHello time; its
-	// ConnectionID().Addr is the proxy_runner's listen address.
+	// ConnectionID().Addr is the proxy_runner's listen address. slotCID points
+	// there so the underlying transport reuses the live conn to proxy_runner to
+	// send the packet — proxy's proxySettings entry then forwards it to target.
 	proxyAddr := entry.Conn.ConnectionID().Addr
 	proxyTransport := entry.Conn.ConnectionID().Transport
 	slotCID := objproto.NewConnectionID(proxyTransport, proxyAddr, slotID)
 
-	priv1, hs1, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
+	priv, hs, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
 	if err != nil {
 		if h.Logger != nil {
-			h.Logger.Warn("dial-runner via: NewECDHHandshake (initial) failed", "err", err)
+			h.Logger.Warn("dial-runner via: NewECDHHandshake failed", "err", err)
 		}
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
 	}
-	ch1, err := h.Endpoint.SendHandshake(slotCID, priv1, hs1)
+	ch, err := h.Endpoint.SendHandshake(slotCID, priv, hs)
 	if err != nil {
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner via: SendHandshake failed", "slot_cid", slotCID.String(), "err", err)
 		}
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
 	}
-	var initialConn objproto.Connection
-	select {
-	case <-relayCtx.Done():
-		if h.Logger != nil {
-			h.Logger.Warn("dial-runner via: timeout waiting initial activeConn", "err", relayCtx.Err())
-		}
-		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
-	case initialConn = <-ch1.C:
-		if initialConn == nil {
-			if h.Logger != nil {
-				h.Logger.Warn("dial-runner via: initial activeConn nil (handshake table cleared)")
-			}
-			return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
-		}
-	}
-
-	// Step 5: rehandshake. The new Handshake travels through proxy_runner's
-	// SetProxy entry and reaches target; target ECDH's it and produces a fresh
-	// activeConn (target's view). Server's rh.C delivers the server's view of
-	// the end-to-end conn.
-	priv2, hs2, err := objproto.NewECDHHandshake(ecdh.P521(), objproto.AES128GCM)
-	if err != nil {
-		if h.Logger != nil {
-			h.Logger.Warn("dial-runner via: NewECDHHandshake (rehandshake) failed", "err", err)
-		}
-		_ = initialConn.Close()
-		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
-	}
-	rh, err := initialConn.RehandshakeForProxy(priv2, hs2)
-	if err != nil {
-		if h.Logger != nil {
-			h.Logger.Warn("dial-runner via: RehandshakeForProxy failed", "err", err)
-		}
-		_ = initialConn.Close()
-		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
-	}
 	var endToEndConn objproto.Connection
 	select {
 	case <-relayCtx.Done():
 		if h.Logger != nil {
-			h.Logger.Warn("dial-runner via: timeout waiting rehandshake completion", "err", relayCtx.Err())
+			h.Logger.Warn("dial-runner via: timeout waiting end-to-end activeConn", "err", relayCtx.Err())
 		}
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
-	case endToEndConn = <-rh.C:
+	case endToEndConn = <-ch.C:
 		if endToEndConn == nil {
 			if h.Logger != nil {
-				h.Logger.Warn("dial-runner via: end-to-end activeConn nil")
+				h.Logger.Warn("dial-runner via: end-to-end activeConn nil (handshake table cleared)")
 			}
 			return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
 		}
 	}
 
-	// Step 6: send DialGreeting on the end-to-end conn. AEAD validates that
+	// Step 5: send DialGreeting on the end-to-end conn. AEAD validates that
 	// keys are end-to-end server↔target (not relayed via proxy decrypt/re-encrypt).
 	greeting := protocol.DialGreeting{Version: 1}
 	greetingPayload := greeting.MustAppend([]byte{byte(wire.ApplicationPayloadKind_DialGreeting)})
@@ -327,7 +295,7 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 		return protocol.DialRunnerResponse{Status: protocol.DialRunnerStatus_DialFailed}
 	}
 
-	// Step 7: hand off to OnDialed so handleConnection drives the standard
+	// Step 6: hand off to OnDialed so handleConnection drives the standard
 	// PSK + RunnerHello + Registry-insert flow. Pass ViaRegistrationInfo so the
 	// Hello handler can populate entry.Via + entry.ViaDialAddr on the RunnerEntry.
 	viaInfo := &ViaRegistrationInfo{

@@ -108,12 +108,10 @@ type Session struct {
 	// HARNESS_PROXY_VIA_RUNNER (Phase B). Set by ListenAndServe in listen mode.
 	ProxyVia string
 
-	// ExpectedRelays records slot_ids the runner has agreed to relay for via
-	// EstablishRelay (server-via-relay Phase). Written by the
-	// dispatchRunnerRequest handler for RunnerRequestType_EstablishRelay,
-	// read by the listen accept loop in handleAcceptedConn to short-circuit
-	// the slot_id dial into a SetProxy + Close ceremony.
-	ExpectedRelays *expectedRelays
+	// Endpoint is the objproto.Endpoint this session's peer.Conn lives on.
+	// Required by handleEstablishRelay to install eager SetProxy entries.
+	// Set by Connect (dial mode) and by handleServerConn (listen mode).
+	Endpoint objproto.Endpoint
 
 	// runnerCanonicalID is the RunnerID the server keys this runner as in
 	// its registry / agentboard ticket store. Filled from RunnerHelloResponse

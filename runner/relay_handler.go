@@ -3,66 +3,10 @@ package runner
 import (
 	"context"
 	"log/slog"
-	"sync"
-	"time"
 
 	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
-
-// watchIncomingActiveConns is the dial-mode counterpart to listen.go's
-// handleAcceptedConn for the relay-setup path. Dial-mode runners now use
-// EndpointModeMutual at objproto so the server can SendHandshake at a fresh
-// slot_id over the existing reused WS/UDP conn; the resulting activeConn is
-// pushed to ep.GetNewActiveConnectionChannel() but no listener loop reads it.
-// This goroutine fills that gap: it polls the channel and, when the new conn's
-// connection_id matches an expectedRelays entry, drives completeRelaySetup.
-// Non-matching new conns are unexpected in dial mode (the runner is not
-// listening for fresh handshakes from arbitrary peers) and are closed with a
-// warning.
-//
-// Listen-mode runners still use ListenAndServe's accept loop and do NOT spawn
-// this goroutine — they would double-consume the channel.
-//
-// Exits when ctx is canceled.
-func watchIncomingActiveConns(
-	ctx context.Context,
-	ep objproto.Endpoint,
-	expected *expectedRelays,
-	pingInterval time.Duration,
-	logger *slog.Logger,
-) {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	ch := ep.GetNewActiveConnectionChannel()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case conn, ok := <-ch:
-			if !ok {
-				return
-			}
-			slotID := conn.ConnectionID().ID
-			target, hit := expected.Take(slotID)
-			if !hit {
-				logger.Warn("dial-mode runner: unexpected incoming activeConn (no expectedRelays hit), closing",
-					"cid", conn.ConnectionID().String())
-				_ = conn.Close()
-				continue
-			}
-			pc := peer.WrapAcceptedConn(ctx, conn, peer.DialConfig{
-				Logger:       logger,
-				PingInterval: pingInterval,
-			})
-			// Run synchronously: SetProxy + Close is fast and we want any
-			// configuration error to be surfaced before the next conn arrives.
-			completeRelaySetup(logger, ep, pc, target, slotID)
-		}
-	}
-}
 
 // relayHandlerState bundles the inputs needed by EstablishRelay validation.
 // Extracted as a struct so the validation logic is pure-function-testable
@@ -77,7 +21,7 @@ type relayHandlerState struct {
 }
 
 // validate computes the EstablishRelayResponse for a request without touching
-// the endpoint or expectedRelays map. Pure function; safe to test in isolation.
+// the endpoint. Pure function; safe to test in isolation.
 func (s *relayHandlerState) validate(req protocol.EstablishRelayRequest) protocol.EstablishRelayResponse {
 	if len(req.Target.Transport) == 0 {
 		return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_InvalidTarget}
@@ -94,52 +38,27 @@ func (s *relayHandlerState) validate(req protocol.EstablishRelayRequest) protoco
 	return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}
 }
 
-// expectedRelays tracks slot_ids the runner has agreed to relay for.
-// Keyed by slot_id; value is the target ConnectionID used to construct the
-// SetProxy allocate-side CID when the server's slot_id dial arrives.
-//
-// One-shot: Take removes the entry, so a single EstablishRelay grants
-// exactly one relay setup. Written by the EstablishRelay dispatch
-// goroutine, read by the listen accept loop.
-type expectedRelays struct {
-	mu sync.Mutex
-	m  map[uint16]objproto.ConnectionID
-}
-
-func newExpectedRelays() *expectedRelays {
-	return &expectedRelays{m: make(map[uint16]objproto.ConnectionID)}
-}
-
-func (e *expectedRelays) Put(slotID uint16, target objproto.ConnectionID) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.m[slotID] = target
-}
-
-// Take returns the target CID for slotID and deletes the entry. The bool is
-// false when no entry exists. One-shot semantics — subsequent Takes miss.
-func (e *expectedRelays) Take(slotID uint16) (objproto.ConnectionID, bool) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	target, ok := e.m[slotID]
-	if ok {
-		delete(e.m, slotID)
-	}
-	return target, ok
-}
-
 // handleEstablishRelay processes an EstablishRelayRequest from the server,
-// invoked from dispatchRunnerRequest. Validates, records the expected slot
-// (on Ok), and sends the response back via sendResponse.
+// invoked from dispatchRunnerRequest. Validates, then immediately installs
+// a SetProxy entry (eager SetProxy) on Ok. This is safe because
+// objproto.SetProxy no longer requires owned to be a live activeConn
+// (synthetic-owned relaxation landed in commit f2b0f5c).
 //
-// NOTE: this does NOT dial target or set up SetProxy. Those happen later
-// when the server's slot_id dial arrives at the accept handler — see
-// completeRelaySetup, invoked from listen.go's handleAcceptedConn.
+// Eager SetProxy is required for chained relay: the agent's rehandshake at
+// the slot_id is forwarded raw by the proxySettings entry without ever
+// creating a local activeConn at proxy_runner. Lazy expectedRelays would
+// never fire in that case.
+//
+// For existing Phase C (direct server --via): the server's SendHandshake at
+// slot_id hits proxy_runner's eager proxySettings entry and is forwarded raw
+// to target. Target ECDH's it; the resulting activeConn IS the end-to-end
+// conn — server's HandleWithVia uses this directly (Task 4 also drops the
+// old RehandshakeForProxy step from dial_runner_handler.go).
 func handleEstablishRelay(
 	ctx context.Context,
 	logger *slog.Logger,
 	st *relayHandlerState,
-	expected *expectedRelays,
+	ep objproto.Endpoint,
 	req protocol.EstablishRelayRequest,
 	sendResponse func(protocol.EstablishRelayResponse) error,
 ) {
@@ -147,64 +66,29 @@ func handleEstablishRelay(
 	resp := st.validate(req)
 	if resp.Status == protocol.EstablishRelayStatus_Ok {
 		targetCID := protocol.RunnerIDToConnID(req.Target)
-		expected.Put(req.SlotId, targetCID)
-		if logger != nil {
-			logger.Info("relay: expecting server dial",
-				"slot_id", req.SlotId,
-				"target", targetCID.String())
+		ownedCID := objproto.NewConnectionID(st.serverCID.Transport, st.serverCID.Addr, req.SlotId)
+		allocCID := objproto.NewConnectionID(targetCID.Transport, targetCID.Addr, req.SlotId)
+		if err := ep.SetProxy(ownedCID, allocCID); err != nil {
+			if logger != nil {
+				logger.Warn("relay: eager SetProxy failed",
+					"owned", ownedCID.String(),
+					"allocate", allocCID.String(),
+					"err", err)
+			}
+			// No perfect-fit status exists for SetProxy failure. Reuse
+			// InvalidTarget: it is distinguishable in logs and no external
+			// users depend on a richer error model (feedback_individual_dogfood).
+			resp.Status = protocol.EstablishRelayStatus_InvalidTarget
+		} else {
+			if logger != nil {
+				logger.Info("relay: eager SetProxy installed",
+					"owned", ownedCID.String(),
+					"allocate", allocCID.String(),
+					"slot_id", req.SlotId)
+			}
 		}
 	}
 	if err := sendResponse(resp); err != nil && logger != nil {
 		logger.Warn("relay: send response failed", "err", err)
-	}
-}
-
-// completeRelaySetup runs when the listen accept loop sees a slot_id dial
-// that matches an expectedRelays entry. The activeConn at
-// (server.Addr, slot_id) is already established (initial ECDH server↔
-// proxy_runner completed). This function:
-//
-//  1. SetProxy(owned=activeConn.CID, allocate=synthetic (target.Transport,
-//     target.Addr, slot_id)) — allocate-side is purely synthetic because
-//     proxy_runner does not have an activeConn for target.
-//  2. Close the underlying objproto connection silently (NOT via peer.Conn.Close,
-//     which would send a trsf.Close wire message to the server and cause
-//     the server's endToEndConn to receive EOF prematurely). Using
-//     pc.Connection().Close() removes the activeConn entry from the endpoint
-//     and leaves the proxySettings entry in place so subsequent packets at
-//     this CID are forwarded raw to target.Addr.
-//
-// proxy_runner does NOT ECDH target and does NOT send DialGreeting — those
-// are the server's responsibility after RehandshakeForProxy (Task 3).
-func completeRelaySetup(
-	logger *slog.Logger,
-	ep objproto.Endpoint,
-	pc *peer.Conn,
-	target objproto.ConnectionID,
-	slotID uint16,
-) {
-	// Close the raw connection without sending a trsf.Close wire message.
-	// peer.Conn.Close() would send Close (causing server's endToEndConn to
-	// receive EOF). We only need to release the activeConn slot; the
-	// proxySettings entry must survive.
-	defer pc.Connection().Close() //nolint:errcheck
-
-	ownedCID := pc.Connection().ConnectionID()
-	allocCID := objproto.NewConnectionID(target.Transport, target.Addr, slotID)
-
-	if err := ep.SetProxy(ownedCID, allocCID); err != nil {
-		if logger != nil {
-			logger.Error("relay: SetProxy failed",
-				"owned", ownedCID.String(),
-				"allocate", allocCID.String(),
-				"err", err)
-		}
-		return
-	}
-	if logger != nil {
-		logger.Info("relay: SetProxy established",
-			"owned", ownedCID.String(),
-			"allocate", allocCID.String(),
-			"slot_id", slotID)
 	}
 }

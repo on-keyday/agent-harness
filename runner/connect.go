@@ -96,13 +96,9 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Dial-mode runner uses EndpointModeMutual so server-initiated Handshakes
-	// (at fresh slot_ids — Phase C relay setup) create activeConns that land
-	// on ep.GetNewActiveConnectionChannel(). Listen mode's accept loop reads
-	// that channel; dial mode has no such loop, so spawn a dedicated watcher
-	// that drives completeRelaySetup when the new conn matches an
-	// expectedRelays entry. Exits when ctx cancels.
-	go watchIncomingActiveConns(ctx, ep, h.session.ExpectedRelays, cfg.PingInterval, cfg.Logger)
+	// Store ep in session so dispatchRunnerRequest can call SetProxy for
+	// EstablishRelay without needing the endpoint threaded through every call.
+	h.session.Endpoint = ep
 	return h, nil
 }
 
@@ -151,7 +147,8 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		Now:                        time.Now,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
-		ExpectedRelays:             newExpectedRelays(),
+		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
+		// mode) after driveAfterConn returns, so the ep is available.
 	}
 
 	h := &RunHandle{
@@ -340,7 +337,7 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		st := &relayHandlerState{serverCID: session.ServerCID}
-		handleEstablishRelay(ctx, log, st, session.ExpectedRelays, *er, func(resp protocol.EstablishRelayResponse) error {
+		handleEstablishRelay(ctx, log, st, session.Endpoint, *er, func(resp protocol.EstablishRelayResponse) error {
 			var rm protocol.RunnerMessage
 			rm.Kind = protocol.RunnerMessageType_EstablishRelayResponse
 			rm.SetEstablishRelayResponse(resp)

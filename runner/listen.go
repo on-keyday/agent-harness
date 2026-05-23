@@ -147,23 +147,14 @@ var lastListenSession atomic.Pointer[Session]
 // agent-proxy path (AgentProxyControl). Other kinds are logged and the
 // conn closed. peer.Conn.Start is idempotent so driveAfterConn (server
 // path) re-calling it is a no-op.
+//
+// With eager SetProxy (Task 4), relay-destined conns at a slot_id never
+// reach handleAcceptedConn: objproto.receive forwards the rehandshake packet
+// raw via proxySettings before the accept channel is notified. No
+// expectedRelays short-circuit is needed here.
 func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], ep objproto.Endpoint, pc *peer.Conn) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
-	}
-
-	// Server-via-relay: if this conn's CID's slot matches an expectedRelays
-	// entry, this is the server's slot_id dial setting up a SetProxy
-	// forward toward the relay target. Short-circuit before installing the
-	// OnControl peek / Start ceremony: completeRelaySetup calls SetProxy
-	// then closes pc, leaving the proxy entry in place. Take() is one-shot
-	// so re-dials on the same slot fall through to the normal dispatch.
-	if sess := sessionRef.Load(); sess != nil && sess.ExpectedRelays != nil {
-		slotID := pc.Connection().ConnectionID().ID
-		if target, ok := sess.ExpectedRelays.Take(slotID); ok {
-			completeRelaySetup(cfg.Logger, ep, pc, target, slotID)
-			return
-		}
 	}
 
 	firstMsg := make(chan firstMsgT, 1)
@@ -190,7 +181,7 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 			if _, err := g.Decode(msg.payload); err == nil {
 				cfg.Logger.Info("server greeting received", "version", g.Version)
 			}
-			handleServerConn(ctx, cfg, sessionRef, pc)
+			handleServerConn(ctx, cfg, sessionRef, ep, pc)
 		case wire.ApplicationPayloadKind_AgentProxyControl:
 			handleAgentProxyConn(ctx, cfg, sessionRef, ep, pc, msg)
 		default:
@@ -206,8 +197,9 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 // invokes driveAfterConn — which replaces the OnControl shim, re-calls
 // Start (no-op due to idempotence), and performs the PSK exchange — then
 // publishes the resulting session to sessionRef so concurrent agent-proxy
-// dials can read it.
-func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], pc *peer.Conn) {
+// dials can read it. ep is stored on the session so dispatchRunnerRequest
+// can call SetProxy for EstablishRelay (eager SetProxy, Task 4).
+func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], ep objproto.Endpoint, pc *peer.Conn) {
 	h, err := driveAfterConn(ctx, cfg, pc)
 	if err != nil {
 		// driveAfterConn already closes pc on PSK failure; do not double-close
@@ -215,6 +207,7 @@ func handleServerConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointe
 		cfg.Logger.Error("server conn: PSK/setup failed", "err", err)
 		return
 	}
+	h.session.Endpoint = ep
 	sessionRef.Store(h.session)
 	defer func() {
 		sessionRef.CompareAndSwap(h.session, nil)
