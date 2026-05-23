@@ -150,8 +150,8 @@ var lastListenSession atomic.Pointer[Session]
 //
 // With eager SetProxy (Task 4), relay-destined conns at a slot_id never
 // reach handleAcceptedConn: objproto.receive forwards the rehandshake packet
-// raw via proxySettings before the accept channel is notified. No
-// expectedRelays short-circuit is needed here.
+// raw via proxySettings before the accept channel is notified. No deferred
+// relay short-circuit is needed here.
 func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Pointer[Session], ep objproto.Endpoint, pc *peer.Conn) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()

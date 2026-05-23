@@ -60,6 +60,7 @@ func TestChainedRelay_Direct(t *testing.T) {
 		Logger:             slog.Default(),
 		Registry:           reg,
 		SendEstablishRelay: noopSendEstablishRelay(t),
+		inFlight:           make(map[string]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -103,6 +104,7 @@ func TestChainedRelay_2Hop(t *testing.T) {
 			mu.Unlock()
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
 		},
+		inFlight: make(map[string]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -159,6 +161,7 @@ func TestChainedRelay_3Hop_Parallel(t *testing.T) {
 			atomic.AddInt32(&callCount, 1)
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
 		},
+		inFlight: make(map[string]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -196,6 +199,7 @@ func TestChainedRelay_HopFailure(t *testing.T) {
 		SendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_SlotCollision}, nil
 		},
+		inFlight: make(map[string]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}
@@ -239,9 +243,62 @@ func TestChainedRelay_LoopDetection(t *testing.T) {
 		Logger:             slog.Default(),
 		Registry:           reg,
 		SendEstablishRelay: noopSendEstablishRelay(t),
+		inFlight:           make(map[string]struct{}),
 	}
 
 	// Request from A — its Via chain loops through B → A → ...
+	conn := &fakeConn{id: aCID}
+	resp := h.Handle(context.Background(), conn, protocol.RequestChainedRelay{SlotId: 99})
+	if resp.Status != protocol.ChainedRelayStatus_ChainUnwalkable {
+		t.Errorf("expected ChainUnwalkable, got %v", resp.Status)
+	}
+}
+
+// TestChainedRelay_3NodeCycle: cyclic Via chain A → B → C → A (3-node cycle).
+// Handle returns ChainUnwalkable and SendEstablishRelay is never called.
+func TestChainedRelay_3NodeCycle(t *testing.T) {
+	reg := NewRegistry()
+
+	dialAddrA := buildTestCID("ws:10.0.2.1:8560-0")
+	dialAddrB := buildTestCID("ws:10.0.2.2:8561-0")
+	dialAddrC := buildTestCID("ws:10.0.2.3:8562-0")
+
+	aCID := buildTestCID("ws:127.0.0.1:9007-1")
+	bCID := buildTestCID("ws:127.0.0.1:9007-2")
+	cCID := buildTestCID("ws:127.0.0.1:9007-3")
+
+	entryA := &RunnerEntry{
+		ID:          aCID.String(),
+		ActiveTasks: make(map[string]struct{}),
+		ViaDialAddr: dialAddrA,
+	}
+	entryB := &RunnerEntry{
+		ID:          bCID.String(),
+		ActiveTasks: make(map[string]struct{}),
+		ViaDialAddr: dialAddrB,
+	}
+	entryC := &RunnerEntry{
+		ID:          cCID.String(),
+		ActiveTasks: make(map[string]struct{}),
+		ViaDialAddr: dialAddrC,
+	}
+	// Wire 3-node cycle: A.Via=B, B.Via=C, C.Via=A.
+	entryA.Via = entryB
+	entryB.Via = entryC
+	entryC.Via = entryA
+
+	reg.Add(entryA)
+	reg.Add(entryB)
+	reg.Add(entryC)
+
+	h := &ChainedRelayHandler{
+		Logger:             slog.Default(),
+		Registry:           reg,
+		SendEstablishRelay: noopSendEstablishRelay(t),
+		inFlight:           make(map[string]struct{}),
+	}
+
+	// Request from A — its Via chain loops B → C → A → ...
 	conn := &fakeConn{id: aCID}
 	resp := h.Handle(context.Background(), conn, protocol.RequestChainedRelay{SlotId: 99})
 	if resp.Status != protocol.ChainedRelayStatus_ChainUnwalkable {
@@ -273,6 +330,7 @@ func TestChainedRelay_AnotherInFlight(t *testing.T) {
 			<-blockCh // block until test releases
 			return protocol.EstablishRelayResponse{Status: protocol.EstablishRelayStatus_Ok}, nil
 		},
+		inFlight: make(map[string]struct{}),
 	}
 
 	conn := &fakeConn{id: lCID}

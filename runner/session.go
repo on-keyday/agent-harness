@@ -112,6 +112,8 @@ type Session struct {
 	// Endpoint is the objproto.Endpoint this session's peer.Conn lives on.
 	// Required by handleEstablishRelay to install eager SetProxy entries.
 	// Set by Connect (dial mode) and by handleServerConn (listen mode).
+	// Written by the same goroutine that subsequently calls OnConnect, so no
+	// mutex is needed; dispatchRunnerRequest cannot observe a nil Endpoint.
 	Endpoint objproto.Endpoint
 
 	// runnerCanonicalID is the RunnerID the server keys this runner as in

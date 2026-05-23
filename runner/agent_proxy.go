@@ -84,7 +84,7 @@ func runAgentProxyCeremony(
 			ch, err := sess.BeginChainedRelay()
 			if err != nil {
 				if logger != nil {
-					logger.Warn("chained-relay: another in flight on this session", "err", err)
+					logger.Warn("chained-relay: another in flight on this session", "err", err, "slot_id", slotID)
 				}
 				resp = protocol.ProxyEstablishResponse{Status: protocol.ProxyEstablishStatus_InternalError}
 			} else {
@@ -95,7 +95,7 @@ func runAgentProxyCeremony(
 				payload := rm.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 				if err := sess.Sender.Send(payload); err != nil {
 					if logger != nil {
-						logger.Error("chained-relay: send RequestChainedRelay failed", "err", err)
+						logger.Error("chained-relay: send RequestChainedRelay failed", "err", err, "slot_id", slotID)
 					}
 					// Clear the pending slot so a future ceremony can proceed.
 					sess.AbortChainedRelay()
@@ -107,7 +107,7 @@ func runAgentProxyCeremony(
 					select {
 					case <-ctx.Done():
 						if logger != nil {
-							logger.Warn("chained-relay: context cancelled waiting for response")
+							logger.Warn("chained-relay: context cancelled waiting for response", "slot_id", slotID)
 						}
 						// Clear the pending slot so a future ceremony can proceed.
 						sess.AbortChainedRelay()

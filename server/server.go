@@ -129,11 +129,7 @@ func New(cfg Config) *Server {
 		OnChange:                 s.scheduler.Tick,
 		OnEstablishRelayResponse: s.deliverEstablishRelayResponse,
 	}
-	s.chainedRelay = &ChainedRelayHandler{
-		Logger:             cfg.Logger,
-		Registry:           s.registry,
-		SendEstablishRelay: s.sendEstablishRelayRequest,
-	}
+	s.chainedRelay = NewChainedRelayHandler(cfg.Logger, s.registry, s.sendEstablishRelayRequest)
 	s.runnerHandler.ChainedRelay = s.chainedRelay
 	logsDir := ""
 	if s.cfg.DataDir != "" {

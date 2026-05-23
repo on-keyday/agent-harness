@@ -35,6 +35,18 @@ type ChainedRelayHandler struct {
 	inFlightMu sync.Mutex
 }
 
+// NewChainedRelayHandler constructs a ChainedRelayHandler with all internal
+// maps eagerly initialized. Always use this instead of a struct literal so
+// that Handle never observes a nil inFlight map.
+func NewChainedRelayHandler(logger *slog.Logger, registry *Registry, sendEstablishRelay func(ctx context.Context, entry *RunnerEntry, req protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error)) *ChainedRelayHandler {
+	return &ChainedRelayHandler{
+		Logger:             logger,
+		Registry:           registry,
+		SendEstablishRelay: sendEstablishRelay,
+		inFlight:           make(map[string]struct{}),
+	}
+}
+
 // Handle processes a RequestChainedRelay from runner L (identified by conn).
 // It returns a ChainedRelayResponse that the caller should send back to L.
 //
@@ -50,9 +62,6 @@ func (h *ChainedRelayHandler) Handle(
 
 	// --- In-flight guard ---
 	h.inFlightMu.Lock()
-	if h.inFlight == nil {
-		h.inFlight = make(map[string]struct{})
-	}
 	if _, exists := h.inFlight[runnerID]; exists {
 		h.inFlightMu.Unlock()
 		return protocol.ChainedRelayResponse{Status: protocol.ChainedRelayStatus_AnotherInFlight}

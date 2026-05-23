@@ -46,8 +46,9 @@ func (s *relayHandlerState) validate(req protocol.EstablishRelayRequest) protoco
 //
 // Eager SetProxy is required for chained relay: the agent's rehandshake at
 // the slot_id is forwarded raw by the proxySettings entry without ever
-// creating a local activeConn at proxy_runner. Lazy expectedRelays would
-// never fire in that case.
+// creating a local activeConn at proxy_runner. Lazy deferred SetProxy (the
+// pre-Task-4 path that required a matching activeConn) would never fire in
+// that case.
 //
 // For existing Phase C (direct server --via): the server's SendHandshake at
 // slot_id hits proxy_runner's eager proxySettings entry and is forwarded raw
