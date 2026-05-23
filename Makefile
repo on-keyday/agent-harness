@@ -2,7 +2,12 @@ CMDS := agent-runner harness-cli harness-server harness-tui
 GOEXE := $(shell go env GOEXE)
 BIN_TARGETS := $(addsuffix $(GOEXE),$(addprefix bin/,$(CMDS)))
 
-.PHONY: all build check webui-build wasm-check test vet clean protoregen help $(BIN_TARGETS)
+.PHONY: all build release check webui-build wasm-check test vet clean protoregen help $(BIN_TARGETS)
+
+# Per-target flags appended to `go build` in the BIN_TARGETS recipe. Empty by
+# default so `make build` matches dev expectations (debug info preserved);
+# `make release` sets release-style flags (see below).
+BUILD_FLAGS ?=
 
 GOROOT := $(shell go env GOROOT)
 WASM_EXEC := $(GOROOT)/lib/wasm/wasm_exec.js
@@ -20,7 +25,14 @@ build: webui-build $(BIN_TARGETS)
 
 $(BIN_TARGETS): bin/%$(GOEXE):
 	@mkdir -p bin
-	go build -o $@ ./cmd/$*
+	go build $(BUILD_FLAGS) -o $@ ./cmd/$*
+
+# Release-style build: -trimpath (strip local paths from binaries for
+# reproducibility) + -ldflags="-s -w" (strip symbol/DWARF tables, ~5MB
+# smaller per binary). Used by CI's matrix build; honors GOOS / GOARCH in
+# the env for cross-compile.
+release: BUILD_FLAGS := -trimpath -ldflags="-s -w"
+release: build
 
 # Compile-check every package without producing binaries (faster than `build`).
 # Useful before commit to catch breakage outside cmd/.
@@ -62,6 +74,7 @@ help:
 	@echo "Targets:"
 	@echo "  webui-build   build wasm module + refresh wasm_exec.js"
 	@echo "  build         webui-build + emit bin/<cmd> for each cmd/*"
+	@echo "  release       build with -trimpath -ldflags=\"-s -w\" (used by CI matrix)"
 	@echo "  check         webui-build + go build ./... (compile-check, no artifacts)"
 	@echo "  wasm-check    GOOS=js GOARCH=wasm go build (lint level)"
 	@echo "  test          go test ./..."

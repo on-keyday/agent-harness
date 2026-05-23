@@ -28,30 +28,25 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # webui-build runs once per matrix shard. Cheap (~1s) and necessary
-      # because cmd/harness-server uses //go:embed for webui/static/main.wasm.
-      - name: webui-build
-        run: make webui-build
-
-      - name: build native binaries
+      # make release = make build with -trimpath -ldflags="-s -w" applied to
+      # every cmd/. Honors GOOS / GOARCH / GOEXE in the env (Makefile uses
+      # `go env GOEXE` so cross-compile to windows automatically appends .exe).
+      # cmd/harness-server's //go:embed of webui/static/main.wasm is handled by
+      # the webui-build dependency in the build target.
+      - name: make release
         env:
           GOOS: ${{ matrix.target.os }}
           GOARCH: ${{ matrix.target.arch }}
           CGO_ENABLED: "0"
+        run: make release
+
+      - name: stage release artifacts
         run: |
           set -euxo pipefail
-          mkdir -p dist/bin
-          EXE=""
-          if [ "$GOOS" = "windows" ]; then EXE=".exe"; fi
-          for cmd in agent-runner harness-cli harness-server harness-tui; do
-            go build -trimpath -ldflags="-s -w" -o "dist/bin/${cmd}${EXE}" "./cmd/${cmd}"
-          done
-          # Bundle the webui static dir alongside binaries so a downloader
-          # can host /static/ + main.wasm without rebuilding.
-          mkdir -p dist/webui/static
+          mkdir -p dist/bin dist/webui/static
+          cp bin/* dist/bin/
           cp webui/static/main.wasm dist/webui/static/
           cp webui/static/wasm_exec.js dist/webui/static/
-          # README pointer
           cp README.md dist/ 2>/dev/null || true
 
       - name: pack archive
