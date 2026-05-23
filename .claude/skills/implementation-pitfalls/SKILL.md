@@ -68,21 +68,7 @@ Fixed in `c55ed45` (TUI/WebUI use the `*With` variant on `a.client` / `currentCl
 
 ---
 
-## Pitfall 4 — Defensive AND-gating creating silent failures
-
-**What went wrong**: When I just added env-based proxy detection to `cli.DialPeerConn`, I gated it on BOTH `HARNESS_PROXY_VIA_RUNNER` AND `HARNESS_TASK_ID` being set. The rationale was "Phase B requires task_id" — true, but admin-side processes that have `HARNESS_PROXY_VIA_RUNNER` somehow (manual export, env merging, future scenarios) would fall back to direct dial silently instead of erroring. Worse: if `HARNESS_TASK_ID` resolution failed for any reason, the proxy attempt would be skipped without log.
-
-Fixed before the commit (current `cli.DialPeerConn`): only the presence of `HARNESS_PROXY_VIA_RUNNER` triggers proxy mode; missing task_id surfaces as a loud error.
-
-**Why it slipped (would have, if user hadn't pushed back)**: "Be defensive about both env vars" feels safer. It isn't — it converts a loud "you're misconfigured" into a silent "and now you're hitting a different network path than you expected".
-
-**Mitigation — general principle:**
-
-When you find yourself writing `if X && Y { useFeature }` for env / config gating, ask: what should happen if X is set but Y is missing? If the answer is "silent fallback", that's almost always wrong. Surface the misconfiguration explicitly instead.
-
----
-
-## Pitfall 5 — Build-output / runtime-state collision in `make clean`
+## Pitfall 4 — Build-output / runtime-state collision in `make clean`
 
 **What went wrong**: `make clean` was `rm -rf bin`. `bin/.run/` is the runtime state directory for `scripts/runner.sh` (slot pid / log / shutdown sentinel files). Live agent-runner processes kept their `--shutdown-file` path open across the delete; subsequent restart attempts via `scripts/build_and_restart_all.py` reported "no alive agent-runner slots under bin/.run/" because the orchestrator could no longer discover them.
 
@@ -96,7 +82,7 @@ Audit `make clean` / `git clean` / build scripts for the new path. Better: don't
 
 ---
 
-## Pitfall 6 — `peer.Conn.Close()` sends wire-level Close, breaks relay setup
+## Pitfall 5 — `peer.Conn.Close()` sends wire-level Close, breaks relay setup
 
 **What went wrong**: `runner/relay_handler.go`'s `completeRelaySetup` initially called `pc.Close()` after `SetProxy`. `peer.Conn.Close()` sends a `trsf.Close` wire message before tearing down — but that wire Close reached the SERVER's end-to-end relay conn (which shares the same CID through SetProxy) and caused `handleConnection` on the server to exit EOF prematurely, before the target runner's `RunnerHello` arrived.
 
@@ -112,7 +98,7 @@ Fixed in commit `101128d` — use `pc.Connection().Close()` (raw objproto-level 
 
 ---
 
-## Pitfall 7 — Listen bind addr ≠ dial target addr
+## Pitfall 6 — Listen bind addr ≠ dial target addr
 
 **What went wrong**: `HARNESS_PROXY_VIA_RUNNER` was set to literal `cfg.WSListen` (e.g. `"ws:0.0.0.0:8540-*"`). Agents on the same host tried to dial `0.0.0.0:8540` — accepted by Linux kernel as localhost, rejected by Windows / macOS. With `--listen :8540` (host empty) the agent got `ws::8540-*` which fails DNS lookup on every OS.
 
@@ -134,7 +120,6 @@ When dispatching an implementer or reviewer subagent in this project, include in
 - [ ] Quote the spec's **Problem statement** verbatim. Report which bullets the diff addresses; justify omissions.
 - [ ] **Sibling-code grep**: before adding code to TUI/WebUI/server handlers, grep how adjacent files in the same layer invoke the same helper category. Match the existing pattern.
 - [ ] Beware `peer.Conn.Close()` vs `pc.Connection().Close()` when working with relays.
-- [ ] If gating a feature on multiple env vars, default to OR (presence of ANY signal triggers the feature, missing required complements surface as loud errors) — not AND with silent fallback.
 
 ### Reviewer prompt augmentations
 - [ ] Read BOTH the Problem statement AND the Implementation section. Flag uncovered problem-statement bullets.
