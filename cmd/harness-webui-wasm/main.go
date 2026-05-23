@@ -34,7 +34,6 @@ var (
 
 	clientMu sync.Mutex
 	client   *cli.Client
-	peerCID  objproto.ConnectionID
 
 	connStateHandler  js.Value
 	connStateHandlerM sync.Mutex
@@ -146,7 +145,6 @@ func harnessConnect(this js.Value, args []js.Value) any {
 						}
 						clientMu.Lock()
 						client = handle.C
-						peerCID = peerCIDLocal
 						clientMu.Unlock()
 						startedOnce.Do(func() { close(started) })
 						<-runCtx.Done()
@@ -406,7 +404,8 @@ func harnessServerDialRunner(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			if _, err := currentClient(); err != nil {
+			c, err := currentClient()
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -432,7 +431,9 @@ func harnessServerDialRunner(this js.Value, args []js.Value) any {
 					}
 				}
 			}
-			resp, err := cli.ServerDialRunner(rootCtx, peerCID, targetCID, viaCID)
+			resp, err := cli.ServerDialRunnerWith(rootCtx, c,
+				protocol.ConnIDToRunnerID(targetCID),
+				protocol.ConnIDToRunnerID(viaCID))
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("serverDialRunner: %w", err))
 				return

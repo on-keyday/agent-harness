@@ -11,7 +11,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -842,12 +841,11 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
 	case ServerDialRunnerAction:
-		serverCID, err := cliopts.ResolveServerCID(a.server)
-		if err != nil {
-			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner: parse --server-cid: %v", err)))
+		if a.client == nil {
+			a.cmdresult.Append(ErrorStyle.Render("server dial-runner: not connected to server"))
 			return a, nil
 		}
-		return a, DoServerDialRunner(serverCID, v.RunnerCID, v.Via)
+		return a, DoServerDialRunner(a.client, v.RunnerCID, v.Via)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil

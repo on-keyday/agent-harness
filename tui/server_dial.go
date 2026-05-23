@@ -21,10 +21,14 @@ type ServerDialResultMsg struct {
 	Err       error
 }
 
-// DoServerDialRunner asks the server to dial out to runnerCIDStr (a Listen-mode
-// runner) via the existing TUI-server connection. viaCIDStr, when non-empty,
-// requests the server to relay through the named runner (Phase B).
-func DoServerDialRunner(serverCID objproto.ConnectionID, runnerCIDStr, viaCIDStr string) tea.Cmd {
+// DoServerDialRunner asks the server (via the TUI's existing *cli.Client) to
+// dial out to runnerCIDStr (a Listen-mode runner). viaCIDStr, when non-empty,
+// requests the server to relay through the named runner (Phase C).
+//
+// Reuses the long-lived client established by App.BindClient instead of opening
+// a fresh peer.Conn per call — every other TUI action (submit/cancel/interactive
+// /file/session) follows this pattern.
+func DoServerDialRunner(c *cli.Client, runnerCIDStr, viaCIDStr string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
@@ -41,7 +45,9 @@ func DoServerDialRunner(serverCID objproto.ConnectionID, runnerCIDStr, viaCIDStr
 				return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: fmt.Errorf("--via: %w", err)}
 			}
 		}
-		resp, err := cli.ServerDialRunner(ctx, serverCID, targetCID, viaCID)
+		resp, err := cli.ServerDialRunnerWith(ctx, c,
+			protocol.ConnIDToRunnerID(targetCID),
+			protocol.ConnIDToRunnerID(viaCID))
 		if err != nil {
 			return ServerDialResultMsg{RunnerCID: runnerCIDStr, Err: err}
 		}
