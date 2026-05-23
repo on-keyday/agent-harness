@@ -76,6 +76,40 @@ agent ──Handshake(rehandshake)──> local ──fwd(slot)──> proxy ─
 
 ## Design
 
+### Prerequisite: `objproto.SetProxy` accepts synthetic `owned`
+
+Current `objproto.SetProxy(owned, allocate)` requires `owned` to exist in
+`activeConnections`. This is a precondition leftover from the ksdk pattern
+where the proxy first ECDH's with the initiator, then `SetProxy`s, then
+closes the activeConn. After Close, the proxySettings entry persists and
+forwarding still works (verified in `completeRelaySetup`: it Closes the
+activeConn but forwarding continues for subsequent packets).
+
+For chained relay, this precondition forces every hop to perform an
+initial-ECDH "warm-up" before `SetProxy` can run (lower hop sending
+Handshake to upper hop). That doubles the round-trips per hop and adds
+ordering complexity.
+
+**Spec change**: remove the `owned must exist` check in
+`objproto.SetProxy`. After the change, `SetProxy` becomes pure
+proxySettings registration — both `owned` and `allocate` are synthetic
+ConnectionIDs (matching incoming packet headers); no activeConn
+requirement on either side.
+
+Safety:
+- The activeConn at `owned` was never used post-`SetProxy` (Phase C's
+  `completeRelaySetup` Closes it immediately).
+- `allocate must NOT exist` check is preserved — prevents ambiguous
+  routing where an inbound packet would match both proxySettings and an
+  activeConn.
+- No new attack surface: `SetProxy` is called internally by runner code;
+  there is no public API for arbitrary peers to invoke it.
+
+Phase C's existing usage continues to work: `completeRelaySetup` happens
+to call `SetProxy` AFTER an activeConn exists (because the server's
+initial ECDH already ran), so the existing-conn case is the trivial
+subset of the relaxed contract.
+
 ### Wire schema additions
 
 `runner/protocol/message.bgn`:
@@ -146,68 +180,114 @@ Server adds a handler for `RunnerMessage{ExtendRelayRequest}`:
 
 #### Upstream peer: proxy_runner case (recursive)
 
-When a proxy_runner receives `RunnerMessage{ExtendRelayRequest}` from a registered runner:
+When a proxy_runner receives `RunnerMessage{ExtendRelayRequest}` from a
+registered lower-runner over its incoming registered conn:
 
-1. Slot collision check vs its own server-conn slot_id (same logic as `relayHandlerState.validate` for Phase C)
-2. Store `expectedRelays[req.slot_id]` = `(local.serverCID.Transport, local.serverCID.Addr, req.slot_id)` — same shape as `runAgentProxyCeremony`'s `allocateCID` but built from this proxy_runner's view of ITS server (which is either the real server OR yet another proxy_runner upstream)
-3. **Recurse**: send its own `ExtendRelayRequest{slot_id, target=req.target}` to ITS upstream peer over its own registered conn
-4. Wait for upstream response (timeout 10s, propagated)
-5. On upstream Ok / NotAProxy → reply Ok to the original caller
-6. On upstream error → reply with the appropriate error (e.g. UpstreamFailed)
-7. When the actual Handshake packet arrives at slot_id later (from the lower runner via SetProxy forward at the lower runner's local SetProxy), the existing `watchIncomingActiveConns` (or accept-loop equivalent) picks it up via the `expectedRelays.Take(slot_id)` hit and runs `completeRelaySetup`
+1. Slot collision check vs its own server-conn slot_id (same as
+   `relayHandlerState.validate` for Phase C).
+2. **Recurse first**: send its own `ExtendRelayRequest{slot_id, target=req.target}`
+   to its OWN upstream peer over its own outbound registered conn.
+3. Wait for upstream response (timeout 10s).
+4. On upstream Ok / NotAProxy:
+   - Compute `owned` = synthetic `(lower_runner.Addr, slot_id)` where
+     `lower_runner.Addr` is the addr of the registered conn the request
+     arrived over (= the proxy's view of the runner that sent ExtendRelay).
+   - Compute `allocate` = synthetic `(local.serverCID.Transport,
+     local.serverCID.Addr, slot_id)` — this proxy_runner's view of its
+     upstream peer.
+   - Call `ep.SetProxy(owned, allocate)` — with the synthetic-owned change
+     from "Prerequisite" above, no prior ECDH required.
+   - Reply `Ok` downward via `RunnerRequest{ExtendRelayResponse{Ok}}`.
+5. On upstream error: do NOT SetProxy, reply with appropriate error
+   (`UpstreamFailed` etc.) downward.
 
-The same `expectedRelays` map and `completeRelaySetup` function (`runner/relay_handler.go`) are reused — no fork of the codepath.
+`expectedRelays` map and `completeRelaySetup` from the Phase C handler are
+NOT used in the chained path — SetProxy happens eagerly in step 4,
+before any Handshake packet arrives. (Phase C's lazy SetProxy was driven
+by the ksdk-style initial-ECDH-then-SetProxy pattern; with synthetic
+owned that bootstrap is unnecessary.)
+
+The Phase C original handler (`runner/relay_handler.go` `completeRelaySetup`)
+may be left in place as-is or migrated to the eager pattern in a follow-up
+cleanup. Either way, this spec only requires the eager pattern for the new
+ExtendRelay path.
 
 ### Ceremony (full 2-hop case)
 
-```
-admin laptop                  agent on runner_L      runner_L           proxy_runner_P   server
-                              (HARNESS_TASK_ID set)  (listen mode,      (dial mode,
-                              (HARNESS_PROXY_VIA=    registered via     directly
-                               local L addr)          Phase C through P) registered)
+With synthetic-owned SetProxy (see Prerequisite above), every hop sets up
+its forwarding rule eagerly in `handleExtendRelay`. The agent's rehandshake
+then flows through all SetProxy entries without any hop processing the
+handshake locally.
 
-[Phase A + Phase C registration setup happens earlier]
-agent invokes `harness-cli ls`:
+```
+agent on runner_L      runner_L            proxy_runner_P       server
+(HARNESS_TASK_ID set)  (listen mode,       (dial mode,
+(HARNESS_PROXY_VIA=    registered via      directly
+ local L addr)          Phase C through P)  registered)
+
+[Phase A direct dial registration of P, then Phase C registration of L
+ through P, both completed earlier.]
+
+agent invokes harness-cli ls:
   agent.cli.DialPeerConn → DialViaProxy(L, taskID)
-  ───Dial L─────────────────────────►
-  ───ProxyRequest{taskID}────────────►
-                                       L.runAgentProxyCeremony:
-                                         validate → Ok
-                                         (NEW STEP) send ExtendRelay
-                                         ──ExtendRelayRequest{slot=agentCID.ID, target=server.Addr}─►
-                                                                           P.handleExtendRelay:
-                                                                             validate slot collision → Ok
-                                                                             Put expectedRelays[slot]
-                                                                               = (P.serverCID.Addr, slot)
-                                                                             (NEW STEP, recurse)
-                                                                             ──ExtendRelayRequest{slot, target}─►
-                                                                                                              server.handle:
-                                                                                                                target == self → reply NotAProxy
-                                                                                                              ◄──Response{NotAProxy}─
-                                                                           Ok → reply Ok upward
-                                         ◄─Response{Ok}─────────────────
-                                         (CONTINUE existing path)
-                                         SetProxy(agentCID, allocate=(L.serverCID.Addr, slot))
-                                                                                 (= P.Addr, slot)
-                                         reply ProxyEstablishResponse{Ok}
-  ◄─Response{Ok}──────────────────────
-  ───RehandshakeForProxy───►
-                                       L's SetProxy hits → forward
-                                       ────────────────────────────────►
-                                                                           P's expectedRelays hit
-                                                                           → completeRelaySetup
-                                                                           → SetProxy(L.Addr-slot,
-                                                                              alloc=(server.Addr, slot))
-                                                                           ───────────────────────────►
-                                                                                                              server.receive
-                                                                                                              → ECDH with agent
-                                                                                                              ←─HandshakeAck (back through
-                                                                                                                proxy SetProxy chain)
-  ◄─end-to-end peer.Conn ready (agent ↔ server, transparent through L and P)
+  ──Dial L (initial ECDH)─────►
+  ──ProxyRequest{taskID}──────►
+                                L.runAgentProxyCeremony:
+                                  validate task_id → Ok
+                                  (NEW) emit ExtendRelay upstream
+                                  ──ExtendRelayRequest{slot=agentCID.ID,
+                                                       target=server.Addr}──►
+                                                                              P.handleExtendRelay:
+                                                                                slot collision → Ok
+                                                                                (NEW) recurse upstream
+                                                                                ──ExtendRelayRequest{slot,
+                                                                                                     target}──►
+                                                                                                                 server.handle:
+                                                                                                                   target == self
+                                                                                                                 ◄─Response{NotAProxy}─
+                                                                                upstream Ok →
+                                                                                  SetProxy(
+                                                                                    owned=(L.Addr, slot)  ← synthetic
+                                                                                    allocate=(server.Addr, slot)  ← synthetic
+                                                                                  )
+                                  ◄─Response{Ok}─────────────────────────
+                                  (continue existing path)
+                                  SetProxy(
+                                    owned=(local-view-of-agent, slot)  ← real activeConn from initial Dial
+                                    allocate=(P.Addr, slot)            ← synthetic
+                                  )
+                                  ProxyEstablishResponse{Ok}
+  ◄─Response{Ok}──────────────
+  ──RehandshakeForProxy──►
+                                L's proxySettings hit (owned side)
+                                → forward raw to P
+                                ─────────────────────────────►
+                                                                P's proxySettings hit (owned side)
+                                                                → forward raw to server
+                                                                ─────────────────────────────────────►
+                                                                                                       server.receive:
+                                                                                                         Handshake at slot
+                                                                                                         → ECDH with agent's
+                                                                                                           pubkey
+                                                                                                         end-to-end keys
+                                                                                                       ◄─HandshakeAck (back through
+                                                                                                         P's then L's SetProxy)
+  ◄─end-to-end peer.Conn ready (agent ↔ server, opaque through L and P)
 
-agent.cli.Dial returns *cli.Client backed by this end-to-end conn.
-PSK + RunnerHello + actual List request etc. flow normally.
+PSK + RunnerHello (or whatever the cli subcommand needs) flow normally
+agent ↔ server over the relayed conn.
 ```
+
+Key timing properties:
+- Each hop's `SetProxy` is set up BEFORE the rehandshake packet arrives,
+  thanks to synthetic-owned. No hop performs local ECDH on the rehandshake.
+- The chain is established in one downward-pass (each hop synchronously
+  recurses upstream then SetProxy then replies). Total round trips per
+  Phase B with N hops above the local runner: `1 (Phase B local dial) +
+  N (ExtendRelay req/resp per hop, sequentially through the chain) +
+  1 (rehandshake one-way to server, response flows back through chain)`.
+  For N=1 (single Phase C upstream): 3 RTs total before agent's peer.Conn
+  is usable.
 
 ### N-hop case
 
@@ -224,32 +304,36 @@ Limits:
 
 | File | Change |
 |---|---|
+| `objproto/objproto.go` | Remove the `owned must exist in activeConnections` precondition from `SetProxy`. Existing call sites unaffected (their owned still exists at call time; the check is purely defensive). |
+| `objproto/objproto_test.go` | Add a test verifying synthetic-owned SetProxy + forward via the proxySettings table works without any prior ECDH. |
 | `runner/protocol/message.bgn` | Add ExtendRelayRequest / ExtendRelayResponse / ExtendRelayStatus. Variants on RunnerMessage + RunnerRequest. |
 | `runner/protocol/message.go` | Regenerated |
-| `runner/relay_handler.go` | New function `handleExtendRelay` (mirrors `handleEstablishRelay` shape). Sends its own request upstream via Session.Sender. |
+| `runner/relay_handler.go` | New function `handleExtendRelay` — eager SetProxy with synthetic owned, plus recursive upstream send via Session.Sender. |
 | `runner/agent_proxy.go` | `runAgentProxyCeremony` adds an ExtendRelay request step BEFORE local SetProxy. Uses Session.Sender + a response-channel pattern. |
-| `runner/connect.go` | Add `dispatchRunnerRequest` arm for `ExtendRelayResponse` (incoming reply from upstream). |
-| `runner/session.go` | Add per-slot response channel map (mirror of server's `relayRespCh`). |
+| `runner/connect.go` | Add `dispatchRunnerRequest` arm for `ExtendRelayResponse` (incoming reply from upstream) + `ExtendRelayRequest` arm for forwarding-on-behalf-of-lower. |
+| `runner/session.go` | Add per-slot response channel map for outgoing-ExtendRelay correlation (mirror of server's `relayRespCh`). |
 | `server/runner_handler.go` | Add handler for `RunnerMessage{ExtendRelayRequest}`. Compute self-match-or-not, reply via RunnerRequest. |
 | `server/server.go` | Wire the new dispatcher hook into RunnerHandler. |
 | `integration/chained_relay_e2e_test.go` | Flip from "expect failure" to "expect success" — invert the cli.List assertion. |
 
 ### Test plan
 
-- New unit tests on `handleExtendRelay` (slot collision / valid target / invalid target).
-- New unit tests on the recursive upstream-call timeout path.
+- objproto unit test: synthetic-owned SetProxy then receive() forwards by proxySettings without an activeConn.
+- `handleExtendRelay` unit tests (slot collision / valid target / invalid target).
+- Recursive upstream-call timeout path test.
 - Existing `TestChainedRelayMissing` red test becomes green (single assertion flip).
-- New positive E2E: 3-hop case (agent → runner_A → proxy_P → proxy_Q → server) to exercise N>2 path.
+- New positive E2E: 3-hop case (agent → runner_A → proxy_P → proxy_Q → server) to exercise N>2 recursion.
 
-### Order of implementation (per pitfall #1 lesson — keep scope contiguous)
+### Order of implementation (per pitfalls catalog — keep scope contiguous, red test stays red until last commit)
 
-1. Schema additions (commit 1)
-2. Server-side `ExtendRelayRequest` handler (replies NotAProxy for self-target) (commit 2)
-3. proxy_runner-side `handleExtendRelay` + recursive upstream send (commit 3)
-4. agent_proxy ceremony's new pre-SetProxy ExtendRelay step (commit 4)
-5. Flip the red E2E test + add 3-hop test (commit 5)
+1. `objproto.SetProxy` synthetic-owned relaxation + unit test (commit 1)
+2. Schema additions (commit 2)
+3. Server-side `ExtendRelayRequest` handler (replies NotAProxy for self-target) (commit 3)
+4. proxy_runner-side `handleExtendRelay` + recursive upstream send + eager SetProxy (commit 4)
+5. agent_proxy ceremony's new pre-SetProxy ExtendRelay step (commit 5)
+6. Flip the red E2E test + add 3-hop test (commit 6)
 
-Each commit must build + pass its targeted tests independently. The red test should remain red until commit 4 lands; flipping it earlier hides progress.
+Each commit must build + pass its targeted tests independently. The red test should remain red until commit 5 lands; flipping it earlier hides progress.
 
 ## Trust model
 
