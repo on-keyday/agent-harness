@@ -161,11 +161,16 @@ func main() {
 		}
 
 	case "logs":
-		if len(args) == 0 {
+		fs := flag.NewFlagSet("logs", flag.ExitOnError)
+		follow := fs.Bool("follow", false, "after dumping history, keep streaming live log chunks (no-op when task is terminal)")
+		fs.BoolVar(follow, "f", false, "shorthand for --follow")
+		fs.Parse(args)
+		rest := fs.Args()
+		if len(rest) == 0 {
 			fmt.Fprintln(os.Stderr, "logs: missing task id")
 			os.Exit(2)
 		}
-		if err := cli.Logs(ctx, parseCID(), args[0], os.Stdout); err != nil {
+		if err := cli.Logs(ctx, parseCID(), rest[0], os.Stdout, *follow); err != nil {
 			die(err)
 		}
 
@@ -402,7 +407,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
 	fmt.Fprintln(os.Stderr, "  prune-local [--repo PATH] [--before DUR]")
 	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(os.Stderr, "  logs TASK_ID                        stream task log output")
+	fmt.Fprintln(os.Stderr, "  logs [-f|--follow] TASK_ID          dump task log history; -f also streams live chunks until task terminal")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID]")
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
