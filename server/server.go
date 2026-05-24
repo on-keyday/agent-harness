@@ -104,6 +104,13 @@ type Server struct {
 	// chainedRelay handles RunnerMessage{RequestChainedRelay} from runners
 	// registered via Phase C. Wired in New; referenced by runnerHandler.ChainedRelay.
 	chainedRelay *ChainedRelayHandler
+
+	// connWG tracks in-flight handleConnection goroutines so serve() can wait
+	// for their deferred trsf.SendClose (~50ms each) to actually leave the
+	// wire before main() exits. Without this the Close packet often loses
+	// the race against process termination on shutdown, and peers must wait
+	// out AutoGarbageCollect's connectionTimeout (~1 min) to notice the death.
+	connWG sync.WaitGroup
 }
 
 // New constructs a Server with all components wired but NOT yet listening.
@@ -276,7 +283,11 @@ func (s *Server) Run(ctx context.Context) error {
 			s.pendingViaInfo[conn.ConnectionID()] = viaInfo
 			s.pendingViaInfoMu.Unlock()
 		}
-		go s.handleConnection(connCtx, conn)
+		s.connWG.Add(1)
+		go func() {
+			defer s.connWG.Done()
+			s.handleConnection(connCtx, conn)
+		}()
 	}
 	s.runnerHandler.TakePendingViaInfo = s.takePendingViaInfo
 	return s.serve(ctx, ep, mux, httpAddr)
@@ -511,24 +522,48 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		<-serverDone
 	}
 
+	// waitConns blocks (with a bound) for in-flight handleConnection goroutines
+	// to finish their deferred trsf.SendClose+50ms-drain+Close so peers learn
+	// of our exit promptly instead of waiting out AutoGarbageCollect.
+	waitConns := func() {
+		done := make(chan struct{})
+		go func() {
+			s.connWG.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(shutdownGracePeriod):
+			s.cfg.Logger.Warn("server: connection drain timed out; some peers may need to wait for AutoGarbageCollect",
+				"after", shutdownGracePeriod)
+		}
+	}
+
 	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
 	ch := ep.GetNewActiveConnectionChannel()
 	for {
 		select {
 		case <-ctx.Done():
 			shutdownHTTP()
+			waitConns()
 			return ctx.Err()
 		case serveErr := <-serverDone:
 			if serveErr != nil {
 				return fmt.Errorf("http server: %w", serveErr)
 			}
+			waitConns()
 			return nil
 		case session, ok := <-ch:
 			if !ok {
 				shutdownHTTP()
+				waitConns()
 				return nil
 			}
-			go s.handleConnection(ctx, session)
+			s.connWG.Add(1)
+			go func() {
+				defer s.connWG.Done()
+				s.handleConnection(ctx, session)
+			}()
 		}
 	}
 }
