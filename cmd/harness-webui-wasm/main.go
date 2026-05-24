@@ -502,7 +502,7 @@ func harnessPrune(this js.Value, args []js.Value) any {
 				return
 			}
 			var buf bytesBuffer
-			if err := c.Prune(rootCtx, before, &buf); err != nil {
+			if err := c.Prune(rootCtx, before, nil, false, &buf); err != nil {
 				rejectErr(reject, fmt.Errorf("prune: %w", err))
 				return
 			}

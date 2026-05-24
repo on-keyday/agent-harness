@@ -137,9 +137,12 @@ func main() {
 
 	case "prune":
 		fs := flag.NewFlagSet("prune", flag.ExitOnError)
-		before := fs.Duration("before", 7*24*time.Hour, "forget terminal tasks older than this")
+		before := fs.Duration("before", 7*24*time.Hour, "forget terminal tasks older than this (ignored when TASK_IDs are passed)")
+		force := fs.Bool("force", false, "with TASK_IDs: also forget tasks the server still considers active (Queued/Running/Detached)")
+		fs.BoolVar(force, "f", false, "shorthand for --force")
 		fs.Parse(args)
-		if err := cli.Prune(ctx, parseCID(), *before, os.Stdout); err != nil {
+		taskIDs := fs.Args()
+		if err := cli.Prune(ctx, parseCID(), *before, taskIDs, *force, os.Stdout); err != nil {
 			die(err)
 		}
 
@@ -423,7 +426,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--claude-arg --resume <uuid>` finds claude's stored session)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
-	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
+	fmt.Fprintln(os.Stderr, "  prune [--before DUR] [-f|--force] [TASK_ID ...]")
+	fmt.Fprintln(os.Stderr, "                                      ask the server to forget tasks")
+	fmt.Fprintln(os.Stderr, "                                      no TASK_IDs: terminal tasks older than --before")
+	fmt.Fprintln(os.Stderr, "                                      with TASK_IDs: only those (refuses active tasks unless --force)")
 	fmt.Fprintln(os.Stderr, "  prune-local [--repo PATH] [--before DUR] [-f|--force] [TASK_ID ...]")
 	fmt.Fprintln(os.Stderr, "                                      remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      with no TASK_IDs: time-based, removes entries older than --before")

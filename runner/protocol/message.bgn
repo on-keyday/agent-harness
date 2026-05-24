@@ -454,9 +454,15 @@ format SubmitResponse:
 
 format PruneTasksRequest:
     before_ts :u64    # unix nano cutoff; terminal tasks with EndedAt < this are removed
+                      # ignored when task_ids_len > 0
+    task_ids_len :u16
+    task_ids :[task_ids_len]TaskID    # when non-empty: prune only these ids, ignoring before_ts
+    force :u8                          # 1 = also prune ids whose tasks are still active (Queued/Running/Detached)
 
 format PruneTasksResponse:
     removed :u32
+    skipped_active :u32    # id-mode only: tasks not pruned because still active and force=0
+    skipped_missing :u32   # id-mode only: ids that were not present in the server's task store
 
 format GetTaskLogRequest:
     task_id :TaskID

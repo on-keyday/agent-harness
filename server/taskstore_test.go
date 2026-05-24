@@ -435,6 +435,59 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 	}
 }
 
+func TestTaskStorePruneByIDs(t *testing.T) {
+	s := NewTaskStore()
+
+	// One running, one terminal, one we'll request that doesn't exist.
+	idActive := s.Create("/r", "still-running", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	s.Assign(idActive, "runner-x", "/wt-1")
+	// Status stays Running
+
+	idTerminal := s.Create("/r", "done", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	s.Assign(idTerminal, "runner-x", "/wt-2")
+	s.Finish(idTerminal, 0, nil)
+
+	// Keepalive task that shouldn't be touched.
+	idKeep := s.Create("/r", "untouched", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	s.Assign(idKeep, "runner-x", "/wt-3")
+	s.Finish(idKeep, 0, nil)
+
+	missingID := "deadbeefdeadbeefdeadbeefdeadbeef"
+
+	logDir := t.TempDir()
+	// Sentinel log file for the terminal task — should be removed.
+	if err := os.WriteFile(filepath.Join(logDir, idTerminal+".log"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass 1: force=false should refuse the active task and report missing.
+	removed, active, missing := s.PruneByIDs([]string{idActive, idTerminal, missingID}, false, logDir)
+	if removed != 1 || active != 1 || missing != 1 {
+		t.Fatalf("PruneByIDs(force=false): removed=%d active=%d missing=%d, want 1/1/1", removed, active, missing)
+	}
+	if _, ok := s.Get(idActive); !ok {
+		t.Errorf("active task should be retained without --force")
+	}
+	if _, ok := s.Get(idTerminal); ok {
+		t.Errorf("terminal task should be pruned")
+	}
+	if _, ok := s.Get(idKeep); !ok {
+		t.Errorf("unrelated task should be retained")
+	}
+
+	// Pass 2: force=true should now remove the active one too.
+	removed, active, missing = s.PruneByIDs([]string{idActive}, true, logDir)
+	if removed != 1 || active != 0 || missing != 0 {
+		t.Fatalf("PruneByIDs(force=true): removed=%d active=%d missing=%d, want 1/0/0", removed, active, missing)
+	}
+	if _, ok := s.Get(idActive); ok {
+		t.Errorf("active task should be force-pruned")
+	}
+	if got := len(s.List(0)); got != 1 {
+		t.Errorf("List(0) length=%d, want 1 (only %s remains)", got, idKeep)
+	}
+}
+
 func TestReplayHandlesPruned(t *testing.T) {
 	s := NewTaskStore()
 	exit := int32(0)

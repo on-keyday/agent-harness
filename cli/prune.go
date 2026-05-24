@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"time"
@@ -36,61 +37,110 @@ func formatBefore(d time.Duration) string {
 	}
 }
 
-// Prune asks the server to forget terminal tasks older than `before`. Method
-// form: callable on an existing *Client without re-dialing.
+// PruneResult is the breakdown returned by a server-side prune. For
+// time-based prunes SkippedActive / SkippedMissing are always zero (the
+// server only considers terminal tasks). For id-based prunes they tell the
+// caller why a requested id was not pruned.
+type PruneResult struct {
+	Removed        uint32
+	SkippedActive  uint32
+	SkippedMissing uint32
+}
+
+// Prune asks the server to forget tasks. With taskIDs empty: terminal tasks
+// older than `before` are removed (the original behavior). With taskIDs
+// non-empty: only those ids are considered, `before` is ignored, and tasks
+// that are still active are skipped unless force is true.
 //
 // This used to also walk local worktrees; that step is now in PruneLocal.
-func (c *Client) Prune(ctx context.Context, before time.Duration, out io.Writer) error {
-	cutoff := time.Now().Add(-before)
-	fmt.Fprintf(out, "prune: cutoff = %s; asking server to forget terminal tasks\n", FormatPruneCutoff(before))
-	removed, err := c.PruneTasks(ctx, cutoff)
+func (c *Client) Prune(ctx context.Context, before time.Duration, taskIDs []string, force bool, out io.Writer) error {
+	if len(taskIDs) == 0 {
+		cutoff := time.Now().Add(-before)
+		fmt.Fprintf(out, "prune: cutoff = %s; asking server to forget terminal tasks\n", FormatPruneCutoff(before))
+		res, err := c.PruneTasks(ctx, cutoff, nil, false)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "prune: server forgot %d task(s)\n", res.Removed)
+		return nil
+	}
+	fmt.Fprintf(out, "prune: asking server to forget %d task id(s) (force=%t)\n", len(taskIDs), force)
+	res, err := c.PruneTasks(ctx, time.Time{}, taskIDs, force)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "prune: server forgot %d task(s)\n", removed)
+	fmt.Fprintf(out, "prune: server forgot %d, skipped %d (active=%d, missing=%d)\n",
+		res.Removed, res.SkippedActive+res.SkippedMissing, res.SkippedActive, res.SkippedMissing)
+	if res.SkippedActive > 0 && !force {
+		fmt.Fprintln(out, "prune: pass --force to also drop active (Queued/Running/Detached) tasks")
+	}
 	return nil
 }
 
-// PruneTasks asks the server to forget terminal tasks whose EndedAt is before
-// cutoff. Method form: callable on an existing *Client without re-dialing.
-// Used by callers that want the raw count (e.g. tui).
-func (c *Client) PruneTasks(ctx context.Context, cutoff time.Time) (uint32, error) {
+// PruneTasks asks the server to forget tasks. If taskIDs is empty the server
+// runs in time mode (terminal tasks with EndedAt < cutoff are removed). If
+// taskIDs is non-empty the server runs in id mode (cutoff is ignored).
+// Method form: callable on an existing *Client without re-dialing.
+func (c *Client) PruneTasks(ctx context.Context, cutoff time.Time, taskIDs []string, force bool) (PruneResult, error) {
+	pr := protocol.PruneTasksRequest{BeforeTs: uint64(cutoff.UnixNano())}
+	if len(taskIDs) > 0 {
+		ids := make([]protocol.TaskID, 0, len(taskIDs))
+		for _, hexID := range taskIDs {
+			raw, err := hex.DecodeString(hexID)
+			if err != nil || len(raw) != 16 {
+				return PruneResult{}, fmt.Errorf("invalid task id %q (need 32 hex chars)", hexID)
+			}
+			var tid protocol.TaskID
+			copy(tid.Id[:], raw)
+			ids = append(ids, tid)
+		}
+		if !pr.SetTaskIds(ids) {
+			return PruneResult{}, fmt.Errorf("too many task ids: %d (max 65535)", len(ids))
+		}
+	}
+	if force {
+		pr.Force = 1
+	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_PruneTasks}
-	req.SetPrune(protocol.PruneTasksRequest{BeforeTs: uint64(cutoff.UnixNano())})
+	req.SetPrune(pr)
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
-		return 0, err
+		return PruneResult{}, err
 	}
 	if resp.Kind != protocol.TaskControlKind_PruneTasks {
-		return 0, fmt.Errorf("unexpected response kind: %v", resp.Kind)
+		return PruneResult{}, fmt.Errorf("unexpected response kind: %v", resp.Kind)
 	}
-	pr := resp.Prune()
-	if pr == nil {
-		return 0, fmt.Errorf("empty prune response")
+	rp := resp.Prune()
+	if rp == nil {
+		return PruneResult{}, fmt.Errorf("empty prune response")
 	}
-	return pr.Removed, nil
+	return PruneResult{
+		Removed:        rp.Removed,
+		SkippedActive:  rp.SkippedActive,
+		SkippedMissing: rp.SkippedMissing,
+	}, nil
 }
 
 // Prune (package-level) is a thin wrapper that opens a fresh Client per call.
 // Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
 // should hold a *Client and call (*Client).Prune instead.
-func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Duration, out io.Writer) error {
+func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Duration, taskIDs []string, force bool, out io.Writer) error {
 	c, err := Dial(ctx, peerCID)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	return c.Prune(ctx, before, out)
+	return c.Prune(ctx, before, taskIDs, force, out)
 }
 
 // PruneTasks (package-level) is a thin wrapper that opens a fresh Client per
 // call. Suitable for short-lived CLI processes. Long-lived consumers should
 // hold a *Client and call (*Client).PruneTasks instead.
-func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.Time) (uint32, error) {
+func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.Time, taskIDs []string, force bool) (PruneResult, error) {
 	c, err := Dial(ctx, peerCID)
 	if err != nil {
-		return 0, err
+		return PruneResult{}, err
 	}
 	defer c.Close()
-	return c.PruneTasks(ctx, cutoff)
+	return c.PruneTasks(ctx, cutoff, taskIDs, force)
 }

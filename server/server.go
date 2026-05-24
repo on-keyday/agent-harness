@@ -142,8 +142,16 @@ func New(cfg Config) *Server {
 		OnChange:       s.scheduler.Tick,
 		LogsDir:        logsDir,
 		RingBufferSize: int(cfg.DetachRingBufferSize),
-		PruneFn: func(cutoff time.Time) int {
-			return s.tasks.PruneTerminal(cutoff, logsDir)
+		PruneFn: func(req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int) {
+			if req.TaskIdsLen == 0 {
+				cutoff := time.Unix(0, int64(req.BeforeTs))
+				return s.tasks.PruneTerminal(cutoff, logsDir), 0, 0
+			}
+			ids := make([]string, 0, req.TaskIdsLen)
+			for i := range req.TaskIds {
+				ids = append(ids, hex.EncodeToString(req.TaskIds[i].Id[:]))
+			}
+			return s.tasks.PruneByIDs(ids, req.Force != 0, logsDir)
 		},
 		// Via-relay hooks for dial-runner --via path. Endpoint + OnDialed are
 		// wired later in Run (they need the constructed Endpoint), but these

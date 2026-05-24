@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/objproto"
@@ -29,9 +28,9 @@ type TaskHandler struct {
 	OnChange func() // called after Submit / Cancel mutations
 
 	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply
-	// with removed=0. Server.New wires this to TaskStore.PruneTerminal with the
-	// configured logs directory.
-	PruneFn func(cutoff time.Time) int
+	// with all-zero counts. Server.New wires this to a closure that dispatches
+	// to TaskStore.PruneTerminal (time mode) or TaskStore.PruneByIDs (id mode).
+	PruneFn func(req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int)
 
 	// LogsDir is the directory containing per-task log files
 	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
@@ -158,13 +157,19 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: Prune variant is nil")
 			return
 		}
-		var removed uint32
+		var removed, skippedActive, skippedMissing uint32
 		if h.PruneFn != nil {
-			cutoff := time.Unix(0, int64(pr.BeforeTs))
-			removed = uint32(h.PruneFn(cutoff))
+			r, sa, sm := h.PruneFn(pr)
+			removed = uint32(r)
+			skippedActive = uint32(sa)
+			skippedMissing = uint32(sm)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PruneTasks, RequestId: req.RequestId}
-		resp.SetPrune(protocol.PruneTasksResponse{Removed: removed})
+		resp.SetPrune(protocol.PruneTasksResponse{
+			Removed:        removed,
+			SkippedActive:  skippedActive,
+			SkippedMissing: skippedMissing,
+		})
 
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck

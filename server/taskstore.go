@@ -654,6 +654,65 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 	}
 }
 
+// PruneByIDs removes the tasks listed in ids. When force is false, only
+// terminal-status tasks are removed; active tasks (Queued/Running/Detached)
+// are left alone and counted in skippedActive. Ids not present in the store
+// are counted in skippedMissing. Log files are deleted via the same path as
+// PruneTerminal.
+func (s *TaskStore) PruneByIDs(ids []string, force bool, logDir string) (removed, skippedActive, skippedMissing int) {
+	s.mu.Lock()
+	pruned := make([]string, 0, len(ids))
+	toRemove := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		t, ok := s.tasks[id]
+		if !ok {
+			skippedMissing++
+			continue
+		}
+		terminal := false
+		switch t.Status {
+		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+			terminal = true
+		}
+		if !terminal && !force {
+			skippedActive++
+			continue
+		}
+		toRemove[id] = struct{}{}
+		pruned = append(pruned, id)
+		delete(s.tasks, id)
+	}
+	if len(toRemove) > 0 {
+		keepOrder := s.order[:0]
+		for _, id := range s.order {
+			if _, drop := toRemove[id]; drop {
+				continue
+			}
+			keepOrder = append(keepOrder, id)
+		}
+		s.order = keepOrder
+	}
+	if s.wal != nil && len(pruned) > 0 {
+		now := time.Now().UnixNano()
+		for _, id := range pruned {
+			if err := s.wal.Write(WALEvent{Type: "task_pruned", TaskID: id, Ts: now}); err != nil {
+				slog.Error("WAL write failed", "op", "task_pruned", "task_id", id, "err", err)
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	if logDir != "" {
+		for _, id := range pruned {
+			path := filepath.Join(logDir, id+".log")
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				slog.Warn("prune log file", "task_id", id, "err", err)
+			}
+		}
+	}
+	return len(pruned), skippedActive, skippedMissing
+}
+
 // PruneTerminal removes terminal-status tasks whose EndedAt is before cutoff.
 // For each pruned task, its log file at <logDir>/<id>.log is also deleted (errors are logged but non-fatal).
 // A "task_pruned" WAL event is emitted so a subsequent replay applies the same removal.

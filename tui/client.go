@@ -131,11 +131,11 @@ func DoPruneTasks(c *cli.Client, before time.Duration) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		cutoff := time.Now().Add(-before)
-		removed, err := c.PruneTasks(ctx, cutoff)
+		res, err := c.PruneTasks(ctx, cutoff, nil, false)
 		if err != nil {
 			return PruneResultMsg{Err: err}
 		}
-		return PruneResultMsg{Removed: removed}
+		return PruneResultMsg{Removed: res.Removed}
 	}
 }
 
