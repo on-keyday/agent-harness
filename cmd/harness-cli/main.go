@@ -4,8 +4,10 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,7 +146,9 @@ func main() {
 	case "prune-local":
 		fs := flag.NewFlagSet("prune-local", flag.ExitOnError)
 		repo := fs.String("repo", ".", "repo to prune (env: HARNESS_REPO_PATH; default \".\")")
-		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees older than this")
+		before := fs.Duration("before", 7*24*time.Hour, "remove worktrees older than this (ignored when TASK_IDs are passed)")
+		force := fs.Bool("force", false, "with TASK_IDs: remove even when the server still considers the task active (Queued/Running/Detached)")
+		fs.BoolVar(force, "f", false, "shorthand for --force")
 		fs.Parse(args)
 		repoVal := *repo
 		if repoVal == "." {
@@ -156,7 +160,22 @@ func main() {
 		if err != nil {
 			die(err)
 		}
-		if err := cli.PruneLocal(ctx, abs, *before, os.Stdout); err != nil {
+		taskIDs := fs.Args()
+		if len(taskIDs) == 0 {
+			if err := cli.PruneLocal(ctx, abs, *before, nil, os.Stdout); err != nil {
+				die(err)
+			}
+			break
+		}
+		safe, err := classifyForLocalPrune(ctx, parseCID(), taskIDs, *force, os.Stdout)
+		if err != nil {
+			die(err)
+		}
+		if len(safe) == 0 {
+			fmt.Fprintln(os.Stdout, "prune-local: no removable task ids (use --force to override server-active state)")
+			break
+		}
+		if err := cli.PruneLocal(ctx, abs, 0, safe, os.Stdout); err != nil {
 			die(err)
 		}
 
@@ -405,8 +424,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR]                forget terminal tasks on the server")
-	fmt.Fprintln(os.Stderr, "  prune-local [--repo PATH] [--before DUR]")
-	fmt.Fprintln(os.Stderr, "                                      remove old worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "  prune-local [--repo PATH] [--before DUR] [-f|--force] [TASK_ID ...]")
+	fmt.Fprintln(os.Stderr, "                                      remove worktrees in <repo>/.harness-worktrees/ (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "                                      with no TASK_IDs: time-based, removes entries older than --before")
+	fmt.Fprintln(os.Stderr, "                                      with TASK_IDs: removes only those (refuses active tasks unless --force)")
 	fmt.Fprintln(os.Stderr, "  logs [-f|--follow] TASK_ID          dump task log history; -f also streams live chunks until task terminal")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID]")
@@ -468,6 +489,50 @@ func agentUsage() {
 func die(err error) {
 	fmt.Fprintln(os.Stderr, err)
 	os.Exit(1)
+}
+
+// classifyForLocalPrune dials the server, snapshots the task list, and
+// returns the subset of taskIDs that are safe to remove locally. A task is
+// safe when its server status is terminal (Succeeded/Failed/Cancelled) or
+// when it is no longer in the snapshot at all (pruned/typo). Tasks the
+// server still considers active (Queued/Running/Detached) are skipped with
+// a warning unless force is set.
+func classifyForLocalPrune(ctx context.Context, peerCID objproto.ConnectionID, taskIDs []string, force bool, out io.Writer) ([]string, error) {
+	c, err := cli.Dial(ctx, peerCID)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	snap, err := c.Snapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	statusByID := make(map[string]protocol.TaskStatus, len(snap.Tasks))
+	for i := range snap.Tasks {
+		statusByID[hex.EncodeToString(snap.Tasks[i].Id.Id[:])] = snap.Tasks[i].Status
+	}
+	safe := make([]string, 0, len(taskIDs))
+	for _, id := range taskIDs {
+		st, known := statusByID[id]
+		if !known {
+			safe = append(safe, id)
+			continue
+		}
+		switch st {
+		case protocol.TaskStatus_Succeeded,
+			protocol.TaskStatus_Failed,
+			protocol.TaskStatus_Cancelled:
+			safe = append(safe, id)
+		default:
+			if force {
+				fmt.Fprintf(out, "force-removing %s (status=%s on server)\n", id, st.String())
+				safe = append(safe, id)
+			} else {
+				fmt.Fprintf(out, "skip %s: still active on server (status=%s); pass --force to override\n", id, st.String())
+			}
+		}
+	}
+	return safe, nil
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence.
