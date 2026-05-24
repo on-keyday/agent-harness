@@ -169,6 +169,25 @@ Why detached sessions over `submit`:
   me a one-line summary of X") where mid-task intervention is not needed
   — but treat it as the exception.
 
+### Use auto mode for complex delegated work
+
+For any non-trivial worker — anything that will require multiple tool
+calls, file edits, or long autonomous stretches — start the worker in
+**auto permission mode** by forwarding the flag through `--claude-arg`:
+
+```bash
+harness-cli session new -d --repo /path/to/repo \
+  --claude-arg --permission-mode --claude-arg auto
+```
+
+Without this the worker spawns in the default permission mode and will
+stall on every permission prompt — and since the worker is detached, no
+TTY is attached to answer them. Auto mode lets the worker proceed
+through routine tool calls on its own while still respecting harder
+safety boundaries (it is not the same as `bypassPermissions`). Use it
+as the default for delegated work; reserve narrower modes for cases
+where you have an explicit reason.
+
 ### Reuse the same task id with `--resume`
 
 If a worker session gets canceled (failed, killed, you want a clean restart)
@@ -185,8 +204,32 @@ Same task id means the same `chat.<short-id>` inbound topic, so:
   to the new one without re-discovering it via `harness.hello`.
 - The worktree branch `harness/<task-id>` is reused, so any commits the
   previous session made are still reachable.
-- `--claude-arg --continue` (forwarded to claude) resumes the same claude
-  conversation thread when possible.
+
+But **`--resume` alone only restores the harness-level identity** — same
+task id, same topic, same worktree. The new session still boots a fresh
+claude process with no memory of the previous conversation. To also
+resume at the claude conversation level (so the worker remembers what it
+was doing), pass `--claude-arg --continue` as well:
+
+```bash
+harness-cli session new -d --repo /path/to/repo \
+  --resume "$TASK_ID" \
+  --claude-arg --permission-mode --claude-arg auto \
+  --claude-arg --continue
+```
+
+Think of it as two independent layers:
+
+| Layer | Flag | What it restores |
+|-------|------|------------------|
+| harness task | `--resume <id>` | task id, chat topic, worktree branch |
+| claude conversation | `--claude-arg --continue` | claude's in-directory session memory |
+
+You almost always want both for a "pick up where it left off" restart.
+Use `--resume` alone only when you specifically want a clean claude
+mind on the same identity (e.g. the previous run got stuck in a
+confused state and you want a fresh start without losing the chat
+topic).
 
 Without `--resume` you get a fresh task id and the peers' link to the
 previous identity is dead — they will need a new hello round.
