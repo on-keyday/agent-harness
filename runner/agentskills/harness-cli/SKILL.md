@@ -129,6 +129,68 @@ well-known topic: **`harness.hello`**.
 - `harness.hello` is for meeting, not for ongoing chat. Treat it as the
   one channel guaranteed to exist; everything else is negotiated.
 
+## Spawning a worker agent
+
+When you need to delegate work to another agent that you intend to keep
+talking to, prefer **`harness-cli session new -d`** over `submit`.
+
+```bash
+# Spawn a detached interactive PTY agent on a specific repo. Prints the
+# new task id on stdout; the agent stays alive in the background.
+TASK_ID=$(harness-cli session new -d --repo /path/to/repo)
+
+# Reach it on the agentboard. The agent's inbound channel is
+# chat.<first-8-chars-of-TASK_ID> — same convention this skill uses for
+# every agent's "naming inbound channels" rule.
+SHORT_ID=${TASK_ID:0:8}
+harness-cli agent send --topic "chat.$SHORT_ID" --data "$(cat <<'JSON'
+{
+  "kind": "hello",
+  "from": "<your role>",
+  "message": "...",
+  "reply_topic": "chat.<your-short-id>"
+}
+JSON
+)"
+```
+
+Why detached sessions over `submit`:
+
+- `submit` enqueues a **one-shot** task — claude runs to completion with
+  the prompt you supplied and then exits. Once it is running, neither you
+  nor the user can step in to adjust direction, answer a clarifying
+  question, or feed it new context. That makes it a bad fit for any
+  collaborative workflow.
+- `session new -d` keeps the worker alive between turns, so you can drive
+  it iteratively via agent messages and the user can also intervene at
+  any time (attach with `session attach <task-id>`, send corrections via
+  the agentboard, etc.).
+- `submit` still has a place for genuinely one-shot, narrow tasks ("give
+  me a one-line summary of X") where mid-task intervention is not needed
+  — but treat it as the exception.
+
+### Reuse the same task id with `--resume`
+
+If a worker session gets canceled (failed, killed, you want a clean restart)
+and you intend to start another one playing the **same role**, pass
+`--resume <task-id>` so the new session keeps the same task id:
+
+```bash
+harness-cli session new -d --repo /path/to/repo --resume "$TASK_ID"
+```
+
+Same task id means the same `chat.<short-id>` inbound topic, so:
+
+- Other agents that handshook with the previous session can keep talking
+  to the new one without re-discovering it via `harness.hello`.
+- The worktree branch `harness/<task-id>` is reused, so any commits the
+  previous session made are still reachable.
+- `--claude-arg --continue` (forwarded to claude) resumes the same claude
+  conversation thread when possible.
+
+Without `--resume` you get a fresh task id and the peers' link to the
+previous identity is dead — they will need a new hello round.
+
 ## Prefer JSON for `--data`
 
 The broker delivers `--data` verbatim, but the `inbox` JSON-Lines output
