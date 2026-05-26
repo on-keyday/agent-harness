@@ -252,6 +252,12 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
     # tries to spawn it. Snapshot the registering shell's PATH into the
     # unit so the spawned runner sees the same lookup the user does.
     env_path = os.environ.get("PATH", "")
+    # Same reason for TERM: systemd doesn't pass it through, so PTY
+    # children agent-runner spawns (claude / bash / etc.) see TERM unset
+    # and strip ANSI colour. Snapshot the registering terminal's TERM;
+    # fall back to xterm-256color when registered from a non-terminal
+    # context so the unit is still usable.
+    env_term = os.environ.get("TERM") or "xterm-256color"
 
     body = (
         f"[Unit]\n"
@@ -264,6 +270,7 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
         f"RemainAfterExit=yes\n"
         f"WorkingDirectory={_ROOT}\n"
         f"Environment=PATH={env_path}\n"
+        f"Environment=TERM={env_term}\n"
         f"ExecStart={exec_start}\n"
         f"ExecStop={exec_stop}\n"
         f"\n"
