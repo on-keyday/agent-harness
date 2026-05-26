@@ -246,6 +246,13 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
     exec_start = shlex.join([str(_runner_py()), *up_args])
     exec_stop = shlex.join([str(_runner_py()), *down_args])
 
+    # systemd --user starts with a minimal PATH that omits ~/.local/bin
+    # and nvm/asdf-style per-user bin dirs, so `claude` (typically
+    # installed under one of those) fails to resolve when agent-runner
+    # tries to spawn it. Snapshot the registering shell's PATH into the
+    # unit so the spawned runner sees the same lookup the user does.
+    env_path = os.environ.get("PATH", "")
+
     body = (
         f"[Unit]\n"
         f"Description=harness agent-runner ({_slot_name(tag)})\n"
@@ -256,6 +263,7 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
         f"Type=oneshot\n"
         f"RemainAfterExit=yes\n"
         f"WorkingDirectory={_ROOT}\n"
+        f"Environment=PATH={env_path}\n"
         f"ExecStart={exec_start}\n"
         f"ExecStop={exec_stop}\n"
         f"\n"
