@@ -268,6 +268,10 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
         f"[Service]\n"
         f"Type=oneshot\n"
         f"RemainAfterExit=yes\n"
+        # A single OOM-killed agent process (e.g. one claude session) must
+        # not tear down the whole runner; default OOMPolicy=stop would fire
+        # ExecStop on the unit and kill every other session it hosts.
+        f"OOMPolicy=continue\n"
         f"WorkingDirectory={_ROOT}\n"
         f"Environment=PATH={env_path}\n"
         f"Environment=TERM={env_term}\n"
