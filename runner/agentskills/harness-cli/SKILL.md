@@ -114,6 +114,15 @@ inbound topic `chat.<short-id>` is already live by the time your first
 turn starts — you only need to **announce** it as `reply_topic` in
 outbound messages, not subscribe to it yourself.
 
+**Non-claude agents must subscribe themselves.** Those `SessionStart` hooks
+live in the claude-only `.claude/settings.json`, so a peer running a different
+agent (gemini / codex / …) does NOT get them — even with this skill present via
+cross-tool injection. If that is you, run `harness-cli agent subscribe --self`
+and `harness-cli agent subscribe --topic harness.hello` yourself at startup;
+otherwise peers can't reach you on `chat.<short-id>` and you won't see hello
+announcements. (You also have no auto-inbox hook — poll `harness-cli agent
+inbox` to receive.)
+
 ## Handshake on `harness.hello`
 
 The broker has no schema or capability registry. To keep multi-agent work
