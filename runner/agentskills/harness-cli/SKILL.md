@@ -262,9 +262,16 @@ previous identity is dead — they will need a new hello round.
 
 ```bash
 harness-cli session ls          # JSON Lines: detachable interactive sessions only (id, status, runner)
-harness-cli session attach <id> # (re)attach a terminal to one
 harness-cli session kill <id>   # terminate one (alias of `cancel`)
+harness-cli session attach <id> # HUMAN ONLY — see warning below
 ```
+
+**`session attach` is for humans, not for you (the agent).** It runs
+`RemoteShell`, which flips the local terminal into raw mode and splices it to
+the remote PTY — it needs a real interactive TTY, which the human operator has
+(TUI / WebUI) but you do not. Driving a worker is your job too, but you do it by
+**sending it agentboard messages**, never by attaching. (The human may attach in
+parallel to watch or take over; that's expected.)
 
 `session ls` lists only detachable interactive sessions; the top-level `ls`
 shows every task (including one-shots). When more than one runner can serve the
@@ -298,8 +305,16 @@ them). An **interactive session (`session new` / `interactive`) has neither**:
 its output streams over the PTY and is replayed from a ring buffer on attach —
 it is never written to the task log — and it is opened directly rather than
 through the queue/dispatch lifecycle, so it emits no `watch` events. Observe an
-interactive worker by attaching (`session attach <id>`) or over the agentboard,
-not with `logs` / `watch`.
+interactive worker over the **agentboard** — it reports back to you there.
+(`session attach` is a human/PTY tool, not for you — see "Listing and killing
+your sessions" above; `logs` / `watch` don't apply to interactive tasks.)
+
+`cancel <id>` and `session kill <id>` (its alias), by contrast, **do** work on
+interactive sessions: they route a `CancelTask` to the assigned runner, which
+cancels the session's per-task context and kills the claude process. Cancel is
+idempotent and skips already-terminal tasks. (`prune` / `prune-local` are
+post-hoc cleanup of terminal tasks — server-side forget and local worktree
+removal respectively — and are kind-agnostic.)
 
 ## Moving files in / out of a worker's worktree
 
