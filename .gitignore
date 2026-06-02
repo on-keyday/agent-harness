@@ -5,3 +5,6 @@ server.log
 bin/
 scripts/.venv/
 scripts/__pycache__/
+
+# superpowers brainstorm scratch (mockups, server state)
+.superpowers/
