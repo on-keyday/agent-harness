@@ -510,6 +510,10 @@ const POLL_INTERVAL_MS = 5000;
     for (const b of tabbar.querySelectorAll(".tab-btn")) {
       b.classList.toggle("is-active", b.dataset.tab === name);
     }
+    // Reset scroll so the newly-shown tab starts from the top. Only when the
+    // tab UI is actually live (<=600px); on desktop all sections show at once
+    // and a tap on a task action shouldn't jump the page.
+    if (window.matchMedia("(max-width: 600px)").matches) window.scrollTo(0, 0);
     if (name === "terminal") {
       // Terminal was display:none under another tab; its grid is stale.
       try { fit.fit(); } catch (_) { /* not laid out yet */ }
@@ -521,7 +525,9 @@ const POLL_INTERVAL_MS = 5000;
     const btn = e.target.closest(".tab-btn");
     if (btn) setActiveTab(btn.dataset.tab);
   });
-  setActiveTab("terminal");
+  // Land on the task list on first connect — no session exists yet, so the
+  // empty terminal isn't a useful default.
+  setActiveTab("tasks");
 
   // scrollTermToBottom pins the viewport to the latest output. Called after
   // Reattach, whose replay otherwise leaves the viewport scrolled up. Triple
