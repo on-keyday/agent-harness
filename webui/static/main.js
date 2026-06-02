@@ -499,6 +499,27 @@ const POLL_INTERVAL_MS = 5000;
   fit.fit();
   window.harness_xtermWrite = (uint8Array) => term.write(uint8Array);
 
+  // --- Mobile tab switching (active only at <=600px via CSS). On desktop
+  //     this only sets a body data-attr; the media query makes it a no-op. ---
+  const tabbar = document.getElementById("tabbar");
+  const setActiveTab = (name) => {
+    document.body.dataset.activeTab = name;
+    for (const b of tabbar.querySelectorAll(".tab-btn")) {
+      b.classList.toggle("is-active", b.dataset.tab === name);
+    }
+    if (name === "terminal") {
+      // Terminal was display:none under another tab; its grid is stale.
+      try { fit.fit(); } catch (_) { /* not laid out yet */ }
+      window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+      term.focus();
+    }
+  };
+  tabbar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab-btn");
+    if (btn) setActiveTab(btn.dataset.tab);
+  });
+  setActiveTab("terminal");
+
   // Touch-keys: virtual modifier toggles + special-key buttons for soft keyboards.
   const mods = { ctrl: false, shift: false };
 

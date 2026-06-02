@@ -182,3 +182,36 @@ button:hover { background: #555; }
 }
 #harness-conn-banner.error  { background: #f8d7da; color: #6e1b22; border-bottom-color: #cd8a8e; }
 #harness-conn-banner.online { background: #d4edda; color: #1e4628; border-bottom-color: #8ec39c; }
+
+/* --- Mobile tab bar (active only at <=600px) --- */
+.tabbar { display: none; }
+.tab-btn {
+  flex: 1;
+  background: #2a2a2a;
+  color: #aaa;
+  border: 1px solid #555;
+  padding: 0.5rem 0.4rem;
+  font-size: 0.95rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.tab-btn.is-active { background: #2d5; color: #000; font-weight: bold; border-color: #2d5; }
+
+@media (max-width: 600px) {
+  .tabbar {
+    display: flex;
+    gap: 0.4rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #1e1e1e;
+    padding: 0.4rem 0;
+    margin-bottom: 0.6rem;
+  }
+  /* Show only the sections belonging to the active tab. */
+  body[data-active-tab="terminal"] [data-tabgroup]:not([data-tabgroup="terminal"]),
+  body[data-active-tab="tasks"]    [data-tabgroup]:not([data-tabgroup="tasks"]),
+  body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]) {
+    display: none;
+  }
+}

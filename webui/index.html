@@ -15,15 +15,20 @@
     <div id="status">disconnected</div>
   </header>
   <main>
-    <section id="runners">
+    <nav id="tabbar" class="tabbar" role="tablist">
+      <button type="button" class="tab-btn is-active" data-tab="terminal">端末</button>
+      <button type="button" class="tab-btn" data-tab="tasks">タスク</button>
+      <button type="button" class="tab-btn" data-tab="files">ファイル</button>
+    </nav>
+    <section id="runners" data-tabgroup="tasks">
       <h2>Runners</h2>
       <pre id="runner-list"></pre>
     </section>
-    <section id="tasks">
+    <section id="tasks" data-tabgroup="tasks">
       <h2>Tasks</h2>
       <pre id="task-list"></pre>
     </section>
-    <section id="compose">
+    <section id="compose" data-tabgroup="tasks">
       <h2>Compose</h2>
       <label for="runner-select">Repo:</label>
       <select id="runner-select"><option value="">(no runners)</option></select>
@@ -33,14 +38,14 @@
       <label for="claude-args-input">Extra claude args (shell-quoted):</label>
       <input id="claude-args-input" type="text" size="60" placeholder='e.g. --add-dir "C:/path"'>
     </section>
-    <section id="cmdline">
+    <section id="cmdline" data-tabgroup="tasks">
       <h2>Command</h2>
       <input id="cmd-input" type="text" placeholder='submit "task..."  ·  cancel <id>  ·  file ls <task> [sub]  ·  file push|pull <task> <rel>  ·  server dial-runner <cid> [--via <cid>]  ·  help' size="80">
       <button id="cmd-run">Run</button>
       <input id="hidden-file-input" type="file" style="display:none">
       <pre id="cmd-output"></pre>
     </section>
-    <section id="files">
+    <section id="files" data-tabgroup="files">
       <h2>Files</h2>
       <div class="actions">
         <label>Task: <select id="file-task-select"><option value="">(select task)</option></select></label>
@@ -58,7 +63,7 @@
       </div>
       <pre id="file-result"></pre>
     </section>
-    <section id="interactive">
+    <section id="interactive" data-tabgroup="terminal">
       <h2>Interactive</h2>
       <div class="actions">
         <button id="open-oneshot">Open one-shot interactive</button>
