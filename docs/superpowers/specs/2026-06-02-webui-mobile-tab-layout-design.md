@@ -60,7 +60,11 @@
 現状 `#touch-keys` は `#terminal` の**前**（上）にある（`index.html:75-85`）。これを `#terminal` の**後**（下）へ移動する。
 
 - 狙い: 自前キー列を「端末 ↔ OSソフトキーボードの間」に置き、OSキーボード直上のアクセサリ行にする。親指移動が最小化され、Ctrl→文字キーの連続入力が自然になる。
-- 留意: 下に置いた自前キー列は、OSキーボードが開いても**その直上に留まり、端末スクロールで流れて消えない**こと。位置固定の扱いだけ要検証（端末タブのレイアウトを「端末=可変高 / タッチキー=下部固定」にする）。
+- **visualViewport によるキーボード追従（実機検証で判明・必須）**: iOS/Android はソフトキーボードを**コンテンツに被せる**挙動で、`dvh` も縮まない。そのため `height: calc(100dvh - …)` 固定だと、端末下のタッチキー列も、入力中の行も、キーボード裏に隠れて別途スクロールが要る。解決として、端末タブの `#interactive` の高さを **`window.visualViewport` の可視領域に動的に合わせる**:
+  - `height = visualViewport.height − (#interactive の可視上端)`（`getBoundingClientRect().top − visualViewport.offsetTop`）。
+  - `visualViewport` の `resize`/`scroll` を `requestAnimationFrame` で1フレーム1回に間引いて再計算し、毎回 `fit.fit()` + `resizeInteractive()`。
+  - 端末タブは flex 縦並び（端末 `flex:1` ＋ タッチキー下部）のままなので、コンテナがキーボード上の可視領域ぴったりになることで、端末もタッチキーも自動的にキーボードの上に収まる（position:fixed は使わない）。
+  - フォールバック: `visualViewport` 非対応時・広幅・端末タブ以外では inline height を空にし、CSS の `calc(100dvh - 4rem)` に戻す。
 
 ### 3.5 タスク行のタップ駆動（コピペ撲滅の核）
 

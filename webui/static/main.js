@@ -505,6 +505,38 @@ const POLL_INTERVAL_MS = 5000;
   // --- Mobile tab switching (active only at <=600px via CSS). On desktop
   //     this only sets a body data-attr; the media query makes it a no-op. ---
   const tabbar = document.getElementById("tabbar");
+  const interactiveSection = document.getElementById("interactive");
+  const vv = window.visualViewport;
+
+  // fitTerminalToViewport sizes the terminal tab to the *visual* viewport, so
+  // the terminal AND its touch-key bar both stay above the on-screen keyboard.
+  // iOS/Android overlay the keyboard over content (dvh does NOT shrink), which
+  // otherwise leaves the in-flow bar — and the lines you're typing — hidden
+  // behind it. Pinning the section height to vv.height keeps everything above
+  // the keyboard with the bar resting on the keyboard's top edge. No-op (clears
+  // the inline height, falling back to the CSS dvh rule) on desktop / off the
+  // terminal tab / when visualViewport is unavailable.
+  const fitTerminalToViewport = () => {
+    const onTerminal = window.matchMedia("(max-width: 600px)").matches
+      && document.body.dataset.activeTab === "terminal";
+    if (!vv || !onTerminal) { interactiveSection.style.height = ""; return; }
+    const top = interactiveSection.getBoundingClientRect().top - vv.offsetTop;
+    interactiveSection.style.height = Math.max(120, vv.height - top) + "px";
+    try { fit.fit(); } catch (_) { /* not laid out yet */ }
+    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+  };
+  // Coalesce the burst of visualViewport events (keyboard open/close, URL-bar
+  // show/hide, scroll) into one fit per frame.
+  let vvRAF = 0;
+  const onVVChange = () => {
+    if (vvRAF) return;
+    vvRAF = requestAnimationFrame(() => { vvRAF = 0; fitTerminalToViewport(); });
+  };
+  if (vv) {
+    vv.addEventListener("resize", onVVChange);
+    vv.addEventListener("scroll", onVVChange);
+  }
+
   const setActiveTab = (name) => {
     document.body.dataset.activeTab = name;
     for (const b of tabbar.querySelectorAll(".tab-btn")) {
@@ -514,12 +546,10 @@ const POLL_INTERVAL_MS = 5000;
     // tab UI is actually live (<=600px); on desktop all sections show at once
     // and a tap on a task action shouldn't jump the page.
     if (window.matchMedia("(max-width: 600px)").matches) window.scrollTo(0, 0);
-    if (name === "terminal") {
-      // Terminal was display:none under another tab; its grid is stale.
-      try { fit.fit(); } catch (_) { /* not laid out yet */ }
-      window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
-      term.focus();
-    }
+    // Size (or release) the terminal tab to the visible viewport; this also
+    // re-fits the grid that went stale while the tab was display:none.
+    fitTerminalToViewport();
+    if (name === "terminal") term.focus();
   };
   tabbar.addEventListener("click", (e) => {
     const btn = e.target.closest(".tab-btn");
