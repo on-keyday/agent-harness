@@ -511,6 +511,23 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, DoCancel(a.client, id, id)
 		}
+		// `r` / `R` re-enter the selected session: reattach a live Detached
+		// session, or resume a finished task into a new detachable session.
+		// r resumes with --continue (keep claude's memory); R resumes fresh.
+		if a.focus == focusTasks && (msg.String() == "r" || msg.String() == "R") {
+			act := resumeReattachAction(a.tasks.SelectedTask(), msg.String() == "r")
+			switch act.Kind {
+			case actionReattach:
+				return a, DoAttachSession(a.client, a.tasks.SelectedID())
+			case actionResume:
+				// repo is irrelevant on resume — the server reuses the task's
+				// RepoPath and worktree branch.
+				return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, act.ResumeArgs, a.tasks.SelectedID())
+			case actionNone:
+				a.cmdresult.Append(WarnStyle.Render(act.Hint))
+				return a, nil
+			}
+		}
 		// Cmdline submit.
 		if a.focus == focusCmdline && msg.Type == tea.KeyEnter {
 			input := a.cmdline.Value()
@@ -639,7 +656,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · F file picker · d detail · c cancel · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
