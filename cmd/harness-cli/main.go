@@ -17,6 +17,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -125,6 +126,17 @@ func main() {
 		if err := cli.List(ctx, parseCID(), os.Stdout); err != nil {
 			die(err)
 		}
+
+	case "skill":
+		name := "harness-cli"
+		if len(args) > 0 {
+			name = args[0]
+		}
+		md, err := agentskills.Skill(name)
+		if err != nil {
+			die(fmt.Errorf("skill %q: %w", name, err))
+		}
+		os.Stdout.Write(md)
 
 	case "cancel":
 		if len(args) == 0 {
@@ -425,6 +437,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--claude-arg --resume <uuid>` finds claude's stored session)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
+	fmt.Fprintln(os.Stderr, "  skill [NAME]                        print the embedded agent skill (default: harness-cli)")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR] [-f|--force] [TASK_ID ...]")
 	fmt.Fprintln(os.Stderr, "                                      ask the server to forget tasks")
