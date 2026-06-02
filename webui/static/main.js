@@ -713,7 +713,6 @@ const POLL_INTERVAL_MS = 5000;
     try {
       const taskID = await window.harness.startInteractive({...req, detachable});
       attachedTask.textContent = `attached: ${taskID} (${label})`;
-      term.focus();
     } catch (e) {
       attachedTask.textContent = "";
       alert(`startInteractive: ${e.message}`);
@@ -741,7 +740,6 @@ const POLL_INTERVAL_MS = 5000;
     try {
       const taskID = await window.harness.attachSession(id);
       attachedTask.textContent = `attached: ${taskID} (reattached)`;
-      term.focus();
       scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";
@@ -809,7 +807,6 @@ const POLL_INTERVAL_MS = 5000;
         try {
           await window.harness.attachSession(t.id);
           attachedTask.textContent = `attached: ${t.id} (reattached)`;
-          term.focus();
           scrollTermToBottom();
         } catch (err) { attachedTask.textContent = ""; showError(err); }
         try { fit.fit(); } catch (_) {}
@@ -825,7 +822,6 @@ const POLL_INTERVAL_MS = 5000;
         try {
           const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: [], resumeTaskId: t.id, detachable: true });
           attachedTask.textContent = `attached: ${id} (resumed)`;
-          term.focus();
         } catch (err) { attachedTask.textContent = ""; alert(`resume: ${err.message}`); }
         try { fit.fit(); } catch (_) {}
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });

@@ -94,6 +94,10 @@
 - 行タップ「このタスクのファイル」→ ファイルタブへ（Task 選択済み）。
 - 広幅ではタブが無いので、これらの「遷移」はノーオペ（全セクション可視のまま）。`setActiveTab()` は body の data 属性を更新するだけで、広幅では CSS media query により非表示効果が無効。
 
+### 3.6.1 フォーカス（キーボード）ポリシー
+
+WebUI は端末を**自動 focus しない**（モバイルでソフトキーボードが勝手に開くのを避ける）。`setActiveTab()` のタブ切替、および Open / Reattach / Resume の**初期状態**で `term.focus()` を呼ばない。打ちたくなったらユーザが端末をタップして focus する（xterm が自前で focus）。例外: タッチキー（Ctrl/Esc/Tab/矢印等）の `sendSeq` は押下＝打つ意思なので `term.focus()` を維持する。
+
 ## 4. 影響範囲とデータフロー
 
 - **`index.html`**: タブバー要素の追加、`#interactive` から起動系コントロールを `#compose` へ移設、`#touch-keys` を `#terminal` の後ろへ移動、Tasks 表示を `<pre>` からクリック可能リストへ。
