@@ -291,9 +291,15 @@ harness-cli cancel <TASK_ID>               # cancel a queued/running task
 harness-cli prune [--before DUR] [-f] [TASK_ID ...]   # ask the server to forget terminal tasks
 ```
 
-`logs` / `watch` work for any task, but you rarely need them for a
-`session new -d` worker — there you drive and observe it directly over the
-agentboard.
+**`logs` and `watch` only cover one-shot (`submit`) tasks.** A submitted task's
+stdout is captured to a server-side log (`logs` reads it) and its queue →
+assigned → ended transitions are published as status events (`watch` reports
+them). An **interactive session (`session new` / `interactive`) has neither**:
+its output streams over the PTY and is replayed from a ring buffer on attach —
+it is never written to the task log — and it is opened directly rather than
+through the queue/dispatch lifecycle, so it emits no `watch` events. Observe an
+interactive worker by attaching (`session attach <id>`) or over the agentboard,
+not with `logs` / `watch`.
 
 ## Moving files in / out of a worker's worktree
 
