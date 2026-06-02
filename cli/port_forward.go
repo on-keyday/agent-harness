@@ -120,7 +120,13 @@ func spliceConnStream(conn net.Conn, st trsf.BidirectionalStream) {
 		for {
 			n, err := conn.Read(buf)
 			if n > 0 {
-				if werr := st.AppendData(false, buf[:n]); werr != nil {
+				// AppendData stores the slice by reference and copies it
+				// asynchronously (see trsf/send_stream.go: "data must be
+				// copied before calling AppendData"). buf is reused next
+				// iteration, so hand AppendData its own copy.
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				if werr := st.AppendData(false, chunk); werr != nil {
 					return
 				}
 			}
