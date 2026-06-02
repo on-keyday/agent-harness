@@ -96,7 +96,7 @@
 
 ### 3.6.1 フォーカス（キーボード）ポリシー
 
-WebUI は端末を**自動 focus しない**（モバイルでソフトキーボードが勝手に開くのを避ける）。`setActiveTab()` のタブ切替、および Open / Reattach / Resume の**初期状態**で `term.focus()` を呼ばない。打ちたくなったらユーザが端末をタップして focus する（xterm が自前で focus）。例外: タッチキー（Ctrl/Esc/Tab/矢印等）の `sendSeq` は押下＝打つ意思なので `term.focus()` を維持する。
+WebUI は端末を**一切自動 focus しない**（モバイルでソフトキーボードが勝手に開くのを避ける）。`setActiveTab()` のタブ切替、Open / Reattach / Resume の初期状態、さらに**タッチキー（`sendSeq`）押下でも** `term.focus()` を呼ばない。タッチキー（Ctrl/Shift/Esc/Tab/矢印等）は `sendInteractive(seq)` で PTY へ直接送るため focus 不要で、これにより softkey 単独操作（例: Shift+Tab で auto mode 切替）でキーボードが開かない。OS ソフトキーボードが開く唯一の経路は、**ユーザが端末を明示的にタップしたとき**（xterm 自前の click→focus）。
 
 ## 4. 影響範囲とデータフロー
 

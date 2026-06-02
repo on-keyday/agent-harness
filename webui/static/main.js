@@ -601,8 +601,11 @@ const POLL_INTERVAL_MS = 5000;
   };
 
   const sendSeq = (seq) => {
+      // Send straight to the PTY — no term.focus(), so touch-key-only
+      // operations (e.g. Shift+Tab to toggle auto mode) don't pop the OS
+      // soft keyboard. The keyboard opens only when the user taps the
+      // terminal to type.
       window.harness.sendInteractive(seq);
-      term.focus();
   };
 
   // Apply Ctrl/Shift modifiers to a CSI base sequence (Esc Tab arrows).
