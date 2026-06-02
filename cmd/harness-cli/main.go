@@ -338,16 +338,19 @@ func main() {
 		}
 
 	case "forward":
-		fs := flag.NewFlagSet("forward", flag.ExitOnError)
-		var specs repeatableStrings
-		fs.Var(&specs, "L", "local forward [bind:]localport:remotehost:remoteport (repeatable)")
-		fs.Parse(args)
-		rest := fs.Args()
-		if len(rest) != 1 || len(specs) == 0 {
+		if len(args) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
 			os.Exit(2)
 		}
-		taskID := rest[0]
+		taskID := args[0]
+		fs := flag.NewFlagSet("forward", flag.ExitOnError)
+		var specs repeatableStrings
+		fs.Var(&specs, "L", "local forward [bind:]localport:remotehost:remoteport (repeatable)")
+		fs.Parse(args[1:])
+		if len(specs) == 0 {
+			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
+			os.Exit(2)
+		}
 		parsed := make([]cli.ForwardSpec, 0, len(specs))
 		for _, s := range specs {
 			sp, err := cli.ParseForwardSpec(s)
@@ -507,7 +510,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      list a single directory under the worktree (default: worktree root)")
 	fmt.Fprintln(os.Stderr, "  file delete [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_PATH")
 	fmt.Fprintln(os.Stderr, "                                      remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused")
-	fmt.Fprintln(os.Stderr, "  forward -L [bind:]localport:remotehost:remoteport [-L ...] TASK_ID")
+	fmt.Fprintln(os.Stderr, "  forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
 	fmt.Fprintln(os.Stderr, "                                      forward local port(s) through the runner to remote host:port (Ctrl-C to stop)")
 }
 

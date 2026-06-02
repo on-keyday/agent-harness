@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -147,7 +148,7 @@ func TestPortForwardE2E(t *testing.T) {
 	}()
 
 	// Poll until the forward listener is up (retry-dial).
-	localAddr := net.JoinHostPort("127.0.0.1", itoa(freePort))
+	localAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freePort))
 	deadline = time.Now().Add(5 * time.Second)
 	var dialOK bool
 	for time.Now().Before(deadline) {
@@ -218,24 +219,26 @@ func TestPortForwardE2E(t *testing.T) {
 
 	// --- Assert 3: dial-failure — forward to a closed remote port propagates EOF ---
 	t.Run("dial_failure", func(t *testing.T) {
-		closedAddr := net.JoinHostPort("127.0.0.1", itoa(freePort2))
+		closedAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freePort2))
 		// The forward listener on freePort2 should be up now too (RunForward
-		// starts all listeners before blocking). Poll briefly.
+		// starts all listeners before blocking). Poll until it is up.
 		deadline2 := time.Now().Add(2 * time.Second)
+		var listenerUp bool
 		for time.Now().Before(deadline2) {
 			tc, err := net.DialTimeout("tcp", closedAddr, 100*time.Millisecond)
 			if err == nil {
 				tc.Close()
+				listenerUp = true
 				break
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
+		if !listenerUp {
+			t.Fatalf("forward listener for closed-remote spec on %s did not come up within 2s", closedAddr)
+		}
 		conn, err := net.DialTimeout("tcp", closedAddr, 2*time.Second)
 		if err != nil {
-			// If the listener itself is not up, report that — but don't fail
-			// harshly, as the runner dial-failure still closes the stream.
-			t.Logf("dial closed-remote forward: %v (listener may not be up)", err)
-			return
+			t.Fatalf("dial closed-remote forward: %v", err)
 		}
 		defer conn.Close()
 		conn.SetDeadline(time.Now().Add(5 * time.Second))
@@ -285,19 +288,4 @@ func TestPortForwardE2E(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Log("runner did not exit within 2s of cancel")
 	}
-}
-
-// itoa is a minimal int-to-string helper to avoid importing strconv.
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	pos := len(buf)
-	for n > 0 {
-		pos--
-		buf[pos] = byte('0' + n%10)
-		n /= 10
-	}
-	return string(buf[pos:])
 }
