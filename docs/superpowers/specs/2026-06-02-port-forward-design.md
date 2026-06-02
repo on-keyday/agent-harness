@@ -100,8 +100,12 @@ ack frame is added, so there is no extra round trip per connection.
   it.
 - Per-connection errors (dial failure, relay error) tear down **only
   that one connection**; never propagate to siblings or the listener.
-- TCP half-close is honoured: a one-directional EOF is propagated to the
-  other direction before both ends close.
+- Teardown semantics: when **either** direction of a connection closes or
+  errors, both directions are torn down (the existing `spliceBidi`
+  variant used by interactive PTY — not the request/response
+  `spliceBidiHalfClose`). This avoids a relay goroutine blocking forever
+  on a peer that half-closed via RST. Preserving TCP half-close across
+  the tunnel is deferred (YAGNI).
 - Known characteristic: each new connection costs one client→server RPC
   round trip (in-flight transfers run at full speed). A later
   optimisation — establish a forward *session* once, then a lightweight
