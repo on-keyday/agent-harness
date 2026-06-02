@@ -1,7 +1,7 @@
 # Peer agent identity over the protocol — design
 
 - 日付: 2026-06-02
-- 対象: `runner/protocol/message.bgn`（+ 生成 `message.go`）, `runner/connect.go`, `server/runner_handler.go`, `server/task_handler.go`（RunnerEntry + toRunnerInfo）, `cli/list.go`, `cmd/harness-webui-wasm/main.go`, `runner/agentskills/harness-cli/SKILL.md`
+- 対象: `runner/protocol/message.bgn`（+ 生成 `message.go`）, `runner/connect.go`, `server/runner_handler.go`, `server/task_handler.go`（RunnerEntry + toRunnerInfo）, `cli/list.go`, `cmd/harness-webui-wasm/main.go`, `runner/agentskills/harness-cli/SKILL.md`; （§9 関連機能）`runner/agentskills/embed.go`（新規）, `runner/agentskill.go`, `cmd/harness-cli/main.go`
 - 種別: プロトコル拡張（schema 変更あり、要 `make protoregen`）
 
 ## 1. 問題
@@ -84,6 +84,41 @@ hh.SetSkillsInjected(!cfg.NoWorktree || cfg.ForceInjectHarnessSettings)
 - codegen: `make protoregen`（brgen api server 必要。ユーザーは brgen 作者なので手元で起動可）。生成後 `go build ./...` と既存テストが通ること。
 - 手動: 別 runner を `--claude-bin bash` や `--no-worktree` で立て、`harness-cli ls` に `agent=bash` / `agent=claude`（`+skills` 無し）が出ることを確認。
 
-## 9. スコープ外
+## 9. （関連機能）harness-cli への SKILL embed と `skill` サブコマンド
+
+peer-identity で「この peer は skill 未注入」と見えても、その peer / オペレータが skill 本文を取得できるように、`harness-cli` 自体に SKILL.md を embed する。CLI さえあれば skill が手に入る。
+
+### 共有 embed パッケージ
+`runner/agentskills/embed.go`（新規, `package agentskills`）:
+```go
+//go:embed all:harness-cli
+var FS embed.FS
+
+// Skill returns the SKILL.md bytes for a named skill (e.g. "harness-cli").
+func Skill(name string) ([]byte, error) { return FS.ReadFile(name + "/SKILL.md") }
+```
+`embed` のみ import の軽量パッケージ。重い `runner` 依存は引かない。import cycle 無し（agentskills は stdlib のみ）。
+
+### runner 側（注入挙動は不変）
+`runner/agentskill.go`: 自前の `//go:embed all:agentskills` / `var agentSkillsFS` を廃し、`agentskills.FS` を使う。`WriteAgentSkills` の walk root を `"agentskills"` → `"."` に調整（FS 直下が `harness-cli/` になるため）。materialize 先・上書き挙動・CLAUDE.md 生成は変更しない。
+
+### harness-cli 側
+`cmd/harness-cli/main.go` に `skill [name]` サブコマンド追加（既定 `harness-cli`）:
+```go
+case "skill":
+    name := "harness-cli"
+    if len(args) > 0 { name = args[0] }
+    md, err := agentskills.Skill(name)
+    if err != nil { die(err) }
+    os.Stdout.Write(md)
+```
+`usage()` に `skill [NAME]   print the embedded agent skill (default: harness-cli)` を1行追記。
+
+### テスト
+- `agentskills.Skill("harness-cli")` が非空を返す / 未知名でエラーの単体テスト。
+- runner の既存スキルテスト（`runner/agentskill_test.go`）が refactor 後も通ること。
+- `go build ./...` 通過。
+
+## 10. スコープ外
 
 - `--claude-bin` フラグのリネーム、gemini/codex 向け注入、agent/shell 自動分類の wire 化、`TaskInfo` への denormalize。いずれも本件では行わない。
