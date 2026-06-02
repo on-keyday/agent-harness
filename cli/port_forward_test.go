@@ -20,7 +20,7 @@ func TestParseForwardSpec(t *testing.T) {
 		{"3000:host:notaport", "", 0, "", 0, true},
 	}
 	for _, c := range cases {
-		got, err := parseForwardSpec(c.in)
+		got, err := ParseForwardSpec(c.in)
 		if c.wantErr {
 			if err == nil {
 				t.Errorf("%q: expected error, got %+v", c.in, got)

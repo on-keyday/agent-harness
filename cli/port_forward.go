@@ -24,10 +24,10 @@ type ForwardSpec struct {
 	RemotePort int
 }
 
-// parseForwardSpec parses "[bind:]localport:remotehost:remoteport".
+// ParseForwardSpec parses "[bind:]localport:remotehost:remoteport".
 // bind defaults to 127.0.0.1 (do not expose the local port externally).
 // IPv6 literal hosts are not supported (dogfood scope).
-func parseForwardSpec(s string) (ForwardSpec, error) {
+func ParseForwardSpec(s string) (ForwardSpec, error) {
 	parts := strings.Split(s, ":")
 	var bind, rhost, lportS, rportS string
 	switch len(parts) {
