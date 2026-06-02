@@ -197,6 +197,16 @@ func (s *Streams) getRecvStream(streamID StreamID) *recvStream {
 			// new stream
 			rs = newReceiveStream(s.ctx, s.logger, streamID, InitialFlowWindow, s.updateWindow, s.cancelTrigger)
 			s.recvStreams[streamID] = rs
+			// Notify the Accept* API of the new peer-initiated stream, but
+			// NON-BLOCKING. Throughout this codebase streams are addressed by
+			// ID (Get{Bidirectional,Receive}Stream / WaitForBidirectionalStream),
+			// and nothing drains these accept queues — so a blocking send here
+			// would stall getRecvStream, and the streamsLock it holds, the
+			// moment the queue fills (~100 peer-initiated streams; e.g. a WebUI
+			// snapshot poll opens a server send-stream every 5s). That wedged
+			// the entire streams layer: all inbound demux and stream creation
+			// froze while connection-level pings kept flowing. Drop the
+			// notification rather than block the demux.
 			if streamID.IsBidirectional() {
 				sd := newSendStream(s.ctx, s.mtu, streamID, newFlowController(InitialFlowWindow), s.logger, s.sendTrigger)
 				s.sendStreams[streamID] = sd
@@ -204,9 +214,15 @@ func (s *Streams) getRecvStream(streamID StreamID) *recvStream {
 					recvStream: rs,
 					sendStream: sd,
 				}
-				s.newBidiStreamQueue <- bs
+				select {
+				case s.newBidiStreamQueue <- bs:
+				default:
+				}
 			} else {
-				s.newRecvStreamQueue <- &wrapRecvStream{rs}
+				select {
+				case s.newRecvStreamQueue <- &wrapRecvStream{rs}:
+				default:
+				}
 			}
 		}
 	}
