@@ -181,9 +181,15 @@ func (r *sendStream) AppendDataContext(ctx context.Context, eof bool, data ...[]
 			r.logger.Debug("send stream buffer full, waiting for drain", "stream_id", r.id, "buffered", buffered, "buffer_limit", r.bufferLimit)
 			select {
 			case <-ctx.Done():
+				// Re-acquire before returning so the top-level `defer
+				// r.m.Unlock()` is balanced — without this the deferred unlock
+				// hits an already-unlocked mutex (fatal "unlock of unlocked
+				// mutex").
+				r.m.Lock()
 				return ctx.Err()
 			case <-r.writerSignal:
 			case <-r.ctx.Done():
+				r.m.Lock()
 				return r.ctx.Err()
 			}
 			r.m.Lock()
