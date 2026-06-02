@@ -12,7 +12,7 @@
 
 ## Controller pre-flight (read before dispatching any subagent)
 
-This repo's worktree paths route to the parent checkout. **All subagents MUST work in `/home/kforfk/workspace/remote-agent-harness/`, NOT in any `.harness-worktrees/<hash>/` dir, and verify `git rev-parse --abbrev-ref HEAD` before writing.** Each implementer/reviewer prompt MUST also include: (1) read `.claude/skills/implementation-pitfalls/SKILL.md` first; (2) quote the spec Problem statement and report coverage; (3) grep sibling code in the layer before adding a new entry. See the spec: `docs/superpowers/specs/2026-06-02-port-forward-design.md`.
+This repo's worktree paths route to the parent checkout if you use a bare `/home/kforfk/workspace/remote-agent-harness/<rel>` path. For THIS task the work lands in the harness worktree (final integration to origin/main is a separate later step). **All subagents MUST work in `/home/kforfk/workspace/remote-agent-harness/.harness-worktrees/0f0d4dd6b7d3b64354cf4ff249b87403/`, use that exact prefix for every absolute path, and verify `git rev-parse --abbrev-ref HEAD` prints `harness/0f0d4dd6b7d3b64354cf4ff249b87403` before writing.** Each implementer/reviewer prompt MUST also include: (1) read `.claude/skills/implementation-pitfalls/SKILL.md` first; (2) quote the spec Problem statement and report coverage; (3) grep sibling code in the layer before adding a new entry. See the spec: `docs/superpowers/specs/2026-06-02-port-forward-design.md`.
 
 ## File structure
 
@@ -365,7 +365,13 @@ func spliceConnStream(conn net.Conn, st trsf.BidirectionalStream) {
 		for {
 			n, err := conn.Read(buf)
 			if n > 0 {
-				if werr := st.AppendData(false, buf[:n]); werr != nil {
+				// AppendData stores the slice by reference and copies it
+				// asynchronously (see trsf/send_stream.go: "data must be
+				// copied before calling AppendData"). buf is reused next
+				// iteration, so hand AppendData its own copy.
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				if werr := st.AppendData(false, chunk); werr != nil {
 					return
 				}
 			}
@@ -669,7 +675,13 @@ func spliceConnStream(conn net.Conn, st trsf.BidirectionalStream) {
 		for {
 			n, err := conn.Read(buf)
 			if n > 0 {
-				if werr := st.AppendData(false, buf[:n]); werr != nil {
+				// AppendData stores the slice by reference and copies it
+				// asynchronously (see trsf/send_stream.go: "data must be
+				// copied before calling AppendData"). buf is reused next
+				// iteration, so hand AppendData its own copy.
+				chunk := make([]byte, n)
+				copy(chunk, buf[:n])
+				if werr := st.AppendData(false, chunk); werr != nil {
 					return
 				}
 			}
