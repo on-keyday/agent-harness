@@ -15,6 +15,9 @@ package runner
 // make worktrees with that file appear "dirty" and stop being cleaned up.
 var HarnessInjectedPaths = []string{
 	"CLAUDE.md",
+	"AGENTS.md",
+	"GEMINI.md",
 	".claude/settings.json",
 	".claude/skills/",
+	".agents/skills/",
 }
