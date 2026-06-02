@@ -601,11 +601,11 @@ const POLL_INTERVAL_MS = 5000;
 
   // harness_onInteractiveClosed fires (from wasm) when the active session ends
   // from the far side: another client took it over, or the session itself
-  // exited. We do NOT clear the terminal — its output is useful for debugging —
-  // we append a dim marker line and update the attached indicator so the stale
-  // "attached" text doesn't mislead. A snapshot tells the two cases apart: a
-  // still-running task means we were taken over; a terminal/absent task means
-  // the session ended.
+  // exited. We leave the terminal completely untouched (no marker write, no
+  // clear) — its output stays intact for debugging — and surface the event only
+  // via the attached indicator and the command log. A snapshot tells the two
+  // cases apart: a still-running task means we were taken over; a terminal/
+  // absent task means the session ended.
   window.harness_onInteractiveClosed = async (taskID) => {
     let kind = "切断 (takeover またはセッション終了)";
     try {
@@ -620,10 +620,8 @@ const POLL_INTERVAL_MS = 5000;
       }
     } catch (_) { /* keep the generic kind */ }
     const short = (taskID || "").slice(0, 12);
-    // Dim, self-contained marker line; no clear, so scrollback stays intact.
-    term.write(`\r\n\x1b[2m── ${kind} ──\x1b[0m\r\n`);
     attachedTask.textContent = `detached: ${short}… (${kind})`;
-    // Also echo into the command log so it's visible from the タスク/ファイル tab.
+    // Echo into the command log so it's visible from the タスク/ファイル tab too.
     appendCmdOutput(`[interactive] ${short}… ${kind}`);
   };
 
