@@ -82,3 +82,15 @@ func TestWriteAgentSkills_OverwritesStaleSkill(t *testing.T) {
 		t.Error("WriteAgentSkills should overwrite stale SKILL.md so runner upgrades ship new guidance")
 	}
 }
+
+func TestClaudeMdMinimalContent(t *testing.T) {
+	if !strings.Contains(claudeMdMinimal, "harness-cli skill harness-cli") {
+		t.Error("pointer should route any agent to `harness-cli skill harness-cli`")
+	}
+	if !strings.Contains(claudeMdMinimal, ".agents/skills/harness-cli/SKILL.md") {
+		t.Error("pointer should mention the .agents/skills location too")
+	}
+	if !strings.Contains(claudeMdMinimal, "do not commit") {
+		t.Error("pointer should tell agents not to commit harness-injected files")
+	}
+}

@@ -9,16 +9,22 @@ import (
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 )
 
-// claudeMdMinimal is written to <worktree>/CLAUDE.md only when no CLAUDE.md
-// already exists in the worktree. Its sole job is to ensure a cold-started
-// agent learns that harness-cli and the bundled skill are available, even
-// before Claude Code surfaces skill descriptions in its system reminder.
+// claudeMdMinimal is written to <worktree>/{CLAUDE,AGENTS,GEMINI}.md only when
+// that file does not already exist. It tells a cold-started agent (claude,
+// codex, gemini, …) that harness-cli + the bundled skill are available, how to
+// read the skill in any agent, and that harness-injected files are not its work.
 const claudeMdMinimal = `This task runs inside a harness-managed worktree.
 
 - ` + "`harness-cli`" + ` is on PATH; ` + "`HARNESS_*`" + ` env vars are pre-set by the runner.
-- For agent-to-agent messaging via the agentboard, consult the
-  ` + "`harness-cli`" + ` skill at ` + "`.claude/skills/harness-cli/SKILL.md`" + `.
+- Read the harness-cli skill for agent-to-agent messaging on the agentboard:
+  run ` + "`harness-cli skill harness-cli`" + ` (works in any agent), or open
+  ` + "`.claude/skills/harness-cli/SKILL.md`" + ` / ` + "`.agents/skills/harness-cli/SKILL.md`" + `.
 - Reserved well-known topic for the initial handshake: ` + "`harness.hello`" + `.
+
+Harness-injected files in this worktree are NOT your work — do not commit them
+as your own: this file (CLAUDE.md/AGENTS.md/GEMINI.md), ` + "`.claude/`" + `, and
+` + "`.agents/skills/`" + `. If you intentionally add project-specific content to
+one of them, that addition IS legitimate work and may be committed.
 `
 
 // WriteAgentSkills materialises bundled skill files into
