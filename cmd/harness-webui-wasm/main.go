@@ -302,7 +302,7 @@ func harnessList(this js.Value, args []js.Value) any {
 // not need a label table.
 //
 //	harness.snapshot() -> Promise<{
-//	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen}],
+//	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, skillsInjected}],
 //	  tasks:   [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	             createdAt, startedAt, endedAt}]
 //	}>
@@ -328,13 +328,15 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					roots = append(roots, string(root.Path))
 				}
 				runners = append(runners, map[string]any{
-					"hostname":    string(r.Hostname),
-					"status":      r.Status.String(),
-					"tasks":       float64(r.ActiveTasksLen),
-					"maxTasks":    float64(r.MaxTasks),
-					"roots":       roots,
-					"connectedAt": float64(r.ConnectedAt),
-					"lastSeen":    float64(r.LastSeen),
+					"hostname":       string(r.Hostname),
+					"status":         r.Status.String(),
+					"tasks":          float64(r.ActiveTasksLen),
+					"maxTasks":       float64(r.MaxTasks),
+					"roots":          roots,
+					"connectedAt":    float64(r.ConnectedAt),
+					"lastSeen":       float64(r.LastSeen),
+					"agentBin":       string(r.AgentBin),
+					"skillsInjected": r.SkillsInjected(),
 				})
 			}
 			tasks := make([]any, 0, len(lr.Tasks))
