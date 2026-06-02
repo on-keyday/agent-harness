@@ -55,6 +55,10 @@ type App struct {
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
+	// port-forward state
+	portForwardModal PortForwardModal
+	activeForwards   map[string]*PortForwardSession
+
 	// log-following state
 	logsCancel context.CancelFunc
 	client     *cli.Client
@@ -83,10 +87,11 @@ func New(cfg Config) *App {
 		cmdline:     cmd,
 		popup:       NewPopup(cfg.DefaultRepo),
 		filepicker:  NewFilePicker(),
-		focus:       focusTasks,
-		connected:   false,
-		status:      "connecting…",
-		tasksByID:   map[string]protocol.TaskInfo{},
+		focus:          focusTasks,
+		connected:      false,
+		status:         "connecting…",
+		tasksByID:      map[string]protocol.TaskInfo{},
+		activeForwards: map[string]*PortForwardSession{},
 	}
 	a.tasks.Focus()
 	return a
@@ -360,6 +365,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case PortForwardStartedMsg:
+		a.activeForwards[msg.TaskID] = &PortForwardSession{TaskID: msg.TaskID, Spec: msg.Spec, Cancel: msg.Cancel}
+		short := msg.TaskID
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		a.cmdresult.Append(OKStyle.Render("forward started: ") + short + "  -L " + msg.Spec)
+		return a, nil
+
+	case PortForwardStatusMsg:
+		a.cmdresult.Append(msg.Line)
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
@@ -420,6 +438,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var pcmd tea.Cmd
 			a.popup, pcmd = a.popup.Update(msg)
 			return a, pcmd
+		}
+		// Port-forward modal intercepts ALL keys when open.
+		if a.portForwardModal.IsOpen() {
+			switch msg.Type {
+			case tea.KeyEsc:
+				a.portForwardModal.Close()
+				return a, nil
+			case tea.KeyEnter:
+				spec := a.portForwardModal.Spec()
+				taskID := a.portForwardModal.TaskID()
+				a.portForwardModal.Close()
+				if spec == "" {
+					a.cmdresult.Append(WarnStyle.Render("forward cancelled (empty spec)"))
+					return a, nil
+				}
+				return a, DoStartPortForward(a.client, taskID, spec, a.program)
+			}
+			var pfcmd tea.Cmd
+			a.portForwardModal, pfcmd = a.portForwardModal.Update(msg)
+			return a, pfcmd
 		}
 		// Ctrl+C always quits.
 		if msg.Type == tea.KeyCtrlC {
@@ -527,6 +565,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil
 			}
+		}
+		// `p` opens the port-forward modal for the selected task.
+		if a.focus == focusTasks && msg.String() == "p" {
+			taskID := a.tasks.SelectedID()
+			if taskID == "" {
+				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
+				return a, nil
+			}
+			a.portForwardModal.Open(taskID)
+			return a, nil
+		}
+		// `P` cancels an active port forward for the selected task.
+		if a.focus == focusTasks && msg.String() == "P" {
+			taskID := a.tasks.SelectedID()
+			if taskID == "" {
+				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
+				return a, nil
+			}
+			if fwd, ok := a.activeForwards[taskID]; ok {
+				fwd.Cancel()
+				delete(a.activeForwards, taskID)
+				short := taskID
+				if len(short) > 12 {
+					short = short[:12]
+				}
+				a.cmdresult.Append(OKStyle.Render("forward cancelled: ") + short)
+			} else {
+				a.cmdresult.Append(WarnStyle.Render("forward: no active forward for selected task"))
+			}
+			return a, nil
 		}
 		// Cmdline submit.
 		if a.focus == focusCmdline && msg.Type == tea.KeyEnter {
@@ -656,7 +724,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · p forward · P stop-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -676,6 +744,9 @@ func (a *App) View() string {
 	}
 	if a.detail.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.detail.View())
+	}
+	if a.portForwardModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.portForwardModal.View())
 	}
 	return view
 }
