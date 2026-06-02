@@ -54,6 +54,15 @@ format RunnerHello:
     max_tasks :u16
     allowed_roots_len :u8
     allowed_roots :[allowed_roots_len]AllowedRoot
+    # basename of the agent binary the runner runs (--claude-bin): "claude" /
+    # "gemini" / "codex" / "bash" / ... . Empty = unknown.
+    agent_bin_len :u8
+    agent_bin :[agent_bin_len]u8
+    # whether the runner injects .claude/{settings.json,skills} for its tasks
+    # (= the inbox hook AND this skill are present). False = peer follows none
+    # of the skill conventions even if it is an agent CLI.
+    skills_injected :u1
+    reserved :u7
 
 format TaskID:
     id :[16]u8
@@ -339,6 +348,12 @@ format RunnerInfo:
     active_tasks :[active_tasks_len]ActiveTaskRef
     connected_at :u64  # unix nano
     last_seen :u64
+    # peer identity (mirrors RunnerHello): agent binary basename + whether the
+    # runner injects .claude/{settings.json,skills}. Echoed by the server.
+    agent_bin_len :u8
+    agent_bin :[agent_bin_len]u8
+    skills_injected :u1
+    reserved :u7
 
 format TaskInfo:
     id :TaskID
