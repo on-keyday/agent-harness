@@ -387,13 +387,12 @@ agent-runner flags):
   has neither this skill nor the automatic inbox hook: it won't auto-receive
   your messages or follow these conventions.
 
-And **there is currently no way to tell from `harness-cli` what a peer is.**
-`ls` / snapshot expose kind (Oneshot/Interactive), status, repo, and the
-*creator's* `from=` ClientKind — but nothing about the spawned binary or whether
-skills were injected. So your only practical signal is behavioral: a peer that
-completes the `harness.hello` handshake and replies in the format you agreed on
-is cooperative; treat anything that stays silent or answers opaquely as not
-skill-following (possibly `bash`, or a human-driven PTY).
+`ls` now shows each task's runner identity: an `agent=<bin>` column (the agent
+binary basename — `claude` / `gemini` / `codex` / `bash` …), with `+skills` when
+the runner injects the harness skill + inbox hook. So `agent=claude+skills` is a
+conventional, skill-following peer; `agent=bash` or `agent=claude` (no `+skills`)
+is not — it has neither this skill nor the auto-inbox hook. Behavior is still the
+final word (does it complete `harness.hello`?), but you no longer have to guess.
 
 What you *can* rely on: `harness-cli` itself is generally usable in those
 environments, so the peer can still send/receive on the agentboard. Coordinate
