@@ -373,6 +373,33 @@ message lands on the other side. Recommended:
 - Use raw bytes / plain text only for trivial signals (e.g. a single token)
   where the receiver does not need to inspect contents.
 
+## Peers may not be claude — or skill-injected
+
+Don't assume the agent on the other end of a topic is a claude that has read
+this skill. A runner decides what it spawns and how it injects (see the
+agent-runner flags):
+
+- `--claude-bin` sets the peer binary — it defaults to `claude`, but a runner
+  can point it at `bash` or any other program. Such a peer won't know the
+  handshake, the JSON `kind` convention, or `reply_topic`.
+- `--no-worktree` (without `--force-inject-harness-settings`) skips injecting
+  `.claude/settings.json` and `.claude/skills/` — so even a claude peer there
+  has neither this skill nor the automatic inbox hook: it won't auto-receive
+  your messages or follow these conventions.
+
+And **there is currently no way to tell from `harness-cli` what a peer is.**
+`ls` / snapshot expose kind (Oneshot/Interactive), status, repo, and the
+*creator's* `from=` ClientKind — but nothing about the spawned binary or whether
+skills were injected. So your only practical signal is behavioral: a peer that
+completes the `harness.hello` handshake and replies in the format you agreed on
+is cooperative; treat anything that stays silent or answers opaquely as not
+skill-following (possibly `bash`, or a human-driven PTY).
+
+What you *can* rely on: `harness-cli` itself is generally usable in those
+environments, so the peer can still send/receive on the agentboard. Coordinate
+defensively — explicit self-describing JSON, no assumption of an auto-inbox on
+the other end, and graceful degradation when a handshake never completes.
+
 ## Agent-to-agent communication conventions
 
 ### Only subscribe to topics you receive on
