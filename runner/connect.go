@@ -19,6 +19,22 @@ import (
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
+// agentBinBase is the basename of the agent binary the runner runs, for peer
+// identification over the wire. Empty stays empty (callers treat "" as unknown).
+func agentBinBase(claudeBin string) string {
+	if claudeBin == "" {
+		return ""
+	}
+	return filepath.Base(claudeBin)
+}
+
+// skillsInjected reports whether the runner injects .claude/{settings.json,skills}
+// for its tasks. Mirrors the guard in runner/session.go (!NoWorktree ||
+// ForceInjectHarnessSettings).
+func skillsInjected(noWorktree, forceInject bool) bool {
+	return !noWorktree || forceInject
+}
+
 // Config holds the configuration for the runner connection.
 type Config struct {
 	ServerCID       objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
@@ -225,6 +241,8 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 		roots = append(roots, ar)
 	}
 	hh.SetAllowedRoots(roots)
+	hh.SetAgentBin([]byte(agentBinBase(cfg.ClaudeBin)))
+	hh.SetSkillsInjected(skillsInjected(cfg.NoWorktree, cfg.ForceInjectHarnessSettings))
 	hello.SetHello(hh)
 	helloBytes := hello.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
 	if err := h.sender.Send(helloBytes); err != nil {
