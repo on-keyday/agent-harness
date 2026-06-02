@@ -918,6 +918,8 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 		LastSeen:    uint64(r.LastSeen.UnixNano()),
 	}
 	info.SetHostname([]byte(r.Hostname))
+	info.SetAgentBin([]byte(r.AgentBin))
+	info.SetSkillsInjected(r.SkillsInjected)
 	info.Id = protocol.ConnIDToRunnerID(r.Conn.ConnectionID())
 
 	// Populate AllowedRoots.

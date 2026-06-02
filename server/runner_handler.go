@@ -80,13 +80,15 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			roots[i] = path.Clean(string(ar.Path))
 		}
 		entry := &RunnerEntry{
-			ID:           runnerID,
-			Hostname:     string(hello.Hostname),
-			AllowedRoots: roots,
-			MaxTasks:     maxTasks,
-			ActiveTasks:  make(map[string]struct{}),
-			ConnectedAt:  now,
-			LastSeen:     now,
+			ID:             runnerID,
+			Hostname:       string(hello.Hostname),
+			AllowedRoots:   roots,
+			MaxTasks:       maxTasks,
+			AgentBin:       string(hello.AgentBin),
+			SkillsInjected: hello.SkillsInjected(),
+			ActiveTasks:    make(map[string]struct{}),
+			ConnectedAt:    now,
+			LastSeen:       now,
 		}
 		entry.Conn = conn
 		// Populate Via + ViaDialAddr from the pending info stashed by OnDialed

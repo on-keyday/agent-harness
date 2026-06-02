@@ -28,6 +28,8 @@ type RunnerEntry struct {
 	Hostname     string              // from RunnerHello.hostname
 	AllowedRoots []string            // POSIX '/'-paths, path.Clean'd at Hello receipt (wire-format)
 	MaxTasks     int                 // from RunnerHello.max_tasks (>=1)
+	AgentBin       string            // from RunnerHello.agent_bin (basename of --claude-bin)
+	SkillsInjected bool              // from RunnerHello.skills_injected
 	ActiveTasks  map[string]struct{} // task_id (hex) set; len() = current load
 	ConnectedAt  time.Time
 	LastSeen     time.Time
