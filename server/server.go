@@ -48,6 +48,15 @@ type Config struct {
 	// cmd/harness-server.
 	WebUIFS fs.FS
 
+	// WebUINoCache, when true, makes the server send `Cache-Control: no-cache`
+	// on every WebUI response (index.html + static/*). Set by the --webui-dir
+	// hot-reload path: without it browsers heuristically cache main.js /
+	// main.wasm (http.FileServer sets Last-Modified but no Cache-Control) and
+	// serve a stale copy that mismatches a freshly-edited index.html — which
+	// silently breaks handlers wired to elements that moved/renamed. Leave
+	// false for embedded assets (they change only on redeploy + restart).
+	WebUINoCache bool
+
 	// DetachRingBufferSize is the byte capacity of the per-session scrollback
 	// ring buffer for detachable sessions. 0 means use the TaskHandler default
 	// (1 MiB).
@@ -120,11 +129,11 @@ func New(cfg Config) *Server {
 		cfg.Logger = slog.Default()
 	}
 	s := &Server{
-		cfg:         cfg,
-		registry:    NewRegistry(),
-		tasks:       NewTaskStore(),
-		sessions:    NewSessionRegistry(),
-		pubsub:      pubsub.NewPubSub(cfg.Logger),
+		cfg:            cfg,
+		registry:       NewRegistry(),
+		tasks:          NewTaskStore(),
+		sessions:       NewSessionRegistry(),
+		pubsub:         pubsub.NewPubSub(cfg.Logger),
 		relayRespCh:    make(map[objproto.ConnectionID]chan protocol.EstablishRelayResponse),
 		pendingViaInfo: make(map[objproto.ConnectionID]*ViaRegistrationInfo),
 	}
@@ -471,18 +480,35 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 	// Mount webui handlers when the caller supplied a mux and an embed FS
 	// is configured. UDP-only callers skip both.
 	if mux != nil && s.cfg.WebUIFS != nil {
-		indexBytes, err := fs.ReadFile(s.cfg.WebUIFS, "index.html")
-		if err != nil {
-			return fmt.Errorf("webui: index.html not in embed.FS: %w", err)
+		if _, err := fs.ReadFile(s.cfg.WebUIFS, "index.html"); err != nil {
+			return fmt.Errorf("webui: index.html not in WebUIFS: %w", err)
 		}
 		if _, err := fs.Stat(s.cfg.WebUIFS, "static/main.wasm"); err != nil {
 			return fmt.Errorf("webui: static/main.wasm missing (did you forget `make webui-build`?): %w", err)
 		}
+		// noCache stamps Cache-Control on responses when hot-reload mode is on,
+		// so the browser always picks up freshly-rebuilt assets instead of a
+		// heuristically-cached stale copy. No-op for embedded assets.
+		noCache := func(w http.ResponseWriter) {
+			if s.cfg.WebUINoCache {
+				w.Header().Set("Cache-Control", "no-cache")
+			}
+		}
+		// index.html is read from WebUIFS per request (not cached at startup)
+		// so that --webui-dir / HARNESS_WEBUI_DIR hot-reload also covers index
+		// edits. With the embedded FS this is an in-memory byte copy — cheap,
+		// and "/" is hit only on page load.
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/" {
 				http.NotFound(w, r)
 				return
 			}
+			indexBytes, err := fs.ReadFile(s.cfg.WebUIFS, "index.html")
+			if err != nil {
+				http.Error(w, "index.html unavailable", http.StatusInternalServerError)
+				return
+			}
+			noCache(w)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(indexBytes)
 		})
@@ -490,7 +516,11 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		if err != nil {
 			return fmt.Errorf("webui: fs.Sub(static): %w", err)
 		}
-		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+		staticServer := http.StripPrefix("/static/", http.FileServer(http.FS(staticFS)))
+		mux.Handle("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			noCache(w)
+			staticServer.ServeHTTP(w, r)
+		}))
 	}
 
 	// Spin the HTTP server only when both mux and httpAddr are present.

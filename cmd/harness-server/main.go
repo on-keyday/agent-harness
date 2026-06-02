@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -21,21 +22,23 @@ import (
 )
 
 var (
-	listen                = flag.String("listen", "127.0.0.1:8539", "WebSocket listen host:port (use :8539 to dual-stack on all interfaces; loopback by default; empty disables WS leg, requires --udp-listen)")
-	udpListen             = flag.String("udp-listen", "", "UDP listen host:port (empty = disabled). Combine with --listen for ws+udp dualstack.")
-	dataDir               = flag.String("data-dir", "./harness-data", "persistent data dir")
-	taskRetain            = flag.Duration("task-retain", 0, "auto-prune terminal tasks older than this (0 = keep forever)")
-	wsPath                = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
-	agentboardRing        = flag.Int("agentboard-ring", 64, "agentboard ring buffer entries per topic")
-	agentboardTTL         = flag.Duration("agentboard-ttl", 30*time.Minute, "agentboard topic TTL after last publish")
-	agentboardMaxTopics   = flag.Int("agentboard-max-topics", 1024, "agentboard max active topics")
-	agentboardMaxPayload  = flag.Int("agentboard-max-payload", 64*1024, "agentboard max payload bytes per message")
-	psk                   = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
-	pskFile               = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
-	ringSize              = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
-	idleTimeout           = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
+	listen               = flag.String("listen", "127.0.0.1:8539", "WebSocket listen host:port (use :8539 to dual-stack on all interfaces; loopback by default; empty disables WS leg, requires --udp-listen)")
+	udpListen            = flag.String("udp-listen", "", "UDP listen host:port (empty = disabled). Combine with --listen for ws+udp dualstack.")
+	dataDir              = flag.String("data-dir", "./harness-data", "persistent data dir")
+	taskRetain           = flag.Duration("task-retain", 0, "auto-prune terminal tasks older than this (0 = keep forever)")
+	wsPath               = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
+	agentboardRing       = flag.Int("agentboard-ring", 64, "agentboard ring buffer entries per topic")
+	agentboardTTL        = flag.Duration("agentboard-ttl", 30*time.Minute, "agentboard topic TTL after last publish")
+	agentboardMaxTopics  = flag.Int("agentboard-max-topics", 1024, "agentboard max active topics")
+	agentboardMaxPayload = flag.Int("agentboard-max-payload", 64*1024, "agentboard max payload bytes per message")
+	psk                  = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
+	pskFile              = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
+	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
+	idleTimeout          = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
 
 	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the server polls every 250ms; when it appears the server triggers a graceful shutdown. daemon.py injects this automatically when the server is spawned via scripts/server.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close WS connections cleanly instead of being TerminateProcess'd cold.")
+
+	webuiDir = flag.String("webui-dir", "", "dev hot-reload: serve WebUI assets from this directory on disk instead of the embedded copy (env: HARNESS_WEBUI_DIR). Point it at the repo's webui/ dir; then `make webui-build` + a browser refresh picks up wasm/js/css changes with no server rebuild or restart. Empty (default) serves the embedded assets.")
 )
 
 func resolvePSK(pskVal, pskFile string) ([]byte, error) {
@@ -95,6 +98,24 @@ func main() {
 		os.Exit(1)
 	}
 
+	// WebUI assets: embedded by default; a non-empty --webui-dir (or
+	// HARNESS_WEBUI_DIR) swaps in an on-disk FS so static/* (main.wasm,
+	// main.js, css) is read fresh per request — rebuild + browser refresh,
+	// no server rebuild. The field is an fs.FS, so the server code is
+	// unchanged. Trade-off: this bypasses the integrity/deploy benefit of
+	// embedding, so it is a dev-only knob, off by default.
+	var webUIFS fs.FS = webui.FS
+	resolvedWebUIDir := strings.TrimSpace(*webuiDir)
+	if resolvedWebUIDir == "" {
+		resolvedWebUIDir = strings.TrimSpace(os.Getenv("HARNESS_WEBUI_DIR"))
+	}
+	webUINoCache := false
+	if resolvedWebUIDir != "" {
+		webUIFS = os.DirFS(resolvedWebUIDir)
+		webUINoCache = true // hot-reload: defeat browser heuristic caching of js/wasm
+		slog.Warn("WebUI hot-reload: serving assets from disk, embedded copy bypassed", "dir", resolvedWebUIDir)
+	}
+
 	s := server.New(server.Config{
 		Addr:                 strings.TrimSpace(*listen),
 		UDPAddr:              strings.TrimSpace(*udpListen),
@@ -102,7 +123,8 @@ func main() {
 		TaskRetention:        *taskRetain,
 		Logger:               slog.Default(),
 		PSK:                  pskBytes,
-		WebUIFS:              webui.FS,
+		WebUIFS:              webUIFS,
+		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,
 		DetachIdleTimeout:    *idleTimeout,
 	})
