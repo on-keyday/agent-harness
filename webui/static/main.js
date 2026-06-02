@@ -556,6 +556,7 @@ const POLL_INTERVAL_MS = 5000;
   }
 
   const setActiveTab = (name) => {
+    const mobile = window.matchMedia("(max-width: 600px)").matches;
     document.body.dataset.activeTab = name;
     for (const b of tabbar.querySelectorAll(".tab-btn")) {
       b.classList.toggle("is-active", b.dataset.tab === name);
@@ -563,10 +564,17 @@ const POLL_INTERVAL_MS = 5000;
     // Reset scroll so the newly-shown tab starts from the top. Only when the
     // tab UI is actually live (<=600px); on desktop all sections show at once
     // and a tap on a task action shouldn't jump the page.
-    if (window.matchMedia("(max-width: 600px)").matches) window.scrollTo(0, 0);
+    if (mobile) window.scrollTo(0, 0);
     // Size (or release) the terminal tab to the visible viewport; this also
     // re-fits the grid that went stale while the tab was display:none.
     fitTerminalToViewport();
+    // On desktop there are no tabs — the terminal section lives below the
+    // controls, so activating it (via Open / Reattach / Resume) should scroll
+    // the page down to it; otherwise the user has to scroll manually to see
+    // the session they just attached to.
+    if (name === "terminal" && !mobile) {
+      interactiveSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
     // Intentionally NOT focusing the terminal here: focusing pops the soft
     // keyboard on mobile every time you merely switch to the terminal tab to
     // read output, and adds keyboard-toggle churn. The open / reattach / resume
