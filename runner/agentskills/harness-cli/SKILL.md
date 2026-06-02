@@ -129,6 +129,30 @@ well-known topic: **`harness.hello`**.
 - `harness.hello` is for meeting, not for ongoing chat. Treat it as the
   one channel guaranteed to exist; everything else is negotiated.
 
+## Finding other agents / tasks
+
+Two views, used together:
+
+```bash
+# Server-side view: every runner and recent task. Each running task is an
+# agent; its 32-hex task id is what you address.
+harness-cli ls
+# RUNNERS
+#   Idle    host=<h>  tasks=N/M  roots=<paths>  id=<runner-cid>
+# TASKS
+#   <task-id>  <status>  repo=<path>  from=<origin>  prompt="..."
+
+# Agentboard view: every active topic (JSON Lines). Reveals who is listening —
+# e.g. chat.<short-id> inbound channels and any per-purpose topics in use.
+harness-cli agent topics
+```
+
+To reach a task you found in `ls`, derive its inbound channel the way every
+agent here names its own: `chat.<first-8-hex-of-task-id>`, and send a `hello`
+there (see the handshake / spawn examples). `ls` tells you *which* agents exist
+and their status; `harness.hello` is how you introduce yourself to one that is
+listening.
+
 ## Spawning a worker agent
 
 When you need to delegate work to another agent that you intend to keep

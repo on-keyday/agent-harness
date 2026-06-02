@@ -230,7 +230,7 @@ func main() {
 
 	case "file":
 		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli file {push|pull|ls} ...")
+			fmt.Fprintln(os.Stderr, "usage: harness-cli file {push|pull|ls|delete} ...")
 			os.Exit(2)
 		}
 		fsub := args[0]
