@@ -881,12 +881,15 @@ const POLL_INTERVAL_MS = 5000;
     }
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
+    // Reflect the Compose "Extra claude args" box (same as Submit / Open) so a
+    // resume can carry e.g. --continue / --permission-mode without going through
+    // the cmdline.
     if (isTerminal) {
       addItem("▶ Resume", "", async () => {
         setActiveTab("terminal");
         term.reset();
         try {
-          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: [], resumeTaskId: t.id, detachable: true });
+          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: currentClaudeArgs(), resumeTaskId: t.id, detachable: true });
           attachedTask.textContent = `attached: ${id} (resumed)`;
         } catch (err) { attachedTask.textContent = ""; alert(`resume: ${err.message}`); }
         try { fit.fit(); } catch (_) {}
