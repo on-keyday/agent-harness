@@ -376,7 +376,7 @@ const POLL_INTERVAL_MS = 5000;
   // so the new entry is visible. Caps the buffer at MAX_OUTPUT_LINES
   // by dropping the oldest entries.
   const MAX_OUTPUT_LINES = 2000;
-  const appendCmdOutput = (text) => {
+  const appendCmdOutput = (text, scroll = false) => {
     const cur = cmdOutput.textContent;
     let next = cur === "" ? text : cur + "\n" + text;
     const lines = next.split("\n");
@@ -384,18 +384,19 @@ const POLL_INTERVAL_MS = 5000;
       next = lines.slice(lines.length - MAX_OUTPUT_LINES).join("\n");
     }
     cmdOutput.textContent = next;
-    // If the pane itself is scrollable, keep its tail visible; either
-    // way, scroll the element bottom into the viewport so the user
-    // does not have to scroll the page to find the new line.
+    // Always keep the pane's own tail visible (harmless, in-element scroll).
     cmdOutput.scrollTop = cmdOutput.scrollHeight;
-    cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
+    // Only scroll the *page* to the pane when the user ran a command — doing it
+    // for background appends (task events, takeover notices) yanks the page
+    // (e.g. jumps to the top on desktop, where #cmdline sits above the terminal).
+    if (scroll) cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
   };
 
   const runCmd = async () => {
     const line = cmdInput.value.trim();
     if (!line) return;
     cmdInput.value = "";
-    appendCmdOutput(`> ${line}`);
+    appendCmdOutput(`> ${line}`, true);
     try {
       const tokens = tokenize(line);   // quote-aware
       const cmd = tokens[0];
@@ -485,10 +486,10 @@ const POLL_INTERVAL_MS = 5000;
         default:
           out = `unknown command: ${cmd} (type 'help' for the list)`;
       }
-      appendCmdOutput(out);
+      appendCmdOutput(out, true);
       refreshSnapshot();
     } catch (e) {
-      appendCmdOutput(`error: ${e.message}`);
+      appendCmdOutput(`error: ${e.message}`, true);
     }
   };
   cmdRun.addEventListener("click", runCmd);
