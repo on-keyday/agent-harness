@@ -21,6 +21,7 @@ enum RunnerRequestType:
     list_files
     establish_relay
     chained_relay_response
+    open_port_forward
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -161,6 +162,7 @@ format RunnerRequest:
         RunnerRequestType.list_files         => list_files         :RunnerListFilesRequest
         RunnerRequestType.establish_relay    => establish_relay    :EstablishRelayRequest
         RunnerRequestType.chained_relay_response => chained_relay_response :ChainedRelayResponse
+        RunnerRequestType.open_port_forward => open_port_forward :RunnerOpenPortForwardRequest
 
 enum TaskControlKind:
     :u8
@@ -175,6 +177,7 @@ enum TaskControlKind:
     open_file_transfer
     list_files
     dial_runner
+    open_port_forward
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # Sent once right after handshake via TaskControlRequest{client_hello,...} so
@@ -559,6 +562,7 @@ format TaskControlRequest:
         TaskControlKind.open_file_transfer => open_file_transfer :OpenFileTransferRequest
         TaskControlKind.list_files         => list_files         :ListFilesRequest
         TaskControlKind.dial_runner        => dial_runner        :DialRunnerRequest
+        TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -579,6 +583,7 @@ format TaskControlResponse:
         TaskControlKind.open_file_transfer => open_file_transfer :OpenFileTransferResponse
         TaskControlKind.list_files         => list_files         :ListFilesResponse
         TaskControlKind.dial_runner        => dial_runner        :DialRunnerResponse
+        TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardResponse
 
 # Pubsub event payloads
 enum StatusEventKind:
@@ -708,3 +713,36 @@ format RunnerListFilesRequest:
     stream_id    :u64
     rel_path_len :u16
     rel_path     :[rel_path_len]u8
+
+# === Port forwarding (client ↔ runner; see specs/2026-06-02-port-forward-design.md) ===
+
+enum PortForwardDirection:
+    :u8
+    local    # client listens, runner dials remote_host:remote_port (SSH -L).
+    remote   # reserved: runner listens, client dials. Not yet implemented.
+
+enum OpenPortForwardStatus:
+    :u8
+    ok             = "ok"
+    no_such_task   = "no_such_task"
+    runner_offline = "runner_offline"
+    internal_error = "internal_error"
+
+format OpenPortForwardRequest:
+    task_id         :TaskID
+    direction       :PortForwardDirection
+    remote_host_len :u16
+    remote_host     :[remote_host_len]u8
+    remote_port     :u16
+
+format OpenPortForwardResponse:
+    status    :OpenPortForwardStatus
+    stream_id :u64
+
+format RunnerOpenPortForwardRequest:
+    task_id         :TaskID
+    stream_id       :u64
+    direction       :PortForwardDirection
+    remote_host_len :u16
+    remote_host     :[remote_host_len]u8
+    remote_port     :u16
