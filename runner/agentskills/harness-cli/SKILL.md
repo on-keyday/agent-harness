@@ -396,12 +396,14 @@ peer regardless of agent. The one claude-only piece is the **auto-inbox hook**
 (`.claude/settings.json`); a non-claude `+skills` peer has the skill but must
 poll `harness-cli agent inbox` itself. So:
 
-- `agent=claude+skills` — a conventional, skill-following peer.
-- `agent=claude` (no `+skills`), or `agent=bash` — not: no skill, no inbox hook.
-- `agent=codex+skills` / any non-claude with `+skills` — **misleading**: the
-  harness wrote `.claude/`, which that agent doesn't read (codex uses `.agent/`
-  / `AGENTS.md`, gemini `GEMINI.md`, …). Treat `+skills` as meaningful only for
-  `claude` until agent-specific injection lands.
+- `agent=claude+skills` — a conventional, skill-following peer with the
+  auto-inbox hook (it auto-receives your messages).
+- `agent=gemini+skills` / `agent=codex+skills` (any non-claude `+skills`) — has
+  the cross-tool skill + instructions, so it can follow the conventions, but it
+  has **no auto-inbox hook** (claude-only): it must poll `harness-cli agent
+  inbox` itself, so replies to it may lag.
+- `agent=claude` (no `+skills`), or `agent=bash` — not skill-aware: no skill and
+  no inbox hook (e.g. a `--no-worktree` runner without force-inject).
 
 Behavior is still the final word (does it complete `harness.hello`?), but you no
 longer have to guess.
