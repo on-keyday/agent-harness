@@ -37,6 +37,16 @@
       <br>
       <label for="claude-args-input">Extra claude args (shell-quoted):</label>
       <input id="claude-args-input" type="text" size="60" placeholder='e.g. --add-dir "C:/path"'>
+      <div class="actions">
+        <button id="open-oneshot">Open one-shot interactive</button>
+        <button id="open-detachable">Open detachable session</button>
+      </div>
+      <div class="actions">
+        <label for="task-id-input">Task id:</label>
+        <input type="text" id="task-id-input" placeholder="32 hex chars" size="40" pattern="[0-9a-fA-F]*">
+        <button id="reattach">Reattach</button>
+      </div>
+      <small>One task id for every id-driven action: <b>Reattach</b> to a detached (live) session, or <b>resume</b> a terminal task's worktree branch via Submit / Open one-shot / Open detachable (Repo is ignored on resume). Leave empty to open a fresh task.</small>
     </section>
     <section id="cmdline" data-tabgroup="tasks">
       <h2>Command</h2>
@@ -66,16 +76,8 @@
     <section id="interactive" data-tabgroup="terminal">
       <h2>Interactive</h2>
       <div class="actions">
-        <button id="open-oneshot">Open one-shot interactive</button>
-        <button id="open-detachable">Open detachable session</button>
         <button id="stop-streaming">Stop streaming</button>
       </div>
-      <div class="actions">
-        <label for="task-id-input">Task id:</label>
-        <input type="text" id="task-id-input" placeholder="32 hex chars" size="40" pattern="[0-9a-fA-F]*">
-        <button id="reattach">Reattach</button>
-      </div>
-      <small>One task id for every id-driven action: <b>Reattach</b> to a detached (live) session, or <b>resume</b> a terminal task's worktree branch via Submit / Open one-shot / Open detachable (Repo is ignored on resume). Leave empty to open a fresh task.</small>
       <div id="attached-task"></div>
       <div id="terminal"></div>
       <div class="touch-keys" id="touch-keys">

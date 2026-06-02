@@ -520,6 +520,16 @@ const POLL_INTERVAL_MS = 5000;
   });
   setActiveTab("terminal");
 
+  // scrollTermToBottom pins the viewport to the latest output. Called after
+  // Reattach, whose replay otherwise leaves the viewport scrolled up. Triple
+  // call (now + next frame + 120ms) catches async replay frames arriving via
+  // recvPump after attachSession resolves. No-op/harmless in alt-screen apps.
+  const scrollTermToBottom = () => {
+    term.scrollToBottom();
+    requestAnimationFrame(() => term.scrollToBottom());
+    setTimeout(() => term.scrollToBottom(), 120);
+  };
+
   // Touch-keys: virtual modifier toggles + special-key buttons for soft keyboards.
   const mods = { ctrl: false, shift: false };
 
@@ -637,6 +647,7 @@ const POLL_INTERVAL_MS = 5000;
       alert("select a repo or fill in Resume task id");
       return;
     }
+    setActiveTab("terminal");
     term.reset();
     try {
       const taskID = await window.harness.startInteractive({...req, detachable});
@@ -664,11 +675,13 @@ const POLL_INTERVAL_MS = 5000;
       attachedTask.textContent = "(session id required)";
       return;
     }
+    setActiveTab("terminal");
     term.reset();
     try {
       const taskID = await window.harness.attachSession(id);
       attachedTask.textContent = `attached: ${taskID} (reattached)`;
       term.focus();
+      scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";
       showError(err);
