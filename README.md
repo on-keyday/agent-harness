@@ -8,6 +8,17 @@ one or more git repos. Submit tasks from a CLI / TUI / WebUI, attach
 interactively to running agents, and let agents talk to each other over
 a per-task broker.
 
+> **⚠️ Toy / dogfood scope.** This is a single-developer personal tool,
+> published as-is. It is **not** production-hardened. In particular the
+> custom transport stack (`objproto` ECDH + AES-GCM, the `trsf` stream
+> multiplexer, PSK pre-auth, congestion control) is deliberately
+> toy-scope: it exists to learn and to dogfood, not to be a vetted
+> security boundary. The server is a **trusted hub** that handles task
+> logs, file contents, PTY streams and port-forward bytes in plaintext;
+> features such as port forwarding dial arbitrary `host:port` from the
+> runner with no sandboxing. Run it only on networks and hosts you
+> control. No stability, security, or support guarantees.
+
 The original design lives in
 `docs/superpowers/specs/2026-04-25-parallel-agent-harness-design.md`;
 follow-up specs covering TUI, multi-task scheduling, agent-to-agent
