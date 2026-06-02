@@ -516,14 +516,32 @@ const POLL_INTERVAL_MS = 5000;
   // the keyboard with the bar resting on the keyboard's top edge. No-op (clears
   // the inline height, falling back to the CSS dvh rule) on desktop / off the
   // terminal tab / when visualViewport is unavailable.
+  let lastTermHeight = "", lastCols = 0, lastRows = 0;
   const fitTerminalToViewport = () => {
     const onTerminal = window.matchMedia("(max-width: 600px)").matches
       && document.body.dataset.activeTab === "terminal";
-    if (!vv || !onTerminal) { interactiveSection.style.height = ""; return; }
+    if (!vv || !onTerminal) {
+      if (interactiveSection.style.height) { interactiveSection.style.height = ""; lastTermHeight = ""; }
+      return;
+    }
     const top = interactiveSection.getBoundingClientRect().top - vv.offsetTop;
-    interactiveSection.style.height = Math.max(120, vv.height - top) + "px";
+    const h = Math.max(120, vv.height - top) + "px";
+    // Skip when the height is unchanged. Without this, re-applying the same
+    // height can re-fire a visualViewport scroll/resize and spin a per-frame
+    // fit loop that pegs the main thread.
+    if (h === lastTermHeight) return;
+    lastTermHeight = h;
+    interactiveSection.style.height = h;
     try { fit.fit(); } catch (_) { /* not laid out yet */ }
-    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+    // Only tell the PTY when the grid actually changed. Pixel-level keyboard
+    // open/close animation yields dozens of identical-dimension fits per
+    // toggle; sending a resize frame for each floods and eventually wedges the
+    // interactive stream (symptom: terminal freezes until a reattach opens a
+    // fresh stream).
+    if (term.cols !== lastCols || term.rows !== lastRows) {
+      lastCols = term.cols; lastRows = term.rows;
+      window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+    }
   };
   // Coalesce the burst of visualViewport events (keyboard open/close, URL-bar
   // show/hide, scroll) into one fit per frame.
