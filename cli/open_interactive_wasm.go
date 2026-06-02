@@ -222,11 +222,19 @@ func (s *InteractiveSession) recvPump() {
 				slog.Info("interactive recv ended", "err", err, "task", s.taskIDHex)
 			}
 			activeInteractiveMu.Lock()
-			if activeInteractiveSession == s {
+			// wasActive distinguishes a far-side close of the *current* session
+			// (another client took it over, or the session itself exited) from a
+			// local supersede / explicit detach — those already cleared
+			// activeInteractiveSession, and should not surface a takeover notice.
+			wasActive := activeInteractiveSession == s
+			if wasActive {
 				activeInteractiveSession = nil
 			}
 			activeInteractiveMu.Unlock()
 			s.markClosed()
+			if wasActive {
+				notifyInteractiveClosed(s.taskIDHex)
+			}
 			return
 		}
 		switch f.Header.Type {
@@ -385,6 +393,20 @@ func (s *InteractiveSession) markClosed() {
 	s.closed = true
 	s.mu.Unlock()
 	s.cancel()
+}
+
+// notifyInteractiveClosed tells the browser that the active interactive session
+// ended from the far side — another client took it over, or the session itself
+// exited — so the WebUI can replace the stale "attached" indicator instead of
+// leaving it. The handler (window.harness_onInteractiveClosed) decides how to
+// surface it and intentionally does NOT clear the terminal. The call is guarded
+// so a missing handler (e.g. a non-WebUI wasm host) is a no-op.
+func notifyInteractiveClosed(taskIDHex string) {
+	fn := js.Global().Get("harness_onInteractiveClosed")
+	if fn.Type() != js.TypeFunction {
+		return
+	}
+	fn.Invoke(taskIDHex)
 }
 
 func (s *InteractiveSession) detach() {
