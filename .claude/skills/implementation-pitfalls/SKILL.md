@@ -178,6 +178,7 @@ When dispatching an implementer or reviewer subagent in this project, include in
 - [ ] Quote the spec's **Problem statement** verbatim. Report which bullets the diff addresses; justify omissions.
 - [ ] **Sibling-code grep**: before adding code to TUI/WebUI/server handlers, grep how adjacent files in the same layer invoke the same helper category. Match the existing pattern.
 - [ ] Beware `peer.Conn.Close()` vs `pc.Connection().Close()` when working with relays.
+- [ ] **Build hygiene — keep the worktree clean.** Compile-check with `go build ./...` (builds everything, writes NO binary) or `go build -o /dev/null ./cmd/<x>` / `go vet ./cmd/<x>`. NEVER bare `go build ./cmd/<x>/` — that drops a `<x>` executable into the worktree root. `go test ./...` cleans up after itself; don't `go test -c` without `-o /dev/null`. Stray `harness-tui` / `*.test` binaries pollute `git status`, get caught by `git add -A`, and leave junk in the user's worktree. The cwd must be exactly as clean after your checks as before.
 
 ### Reviewer prompt augmentations
 - [ ] Read BOTH the Problem statement AND the Implementation section. Flag uncovered problem-statement bullets.
