@@ -220,6 +220,18 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_OpenPortForward:
+		pf := req.OpenPortForward()
+		if pf == nil {
+			slog.Error("TaskHandler: OpenPortForward variant is nil")
+			return
+		}
+		presp := h.handleOpenPortForward(conn, pf)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
+		resp.SetOpenPortForward(presp)
+		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_AttachSession:
 		a := req.Attach()
 		if a == nil {
