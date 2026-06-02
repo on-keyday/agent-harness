@@ -606,23 +606,36 @@ const POLL_INTERVAL_MS = 5000;
   // via the attached indicator and the command log. A snapshot tells the two
   // cases apart: a still-running task means we were taken over; a terminal/
   // absent task means the session ended.
+  // attachEpoch bumps on every (re)attach / open. The close handler below awaits
+  // a snapshot; if the user (re)attaches during that await, the epoch changes
+  // and the handler must NOT clobber the now-correct "attached" display.
+  let attachEpoch = 0;
   window.harness_onInteractiveClosed = async (taskID) => {
+    const myEpoch = attachEpoch;
     let kind = "切断 (takeover またはセッション終了)";
+    let reattachable = false;
     try {
       const snap = await window.harness.snapshot();
       const t = (snap.tasks || []).find(x => x.id === taskID);
       if (t && (t.status === "Running" || t.status === "Detached")) {
         kind = "他のクライアントが takeover しました";
+        reattachable = true;   // session still alive elsewhere → can re-attach
       } else if (t) {
         kind = `セッション終了 (${t.status})`;
       } else {
         kind = "セッション終了";
       }
     } catch (_) { /* keep the generic kind */ }
+    // A (re)attach happened while we awaited the snapshot — its display is the
+    // truth now; don't overwrite it with a stale "detached" notice.
+    if (attachEpoch !== myEpoch) return;
     const short = (taskID || "").slice(0, 12);
     attachedTask.textContent = `detached: ${short}… (${kind})`;
     // Echo into the command log so it's visible from the タスク/ファイル tab too.
     appendCmdOutput(`[interactive] ${short}… ${kind}`);
+    // Offer one-tap re-attach right here when the session is still alive, so the
+    // user doesn't have to go back to the task list.
+    if (reattachable) showQuickReattach(taskID); else hideQuickReattach();
   };
 
   // Touch-keys: virtual modifier toggles + special-key buttons for soft keyboards.
@@ -738,6 +751,42 @@ const POLL_INTERVAL_MS = 5000;
     };
   };
 
+  // Quick-reattach button (terminal tab): shown after a takeover so the user
+  // can re-attach to the same session in one tap, without going back to the
+  // task list. Carries the task id in a data attribute.
+  const reattachQuick = document.getElementById("reattach-quick");
+  const showQuickReattach = (id) => {
+    if (!reattachQuick) return;
+    reattachQuick.dataset.taskId = id;
+    reattachQuick.hidden = false;
+  };
+  const hideQuickReattach = () => {
+    if (!reattachQuick) return;
+    reattachQuick.hidden = true;
+    delete reattachQuick.dataset.taskId;
+  };
+
+  // reattachTo re-attaches to an existing live session by id. Shared by the
+  // Reattach button, the task-row Reattach action, and the post-takeover quick
+  // button (DRY). Switches to the terminal tab, replays, and pins to the bottom.
+  const reattachTo = async (id) => {
+    if (!id) { attachedTask.textContent = "(session id required)"; return; }
+    attachEpoch++;            // invalidate any in-flight close handler
+    hideQuickReattach();
+    setActiveTab("terminal");
+    term.reset();
+    try {
+      const taskID = await window.harness.attachSession(id);
+      attachedTask.textContent = `attached: ${taskID} (reattached)`;
+      scrollTermToBottom();
+    } catch (err) {
+      attachedTask.textContent = "";
+      showError(err);
+    }
+    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+  };
+
   // openInteractive is the shared helper for one-shot and detachable opens.
   const openInteractive = async (detachable, label) => {
     const req = composeRequest();
@@ -745,6 +794,8 @@ const POLL_INTERVAL_MS = 5000;
       alert("select a repo or fill in Resume task id");
       return;
     }
+    attachEpoch++;            // invalidate any in-flight close handler
+    hideQuickReattach();
     setActiveTab("terminal");
     term.reset();
     try {
@@ -764,27 +815,14 @@ const POLL_INTERVAL_MS = 5000;
   document.getElementById("stop-streaming").addEventListener("click", () => {
     window.harness.detachInteractive();
     attachedTask.textContent = "";
+    hideQuickReattach();
   });
 
-  document.getElementById("reattach").addEventListener("click", async () => {
-    const id = taskIdInput.value.trim();
-    if (!id) {
-      attachedTask.textContent = "(session id required)";
-      return;
-    }
-    setActiveTab("terminal");
-    term.reset();
-    try {
-      const taskID = await window.harness.attachSession(id);
-      attachedTask.textContent = `attached: ${taskID} (reattached)`;
-      scrollTermToBottom();
-    } catch (err) {
-      attachedTask.textContent = "";
-      showError(err);
-    }
-    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
-    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
-  });
+  if (reattachQuick) {
+    reattachQuick.addEventListener("click", () => reattachTo(reattachQuick.dataset.taskId));
+  }
+
+  document.getElementById("reattach").addEventListener("click", () => reattachTo(taskIdInput.value.trim()));
 
   // renderTaskList builds clickable task rows into #task-list. Each row toggles
   // an inline action sheet; every action derives the id from the row, so the
@@ -838,17 +876,7 @@ const POLL_INTERVAL_MS = 5000;
 
     // Reattach — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
-      addItem("↪ Reattach", "", async () => {
-        setActiveTab("terminal");
-        term.reset();
-        try {
-          await window.harness.attachSession(t.id);
-          attachedTask.textContent = `attached: ${t.id} (reattached)`;
-          scrollTermToBottom();
-        } catch (err) { attachedTask.textContent = ""; showError(err); }
-        try { fit.fit(); } catch (_) {}
-        window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
-      });
+      addItem("↪ Reattach", "", () => reattachTo(t.id));
     }
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
