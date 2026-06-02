@@ -349,6 +349,12 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleListFiles(ctx, lf)
+	case protocol.RunnerRequestType_OpenPortForward:
+		pf := req.OpenPortForward()
+		if pf == nil {
+			return
+		}
+		go session.handleOpenPortForward(ctx, pf)
 	case protocol.RunnerRequestType_EstablishRelay:
 		er := req.EstablishRelay()
 		if er == nil {
