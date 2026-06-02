@@ -167,6 +167,18 @@ button:hover { background: #555; }
 
     /* Terminal: taller so claude has room. */
     #terminal { height: 70vh; min-height: 280px; }
+
+    /* Terminal tab fills the viewport below the sticky tab bar; touch-keys sit
+       at the bottom as a keyboard-accessory row (just above the OS keyboard).
+       dvh tracks the shrinking viewport when the soft keyboard opens. */
+    body[data-active-tab="terminal"] #interactive {
+      display: flex;
+      flex-direction: column;
+      height: calc(100dvh - 4rem); /* tab bar + page padding; tune if it clips */
+    }
+    body[data-active-tab="terminal"] #interactive h2 { display: none; }
+    #interactive #terminal { flex: 1 1 auto; min-height: 0; height: auto; }
+    #interactive #touch-keys { flex: 0 0 auto; margin: 0.4rem 0 0; }
 }
 
 #harness-conn-banner {
