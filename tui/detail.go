@@ -53,6 +53,7 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
 	fmt.Fprintf(&sb, "id:            %s\n", protocol.RunnerIDToConnID(r.Id).String())
 	fmt.Fprintf(&sb, "host:          %s\n", string(r.Hostname))
+	fmt.Fprintf(&sb, "agent:         %s\n", agentDescriptor(string(r.AgentBin), r.SkillsInjected()))
 	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
 	for i, root := range r.AllowedRoots {
 		fmt.Fprintf(&sb, "root[%d]:       %s\n", i, string(root.Path))

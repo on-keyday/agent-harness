@@ -707,7 +707,7 @@ func (a *App) refreshTasksTable() {
 	if len(all) > 100 {
 		all = all[:100]
 	}
-	a.tasks.SetRows(all)
+	a.tasks.SetRows(all, a.runnersSnapshot)
 }
 
 // resolveTaskIDPrefix returns the full hex id matching prefix (case-insensitive).

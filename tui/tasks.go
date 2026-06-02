@@ -26,6 +26,7 @@ func NewTasks() TasksModel {
 		{Title: "Status", Width: 9},
 		{Title: "ID", Width: 12},
 		{Title: "From", Width: 6},
+		{Title: "Agent", Width: 14},
 		{Title: "Repo", Width: 28},
 		{Title: "Prompt", Width: 0}, // resized later via SetSize
 	}
@@ -60,15 +61,25 @@ func (m *TasksModel) SetSize(w, h int) {
 	}
 }
 
-func (m *TasksModel) SetRows(ts []protocol.TaskInfo) {
+func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerInfo) {
+	// Index runners by ConnID string so each task can show its runner's agent.
+	runnerByID := make(map[string]protocol.RunnerInfo, len(runners))
+	for _, r := range runners {
+		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+	}
 	rows := make([]table.Row, 0, len(ts))
 	ids := make([]string, 0, len(ts))
 	for _, t := range ts {
 		idHex := hex.EncodeToString(t.Id.Id[:])
+		agent := "-"
+		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+			agent = agentDescriptor(string(r.AgentBin), r.SkillsInjected())
+		}
 		rows = append(rows, table.Row{
 			taskStatusStr(t.Status),
 			idHex[:12],
 			originCell(t.OriginKind),
+			agent,
 			truncateLeft(string(t.RepoPath), 28),
 			renderPromptCell(t),
 		})

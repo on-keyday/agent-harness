@@ -22,6 +22,7 @@ func NewRunners() RunnersModel {
 		{Title: "Status", Width: 8},
 		{Title: "Host", Width: 20},
 		{Title: "Tasks", Width: 7},
+		{Title: "Agent", Width: 14},
 		{Title: "Roots", Width: 30},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(false))
@@ -53,6 +54,7 @@ func (m *RunnersModel) SetRows(rs []protocol.RunnerInfo) {
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			runnerTasksCell(r),
+			runnerAgentCell(r),
 			runnerRootsCell(r),
 		})
 	}
@@ -112,6 +114,24 @@ func formatTaskID(b []byte) string { return fmt.Sprintf("%x", b) }
 // runnerTasksCell renders "active/max" for the Tasks column.
 func runnerTasksCell(r protocol.RunnerInfo) string {
 	return fmt.Sprintf("%d/%d", r.ActiveTasksLen, r.MaxTasks)
+}
+
+// agentDescriptor renders a runner's agent identity (binary basename + a skill
+// marker) for tables / detail. "?" for an unknown binary. Note: "+skills" is
+// only meaningful for claude — the harness injection is claude-specific.
+func agentDescriptor(bin string, injected bool) string {
+	if bin == "" {
+		bin = "?"
+	}
+	if injected {
+		return bin + "+skills"
+	}
+	return bin
+}
+
+// runnerAgentCell renders the Agent column for a runner row.
+func runnerAgentCell(r protocol.RunnerInfo) string {
+	return agentDescriptor(string(r.AgentBin), r.SkillsInjected())
 }
 
 // runnerRootsCell renders the first AllowedRoot path (truncated) for the table.
