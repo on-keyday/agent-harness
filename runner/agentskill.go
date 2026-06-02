@@ -1,16 +1,13 @@
 package runner
 
 import (
-	"embed"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
-)
 
-//go:embed all:agentskills
-var agentSkillsFS embed.FS
+	"github.com/on-keyday/agent-harness/runner/agentskills"
+)
 
 // claudeMdMinimal is written to <worktree>/CLAUDE.md only when no CLAUDE.md
 // already exists in the worktree. Its sole job is to ensure a cold-started
@@ -32,22 +29,20 @@ const claudeMdMinimal = `This task runs inside a harness-managed worktree.
 // guidance to the agent. CLAUDE.md is never overwritten — the worktree's
 // repository may already provide one with project-specific instructions.
 func WriteAgentSkills(worktreeDir string) error {
-	const root = "agentskills"
 	skillsDir := filepath.Join(worktreeDir, ".claude", "skills")
 
-	err := fs.WalkDir(agentSkillsFS, root, func(p string, d fs.DirEntry, err error) error {
+	err := fs.WalkDir(agentskills.FS, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel := strings.TrimPrefix(strings.TrimPrefix(p, root), "/")
-		if rel == "" {
+		if p == "." {
 			return nil
 		}
-		dst := filepath.Join(skillsDir, filepath.FromSlash(rel))
+		dst := filepath.Join(skillsDir, filepath.FromSlash(p))
 		if d.IsDir() {
 			return os.MkdirAll(dst, 0o755)
 		}
-		data, err := agentSkillsFS.ReadFile(p)
+		data, err := agentskills.FS.ReadFile(p)
 		if err != nil {
 			return err
 		}
