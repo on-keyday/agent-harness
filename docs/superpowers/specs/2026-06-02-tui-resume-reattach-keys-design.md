@@ -2,7 +2,7 @@
 
 - 日付: 2026-06-02
 - 対象: `tui/app.go`（キーハンドラ + ヒント行）, `tui/taskaction.go`（新規・純関数ヘルパ）, `tui/taskaction_test.go`（新規）
-- 種別: TUI キーバインド追加（プロトコル/サーバ変更なし）
+- 種別: TUI キーバインド追加 + `i` の reattach 分岐除去（プロトコル/サーバ変更なし）
 
 ## 1. 問題
 
@@ -14,12 +14,20 @@ TUI で終了タスクを resume するには cmdline/popup で `session new --r
 - タスクパネルで選択中のタスクに対し、**ワンキーで reattach / resume**。
 - resume は **`r`=`--continue` 継続 / `R`=まっさら** を分けて即実行。
 
-### 非ゴール
-- 既存 `i`（非 detachable interactive open / Detached 時 reattach）と `S`（detachable 新規）は**触らない**。
-- 非 detachable interactive の廃止・整理（別件）。
-- Running セッションの takeover reattach（既存 `i` と同じく Detached のみを対象）。
+### スコープに含む（追記）
+- **`i` から reattach 分岐を除去** — `i` は常に「新規（非 detachable）interactive を開く」に簡素化。reattach は `r` に一本化（`i` と `r` の重複・紛らわしさを解消）。
 
-## 3. キーバインド設計（`i`/`S` 不変・追加のみ）
+### 非ゴール
+- `S`（detachable 新規）は**触らない**。
+- **非 detachable interactive 自体の廃止**（`i` の open 先を detachable に変える等）は別件。今回は `i` の reattach 分岐を消すだけ。
+- Running セッションの takeover reattach（reattach は Detached のみを対象）。
+
+## 3. キーバインド設計
+
+### 3.0 `i` の簡素化（reattach 除去）
+現状 `i` は「Detached 選択時 reattach / それ以外は新規 interactive」だが、reattach は `r` に移すため、`i` は**常に新規（非 detachable）interactive を開く**だけにする。`tui/app.go` の `i` ハンドラから内側の Detached→`DoAttachSession` 分岐を削除し、`DoOpenInteractive(a.client, a.defaultRepo)` のみ残す。`S`（detachable 新規）は不変。
+
+### 3.1 追加キー（`r` / `R`）
 
 タスクパネル focus かつ選択タスクがあるとき:
 
