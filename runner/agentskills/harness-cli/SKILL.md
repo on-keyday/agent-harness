@@ -258,6 +258,43 @@ topic).
 Without `--resume` you get a fresh task id and the peers' link to the
 previous identity is dead — they will need a new hello round.
 
+### Listing and killing your sessions
+
+```bash
+harness-cli session ls          # JSON Lines: detachable interactive sessions only (id, status, runner)
+harness-cli session attach <id> # (re)attach a terminal to one
+harness-cli session kill <id>   # terminate one (alias of `cancel`)
+```
+
+`session ls` lists only detachable interactive sessions; the top-level `ls`
+shows every task (including one-shots). When more than one runner can serve the
+repo, pin a spawn with `--runner <cid>` / `--host <name>` / `--ip <addr>`.
+
+## One-shot tasks & monitoring (`submit`, `logs`, `watch`)
+
+`submit` is the fire-and-forget counterpart to `session new -d`: it enqueues a
+one-shot task that runs to completion and exits, with no way to step in mid-run
+(see "Why detached sessions over `submit`" above). **Prefer `session new -d`**
+for anything collaborative; reach for `submit` only for genuinely narrow,
+no-intervention jobs.
+
+```bash
+harness-cli submit --repo /path/to/repo --task "one-line job ..."
+```
+
+Because a submitted task gives you no live channel, you observe it from outside:
+
+```bash
+harness-cli logs [-f|--follow] <TASK_ID>   # dump log history; -f streams live until the task is terminal
+harness-cli watch                          # stream task + runner status events (all tasks)
+harness-cli cancel <TASK_ID>               # cancel a queued/running task
+harness-cli prune [--before DUR] [-f] [TASK_ID ...]   # ask the server to forget terminal tasks
+```
+
+`logs` / `watch` work for any task, but you rarely need them for a
+`session new -d` worker — there you drive and observe it directly over the
+agentboard.
+
 ## Moving files in / out of a worker's worktree
 
 `harness-cli file` reads and writes files inside a task's **worktree** — the
