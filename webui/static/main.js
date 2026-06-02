@@ -85,7 +85,9 @@ const POLL_INTERVAL_MS = 5000;
   const runnerSelect = document.getElementById("runner-select");
   const hostSelect   = document.getElementById("host-select");
   const claudeArgs   = document.getElementById("claude-args-input");
-  const resumeInput  = document.getElementById("resume-task-input");
+  // Single unified task-id field, shared by reattach (target a detached
+  // session) and resume (reuse a terminal task's worktree via Submit / Open).
+  const taskIdInput  = document.getElementById("task-id-input");
   const runnerList   = document.getElementById("runner-list");
   const taskList     = document.getElementById("task-list");
 
@@ -101,8 +103,8 @@ const POLL_INTERVAL_MS = 5000;
   // currentResumeTaskID returns the trimmed resume input, or "" when blank.
   // The wasm bridge translates "" to "no resume" before serializing.
   const currentResumeTaskID = () => {
-    if (!resumeInput) return "";
-    return resumeInput.value.trim();
+    if (!taskIdInput) return "";
+    return taskIdInput.value.trim();
   };
 
   // File picker DOM refs + state need to exist BEFORE refreshSnapshot()
@@ -636,7 +638,7 @@ const POLL_INTERVAL_MS = 5000;
   });
 
   document.getElementById("reattach").addEventListener("click", async () => {
-    const id = document.getElementById("reattach-session-id").value.trim();
+    const id = taskIdInput.value.trim();
     if (!id) {
       attachedTask.textContent = "(session id required)";
       return;

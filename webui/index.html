@@ -32,10 +32,6 @@
       <br>
       <label for="claude-args-input">Extra claude args (shell-quoted):</label>
       <input id="claude-args-input" type="text" size="60" placeholder='e.g. --add-dir "C:/path"'>
-      <br>
-      <label for="resume-task-input">Resume task id (optional):</label>
-      <input id="resume-task-input" type="text" size="40" placeholder="32 hex chars; empty = new task" pattern="[0-9a-fA-F]*">
-      <small>Used by Submit, Open one-shot, and Open detachable to reuse a terminal task's id + worktree branch. Repo is ignored on resume.</small>
     </section>
     <section id="cmdline">
       <h2>Command</h2>
@@ -70,9 +66,11 @@
         <button id="stop-streaming">Stop streaming</button>
       </div>
       <div class="actions">
-        <input type="text" id="reattach-session-id" placeholder="session id (hex)" size="40">
-        <button id="reattach">Reattach to session</button>
+        <label for="task-id-input">Task id:</label>
+        <input type="text" id="task-id-input" placeholder="32 hex chars" size="40" pattern="[0-9a-fA-F]*">
+        <button id="reattach">Reattach</button>
       </div>
+      <small>One task id for every id-driven action: <b>Reattach</b> to a detached (live) session, or <b>resume</b> a terminal task's worktree branch via Submit / Open one-shot / Open detachable (Repo is ignored on resume). Leave empty to open a fresh task.</small>
       <div id="attached-task"></div>
       <div class="touch-keys" id="touch-keys">
         <button type="button" data-mod="ctrl" id="tk-ctrl">Ctrl</button>
