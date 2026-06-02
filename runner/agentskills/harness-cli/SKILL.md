@@ -389,10 +389,18 @@ agent-runner flags):
 
 `ls` now shows each task's runner identity: an `agent=<bin>` column (the agent
 binary basename — `claude` / `gemini` / `codex` / `bash` …), with `+skills` when
-the runner injects the harness skill + inbox hook. So `agent=claude+skills` is a
-conventional, skill-following peer; `agent=bash` or `agent=claude` (no `+skills`)
-is not — it has neither this skill nor the auto-inbox hook. Behavior is still the
-final word (does it complete `harness.hello`?), but you no longer have to guess.
+the runner did its harness injection (settings hook + this skill). **That
+injection is currently claude-specific** — it writes `.claude/`. So:
+
+- `agent=claude+skills` — a conventional, skill-following peer.
+- `agent=claude` (no `+skills`), or `agent=bash` — not: no skill, no inbox hook.
+- `agent=codex+skills` / any non-claude with `+skills` — **misleading**: the
+  harness wrote `.claude/`, which that agent doesn't read (codex uses `.agent/`
+  / `AGENTS.md`, gemini `GEMINI.md`, …). Treat `+skills` as meaningful only for
+  `claude` until agent-specific injection lands.
+
+Behavior is still the final word (does it complete `harness.hello`?), but you no
+longer have to guess.
 
 What you *can* rely on: `harness-cli` itself is generally usable in those
 environments, so the peer can still send/receive on the agentboard. Coordinate

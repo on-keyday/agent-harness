@@ -119,6 +119,8 @@ case "skill":
 - runner の既存スキルテスト（`runner/agentskill_test.go`）が refactor 後も通ること。
 - `go build ./...` 通過。
 
-## 10. スコープ外
+## 10. スコープ外 / 既知の限界（→ 後続設計）
 
-- `--claude-bin` フラグのリネーム、gemini/codex 向け注入、agent/shell 自動分類の wire 化、`TaskInfo` への denormalize。いずれも本件では行わない。
+- **`skills_injected` は現状 claude 専用の意味**: 実体は `!NoWorktree || ForceInject` ＝「`.claude/{settings.json,skills}` 注入をしたか」。harness の注入は claude 形式のみで、codex（`.agent/`・`AGENTS.md`）/ gemini（`GEMINI.md`）等は置き場・形式が異なる。よって `--claude-bin codex` で worktree モードだと `skills_injected=true`（`agent=codex+skills`）になるが、codex は `.claude/` を読まないため**実際には skill 非追従**。`+skills` は `agent_bin==claude` のときのみ意味を持つ、と SKILL.md に明記済み。
+- **agent 別注入**（`agent_bin` で `.claude` / `.agent`・`AGENTS.md` / `GEMINI.md` を振り分け、`skills_injected` を agent 適合の意味へ拡張）は**別途設計する後続機能**。今回追加した `agent_bin` がその駆動信号になる。
+- 本件では行わない: `--claude-bin` フラグのリネーム、上記 agent 別注入、agent/shell 自動分類の wire 化、`TaskInfo` への denormalize。
