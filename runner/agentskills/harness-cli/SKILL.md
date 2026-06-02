@@ -234,6 +234,44 @@ topic).
 Without `--resume` you get a fresh task id and the peers' link to the
 previous identity is dead — they will need a new hello round.
 
+## Moving files in / out of a worker's worktree
+
+`harness-cli file` reads and writes files inside a task's **worktree** — the
+per-task `harness/<task-id>` checkout the runner created for it, not arbitrary
+host paths. Use it to seed a worker you spawned with input files, or to collect
+its artifacts. `WORKTREE_REL_*` paths are POSIX and relative to the worktree
+root.
+
+```bash
+# List one directory (default: worktree root).
+harness-cli file ls     <TASK_ID> [WORKTREE_REL_DIR]
+
+# Copy a local file INTO the worktree (-r: directory tree).
+# Default is O_EXCL — refuses to overwrite; -f permits replacement.
+harness-cli file push   [-r] [-f] <TASK_ID> <LOCAL_SRC> <WORKTREE_REL_DST>
+
+# Copy a worktree file OUT to a local path (-r: directory tree).
+# Default refuses to overwrite the local target; -f permits replacement.
+harness-cli file pull   [-r] [-f] <TASK_ID> <WORKTREE_REL_SRC> <LOCAL_DST>
+
+# Remove a single file from the worktree (refuses directories).
+harness-cli file delete <TASK_ID> <WORKTREE_REL_PATH>
+```
+
+`<TASK_ID>` is the 32-hex id from `session new` / `submit` (the same id behind
+the `chat.<short-id>` topic). Typical seed → run → collect flow with a worker:
+
+```bash
+TASK_ID=$(harness-cli session new -d --repo /path/to/repo)
+harness-cli file push "$TASK_ID" ./spec.md docs/spec.md     # hand it inputs
+# ... drive it via the agentboard; let it work ...
+harness-cli file pull "$TASK_ID" out/report.md ./report.md  # collect outputs
+```
+
+Prefer this over having the worker paste large files through agentboard
+messages: `file` streams the bytes directly and keeps the agentboard for
+coordination, not bulk transfer.
+
 ## Prefer JSON for `--data`
 
 The broker delivers `--data` verbatim, but the `inbox` JSON-Lines output
