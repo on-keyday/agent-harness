@@ -65,12 +65,20 @@
 タスクタブの Tasks 一覧を、非インタラクティブな `<pre>` から**行クリック可能なリスト**に変更する（既存の File picker の `<ul>`/`<li>` クリック実装 `main.js:208-243` が手本）。
 
 - 行タップ → アクションシート表示。項目と表示条件（snapshot の `status` / `kind` 文字列で判定）:
-  - **Reattach** → `window.harness.attachSession(id)` を呼び、**端末タブへ自動遷移**。表示条件: `kind === "Interactive"` かつ `status ∈ {Running, Detached}`（再接続可能な生きた対話セッション）。
+  - **Reattach** → `window.harness.attachSession(id)` を呼び、**端末タブへ自動遷移**。再接続後に `term.scrollToBottom()` で端末を最下部へスクロールし、最新出力位置に合わせる（後述 3.5.1）。表示条件: `kind === "Interactive"` かつ `status ∈ {Running, Detached}`（再接続可能な生きた対話セッション）。
   - **Resume** → `window.harness.startInteractive({repo:"", host:"", claudeArgs:[], resumeTaskId: id, detachable:true})` で当該タスクの worktree を再開。実行後**端末タブへ自動遷移**。表示条件: `status ∈ {Succeeded, Failed, Cancelled}`（終了済みタスクの worktree 再開）。
   - **このタスクのファイル** → **ファイルタブへ自動遷移**し、`file-task-select.value` を当該IDに設定して `change` を発火（既存 `refreshFilePicker()` 経路）。表示条件: 常時。
   - **Cancel** → `window.harness.cancel(id)`（破壊的操作は `confirm` ガード）。表示条件: `status ∈ {Queued, Running, Detached}`（非終了状態）。
 - IDは内部（クリックされた行の `task.id`）から補完するため、**ユーザは一度もIDをコピペしない**。
 - status 文字列の定義: 非終了 = `Queued`/`Running`/`Detached`、終了 = `Succeeded`/`Failed`/`Cancelled`（`runner/protocol/message.go` の `TaskStatus.String()`）。kind = `Oneshot`/`Interactive`。
+
+### 3.5.1 Reattach 後の最下部スクロール
+
+現状の Reattach はリングバッファのリプレイで過去スクロールバックを書き戻すため、再接続直後にビューポートが上方に残り、ユーザが毎回手で最下部までスクロールする必要がある。これを解消する。
+
+- 機構: Reattach 経路（タスク行タップの Reattach、および手入力ID用の Reattach ボタン）で、`attachSession` 解決後に `term.scrollToBottom()` を呼ぶ。
+- **非同期リプレイの考慮**: リプレイフレームは `attachSession` の解決後に `recvPump`（wasm側）経由で遅れて届き得る。`attachSession` 直後の1回だけでは末尾フレーム到着前にスクロールが確定し最下部に揃わない可能性がある。そこで、直後の1回に加えて `requestAnimationFrame` で1回、さらに後続フレームを取りこぼさないよう短い遅延（120ms）でもう1回 `scrollToBottom()` を呼ぶ三段構えとする。alt-screen を使うフルTUIでは scrollToBottom が無効（スクロールバックなし）だが副作用は無いので無害。
+- 対象外: Resume / Open one-shot / Open detachable はフレッシュ出力で自然に最下部に追従するため変更しない。
 
 ### 3.6 自動タブ遷移のまとめ
 
