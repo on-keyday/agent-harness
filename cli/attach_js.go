@@ -4,12 +4,6 @@ package cli
 
 import (
 	"context"
-	"errors"
-	"io"
-	"log/slog"
-	"syscall/js"
-
-	"github.com/on-keyday/agent-harness/exec/frame"
 )
 
 // AttachSession (WASM) re-attaches to an existing detachable interactive
@@ -18,6 +12,11 @@ import (
 // activeInteractiveSession — exactly like InteractiveWithSelectorAndArgs does
 // for a fresh session. The browser xterm will receive replayed + live output
 // via harness_xtermWrite without any additional wiring.
+//
+// Installation, the recv pump, the single-writer generation guard, and the
+// detach-and-drain of any previous session are all handled by
+// installAndPumpSession (see open_interactive_wasm.go) — shared verbatim with
+// the fresh-session path so the two cannot drift.
 //
 // Returns the task's hex id (same as taskIDHex) on success.
 func (c *Client) AttachSession(ctx context.Context, taskIDHex string) (string, error) {
@@ -30,57 +29,11 @@ func (c *Client) AttachSession(ctx context.Context, taskIDHex string) (string, e
 	session := &InteractiveSession{
 		stream:    stream,
 		taskIDHex: taskIDHex,
+		ctx:       sessCtx,
 		cancel:    cancel,
+		done:      make(chan struct{}),
 	}
-
-	// Detach any pre-existing session (same pattern as InteractiveWithSelectorAndArgs).
-	activeInteractiveMu.Lock()
-	if old := activeInteractiveSession; old != nil {
-		old.detach()
-	}
-	activeInteractiveSession = session
-	activeInteractiveMu.Unlock()
-
-	// recv goroutine: stream → frame parser → harness_xtermWrite.
-	// Mirrors the goroutine in open_interactive_wasm.go verbatim.
-	go func() {
-		for {
-			select {
-			case <-sessCtx.Done():
-				return
-			default:
-			}
-			f := &frame.Frame{}
-			if err := f.Read(stream); err != nil {
-				if !errors.Is(err, io.EOF) {
-					slog.Info("attachSession recv ended", "err", err)
-				}
-				activeInteractiveMu.Lock()
-				if activeInteractiveSession == session {
-					activeInteractiveSession = nil
-				}
-				activeInteractiveMu.Unlock()
-				session.markClosed()
-				return
-			}
-			switch f.Header.Type {
-			case frame.FrameType_Stdout, frame.FrameType_Stderr:
-				if f.Header.Len == 0 {
-					continue
-				}
-				data := *f.Data()
-				if len(data) == 0 {
-					continue
-				}
-				arr := js.Global().Get("Uint8Array").New(len(data))
-				js.CopyBytesToJS(arr, data)
-				js.Global().Call("harness_xtermWrite", arr)
-			default:
-				// Stdin / Control frames going back to the client are
-				// not part of the wire contract here.
-			}
-		}
-	}()
+	installAndPumpSession(session)
 
 	return taskIDHex, nil
 }

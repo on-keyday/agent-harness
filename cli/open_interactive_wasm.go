@@ -10,7 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"syscall/js"
+	"time"
 
 	"github.com/on-keyday/agent-harness/exec/frame"
 	"github.com/on-keyday/agent-harness/peer"
@@ -28,18 +30,46 @@ import (
 type InteractiveSession struct {
 	stream    trsf.BidirectionalStream
 	taskIDHex string
+	ctx       context.Context
 	cancel    context.CancelFunc
-	mu        sync.Mutex
-	closed    bool
+	// gen stamps which generation of the active session this is. recvPump
+	// writes to the shared xterm only while gen == interactiveGen — see the
+	// single-writer guard in recvPump.
+	gen uint64
+	// done is closed when recvPump exits. installAndPumpSession waits on it
+	// so a superseded session's goroutine has stopped before the next one
+	// starts painting the terminal.
+	done   chan struct{}
+	mu     sync.Mutex
+	closed bool
 }
 
 // activeInteractiveSession is the singleton current session. Browser UX only
 // allows one interactive task at a time; if a second Interactive call lands
 // while a session exists, the old one is detached first.
+//
+// interactiveGen is bumped on every change of the active session (install of a
+// new one, or detach to none). A recv goroutine paints the shared browser
+// xterm only while its session.gen still equals interactiveGen. This is the
+// single-writer invariant that the native TUI/CLI get for free — each runs one
+// RemoteShell at a time against the real terminal (tui/interactive.go uses
+// tea.Exec → RemoteShell, suspending the rest of the UI) — but the browser,
+// with one long-lived xterm fed by per-session goroutines, must enforce
+// explicitly. Without it, a superseded session's residual frames interleave
+// with the new session's replay and desync the xterm parser, which is the
+// browser-only reattach corruption that forced a page reload.
 var (
 	activeInteractiveSession *InteractiveSession
 	activeInteractiveMu      sync.Mutex
+	interactiveGen           atomic.Uint64
 )
+
+// detachDrainTimeout bounds how long installAndPumpSession waits for a
+// superseded session's recv goroutine to stop before installing the new one.
+// On a healthy transport CloseBoth unblocks the read well under this; the
+// timeout only guards a wedged/dead transport (e.g. after a WS reconnect),
+// where the old session has no inbound bytes to leak anyway.
+const detachDrainTimeout = time.Second
 
 // Interactive (wasm) opens an interactive PTY session against an idle runner
 // for repo and wires the bidirectional stream's bytes to the browser xterm.
@@ -131,64 +161,115 @@ func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string
 	session := &InteractiveSession{
 		stream:    stream,
 		taskIDHex: taskIDHex,
+		ctx:       sessCtx,
 		cancel:    cancel,
+		done:      make(chan struct{}),
 	}
+	installAndPumpSession(session)
+	return taskIDHex, nil
+}
 
-	// Detach any previous session before installing the new one. The
-	// browser only ever shows one xterm at a time; if JS forgot to call
-	// DetachInteractive before reopening, do it implicitly so the old
-	// recv goroutine doesn't keep writing into the (about-to-be-replaced)
-	// xterm.
+// installAndPumpSession makes session the active interactive session and starts
+// its recv pump. It reproduces, for the browser's single shared xterm, the
+// single-writer-at-a-time property the native TUI/CLI get from RemoteShell.
+//
+// Ordering is deliberate:
+//  1. Bump the generation and install the new session FIRST, so the previous
+//     session's recv pump immediately fails its write guard and drops any
+//     residual frames. This is what prevents the takeover corruption: the
+//     server's replay ring already contains every frame it forwarded to the
+//     old tui (runnerPump appends to the ring before forwarding), so the old
+//     stream's tail is a *duplicate* of the replay — dropping it is correct,
+//     letting it paint would double-render and desync the parser.
+//  2. Detach the previous session (close its stream) and drain its goroutine,
+//     bounded by detachDrainTimeout, so goroutines don't pile up across rapid
+//     reattaches. This runs OUTSIDE activeInteractiveMu — the goroutine's exit
+//     path also takes that lock, so holding it across the drain would deadlock.
+//  3. Start the new session's pump, which replays the ring and then live output.
+func installAndPumpSession(session *InteractiveSession) {
 	activeInteractiveMu.Lock()
-	if old := activeInteractiveSession; old != nil {
-		old.detach()
-	}
+	old := activeInteractiveSession
+	session.gen = interactiveGen.Add(1)
 	activeInteractiveSession = session
 	activeInteractiveMu.Unlock()
 
-	// recv goroutine: stream → frame parser → harness_xtermWrite for
-	// stdout/stderr payload bytes. Control frames (signal echoes) are
-	// currently ignored — the browser does not need to surface them.
-	go func() {
-		for {
-			select {
-			case <-sessCtx.Done():
-				return
-			default:
-			}
-			f := &frame.Frame{}
-			if err := f.Read(stream); err != nil {
-				if !errors.Is(err, io.EOF) {
-					slog.Info("interactive recv ended", "err", err)
-				}
-				activeInteractiveMu.Lock()
-				if activeInteractiveSession == session {
-					activeInteractiveSession = nil
-				}
-				activeInteractiveMu.Unlock()
-				session.markClosed()
-				return
-			}
-			switch f.Header.Type {
-			case frame.FrameType_Stdout, frame.FrameType_Stderr:
-				if f.Header.Len == 0 {
-					continue
-				}
-				data := *f.Data()
-				if len(data) == 0 {
-					continue
-				}
-				arr := js.Global().Get("Uint8Array").New(len(data))
-				js.CopyBytesToJS(arr, data)
-				js.Global().Call("harness_xtermWrite", arr)
-			default:
-				// Stdin / Control frames going *back* to the client
-				// are not part of the contract. Ignore.
-			}
-		}
-	}()
+	if old != nil {
+		old.detach()
+		old.waitDone(detachDrainTimeout)
+	}
 
-	return taskIDHex, nil
+	go session.recvPump()
+}
+
+// recvPump reads frames from the session's stream and writes stdout/stderr
+// payload bytes to the browser xterm via harness_xtermWrite. Control frames
+// (signal echoes) are ignored — the browser does not need to surface them. It
+// exits (closing session.done) on stream EOF/error or when the session is
+// superseded. Writes are gated by the generation guard so a superseded session
+// cannot interleave its output with the successor's replay.
+func (s *InteractiveSession) recvPump() {
+	defer close(s.done)
+	staleLogged := false
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+		f := &frame.Frame{}
+		if err := f.Read(s.stream); err != nil {
+			if !errors.Is(err, io.EOF) {
+				slog.Info("interactive recv ended", "err", err, "task", s.taskIDHex)
+			}
+			activeInteractiveMu.Lock()
+			if activeInteractiveSession == s {
+				activeInteractiveSession = nil
+			}
+			activeInteractiveMu.Unlock()
+			s.markClosed()
+			return
+		}
+		switch f.Header.Type {
+		case frame.FrameType_Stdout, frame.FrameType_Stderr:
+			if f.Header.Len == 0 {
+				continue
+			}
+			data := *f.Data()
+			if len(data) == 0 {
+				continue
+			}
+			// Single-writer guard: only the current generation paints the
+			// shared xterm. A superseded session (older gen) was already
+			// detached before the bump, so its stream is closing; drop its
+			// residual output rather than interleaving it with the new
+			// session's replay and desyncing the parser.
+			if interactiveGen.Load() != s.gen {
+				if !staleLogged {
+					slog.Info("interactive: dropping output from superseded session",
+						"task", s.taskIDHex, "sessionGen", s.gen, "currentGen", interactiveGen.Load())
+					staleLogged = true
+				}
+				return
+			}
+			arr := js.Global().Get("Uint8Array").New(len(data))
+			js.CopyBytesToJS(arr, data)
+			js.Global().Call("harness_xtermWrite", arr)
+		default:
+			// Stdin / Control frames going *back* to the client are not
+			// part of the contract. Ignore.
+		}
+	}
+}
+
+// waitDone blocks until the session's recv pump has exited (done closed) or
+// timeout elapses, whichever comes first.
+func (s *InteractiveSession) waitDone(timeout time.Duration) {
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-s.done:
+	case <-t.C:
+	}
 }
 
 // SendInteractive writes user-typed bytes (from xterm.onData) to the active
@@ -277,6 +358,10 @@ func DetachInteractive() {
 	activeInteractiveMu.Lock()
 	session := activeInteractiveSession
 	activeInteractiveSession = nil
+	// Supersede the generation so any in-flight recv pump for this session
+	// stops painting the shared xterm immediately (no session is current
+	// after an explicit detach).
+	interactiveGen.Add(1)
 	activeInteractiveMu.Unlock()
 	if session != nil {
 		session.detach()
