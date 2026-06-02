@@ -455,13 +455,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the default repo. The RPC + tea.Exec dance is two-stage: the Cmd
 		// dispatches the RPC, the response arrives as InteractiveReadyMsg,
 		// and Update returns tea.Exec then to actually suspend the TUI.
+		// `i` opens a new (non-detachable) interactive PTY in the default repo.
+		// Reattach lives on `r` now (see below), so `i` no longer special-cases a
+		// selected Detached task.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
-			if a.focus == focusTasks {
-				if t := a.tasks.SelectedTask(); t != nil &&
-					t.Status == protocol.TaskStatus_Detached && t.Detachable() {
-					return a, DoAttachSession(a.client, a.tasks.SelectedID())
-				}
-			}
 			return a, DoOpenInteractive(a.client, a.defaultRepo)
 		}
 		// `S` (capital) opens a new detachable interactive PTY session in the
