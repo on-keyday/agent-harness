@@ -567,7 +567,11 @@ const POLL_INTERVAL_MS = 5000;
     // Size (or release) the terminal tab to the visible viewport; this also
     // re-fits the grid that went stale while the tab was display:none.
     fitTerminalToViewport();
-    if (name === "terminal") term.focus();
+    // Intentionally NOT focusing the terminal here: focusing pops the soft
+    // keyboard on mobile every time you merely switch to the terminal tab to
+    // read output, and adds keyboard-toggle churn. The open / reattach / resume
+    // paths focus explicitly when you actually intend to type; otherwise tap
+    // the terminal to focus.
   };
   tabbar.addEventListener("click", (e) => {
     const btn = e.target.closest(".tab-btn");
