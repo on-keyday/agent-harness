@@ -84,29 +84,53 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  tasks=%d/%d  roots=%s  id=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
 			len(r.ActiveTasks),
 			r.MaxTasks,
+			agentStr(string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			protocol.RunnerIDToConnID(r.Id).String(),
 		)
 	}
 
+	// Index runners by ConnID string so each task can show its runner's agent.
+	runnerByID := make(map[string]protocol.RunnerInfo, len(lr.Runners))
+	for _, r := range lr.Runners {
+		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+	}
 	fmt.Fprintln(out, "TASKS")
 	if len(lr.Tasks) == 0 {
 		fmt.Fprintln(out, "  (none)")
 	}
 	for _, t := range lr.Tasks {
-		fmt.Fprintf(out, "  %s  %s  repo=%s  from=%s  prompt=%q\n",
+		agent := ""
+		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+			agent = "  " + agentStr(string(r.AgentBin), r.SkillsInjected())
+		}
+		fmt.Fprintf(out, "  %s  %s  repo=%s  from=%s%s  prompt=%q\n",
 			taskIDStr(t.Id.Id[:]),
 			taskStatusStr(t.Status),
 			string(t.RepoPath),
 			originStr(t.OriginKind),
+			agent,
 			string(t.Prompt),
 		)
 	}
+}
+
+// agentStr renders a peer's agent descriptor for the ls output: the agent
+// binary basename, plus "+skills" when the runner injects the harness skill.
+// Empty bin renders as "?".
+func agentStr(bin string, injected bool) string {
+	if bin == "" {
+		bin = "?"
+	}
+	if injected {
+		return "agent=" + bin + "+skills"
+	}
+	return "agent=" + bin
 }
 
 // originStr formats a ClientKind for the `from=` column. Unspecified renders
