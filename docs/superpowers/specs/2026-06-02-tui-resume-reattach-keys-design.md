@@ -20,7 +20,6 @@ TUI で終了タスクを resume するには cmdline/popup で `session new --r
 ### 非ゴール
 - `S`（detachable 新規）は**触らない**。
 - **非 detachable interactive 自体の廃止**（`i` の open 先を detachable に変える等）は別件。今回は `i` の reattach 分岐を消すだけ。
-- Running セッションの takeover reattach（reattach は Detached のみを対象）。
 
 ## 3. キーバインド設計
 
@@ -32,12 +31,12 @@ TUI で終了タスクを resume するには cmdline/popup で `session new --r
 タスクパネル focus かつ選択タスクがあるとき:
 
 - **`r`**（便利系・コンテキスト依存）:
-  - `Detached` かつ `Detachable()` → **reattach**。
+  - `Detachable()` かつ（`Detached` または `Running`）→ **reattach**（Running は takeover。`SessionMux.Attach` が既存クライアントを force-close する。WebUI の `Running||Detached` ゲートと一致）。
   - 終了状態（`Succeeded`/`Failed`/`Cancelled`）→ **resume + `--continue`**。
-  - それ以外（Running/Queued 等）→ 何もせず cmdresult にヒント。
+  - それ以外（非 detachable な Running/Queued 等）→ 何もせず cmdresult にヒント。
 - **`R`**（fresh 系）:
   - 終了状態 → **resume（`--continue` 無し）**。
-  - `Detached` かつ `Detachable()` → **reattach**（`--continue` は reattach に無関係なので `r` と同義）。
+  - `Detachable()` かつ（`Detached` または `Running`）→ **reattach**（`--continue` は reattach に無関係なので `r` と同義）。
   - それ以外 → ヒント。
 
 意味: 「**r/R どちらも選択セッションに再入。終了タスクのときだけ r=claude 記憶を継続 / R=まっさら**」。
@@ -66,7 +65,8 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	if t == nil {
 		return taskAction{Kind: actionNone, Hint: "no task selected"}
 	}
-	if t.Status == protocol.TaskStatus_Detached && t.Detachable() {
+	if t.Detachable() &&
+		(t.Status == protocol.TaskStatus_Detached || t.Status == protocol.TaskStatus_Running) {
 		return taskAction{Kind: actionReattach}
 	}
 	switch t.Status {
@@ -114,13 +114,14 @@ if a.focus == focusTasks && (msg.String() == "r" || msg.String() == "R") {
 `tui/taskaction_test.go`: `resumeReattachAction` の表駆動テスト:
 - `nil` → actionNone。
 - Detached+Detachable → actionReattach（withContinue 両方）。
+- Running+Detachable → actionReattach（takeover。withContinue 両方）。
 - Succeeded/Failed/Cancelled × withContinue=true → actionResume, ResumeArgs=["--continue"]。
 - 同上 × withContinue=false → actionResume, ResumeArgs=nil。
-- Running/Queued → actionNone。
+- Running+非 detachable（oneshot）/Queued → actionNone。
 - （`Detachable()` は bitfield アクセサ。テストで `TaskInfo` に `SetDetachable(true)` 等で設定。）
 
 手動: TUI 起動 → 終了タスク選択 → `r` で resume+continue、`R` で fresh resume、Detached タスクで `r` reattach、を確認。
 
 ## 8. スコープ外
 
-- `i`/`S` の変更、非 detachable interactive の廃止、Running takeover reattach、popup/cmdline の resume UX 改修。
+- `S`（detachable 新規）の変更、非 detachable interactive の廃止、popup/cmdline の resume UX 改修。

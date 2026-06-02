@@ -9,7 +9,9 @@ import (
 func TestResumeReattachAction(t *testing.T) {
 	detached := &protocol.TaskInfo{Status: protocol.TaskStatus_Detached}
 	detached.SetDetachable(true)
-	running := &protocol.TaskInfo{Status: protocol.TaskStatus_Running}
+	runningDetachable := &protocol.TaskInfo{Status: protocol.TaskStatus_Running}
+	runningDetachable.SetDetachable(true)
+	runningOneshot := &protocol.TaskInfo{Status: protocol.TaskStatus_Running}
 
 	if got := resumeReattachAction(nil, true); got.Kind != actionNone {
 		t.Errorf("nil: want actionNone, got %v", got.Kind)
@@ -17,6 +19,10 @@ func TestResumeReattachAction(t *testing.T) {
 	for _, wc := range []bool{true, false} {
 		if got := resumeReattachAction(detached, wc); got.Kind != actionReattach {
 			t.Errorf("detached wc=%v: want actionReattach, got %v", wc, got.Kind)
+		}
+		// Running + detachable → takeover reattach (matches WebUI gate).
+		if got := resumeReattachAction(runningDetachable, wc); got.Kind != actionReattach {
+			t.Errorf("running+detachable wc=%v: want actionReattach, got %v", wc, got.Kind)
 		}
 	}
 	for _, st := range []protocol.TaskStatus{
@@ -31,7 +37,8 @@ func TestResumeReattachAction(t *testing.T) {
 			t.Errorf("status=%v R: want resume nil, got %v %v", st, got.Kind, got.ResumeArgs)
 		}
 	}
-	if got := resumeReattachAction(running, true); got.Kind != actionNone {
-		t.Errorf("running: want actionNone, got %v", got.Kind)
+	// Running but non-detachable (oneshot) has no PTY to attach → actionNone.
+	if got := resumeReattachAction(runningOneshot, true); got.Kind != actionNone {
+		t.Errorf("running+oneshot: want actionNone, got %v", got.Kind)
 	}
 }

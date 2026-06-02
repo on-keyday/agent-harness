@@ -19,14 +19,20 @@ type taskAction struct {
 }
 
 // resumeReattachAction decides what r (withContinue=true) / R (withContinue=false)
-// do for the selected task: reattach a live Detached+Detachable session, resume a
+// do for the selected task: reattach a live detachable session (Detached, or
+// Running via takeover — the server force-closes the prior client), resume a
 // finished task into a new detachable session (with or without --continue), or
 // nothing (with a hint) for anything else.
 func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	if t == nil {
 		return taskAction{Kind: actionNone, Hint: "no task selected"}
 	}
-	if t.Status == protocol.TaskStatus_Detached && t.Detachable() {
+	// A detachable session can be re-entered whether it is Detached (no client)
+	// or Running (takeover — SessionMux.Attach force-closes the prior client),
+	// matching the WebUI's Running||Detached reattach gate. Non-detachable
+	// (oneshot) Running tasks have no PTY to attach to, so they fall through.
+	if t.Detachable() &&
+		(t.Status == protocol.TaskStatus_Detached || t.Status == protocol.TaskStatus_Running) {
 		return taskAction{Kind: actionReattach}
 	}
 	switch t.Status {
