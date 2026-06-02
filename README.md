@@ -61,6 +61,9 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - File transfer: `file ls`, `file push`, `file pull`, `file delete`
       against a task's worktree (recursive variants via `-r`, force
       overwrite via `-f`; paths are confined to the worktree root).
+    - Port forwarding: `forward <task-id> -L [bind:]lport:rhost:rport`
+      (SSH `-L` style — the runner dials `rhost:rport`, bytes relayed
+      over the same transport; `-L` repeatable, foreground until Ctrl-C).
     - Agent runtime (called from inside agent sessions):
       `agent {send | wait | inbox | dispatch | subscribe | unsubscribe
       | topics | subscriptions}`. See `runner/agentskills/harness-cli/
@@ -140,6 +143,12 @@ bin/harness-cli file delete <task-id> rel/path.txt
 # Recursive directory transfer (tar over the wire) and force overwrite:
 bin/harness-cli file push -r -f <task-id> ./local-dir/ rel/dir
 bin/harness-cli file pull -r -f <task-id> rel/dir ./local-dir/
+
+# 7. Port-forward a runner-side port to your machine (SSH -L style). The runner
+# dials remote-host:remote-port; bytes relay over the harness transport. Handy
+# for reaching a dev server the agent started inside its worktree. Foreground;
+# Ctrl-C tears down. bind defaults to 127.0.0.1; -L is repeatable.
+bin/harness-cli forward <task-id> -L 3000:127.0.0.1:3000
 ```
 
 ### Daemon lifecycle helpers
@@ -227,6 +236,9 @@ Keys:
 | `s` | Open the multi-line submit popup (`Ctrl+J` / `Ctrl+Enter` to send, `Esc` to cancel) |
 | `S` | Open a detachable session in the default repo (equivalent to `harness-cli session new`) |
 | `i` (tasks focus) | Attach interactively to the focused task, or open a new interactive session in the default repo if no task is focused. On a Detached row, reattaches via `session attach`. |
+| `r` / `R` (tasks focus) | `r`: reattach a Detached / Running detachable session, or resume a finished task with `--continue`. `R`: resume fresh (no `--continue`). |
+| `F` (tasks focus) | Open the file browser for the selected task's worktree (push / pull / delete). |
+| `p` / `P` (tasks focus) | `p`: open the port-forward prompt (enter a `-L` spec) for the selected task; the forward runs in the background. `P`: stop that task's active forward. |
 | `d` | Detail popup for the focused row (runners or tasks) |
 | `Enter` (tasks focus) | Follow the selected task's log |
 | `c` (tasks focus) | Cancel the selected task |
@@ -339,3 +351,13 @@ testdata/             fake-claude.sh used by tests
 integration/          end-to-end smoke test (build tag: integration)
 docs/superpowers/     specs/ and plans/ for design history
 ```
+
+## License
+
+MIT — see [`LICENSE`](LICENSE). Copyright (c) 2026 on-keyday.
+
+The in-browser WebUI vendors third-party assets under `webui/static/`
+(xterm.js + `addon-fit.js` / `xterm.css`, MIT; `wasm_exec.js` from the Go
+distribution, BSD-3-Clause). Their license texts and copyright notices are
+reproduced in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+

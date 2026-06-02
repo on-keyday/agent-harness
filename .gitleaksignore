@@ -1,0 +1,4 @@
+# Vendored third-party minified asset (xterm.js, MIT — see THIRD-PARTY-NOTICES.md).
+# gitleaks' generic-api-key heuristic matches a high-entropy token inside the
+# minified bundle; it is library code, not a secret.
+64703ab2356d7de5ab29027769ec6801c17f50a0:webui/static/xterm.js:generic-api-key:1
