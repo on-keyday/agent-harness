@@ -387,10 +387,14 @@ agent-runner flags):
   has neither this skill nor the automatic inbox hook: it won't auto-receive
   your messages or follow these conventions.
 
-`ls` now shows each task's runner identity: an `agent=<bin>` column (the agent
+`ls` shows each task's runner identity: an `agent=<bin>` column (the agent
 binary basename — `claude` / `gemini` / `codex` / `bash` …), with `+skills` when
-the runner did its harness injection (settings hook + this skill). **That
-injection is currently claude-specific** — it writes `.claude/`. So:
+the runner injected harness instructions + this skill. Injection is now
+**cross-tool** — `AGENTS.md`/`GEMINI.md`/`CLAUDE.md` pointers plus the skill under
+both `.claude/skills/` and `.agents/skills/` — so `+skills` means a skill-aware
+peer regardless of agent. The one claude-only piece is the **auto-inbox hook**
+(`.claude/settings.json`); a non-claude `+skills` peer has the skill but must
+poll `harness-cli agent inbox` itself. So:
 
 - `agent=claude+skills` — a conventional, skill-following peer.
 - `agent=claude` (no `+skills`), or `agent=bash` — not: no skill, no inbox hook.
@@ -468,6 +472,14 @@ harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
   inbox hook to deliver. Don't `wait` in a loop. (See also "Async by default".)
 - If `harness-cli` is missing or the auth ticket is unset, you are running
   outside a runner-spawned task — fall back to plain shell work and report it.
+
+## Harness-injected files — don't commit them
+
+The runner injects these into your worktree; they are NOT your work: the pointer
+files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), `.claude/` (settings + skills),
+and `.agents/skills/`. Don't commit them as your own. If you deliberately add
+project-specific content to one of them, that addition is legitimate work and
+may be committed.
 
 ## Trust model
 
