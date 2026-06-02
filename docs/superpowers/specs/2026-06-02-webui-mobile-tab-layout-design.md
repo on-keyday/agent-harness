@@ -64,20 +64,21 @@
 
 タスクタブの Tasks 一覧を、非インタラクティブな `<pre>` から**行クリック可能なリスト**に変更する（既存の File picker の `<ul>`/`<li>` クリック実装 `main.js:208-243` が手本）。
 
-- 行タップ → アクションシート表示。項目:
-  - **Reattach** → `window.harness.attachSession(id)` を呼び、**端末タブへ自動遷移**。
-  - **Resume** → 当該タスクの worktree を再開（既存の resume 経路: `startInteractive({resumeTaskId: id})` 相当）。実行後**端末タブへ自動遷移**。
-  - **このタスクのファイル** → **ファイルタブへ自動遷移**し、`file-task-select` を当該IDに設定して `refreshFilePicker()`。
-  - **Cancel** → `window.harness.cancel(id)`（破壊的操作は既存同様 `confirm` ガード）。
+- 行タップ → アクションシート表示。項目と表示条件（snapshot の `status` / `kind` 文字列で判定）:
+  - **Reattach** → `window.harness.attachSession(id)` を呼び、**端末タブへ自動遷移**。表示条件: `kind === "Interactive"` かつ `status ∈ {Running, Detached}`（再接続可能な生きた対話セッション）。
+  - **Resume** → `window.harness.startInteractive({repo:"", host:"", claudeArgs:[], resumeTaskId: id, detachable:true})` で当該タスクの worktree を再開。実行後**端末タブへ自動遷移**。表示条件: `status ∈ {Succeeded, Failed, Cancelled}`（終了済みタスクの worktree 再開）。
+  - **このタスクのファイル** → **ファイルタブへ自動遷移**し、`file-task-select.value` を当該IDに設定して `change` を発火（既存 `refreshFilePicker()` 経路）。表示条件: 常時。
+  - **Cancel** → `window.harness.cancel(id)`（破壊的操作は `confirm` ガード）。表示条件: `status ∈ {Queued, Running, Detached}`（非終了状態）。
 - IDは内部（クリックされた行の `task.id`）から補完するため、**ユーザは一度もIDをコピペしない**。
-- アクションの活性/非活性はタスクの `status` / `kind` に応じて出し分ける（例: 終了済みに Cancel を出さない、live セッションでないものに Reattach を出さない）。判定材料は既存 snapshot の各タスクフィールドで足りる。
+- status 文字列の定義: 非終了 = `Queued`/`Running`/`Detached`、終了 = `Succeeded`/`Failed`/`Cancelled`（`runner/protocol/message.go` の `TaskStatus.String()`）。kind = `Oneshot`/`Interactive`。
 
 ### 3.6 自動タブ遷移のまとめ
 
-- タスクタブで `Submit` / `端末を開く` を実行 → 端末タブへ。
+- タスクタブで `端末を開く`（one-shot / detachable）を実行 → **端末タブへ**。
+- **`Submit` は背景タスク投入で端末を開かないため、タブ遷移しない**（タスクタブに留まり、投入したタスクが一覧に現れるのを見られる）。
 - 行タップ Reattach / Resume → 端末タブへ。
 - 行タップ「このタスクのファイル」→ ファイルタブへ（Task 選択済み）。
-- 広幅ではタブが無いので、これらの「遷移」はノーオペ（全セクション可視のまま）。
+- 広幅ではタブが無いので、これらの「遷移」はノーオペ（全セクション可視のまま）。`setActiveTab()` は body の data 属性を更新するだけで、広幅では CSS media query により非表示効果が無効。
 
 ## 4. 影響範囲とデータフロー
 
