@@ -27,24 +27,39 @@ as your own: this file (CLAUDE.md/AGENTS.md/GEMINI.md), ` + "`.claude/`" + `, an
 one of them, that addition IS legitimate work and may be committed.
 `
 
-// WriteAgentSkills materialises bundled skill files into
-// <worktree>/.claude/skills/<name>/... and, when no CLAUDE.md already exists
-// in the worktree, writes a minimal pointer CLAUDE.md.
-//
-// Skill files are always overwritten so that runner upgrades ship updated
-// guidance to the agent. CLAUDE.md is never overwritten — the worktree's
-// repository may already provide one with project-specific instructions.
+// WriteAgentSkills materialises the bundled skills into both the Claude
+// (.claude/skills) and cross-tool (.agents/skills) locations, and writes a
+// minimal instruction pointer to CLAUDE.md/AGENTS.md/GEMINI.md when each is
+// absent. Skill files are always overwritten so runner upgrades ship updated
+// guidance; pointer files are never overwritten — a project may provide its own.
 func WriteAgentSkills(worktreeDir string) error {
-	skillsDir := filepath.Join(worktreeDir, ".claude", "skills")
+	for _, root := range []string{
+		filepath.Join(worktreeDir, ".claude", "skills"),
+		filepath.Join(worktreeDir, ".agents", "skills"),
+	} {
+		if err := materializeSkills(root); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md"} {
+		if err := writePointerIfAbsent(filepath.Join(worktreeDir, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
-	err := fs.WalkDir(agentskills.FS, ".", func(p string, d fs.DirEntry, err error) error {
+// materializeSkills copies the embedded skill tree into destRoot, overwriting
+// existing files.
+func materializeSkills(destRoot string) error {
+	return fs.WalkDir(agentskills.FS, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if p == "." {
 			return nil
 		}
-		dst := filepath.Join(skillsDir, filepath.FromSlash(p))
+		dst := filepath.Join(destRoot, filepath.FromSlash(p))
 		if d.IsDir() {
 			return os.MkdirAll(dst, 0o755)
 		}
@@ -57,15 +72,15 @@ func WriteAgentSkills(worktreeDir string) error {
 		}
 		return os.WriteFile(dst, data, 0o644)
 	})
-	if err != nil {
-		return err
-	}
+}
 
-	claudeMd := filepath.Join(worktreeDir, "CLAUDE.md")
-	if _, statErr := os.Stat(claudeMd); statErr == nil {
+// writePointerIfAbsent writes claudeMdMinimal to path only when no file exists
+// there, leaving a project's own pointer file untouched.
+func writePointerIfAbsent(path string) error {
+	if _, statErr := os.Stat(path); statErr == nil {
 		return nil
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
 	}
-	return os.WriteFile(claudeMd, []byte(claudeMdMinimal), 0o644)
+	return os.WriteFile(path, []byte(claudeMdMinimal), 0o644)
 }

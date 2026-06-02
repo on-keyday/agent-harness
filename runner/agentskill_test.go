@@ -94,3 +94,49 @@ func TestClaudeMdMinimalContent(t *testing.T) {
 		t.Error("pointer should tell agents not to commit harness-injected files")
 	}
 }
+
+func TestWriteAgentSkills_WritesAgentsSkillsLocation(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteAgentSkills(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		filepath.Join(dir, ".claude", "skills", "harness-cli", "SKILL.md"),
+		filepath.Join(dir, ".agents", "skills", "harness-cli", "SKILL.md"),
+	} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected skill at %s: %v", p, err)
+		}
+	}
+}
+
+func TestWriteAgentSkills_WritesAgentsAndGeminiPointers(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteAgentSkills(dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"CLAUDE.md", "AGENTS.md", "GEMINI.md"} {
+		data, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("%s not written: %v", name, err)
+		}
+		if !strings.Contains(string(data), "harness-cli") {
+			t.Errorf("%s should mention harness-cli", name)
+		}
+	}
+}
+
+func TestWriteAgentSkills_PreservesExistingAgentsMd(t *testing.T) {
+	dir := t.TempDir()
+	original := []byte("# project AGENTS.md\nproject rules\n")
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAgentSkills(dir); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if string(got) != string(original) {
+		t.Errorf("existing AGENTS.md was modified:\nwant %q\ngot  %q", original, got)
+	}
+}
