@@ -254,8 +254,9 @@ harness-cli file push   [-r] [-f] <TASK_ID> <LOCAL_SRC> <WORKTREE_REL_DST>
 # Default refuses to overwrite the local target; -f permits replacement.
 harness-cli file pull   [-r] [-f] <TASK_ID> <WORKTREE_REL_SRC> <LOCAL_DST>
 
-# Remove a single file from the worktree (refuses directories).
-harness-cli file delete <TASK_ID> <WORKTREE_REL_PATH>
+# Remove a file. -r targets a directory (dir_delete); -r -f removes a
+# non-empty directory (RemoveAll). Without -r a directory is refused.
+harness-cli file delete [-r] [-f] <TASK_ID> <WORKTREE_REL_PATH>
 ```
 
 `<TASK_ID>` is the 32-hex id from `session new` / `submit` (the same id behind

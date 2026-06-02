@@ -458,8 +458,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      default: O_EXCL refuses to overwrite local; -f permits replacement")
 	fmt.Fprintln(os.Stderr, "  file ls   TASK_ID [WORKTREE_REL_DIR]")
 	fmt.Fprintln(os.Stderr, "                                      list a single directory under the worktree (default: worktree root)")
-	fmt.Fprintln(os.Stderr, "  file delete TASK_ID WORKTREE_REL_PATH")
-	fmt.Fprintln(os.Stderr, "                                      remove a file from the task's worktree (refuses directories)")
+	fmt.Fprintln(os.Stderr, "  file delete [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_PATH")
+	fmt.Fprintln(os.Stderr, "                                      remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused")
 }
 
 func serverUsage() {
