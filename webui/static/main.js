@@ -127,6 +127,9 @@ const POLL_INTERVAL_MS = 5000;
   let filePickerEntries  = [];
   let filePickerSelected = null; // {name, size, mode, isDir} or null
 
+  // Terminal (finished) task states; gates Resume vs Cancel in the action sheet.
+  const TERMINAL_STATES = new Set(["Succeeded", "Failed", "Cancelled"]);
+
   const refreshSnapshot = async () => {
     let snap;
     try {
@@ -145,7 +148,7 @@ const POLL_INTERVAL_MS = 5000;
     renderRunnerSelect(runnerSelect, sortedRunners);
     renderHostSelect(hostSelect, sortedRunners);
     runnerList.textContent = renderRunners(sortedRunners);
-    taskList.textContent   = renderTasks(snap.tasks);
+    renderTaskList(snap.tasks);
     renderFileTaskSelect(snap.tasks);
   };
   await refreshSnapshot();
@@ -418,11 +421,11 @@ const POLL_INTERVAL_MS = 5000;
           break;
         }
         case "list":
-          // Force a snapshot refresh and render the structured task list
-          // into cmd-output for parity with the prior `harness.list()`
-          // string output.
+          // Force a snapshot refresh, then echo the rendered task rows
+          // (newline-joined) into cmd-output.
           await refreshSnapshot();
-          out = taskList.textContent;
+          out = Array.from(taskList.querySelectorAll(".task-row"))
+                  .map(r => r.textContent).join("\n") || "(none)";
           break;
         case "cancel":
           if (!tokens[1]) throw new Error("cancel: missing task id");
@@ -689,6 +692,109 @@ const POLL_INTERVAL_MS = 5000;
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   });
+
+  // renderTaskList builds clickable task rows into #task-list. Each row toggles
+  // an inline action sheet; every action derives the id from the row, so the
+  // user never copies a 32-hex id by hand. Modeled on the file-picker list.
+  // Function declaration so refreshSnapshot() (called earlier textually) can
+  // invoke it via hoisting.
+  function renderTaskList(tasks) {
+    taskList.innerHTML = "";
+    if (!tasks || tasks.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "task-empty";
+      empty.textContent = "(none)";
+      taskList.appendChild(empty);
+      return;
+    }
+    for (const t of tasks) {
+      const wrap = document.createElement("div");
+      const row = document.createElement("div");
+      row.className = "task-row";
+      const promptShort = (t.prompt || "").slice(0, 60);
+      row.textContent = `${t.id.slice(0, 12)}…  ${t.status}  ${t.kind}  ${t.repoPath}  ${JSON.stringify(promptShort)}`;
+      const sheet = document.createElement("div");
+      sheet.className = "task-sheet";
+      sheet.hidden = true;
+      buildTaskSheet(sheet, t);
+      row.addEventListener("click", () => {
+        for (const s of taskList.querySelectorAll(".task-sheet")) {
+          if (s !== sheet) s.hidden = true;   // single open sheet at a time
+        }
+        sheet.hidden = !sheet.hidden;
+      });
+      wrap.appendChild(row);
+      wrap.appendChild(sheet);
+      taskList.appendChild(wrap);
+    }
+  }
+
+  // buildTaskSheet fills one task's action sheet, gating items by status/kind.
+  // Each item stops propagation (so it doesn't re-toggle the row), runs its
+  // harness call, and switches tabs where relevant.
+  function buildTaskSheet(sheet, t) {
+    const isTerminal = TERMINAL_STATES.has(t.status);
+    const addItem = (label, cls, fn) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "task-action" + (cls ? " " + cls : "");
+      item.textContent = label;
+      item.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
+      sheet.appendChild(item);
+    };
+
+    // Reattach — live interactive session only.
+    if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
+      addItem("↪ Reattach", "", async () => {
+        setActiveTab("terminal");
+        term.reset();
+        try {
+          await window.harness.attachSession(t.id);
+          attachedTask.textContent = `attached: ${t.id} (reattached)`;
+          term.focus();
+          scrollTermToBottom();
+        } catch (err) { attachedTask.textContent = ""; showError(err); }
+        try { fit.fit(); } catch (_) {}
+        window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+      });
+    }
+
+    // Resume — finished task's worktree, opened as a fresh interactive session.
+    if (isTerminal) {
+      addItem("▶ Resume", "", async () => {
+        setActiveTab("terminal");
+        term.reset();
+        try {
+          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: [], resumeTaskId: t.id, detachable: true });
+          attachedTask.textContent = `attached: ${id} (resumed)`;
+          term.focus();
+        } catch (err) { attachedTask.textContent = ""; alert(`resume: ${err.message}`); }
+        try { fit.fit(); } catch (_) {}
+        window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+      });
+    }
+
+    // Files — always available.
+    addItem("📁 ファイル", "", () => {
+      fileTaskSelect.value = t.id;
+      filePickerCurDir = "";
+      filePickerSelected = null;
+      setActiveTab("files");
+      refreshFilePicker();
+    });
+
+    // Cancel — non-terminal only.
+    if (!isTerminal) {
+      addItem("✕ Cancel", "danger", async () => {
+        if (!window.confirm(`Cancel task ${t.id.slice(0, 12)}…?`)) return;
+        try {
+          await window.harness.cancel(t.id);
+          appendCmdOutput(`cancelled ${t.id.slice(0, 12)}…`);
+          refreshSnapshot();
+        } catch (err) { appendCmdOutput(`cancel error: ${err.message}`); }
+      });
+    }
+  }
 })();
 
 // sortRunners returns a new array sorted by (hostname asc, connectedAt
@@ -793,14 +899,6 @@ function renderRunners(runners) {
   return runners.map(r => {
     const roots = (r.roots && r.roots.length > 0) ? r.roots.join(", ") : "(any)";
     return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  tasks=${r.tasks}/${r.maxTasks}  roots=${roots}`;
-  }).join("\n");
-}
-
-function renderTasks(tasks) {
-  if (!tasks || tasks.length === 0) return "(none)";
-  return tasks.map(t => {
-    const promptShort = (t.prompt || "").slice(0, 60);
-    return `  ${t.id}  ${pad(t.status, 10)} ${pad(t.kind, 12)} repo=${t.repoPath}  prompt=${JSON.stringify(promptShort)}`;
   }).join("\n");
 }
 

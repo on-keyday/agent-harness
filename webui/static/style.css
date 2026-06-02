@@ -195,6 +195,18 @@ button:hover { background: #555; }
 #harness-conn-banner.error  { background: #f8d7da; color: #6e1b22; border-bottom-color: #cd8a8e; }
 #harness-conn-banner.online { background: #d4edda; color: #1e4628; border-bottom-color: #8ec39c; }
 
+/* --- Clickable task list + action sheet --- */
+.task-list { background:#111; padding:0.4rem; border-radius:4px; max-height:240px; overflow:auto; font-size:0.85rem; }
+.task-row { font-family: monospace; padding:0.45rem 0.5rem; border-radius:3px; cursor:pointer; white-space:pre-wrap; word-break:break-all; }
+.task-row:hover { background:#222; }
+.task-row:active { background:#2a2a2a; }
+.task-empty { color:#888; padding:0.4rem; }
+.task-sheet { display:flex; flex-wrap:wrap; gap:0.4rem; padding:0.3rem 0.5rem 0.6rem; }
+.task-action { background:#2a2a2a; color:#fff; border:1px solid #555; border-radius:4px; padding:0.45rem 0.7rem; font-size:0.9rem; cursor:pointer; min-height:2.4rem; }
+.task-action:hover { background:#3a3a3a; }
+.task-action.danger { color:#f88; border-color:#a44; }
+@media (max-width:600px){ .task-list { max-height:none; } }
+
 /* --- Mobile tab bar (active only at <=600px) --- */
 .tabbar { display: none; }
 .tab-btn {
