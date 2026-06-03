@@ -246,7 +246,7 @@ Keys:
 | `Tab` / `Shift+Tab` | Cycle focus runners → tasks → logs → cmdresult → cmdline |
 | `s` | Open the multi-line submit popup (`Ctrl+J` / `Ctrl+Enter` to send, `Esc` to cancel) |
 | `S` | Open a detachable session in the default repo (equivalent to `harness-cli session new`) |
-| `i` (tasks focus) | Attach interactively to the focused task, or open a new interactive session in the default repo if no task is focused. On a Detached row, reattaches via `session attach`. |
+| `i` | Open a new (non-detachable) interactive PTY in the default repo (equivalent to `harness-cli interactive`). Does not attach to the focused task — reattach/resume lives on `r` / `R`. |
 | `r` / `R` (tasks focus) | `r`: reattach a Detached / Running detachable session, or resume a finished task with `--continue`. `R`: resume fresh (no `--continue`). |
 | `F` (tasks focus) | Open the file browser for the selected task's worktree (push / pull / delete). |
 | `p` / `P` (tasks focus) | `p`: open the port-forward prompt (enter a `-L` spec) for the selected task; the forward runs in the background. `P`: stop that task's active forward. |
