@@ -65,10 +65,11 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
   - `cmd/harness-cli` — request/control surface:
     - Task lifecycle: `submit`, `ls`, `logs`, `cancel`, `prune`,
       `prune-local`, `watch`.
-    - Interactive: `interactive` (PTY spliced to the client; client
-      disconnect kills claude — legacy), `session new` (detachable PTY:
-      client disconnect leaves claude running on the runner),
-      `session attach <id>`, `session ls`, `session kill <id>`.
+    - Interactive: `session new` (detachable PTY: client disconnect
+      leaves claude running on the runner), `session attach <id>`,
+      `session ls`, `session kill <id>`; `interactive` is a one-off
+      PTY spliced to the client that dies on disconnect (the older
+      non-detachable mode).
     - File transfer: `file ls`, `file push`, `file pull`, `file delete`
       against a task's worktree (recursive variants via `-r`, force
       overwrite via `-f`; paths are confined to the worktree root).
@@ -138,17 +139,19 @@ bin/harness-cli cancel <task-id>
 bin/harness-cli prune --before 168h     # forget terminal tasks older than 7d
 bin/harness-cli prune-local --before 168h   # remove old local worktrees
 
-# 5a. Attach interactively (legacy: PTY claude on an idle runner, spliced
-# to your terminal stdin / stdout / SIGWINCH; client disconnect kills claude).
-bin/harness-cli interactive --repo /abs/path/to/repo
-
-# 5b. Open a detachable session instead (claude survives disconnect; reattach
-# from any client via `session attach <id>`). `-d` returns immediately
-# without splicing the local terminal — useful when you only want to spawn.
+# 5a. Open a detachable session: a PTY claude spliced to your terminal that
+# SURVIVES client disconnect — reattach from any client via `session attach
+# <id>`. `-d` returns immediately without splicing the local terminal (spawn
+# only). This is the recommended interactive path.
 bin/harness-cli session new --repo /abs/path/to/repo
 bin/harness-cli session ls                       # detachable sessions only
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
+
+# 5b. Or a one-off interactive PTY (stdin / stdout / SIGWINCH spliced to your
+# terminal): client disconnect KILLS claude. The older non-detachable mode —
+# ephemeral and self-cleaning, so there is no session to kill afterwards.
+bin/harness-cli interactive --repo /abs/path/to/repo
 
 # 6. File transfer against a running task's worktree (paths are confined
 # to the worktree root; `..` escapes are rejected).
