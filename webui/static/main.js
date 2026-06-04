@@ -611,6 +611,12 @@ const POLL_INTERVAL_MS = 5000;
   // a snapshot; if the user (re)attaches during that await, the epoch changes
   // and the handler must NOT clobber the now-correct "attached" display.
   let attachEpoch = 0;
+  // pendingReattachTaskID is the id of a session whose interactive stream
+  // closed while it (probably) stayed alive on the runner — i.e. the quick-
+  // reattach button is/should be offered. It is maintained by show/
+  // hideQuickReattach and re-verified by the registerOnConnected handler below
+  // after the persist loop reconnects.
+  let pendingReattachTaskID = null;
   window.harness_onInteractiveClosed = async (taskID) => {
     const myEpoch = attachEpoch;
     let kind = "切断 (takeover またはセッション終了)";
@@ -626,7 +632,18 @@ const POLL_INTERVAL_MS = 5000;
       } else {
         kind = "セッション終了";
       }
-    } catch (_) { /* keep the generic kind */ }
+    } catch (_) {
+      // Snapshot failed — almost always because the connection itself dropped
+      // (the interactive stream rides the same connection, so a network/sleep
+      // disconnect ends the stream AND breaks this snapshot). We cannot confirm
+      // the session ended, so bias toward offering reattach: re-attaching a dead
+      // session fails gracefully, whereas hiding the button strands the user
+      // exactly when they most want it (right after a drop). The
+      // registerOnConnected handler below re-verifies once the connection is
+      // back and clears the button if the session turns out to be gone.
+      kind = "接続が切れました (復帰後に再アタッチできます)";
+      reattachable = true;
+    }
     // A (re)attach happened while we awaited the snapshot — its display is the
     // truth now; don't overwrite it with a stale "detached" notice.
     if (attachEpoch !== myEpoch) return;
@@ -757,15 +774,36 @@ const POLL_INTERVAL_MS = 5000;
   // task list. Carries the task id in a data attribute.
   const reattachQuick = document.getElementById("reattach-quick");
   const showQuickReattach = (id) => {
+    pendingReattachTaskID = id;   // remember across a reconnect (see below)
     if (!reattachQuick) return;
     reattachQuick.dataset.taskId = id;
     reattachQuick.hidden = false;
   };
   const hideQuickReattach = () => {
+    pendingReattachTaskID = null;
     if (!reattachQuick) return;
     reattachQuick.hidden = true;
     delete reattachQuick.dataset.taskId;
   };
+
+  // After the persist loop reconnects, re-verify any session left pending by a
+  // disconnect-time close (where onInteractiveClosed couldn't fetch a snapshot
+  // and defaulted to offering reattach). Now that the connection is back, a
+  // working snapshot decides the truth: keep the quick-reattach button if the
+  // session is still alive, drop it if it ended while we were away.
+  registerOnConnected(async () => {
+    const id = pendingReattachTaskID;
+    if (!id) return;
+    try {
+      const snap = await window.harness.snapshot();
+      const t = (snap.tasks || []).find(x => x.id === id);
+      if (t && (t.status === "Running" || t.status === "Detached")) {
+        showQuickReattach(id);
+      } else {
+        hideQuickReattach();
+      }
+    } catch (_) { /* still flaky — leave the button as-is for the next reconnect */ }
+  });
 
   // reattachTo re-attaches to an existing live session by id. Shared by the
   // Reattach button, the task-row Reattach action, and the post-takeover quick
