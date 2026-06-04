@@ -169,17 +169,36 @@ bin/harness-cli forward <task-id> -L 3000:127.0.0.1:3000
 
 ### Daemon lifecycle helpers
 
-`scripts/{runner,server,restart}.sh` are thin shims over the
-canonical Python implementations `scripts/{runner,server,restart}.py`
-(`bootstrap.py` provisions `scripts/.venv` with psutil on first call,
-so the .py side runs cross-platform). State files
-(`bin/.run/<slot>.{pid,log}`) are shared between the bash and python
-entry points, so a daemon started via one can be controlled by the
-other. Pass `--as <tag>` to `up` / `down` to run multiple instances
-of the same daemon side by side (e.g.
-`scripts/runner.sh up --as 2 --max-tasks 2 ...` registers an extra
-runner alongside the primary one, with its own
-`bin/.run/agent-runner-2.{pid,log}` slot).
+Run the server and runner as **detached background daemons** instead of
+the foreground invocations shown in Quick start. Any args after
+`up` are forwarded verbatim to the underlying binary.
+
+```bash
+# Start (build first: `make build`). Same flags as the Quick start binaries.
+scripts/server.sh up --listen :8539 --data-dir ./harness-data
+scripts/runner.sh up --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo --max-tasks 4
+
+# Stop
+scripts/server.sh down
+scripts/runner.sh down
+
+# Restart in place — reuses the running daemon's flags / CWD (read via psutil).
+# <slot> is the pid-file name: the binary name, or <binary>-<tag> when tagged.
+scripts/restart.sh agent-runner
+
+# Run several instances of one daemon side by side with --as <tag>
+# (each gets its own bin/.run/<binary>-<tag>.{pid,log} slot):
+scripts/runner.sh up --as 2 --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo --max-tasks 2
+scripts/runner.sh down    --as 2
+scripts/restart.sh agent-runner-2
+```
+
+Implementation notes: the `.sh` entry points are thin shims over the
+canonical cross-platform Python (`scripts/{runner,server,restart}.py`);
+`bootstrap.py` provisions `scripts/.venv` (psutil) on first call. pid /
+log state lives in `bin/.run/<slot>.{pid,log}` and is shared between the
+bash and python entry points, so a daemon started via one can be stopped
+via the other.
 
 For boot/login persistence, `scripts/runner-autostart.py register
 --tag <tag> [runner.py flags...]` registers an OS-level autostart
