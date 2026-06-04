@@ -245,7 +245,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	if err := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := proxyConn.Connection().SendMessage(b)
 		return err
-	}, nil, pskRespCh); err != nil {
+	}, nil, proxyConn.Connection().GetTranscript(), pskRespCh); err != nil {
 		t.Fatalf("SendAndWaitPSK: %v", err)
 	}
 

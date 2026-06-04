@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -32,13 +33,22 @@ func GetPSK() []byte {
 
 // SendAndWaitPSK sends a PskAuthRequest via sendFn and waits for a PskAuthResponse on respCh.
 // No-op when psk is nil. sendFn is called exactly once with the encoded request bytes.
-func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk []byte, respCh <-chan wire.PskAuthStatus) error {
+//
+// transcript is the objproto handshake transcript (Connection.GetTranscript());
+// the PSK is never sent verbatim — what goes on the wire is a transcript-bound
+// binder (see objproto.ComputePSKBinder), so the exchange authenticates the
+// channel instead of leaking a replayable bearer secret.
+func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan wire.PskAuthStatus) error {
 	if len(psk) == 0 {
 		return nil
 	}
-	data := make([]byte, 1+len(psk))
+	binder, err := objproto.ComputePSKBinder(psk, transcript)
+	if err != nil {
+		return fmt.Errorf("psk: binder: %w", err)
+	}
+	data := make([]byte, 1+len(binder))
 	data[0] = byte(wire.ApplicationPayloadKind_PskAuth)
-	copy(data[1:], psk)
+	copy(data[1:], binder)
 	if err := sendFn(data); err != nil {
 		return fmt.Errorf("psk: send: %w", err)
 	}

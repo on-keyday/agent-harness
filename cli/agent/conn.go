@@ -215,7 +215,7 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pskRespCh)
+	}, psk, pc.Connection().GetTranscript(), pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()

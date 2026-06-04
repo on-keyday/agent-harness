@@ -9,7 +9,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"bytes"
+
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -65,7 +68,7 @@ func TestGetPSK_FileMissing(t *testing.T) {
 }
 
 func TestSendAndWaitPSK_NilPSK(t *testing.T) {
-	err := cli.SendAndWaitPSK(context.Background(), func([]byte) error { return nil }, nil, nil)
+	err := cli.SendAndWaitPSK(context.Background(), func([]byte) error { return nil }, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("nil PSK must be a no-op, got %v", err)
 	}
@@ -78,7 +81,9 @@ func TestSendAndWaitPSK_OK(t *testing.T) {
 	respCh := make(chan wire.PskAuthStatus, 1)
 	respCh <- wire.PskAuthStatus_Ok
 
-	err := cli.SendAndWaitPSK(context.Background(), sendFn, []byte("secret"), respCh)
+	psk := []byte("secret")
+	transcript := []byte("handshake-transcript-bytes")
+	err := cli.SendAndWaitPSK(context.Background(), sendFn, psk, transcript, respCh)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,8 +93,33 @@ func TestSendAndWaitPSK_OK(t *testing.T) {
 	if wire.ApplicationPayloadKind(sent[0]) != wire.ApplicationPayloadKind_PskAuth {
 		t.Errorf("sent[0] = %v, want PskAuth", sent[0])
 	}
-	if string(sent[1:]) != "secret" {
-		t.Errorf("sent PSK = %q, want %q", sent[1:], "secret")
+	// The raw PSK must NOT be on the wire; a transcript-bound binder is.
+	if bytes.Contains(sent[1:], psk) {
+		t.Errorf("raw PSK leaked onto the wire: %v", sent[1:])
+	}
+	wantBinder, err := objproto.ComputePSKBinder(psk, transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(sent[1:], wantBinder) {
+		t.Errorf("sent binder = %x, want %x", sent[1:], wantBinder)
+	}
+}
+
+// TestSendAndWaitPSK_BinderIsTranscriptBound locks in the MITM-resistance
+// property: the same PSK over a different transcript yields a different binder.
+func TestSendAndWaitPSK_BinderIsTranscriptBound(t *testing.T) {
+	psk := []byte("secret")
+	a, err := objproto.ComputePSKBinder(psk, []byte("transcript-A"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := objproto.ComputePSKBinder(psk, []byte("transcript-B"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(a, b) {
+		t.Fatal("binder must differ across transcripts (else a relayed binder validates on another leg)")
 	}
 }
 
@@ -98,7 +128,7 @@ func TestSendAndWaitPSK_BadPSK(t *testing.T) {
 	respCh := make(chan wire.PskAuthStatus, 1)
 	respCh <- wire.PskAuthStatus_BadPsk
 
-	err := cli.SendAndWaitPSK(context.Background(), sendFn, []byte("secret"), respCh)
+	err := cli.SendAndWaitPSK(context.Background(), sendFn, []byte("secret"), nil, respCh)
 	if err == nil {
 		t.Fatal("expected error on BadPsk, got nil")
 	}
@@ -109,7 +139,7 @@ func TestSendAndWaitPSK_SendError(t *testing.T) {
 	sendFn := func([]byte) error { return sendErr }
 	respCh := make(chan wire.PskAuthStatus, 1)
 
-	err := cli.SendAndWaitPSK(context.Background(), sendFn, []byte("secret"), respCh)
+	err := cli.SendAndWaitPSK(context.Background(), sendFn, []byte("secret"), nil, respCh)
 	if !errors.Is(err, sendErr) {
 		t.Errorf("got %v, want wrapping %v", err, sendErr)
 	}
@@ -121,7 +151,7 @@ func TestSendAndWaitPSK_ContextCancelled(t *testing.T) {
 	sendFn := func([]byte) error { return nil }
 	respCh := make(chan wire.PskAuthStatus) // never receives
 
-	err := cli.SendAndWaitPSK(ctx, sendFn, []byte("secret"), respCh)
+	err := cli.SendAndWaitPSK(ctx, sendFn, []byte("secret"), nil, respCh)
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("got %v, want context.Canceled", err)
 	}

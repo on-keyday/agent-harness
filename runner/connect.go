@@ -200,7 +200,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, h.pskRespCh)
+	}, psk, pc.Connection().GetTranscript(), h.pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()

@@ -75,7 +75,7 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	pskErr := SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pskRespCh)
+	}, psk, pc.Connection().GetTranscript(), pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()

@@ -663,7 +663,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 			return
 		}
 		// PSK gate: first message must be PskAuth when PSK is configured.
-		if isPSKMsg, shouldClose := gate.Check(msg.Data, func(resp []byte) {
+		if isPSKMsg, shouldClose := gate.Check(msg.Data, session.GetTranscript(), func(resp []byte) {
 			session.SendMessage(resp) //nolint:errcheck
 		}); isPSKMsg || !gate.Authed() {
 			if shouldClose {
