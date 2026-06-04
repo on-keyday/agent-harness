@@ -103,8 +103,8 @@ Run each command in its own terminal. `make build` produces all four
 binaries under `bin/`; the examples below assume that.
 
 ```bash
-# 1. Start the server. --listen accepts host:port (use :8539 to dual-stack on
-# all interfaces; loopback by default). PSK file is auto-generated on first
+# 1. Start the server. --listen accepts host:port (use :8539 to bind all
+# interfaces; defaults to 127.0.0.1:8539 / loopback). PSK file is auto-generated on first
 # run if --psk-file is unset. The WebUI is mounted on the same HTTP listener,
 # so http://<server-host>:8539/ in a browser gives you the WASM frontend.
 bin/harness-server --listen :8539 --data-dir ./harness-data
@@ -257,7 +257,8 @@ Keys:
 | `q`, `Ctrl+C` | Quit |
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ cancel / prune / repo / clear / help / quit`. `session new` supports
+/ file {ls,push,pull,delete} / server dial-runner / cancel / prune / repo
+/ clear / help / quit`. `session new` supports
 `--host NAME | --runner HEX | --ip ADDR` for runner-pinning (mutually
 exclusive), plus `--detach` to spawn-and-exit without splicing the
 local terminal. Use `harness-cli prune-local` for local-only worktree
