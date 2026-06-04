@@ -90,9 +90,14 @@ AES-128-GCM) on top of one of two underlays — **WebSocket**
 QUIC-like layering in `trsf`). Both can run simultaneously
 (WS+UDP dualstack) on a single server. The `trsf`
 stream-multiplexing layer carries control / data frames on top of
-either. PSK pre-authentication (`--psk` / `--psk-file`, env
-`HARNESS_PSK` / `HARNESS_PSK_FILE`) gates incoming connections
-before the secure session starts. Server and runner can run on
+either. PSK pre-authentication gates incoming connections before the
+secure session starts. The server takes the PSK via `--psk` (or env
+`HARNESS_PSK`) or `--psk-file` — the file is the PSK *origin*:
+auto-generated on first run if absent, then persisted there. Clients
+and runners *consume* an already-established PSK via `--psk` / `--psk-file`
+or env `HARNESS_PSK` / `HARNESS_PSK_FILE` (env `HARNESS_PSK_FILE` is
+read-only — it is not honored by the server, which only generates to the
+`--psk-file` flag path). Server and runner can run on
 different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
 ConnectionID (`ws:host:port-id` or `udp:host:port-id`) that the
 runner / clients dial; the transport prefix selects the underlay.
