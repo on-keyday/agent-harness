@@ -87,6 +87,12 @@ type Server struct {
 	agentConnsMu sync.Mutex
 	agentConns   map[objproto.ConnectionID]*agentConn
 
+	// activeConnsMu / activeConns track every live wrapped connection so a
+	// debug dump (DumpTrsfState, via SIGUSR1) can report each transport's trsf
+	// internal state. Debug aid only.
+	activeConnsMu sync.Mutex
+	activeConns   map[objproto.ConnectionID]streamingConn
+
 	// relayRespChMu / relayRespCh correlate inbound
 	// RunnerMessageType_EstablishRelayResponse messages back to the goroutine
 	// that sent the original EstablishRelayRequest. Keyed by the proxy_runner's
@@ -136,6 +142,7 @@ func New(cfg Config) *Server {
 		pubsub:         pubsub.NewPubSub(cfg.Logger),
 		relayRespCh:    make(map[objproto.ConnectionID]chan protocol.EstablishRelayResponse),
 		pendingViaInfo: make(map[objproto.ConnectionID]*ViaRegistrationInfo),
+		activeConns:    make(map[objproto.ConnectionID]streamingConn),
 	}
 	s.scheduler = NewScheduler(s.registry, s.tasks, s.sendAssign)
 	s.runnerHandler = &RunnerHandler{
@@ -611,6 +618,45 @@ type streamingConn struct {
 	trans trsf.Transport
 }
 
+// DumpTrsfState logs each active connection's trsf internal state (debug aid;
+// wired to SIGUSR1 on Unix). role=runner/client makes a stuck remote-forward
+// relay visible — e.g. a runner conn whose recvStreams aren't draining.
+func (s *Server) DumpTrsfState() {
+	s.activeConnsMu.Lock()
+	conns := make([]streamingConn, 0, len(s.activeConns))
+	for _, c := range s.activeConns {
+		conns = append(conns, c)
+	}
+	s.activeConnsMu.Unlock()
+
+	log := s.cfg.Logger
+	log.Info("trsf dump: begin", "conns", len(conns))
+	for _, c := range conns {
+		cid := c.ConnectionID()
+		role := "client"
+		if _, ok := s.registry.GetByConnectionID(cid); ok {
+			role = "runner"
+		}
+		st := c.trans.GetInternalState()
+		if st == nil {
+			log.Info("trsf dump: conn", "cid", cid.String(), "role", role, "state", "nil")
+			continue
+		}
+		log.Info("trsf dump: conn",
+			"cid", cid.String(), "role", role,
+			"sendStreams", st.ActiveSendStreams, "recvStreams", st.ActiveReceiveStreams,
+			"sendQ", st.SendQueueLength, "recvQ", st.ReceiveQueueLength,
+			"sendTrig", st.SendActionCount, "updWin", st.UpdateWindowCount, "cancel", st.CancelStreamCount,
+			"inflight", st.BytesInFlight, "cwnd", st.CongestionWindow, "rtt", st.SmoothedRTT, "sentPkts", len(st.SentPackets))
+	}
+	if s.taskHandler != nil {
+		for _, rf := range s.taskHandler.rforwards().snapshot() {
+			log.Info("trsf dump: remote-forward", "fwd", rf.forwardID, "task", rf.taskIDHex, "runner", rf.runnerID, "client_cid", rf.clientCID)
+		}
+	}
+	log.Info("trsf dump: end")
+}
+
 func (s streamingConn) CreateSendStream() trsf.SendStream { return s.trans.CreateSendStream() }
 
 func (s streamingConn) CreateBidirectionalStream() trsf.BidirectionalStream {
@@ -659,6 +705,14 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	go trsf.AutoSend(connCtx, p, session, nil)
 
 	wrapped := streamingConn{Connection: session, trans: p}
+	s.activeConnsMu.Lock()
+	s.activeConns[session.ConnectionID()] = wrapped
+	s.activeConnsMu.Unlock()
+	defer func() {
+		s.activeConnsMu.Lock()
+		delete(s.activeConns, session.ConnectionID())
+		s.activeConnsMu.Unlock()
+	}()
 
 	gate := newPSKGate(s.cfg.PSK)
 

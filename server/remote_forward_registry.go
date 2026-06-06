@@ -83,6 +83,29 @@ func (r *remoteForwardRegistry) add(rf *remoteForward) uint64 {
 	return r.next
 }
 
+// remoteForwardInfo is a debug-dump snapshot of one registration.
+type remoteForwardInfo struct {
+	forwardID uint64
+	taskIDHex string
+	runnerID  string
+	clientCID string
+}
+
+// snapshot returns a copy of the active registrations for debug dumps.
+func (r *remoteForwardRegistry) snapshot() []remoteForwardInfo {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]remoteForwardInfo, 0, len(r.m))
+	for _, rf := range r.m {
+		cid := ""
+		if rf.clientCxn != nil {
+			cid = rf.clientCxn.ConnectionID().String()
+		}
+		out = append(out, remoteForwardInfo{forwardID: rf.forwardID, taskIDHex: rf.taskIDHex, runnerID: rf.runnerID, clientCID: cid})
+	}
+	return out
+}
+
 func (r *remoteForwardRegistry) get(id uint64) (*remoteForward, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

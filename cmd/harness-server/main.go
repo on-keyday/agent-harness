@@ -137,6 +137,9 @@ func main() {
 	defer board.Close()
 	s.SetBoard(board)
 
+	// Debug: SIGUSR1 (Unix) dumps every connection's trsf internal state.
+	installTrsfDump(s)
+
 	if err := s.Run(ctx); err != nil && err != context.Canceled {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
