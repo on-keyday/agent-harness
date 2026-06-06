@@ -680,6 +680,7 @@ const POLL_INTERVAL_MS = 5000;
   const KEY_BASE = {
       esc:   "\x1b",
       tab:   "\t",
+      enter: "\r",
       up:    "\x1b[A",
       down:  "\x1b[B",
       left:  "\x1b[D",
@@ -720,6 +721,20 @@ const POLL_INTERVAL_MS = 5000;
           // Auto-clear shift after a special key press (one-shot semantics).
           if (mods.shift) setMod("shift", false);
           if (mods.ctrl) setMod("ctrl", false);
+      });
+  });
+
+  // Scroll buttons act on xterm's local scrollback viewport — NOT sent to the
+  // PTY. xterm's touch scrolling is finger-1:1 with no momentum (see
+  // Viewport.handleTouchMove), so a flick won't carry; these give reliable
+  // page-at-a-time navigation plus a jump back to the live bottom.
+  document.querySelectorAll("#touch-keys button[data-scroll]").forEach(btn => {
+      btn.addEventListener("click", () => {
+          switch (btn.getAttribute("data-scroll")) {
+              case "pageup":   term.scrollPages(-1); break;
+              case "pagedown": term.scrollPages(1);  break;
+              case "bottom":   term.scrollToBottom(); break;
+          }
       });
   });
 
