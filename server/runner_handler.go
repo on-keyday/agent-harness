@@ -46,6 +46,11 @@ type RunnerHandler struct {
 	// Server.chainedRelay in Server.New.
 	// Nil-safe: tests that do not exercise the chained-relay path leave it unwired.
 	ChainedRelay *ChainedRelayHandler
+
+	// OnRemoteForwardConn, when non-nil, handles RunnerMessage{RemoteForwardConn}
+	// (a connection accepted on a remote-forward listener). Wired to
+	// TaskHandler.handleRemoteForwardConn in Server.New.
+	OnRemoteForwardConn func(conn ConnHandle, msg *protocol.RemoteForwardConn)
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -209,6 +214,18 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		// RequestChainedRelay does not mutate Registry/Tasks; suppress the
 		// trailing OnChange so we don't run a spurious Scheduler.Tick.
+		return
+
+	case protocol.RunnerMessageType_RemoteForwardConn:
+		rfc := msg.RemoteForwardConn()
+		if rfc == nil {
+			slog.Error("RunnerHandler: RemoteForwardConn variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnRemoteForwardConn != nil {
+			h.OnRemoteForwardConn(conn, rfc)
+		}
+		// Does not mutate Registry/Tasks; suppress the trailing OnChange.
 		return
 
 	default:

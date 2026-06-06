@@ -32,6 +32,10 @@ type ConnHandle interface {
 	CreateSendStream() trsf.SendStream
 	CreateBidirectionalStream() trsf.BidirectionalStream
 	GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream
+	// GetBidirectionalStream looks up a peer-created bidi stream by id. Used to
+	// pick up a runner-created remote-forward data stream (the runner creates it
+	// per accepted connection and sends the id via RemoteForwardConn).
+	GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream
 }
 
 type Dispatcher struct {

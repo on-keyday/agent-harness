@@ -22,6 +22,7 @@ func (stubConn) SendMessage([]byte) (int, uint64, error)   { return 0, 0, nil }
 func (stubConn) CreateSendStream() trsf.SendStream         { return nil }
 func (stubConn) GetReceiveStream(trsf.StreamID) trsf.ReceiveStream { return nil }
 func (stubConn) CreateBidirectionalStream() trsf.BidirectionalStream { return nil }
+func (stubConn) GetBidirectionalStream(trsf.StreamID) trsf.BidirectionalStream { return nil }
 
 // newTestHandler returns a *TaskHandler with an empty Registry and TaskStore,
 // suitable for unit-testing handleSubmit and handleOpenInteractive.

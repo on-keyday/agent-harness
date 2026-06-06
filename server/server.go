@@ -175,6 +175,10 @@ func New(cfg Config) *Server {
 		ResolveVia:            s.registry.GetByConnectionID,
 		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
 	}
+	// Route runner-reported remote-forward connections into the TaskHandler
+	// (wired here, after taskHandler construction, since runnerHandler is built
+	// just above it).
+	s.runnerHandler.OnRemoteForwardConn = s.taskHandler.handleRemoteForwardConn
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
@@ -614,6 +618,10 @@ func (s streamingConn) CreateBidirectionalStream() trsf.BidirectionalStream {
 
 func (s streamingConn) GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream {
 	return s.trans.GetReceiveStream(id)
+}
+
+func (s streamingConn) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
+	return s.trans.GetBidirectionalStream(id)
 }
 
 // handleConnection manages a single active objproto connection for its lifetime.

@@ -16,6 +16,13 @@ type fakeConn struct {
 	// nextStreamID is the StreamID to assign to the next CreateBidirectionalStream
 	// result. When zero, CreateBidirectionalStream returns nil (legacy behaviour).
 	nextStreamID trsf.StreamID
+	// nextBidi, when non-nil, is returned by the next CreateBidirectionalStream
+	// call (and then cleared) instead of constructing a noopBidiStream. Lets a
+	// test inject a recording/blocking control stream.
+	nextBidi trsf.BidirectionalStream
+	// bidiByID is consulted by GetBidirectionalStream to resolve a peer-created
+	// stream by id (e.g. a runner-created remote-forward data stream).
+	bidiByID map[trsf.StreamID]trsf.BidirectionalStream
 	// bidiStreams collects every non-nil stream returned, so tests can assert
 	// that they were torn down via CloseBoth.
 	bidiStreams []*noopBidiStream
@@ -85,6 +92,11 @@ func (s *recordingSendStream) AppendDataContext(_ context.Context, eof bool, pay
 // otherwise nil. Tests that exercise OpenInteractive's Ok path set nextStreamID
 // before invoking the handler so the splice has a non-nil stream to operate on.
 func (f *fakeConn) CreateBidirectionalStream() trsf.BidirectionalStream {
+	if f.nextBidi != nil {
+		s := f.nextBidi
+		f.nextBidi = nil
+		return s
+	}
 	if f.nextStreamID == 0 {
 		return nil
 	}
@@ -97,6 +109,13 @@ func (f *fakeConn) CreateBidirectionalStream() trsf.BidirectionalStream {
 // GetReceiveStream returns nil; tests that need a non-nil receive stream
 // (agentboard payload-stream paths) wire a different stub.
 func (f *fakeConn) GetReceiveStream(_ trsf.StreamID) trsf.ReceiveStream { return nil }
+
+// GetBidirectionalStream resolves a peer-created stream by id from bidiByID
+// (nil if absent), mirroring how the real conn looks up a runner-created
+// remote-forward data stream.
+func (f *fakeConn) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
+	return f.bidiByID[id]
+}
 
 // noopBidiStream is a minimal trsf.BidirectionalStream stub. Reads return EOF
 // immediately, writes are dropped, and CloseBoth flips a flag so tests can

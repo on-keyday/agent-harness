@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/hex"
 	"log/slog"
 
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -109,5 +112,59 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 	}
 }
 
-// watchRemoteForwardControl is replaced with the real teardown loop in Task 3.
-func (h *TaskHandler) watchRemoteForwardControl(rf *remoteForward) {}
+// handleRemoteForwardConn fires when a runner reports a new connection accepted
+// on a remote-forward listener. It picks up the runner-created data stream,
+// allocates a client-side stream, splices the two, and notifies the client over
+// the control stream so it dials its local target and picks up the stream by id.
+func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protocol.RemoteForwardConn) {
+	rf, ok := h.rforwards().get(msg.ForwardId)
+	if !ok {
+		return // registration gone; the runner stream will EOF and clean up
+	}
+	runnerStream := peer.WaitForBidirectionalStream(context.Background(), runnerConn, trsf.StreamID(msg.StreamId))
+	if runnerStream == nil {
+		return
+	}
+	clientStream := rf.clientCxn.CreateBidirectionalStream()
+	if clientStream == nil {
+		_ = runnerStream.CloseBoth()
+		return
+	}
+	notify := protocol.RemoteForwardConnNotify{StreamId: uint64(clientStream.ID())}
+	nb, err := notify.Append(nil)
+	if err != nil {
+		_ = clientStream.CloseBoth()
+		_ = runnerStream.CloseBoth()
+		return
+	}
+	if err := rf.control.AppendData(false, nb); err != nil {
+		_ = clientStream.CloseBoth()
+		_ = runnerStream.CloseBoth()
+		return
+	}
+	go spliceBidi(clientStream, runnerStream, rf.taskIDHex)
+}
+
+// watchRemoteForwardControl tears the forward down when the client closes the
+// control stream. The client never writes on it, so any read returning EOF or
+// error means the client is gone: drop the registration and tell the runner to
+// stop listening (no orphan listener left behind).
+func (h *TaskHandler) watchRemoteForwardControl(rf *remoteForward) {
+	for {
+		_, eof, err := rf.control.ReadDirect(4096)
+		if eof || err != nil {
+			break
+		}
+	}
+	if _, ok := h.rforwards().remove(rf.forwardID); !ok {
+		return
+	}
+	runner, ok := h.Registry.Get(rf.runnerID)
+	if !ok || runner.Conn == nil {
+		return
+	}
+	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ClosePortForward}
+	rreq.SetClosePortForward(protocol.ClosePortForwardRequest{ForwardId: rf.forwardID})
+	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	_, _, _ = runner.Conn.SendMessage(data)
+}
