@@ -57,7 +57,9 @@ type App struct {
 
 	// port-forward state
 	portForwardModal PortForwardModal
-	activeForwards   map[string]*PortForwardSession
+	forwardPicker    ForwardPicker
+	activeForwards   map[int]*PortForwardSession // keyed by client-side unique id
+	nextForwardID    int
 
 	// log-following state
 	logsCancel context.CancelFunc
@@ -91,7 +93,7 @@ func New(cfg Config) *App {
 		connected:      false,
 		status:         "connecting…",
 		tasksByID:      map[string]protocol.TaskInfo{},
-		activeForwards: map[string]*PortForwardSession{},
+		activeForwards: map[int]*PortForwardSession{},
 	}
 	a.tasks.Focus()
 	return a
@@ -366,12 +368,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case PortForwardStartedMsg:
-		a.activeForwards[msg.TaskID] = &PortForwardSession{TaskID: msg.TaskID, Spec: msg.Spec, Cancel: msg.Cancel}
-		short := msg.TaskID
-		if len(short) > 12 {
-			short = short[:12]
-		}
-		a.cmdresult.Append(OKStyle.Render("forward started: ") + short + "  -L " + msg.Spec)
+		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel}
+		a.cmdresult.Append(OKStyle.Render("forward started: ") + pfShortID(msg.TaskID) + "  " + msg.Direction.flag() + " " + msg.Spec)
 		return a, nil
 
 	case PortForwardStatusMsg:
@@ -439,6 +437,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.popup, pcmd = a.popup.Update(msg)
 			return a, pcmd
 		}
+		// Forward-stop picker intercepts keys when open (digit selects, Esc cancels).
+		if a.forwardPicker.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				a.forwardPicker.Close()
+				return a, nil
+			}
+			if sess := a.forwardPicker.Pick(msg.String()); sess != nil {
+				sess.Cancel()
+				delete(a.activeForwards, sess.ID)
+				a.forwardPicker.Close()
+				a.cmdresult.Append(OKStyle.Render("forward cancelled: ") + pfShortID(sess.TaskID) + "  " + sess.Direction.flag() + " " + sess.Spec)
+			}
+			return a, nil
+		}
 		// Port-forward modal intercepts ALL keys when open.
 		if a.portForwardModal.IsOpen() {
 			switch msg.Type {
@@ -448,12 +460,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyEnter:
 				spec := a.portForwardModal.Spec()
 				taskID := a.portForwardModal.TaskID()
+				mode := a.portForwardModal.Mode()
 				a.portForwardModal.Close()
 				if spec == "" {
 					a.cmdresult.Append(WarnStyle.Render("forward cancelled (empty spec)"))
 					return a, nil
 				}
-				return a, DoStartPortForward(a.client, taskID, spec, a.program)
+				a.nextForwardID++
+				if mode == ForwardRemote {
+					return a, DoStartRemoteForward(a.client, taskID, spec, a.nextForwardID, a.program)
+				}
+				return a, DoStartPortForward(a.client, taskID, spec, a.nextForwardID, a.program)
 			}
 			var pfcmd tea.Cmd
 			a.portForwardModal, pfcmd = a.portForwardModal.Update(msg)
@@ -566,33 +583,42 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 		}
-		// `p` opens the port-forward modal for the selected task.
-		if a.focus == focusTasks && msg.String() == "p" {
+		// `p` / `b` open the local / remote port-forward modal for the selected task.
+		if a.focus == focusTasks && (msg.String() == "p" || msg.String() == "b") {
 			taskID := a.tasks.SelectedID()
 			if taskID == "" {
 				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
 				return a, nil
 			}
-			a.portForwardModal.Open(taskID)
+			dir := ForwardLocal
+			if msg.String() == "b" {
+				dir = ForwardRemote
+			}
+			a.portForwardModal.OpenMode(taskID, dir)
 			return a, nil
 		}
-		// `P` cancels an active port forward for the selected task.
-		if a.focus == focusTasks && msg.String() == "P" {
+		// `P` / `B` stop a local / remote forward for the selected task. With more
+		// than one active, a digit picker is shown; with exactly one, cancel now.
+		if a.focus == focusTasks && (msg.String() == "P" || msg.String() == "B") {
 			taskID := a.tasks.SelectedID()
 			if taskID == "" {
 				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
 				return a, nil
 			}
-			if fwd, ok := a.activeForwards[taskID]; ok {
-				fwd.Cancel()
-				delete(a.activeForwards, taskID)
-				short := taskID
-				if len(short) > 12 {
-					short = short[:12]
-				}
-				a.cmdresult.Append(OKStyle.Render("forward cancelled: ") + short)
-			} else {
-				a.cmdresult.Append(WarnStyle.Render("forward: no active forward for selected task"))
+			dir := ForwardLocal
+			if msg.String() == "B" {
+				dir = ForwardRemote
+			}
+			sel := selectForwards(a.activeForwards, taskID, dir)
+			switch len(sel) {
+			case 0:
+				a.cmdresult.Append(WarnStyle.Render("forward: no active " + dir.flag() + " forward for selected task"))
+			case 1:
+				sel[0].Cancel()
+				delete(a.activeForwards, sel[0].ID)
+				a.cmdresult.Append(OKStyle.Render("forward cancelled: ") + pfShortID(taskID) + "  " + dir.flag() + " " + sel[0].Spec)
+			default:
+				a.forwardPicker.Open(dir, sel)
 			}
 			return a, nil
 		}
@@ -724,7 +750,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · p forward · P stop-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -747,6 +773,9 @@ func (a *App) View() string {
 	}
 	if a.portForwardModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.portForwardModal.View())
+	}
+	if a.forwardPicker.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardPicker.View())
 	}
 	return view
 }

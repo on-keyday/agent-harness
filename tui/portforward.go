@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -11,20 +12,54 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 )
 
-// PortForwardModal prompts for one -L spec for a selected task.
+// ForwardDirection distinguishes local (-L) and remote (-R) forwards.
+type ForwardDirection int
+
+const (
+	ForwardLocal ForwardDirection = iota
+	ForwardRemote
+)
+
+func (d ForwardDirection) flag() string {
+	if d == ForwardRemote {
+		return "-R"
+	}
+	return "-L"
+}
+
+func pfShortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// PortForwardModal prompts for one forward spec for a selected task. mode picks
+// local vs remote (placeholder + dispatch differ).
 type PortForwardModal struct {
 	open   bool
 	taskID string
+	mode   ForwardDirection
 	input  textinput.Model
 }
 
-func (m *PortForwardModal) IsOpen() bool   { return m.open }
-func (m *PortForwardModal) TaskID() string { return m.taskID }
+func (m *PortForwardModal) IsOpen() bool           { return m.open }
+func (m *PortForwardModal) TaskID() string         { return m.taskID }
+func (m *PortForwardModal) Mode() ForwardDirection { return m.mode }
 
-func (m *PortForwardModal) Open(taskID string) {
+// Open opens the modal in local mode (back-compat for existing call sites).
+func (m *PortForwardModal) Open(taskID string) { m.OpenMode(taskID, ForwardLocal) }
+
+// OpenMode opens the modal for taskID in the given direction.
+func (m *PortForwardModal) OpenMode(taskID string, dir ForwardDirection) {
 	m.taskID = taskID
+	m.mode = dir
 	if m.input.Prompt == "" {
 		m.input = textinput.New()
+	}
+	if dir == ForwardRemote {
+		m.input.Placeholder = "[bind:]runnerport:dialhost:dialport"
+	} else {
 		m.input.Placeholder = "[bind:]localport:remotehost:remoteport"
 	}
 	m.input.SetValue("")
@@ -49,23 +84,81 @@ func (m *PortForwardModal) View() string {
 	if !m.open {
 		return ""
 	}
-	short := m.taskID
-	if len(short) > 12 {
-		short = short[:12]
-	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorFocused).
 		Padding(1, 2)
 	footer := FooterStyle.Render("Enter to start · Esc to cancel")
-	return box.Render("Port-forward task " + short + "  -L " + m.input.View() + "\n\n" + footer)
+	return box.Render("Port-forward task " + pfShortID(m.taskID) + "  " + m.mode.flag() + " " + m.input.View() + "\n\n" + footer)
 }
 
-// PortForwardSession tracks a running forward so it can be cancelled.
+// PortForwardSession tracks a running forward so it can be cancelled. ID is a
+// client-side unique handle so a task can hold several forwards at once.
 type PortForwardSession struct {
-	TaskID string
-	Spec   string
-	Cancel context.CancelFunc
+	ID        int
+	TaskID    string
+	Direction ForwardDirection
+	Spec      string
+	Cancel    context.CancelFunc
+}
+
+// selectForwards returns the active sessions for a task in one direction, sorted
+// by ID for stable picker ordering.
+func selectForwards(m map[int]*PortForwardSession, taskID string, dir ForwardDirection) []*PortForwardSession {
+	var out []*PortForwardSession
+	for _, s := range m {
+		if s.TaskID == taskID && s.Direction == dir {
+			out = append(out, s)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// ForwardPicker lists active forwards (one task + direction) for digit-key
+// selection, shown when more than one is active for a stop request.
+type ForwardPicker struct {
+	open     bool
+	dir      ForwardDirection
+	sessions []*PortForwardSession
+}
+
+func (p *ForwardPicker) IsOpen() bool { return p.open }
+
+func (p *ForwardPicker) Open(dir ForwardDirection, sessions []*PortForwardSession) {
+	p.open = true
+	p.dir = dir
+	p.sessions = sessions
+}
+
+func (p *ForwardPicker) Close() { p.open = false; p.sessions = nil }
+
+// Pick maps a digit key ("1".."9") to a session, or nil if out of range.
+func (p *ForwardPicker) Pick(key string) *PortForwardSession {
+	if len(key) != 1 || key[0] < '1' || key[0] > '9' {
+		return nil
+	}
+	idx := int(key[0] - '1')
+	if idx >= len(p.sessions) {
+		return nil
+	}
+	return p.sessions[idx]
+}
+
+func (p *ForwardPicker) View() string {
+	if !p.open {
+		return ""
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorFocused).
+		Padding(1, 2)
+	body := "Stop which " + p.dir.flag() + " forward?\n\n"
+	for i, s := range p.sessions {
+		body += fmt.Sprintf("%d) %s\n", i+1, s.Spec)
+	}
+	body += "\n" + FooterStyle.Render("press number to stop · Esc to cancel")
+	return box.Render(body)
 }
 
 // PortForwardStatusMsg carries a line to append to cmdresult.
@@ -73,16 +166,17 @@ type PortForwardStatusMsg struct{ Line string }
 
 // PortForwardStartedMsg registers a started forward in the App.
 type PortForwardStartedMsg struct {
-	TaskID string
-	Spec   string
-	Cancel context.CancelFunc
+	ID        int
+	TaskID    string
+	Direction ForwardDirection
+	Spec      string
+	Cancel    context.CancelFunc
 }
 
-// DoStartPortForward parses the spec and starts a background forward using
-// the long-lived client (NOT a fresh dial). The program handle MUST be
-// the same *tea.Program stored on App — matching the SubscribeTaskLog
-// pattern in events.go where goroutines emit messages via program.Send.
-func DoStartPortForward(c *cli.Client, taskID, spec string, program *tea.Program) tea.Cmd {
+// DoStartPortForward parses the spec and starts a background local (-L) forward
+// using the long-lived client (NOT a fresh dial). program MUST be App's
+// *tea.Program (goroutines emit messages via program.Send).
+func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
 		sp, err := cli.ParseForwardSpec(spec)
 		if err != nil {
@@ -96,12 +190,29 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, program *tea.Program
 			if err != nil {
 				program.Send(PortForwardStatusMsg{Line: "forward: " + err.Error()})
 			}
-			short := taskID
-			if len(short) > 12 {
-				short = short[:12]
-			}
-			program.Send(PortForwardStatusMsg{Line: fmt.Sprintf("forward stopped: %s", short)})
+			program.Send(PortForwardStatusMsg{Line: fmt.Sprintf("forward stopped: %s", pfShortID(taskID))})
 		}()
-		return PortForwardStartedMsg{TaskID: taskID, Spec: spec, Cancel: cancel}
+		return PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel}
+	}
+}
+
+// DoStartRemoteForward is the -R counterpart of DoStartPortForward.
+func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *tea.Program) tea.Cmd {
+	return func() tea.Msg {
+		sp, err := cli.ParseRemoteForwardSpec(spec)
+		if err != nil {
+			return PortForwardStatusMsg{Line: "forward: " + err.Error()}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			err := cli.RunRemoteForward(ctx, c, taskID, []cli.RemoteForwardSpec{sp}, func(s string) {
+				program.Send(PortForwardStatusMsg{Line: s})
+			})
+			if err != nil {
+				program.Send(PortForwardStatusMsg{Line: "forward: " + err.Error()})
+			}
+			program.Send(PortForwardStatusMsg{Line: fmt.Sprintf("forward stopped: %s", pfShortID(taskID))})
+		}()
+		return PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel}
 	}
 }
