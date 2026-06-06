@@ -159,6 +159,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		ProxyVia:                   cfg.ProxyVia,
 		Sender:                     sender,
 		Streams:                    pc.Transport(),
+		creator:                    pc.Transport(),
 		Logger:                     cfg.Logger,
 		Now:                        time.Now,
 		NoWorktree:                 cfg.NoWorktree,
@@ -355,6 +356,12 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleOpenPortForward(ctx, pf)
+	case protocol.RunnerRequestType_ClosePortForward:
+		cpf := req.ClosePortForward()
+		if cpf == nil {
+			return
+		}
+		session.rforwardListeners().close(cpf.ForwardId)
 	case protocol.RunnerRequestType_EstablishRelay:
 		er := req.EstablishRelay()
 		if er == nil {

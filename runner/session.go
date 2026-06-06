@@ -91,6 +91,15 @@ type Session struct {
 	Logger          *slog.Logger                   // optional; defaults to slog.Default()
 	Now             func() time.Time
 
+	// creator makes bidi streams toward the server. Set to pc.Transport() for
+	// live runner connections; required by remote port-forward (one stream per
+	// accepted connection). nil in tests that don't exercise remote forward.
+	creator bidiStreamCreator
+	// rforwards tracks active remote port-forward listeners by forwardId so a
+	// ClosePortForward request can shut them down. Lazily created (see
+	// remoteForwardListeners / port_forward.go).
+	rforwards *remoteForwardListeners
+
 	// ServerCID, Hostname, WSPath, BinDir are required for HARNESS_* env
 	// injection at task spawn time. Filled from Config in connect.go.
 	// BinDir is prepended to the agent's PATH so harness-cli is reachable
