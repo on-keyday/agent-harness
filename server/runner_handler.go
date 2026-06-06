@@ -223,7 +223,11 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		if h.OnRemoteForwardConn != nil {
-			h.OnRemoteForwardConn(conn, rfc)
+			// Run async: handleRemoteForwardConn blocks on WaitForBidirectionalStream
+			// for the runner-created data stream, and this dispatch runs on the
+			// connection's recv goroutine — blocking it would stall the very
+			// stream-frame demux we are waiting on (self-deadlock until timeout).
+			go h.OnRemoteForwardConn(conn, rfc)
 		}
 		// Does not mutate Registry/Tasks; suppress the trailing OnChange.
 		return

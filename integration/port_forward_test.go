@@ -289,3 +289,154 @@ func TestPortForwardE2E(t *testing.T) {
 		t.Log("runner did not exit within 2s of cancel")
 	}
 }
+
+// TestRemotePortForwardE2E exercises the full ssh -R path: the runner listens,
+// and a connection to its bound port is dialed back out by the client to a
+// client-side echo server.
+//  1. boots server + runner with fake-claude-slow.sh so the task stays Running
+//  2. starts a client-side echo TCP server (the dial target)
+//  3. registers a remote forward (runner binds a free port) via cli.RunRemoteForward
+//  4. dials the runner-bound port and asserts a byte round-trip through the tunnel
+func TestRemotePortForwardE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18548"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			ClaudeBin:    fakeClaude,
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "rpf-test")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+
+	// Client-side echo server = the dial target.
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("echo listen: %v", err)
+	}
+	defer echoLn.Close()
+	echoPort := echoLn.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				io.Copy(conn, conn) //nolint:errcheck
+			}()
+		}
+	}()
+
+	// A free port for the runner to listen on.
+	bindLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("bind port listen: %v", err)
+	}
+	runnerPort := bindLn.Addr().(*net.TCPAddr).Port
+	bindLn.Close()
+
+	c, err := cli.Dial(ctx, peerCID)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+
+	spec := cli.RemoteForwardSpec{BindAddr: "127.0.0.1", RunnerPort: runnerPort, DialHost: "127.0.0.1", DialPort: echoPort}
+	fwdCtx, fwdCancel := context.WithCancel(ctx)
+	defer fwdCancel()
+	fwdDone := make(chan error, 1)
+	go func() { fwdDone <- cli.RunRemoteForward(fwdCtx, c, taskID, []cli.RemoteForwardSpec{spec}, nil) }()
+
+	// Poll until the runner has bound its listener (registration round-trips
+	// through server→runner, then the runner binds).
+	runnerAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(runnerPort))
+	deadline = time.Now().Add(8 * time.Second)
+	var up bool
+	for time.Now().Before(deadline) {
+		tc, err := net.DialTimeout("tcp", runnerAddr, 100*time.Millisecond)
+		if err == nil {
+			tc.Close()
+			up = true
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !up {
+		t.Fatalf("runner listener on %s did not come up within 8s", runnerAddr)
+	}
+
+	t.Run("roundtrip", func(t *testing.T) {
+		conn, err := net.DialTimeout("tcp", runnerAddr, 2*time.Second)
+		if err != nil {
+			t.Fatalf("dial runner port: %v", err)
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		msg := []byte("ping\n")
+		if _, err := conn.Write(msg); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		buf := make([]byte, len(msg))
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			t.Fatalf("readfull: %v", err)
+		}
+		if string(buf) != string(msg) {
+			t.Errorf("echo mismatch through remote forward: got %q want %q", buf, msg)
+		}
+	})
+
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Log("server did not exit within 2s of cancel")
+	}
+	select {
+	case <-runnerDone:
+	case <-time.After(2 * time.Second):
+		t.Log("runner did not exit within 2s of cancel")
+	}
+}
