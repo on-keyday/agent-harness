@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
+	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -86,6 +87,10 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 	}
 	rf := &remoteForward{taskIDHex: taskIDHex, runnerID: runnerID, control: ctrl, clientCxn: conn}
 	fid := h.rforwards().add(rf)
+	// Register the pending bind channel BEFORE sending, so a fast runner reply
+	// isn't missed.
+	resultCh := h.rforwards().addPending(fid)
+	defer h.rforwards().removePending(fid)
 
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenPortForward}
 	body := protocol.RunnerOpenPortForwardRequest{
@@ -103,6 +108,23 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 		slog.Error("port_forward: send listen request to runner failed", "task_id", taskIDHex, "err", err)
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
+
+	// Wait for the runner to report whether the listener bound, so the client
+	// learns success/failure instead of a silent no-op (e.g. port already in use).
+	var bound bool
+	select {
+	case bound = <-resultCh:
+	case <-time.After(remoteForwardBindTimeout):
+	}
+	if !bound {
+		h.rforwards().remove(fid)
+		_ = ctrl.CloseBoth()
+		// In case the runner DID bind but the result was slow/lost, tell it to
+		// stop listening so no orphan listener is left behind.
+		sendClosePortForward(runner.Conn, fid)
+		return errResp(protocol.OpenPortForwardStatus_BindFailed)
+	}
+
 	// Tear the forward down when the client closes the control stream.
 	go h.watchRemoteForwardControl(rf)
 	return protocol.OpenPortForwardResponse{
@@ -110,6 +132,27 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 		StreamId:  uint64(ctrl.ID()),
 		ForwardId: fid,
 	}
+}
+
+// remoteForwardBindTimeout bounds how long registration waits for the runner's
+// bind result before giving up with BindFailed.
+const remoteForwardBindTimeout = 5 * time.Second
+
+// handleRemoteForwardBindResult delivers a runner's listener-bind result to the
+// registration goroutine blocked in registerRemoteForward.
+func (h *TaskHandler) handleRemoteForwardBindResult(_ ConnHandle, msg *protocol.RemoteForwardBindResult) {
+	h.rforwards().signalBind(msg.ForwardId, msg.Ok())
+}
+
+// sendClosePortForward best-effort tells a runner to stop a remote-forward listener.
+func sendClosePortForward(rc ConnHandle, forwardID uint64) {
+	if rc == nil {
+		return
+	}
+	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ClosePortForward}
+	rreq.SetClosePortForward(protocol.ClosePortForwardRequest{ForwardId: forwardID})
+	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	_, _, _ = rc.SendMessage(data)
 }
 
 // handleRemoteForwardConn fires when a runner reports a new connection accepted
@@ -163,8 +206,5 @@ func (h *TaskHandler) watchRemoteForwardControl(rf *remoteForward) {
 	if !ok || runner.Conn == nil {
 		return
 	}
-	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ClosePortForward}
-	rreq.SetClosePortForward(protocol.ClosePortForwardRequest{ForwardId: rf.forwardID})
-	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
-	_, _, _ = runner.Conn.SendMessage(data)
+	sendClosePortForward(runner.Conn, rf.forwardID)
 }

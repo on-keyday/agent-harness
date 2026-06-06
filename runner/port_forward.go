@@ -93,22 +93,33 @@ func (s *Session) startRemoteForward(ctx context.Context, req *protocol.RunnerOp
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
 	if s.worktreeDirFor(taskIDHex) == "" {
 		log.Error("remote_forward: unknown task", "task_id", taskIDHex)
+		s.sendBindResult(req.ForwardId, false)
 		return
 	}
 	if s.creator == nil {
 		log.Error("remote_forward: no stream creator wired")
+		s.sendBindResult(req.ForwardId, false)
 		return
 	}
 	ln, err := s.startRemoteForwardListener(ctx, req.ForwardId, string(req.BindAddr), int(req.BindPort))
 	if err != nil {
-		// The server already returned Ok at registration time; a listen failure
-		// here just means no connections will ever arrive. Log it. (A precise
-		// BindFailed reply would need a runner→server ack; out of scope.)
 		log.Info("remote_forward: listen failed", "addr", net.JoinHostPort(string(req.BindAddr), strconv.Itoa(int(req.BindPort))), "err", err)
+		s.sendBindResult(req.ForwardId, false)
 		return
 	}
 	s.rforwardListeners().add(req.ForwardId, ln)
+	s.sendBindResult(req.ForwardId, true)
 	log.Info("remote_forward: listening", "forward_id", req.ForwardId, "addr", ln.Addr().String())
+}
+
+// sendBindResult tells the server whether the listener bound, so the server can
+// return Ok / BindFailed to the client instead of silently succeeding.
+func (s *Session) sendBindResult(forwardID uint64, ok bool) {
+	m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_RemoteForwardBindResult}
+	br := protocol.RemoteForwardBindResult{ForwardId: forwardID}
+	br.SetOk(ok)
+	m.SetRemoteForwardBindResult(br)
+	_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
 }
 
 // startRemoteForwardListener binds a TCP listener and starts an accept loop that

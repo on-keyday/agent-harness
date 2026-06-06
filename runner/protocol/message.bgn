@@ -10,6 +10,7 @@ enum RunnerMessageType:
     establish_relay_response
     request_chained_relay
     remote_forward_conn
+    remote_forward_bind_result
 
 enum RunnerRequestType:
     :u8
@@ -151,6 +152,7 @@ format RunnerMessage:
         RunnerMessageType.establish_relay_response => establish_relay_response :EstablishRelayResponse
         RunnerMessageType.request_chained_relay => request_chained_relay :RequestChainedRelay
         RunnerMessageType.remote_forward_conn => remote_forward_conn :RemoteForwardConn
+        RunnerMessageType.remote_forward_bind_result => remote_forward_bind_result :RemoteForwardBindResult
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -781,3 +783,12 @@ format RemoteForwardConn:
 # local target and pick up the data stream by stream_id.
 format RemoteForwardConnNotify:
     stream_id :u64
+
+# RemoteForwardBindResult (runner -> server): result of trying to open the
+# remote-forward listener. ok=1 if bound, 0 if net.Listen failed. The server
+# blocks the registration response until this arrives, so the client learns
+# success/failure instead of a silent no-op.
+format RemoteForwardBindResult:
+    forward_id :u64
+    ok         :u1
+    reserved   :u7

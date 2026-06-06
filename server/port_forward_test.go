@@ -95,7 +95,7 @@ func TestHandleOpenPortForward_RemoteRegisters(t *testing.T) {
 	req.SetRemoteHost([]byte("127.0.0.1"))
 	req.SetBindAddr([]byte("127.0.0.1"))
 
-	resp := h.handleOpenPortForward(clientConn, req)
+	resp := runRemoteRegister(t, h, clientConn, req, runnerConn, true)
 	if resp.Status != protocol.OpenPortForwardStatus_Ok {
 		t.Fatalf("status = %v, want Ok", resp.Status)
 	}
@@ -191,10 +191,34 @@ func (s *recordingBidiStream) CloseBoth() error {
 	return nil
 }
 
+// runRemoteRegister runs handleOpenPortForward(Remote) (which now blocks for the
+// runner's bind result) in a goroutine and feeds it that result. A fresh handler
+// assigns forwardId 1, so we signal id 1; the signal is retried until the
+// registration consumes it, then the response is returned.
+func runRemoteRegister(t *testing.T, h *TaskHandler, clientConn *fakeConn, req *protocol.OpenPortForwardRequest, runnerConn *fakeConn, bindOK bool) protocol.OpenPortForwardResponse {
+	t.Helper()
+	respCh := make(chan protocol.OpenPortForwardResponse, 1)
+	go func() { respCh <- h.handleOpenPortForward(clientConn, req) }()
+	br := &protocol.RemoteForwardBindResult{ForwardId: 1}
+	br.SetOk(bindOK)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		h.handleRemoteForwardBindResult(runnerConn, br)
+		select {
+		case r := <-respCh:
+			return r
+		case <-time.After(10 * time.Millisecond):
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("registration did not complete (bind result not consumed)")
+		}
+	}
+}
+
 // registerRemoteForwardForTest sets up a running task + runner and registers a
-// remote forward whose control stream is ctrl. Returns the handler, the two
-// fake conns, and the registration response.
-func registerRemoteForwardForTest(t *testing.T, ctrl trsf.BidirectionalStream) (*TaskHandler, *fakeConn, *fakeConn, protocol.OpenPortForwardResponse) {
+// remote forward whose control stream is ctrl, feeding the given bind result.
+// Returns the handler, the two fake conns, and the registration response.
+func registerRemoteForwardForTest(t *testing.T, ctrl trsf.BidirectionalStream, bindOK bool) (*TaskHandler, *fakeConn, *fakeConn, protocol.OpenPortForwardResponse) {
 	t.Helper()
 	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
 	var rawID [16]byte
@@ -215,8 +239,25 @@ func registerRemoteForwardForTest(t *testing.T, ctrl trsf.BidirectionalStream) (
 	}
 	req.SetRemoteHost([]byte("127.0.0.1"))
 	req.SetBindAddr([]byte("127.0.0.1"))
-	resp := h.handleOpenPortForward(clientConn, req)
+	resp := runRemoteRegister(t, h, clientConn, req, runnerConn, bindOK)
 	return h, clientConn, runnerConn, resp
+}
+
+// TestRegisterRemoteForward_BindFailed verifies that a runner bind failure makes
+// registration return BindFailed and clean up (no leaked registration; control
+// stream closed).
+func TestRegisterRemoteForward_BindFailed(t *testing.T) {
+	ctrl := newRecordingBidiStream(555)
+	h, _, _, resp := registerRemoteForwardForTest(t, ctrl, false)
+	if resp.Status != protocol.OpenPortForwardStatus_BindFailed {
+		t.Fatalf("status = %v, want BindFailed", resp.Status)
+	}
+	if _, ok := h.rforwards().get(1); ok {
+		t.Fatal("registration should be removed after bind failure")
+	}
+	if !ctrl.closed.Load() {
+		t.Fatal("control stream should be closed after bind failure")
+	}
 }
 
 // TestHandleRemoteForwardConn_NotifiesClient verifies a runner-reported
@@ -224,7 +265,7 @@ func registerRemoteForwardForTest(t *testing.T, ctrl trsf.BidirectionalStream) (
 // the new client data-stream id.
 func TestHandleRemoteForwardConn_NotifiesClient(t *testing.T) {
 	ctrl := newRecordingBidiStream(555)
-	h, clientConn, runnerConn, resp := registerRemoteForwardForTest(t, ctrl)
+	h, clientConn, runnerConn, resp := registerRemoteForwardForTest(t, ctrl, true)
 	if resp.Status != protocol.OpenPortForwardStatus_Ok {
 		t.Fatalf("register status = %v, want Ok", resp.Status)
 	}
@@ -248,7 +289,7 @@ func TestHandleRemoteForwardConn_NotifiesClient(t *testing.T) {
 // control stream makes the watcher drop the registration (and signal the runner).
 func TestRemoteForwardControlClose_TearsDownRegistration(t *testing.T) {
 	ctrl := newRecordingBidiStream(555)
-	h, _, _, resp := registerRemoteForwardForTest(t, ctrl)
+	h, _, _, resp := registerRemoteForwardForTest(t, ctrl, true)
 	if _, ok := h.rforwards().get(resp.ForwardId); !ok {
 		t.Fatal("registration missing after register")
 	}

@@ -51,6 +51,11 @@ type RunnerHandler struct {
 	// (a connection accepted on a remote-forward listener). Wired to
 	// TaskHandler.handleRemoteForwardConn in Server.New.
 	OnRemoteForwardConn func(conn ConnHandle, msg *protocol.RemoteForwardConn)
+
+	// OnRemoteForwardBindResult, when non-nil, handles
+	// RunnerMessage{RemoteForwardBindResult} (the runner's listener-bind result).
+	// Wired to TaskHandler.handleRemoteForwardBindResult in Server.New.
+	OnRemoteForwardBindResult func(conn ConnHandle, msg *protocol.RemoteForwardBindResult)
 }
 
 // Handle decodes a RunnerMessage payload (the full bytes including the Kind byte,
@@ -230,6 +235,18 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			go h.OnRemoteForwardConn(conn, rfc)
 		}
 		// Does not mutate Registry/Tasks; suppress the trailing OnChange.
+		return
+
+	case protocol.RunnerMessageType_RemoteForwardBindResult:
+		br := msg.RemoteForwardBindResult()
+		if br == nil {
+			slog.Error("RunnerHandler: RemoteForwardBindResult variant is nil", "runnerID", runnerID)
+			return
+		}
+		if h.OnRemoteForwardBindResult != nil {
+			// Non-blocking (signals a buffered channel); safe to run inline.
+			h.OnRemoteForwardBindResult(conn, br)
+		}
 		return
 
 	default:

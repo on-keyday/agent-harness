@@ -19,15 +19,48 @@ type remoteForward struct {
 }
 
 // remoteForwardRegistry maps server-assigned forwardId → registration. Safe for
-// concurrent use. Lives on TaskHandler.
+// concurrent use. Lives on TaskHandler. It also tracks pending bind-result
+// channels so a registration can block until the runner reports whether its
+// listener bound.
 type remoteForwardRegistry struct {
-	mu   sync.Mutex
-	next uint64
-	m    map[uint64]*remoteForward
+	mu      sync.Mutex
+	next    uint64
+	m       map[uint64]*remoteForward
+	pending map[uint64]chan bool
 }
 
 func newRemoteForwardRegistry() *remoteForwardRegistry {
-	return &remoteForwardRegistry{m: map[uint64]*remoteForward{}}
+	return &remoteForwardRegistry{m: map[uint64]*remoteForward{}, pending: map[uint64]chan bool{}}
+}
+
+// addPending registers a buffered channel the registration waits on for the
+// runner's bind result. Caller must removePending when done.
+func (r *remoteForwardRegistry) addPending(id uint64) chan bool {
+	ch := make(chan bool, 1)
+	r.mu.Lock()
+	r.pending[id] = ch
+	r.mu.Unlock()
+	return ch
+}
+
+func (r *remoteForwardRegistry) removePending(id uint64) {
+	r.mu.Lock()
+	delete(r.pending, id)
+	r.mu.Unlock()
+}
+
+// signalBind delivers a runner bind result to the waiting registration, if any.
+// Non-blocking: a missing or already-signalled entry is a no-op.
+func (r *remoteForwardRegistry) signalBind(id uint64, ok bool) {
+	r.mu.Lock()
+	ch := r.pending[id]
+	r.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch <- ok:
+		default:
+		}
+	}
 }
 
 // rforwards returns the handler's remote-forward registry, lazily creating it.

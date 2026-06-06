@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -425,6 +426,27 @@ func TestRemotePortForwardE2E(t *testing.T) {
 		}
 		if string(buf) != string(msg) {
 			t.Errorf("echo mismatch through remote forward: got %q want %q", buf, msg)
+		}
+	})
+
+	// --- A bind failure on the runner must surface to the client (not a silent
+	// success): occupy the port on the runner host so net.Listen fails, then
+	// register → expect a BindFailed error from OpenRemoteForward.
+	t.Run("bind_failure_surfaces", func(t *testing.T) {
+		occupied, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("occupy listen: %v", err)
+		}
+		defer occupied.Close()
+		occPort := occupied.Addr().(*net.TCPAddr).Port
+		_, _, err = c.OpenRemoteForward(ctx, taskID, cli.RemoteForwardSpec{
+			BindAddr: "127.0.0.1", RunnerPort: occPort, DialHost: "127.0.0.1", DialPort: echoPort,
+		})
+		if err == nil {
+			t.Fatal("expected an error when the runner port is already in use, got nil (silent success)")
+		}
+		if !strings.Contains(err.Error(), "bind") {
+			t.Errorf("error %q should mention the bind failure", err)
 		}
 	})
 

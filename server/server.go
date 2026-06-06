@@ -179,6 +179,7 @@ func New(cfg Config) *Server {
 	// (wired here, after taskHandler construction, since runnerHandler is built
 	// just above it).
 	s.runnerHandler.OnRemoteForwardConn = s.taskHandler.handleRemoteForwardConn
+	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl: s.runnerHandler.Handle,
 		OnTaskControl:   s.taskHandler.Handle,
