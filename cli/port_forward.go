@@ -206,3 +206,172 @@ func acceptLoop(ctx context.Context, c *Client, taskIDHex string, sp ForwardSpec
 		}()
 	}
 }
+
+// RemoteForwardSpec is one parsed -R forward: the runner listens on
+// BindAddr:RunnerPort, and for each accepted connection the client dials
+// DialHost:DialPort.
+type RemoteForwardSpec struct {
+	BindAddr   string
+	RunnerPort int
+	DialHost   string
+	DialPort   int
+}
+
+// ParseRemoteForwardSpec parses "[bind:]runnerport:dialhost:dialport".
+// bind defaults to 127.0.0.1 (on the runner). IPv6 literal hosts unsupported.
+func ParseRemoteForwardSpec(s string) (RemoteForwardSpec, error) {
+	parts := strings.Split(s, ":")
+	var bind, dhost, rportS, dportS string
+	switch len(parts) {
+	case 3:
+		bind, rportS, dhost, dportS = "127.0.0.1", parts[0], parts[1], parts[2]
+	case 4:
+		bind, rportS, dhost, dportS = parts[0], parts[1], parts[2], parts[3]
+	default:
+		return RemoteForwardSpec{}, fmt.Errorf("forward: bad -R spec %q (want [bind:]runnerport:dialhost:dialport)", s)
+	}
+	rport, err := strconv.Atoi(rportS)
+	if err != nil || rport <= 0 || rport > 65535 {
+		return RemoteForwardSpec{}, fmt.Errorf("forward: bad runner port in %q", s)
+	}
+	dport, err := strconv.Atoi(dportS)
+	if err != nil || dport <= 0 || dport > 65535 {
+		return RemoteForwardSpec{}, fmt.Errorf("forward: bad dial port in %q", s)
+	}
+	if dhost == "" {
+		return RemoteForwardSpec{}, fmt.Errorf("forward: empty dial host in %q", s)
+	}
+	return RemoteForwardSpec{BindAddr: bind, RunnerPort: rport, DialHost: dhost, DialPort: dport}, nil
+}
+
+// remoteForwardConnNotifySize is the fixed wire size of a RemoteForwardConnNotify
+// (one u64 stream id). Asserted in the protocol round-trip test.
+const remoteForwardConnNotifySize = 8
+
+// parseConnNotifies consumes as many whole RemoteForwardConnNotify records from
+// buf as possible, returning the stream ids and the unconsumed remainder.
+func parseConnNotifies(buf []byte) (ids []uint64, rest []byte) {
+	for len(buf) >= remoteForwardConnNotifySize {
+		var n protocol.RemoteForwardConnNotify
+		if _, err := n.Decode(buf[:remoteForwardConnNotifySize]); err != nil {
+			break
+		}
+		ids = append(ids, n.StreamId)
+		buf = buf[remoteForwardConnNotifySize:]
+	}
+	return ids, buf
+}
+
+// OpenRemoteForward registers a remote forward and returns the server-created
+// control stream (picked up by id) plus the assigned forwardId. The caller reads
+// RemoteForwardConnNotify records off the control stream and dials per conn.
+func (c *Client) OpenRemoteForward(ctx context.Context, taskIDHex string, sp RemoteForwardSpec) (trsf.BidirectionalStream, uint64, error) {
+	tid, err := parseTaskIDHex(taskIDHex)
+	if err != nil {
+		return nil, 0, fmt.Errorf("forward: parse task id: %w", err)
+	}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenPortForward}
+	body := protocol.OpenPortForwardRequest{
+		TaskId:     tid,
+		Direction:  protocol.PortForwardDirection_Remote,
+		RemotePort: uint16(sp.DialPort),
+		BindPort:   uint16(sp.RunnerPort),
+	}
+	body.SetRemoteHost([]byte(sp.DialHost))
+	body.SetBindAddr([]byte(sp.BindAddr))
+	req.SetOpenPortForward(body)
+
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.Kind != protocol.TaskControlKind_OpenPortForward {
+		return nil, 0, fmt.Errorf("forward: unexpected response kind %v", resp.Kind)
+	}
+	r := resp.OpenPortForward()
+	if r == nil {
+		return nil, 0, errors.New("forward: response variant missing")
+	}
+	switch r.Status {
+	case protocol.OpenPortForwardStatus_Ok:
+	case protocol.OpenPortForwardStatus_NoSuchTask:
+		return nil, 0, errors.New("forward: no such task (id unknown or task not running)")
+	case protocol.OpenPortForwardStatus_RunnerOffline:
+		return nil, 0, errors.New("forward: runner offline")
+	case protocol.OpenPortForwardStatus_BindFailed:
+		return nil, 0, errors.New("forward: runner failed to bind the listen port")
+	default:
+		return nil, 0, fmt.Errorf("forward: server error (status=%d)", r.Status)
+	}
+	// The control stream is server-created; pick it up by id (same pattern as
+	// every other server-allocated stream).
+	ctrl := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
+	if ctrl == nil {
+		return nil, 0, fmt.Errorf("forward: control stream %d not visible", r.StreamId)
+	}
+	return ctrl, r.ForwardId, nil
+}
+
+// RunRemoteForward registers each spec and reads its control stream, dialing the
+// client-side target per arriving connection. Blocks until ctx is cancelled.
+func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []RemoteForwardSpec, logf func(string)) error {
+	if logf == nil {
+		logf = func(s string) { slog.Info(s) }
+	}
+	var wg sync.WaitGroup
+	for _, sp := range specs {
+		ctrl, fid, err := c.OpenRemoteForward(ctx, taskIDHex, sp)
+		if err != nil {
+			return err
+		}
+		logf(fmt.Sprintf("remote-forwarding runner:%s:%d -> %s:%d (task %s, fwd %d)",
+			sp.BindAddr, sp.RunnerPort, sp.DialHost, sp.DialPort, taskIDHex[:min(12, len(taskIDHex))], fid))
+		wg.Add(1)
+		go func(sp RemoteForwardSpec, ctrl trsf.BidirectionalStream) {
+			defer wg.Done()
+			c.readRemoteForwardControl(ctx, sp, ctrl, logf)
+		}(sp, ctrl)
+	}
+	<-ctx.Done()
+	wg.Wait()
+	return nil
+}
+
+// readRemoteForwardControl parses RemoteForwardConnNotify records off the control
+// stream and, for each, dials the client-side target and splices. Buffers across
+// ReadDirect boundaries so a coalesced/split notify is handled.
+func (c *Client) readRemoteForwardControl(ctx context.Context, sp RemoteForwardSpec, ctrl trsf.BidirectionalStream, logf func(string)) {
+	defer ctrl.CloseBoth()
+	var buf []byte
+	for {
+		data, eof, err := ctrl.ReadDirect(64 * 1024)
+		if len(data) > 0 {
+			buf = append(buf, data...)
+			var ids []uint64
+			ids, buf = parseConnNotifies(buf)
+			for _, id := range ids {
+				go c.dialAndSplice(ctx, sp, trsf.StreamID(id), logf)
+			}
+		}
+		if eof || err != nil {
+			return
+		}
+	}
+}
+
+// dialAndSplice picks up the server-created data stream by id, dials the
+// client-side target, and splices. On dial failure it closes the stream so the
+// runner-side connection sees EOF (connection-refused semantics).
+func (c *Client) dialAndSplice(ctx context.Context, sp RemoteForwardSpec, streamID trsf.StreamID, logf func(string)) {
+	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), streamID)
+	if st == nil {
+		return
+	}
+	conn, err := net.Dial("tcp", net.JoinHostPort(sp.DialHost, strconv.Itoa(sp.DialPort)))
+	if err != nil {
+		logf(fmt.Sprintf("remote-forward: dial %s:%d failed: %v", sp.DialHost, sp.DialPort, err))
+		_ = st.CloseBoth()
+		return
+	}
+	spliceConnStream(conn, st)
+}

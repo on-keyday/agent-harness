@@ -345,10 +345,12 @@ func main() {
 		taskID := args[0]
 		fs := flag.NewFlagSet("forward", flag.ExitOnError)
 		var specs repeatableStrings
+		var rspecs repeatableStrings
 		fs.Var(&specs, "L", "local forward [bind:]localport:remotehost:remoteport (repeatable)")
+		fs.Var(&rspecs, "R", "remote forward [bind:]runnerport:dialhost:dialport (repeatable)")
 		fs.Parse(args[1:])
-		if len(specs) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
+		if len(specs) == 0 && len(rspecs) == 0 {
+			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] ...")
 			os.Exit(2)
 		}
 		parsed := make([]cli.ForwardSpec, 0, len(specs))
@@ -358,6 +360,14 @@ func main() {
 				die(err)
 			}
 			parsed = append(parsed, sp)
+		}
+		parsedR := make([]cli.RemoteForwardSpec, 0, len(rspecs))
+		for _, s := range rspecs {
+			sp, err := cli.ParseRemoteForwardSpec(s)
+			if err != nil {
+				die(err)
+			}
+			parsedR = append(parsedR, sp)
 		}
 		c, err := cli.Dial(ctx, parseCID())
 		if err != nil {
@@ -369,8 +379,23 @@ func main() {
 		}
 		fctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 		defer cancel()
-		if err := cli.RunForward(fctx, c, taskID, parsed, func(s string) { fmt.Fprintln(os.Stderr, s) }); err != nil {
-			die(err)
+		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
+		// Remote (-R) forwards run in the background; local (-L) forwards — or a
+		// bare wait when only -R is given — hold the foreground until Ctrl-C.
+		if len(parsedR) > 0 {
+			go func() {
+				if err := cli.RunRemoteForward(fctx, c, taskID, parsedR, logf); err != nil {
+					logf("remote-forward: " + err.Error())
+					cancel()
+				}
+			}()
+		}
+		if len(parsed) > 0 {
+			if err := cli.RunForward(fctx, c, taskID, parsed, logf); err != nil {
+				die(err)
+			}
+		} else {
+			<-fctx.Done()
 		}
 
 	case "session":
@@ -510,8 +535,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      list a single directory under the worktree (default: worktree root)")
 	fmt.Fprintln(os.Stderr, "  file delete [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_PATH")
 	fmt.Fprintln(os.Stderr, "                                      remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused")
-	fmt.Fprintln(os.Stderr, "  forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
-	fmt.Fprintln(os.Stderr, "                                      forward local port(s) through the runner to remote host:port (Ctrl-C to stop)")
+	fmt.Fprintln(os.Stderr, "  forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] ...")
+	fmt.Fprintln(os.Stderr, "                                      -L: forward a local port through the runner to remote host:port (ssh -L)")
+	fmt.Fprintln(os.Stderr, "                                      -R: runner listens, connections dial back to a client-side host:port (ssh -R)")
+	fmt.Fprintln(os.Stderr, "                                      both repeatable; Ctrl-C to stop")
 }
 
 func serverUsage() {
