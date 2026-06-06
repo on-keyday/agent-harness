@@ -450,6 +450,28 @@ func TestRemotePortForwardE2E(t *testing.T) {
 		}
 	})
 
+	// --- A second forward failing must NOT break the first one ("巻き添え"). The
+	// first forward (still running on runnerAddr) must still round-trip after the
+	// failed registration above.
+	t.Run("first_survives_second_failure", func(t *testing.T) {
+		conn, err := net.DialTimeout("tcp", runnerAddr, 2*time.Second)
+		if err != nil {
+			t.Fatalf("dial first forward after second failed: %v", err)
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Write([]byte("pong\n")); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		buf := make([]byte, 5)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			t.Fatalf("first forward broke after second's bind failure: %v", err)
+		}
+		if string(buf) != "pong\n" {
+			t.Errorf("echo mismatch: got %q", buf)
+		}
+	})
+
 	// --- Stopping the forward (ctx cancel) must release the RUNNER listener ---
 	// (not just stop the client): cancel → control stream closes → server sends
 	// ClosePortForward → runner closes its listener. Regression for the leak

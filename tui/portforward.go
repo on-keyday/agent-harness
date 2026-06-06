@@ -181,6 +181,12 @@ type PortForwardStoppedMsg struct {
 	TaskID string
 }
 
+// forwardFailLine renders a clearly-marked failure line so a failed forward is
+// unmistakable (the old flow showed a green "forward started" even on failure).
+func forwardFailLine(taskID string, err error) string {
+	return WarnStyle.Render("✗ forward failed: ") + pfShortID(taskID) + "  " + err.Error()
+}
+
 // DoStartPortForward parses the spec and starts a background local (-L) forward
 // using the long-lived client (NOT a fresh dial). program MUST be App's
 // *tea.Program (goroutines emit messages via program.Send).
@@ -192,7 +198,7 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea
 	return func() tea.Msg {
 		sp, err := cli.ParseForwardSpec(spec)
 		if err != nil {
-			return PortForwardStatusMsg{Line: "forward: " + err.Error()}
+			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel})
@@ -200,7 +206,7 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea
 			if err := cli.RunForward(ctx, c, taskID, []cli.ForwardSpec{sp}, func(s string) {
 				program.Send(PortForwardStatusMsg{Line: s})
 			}); err != nil {
-				program.Send(PortForwardStatusMsg{Line: "forward: " + err.Error()})
+				program.Send(PortForwardStatusMsg{Line: forwardFailLine(taskID, err)})
 			}
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
 		}()
@@ -208,21 +214,27 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea
 	}
 }
 
-// DoStartRemoteForward is the -R counterpart of DoStartPortForward.
+// DoStartRemoteForward is the -R counterpart. It confirms the runner actually
+// bound the listener (OpenRemoteForward blocks until the bind result) BEFORE
+// registering, so a bind failure shows a clear error instead of a misleading
+// "forward started" followed by an error.
 func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
 		sp, err := cli.ParseRemoteForwardSpec(spec)
 		if err != nil {
-			return PortForwardStatusMsg{Line: "forward: " + err.Error()}
+			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
+		ctrl, _, err := c.OpenRemoteForward(ctx, taskID, sp)
+		if err != nil {
+			cancel()
+			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
+		}
 		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel})
 		go func() {
-			if err := cli.RunRemoteForward(ctx, c, taskID, []cli.RemoteForwardSpec{sp}, func(s string) {
+			c.ServeRemoteForwardControl(ctx, sp, ctrl, func(s string) {
 				program.Send(PortForwardStatusMsg{Line: s})
-			}); err != nil {
-				program.Send(PortForwardStatusMsg{Line: "forward: " + err.Error()})
-			}
+			})
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
 		}()
 		return nil

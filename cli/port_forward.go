@@ -329,7 +329,7 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 		wg.Add(1)
 		go func(sp RemoteForwardSpec, ctrl trsf.BidirectionalStream) {
 			defer wg.Done()
-			c.readRemoteForwardControl(ctx, sp, ctrl, logf)
+			c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
 		}(sp, ctrl)
 	}
 	<-ctx.Done()
@@ -340,7 +340,15 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 // readRemoteForwardControl parses RemoteForwardConnNotify records off the control
 // stream and, for each, dials the client-side target and splices. Buffers across
 // ReadDirect boundaries so a coalesced/split notify is handled.
-func (c *Client) readRemoteForwardControl(ctx context.Context, sp RemoteForwardSpec, ctrl trsf.BidirectionalStream, logf func(string)) {
+// ServeRemoteForwardControl runs the control-stream loop for an already-opened
+// remote forward (see OpenRemoteForward): it dials the client-side target per
+// arriving connection and returns when ctx is cancelled or the control stream
+// closes. Callers that opened the forward themselves (e.g. the TUI, so it can
+// confirm the bind before registering) use this to run the rest.
+func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForwardSpec, ctrl trsf.BidirectionalStream, logf func(string)) {
+	if logf == nil {
+		logf = func(s string) { slog.Info(s) }
+	}
 	// CloseBoth on return is what tears the forward down: closing the control
 	// stream makes the server's watcher send ClosePortForward to the runner so it
 	// stops listening. Read with ctx so a forward stop (ctx cancel) actually
