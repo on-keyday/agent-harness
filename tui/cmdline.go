@@ -34,6 +34,10 @@ type ClearAction struct{}
 type QuitAction struct{}
 type HelpAction struct{}
 
+// TrsfDebugAction dumps the client↔server trsf transport's internal state into
+// the command-result panel (debug aid).
+type TrsfDebugAction struct{}
+
 // SessionNewAction opens a new detachable interactive PTY session.
 // When Detach is true the session is opened and the local stream is closed
 // immediately (Docker-style background start); the task id is printed to
@@ -137,6 +141,7 @@ func (PruneAction) isAction()            {}
 func (ClearAction) isAction()            {}
 func (QuitAction) isAction()             {}
 func (HelpAction) isAction()             {}
+func (TrsfDebugAction) isAction()        {}
 func (RepoAction) isAction()             {}
 func (InteractiveAction) isAction()      {}
 func (SessionNewAction) isAction()       {}
@@ -183,6 +188,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseFile(tokens[1:])
 	case "server":
 		return parseServer(tokens[1:])
+	case "trsf":
+		return TrsfDebugAction{}, nil
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
 	}

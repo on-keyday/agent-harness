@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -159,7 +160,10 @@ func (s *Session) onRemoteForwardConn(forwardID uint64, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
+	s.logger().Info("rfdbg: runner accepted conn, announced + splicing", "fwd", forwardID, "stream", uint64(stream.ID()))
+	t0 := time.Now()
 	spliceConnStream(conn, stream)
+	s.logger().Info("rfdbg: runner conn torn down", "stream", uint64(stream.ID()), "after", time.Since(t0))
 }
 
 // spliceConnStream pumps bytes between a net.Conn and a trsf bidi stream

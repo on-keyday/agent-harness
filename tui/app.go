@@ -877,6 +877,24 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. u push / g pull / d delete / D rm -rf. Esc closes.")
 		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.")
 		a.cmdresult.Append("  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.")
+		a.cmdresult.Append("trsf                        - dump the client↔server transport's internal state (debug)")
+		return a, nil
+	case TrsfDebugAction:
+		if a.client == nil {
+			a.cmdresult.Append(WarnStyle.Render("trsf: not connected"))
+			return a, nil
+		}
+		st := a.client.Transport().GetInternalState()
+		if st == nil {
+			a.cmdresult.Append(WarnStyle.Render("trsf: no internal state"))
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render("trsf internal state (client↔server):"))
+		a.cmdresult.Append(fmt.Sprintf("  streams: send=%d recv=%d   mtu=%d", st.ActiveSendStreams, st.ActiveReceiveStreams, st.CurrentMTU))
+		a.cmdresult.Append(fmt.Sprintf("  queues: send=%d recv=%d   triggers: sendAction=%d updateWin=%d cancel=%d",
+			st.SendQueueLength, st.ReceiveQueueLength, st.SendActionCount, st.UpdateWindowCount, st.CancelStreamCount))
+		a.cmdresult.Append(fmt.Sprintf("  cc: inflight=%dB cwnd=%dB rtt=%v (var %v) sentPkts=%d",
+			st.BytesInFlight, st.CongestionWindow, st.SmoothedRTT, st.RTTVariance, len(st.SentPackets)))
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server

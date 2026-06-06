@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -469,6 +470,100 @@ func TestRemotePortForwardE2E(t *testing.T) {
 		}
 		if string(buf) != "pong\n" {
 			t.Errorf("echo mismatch: got %q", buf)
+		}
+	})
+
+	// --- A dead dial target must close the runner-side connection promptly,
+	// not hang: connect to forward B (whose client-side target is down) and the
+	// read must return an error well before the deadline.
+	t.Run("dial_failure_closes_promptly", func(t *testing.T) {
+		dl, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadPort := dl.Addr().(*net.TCPAddr).Port
+		dl.Close() // nothing listens here now → client dial will be refused
+
+		bl, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		bindPort2 := bl.Addr().(*net.TCPAddr).Port
+		bl.Close()
+
+		bCtx, bCancel := context.WithCancel(ctx)
+		defer bCancel()
+		var logmu sync.Mutex
+		var logs []string
+		go cli.RunRemoteForward(bCtx, c, taskID, []cli.RemoteForwardSpec{
+			{BindAddr: "127.0.0.1", RunnerPort: bindPort2, DialHost: "127.0.0.1", DialPort: deadPort},
+		}, func(s string) { logmu.Lock(); logs = append(logs, s); logmu.Unlock() })
+
+		bAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(bindPort2))
+		deadline := time.Now().Add(8 * time.Second)
+		var up bool
+		for time.Now().Before(deadline) {
+			if tc, e := net.DialTimeout("tcp", bAddr, 100*time.Millisecond); e == nil {
+				tc.Close()
+				up = true
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if !up {
+			t.Fatal("forward B listener did not come up")
+		}
+
+		// Fire many connections concurrently to expose any close-propagation
+		// race (a single connection always closes promptly in-process; the real
+		// hang is timing-dependent).
+		const n = 40
+		var wg sync.WaitGroup
+		elapsed := make([]time.Duration, n)
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				conn, err := net.DialTimeout("tcp", bAddr, 3*time.Second)
+				if err != nil {
+					elapsed[i] = -1
+					return
+				}
+				defer conn.Close()
+				_, _ = conn.Write([]byte("GET / HTTP/1.0\r\n\r\n"))
+				conn.SetReadDeadline(time.Now().Add(12 * time.Second))
+				start := time.Now()
+				buf := make([]byte, 64)
+				_, rerr := conn.Read(buf)
+				if rerr == nil {
+					elapsed[i] = -2 // got data unexpectedly
+					return
+				}
+				elapsed[i] = time.Since(start)
+			}(i)
+		}
+		wg.Wait()
+		var worst time.Duration
+		for i, e := range elapsed {
+			if e == -1 {
+				t.Errorf("conn %d failed to dial the runner port", i)
+				continue
+			}
+			if e == -2 {
+				t.Errorf("conn %d got data from a dead target", i)
+				continue
+			}
+			if e > worst {
+				worst = e
+			}
+		}
+		if worst > 3*time.Second {
+			logmu.Lock()
+			ls := append([]string{}, logs...)
+			logmu.Unlock()
+			t.Errorf("slowest of %d conns hung %v before closing (want prompt close). logs=%v", n, worst, ls)
+		} else {
+			t.Logf("all %d dead-target conns closed; slowest %v", n, worst)
 		}
 	})
 
