@@ -80,7 +80,18 @@ type RunHandle struct {
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.pc.Done() }
-func (h *RunHandle) Close()                { h.closeOnce.Do(func() { h.pc.Close() }) }
+func (h *RunHandle) Close() {
+	h.closeOnce.Do(func() {
+		// Release this connection's remote port-forward listeners before
+		// dropping the peer conn. PersistLoop calls Close() on every
+		// disconnect and then builds a fresh Session on reconnect, so skipping
+		// this leaks the bound listener ports across reconnects.
+		if h.session != nil && h.session.rforwards != nil {
+			h.session.rforwards.closeAll()
+		}
+		h.pc.Close()
+	})
+}
 
 // Connect performs the WS dial, ECDH handshake, PSK exchange, and session
 // scaffolding. The caller drives the rest of the lifecycle via OnConnect.

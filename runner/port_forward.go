@@ -6,7 +6,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -42,6 +41,20 @@ func (r *remoteForwardListeners) close(id uint64) {
 	delete(r.m, id)
 	r.mu.Unlock()
 	if ln != nil {
+		_ = ln.Close()
+	}
+}
+
+// closeAll shuts down every tracked listener. Called on connection teardown:
+// each server reconnect builds a fresh Session, so without this the previous
+// Session's bound listener ports leak (the forwards are dead anyway — their
+// control streams lived on the now-closing connection).
+func (r *remoteForwardListeners) closeAll() {
+	r.mu.Lock()
+	lns := r.m
+	r.m = nil
+	r.mu.Unlock()
+	for _, ln := range lns {
 		_ = ln.Close()
 	}
 }
@@ -160,10 +173,7 @@ func (s *Session) onRemoteForwardConn(forwardID uint64, conn net.Conn) {
 		_ = conn.Close()
 		return
 	}
-	s.logger().Info("rfdbg: runner accepted conn, announced + splicing", "fwd", forwardID, "stream", uint64(stream.ID()))
-	t0 := time.Now()
 	spliceConnStream(conn, stream)
-	s.logger().Info("rfdbg: runner conn torn down", "stream", uint64(stream.ID()), "after", time.Since(t0))
 }
 
 // spliceConnStream pumps bytes between a net.Conn and a trsf bidi stream

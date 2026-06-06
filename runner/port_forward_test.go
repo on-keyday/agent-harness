@@ -63,6 +63,41 @@ func TestRemoteForwardListener_AcceptsAndNotifies(t *testing.T) {
 	}
 }
 
+// TestCloseAllRemoteForwardListeners verifies closeAll releases every tracked
+// listener — the connection-teardown path, so a server reconnect (which builds
+// a fresh Session) does not leak the previous Session's bound ports.
+func TestCloseAllRemoteForwardListeners(t *testing.T) {
+	s := &Session{Now: time.Now}
+	addrs := make([]string, 0, 3)
+	for i, fid := range []uint64{1, 2, 3} {
+		ln, err := s.startRemoteForwardListener(context.Background(), fid, "127.0.0.1", 0)
+		if err != nil {
+			t.Fatalf("listen %d: %v", i, err)
+		}
+		s.rforwardListeners().add(fid, ln)
+		addrs = append(addrs, ln.Addr().String())
+	}
+
+	s.rforwardListeners().closeAll()
+
+	for _, addr := range addrs {
+		deadline := time.Now().Add(time.Second)
+		closed := false
+		for time.Now().Before(deadline) {
+			c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			if err != nil {
+				closed = true
+				break
+			}
+			_ = c.Close()
+			time.Sleep(10 * time.Millisecond)
+		}
+		if !closed {
+			t.Fatalf("listener %s still accepting after closeAll", addr)
+		}
+	}
+}
+
 // TestCloseRemoteForwardListener verifies the listener registry closes the
 // tracked listener (so a subsequent accept fails).
 func TestCloseRemoteForwardListener(t *testing.T) {
