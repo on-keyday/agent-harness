@@ -372,6 +372,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render("forward started: ") + pfShortID(msg.TaskID) + "  " + msg.Direction.flag() + " " + msg.Spec)
 		return a, nil
 
+	case PortForwardStoppedMsg:
+		// The forward goroutine exited (stopped, or never started on bind
+		// failure). Drop it so it no longer shows in the stop picker. If it was
+		// already removed (e.g. the user cancelled it via the picker), this is a
+		// no-op and we skip the duplicate log.
+		if _, ok := a.activeForwards[msg.ID]; ok {
+			delete(a.activeForwards, msg.ID)
+			a.cmdresult.Append("forward stopped: " + pfShortID(msg.TaskID))
+		}
+		return a, nil
+
 	case PortForwardStatusMsg:
 		a.cmdresult.Append(msg.Line)
 		return a, nil

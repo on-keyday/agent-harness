@@ -173,9 +173,21 @@ type PortForwardStartedMsg struct {
 	Cancel    context.CancelFunc
 }
 
+// PortForwardStoppedMsg removes a finished/failed forward from the App so it no
+// longer lingers in the stop picker. Sent when the forward goroutine exits —
+// including a bind failure, where the forward never actually ran.
+type PortForwardStoppedMsg struct {
+	ID     int
+	TaskID string
+}
+
 // DoStartPortForward parses the spec and starts a background local (-L) forward
 // using the long-lived client (NOT a fresh dial). program MUST be App's
 // *tea.Program (goroutines emit messages via program.Send).
+//
+// Started is emitted via program.Send (not the cmd return value) so it is
+// enqueued before the goroutine's Stopped message — otherwise a fast failure
+// could enqueue Stopped first and leave a stale entry in activeForwards.
 func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
 		sp, err := cli.ParseForwardSpec(spec)
@@ -183,16 +195,16 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea
 			return PortForwardStatusMsg{Line: "forward: " + err.Error()}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
+		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel})
 		go func() {
-			err := cli.RunForward(ctx, c, taskID, []cli.ForwardSpec{sp}, func(s string) {
+			if err := cli.RunForward(ctx, c, taskID, []cli.ForwardSpec{sp}, func(s string) {
 				program.Send(PortForwardStatusMsg{Line: s})
-			})
-			if err != nil {
+			}); err != nil {
 				program.Send(PortForwardStatusMsg{Line: "forward: " + err.Error()})
 			}
-			program.Send(PortForwardStatusMsg{Line: fmt.Sprintf("forward stopped: %s", pfShortID(taskID))})
+			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
 		}()
-		return PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel}
+		return nil
 	}
 }
 
@@ -204,15 +216,15 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 			return PortForwardStatusMsg{Line: "forward: " + err.Error()}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
+		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel})
 		go func() {
-			err := cli.RunRemoteForward(ctx, c, taskID, []cli.RemoteForwardSpec{sp}, func(s string) {
+			if err := cli.RunRemoteForward(ctx, c, taskID, []cli.RemoteForwardSpec{sp}, func(s string) {
 				program.Send(PortForwardStatusMsg{Line: s})
-			})
-			if err != nil {
+			}); err != nil {
 				program.Send(PortForwardStatusMsg{Line: "forward: " + err.Error()})
 			}
-			program.Send(PortForwardStatusMsg{Line: fmt.Sprintf("forward stopped: %s", pfShortID(taskID))})
+			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
 		}()
-		return PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel}
+		return nil
 	}
 }

@@ -67,3 +67,22 @@ func TestPortForwardModal_RemoteMode(t *testing.T) {
 		t.Fatalf("mode = %v, want remote", m.Mode())
 	}
 }
+
+// TestForwardLifecycle_StoppedRemovesEntry guards the bug where a finished/failed
+// forward stayed in activeForwards and kept showing in the stop picker.
+func TestForwardLifecycle_StoppedRemovesEntry(t *testing.T) {
+	a := New(Config{})
+	m, _ := a.Update(PortForwardStartedMsg{ID: 1, TaskID: "abcdef", Direction: ForwardRemote, Spec: "8080:h:80"})
+	a = m.(*App)
+	if len(a.activeForwards) != 1 {
+		t.Fatalf("after start: want 1 active, got %d", len(a.activeForwards))
+	}
+	m, _ = a.Update(PortForwardStoppedMsg{ID: 1, TaskID: "abcdef"})
+	a = m.(*App)
+	if len(a.activeForwards) != 0 {
+		t.Fatalf("after stop: want 0 active (entry should be removed), got %d", len(a.activeForwards))
+	}
+	if got := selectForwards(a.activeForwards, "abcdef", ForwardRemote); len(got) != 0 {
+		t.Fatalf("stop picker should be empty, got %d", len(got))
+	}
+}
