@@ -162,20 +162,16 @@ func sendClosePortForward(rc ConnHandle, forwardID uint64) {
 func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protocol.RemoteForwardConn) {
 	rf, ok := h.rforwards().get(msg.ForwardId)
 	if !ok {
-		slog.Info("rfdbg: server no registration for conn", "fwd", msg.ForwardId)
 		return // registration gone; the runner stream will EOF and clean up
 	}
-	t0 := time.Now()
 	runnerStream := peer.WaitForBidirectionalStream(context.Background(), runnerConn, trsf.StreamID(msg.StreamId))
 	if runnerStream == nil {
-		slog.Info("rfdbg: server runner stream NOT visible (lookup timeout) — runner conn will hang", "fwd", msg.ForwardId, "runner_stream", msg.StreamId, "waited", time.Since(t0))
+		slog.Info("port_forward: runner data stream not visible", "fwd", msg.ForwardId, "runner_stream", msg.StreamId)
 		return
 	}
-	slog.Info("rfdbg: server adopted runner stream", "runner_stream", msg.StreamId, "in", time.Since(t0))
 	clientStream := rf.clientCxn.CreateBidirectionalStream()
 	if clientStream == nil {
 		_ = runnerStream.CloseBoth()
-		slog.Info("rfdbg: server could not create client stream", "fwd", msg.ForwardId)
 		return
 	}
 	notify := protocol.RemoteForwardConnNotify{StreamId: uint64(clientStream.ID())}
@@ -190,7 +186,6 @@ func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protoc
 		_ = runnerStream.CloseBoth()
 		return
 	}
-	slog.Info("rfdbg: server notified client + splicing", "client_stream", clientStream.ID(), "runner_stream", msg.StreamId)
 	go spliceBidi(clientStream, runnerStream, rf.taskIDHex)
 }
 

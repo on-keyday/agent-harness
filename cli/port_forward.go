@@ -378,18 +378,14 @@ func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForward
 func (c *Client) dialAndSplice(ctx context.Context, sp RemoteForwardSpec, streamID trsf.StreamID, logf func(string)) {
 	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), streamID)
 	if st == nil {
-		logf(fmt.Sprintf("rfdbg: client data stream %d NOT visible (lookup timeout) — connection will hang", uint64(streamID)))
+		logf(fmt.Sprintf("remote-forward: data stream %d not visible (lookup timeout)", uint64(streamID)))
 		return
 	}
-	logf(fmt.Sprintf("rfdbg: client got data stream %d; dialing %s:%d", uint64(streamID), sp.DialHost, sp.DialPort))
 	conn, err := net.Dial("tcp", net.JoinHostPort(sp.DialHost, strconv.Itoa(sp.DialPort)))
 	if err != nil {
 		logf(fmt.Sprintf("remote-forward: dial %s:%d failed: %v", sp.DialHost, sp.DialPort, err))
 		_ = st.CloseBoth()
-		logf(fmt.Sprintf("rfdbg: client CloseBoth(stream %d) returned after dial failure", uint64(streamID)))
 		return
 	}
-	logf(fmt.Sprintf("rfdbg: client splicing conn↔stream %d", uint64(streamID)))
 	spliceConnStream(conn, st)
-	logf(fmt.Sprintf("rfdbg: client splice ended for stream %d", uint64(streamID)))
 }
