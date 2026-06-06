@@ -7,6 +7,7 @@ import (
 	"io"
 	"sync"
 
+	"github.com/on-keyday/agent-harness/exec/frame"
 	"github.com/on-keyday/agent-harness/trsf"
 )
 
@@ -38,6 +39,18 @@ func readOneFrame(r io.Reader) ([]byte, error) {
 	return out, nil
 }
 
+// encodeStdoutFrame wraps payload in one exec/frame Stdout frame (1-byte type +
+// 4-byte big-endian length + payload), matching the wire format runnerPump
+// forwards and the ring stores, so a synthesised frame is indistinguishable
+// from a live one to the client's parser.
+func encodeStdoutFrame(payload []byte) []byte {
+	out := make([]byte, frameHeaderSize+len(payload))
+	out[0] = byte(frame.FrameType_Stdout)
+	binary.BigEndian.PutUint32(out[1:5], uint32(len(payload)))
+	copy(out[frameHeaderSize:], payload)
+	return out
+}
+
 // SessionHooks lets the controller observe SessionMux state transitions.
 // Any field may be nil. Hooks fire from goroutines other than the caller's,
 // so callbacks must be safe to call concurrently with other SessionMux
@@ -60,6 +73,7 @@ type SessionMux struct {
 	taskID string
 	runner trsf.BidirectionalStream
 	ring   *RingBuffer
+	modes  *modeTracker
 
 	mu        sync.Mutex
 	tui       trsf.BidirectionalStream
@@ -84,6 +98,7 @@ func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.Bidirec
 		taskID:   taskID,
 		runner:   runner,
 		ring:     ring,
+		modes:    newModeTracker(),
 		stopped:  make(chan struct{}),
 		onAttach: hooks.OnAttach,
 		onDetach: hooks.OnDetach,
@@ -109,6 +124,15 @@ func (m *SessionMux) runnerPump() {
 		frameBytes, err := readOneFrame(m.runner)
 		if err != nil {
 			return
+		}
+		// Track DEC private-mode state from display output so a reattach can
+		// re-establish modes (e.g. a hidden cursor) whose controlling sequence
+		// has since been evicted from the ring. Only Stdout/Stderr carry it.
+		if len(frameBytes) >= frameHeaderSize {
+			switch frame.FrameType(frameBytes[0]) {
+			case frame.FrameType_Stdout, frame.FrameType_Stderr:
+				m.modes.feed(frameBytes[frameHeaderSize:])
+			}
 		}
 		m.ring.Append(frameBytes)
 		m.mu.Lock()
@@ -147,10 +171,17 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 		_ = old.CloseBoth()
 	}
 
-	// Replay ring buffer contents.
-	snap := m.ring.Snapshot()
-	if len(snap) > 0 {
-		if err := tui.AppendData(false, snap); err != nil {
+	// Replay: first re-establish terminal modes whose controlling sequence may
+	// have scrolled out of the ring window (e.g. a hidden cursor), then the
+	// buffered output. Both go out as ordinary Stdout frames the client parses
+	// exactly like live ones, so the new emulator starts from the right state.
+	var replay []byte
+	if pre := m.modes.preamble(); len(pre) > 0 {
+		replay = append(replay, encodeStdoutFrame(pre)...)
+	}
+	replay = append(replay, m.ring.Snapshot()...)
+	if len(replay) > 0 {
+		if err := tui.AppendData(false, replay); err != nil {
 			m.mu.Lock()
 			if m.tui == tui {
 				m.tui = nil
