@@ -231,11 +231,20 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenPortForward variant is nil")
 			return
 		}
-		presp := h.handleOpenPortForward(conn, pf)
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
-		resp.SetOpenPortForward(presp)
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
-		conn.SendMessage(out) //nolint:errcheck
+		// Run async: a remote (-R) registration blocks in handleOpenPortForward
+		// waiting for the runner's bind result, and Handle runs on the
+		// connection's single AutoReceive loop (server.go). Blocking that loop
+		// stalls EVERY later message on this connection — stream frames (so a
+		// peer's CloseBoth never reaches trsf → relays hang) AND other requests
+		// (attach, snapshot). conn.SendMessage is concurrency-safe.
+		reqID := req.RequestId
+		go func() {
+			presp := h.handleOpenPortForward(conn, pf)
+			resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: reqID}
+			resp.SetOpenPortForward(presp)
+			out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+			conn.SendMessage(out) //nolint:errcheck
+		}()
 
 	case protocol.TaskControlKind_AttachSession:
 		a := req.Attach()
