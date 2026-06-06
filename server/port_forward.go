@@ -31,6 +31,9 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 		slog.Error("port_forward: nil client conn (programmer error)")
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
+	if req.Direction == protocol.PortForwardDirection_Remote {
+		return h.registerRemoteForward(conn, req, taskIDHex, task.AssignedTo, runner)
+	}
 	clientStream := conn.CreateBidirectionalStream()
 	if clientStream == nil {
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
@@ -63,3 +66,48 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 		StreamId: uint64(clientStream.ID()),
 	}
 }
+
+// registerRemoteForward (ssh -R) records the server-created control stream, asks
+// the runner to open a listener, and returns the control stream id + assigned
+// forwardId. Per-connection data streams are created later in
+// handleRemoteForwardConn when the runner reports an accepted connection.
+func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenPortForwardRequest, taskIDHex, runnerID string, runner RunnerEntry) protocol.OpenPortForwardResponse {
+	errResp := func(s protocol.OpenPortForwardStatus) protocol.OpenPortForwardResponse {
+		return protocol.OpenPortForwardResponse{Status: s}
+	}
+	// The server creates the control stream (matches the codebase pattern:
+	// server creates, client picks up by id via WaitForBidirectionalStream).
+	ctrl := conn.CreateBidirectionalStream()
+	if ctrl == nil {
+		return errResp(protocol.OpenPortForwardStatus_InternalError)
+	}
+	rf := &remoteForward{taskIDHex: taskIDHex, runnerID: runnerID, control: ctrl, clientCxn: conn}
+	fid := h.rforwards().add(rf)
+
+	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenPortForward}
+	body := protocol.RunnerOpenPortForwardRequest{
+		TaskId:    req.TaskId,
+		Direction: protocol.PortForwardDirection_Remote,
+		BindPort:  req.BindPort,
+		ForwardId: fid,
+	}
+	body.SetBindAddr(req.BindAddr)
+	rreq.SetOpenPortForward(body)
+	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	if _, _, err := runner.Conn.SendMessage(data); err != nil {
+		h.rforwards().remove(fid)
+		_ = ctrl.CloseBoth()
+		slog.Error("port_forward: send listen request to runner failed", "task_id", taskIDHex, "err", err)
+		return errResp(protocol.OpenPortForwardStatus_InternalError)
+	}
+	// Tear the forward down when the client closes the control stream.
+	go h.watchRemoteForwardControl(rf)
+	return protocol.OpenPortForwardResponse{
+		Status:    protocol.OpenPortForwardStatus_Ok,
+		StreamId:  uint64(ctrl.ID()),
+		ForwardId: fid,
+	}
+}
+
+// watchRemoteForwardControl is replaced with the real teardown loop in Task 3.
+func (h *TaskHandler) watchRemoteForwardControl(rf *remoteForward) {}

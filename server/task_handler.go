@@ -27,6 +27,11 @@ type TaskHandler struct {
 	Registry *Registry
 	OnChange func() // called after Submit / Cancel mutations
 
+	// remoteForwards tracks active ssh -R registrations (forwardId →
+	// registration). Lazily initialised via rforwards() so struct-literal
+	// construction in tests need not set it.
+	remoteForwards *remoteForwardRegistry
+
 	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply
 	// with all-zero counts. Server.New wires this to a closure that dispatches
 	// to TaskStore.PruneTerminal (time mode) or TaskStore.PruneByIDs (id mode).

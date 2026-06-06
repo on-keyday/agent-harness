@@ -62,3 +62,59 @@ func TestHandleOpenPortForward_DetachedTaskAccepted(t *testing.T) {
 		t.Fatalf("expected RunnerOffline (no runner registered), got %v", resp.Status)
 	}
 }
+
+// TestHandleOpenPortForward_RemoteRegisters verifies the ssh -R registration:
+// the server creates a control stream (returned as StreamId), assigns a
+// ForwardId, stores the registration, and sends the runner a listen request.
+func TestHandleOpenPortForward_RemoteRegisters(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	var rawID [16]byte
+	rawID[0] = 0x5A
+	idHex := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[idHex] = &TaskEntry{ID: idHex, Status: protocol.TaskStatus_Running, AssignedTo: "runner-1"}
+	h.Tasks.order = append(h.Tasks.order, idHex)
+	h.Tasks.mu.Unlock()
+
+	runnerConn := &fakeConn{}
+	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: runnerConn})
+
+	clientConn := &fakeConn{nextStreamID: 555}
+	req := &protocol.OpenPortForwardRequest{
+		TaskId:     protocol.TaskID{Id: rawID},
+		Direction:  protocol.PortForwardDirection_Remote,
+		RemotePort: 5432,
+		BindPort:   15432,
+	}
+	req.SetRemoteHost([]byte("127.0.0.1"))
+	req.SetBindAddr([]byte("127.0.0.1"))
+
+	resp := h.handleOpenPortForward(clientConn, req)
+	if resp.Status != protocol.OpenPortForwardStatus_Ok {
+		t.Fatalf("status = %v, want Ok", resp.Status)
+	}
+	if resp.ForwardId == 0 {
+		t.Fatal("ForwardId should be non-zero")
+	}
+	if resp.StreamId != 555 {
+		t.Fatalf("StreamId = %d, want control stream id 555", resp.StreamId)
+	}
+	if _, ok := h.rforwards().get(resp.ForwardId); !ok {
+		t.Fatal("registration not stored")
+	}
+	if len(runnerConn.sent) == 0 {
+		t.Fatal("no listen request sent to runner")
+	}
+	var rr protocol.RunnerRequest
+	if _, err := rr.Decode(runnerConn.sent[0][1:]); err != nil { // strip ApplicationPayloadKind byte
+		t.Fatalf("decode runner req: %v", err)
+	}
+	if rr.Kind != protocol.RunnerRequestType_OpenPortForward {
+		t.Fatalf("runner req kind = %v", rr.Kind)
+	}
+	body := rr.OpenPortForward()
+	if body == nil || body.Direction != protocol.PortForwardDirection_Remote ||
+		body.BindPort != 15432 || body.ForwardId != resp.ForwardId {
+		t.Fatalf("runner req body = %+v", body)
+	}
+}
