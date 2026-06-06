@@ -194,6 +194,41 @@ func forwardFailLine(taskID string, err error) string {
 // Started is emitted via program.Send (not the cmd return value) so it is
 // enqueued before the goroutine's Stopped message — otherwise a fast failure
 // could enqueue Stopped first and leave a stale entry in activeForwards.
+// forwardStatusLogf returns a logf-style callback that delivers per-connection
+// forward status lines to the TUI WITHOUT ever blocking the caller.
+//
+// bubbletea's program.Send writes to an UNBUFFERED msgs channel (tea.go), and
+// the event loop runs tea.Exec (an interactive claude session) SYNCHRONOUSLY —
+// for the whole session it sits inside RemoteShell and never drains msgs. A
+// direct program.Send from a forward relay goroutine therefore blocks until the
+// user leaves the session. Because cli.dialAndSplice logs the dial-failure line
+// BEFORE it CloseBoth's the stream, that block stalls connection teardown: the
+// runner-side accepted connection is never closed and the forwarded peer (e.g.
+// curl) hangs until the interactive session ends. Routing status through a
+// buffered channel drained by a single goroutine decouples cosmetic logging from
+// the relay's progress: the relay does a non-blocking send and on overflow the
+// pending status line is dropped (status is cosmetic). The drain goroutine exits
+// when ctx is cancelled (forward stop).
+func forwardStatusLogf(ctx context.Context, program *tea.Program) func(string) {
+	ch := make(chan string, 256)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case s := <-ch:
+				program.Send(PortForwardStatusMsg{Line: s})
+			}
+		}
+	}()
+	return func(s string) {
+		select {
+		case ch <- s:
+		default: // UI suspended (interactive session) + buffer full — drop cosmetic line
+		}
+	}
+}
+
 func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
 		sp, err := cli.ParseForwardSpec(spec)
@@ -203,9 +238,7 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea
 		ctx, cancel := context.WithCancel(context.Background())
 		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel})
 		go func() {
-			if err := cli.RunForward(ctx, c, taskID, []cli.ForwardSpec{sp}, func(s string) {
-				program.Send(PortForwardStatusMsg{Line: s})
-			}); err != nil {
+			if err := cli.RunForward(ctx, c, taskID, []cli.ForwardSpec{sp}, forwardStatusLogf(ctx, program)); err != nil {
 				program.Send(PortForwardStatusMsg{Line: forwardFailLine(taskID, err)})
 			}
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
@@ -232,9 +265,7 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 		}
 		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel})
 		go func() {
-			c.ServeRemoteForwardControl(ctx, sp, ctrl, func(s string) {
-				program.Send(PortForwardStatusMsg{Line: s})
-			})
+			c.ServeRemoteForwardControl(ctx, sp, ctrl, forwardStatusLogf(ctx, program))
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
 		}()
 		return nil
