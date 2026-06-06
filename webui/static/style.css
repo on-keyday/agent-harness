@@ -1,3 +1,10 @@
+html, body {
+  /* Stop mobile pull-to-refresh: dragging down at the top of the terminal
+     scrollback bubbles to the document and otherwise triggers a browser
+     reload. `contain` blocks the refresh + scroll-chaining while keeping
+     normal in-element scrolling. */
+  overscroll-behavior-y: contain;
+}
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   margin: 0;
