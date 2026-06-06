@@ -341,10 +341,15 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 // stream and, for each, dials the client-side target and splices. Buffers across
 // ReadDirect boundaries so a coalesced/split notify is handled.
 func (c *Client) readRemoteForwardControl(ctx context.Context, sp RemoteForwardSpec, ctrl trsf.BidirectionalStream, logf func(string)) {
+	// CloseBoth on return is what tears the forward down: closing the control
+	// stream makes the server's watcher send ClosePortForward to the runner so it
+	// stops listening. Read with ctx so a forward stop (ctx cancel) actually
+	// unblocks here — otherwise the goroutine leaks and the runner listener is
+	// never released.
 	defer ctrl.CloseBoth()
 	var buf []byte
 	for {
-		data, eof, err := ctrl.ReadDirect(64 * 1024)
+		data, eof, err := ctrl.ReadDirectContext(ctx, 64*1024)
 		if len(data) > 0 {
 			buf = append(buf, data...)
 			var ids []uint64

@@ -428,6 +428,35 @@ func TestRemotePortForwardE2E(t *testing.T) {
 		}
 	})
 
+	// --- Stopping the forward (ctx cancel) must release the RUNNER listener ---
+	// (not just stop the client): cancel → control stream closes → server sends
+	// ClosePortForward → runner closes its listener. Regression for the leak
+	// where the client blocked on a ctx-less read and never closed the control
+	// stream.
+	t.Run("cancel_stops_runner_listener", func(t *testing.T) {
+		fwdCancel()
+		select {
+		case <-fwdDone:
+		case <-time.After(3 * time.Second):
+			t.Fatal("RunRemoteForward did not return within 3s of cancel (goroutine leak)")
+		}
+		// The runner listener should now be closed: a dial must fail.
+		deadline := time.Now().Add(3 * time.Second)
+		var lastErr error
+		for time.Now().Before(deadline) {
+			tc, err := net.DialTimeout("tcp", runnerAddr, 100*time.Millisecond)
+			if err != nil {
+				lastErr = err
+				break
+			}
+			tc.Close()
+			time.Sleep(50 * time.Millisecond)
+		}
+		if lastErr == nil {
+			t.Error("runner listener still accepting after forward cancel (listener leaked on runner)")
+		}
+	})
+
 	cancel()
 	select {
 	case <-serverDone:
