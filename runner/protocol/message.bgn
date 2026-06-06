@@ -9,6 +9,7 @@ enum RunnerMessageType:
     heartbeat
     establish_relay_response
     request_chained_relay
+    remote_forward_conn
 
 enum RunnerRequestType:
     :u8
@@ -22,6 +23,7 @@ enum RunnerRequestType:
     establish_relay
     chained_relay_response
     open_port_forward
+    close_port_forward
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -148,6 +150,7 @@ format RunnerMessage:
         RunnerMessageType.heartbeat => ..
         RunnerMessageType.establish_relay_response => establish_relay_response :EstablishRelayResponse
         RunnerMessageType.request_chained_relay => request_chained_relay :RequestChainedRelay
+        RunnerMessageType.remote_forward_conn => remote_forward_conn :RemoteForwardConn
         .. => error("Unexpected message")
 
 format RunnerRequest:
@@ -163,6 +166,7 @@ format RunnerRequest:
         RunnerRequestType.establish_relay    => establish_relay    :EstablishRelayRequest
         RunnerRequestType.chained_relay_response => chained_relay_response :ChainedRelayResponse
         RunnerRequestType.open_port_forward => open_port_forward :RunnerOpenPortForwardRequest
+        RunnerRequestType.close_port_forward => close_port_forward :ClosePortForwardRequest
 
 enum TaskControlKind:
     :u8
@@ -719,7 +723,7 @@ format RunnerListFilesRequest:
 enum PortForwardDirection:
     :u8
     local    # client listens, runner dials remote_host:remote_port (SSH -L).
-    remote   # reserved: runner listens, client dials. Not yet implemented.
+    remote   # runner listens on bind_addr:bind_port, client dials remote_host:remote_port (SSH -R).
 
 enum OpenPortForwardStatus:
     :u8
@@ -727,22 +731,53 @@ enum OpenPortForwardStatus:
     no_such_task   = "no_such_task"
     runner_offline = "runner_offline"
     internal_error = "internal_error"
+    bind_failed    = "bind_failed"
 
+# OpenPortForwardRequest: remote_host/remote_port are the dial target (runner
+# dials it for local; client dials it for remote). bind_addr/bind_port are the
+# runner-side listener for remote forwards (unused for local).
 format OpenPortForwardRequest:
-    task_id         :TaskID
-    direction       :PortForwardDirection
-    remote_host_len :u16
-    remote_host     :[remote_host_len]u8
-    remote_port     :u16
+    task_id           :TaskID
+    direction         :PortForwardDirection
+    remote_host_len   :u16
+    remote_host       :[remote_host_len]u8
+    remote_port       :u16
+    bind_addr_len     :u16
+    bind_addr         :[bind_addr_len]u8
+    bind_port         :u16
 
+# OpenPortForwardResponse: for local, stream_id is the data stream. For remote,
+# stream_id is the server-created persistent control stream (the client picks it
+# up by id and reads RemoteForwardConnNotify records off it); forward_id is the
+# registration handle.
 format OpenPortForwardResponse:
-    status    :OpenPortForwardStatus
-    stream_id :u64
+    status     :OpenPortForwardStatus
+    stream_id  :u64
+    forward_id :u64
 
 format RunnerOpenPortForwardRequest:
-    task_id         :TaskID
-    stream_id       :u64
-    direction       :PortForwardDirection
-    remote_host_len :u16
-    remote_host     :[remote_host_len]u8
-    remote_port     :u16
+    task_id           :TaskID
+    stream_id         :u64
+    direction         :PortForwardDirection
+    remote_host_len   :u16
+    remote_host       :[remote_host_len]u8
+    remote_port       :u16
+    bind_addr_len     :u16
+    bind_addr         :[bind_addr_len]u8
+    bind_port         :u16
+    forward_id        :u64
+
+# ClosePortForwardRequest tells the runner to stop a remote-forward listener.
+format ClosePortForwardRequest:
+    forward_id :u64
+
+# RemoteForwardConn (runner -> server): a connection arrived on a remote-forward
+# listener; stream_id is the runner-created stream for it.
+format RemoteForwardConn:
+    forward_id :u64
+    stream_id  :u64
+
+# RemoteForwardConnNotify (server -> client, on the control stream): dial your
+# local target and pick up the data stream by stream_id.
+format RemoteForwardConnNotify:
+    stream_id :u64
