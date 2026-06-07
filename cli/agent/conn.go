@@ -13,8 +13,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // trsfStreamID converts a uint64 wire id to trsf.StreamID.
@@ -178,7 +177,7 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	}
 
 	psk := cli.GetPSK()
-	pskRespCh := make(chan wire.PskAuthStatus, 1)
+	pskRespCh := make(chan appwire.PskAuthStatus, 1)
 	helloRespCh := make(chan agentboard.HelloStatus, 1)
 
 	// Combined handler: routes PskAuth responses during PSK phase,
@@ -188,7 +187,7 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		case appwire.AppKind_PskAuth:
 			if len(payload) > 0 {
 				select {
-				case pskRespCh <- wire.PskAuthStatus(payload[0]):
+				case pskRespCh <- appwire.PskAuthStatus(payload[0]):
 				default:
 				}
 			}

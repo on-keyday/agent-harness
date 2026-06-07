@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // fakeStreamCreator hands out a noopBidiStream with a fixed id, standing in for

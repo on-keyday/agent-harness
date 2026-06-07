@@ -6,7 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/on-keyday/objtrsf/objproto"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 type fakeConn struct {

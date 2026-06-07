@@ -12,7 +12,7 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // OpenInteractive asks the server to allocate an interactive PTY claude

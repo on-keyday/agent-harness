@@ -13,7 +13,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 func TestGetPSK_Unset(t *testing.T) {
@@ -78,8 +77,8 @@ func TestSendAndWaitPSK_OK(t *testing.T) {
 	var sent []byte
 	sendFn := func(data []byte) error { sent = append(sent, data...); return nil }
 
-	respCh := make(chan wire.PskAuthStatus, 1)
-	respCh <- wire.PskAuthStatus_Ok
+	respCh := make(chan appwire.PskAuthStatus, 1)
+	respCh <- appwire.PskAuthStatus_Ok
 
 	psk := []byte("secret")
 	transcript := []byte("handshake-transcript-bytes")
@@ -125,8 +124,8 @@ func TestSendAndWaitPSK_BinderIsTranscriptBound(t *testing.T) {
 
 func TestSendAndWaitPSK_BadPSK(t *testing.T) {
 	sendFn := func([]byte) error { return nil }
-	respCh := make(chan wire.PskAuthStatus, 1)
-	respCh <- wire.PskAuthStatus_BadPsk
+	respCh := make(chan appwire.PskAuthStatus, 1)
+	respCh <- appwire.PskAuthStatus_BadPsk
 
 	err := cli.SendAndWaitPSK(context.Background(), sendFn, []byte("secret"), nil, respCh)
 	if err == nil {
@@ -137,7 +136,7 @@ func TestSendAndWaitPSK_BadPSK(t *testing.T) {
 func TestSendAndWaitPSK_SendError(t *testing.T) {
 	sendErr := errors.New("network gone")
 	sendFn := func([]byte) error { return sendErr }
-	respCh := make(chan wire.PskAuthStatus, 1)
+	respCh := make(chan appwire.PskAuthStatus, 1)
 
 	err := cli.SendAndWaitPSK(context.Background(), sendFn, []byte("secret"), nil, respCh)
 	if !errors.Is(err, sendErr) {
@@ -149,7 +148,7 @@ func TestSendAndWaitPSK_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // already cancelled
 	sendFn := func([]byte) error { return nil }
-	respCh := make(chan wire.PskAuthStatus) // never receives
+	respCh := make(chan appwire.PskAuthStatus) // never receives
 
 	err := cli.SendAndWaitPSK(ctx, sendFn, []byte("secret"), nil, respCh)
 	if !errors.Is(err, context.Canceled) {

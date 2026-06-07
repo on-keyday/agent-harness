@@ -10,7 +10,6 @@ import (
 	"syscall/js"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // GetPSK reads the PSK from the URL fragment (#psk=<value>).
@@ -33,7 +32,7 @@ func GetPSK() []byte {
 // the PSK is bound to the handshake transcript and only the binder crosses the
 // wire (see ComputePSKBinder). crypto/hmac + crypto/sha512 compile
 // for GOOS=js, so the browser client computes the same binder as the server.
-func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan wire.PskAuthStatus) error {
+func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan appwire.PskAuthStatus) error {
 	if len(psk) == 0 {
 		return nil
 	}
@@ -49,7 +48,7 @@ func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcr
 	}
 	select {
 	case status := <-respCh:
-		if status != wire.PskAuthStatus_Ok {
+		if status != appwire.PskAuthStatus_Ok {
 			return fmt.Errorf("psk: server rejected: %v", status)
 		}
 		return nil

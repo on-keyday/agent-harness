@@ -6,7 +6,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/pubsub/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 

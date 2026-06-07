@@ -15,8 +15,7 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
-	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -76,7 +75,7 @@ type RunHandle struct {
 	sender  *peerSender
 	cfg     Config
 
-	pskRespCh chan wire.PskAuthStatus
+	pskRespCh chan appwire.PskAuthStatus
 	closeOnce sync.Once
 }
 
@@ -185,7 +184,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		session:   session,
 		sender:    sender,
 		cfg:       cfg,
-		pskRespCh: make(chan wire.PskAuthStatus, 1),
+		pskRespCh: make(chan appwire.PskAuthStatus, 1),
 	}
 
 	// During PSK phase, only route PskAuth responses; runner control messages
@@ -193,7 +192,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
 			select {
-			case h.pskRespCh <- wire.PskAuthStatus(payload[0]):
+			case h.pskRespCh <- appwire.PskAuthStatus(payload[0]):
 			default:
 			}
 			return

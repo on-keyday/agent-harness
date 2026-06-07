@@ -14,8 +14,7 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -56,13 +55,13 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	}
 
 	psk := GetPSK()
-	pskRespCh := make(chan wire.PskAuthStatus, 1)
+	pskRespCh := make(chan appwire.PskAuthStatus, 1)
 
 	// Combined handler: PSK response during handshake, TaskControl after.
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
 			select {
-			case pskRespCh <- wire.PskAuthStatus(payload[0]):
+			case pskRespCh <- appwire.PskAuthStatus(payload[0]):
 			default:
 			}
 			return

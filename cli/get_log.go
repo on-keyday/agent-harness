@@ -8,7 +8,7 @@ import (
 
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // GetTaskLog fetches the historical log for `taskIDHex` from the server.

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	pubsubproto "github.com/on-keyday/agent-harness/pubsub/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // pubTopic holds the per-topic singleflight state for Publish. The first

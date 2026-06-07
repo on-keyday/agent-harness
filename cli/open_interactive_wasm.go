@@ -17,7 +17,7 @@ import (
 	"github.com/on-keyday/agent-harness/exec/frame"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // InteractiveSession holds the state of an active wasm-side interactive PTY

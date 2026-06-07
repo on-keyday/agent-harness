@@ -3,7 +3,7 @@ package server
 import (
 	"sync"
 
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // remoteForward is one active ssh -R registration. The server creates the

@@ -12,7 +12,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // ForwardSpec is one parsed -L forward: listen on BindAddr:LocalPort, and

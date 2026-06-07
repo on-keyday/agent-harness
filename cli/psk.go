@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // GetPSK resolves the PSK in priority order:
@@ -38,7 +37,7 @@ func GetPSK() []byte {
 // the PSK is never sent verbatim — what goes on the wire is a transcript-bound
 // binder (see ComputePSKBinder), so the exchange authenticates the
 // channel instead of leaking a replayable bearer secret.
-func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan wire.PskAuthStatus) error {
+func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan appwire.PskAuthStatus) error {
 	if len(psk) == 0 {
 		return nil
 	}
@@ -54,7 +53,7 @@ func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcr
 	}
 	select {
 	case status := <-respCh:
-		if status != wire.PskAuthStatus_Ok {
+		if status != appwire.PskAuthStatus_Ok {
 			return fmt.Errorf("psk: server rejected: %v", status)
 		}
 		return nil

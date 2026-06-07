@@ -5,7 +5,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // pskGate enforces a PSK handshake on each connection.
@@ -42,13 +41,13 @@ func (g *pskGate) Check(data, transcript []byte, sendFn func([]byte)) (isPSKMsg 
 	if kind != appwire.AppKind_PskAuth {
 		return false, true
 	}
-	status := wire.PskAuthStatus_BadPsk
+	status := appwire.PskAuthStatus_BadPsk
 	if expected, err := cli.ComputePSKBinder(g.psk, transcript); err == nil &&
 		subtle.ConstantTimeCompare(data[1:], expected) == 1 {
-		status = wire.PskAuthStatus_Ok
+		status = appwire.PskAuthStatus_Ok
 	}
 	sendFn([]byte{byte(appwire.AppKind_PskAuth), byte(status)})
-	if status == wire.PskAuthStatus_Ok {
+	if status == appwire.PskAuthStatus_Ok {
 		g.authed = true
 		return true, false
 	}

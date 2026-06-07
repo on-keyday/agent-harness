@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/on-keyday/agent-harness/exec/frame"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // frameHeaderSize is the wire size of exec/frame.FrameHeader: 1-byte Type

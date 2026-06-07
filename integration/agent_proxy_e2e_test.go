@@ -51,7 +51,6 @@ import (
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -206,7 +205,7 @@ func TestAgentProxyE2E(t *testing.T) {
 
 	// 6. PSK + AgentBridgeHello on the proxied conn, mirroring
 	//    cli/agent/conn.go ConnectAgent's combined-handler pattern.
-	pskRespCh := make(chan wire.PskAuthStatus, 1)
+	pskRespCh := make(chan appwire.PskAuthStatus, 1)
 	helloRespCh := make(chan agentboard.HelloStatus, 1)
 
 	proxyConn.SetOnControl(func(kind appwire.AppKind, payload []byte) {
@@ -214,7 +213,7 @@ func TestAgentProxyE2E(t *testing.T) {
 		case appwire.AppKind_PskAuth:
 			if len(payload) > 0 {
 				select {
-				case pskRespCh <- wire.PskAuthStatus(payload[0]):
+				case pskRespCh <- appwire.PskAuthStatus(payload[0]):
 				default:
 				}
 			}

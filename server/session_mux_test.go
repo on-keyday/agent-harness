@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 var _ trsf.BidirectionalStream = (*fakeBidiStream)(nil)

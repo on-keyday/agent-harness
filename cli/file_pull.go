@@ -13,7 +13,7 @@ import (
 	"strings"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // FilePull copies remoteRel from the task's worktree to localPath. If the

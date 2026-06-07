@@ -16,7 +16,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // ErrPathInvalid is returned by ValidateRelPath when the input cannot be

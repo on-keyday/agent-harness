@@ -5,7 +5,6 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // testTranscript is a stand-in for a connection's handshake transcript.
@@ -46,7 +45,7 @@ func TestPSKGate_CorrectPSK(t *testing.T) {
 	if !g.Authed() {
 		t.Error("gate must be authed after correct PSK")
 	}
-	if len(sent) < 2 || wire.PskAuthStatus(sent[1]) != wire.PskAuthStatus_Ok {
+	if len(sent) < 2 || appwire.PskAuthStatus(sent[1]) != appwire.PskAuthStatus_Ok {
 		t.Errorf("response = %v, want [PskAuth Ok]", sent)
 	}
 }
@@ -63,7 +62,7 @@ func TestPSKGate_WrongPSK(t *testing.T) {
 	if g.Authed() {
 		t.Error("gate must not be authed after wrong PSK")
 	}
-	if len(sent) < 2 || wire.PskAuthStatus(sent[1]) != wire.PskAuthStatus_BadPsk {
+	if len(sent) < 2 || appwire.PskAuthStatus(sent[1]) != appwire.PskAuthStatus_BadPsk {
 		t.Errorf("response = %v, want [PskAuth BadPsk]", sent)
 	}
 }
@@ -85,7 +84,7 @@ func TestPSKGate_TranscriptMismatch(t *testing.T) {
 	if g.Authed() {
 		t.Error("gate must NOT auth a binder bound to a different transcript")
 	}
-	if len(sent) < 2 || wire.PskAuthStatus(sent[1]) != wire.PskAuthStatus_BadPsk {
+	if len(sent) < 2 || appwire.PskAuthStatus(sent[1]) != appwire.PskAuthStatus_BadPsk {
 		t.Errorf("response = %v, want [PskAuth BadPsk]", sent)
 	}
 }

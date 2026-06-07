@@ -19,7 +19,7 @@ import (
 
 	pty "github.com/aymanbagabas/go-pty"
 	"github.com/on-keyday/agent-harness/exec/frame"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/term"

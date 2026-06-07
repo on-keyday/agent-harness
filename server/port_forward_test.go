@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // TestHandleOpenPortForward_NoSuchTask exercises the early-exit branch
