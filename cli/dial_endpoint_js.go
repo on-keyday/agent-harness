@@ -7,7 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/objtrsf/objproto"
-	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/objtrsf/transport"
 )
 
 // BuildClientEndpoint constructs a Client-mode objproto.Endpoint for the

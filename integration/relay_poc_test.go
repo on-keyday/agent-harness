@@ -31,7 +31,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/objtrsf/transport"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 

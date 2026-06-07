@@ -15,7 +15,7 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
-	"github.com/on-keyday/agent-harness/transport"
+	"github.com/on-keyday/objtrsf/transport"
 	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
 )
