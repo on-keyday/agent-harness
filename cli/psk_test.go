@@ -12,7 +12,6 @@ import (
 	"bytes"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -97,7 +96,7 @@ func TestSendAndWaitPSK_OK(t *testing.T) {
 	if bytes.Contains(sent[1:], psk) {
 		t.Errorf("raw PSK leaked onto the wire: %v", sent[1:])
 	}
-	wantBinder, err := objproto.ComputePSKBinder(psk, transcript)
+	wantBinder, err := cli.ComputePSKBinder(psk, transcript)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,11 +109,11 @@ func TestSendAndWaitPSK_OK(t *testing.T) {
 // property: the same PSK over a different transcript yields a different binder.
 func TestSendAndWaitPSK_BinderIsTranscriptBound(t *testing.T) {
 	psk := []byte("secret")
-	a, err := objproto.ComputePSKBinder(psk, []byte("transcript-A"))
+	a, err := cli.ComputePSKBinder(psk, []byte("transcript-A"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := objproto.ComputePSKBinder(psk, []byte("transcript-B"))
+	b, err := cli.ComputePSKBinder(psk, []byte("transcript-B"))
 	if err != nil {
 		t.Fatal(err)
 	}

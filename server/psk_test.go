@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -12,7 +12,7 @@ var testTranscript = []byte("handshake-transcript-bytes")
 
 func pskBinder(t *testing.T, psk, transcript []byte) []byte {
 	t.Helper()
-	b, err := objproto.ComputePSKBinder(psk, transcript)
+	b, err := cli.ComputePSKBinder(psk, transcript)
 	if err != nil {
 		t.Fatal(err)
 	}

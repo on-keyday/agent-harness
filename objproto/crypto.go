@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
-	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha512"
 	"fmt"
@@ -97,30 +96,6 @@ func DeriveKey(secret []byte, context string, keyLen int) (key []byte, err error
 	key = make([]byte, keyLen)
 	_, err = io.ReadFull(hkdf, key)
 	return key, err
-}
-
-// ComputePSKBinder derives a transcript-bound authenticator from the PSK, in
-// the style of the TLS 1.3 PSK binder: HMAC over the objproto handshake
-// transcript, keyed by a key derived from the PSK.
-//
-// objproto's handshake is deliberately unauthenticated (it provides the
-// "encrypt first" half of a TLS-1.3-style exchange and exports the transcript
-// via Connection.GetTranscript so an upper layer can authenticate). Binding the
-// PSK proof to that transcript is what closes the gap: it turns the PSK from a
-// replayable bearer secret (sent verbatim inside an unauthenticated channel)
-// into a channel authenticator. An active MITM that relays two separate
-// handshakes ends up with two different transcripts, so a binder captured on
-// one leg does not validate on the other, and the PSK itself never crosses the
-// wire. Both ends derive the same transcript (clientHandshake ‖ serverAck), so
-// the binders match for a genuine end-to-end handshake.
-func ComputePSKBinder(psk, transcript []byte) ([]byte, error) {
-	binderKey, err := DeriveKey(psk, "ksdk-psk-binder", 32)
-	if err != nil {
-		return nil, fmt.Errorf("psk binder key derive: %w", err)
-	}
-	mac := hmac.New(sha512.New, binderKey)
-	mac.Write(transcript)
-	return mac.Sum(nil), nil
 }
 
 func NewAEADFromCommonKeyKind(kind packet.CommonKeyKind, key []byte) (cipher.AEAD, error) {

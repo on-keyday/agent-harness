@@ -9,7 +9,6 @@ import (
 	"strings"
 	"syscall/js"
 
-	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -31,13 +30,13 @@ func GetPSK() []byte {
 
 // SendAndWaitPSK is the WASM variant — identical logic to the native build:
 // the PSK is bound to the handshake transcript and only the binder crosses the
-// wire (see objproto.ComputePSKBinder). crypto/hmac + crypto/sha512 compile
+// wire (see ComputePSKBinder). crypto/hmac + crypto/sha512 compile
 // for GOOS=js, so the browser client computes the same binder as the server.
 func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan wire.PskAuthStatus) error {
 	if len(psk) == 0 {
 		return nil
 	}
-	binder, err := objproto.ComputePSKBinder(psk, transcript)
+	binder, err := ComputePSKBinder(psk, transcript)
 	if err != nil {
 		return fmt.Errorf("psk: binder: %w", err)
 	}

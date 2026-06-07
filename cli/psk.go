@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/on-keyday/agent-harness/objproto"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -36,13 +35,13 @@ func GetPSK() []byte {
 //
 // transcript is the objproto handshake transcript (Connection.GetTranscript());
 // the PSK is never sent verbatim — what goes on the wire is a transcript-bound
-// binder (see objproto.ComputePSKBinder), so the exchange authenticates the
+// binder (see ComputePSKBinder), so the exchange authenticates the
 // channel instead of leaking a replayable bearer secret.
 func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan wire.PskAuthStatus) error {
 	if len(psk) == 0 {
 		return nil
 	}
-	binder, err := objproto.ComputePSKBinder(psk, transcript)
+	binder, err := ComputePSKBinder(psk, transcript)
 	if err != nil {
 		return fmt.Errorf("psk: binder: %w", err)
 	}
