@@ -22,6 +22,16 @@ func TestSkillIndependentReview(t *testing.T) {
 	}
 }
 
+func TestSkillLandingToMain(t *testing.T) {
+	b, err := Skill("landing-to-main")
+	if err != nil {
+		t.Fatalf("Skill(landing-to-main): %v", err)
+	}
+	if len(b) == 0 {
+		t.Fatal("landing-to-main skill is empty")
+	}
+}
+
 func TestSkillUnknown(t *testing.T) {
 	if _, err := Skill("nope"); err == nil {
 		t.Fatal("expected error for unknown skill")
