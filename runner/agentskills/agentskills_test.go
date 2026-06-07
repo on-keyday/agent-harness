@@ -12,6 +12,16 @@ func TestSkillHarnessCLI(t *testing.T) {
 	}
 }
 
+func TestSkillIndependentReview(t *testing.T) {
+	b, err := Skill("independent-review")
+	if err != nil {
+		t.Fatalf("Skill(independent-review): %v", err)
+	}
+	if len(b) == 0 {
+		t.Fatal("independent-review skill is empty")
+	}
+}
+
 func TestSkillUnknown(t *testing.T) {
 	if _, err := Skill("nope"); err == nil {
 		t.Fatal("expected error for unknown skill")
