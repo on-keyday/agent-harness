@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // RunnerHandler decodes inbound RunnerMessage payloads from runners
@@ -121,7 +121,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		rhResp.SetRunnerHelloResponse(protocol.RunnerHelloResponse{
 			YourRunnerId: runnerIDFromConnID(runnerID),
 		})
-		if rhBytes, err := rhResp.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}); err != nil {
+		if rhBytes, err := rhResp.Append([]byte{byte(appwire.AppKind_RunnerControl)}); err != nil {
 			slog.Error("RunnerHandler: encode RunnerHelloResponse failed", "runner", runnerID, "err", err)
 		} else if _, _, err := conn.SendMessage(rhBytes); err != nil {
 			slog.Error("RunnerHandler: send RunnerHelloResponse failed", "runner", runnerID, "err", err)
@@ -212,7 +212,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		resp := h.ChainedRelay.Handle(context.Background(), conn, *rcr)
 		rrResp := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ChainedRelayResponse}
 		rrResp.SetChainedRelayResponse(resp)
-		if rrBytes, err := rrResp.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}); err != nil {
+		if rrBytes, err := rrResp.Append([]byte{byte(appwire.AppKind_RunnerControl)}); err != nil {
 			slog.Error("RunnerHandler: encode ChainedRelayResponse failed", "runner", runnerID, "err", err)
 		} else if _, _, err := conn.SendMessage(rrBytes); err != nil {
 			slog.Error("RunnerHandler: send ChainedRelayResponse failed", "runner", runnerID, "err", err)

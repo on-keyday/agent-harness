@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall/js"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
@@ -41,7 +42,7 @@ func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcr
 		return fmt.Errorf("psk: binder: %w", err)
 	}
 	data := make([]byte, 1+len(binder))
-	data[0] = byte(wire.ApplicationPayloadKind_PskAuth)
+	data[0] = byte(appwire.AppKind_PskAuth)
 	copy(data[1:], binder)
 	if err := sendFn(data); err != nil {
 		return fmt.Errorf("psk: send: %w", err)

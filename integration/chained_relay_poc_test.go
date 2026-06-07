@@ -35,9 +35,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/transport"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // chainEndpoint bundles one endpoint with the listen-addr the next-lower
@@ -146,8 +146,8 @@ func hopComputeSetProxy(t *testing.T, self *hopInfo, slot uint16, targetDialedAd
 // activeConn's CID, then SetProxy. Matches Phase B's pattern.
 func leafComputeAgentProxySetProxy(t *testing.T, leaf *hopInfo, agentSlot uint16, incomingConn objproto.Connection) {
 	t.Helper()
-	owned := incomingConn.ConnectionID()                                           // leaf knows from the accepted conn
-	allocate := objproto.NewConnectionID("ws", leaf.serverCID.Addr, agentSlot)     // leaf knows own serverCID
+	owned := incomingConn.ConnectionID()                                       // leaf knows from the accepted conn
+	allocate := objproto.NewConnectionID("ws", leaf.serverCID.Addr, agentSlot) // leaf knows own serverCID
 	if err := leaf.endpoint.ep.SetProxy(owned, allocate); err != nil {
 		t.Fatalf("leafComputeAgentProxySetProxy on %s: %v", leaf.endpoint.name, err)
 	}
@@ -167,8 +167,8 @@ func leafComputeAgentProxySetProxy(t *testing.T, leaf *hopInfo, agentSlot uint16
 //
 // Wire-level flow:
 //   - For each intermediate above target, set up SetProxy at regSlot:
-//       owned    = (intermediate.serverCID.Addr, regSlot)
-//       allocate = (next-hop-down.dialedAddr, regSlot)
+//     owned    = (intermediate.serverCID.Addr, regSlot)
+//     allocate = (next-hop-down.dialedAddr, regSlot)
 //     The last intermediate's allocate.addr = target's listen-addr.
 //   - server.SendHandshake to (top-intermediate.LISTEN_ADDR, regSlot).
 //     With synthetic-owned + eager SetProxy, the Handshake is forwarded
@@ -177,6 +177,7 @@ func leafComputeAgentProxySetProxy(t *testing.T, leaf *hopInfo, agentSlot uint16
 //     pubkey, activeConn appears on newActiveSess.
 //   - Read pc.Connection().ConnectionID() from target's side; that's the
 //     real serverCID the runner would record in production.
+//
 // chainRegister drives a runner registration through (possibly empty) chain.
 // Role separation:
 //   - SERVER role: orchestrate per-hop EstablishRelay (each intermediate is
@@ -247,8 +248,8 @@ func chainRegister(
 	}
 	result := &hopInfo{
 		endpoint:   target,
-		serverCID:  targetConn.ConnectionID(),                    // TARGET's own knowledge
-		dialedAddr: netip.MustParseAddrPort(target.addr),          // SERVER stores this (= what server dialed)
+		serverCID:  targetConn.ConnectionID(),            // TARGET's own knowledge
+		dialedAddr: netip.MustParseAddrPort(target.addr), // SERVER stores this (= what server dialed)
 	}
 	t.Logf("chainRegister: %s registered, serverCID=%v (private to %s) dialedAddr=%v (server-visible)",
 		target.name, result.serverCID, target.name, result.dialedAddr)
@@ -260,22 +261,22 @@ func chainRegister(
 // Returns the initiator-side end-to-end Connection.
 //
 // Realistic sequence:
-//   1. initiator.SendHandshake to (leaf.LISTEN_ADDR, agentSlot) — initial
-//      ECDH agent↔leaf. leaf has activeConn with cid=(initiator.SRC-from-leaf, agentSlot).
-//   2. leaf.runAgentProxyCeremony equivalent: SetProxy(
-//        owned = leafIncomingConn.CID,
-//        allocate = (leaf.serverCID.Addr, agentSlot),
-//      ). Close leafIncomingConn.
-//   3. initiator.RehandshakeForProxy(newKey) — packet flows through leaf's
-//      proxySettings → all intermediates → server. server ECDHs with initiator.
-//   4. Both ends have end-to-end peer.Conn.
+//  1. initiator.SendHandshake to (leaf.LISTEN_ADDR, agentSlot) — initial
+//     ECDH agent↔leaf. leaf has activeConn with cid=(initiator.SRC-from-leaf, agentSlot).
+//  2. leaf.runAgentProxyCeremony equivalent: SetProxy(
+//     owned = leafIncomingConn.CID,
+//     allocate = (leaf.serverCID.Addr, agentSlot),
+//     ). Close leafIncomingConn.
+//  3. initiator.RehandshakeForProxy(newKey) — packet flows through leaf's
+//     proxySettings → all intermediates → server. server ECDHs with initiator.
+//  4. Both ends have end-to-end peer.Conn.
 //
 // Pre-condition: chained relay setup has already been applied at every
 // intermediate hop for agentSlot.
 // chainedRelayPhaseB drives Phase B from the agent's perspective with full role
 // separation:
 //   - AGENT role: knows only leaf's LISTEN_ADDR (= HARNESS_PROXY_VIA_RUNNER env)
-//     + its own crypto material. Does NOT read leaf.serverCID. Calls SendHandshake
+//   - its own crypto material. Does NOT read leaf.serverCID. Calls SendHandshake
 //     then RehandshakeForProxy on its own endpoint.
 //   - LEAF role: accepts the incoming conn, computes SetProxy using its own
 //     serverCID (via leafComputeAgentProxySetProxy).
@@ -385,7 +386,7 @@ func TestChainedRelayPOC_3hop(t *testing.T) {
 	}
 	t.Logf("server end-to-end conn: cid=%v", serverE2EConn.ConnectionID())
 
-	payload := []byte{byte(wire.ApplicationPayloadKind_AgentMessage), 0xAA, 0xBB, 0xCC, 0xDD}
+	payload := []byte{byte(appwire.AppKind_AgentMessage), 0xAA, 0xBB, 0xCC, 0xDD}
 	if _, _, err := initE2EConn.SendMessage(payload); err != nil {
 		t.Fatalf("initiator SendMessage: %v", err)
 	}
@@ -394,7 +395,7 @@ func TestChainedRelayPOC_3hop(t *testing.T) {
 		t.Fatalf("server ReceiveMessage: %v", err)
 	}
 	if len(msg.Data) < 5 ||
-		msg.Data[0] != byte(wire.ApplicationPayloadKind_AgentMessage) ||
+		msg.Data[0] != byte(appwire.AppKind_AgentMessage) ||
 		msg.Data[1] != 0xAA || msg.Data[2] != 0xBB || msg.Data[3] != 0xCC || msg.Data[4] != 0xDD {
 		t.Fatalf("unexpected payload at server: % x", msg.Data)
 	}
@@ -452,7 +453,7 @@ func TestChainedRelayPOC_4hop(t *testing.T) {
 		t.Fatal("server did not receive end-to-end conn (4-hop chain broken)")
 	}
 
-	payload := []byte{byte(wire.ApplicationPayloadKind_AgentMessage), 0x11, 0x22, 0x33, 0x44}
+	payload := []byte{byte(appwire.AppKind_AgentMessage), 0x11, 0x22, 0x33, 0x44}
 	if _, _, err := initE2EConn.SendMessage(payload); err != nil {
 		t.Fatalf("initiator SendMessage: %v", err)
 	}
@@ -461,7 +462,7 @@ func TestChainedRelayPOC_4hop(t *testing.T) {
 		t.Fatalf("server ReceiveMessage: %v", err)
 	}
 	if len(msg.Data) < 5 ||
-		msg.Data[0] != byte(wire.ApplicationPayloadKind_AgentMessage) ||
+		msg.Data[0] != byte(appwire.AppKind_AgentMessage) ||
 		msg.Data[1] != 0x11 || msg.Data[2] != 0x22 || msg.Data[3] != 0x33 || msg.Data[4] != 0x44 {
 		t.Fatalf("unexpected payload at server: % x", msg.Data)
 	}

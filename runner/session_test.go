@@ -14,11 +14,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 type mockSender struct {
@@ -390,7 +390,7 @@ echo "TASK=$HARNESS_TASK_ID"`)
 // decodeRunnerMsg parses the wire-prefixed RunnerControl payload from a Sender.Send call.
 func decodeRunnerMsg(t *testing.T, raw []byte) *protocol.RunnerMessage {
 	t.Helper()
-	if len(raw) == 0 || raw[0] != byte(wire.ApplicationPayloadKind_RunnerControl) {
+	if len(raw) == 0 || raw[0] != byte(appwire.AppKind_RunnerControl) {
 		t.Fatalf("expected RunnerControl prefix byte, got %v", raw)
 	}
 	msg := &protocol.RunnerMessage{}

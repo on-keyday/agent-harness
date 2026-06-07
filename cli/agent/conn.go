@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
 	"github.com/on-keyday/agent-harness/peer"
@@ -35,7 +36,7 @@ type Conn struct {
 	taskID   protocol.TaskID
 	runnerID protocol.RunnerID
 	mu       sync.Mutex
-	onCtl    func(kind wire.ApplicationPayloadKind, payload []byte)
+	onCtl    func(kind appwire.AppKind, payload []byte)
 }
 
 func (c *Conn) Close() { c.pc.Close() }
@@ -49,11 +50,11 @@ func (c *Conn) RunnerID() protocol.RunnerID { return c.runnerID }
 // SetOnControl installs a control-payload callback (overriding any prior).
 // Subcommands use this to demux response messages by request_id.
 // Safe to call multiple times; the latest callback wins.
-func (c *Conn) SetOnControl(fn func(kind wire.ApplicationPayloadKind, payload []byte)) {
+func (c *Conn) SetOnControl(fn func(kind appwire.AppKind, payload []byte)) {
 	c.mu.Lock()
 	c.onCtl = fn
 	c.mu.Unlock()
-	c.pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+	c.pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		c.mu.Lock()
 		f := c.onCtl
 		c.mu.Unlock()
@@ -65,7 +66,7 @@ func (c *Conn) SetOnControl(fn func(kind wire.ApplicationPayloadKind, payload []
 
 // SendRaw writes an agentboard message to the underlying connection.
 func (c *Conn) SendRaw(msg *agentboard.AgentMessage) error {
-	data := msg.MustAppend([]byte{byte(wire.ApplicationPayloadKind_AgentMessage)})
+	data := msg.MustAppend([]byte{byte(appwire.AppKind_AgentMessage)})
 	if _, _, err := c.pc.Connection().SendMessage(data); err != nil {
 		return errors.Join(errors.New("agent: send failed"), err)
 	}
@@ -182,16 +183,16 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 
 	// Combined handler: routes PskAuth responses during PSK phase,
 	// then AgentMessage HelloResponse during Hello phase.
-	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		switch kind {
-		case wire.ApplicationPayloadKind_PskAuth:
+		case appwire.AppKind_PskAuth:
 			if len(payload) > 0 {
 				select {
 				case pskRespCh <- wire.PskAuthStatus(payload[0]):
 				default:
 				}
 			}
-		case wire.ApplicationPayloadKind_AgentMessage:
+		case appwire.AppKind_AgentMessage:
 			msg := &agentboard.AgentMessage{}
 			if _, err := msg.Decode(payload); err != nil {
 				return
@@ -211,7 +212,13 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	pc.Start(ctx)
 
 	pskCtx, pskCancel := context.WithCancel(ctx)
-	go func() { defer pskCancel(); select { case <-pc.Done(): case <-pskCtx.Done(): } }()
+	go func() {
+		defer pskCancel()
+		select {
+		case <-pc.Done():
+		case <-pskCtx.Done():
+		}
+	}()
 	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
@@ -233,7 +240,7 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	}
 	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Hello}
 	msg.SetHello(hello)
-	data := msg.MustAppend([]byte{byte(wire.ApplicationPayloadKind_AgentMessage)})
+	data := msg.MustAppend([]byte{byte(appwire.AppKind_AgentMessage)})
 	if _, _, err := pc.Connection().SendMessage(data); err != nil {
 		pc.Close()
 		return nil, fmt.Errorf("send hello: %w", err)

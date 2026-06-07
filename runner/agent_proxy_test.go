@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestProxyHandlerCollisionDetection(t *testing.T) {
@@ -200,7 +200,7 @@ func TestDispatchChainedRelayResponseDelivers(t *testing.T) {
 		t.Fatalf("encode RunnerRequest: %v", err)
 	}
 
-	dispatchRunnerRequest(context.Background(), sess, sess.logger(), wire.ApplicationPayloadKind_RunnerControl, payload)
+	dispatchRunnerRequest(context.Background(), sess, sess.logger(), appwire.AppKind_RunnerControl, payload)
 
 	select {
 	case got := <-ch:
@@ -228,7 +228,7 @@ func TestDispatchChainedRelayResponseNoWaiterNoOp(t *testing.T) {
 	// Must not panic, must not block.
 	done := make(chan struct{})
 	go func() {
-		dispatchRunnerRequest(context.Background(), sess, sess.logger(), wire.ApplicationPayloadKind_RunnerControl, payload)
+		dispatchRunnerRequest(context.Background(), sess, sess.logger(), appwire.AppKind_RunnerControl, payload)
 		close(done)
 	}()
 	select {
@@ -365,8 +365,8 @@ func ceremonyCaseRun(t *testing.T, ctx context.Context, deliverResp *protocol.Ch
 	var rcvStatus protocol.ProxyEstablishStatus
 	var rcvMu sync.Mutex
 	rcvOk := false
-	agentPC.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-		if kind != wire.ApplicationPayloadKind_AgentProxyControl {
+	agentPC.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+		if kind != appwire.AppKind_AgentProxyControl {
 			return
 		}
 		var env protocol.ProxyControl

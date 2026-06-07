@@ -11,6 +11,7 @@ import (
 
 	"bytes"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
@@ -89,7 +90,7 @@ func TestSendAndWaitPSK_OK(t *testing.T) {
 	if len(sent) < 2 {
 		t.Fatalf("sent too short: %v", sent)
 	}
-	if wire.ApplicationPayloadKind(sent[0]) != wire.ApplicationPayloadKind_PskAuth {
+	if appwire.AppKind(sent[0]) != appwire.AppKind_PskAuth {
 		t.Errorf("sent[0] = %v, want PskAuth", sent[0])
 	}
 	// The raw PSK must NOT be on the wire; a transcript-bound binder is.

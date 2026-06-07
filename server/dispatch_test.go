@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/agent-harness/appwire"
 )
 
 func TestDispatchRoutesByKind(t *testing.T) {
@@ -24,7 +24,7 @@ func TestDispatchRoutesByKind(t *testing.T) {
 	}
 
 	// Test RunnerControl
-	msg1 := []byte{byte(wire.ApplicationPayloadKind_RunnerControl), 0x00, 0x01}
+	msg1 := []byte{byte(appwire.AppKind_RunnerControl), 0x00, 0x01}
 	d.Dispatch(nil, msg1)
 
 	if !runnerControlCalled {
@@ -44,7 +44,7 @@ func TestDispatchRoutesByKind(t *testing.T) {
 	taskControlPayload = nil
 
 	// Test TaskControl
-	msg2 := []byte{byte(wire.ApplicationPayloadKind_TaskControl), 0x42}
+	msg2 := []byte{byte(appwire.AppKind_TaskControl), 0x42}
 	d.Dispatch(nil, msg2)
 
 	if runnerControlCalled {
@@ -113,10 +113,10 @@ func TestDispatchNilCallbacks(t *testing.T) {
 	}
 
 	// This should not panic
-	msg := []byte{byte(wire.ApplicationPayloadKind_RunnerControl)}
+	msg := []byte{byte(appwire.AppKind_RunnerControl)}
 	d.Dispatch(nil, msg)
 
 	// Also test with TaskControl
-	msg2 := []byte{byte(wire.ApplicationPayloadKind_TaskControl)}
+	msg2 := []byte{byte(appwire.AppKind_TaskControl)}
 	d.Dispatch(nil, msg2)
 }

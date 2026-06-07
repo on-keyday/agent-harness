@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TestDialViaProxyHandlesIdCollision: the runner replies with IdCollision;
@@ -161,8 +161,8 @@ func startFakeProxyRunner(t *testing.T, listenAddr string, respond func(protocol
 				// Process exactly one conn: wait for ProxyRequest, reply, return.
 				go func(pc *peer.Conn) {
 					respCh := make(chan protocol.ProxyRequest, 1)
-					pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-						if kind != wire.ApplicationPayloadKind_AgentProxyControl {
+					pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+						if kind != appwire.AppKind_AgentProxyControl {
 							return
 						}
 						var envelope protocol.ProxyControl
@@ -190,7 +190,7 @@ func startFakeProxyRunner(t *testing.T, listenAddr string, respond func(protocol
 						var envelope protocol.ProxyControl
 						envelope.Kind = protocol.ProxyControlKind_EstablishResponse
 						envelope.SetEstablishResponse(resp)
-						out := envelope.MustAppend([]byte{byte(wire.ApplicationPayloadKind_AgentProxyControl)})
+						out := envelope.MustAppend([]byte{byte(appwire.AppKind_AgentProxyControl)})
 						_, _, _ = pc.Connection().SendMessage(out)
 						// Give the message a moment to flush, then close.
 						time.Sleep(100 * time.Millisecond)

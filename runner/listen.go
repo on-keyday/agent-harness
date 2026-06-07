@@ -11,12 +11,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ListenConfig extends Config with listen-side fields. WSListen / UDPListen
@@ -130,7 +130,7 @@ func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
 // firstMsgT is the first inbound app payload captured by the OnControl
 // shim installed in handleAcceptedConn, used to dispatch by wire kind.
 type firstMsgT struct {
-	kind    wire.ApplicationPayloadKind
+	kind    appwire.AppKind
 	payload []byte
 }
 
@@ -158,7 +158,7 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 	}
 
 	firstMsg := make(chan firstMsgT, 1)
-	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		// Copy: peer.Conn does not promise the slice is retained beyond
 		// this callback (it sits over a pooled receive buffer).
 		select {
@@ -174,7 +174,7 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 		return
 	case msg := <-firstMsg:
 		switch msg.kind {
-		case wire.ApplicationPayloadKind_DialGreeting:
+		case appwire.AppKind_DialGreeting:
 			// Best-effort: log the greeting version. Decode failure is
 			// non-fatal — server-conn path proceeds regardless.
 			var g protocol.DialGreeting
@@ -182,7 +182,7 @@ func handleAcceptedConn(ctx context.Context, cfg Config, sessionRef *atomic.Poin
 				cfg.Logger.Info("server greeting received", "version", g.Version)
 			}
 			handleServerConn(ctx, cfg, sessionRef, ep, pc)
-		case wire.ApplicationPayloadKind_AgentProxyControl:
+		case appwire.AppKind_AgentProxyControl:
 			handleAgentProxyConn(ctx, cfg, sessionRef, ep, pc, msg)
 		default:
 			cfg.Logger.Warn("accepted conn sent unexpected first payload",

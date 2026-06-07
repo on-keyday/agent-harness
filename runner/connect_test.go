@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // TestPeerSenderPublishCachesStreamPerTopic verifies that the runner's
@@ -66,7 +66,7 @@ func TestRunnerHandlesCancelTaskCallsCancelFunc(t *testing.T) {
 		t.Fatalf("encode CancelTask: %v", err)
 	}
 
-	dispatchRunnerRequest(context.Background(), s, s.logger(), wire.ApplicationPayloadKind_RunnerControl, payload)
+	dispatchRunnerRequest(context.Background(), s, s.logger(), appwire.AppKind_RunnerControl, payload)
 
 	cancelMu.Lock()
 	got := cancelCalled
@@ -98,7 +98,7 @@ func TestRunnerHandlesCancelTaskUnknownIsNoOp(t *testing.T) {
 	}
 
 	// Must not panic.
-	dispatchRunnerRequest(context.Background(), s, s.logger(), wire.ApplicationPayloadKind_RunnerControl, payload)
+	dispatchRunnerRequest(context.Background(), s, s.logger(), appwire.AppKind_RunnerControl, payload)
 }
 
 // TestRunnerHello verifies that the Hello payload built in Run uses
@@ -182,7 +182,7 @@ func TestDispatchRunnerHelloResponseStoresCanonicalID(t *testing.T) {
 		t.Fatalf("encode: %v", err)
 	}
 
-	dispatchRunnerRequest(context.Background(), s, nil, wire.ApplicationPayloadKind_RunnerControl, payload)
+	dispatchRunnerRequest(context.Background(), s, nil, appwire.AppKind_RunnerControl, payload)
 
 	got := s.runnerCanonicalConnID().String()
 	want := "ws:192.168.1.42:8539-16962" // 0x4242 = 16962

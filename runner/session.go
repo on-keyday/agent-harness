@@ -8,13 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	agentexec "github.com/on-keyday/agent-harness/exec"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // wakeDebounceWindow is the minimum interval between successive wake
@@ -317,7 +317,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	{
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskAccepted}
 		m.SetTaskAccepted(protocol.TaskAccepted{TaskId: taskID})
-		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 		_ = s.Sender.Send(data)
 	}
 
@@ -329,7 +329,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 			ErrorMessage: []byte(reason),
 		}
 		m.SetTaskFinished(tf)
-		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 		_ = s.Sender.Send(data)
 	}
 
@@ -396,7 +396,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		ts := protocol.TaskStarted{TaskId: taskID}
 		ts.SetWorktreeDir([]byte(dir))
 		m.SetTaskStarted(ts)
-		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 		_ = s.Sender.Send(data)
 	}
 
@@ -465,7 +465,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 			tf.ErrorMessage = []byte("process_error: " + runErr.Error())
 		}
 		m.SetTaskFinished(tf)
-		data := m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+		data := m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 		_ = s.Sender.Send(data)
 	}
 
@@ -510,7 +510,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	{
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskAccepted}
 		m.SetTaskAccepted(protocol.TaskAccepted{TaskId: oer.TaskId})
-		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	log.Info("handleOpenExec", "task_id", taskIDHex, "repo", repoPath, "detachable", oer.Detachable())
@@ -521,7 +521,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		tf := protocol.TaskFinished{TaskId: oer.TaskId, ExitCode: code}
 		tf.ErrorMessage = []byte(reason)
 		m.SetTaskFinished(tf)
-		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	if s.Streams == nil {
@@ -589,7 +589,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		ts := protocol.TaskStarted{TaskId: oer.TaskId}
 		ts.SetWorktreeDir([]byte(dir))
 		m.SetTaskStarted(ts)
-		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	// Write .claude/settings.json into the worktree so the inbox hook fires.
@@ -647,7 +647,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			tf.ErrorMessage = []byte("interactive_error: " + runErr.Error())
 		}
 		m.SetTaskFinished(tf)
-		_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+		_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 	}
 
 	// Step 6: Conditionally clean up the worktree directory. See handleAssign

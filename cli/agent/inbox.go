@@ -9,7 +9,7 @@ import (
 	"math/rand"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/agent-harness/appwire"
 )
 
 // Inbox returns the JSON-Lines dump of pending messages on subscribed topics.
@@ -71,8 +71,8 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 
 	reqID := rand.Uint32()
 	respCh := make(chan agentboard.InboxResponse, 1)
-	conn.SetOnControl(func(kind wire.ApplicationPayloadKind, p []byte) {
-		if kind != wire.ApplicationPayloadKind_AgentMessage {
+	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
+		if kind != appwire.AppKind_AgentMessage {
 			return
 		}
 		msg := &agentboard.AgentMessage{}

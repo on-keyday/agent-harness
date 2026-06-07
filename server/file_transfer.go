@@ -4,8 +4,8 @@ import (
 	"encoding/hex"
 	"log/slog"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // handleOpenFileTransfer fans the client's request out to the assigned
@@ -57,7 +57,7 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 	body.SetRelPath(req.RelPath)
 	body.SetForce(req.Force())
 	rreq.SetOpenFileTransfer(body)
-	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		_ = clientStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
@@ -112,7 +112,7 @@ func (h *TaskHandler) handleListFiles(conn ConnHandle, req *protocol.ListFilesRe
 	}
 	body.SetRelPath(req.RelPath)
 	rreq.SetListFiles(body)
-	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		_ = clientStream.CloseBoth()
 		_ = runnerStream.CloseBoth()

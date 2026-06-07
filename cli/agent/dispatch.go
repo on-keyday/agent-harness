@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/agent-harness/appwire"
 )
 
 // Dispatch sends a message to --topic, then blocks waiting for a reply on
@@ -57,8 +57,8 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	waitID := rand.Uint32()
 	sendCh := make(chan agentboard.SendResponse, 1)
 	waitCh := make(chan agentboard.WaitResponse, 1)
-	conn.SetOnControl(func(kind wire.ApplicationPayloadKind, p []byte) {
-		if kind != wire.ApplicationPayloadKind_AgentMessage {
+	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
+		if kind != appwire.AppKind_AgentMessage {
 			return
 		}
 		msg := &agentboard.AgentMessage{}

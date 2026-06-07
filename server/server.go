@@ -17,14 +17,14 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // Config holds the configuration for a Server instance.
@@ -735,11 +735,11 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 			}
 			return
 		}
-		kind := wire.ApplicationPayloadKind(msg.Data[0])
-		if kind == wire.ApplicationPayloadKind_PskAuth {
+		kind := appwire.AppKind(msg.Data[0])
+		if kind == appwire.AppKind_PskAuth {
 			return // stray PskAuth after auth complete — discard
 		}
-		if kind == wire.ApplicationPayloadKind_Pubsub {
+		if kind == appwire.AppKind_Pubsub {
 			// HandleMessage already returns the response wire-kind prefixed.
 			if resp := subscriber.HandleMessage(s.pubsub, msg.Data[1:]); resp != nil {
 				session.SendMessage(resp) //nolint:errcheck
@@ -906,7 +906,7 @@ func (s *Server) sendEstablishRelayRequest(ctx context.Context, entry *RunnerEnt
 	var rr protocol.RunnerRequest
 	rr.Kind = protocol.RunnerRequestType_EstablishRelay
 	rr.SetEstablishRelay(req)
-	payload, err := rr.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	payload, err := rr.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 	if err != nil {
 		return protocol.EstablishRelayResponse{}, fmt.Errorf("encode EstablishRelayRequest: %w", err)
 	}

@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func mustParseCID(t *testing.T, s string) objproto.ConnectionID {
@@ -33,7 +33,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 	if len(fc.sent) != 1 {
 		t.Fatalf("want 1 message, got %d", len(fc.sent))
 	}
-	if fc.sent[0][0] != byte(wire.ApplicationPayloadKind_RunnerControl) {
+	if fc.sent[0][0] != byte(appwire.AppKind_RunnerControl) {
 		t.Fatalf("want kind=RunnerControl byte, got %d", fc.sent[0][0])
 	}
 	// Decode the runner request — envelope only carries TaskID + StreamId.

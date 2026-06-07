@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ViaRegistrationInfo carries the Phase C registration metadata that must travel
@@ -113,7 +113,7 @@ func (h *DialRunnerHandler) Handle(ctx context.Context, target protocol.RunnerID
 	// ProxyControl). The greeting carries a version byte for forward
 	// compatibility; runner ignores unknown versions.
 	greeting := protocol.DialGreeting{Version: 1}
-	greetingPayload := greeting.MustAppend([]byte{byte(wire.ApplicationPayloadKind_DialGreeting)})
+	greetingPayload := greeting.MustAppend([]byte{byte(appwire.AppKind_DialGreeting)})
 	if _, _, err := conn.SendMessage(greetingPayload); err != nil {
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner: failed to send greeting", "err", err)
@@ -314,7 +314,7 @@ func (h *DialRunnerHandler) HandleWithVia(ctx context.Context, target, via proto
 	// Step 5: send DialGreeting on the end-to-end conn. AEAD validates that
 	// keys are end-to-end server↔target (not relayed via proxy decrypt/re-encrypt).
 	greeting := protocol.DialGreeting{Version: 1}
-	greetingPayload := greeting.MustAppend([]byte{byte(wire.ApplicationPayloadKind_DialGreeting)})
+	greetingPayload := greeting.MustAppend([]byte{byte(appwire.AppKind_DialGreeting)})
 	if _, _, err := endToEndConn.SendMessage(greetingPayload); err != nil {
 		if h.Logger != nil {
 			h.Logger.Warn("dial-runner via: send DialGreeting failed", "err", err)

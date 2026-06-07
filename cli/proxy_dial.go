@@ -9,10 +9,10 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // Sentinel errors returned by DialViaProxy. Callers can errors.Is-check to
@@ -71,8 +71,8 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 	// paths below.
 
 	respCh := make(chan protocol.ProxyEstablishResponse, 1)
-	localConn.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-		if kind != wire.ApplicationPayloadKind_AgentProxyControl {
+	localConn.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+		if kind != appwire.AppKind_AgentProxyControl {
 			return
 		}
 		var envelope protocol.ProxyControl
@@ -97,7 +97,7 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 	var req protocol.ProxyControl
 	req.Kind = protocol.ProxyControlKind_Request
 	req.SetRequest(protocol.ProxyRequest{TaskId: taskID})
-	if _, _, err := localConn.Connection().SendMessage(req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_AgentProxyControl)})); err != nil {
+	if _, _, err := localConn.Connection().SendMessage(req.MustAppend([]byte{byte(appwire.AppKind_AgentProxyControl)})); err != nil {
 		localConn.Close()
 		return nil, fmt.Errorf("send ProxyRequest: %w", err)
 	}

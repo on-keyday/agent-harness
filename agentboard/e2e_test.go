@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func trsfStreamIDForTest(id uint64) trsf.StreamID { return trsf.StreamID(id) }
@@ -152,8 +152,8 @@ func dialAgent(
 	helloCh := make(chan agentboard.HelloStatus, 1)
 	var helloOnce sync.Once
 
-	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-		if kind != wire.ApplicationPayloadKind_AgentMessage {
+	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+		if kind != appwire.AppKind_AgentMessage {
 			return
 		}
 		msg := &agentboard.AgentMessage{}
@@ -188,7 +188,7 @@ func dialAgent(
 	if !hello.SetHello(h) {
 		t.Fatal("dialAgent: SetHello failed")
 	}
-	helloBytes, err := hello.Append([]byte{byte(wire.ApplicationPayloadKind_AgentMessage)})
+	helloBytes, err := hello.Append([]byte{byte(appwire.AppKind_AgentMessage)})
 	if err != nil {
 		t.Fatalf("dialAgent: encode hello: %v", err)
 	}
@@ -209,7 +209,7 @@ func dialAgent(
 // sendAgentMsg is a helper to encode and send an AgentMessage over a peer.Conn.
 func sendAgentMsg(t *testing.T, pc *peer.Conn, msg *agentboard.AgentMessage) {
 	t.Helper()
-	data, err := msg.Append([]byte{byte(wire.ApplicationPayloadKind_AgentMessage)})
+	data, err := msg.Append([]byte{byte(appwire.AppKind_AgentMessage)})
 	if err != nil {
 		t.Fatalf("sendAgentMsg encode: %v", err)
 	}

@@ -4,8 +4,8 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // runnerForTask returns the ConnHandle for the runner currently executing tid,
@@ -51,7 +51,7 @@ func (s *Server) emitTaskWake(tid protocol.TaskID) {
 	}
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_TaskWake}
 	req.SetTaskWake(protocol.TaskWakeRequest{TaskId: tid})
-	wireBytes, err := req.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	wireBytes, err := req.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 	if err != nil {
 		slog.Warn("emitTaskWake encode failed", "err", err)
 		return

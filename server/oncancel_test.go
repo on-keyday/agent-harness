@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // classifyMsg inspects the first byte of a message to determine its
@@ -16,7 +16,7 @@ func classifyRunnerRequest(msg []byte) string {
 	if len(msg) == 0 {
 		return "empty"
 	}
-	if wire.ApplicationPayloadKind(msg[0]) != wire.ApplicationPayloadKind_RunnerControl {
+	if appwire.AppKind(msg[0]) != appwire.AppKind_RunnerControl {
 		return "not-runner-control"
 	}
 	var req protocol.RunnerRequest

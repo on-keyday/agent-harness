@@ -10,13 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // agentBinBase is the basename of the agent binary the runner runs, for peer
@@ -189,8 +190,8 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 
 	// During PSK phase, only route PskAuth responses; runner control messages
 	// arrive only after the server has accepted the connection.
-	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-		if kind == wire.ApplicationPayloadKind_PskAuth && len(payload) > 0 {
+	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
 			select {
 			case h.pskRespCh <- wire.PskAuthStatus(payload[0]):
 			default:
@@ -229,7 +230,7 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 	session := h.session
 	cfg := h.cfg
 
-	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		dispatchRunnerRequest(runCtx, session, cfg.Logger, kind, payload)
 	})
 
@@ -256,7 +257,7 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 	hh.SetAgentBin([]byte(agentBinBase(cfg.ClaudeBin)))
 	hh.SetSkillsInjected(skillsInjected(cfg.NoWorktree, cfg.ForceInjectHarnessSettings))
 	hello.SetHello(hh)
-	helloBytes := hello.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	helloBytes := hello.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if err := h.sender.Send(helloBytes); err != nil {
 		return fmt.Errorf("send Hello: %w", err)
 	}
@@ -284,8 +285,8 @@ func Run(ctx context.Context, cfg Config) error {
 // dispatchRunnerRequest decodes an inbound control payload and dispatches it to
 // the appropriate session handler. Extracted from the OnControl closure so that
 // tests can call it directly without a live peer connection.
-func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logger, kind wire.ApplicationPayloadKind, payload []byte) {
-	if kind != wire.ApplicationPayloadKind_RunnerControl {
+func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logger, kind appwire.AppKind, payload []byte) {
+	if kind != appwire.AppKind_RunnerControl {
 		return // server side never sends TaskControl/Pubsub-other to runners
 	}
 	req := &protocol.RunnerRequest{}
@@ -383,7 +384,7 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			var rm protocol.RunnerMessage
 			rm.Kind = protocol.RunnerMessageType_EstablishRelayResponse
 			rm.SetEstablishRelayResponse(resp)
-			payload := rm.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+			payload := rm.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 			return session.Sender.Send(payload)
 		})
 	case protocol.RunnerRequestType_ChainedRelayResponse:
@@ -509,4 +510,3 @@ func waitForAssignTaskBody(ctx context.Context, p peer.BidirectionalStreamLookup
 	}
 	return body, nil
 }
-

@@ -13,10 +13,10 @@ import (
 	"sync"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TaskHandler decodes inbound TaskControlRequest payloads from the CLI
@@ -127,7 +127,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
 		resp.SetSubmit(submitResp)
 
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 		if submitResp.Status == protocol.SubmitStatus_Ok && h.OnChange != nil {
@@ -149,7 +149,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel, RequestId: req.RequestId}
 		resp.SetCancel(protocol.CancelStatus{Status: 0})
 
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 		if h.OnChange != nil {
@@ -176,7 +176,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			SkippedMissing: skippedMissing,
 		})
 
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_GetTaskLog:
@@ -198,7 +198,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		oresp := h.handleOpenInteractive(conn, oi, origin)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
 		resp.SetOpenInteractive(oresp)
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_OpenFileTransfer:
@@ -210,7 +210,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		oresp := h.handleOpenFileTransfer(conn, oft)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.RequestId}
 		resp.SetOpenFileTransfer(oresp)
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_ListFiles:
@@ -222,7 +222,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		lresp := h.handleListFiles(conn, lf)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.RequestId}
 		resp.SetListFiles(lresp)
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_OpenPortForward:
@@ -234,7 +234,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		presp := h.handleOpenPortForward(conn, pf)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
 		resp.SetOpenPortForward(presp)
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_AttachSession:
@@ -246,7 +246,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		aresp := h.handleAttachSession(conn, a)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AttachSession, RequestId: req.RequestId}
 		resp.SetAttach(aresp)
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_ClientHello:
@@ -271,7 +271,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ClientHello, RequestId: req.RequestId}
 		resp.SetClientHello(protocol.ClientHelloResponse{Status: protocol.ClientHelloStatus_Ok})
 
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
 	case protocol.TaskControlKind_DialRunner:
@@ -299,7 +299,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		out := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_DialRunner, RequestId: req.RequestId}
 		out.SetDialRunner(dialResp)
-		bytes := out.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		bytes := out.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(bytes) //nolint:errcheck
 
 	default:
@@ -564,7 +564,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		oer.SetDetachable(true)
 	}
 	rreq.SetOpenExec(oer)
-	rdata := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	rdata := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runnerConn.SendMessage(rdata); err != nil {
 		_ = tuiStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
@@ -619,7 +619,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		// state and registry binding — same defensive cleanup as the legacy path.
 		go func() {
 			<-mux.Wait()
-			h.Sessions.Remove(taskIDHex)  // NEW: defensive — handles race where OnStop fired before Sessions.Add
+			h.Sessions.Remove(taskIDHex) // NEW: defensive — handles race where OnStop fired before Sessions.Add
 			if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
 				h.Tasks.Cancel(taskIDHex)
 			}
@@ -817,7 +817,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
 		resp.SetList(protocol.ListResult{StreamId: streamID})
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 	}
 
@@ -871,7 +871,7 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 	respond := func(found uint8, streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: requestID}
 		resp.SetGetLog(protocol.GetTaskLogResponse{Found: found, StreamId: streamID})
-		out := resp.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 	}
 

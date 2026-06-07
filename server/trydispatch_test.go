@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // errConnHandle is a fakeConn variant whose SendMessage always errors.
@@ -82,7 +82,7 @@ func TestTryDispatch_HappyPath(t *testing.T) {
 	if len(fc.sent) != 1 {
 		t.Fatalf("expected 1 sent message, got %d", len(fc.sent))
 	}
-	if fc.sent[0][0] != byte(wire.ApplicationPayloadKind_RunnerControl) {
+	if fc.sent[0][0] != byte(appwire.AppKind_RunnerControl) {
 		t.Errorf("expected RunnerControl prefix byte, got %d", fc.sent[0][0])
 	}
 

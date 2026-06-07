@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // handleOpenPortForward mirrors handleOpenFileTransfer: it allocates a
@@ -57,7 +57,7 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 	}
 	body.SetRemoteHost(req.RemoteHost)
 	rreq.SetOpenPortForward(body)
-	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		_ = clientStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
@@ -101,7 +101,7 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 	}
 	body.SetBindAddr(req.BindAddr)
 	rreq.SetOpenPortForward(body)
-	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		h.rforwards().remove(fid)
 		_ = ctrl.CloseBoth()
@@ -151,7 +151,7 @@ func sendClosePortForward(rc ConnHandle, forwardID uint64) {
 	}
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_ClosePortForward}
 	rreq.SetClosePortForward(protocol.ClosePortForwardRequest{ForwardId: forwardID})
-	data := rreq.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	_, _, _ = rc.SendMessage(data)
 }
 

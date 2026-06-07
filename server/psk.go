@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/subtle"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )
@@ -37,8 +38,8 @@ func (g *pskGate) Check(data, transcript []byte, sendFn func([]byte)) (isPSKMsg 
 	if len(data) == 0 {
 		return false, true
 	}
-	kind := wire.ApplicationPayloadKind(data[0])
-	if kind != wire.ApplicationPayloadKind_PskAuth {
+	kind := appwire.AppKind(data[0])
+	if kind != appwire.AppKind_PskAuth {
 		return false, true
 	}
 	status := wire.PskAuthStatus_BadPsk
@@ -46,7 +47,7 @@ func (g *pskGate) Check(data, transcript []byte, sendFn func([]byte)) (isPSKMsg 
 		subtle.ConstantTimeCompare(data[1:], expected) == 1 {
 		status = wire.PskAuthStatus_Ok
 	}
-	sendFn([]byte{byte(wire.ApplicationPayloadKind_PskAuth), byte(status)})
+	sendFn([]byte{byte(appwire.AppKind_PskAuth), byte(status)})
 	if status == wire.PskAuthStatus_Ok {
 		g.authed = true
 		return true, false

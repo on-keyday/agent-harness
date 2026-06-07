@@ -9,8 +9,8 @@ import (
 	"math/rand"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind agentboard.AgentMessageKind) error {
@@ -50,8 +50,8 @@ func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind
 
 	reqID := rand.Uint32()
 	respCh := make(chan agentboard.SubscribeResponse, 1)
-	conn.SetOnControl(func(k wire.ApplicationPayloadKind, p []byte) {
-		if k != wire.ApplicationPayloadKind_AgentMessage {
+	conn.SetOnControl(func(k appwire.AppKind, p []byte) {
+		if k != appwire.AppKind_AgentMessage {
 			return
 		}
 		msg := &agentboard.AgentMessage{}

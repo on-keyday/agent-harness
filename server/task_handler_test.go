@@ -7,21 +7,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // stubConn is a minimal ConnHandle used to mark a RunnerEntry as connected
 // without wiring real network I/O. It no-ops all methods.
 type stubConn struct{}
 
-func (stubConn) ConnectionID() objproto.ConnectionID       { return objproto.ConnectionID{} }
-func (stubConn) SendMessage([]byte) (int, uint64, error)   { return 0, 0, nil }
-func (stubConn) CreateSendStream() trsf.SendStream         { return nil }
-func (stubConn) GetReceiveStream(trsf.StreamID) trsf.ReceiveStream { return nil }
-func (stubConn) CreateBidirectionalStream() trsf.BidirectionalStream { return nil }
+func (stubConn) ConnectionID() objproto.ConnectionID                           { return objproto.ConnectionID{} }
+func (stubConn) SendMessage([]byte) (int, uint64, error)                       { return 0, 0, nil }
+func (stubConn) CreateSendStream() trsf.SendStream                             { return nil }
+func (stubConn) GetReceiveStream(trsf.StreamID) trsf.ReceiveStream             { return nil }
+func (stubConn) CreateBidirectionalStream() trsf.BidirectionalStream           { return nil }
 func (stubConn) GetBidirectionalStream(trsf.StreamID) trsf.BidirectionalStream { return nil }
 
 // newTestHandler returns a *TaskHandler with an empty Registry and TaskStore,
@@ -500,7 +500,7 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
 	}
 	raw := runnerConn.sent[0]
-	if raw[0] != byte(wire.ApplicationPayloadKind_RunnerControl) {
+	if raw[0] != byte(appwire.AppKind_RunnerControl) {
 		t.Fatalf("first byte=%d, want RunnerControl kind", raw[0])
 	}
 

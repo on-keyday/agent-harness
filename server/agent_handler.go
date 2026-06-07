@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // agentConn is the per-peer state for an agent_message-bearing connection.
@@ -87,7 +87,7 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 }
 
 func (s *Server) sendAgent(conn ConnHandle, msg *agentboard.AgentMessage) {
-	data, err := msg.Append([]byte{byte(wire.ApplicationPayloadKind_AgentMessage)})
+	data, err := msg.Append([]byte{byte(appwire.AppKind_AgentMessage)})
 	if err != nil {
 		slog.Warn("agent_message encode", "err", err)
 		return

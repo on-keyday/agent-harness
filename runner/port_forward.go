@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
 )
 
 // bidiStreamCreator makes a bidi stream toward the server. Satisfied by
@@ -133,7 +133,7 @@ func (s *Session) sendBindResult(forwardID uint64, ok bool) {
 	br := protocol.RemoteForwardBindResult{ForwardId: forwardID}
 	br.SetOk(ok)
 	m.SetRemoteForwardBindResult(br)
-	_ = s.Sender.Send(m.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)}))
+	_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
 }
 
 // startRemoteForwardListener binds a TCP listener and starts an accept loop that
@@ -168,7 +168,7 @@ func (s *Session) onRemoteForwardConn(forwardID uint64, conn net.Conn) {
 	}
 	msg := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_RemoteForwardConn}
 	msg.SetRemoteForwardConn(protocol.RemoteForwardConn{ForwardId: forwardID, StreamId: uint64(stream.ID())})
-	if err := s.Sender.Send(msg.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})); err != nil {
+	if err := s.Sender.Send(msg.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})); err != nil {
 		_ = stream.CloseBoth()
 		_ = conn.Close()
 		return

@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TestDialRunnerViaInvalidTarget covers the early-return guard on the via-relay
@@ -137,7 +137,6 @@ func TestDialRunnerViaEmptyVia(t *testing.T) {
 		t.Errorf("status: got %v want InvalidTarget (direct path)", resp.Status)
 	}
 }
-
 
 // TestDialRunnerInvalidTargetTransport covers empty-transport early return.
 func TestDialRunnerInvalidTargetTransport(t *testing.T) {
@@ -331,7 +330,7 @@ func TestTaskControlDialRunnerResponseRoundTrip(t *testing.T) {
 // app message on the new conn.
 func TestDialRunnerSendsGreeting(t *testing.T) {
 	listenAddr := "127.0.0.1:18570"
-	firstKind := make(chan wire.ApplicationPayloadKind, 1)
+	firstKind := make(chan appwire.AppKind, 1)
 	firstPayload := make(chan []byte, 1)
 	stop := startFakeListenRunner(t, listenAddr, firstKind, firstPayload)
 	defer stop()
@@ -361,7 +360,7 @@ func TestDialRunnerSendsGreeting(t *testing.T) {
 
 	select {
 	case k := <-firstKind:
-		if k != wire.ApplicationPayloadKind_DialGreeting {
+		if k != appwire.AppKind_DialGreeting {
 			t.Fatalf("first inbound kind: got %v want DialGreeting", k)
 		}
 	case <-time.After(2 * time.Second):
@@ -571,7 +570,7 @@ func TestDialRunnerViaLoopDetected(t *testing.T) {
 // the kind byte prefix). Returns a cleanup function.
 //
 // Mirrors the pattern in runner/listen.go (buildListenEndpoint, WS-only).
-func startFakeListenRunner(t *testing.T, listenAddr string, firstKind chan<- wire.ApplicationPayloadKind, firstPayload chan<- []byte) (cleanup func()) {
+func startFakeListenRunner(t *testing.T, listenAddr string, firstKind chan<- appwire.AppKind, firstPayload chan<- []byte) (cleanup func()) {
 	t.Helper()
 	mux := http.NewServeMux()
 	ep, err := transport.WebSocketEndpoint(mux, transport.WebSocketConfig{
@@ -601,7 +600,7 @@ func startFakeListenRunner(t *testing.T, listenAddr string, firstKind chan<- wir
 			pc := peer.WrapAcceptedConn(ctx, conn, peer.DialConfig{
 				Logger: slog.Default(),
 			})
-			pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+			pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 				select {
 				case firstKind <- kind:
 				default:
@@ -626,4 +625,3 @@ func startFakeListenRunner(t *testing.T, listenAddr string, firstKind chan<- wir
 		_ = srv.Shutdown(shutdownCtx)
 	}
 }
-

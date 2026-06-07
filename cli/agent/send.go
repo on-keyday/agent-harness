@@ -10,7 +10,7 @@ import (
 	"math/rand"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/agent-harness/appwire"
 )
 
 // Send is the entry for `harness-cli agent send`.
@@ -51,8 +51,8 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 
 	reqID := rand.Uint32()
 	respCh := make(chan agentboard.SendResponse, 1)
-	conn.SetOnControl(func(kind wire.ApplicationPayloadKind, p []byte) {
-		if kind != wire.ApplicationPayloadKind_AgentMessage {
+	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
+		if kind != appwire.AppKind_AgentMessage {
 			return
 		}
 		msg := &agentboard.AgentMessage{}

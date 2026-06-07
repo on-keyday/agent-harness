@@ -4,10 +4,10 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func JoinTopic(reqID uint32, nickName string, topic string) []byte {
@@ -19,7 +19,7 @@ func JoinTopic(reqID uint32, nickName string, topic string) []byte {
 	if !p.SetNickName([]uint8(nickName)) {
 		return nil
 	}
-	return p.MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
+	return p.MustAppend([]byte{byte(appwire.AppKind_Pubsub)})
 }
 
 func LeaveTopic(reqID uint32, topic string) []byte {
@@ -27,7 +27,7 @@ func LeaveTopic(reqID uint32, topic string) []byte {
 		Kind:      protocol.MessageKind_LEAVE,
 		RequestId: reqID,
 		Topic:     []byte(topic),
-	}).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
+	}).MustAppend([]byte{byte(appwire.AppKind_Pubsub)})
 }
 
 func (s *Subscriber) HandleMessage(ps *PubSub, msg []byte) []byte {
@@ -39,14 +39,14 @@ func (s *Subscriber) HandleMessage(ps *PubSub, msg []byte) []byte {
 	switch req.Kind {
 	case protocol.MessageKind_JOIN:
 		topic := string(req.Topic)
-		return ps.Subscribe(req.RequestId, topic, string(*req.NickName()), s).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
+		return ps.Subscribe(req.RequestId, topic, string(*req.NickName()), s).MustAppend([]byte{byte(appwire.AppKind_Pubsub)})
 	case protocol.MessageKind_LEAVE:
 		topic := string(req.Topic)
-		return ps.Unsubscribe(req.RequestId, topic, s).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
+		return ps.Unsubscribe(req.RequestId, topic, s).MustAppend([]byte{byte(appwire.AppKind_Pubsub)})
 	}
 	return (&protocol.PubSubResponse{
 		Status: protocol.Status_UnknownMessage,
-	}).MustAppend([]byte{byte(wire.ApplicationPayloadKind_Pubsub)})
+	}).MustAppend([]byte{byte(appwire.AppKind_Pubsub)})
 }
 
 func (s *Subscriber) LeaveAll(ps *PubSub) {

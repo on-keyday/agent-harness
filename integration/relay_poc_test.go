@@ -21,18 +21,18 @@
 package integration
 
 import (
-	"crypto/ecdh"
 	"context"
+	"crypto/ecdh"
 	"log/slog"
 	"net/http"
 	"net/netip"
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/transport"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestRelayPOC(t *testing.T) {
@@ -176,7 +176,7 @@ func TestRelayPOC(t *testing.T) {
 
 	// === Step 7: server sends DialGreeting on the new end-to-end conn ===
 	greeting := protocol.DialGreeting{Version: 1}
-	greetingPayload := greeting.MustAppend([]byte{byte(wire.ApplicationPayloadKind_DialGreeting)})
+	greetingPayload := greeting.MustAppend([]byte{byte(appwire.AppKind_DialGreeting)})
 	if _, _, err := newServerConn.SendMessage(greetingPayload); err != nil {
 		t.Fatalf("Step 7: server send DialGreeting: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestRelayPOC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Step 8: target receive DialGreeting: %v", err)
 	}
-	if len(msg.Data) < 1 || msg.Data[0] != byte(wire.ApplicationPayloadKind_DialGreeting) {
+	if len(msg.Data) < 1 || msg.Data[0] != byte(appwire.AppKind_DialGreeting) {
 		t.Fatalf("Step 8: expected DialGreeting kind, got: % x", msg.Data)
 	}
 	var receivedGreeting protocol.DialGreeting

@@ -46,12 +46,13 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestAgentProxyE2E(t *testing.T) {
@@ -208,16 +209,16 @@ func TestAgentProxyE2E(t *testing.T) {
 	pskRespCh := make(chan wire.PskAuthStatus, 1)
 	helloRespCh := make(chan agentboard.HelloStatus, 1)
 
-	proxyConn.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
+	proxyConn.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		switch kind {
-		case wire.ApplicationPayloadKind_PskAuth:
+		case appwire.AppKind_PskAuth:
 			if len(payload) > 0 {
 				select {
 				case pskRespCh <- wire.PskAuthStatus(payload[0]):
 				default:
 				}
 			}
-		case wire.ApplicationPayloadKind_AgentMessage:
+		case appwire.AppKind_AgentMessage:
 			msg := &agentboard.AgentMessage{}
 			if _, err := msg.Decode(payload); err != nil {
 				return
@@ -258,7 +259,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	hello.SetHostname([]byte("proxy-e2e-agent"))
 	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Hello}
 	msg.SetHello(hello)
-	data := msg.MustAppend([]byte{byte(wire.ApplicationPayloadKind_AgentMessage)})
+	data := msg.MustAppend([]byte{byte(appwire.AppKind_AgentMessage)})
 	if _, _, err := proxyConn.Connection().SendMessage(data); err != nil {
 		t.Fatalf("send AgentBridgeHello: %v", err)
 	}

@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // proxyHandlerState bundles the inputs the agent-proxy ceremony needs from
@@ -92,7 +92,7 @@ func runAgentProxyCeremony(
 				var rm protocol.RunnerMessage
 				rm.Kind = protocol.RunnerMessageType_RequestChainedRelay
 				rm.SetRequestChainedRelay(protocol.RequestChainedRelay{SlotId: slotID})
-				payload := rm.MustAppend([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+				payload := rm.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 				if err := sess.Sender.Send(payload); err != nil {
 					if logger != nil {
 						logger.Error("chained-relay: send RequestChainedRelay failed", "err", err, "slot_id", slotID)
@@ -167,7 +167,7 @@ func runAgentProxyCeremony(
 	var envelope protocol.ProxyControl
 	envelope.Kind = protocol.ProxyControlKind_EstablishResponse
 	envelope.SetEstablishResponse(resp)
-	payload := envelope.MustAppend([]byte{byte(wire.ApplicationPayloadKind_AgentProxyControl)})
+	payload := envelope.MustAppend([]byte{byte(appwire.AppKind_AgentProxyControl)})
 	if _, _, err := pc.Connection().SendMessage(payload); err != nil {
 		return fmt.Errorf("send EstablishResponse: %w", err)
 	}

@@ -6,10 +6,10 @@ import (
 	"log/slog"
 
 	"github.com/on-keyday/agent-harness/agentboard"
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ConnHandle is the minimal interface a handler needs to identify, reply to,
@@ -60,19 +60,19 @@ func (d *Dispatcher) Dispatch(conn ConnHandle, msg []byte) {
 		return
 	}
 
-	kind := wire.ApplicationPayloadKind(msg[0])
+	kind := appwire.AppKind(msg[0])
 	payload := msg[1:]
 
 	switch kind {
-	case wire.ApplicationPayloadKind_RunnerControl:
+	case appwire.AppKind_RunnerControl:
 		if d.OnRunnerControl != nil {
 			d.OnRunnerControl(conn, payload)
 		}
-	case wire.ApplicationPayloadKind_TaskControl:
+	case appwire.AppKind_TaskControl:
 		if d.OnTaskControl != nil {
 			d.OnTaskControl(conn, payload)
 		}
-	case wire.ApplicationPayloadKind_AgentMessage:
+	case appwire.AppKind_AgentMessage:
 		if d.OnAgentMessage != nil {
 			d.OnAgentMessage(conn, payload)
 		}
@@ -99,7 +99,7 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, [
 
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_AssignTask}
 	req.SetAssignTask(assign)
-	data, err := req.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	data, err := req.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -280,7 +280,7 @@ func (d *Dispatcher) OnCancel(taskID string) {
 
 	req := &protocol.RunnerRequest{Kind: protocol.RunnerRequestType_CancelTask}
 	req.SetCancelTask(protocol.CancelTask{TaskId: tid})
-	data, err := req.Append([]byte{byte(wire.ApplicationPayloadKind_RunnerControl)})
+	data, err := req.Append([]byte{byte(appwire.AppKind_RunnerControl)})
 	if err != nil {
 		slog.Error("dispatcher: OnCancel encode failed", "task", taskID, "err", err)
 		return

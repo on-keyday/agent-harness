@@ -24,17 +24,17 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/trsf"
-	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ControlHandler receives every application-kind payload that isn't Pubsub
 // (those are routed to the embedded pubsub.Client first). The kind argument
-// is the original wire.ApplicationPayloadKind from msg.Data[0]; payload is
+// is the application appwire.AppKind from msg.Data[0]; payload is
 // msg.Data[1:].
-type ControlHandler func(kind wire.ApplicationPayloadKind, payload []byte)
+type ControlHandler func(kind appwire.AppKind, payload []byte)
 
 // Conn wraps an objproto.Connection together with its trsf.Transport and a
 // pubsub.Client correlator. Both cli.Client and the runner embed one of
@@ -229,8 +229,8 @@ func (c *Conn) dispatch(msg *objproto.Message, err error) {
 	if msg == nil || len(msg.Data) == 0 {
 		return
 	}
-	kind := wire.ApplicationPayloadKind(msg.Data[0])
-	if kind == wire.ApplicationPayloadKind_Pubsub {
+	kind := appwire.AppKind(msg.Data[0])
+	if kind == appwire.AppKind_Pubsub {
 		c.pub.HandleResponse(msg.Data[1:])
 		return
 	}
@@ -238,4 +238,3 @@ func (c *Conn) dispatch(msg *objproto.Message, err error) {
 		(*h)(kind, msg.Data[1:])
 	}
 }
-

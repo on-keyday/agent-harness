@@ -9,13 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // Client is the CLI/TUI-facing endpoint. It owns a peer.Conn (which handles
@@ -58,8 +59,8 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	pskRespCh := make(chan wire.PskAuthStatus, 1)
 
 	// Combined handler: PSK response during handshake, TaskControl after.
-	pc.SetOnControl(func(kind wire.ApplicationPayloadKind, payload []byte) {
-		if kind == wire.ApplicationPayloadKind_PskAuth && len(payload) > 0 {
+	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
 			select {
 			case pskRespCh <- wire.PskAuthStatus(payload[0]):
 			default:
@@ -71,7 +72,13 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	pc.Start(ctx)
 
 	pskCtx, pskCancel := context.WithCancel(ctx)
-	go func() { defer pskCancel(); select { case <-pc.Done(): case <-pskCtx.Done(): } }()
+	go func() {
+		defer pskCancel()
+		select {
+		case <-pc.Done():
+		case <-pskCtx.Done():
+		}
+	}()
 	pskErr := SendAndWaitPSK(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
@@ -89,8 +96,8 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 
 // dispatchControl is the peer ControlHandler. We only care about TaskControl
 // kind — everything else (RunnerControl is server-side only here) is dropped.
-func (c *Client) dispatchControl(kind wire.ApplicationPayloadKind, payload []byte) {
-	if kind != wire.ApplicationPayloadKind_TaskControl {
+func (c *Client) dispatchControl(kind appwire.AppKind, payload []byte) {
+	if kind != appwire.AppKind_TaskControl {
 		return
 	}
 	resp := &protocol.TaskControlResponse{}
@@ -138,7 +145,7 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 	c.mu.Unlock()
 
 	req.RequestId = id
-	data := req.MustAppend([]byte{byte(wire.ApplicationPayloadKind_TaskControl)})
+	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 	if _, _, err := c.conn.Connection().SendMessage(data); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
