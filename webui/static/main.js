@@ -939,18 +939,25 @@ const POLL_INTERVAL_MS = 5000;
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
     // Reflect the Compose "Extra claude args" box (same as Submit / Open) so a
-    // resume can carry e.g. --continue / --permission-mode without going through
-    // the cmdline.
+    // resume can carry --permission-mode etc. without going through the cmdline.
+    // Two variants mirror the TUI's r/R: plain Resume (R) and Resume (--continue)
+    // (r), the latter appending --continue so claude reloads its prior session.
     if (isTerminal) {
-      addItem("▶ Resume", "", async () => {
+      const doResume = async (claudeArgs, note) => {
         setActiveTab("terminal");
         term.reset();
         try {
-          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: currentClaudeArgs(), resumeTaskId: t.id, detachable: true });
-          attachedTask.textContent = `attached: ${id} (resumed)`;
+          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true });
+          attachedTask.textContent = `attached: ${id} (${note})`;
         } catch (err) { attachedTask.textContent = ""; alert(`resume: ${err.message}`); }
         try { fit.fit(); } catch (_) {}
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+      };
+      addItem("▶ Resume", "", () => doResume(currentClaudeArgs(), "resumed"));
+      addItem("▶ Resume (--continue)", "", () => {
+        const args = currentClaudeArgs();
+        if (!args.includes("--continue")) args.push("--continue");
+        doResume(args, "resumed --continue");
       });
     }
 
