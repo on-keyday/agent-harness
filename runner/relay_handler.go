@@ -4,7 +4,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 

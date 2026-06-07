@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 

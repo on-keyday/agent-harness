@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestToRunnerInfoCarriesAgentIdentity(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"net/netip"
 	"syscall"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func UDPEndpoint(logger *slog.Logger, port uint16, mode objproto.EndpointMode) (objproto.Endpoint, error) {

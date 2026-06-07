@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )

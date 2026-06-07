@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli/cliopts"
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"

@@ -3,7 +3,7 @@ package protocol
 import (
 	"net/netip"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // runnerIDToConnID converts protocol.RunnerID → objproto.ConnectionID without

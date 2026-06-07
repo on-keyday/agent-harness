@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/trsf/congestion"
 	"github.com/on-keyday/agent-harness/trsf/mtu"
 	"github.com/on-keyday/agent-harness/trsf/wire"

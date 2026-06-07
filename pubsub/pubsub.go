@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
 	"github.com/on-keyday/agent-harness/trsf/wire"

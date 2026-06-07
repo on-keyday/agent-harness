@@ -4,7 +4,7 @@ import (
 	"crypto/tls"
 	"log/slog"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // WebSocketConfig configures a WebSocket-backed objproto Endpoint. The same

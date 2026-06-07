@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/server"
 )

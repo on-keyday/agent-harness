@@ -11,8 +11,8 @@ import (
 	"sync"
 	"syscall/js"
 
-	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/objproto/packet"
+	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/objproto/packet"
 )
 
 // WebSocketEndpoint constructs a WebSocket-backed objproto Endpoint in the

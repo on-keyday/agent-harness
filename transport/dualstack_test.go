@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // fakeCancelSink records CannotSend invocations so the test can verify

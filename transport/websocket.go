@@ -14,8 +14,8 @@ import (
 	"net/url"
 	"sync"
 
-	"github.com/on-keyday/agent-harness/objproto"
-	"github.com/on-keyday/agent-harness/objproto/packet"
+	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/objproto/packet"
 	"golang.org/x/net/websocket"
 )
 

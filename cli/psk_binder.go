@@ -5,7 +5,7 @@ import (
 	"crypto/sha512"
 	"fmt"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ComputePSKBinder derives a transcript-bound authenticator from the PSK, in

@@ -35,7 +35,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/transport"
 	"github.com/on-keyday/agent-harness/trsf/wire"
 )

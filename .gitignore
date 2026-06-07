@@ -8,3 +8,8 @@ scripts/__pycache__/
 
 # superpowers brainstorm scratch (mockups, server state)
 .superpowers/
+
+# Go workspace — local dev only (e.g. pointing at a sibling objtrsf checkout);
+# never committed so the public go.mod stays free of local replace paths.
+go.work
+go.work.sum

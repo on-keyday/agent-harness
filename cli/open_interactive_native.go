@@ -9,7 +9,7 @@ import (
 	"os"
 
 	agentexec "github.com/on-keyday/agent-harness/exec"
-	"github.com/on-keyday/agent-harness/objproto"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/trsf"
