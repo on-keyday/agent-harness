@@ -569,12 +569,16 @@ const POLL_INTERVAL_MS = 5000;
     // Size (or release) the terminal tab to the visible viewport; this also
     // re-fits the grid that went stale while the tab was display:none.
     fitTerminalToViewport();
-    // On desktop there are no tabs — the terminal section lives below the
-    // controls, so activating it (via Open / Reattach / Resume) should scroll
-    // the page down to it; otherwise the user has to scroll manually to see
-    // the session they just attached to.
-    if (name === "terminal" && !mobile) {
-      interactiveSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    // On desktop there are no tabs — the section lives below the controls, so
+    // activating it should scroll the page down to it; otherwise the user has
+    // to scroll manually to see what they just opened. Applies to the terminal
+    // (Open / Reattach / Resume) and to the file picker (📁 ファイル), both of
+    // which sit below the fold.
+    if (!mobile && (name === "terminal" || name === "files")) {
+      const target = name === "terminal"
+        ? interactiveSection
+        : document.querySelector(`[data-tabgroup="files"]`);
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     // Intentionally NOT focusing the terminal here: focusing pops the soft
     // keyboard on mobile every time you merely switch to the terminal tab to
