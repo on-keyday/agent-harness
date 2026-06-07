@@ -132,6 +132,14 @@ func SendClose(conn UnderlayingSendTransport) error {
 	return err
 }
 
+// SendCloseBody is SendClose with a diagnostic body (status + message). The
+// peer's AutoReceive surfaces the body to its onEvent callback alongside the
+// io.EOF. status is logging-only; a bare SendClose is equally valid.
+func SendCloseBody(conn UnderlayingSendTransport, status wire.CloseStatus, message []byte) error {
+	_, _, err := conn.SendMessage(EncodeClose(status, message))
+	return err
+}
+
 func AutoReceive(ctx context.Context, p Transport, conn UnderlayingBidirectionalTransport, onEvent func(msg *objproto.Message, err error)) {
 	for {
 		data, err := conn.ReceiveMessageContext(ctx)
@@ -150,8 +158,9 @@ func AutoReceive(ctx context.Context, p Transport, conn UnderlayingBidirectional
 			continue
 		}
 		if kind == wire.ApplicationPayloadKind_Ping {
-			// respond with a Pong
-			conn.SendMessage([]byte{byte(wire.ApplicationPayloadKind_Pong)})
+			// Respond with a Pong, echoing the ping body verbatim so the
+			// initiator can compute RTT. A bare ping echoes a bare pong.
+			conn.SendMessage(EncodePong(data.Data[1:]))
 			continue
 		}
 		if kind == wire.ApplicationPayloadKind_Pong {
@@ -160,9 +169,12 @@ func AutoReceive(ctx context.Context, p Transport, conn UnderlayingBidirectional
 		}
 		if kind == wire.ApplicationPayloadKind_Close {
 			// Peer signalled it is going away. Dispatch a final EOF event so
-			// the caller can run its cleanup, then exit the loop.
+			// the caller can run its cleanup, then exit the loop. Any
+			// diagnostic close body (bytes after the kind) is surfaced via the
+			// message; a bare close yields an empty body. Callers that only
+			// care about EOF check err first and ignore the message.
 			if onEvent != nil {
-				onEvent(nil, io.EOF)
+				onEvent(&objproto.Message{Data: data.Data[1:]}, io.EOF)
 			}
 			return
 		}

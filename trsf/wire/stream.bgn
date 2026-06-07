@@ -59,6 +59,24 @@ format UpdateWindow:
 format CancelStreamPacket:
     id :Varint
 
+# Optional transport-keepalive / teardown bodies. ping/pong/close carry an
+# OPTIONAL rest-of-packet body after the kind byte: a 0-length body is valid
+# (bare keepalive / teardown). A ping initiator MAY send PingBody{nanos}; the
+# responder echoes the received body verbatim in its pong so the initiator can
+# compute RTT (time.Since). close MAY carry a CloseBody for diagnostics.
+enum CloseStatus:
+    :u8
+    ok
+    failed
+
+format PingBody:
+    nanos :u64
+
+format CloseBody:
+    status :CloseStatus
+    message_len :u16
+    message :[message_len]u8
+
 enum ApplicationPayloadKind:
     :u8
     ping
