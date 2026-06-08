@@ -32,8 +32,8 @@ func TestRenderNotifyEvent_WorkerShowsTaskIDAndCorrectTime(t *testing.T) {
 	})
 	got := renderNotifyEvent(ev)
 
-	if !strings.Contains(got, taskID[:8]) {
-		t.Fatalf("render missing short task id %q: %q", taskID[:8], got)
+	if !strings.Contains(got, taskID) {
+		t.Fatalf("render missing full task id %q: %q", taskID, got)
 	}
 	if !strings.Contains(got, "gmkhost") {
 		t.Fatalf("render missing hostname: %q", got)

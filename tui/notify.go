@@ -55,10 +55,7 @@ func renderNotifyEvent(ev protocol.NotifyEvent) string {
 			origin += "/" + string(w.Hostname)
 		}
 		if id := string(w.TaskId); len(id) > 0 {
-			if len(id) > 8 {
-				id = id[:8]
-			}
-			origin += " " + id
+			origin += " " + id // full id — copy-pasteable for task addressing
 		}
 	}
 	title := string(ev.Title)

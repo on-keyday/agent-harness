@@ -393,7 +393,7 @@ const POLL_INTERVAL_MS = 5000;
       if (!feed) return;
       const ts = e.ts ? new Date(e.ts * 1000).toISOString() : new Date().toISOString();
       let origin = e.hostname ? `${e.origin || ""}@${e.hostname}` : (e.origin || "");
-      if (e.task_id) origin += " " + String(e.task_id).slice(0, 8);
+      if (e.task_id) origin += " " + String(e.task_id); // full id for copy-paste
       const line = document.createElement("div");
       line.className = "notify-entry notify-level-" + (e.level || "info");
       // "title — text" with both; just one side alone — no dangling separator

@@ -67,7 +67,7 @@ def build_payload(ev: dict) -> dict:
     if origin == "worker":
         bits = []
         host = (ev.get("hostname") or "").strip()
-        task = (ev.get("task_id") or "")[:8]
+        task = (ev.get("task_id") or "")  # full id — copy-pasteable for task addressing
         repo = os.path.basename((ev.get("repo") or "").rstrip("/"))
         if host:
             bits.append(host)
