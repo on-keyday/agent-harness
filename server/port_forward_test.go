@@ -108,11 +108,12 @@ func TestHandleOpenPortForward_RemoteRegisters(t *testing.T) {
 	if _, ok := h.rforwards().get(resp.ForwardId); !ok {
 		t.Fatal("registration not stored")
 	}
-	if len(runnerConn.sent) == 0 {
+	runnerSent := runnerConn.Sent()
+	if len(runnerSent) == 0 {
 		t.Fatal("no listen request sent to runner")
 	}
 	var rr protocol.RunnerRequest
-	if _, err := rr.Decode(runnerConn.sent[0][1:]); err != nil { // strip ApplicationPayloadKind byte
+	if _, err := rr.Decode(runnerSent[0][1:]); err != nil { // strip ApplicationPayloadKind byte
 		t.Fatalf("decode runner req: %v", err)
 	}
 	if rr.Kind != protocol.RunnerRequestType_OpenPortForward {

@@ -36,9 +36,13 @@ type TaskHandler struct {
 	// nil-safe: tests may leave it nil to exercise egress in isolation.
 	OnNotify func(ev protocol.NotifyEvent)
 
+	// remoteForwardsOnce guards the lazy init of remoteForwards so concurrent
+	// callers racing on the first use cannot create two separate registries or
+	// observe a torn pointer write.
+	remoteForwardsOnce sync.Once
 	// remoteForwards tracks active ssh -R registrations (forwardId →
-	// registration). Lazily initialised via rforwards() so struct-literal
-	// construction in tests need not set it.
+	// registration). Lazily initialised via rforwards() (guarded by
+	// remoteForwardsOnce) so struct-literal construction in tests need not set it.
 	remoteForwards *remoteForwardRegistry
 
 	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply

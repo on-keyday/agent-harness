@@ -63,13 +63,13 @@ func (r *remoteForwardRegistry) signalBind(id uint64, ok bool) {
 	}
 }
 
-// rforwards returns the handler's remote-forward registry, lazily creating it.
-// Not safe to call concurrently with itself on first use; in practice the first
-// call happens on a single request goroutine before any teardown goroutine runs.
+// rforwards returns the handler's remote-forward registry, creating it exactly
+// once. Safe for concurrent callers: sync.Once serializes the init and
+// establishes the happens-before so the subsequent field read is race-free.
 func (h *TaskHandler) rforwards() *remoteForwardRegistry {
-	if h.remoteForwards == nil {
+	h.remoteForwardsOnce.Do(func() {
 		h.remoteForwards = newRemoteForwardRegistry()
-	}
+	})
 	return h.remoteForwards
 }
 

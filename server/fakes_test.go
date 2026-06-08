@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"io"
+	"sync"
 	"sync/atomic"
 
 	"github.com/on-keyday/objtrsf/objproto"
@@ -10,8 +11,9 @@ import (
 )
 
 type fakeConn struct {
-	id   objproto.ConnectionID
-	sent [][]byte
+	id     objproto.ConnectionID
+	sentMu sync.Mutex
+	sent   [][]byte
 
 	// nextStreamID is the StreamID to assign to the next CreateBidirectionalStream
 	// result. When zero, CreateBidirectionalStream returns nil (legacy behaviour).
@@ -37,8 +39,19 @@ type fakeConn struct {
 
 func (f *fakeConn) ConnectionID() objproto.ConnectionID { return f.id }
 func (f *fakeConn) SendMessage(b []byte) (int, uint64, error) {
+	f.sentMu.Lock()
 	f.sent = append(f.sent, append([]byte{}, b...))
+	f.sentMu.Unlock()
 	return len(b), 0, nil
+}
+
+// Sent returns a snapshot of the sent messages, safe for concurrent access.
+func (f *fakeConn) Sent() [][]byte {
+	f.sentMu.Lock()
+	defer f.sentMu.Unlock()
+	out := make([][]byte, len(f.sent))
+	copy(out, f.sent)
+	return out
 }
 
 // CreateSendStream returns a recordingSendStream when nextSendStreamID is
