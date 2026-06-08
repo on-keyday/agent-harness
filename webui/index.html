@@ -19,6 +19,7 @@
       <button type="button" class="tab-btn" data-tab="terminal">端末</button>
       <button type="button" class="tab-btn is-active" data-tab="tasks">タスク</button>
       <button type="button" class="tab-btn" data-tab="files">ファイル</button>
+      <button type="button" class="tab-btn" data-tab="notify">通知</button>
     </nav>
     <section id="runners" data-tabgroup="tasks">
       <h2>Runners</h2>
@@ -54,6 +55,25 @@
       <button id="cmd-run">Run</button>
       <input id="hidden-file-input" type="file" style="display:none">
       <pre id="cmd-output"></pre>
+    </section>
+    <section id="notifications" data-tabgroup="notify">
+      <h2>Notifications</h2>
+      <div class="actions">
+        <label for="notify-level">Level:</label>
+        <select id="notify-level">
+          <option value="info">info</option>
+          <option value="warn">warn</option>
+          <option value="error">error</option>
+        </select>
+        <label for="notify-title">Title:</label>
+        <input id="notify-title" type="text" size="30" placeholder="notification title">
+        <label for="notify-text">Text:</label>
+        <input id="notify-text" type="text" size="40" placeholder="notification body">
+        <button id="notify-send">Send</button>
+      </div>
+      <span id="notify-result"></span>
+      <h3>Feed</h3>
+      <div id="notify-feed" style="font-family:monospace;font-size:0.85em;max-height:400px;overflow:auto;border:1px solid #ccc;padding:0.25em"></div>
     </section>
     <section id="files" data-tabgroup="files">
       <h2>Files</h2>

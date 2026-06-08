@@ -63,6 +63,8 @@ func main() {
 		"filePushBytes":        js.FuncOf(harnessFilePushBytes),
 		"filePullBytes":        js.FuncOf(harnessFilePullBytes),
 		"serverDialRunner":     js.FuncOf(harnessServerDialRunner),
+		"sendNotification":     js.FuncOf(harnessSendNotification),
+		"watchNotifications":   js.FuncOf(harnessWatchNotifications),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -752,6 +754,97 @@ func (w *watchPipe) Write(p []byte) (int, error) {
 		evt := map[string]any{"line": line}
 		blob, _ := json.Marshal(evt)
 		js.Global().Call("harness_onTaskEvent", string(blob))
+	}
+	return len(p), nil
+}
+
+// harnessSendNotification sends a notification to the server.
+//
+//	harness.sendNotification({level: "info"|"warn"|"error", title: "...", text: "..."}) -> Promise<void>
+func harnessSendNotification(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("sendNotification: missing options arg"))
+				return
+			}
+			opts := args[0]
+			level := opts.Get("level").String()
+			title := opts.Get("title").String()
+			text := opts.Get("text").String()
+			if err := c.Notify(rootCtx, level, title, text); err != nil {
+				rejectErr(reject, fmt.Errorf("sendNotification: %w", err))
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessWatchNotifications starts a notification-watch goroutine. Events are
+// pushed via window.harness_onNotifyEvent(jsonString) — one raw JSON object per
+// event. The Promise resolves once the goroutine is running; the goroutine runs
+// until rootCtx is cancelled or cli.WatchNotifications returns an error.
+//
+//	harness.watchNotifications() -> Promise<void>
+func harnessWatchNotifications(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			pipe := &notifyPipe{}
+			go func() {
+				if err := c.WatchNotifications(rootCtx, pipe); err != nil {
+					slog.Error("watchNotifications ended", "err", err)
+				}
+			}()
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// notifyPipe accumulates bytes from cli.WatchNotifications, splits on '\n',
+// and forwards each complete line (already a JSON object) to
+// window.harness_onNotifyEvent. Mirrors watchPipe but does NOT re-wrap the
+// line — the JS side receives the raw JSON string and calls JSON.parse itself.
+type notifyPipe struct {
+	carry []byte
+}
+
+func (n *notifyPipe) Write(p []byte) (int, error) {
+	n.carry = append(n.carry, p...)
+	for {
+		idx := -1
+		for i, b := range n.carry {
+			if b == '\n' {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			break
+		}
+		line := string(n.carry[:idx])
+		n.carry = n.carry[idx+1:]
+		js.Global().Call("harness_onNotifyEvent", line)
 	}
 	return len(p), nil
 }

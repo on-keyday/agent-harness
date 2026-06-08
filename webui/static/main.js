@@ -371,6 +371,45 @@ const POLL_INTERVAL_MS = 5000;
     window.harness.watch().catch(e => console.error("watch:", e));
   });
 
+  // Notification feed: window.harness_onNotifyEvent receives one raw JSON
+  // object per event from the wasm notifyPipe.  ts is unix seconds.
+  window.harness_onNotifyEvent = (jsonStr) => {
+    try {
+      const e = JSON.parse(jsonStr);
+      const feed = document.getElementById("notify-feed");
+      if (!feed) return;
+      const ts = e.ts ? new Date(e.ts * 1000).toISOString() : new Date().toISOString();
+      const origin = e.hostname ? `${e.origin || ""}@${e.hostname}` : (e.origin || "");
+      const line = document.createElement("div");
+      line.className = "notify-entry notify-level-" + (e.level || "info");
+      line.textContent = `[${ts}] [${e.level || "?"}] ${origin ? origin + " " : ""}${e.title || ""}: ${e.text || ""}`;
+      feed.insertBefore(line, feed.firstChild);
+      // Cap feed at 200 entries to avoid unbounded growth.
+      while (feed.children.length > 200) feed.removeChild(feed.lastChild);
+    } catch (_) {}
+  };
+  registerOnConnected(() => {
+    window.harness.watchNotifications().catch(e => console.error("watchNotifications:", e));
+  });
+
+  // Notification send form.
+  const notifySend = document.getElementById("notify-send");
+  const notifyResult = document.getElementById("notify-result");
+  if (notifySend && notifyResult) {
+    notifySend.addEventListener("click", async () => {
+      const level = (document.getElementById("notify-level") || {}).value || "info";
+      const title = (document.getElementById("notify-title") || {}).value || "";
+      const text  = (document.getElementById("notify-text")  || {}).value || "";
+      notifyResult.textContent = "sending…";
+      try {
+        await window.harness.sendNotification({ level, title, text });
+        notifyResult.textContent = "sent";
+      } catch (e) {
+        notifyResult.textContent = `error: ${e.message}`;
+      }
+    });
+  }
+
   // appendCmdOutput appends a line to the cmd-output history pane
   // (newest at the bottom, terminal-style) and scrolls the pane / page
   // so the new entry is visible. Caps the buffer at MAX_OUTPUT_LINES
