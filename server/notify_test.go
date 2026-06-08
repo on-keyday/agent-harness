@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 func TestRunNotifyHook_NoHook(t *testing.T) {
@@ -60,5 +62,53 @@ func TestNotifyRing_AppendEvicts(t *testing.T) {
 	}
 	if snap[0].Ts != 2 || snap[2].Ts != 4 {
 		t.Fatalf("ring kept wrong entries: first=%d last=%d", snap[0].Ts, snap[2].Ts)
+	}
+}
+
+// captureConn is a minimal ConnHandle that records the last SendMessage.
+type captureConn struct{ last []byte }
+
+func (c *captureConn) ConnectionID() objproto.ConnectionID { return objproto.ConnectionID{} }
+func (c *captureConn) SendMessage(b []byte) (int, uint64, error) {
+	c.last = append([]byte(nil), b...)
+	return len(b), 0, nil
+}
+func (c *captureConn) CreateSendStream() trsf.SendStream                   { return nil }
+func (c *captureConn) CreateBidirectionalStream() trsf.BidirectionalStream { return nil }
+func (c *captureConn) GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream { return nil }
+func (c *captureConn) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
+	return nil
+}
+
+func TestHandleNotify_NoHook_RunsLiveLeg(t *testing.T) {
+	var captured *protocol.NotifyEvent
+	h := &TaskHandler{
+		OnNotify: func(ev protocol.NotifyEvent) { captured = &ev },
+	}
+
+	nr := protocol.NotifyRequest{Level: protocol.NotifyLevel_Warn, Origin: protocol.NotifyOrigin_External}
+	nr.TextLen = uint16(len("hi"))
+	nr.Text = []byte("hi")
+	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Notify, RequestId: 7}
+	req.SetNotify(nr)
+
+	conn := &captureConn{}
+	h.handleNotify(conn, &req)
+
+	if captured == nil {
+		t.Fatal("OnNotify (live leg) was not called")
+	}
+	if string(captured.Text) != "hi" || captured.Level != protocol.NotifyLevel_Warn {
+		t.Fatalf("event wrong: text=%q level=%v", captured.Text, captured.Level)
+	}
+	var resp protocol.TaskControlResponse
+	if err := resp.DecodeExact(conn.last[1:]); err != nil { // strip AppKind byte
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Kind != protocol.TaskControlKind_Notify || resp.RequestId != 7 {
+		t.Fatalf("response kind/id wrong: %v/%d", resp.Kind, resp.RequestId)
+	}
+	if out := resp.Notify(); out == nil || out.Status != protocol.NotifyStatus_NoHook {
+		t.Fatalf("status = %v, want no_hook", out)
 	}
 }

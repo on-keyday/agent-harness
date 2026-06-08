@@ -85,6 +85,7 @@ type Server struct {
 	runnerHandler *RunnerHandler
 	taskHandler   *TaskHandler
 	dispatcher    *Dispatcher
+	notifyRing    *notifyRing
 
 	// Board is the agentboard instance, wired in by the server binary (Task 9).
 	// When nil, agent_message payloads are ignored silently.
@@ -187,6 +188,13 @@ func New(cfg Config) *Server {
 		// two don't depend on the transport so we set them here.
 		ResolveVia:            s.registry.GetByConnectionID,
 		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
+	}
+	// Wire notify ring + egress hook into the TaskHandler.
+	s.notifyRing = newNotifyRing(64)
+	s.taskHandler.NotifyHook = cfg.NotifyHook
+	s.taskHandler.OnNotify = func(ev protocol.NotifyEvent) {
+		s.notifyRing.append(ev)
+		s.pubsub.Publish("server", topics.Notifications(), ev.MustAppend(nil))
 	}
 	// Route runner-reported remote-forward connections into the TaskHandler
 	// (wired here, after taskHandler construction, since runnerHandler is built

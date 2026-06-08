@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
@@ -26,6 +27,14 @@ type TaskHandler struct {
 	Tasks    *TaskStore
 	Registry *Registry
 	OnChange func() // called after Submit / Cancel mutations
+
+	// NotifyHook is the configured external command for the egress leg of
+	// notify (empty = egress disabled). See server/notify_hook.go.
+	NotifyHook string
+
+	// OnNotify runs the live leg for a notify (ring append + topic publish).
+	// nil-safe: tests may leave it nil to exercise egress in isolation.
+	OnNotify func(ev protocol.NotifyEvent)
 
 	// remoteForwards tracks active ssh -R registrations (forwardId →
 	// registration). Lazily initialised via rforwards() so struct-literal
@@ -273,6 +282,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_Notify:
+		h.handleNotify(conn, &req)
 
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
@@ -1000,6 +1012,94 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.SetIsAttached(t.IsAttached)
 	info.RingBufferBytes = t.RingBufferBytes
 	return info
+}
+
+// notifyLevelString returns the lowercase wire word for a NotifyLevel.
+// protocol.NotifyLevel.String() returns title-case ("Info", "Warn", "Error");
+// hook JSON and env must use lowercase words.
+func notifyLevelString(l protocol.NotifyLevel) string {
+	switch l {
+	case protocol.NotifyLevel_Info:
+		return "info"
+	case protocol.NotifyLevel_Warn:
+		return "warn"
+	case protocol.NotifyLevel_Error:
+		return "error"
+	default:
+		return "info"
+	}
+}
+
+// notifyOriginString returns the lowercase wire word for a NotifyOrigin.
+// protocol.NotifyOrigin.String() returns title-case ("Worker", "External");
+// hook JSON and env must use lowercase words.
+func notifyOriginString(o protocol.NotifyOrigin) string {
+	switch o {
+	case protocol.NotifyOrigin_Worker:
+		return "worker"
+	case protocol.NotifyOrigin_External:
+		return "external"
+	default:
+		return "worker"
+	}
+}
+
+// handleNotify runs both legs of a notify request: the live leg (OnNotify →
+// ring + topic) and the egress leg (NotifyHook exec), then replies with the
+// resulting NotifyStatus. accepted = hook launched; no_hook = egress disabled
+// (live leg still ran); spawn_failed = hook failed to start.
+func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlRequest) {
+	nr := req.Notify()
+	if nr == nil {
+		slog.Error("TaskHandler: Notify variant is nil")
+		return
+	}
+	cid := conn.ConnectionID().String()
+	h.clientKindsMu.Lock()
+	ck := h.clientKinds[cid]
+	h.clientKindsMu.Unlock()
+
+	ts := time.Now().UnixNano()
+	ev := protocol.NotifyEvent{
+		Ts:         uint64(ts),
+		ClientKind: ck,
+		Level:      nr.Level,
+		Origin:     nr.Origin,
+		TitleLen:   nr.TitleLen,
+		Title:      nr.Title,
+		TextLen:    nr.TextLen,
+		Text:       nr.Text,
+	}
+	if nr.Origin == protocol.NotifyOrigin_Worker {
+		if w := nr.Worker(); w != nil {
+			ev.SetWorker(*w)
+		}
+	}
+
+	if h.OnNotify != nil {
+		h.OnNotify(ev)
+	}
+
+	payload := notifyHookPayload{
+		Level:  notifyLevelString(nr.Level),
+		Origin: notifyOriginString(nr.Origin),
+		Title:  string(nr.Title),
+		Text:   string(nr.Text),
+		ConnID: cid,
+		Ts:     ts,
+	}
+	if w := nr.Worker(); w != nil {
+		payload.TaskID = string(w.TaskId)
+		payload.RunnerID = string(w.RunnerId)
+		payload.Repo = string(w.Repo)
+		payload.Hostname = string(w.Hostname)
+	}
+	status := runNotifyHook(h.NotifyHook, payload)
+
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Notify, RequestId: req.RequestId}
+	resp.SetNotify(protocol.NotifyResponse{Status: status})
+	out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+	conn.SendMessage(out) //nolint:errcheck
 }
 
 // placeholderRunnerID returns a safe, encodable RunnerID with a loopback IPv4 address.
