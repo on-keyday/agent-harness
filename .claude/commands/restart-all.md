@@ -30,9 +30,21 @@ skip.
    other slots completes first, then this claude process may be torn down and
    re-spawned with `--continue`. That is normal, not an error.
 
-2. **One** quick confirm — a single `harness-cli ls` to show the fleet came back
-   (binaries rebuilt, runners re-registered `Idle`). Report in 2–3 lines:
-   what the script restarted + that the fleet is back. Do not turn this into a
-   multi-step health audit; the script's own output is authoritative.
+   **A severed / empty / "not executed"-looking Bash result is the SUCCESS
+   signature here, not a failure.** When the self-restart tears this process
+   down, the running `build_and_restart_all.py` call is SIGHUP'd mid-flight, so
+   its stdout never makes it back into the transcript — the tool result may show
+   as empty, truncated, or as though the command never ran. That only means the
+   connection was cut at the moment of self-restart; it says **nothing** about
+   whether the restart happened. It almost certainly did: self is torn down
+   **last**, after every other slot is already rebuilt and back. So:
+   **do NOT conclude the restart failed, and do NOT re-run the script** on the
+   strength of a missing/empty result. Confirm with step 2 instead.
+
+2. **One** quick confirm — a single `harness-cli ls`. This is the authoritative
+   evidence (the Bash output is not, per the note above): look for runners
+   re-registered `Idle` with fresh connection IDs and recently-rebuilt
+   `$HARNESS_REPO_PATH/bin/` timestamps. Report in 2–3 lines: what was restarted
+   + that the fleet is back. Do not turn this into a multi-step health audit.
 
 Arguments (optional): $ARGUMENTS
