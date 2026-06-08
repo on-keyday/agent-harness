@@ -242,7 +242,8 @@ button:hover { background: #555; }
   /* Show only the sections belonging to the active tab. */
   body[data-active-tab="terminal"] [data-tabgroup]:not([data-tabgroup="terminal"]),
   body[data-active-tab="tasks"]    [data-tabgroup]:not([data-tabgroup="tasks"]),
-  body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]) {
+  body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]),
+  body[data-active-tab="notify"]   [data-tabgroup]:not([data-tabgroup="notify"]) {
     display: none;
   }
 }
