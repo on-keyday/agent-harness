@@ -31,7 +31,17 @@ const POLL_INTERVAL_MS = 5000;
 
   // 3. Connect (options-bag form; persist=true enables auto-reconnect loop).
   const connectedHandlers = [];
-  function registerOnConnected(fn) { connectedHandlers.push(fn); }
+  let connectionIsUp = false;
+  function registerOnConnected(fn) {
+    connectedHandlers.push(fn);
+    // The connection can reach 'connected' during `await harness.connect()`,
+    // before the registrations further down in init run — so a handler added
+    // after that event would be stranded until the next reconnect. If we're
+    // already up, invoke it now so it attaches immediately.
+    if (connectionIsUp) {
+      try { fn(); } catch (e) { console.error('connected handler (late)', e); }
+    }
+  }
 
   function paintBanner(state) {
     const el = document.getElementById('harness-conn-banner');
@@ -60,12 +70,15 @@ const POLL_INTERVAL_MS = 5000;
     paintBanner(state);
     if (state.phase === 'connected') {
       setStatus("connected", "connected");
+      connectionIsUp = true;
       for (const fn of connectedHandlers) {
         try { fn(); } catch (e) { console.error('connected handler', e); }
       }
     } else if (state.phase === 'closed') {
+      connectionIsUp = false;
       setStatus("disconnected", "error");
     } else if (state.phase === 'reconnecting') {
+      connectionIsUp = false;
       setStatus("reconnecting…");
     }
   });
@@ -383,9 +396,14 @@ const POLL_INTERVAL_MS = 5000;
       const line = document.createElement("div");
       line.className = "notify-entry notify-level-" + (e.level || "info");
       line.textContent = `[${ts}] [${e.level || "?"}] ${origin ? origin + " " : ""}${e.title || ""}: ${e.text || ""}`;
-      feed.insertBefore(line, feed.firstChild);
-      // Cap feed at 200 entries to avoid unbounded growth.
-      while (feed.children.length > 200) feed.removeChild(feed.lastChild);
+      // Chronological order (oldest top, newest bottom) to match the TUI pane.
+      // Auto-scroll to the newest only if the user was already at the bottom,
+      // so reading older entries isn't interrupted.
+      const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 4;
+      feed.appendChild(line);
+      // Cap feed at 200 entries (drop the oldest from the top).
+      while (feed.children.length > 200) feed.removeChild(feed.firstChild);
+      if (atBottom) feed.scrollTop = feed.scrollHeight;
     } catch (_) {}
   };
   registerOnConnected(() => {
