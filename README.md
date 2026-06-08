@@ -168,6 +168,19 @@ bin/harness-cli file pull -r -f <task-id> rel/dir ./local-dir/
 # for reaching a dev server the agent started inside its worktree. Foreground;
 # Ctrl-C tears down. bind defaults to 127.0.0.1; -L is repeatable.
 bin/harness-cli forward <task-id> -L 3000:127.0.0.1:3000
+
+# 8. Notifications. Push a short status ping — from inside a task or by hand —
+# that shows in the TUI / WebUI notification feed and `notify-watch`. Fire-and-
+# forget; --level is info|warn|error, --title is optional. Origin (task / runner
+# / repo / host) is auto-filled from HARNESS_* when run inside a worker.
+bin/harness-cli notify --level warn "need a decision on approach X"
+bin/harness-cli notify-watch          # stream notifications (ring backlog + live)
+
+# External delivery: start the SERVER with --notify-hook CMD. The server runs
+# CMD per notification (stdin: JSON event; env: HARNESS_NOTIFY_*); CMD relays it
+# onward (phone, chat, …) — no live client needed. examples/notify-hooks/discord.py
+# is a ready Discord-webhook hook (URL from DISCORD_WEBHOOK_URL / _FILE).
+# bin/harness-server --listen :8539 --notify-hook /abs/examples/notify-hooks/discord.py
 ```
 
 ### Daemon lifecycle helpers
