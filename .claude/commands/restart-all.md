@@ -41,10 +41,17 @@ skip.
    **do NOT conclude the restart failed, and do NOT re-run the script** on the
    strength of a missing/empty result. Confirm with step 2 instead.
 
-2. **One** quick confirm — a single `harness-cli ls`. This is the authoritative
-   evidence (the Bash output is not, per the note above): look for runners
-   re-registered `Idle` with fresh connection IDs and recently-rebuilt
-   `$HARNESS_REPO_PATH/bin/` timestamps. Report in 2–3 lines: what was restarted
-   + that the fleet is back. Do not turn this into a multi-step health audit.
+2. Quick confirm — the Bash output is NOT the evidence (per the note above);
+   these two cheap checks are, and they are **separate commands**:
+   - `harness-cli ls` → runners re-registered `Idle` with **fresh connection
+     IDs** (a new ID per runner = it reconnected = it restarted). This is the
+     primary proof the fleet came back. `harness-cli ls` does **not** show
+     binary build times — don't expect them here.
+   - `ls -la "$HARNESS_REPO_PATH/bin/"` → **recent rebuild timestamps** on the
+     binaries (proves `make build` ran). Only needed if you want build proof in
+     addition to the reconnect proof.
+
+   Report in 2–3 lines: what was restarted + that the fleet is back. Don't turn
+   this into a multi-step health audit — these two reads are the whole check.
 
 Arguments (optional): $ARGUMENTS
