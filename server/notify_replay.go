@@ -20,7 +20,9 @@ func replayNotifications(ring *notifyRing, topic string, stream notifyStreamWrit
 		return
 	}
 	for _, ev := range ring.snapshot() {
-		ev := ev
+		// Send-only best-effort: a closed/slow subscriber stream is not a
+		// replay failure, so the AppendData error is intentionally ignored
+		// (mirrors pubsub.Publish).
 		_ = stream.AppendData(false, ev.MustAppend(nil))
 	}
 }
