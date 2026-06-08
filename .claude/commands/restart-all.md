@@ -41,11 +41,29 @@ skip.
    **do NOT conclude the restart failed, and do NOT re-run the script** on the
    strength of a missing/empty result. Confirm with step 2 instead.
 
+   **A bare `continue` arriving as a USER/human-side input turn — right where
+   the self-restart Bash should have been executing — is the resume-after-
+   restart SIGNAL, not a "re-run me" prompt.** (This is specifically about an
+   *input turn*, not anything inside a Bash result or tool output.) When this
+   session's own runner is torn down last, the SIGHUP severs the transcript
+   mid-call; the runner re-spawns claude with `--continue`, which surfaces on
+   the next turn as a user-side `continue` picking up at exactly that Bash
+   point. If the conversation sequence is *[the self-restart Bash point] → a
+   user input turn that just says `continue`*, read it as **"the restart
+   already completed, resume from here"** — confirm via step 2 and stop. Do
+   **NOT** read it as the command having failed, and do **NOT** re-run the
+   script in response — least of all with `--force`.
+
    Belt-and-suspenders: the script is **debounced** — it stamps
    `bin/.run/last-restart-stamp` and no-ops (exit 0, "a restart completed Ns
    ago … skipping") if re-run within 300s. So if a resume re-fires it anyway,
-   you get a safe skip, not a double restart. Use `--force` to override when you
-   genuinely want another cycle inside the window.
+   you get a safe skip, not a double restart. **A debounce skip that lands right
+   after such a `continue` is the safety mechanism working correctly — the
+   restart already happened; the skip is the proof, not an obstacle.** `--force`
+   is a deliberate, explicitly-requested manual action for when you genuinely
+   want another cycle inside the window. **Never reach for `--force` as a reflex
+   to get past an unexpected skip** — doing so produces exactly the redundant
+   double restart the debounce exists to prevent.
 
 2. Quick confirm — the Bash output is NOT the evidence (per the note above);
    these two cheap checks are, and they are **separate commands**:
