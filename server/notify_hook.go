@@ -51,6 +51,9 @@ func runNotifyHook(hookCmd string, payload notifyHookPayload) protocol.NotifySta
 		"HARNESS_NOTIFY_ORIGIN="+payload.Origin,
 		"HARNESS_NOTIFY_TITLE="+payload.Title,
 	)
+	// Bound Wait() even if the hook leaves inheriting children holding the
+	// I/O pipes (mirrors runner/process.go). Force-kill I/O after the deadline.
+	cmd.WaitDelay = notifyHookTimeout
 	if err := cmd.Start(); err != nil {
 		cancel()
 		slog.Error("notify hook: spawn failed", "cmd", hookCmd, "err", err)
