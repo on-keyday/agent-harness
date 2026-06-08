@@ -1025,11 +1025,9 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 		return
 	}
 	cid := conn.ConnectionID().String()
-	h.clientKindsMu.Lock()
-	ck := h.clientKinds[cid]
-	h.clientKindsMu.Unlock()
+	ck := h.lookupClientKind(cid)
 
-	ts := time.Now().UnixNano()
+	ts := time.Now().Unix()
 	ev := protocol.NotifyEvent{
 		Ts:         uint64(ts),
 		ClientKind: ck,
