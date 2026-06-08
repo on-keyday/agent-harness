@@ -119,6 +119,9 @@ enum NotifyOrigin:
 # bash-worker shell with HARNESS_* env). Carried as text (not the typed
 # RunnerID) deliberately: a zero-valued protocol.RunnerID trips the IpAddrLen
 # assertion and panics the encoder, and the hook only needs display strings.
+# As a nested format under `if`, codegen produces a pointer getter
+# `Worker() *WorkerInfo` (nil when origin != worker) and a value setter
+# `SetWorker(WorkerInfo)` — same shape as Cancel()/SetCancel().
 format WorkerInfo:
     task_id_len   :u16
     task_id       :[task_id_len]u8
