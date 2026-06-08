@@ -148,6 +148,21 @@ func main() {
 			die(err)
 		}
 
+	case "notify":
+		fs := flag.NewFlagSet("notify", flag.ExitOnError)
+		title := fs.String("title", "", "short heading for the notification")
+		level := fs.String("level", "info", "severity: info|warn|error")
+		_ = fs.Parse(args)
+		rest := fs.Args()
+		if len(rest) == 0 {
+			fmt.Fprintln(os.Stderr, "notify: missing text")
+			os.Exit(2)
+		}
+		text := strings.Join(rest, " ")
+		if err := cli.Notify(ctx, parseCID(), *level, *title, text); err != nil {
+			die(err)
+		}
+
 	case "prune":
 		fs := flag.NewFlagSet("prune", flag.ExitOnError)
 		before := fs.Duration("before", 7*24*time.Hour, "forget terminal tasks older than this (ignored when TASK_IDs are passed)")
@@ -501,6 +516,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  skill [NAME]                        print the embedded agent skill (default: harness-cli)")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
+	fmt.Fprintln(os.Stderr, "  notify [--title T] [--level info|warn|error] <text>")
+	fmt.Fprintln(os.Stderr, "                                      send a notification (one short line; detail goes in the task log)")
 	fmt.Fprintln(os.Stderr, "  prune [--before DUR] [-f|--force] [TASK_ID ...]")
 	fmt.Fprintln(os.Stderr, "                                      ask the server to forget tasks")
 	fmt.Fprintln(os.Stderr, "                                      no TASK_IDs: terminal tasks older than --before")
