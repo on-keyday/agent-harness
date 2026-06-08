@@ -63,16 +63,22 @@ func renderNotifyEvent(ev protocol.NotifyEvent) string {
 	}
 	title := string(ev.Title)
 	text := string(ev.Text)
+	// body: "title — text" with both; just "text" or "title" alone — no dangling
+	// separator when one side is empty (untitled notifications are common).
+	body := title
+	if text != "" {
+		if body != "" {
+			body += " — " + text
+		} else {
+			body = text
+		}
+	}
 	var sb strings.Builder
 	sb.WriteString(ts)
 	sb.WriteString(" [")
 	sb.WriteString(level)
 	sb.WriteString("] ")
-	sb.WriteString(title)
-	if text != "" {
-		sb.WriteString(" — ")
-		sb.WriteString(text)
-	}
+	sb.WriteString(body)
 	sb.WriteString("  (")
 	sb.WriteString(origin)
 	sb.WriteString(")")

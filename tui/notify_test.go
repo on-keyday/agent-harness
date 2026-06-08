@@ -44,6 +44,26 @@ func TestRenderNotifyEvent_WorkerShowsTaskIDAndCorrectTime(t *testing.T) {
 	}
 }
 
+// TestRenderNotifyEvent_NoTitleNoDanglingSeparator: an untitled event shows the
+// text cleanly, with no dangling "— " separator (the old format rendered
+// "[info]  — text" which read as malformed).
+func TestRenderNotifyEvent_NoTitleNoDanglingSeparator(t *testing.T) {
+	ev := protocol.NotifyEvent{
+		Ts:      1717800000,
+		Level:   protocol.NotifyLevel_Info,
+		Origin:  protocol.NotifyOrigin_External,
+		TextLen: uint16(len("body only")),
+		Text:    []byte("body only"),
+	}
+	got := renderNotifyEvent(ev)
+	if !strings.Contains(got, "body only") {
+		t.Fatalf("render missing text: %q", got)
+	}
+	if strings.Contains(got, "— body only") {
+		t.Fatalf("untitled event has a dangling separator: %q", got)
+	}
+}
+
 // TestDrainNotifyEventsCoalesced verifies that drainNotifyEvents correctly
 // handles a buffer containing multiple coalesced events (as produced by the
 // server-side ring replay path) plus a trailing partial event.

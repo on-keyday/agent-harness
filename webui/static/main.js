@@ -396,7 +396,11 @@ const POLL_INTERVAL_MS = 5000;
       if (e.task_id) origin += " " + String(e.task_id).slice(0, 8);
       const line = document.createElement("div");
       line.className = "notify-entry notify-level-" + (e.level || "info");
-      line.textContent = `[${ts}] [${e.level || "?"}] ${origin ? origin + " " : ""}${e.title || ""}: ${e.text || ""}`;
+      // "title — text" with both; just one side alone — no dangling separator
+      // when untitled (or no body).
+      let body = e.title || "";
+      if (e.text) body = body ? `${body} — ${e.text}` : e.text;
+      line.textContent = `[${ts}] [${e.level || "?"}] ${origin ? origin + " " : ""}${body}`;
       // Chronological order (oldest top, newest bottom) to match the TUI pane.
       // Auto-scroll to the newest only if the user was already at the bottom,
       // so reading older entries isn't interrupted.
