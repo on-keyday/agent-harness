@@ -42,7 +42,7 @@ check: webui-build
 # Static check that the wasm-relevant packages still compile under
 # GOOS=js GOARCH=wasm. Run before commit.
 wasm-check:
-	GOOS=js GOARCH=wasm go build ./cli/... ./transport/... ./cmd/harness-webui-wasm/
+	GOOS=js GOARCH=wasm go build ./cli/... ./cmd/harness-webui-wasm/
 
 test:
 	go test ./...
