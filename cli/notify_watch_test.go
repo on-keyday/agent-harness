@@ -17,7 +17,7 @@ func TestDrainNotifyEvents(t *testing.T) {
 
 	var out bytes.Buffer
 	var mu sync.Mutex
-	rest := drainNotifyEvents(buf, &out, &mu)
+	rest := drainNotifyEvents(buf, &out, &mu, notifyEventJSONLine)
 
 	if n := strings.Count(out.String(), "\n"); n != 2 {
 		t.Fatalf("emitted %d lines, want 2:\n%s", n, out.String())
@@ -28,5 +28,19 @@ func TestDrainNotifyEvents(t *testing.T) {
 	// each emitted line is JSON with the lowercase level
 	if !strings.Contains(out.String(), `"level":"info"`) || !strings.Contains(out.String(), `"level":"warn"`) {
 		t.Fatalf("expected lowercase levels in output:\n%s", out.String())
+	}
+}
+
+func TestNotifyEventTextLine(t *testing.T) {
+	ev := protocol.NotifyEvent{Ts: 1717800000, Level: protocol.NotifyLevel_Warn, Origin: protocol.NotifyOrigin_Worker, TextLen: 2, Text: []byte("hi")}
+	ev.SetWorker(protocol.WorkerInfo{
+		TaskIdLen: uint16(len("0f0d4dd6b7d3b64354cf4ff249b87403")), TaskId: []byte("0f0d4dd6b7d3b64354cf4ff249b87403"),
+		HostnameLen: uint16(len("gmkhost")), Hostname: []byte("gmkhost"),
+	})
+	got := notifyEventTextLine(&ev)
+	for _, want := range []string{"[warn]", "hi", "gmkhost", "0f0d4dd6b7d3b64354cf4ff249b87403"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("text line missing %q: %q", want, got)
+		}
 	}
 }

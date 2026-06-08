@@ -6,16 +6,17 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 )
 
-// WatchNotifications subscribes to the notifications topic and writes one JSON
-// object per line to out for each NotifyEvent (ring backlog first, then live).
-// Method form: callable on an existing *Client (TUI/WebUI reuse their client).
-func (c *Client) WatchNotifications(ctx context.Context, out io.Writer) error {
+// watchNotifications subscribes to the notifications topic and writes one
+// formatted line per NotifyEvent to out (ring backlog first, then live), using
+// the given per-event line formatter. Blocks until ctx is done.
+func (c *Client) watchNotifications(ctx context.Context, out io.Writer, line func(*protocol.NotifyEvent) string) error {
 	topic := topics.Notifications()
 	stream, err := c.Peer().JoinAndGetStream(ctx, "notify-watch", topic)
 	if err != nil {
@@ -31,7 +32,7 @@ func (c *Client) WatchNotifications(ctx context.Context, out io.Writer) error {
 			}
 			if len(data) > 0 {
 				buf = append(buf, data...)
-				buf = drainNotifyEvents(buf, out, &mu)
+				buf = drainNotifyEvents(buf, out, &mu, line)
 			}
 			if eof {
 				return
@@ -42,9 +43,20 @@ func (c *Client) WatchNotifications(ctx context.Context, out io.Writer) error {
 	return ctx.Err()
 }
 
-// WatchNotifications (package-level) is a thin wrapper that opens a fresh Client per call.
-// Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
-// should hold a *Client and call (*Client).WatchNotifications instead.
+// WatchNotifications writes one JSON object per line (machine-readable). Used by
+// the TUI/WebUI wasm consumers. Method form: callable on an existing *Client.
+func (c *Client) WatchNotifications(ctx context.Context, out io.Writer) error {
+	return c.watchNotifications(ctx, out, notifyEventJSONLine)
+}
+
+// WatchNotificationsText writes one human-readable line per event — for
+// `harness-cli notify-watch`, mirroring cli.Watch's line output.
+func (c *Client) WatchNotificationsText(ctx context.Context, out io.Writer) error {
+	return c.watchNotifications(ctx, out, notifyEventTextLine)
+}
+
+// WatchNotifications (package-level) opens a fresh Client per call (short-lived
+// harness-cli). Writes JSON lines. Long-lived consumers hold a *Client.
 func WatchNotifications(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
 	c, err := Dial(ctx, peerCID)
 	if err != nil {
@@ -54,9 +66,20 @@ func WatchNotifications(ctx context.Context, peerCID objproto.ConnectionID, out 
 	return c.WatchNotifications(ctx, out)
 }
 
+// WatchNotificationsText (package-level) is the human-readable variant for the
+// `harness-cli notify-watch` subcommand.
+func WatchNotificationsText(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, peerCID)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.WatchNotificationsText(ctx, out)
+}
+
 // drainNotifyEvents decodes as many whole NotifyEvents as buf holds, writing one
-// JSON line each, and returns the undrained remainder.
-func drainNotifyEvents(buf []byte, out io.Writer, mu *sync.Mutex) []byte {
+// formatted line each, and returns the undrained remainder.
+func drainNotifyEvents(buf []byte, out io.Writer, mu *sync.Mutex, line func(*protocol.NotifyEvent) string) []byte {
 	for {
 		ev := &protocol.NotifyEvent{}
 		rest, err := ev.Decode(buf)
@@ -64,12 +87,40 @@ func drainNotifyEvents(buf []byte, out io.Writer, mu *sync.Mutex) []byte {
 			break
 		}
 		mu.Lock()
-		line, _ := json.Marshal(notifyEventJSON(ev))
-		fmt.Fprintf(out, "%s\n", line)
+		fmt.Fprintln(out, line(ev))
 		mu.Unlock()
 		buf = rest
 	}
 	return buf
+}
+
+func notifyEventJSONLine(ev *protocol.NotifyEvent) string {
+	b, _ := json.Marshal(notifyEventJSON(ev))
+	return string(b)
+}
+
+// notifyEventTextLine renders "15:04:05 [level] title — text  (origin[/host][ taskid])",
+// matching the TUI pane's renderNotifyEvent.
+func notifyEventTextLine(ev *protocol.NotifyEvent) string {
+	ts := time.Unix(int64(ev.Ts), 0).Local().Format("15:04:05")
+	origin := ev.Origin.String()
+	if w := ev.Worker(); w != nil {
+		if len(w.Hostname) > 0 {
+			origin += "/" + string(w.Hostname)
+		}
+		if id := string(w.TaskId); len(id) > 0 {
+			origin += " " + id
+		}
+	}
+	body := string(ev.Title)
+	if text := string(ev.Text); text != "" {
+		if body != "" {
+			body += " — " + text
+		} else {
+			body = text
+		}
+	}
+	return fmt.Sprintf("%s [%s] %s  (%s)", ts, ev.Level.String(), body, origin)
 }
 
 func notifyEventJSON(ev *protocol.NotifyEvent) map[string]any {

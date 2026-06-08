@@ -229,6 +229,11 @@ func main() {
 			die(err)
 		}
 
+	case "notify-watch":
+		if err := cli.WatchNotificationsText(ctx, parseCID(), os.Stdout); err != nil {
+			die(err)
+		}
+
 	case "interactive":
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
 		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
@@ -528,6 +533,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      with TASK_IDs: removes only those (refuses active tasks unless --force)")
 	fmt.Fprintln(os.Stderr, "  logs [-f|--follow] TASK_ID          dump task log history; -f also streams live chunks until task terminal")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
+	fmt.Fprintln(os.Stderr, "  notify-watch                        stream notifications (backlog + live); one human-readable line each")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID]")
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
