@@ -108,15 +108,6 @@ func truncateRunes(s string, maxBytes int) string {
 	return string(b[:n])
 }
 
-// isValidUTF8 / tail are test helpers kept here so the test file needs no extra imports.
-func isValidUTF8(b []byte) bool { return utf8.Valid(b) }
-func tail(s string) string {
-	if len(s) <= 12 {
-		return s
-	}
-	return s[len(s)-12:]
-}
-
 // Notify sends a notification over an existing *Client. Long-lived consumers
 // (TUI/WebUI) call this on their persistent client. level is "info|warn|error".
 func (c *Client) Notify(ctx context.Context, level, title, text string) error {
