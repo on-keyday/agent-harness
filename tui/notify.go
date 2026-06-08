@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -46,13 +45,21 @@ func (m *NotifyModel) Append(ev protocol.NotifyEvent) {
 }
 
 // renderNotifyEvent formats a single event as:
-// 15:04:05 [level] title — text  (origin[/hostname])
+// 15:04:05 [level] title — text  (origin[/hostname][ taskid])
 func renderNotifyEvent(ev protocol.NotifyEvent) string {
-	ts := time.Unix(0, int64(ev.Ts)).Local().Format("15:04:05")
+	ts := time.Unix(int64(ev.Ts), 0).Local().Format("15:04:05") // ev.Ts is unix seconds
 	level := ev.Level.String()
 	origin := ev.Origin.String()
-	if w := ev.Worker(); w != nil && len(w.Hostname) > 0 {
-		origin = fmt.Sprintf("%s/%s", origin, string(w.Hostname))
+	if w := ev.Worker(); w != nil {
+		if len(w.Hostname) > 0 {
+			origin += "/" + string(w.Hostname)
+		}
+		if id := string(w.TaskId); len(id) > 0 {
+			if len(id) > 8 {
+				id = id[:8]
+			}
+			origin += " " + id
+		}
 	}
 	title := string(ev.Title)
 	text := string(ev.Text)
