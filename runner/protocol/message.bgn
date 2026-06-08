@@ -184,6 +184,7 @@ enum TaskControlKind:
     list_files
     dial_runner
     open_port_forward
+    notify
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # Sent once right after handshake via TaskControlRequest{client_hello,...} so
@@ -569,6 +570,7 @@ format TaskControlRequest:
         TaskControlKind.list_files         => list_files         :ListFilesRequest
         TaskControlKind.dial_runner        => dial_runner        :DialRunnerRequest
         TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardRequest
+        TaskControlKind.notify => notify :NotifyRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -590,6 +592,59 @@ format TaskControlResponse:
         TaskControlKind.list_files         => list_files         :ListFilesResponse
         TaskControlKind.dial_runner        => dial_runner        :DialRunnerResponse
         TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardResponse
+        TaskControlKind.notify => notify :NotifyResponse
+
+enum NotifyLevel:
+    :u8
+    info
+    warn
+    error
+
+enum NotifyOrigin:
+    :u8
+    worker
+    external
+
+enum NotifyStatus:
+    :u8
+    accepted
+    no_hook
+    spawn_failed
+
+format WorkerInfo:
+    task_id_len   :u16
+    task_id       :[task_id_len]u8
+    runner_id_len :u16
+    runner_id     :[runner_id_len]u8
+    repo_len      :u16
+    repo          :[repo_len]u8
+    hostname_len  :u16
+    hostname      :[hostname_len]u8
+
+format NotifyRequest:
+    level  :NotifyLevel
+    origin :NotifyOrigin
+    if origin == NotifyOrigin.worker:
+        worker :WorkerInfo
+    title_len :u16
+    title     :[title_len]u8
+    text_len  :u16
+    text      :[text_len]u8
+
+format NotifyResponse:
+    status :NotifyStatus
+
+format NotifyEvent:
+    ts          :u64
+    client_kind :ClientKind
+    level  :NotifyLevel
+    origin :NotifyOrigin
+    if origin == NotifyOrigin.worker:
+        worker :WorkerInfo
+    title_len :u16
+    title     :[title_len]u8
+    text_len  :u16
+    text      :[text_len]u8
 
 # Pubsub event payloads
 enum StatusEventKind:
