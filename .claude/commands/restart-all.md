@@ -6,6 +6,30 @@ allowed-tools: Bash
 Rebuild + restart every alive local agent-runner slot. This is the canonical
 fleet cutover/refresh action.
 
+## When you need this — and when you DON'T
+
+`/restart-all` rebuilds **and restarts** the long-running **server / runner**
+processes. You only need it when the change affects **server or runner runtime
+behavior** — those processes hold their binary in memory and won't pick up new
+code without a restart.
+
+A change that touches ONLY the CLI does **not** need a restart. `harness-cli`
+(and `harness-tui` when launched fresh) is invoked as a new process each time, so
+rebuilding the binary is enough:
+
+```
+make build      # in the MAIN checkout ($HARNESS_REPO_PATH, where `which harness-cli` lives)
+```
+
+`make build` rebuilds every binary + the webui wasm but **restarts nothing**. So:
+
+- New/changed `harness-cli` subcommand, `cli/` package, TUI rendering → `make build`.
+- Changed `server/`, `runner/`, the wire protocol the running procs speak, or
+  anything the **live** server/runner must execute → `/restart-all`.
+
+Ask "did the server or runner behavior change?" before reaching for `/restart-all`
+— don't run it reflexively after every land.
+
 **Do NOT investigate topology, env vars, or self-termination risk first.** The
 script already handles all of it: self-last ordering, detached self-restart that
 survives the cascade (`scripts/restart.py`), stale-slot skipping, and self
