@@ -391,21 +391,42 @@ const POLL_INTERVAL_MS = 5000;
       const e = JSON.parse(jsonStr);
       const feed = document.getElementById("notify-feed");
       if (!feed) return;
-      const ts = e.ts ? new Date(e.ts * 1000).toISOString() : new Date().toISOString();
-      let origin = e.hostname ? `${e.origin || ""}@${e.hostname}` : (e.origin || "");
-      if (e.task_id) origin += " " + String(e.task_id); // full id for copy-paste
-      const line = document.createElement("div");
-      line.className = "notify-entry notify-level-" + (e.level || "info");
-      // "title — text" with both; just one side alone — no dangling separator
-      // when untitled (or no body).
+      const lvl = e.level || "info";
+      const time = new Date((e.ts ? e.ts * 1000 : Date.now())).toLocaleTimeString();
+      // "title — text" with both; just one side alone — no dangling separator.
       let body = e.title || "";
       if (e.text) body = body ? `${body} — ${e.text}` : e.text;
-      line.textContent = `[${ts}] [${e.level || "?"}] ${origin ? origin + " " : ""}${body}`;
-      // Chronological order (oldest top, newest bottom) to match the TUI pane.
-      // Auto-scroll to the newest only if the user was already at the bottom,
-      // so reading older entries isn't interrupted.
+      let src = e.hostname ? `${e.origin || ""}@${e.hostname}` : (e.origin || "");
+      if (e.task_id) src += " · " + String(e.task_id); // full id, copy-pasteable
+
+      // Structured entry: colored level badge + short time, prominent message,
+      // muted source/task-id below. Color-coding + spacing are in style.css.
+      const entry = document.createElement("div");
+      entry.className = "notify-entry notify-level-" + lvl;
+      const head = document.createElement("div");
+      head.className = "notify-head";
+      const badge = document.createElement("span");
+      badge.className = "notify-badge";
+      badge.textContent = lvl.toUpperCase();
+      const tEl = document.createElement("span");
+      tEl.className = "notify-time";
+      tEl.textContent = time;
+      head.append(badge, tEl);
+      const bodyEl = document.createElement("div");
+      bodyEl.className = "notify-body";
+      bodyEl.textContent = body || "(no body)";
+      entry.append(head, bodyEl);
+      if (src) {
+        const metaEl = document.createElement("div");
+        metaEl.className = "notify-meta";
+        metaEl.textContent = src;
+        entry.append(metaEl);
+      }
+
+      // Chronological order (oldest top, newest bottom). Auto-scroll to the
+      // newest only if the user was already at the bottom.
       const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 4;
-      feed.appendChild(line);
+      feed.appendChild(entry);
       // Cap feed at 200 entries (drop the oldest from the top).
       while (feed.children.length > 200) feed.removeChild(feed.firstChild);
       if (atBottom) feed.scrollTop = feed.scrollHeight;
