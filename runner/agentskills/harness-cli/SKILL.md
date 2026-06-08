@@ -325,6 +325,31 @@ idempotent and skips already-terminal tasks. (`prune` / `prune-local` are
 post-hoc cleanup of terminal tasks — server-side forget and local worktree
 removal respectively — and are kind-agnostic.)
 
+## Notifying the operator (`notify`)
+
+`harness-cli notify` pushes a short text notification to the server. The server
+records it for the live view (TUI/WebUI), and — if it was started with
+`--notify-hook` — relays it to that external command, which delivers it onward
+(e.g. to the operator's phone). It needs no live client attached.
+
+```bash
+harness-cli notify "build green, PR is up"
+harness-cli notify --level warn  "which approach for X — need your call"
+harness-cli notify --level error "make check failed on the lint runner"
+```
+
+`--level` is `info` (default) / `warn` / `error`; `--title` sets an optional
+heading. Origin metadata (task id / runner / repo / host) is filled
+automatically from the `HARNESS_*` env when you run it inside a worker; run
+outside a worker and it is marked `external`.
+
+**Keep it to one short line.** It is a fire-and-forget, one-way ping — NOT a
+question and NOT a request/response. Send it and end the turn; do not wait for
+anything back. Over-long text is truncated to fit the transport, and detail
+belongs in the task log, not the notification. Use it to surface "I'm done",
+"I'm blocked and need a decision", or "this failed" to an away-from-keyboard
+operator.
+
 ## Moving files in / out of a worker's worktree
 
 `harness-cli file` reads and writes files inside a task's **worktree** — the
