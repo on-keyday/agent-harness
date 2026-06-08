@@ -740,8 +740,10 @@ func (a *App) cycleFocus(delta int) {
 }
 
 // layout computes per-panel sizes from a.width / a.height. Header 1, runners
-// + tasks 10 each, notify 4, cmdresult 5, cmdline 1, footer 1, plus 5 border
-// rows distributed across panels = 27 reserved. Log gets the rest (min 5).
+// + tasks border-inclusive 12, notify border-inclusive 6, cmdresult
+// border-inclusive 7, cmdline 1, footer 1 = 28 fixed non-log rows, plus the
+// log panel's own 2 border rows = 30 reserved. Log content gets the rest
+// (min 5); logHeight refers to the inner content height of the log panel.
 func (a *App) layout() {
 	if a.width < 80 || a.height < 24 {
 		return
@@ -779,7 +781,7 @@ func (a *App) View() string {
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, runnersView, tasksView)
 
-	logHeight := max(a.height-27, 5)
+	logHeight := max(a.height-30, 5)
 	a.logs.SetSize(a.width-4, logHeight-2) // -2 for the panel border rows
 	logBorder := PanelStyle
 	if a.logs.IsFocused() {
@@ -809,7 +811,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · notify <text> · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
