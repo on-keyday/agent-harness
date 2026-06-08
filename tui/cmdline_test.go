@@ -403,3 +403,62 @@ func TestParseServerDialRunnerWithoutVia(t *testing.T) {
 		t.Errorf("Via should be empty, got %q", a.Via)
 	}
 }
+
+func TestParseNotifySimple(t *testing.T) {
+	// "notify hello" — no explicit level; Level is empty (defaults to info at dispatch),
+	// title = "hello", text = "".
+	got, err := ParseCommand(`notify hello`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := got.(NotifyAction)
+	if !ok {
+		t.Fatalf("got %T, want NotifyAction", got)
+	}
+	if a.Level != "" {
+		t.Errorf("Level=%q, want empty (defaulted)", a.Level)
+	}
+	if a.Title != "hello" {
+		t.Errorf("Title=%q, want hello", a.Title)
+	}
+	if a.Text != "" {
+		t.Errorf("Text=%q, want empty", a.Text)
+	}
+}
+
+func TestParseNotifyWarnWithText(t *testing.T) {
+	// "notify warn foo bar" — explicit warn level, title = "foo", text = "bar".
+	got, err := ParseCommand(`notify warn foo bar`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := got.(NotifyAction)
+	if !ok {
+		t.Fatalf("got %T, want NotifyAction", got)
+	}
+	if a.Level != "warn" {
+		t.Errorf("Level=%q, want warn", a.Level)
+	}
+	if a.Title != "foo" {
+		t.Errorf("Title=%q, want foo", a.Title)
+	}
+	if a.Text != "bar" {
+		t.Errorf("Text=%q, want bar", a.Text)
+	}
+}
+
+func TestParseNotifyEmpty(t *testing.T) {
+	// "notify" with no arguments must return an error.
+	_, err := ParseCommand(`notify`, "/cwd")
+	if err == nil {
+		t.Fatal("expected error on empty notify")
+	}
+}
+
+func TestParseNotifyLevelOnlyNoTitle(t *testing.T) {
+	// "notify error" — "error" is consumed as the level, leaving no title → error.
+	_, err := ParseCommand(`notify error`, "/cwd")
+	if err == nil {
+		t.Fatal("expected error: level consumed but no title provided")
+	}
+}

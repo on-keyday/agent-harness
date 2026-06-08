@@ -113,17 +113,56 @@ type NotifyEventMsg struct {
 	Event protocol.NotifyEvent
 }
 
-// SubscribeNotifications joins the notifications topic and forwards each decoded
-// NotifyEvent as NotifyEventMsg via program.Send. Mirrors SubscribeTaskStatus.
-func SubscribeNotifications(ctx context.Context, c *cli.Client, program *tea.Program) {
-	subscribeAndStream(ctx, c, topics.Notifications(), program, func(payload []byte) tea.Msg {
+// drainNotifyEvents decodes every complete NotifyEvent in buf, calling emit for
+// each (in order), and returns the undrained remainder. Handles coalesced reads
+// (multiple events in one payload) and split reads (a partial event at the tail).
+func drainNotifyEvents(buf []byte, emit func(protocol.NotifyEvent)) []byte {
+	for {
 		var ev protocol.NotifyEvent
-		if _, err := ev.Decode(payload); err != nil {
-			slog.Warn("decode notify event", "err", err)
-			return nil
+		rest, err := ev.Decode(buf)
+		if err != nil {
+			break
 		}
-		return NotifyEventMsg{Event: ev}
-	})
+		emit(ev)
+		buf = rest
+	}
+	return buf
+}
+
+// SubscribeNotifications joins the notifications topic and forwards each decoded
+// NotifyEvent as NotifyEventMsg via program.Send. Unlike subscribeAndStream, this
+// accumulates bytes across ReadDirect calls and drains ALL complete events per read,
+// correctly handling the server-side ring replay path that may coalesce multiple
+// AppendData calls into a single ReadDirect payload.
+func SubscribeNotifications(ctx context.Context, c *cli.Client, program *tea.Program) {
+	stream, err := c.Peer().JoinAndGetStream(ctx, "tui", topics.Notifications())
+	if err != nil {
+		if ctx.Err() == nil {
+			slog.Warn("subscribe notifications", "err", err)
+		}
+		return
+	}
+	var buf []byte
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		data, eof, rerr := stream.ReadDirect(64 * 1024)
+		if rerr != nil {
+			return
+		}
+		if len(data) > 0 {
+			buf = append(buf, data...)
+			buf = drainNotifyEvents(buf, func(ev protocol.NotifyEvent) {
+				program.Send(NotifyEventMsg{Event: ev})
+			})
+		}
+		if eof {
+			return
+		}
+	}
 }
 
 // subscribeAndStream uses peer.Conn.JoinAndGetStream to do the JOIN+lookup+
