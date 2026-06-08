@@ -424,25 +424,49 @@ const POLL_INTERVAL_MS = 5000;
       }
 
       // A worker-origin notification carries a task id — make the entry tappable
-      // to reattach to / resume that task straight from the feed (WebUI only).
+      // to reattach to / resume that task from the feed (WebUI only). The action
+      // is gated by the task's CURRENT state, looked up at tap time (the status
+      // may have changed since the notification): a live interactive session →
+      // Reattach; a terminal task → Resume; same gating as the task sheet.
       if (e.task_id) {
         const taskID = String(e.task_id);
         entry.classList.add("notify-actionable");
         const actions = document.createElement("div");
         actions.className = "notify-actions";
         actions.hidden = true;
-        const mkBtn = (label, fn) => {
-          const b = document.createElement("button");
-          b.type = "button";
-          b.className = "notify-action-btn";
-          b.textContent = label;
-          b.addEventListener("click", (ev) => { ev.stopPropagation(); actions.hidden = true; fn(taskID); });
-          actions.appendChild(b);
-        };
-        mkBtn("↪ Reattach", reattachTo);
-        mkBtn("▶ Resume", resumeTaskById);
         entry.append(actions);
-        entry.addEventListener("click", () => { actions.hidden = !actions.hidden; });
+        entry.addEventListener("click", async () => {
+          if (!actions.hidden) { actions.hidden = true; return; } // tap again closes
+          actions.replaceChildren();
+          let t = null;
+          try {
+            const snap = await window.harness.snapshot();
+            t = (snap.tasks || []).find((x) => x.id === taskID);
+          } catch (_) { /* snapshot unavailable — fall through to unknown */ }
+          const mkBtn = (label, fn) => {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "notify-action-btn";
+            b.textContent = label;
+            b.addEventListener("click", (ev) => { ev.stopPropagation(); actions.hidden = true; fn(taskID); });
+            actions.appendChild(b);
+          };
+          const live = t && t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached");
+          const terminal = t && TERMINAL_STATES.has(t.status);
+          if (live) mkBtn("↪ Reattach", reattachTo);
+          if (terminal) mkBtn("▶ Resume", resumeTaskById);
+          if (!t) { // not in the snapshot (pruned/unknown) — offer both as a fallback
+            mkBtn("↪ Reattach", reattachTo);
+            mkBtn("▶ Resume", resumeTaskById);
+          }
+          if (!actions.childElementCount) { // known, but neither applies (e.g. a running one-shot)
+            const note = document.createElement("span");
+            note.className = "notify-meta";
+            note.textContent = `(${t.status} ${t.kind} — no reattach/resume)`;
+            actions.appendChild(note);
+          }
+          actions.hidden = false;
+        });
       }
 
       // Chronological order (oldest top, newest bottom). Auto-scroll to the
