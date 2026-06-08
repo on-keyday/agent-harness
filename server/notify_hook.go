@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -14,6 +16,38 @@ import (
 
 // notifyHookTimeout bounds a hook process; a slow/hung sink must not pile up.
 const notifyHookTimeout = 10 * time.Second
+
+// notifyHookOutputCap bounds how much hook stdout+stderr we retain for the log,
+// so a misbehaving hook can't flood it.
+const notifyHookOutputCap = 4096
+
+// capBuf is an io.Writer that retains at most cap bytes and drops the rest. It
+// is mutex-guarded so reading it is safe even in the cmd.WaitDelay edge case
+// where the exec I/O copier may still be writing after Wait returns.
+type capBuf struct {
+	mu  sync.Mutex
+	buf []byte
+	cap int
+}
+
+func (c *capBuf) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if room := c.cap - len(c.buf); room > 0 {
+		if room < len(p) {
+			c.buf = append(c.buf, p[:room]...)
+		} else {
+			c.buf = append(c.buf, p...)
+		}
+	}
+	return len(p), nil // report full consumption; overflow is intentionally dropped
+}
+
+func (c *capBuf) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return strings.TrimSpace(string(c.buf))
+}
 
 // notifyHookPayload is the JSON written to the hook's stdin. Worker fields are
 // empty for origin=external. conn_id + ts are server-injected.
@@ -51,6 +85,13 @@ func runNotifyHook(hookCmd string, payload notifyHookPayload) protocol.NotifySta
 		"HARNESS_NOTIFY_ORIGIN="+payload.Origin,
 		"HARNESS_NOTIFY_TITLE="+payload.Title,
 	)
+	// Capture the hook's combined stdout+stderr (capped) so a failure surfaces
+	// WHY in the server log, not just the exit code. Setting Stdout==Stderr makes
+	// exec serialize the writes (single writer), so capBuf needs no extra lock
+	// for that — its mutex only guards the post-Wait read.
+	out := &capBuf{cap: notifyHookOutputCap}
+	cmd.Stdout = out
+	cmd.Stderr = out
 	// Bound Wait() even if the hook leaves inheriting children holding the
 	// I/O pipes (mirrors runner/process.go). Force-kill I/O after the deadline.
 	cmd.WaitDelay = notifyHookTimeout
@@ -62,7 +103,7 @@ func runNotifyHook(hookCmd string, payload notifyHookPayload) protocol.NotifySta
 	go func() {
 		defer cancel()
 		if err := cmd.Wait(); err != nil {
-			slog.Warn("notify hook: nonzero/timeout", "cmd", hookCmd, "err", err)
+			slog.Warn("notify hook: nonzero/timeout", "cmd", hookCmd, "err", err, "output", out.String())
 		}
 	}()
 	return protocol.NotifyStatus_Accepted

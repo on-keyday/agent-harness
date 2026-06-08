@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +14,63 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
+
+// syncLogBuf is a goroutine-safe buffer for capturing async slog output.
+type syncLogBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (w *syncLogBuf) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.Write(p)
+}
+
+func (w *syncLogBuf) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.b.String()
+}
+
+func TestCapBuf_CapsAndDropsOverflow(t *testing.T) {
+	c := &capBuf{cap: 8}
+	c.Write([]byte("hello "))    // 6 bytes
+	c.Write([]byte("world!!!!")) // only 2 more bytes retained, rest dropped
+	if got := c.String(); got != "hello wo" {
+		t.Fatalf("capBuf = %q, want %q", got, "hello wo")
+	}
+}
+
+func TestRunNotifyHook_LogsHookOutputOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "hook.sh")
+	// Exit nonzero and print a diagnostic to stderr — what a real hook (e.g. the
+	// discord example) does when delivery fails.
+	body := "#!/bin/sh\necho 'discord notify: POST failed: BOOM' >&2\nexit 7\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	logbuf := &syncLogBuf{}
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(logbuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(old)
+
+	if got := runNotifyHook(script, notifyHookPayload{Text: "x"}); got != protocol.NotifyStatus_Accepted {
+		t.Fatalf("status = %v, want accepted (failures are logged, not returned)", got)
+	}
+
+	// The reap+log happens in a background goroutine — poll for it.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(logbuf.String(), "BOOM") {
+			return // the hook's stderr reached the server log
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("hook stderr ('BOOM') never appeared in the server log:\n%s", logbuf.String())
+}
 
 func TestRunNotifyHook_NoHook(t *testing.T) {
 	if got := runNotifyHook("", notifyHookPayload{Text: "x"}); got != protocol.NotifyStatus_NoHook {
