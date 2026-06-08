@@ -35,6 +35,7 @@ var (
 	pskFile              = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
 	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
 	idleTimeout          = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
+	notifyHook           = flag.String("notify-hook", "", "external command invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); empty disables egress, fallback env HARNESS_NOTIFY_HOOK")
 
 	shutdownFile = flag.String("shutdown-file", "", "path to a sentinel file the server polls every 250ms; when it appears the server triggers a graceful shutdown. daemon.py injects this automatically when the server is spawned via scripts/server.py up, so Windows downs (where SIGTERM can't reach a DETACHED_PROCESS child) can still close WS connections cleanly instead of being TerminateProcess'd cold.")
 
@@ -98,6 +99,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	nh := strings.TrimSpace(*notifyHook)
+	if nh == "" {
+		nh = strings.TrimSpace(os.Getenv("HARNESS_NOTIFY_HOOK"))
+	}
+
 	// WebUI assets: embedded by default; a non-empty --webui-dir (or
 	// HARNESS_WEBUI_DIR) swaps in an on-disk FS so static/* (main.wasm,
 	// main.js, css) is read fresh per request — rebuild + browser refresh,
@@ -127,6 +133,7 @@ func main() {
 		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,
 		DetachIdleTimeout:    *idleTimeout,
+		NotifyHook:           nh,
 	})
 	board := agentboard.New(agentboard.Config{
 		RingN:      *agentboardRing,

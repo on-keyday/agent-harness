@@ -66,6 +66,12 @@ type Config struct {
 	// idle for longer than this duration to be automatically cancelled. 0
 	// disables idle cancellation (default).
 	DetachIdleTimeout time.Duration
+
+	// NotifyHook, when non-empty, is an executable invoked once per notify
+	// request: stdin receives a JSON payload, env carries HARNESS_NOTIFY_*.
+	// Empty disables the egress leg (notify still records to the ring + topic).
+	// Invoked directly (no shell) — text is on stdin, never an argument.
+	NotifyHook string
 }
 
 // Server wires all components together and manages the main accept loop.
