@@ -570,7 +570,7 @@ format TaskControlRequest:
         TaskControlKind.list_files         => list_files         :ListFilesRequest
         TaskControlKind.dial_runner        => dial_runner        :DialRunnerRequest
         TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardRequest
-        TaskControlKind.notify => notify :NotifyRequest
+        TaskControlKind.notify              => notify             :NotifyRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -592,7 +592,7 @@ format TaskControlResponse:
         TaskControlKind.list_files         => list_files         :ListFilesResponse
         TaskControlKind.dial_runner        => dial_runner        :DialRunnerResponse
         TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardResponse
-        TaskControlKind.notify => notify :NotifyResponse
+        TaskControlKind.notify              => notify             :NotifyResponse
 
 enum NotifyLevel:
     :u8
@@ -611,6 +611,8 @@ enum NotifyStatus:
     no_hook
     spawn_failed
 
+# Worker identity as text (not the typed RunnerID): a zero-value RunnerID trips
+# the IpAddrLen hard assertion and panics the encoder. The hook only needs strings.
 format WorkerInfo:
     task_id_len   :u16
     task_id       :[task_id_len]u8
