@@ -423,6 +423,28 @@ const POLL_INTERVAL_MS = 5000;
         entry.append(metaEl);
       }
 
+      // A worker-origin notification carries a task id — make the entry tappable
+      // to reattach to / resume that task straight from the feed (WebUI only).
+      if (e.task_id) {
+        const taskID = String(e.task_id);
+        entry.classList.add("notify-actionable");
+        const actions = document.createElement("div");
+        actions.className = "notify-actions";
+        actions.hidden = true;
+        const mkBtn = (label, fn) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = "notify-action-btn";
+          b.textContent = label;
+          b.addEventListener("click", (ev) => { ev.stopPropagation(); actions.hidden = true; fn(taskID); });
+          actions.appendChild(b);
+        };
+        mkBtn("↪ Reattach", reattachTo);
+        mkBtn("▶ Resume", resumeTaskById);
+        entry.append(actions);
+        entry.addEventListener("click", () => { actions.hidden = !actions.hidden; });
+      }
+
       // Chronological order (oldest top, newest bottom). Auto-scroll to the
       // newest only if the user was already at the bottom.
       const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 4;
@@ -919,6 +941,27 @@ const POLL_INTERVAL_MS = 5000;
     try {
       const taskID = await window.harness.attachSession(id);
       attachedTask.textContent = `attached: ${taskID} (reattached)`;
+      scrollTermToBottom();
+    } catch (err) {
+      attachedTask.textContent = "";
+      showError(err);
+    }
+    try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+    window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+  };
+
+  // resumeTaskById opens a (terminal) task's worktree as a fresh interactive
+  // session with --continue — "pick up where it left off". Shared by the notify
+  // feed tap; mirrors the task sheet's Resume (--continue) action.
+  const resumeTaskById = async (id) => {
+    if (!id) return;
+    setActiveTab("terminal");
+    term.reset();
+    const args = currentClaudeArgs();
+    if (!args.includes("--continue")) args.push("--continue");
+    try {
+      const taskID = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true });
+      attachedTask.textContent = `attached: ${taskID} (resumed --continue)`;
       scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";

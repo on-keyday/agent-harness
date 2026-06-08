@@ -282,3 +282,16 @@ button:hover { background: #555; }
 .notify-level-info  .notify-badge { color: #3498db; }
 .notify-level-warn  .notify-badge { color: #f1c40f; }
 .notify-level-error .notify-badge { color: #e74c3c; }
+/* Tappable worker-origin entries reveal reattach/resume actions. */
+.notify-actionable { cursor: pointer; }
+.notify-actions { display: flex; gap: 0.4em; margin-top: 0.45em; flex-wrap: wrap; }
+.notify-action-btn {
+  font-size: 0.72em;
+  padding: 0.25em 0.7em;
+  border: 1px solid #555;
+  border-radius: 3px;
+  background: #2a2a2a;
+  color: inherit;
+  cursor: pointer;
+}
+.notify-action-btn:active { background: #3a3a3a; }
