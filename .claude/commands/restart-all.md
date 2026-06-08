@@ -41,6 +41,12 @@ skip.
    **do NOT conclude the restart failed, and do NOT re-run the script** on the
    strength of a missing/empty result. Confirm with step 2 instead.
 
+   Belt-and-suspenders: the script is **debounced** — it stamps
+   `bin/.run/last-restart-stamp` and no-ops (exit 0, "a restart completed Ns
+   ago … skipping") if re-run within 300s. So if a resume re-fires it anyway,
+   you get a safe skip, not a double restart. Use `--force` to override when you
+   genuinely want another cycle inside the window.
+
 2. Quick confirm — the Bash output is NOT the evidence (per the note above);
    these two cheap checks are, and they are **separate commands**:
    - `harness-cli ls` → runners re-registered `Idle` with **fresh connection
