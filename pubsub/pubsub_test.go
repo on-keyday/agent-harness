@@ -5,6 +5,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/on-keyday/agent-harness/pubsub/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -61,5 +62,13 @@ func TestPubSub_OnSubscribeHookFires(t *testing.T) {
 	}
 	if hookStream == nil {
 		t.Fatal("expected non-nil stream in OnSubscribe hook")
+	}
+
+	resp2 := ps.Subscribe(2, "T", "nick", sub)
+	if resp2.Status != protocol.Status_AlreadySubscribed {
+		t.Fatalf("second subscribe status = %v, want AlreadySubscribed", resp2.Status)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("hook must NOT fire on AlreadySubscribed; hookCalls = %d, want 1", hookCalls)
 	}
 }

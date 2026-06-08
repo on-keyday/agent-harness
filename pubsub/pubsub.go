@@ -109,6 +109,8 @@ type PubSub struct {
 	// BEFORE any concurrent Publish to the same topic. Used for
 	// replay-on-subscribe (the notifications ring backlog). Writes go only to
 	// this one stream's send side; it must NOT read or block on the receive path.
+	// It must also NOT call ps.Publish, ps.Subscribe, or ps.Unsubscribe — ps.m
+	// is already held and is not reentrant; doing so self-deadlocks.
 	OnSubscribe func(topic string, stream trsf.BidirectionalStream)
 }
 
