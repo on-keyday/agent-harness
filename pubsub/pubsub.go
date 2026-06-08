@@ -102,6 +102,14 @@ type PubSub struct {
 	topics map[string]*SubscriberList
 	taps   map[string][]*Tap
 	logger *slog.Logger
+
+	// OnSubscribe, when non-nil, is called once per successful Subscribe, with
+	// the joined topic and the new subscriber's send stream, while the broker
+	// lock (ps.m) is held — so anything written here reaches the subscriber
+	// BEFORE any concurrent Publish to the same topic. Used for
+	// replay-on-subscribe (the notifications ring backlog). Writes go only to
+	// this one stream's send side; it must NOT read or block on the receive path.
+	OnSubscribe func(topic string, stream trsf.BidirectionalStream)
 }
 
 func NewPubSub(logger *slog.Logger) *PubSub {
@@ -177,6 +185,9 @@ func (ps *PubSub) Subscribe(requestID uint32, topic string, nickName string, sub
 		ps.topics[topic] = &SubscriberList{}
 	}
 	ps.topics[topic].AddSubscriber(sub)
+	if ps.OnSubscribe != nil {
+		ps.OnSubscribe(topic, stream)
+	}
 	ps.logger.Info("subscriber joined topic", "topic", topic, "nickName", nickName, "subscriberID", sub.id, "streamID", stream.ID())
 	return &protocol.PubSubResponse{
 		Status:    protocol.Status_Ok,
