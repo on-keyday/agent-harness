@@ -596,14 +596,14 @@ format TaskControlResponse:
 
 enum NotifyLevel:
     :u8
-    info
-    warn
-    error
+    info = "info"
+    warn = "warn"
+    error = "error"
 
 enum NotifyOrigin:
     :u8
-    worker
-    external
+    worker = "worker"
+    external = "external"
 
 enum NotifyStatus:
     :u8

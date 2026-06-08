@@ -1014,36 +1014,6 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	return info
 }
 
-// notifyLevelString returns the lowercase wire word for a NotifyLevel.
-// protocol.NotifyLevel.String() returns title-case ("Info", "Warn", "Error");
-// hook JSON and env must use lowercase words.
-func notifyLevelString(l protocol.NotifyLevel) string {
-	switch l {
-	case protocol.NotifyLevel_Info:
-		return "info"
-	case protocol.NotifyLevel_Warn:
-		return "warn"
-	case protocol.NotifyLevel_Error:
-		return "error"
-	default:
-		return "info"
-	}
-}
-
-// notifyOriginString returns the lowercase wire word for a NotifyOrigin.
-// protocol.NotifyOrigin.String() returns title-case ("Worker", "External");
-// hook JSON and env must use lowercase words.
-func notifyOriginString(o protocol.NotifyOrigin) string {
-	switch o {
-	case protocol.NotifyOrigin_Worker:
-		return "worker"
-	case protocol.NotifyOrigin_External:
-		return "external"
-	default:
-		return "worker"
-	}
-}
-
 // handleNotify runs both legs of a notify request: the live leg (OnNotify →
 // ring + topic) and the egress leg (NotifyHook exec), then replies with the
 // resulting NotifyStatus. accepted = hook launched; no_hook = egress disabled
@@ -1081,8 +1051,8 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 	}
 
 	payload := notifyHookPayload{
-		Level:  notifyLevelString(nr.Level),
-		Origin: notifyOriginString(nr.Origin),
+		Level:  nr.Level.String(),
+		Origin: nr.Origin.String(),
 		Title:  string(nr.Title),
 		Text:   string(nr.Text),
 		ConnID: cid,

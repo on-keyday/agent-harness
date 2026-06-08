@@ -106,14 +106,19 @@ enum TaskControlKind:        # existing enum — append one value
 
 enum NotifyLevel:
     :u8
-    info
-    warn
-    error
+    info = "info"
+    warn = "warn"
+    error = "error"
 
 enum NotifyOrigin:
     :u8
-    worker
-    external
+    worker = "worker"
+    external = "external"
+
+# The explicit string values above make `.String()` return the lowercase wire
+# words used in the hook JSON (§6) and env vars, so no Go-side mapping helper
+# is needed — `nr.Level.String()` and `nr.Origin.String()` yield the correct
+# lowercase strings directly.
 
 # Origin metadata, present only when the caller ran inside a worker (a task /
 # bash-worker shell with HARNESS_* env). Carried as text (not the typed
