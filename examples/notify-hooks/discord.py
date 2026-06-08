@@ -11,11 +11,23 @@ Setup
 -----
 1. Create a Discord webhook: Server Settings -> Integrations -> Webhooks ->
    New Webhook, then "Copy Webhook URL".
-2. Make this file executable and export the URL where the harness *server* runs
-   (the server's environment is inherited by the hook):
+2. Make this file executable and provide the webhook URL where the harness
+   *server* runs (its environment is inherited by the hook). Either way the URL
+   stays out of this (public) repo:
 
        chmod +x examples/notify-hooks/discord.py
+
+       # option A — env var:
        export DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/XXXX/YYYY'
+
+       # option B — a file that holds the URL (set once, gitignored), and point
+       # an env var at its path:
+       printf '%s' 'https://discord.com/api/webhooks/XXXX/YYYY' > /secret/discord-url
+       chmod 600 /secret/discord-url
+       export DISCORD_WEBHOOK_FILE=/secret/discord-url
+
+   Resolution order is DISCORD_WEBHOOK_URL, then DISCORD_WEBHOOK_FILE. There is
+   no hardcoded default path.
 
 3. Start the server with the hook (absolute path; invoked directly, no shell):
 
@@ -23,9 +35,10 @@ Setup
 
    Then `harness-cli notify --level warn "needs your call"` reaches Discord.
 
-No secret lives in this file — the webhook URL comes from the environment, so it
-is safe to commit. To use a different sink (ntfy, Telegram, Slack, …), copy this
-file and swap the `build_payload` / endpoint; the stdin contract is identical.
+No secret lives in this file — the URL comes from the environment (directly or
+via a file the env points at), so it is safe to commit. To use a different sink
+(ntfy, Telegram, Slack, …), copy this file and swap the `build_payload` /
+endpoint; the stdin contract is identical.
 
 stdin JSON contract (every field may be absent)
 -----------------------------------------------
@@ -53,6 +66,27 @@ COLORS = {
     "warn": 0xF1C40F,   # yellow
     "error": 0xE74C3C,  # red
 }
+
+
+def resolve_url() -> str:
+    """Resolve the webhook URL: DISCORD_WEBHOOK_URL, else the contents of the
+    file at DISCORD_WEBHOOK_FILE. No secret is hardcoded and no default path is
+    assumed — both sources come from the environment, so nothing leaks into the
+    (public) repo. Returns "" when neither is configured."""
+    url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    if url:
+        return url
+    path = os.environ.get("DISCORD_WEBHOOK_FILE", "").strip()
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except OSError as e:
+            print(
+                f"discord notify: cannot read DISCORD_WEBHOOK_FILE {path!r}: {e}",
+                file=sys.stderr,
+            )
+    return ""
 
 
 def build_payload(ev: dict) -> dict:
@@ -97,9 +131,13 @@ def build_payload(ev: dict) -> dict:
 
 
 def main() -> int:
-    url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+    url = resolve_url()
     if not url:
-        print("discord notify: DISCORD_WEBHOOK_URL is not set", file=sys.stderr)
+        print(
+            "discord notify: no webhook URL "
+            "(set DISCORD_WEBHOOK_URL, or DISCORD_WEBHOOK_FILE to a file holding it)",
+            file=sys.stderr,
+        )
         return 1
 
     try:
