@@ -8,27 +8,25 @@ fleet cutover/refresh action.
 
 ## When you need this — and when you DON'T
 
-`/restart-all` rebuilds **and restarts** the long-running **server / runner**
-processes. You only need it when the change affects **server or runner runtime
-behavior** — those processes hold their binary in memory and won't pick up new
-code without a restart.
+`/restart-all` rebuilds every binary (`make build`) and restarts the local
+**agent-runner** fleet. It does **NOT** restart the harness **server** — the
+server is a separate process (typically a different host) that you bring up /
+restart yourself, so server-only changes are **out of scope** for this command.
 
-A change that touches ONLY the CLI does **not** need a restart. `harness-cli`
-(and `harness-tui` when launched fresh) is invoked as a new process each time, so
-rebuilding the binary is enough:
+Pick by what actually changed:
 
-```
-make build      # in the MAIN checkout ($HARNESS_REPO_PATH, where `which harness-cli` lives)
-```
+- **CLI only** (`harness-cli` subcommand, `cli/` package, TUI rendering) → just
+  `make build` in the MAIN checkout (`$HARNESS_REPO_PATH`, where `which
+  harness-cli` lives). The CLI is invoked fresh each time, so the rebuilt binary
+  is used immediately — **no restart**.
+- **Runner** behavior (`runner/`, or what a live agent-runner executes) →
+  `/restart-all`.
+- **Server** behavior (`server/`) → restart the server on its own host yourself;
+  `/restart-all` will not do it.
 
-`make build` rebuilds every binary + the webui wasm but **restarts nothing**. So:
-
-- New/changed `harness-cli` subcommand, `cli/` package, TUI rendering → `make build`.
-- Changed `server/`, `runner/`, the wire protocol the running procs speak, or
-  anything the **live** server/runner must execute → `/restart-all`.
-
-Ask "did the server or runner behavior change?" before reaching for `/restart-all`
-— don't run it reflexively after every land.
+`make build` rebuilds all binaries + the webui wasm but **restarts nothing**.
+Ask "what changed — CLI, runner, or server?" before reaching for `/restart-all`;
+don't run it reflexively after every land.
 
 **Do NOT investigate topology, env vars, or self-termination risk first.** The
 script already handles all of it: self-last ordering, detached self-restart that
