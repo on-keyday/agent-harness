@@ -79,3 +79,43 @@ func tail(s string) string {
 	}
 	return s[len(s)-12:]
 }
+
+func TestNotifyRequest_RoundTrip(t *testing.T) {
+	// worker origin: worker block must survive the round trip
+	t.Setenv("HARNESS_TASK_ID", "task42")
+	t.Setenv("HARNESS_RUNNER_ID", "ws:host:1-2")
+	t.Setenv("HARNESS_REPO_PATH", "/repo")
+	t.Setenv("HARNESS_HOSTNAME", "gmkhost")
+	w := newNotifyRequestFromEnv(protocol.NotifyLevel_Warn, "t", "body")
+
+	var gotW protocol.NotifyRequest
+	if err := gotW.DecodeExact(w.MustAppend(nil)); err != nil {
+		t.Fatalf("worker decode: %v", err)
+	}
+	if gotW.Origin != protocol.NotifyOrigin_Worker {
+		t.Fatalf("worker origin lost: %v", gotW.Origin)
+	}
+	if wi := gotW.Worker(); wi == nil || string(wi.TaskId) != "task42" || string(wi.Hostname) != "gmkhost" {
+		t.Fatalf("worker block not round-tripped: %+v", gotW.Worker())
+	}
+	if string(gotW.Title) != "t" || string(gotW.Text) != "body" {
+		t.Fatalf("title/text lost: %q / %q", gotW.Title, gotW.Text)
+	}
+
+	// external origin: worker block must be ABSENT after round trip
+	t.Setenv("HARNESS_TASK_ID", "")
+	e := newNotifyRequestFromEnv(protocol.NotifyLevel_Info, "", "hi")
+	var gotE protocol.NotifyRequest
+	if err := gotE.DecodeExact(e.MustAppend(nil)); err != nil {
+		t.Fatalf("external decode: %v", err)
+	}
+	if gotE.Origin != protocol.NotifyOrigin_External {
+		t.Fatalf("external origin lost: %v", gotE.Origin)
+	}
+	if gotE.Worker() != nil {
+		t.Fatal("external NotifyRequest must have no worker block after round trip")
+	}
+	if string(gotE.Text) != "hi" {
+		t.Fatalf("text lost: %q", gotE.Text)
+	}
+}

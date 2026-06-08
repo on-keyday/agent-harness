@@ -306,10 +306,11 @@ Layered handling of "long text clogs the destination":
 - `harness-cli notify "text" [--title T] [--level info|warn|error]`
   (default level `info`).
 - `cmd/harness-cli/main.go`: add `case "notify":`.
-- `cli/notify.go` (new): `func (c *Client) Notify(...)` and a thin
-  `func Notify(ctx, peerCID, ...)` wrapper that dials, calls, closes. Expose a
-  `NotifyWith(client)` form so the TUI/WebUI reuse a long-lived `*cli.Client`
-  rather than re-handshaking.
+- `cli/notify.go` (new): `func (c *Client) Notify(ctx, level, title, text string) error`
+  is the long-lived reuse form (mirrors `(*Client).Cancel`); TUI/WebUI call this
+  on their persistent `*cli.Client`. A thin package-level `func Notify(ctx, peerCID, ...)`
+  wrapper dials, calls `(*Client).Notify`, and closes — for the short-lived
+  `harness-cli` binary.
 - **Agent usage:** the agent invokes `notify` **fire-and-forget and ends its
   turn**. It does not block its reasoning turn awaiting downstream effects. This
   matches the existing inbox/agentboard discipline (send-only, no synchronous
@@ -318,8 +319,8 @@ Layered handling of "long text clogs the destination":
   The `harness-cli` short-lived CLI process itself still does a normal
   sub-second request→ack→exit.
 - **TUI / WebUI send:** both gain a "send notification" action that calls
-  `NotifyWith(longLivedClient)` (reusing their existing `*cli.Client`, not a
-  fresh dial). The TUI builds the `NotifyRequest` in Go; the WebUI builds it in
+  `(*cli.Client).Notify(...)` directly on their existing long-lived `*cli.Client`
+  (no fresh dial). The TUI builds the `NotifyRequest` in Go; the WebUI builds it in
   browser JS and sends it over its existing `/ws` connection. Neither runs inside
   a worker, so UI-originated notifications carry `origin = external`. (Use case:
   ping another device from the UI.)
@@ -398,7 +399,7 @@ worker-vs-external).
 |-----------------------------------|---------------------------------------|------------------------------------------|
 | `TaskControlKind` enum + formats  | `runner/protocol/message.bgn`         | add `notify`; add Notify*/WorkerInfo; 2 match arms |
 | CLI subcommand dispatch           | `cmd/harness-cli/main.go`             | add `case "notify":`                     |
-| CLI helper (+ truncate guard)     | `cli/notify.go` (new)                 | `Notify` / `NotifyWith` / wrapper        |
+| CLI helper (+ truncate guard)     | `cli/notify.go` (new)                 | `(*Client).Notify` (reuse) / `Notify` (dial+close wrapper) |
 | Server control dispatch           | `server/task_handler.go`              | add `case TaskControlKind.notify:` → `handleNotify` |
 | Notify hook impl (exec)           | `server/` (new method/file)           | exec.CommandContext, stdin JSON, env, timeout |
 | Server config flag                | `cmd/harness-server/main.go`          | add `--notify-hook` (+ `HARNESS_NOTIFY_HOOK`) |
@@ -406,7 +407,7 @@ worker-vs-external).
 | `NotifyEvent` schema              | `runner/protocol/message.bgn`         | add format (topic + ring payload)        |
 | Ring + topic publish              | `server/task_handler.go` / `server.go`| in-mem ring (N=64); publish to `notifications` |
 | Replay-on-subscribe               | `pubsub/` + server `notifications` join| flush ring to a new subscriber's send-stream |
-| TUI display + send                | `tui/` (notifications pane + action)  | watch `notifications`; `NotifyWith(client)` |
+| TUI display + send                | `tui/` (notifications pane + action)  | watch `notifications`; `(*cli.Client).Notify(...)` |
 | WebUI display + send              | `webui/static/main.js` + `index.html` | watch `notifications` (toast/list) + send button |
 | Brevity norm doc                  | `.claude/skills/harness-cli/SKILL.md` | document `notify` one-line norm          |
 
