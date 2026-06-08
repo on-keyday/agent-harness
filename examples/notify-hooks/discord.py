@@ -67,6 +67,10 @@ COLORS = {
     "error": 0xE74C3C,  # red
 }
 
+# Discord / its Cloudflare front reject the default urllib User-Agent
+# ("Python-urllib/x.y") with 403, so send an explicit one.
+USER_AGENT = "harness-notify/1.0 (+https://github.com/on-keyday/agent-harness)"
+
 
 def resolve_url() -> str:
     """Resolve the webhook URL: DISCORD_WEBHOOK_URL, else the contents of the
@@ -150,7 +154,10 @@ def main() -> int:
 
     data = json.dumps(build_payload(ev)).encode("utf-8")
     req = urllib.request.Request(
-        url, data=data, headers={"Content-Type": "application/json"}, method="POST"
+        url,
+        data=data,
+        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+        method="POST",
     )
     try:
         with urllib.request.urlopen(req, timeout=8) as resp:
