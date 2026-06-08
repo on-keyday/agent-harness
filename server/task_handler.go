@@ -1038,10 +1038,8 @@ func (h *TaskHandler) handleNotify(conn ConnHandle, req *protocol.TaskControlReq
 		TextLen:    nr.TextLen,
 		Text:       nr.Text,
 	}
-	if nr.Origin == protocol.NotifyOrigin_Worker {
-		if w := nr.Worker(); w != nil {
-			ev.SetWorker(*w)
-		}
+	if w := nr.Worker(); w != nil {
+		ev.SetWorker(*w)
 	}
 
 	if h.OnNotify != nil {

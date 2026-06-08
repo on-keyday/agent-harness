@@ -112,3 +112,43 @@ func TestHandleNotify_NoHook_RunsLiveLeg(t *testing.T) {
 		t.Fatalf("status = %v, want no_hook", out)
 	}
 }
+
+func TestHandleNotify_WorkerOrigin_PopulatesEvent(t *testing.T) {
+	var captured *protocol.NotifyEvent
+	h := &TaskHandler{
+		OnNotify: func(ev protocol.NotifyEvent) { captured = &ev },
+	}
+
+	nr := protocol.NotifyRequest{Level: protocol.NotifyLevel_Info, Origin: protocol.NotifyOrigin_Worker}
+	nr.SetWorker(protocol.WorkerInfo{
+		TaskIdLen:   uint16(len("task42")),
+		TaskId:      []byte("task42"),
+		RunnerIdLen: uint16(len("ws:host:1-2")),
+		RunnerId:    []byte("ws:host:1-2"),
+		RepoLen:     uint16(len("/repo")),
+		Repo:        []byte("/repo"),
+		HostnameLen: uint16(len("gmkhost")),
+		Hostname:    []byte("gmkhost"),
+	})
+	nr.TextLen = uint16(len("done"))
+	nr.Text = []byte("done")
+	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Notify, RequestId: 9}
+	req.SetNotify(nr)
+
+	conn := &captureConn{}
+	h.handleNotify(conn, &req)
+
+	if captured == nil {
+		t.Fatal("OnNotify was not called")
+	}
+	if captured.Origin != protocol.NotifyOrigin_Worker {
+		t.Fatalf("event origin = %v, want worker", captured.Origin)
+	}
+	w := captured.Worker()
+	if w == nil {
+		t.Fatal("captured event Worker() is nil for worker origin")
+	}
+	if string(w.TaskId) != "task42" || string(w.Hostname) != "gmkhost" || string(w.RunnerId) != "ws:host:1-2" {
+		t.Fatalf("worker fields not propagated: task_id=%q hostname=%q runner_id=%q", w.TaskId, w.Hostname, w.RunnerId)
+	}
+}
