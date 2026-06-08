@@ -3,8 +3,11 @@
 - **Date:** 2026-06-08
 - **Status:** Design (approved for plan)
 - **Scope:** New `harness-cli notify` subcommand → `TaskControlKind.notify` wire
-  message → server exec hook → operator-supplied external "translation layer"
-  command that performs the actual delivery (Telegram / ntfy / Discord / custom).
+  message → server, which runs two independent legs: an **egress leg** (exec
+  hook → operator-supplied external "translation layer" command that delivers to
+  Telegram / ntfy / Discord / custom → phone) and a **live leg** (in-memory
+  recent ring + `notifications` pubsub topic → TUI/WebUI live view). TUI/WebUI
+  can also send. No disk persistence.
 
 ## 1. Problem / motivation
 
@@ -32,10 +35,12 @@ this public repo).
 - No delivery guarantee. The server ack means "accepted / hook launched", not
   "delivered". Retry/back-off/medium-specific formatting belong to the external
   script.
-- No inbound path. This is egress-only — it opens no new externally-reachable
-  surface (contrast with the chat-bot "channels" model, which has an inbound
-  leg).
-- No persistent notification queue or catch-up for disconnected clients.
+- The egress leg is one-way (no inbound external surface; contrast the chat-bot
+  "channels" model). The live-view leg (§8a) does fan out to connected TUI/WebUI
+  clients, but stays inside the existing PSK-authed cluster.
+- **No disk persistence.** An in-memory recent ring (lost on server restart) is
+  in scope (§8a) for live viewing / short catch-up; durable storage, archival,
+  and per-client guaranteed catch-up beyond the ring are not.
 - No long-text transport. Notifications are short one-liners (see §7).
 
 ## 3. Architecture
@@ -50,16 +55,27 @@ this public repo).
    │                                                  (single message, MTU-bound)
    ▼
  server TaskHandler.Handle  ── case TaskControlKind.notify ──▶ handleNotify
-   │     · assembles hook JSON (wire fields + server-injected conn_id, ts)
-   │     · exec.CommandContext(--notify-hook), stdin=JSON, env=HARNESS_NOTIFY_*
+   │     builds NotifyEvent (stamp ts + sender ClientKind), then runs 2 legs:
+   │
+   ├─[egress leg]─ exec.CommandContext(--notify-hook), stdin=JSON, env=HARNESS_NOTIFY_*
    │     · Start() → accepted; reap in goroutine w/ timeout; bad path → spawn_failed
-   │     · no hook configured → no_hook
+   │     · no hook configured → no_hook (egress skipped; live leg still runs)
+   │     ▼
+   │   external "translation layer" command (operator-owned, outside repo)
+   │       reads JSON on stdin → delivers to Telegram / ntfy / Discord / custom ──▶ phone
+   │
+   └─[live leg]─ append NotifyEvent to in-memory ring (last N) + publish to
+   │     pubsub topic `notifications`
+   │     ▼
+   │   TUI / WebUI subscribed to `notifications` (trsf stream, NOT MTU-bound):
+   │       on subscribe → server replays ring backlog, then streams live events
    ▼
  NotifyResponse{ status } ──▶ caller (CLI exits; agent does not wait — see §8)
-   │
- external "translation layer" command (operator-owned, outside repo)
-       reads JSON on stdin → delivers to Telegram / ntfy / Discord / custom
 ```
+
+The two legs are independent: the **live leg runs even with no hook configured**,
+so the TUI/WebUI live notification view works with zero external setup; the
+**egress leg** is the opt-in path to a phone.
 
 `notify` rides the existing **`TaskControlKind`** control RPC channel (which
 already carries non-task control such as `client_hello`, `dial_runner`,
@@ -125,13 +141,35 @@ format NotifyRequest:
 
 enum NotifyStatus:
     :u8
-    accepted        # hook process launched (NOT a delivery guarantee)
-    no_hook         # server has no --notify-hook configured; request ignored
+    accepted        # accepted: ring-published; hook launched if configured
+    no_hook         # no --notify-hook configured; egress skipped (live leg still ran)
     spawn_failed    # exec of the configured hook failed to start
 
 format NotifyResponse:
     status :NotifyStatus
+
+# Server → client payload broadcast on the `notifications` pubsub topic and held
+# in the in-memory ring (§8a). Same content as NotifyRequest plus server-stamped
+# fields. Rides a trsf stream (segmented) so it is NOT MTU-bound; text is already
+# bounded by the ingress truncate guard (§7).
+format NotifyEvent:
+    ts          :u64           # server receive time (unix seconds)
+    client_kind :ClientKind    # server-stamped from the sender conn (cli/tui/webui)
+    level  :NotifyLevel
+    origin :NotifyOrigin
+    if origin == NotifyOrigin.worker:
+        worker :WorkerInfo
+    title_len :u16
+    title     :[title_len]u8
+    text_len  :u16
+    text      :[text_len]u8
 ```
+
+`ClientKind` is the existing enum (`unspecified|cli|tui|webui`,
+`message.bgn:192`); the server already learns it from `client_hello`, so the live
+event can show "from webui" without any client-side work. The `notifications`
+topic name is a string constant alongside `tasks.status` / `runners.status` (not
+a schema element).
 
 Match arms:
 
@@ -271,6 +309,42 @@ Layered handling of "long text clogs the destination":
   user-decision prompt (which blocks for a choice) — `notify` is a one-way ping.
   The `harness-cli` short-lived CLI process itself still does a normal
   sub-second request→ack→exit.
+- **TUI / WebUI send:** both gain a "send notification" action that calls
+  `NotifyWith(longLivedClient)` (reusing their existing `*cli.Client`, not a
+  fresh dial). The TUI builds the `NotifyRequest` in Go; the WebUI builds it in
+  browser JS and sends it over its existing `/ws` connection. Neither runs inside
+  a worker, so UI-originated notifications carry `origin = external`. (Use case:
+  ping another device from the UI.)
+
+## 8a. Live view + in-memory ring (TUI / WebUI)
+
+The live leg makes notifications observable on connected clients without any
+external hook, and without disk persistence.
+
+- **Topic:** the server publishes each `NotifyEvent` to a new pubsub topic
+  `notifications`, exactly as it already publishes `TaskStatusEvent` to
+  `tasks.status` (`server/server.go:205-224`).
+- **Ring:** the server holds the last **N = 64** `NotifyEvent`s in memory
+  (append on receive, evict oldest). Lost on server restart — no disk. N is a
+  server constant; sizing is not exposed as config (YAGNI).
+- **Replay on subscribe:** when a client JOINs `notifications`, the server first
+  writes the current ring to that subscriber's stream (recent backlog), then
+  continues with live events. Because pubsub delivery is a **trsf stream**
+  (segmented), the backlog is **not** MTU-bound — this is why the ring is
+  delivered over the topic, not via a single-message snapshot RPC (which would
+  hit the §7 MTU limit). The replay writes only to the joining subscriber's
+  send-stream (normal publish direction); it must not touch the wedge-prone
+  receive/accept-queue path that previously caused a streams-layer wedge.
+- **Client rendering:** TUI/WebUI subscribe to `notifications` via the existing
+  `Watch()` machinery (`cli/watch.go`, `webui` `window.harness.watch()`) and
+  render incoming `NotifyEvent`s (e.g. a TUI notifications pane / WebUI toast +
+  list). On (re)connect they receive the ring backlog first, so reopening the UI
+  shows "what was I pinged about recently".
+
+The away-from-keyboard path is the egress leg (phone); the at-keyboard path is
+this live leg (TUI/WebUI). A notification sent while no client is connected is
+still visible later **iff** it is within the last N when a client next
+connects — beyond that, only the phone (egress) received it.
 
 ## 9. Validated use cases
 
@@ -321,9 +395,16 @@ worker-vs-external).
 | Notify hook impl (exec)           | `server/` (new method/file)           | exec.CommandContext, stdin JSON, env, timeout |
 | Server config flag                | `cmd/harness-server/main.go`          | add `--notify-hook` (+ `HARNESS_NOTIFY_HOOK`) |
 | Server config field               | `server/server.go` (`Config`)         | add `NotifyHook string`                  |
+| `NotifyEvent` schema              | `runner/protocol/message.bgn`         | add format (topic + ring payload)        |
+| Ring + topic publish              | `server/task_handler.go` / `server.go`| in-mem ring (N=64); publish to `notifications` |
+| Replay-on-subscribe               | `pubsub/` + server `notifications` join| flush ring to a new subscriber's send-stream |
+| TUI display + send                | `tui/` (notifications pane + action)  | watch `notifications`; `NotifyWith(client)` |
+| WebUI display + send              | `webui/static/main.js` + `index.html` | watch `notifications` (toast/list) + send button |
 | Brevity norm doc                  | `.claude/skills/harness-cli/SKILL.md` | document `notify` one-line norm          |
 
-Exec-from-server is greenfield (no existing `os/exec` in `server/`).
+Exec-from-server is greenfield (no existing `os/exec` in `server/`). The live
+leg reuses the existing pubsub publish + `Watch()` paths; only replay-on-subscribe
+for the `notifications` topic is new (and must avoid the recv/accept-queue path).
 
 ## 12. Testing
 
@@ -335,8 +416,15 @@ Exec-from-server is greenfield (no existing `os/exec` in `server/`).
 - **Server handler:** `no_hook` when unconfigured; `spawn_failed` on a bad
   command path; `accepted` launches the process with the expected stdin JSON +
   env (test hook script writes stdin/env to a temp file for assertion).
-- **End-to-end:** `harness-cli notify` → server → test hook script invoked once
-  with correct payload.
+- **End-to-end (egress):** `harness-cli notify` → server → test hook script
+  invoked once with correct payload.
+- **Ring + live fan-out:** `NotifyEvent` round-trip; ring evicts past N=64;
+  publishing to `notifications` reaches a subscribed client; with **no hook
+  configured**, the live leg still publishes (status `no_hook`, event delivered).
+- **Replay on subscribe:** a client joining `notifications` after several
+  notifies receives the recent ring backlog (≤ N), then a subsequent live notify.
+- **End-to-end (live):** `harness-cli notify` → server → event observed by a
+  watching client; `client_kind` stamped from the sender's hello.
 
 ## 13. Open questions / future
 
