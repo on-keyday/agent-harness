@@ -108,6 +108,24 @@ func SubscribeTaskLog(ctx context.Context, c *cli.Client, program *tea.Program, 
 	})
 }
 
+// NotifyEventMsg carries a decoded NotifyEvent dispatched from SubscribeNotifications.
+type NotifyEventMsg struct {
+	Event protocol.NotifyEvent
+}
+
+// SubscribeNotifications joins the notifications topic and forwards each decoded
+// NotifyEvent as NotifyEventMsg via program.Send. Mirrors SubscribeTaskStatus.
+func SubscribeNotifications(ctx context.Context, c *cli.Client, program *tea.Program) {
+	subscribeAndStream(ctx, c, topics.Notifications(), program, func(payload []byte) tea.Msg {
+		var ev protocol.NotifyEvent
+		if _, err := ev.Decode(payload); err != nil {
+			slog.Warn("decode notify event", "err", err)
+			return nil
+		}
+		return NotifyEventMsg{Event: ev}
+	})
+}
+
 // subscribeAndStream uses peer.Conn.JoinAndGetStream to do the JOIN+lookup+
 // header-discard dance, then pumps payload chunks through fn → program.Send
 // until ctx is cancelled or the stream EOFs.

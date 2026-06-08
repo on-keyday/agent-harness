@@ -76,6 +76,7 @@ func main() {
 				program.Send(tui.RefreshSnapshot(handle.C)())
 				go tui.SubscribeTaskStatus(runCtx, handle.C, program)
 				go tui.SubscribeRunnerStatus(runCtx, handle.C, program)
+				go tui.SubscribeNotifications(runCtx, handle.C, program)
 				if id := app.FollowingTaskID(); id != "" {
 					go tui.SubscribeTaskLog(runCtx, handle.C, program, id)
 				}

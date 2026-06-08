@@ -135,6 +135,16 @@ type ServerDialRunnerAction struct {
 	Via       string // empty = direct dial; non-empty = relay via this CID
 }
 
+// NotifyAction sends a notification via the server's notify hook.
+// Level is one of "info", "warn", "error" (empty defaults to "info").
+// Title is the first word of text when not using --level / explicit title
+// syntax; see parseNotify for the full grammar.
+type NotifyAction struct {
+	Level string
+	Title string
+	Text  string
+}
+
 func (SubmitAction) isAction()           {}
 func (CancelAction) isAction()           {}
 func (PruneAction) isAction()            {}
@@ -153,6 +163,7 @@ func (FilePushAction) isAction()         {}
 func (FilePullAction) isAction()         {}
 func (FileDeleteAction) isAction()       {}
 func (ServerDialRunnerAction) isAction() {}
+func (NotifyAction) isAction()           {}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -190,6 +201,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseServer(tokens[1:])
 	case "trsf":
 		return TrsfDebugAction{}, nil
+	case "notify":
+		return parseNotify(tokens[1:])
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
 	}
@@ -387,6 +400,37 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 	default:
 		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id>)", verb)
 	}
+}
+
+// parseNotify parses `notify [<level>] <text>`.
+//
+// Grammar:
+//
+//	notify <text>                 — level defaults to "info", title = first word, text = remainder
+//	notify <level> <text>         — level ∈ {info,warn,error}, title = first word of text, text = remainder
+//
+// The first argument is treated as a level only when it is exactly one of
+// "info", "warn", or "error". Otherwise the entire argument list is the text.
+// The first whitespace-delimited token of the text becomes the title; the rest
+// (if any) is the notification body. To include spaces in the title, quote the
+// whole first argument (shlex splitting has already run).
+func parseNotify(args []string) (Action, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("notify: usage: notify [info|warn|error] <title> [<text>...]")
+	}
+	level := ""
+	rest := args
+	switch args[0] {
+	case "info", "warn", "error":
+		level = args[0]
+		rest = args[1:]
+	}
+	if len(rest) == 0 {
+		return nil, fmt.Errorf("notify: title required")
+	}
+	title := rest[0]
+	text := strings.Join(rest[1:], " ")
+	return NotifyAction{Level: level, Title: title, Text: text}, nil
 }
 
 // parseFile dispatches file sub-verbs: ls / push / pull / delete. All

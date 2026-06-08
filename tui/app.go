@@ -20,6 +20,7 @@ const (
 	focusRunners focus = iota
 	focusTasks
 	focusLogs
+	focusNotify
 	focusCmdresult
 	focusCmdline
 	numFocus = iota
@@ -33,6 +34,7 @@ type App struct {
 	runners    RunnersModel
 	tasks      TasksModel
 	logs       LogsModel
+	notify     NotifyModel
 	cmdresult  CmdResultModel
 	cmdline    textinput.Model
 	popup      PopupModel
@@ -68,6 +70,27 @@ type App struct {
 	program    *tea.Program
 }
 
+// NotifyResultMsg carries the result of a notify send command.
+type NotifyResultMsg struct {
+	Level string
+	Title string
+	Err   error
+}
+
+// DoNotify sends a notification over the persistent *cli.Client. level is
+// "info|warn|error"; empty defaults to "info".
+func DoNotify(c *cli.Client, level, title, text string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if level == "" {
+			level = "info"
+		}
+		err := c.Notify(ctx, level, title, text)
+		return NotifyResultMsg{Level: level, Title: title, Err: err}
+	}
+}
+
 type Config struct {
 	Server      string
 	DefaultRepo string
@@ -85,6 +108,7 @@ func New(cfg Config) *App {
 		runners:     NewRunners(),
 		tasks:       NewTasks(),
 		logs:        NewLogs(),
+		notify:      NewNotify(),
 		cmdresult:   NewCmdResult(),
 		cmdline:     cmd,
 		popup:       NewPopup(cfg.DefaultRepo),
@@ -173,6 +197,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.TaskID == a.logs.TaskID() {
 			a.logs.Append(msg.Chunk)
 		}
+		return a, nil
+
+	case NotifyEventMsg:
+		a.notify.Append(msg.Event)
 		return a, nil
 
 	case LogHistoryMsg:
@@ -288,6 +316,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("file %s %s ok ", msg.Op, short)) + msg.Detail)
 		return a, pcmd
+
+	case NotifyResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("notify failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("notify [%s] %q sent", msg.Level, msg.Title)))
+		return a, nil
 
 	case ServerDialResultMsg:
 		if msg.Err != nil {
@@ -667,6 +703,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.tasks, cmd = a.tasks.Update(msg)
 	case focusLogs:
 		a.logs, cmd = a.logs.Update(msg)
+	case focusNotify:
+		a.notify, cmd = a.notify.Update(msg)
 	case focusCmdresult:
 		a.cmdresult, cmd = a.cmdresult.Update(msg)
 	case focusCmdline:
@@ -679,6 +717,7 @@ func (a *App) cycleFocus(delta int) {
 	a.runners.Blur()
 	a.tasks.Blur()
 	a.logs.Blur()
+	a.notify.Blur()
 	a.cmdresult.Blur()
 	a.cmdline.Blur()
 
@@ -691,6 +730,8 @@ func (a *App) cycleFocus(delta int) {
 		a.tasks.Focus()
 	case focusLogs:
 		a.logs.Focus()
+	case focusNotify:
+		a.notify.Focus()
 	case focusCmdresult:
 		a.cmdresult.Focus()
 	case focusCmdline:
@@ -699,8 +740,8 @@ func (a *App) cycleFocus(delta int) {
 }
 
 // layout computes per-panel sizes from a.width / a.height. Header 1, runners
-// + tasks 10 each, cmdresult 5, cmdline 1, footer 1, plus 4 border rows
-// distributed across panels = 22 reserved. Log gets the rest (min 5).
+// + tasks 10 each, notify 4, cmdresult 5, cmdline 1, footer 1, plus 5 border
+// rows distributed across panels = 27 reserved. Log gets the rest (min 5).
 func (a *App) layout() {
 	if a.width < 80 || a.height < 24 {
 		return
@@ -708,6 +749,7 @@ func (a *App) layout() {
 	half := a.width / 2
 	a.runners.SetSize(half-2, 10)
 	a.tasks.SetSize(a.width-half-2, 10)
+	a.notify.SetSize(a.width-2, 4)
 	a.cmdresult.SetSize(a.width-2, 5)
 	a.cmdline.Width = a.width - 4
 }
@@ -737,7 +779,7 @@ func (a *App) View() string {
 	}
 	top := lipgloss.JoinHorizontal(lipgloss.Top, runnersView, tasksView)
 
-	logHeight := max(a.height-22, 5)
+	logHeight := max(a.height-27, 5)
 	a.logs.SetSize(a.width-4, logHeight-2) // -2 for the panel border rows
 	logBorder := PanelStyle
 	if a.logs.IsFocused() {
@@ -747,6 +789,12 @@ func (a *App) View() string {
 		Width(a.width - 2).
 		Height(logHeight).
 		Render(a.logs.View())
+
+	notifyBorder := PanelStyle
+	if a.notify.IsFocused() {
+		notifyBorder = PanelStyleFocused
+	}
+	notifyView := notifyBorder.Width(a.width - 2).Render(a.notify.View())
 
 	cmdresultBorder := PanelStyle
 	if a.cmdresult.IsFocused() {
@@ -761,7 +809,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · notify <text> · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -769,6 +817,7 @@ func (a *App) View() string {
 		header,
 		top,
 		logView,
+		notifyView,
 		cmdresultView,
 		cmdlineView,
 		footer,
@@ -989,6 +1038,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoServerDialRunner(a.client, v.RunnerCID, v.Via)
+	case NotifyAction:
+		if a.client == nil {
+			a.cmdresult.Append(ErrorStyle.Render("notify: not connected to server"))
+			return a, nil
+		}
+		return a, DoNotify(a.client, v.Level, v.Title, v.Text)
 	}
 	a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("(unhandled action %T)", act)))
 	return a, nil
