@@ -160,10 +160,25 @@ fi
 fw_mode="none"; [ "$firewall" = 1 ] && fw_mode="ip"; [ "$firewall_proxy" = 1 ] && fw_mode="proxy"
 echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) image=$IMAGE" >&2
 
-exec podman run --rm -i "${TTY[@]}" \
+# Do NOT `exec` podman. With exec, when the runner kills this process, the podman
+# client dies but conmon keeps the container (and its claude) alive — orphaned,
+# accumulating across re-spawns. Instead run it as a child with a --cidfile and
+# force-remove the container on any exit or terminating signal. The runner sends
+# SIGHUP/SIGTERM before SIGKILL, so the trap fires before the un-catchable kill.
+cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
+teardown() {
+  [ -e "$cidfile" ] && podman rm -f -t 1 --cidfile "$cidfile" >/dev/null 2>&1
+  rm -f "$cidfile"
+  return 0
+}
+trap teardown EXIT
+trap 'teardown; exit 143' TERM HUP INT
+
+podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
   --security-opt no-new-privileges \
+  --cidfile "$cidfile" \
   -w "$WT" \
   --env HOME="$CLAUDE_HOME" \
   "${AUTH[@]}" \
@@ -171,4 +186,8 @@ exec podman run --rm -i "${TTY[@]}" \
   "${FW[@]}" \
   "${MOUNTS[@]}" \
   "$IMAGE" \
-  /usr/local/bin/sandbox-claude-launch.sh "$@"
+  /usr/local/bin/sandbox-claude-launch.sh "$@" &
+cpid=$!
+rc=0
+wait "$cpid" || rc=$?
+exit "$rc"
