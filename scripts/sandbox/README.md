@@ -29,7 +29,9 @@ scripts/sandbox/build.sh --build-arg CLAUDE_VERSION=2.1.169
 ```
 
 Produces `harness-claude-sandbox:latest` (override via `HARNESS_SANDBOX_IMAGE`):
-`node:22` base + `git` + `ripgrep` + `python3`/`pip`/`venv` + `@anthropic-ai/claude-code`.
+`node:22` base + `git` + `ripgrep` + `python3`/`pip`/`venv` + the egress-firewall
+tools (`iptables`/`ipset`/`iproute2`/`dnsutils`/`aggregate`/`jq`/`gosu`) +
+`@anthropic-ai/claude-code`.
 
 ## Use it from a runner
 
@@ -67,7 +69,14 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   `--claude-arg --omit-harness-cli` / `--claude-args "--omit-harness-cli"` for full
   isolation. (Bridge assumes the server is directly reachable; behind
   `HARNESS_PROXY_VIA_RUNNER` it would need `--network=host` — not handled yet.)
-- **Network: open.** Egress is unrestricted for now (allowlist firewall = TODO).
+- **Network: open by default; opt-in egress allowlist via `--firewall`.** Pass
+  `--claude-arg --firewall` (or runner `--claude-args "--firewall"`) to apply a
+  default-deny iptables+ipset allowlist inside the container — GitHub IP ranges
+  (api.github.com/meta) + npm/anthropic/pypi + the harness server, IPv6 blocked,
+  everything else REJECTed. Adapted from Anthropic's `init-firewall.sh`; runs as
+  container-root (needs `--user 0` + `NET_ADMIN`/`NET_RAW`, added automatically)
+  then drops to the agent user. **Fail-closed:** if the firewall can't be applied
+  the task aborts rather than running unconfined.
 
 ## Scope / roadmap
 
@@ -77,5 +86,8 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   adds `podman -t` when its stdin is a terminal (and omits it for the `-p` pipe,
   which `-t` would corrupt). TTY plumbing verified; live TUI rendering/resize
   through podman still wants real-world confirmation. ⚠️
-- **v2 (TODO):** egress allowlist firewall (adapt Anthropic's `init-firewall.sh`,
-  iptables in the container netns). Network is currently open.
+- **egress firewall (opt-in `--firewall`):** default-deny iptables+ipset allowlist
+  (GitHub ranges + npm/anthropic/pypi + the harness server), IPv6 blocked, applied
+  as container-root then dropped to the agent user. Adapted from Anthropic's
+  `init-firewall.sh`; fail-closed. Verified end-to-end (blocked domains rejected,
+  allowed reachable, claude runs + writes the worktree as the host user). ✅

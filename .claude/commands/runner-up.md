@@ -39,7 +39,10 @@ Arguments: $ARGUMENTS
    `scripts/sandbox/README.md`). The preset
    defaults `--claude-args "--dangerously-skip-permissions"` — safe here because
    the container is the boundary and keep-id runs claude non-root (so the flag is
-   accepted); the wrapper itself stays a pure pass-through. Because the roots
+   accepted); the wrapper itself stays a pure pass-through. Optional wrapper
+   controls, passed the same way (`--claude-arg` / `--claude-args`): `--firewall`
+   (default-deny egress allowlist) and `--omit-harness-cli` (drop the control-plane
+   bridge for full isolation) — see `scripts/sandbox/README.md`. Because the roots
    usually overlap a broad existing slot (e.g. the `bash` runner serving
    `$HOME/workspace`), inject `--hostname $HARNESS_HOSTNAME-sandbox` so the slot
    is unambiguously pinnable via `--host`.

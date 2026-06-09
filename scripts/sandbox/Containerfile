@@ -21,8 +21,15 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git ripgrep ca-certificates curl less \
       python3 python3-pip python3-venv \
+      iptables ipset iproute2 dnsutils aggregate jq gosu \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
  && npm cache clean --force \
  && claude --version \
  && python3 --version
+
+# Egress-firewall kit (used only when the wrapper passes --firewall; see
+# entrypoint.sh / init-firewall.sh). Harmless dead weight otherwise.
+COPY init-firewall.sh /usr/local/bin/sandbox-init-firewall.sh
+COPY entrypoint.sh    /usr/local/bin/sandbox-entrypoint.sh
+RUN chmod +x /usr/local/bin/sandbox-init-firewall.sh /usr/local/bin/sandbox-entrypoint.sh

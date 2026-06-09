@@ -22,14 +22,21 @@ IMAGE="${HARNESS_SANDBOX_IMAGE:-harness-claude-sandbox:latest}"
 WT="$PWD"                                  # the runner sets cwd to the worktree
 HOME_DIR="${HOME:-/home/$(id -un)}"
 
-# Consume our own control flag from the arg stream (NOT a claude flag, so it must
-# not reach claude). Pass `--claude-arg --omit-harness-cli` (or runner
-# --claude-args) to run with NO harness control plane in the container = full
-# isolation. Default: bridge harness-cli + the HARNESS_* env in (see below).
+# Consume our own control flags from the arg stream (NOT claude flags, so they
+# must not reach claude). Pass them via `--claude-arg` / runner `--claude-args`:
+#   --omit-harness-cli  run with NO harness control plane in the container (full
+#                       isolation); default is to bridge harness-cli + HARNESS_* in.
+#   --firewall          apply the egress allowlist (init-firewall.sh) inside the
+#                       container; default is an open network.
 bridge_cli=1
+firewall=0
 declare -a ARGS=()
 for a in "$@"; do
-  if [ "$a" = "--omit-harness-cli" ]; then bridge_cli=0; else ARGS+=( "$a" ); fi
+  case "$a" in
+    --omit-harness-cli) bridge_cli=0 ;;
+    --firewall)         firewall=1 ;;
+    *)                  ARGS+=( "$a" ) ;;
+  esac
 done
 if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
 
@@ -88,6 +95,23 @@ if [ "$bridge_cli" = 1 ]; then
   done < <(env)
 fi
 
+# Egress firewall (opt-in via --firewall). Start as container-root with the caps
+# the iptables setup needs; the entrypoint applies the allowlist then drops to
+# the keep-id host user to run claude. The harness server (parsed from
+# HARNESS_SERVER_CID) is allowlisted so the bridged harness-cli still reaches it.
+declare -a FW=()
+if [ "$firewall" = 1 ]; then
+  server_ip=$(printf '%s' "${HARNESS_SERVER_CID:-}" | sed -E 's#^[a-z]+:##; s#[:-].*##')
+  FW=(
+    --user 0
+    --cap-add=NET_ADMIN --cap-add=NET_RAW
+    --env SANDBOX_FIREWALL=1
+    --env DROP_UID="$(id -u)" --env DROP_GID="$(id -g)"
+    --env SANDBOX_SERVER_IP="$server_ip"
+    --entrypoint /usr/local/bin/sandbox-entrypoint.sh
+  )
+fi
+
 exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
@@ -96,6 +120,7 @@ exec podman run --rm -i "${TTY[@]}" \
   -v "$HOME_DIR/.claude:$HOME_DIR/.claude" \
   "${CLAUDE_JSON[@]}" \
   "${CLI[@]}" \
+  "${FW[@]}" \
   "${MOUNTS[@]}" \
   "$IMAGE" \
   claude "$@"
