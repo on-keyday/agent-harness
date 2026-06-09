@@ -33,8 +33,17 @@ RUN apt-get update \
 COPY init-firewall.sh       /usr/local/bin/sandbox-init-firewall.sh
 COPY init-firewall-proxy.sh /usr/local/bin/sandbox-init-firewall-proxy.sh
 COPY connect-proxy.py       /usr/local/bin/sandbox-connect-proxy.py
+COPY claude-launch.sh       /usr/local/bin/sandbox-claude-launch.sh
 COPY entrypoint.sh          /usr/local/bin/sandbox-entrypoint.sh
 RUN chmod +x /usr/local/bin/sandbox-init-firewall.sh \
              /usr/local/bin/sandbox-init-firewall-proxy.sh \
              /usr/local/bin/sandbox-connect-proxy.py \
+             /usr/local/bin/sandbox-claude-launch.sh \
              /usr/local/bin/sandbox-entrypoint.sh
+
+# Token-auth runs from the image's own home (/home/node) with an ephemeral
+# ~/.claude every run, so interactive claude would re-show the first-run
+# onboarding (theme/welcome) each time. Pre-seed onboarding-complete so it starts
+# straight at the prompt; auth still comes from CLAUDE_CODE_OAUTH_TOKEN.
+RUN printf '{"hasCompletedOnboarding": true, "theme": "dark"}\n' > /home/node/.claude.json \
+ && chown node:node /home/node/.claude.json

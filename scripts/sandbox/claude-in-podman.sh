@@ -87,7 +87,9 @@ auth_mode="mount"
 if [ -s "$TOKEN_FILE" ]; then
   auth_mode="token"
   CLAUDE_HOME="/home/node"
-  AUTH=( --env CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" )
+  # SANDBOX_SEED_CONFIG tells the in-container launcher to pre-seed onboarding +
+  # trust-this-folder for the worktree (ephemeral home re-prompts otherwise).
+  AUTH=( --env CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" --env SANDBOX_SEED_CONFIG=1 )
 else
   AUTH=( -v "$HOME_DIR/.claude:$HOME_DIR/.claude" )
   [ -f "$HOME_DIR/.claude.json" ] && AUTH+=( -v "$HOME_DIR/.claude.json:$HOME_DIR/.claude.json" )
@@ -161,4 +163,4 @@ exec podman run --rm -i "${TTY[@]}" \
   "${FW[@]}" \
   "${MOUNTS[@]}" \
   "$IMAGE" \
-  claude "$@"
+  /usr/local/bin/sandbox-claude-launch.sh "$@"
