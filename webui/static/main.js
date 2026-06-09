@@ -36,7 +36,8 @@ const POLL_INTERVAL_MS = 5000;
   // Toast popups for incoming notifications (see harness_onNotifyEvent /
   // showToast). Declared here — before onConnectionChange is wired below — so
   // the 'connected' handler can set the grace window without a TDZ throw.
-  const TOAST_TTL_MS = 5000;       // info/warn self-dismiss; error is sticky
+  const TOAST_TTL_MS = 5000;       // info/warn auto-dismiss
+  const TOAST_ERROR_TTL_MS = 8000; // error lingers a bit longer (not sticky — feed persists it)
   const TOAST_SUPPRESS_MS = 1500;  // suppress the backlog burst after each (re)connect
   let toastSuppressUntil = 0;      // Date.now() before which incoming events do NOT toast
   function registerOnConnected(fn) {
@@ -424,8 +425,8 @@ const POLL_INTERVAL_MS = 5000;
 
   // showToast pops a transient copy of an incoming notification: top-right on
   // desktop, a top banner on mobile (style.css). Tap → reveal the 通知 feed
-  // (where the entry is actionable); ✕ or auto-dismiss closes it. error is
-  // sticky (no auto-dismiss) so it can't be missed.
+  // (where the entry is actionable); ✕ or auto-dismiss closes it. All levels
+  // auto-dismiss (the feed is the persistent record); error just lingers longer.
   function showToast(e) {
     const host = document.getElementById("toast-host");
     if (!host) return;
@@ -472,7 +473,7 @@ const POLL_INTERVAL_MS = 5000;
     // Cap the visible stack; drop the oldest beyond the cap (fewer on mobile).
     const cap = window.matchMedia("(max-width: 600px)").matches ? 2 : 4;
     while (host.children.length > cap) host.removeChild(host.firstChild);
-    if (lvl !== "error") setTimeout(() => dismissToast(t), TOAST_TTL_MS);
+    setTimeout(() => dismissToast(t), lvl === "error" ? TOAST_ERROR_TTL_MS : TOAST_TTL_MS);
   }
 
   function dismissToast(t) {
