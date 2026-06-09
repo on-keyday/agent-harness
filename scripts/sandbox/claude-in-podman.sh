@@ -160,21 +160,27 @@ fi
 fw_mode="none"; [ "$firewall" = 1 ] && fw_mode="ip"; [ "$firewall_proxy" = 1 ] && fw_mode="proxy"
 echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) image=$IMAGE" >&2
 
-# Do NOT `exec` podman. With exec, when the runner kills this process, the podman
-# client dies but conmon keeps the container (and its claude) alive — orphaned,
-# accumulating across re-spawns. Instead run it as a child with a --cidfile and
-# force-remove the container on any exit or terminating signal. The runner sends
-# SIGHUP/SIGTERM before SIGKILL, so the trap fires before the un-catchable kill.
+# Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
+# the TTY — otherwise interactive keystrokes never reach claude. But with exec,
+# when the runner kills this process the podman client dies while conmon keeps the
+# container (and its claude) alive — orphaned, accumulating across --continue
+# re-spawns. So fork a detached reaper that force-removes the container (via
+# --cidfile) once this process is gone. It polls, so it catches even SIGKILL
+# (which a trap can't), and it never touches the terminal (stdin /dev/null), so it
+# doesn't interfere with claude's TTY input.
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
-teardown() {
-  [ -e "$cidfile" ] && podman rm -f -t 1 --cidfile "$cidfile" >/dev/null 2>&1
+wrapper_pid=$$
+(
+  while kill -0 "$wrapper_pid" 2>/dev/null; do sleep 0.5; done
+  n=0
+  while [ -e "$cidfile" ] && [ "$n" -lt 6 ]; do
+    podman rm -f -i -t 1 --cidfile "$cidfile" >/dev/null 2>&1 && break
+    n=$((n + 1)); sleep 0.3
+  done
   rm -f "$cidfile"
-  return 0
-}
-trap teardown EXIT
-trap 'teardown; exit 143' TERM HUP INT
+) </dev/null >/dev/null 2>&1 &
 
-podman run --rm -i "${TTY[@]}" \
+exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
   --security-opt no-new-privileges \
@@ -186,8 +192,4 @@ podman run --rm -i "${TTY[@]}" \
   "${FW[@]}" \
   "${MOUNTS[@]}" \
   "$IMAGE" \
-  /usr/local/bin/sandbox-claude-launch.sh "$@" &
-cpid=$!
-rc=0
-wait "$cpid" || rc=$?
-exit "$rc"
+  /usr/local/bin/sandbox-claude-launch.sh "$@"
