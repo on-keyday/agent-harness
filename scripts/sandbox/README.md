@@ -71,8 +71,11 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 - **Token auth (hardened, recommended for untrusted work):** put a dedicated,
   revocable token in a file and the wrapper authenticates via
   `CLAUDE_CODE_OAUTH_TOKEN` **without mounting `~/.claude`** — so a leak means
-  revoking *that one token*, not your account. Session state is ephemeral
-  (no host resume). One-time setup:
+  revoking *that one token*, not your account. Session state is ephemeral, so
+  **`--continue` / resume do NOT work** in token auth. Need resume on a given
+  task? pass **`--mount-auth`** to force mount auth (host `~/.claude`, resume
+  works) even when the token file is present — trading the refresh-token exposure
+  back in for that task. One-time setup:
 
   ```sh
   claude setup-token            # interactive; prints a long-lived token

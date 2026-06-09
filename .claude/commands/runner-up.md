@@ -42,9 +42,11 @@ Arguments: $ARGUMENTS
    accepted); the wrapper itself stays a pure pass-through. Optional wrapper
    controls, passed the same way (`--claude-arg` / `--claude-args`): `--firewall`
    (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
-   allowlisting CONNECT proxy, no raw agent egress, WebFetch works) and
-   `--omit-harness-cli` (drop the control-plane bridge for full isolation) — see
-   `scripts/sandbox/README.md`. Because the roots
+   allowlisting CONNECT proxy, no raw agent egress, WebFetch works),
+   `--omit-harness-cli` (drop the control-plane bridge for full isolation), and
+   `--mount-auth` (force host `~/.claude` mount auth — resume/`--continue` works —
+   even when a setup-token file is present) — see `scripts/sandbox/README.md`.
+   Because the roots
    usually overlap a broad existing slot (e.g. the `bash` runner serving
    `$HOME/workspace`), inject `--hostname $HARNESS_HOSTNAME-sandbox` so the slot
    is unambiguously pinnable via `--host`.

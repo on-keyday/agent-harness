@@ -32,15 +32,22 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       CONNECT proxy (connect-proxy.py); the agent gets no raw
 #                       egress and its API/WebFetch funnel through the proxy.
 #                       Takes precedence over --firewall if both are given.
+#   --mount-auth        force MOUNT auth (bind-mount the host ~/.claude) even when
+#                       a token file exists. Mount auth persists session state, so
+#                       --continue / resume work — at the cost of exposing the
+#                       refresh token. Use it for trusted, resumable tasks; leave
+#                       it off for untrusted work (token auth, ephemeral).
 bridge_cli=1
 firewall=0
 firewall_proxy=0
+force_mount=0
 declare -a ARGS=()
 for a in "$@"; do
   case "$a" in
     --omit-harness-cli) bridge_cli=0 ;;
     --firewall)         firewall=1 ;;
     --firewall-proxy)   firewall_proxy=1 ;;
+    --mount-auth)       force_mount=1 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
 done
@@ -84,7 +91,7 @@ TOKEN_FILE="${HARNESS_SANDBOX_CLAUDE_TOKEN_FILE:-$HOME_DIR/.config/harness/sandb
 CLAUDE_HOME="$HOME_DIR"
 declare -a AUTH=()
 auth_mode="mount"
-if [ -s "$TOKEN_FILE" ]; then
+if [ -s "$TOKEN_FILE" ] && [ "$force_mount" != 1 ]; then
   auth_mode="token"
   CLAUDE_HOME="/home/node"
   # SANDBOX_SEED_CONFIG tells the in-container launcher to pre-seed onboarding +
