@@ -1,0 +1,26 @@
+# Sandbox image for running Claude Code confined in a ROOTLESS podman container.
+#
+# Built to be run as `podman run --userns=keep-id` (see claude-in-podman.sh):
+# keep-id maps the invoking host user (e.g. uid 1000) into the container
+# unchanged, so claude runs as a NON-root user — which both satisfies its
+# "refuse --dangerously-skip-permissions as root" rule AND keeps the agent's
+# worktree edits owned by the host user on disk.
+#
+# No USER line and no app account: the runtime uid is supplied by keep-id at
+# `podman run` time, and the wrapper sets HOME + cwd. claude installs to
+# /usr/local/bin so any uid can execute it.
+
+ARG NODE_TAG=22-bookworm-slim
+FROM node:${NODE_TAG}
+
+# Pin to a specific Claude Code release for reproducible images, or override:
+#   podman build --build-arg CLAUDE_VERSION=2.1.169 ...
+ARG CLAUDE_VERSION=latest
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      git ripgrep ca-certificates curl less \
+ && rm -rf /var/lib/apt/lists/* \
+ && npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
+ && npm cache clean --force \
+ && claude --version
