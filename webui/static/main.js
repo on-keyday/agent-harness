@@ -386,9 +386,27 @@ const POLL_INTERVAL_MS = 5000;
 
   // Notification feed: window.harness_onNotifyEvent receives one raw JSON
   // object per event from the wasm notifyPipe.  ts is unix seconds.
+  //
+  // Dedup: the server replays its backlog ring (server/notify_ring.go, cap 64)
+  // to EVERY new subscriber — including the re-subscribe that happens after a
+  // reconnect — so recent events would re-render as duplicates. NotifyEvent
+  // carries no unique id (ts is only seconds), so we key on content. Events
+  // that genuinely arrived while disconnected have unseen keys and still render;
+  // only an already-shown event is suppressed. Same-second byte-identical events
+  // collapse to one, which is acceptable (they are indistinguishable anyway).
+  const seenNotify = new Set();
+  const seenNotifyOrder = [];
+  const SEEN_NOTIFY_MAX = 512; // > ring cap (64) and feed cap (200)
+  const notifyKey = (e) =>
+    JSON.stringify([e.ts, e.level, e.origin, e.hostname, e.task_id, e.title, e.text]);
   window.harness_onNotifyEvent = (jsonStr) => {
     try {
       const e = JSON.parse(jsonStr);
+      const key = notifyKey(e);
+      if (seenNotify.has(key)) return; // already shown (e.g. backlog replay after reconnect)
+      seenNotify.add(key);
+      seenNotifyOrder.push(key);
+      if (seenNotifyOrder.length > SEEN_NOTIFY_MAX) seenNotify.delete(seenNotifyOrder.shift());
       const feed = document.getElementById("notify-feed");
       if (!feed) return;
       const lvl = e.level || "info";
