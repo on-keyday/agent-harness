@@ -11,7 +11,9 @@ a per-task broker.
 > **⚠️ Toy / dogfood scope.** This is a single-developer personal tool,
 > published as-is. It is **not** production-hardened. In particular the
 > custom transport stack (`objproto` ECDH + AES-GCM, the `trsf` stream
-> multiplexer, PSK pre-auth, congestion control) is deliberately
+> multiplexer, PSK pre-auth, congestion control — maintained in the
+> companion module
+> [objtrsf](https://github.com/on-keyday/objtrsf)) is deliberately
 > toy-scope: it exists to learn and to dogfood, not to be a vetted
 > security boundary. The server is a **trusted hub** that handles task
 > logs, file contents, PTY streams and port-forward bytes in plaintext;
@@ -84,10 +86,11 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
   - `cmd/harness-webui-wasm`: in-browser WebUI compiled to WASM, served
     by `harness-server`.
 
-Connections use the in-tree `objproto` secure transport (ECDH +
-AES-128-GCM) on top of one of two underlays — **WebSocket**
-(default, `--listen host:port` on the server) and **UDP**
-(`--udp-listen host:port`, which uses the project's own
+Connections use the `objproto` secure transport (ECDH +
+AES-128-GCM) from the companion module
+[objtrsf](https://github.com/on-keyday/objtrsf) on top of one of two
+underlays — **WebSocket** (default, `--listen host:port` on the server)
+and **UDP** (`--udp-listen host:port`, which uses objtrsf's own
 QUIC-like layering in `trsf`). Both can run simultaneously
 (WS+UDP dualstack) on a single server. The `trsf`
 stream-multiplexing layer carries control / data frames on top of
@@ -366,10 +369,15 @@ go test -tags integration ./integration/... -v
 
 ## Layout
 
+The transport stack — `objproto` (encrypted secure session, ECDH +
+AES-GCM), `trsf` (QUIC-like stream multiplexer; flow / congestion /
+MTU) and `transport` (WebSocket adapter, incl. WASM build) — lives in
+the companion module
+[github.com/on-keyday/objtrsf](https://github.com/on-keyday/objtrsf).
+
 ```
-objproto/             encrypted secure session (ECDH + AES-GCM)
-trsf/                 stream multiplexer (QUIC-like; flow / congestion / MTU)
-transport/            WebSocket adapter for objproto (incl. WASM build)
+appwire/              bgn-generated app-layer wire types (AppKind payload ids,
+                      PSK auth status) carried over the objtrsf transport
 peer/                 Conn + Dial + bidi stream lookup on top of objproto
 exec/                 PTY plumbing for `interactive` (frame mux, stream splice)
 pubsub/               topic broker for task-log / status fanout
@@ -399,6 +407,7 @@ scripts/              {runner,server,restart}.{py,sh} daemon lifecycle helpers (
                       user units (Linux) / Task Scheduler tasks (Windows) for
                       boot/login persistence. build_and_restart_all.py rebuilds
                       and restarts every alive runner, self last.
+examples/             notify-hook samples (e.g. Discord webhook relay)
 testdata/             fake-claude.sh used by tests
 integration/          end-to-end smoke test (build tag: integration)
 docs/superpowers/     specs/ and plans/ for design history
