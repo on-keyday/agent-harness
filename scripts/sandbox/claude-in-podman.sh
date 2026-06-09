@@ -163,6 +163,7 @@ echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bri
 exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
+  --security-opt no-new-privileges \
   -w "$WT" \
   --env HOME="$CLAUDE_HOME" \
   "${AUTH[@]}" \
