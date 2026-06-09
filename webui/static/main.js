@@ -32,6 +32,13 @@ const POLL_INTERVAL_MS = 5000;
   // 3. Connect (options-bag form; persist=true enables auto-reconnect loop).
   const connectedHandlers = [];
   let connectionIsUp = false;
+
+  // Toast popups for incoming notifications (see harness_onNotifyEvent /
+  // showToast). Declared here — before onConnectionChange is wired below — so
+  // the 'connected' handler can set the grace window without a TDZ throw.
+  const TOAST_TTL_MS = 5000;       // info/warn self-dismiss; error is sticky
+  const TOAST_SUPPRESS_MS = 1500;  // suppress the backlog burst after each (re)connect
+  let toastSuppressUntil = 0;      // Date.now() before which incoming events do NOT toast
   function registerOnConnected(fn) {
     connectedHandlers.push(fn);
     // The connection can reach 'connected' during `await harness.connect()`,
@@ -71,6 +78,9 @@ const POLL_INTERVAL_MS = 5000;
     if (state.phase === 'connected') {
       setStatus("connected", "connected");
       connectionIsUp = true;
+      // The re-subscribe in the handler loop below makes the server replay its
+      // backlog ring; hold off toasting until that burst settles.
+      toastSuppressUntil = Date.now() + TOAST_SUPPRESS_MS;
       for (const fn of connectedHandlers) {
         try { fn(); } catch (e) { console.error('connected handler', e); }
       }
@@ -399,6 +409,86 @@ const POLL_INTERVAL_MS = 5000;
   const SEEN_NOTIFY_MAX = 512; // > ring cap (64) and feed cap (200)
   const notifyKey = (e) =>
     JSON.stringify([e.ts, e.level, e.origin, e.hostname, e.task_id, e.title, e.text]);
+  // notifyParts derives the display fields shared by the feed entry and the
+  // toast popup, so the two renderings never diverge.
+  function notifyParts(e) {
+    const lvl = e.level || "info";
+    const time = new Date((e.ts ? e.ts * 1000 : Date.now())).toLocaleTimeString();
+    // "title — text" with both; just one side alone — no dangling separator.
+    let body = e.title || "";
+    if (e.text) body = body ? `${body} — ${e.text}` : e.text;
+    let src = e.hostname ? `${e.origin || ""}@${e.hostname}` : (e.origin || "");
+    if (e.task_id) src += " · " + String(e.task_id); // full id, copy-pasteable
+    return { lvl, time, body, src };
+  }
+
+  // showToast pops a transient copy of an incoming notification: top-right on
+  // desktop, a top banner on mobile (style.css). Tap → reveal the 通知 feed
+  // (where the entry is actionable); ✕ or auto-dismiss closes it. error is
+  // sticky (no auto-dismiss) so it can't be missed.
+  function showToast(e) {
+    const host = document.getElementById("toast-host");
+    if (!host) return;
+    const { lvl, time, body, src } = notifyParts(e);
+    const t = document.createElement("div");
+    t.className = "toast notify-level-" + lvl;
+    if (lvl === "error") t.setAttribute("role", "alert");
+
+    const head = document.createElement("div");
+    head.className = "notify-head";
+    const badge = document.createElement("span");
+    badge.className = "notify-badge";
+    badge.textContent = lvl.toUpperCase();
+    const tEl = document.createElement("span");
+    tEl.className = "notify-time";
+    tEl.textContent = time;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "toast-close";
+    x.textContent = "✕";
+    x.addEventListener("click", (ev) => { ev.stopPropagation(); dismissToast(t); });
+    head.append(badge, tEl, x);
+
+    const bodyEl = document.createElement("div");
+    bodyEl.className = "notify-body";
+    bodyEl.textContent = body || "(no body)";
+    t.append(head, bodyEl);
+    if (src) {
+      const metaEl = document.createElement("div");
+      metaEl.className = "notify-meta";
+      metaEl.textContent = src;
+      t.append(metaEl);
+    }
+
+    t.addEventListener("click", () => {
+      document.querySelector('.tab-btn[data-tab="notify"]')?.click(); // mobile: switch tab
+      if (!window.matchMedia("(max-width: 600px)").matches) {
+        document.getElementById("notifications")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      dismissToast(t);
+    });
+
+    host.appendChild(t);
+    // Cap the visible stack; drop the oldest beyond the cap (fewer on mobile).
+    const cap = window.matchMedia("(max-width: 600px)").matches ? 2 : 4;
+    while (host.children.length > cap) host.removeChild(host.firstChild);
+    if (lvl !== "error") setTimeout(() => dismissToast(t), TOAST_TTL_MS);
+  }
+
+  function dismissToast(t) {
+    if (!t.isConnected) return;
+    t.classList.add("toast-leaving");
+    setTimeout(() => t.remove(), 200); // matches the CSS leave transition
+  }
+
+  // maybeToast gates showToast by the post-connect grace window so the backlog
+  // ring replay (server/notify_replay.go) doesn't fire a burst of toasts on
+  // connect / reconnect. Already-seen events never reach here (deduped upstream).
+  function maybeToast(e) {
+    if (Date.now() < toastSuppressUntil) return;
+    showToast(e);
+  }
+
   window.harness_onNotifyEvent = (jsonStr) => {
     try {
       const e = JSON.parse(jsonStr);
@@ -409,13 +499,7 @@ const POLL_INTERVAL_MS = 5000;
       if (seenNotifyOrder.length > SEEN_NOTIFY_MAX) seenNotify.delete(seenNotifyOrder.shift());
       const feed = document.getElementById("notify-feed");
       if (!feed) return;
-      const lvl = e.level || "info";
-      const time = new Date((e.ts ? e.ts * 1000 : Date.now())).toLocaleTimeString();
-      // "title — text" with both; just one side alone — no dangling separator.
-      let body = e.title || "";
-      if (e.text) body = body ? `${body} — ${e.text}` : e.text;
-      let src = e.hostname ? `${e.origin || ""}@${e.hostname}` : (e.origin || "");
-      if (e.task_id) src += " · " + String(e.task_id); // full id, copy-pasteable
+      const { lvl, time, body, src } = notifyParts(e);
 
       // Structured entry: colored level badge + short time, prominent message,
       // muted source/task-id below. Color-coding + spacing are in style.css.
@@ -494,6 +578,7 @@ const POLL_INTERVAL_MS = 5000;
       // Cap feed at 200 entries (drop the oldest from the top).
       while (feed.children.length > 200) feed.removeChild(feed.firstChild);
       if (atBottom) feed.scrollTop = feed.scrollHeight;
+      maybeToast(e); // pop a transient toast for live events (grace-gated)
     } catch (_) {}
   };
   registerOnConnected(() => {

@@ -295,3 +295,60 @@ button:hover { background: #555; }
   cursor: pointer;
 }
 .notify-action-btn:active { background: #3a3a3a; }
+
+/* Notification toast popups (window.harness_onNotifyEvent → showToast).
+   Desktop: a stack in the top-right corner. Mobile: a full-width banner under
+   the notch, overlaying the sticky tabbar while shown (kept at the TOP so it
+   never collides with the soft keyboard at the bottom). Reuses notify-level-*
+   for the left accent + badge color. */
+#toast-host {
+  position: fixed;
+  z-index: 1000;                 /* above content, below the conn-banner (9999) */
+  top: 0.5rem;
+  right: 0.5rem;
+  width: min(360px, calc(100vw - 1rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;          /* clicks pass through the gaps; toasts opt back in */
+}
+#toast-host .toast {
+  pointer-events: auto;
+  background: #252526;
+  color: #d4d4d4;
+  border: 1px solid #444;
+  border-left-width: 4px;        /* accent color set per-level below */
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+  cursor: pointer;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+#toast-host .toast.toast-leaving { opacity: 0; transform: translateY(-6px); }
+/* ID-specificity beats .notify-level-* (class), so re-assert the accent here. */
+#toast-host .toast.notify-level-info  { border-left-color: #3498db; }
+#toast-host .toast.notify-level-warn  { border-left-color: #f1c40f; }
+#toast-host .toast.notify-level-error { border-left-color: #e74c3c; }
+.toast .notify-time { color: #888; font-size: 0.8em; }
+.toast-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #999;
+  font-size: 0.9em;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.15em;
+}
+.toast-close:hover { color: #ddd; }
+@media (max-width: 600px) {
+  #toast-host {
+    top: 0;
+    right: 0;
+    left: 0;
+    width: auto;
+    padding: env(safe-area-inset-top, 0) 0.4rem 0;
+    z-index: 9000;               /* overlay the sticky tabbar (100) while shown */
+  }
+  #toast-host .toast { border-radius: 0 0 6px 6px; }
+}
