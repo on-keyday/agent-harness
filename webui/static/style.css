@@ -295,6 +295,15 @@ button:hover { background: #555; }
   cursor: pointer;
 }
 .notify-action-btn:active { background: #3a3a3a; }
+.notify-sound-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  margin: 0.4em 0;
+  font-size: 0.9em;
+  color: #bbb;
+  cursor: pointer;
+}
 
 /* Notification toast popups (window.harness_onNotifyEvent → showToast).
    Desktop: a stack in the top-right corner. Mobile: a full-width banner under

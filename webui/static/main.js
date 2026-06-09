@@ -482,12 +482,50 @@ const POLL_INTERVAL_MS = 5000;
     setTimeout(() => t.remove(), 200); // matches the CSS leave transition
   }
 
-  // maybeToast gates showToast by the post-connect grace window so the backlog
-  // ring replay (server/notify_replay.go) doesn't fire a burst of toasts on
+  // --- Notification sound (Web Audio synth beep) ------------------------------
+  // A short blip on each live notification, gated like the toast. Browsers block
+  // audio until the page has seen a user gesture, so we lazily create + resume an
+  // AudioContext and also unlock it on the first pointer/key event. Toggle is
+  // persisted in localStorage (default on); iOS may still mute via the ring
+  // switch — that's a platform limit, not something we can override.
+  const SOUND_KEY = "harness.notifySound";
+  const soundEnabled = () => localStorage.getItem(SOUND_KEY) !== "off"; // default on
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try { audioCtx = new AC(); } catch (_) { return null; }
+    }
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+    return audioCtx;
+  }
+  window.addEventListener("pointerdown", ensureAudio, { once: true });
+  window.addEventListener("keydown", ensureAudio, { once: true });
+  function playBeep() {
+    const ctx = ensureAudio();
+    if (!ctx || ctx.state !== "running") return; // not unlocked yet (no gesture)
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, t0);
+    osc.frequency.setValueAtTime(1175, t0 + 0.08); // two-note "ding"
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.01); // attack (ramp avoids click)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25); // decay
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + 0.26);
+  }
+
+  // maybeToast gates the toast + sound by the post-connect grace window so the
+  // backlog ring replay (server/notify_replay.go) doesn't fire a burst on
   // connect / reconnect. Already-seen events never reach here (deduped upstream).
   function maybeToast(e) {
     if (Date.now() < toastSuppressUntil) return;
     showToast(e);
+    if (soundEnabled()) playBeep();
   }
 
   window.harness_onNotifyEvent = (jsonStr) => {
@@ -601,6 +639,17 @@ const POLL_INTERVAL_MS = 5000;
       } catch (e) {
         notifyResult.textContent = `error: ${e.message}`;
       }
+    });
+  }
+
+  // Notification-sound on/off (persisted; default on). Toggling is a user
+  // gesture, so enabling also unlocks the AudioContext and previews the beep.
+  const soundToggle = document.getElementById("notify-sound");
+  if (soundToggle) {
+    soundToggle.checked = soundEnabled();
+    soundToggle.addEventListener("change", () => {
+      localStorage.setItem(SOUND_KEY, soundToggle.checked ? "on" : "off");
+      if (soundToggle.checked) playBeep();
     });
   }
 
