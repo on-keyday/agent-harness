@@ -20,7 +20,9 @@ ARG CLAUDE_VERSION=latest
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       git ripgrep ca-certificates curl less \
+      python3 python3-pip python3-venv \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}" \
  && npm cache clean --force \
- && claude --version
+ && claude --version \
+ && python3 --version

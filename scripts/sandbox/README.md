@@ -29,7 +29,7 @@ scripts/sandbox/build.sh --build-arg CLAUDE_VERSION=2.1.169
 ```
 
 Produces `harness-claude-sandbox:latest` (override via `HARNESS_SANDBOX_IMAGE`):
-`node:22` base + `git` + `ripgrep` + `@anthropic-ai/claude-code`.
+`node:22` base + `git` + `ripgrep` + `python3`/`pip`/`venv` + `@anthropic-ai/claude-code`.
 
 ## Use it from a runner
 
