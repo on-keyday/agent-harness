@@ -12,13 +12,26 @@
 # The runner invokes this with cwd = the task worktree and forwards claude's
 # args (including `--dangerously-skip-permissions ... -p <prompt>`) as "$@".
 #
-# SCOPE (v1): one-shot / print mode (`-p`). Interactive PTY passthrough and
-# network egress restriction are deliberately out of scope here — see README.md.
+# SCOPE: one-shot (`-p`) verified end-to-end; interactive gets a container TTY
+# when stdin is one. harness-cli + the HARNESS_* env are bridged in by default so
+# the confined agent keeps the control plane (--omit-harness-cli to disable).
+# Network egress is open (allowlist firewall = TODO). See README.md.
 set -euo pipefail
 
 IMAGE="${HARNESS_SANDBOX_IMAGE:-harness-claude-sandbox:latest}"
 WT="$PWD"                                  # the runner sets cwd to the worktree
 HOME_DIR="${HOME:-/home/$(id -un)}"
+
+# Consume our own control flag from the arg stream (NOT a claude flag, so it must
+# not reach claude). Pass `--claude-arg --omit-harness-cli` (or runner
+# --claude-args) to run with NO harness control plane in the container = full
+# isolation. Default: bridge harness-cli + the HARNESS_* env in (see below).
+bridge_cli=1
+declare -a ARGS=()
+for a in "$@"; do
+  if [ "$a" = "--omit-harness-cli" ]; then bridge_cli=0; else ARGS+=( "$a" ); fi
+done
+if [ "${#ARGS[@]}" -gt 0 ]; then set -- "${ARGS[@]}"; else set --; fi
 
 # Bind-mount at IDENTICAL host paths so (a) claude's cwd-hash session resume and
 # (b) git's worktree gitdir link both resolve inside the container. We mount the
@@ -61,6 +74,20 @@ fi
 declare -a TTY=()
 [ -t 0 ] && TTY=( -t )
 
+# harness control plane (default ON; --omit-harness-cli disables). The runner
+# already set HARNESS_* in OUR env and put harness-cli on PATH — forward both in
+# so the confined agent can still submit / agentboard / file-transfer. Works when
+# the server is directly reachable; behind HARNESS_PROXY_VIA_RUNNER a
+# --network=host shim would be needed (left for later).
+declare -a CLI=()
+if [ "$bridge_cli" = 1 ]; then
+  hcli=$(command -v harness-cli 2>/dev/null)
+  [ -n "$hcli" ] && CLI+=( -v "$(readlink -f "$hcli"):/usr/local/bin/harness-cli:ro" )
+  while IFS='=' read -r name _; do
+    case "$name" in HARNESS_*) CLI+=( --env "$name" ) ;; esac
+  done < <(env)
+fi
+
 exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
@@ -68,6 +95,7 @@ exec podman run --rm -i "${TTY[@]}" \
   --env HOME="$HOME_DIR" \
   -v "$HOME_DIR/.claude:$HOME_DIR/.claude" \
   "${CLAUDE_JSON[@]}" \
+  "${CLI[@]}" \
   "${MOUNTS[@]}" \
   "$IMAGE" \
   claude "$@"

@@ -58,7 +58,16 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   read and modify your full claude config). Do **not** treat this as a boundary
   against a hostile agent — it reduces *accidental* blast radius for dogfood use.
   A stricter setup (creds-only mount + dedicated config) is a v2 hardening.
-- **Network: open (v1).** Egress is unrestricted for now.
+- **harness control plane bridged in (default):** the host `harness-cli` binary
+  is mounted onto PATH and the runner's `HARNESS_*` env is forwarded, so the
+  confined agent can still `submit` / agentboard / file-transfer. This re-grants
+  the harness control plane (a deliberate agent could spawn an unsandboxed task
+  and escape) — fine for trusted dogfood, where the goal is preventing *accidental*
+  host damage, not adversarial containment. Disable per task or per runner with
+  `--claude-arg --omit-harness-cli` / `--claude-args "--omit-harness-cli"` for full
+  isolation. (Bridge assumes the server is directly reachable; behind
+  `HARNESS_PROXY_VIA_RUNNER` it would need `--network=host` — not handled yet.)
+- **Network: open.** Egress is unrestricted for now (allowlist firewall = TODO).
 
 ## Scope / roadmap
 
