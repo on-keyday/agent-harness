@@ -26,15 +26,21 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 # must not reach claude). Pass them via `--claude-arg` / runner `--claude-args`:
 #   --omit-harness-cli  run with NO harness control plane in the container (full
 #                       isolation); default is to bridge harness-cli + HARNESS_* in.
-#   --firewall          apply the egress allowlist (init-firewall.sh) inside the
-#                       container; default is an open network.
+#   --firewall          apply the iptables+ipset egress allowlist
+#                       (init-firewall.sh); default is an open network.
+#   --firewall-proxy    stronger egress: deny-all + an in-container allowlisting
+#                       CONNECT proxy (connect-proxy.py); the agent gets no raw
+#                       egress and its API/WebFetch funnel through the proxy.
+#                       Takes precedence over --firewall if both are given.
 bridge_cli=1
 firewall=0
+firewall_proxy=0
 declare -a ARGS=()
 for a in "$@"; do
   case "$a" in
     --omit-harness-cli) bridge_cli=0 ;;
     --firewall)         firewall=1 ;;
+    --firewall-proxy)   firewall_proxy=1 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
 done
@@ -100,21 +106,28 @@ fi
 # the keep-id host user to run claude. The harness server (parsed from
 # HARNESS_SERVER_CID) is allowlisted so the bridged harness-cli still reaches it.
 declare -a FW=()
-if [ "$firewall" = 1 ]; then
+if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
   server_ip=$(printf '%s' "${HARNESS_SERVER_CID:-}" | sed -E 's#^[a-z]+:##; s#[:-].*##')
   FW=(
     --user 0
     --cap-add=NET_ADMIN --cap-add=NET_RAW
-    --env SANDBOX_FIREWALL=1
     --env DROP_UID="$(id -u)" --env DROP_GID="$(id -g)"
     --env SANDBOX_SERVER_IP="$server_ip"
     # Disable claude's non-essential egress (telemetry → datadog, statsig
     # feature-flags, auto-update, error reporting). Verified A/B that this drops
-    # http-intake.logs.us5.datadoghq.com etc. — so the allowlist needn't include
-    # those telemetry CDNs, and fail-closed won't silently stall on them.
+    # http-intake.logs.us5.datadoghq.com etc. — so neither the allowlist nor the
+    # proxy needs those telemetry CDNs, and fail-closed won't stall on them.
     --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
     --entrypoint /usr/local/bin/sandbox-entrypoint.sh
   )
+  if [ "$firewall_proxy" = 1 ]; then
+    FW+=( --env SANDBOX_FIREWALL_PROXY=1 )
+    # Extend the proxy's domain allowlist (comma-separated) for WebFetch research
+    # targets via SANDBOX_PROXY_ALLOW in the runner's env.
+    [ -n "${SANDBOX_PROXY_ALLOW:-}" ] && FW+=( --env SANDBOX_PROXY_ALLOW="$SANDBOX_PROXY_ALLOW" )
+  else
+    FW+=( --env SANDBOX_FIREWALL=1 )
+  fi
 fi
 
 exec podman run --rm -i "${TTY[@]}" \

@@ -83,6 +83,17 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   auto-update, error reporting) is disabled in-container via
   `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, so the allowlist needn't include
   those endpoints and fail-closed won't stall on them.
+- **`--firewall-proxy` (stronger egress):** instead of an IP allowlist, deny ALL
+  raw egress for the agent uid (iptables owner-match) and run an in-container
+  allowlisting CONNECT proxy (`connect-proxy.py`) as a separate uid; the agent's
+  API/WebFetch are forced through it via `HTTPS_PROXY`. Wins over `--firewall`:
+  client-side **WebFetch works** (routed through the proxy), domain-based allowlist
+  (no CDN-IP rotation / ipset), and injected code cannot open a raw socket at all.
+  Default proxy allowlist = `api.anthropic.com` + github/npm/pypi; extend for
+  WebFetch research targets by setting `SANDBOX_PROXY_ALLOW=domain1,domain2` in the
+  runner env. harness-cli is unaffected (direct L3 carve-out to the harness
+  server; it doesn't use `HTTPS_PROXY`). Residual: a CONNECT proxy sees SNI/host
+  only — it raises the bar but cannot stop exfil to an *allowlisted* domain.
 
 ## Scope / roadmap
 
@@ -97,3 +108,11 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   as container-root then dropped to the agent user. Adapted from Anthropic's
   `init-firewall.sh`; fail-closed. Verified end-to-end (blocked domains rejected,
   allowed reachable, claude runs + writes the worktree as the host user). ✅
+- **proxy-broker egress (opt-in `--firewall-proxy`, stronger):** an in-container
+  allowlisting CONNECT proxy (`connect-proxy.py`) runs as a dedicated uid; iptables
+  **owner-match** gives the agent uid NO raw-socket egress, so its API + WebFetch
+  funnel through the proxy (domain allowlist, no CDN-IP fragility, **WebFetch
+  works** unlike the IP allowlist). harness-cli still reaches the harness server
+  via a direct L3 carve-out (it doesn't honor `HTTPS_PROXY`). Verified end-to-end
+  (allowed via proxy, denied refused, raw-socket bypass blocked, claude runs +
+  writes the worktree as the host user). ✅

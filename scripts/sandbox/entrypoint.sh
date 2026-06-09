@@ -14,6 +14,27 @@ set -euo pipefail
 # claude to an empty /home/node → "Not logged in". Force the wrapper's HOME back.
 AGENT_HOME="${HOME:-/home/$(id -un 2>/dev/null || echo user)}"
 
+if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
+  # Proxy-broker mode: start the allowlisting CONNECT proxy as its own uid, then
+  # apply the owner-match firewall (agent uid gets no raw egress), then point the
+  # agent at the proxy. Fail CLOSED on firewall error.
+  PROXY_UID="${SANDBOX_PROXY_UID:-1001}"
+  PROXY_PORT="${SANDBOX_PROXY_PORT:-18080}"
+  gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
+    python3 /usr/local/bin/sandbox-connect-proxy.py &
+  for _ in $(seq 1 50); do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$PROXY_PORT") 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  /usr/local/bin/sandbox-init-firewall-proxy.sh || {
+    echo "FATAL: proxy-broker firewall setup failed; refusing to run unconfined" >&2
+    exit 1
+  }
+  P="http://127.0.0.1:$PROXY_PORT"
+  export HTTPS_PROXY="$P" HTTP_PROXY="$P" https_proxy="$P" http_proxy="$P"
+  export NO_PROXY="" no_proxy=""
+fi
+
 if [ "${SANDBOX_FIREWALL:-0}" = "1" ]; then
   # Fail CLOSED: if the egress allowlist can't be applied, refuse to run claude
   # unconfined — a firewall that silently fails open is worse than none.

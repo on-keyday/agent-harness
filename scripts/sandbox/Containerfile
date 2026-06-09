@@ -30,6 +30,11 @@ RUN apt-get update \
 
 # Egress-firewall kit (used only when the wrapper passes --firewall; see
 # entrypoint.sh / init-firewall.sh). Harmless dead weight otherwise.
-COPY init-firewall.sh /usr/local/bin/sandbox-init-firewall.sh
-COPY entrypoint.sh    /usr/local/bin/sandbox-entrypoint.sh
-RUN chmod +x /usr/local/bin/sandbox-init-firewall.sh /usr/local/bin/sandbox-entrypoint.sh
+COPY init-firewall.sh       /usr/local/bin/sandbox-init-firewall.sh
+COPY init-firewall-proxy.sh /usr/local/bin/sandbox-init-firewall-proxy.sh
+COPY connect-proxy.py       /usr/local/bin/sandbox-connect-proxy.py
+COPY entrypoint.sh          /usr/local/bin/sandbox-entrypoint.sh
+RUN chmod +x /usr/local/bin/sandbox-init-firewall.sh \
+             /usr/local/bin/sandbox-init-firewall-proxy.sh \
+             /usr/local/bin/sandbox-connect-proxy.py \
+             /usr/local/bin/sandbox-entrypoint.sh
