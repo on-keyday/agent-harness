@@ -34,8 +34,9 @@ Arguments: $ARGUMENTS
    command execution while keeping worktree-based isolation — so it does **not**
    set `--no-worktree`, and the user must still supply `roots=` (no sensible
    default). Prerequisites before spawning: `podman` installed and the image
-   built once via `scripts/sandbox/build.sh`. v1 supports one-shot tasks only;
-   interactive PTY is not yet wired (see `scripts/sandbox/README.md`). The preset
+   built once via `scripts/sandbox/build.sh`. one-shot is verified; interactive
+   is bridged via a conditional `podman -t` (worth confirming on real use; see
+   `scripts/sandbox/README.md`). The preset
    defaults `--claude-args "--dangerously-skip-permissions"` — safe here because
    the container is the boundary and keep-id runs claude non-root (so the flag is
    accepted); the wrapper itself stays a pure pass-through. Because the roots

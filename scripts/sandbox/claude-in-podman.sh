@@ -52,7 +52,16 @@ fi
 # Pure pass-through: claude args (incl. --dangerously-skip-permissions, which the
 # runner forwards via --claude-args / submit --claude-arg) arrive in "$@". The
 # container is the confinement boundary; the runner owns claude's arg policy.
-exec podman run --rm -i \
+#
+# TTY: the runner runs an interactive session under a real PTY (exec.ExecuteCommand
+# ptyEnabled=true), so our stdin is a terminal — allocate a TTY inside the
+# container too (-t), else claude's TUI aborts with "stdin is not a TTY". One-shot
+# (`-p`) runs under a pipe (stdin not a tty), where -t would corrupt the captured
+# byte stream — so gate -t on stdin being a terminal.
+declare -a TTY=()
+[ -t 0 ] && TTY=( -t )
+
+exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
   -w "$WT" \

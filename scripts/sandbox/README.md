@@ -62,10 +62,11 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 
 ## Scope / roadmap
 
-- **v1 (this):** one-shot / print mode (`claude -p`). Rootless, keep-id, FS
-  confinement. ✅
-- **v2:** egress allowlist firewall (adapt Anthropic's `init-firewall.sh`,
-  iptables in the container netns).
-- **v3:** interactive PTY passthrough (the runner allocates a PTY; threading it
-  through `podman run -t` without double-PTY is the open problem). Until then,
-  interactive tasks should use a non-sandboxed runner.
+- **one-shot / print mode (`claude -p`):** rootless, keep-id, FS confinement.
+  Verified end-to-end through a real runner. ✅
+- **interactive:** the runner runs the wrapper under a real PTY, so the wrapper
+  adds `podman -t` when its stdin is a terminal (and omits it for the `-p` pipe,
+  which `-t` would corrupt). TTY plumbing verified; live TUI rendering/resize
+  through podman still wants real-world confirmation. ⚠️
+- **v2 (TODO):** egress allowlist firewall (adapt Anthropic's `init-firewall.sh`,
+  iptables in the container netns). Network is currently open.
