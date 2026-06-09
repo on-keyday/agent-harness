@@ -52,6 +52,34 @@ def log(msg):
     sys.stderr.flush()
 
 
+def connect_ipv4(host, port, timeout):
+    """Connect over IPv4 only.
+
+    The firewall blocks the agent's IPv6 anyway, and a broken/again-firewalled v6
+    route otherwise makes the default dual-stack create_connection try the AAAA
+    address first and burn the whole connect timeout before falling back to v4
+    (observed: registry.npmjs.org unreachable at 15s, pypi ~12s). Resolving A-only
+    also skips the AAAA DNS lookup, so cold names resolve fast.
+    """
+    last = None
+    for af, stype, proto, _, addr in socket.getaddrinfo(
+        host, port, socket.AF_INET, socket.SOCK_STREAM
+    ):
+        s = socket.socket(af, stype, proto)
+        try:
+            s.settimeout(timeout)
+            s.connect(addr)
+            s.settimeout(None)
+            return s
+        except OSError as e:
+            last = e
+            try:
+                s.close()
+            except OSError:
+                pass
+    raise last or OSError("no IPv4 address for %s" % host)
+
+
 def splice(a, b):
     try:
         while True:
@@ -103,7 +131,7 @@ def handle(client):
             client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
             return
         try:
-            upstream = socket.create_connection((host, port), timeout=15)
+            upstream = connect_ipv4(host, port, 15)
         except OSError as e:
             log("FAIL  %s:%d (%s)" % (host, port, e))
             client.sendall(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")

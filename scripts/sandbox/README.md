@@ -93,7 +93,10 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   WebFetch research targets by setting `SANDBOX_PROXY_ALLOW=domain1,domain2` in the
   runner env. harness-cli is unaffected (direct L3 carve-out to the harness
   server; it doesn't use `HTTPS_PROXY`). Residual: a CONNECT proxy sees SNI/host
-  only — it raises the bar but cannot stop exfil to an *allowlisted* domain.
+  only (no TLS-body inspection without MITM) — it closes raw-socket and
+  non-allowlisted exfil, but cannot stop exfil *to an allowlisted domain* (e.g. a
+  GitHub gist, since `github.com` is allowlisted). Trim the allowlist for
+  sensitive tasks; full DLP would need a MITM proxy (out of scope).
 
 ## Scope / roadmap
 
