@@ -22,6 +22,8 @@ import threading
 # hosts. Extend per task with SANDBOX_PROXY_ALLOW for WebFetch research domains.
 DEFAULT_ALLOW = [
     "api.anthropic.com",
+    "platform.claude.com",   # token-auth validates CLAUDE_CODE_OAUTH_TOKEN here
+    "console.anthropic.com",  # oauth / account
     "github.com",            # + api./codeload. via suffix
     "githubusercontent.com",  # raw./objects.
     "npmjs.org",             # registry.

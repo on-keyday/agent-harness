@@ -51,6 +51,8 @@ fi
 for domain in \
     registry.npmjs.org \
     api.anthropic.com \
+    platform.claude.com \
+    console.anthropic.com \
     sentry.io \
     statsig.anthropic.com \
     statsig.com \
