@@ -76,7 +76,13 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   everything else REJECTed. Adapted from Anthropic's `init-firewall.sh`; runs as
   container-root (needs `--user 0` + `NET_ADMIN`/`NET_RAW`, added automatically)
   then drops to the agent user. **Fail-closed:** if the firewall can't be applied
-  the task aborts rather than running unconfined.
+  the task aborts rather than running unconfined. Two behaviours to know: (1)
+  client-side `WebFetch` can only reach allowlisted hosts under `--firewall`
+  (server-side `WebSearch`, which goes via `api.anthropic.com`, is unaffected);
+  (2) claude's non-essential egress (telemetry → Datadog, statsig feature-flags,
+  auto-update, error reporting) is disabled in-container via
+  `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, so the allowlist needn't include
+  those endpoints and fail-closed won't stall on them.
 
 ## Scope / roadmap
 

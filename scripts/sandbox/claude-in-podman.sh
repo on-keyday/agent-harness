@@ -108,6 +108,11 @@ if [ "$firewall" = 1 ]; then
     --env SANDBOX_FIREWALL=1
     --env DROP_UID="$(id -u)" --env DROP_GID="$(id -g)"
     --env SANDBOX_SERVER_IP="$server_ip"
+    # Disable claude's non-essential egress (telemetry → datadog, statsig
+    # feature-flags, auto-update, error reporting). Verified A/B that this drops
+    # http-intake.logs.us5.datadoghq.com etc. — so the allowlist needn't include
+    # those telemetry CDNs, and fail-closed won't silently stall on them.
+    --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
     --entrypoint /usr/local/bin/sandbox-entrypoint.sh
   )
 fi
