@@ -83,7 +83,9 @@ add_mount "$WT"
 TOKEN_FILE="${HARNESS_SANDBOX_CLAUDE_TOKEN_FILE:-$HOME_DIR/.config/harness/sandbox-claude-token}"
 CLAUDE_HOME="$HOME_DIR"
 declare -a AUTH=()
+auth_mode="mount"
 if [ -s "$TOKEN_FILE" ]; then
+  auth_mode="token"
   CLAUDE_HOME="/home/node"
   AUTH=( --env CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" )
 else
@@ -144,6 +146,10 @@ if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
     FW+=( --env SANDBOX_FIREWALL=1 )
   fi
 fi
+
+# One-line summary of the chosen modes → the runner log (token VALUE never shown).
+fw_mode="none"; [ "$firewall" = 1 ] && fw_mode="ip"; [ "$firewall_proxy" = 1 ] && fw_mode="proxy"
+echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) image=$IMAGE" >&2
 
 exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
