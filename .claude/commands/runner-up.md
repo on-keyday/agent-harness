@@ -27,6 +27,21 @@ Arguments: $ARGUMENTS
    | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace`                                                                  | Linux / macOS (existing sandbox slot) |
    | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
+   | `sandbox`    | `--claude-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --claude-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
+
+   **The `sandbox` preset is NOT a shell preset.** It runs the *full* claude
+   inside a rootless-podman container (`scripts/sandbox/`), confining the agent's
+   command execution while keeping worktree-based isolation — so it does **not**
+   set `--no-worktree`, and the user must still supply `roots=` (no sensible
+   default). Prerequisites before spawning: `podman` installed and the image
+   built once via `scripts/sandbox/build.sh`. v1 supports one-shot tasks only;
+   interactive PTY is not yet wired (see `scripts/sandbox/README.md`). The preset
+   defaults `--claude-args "--dangerously-skip-permissions"` — safe here because
+   the container is the boundary and keep-id runs claude non-root (so the flag is
+   accepted); the wrapper itself stays a pure pass-through. Because the roots
+   usually overlap a broad existing slot (e.g. the `bash` runner serving
+   `$HOME/workspace`), inject `--hostname $HARNESS_HOSTNAME-sandbox` so the slot
+   is unambiguously pinnable via `--host`.
 
    **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 

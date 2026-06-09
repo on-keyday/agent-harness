@@ -49,6 +49,9 @@ declare -a CLAUDE_JSON=()
 if [ -f "$HOME_DIR/.claude.json" ]; then
   CLAUDE_JSON=( -v "$HOME_DIR/.claude.json:$HOME_DIR/.claude.json" )
 fi
+# Pure pass-through: claude args (incl. --dangerously-skip-permissions, which the
+# runner forwards via --claude-args / submit --claude-arg) arrive in "$@". The
+# container is the confinement boundary; the runner owns claude's arg policy.
 exec podman run --rm -i \
   --userns=keep-id \
   --security-opt label=disable \
