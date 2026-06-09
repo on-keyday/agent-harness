@@ -90,6 +90,34 @@ func currentClient() (*cli.Client, error) {
 	return client, nil
 }
 
+// waitForClient blocks until a live client handle is installed and returns it,
+// or returns ctx.Err() once ctx is done.
+//
+// Reconnect ordering: PersistLoop emits Connected (cli/persist.go) — which the
+// JS layer turns into an onConnectionChange('connected') that re-invokes the
+// watch starters below — BEFORE onConnect installs the new handle into `client`
+// and completes SayHello. So during the reconnect window currentClient() is
+// transiently nil. The stream starters must WAIT for the fresh handle rather
+// than snapshot-once-and-give-up; otherwise a reconnect permanently kills the
+// stream (e.g. the notification feed stops updating until a full page reload).
+// First connect avoids this because the starters are registered only after
+// `await harness.connect()` resolves, which already gates on `client` being set.
+func waitForClient(ctx context.Context) (*cli.Client, error) {
+	for {
+		clientMu.Lock()
+		c := client
+		clientMu.Unlock()
+		if c != nil {
+			return c, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(25 * time.Millisecond):
+		}
+	}
+}
+
 // harnessConnect parses the CID string and dials the server.
 //
 //	harness.connect("ws:127.0.0.1:8539-*"):                 one-shot, persist=false (compat)
@@ -461,7 +489,9 @@ func harnessWatch(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			c, err := currentClient()
+			// Wait for the live handle: on reconnect this starter is
+			// re-invoked before the new client is installed (see waitForClient).
+			c, err := waitForClient(rootCtx)
 			if err != nil {
 				rejectErr(reject, err)
 				return
@@ -802,7 +832,9 @@ func harnessWatchNotifications(this js.Value, args []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
-			c, err := currentClient()
+			// Wait for the live handle: on reconnect this starter is
+			// re-invoked before the new client is installed (see waitForClient).
+			c, err := waitForClient(rootCtx)
 			if err != nil {
 				rejectErr(reject, err)
 				return
