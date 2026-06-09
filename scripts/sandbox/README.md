@@ -56,10 +56,34 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 - **Confined:** filesystem outside the mounted repo, host processes, the rest of
   your home. The agent sees only the repo it's working in (+ `~/.claude`).
 - **Exposed (intentional):** the mounted repo worktree (that's where edits go),
-  plus `~/.claude` + `~/.claude.json` (login/session/config — the container can
-  read and modify your full claude config). Do **not** treat this as a boundary
-  against a hostile agent — it reduces *accidental* blast radius for dogfood use.
-  A stricter setup (creds-only mount + dedicated config) is a v2 hardening.
+  plus — in the default **mount auth** mode — `~/.claude` + `~/.claude.json`
+  (login/session/config; the container can read your full claude config,
+  **including the permanent refresh token**). Use **token auth** (below) to remove
+  that exposure. Do **not** treat the container as a boundary against a hostile
+  agent; it reduces *accidental* blast radius for dogfood use.
+
+### Authentication
+
+- **Mount auth (default):** bind-mounts `~/.claude` so the sandbox reuses your
+  host login + session resume. Simplest, but the personal **refresh token** is in
+  the container — combined with open egress + untrusted input that's a real
+  exfil-to-permanent-compromise risk (mitigate with `--firewall-proxy`).
+- **Token auth (hardened, recommended for untrusted work):** put a dedicated,
+  revocable token in a file and the wrapper authenticates via
+  `CLAUDE_CODE_OAUTH_TOKEN` **without mounting `~/.claude`** — so a leak means
+  revoking *that one token*, not your account. Session state is ephemeral
+  (no host resume). One-time setup:
+
+  ```sh
+  claude setup-token            # interactive; prints a long-lived token
+  mkdir -p ~/.config/harness
+  ( umask 077; printf '%s\n' '<the token>' > ~/.config/harness/sandbox-claude-token )
+  ```
+
+  The wrapper auto-detects that file (override path with
+  `HARNESS_SANDBOX_CLAUDE_TOKEN_FILE`) and switches to token auth; it never reads
+  the token's bytes (hands it to podman as an env). The token is *long-lived*, not
+  short-TTL — the win is "dedicated + revocable", not "harmless if leaked".
 - **harness control plane bridged in (default):** the host `harness-cli` binary
   is mounted onto PATH and the runner's `HARNESS_*` env is forwarded, so the
   confined agent can still `submit` / agentboard / file-transfer. This re-grants

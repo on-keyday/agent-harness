@@ -66,14 +66,29 @@ if common=$(git -C "$WT" rev-parse --git-common-dir 2>/dev/null); then
 fi
 add_mount "$WT"
 
-# HOME/.claude (dir) is bind-mounted so the container reuses the host login +
-# session store (claude resumes a worktree by cwd hash). claude ALSO keeps a
-# top-level ~/.claude.json (settings, per-project state) — mount it too when it
-# exists, else claude warns "config not found" every run and rewrites it.
-# Everything else under HOME is ephemeral per run.
-declare -a CLAUDE_JSON=()
-if [ -f "$HOME_DIR/.claude.json" ]; then
-  CLAUDE_JSON=( -v "$HOME_DIR/.claude.json:$HOME_DIR/.claude.json" )
+# Auth. Two modes:
+#
+#  (a) Token (preferred, hardened): if a token file exists — default
+#      ~/.config/harness/sandbox-claude-token, override with
+#      HARNESS_SANDBOX_CLAUDE_TOKEN_FILE — auth via CLAUDE_CODE_OAUTH_TOKEN (a
+#      DEDICATED, revocable `claude setup-token`) and DO NOT mount the personal
+#      ~/.claude (which holds the *permanent* refresh token). claude runs from the
+#      image's own writable home (/home/node), so ~/.claude is ephemeral per run
+#      (no host-session resume — accepted trade for not exposing the refresh
+#      token). We never read the token's bytes; podman receives it as an env.
+#
+#  (b) Mount (fallback): reuse the host login by bind-mounting ~/.claude (+
+#      ~/.claude.json). This exposes the permanent refresh token to the container
+#      — see the README security section.
+TOKEN_FILE="${HARNESS_SANDBOX_CLAUDE_TOKEN_FILE:-$HOME_DIR/.config/harness/sandbox-claude-token}"
+CLAUDE_HOME="$HOME_DIR"
+declare -a AUTH=()
+if [ -s "$TOKEN_FILE" ]; then
+  CLAUDE_HOME="/home/node"
+  AUTH=( --env CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" )
+else
+  AUTH=( -v "$HOME_DIR/.claude:$HOME_DIR/.claude" )
+  [ -f "$HOME_DIR/.claude.json" ] && AUTH+=( -v "$HOME_DIR/.claude.json:$HOME_DIR/.claude.json" )
 fi
 # Pure pass-through: claude args (incl. --dangerously-skip-permissions, which the
 # runner forwards via --claude-args / submit --claude-arg) arrive in "$@". The
@@ -134,9 +149,8 @@ exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
   --security-opt label=disable \
   -w "$WT" \
-  --env HOME="$HOME_DIR" \
-  -v "$HOME_DIR/.claude:$HOME_DIR/.claude" \
-  "${CLAUDE_JSON[@]}" \
+  --env HOME="$CLAUDE_HOME" \
+  "${AUTH[@]}" \
   "${CLI[@]}" \
   "${FW[@]}" \
   "${MOUNTS[@]}" \
