@@ -168,9 +168,17 @@ echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bri
 # --cidfile) once this process is gone. It polls, so it catches even SIGKILL
 # (which a trap can't), and it never touches the terminal (stdin /dev/null), so it
 # doesn't interfere with claude's TTY input.
+#
+# setsid is load-bearing: the runner starts this script as a PTY session leader,
+# and a plain `( ... ) &` subshell stays in the leader's session + foreground
+# process group — when the leader (the exec'd podman client) dies, the kernel
+# HUPs that whole foreground group and the reaper dies BEFORE its podman rm ever
+# runs (observed 2026-06-12: 8 orphaned containers, each with its cidfile still
+# in /tmp because the trailing rm never executed). Redirecting stdio is not
+# detaching; only a new session escapes the PTY hangup.
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
-wrapper_pid=$$
-(
+setsid bash -c '
+  wrapper_pid="$1"; cidfile="$2"
   while kill -0 "$wrapper_pid" 2>/dev/null; do sleep 0.5; done
   n=0
   while [ -e "$cidfile" ] && [ "$n" -lt 6 ]; do
@@ -178,7 +186,7 @@ wrapper_pid=$$
     n=$((n + 1)); sleep 0.3
   done
   rm -f "$cidfile"
-) </dev/null >/dev/null 2>&1 &
+' _ "$$" "$cidfile" </dev/null >/dev/null 2>&1 &
 
 exec podman run --rm -i "${TTY[@]}" \
   --userns=keep-id \
