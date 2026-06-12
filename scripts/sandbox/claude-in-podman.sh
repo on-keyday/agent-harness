@@ -37,10 +37,13 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       --continue / resume work — at the cost of exposing the
 #                       refresh token. Use it for trusted, resumable tasks; leave
 #                       it off for untrusted work (token auth, ephemeral).
+#   --image-claude      run the image's npm-installed claude instead of bridging
+#                       the host binary in (see "Host claude bridge" below).
 bridge_cli=1
 firewall=0
 firewall_proxy=0
 force_mount=0
+image_claude=0
 declare -a ARGS=()
 for a in "$@"; do
   case "$a" in
@@ -48,6 +51,7 @@ for a in "$@"; do
     --firewall)         firewall=1 ;;
     --firewall-proxy)   firewall_proxy=1 ;;
     --mount-auth)       force_mount=1 ;;
+    --image-claude)     image_claude=1 ;;
     *)                  ARGS+=( "$a" ) ;;
   esac
 done
@@ -156,9 +160,28 @@ if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
   fi
 fi
 
+# Host claude bridge (default ON; --image-claude opts out). The image bakes in
+# an npm-installed claude that goes stale within days (claude releases often)
+# and then nags about upgrading, while the mounted-ro binary can't self-update.
+# Instead bind-mount the host's auto-updated native-install binary over the
+# image's /usr/local/bin/claude — verified the host ELF runs fine on the
+# image's glibc. Falls back to the image copy when the host has no native
+# install (e.g. ~/.local/bin/claude absent). DISABLE_AUTOUPDATER silences
+# update attempts either way: the ro mount can't be replaced, and the image
+# copy is fixed until the next image build.
+declare -a HOSTCLAUDE=( --env DISABLE_AUTOUPDATER=1 )
+claude_src="image"
+if [ "$image_claude" != 1 ]; then
+  hclaude="$(readlink -f "$HOME_DIR/.local/bin/claude" 2>/dev/null || true)"
+  if [ -n "$hclaude" ] && [ -x "$hclaude" ]; then
+    HOSTCLAUDE+=( -v "$hclaude:/usr/local/bin/claude:ro" )
+    claude_src="host:$(basename "$hclaude")"
+  fi
+fi
+
 # One-line summary of the chosen modes → the runner log (token VALUE never shown).
 fw_mode="none"; [ "$firewall" = 1 ] && fw_mode="ip"; [ "$firewall_proxy" = 1 ] && fw_mode="proxy"
-echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) image=$IMAGE" >&2
+echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bridge_cli" = 1 ] && echo on || echo off) claude=$claude_src image=$IMAGE" >&2
 
 # Container lifecycle. We MUST `exec` podman so it stays the foreground owner of
 # the TTY — otherwise interactive keystrokes never reach claude. But with exec,
@@ -214,6 +237,7 @@ exec podman run --rm -i "${TTY[@]}" \
   "${AUTH[@]}" \
   "${CLI[@]}" \
   "${FW[@]}" \
+  "${HOSTCLAUDE[@]}" \
   "${MOUNTS[@]}" \
   "$IMAGE" \
   /usr/local/bin/sandbox-claude-launch.sh "$@"
