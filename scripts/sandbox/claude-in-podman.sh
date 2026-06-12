@@ -182,13 +182,19 @@ echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bri
 # live 2026-06-13 — six 0.3s-spaced attempts all lost to that window, while a
 # manual rm ~90s later succeeded instantly. Each attempt is capped with
 # `timeout 10` so a wedged podman call cannot pin the reaper forever.
+# Reaper diagnostics go to a log, not /dev/null — when a container outlives
+# its session anyway, the per-attempt podman errors there are the only
+# post-mortem evidence of why.
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
   wrapper_pid="$1"; cidfile="$2"
+  log="${TMPDIR:-/tmp}/sandbox-reaper.log"
   while kill -0 "$wrapper_pid" 2>/dev/null; do sleep 0.5; done
+  echo "$(date "+%F %T") reaper: wrapper $wrapper_pid gone cid=$(head -c12 "$cidfile" 2>/dev/null || echo no-cidfile)" >>"$log"
   deadline=$((SECONDS + 60))
   while [ -e "$cidfile" ] && [ "$SECONDS" -lt "$deadline" ]; do
-    timeout 10 podman rm -f -i -t 1 --cidfile "$cidfile" >/dev/null 2>&1 && break
+    err=$(timeout 10 podman rm -f -i -t 1 --cidfile "$cidfile" 2>&1) && { echo "$(date "+%F %T") reaper: removed" >>"$log"; break; }
+    echo "$(date "+%F %T") reaper: rm rc=$? ${err}" >>"$log"
     sleep 1
   done
   rm -f "$cidfile"
