@@ -189,6 +189,10 @@ cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
   wrapper_pid="$1"; cidfile="$2"
   log="${TMPDIR:-/tmp}/sandbox-reaper.log"
+  # cd out of the inherited cwd (= the task worktree): the runner deletes the
+  # worktree on session kill, and podman aborts on a vanished cwd ("error
+  # getting current working directory") before it ever touches the container.
+  cd /
   while kill -0 "$wrapper_pid" 2>/dev/null; do sleep 0.5; done
   echo "$(date "+%F %T") reaper: wrapper $wrapper_pid gone cid=$(head -c12 "$cidfile" 2>/dev/null || echo no-cidfile)" >>"$log"
   deadline=$((SECONDS + 60))
