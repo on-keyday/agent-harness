@@ -377,6 +377,9 @@ func TestTaskStoreReplayMarksRunningAsFailed(t *testing.T) {
 	if got.Status != protocol.TaskStatus_Failed {
 		t.Fatalf("expected Failed, got %v", got.Status)
 	}
+	if string(got.ErrorMsg) != "server_restart" {
+		t.Fatalf("expected ErrorMsg=server_restart, got %q", got.ErrorMsg)
+	}
 }
 
 func TestTaskStorePruneTerminal(t *testing.T) {

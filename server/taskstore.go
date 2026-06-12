@@ -644,12 +644,16 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 		}
 	}
 	// Any task still Running after full replay had no Finished event.
-	// Server restart loses the runner connection; Running tasks are forced to Failed.
+	// Server restart loses the runner connection; Running tasks are forced to
+	// Failed with a recorded reason, symmetric with MarkFailed's
+	// "runner_disconnected" — both mark a resumable interruption, not a task
+	// that errored on its own.
 	for _, t := range s.tasks {
 		if t.Status == protocol.TaskStatus_Running {
 			t.Status = protocol.TaskStatus_Failed
 			now := time.Now()
 			t.EndedAt = &now
+			t.ErrorMsg = []byte("server_restart")
 		}
 	}
 }
