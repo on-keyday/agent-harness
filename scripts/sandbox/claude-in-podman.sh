@@ -176,14 +176,20 @@ echo "[claude-in-podman] auth=$auth_mode firewall=$fw_mode harness-cli=$([ "$bri
 # runs (observed 2026-06-12: 8 orphaned containers, each with its cidfile still
 # in /tmp because the trailing rm never executed). Redirecting stdio is not
 # detaching; only a new session escapes the PTY hangup.
+# The retry budget is ~60s, not a few seconds: right after the podman client
+# dies, the container goes through a stop/cleanup window during which
+# `podman rm -f` blocks or fails ("Stopping" state / cleanup lock); observed
+# live 2026-06-13 — six 0.3s-spaced attempts all lost to that window, while a
+# manual rm ~90s later succeeded instantly. Each attempt is capped with
+# `timeout 10` so a wedged podman call cannot pin the reaper forever.
 cidfile="$(mktemp -u "${TMPDIR:-/tmp}/sandbox-cid.XXXXXX")"
 setsid bash -c '
   wrapper_pid="$1"; cidfile="$2"
   while kill -0 "$wrapper_pid" 2>/dev/null; do sleep 0.5; done
-  n=0
-  while [ -e "$cidfile" ] && [ "$n" -lt 6 ]; do
-    podman rm -f -i -t 1 --cidfile "$cidfile" >/dev/null 2>&1 && break
-    n=$((n + 1)); sleep 0.3
+  deadline=$((SECONDS + 60))
+  while [ -e "$cidfile" ] && [ "$SECONDS" -lt "$deadline" ]; do
+    timeout 10 podman rm -f -i -t 1 --cidfile "$cidfile" >/dev/null 2>&1 && break
+    sleep 1
   done
   rm -f "$cidfile"
 ' _ "$$" "$cidfile" </dev/null >/dev/null 2>&1 &
