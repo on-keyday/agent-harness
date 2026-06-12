@@ -141,6 +141,71 @@ func TestLsTaskRow(t *testing.T) {
 	if !strings.Contains(s, "/home/user/myrepo") {
 		t.Errorf("expected repo path in output:\n%s", s)
 	}
+	// Zero-value kind renders as the oneshot column.
+	if !strings.Contains(s, "oneshot") {
+		t.Errorf("expected oneshot kind column in output:\n%s", s)
+	}
+	// No error / no exit code → the optional suffixes must be absent.
+	if strings.Contains(s, "err=") || strings.Contains(s, "exit=") {
+		t.Errorf("unexpected err=/exit= suffix on a clean running task:\n%s", s)
+	}
+}
+
+// TestLsTaskKindInteractive verifies an interactive (session) task renders
+// the interactive kind column, explaining its empty prompt.
+func TestLsTaskKindInteractive(t *testing.T) {
+	var taskID protocol.TaskID
+	taskID.Id[0] = 0xcd
+	task := protocol.TaskInfo{
+		Id:     taskID,
+		Status: protocol.TaskStatus_Detached,
+		Kind:   protocol.TaskKind_Interactive,
+	}
+
+	lr := &protocol.ListResultBody{
+		Tasks:    []protocol.TaskInfo{task},
+		TasksLen: 1,
+	}
+
+	var out strings.Builder
+	renderList(lr, &out)
+	s := out.String()
+
+	if !strings.Contains(s, "interactive") {
+		t.Errorf("expected interactive kind column in output:\n%s", s)
+	}
+}
+
+// TestLsTaskErrorAndExitSuffix verifies err= renders for a recorded failure
+// reason (e.g. runner_disconnected) and exit= for a non-zero exit code on a
+// finished task.
+func TestLsTaskErrorAndExitSuffix(t *testing.T) {
+	var taskID protocol.TaskID
+	taskID.Id[0] = 0xef
+	task := protocol.TaskInfo{
+		Id:       taskID,
+		Status:   protocol.TaskStatus_Failed,
+		Kind:     protocol.TaskKind_Interactive,
+		EndedAt:  1,
+		ExitCode: 137,
+	}
+	task.SetErrorMessage([]byte("runner_disconnected"))
+
+	lr := &protocol.ListResultBody{
+		Tasks:    []protocol.TaskInfo{task},
+		TasksLen: 1,
+	}
+
+	var out strings.Builder
+	renderList(lr, &out)
+	s := out.String()
+
+	if !strings.Contains(s, `err="runner_disconnected"`) {
+		t.Errorf("expected err= suffix in output:\n%s", s)
+	}
+	if !strings.Contains(s, "exit=137") {
+		t.Errorf("expected exit=137 suffix in output:\n%s", s)
+	}
 }
 
 // TestTaskIDStr verifies taskIDStr behaviour: full-length hex with "-" for

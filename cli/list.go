@@ -109,13 +109,26 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
 			agent = "  " + agentStr(string(r.AgentBin), r.SkillsInjected())
 		}
-		fmt.Fprintf(out, "  %s  %s  repo=%s  from=%s%s  prompt=%q\n",
+		// exit= / err= render only when meaningful so the common rows stay
+		// short: exit= for a finished task with a non-zero code, err= for a
+		// server- or runner-recorded failure reason (e.g. runner_disconnected
+		// — which marks a resumable task, not a dead one).
+		suffix := ""
+		if t.EndedAt > 0 && t.ExitCode != 0 {
+			suffix += fmt.Sprintf("  exit=%d", t.ExitCode)
+		}
+		if len(t.ErrorMessage) > 0 {
+			suffix += fmt.Sprintf("  err=%q", string(t.ErrorMessage))
+		}
+		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s  prompt=%q%s\n",
 			taskIDStr(t.Id.Id[:]),
 			taskStatusStr(t.Status),
+			taskKindStr(t.Kind),
 			string(t.RepoPath),
 			originStr(t.OriginKind),
 			agent,
 			string(t.Prompt),
+			suffix,
 		)
 	}
 }
@@ -164,6 +177,20 @@ func runnerStatusStr(s protocol.RunnerStatus) string {
 	default:
 		return "Offline"
 	}
+}
+
+// taskKindStr renders TaskKind as a fixed-width column. Vocabulary matches
+// the TUI detail popup (tui/detail.go taskKindStr): oneshot / interactive.
+// An interactive row explains its empty prompt= by itself; a oneshot row
+// with an empty prompt really was submitted with one.
+func taskKindStr(k protocol.TaskKind) string {
+	switch k {
+	case protocol.TaskKind_Oneshot:
+		return "oneshot    "
+	case protocol.TaskKind_Interactive:
+		return "interactive"
+	}
+	return "?          "
 }
 
 func taskStatusStr(s protocol.TaskStatus) string {
