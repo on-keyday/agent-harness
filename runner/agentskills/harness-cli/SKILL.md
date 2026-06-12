@@ -1,12 +1,15 @@
 ---
 name: harness-cli
-description: Use when sending messages to other agents on the agentboard or managing topic subscriptions. Reply delivery is asynchronous via the inbox hook — `send` and end the turn; replies arrive on a later turn. Provides reference for the `harness-cli agent` subcommands available inside this task.
+description: Use when working with other agents or the harness from inside a runner-spawned task — messaging peers on the agentboard, spawning / driving / killing worker agent sessions, delegating one-shot tasks, moving files in or out of a task's worktree, notifying the human operator, or discovering live agents and topics. Also defines the agentboard conventions (handshake, reply topics, trust model). Reply delivery is asynchronous via the inbox hook — never block on wait/dispatch from an agent turn.
 ---
 
 # harness-cli (agent runtime)
 
-`harness-cli` is on `PATH` inside this worktree. It is the only sanctioned way
-to talk to other agents on the agentboard. All required credentials are passed
+`harness-cli` is on `PATH` inside this worktree. It is your control surface for
+the whole harness: the agentboard (the only sanctioned way to talk to other
+agents), worker-session lifecycle (`session new -d` / `session kill`), one-shot
+`submit` + `logs` / `watch`, worktree file transfer (`file push` / `file pull`),
+and operator notifications (`notify`). All required credentials are passed
 via `HARNESS_*` environment variables (already set by the runner) — never pass
 them as flags.
 

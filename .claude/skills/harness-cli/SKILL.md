@@ -1,12 +1,15 @@
 ---
 name: harness-cli
-description: Use when sending messages to other agents, waiting for replies, dispatching request/response, or managing topic subscriptions on the agentboard. Provides reference for the `harness-cli agent` subcommands available inside this task.
+description: Use when working with other agents or the harness from inside a runner-spawned task — messaging peers on the agentboard, spawning / driving / killing worker agent sessions, delegating one-shot tasks, moving files in or out of a task's worktree, notifying the human operator, or discovering live agents and topics. Also defines the agentboard conventions (handshake, reply topics, trust model). Reply delivery is asynchronous via the inbox hook — never block on wait/dispatch from an agent turn.
 ---
 
 # harness-cli (agent runtime)
 
-`harness-cli` is on `PATH` inside this worktree. It is the only sanctioned way
-to talk to other agents on the agentboard. All required credentials are passed
+`harness-cli` is on `PATH` inside this worktree. It is your control surface for
+the whole harness: the agentboard (the only sanctioned way to talk to other
+agents), worker-session lifecycle (`session new -d` / `session kill`), one-shot
+`submit` + `logs` / `watch`, worktree file transfer (`file push` / `file pull`),
+and operator notifications (`notify`). All required credentials are passed
 via `HARNESS_*` environment variables (already set by the runner) — never pass
 them as flags.
 
@@ -32,7 +35,47 @@ because peek reads from the prev-cursor snapshot, not the live cursor.
 suppresses the next hook's delivery of those seqs. `--commit` is for the
 hooks only.
 
-## Sending and receiving
+**Known issue — `--since-last` can desync.** When you receive a
+`<harness:agentboard-wake>` prompt but the hook-delivered batch in your
+context appears empty (no inbox payload visible), the local cursor at
+`~/.cache/harness/agent-cursor-<task>` may have advanced past unprocessed
+seqs. As a fallback, run `harness-cli agent inbox --json` (no
+`--since-last`) once — that surfaces anything still in the broker queue.
+If it returns content, treat it as the missed batch and act on it.
+Do not add `--commit` to the fallback call; it remains hook-only.
+
+## Async by default — never block on a reply
+
+Reply delivery to your context is **always asynchronous**, via the inbox
+hook described above. The correct pattern for any request/response flow,
+**including the initial `harness.hello` handshake**, is:
+
+1. `send` to the peer.
+2. End the turn (or do other unrelated work). Do **not** invoke `wait`
+   or `dispatch` to "block until the reply".
+3. The peer's reply arrives on a later turn through the inbox hook —
+   either when the user types a prompt, or when the runner injects a
+   synthetic `<harness:agentboard-wake>` prompt because a new message
+   landed while you were idle.
+
+Why this rule exists:
+
+- `wait` / `dispatch` block the agent's bash process for the full
+  timeout. While blocked you cannot reason, send to other peers, or do
+  any other work — pure dead time.
+- In practice replies very frequently miss the timeout window
+  (handshakes included), so the blocking call ends in failure and the
+  message arrives through the inbox hook anyway. The synchronous form
+  has no payoff and a real cost.
+- State that needs to survive across turns ("I'm waiting on a reply
+  from peer X about Y") belongs in `TodoWrite` or memory, not in a
+  blocking wait.
+
+`harness-cli agent wait` and `harness-cli agent dispatch` exist as
+shell-level escape hatches for scripting **outside** the agent's turn
+loop. The agent itself must not call them.
+
+## Sending
 
 Topics in v1 are **exact match** — no wildcards.
 
@@ -41,15 +84,14 @@ Topics in v1 are **exact match** — no wildcards.
 harness-cli agent send --topic T --data 'hello'
 # Or read --data from stdin with `-`:
 echo 'hello' | harness-cli agent send --topic T --data -
-
-# Block until the next message arrives on topic T.
-harness-cli agent wait --topic T --timeout 30s
-# Use --since-last to honour the shared cursor (skip already-seen seqs):
-harness-cli agent wait --topic T --since-last --timeout 30s
-
-# Request/response sugar: publish on T, block on R for the reply.
-harness-cli agent dispatch --topic T --reply-topic R --data 'q' --timeout 30s
 ```
+
+That is the only command an agent normally runs to talk to peers. End
+the turn after sending; replies arrive through the inbox hook.
+
+The `wait` and `dispatch` subcommands shown by `harness-cli agent --help`
+are for shell scripting outside an agent turn (see "Async by default"
+above); do not invoke them from within an agent turn.
 
 ## Subscriptions
 
@@ -75,6 +117,15 @@ inbound topic `chat.<short-id>` is already live by the time your first
 turn starts — you only need to **announce** it as `reply_topic` in
 outbound messages, not subscribe to it yourself.
 
+**Non-claude agents must subscribe themselves.** Those `SessionStart` hooks
+live in the claude-only `.claude/settings.json`, so a peer running a different
+agent (gemini / codex / …) does NOT get them — even with this skill present via
+cross-tool injection. If that is you, run `harness-cli agent subscribe --self`
+and `harness-cli agent subscribe --topic harness.hello` yourself at startup;
+otherwise peers can't reach you on `chat.<short-id>` and you won't see hello
+announcements. (You also have no auto-inbox hook — poll `harness-cli agent
+inbox` to receive.)
+
 ## Handshake on `harness.hello`
 
 The broker has no schema or capability registry. To keep multi-agent work
@@ -89,6 +140,257 @@ well-known topic: **`harness.hello`**.
   posting traffic on `harness.hello`.
 - `harness.hello` is for meeting, not for ongoing chat. Treat it as the
   one channel guaranteed to exist; everything else is negotiated.
+
+## Finding other agents / tasks
+
+Two views, used together:
+
+```bash
+# Server-side view: every runner and recent task. Each running task is an
+# agent; its 32-hex task id is what you address.
+harness-cli ls
+# RUNNERS
+#   Idle    host=<h>  tasks=N/M  roots=<paths>  id=<runner-cid>
+# TASKS
+#   <task-id>  <status>  repo=<path>  from=<origin>  prompt="..."
+
+# Agentboard view: every active topic (JSON Lines). Reveals who is listening —
+# e.g. chat.<short-id> inbound channels and any per-purpose topics in use.
+harness-cli agent topics
+```
+
+To reach a task you found in `ls`, derive its inbound channel the way every
+agent here names its own: `chat.<first-8-hex-of-task-id>`, and send a `hello`
+there (see the handshake / spawn examples). `ls` tells you *which* agents exist
+and their status; `harness.hello` is how you introduce yourself to one that is
+listening.
+
+## Spawning a worker agent
+
+When you need to delegate work to another agent that you intend to keep
+talking to, prefer **`harness-cli session new -d`** over `submit`.
+
+```bash
+# Spawn a detached interactive PTY agent on a specific repo. Prints the
+# new task id on stdout; the agent stays alive in the background.
+TASK_ID=$(harness-cli session new -d --repo /path/to/repo)
+
+# Reach it on the agentboard. The agent's inbound channel is
+# chat.<first-8-chars-of-TASK_ID> — same convention this skill uses for
+# every agent's "naming inbound channels" rule.
+SHORT_ID=${TASK_ID:0:8}
+harness-cli agent send --topic "chat.$SHORT_ID" --data "$(cat <<'JSON'
+{
+  "kind": "hello",
+  "from": "<your role>",
+  "message": "...",
+  "reply_topic": "chat.<your-short-id>"
+}
+JSON
+)"
+```
+
+Why detached sessions over `submit`:
+
+- `submit` enqueues a **one-shot** task — claude runs to completion with
+  the prompt you supplied and then exits. Once it is running, neither you
+  nor the user can step in to adjust direction, answer a clarifying
+  question, or feed it new context. That makes it a bad fit for any
+  collaborative workflow.
+- `session new -d` keeps the worker alive between turns, so you can drive
+  it iteratively via agent messages and the user can also intervene at
+  any time (attach with `session attach <task-id>`, send corrections via
+  the agentboard, etc.).
+- `submit` still has a place for genuinely one-shot, narrow tasks ("give
+  me a one-line summary of X") where mid-task intervention is not needed
+  — but treat it as the exception.
+
+### Use auto mode for complex delegated work
+
+For any non-trivial worker — anything that will require multiple tool
+calls, file edits, or long autonomous stretches — start the worker in
+**auto permission mode** by forwarding the flag through `--claude-arg`:
+
+```bash
+harness-cli session new -d --repo /path/to/repo \
+  --claude-arg --permission-mode --claude-arg auto
+```
+
+Without this the worker spawns in the default permission mode and will
+stall on every permission prompt — and since the worker is detached, no
+TTY is attached to answer them. Auto mode lets the worker proceed
+through routine tool calls on its own while still respecting harder
+safety boundaries (it is not the same as `bypassPermissions`). Use it
+as the default for delegated work; reserve narrower modes for cases
+where you have an explicit reason.
+
+### Reuse the same task id with `--resume`
+
+If a worker session gets canceled (failed, killed, you want a clean restart)
+and you intend to start another one playing the **same role**, pass
+`--resume <task-id>` so the new session keeps the same task id:
+
+```bash
+harness-cli session new -d --repo /path/to/repo --resume "$TASK_ID"
+```
+
+Same task id means the same `chat.<short-id>` inbound topic, so:
+
+- Other agents that handshook with the previous session can keep talking
+  to the new one without re-discovering it via `harness.hello`.
+- The worktree branch `harness/<task-id>` is reused, so any commits the
+  previous session made are still reachable.
+
+But **`--resume` alone only restores the harness-level identity** — same
+task id, same topic, same worktree. The new session still boots a fresh
+claude process with no memory of the previous conversation. To also
+resume at the claude conversation level (so the worker remembers what it
+was doing), pass `--claude-arg --continue` as well:
+
+```bash
+harness-cli session new -d --repo /path/to/repo \
+  --resume "$TASK_ID" \
+  --claude-arg --permission-mode --claude-arg auto \
+  --claude-arg --continue
+```
+
+Think of it as two independent layers:
+
+| Layer | Flag | What it restores |
+|-------|------|------------------|
+| harness task | `--resume <id>` | task id, chat topic, worktree branch |
+| claude conversation | `--claude-arg --continue` | claude's in-directory session memory |
+
+You almost always want both for a "pick up where it left off" restart.
+Use `--resume` alone only when you specifically want a clean claude
+mind on the same identity (e.g. the previous run got stuck in a
+confused state and you want a fresh start without losing the chat
+topic).
+
+Without `--resume` you get a fresh task id and the peers' link to the
+previous identity is dead — they will need a new hello round.
+
+### Listing and killing your sessions
+
+```bash
+harness-cli session ls          # JSON Lines: detachable interactive sessions only (id, status, runner)
+harness-cli session kill <id>   # terminate one (alias of `cancel`)
+harness-cli session attach <id> # HUMAN ONLY — see warning below
+```
+
+**`session attach` is for humans, not for you (the agent).** It runs
+`RemoteShell`, which flips the local terminal into raw mode and splices it to
+the remote PTY — it needs a real interactive TTY, which the human operator has
+(TUI / WebUI) but you do not. Driving a worker is your job too, but you do it by
+**sending it agentboard messages**, never by attaching. (The human may attach in
+parallel to watch or take over; that's expected.)
+
+`session ls` lists only detachable interactive sessions; the top-level `ls`
+shows every task (including one-shots). When more than one runner can serve the
+repo, pin a spawn with `--runner <cid>` / `--host <name>` / `--ip <addr>`.
+
+## One-shot tasks & monitoring (`submit`, `logs`, `watch`)
+
+`submit` is the fire-and-forget counterpart to `session new -d`: it enqueues a
+one-shot task that runs to completion and exits, with no way to step in mid-run
+(see "Why detached sessions over `submit`" above). **Prefer `session new -d`**
+for anything collaborative; reach for `submit` only for genuinely narrow,
+no-intervention jobs.
+
+```bash
+harness-cli submit --repo /path/to/repo --task "one-line job ..."
+```
+
+Because a submitted task gives you no live channel, you observe it from outside:
+
+```bash
+harness-cli logs [-f|--follow] <TASK_ID>   # dump log history; -f streams live until the task is terminal
+harness-cli watch                          # stream task + runner status events (all tasks)
+harness-cli cancel <TASK_ID>               # cancel a queued/running task
+harness-cli prune [--before DUR] [-f] [TASK_ID ...]   # ask the server to forget terminal tasks
+```
+
+**`logs` and `watch` only cover one-shot (`submit`) tasks.** A submitted task's
+stdout is captured to a server-side log (`logs` reads it) and its queue →
+assigned → ended transitions are published as status events (`watch` reports
+them). An **interactive session (`session new` / `interactive`) has neither**:
+its output streams over the PTY and is replayed from a ring buffer on attach —
+it is never written to the task log — and it is opened directly rather than
+through the queue/dispatch lifecycle, so it emits no `watch` events. Observe an
+interactive worker over the **agentboard** — it reports back to you there.
+(`session attach` is a human/PTY tool, not for you — see "Listing and killing
+your sessions" above; `logs` / `watch` don't apply to interactive tasks.)
+
+`cancel <id>` and `session kill <id>` (its alias), by contrast, **do** work on
+interactive sessions: they route a `CancelTask` to the assigned runner, which
+cancels the session's per-task context and kills the claude process. Cancel is
+idempotent and skips already-terminal tasks. (`prune` / `prune-local` are
+post-hoc cleanup of terminal tasks — server-side forget and local worktree
+removal respectively — and are kind-agnostic.)
+
+## Notifying the operator (`notify`)
+
+`harness-cli notify` pushes a short text notification to the server. The server
+records it for the live view (TUI/WebUI), and — if it was started with
+`--notify-hook` — relays it to that external command, which delivers it onward
+(e.g. to the operator's phone). It needs no live client attached.
+
+```bash
+harness-cli notify "build green, PR is up"
+harness-cli notify --level warn  "which approach for X — need your call"
+harness-cli notify --level error "make check failed on the lint runner"
+```
+
+`--level` is `info` (default) / `warn` / `error`; `--title` sets an optional
+heading. Origin metadata (task id / runner / repo / host) is filled
+automatically from the `HARNESS_*` env when you run it inside a worker; run
+outside a worker and it is marked `external`.
+
+**Keep it to one short line.** It is a fire-and-forget, one-way ping — NOT a
+question and NOT a request/response. Send it and end the turn; do not wait for
+anything back. Over-long text is truncated to fit the transport, and detail
+belongs in the task log, not the notification. Use it to surface "I'm done",
+"I'm blocked and need a decision", or "this failed" to an away-from-keyboard
+operator.
+
+## Moving files in / out of a worker's worktree
+
+`harness-cli file` reads and writes files inside a task's **worktree** — the
+per-task `harness/<task-id>` checkout the runner created for it, not arbitrary
+host paths. Use it to seed a worker you spawned with input files, or to collect
+its artifacts. `WORKTREE_REL_*` paths are POSIX and relative to the worktree
+root.
+
+```bash
+# List one directory (default: worktree root).
+harness-cli file ls     <TASK_ID> [WORKTREE_REL_DIR]
+
+# Copy a local file INTO the worktree (-r: directory tree).
+# Default is O_EXCL — refuses to overwrite; -f permits replacement.
+harness-cli file push   [-r] [-f] <TASK_ID> <LOCAL_SRC> <WORKTREE_REL_DST>
+
+# Copy a worktree file OUT to a local path (-r: directory tree).
+# Default refuses to overwrite the local target; -f permits replacement.
+harness-cli file pull   [-r] [-f] <TASK_ID> <WORKTREE_REL_SRC> <LOCAL_DST>
+
+# Remove a file. -r targets a directory (dir_delete); -r -f removes a
+# non-empty directory (RemoveAll). Without -r a directory is refused.
+harness-cli file delete [-r] [-f] <TASK_ID> <WORKTREE_REL_PATH>
+```
+
+`<TASK_ID>` is the 32-hex id from `session new` / `submit` (the same id behind
+the `chat.<short-id>` topic). Typical seed → run → collect flow with a worker:
+
+```bash
+TASK_ID=$(harness-cli session new -d --repo /path/to/repo)
+harness-cli file push "$TASK_ID" ./spec.md docs/spec.md     # hand it inputs
+# ... drive it via the agentboard; let it work ...
+harness-cli file pull "$TASK_ID" out/report.md ./report.md  # collect outputs
+```
+
+Prefer this over having the worker paste large files through agentboard
+messages: `file` streams the bytes directly and keeps the agentboard for
+coordination, not bulk transfer.
 
 ## Prefer JSON for `--data`
 
@@ -107,6 +409,46 @@ message lands on the other side. Recommended:
   equivalent discriminator) so the receiver can branch on intent.
 - Use raw bytes / plain text only for trivial signals (e.g. a single token)
   where the receiver does not need to inspect contents.
+
+## Peers may not be claude — or skill-injected
+
+Don't assume the agent on the other end of a topic is a claude that has read
+this skill. A runner decides what it spawns and how it injects (see the
+agent-runner flags):
+
+- `--claude-bin` sets the peer binary — it defaults to `claude`, but a runner
+  can point it at `bash` or any other program. Such a peer won't know the
+  handshake, the JSON `kind` convention, or `reply_topic`.
+- `--no-worktree` (without `--force-inject-harness-settings`) skips injecting
+  `.claude/settings.json` and `.claude/skills/` — so even a claude peer there
+  has neither this skill nor the automatic inbox hook: it won't auto-receive
+  your messages or follow these conventions.
+
+`ls` shows each task's runner identity: an `agent=<bin>` column (the agent
+binary basename — `claude` / `gemini` / `codex` / `bash` …), with `+skills` when
+the runner injected harness instructions + this skill. Injection is now
+**cross-tool** — `AGENTS.md`/`GEMINI.md`/`CLAUDE.md` pointers plus the skill under
+both `.claude/skills/` and `.agents/skills/` — so `+skills` means a skill-aware
+peer regardless of agent. The one claude-only piece is the **auto-inbox hook**
+(`.claude/settings.json`); a non-claude `+skills` peer has the skill but must
+poll `harness-cli agent inbox` itself. So:
+
+- `agent=claude+skills` — a conventional, skill-following peer with the
+  auto-inbox hook (it auto-receives your messages).
+- `agent=gemini+skills` / `agent=codex+skills` (any non-claude `+skills`) — has
+  the cross-tool skill + instructions, so it can follow the conventions, but it
+  has **no auto-inbox hook** (claude-only): it must poll `harness-cli agent
+  inbox` itself, so replies to it may lag.
+- `agent=claude` (no `+skills`), or `agent=bash` — not skill-aware: no skill and
+  no inbox hook (e.g. a `--no-worktree` runner without force-inject).
+
+Behavior is still the final word (does it complete `harness.hello`?), but you no
+longer have to guess.
+
+What you *can* rely on: `harness-cli` itself is generally usable in those
+environments, so the peer can still send/receive on the agentboard. Coordinate
+defensively — explicit self-describing JSON, no assumption of an auto-inbox on
+the other end, and graceful degradation when a handshake never completes.
 
 ## Agent-to-agent communication conventions
 
@@ -146,8 +488,11 @@ reach you.
      "reply_topic": "chat.<short-id>"
    }
    ```
-3. **Peer replies** on your `reply_topic`. Switch all further conversation
-   to the pair topics — stop using `harness.hello` for ongoing chat.
+3. **End the turn after step 2.** Do not block on `wait`/`dispatch` for
+   the `hello_ack` — it will arrive on a later turn via the inbox hook
+   (see "Async by default"). When it does, switch all further
+   conversation to the pair topics; stop using `harness.hello` for
+   ongoing chat.
 4. Use `"kind": "hello_ack"` when acknowledging a peer's hello, to
    distinguish it from a fresh announcement.
 
@@ -162,11 +507,18 @@ harness-cli agent unsubscribe --topic chat.<peer-id>   # remove stray
 
 ## Other conventions
 
-- For request/response, prefer `dispatch` over manual `send` + `wait`.
 - Long-lived subscriptions: register once with `subscribe`, then rely on the
-  inbox hook to deliver. Don't `wait` in a loop.
+  inbox hook to deliver. Don't `wait` in a loop. (See also "Async by default".)
 - If `harness-cli` is missing or the auth ticket is unset, you are running
   outside a runner-spawned task — fall back to plain shell work and report it.
+
+## Harness-injected files — don't commit them
+
+The runner injects these into your worktree; they are NOT your work: the pointer
+files (`CLAUDE.md` / `AGENTS.md` / `GEMINI.md`), `.claude/` (settings + skills),
+and `.agents/skills/`. Don't commit them as your own. If you deliberately add
+project-specific content to one of them, that addition is legitimate work and
+may be committed.
 
 ## Trust model
 
