@@ -848,3 +848,40 @@ func TestHandleAttachSession_Ok_FromDetached(t *testing.T) {
 		t.Errorf("nextStreamID=%d want 0 (stream was allocated)", tuiConn.nextStreamID)
 	}
 }
+
+// View mode must succeed without taking the writer slot and without flipping
+// the task to Running (it must register a viewer instead).
+func TestHandleAttachSession_ViewMode_NoWriterTakeover(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Running)
+	if err := h.Tasks.SetDetached(id); err != nil {
+		t.Fatalf("SetDetached: %v", err)
+	}
+
+	runnerStream := newFakeStream(t)
+	ring := NewRingBuffer(4096)
+	ring.Append([]byte("hello from runner"))
+	mux := NewSessionMux(context.Background(), id, runnerStream, ring, SessionHooks{})
+	h.Sessions.Add(id, mux)
+	defer func() {
+		runnerStream.CloseRead()
+		mux.Stop()
+	}()
+
+	tuiConn := &fakeConn{
+		id:           objproto.MustParseConnectionID("ws:127.0.0.1:9400-1"),
+		nextStreamID: trsf.StreamID(33),
+	}
+
+	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id), Mode: protocol.AttachMode_View}
+	resp := h.handleAttachSession(tuiConn, req)
+	if resp.Status != protocol.AttachSessionStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+	if mux.IsAttached() {
+		t.Fatal("view attach must NOT occupy the writer slot")
+	}
+	waitFor(t, func() bool { return mux.ViewerCount() == 1 })
+}

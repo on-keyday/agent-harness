@@ -738,8 +738,12 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 		parentCtx = context.Background()
 	}
 
-	if err := mux.Attach(parentCtx, tuiStream); err != nil {
-		slog.Error("AttachSession: mux.Attach", "task", idHex, "err", err)
+	attach := mux.Attach
+	if req.Mode == protocol.AttachMode_View {
+		attach = mux.AttachViewer
+	}
+	if err := attach(parentCtx, tuiStream); err != nil {
+		slog.Error("AttachSession: attach", "task", idHex, "mode", req.Mode, "err", err)
 		_ = tuiStream.CloseBoth()
 		return errResp(protocol.AttachSessionStatus_InternalError)
 	}
