@@ -102,12 +102,36 @@ def _binary_is_executable(path: Path) -> bool:
     return os.access(str(path), os.X_OK)
 
 
+# Env vars claude-code injects into its child processes to mark "you are running
+# under claude" (a nested/child session). If runner.py is launched from inside a
+# claude session — e.g. /restart-all run in a conversation — these leak into the
+# detached agent-runner and then into every agent it spawns. CLAUDE_CODE_CHILD_SESSION
+# in particular makes a spawned interactive claude treat itself as a child session
+# and write NO local transcript (~/.claude/projects/<slug>/<uuid>.jsonl), proven by
+# a controlled toggle test. Scrub them so the runner and its descendants start from
+# a clean session identity regardless of who launched runner.py. (CLAUDE_CONFIG_DIR
+# is deliberately preserved — it is real config, not a session marker.)
+_CLAUDE_MARKER_PREFIXES = ("CLAUDE_CODE",)
+_CLAUDE_MARKER_EXACT = frozenset({"CLAUDECODE", "CLAUDE_EFFORT", "AI_AGENT"})
+
+
+def _clean_child_env() -> dict[str, str]:
+    """os.environ minus claude-code's leaked session markers."""
+    return {
+        k: v
+        for k, v in os.environ.items()
+        if k not in _CLAUDE_MARKER_EXACT
+        and not any(k.startswith(p) for p in _CLAUDE_MARKER_PREFIXES)
+    }
+
+
 def _spawn_detached(args: list[str], log_path: Path) -> int:
     """Start *args* as a detached background process; return its pid.
 
     - stdout / stderr appended to *log_path*; stdin /dev/null.
     - Detached from controlling terminal: setsid on Unix, DETACHED_PROCESS
       | CREATE_NEW_PROCESS_GROUP on Windows.
+    - Env scrubbed of claude-code session markers (see _clean_child_env).
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(log_path, "ab")
@@ -118,6 +142,7 @@ def _spawn_detached(args: list[str], log_path: Path) -> int:
             stderr=subprocess.STDOUT,
             close_fds=True,
             cwd=str(_ROOT),
+            env=_clean_child_env(),
         )
         if os.name == "nt":
             popen_kwargs["creationflags"] = (

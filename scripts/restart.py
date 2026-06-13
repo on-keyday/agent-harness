@@ -51,11 +51,17 @@ def _spawn_detached_child(args: list[str], log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_fh = open(log_path, "ab")
     try:
+        # Scrub claude-code session markers (CLAUDE_CODE_CHILD_SESSION etc.) from
+        # the env so a restart invoked from inside a claude session (/restart-all
+        # run in a conversation) doesn't leak them into the runner and suppress
+        # spawned agents' local transcripts. Shares daemon._clean_child_env so the
+        # `up` and `restart` paths strip the same set. See daemon.py for rationale.
         popen_kwargs: dict = dict(
             stdin=subprocess.DEVNULL,
             stdout=log_fh,
             stderr=subprocess.STDOUT,
             close_fds=True,
+            env=_daemon._clean_child_env(),
         )
         if os.name == "nt":
             popen_kwargs["creationflags"] = (
