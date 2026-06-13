@@ -17,6 +17,18 @@ import (
 // frame's semantic content. Keep in sync with exec/frame/frame.bgn.
 const frameHeaderSize = 5
 
+// viewerQueueDepth bounds per-viewer buffering. A viewer that cannot drain its
+// queue this fast is dropped (it can never block the runner pump or the writer).
+const viewerQueueDepth = 256
+
+// viewerConn is one read-only observer of the session. Its output is delivered
+// through a bounded channel by a dedicated pump; its input is read-and-discarded.
+type viewerConn struct {
+	stream trsf.BidirectionalStream
+	ch     chan []byte
+	cancel context.CancelFunc
+}
+
 // readOneFrame reads exactly one wire-encoded frame (header + payload)
 // from r and returns the concatenated bytes. Used by runnerPump to keep
 // ring-buffer entries aligned to frame boundaries: a byte-level ring that
@@ -79,6 +91,8 @@ type SessionMux struct {
 	tui       trsf.BidirectionalStream
 	tuiCancel context.CancelFunc
 
+	viewers map[*viewerConn]struct{}
+
 	onDetach func(taskID string)
 	onAttach func(taskID string)
 	onStop   func(taskID string)
@@ -100,6 +114,7 @@ func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.Bidirec
 		ring:     ring,
 		modes:    newModeTracker(),
 		stopped:  make(chan struct{}),
+		viewers:  make(map[*viewerConn]struct{}),
 		onAttach: hooks.OnAttach,
 		onDetach: hooks.OnDetach,
 		onStop:   hooks.OnStop,
@@ -145,6 +160,17 @@ func (m *SessionMux) runnerPump() {
 				m.mu.Unlock()
 			}
 		}
+		// Fan out to viewers (non-blocking). A viewer whose queue is full
+		// cannot keep up and is dropped here — never blocking this pump.
+		m.mu.Lock()
+		for v := range m.viewers {
+			select {
+			case v.ch <- frameBytes:
+			default:
+				m.dropViewerLocked(v)
+			}
+		}
+		m.mu.Unlock()
 	}
 }
 
@@ -199,6 +225,96 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 
 	go m.tuiPump(tuiCtx, tui)
 	return nil
+}
+
+// AttachViewer adds a read-only observer. Unlike Attach it does NOT take over
+// the writer slot, fire onAttach, or forward input to the runner. It replays
+// the ring (and mode preamble) to the viewer, then streams live frames.
+func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.BidirectionalStream) error {
+	m.mu.Lock()
+	if m.ctx.Err() != nil {
+		m.mu.Unlock()
+		return errors.New("session_mux: stopped")
+	}
+	vctx, vcancel := context.WithCancel(m.ctx)
+	v := &viewerConn{stream: stream, ch: make(chan []byte, viewerQueueDepth), cancel: vcancel}
+	m.viewers[v] = struct{}{}
+	// Snapshot replay state under the SAME lock as the insert so runnerPump's
+	// fan-out cannot interleave between "added" and "snapshotted".
+	var replay []byte
+	if pre := m.modes.preamble(); len(pre) > 0 {
+		replay = append(replay, encodeStdoutFrame(pre)...)
+	}
+	replay = append(replay, m.ring.Snapshot()...)
+	m.mu.Unlock()
+
+	// Replay BEFORE starting the output pump, so replayed bytes always precede
+	// live frames (live frames buffer in v.ch meanwhile).
+	if len(replay) > 0 {
+		if err := stream.AppendData(false, replay); err != nil {
+			m.dropViewer(v)
+			return err
+		}
+	}
+	go m.viewerOutputPump(vctx, v)
+	go m.viewerInputDrain(vctx, v)
+	return nil
+}
+
+// viewerOutputPump drains v.ch to the viewer stream. Drops the viewer on write error.
+func (m *SessionMux) viewerOutputPump(ctx context.Context, v *viewerConn) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case b := <-v.ch:
+			if err := v.stream.AppendData(false, b); err != nil {
+				m.dropViewer(v)
+				return
+			}
+		}
+	}
+}
+
+// viewerInputDrain reads and DISCARDS the viewer's incoming direction. This is
+// the read-only enforcement point: unlike tuiPump it never forwards to the
+// runner. Draining prevents the bidi recv side from backpressuring/wedging and
+// gives prompt EOF when the client closes. ReadDirectContext (not ReadDirect)
+// so cancel()/Stop() unblock the read immediately.
+func (m *SessionMux) viewerInputDrain(ctx context.Context, v *viewerConn) {
+	const maxRead = 32 * 1024
+	for {
+		_, eof, err := v.stream.ReadDirectContext(ctx, maxRead)
+		if eof || err != nil {
+			m.dropViewer(v)
+			return
+		}
+	}
+}
+
+func (m *SessionMux) dropViewer(v *viewerConn) {
+	m.mu.Lock()
+	m.dropViewerLocked(v)
+	m.mu.Unlock()
+}
+
+// dropViewerLocked removes and tears down a viewer. Idempotent: if v is no
+// longer in the set, it is a no-op (both viewer goroutines may call it).
+// Must be called with m.mu held.
+func (m *SessionMux) dropViewerLocked(v *viewerConn) {
+	if _, ok := m.viewers[v]; !ok {
+		return
+	}
+	delete(m.viewers, v)
+	v.cancel()
+	_ = v.stream.CloseBoth()
+}
+
+// ViewerCount reports the number of attached viewers (test/inspection helper).
+func (m *SessionMux) ViewerCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.viewers)
 }
 
 // tuiPump forwards tui→runner bytes. It detaches (without closing the runner)
@@ -276,9 +392,18 @@ func (m *SessionMux) Stop() {
 			m.tuiCancel()
 			m.tuiCancel = nil
 		}
+		vs := make([]*viewerConn, 0, len(m.viewers))
+		for v := range m.viewers {
+			vs = append(vs, v)
+		}
+		m.viewers = make(map[*viewerConn]struct{})
 		m.mu.Unlock()
 		if tui != nil {
 			_ = tui.CloseBoth()
+		}
+		for _, v := range vs {
+			v.cancel()
+			_ = v.stream.CloseBoth()
 		}
 		_ = m.runner.CloseBoth()
 		if m.onStop != nil {

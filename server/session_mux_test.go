@@ -307,3 +307,148 @@ func TestSessionMux_AttachTakeover(t *testing.T) {
 		t.Fatal("mux must be attached to second")
 	}
 }
+
+func TestSessionMux_AttachViewer_ReplaysThenStreams(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	pre := makeWireFrame(1, []byte("scrollback"))
+	runner.QueueRead(pre)
+	waitFor(t, func() bool { return mux.RingBufferLen() == len(pre) })
+
+	viewer := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, viewer); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	if got := viewer.WaitWritten(t, len(pre)); !bytes.Equal(got, pre) {
+		t.Fatalf("viewer replay got %q want %q", got, pre)
+	}
+	if mux.IsAttached() {
+		t.Fatal("AttachViewer must NOT occupy the writer slot")
+	}
+
+	live := makeWireFrame(1, []byte("live"))
+	runner.QueueRead(live)
+	want := append(append([]byte{}, pre...), live...)
+	if got := viewer.WaitWritten(t, len(want)); !bytes.Equal(got, want) {
+		t.Fatalf("viewer live got %q want %q", got, want)
+	}
+}
+
+func TestSessionMux_FanOutWriterAndViewers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	writer := newFakeStream(t)
+	if err := mux.Attach(ctx, writer); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	v1 := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, v1); err != nil {
+		t.Fatalf("v1: %v", err)
+	}
+	v2 := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, v2); err != nil {
+		t.Fatalf("v2: %v", err)
+	}
+
+	fr := makeWireFrame(1, []byte("broadcast"))
+	runner.QueueRead(fr)
+	for name, s := range map[string]*fakeBidiStream{"writer": writer, "v1": v1, "v2": v2} {
+		if got := s.WaitWritten(t, len(fr)); !bytes.Equal(got, fr) {
+			t.Fatalf("%s got %q want %q", name, got, fr)
+		}
+	}
+}
+
+func TestSessionMux_SlowViewerDroppedWithoutWedge(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<20), SessionHooks{})
+
+	writer := newFakeStream(t)
+	if err := mux.Attach(ctx, writer); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	slow := newFakeStream(t)
+	slow.SetBlockWrites(true) // its output pump blocks on the first frame
+	if err := mux.AttachViewer(ctx, slow); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+
+	const n = viewerQueueDepth + 50
+	var want []byte
+	for i := 0; i < n; i++ {
+		fr := makeWireFrame(1, []byte{byte(i)})
+		want = append(want, fr...)
+		runner.QueueRead(fr)
+	}
+	if got := writer.WaitWritten(t, len(want)); !bytes.Equal(got, want) {
+		t.Fatalf("writer missing frames — pump wedged on slow viewer?")
+	}
+	waitFor(t, func() bool { return mux.ViewerCount() == 0 })
+	if !slow.IsClosed() {
+		t.Fatal("dropped viewer stream must be CloseBoth'd")
+	}
+}
+
+func TestSessionMux_ViewerInputDiscarded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	viewer := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, viewer); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	viewer.QueueRead([]byte("rm -rf / # should never reach runner\n"))
+	waitFor(t, func() bool { return !viewer.HasRecvData() })
+	time.Sleep(50 * time.Millisecond)
+	if w := runner.Written(); len(w) != 0 {
+		t.Fatalf("viewer input was forwarded to runner: %q", w)
+	}
+}
+
+func TestSessionMux_ViewerDoesNotFireOnAttach(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	var attaches int32
+	hooks := SessionHooks{OnAttach: func(string) { atomic.AddInt32(&attaches, 1) }}
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), hooks)
+
+	v := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, v); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := atomic.LoadInt32(&attaches); n != 0 {
+		t.Fatalf("onAttach fired %d times for a viewer; want 0", n)
+	}
+	w := newFakeStream(t)
+	if err := mux.Attach(ctx, w); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	waitFor(t, func() bool { return atomic.LoadInt32(&attaches) == 1 })
+}
+
+func TestSessionMux_StopClosesViewers(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	v := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, v); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	mux.Stop()
+	waitFor(t, func() bool { return v.IsClosed() })
+	waitFor(t, func() bool { return mux.ViewerCount() == 0 })
+}
