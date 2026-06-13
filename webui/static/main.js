@@ -778,7 +778,14 @@ const POLL_INTERVAL_MS = 5000;
   cmdInput.addEventListener("keydown", (e) => { if (e.key === "Enter") runCmd(); });
 
   // 7. Interactive PTY.
-  const term = new Terminal({ convertEol: true, fontSize: 13 });
+  // Explicit monospace stack: generic `monospace` rendered soft under the browser/OS
+  // anti-aliasing. fontSize stays 13 — 14 cut the column count enough to break TUI
+  // layouts (Claude Code's box-drawing) that fit at 13.
+  const term = new Terminal({
+    convertEol: true,
+    fontSize: 13,
+    fontFamily: '"Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace',
+  });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
   term.open(document.getElementById("terminal"));
