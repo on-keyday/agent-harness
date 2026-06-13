@@ -31,6 +31,8 @@ type fakeBidiStream struct {
 	written []byte
 
 	closed atomic.Bool
+
+	blockWrites atomic.Bool // when true, Write spins until cleared or closed
 }
 
 func newFakeStream(t *testing.T) *fakeBidiStream {
@@ -63,6 +65,17 @@ func (f *fakeBidiStream) IsClosed() bool {
 	return f.closed.Load()
 }
 
+// SetBlockWrites makes Write block (spin) until cleared or the stream is closed.
+// Used to simulate a viewer whose client cannot keep up.
+func (f *fakeBidiStream) SetBlockWrites(b bool) { f.blockWrites.Store(b) }
+
+// Written returns a snapshot copy of all bytes written so far (non-blocking).
+func (f *fakeBidiStream) Written() []byte {
+	f.writeMu.Lock()
+	defer f.writeMu.Unlock()
+	return append([]byte{}, f.written...)
+}
+
 // WaitWritten blocks until at least n bytes have been written to this stream,
 // then returns all written bytes so far.
 func (f *fakeBidiStream) WaitWritten(t *testing.T, n int) []byte {
@@ -92,6 +105,9 @@ func (f *fakeBidiStream) ID() trsf.StreamID { return f.streamID }
 
 // Write captures bytes written to this stream (runner→tui direction).
 func (f *fakeBidiStream) Write(p []byte) (int, error) {
+	for f.blockWrites.Load() && !f.closed.Load() {
+		time.Sleep(time.Millisecond)
+	}
 	if f.closed.Load() {
 		return 0, io.ErrClosedPipe
 	}
