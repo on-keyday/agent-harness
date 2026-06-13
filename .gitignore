@@ -13,3 +13,7 @@ scripts/__pycache__/
 # never committed so the public go.mod stays free of local replace paths.
 go.work
 go.work.sum
+
+# Playwright MCP browser session output (local-only, not committed)
+.playwright-mcp/
+webui-baseline.png
