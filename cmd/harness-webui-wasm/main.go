@@ -697,7 +697,7 @@ func harnessAttachSession(this js.Value, args []js.Value) any {
 				rejectErr(reject, errors.New("attachSession: taskIDHex is empty"))
 				return
 			}
-			resultID, err := c.AttachSession(rootCtx, taskIDHex)
+			resultID, err := c.AttachSession(rootCtx, taskIDHex, protocol.AttachMode_Control) // TODO(Task 7): wire view mode from JS
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("attachSession: %w", err))
 				return

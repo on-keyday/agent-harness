@@ -105,11 +105,23 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 }
 
 // runSessionAttach re-attaches to a detachable interactive session by id.
+// With --view the attach is read-only: the server discards keystrokes from
+// this client but continues streaming PTY output.
 func runSessionAttach(cid objproto.ConnectionID, args []string) error {
-	if len(args) < 1 {
-		return fmt.Errorf("usage: session attach <id>")
+	fs := flag.NewFlagSet("session attach", flag.ExitOnError)
+	view := fs.Bool("view", false, "attach in view-only mode (output only; your input is discarded by the server)")
+	if err := fs.Parse(args); err != nil {
+		return err
 	}
-	taskIDHex := args[0]
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: session attach [--view] <id>")
+	}
+	taskIDHex := fs.Arg(0)
+
+	mode := protocol.AttachMode_Control
+	if *view {
+		mode = protocol.AttachMode_View
+	}
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid)
@@ -121,7 +133,7 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 
-	if _, err := c.SessionAttach(ctx, taskIDHex); err != nil {
+	if _, err := c.SessionAttach(ctx, taskIDHex, mode); err != nil {
 		return err
 	}
 	return nil

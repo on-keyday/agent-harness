@@ -14,14 +14,14 @@ import (
 // It is shared between native (cli/attach_native.go) and WASM
 // (cli/attach_js.go) callers; neither syscall nor exec dependencies are
 // introduced here.
-func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string) (trsf.BidirectionalStream, uint64, error) {
+func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string, mode protocol.AttachMode) (trsf.BidirectionalStream, uint64, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, 0, fmt.Errorf("AttachSession: parse task id: %w", err)
 	}
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AttachSession}
-	req.SetAttach(protocol.AttachSessionRequest{TaskId: tid})
+	req.SetAttach(protocol.AttachSessionRequest{TaskId: tid, Mode: mode})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

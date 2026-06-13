@@ -4,6 +4,8 @@ package cli
 
 import (
 	"context"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // AttachSession (WASM) re-attaches to an existing detachable interactive
@@ -19,8 +21,8 @@ import (
 // the fresh-session path so the two cannot drift.
 //
 // Returns the task's hex id (same as taskIDHex) on success.
-func (c *Client) AttachSession(ctx context.Context, taskIDHex string) (string, error) {
-	stream, _, err := c.attachSessionRPC(ctx, taskIDHex)
+func (c *Client) AttachSession(ctx context.Context, taskIDHex string, mode protocol.AttachMode) (string, error) {
+	stream, _, err := c.attachSessionRPC(ctx, taskIDHex, mode)
 	if err != nil {
 		return "", err
 	}

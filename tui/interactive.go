@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	agentexec "github.com/on-keyday/agent-harness/exec"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // InteractiveReadyMsg lands in the App's Update once OpenInteractive has
@@ -83,7 +84,7 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 // (identical flow to DoOpenInteractiveWithOpts).
 func DoAttachSession(c *cli.Client, taskIDHex string) tea.Cmd {
 	return func() tea.Msg {
-		stream, _, err := c.AttachSession(context.Background(), taskIDHex)
+		stream, _, err := c.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("attach session: %w", err)}
 		}
