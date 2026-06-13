@@ -620,7 +620,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			act := resumeReattachAction(a.tasks.SelectedTask(), msg.String() == "r")
 			switch act.Kind {
 			case actionReattach:
-				return a, DoAttachSession(a.client, a.tasks.SelectedID())
+				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_Control)
 			case actionResume:
 				// repo is irrelevant on resume — the server reuses the task's
 				// RepoPath and worktree branch.
@@ -628,6 +628,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil
+			}
+		}
+		// `v` view-attaches the selected live session in read-only mode (no input sent).
+		if a.focus == focusTasks && msg.String() == "v" {
+			act := resumeReattachAction(a.tasks.SelectedTask(), true)
+			if act.Kind == actionReattach {
+				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_View)
 			}
 		}
 		// `p` / `b` open the local / remote port-forward modal for the selected task.
@@ -811,7 +818,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · F file picker · d detail · c cancel · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · v view-only · F file picker · d detail · c cancel · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -997,7 +1004,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID)
 	case SessionAttachAction:
-		return a, DoAttachSession(a.client, v.TaskID)
+		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:
 		return a, DoSessionList(a.client)
 	case SessionKillAction:

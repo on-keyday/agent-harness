@@ -79,12 +79,14 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 }
 
 // DoAttachSession re-attaches to an existing detachable interactive task. It
-// calls client.AttachSession, then posts InteractiveReadyMsg so the existing
-// tea.Exec path in App.Update can suspend the TUI and run the PTY splice
-// (identical flow to DoOpenInteractiveWithOpts).
-func DoAttachSession(c *cli.Client, taskIDHex string) tea.Cmd {
+// calls client.AttachSession with the given mode, then posts InteractiveReadyMsg
+// so the existing tea.Exec path in App.Update can suspend the TUI and run the
+// PTY splice (identical flow to DoOpenInteractiveWithOpts).
+// Use protocol.AttachMode_Control for normal reattach (read/write) and
+// protocol.AttachMode_View for a read-only observer attach.
+func DoAttachSession(c *cli.Client, taskIDHex string, mode protocol.AttachMode) tea.Cmd {
 	return func() tea.Msg {
-		stream, _, err := c.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
+		stream, _, err := c.AttachSession(context.Background(), taskIDHex, mode)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("attach session: %w", err)}
 		}
