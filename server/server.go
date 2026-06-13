@@ -1,6 +1,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,9 +24,9 @@ import (
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/transport"
 	"github.com/on-keyday/objtrsf/trsf"
-	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // Config holds the configuration for a Server instance.
@@ -548,6 +550,18 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		staticServer := http.StripPrefix("/static/", http.FileServer(http.FS(staticFS)))
 		mux.Handle("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			noCache(w)
+			// gzip compressible static assets. main.wasm is ~7.5 MiB uncompressed and
+			// dominates first-load time, badly so over the port-forward tunnel (bulk
+			// 64 KiB chunks over the interactive-tuned trsf relay). Only for clients
+			// advertising gzip; Range is dropped since byte ranges and gzip don't mix
+			// (the browser fetches the whole entity anyway).
+			if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+				r.Header.Del("Range")
+				gw := &gzipResponseWriter{rw: w}
+				defer gw.Close()
+				staticServer.ServeHTTP(gw, r)
+				return
+			}
 			staticServer.ServeHTTP(w, r)
 		}))
 	}
@@ -978,4 +992,56 @@ func (s *Server) sweepIdleDetached(now time.Time) {
 			s.tasks.Cancel(info.ID)
 		}
 	}
+}
+
+// gzipResponseWriter wraps an http.ResponseWriter to gzip the body. It holds the
+// underlying writer in a field (rather than embedding) on purpose: embedding would
+// promote io.ReaderFrom/http.Flusher, and net/http's ServeContent would then copy
+// file bytes straight to the underlying writer via ReadFrom — bypassing the gzip
+// stream while Content-Encoding: gzip is set, i.e. a corrupt response. Compression
+// is decided at WriteHeader: only 200s get gzipped, so 304/Range/error replies pass
+// through untouched.
+type gzipResponseWriter struct {
+	rw       http.ResponseWriter
+	gz       *gzip.Writer
+	gzipping bool
+	wrote    bool
+}
+
+func (w *gzipResponseWriter) Header() http.Header { return w.rw.Header() }
+
+func (w *gzipResponseWriter) WriteHeader(status int) {
+	if w.wrote {
+		return
+	}
+	w.wrote = true
+	if status == http.StatusOK {
+		h := w.rw.Header()
+		h.Del("Content-Length") // length differs after compression
+		h.Del("Accept-Ranges")  // ranges are meaningless on the gzipped entity
+		h.Set("Content-Encoding", "gzip")
+		h.Add("Vary", "Accept-Encoding")
+		w.gzipping = true
+	}
+	w.rw.WriteHeader(status)
+	if w.gzipping {
+		w.gz = gzip.NewWriter(w.rw)
+	}
+}
+
+func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.gzipping {
+		return w.gz.Write(b)
+	}
+	return w.rw.Write(b)
+}
+
+func (w *gzipResponseWriter) Close() error {
+	if w.gz != nil {
+		return w.gz.Close()
+	}
+	return nil
 }
