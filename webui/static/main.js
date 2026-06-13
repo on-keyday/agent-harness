@@ -594,10 +594,14 @@ const POLL_INTERVAL_MS = 5000;
           };
           const live = t && t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached");
           const terminal = t && TERMINAL_STATES.has(t.status);
-          if (live) mkBtn("↪ Reattach", reattachTo);
+          if (live) {
+            mkBtn("↪ Reattach", (id) => reattachTo(id, false));
+            mkBtn("👁 View", (id) => reattachTo(id, true));
+          }
           if (terminal) mkBtn("▶ Resume", resumeTaskById);
           if (!t) { // not in the snapshot (pruned/unknown) — offer both as a fallback
-            mkBtn("↪ Reattach", reattachTo);
+            mkBtn("↪ Reattach", (id) => reattachTo(id, false));
+            mkBtn("👁 View", (id) => reattachTo(id, true));
             mkBtn("▶ Resume", resumeTaskById);
           }
           if (!actions.childElementCount) { // known, but neither applies (e.g. a running one-shot)
@@ -1116,15 +1120,16 @@ const POLL_INTERVAL_MS = 5000;
   // reattachTo re-attaches to an existing live session by id. Shared by the
   // Reattach button, the task-row Reattach action, and the post-takeover quick
   // button (DRY). Switches to the terminal tab, replays, and pins to the bottom.
-  const reattachTo = async (id) => {
+  // Pass view=true for read-only attach (AttachMode_View); default is control.
+  const reattachTo = async (id, view = false) => {
     if (!id) { attachedTask.textContent = "(session id required)"; return; }
     attachEpoch++;            // invalidate any in-flight close handler
     hideQuickReattach();
     setActiveTab("terminal");
     term.reset();
     try {
-      const taskID = await window.harness.attachSession(id);
-      attachedTask.textContent = `attached: ${taskID} (reattached)`;
+      const taskID = await window.harness.attachSession(id, view ? "view" : "control");
+      attachedTask.textContent = `attached: ${taskID} (${view ? "view" : "reattached"})`;
       scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";
@@ -1242,9 +1247,10 @@ const POLL_INTERVAL_MS = 5000;
       sheet.appendChild(item);
     };
 
-    // Reattach — live interactive session only.
+    // Reattach / View — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
-      addItem("↪ Reattach", "", () => reattachTo(t.id));
+      addItem("↪ Reattach", "", () => reattachTo(t.id, false));
+      addItem("👁 View", "", () => reattachTo(t.id, true));
     }
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
