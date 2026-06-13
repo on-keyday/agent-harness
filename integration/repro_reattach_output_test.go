@@ -120,7 +120,7 @@ func TestSessionReattach_PostReattachOutput(t *testing.T) {
 
 	// Reattach using the SAME client (mirrors TUI/WebUI: one cli.Client lives
 	// across attach/detach/reattach, only the bidi stream is recreated).
-	stream2, replayBytes, err := c1.AttachSession(context.Background(), taskIDHex)
+	stream2, replayBytes, err := c1.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
 	if err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestSessionReattach_PostReattachOutput(t *testing.T) {
 
 	time.Sleep(500 * time.Millisecond)
 
-	stream3, _, err := c1.AttachSession(context.Background(), taskIDHex)
+	stream3, _, err := c1.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
 	if err != nil {
 		t.Fatalf("third AttachSession: %v", err)
 	}

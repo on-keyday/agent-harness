@@ -452,3 +452,40 @@ func TestSessionMux_StopClosesViewers(t *testing.T) {
 	waitFor(t, func() bool { return v.IsClosed() })
 	waitFor(t, func() bool { return mux.ViewerCount() == 0 })
 }
+
+// A control takeover (second Attach) must not disturb existing viewers: the
+// old writer is closed, but viewers keep their slot and keep streaming.
+func TestSessionMux_TakeoverLeavesViewersStreaming(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	w1 := newFakeStream(t)
+	if err := mux.Attach(ctx, w1); err != nil {
+		t.Fatalf("w1 Attach: %v", err)
+	}
+	viewer := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, viewer); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+
+	// Second control attach takes over the writer slot.
+	w2 := newFakeStream(t)
+	if err := mux.Attach(ctx, w2); err != nil {
+		t.Fatalf("w2 Attach: %v", err)
+	}
+	if !w1.IsClosed() {
+		t.Fatal("first writer must be closed by takeover")
+	}
+	if mux.ViewerCount() != 1 {
+		t.Fatalf("ViewerCount=%d want 1 (takeover must not drop viewers)", mux.ViewerCount())
+	}
+
+	// A live frame after the takeover still reaches the viewer.
+	fr := makeWireFrame(1, []byte("after-takeover"))
+	runner.QueueRead(fr)
+	if got := viewer.WaitWritten(t, len(fr)); !bytes.Equal(got, fr) {
+		t.Fatalf("viewer stopped streaming after writer takeover: got %q want %q", got, fr)
+	}
+}
