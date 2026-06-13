@@ -536,8 +536,14 @@ format OpenInteractiveResponse:
                        # feeds it to exec.ExecuteCommand for an interactive
                        # PTY claude session.
 
+enum AttachMode:
+    :u8
+    control = "control"   # default (ordinal 0): takeover-writer behavior
+    view    = "view"      # read-only observer; no input, no takeover
+
 format AttachSessionRequest:
     task_id :TaskID
+    mode :AttachMode
 
 enum AttachSessionStatus:
     :u8
