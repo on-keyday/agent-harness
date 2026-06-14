@@ -607,15 +607,21 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// Build HARNESS_* env vars for the subprocess. See handleAssign comment.
 	var x11Display int
 	var x11AuthFile string
+	var x11Enabled bool
 	if oer.X11Enabled() {
 		if f := oer.X11(); f != nil {
 			x11Display = int(f.Display)
-			p, err := writeXauthFile(taskIDHex, x11Display, f.Cookie)
-			if err != nil {
-				log.Warn("x11 setup failed; continuing without DISPLAY", "task_id", taskIDHex, "err", err)
+			x11Enabled = true
+			if len(f.Cookie) > 0 {
+				p, err := writeXauthFile(taskIDHex, x11Display, f.Cookie)
+				if err != nil {
+					log.Warn("x11 xauth setup failed; forwarding without authentication", "task_id", taskIDHex, "err", err)
+				} else {
+					x11AuthFile = p
+					defer cleanupXauthFile(p)
+				}
 			} else {
-				x11AuthFile = p
-				defer cleanupXauthFile(p)
+				log.Info("x11 forwarding without authentication (no cookie)", "task_id", taskIDHex, "display", x11Display)
 			}
 		} else {
 			log.Warn("x11 enabled but X11Forward block absent; continuing without DISPLAY", "task_id", taskIDHex)
@@ -632,6 +638,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		BinDir:      s.BinDir,
 		PSK:         s.PSK,
 		ProxyVia:    s.ProxyVia,
+		X11Enabled:  x11Enabled,
 		X11Display:  x11Display,
 		X11AuthFile: x11AuthFile,
 	})

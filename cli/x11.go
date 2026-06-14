@@ -110,7 +110,12 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protoco
 	}
 	cookie, err := localX11Cookie(display) // derives the display number internally
 	if err != nil {
-		return "", err
+		// No cookie (xauth absent, or an access-control-disabled X server like
+		// VcXsrv). Forward WITHOUT authentication: send an empty cookie; the
+		// runner injects DISPLAY but no XAUTHORITY. A secured X server will
+		// reject the cookieless connection, so this can't downgrade security.
+		fmt.Fprintf(os.Stderr, "x11: no cookie for %s (%v); forwarding WITHOUT authentication — your X server must accept unauthenticated connections\n", display, err)
+		cookie = nil
 	}
 
 	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie})

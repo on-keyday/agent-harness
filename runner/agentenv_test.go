@@ -266,6 +266,7 @@ func TestBuildAgentEnv_X11(t *testing.T) {
 	env := BuildAgentEnv(AgentEnvSpec{
 		ServerCID:   mustParseCID(t, "ws:127.0.0.1:8539-1"),
 		RunnerID:    mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		X11Enabled:  true,
 		X11Display:  10,
 		X11AuthFile: "/tmp/harness-xauth-abc",
 	})
@@ -280,6 +281,29 @@ func TestBuildAgentEnv_X11(t *testing.T) {
 	}
 	if !gotDisplay || !gotXauth {
 		t.Fatalf("missing X11 env: display=%v xauth=%v in %v", gotDisplay, gotXauth, env)
+	}
+}
+
+func TestBuildAgentEnv_X11NoAuth(t *testing.T) {
+	env := BuildAgentEnv(AgentEnvSpec{
+		X11Enabled: true,
+		X11Display: 10,
+		// no X11AuthFile
+	})
+	var gotDisplay, gotXauth bool
+	for _, e := range env {
+		if e == "DISPLAY=127.0.0.1:10" {
+			gotDisplay = true
+		}
+		if len(e) >= 11 && e[:11] == "XAUTHORITY=" {
+			gotXauth = true
+		}
+	}
+	if !gotDisplay {
+		t.Fatalf("DISPLAY missing in no-auth mode: %v", env)
+	}
+	if gotXauth {
+		t.Fatalf("XAUTHORITY must NOT be set in no-auth mode: %v", env)
 	}
 }
 

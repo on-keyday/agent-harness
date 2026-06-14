@@ -36,9 +36,13 @@ type AgentEnvSpec struct {
 	// negotiated-proxy path (Phase B) instead of dialing the server directly.
 	ProxyVia string
 
-	// X11Display/X11AuthFile, when X11AuthFile != "", inject
-	// DISPLAY=127.0.0.1:<X11Display> and XAUTHORITY=<X11AuthFile> so X clients
-	// started in the session reach the forwarded X server. See runner/x11.go.
+	// X11Enabled injects DISPLAY=127.0.0.1:<X11Display> even when there is no
+	// XAUTHORITY (no-auth forwarding). XAUTHORITY is emitted only when
+	// X11AuthFile != "".
+	X11Enabled bool
+	// X11Display/X11AuthFile: when X11Enabled, DISPLAY=127.0.0.1:<X11Display>
+	// is always injected. XAUTHORITY=<X11AuthFile> is injected only when
+	// X11AuthFile != "" (cookie-authenticated forwarding). See runner/x11.go.
 	X11Display  int
 	X11AuthFile string
 }
@@ -77,11 +81,11 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 	if s.ProxyVia != "" {
 		env = append(env, "HARNESS_PROXY_VIA_RUNNER="+rewriteProxyViaForLocalDial(s.ProxyVia))
 	}
-	if s.X11AuthFile != "" {
-		env = append(env,
-			fmt.Sprintf("DISPLAY=127.0.0.1:%d", s.X11Display),
-			"XAUTHORITY="+s.X11AuthFile,
-		)
+	if s.X11Enabled {
+		env = append(env, fmt.Sprintf("DISPLAY=127.0.0.1:%d", s.X11Display))
+		if s.X11AuthFile != "" {
+			env = append(env, "XAUTHORITY="+s.X11AuthFile)
+		}
 	}
 	return env
 }
