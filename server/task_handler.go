@@ -579,6 +579,12 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	if req.Detachable() {
 		oer.SetDetachable(true)
 	}
+	if req.X11Enabled() {
+		oer.SetX11Enabled(true) // discriminator first
+		if f := req.X11(); f != nil {
+			oer.SetX11(*f) // relay the whole X11Forward block verbatim
+		}
+	}
 	rreq.SetOpenExec(oer)
 	rdata := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runnerConn.SendMessage(rdata); err != nil {
