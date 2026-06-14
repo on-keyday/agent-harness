@@ -40,6 +40,13 @@ func (c *Client) OpenInteractiveWithSelector(ctx context.Context, repoPath strin
 // task id and worktree branch, and a detachable flag (true for
 // session-new-style detachable sessions; false for legacy kill-on-disconnect).
 func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (*agentexec.CommandExecutionStream, string, error) {
+	return c.openInteractiveImpl(ctx, repoPath, sel, extraArgs, resumeTaskID, detachable, nil)
+}
+
+// openInteractiveImpl is the single OpenInteractive request builder. x11 is
+// nil for non-X11 sessions; when set, x11_enabled + the X11Forward block
+// (display + cookie) are sent.
+func (c *Client) openInteractiveImpl(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, x11 *X11Request) (*agentexec.CommandExecutionStream, string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repoPath))
@@ -54,6 +61,12 @@ func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPat
 	}
 	if detachable {
 		oi.SetDetachable(true)
+	}
+	if x11 != nil {
+		oi.SetX11Enabled(true) // set the discriminator BEFORE the embedded block
+		f := protocol.X11Forward{Display: uint16(x11.Display)}
+		f.SetCookie(x11.Cookie)
+		oi.SetX11(f)
 	}
 	req.SetOpenInteractive(oi)
 

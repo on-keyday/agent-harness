@@ -84,3 +84,11 @@ func localX11Cookie(display string) ([]byte, error) {
 	}
 	return parseXauthCookie(string(out), n)
 }
+
+// X11Request carries the client-chosen display number and the local X
+// server's cookie into OpenInteractiveRequest. This is the cli-side input
+// type; the wire type is protocol.X11Forward.
+type X11Request struct {
+	Display int    // N; app sees DISPLAY=127.0.0.1:N on the runner
+	Cookie  []byte // MIT-MAGIC-COOKIE-1 value of the client's local X server
+}
