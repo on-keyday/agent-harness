@@ -100,6 +100,16 @@ format AssignTaskBody:
 format CancelTask:
     task_id :TaskID
 
+# X11Forward carries the data needed to forward X11 to the client's local X
+# server: the display number N (app sees DISPLAY=127.0.0.1:N -> TCP 6000+N) and
+# the client's MIT-MAGIC-COOKIE-1 value (raw bytes, typically 16). Embedded
+# conditionally in OpenInteractiveRequest and OpenExecRunnerRequest under
+# `if x11_enabled == 1` so no bytes appear on the wire when X11 is off.
+format X11Forward:
+    display :u16
+    cookie_len :u16
+    cookie :[cookie_len]u8
+
 format OpenExecRunnerRequest:
     task_id :TaskID
     auth_ticket :[16]u8
@@ -112,7 +122,10 @@ format OpenExecRunnerRequest:
     extra_args :ClaudeArgs
     detachable :u1    # 1 = stream EOF → keep claude alive,
                       # 0 = stream EOF → SIGHUP ladder (legacy)
-    reserved :u7
+    x11_enabled :u1   # relayed from OpenInteractiveRequest.x11_enabled
+    reserved :u6
+    if x11_enabled == 1:
+        x11 :X11Forward  # relayed verbatim from OpenInteractiveRequest.x11
 
 format TaskWakeRequest:
     task_id :TaskID
@@ -508,8 +521,15 @@ format OpenInteractiveRequest:
     # interactive path (PTY claude with empty prompt).
     detachable :u1    # 1 = session new (detach on disconnect),
                       # 0 = legacy interactive (kill on disconnect)
-    reserved :u7
+    x11_enabled :u1   # 1 = client requested X11 forwarding; gates the
+                      # conditional block below. Incompatible with detach (no
+                      # client process to host the tunnel).
+    reserved :u6
     resume_task_id :TaskID
+    # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
+    # when disabled).
+    if x11_enabled == 1:
+        x11 :X11Forward
 
 enum OpenInteractiveStatus:
     :u8
