@@ -145,6 +145,8 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protoco
 		if err := RunRemoteForward(fctx, c, taskIDHex, []RemoteForwardSpec{sp}, logf); err != nil {
 			fmt.Fprintln(os.Stderr, "x11 forward: "+err.Error())
 		}
+		// Confirm teardown on the console (forward dies with the session).
+		fmt.Fprintln(os.Stderr, "x11: forward stopped")
 	}()
 	fmt.Fprintf(os.Stderr, "harness-cli: X11 session %s (remote DISPLAY=127.0.0.1:%d -> local %s; Ctrl+] detach, Ctrl+D/exit ends)\n", taskIDHex, displayN, os.Getenv("DISPLAY"))
 	if err := stream.RemoteShell(); err != nil {

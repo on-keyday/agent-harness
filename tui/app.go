@@ -364,6 +364,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(WarnStyle.Render("x11: " + msg.X11Warn))
 		}
 		a.x11Cancel = msg.X11Cancel
+		if msg.X11Cancel != nil {
+			a.cmdresult.Append(OKStyle.Render("x11 forward started: ") + pfShortID(msg.TaskID))
+		}
 		short := msg.TaskID
 		if len(short) > 12 {
 			short = short[:12]
