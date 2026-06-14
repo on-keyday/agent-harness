@@ -54,6 +54,9 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	detach := false
 	fs.BoolVar(&detach, "detach", false, "start the session and immediately detach (run in background, print task id, exit)")
 	fs.BoolVar(&detach, "d", false, "shorthand for --detach")
+	x11 := false
+	fs.BoolVar(&x11, "x11", false, "forward X11: inject DISPLAY/XAUTHORITY so GUI apps in the session render on your local X server (requires xauth + a running local X server)")
+	x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N; default 10)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -64,6 +67,13 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 	if repoVal == "" && *resume == "" {
 		return fmt.Errorf("session new: --repo required (or set HARNESS_REPO_PATH) — except when --resume is set, which uses the existing task's repo")
+	}
+
+	if x11 && detach {
+		return fmt.Errorf("session new: --x11 is incompatible with --detach (a detached session has no client to host the X tunnel)")
+	}
+	if x11 && (*x11Display < 0 || *x11Display > 99) {
+		return fmt.Errorf("session new: --x11-display must be 0..99")
 	}
 
 	opts := cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}
@@ -93,6 +103,15 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		}
 		_ = stream.Close() // immediately detach → server transitions Running -> Detached
 		fmt.Println(taskIDHex)
+		return nil
+	}
+
+	if x11 {
+		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("session %s ended\n", id)
 		return nil
 	}
 
