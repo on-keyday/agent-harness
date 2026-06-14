@@ -469,8 +469,17 @@ func (w *CommandExecutionStream) RemoteShell() error {
 	// already in the default state — so emitting unconditionally is safe.
 	// LIFO order: this fires *before* term.Restore so the escape goes out
 	// while stdout is still flushing in raw mode without line buffering.
+	// \x1b[r resets the scroll region (DECSTBM) to the full window and \x1b[?6l
+	// resets origin mode (DECOM). A full-screen app (htop) sets a partial
+	// scroll region while running; if it is detached before tearing down, that
+	// region persists on the LOCAL terminal and confines/mis-positions all
+	// subsequent output — for a bubbletea host TUI this looks like panels
+	// shifted up with a blank lower half (NOT a size bug; verified on the
+	// Windows ConPTY repro — the reported size stays correct throughout, only
+	// the scroll region is wrong). Resetting both is idempotent on a terminal
+	// already at defaults.
 	defer fmt.Fprint(os.Stdout, "\x1b[?9001l\x1b[>4;0m"+
-		"\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[0m")
+		"\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[r\x1b[?6l\x1b[0m")
 
 	// sendSize re-queries the local terminal dimensions and forwards them
 	// over the control frame channel. Used both for the initial size and
