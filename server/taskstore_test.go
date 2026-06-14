@@ -265,6 +265,47 @@ func TestTaskStoreListLimit(t *testing.T) {
 	}
 }
 
+// PruneByIDs must fire OnPrune for each removed task (so the server can publish
+// a TaskPruned event and clients drop the row). PruneTerminal shares the same
+// capture-then-fire-after-unlock code path.
+func TestTaskStore_PruneByIDsFiresOnPrune(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	s.MarkFailed(id, "done") // terminal, so prune (force=false) removes it
+
+	var pruned []string
+	s.OnPrune = func(pid string) { pruned = append(pruned, pid) }
+
+	removed, _, _ := s.PruneByIDs([]string{id}, false, "")
+	if removed != 1 {
+		t.Fatalf("removed=%d want 1", removed)
+	}
+	if len(pruned) != 1 || pruned[0] != id {
+		t.Fatalf("OnPrune fired %v, want [%s]", pruned, id)
+	}
+	if _, ok := s.Get(id); ok {
+		t.Fatal("task still present after prune")
+	}
+}
+
+// An active (non-terminal) task skipped by PruneByIDs must NOT fire OnPrune.
+func TestTaskStore_PruneSkipsActiveNoOnPrune(t *testing.T) {
+	s := NewTaskStore()
+	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	// left Queued (non-terminal)
+
+	fired := false
+	s.OnPrune = func(string) { fired = true }
+
+	removed, skippedActive, _ := s.PruneByIDs([]string{id}, false, "")
+	if removed != 0 || skippedActive != 1 {
+		t.Fatalf("removed=%d skippedActive=%d want 0/1", removed, skippedActive)
+	}
+	if fired {
+		t.Fatal("OnPrune must not fire for a skipped active task")
+	}
+}
+
 func TestTaskStoreCancelRunning(t *testing.T) {
 	s := NewTaskStore()
 	id := s.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)

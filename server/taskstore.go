@@ -83,6 +83,7 @@ type TaskStore struct {
 	OnAssign func(id, runnerID, worktreeDir string)                  // optional; called after Assign transitions a task to Running.
 	OnFinish func(id string, exit int32, status protocol.TaskStatus) // optional; called after Finish marks a task terminal.
 	OnCancel func(id string)                                         // optional; called after Cancel marks a task Cancelled.
+	OnPrune  func(id string)                                         // optional; called (after the store lock is released) for each task removed by PruneByIDs/PruneTerminal.
 }
 
 // SetWAL attaches a WAL to which subsequent mutations append. nil disables WAL hooks.
@@ -704,6 +705,7 @@ func (s *TaskStore) PruneByIDs(ids []string, force bool, logDir string) (removed
 			}
 		}
 	}
+	onPrune := s.OnPrune
 	s.mu.Unlock()
 
 	if logDir != "" {
@@ -712,6 +714,11 @@ func (s *TaskStore) PruneByIDs(ids []string, force bool, logDir string) (removed
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				slog.Warn("prune log file", "task_id", id, "err", err)
 			}
+		}
+	}
+	if onPrune != nil {
+		for _, id := range pruned {
+			onPrune(id)
 		}
 	}
 	return len(pruned), skippedActive, skippedMissing
@@ -751,6 +758,7 @@ func (s *TaskStore) PruneTerminal(cutoff time.Time, logDir string) int {
 			}
 		}
 	}
+	onPrune := s.OnPrune
 	s.mu.Unlock()
 
 	if logDir != "" {
@@ -759,6 +767,11 @@ func (s *TaskStore) PruneTerminal(cutoff time.Time, logDir string) int {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				slog.Warn("prune log file", "task_id", id, "err", err)
 			}
+		}
+	}
+	if onPrune != nil {
+		for _, id := range pruned {
+			onPrune(id)
 		}
 	}
 	return len(pruned)

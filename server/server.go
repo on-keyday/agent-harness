@@ -270,6 +270,12 @@ func New(cfg Config) *Server {
 		publishTaskEvent(id, protocol.StatusEventKind_TaskEnded, protocol.TaskStatus_Cancelled, 0)
 		s.dispatcher.OnCancel(id)
 	}
+	s.tasks.OnPrune = func(id string) {
+		// The task is already removed, so publishTaskEvent's TaskKind lookup
+		// comes back zero — fine, clients key on the TaskPruned kind and drop
+		// the row. task_status is left unset for the same reason.
+		publishTaskEvent(id, protocol.StatusEventKind_TaskPruned, 0, 0)
+	}
 
 	// Wire registry hooks.
 	s.registry.OnAdd = func(entry RunnerEntry) {
