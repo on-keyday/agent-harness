@@ -186,6 +186,16 @@ bin/harness-cli notify-watch          # stream notifications (ring backlog + liv
 # bin/harness-server --listen :8539 --notify-hook /abs/examples/notify-hooks/discord.py
 ```
 
+### X11 forwarding
+
+`harness-cli session new --x11 --repo <path>` injects `DISPLAY`/`XAUTHORITY`
+into the session so GUI programs render on your local X server (SSH `-Y`
+equivalent; trusted forwarding). Requires `xauth` on both the client and the
+runner, a Linux runner (or a runner with X11 client libraries), and a running
+local X server (Linux with `$DISPLAY`, or Windows/macOS with VcXsrv/XQuartz
+exported as `$DISPLAY`). Override the display number with `--x11-display N`
+(default 10). Not available with `--detach` or for the WebUI client.
+
 ### Daemon lifecycle helpers
 
 Run the server and runner as **detached background daemons** instead of
