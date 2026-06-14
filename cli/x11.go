@@ -32,36 +32,52 @@ func parseXauthCookie(xauthList string, n int) ([]byte, error) {
 	return nil, fmt.Errorf("x11: no MIT-MAGIC-COOKIE-1 entry for display %s in xauth list (is the X server running and authorized?)", suffix)
 }
 
-// localXServerDialSpec parses a client-side DISPLAY value into a dial target
-// for the REAL local X server. "[unix]:N" → unix socket /tmp/.X11-unix/XN;
-// "host:N" → TCP host:(6000+N).
-func localXServerDialSpec(display string) (network, host string, port int, err error) {
+// x11DisplayNumber extracts the display number N from a DISPLAY value,
+// stripping an optional "unix" prefix and a trailing ".screen".
+func x11DisplayNumber(display string) (int, error) {
 	if display == "" {
-		return "", "", 0, fmt.Errorf("x11: DISPLAY is empty")
+		return 0, fmt.Errorf("x11: DISPLAY is empty")
 	}
 	d := strings.TrimPrefix(display, "unix")
 	colon := strings.LastIndex(d, ":")
 	if colon < 0 {
-		return "", "", 0, fmt.Errorf("x11: malformed DISPLAY %q", display)
+		return 0, fmt.Errorf("x11: malformed DISPLAY %q", display)
 	}
-	hostPart := d[:colon]
 	numPart := d[colon+1:]
 	if dot := strings.IndexByte(numPart, '.'); dot >= 0 {
 		numPart = numPart[:dot]
 	}
-	nval, convErr := strconv.Atoi(numPart)
-	if convErr != nil {
-		return "", "", 0, fmt.Errorf("x11: bad display number in %q", display)
+	n, err := strconv.Atoi(numPart)
+	if err != nil {
+		return 0, fmt.Errorf("x11: bad display number in %q", display)
 	}
-	if hostPart == "" {
-		return "unix", fmt.Sprintf("/tmp/.X11-unix/X%d", nval), 0, nil
-	}
-	return "tcp", hostPart, 6000 + nval, nil
+	return n, nil
 }
 
-// localX11Cookie shells out to `xauth list <DISPLAY>` and returns the cookie
-// bytes for display number n. Requires xauth on the client PATH.
-func localX11Cookie(display string, n int) ([]byte, error) {
+// localXServerDialSpec parses a client-side DISPLAY value into a dial target
+// for the REAL local X server. "[unix]:N" → unix socket /tmp/.X11-unix/XN;
+// "host:N" → TCP host:(6000+N).
+func localXServerDialSpec(display string) (network, host string, port int, err error) {
+	n, err := x11DisplayNumber(display)
+	if err != nil {
+		return "", "", 0, err
+	}
+	d := strings.TrimPrefix(display, "unix")
+	colon := strings.LastIndex(d, ":")
+	hostPart := d[:colon]
+	if hostPart == "" {
+		return "unix", fmt.Sprintf("/tmp/.X11-unix/X%d", n), 0, nil
+	}
+	return "tcp", hostPart, 6000 + n, nil
+}
+
+// localX11Cookie shells out to `xauth list <display>` and returns the cookie
+// bytes for the display number encoded in DISPLAY. Requires xauth on PATH.
+func localX11Cookie(display string) ([]byte, error) {
+	n, err := x11DisplayNumber(display)
+	if err != nil {
+		return nil, err
+	}
 	out, err := exec.Command("xauth", "list", display).Output()
 	if err != nil {
 		return nil, fmt.Errorf("x11: `xauth list %s` failed (is xauth installed and the X server authorized?): %w", display, err)

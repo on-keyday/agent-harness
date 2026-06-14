@@ -24,6 +24,42 @@ func TestParseXauthCookie_NoMatch(t *testing.T) {
 	}
 }
 
+func TestParseXauthCookie_NoFalseSuffixMatch(t *testing.T) {
+	// display :21 must NOT satisfy a lookup for n=1 (the ":N" suffix is
+	// colon-anchored, so :21 does not match :1).
+	in := "host/unix:21  MIT-MAGIC-COOKIE-1  0123456789abcdef0123456789abcdef\n"
+	if _, err := parseXauthCookie(in, 1); err == nil {
+		t.Fatal("display :21 wrongly matched n=1")
+	}
+}
+
+func TestX11DisplayNumber(t *testing.T) {
+	cases := []struct {
+		display string
+		want    int
+		wantErr bool
+	}{
+		{":0", 0, false},
+		{"unix:2", 2, false},
+		{"localhost:10.0", 10, false},
+		{"192.168.0.5:1", 1, false},
+		{"", 0, true},
+		{"garbage", 0, true},
+	}
+	for _, tc := range cases {
+		got, err := x11DisplayNumber(tc.display)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%q: want err", tc.display)
+			}
+			continue
+		}
+		if err != nil || got != tc.want {
+			t.Errorf("%q: got (%d,%v) want %d", tc.display, got, err, tc.want)
+		}
+	}
+}
+
 func TestLocalXServerDialSpec(t *testing.T) {
 	cases := []struct {
 		display     string
