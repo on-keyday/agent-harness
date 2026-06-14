@@ -605,17 +605,33 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	}
 
 	// Build HARNESS_* env vars for the subprocess. See handleAssign comment.
+	var x11Display int
+	var x11AuthFile string
+	if oer.X11Enabled() {
+		if f := oer.X11(); f != nil {
+			x11Display = int(f.Display)
+			p, err := writeXauthFile(taskIDHex, x11Display, f.Cookie)
+			if err != nil {
+				log.Warn("x11 setup failed; continuing without DISPLAY", "task_id", taskIDHex, "err", err)
+			} else {
+				x11AuthFile = p
+				defer cleanupXauthFile(p)
+			}
+		}
+	}
 	env := BuildAgentEnv(AgentEnvSpec{
-		ServerCID:  s.ServerCID,
-		RunnerID:   s.runnerCanonicalConnID(),
-		TaskID:     oer.TaskId,
-		RepoPath:   repoPath,
-		Hostname:   s.Hostname,
-		WSPath:     s.WSPath,
-		AuthTicket: oer.AuthTicket,
-		BinDir:     s.BinDir,
-		PSK:        s.PSK,
-		ProxyVia:   s.ProxyVia,
+		ServerCID:   s.ServerCID,
+		RunnerID:    s.runnerCanonicalConnID(),
+		TaskID:      oer.TaskId,
+		RepoPath:    repoPath,
+		Hostname:    s.Hostname,
+		WSPath:      s.WSPath,
+		AuthTicket:  oer.AuthTicket,
+		BinDir:      s.BinDir,
+		PSK:         s.PSK,
+		ProxyVia:    s.ProxyVia,
+		X11Display:  x11Display,
+		X11AuthFile: x11AuthFile,
 	})
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.

@@ -2,6 +2,7 @@ package runner
 
 import (
 	"encoding/hex"
+	"fmt"
 	"os"
 	"strings"
 
@@ -34,6 +35,12 @@ type AgentEnvSpec struct {
 	// HARNESS_PROXY_VIA_RUNNER so agent processes use the objproto
 	// negotiated-proxy path (Phase B) instead of dialing the server directly.
 	ProxyVia string
+
+	// X11Display/X11AuthFile, when X11AuthFile != "", inject
+	// DISPLAY=127.0.0.1:<X11Display> and XAUTHORITY=<X11AuthFile> so X clients
+	// started in the session reach the forwarded X server. See runner/x11.go.
+	X11Display  int
+	X11AuthFile string
 }
 
 // BuildAgentEnv returns "KEY=VAL" entries to merge with os.Environ() in Process.Env.
@@ -69,6 +76,12 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 	}
 	if s.ProxyVia != "" {
 		env = append(env, "HARNESS_PROXY_VIA_RUNNER="+rewriteProxyViaForLocalDial(s.ProxyVia))
+	}
+	if s.X11AuthFile != "" {
+		env = append(env,
+			fmt.Sprintf("DISPLAY=127.0.0.1:%d", s.X11Display),
+			"XAUTHORITY="+s.X11AuthFile,
+		)
 	}
 	return env
 }

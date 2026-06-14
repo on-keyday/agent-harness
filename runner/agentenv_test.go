@@ -261,3 +261,36 @@ func TestBuildAgentEnvAppliesRewrite(t *testing.T) {
 		t.Errorf("env did not contain rewritten %q; full env:\n%s", want, strings.Join(env, "\n"))
 	}
 }
+
+func TestBuildAgentEnv_X11(t *testing.T) {
+	env := BuildAgentEnv(AgentEnvSpec{
+		ServerCID:   mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:    mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		X11Display:  10,
+		X11AuthFile: "/tmp/harness-xauth-abc",
+	})
+	var gotDisplay, gotXauth bool
+	for _, e := range env {
+		if e == "DISPLAY=127.0.0.1:10" {
+			gotDisplay = true
+		}
+		if e == "XAUTHORITY=/tmp/harness-xauth-abc" {
+			gotXauth = true
+		}
+	}
+	if !gotDisplay || !gotXauth {
+		t.Fatalf("missing X11 env: display=%v xauth=%v in %v", gotDisplay, gotXauth, env)
+	}
+}
+
+func TestBuildAgentEnv_NoX11WhenUnset(t *testing.T) {
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+	}
+	for _, e := range BuildAgentEnv(spec) {
+		if len(e) >= 8 && e[:8] == "DISPLAY=" {
+			t.Fatalf("unexpected DISPLAY when X11 unset: %q", e)
+		}
+	}
+}
