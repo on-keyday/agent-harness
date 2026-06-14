@@ -3,11 +3,15 @@
 package cli
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // parseXauthCookie extracts the MIT-MAGIC-COOKIE-1 hex value for display
@@ -91,4 +95,51 @@ func localX11Cookie(display string) ([]byte, error) {
 type X11Request struct {
 	Display int    // N; app sees DISPLAY=127.0.0.1:N on the runner
 	Cookie  []byte // MIT-MAGIC-COOKIE-1 value of the client's local X server
+}
+
+// RunInteractiveX11 opens an interactive session with X11 forwarding enabled,
+// runs an -R remote forward (runner 127.0.0.1:6000+N -> client's local X
+// server) in the background for its lifetime, and drives the PTY in the
+// foreground. displayN is the client-chosen display number. Requires xauth on
+// the client and a running, authorized local X server (via $DISPLAY).
+func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, displayN int) (string, error) {
+	display := os.Getenv("DISPLAY")
+	network, host, port, err := localXServerDialSpec(display)
+	if err != nil {
+		return "", err
+	}
+	cookie, err := localX11Cookie(display) // derives the display number internally
+	if err != nil {
+		return "", err
+	}
+
+	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie})
+	if err != nil {
+		return taskIDHex, err
+	}
+	defer stream.Close()
+
+	// Background -R forward: runner binds 127.0.0.1:(6000+displayN); each X
+	// client connection is dialed to the client's local X server.
+	fctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	sp := RemoteForwardSpec{
+		BindAddr:    "127.0.0.1",
+		RunnerPort:  6000 + displayN,
+		DialNetwork: network,
+		DialHost:    host,
+		DialPort:    port,
+	}
+	go func() {
+		logf := func(s string) { fmt.Fprintln(os.Stderr, "x11: "+s) }
+		if err := RunRemoteForward(fctx, c, taskIDHex, []RemoteForwardSpec{sp}, logf); err != nil {
+			fmt.Fprintln(os.Stderr, "x11 forward: "+err.Error())
+		}
+	}()
+
+	fmt.Fprintf(os.Stderr, "harness-cli: X11 session %s (remote DISPLAY=127.0.0.1:%d -> local %s; Ctrl+] detach, Ctrl+D/exit ends)\n", taskIDHex, displayN, display)
+	if err := stream.RemoteShell(); err != nil {
+		return taskIDHex, err
+	}
+	return taskIDHex, nil
 }
