@@ -559,7 +559,7 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protoco
 	if err != nil {
 		return "", err
 	}
-	cookie, err := localX11Cookie(display, displayNumber(display))
+	cookie, err := localX11Cookie(display) // derives the display number internally
 	if err != nil {
 		return "", err
 	}
@@ -594,29 +594,11 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protoco
 	}
 	return taskIDHex, nil
 }
-
-// displayNumber extracts N from a DISPLAY value for cookie lookup.
-func displayNumber(display string) int {
-	_, _, port, err := localXServerDialSpec(display)
-	if err != nil {
-		return 0
-	}
-	if port >= 6000 { // tcp form
-		return port - 6000
-	}
-	// unix form: parse trailing :N
-	colon := strings.LastIndex(display, ":")
-	if colon < 0 {
-		return 0
-	}
-	num := display[colon+1:]
-	if dot := strings.IndexByte(num, '.'); dot >= 0 {
-		num = num[:dot]
-	}
-	n, _ := strconv.Atoi(num)
-	return n
-}
 ```
+
+(`localX11Cookie` and `localXServerDialSpec` both derive the display number from
+`$DISPLAY` internally via `x11DisplayNumber` — added in Task 3's refactor — so no
+separate `displayNumber` helper is needed here.)
 
 (Note: `RunInteractiveX11` always opens detachable=true to match `session new`; `--x11`+`--detach` is rejected at the CLI layer in Task 8, so the session is never actually detached out from under the forward.)
 
