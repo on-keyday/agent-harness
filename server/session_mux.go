@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/on-keyday/agent-harness/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -87,6 +88,15 @@ type SessionMux struct {
 	ring   *RingBuffer
 	modes  *modeTracker
 
+	// mainMark is the ring append-index of the frame at which the session last
+	// returned to the primary screen (a full-screen app's alt-screen exit).
+	// On reattach, when the session is currently on the primary screen, replay
+	// starts here instead of at the ring head, skipping the dead alt-screen
+	// episode whose verbatim replay would corrupt the display. Zero (the
+	// default) means "no alt-screen exit recorded" → full replay. Atomic so the
+	// runner pump can publish it without coordinating with the attach path.
+	mainMark atomic.Int64
+
 	mu        sync.Mutex
 	tui       trsf.BidirectionalStream
 	tuiCancel context.CancelFunc
@@ -143,6 +153,7 @@ func (m *SessionMux) runnerPump() {
 		// Track DEC private-mode state from display output so a reattach can
 		// re-establish modes (e.g. a hidden cursor) whose controlling sequence
 		// has since been evicted from the ring. Only Stdout/Stderr carry it.
+		wasAlt := m.modes.onAltScreen()
 		if len(frameBytes) >= frameHeaderSize {
 			switch frame.FrameType(frameBytes[0]) {
 			case frame.FrameType_Stdout, frame.FrameType_Stderr:
@@ -150,6 +161,14 @@ func (m *SessionMux) runnerPump() {
 			}
 		}
 		m.ring.Append(frameBytes)
+		// If this frame carried the alt-screen exit (alt → primary), mark it as
+		// the replay start point: everything before is a now-finished
+		// full-screen episode that must not be replayed verbatim. The mark is
+		// the just-appended frame's index, so replay includes the ESC[?1049l
+		// itself (ensuring a reattaching client also leaves the alt buffer).
+		if wasAlt && !m.modes.onAltScreen() {
+			m.mainMark.Store(int64(m.ring.AppendCount() - 1))
+		}
 		m.mu.Lock()
 		tui := m.tui
 		m.mu.Unlock()
@@ -205,7 +224,7 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 	if pre := m.modes.preamble(); len(pre) > 0 {
 		replay = append(replay, encodeStdoutFrame(pre)...)
 	}
-	replay = append(replay, m.ring.Snapshot()...)
+	replay = append(replay, m.replaySnapshot()...)
 	if len(replay) > 0 {
 		if err := tui.AppendData(false, replay); err != nil {
 			m.mu.Lock()
@@ -245,7 +264,7 @@ func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.Bidirectional
 	if pre := m.modes.preamble(); len(pre) > 0 {
 		replay = append(replay, encodeStdoutFrame(pre)...)
 	}
-	replay = append(replay, m.ring.Snapshot()...)
+	replay = append(replay, m.replaySnapshot()...)
 	m.mu.Unlock()
 
 	// Replay BEFORE starting the output pump, so replayed bytes always precede
@@ -375,6 +394,19 @@ func (m *SessionMux) IsAttached() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.tui != nil
+}
+
+// replaySnapshot returns the ring bytes to replay to a (re)attaching client.
+// On the primary screen it starts from the last alt-screen exit (mainMark),
+// skipping a finished full-screen episode whose verbatim replay — absolute-
+// cursor frame fragments with no enclosing alt-screen — corrupts the display.
+// While a full-screen app is still live (in the alt screen) it replays the
+// whole ring, since the app repaints over any partial frame on the next tick.
+func (m *SessionMux) replaySnapshot() []byte {
+	if m.modes.onAltScreen() {
+		return m.ring.Snapshot()
+	}
+	return m.ring.SnapshotFrom(int(m.mainMark.Load()))
 }
 
 // RingBufferLen returns the number of bytes currently stored in the ring buffer.

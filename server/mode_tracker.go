@@ -132,6 +132,18 @@ func (t *modeTracker) applyParams(set bool) {
 	}
 }
 
+// onAltScreen reports whether the session is currently in an alternate-screen
+// buffer (any of the 47 / 1047 / 1049 modes last seen set). Reattach uses this
+// to decide replay scope: while a full-screen app is live we replay the whole
+// ring (the app repaints over any partial frame), but once it has exited we
+// skip the now-meaningless alt-screen episode — replaying its absolute-cursor
+// frame fragments onto the primary screen is exactly what corrupts the display.
+func (t *modeTracker) onAltScreen() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.modes[47] || t.modes[1047] || t.modes[1049]
+}
+
 // preamble returns the escape-sequence bytes that re-establish every tracked,
 // non-excluded mode at its last-known value, in ascending mode order for
 // determinism. nil if there is nothing to restore.
