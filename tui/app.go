@@ -160,6 +160,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case TaskEventMsg:
 		id := FormatTaskID(msg.Event.TaskId)
+		if msg.Event.Kind == protocol.StatusEventKind_TaskPruned {
+			// Server forgot this task — drop its row immediately instead of
+			// waiting for the next incidental snapshot refresh (the TUI has no
+			// periodic poll; the WebUI's 5s poll is its own backstop).
+			delete(a.tasksByID, id)
+			a.refreshTasksTable()
+			return a, nil
+		}
 		cur, ok := a.tasksByID[id]
 		if !ok {
 			// First time we see this task. TaskStatusEvent carries id /
