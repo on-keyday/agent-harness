@@ -68,6 +68,11 @@ type App struct {
 	client     *cli.Client
 	appCtx     context.Context
 	program    *tea.Program
+
+	// x11Cancel stops the background -R forward of the current X11 interactive
+	// session. Set when InteractiveReadyMsg carries one; called and cleared on
+	// InteractiveDoneMsg so the forward stops with the session.
+	x11Cancel context.CancelFunc
 }
 
 // NotifyResultMsg carries the result of a notify send command.
@@ -355,6 +360,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render("open interactive failed: " + msg.Err.Error()))
 			return a, nil
 		}
+		if msg.X11Warn != "" {
+			a.cmdresult.Append(WarnStyle.Render("x11: " + msg.X11Warn))
+		}
+		a.x11Cancel = msg.X11Cancel
 		short := msg.TaskID
 		if len(short) > 12 {
 			short = short[:12]
@@ -377,6 +386,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, RefreshSnapshot(a.client)
 
 	case InteractiveDoneMsg:
+		if a.x11Cancel != nil {
+			a.x11Cancel()
+			a.x11Cancel = nil
+		}
 		short := msg.TaskID
 		if len(short) > 12 {
 			short = short[:12]
@@ -1007,6 +1020,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			repo = a.defaultRepo
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
+		if v.X11 {
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program)
+		}
 		if v.Detach {
 			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID)
 		}

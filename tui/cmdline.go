@@ -53,6 +53,8 @@ type SessionNewAction struct {
 	Host         string
 	Runner       string
 	IP           string
+	X11          bool
+	X11Display   int
 }
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
@@ -359,6 +361,8 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		host := fs.String("host", "", "pin to a runner by reported hostname (mutually exclusive with --runner / --ip)")
 		runner := fs.String("runner", "", "pin to a runner by 32-hex RunnerID (mutually exclusive with --host / --ip)")
 		ip := fs.String("ip", "", "pin to a runner by IP address (mutually exclusive with --host / --runner)")
+		x11 := fs.Bool("x11", false, "X11-forward GUI apps to your local X server")
+		x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N)")
 		var extra repeatableStrings
 		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 		if err := fs.Parse(rest); err != nil {
@@ -370,6 +374,9 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		if err := (cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}).ValidateSelector(); err != nil {
 			return nil, fmt.Errorf("session new: %w", err)
 		}
+		if *x11 && *detach {
+			return nil, fmt.Errorf("session new: --x11 is incompatible with --detach")
+		}
 		return SessionNewAction{
 			Repo:         defaultRepo,
 			ExtraArgs:    []string(extra),
@@ -378,6 +385,8 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			Host:         *host,
 			Runner:       *runner,
 			IP:           *ip,
+			X11:          *x11,
+			X11Display:   *x11Display,
 		}, nil
 	case "attach":
 		if len(rest) == 0 {

@@ -20,6 +20,15 @@ type InteractiveReadyMsg struct {
 	Stream *agentexec.CommandExecutionStream
 	TaskID string
 	Err    error
+
+	// X11Cancel cancels the background -R forward goroutine when set (X11
+	// sessions only). Non-x11 paths leave it nil; the Done handler calls it
+	// when present so the forward stops with the session.
+	X11Cancel context.CancelFunc
+	// X11Warn is non-empty when forwarding WITHOUT authentication (no cookie);
+	// the Ready handler surfaces it as a status line (stderr would corrupt the
+	// alt-screen). Non-x11 paths leave it "".
+	X11Warn string
 }
 
 // InteractiveDoneMsg lands after tea.Exec returns — claude has exited or
@@ -59,6 +68,35 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 		}
 		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, true)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
+	}
+}
+
+// DoOpenX11Session opens a new detachable interactive session with X11
+// forwarding (equivalent to `harness-cli session new --x11`). It mirrors
+// DoOpenDetachableSession but, on success, spawns a background goroutine that
+// runs the -R remote forward (runner 127.0.0.1:6000+displayN -> the client's
+// local X server) for the session's lifetime, then posts InteractiveReadyMsg so
+// App.Update's existing tea.Exec path drives the PTY. The forward goroutine uses
+// the BUFFERED forwardStatusLogf — a raw program.Send would block for the whole
+// session because tea.Exec/RemoteShell never drains the msgs channel.
+// program MUST be App's *tea.Program. The returned InteractiveReadyMsg carries
+// X11Cancel (stops the forward; App stores it and calls it on InteractiveDoneMsg)
+// and X11Warn (non-empty => forwarding without authentication).
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program) tea.Cmd {
+	return func() tea.Msg {
+		sel, err := cli.BuildSelector(selOpts)
+		if err != nil {
+			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
+		}
+		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN)
+		if err != nil {
+			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
+		}
+		fctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			_ = cli.RunRemoteForward(fctx, c, taskID, []cli.RemoteForwardSpec{sp}, forwardStatusLogf(fctx, program))
+		}()
+		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Cancel: cancel, X11Warn: warn}
 	}
 }
 
