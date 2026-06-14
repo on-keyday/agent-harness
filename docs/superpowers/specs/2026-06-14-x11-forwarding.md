@@ -51,8 +51,17 @@ SSH **trusted** (`-Y`) forwarding: the real cookie is reused, no translation.
   == 1` in both `OpenInteractiveRequest` and `OpenExecRunnerRequest`. No bytes
   on the wire when X11 is off (`feedback_no_schema_invisible_bytes`); single
   source for the byte layout (`feedback_no_split_schemas`).
-- **`xauth` required on both ends.** Missing `xauth` / no parseable cookie is a
-  hard error, no fallback.
+- **Cookie optional — no-auth fallback.** When the client can extract a cookie
+  (`xauth list $DISPLAY`), it is shipped and the runner registers it (trusted
+  `-Y` forwarding). When no cookie is available (xauth absent, or the local X
+  server runs without access control — e.g. VcXsrv "Disable access control",
+  common on Windows), the client warns and forwards WITHOUT authentication: it
+  sends an empty cookie, and the runner injects `DISPLAY` but not `XAUTHORITY`
+  (no xauth registration). This makes the cross-OS Windows+VcXsrv path usable
+  (`project_deployment_topology`). Safety: a cookieless session only "succeeds
+  insecurely" against an already-unauthenticated server; a secured server
+  rejects the cookieless client, so the fallback cannot downgrade a secured
+  connection. The fallback is announced on stderr, not silent.
 
 ## Out of scope
 

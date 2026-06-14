@@ -17,7 +17,7 @@
 - **Client picks the display number** (`--x11`, default `N=10`; `--x11-display N` to override). Rationale: the `OpenInteractive` response is sent before the runner runs (server fire-and-forwards `OpenExec` then returns immediately at `server/task_handler.go:681`), so the runner cannot report an allocated `N` back synchronously. Client-chosen `N` avoids a response round-trip. Collisions surface as a `-R` BindFailed error (observable, retry with another `N`).
 - **Runner listens on TCP `127.0.0.1:(6000+N)`**, sets `DISPLAY=127.0.0.1:N`. This sidesteps UNIX-socket support on the runner side entirely (no `/tmp/.X11-unix` file management on the runner).
 - **`--x11` is incompatible with `--detach`** (a detached session has no client process to host the tunnel) and is **only available on `session new`** (interactive). Both are validated as errors.
-- **`xauth` required on both ends.** Missing `xauth`, or no parseable cookie for the client's `$DISPLAY`, is a hard error with a clear message. No fallback.
+- **Cookie optional (no-auth fallback) — see Task 10.** When the client can extract a cookie it ships it (trusted `-Y` forwarding) and the runner registers it. When no cookie is available (xauth absent, or an access-control-disabled X server like VcXsrv), the client warns and forwards without auth: empty cookie, runner injects DISPLAY but not XAUTHORITY. (Tasks 1–9 implement the cookie path; Task 10 adds the fallback. The runner needs `xauth` only for the cookie path.)
 - **WebUI is out of scope** (no port-forward wiring there, no X server in a browser). CLI/TUI only; this plan ships the CLI path.
 
 ---
@@ -946,3 +946,31 @@ git commit -m "docs: document session new --x11 forwarding"
 **Type consistency:** `RemoteForwardSpec.DialNetwork` (Task 2) used in Task 5. `X11Request{Display,Cookie}` (cli-side input type) defined Task 4, used Task 5 — distinct from the wire type `protocol.X11Forward{Display,Cookie}` (Task 1). `AgentEnvSpec.X11Display/X11AuthFile` defined Task 7 Step 3, used Task 7 Step 6. Wire accessors `X11Enabled()/SetX11Enabled(bool)/SetX11(X11Forward)/X11() *X11Forward` + `X11Forward.{Display,Cookie,SetCookie}` used consistently in Tasks 4/6/7 (set discriminator before the embedded block on encode; getter is nil-guarded on decode); every later task carries the "confirm against Task 1 Step 4" caveat. ✓
 
 **Known limitation (documented, not a gap):** two runner processes on one host both using the same display `N` would collide on `127.0.0.1:(6000+N)`; surfaced as a `-R` BindFailed error. Consistent with `project_runner_ambiguous_same_host_roots`. Mitigation if needed later: per-runner display allocation requiring an OpenInteractive response field (deferred — needs a server→client round-trip the current flow lacks).
+
+---
+
+## Task 10: No-auth fallback (post-E2E, cross-OS enabler)
+
+**Why:** On Windows the common workflow is VcXsrv "Disable access control" (no
+cookie). The client then has no cookie to ship and Tasks 5/7 would fail at
+extraction. Allow cookieless forwarding: DISPLAY injected, no XAUTHORITY. See
+the spec's updated "Cookie optional — no-auth fallback" decision.
+
+**Files:** `cli/x11.go`, `runner/agentenv.go`, `runner/session.go`, `runner/agentenv_test.go`.
+
+- **Client (`cli/x11.go` RunInteractiveX11):** make cookie extraction non-fatal —
+  on `localX11Cookie` error, print a stderr warning and continue with a nil
+  cookie (still `x11_enabled=true`, `X11Forward{Display:N, Cookie:nil}`).
+- **Runner env (`runner/agentenv.go`):** add `X11Enabled bool` to `AgentEnvSpec`.
+  Emit `DISPLAY=127.0.0.1:<N>` when `X11Enabled` is true (regardless of auth);
+  emit `XAUTHORITY=<file>` only when `X11AuthFile != ""`.
+- **Runner (`runner/session.go` handleOpenExec):** when `oer.X11Enabled()` and
+  `X11()!=nil`, set `x11Display` and `x11Enabled=true`. If the cookie is
+  non-empty → `writeXauthFile` + set `x11AuthFile` + `defer cleanup`. If empty →
+  skip xauth (no XAUTHORITY), DISPLAY only. Log which mode.
+- **Tests:** update `TestBuildAgentEnv_X11` to set `X11Enabled:true`; add
+  `TestBuildAgentEnv_X11NoAuth` (X11Enabled:true, X11AuthFile:"" → DISPLAY present,
+  no XAUTHORITY).
+
+**Safety:** cookieless only connects to an already-unauthenticated server; a
+secured server rejects it. Fallback is warned on stderr, not silent.
