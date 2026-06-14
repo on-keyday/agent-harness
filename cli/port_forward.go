@@ -215,6 +215,10 @@ type RemoteForwardSpec struct {
 	RunnerPort int
 	DialHost   string
 	DialPort   int
+	// DialNetwork selects how the client dials the local target: "tcp"
+	// (default; DialHost:DialPort) or "unix" (DialHost is the socket path,
+	// DialPort ignored). Used by X11 forwarding to reach a UNIX X server.
+	DialNetwork string
 }
 
 // ParseRemoteForwardSpec parses "[bind:]runnerport:dialhost:dialport".
@@ -241,7 +245,7 @@ func ParseRemoteForwardSpec(s string) (RemoteForwardSpec, error) {
 	if dhost == "" {
 		return RemoteForwardSpec{}, fmt.Errorf("forward: empty dial host in %q", s)
 	}
-	return RemoteForwardSpec{BindAddr: bind, RunnerPort: rport, DialHost: dhost, DialPort: dport}, nil
+	return RemoteForwardSpec{BindAddr: bind, RunnerPort: rport, DialHost: dhost, DialPort: dport, DialNetwork: "tcp"}, nil
 }
 
 // remoteForwardConnNotifySize is the fixed wire size of a RemoteForwardConnNotify
@@ -372,6 +376,15 @@ func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForward
 	}
 }
 
+// dialForwardTarget dials the client-side target described by sp, honoring
+// sp.DialNetwork ("unix" → DialHost is a socket path; otherwise TCP).
+func dialForwardTarget(sp RemoteForwardSpec) (net.Conn, error) {
+	if sp.DialNetwork == "unix" {
+		return net.Dial("unix", sp.DialHost)
+	}
+	return net.Dial("tcp", net.JoinHostPort(sp.DialHost, strconv.Itoa(sp.DialPort)))
+}
+
 // dialAndSplice picks up the server-created data stream by id, dials the
 // client-side target, and splices. On dial failure it closes the stream so the
 // runner-side connection sees EOF (connection-refused semantics).
@@ -381,9 +394,9 @@ func (c *Client) dialAndSplice(ctx context.Context, sp RemoteForwardSpec, stream
 		logf(fmt.Sprintf("remote-forward: data stream %d not visible (lookup timeout)", uint64(streamID)))
 		return
 	}
-	conn, err := net.Dial("tcp", net.JoinHostPort(sp.DialHost, strconv.Itoa(sp.DialPort)))
+	conn, err := dialForwardTarget(sp)
 	if err != nil {
-		logf(fmt.Sprintf("remote-forward: dial %s:%d failed: %v", sp.DialHost, sp.DialPort, err))
+		logf(fmt.Sprintf("remote-forward: dial %s/%s failed: %v", sp.DialNetwork, sp.DialHost, err))
 		_ = st.CloseBoth()
 		return
 	}
