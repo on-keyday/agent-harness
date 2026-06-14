@@ -663,6 +663,10 @@ enum StatusEventKind:
     task_ended
     runner_registered
     runner_offline
+    task_pruned       # appended (keeps existing ordinals stable): the server
+                      # forgot a terminal task; clients remove its row. Carries
+                      # task_id + kind only — task_status/task_kind are unset
+                      # because the TaskStore entry is already gone.
 
 format TaskStatusEvent:
     kind :StatusEventKind
