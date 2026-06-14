@@ -426,20 +426,51 @@ func (w *CommandExecutionStream) RemoteShell() error {
 	}
 	defer term.Restore(int(os.Stdin.Fd()), old)
 
-	// Reset terminal-emulator-level input modes that the runner-side ConPTY
-	// may have enabled at attach time (`\x1b[?9001h` Win32 Input Mode and
-	// `\x1b[>4;1m` modifyOtherKeys). When the runner is Windows and the
-	// local terminal supports those modes (Windows Terminal, conhost,
-	// recent mintty), without this defer a *detach* would leave the local
-	// terminal stuck in those modes — every subsequent keystroke encoded as
-	// a multi-byte CSI even when the user later attaches to a Linux runner
-	// whose bash readline can't parse them, making lowercase input "vanish".
-	// The natural-`exit` path is unaffected because closing the ConPTY emits
-	// these resets itself; we only need to cover the detach path, but
-	// emitting unconditionally is idempotent on terminals not in those modes.
+	// Restore terminal-emulator-level state that the runner-side agent (or its
+	// ConPTY) may have left enabled, which term.Restore above does NOT cover:
+	// term.Restore only resets the kernel termios line discipline (echo,
+	// canonical mode, signals), not the emulator's screen/cursor/input modes,
+	// which are driven purely by escape sequences. Two groups:
+	//
+	//   1. Input modes the ConPTY negotiated at attach: `\x1b[?9001h` Win32
+	//      Input Mode and `\x1b[>4;1m` modifyOtherKeys. When the runner is
+	//      Windows and the local terminal honours them (Windows Terminal,
+	//      conhost, recent mintty), without this a *detach* leaves every
+	//      subsequent keystroke encoded as a multi-byte CSI — so a later
+	//      attach to a Linux runner whose bash readline can't parse them makes
+	//      lowercase input "vanish".
+	//
+	//   2. Screen state a full-screen TUI (htop, less, vim, man …) set and
+	//      never got to tear down: alternate screen buffer (`\x1b[?1049h`),
+	//      hidden cursor (`\x1b[?25l`), mouse reporting (`\x1b[?1000h` /
+	//      1002 / 1003 / 1006), bracketed paste (`\x1b[?2004h`), and stray
+	//      SGR colour. If the user hits Ctrl+] while such an app is still
+	//      running, the app is detached before its atexit cleanup runs, so the
+	//      LOCAL terminal is left with those modes set. Two callers, two
+	//      symptoms:
+	//        - bare CLI attach (no host TUI): the terminal is stranded on the
+	//          alternate screen with the cursor hidden — it goes blank
+	//          ("nothing displayed").
+	//        - the bubbletea host TUI (tea.Exec): bubbletea exits its OWN alt
+	//          screen before running us and re-enters it after (ReleaseTerminal
+	//          / RestoreTerminal). htop's un-torn-down `\x1b[?1049h` means
+	//          bubbletea's re-enter `\x1b[?1049h` fires while the terminal is
+	//          already on an alt buffer, so on some emulators (notably Windows
+	//          conhost / Windows Terminal) the repaint doesn't start from a
+	//          clean buffer and stale panel lines survive. Emitting `?1049l`
+	//          here restores primary-screen parity so bubbletea's re-enter is a
+	//          clean primary→alt toggle; it also clears the leaked mouse
+	//          reporting that bubbletea's RestoreTerminal does not re-disable.
+	//      (On reattach the server's modeTracker deliberately does NOT replay
+	//      alt-screen, so folding it on detach keeps the two paths consistent.)
+	//
+	// The natural-`exit` path is unaffected: closing the agent/ConPTY emits
+	// these resets itself, and re-emitting them is idempotent on a terminal
+	// already in the default state — so emitting unconditionally is safe.
 	// LIFO order: this fires *before* term.Restore so the escape goes out
 	// while stdout is still flushing in raw mode without line buffering.
-	defer fmt.Fprint(os.Stdout, "\x1b[?9001l\x1b[>4;0m")
+	defer fmt.Fprint(os.Stdout, "\x1b[?9001l\x1b[>4;0m"+
+		"\x1b[?1049l\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l\x1b[0m")
 
 	// sendSize re-queries the local terminal dimensions and forwards them
 	// over the control frame channel. Used both for the initial size and
