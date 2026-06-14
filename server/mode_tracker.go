@@ -147,20 +147,32 @@ func (t *modeTracker) onAltScreen() bool {
 // preamble returns the escape-sequence bytes that re-establish every tracked,
 // non-excluded mode at its last-known value, in ascending mode order for
 // determinism. nil if there is nothing to restore.
+//
+// Special case — the alternate screen. The alt-screen modes (47/1047/1049) are
+// excluded from the generic loop because we must never replay a *reset*
+// (ESC[?1049l) on the primary screen, and replaying a stale *set* when the app
+// has already exited would strand the client on an empty alt buffer. But when
+// the session is CURRENTLY in the alt screen (a full-screen app is live), the
+// reattaching client must enter it too — otherwise, if the establishing
+// ESC[?1049h has already been evicted from the ring window, the app's
+// absolute-cursor frame fragments replay onto the primary screen and corrupt
+// it. So we emit ESC[?1049h FIRST (before the cursor/mouse modes and the
+// replayed ring), and only when on the alt screen. The reset direction is left
+// to SnapshotFrom, which trims a finished episode instead.
 func (t *modeTracker) preamble() []byte {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	var out []byte
+	if t.modes[1049] || t.modes[1047] || t.modes[47] {
+		out = append(out, 0x1b, '[', '?', '1', '0', '4', '9', 'h')
+	}
 	keys := make([]int, 0, len(t.modes))
 	for m := range t.modes {
 		if !excludedFromPreamble(m) {
 			keys = append(keys, m)
 		}
 	}
-	if len(keys) == 0 {
-		return nil
-	}
 	sort.Ints(keys)
-	var out []byte
 	for _, m := range keys {
 		final := byte('l')
 		if t.modes[m] {
@@ -169,6 +181,9 @@ func (t *modeTracker) preamble() []byte {
 		out = append(out, 0x1b, '[', '?')
 		out = append(out, strconv.Itoa(m)...)
 		out = append(out, final)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

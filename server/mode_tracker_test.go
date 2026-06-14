@@ -19,12 +19,26 @@ func TestModeTracker_BasicAndLastValueWins(t *testing.T) {
 	}
 }
 
-func TestModeTracker_AltScreenAndSyncExcluded(t *testing.T) {
+func TestModeTracker_AltScreenLiveReentered(t *testing.T) {
 	tr := newModeTracker()
 	tr.feed([]byte("\x1b[?25l\x1b[?1049h\x1b[?2026h")) // cursor + alt-screen + sync
-	// Only the cursor bit is content-independent and replayable.
-	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?25l")) {
-		t.Fatalf("preamble = %q, want only ESC[?25l (alt-screen/sync excluded)", got)
+	// Session is currently in the alt screen → the preamble must re-enter it
+	// FIRST (so a reattach lands the live app's frames on the alt buffer even
+	// when the original ESC[?1049h was evicted), then restore the cursor bit.
+	// Sync (2026) stays excluded (transient framing).
+	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?1049h\x1b[?25l")) {
+		t.Fatalf("preamble = %q, want ESC[?1049h ESC[?25l (alt re-entered, sync excluded)", got)
+	}
+}
+
+func TestModeTracker_AltScreenExitedNotReentered(t *testing.T) {
+	tr := newModeTracker()
+	// Full-screen app entered then exited the alt screen; cursor shown again.
+	tr.feed([]byte("\x1b[?1049h\x1b[?25l\x1b[?25h\x1b[?1049l"))
+	// On the primary screen the preamble must NOT emit ESC[?1049h (nor a stray
+	// ESC[?1049l) — only the surviving content-independent mode (cursor shown).
+	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?25h")) {
+		t.Fatalf("preamble = %q, want only ESC[?25h (no alt-screen re-entry on primary)", got)
 	}
 }
 

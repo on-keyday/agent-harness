@@ -72,11 +72,50 @@ func TestSessionMux_AttachWhileAltScreenLiveReplaysFull(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	// alt-screen is excluded from the preamble, so replay == full ring snapshot.
-	want := append(append([]byte{}, pre...), enter...)
+	// Live alt-screen: the preamble re-enters the alt screen (ESC[?1049h) as its
+	// own stdout frame, then the full ring snapshot replays — no trimming while
+	// the app is live.
+	want := append([]byte{}, makeWireFrame(1, []byte("\x1b[?1049h"))...)
+	want = append(want, pre...)
+	want = append(want, enter...)
 	got := tui.WaitWritten(t, len(want))
 	if !bytes.Equal(got, want) {
-		t.Fatalf("live alt-screen replay\n got=%q\nwant=%q (full ring)", got, want)
+		t.Fatalf("live alt-screen replay\n got=%q\nwant=%q (ESC[?1049h + full ring)", got, want)
+	}
+}
+
+// TestSessionMux_AttachLiveAltScreenReentersEvenIfEnterEvicted is the live-app
+// counterpart to the trim test. A full-screen app is still in the alt screen,
+// but its establishing ESC[?1049h has been evicted from the ring window. Replay
+// must re-enter the alt screen via the preamble, so the surviving frame
+// fragment lands on the alt buffer instead of corrupting the primary screen.
+func TestSessionMux_AttachLiveAltScreenReentersEvenIfEnterEvicted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	runner := newFakeStream(t)
+	enter := makeWireFrame(1, []byte("\x1b[?1049hENTER"))        // establishing alt-enter
+	bulk := makeWireFrame(1, []byte("\x1b[10;5HFRAGMENTxxxxxx")) // mid-frame fragment, no 1049
+	// Ring holds exactly one of these frames → the alt-enter is evicted.
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(len(bulk)), SessionHooks{})
+
+	runner.QueueRead(enter)
+	waitFor(t, func() bool { return mux.RingBufferLen() == len(enter) })
+	runner.QueueRead(bulk)
+	waitFor(t, func() bool { return mux.RingBufferLen() == len(bulk) })
+
+	tui := newFakeStream(t)
+	if err := mux.Attach(ctx, tui); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+
+	got := tui.WaitWritten(t, len(bulk))
+	if !bytes.Contains(got, []byte("\x1b[?1049h")) {
+		t.Fatalf("live alt-screen reattach must re-enter the alt screen even when\nthe enter sequence was evicted; got=%q", got)
+	}
+	// And the surviving fragment is still replayed (after the re-entry).
+	if !bytes.Contains(got, []byte("FRAGMENTxxxxxx")) {
+		t.Fatalf("surviving fragment missing from replay; got=%q", got)
 	}
 }
 
