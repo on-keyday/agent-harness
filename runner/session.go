@@ -617,6 +617,8 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 				x11AuthFile = p
 				defer cleanupXauthFile(p)
 			}
+		} else {
+			log.Warn("x11 enabled but X11Forward block absent; continuing without DISPLAY", "task_id", taskIDHex)
 		}
 	}
 	env := BuildAgentEnv(AgentEnvSpec{
