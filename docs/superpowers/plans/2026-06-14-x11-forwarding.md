@@ -564,7 +564,7 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protoco
 		return "", err
 	}
 
-	stream, taskIDHex, err := c.openInteractiveImpl(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie})
+	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie})
 	if err != nil {
 		return taskIDHex, err
 	}
