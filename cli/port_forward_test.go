@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -38,6 +39,40 @@ func TestDialAndSplice_UnixTarget(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(buf) != "ping" {
+		t.Fatalf("got %q", buf)
+	}
+}
+
+func TestDialAndSplice_TCPTarget(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		io.Copy(c, c)
+		c.Close()
+	}()
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+	sp := RemoteForwardSpec{DialNetwork: "tcp", DialHost: "127.0.0.1", DialPort: port}
+	conn, err := dialForwardTarget(sp)
+	if err != nil {
+		t.Fatalf("dial tcp: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("pong")); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatal(err)
+	}
+	if string(buf) != "pong" {
 		t.Fatalf("got %q", buf)
 	}
 }

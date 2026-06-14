@@ -328,8 +328,12 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 		if err != nil {
 			return err
 		}
-		logf(fmt.Sprintf("remote-forwarding runner:%s:%d -> %s:%d (task %s, fwd %d)",
-			sp.BindAddr, sp.RunnerPort, sp.DialHost, sp.DialPort, taskIDHex[:min(12, len(taskIDHex))], fid))
+		dialTarget := sp.DialHost
+		if sp.DialNetwork != "unix" {
+			dialTarget = fmt.Sprintf("%s:%d", sp.DialHost, sp.DialPort)
+		}
+		logf(fmt.Sprintf("remote-forwarding runner:%s:%d -> %s (task %s, fwd %d)",
+			sp.BindAddr, sp.RunnerPort, dialTarget, taskIDHex[:min(12, len(taskIDHex))], fid))
 		wg.Add(1)
 		go func(sp RemoteForwardSpec, ctrl trsf.BidirectionalStream) {
 			defer wg.Done()
@@ -396,7 +400,11 @@ func (c *Client) dialAndSplice(ctx context.Context, sp RemoteForwardSpec, stream
 	}
 	conn, err := dialForwardTarget(sp)
 	if err != nil {
-		logf(fmt.Sprintf("remote-forward: dial %s/%s failed: %v", sp.DialNetwork, sp.DialHost, err))
+		target := sp.DialHost
+		if sp.DialNetwork != "unix" {
+			target = net.JoinHostPort(sp.DialHost, strconv.Itoa(sp.DialPort))
+		}
+		logf(fmt.Sprintf("remote-forward: dial %s/%s failed: %v", sp.DialNetwork, target, err))
 		_ = st.CloseBoth()
 		return
 	}
