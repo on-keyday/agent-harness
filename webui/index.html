@@ -95,13 +95,6 @@
         <button id="file-delete-btn" disabled>Delete</button>
       </div>
       <pre id="file-result"></pre>
-      <dialog id="file-preview-modal" class="preview-modal">
-        <div class="preview-header">
-          <span id="file-preview-title" class="preview-title"></span>
-          <button id="file-preview-close" class="preview-close" aria-label="Close">✕</button>
-        </div>
-        <div id="file-preview-body" class="preview-body"></div>
-      </dialog>
     </section>
     <section id="interactive" data-tabgroup="terminal">
       <h2>Interactive</h2>
@@ -128,6 +121,16 @@
     </section>
   </main>
 </div>
+<!-- File preview modal lives at body level (not inside the Files tab section)
+     so showModal() works regardless of which tab is active — a dialog inside a
+     display:none ancestor renders nothing even in the top layer. -->
+<dialog id="file-preview-modal" class="preview-modal">
+  <div class="preview-header">
+    <span id="file-preview-title" class="preview-title"></span>
+    <button id="file-preview-close" class="preview-close" aria-label="Close">✕</button>
+  </div>
+  <div id="file-preview-body" class="preview-body"></div>
+</dialog>
 <script src="/static/wasm_exec.js"></script>
 <script src="/static/xterm.js"></script>
 <script src="/static/addon-fit.js"></script>
