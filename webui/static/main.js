@@ -144,8 +144,21 @@ const POLL_INTERVAL_MS = 5000;
   const fileEntriesUL     = document.getElementById("file-entries");
   const filePushBtn       = document.getElementById("file-push-btn");
   const filePullBtn       = document.getElementById("file-pull-btn");
+  const filePreviewBtn    = document.getElementById("file-preview-btn");
   const fileDeleteBtn     = document.getElementById("file-delete-btn");
   const fileResultPre     = document.getElementById("file-result");
+  const filePreviewModal  = document.getElementById("file-preview-modal");
+  const filePreviewTitle  = document.getElementById("file-preview-title");
+  const filePreviewBody   = document.getElementById("file-preview-body");
+  const filePreviewClose  = document.getElementById("file-preview-close");
+
+  // Preview never pulls more than this into browser memory; oversize files
+  // are rejected up front using the size from fileLs (no fetch attempted).
+  const PREVIEW_MAX_BYTES = 1 * 1024 * 1024; // 1 MiB
+  // Binary files are rendered as a hex dump truncated to this many bytes.
+  const HEX_PREVIEW_MAX_BYTES = 4 * 1024;    // 4 KiB
+  // Object URL held open for an image preview; revoked when the modal closes.
+  let filePreviewObjectURL = null;
 
   let filePickerCurDir   = "";
   let filePickerEntries  = [];
@@ -204,6 +217,7 @@ const POLL_INTERVAL_MS = 5000;
     fileRefreshBtn.disabled = !hasTask;
     filePushBtn.disabled = !hasTask;
     filePullBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
+    filePreviewBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
     fileDeleteBtn.disabled = !hasTask || !hasSel;
   }
 
@@ -342,6 +356,85 @@ const POLL_INTERVAL_MS = 5000;
       fileResultPre.textContent = `pull error: ${e.message}`;
     }
   });
+
+  filePreviewBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID || !filePickerSelected || filePickerSelected.isDir) return;
+    const sel = filePickerSelected;
+    const rel = joinFsPath(filePickerCurDir, sel.name);
+    // Reject oversize before fetching — sel.size comes from fileLs, so we
+    // never pull a huge file into browser memory just to refuse it.
+    if (sel.size > PREVIEW_MAX_BYTES) {
+      openFilePreview(rel, sel.size, null,
+        `File is too large to preview (${sel.size} bytes, limit ${PREVIEW_MAX_BYTES}). Use Pull to download it.`);
+      return;
+    }
+    try {
+      const bytes = await window.harness.filePullBytes(taskID, rel);
+      renderFilePreview(rel, sel.size, sel.name, bytes);
+    } catch (e) {
+      openFilePreview(rel, sel.size, null, `preview error: ${e.message}`);
+    }
+  });
+
+  filePreviewClose.addEventListener("click", () => filePreviewModal.close());
+  // Backdrop click (the dialog element itself, outside its content) closes.
+  filePreviewModal.addEventListener("click", (ev) => {
+    if (ev.target === filePreviewModal) filePreviewModal.close();
+  });
+  // Esc-triggered native close also needs to release any image object URL.
+  filePreviewModal.addEventListener("close", () => {
+    if (filePreviewObjectURL) {
+      URL.revokeObjectURL(filePreviewObjectURL);
+      filePreviewObjectURL = null;
+    }
+  });
+
+  // openFilePreview shows the modal with a header and a body built from the
+  // given DOM node (or a plain note string for errors / oversize messages).
+  function openFilePreview(rel, size, bodyNode, note) {
+    if (filePreviewObjectURL) {
+      URL.revokeObjectURL(filePreviewObjectURL);
+      filePreviewObjectURL = null;
+    }
+    filePreviewTitle.textContent = `${rel}  (${size} bytes)`;
+    filePreviewBody.innerHTML = "";
+    if (bodyNode) {
+      filePreviewBody.appendChild(bodyNode);
+    }
+    if (note) {
+      const p = document.createElement("p");
+      p.className = "preview-note";
+      p.textContent = note;
+      filePreviewBody.appendChild(p);
+    }
+    if (!filePreviewModal.open) filePreviewModal.showModal();
+  }
+
+  // renderFilePreview picks a renderer based on extension (images) and a
+  // byte sniff (text vs binary), then opens the modal.
+  function renderFilePreview(rel, size, name, bytes) {
+    if (isImageExt(name)) {
+      const blob = new Blob([bytes], { type: imageMimeForName(name) });
+      filePreviewObjectURL = URL.createObjectURL(blob);
+      const img = document.createElement("img");
+      img.src = filePreviewObjectURL;
+      img.alt = name;
+      openFilePreview(rel, size, img, null);
+      return;
+    }
+    if (isLikelyBinary(bytes)) {
+      const pre = document.createElement("pre");
+      pre.textContent = hexDump(bytes, HEX_PREVIEW_MAX_BYTES);
+      const truncated = bytes.byteLength > HEX_PREVIEW_MAX_BYTES;
+      openFilePreview(rel, size, pre,
+        truncated ? `binary — showing first ${HEX_PREVIEW_MAX_BYTES} of ${bytes.byteLength} bytes` : "binary");
+      return;
+    }
+    const pre = document.createElement("pre");
+    pre.textContent = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    openFilePreview(rel, size, pre, null);
+  }
 
   fileDeleteBtn.addEventListener("click", async () => {
     const taskID = fileTaskSelect.value;
@@ -1605,4 +1698,61 @@ function triggerDownload(bytes, filename) {
 function basename(p) {
   const i = p.lastIndexOf("/");
   return i >= 0 ? p.slice(i + 1) : p;
+}
+
+// --- File preview helpers (pure; used by the Files-tab Preview modal) ---
+
+const IMAGE_MIME_BY_EXT = {
+  png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+  webp: "image/webp", bmp: "image/bmp", svg: "image/svg+xml", ico: "image/x-icon",
+  avif: "image/avif",
+};
+
+function fileExt(name) {
+  const b = basename(name || "");
+  const i = b.lastIndexOf(".");
+  return i > 0 ? b.slice(i + 1).toLowerCase() : "";
+}
+
+function isImageExt(name) {
+  return Object.prototype.hasOwnProperty.call(IMAGE_MIME_BY_EXT, fileExt(name));
+}
+
+function imageMimeForName(name) {
+  return IMAGE_MIME_BY_EXT[fileExt(name)] || "application/octet-stream";
+}
+
+// isLikelyBinary sniffs the first 8 KiB: a NUL byte or a high ratio of
+// non-text control bytes (outside tab/newline/CR and the printable range)
+// marks the content as binary. UTF-8 multibyte sequences (>=0x80) are
+// treated as text so non-ASCII source files still render.
+function isLikelyBinary(bytes) {
+  const n = Math.min(bytes.byteLength, 8 * 1024);
+  if (n === 0) return false;
+  let suspicious = 0;
+  for (let i = 0; i < n; i++) {
+    const b = bytes[i];
+    if (b === 0) return true;
+    const isText = b === 0x09 || b === 0x0a || b === 0x0d || (b >= 0x20 && b <= 0x7e) || b >= 0x80;
+    if (!isText) suspicious++;
+  }
+  return suspicious / n > 0.30;
+}
+
+// hexDump formats up to limit bytes as `offset  hex  ASCII` rows of 16.
+function hexDump(bytes, limit) {
+  const n = Math.min(bytes.byteLength, limit);
+  const rows = [];
+  for (let off = 0; off < n; off += 16) {
+    const end = Math.min(off + 16, n);
+    let hex = "";
+    let ascii = "";
+    for (let i = off; i < end; i++) {
+      hex += bytes[i].toString(16).padStart(2, "0") + " ";
+      const b = bytes[i];
+      ascii += (b >= 0x20 && b <= 0x7e) ? String.fromCharCode(b) : ".";
+    }
+    rows.push(off.toString(16).padStart(8, "0") + "  " + hex.padEnd(16 * 3, " ") + " " + ascii);
+  }
+  return rows.join("\n");
 }

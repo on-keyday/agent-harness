@@ -91,9 +91,17 @@
       <div class="actions">
         <button id="file-push-btn" disabled>Push (upload local file into current dir)</button>
         <button id="file-pull-btn" disabled>Pull (download selected file)</button>
+        <button id="file-preview-btn" disabled>Preview (view selected file)</button>
         <button id="file-delete-btn" disabled>Delete</button>
       </div>
       <pre id="file-result"></pre>
+      <dialog id="file-preview-modal" class="preview-modal">
+        <div class="preview-header">
+          <span id="file-preview-title" class="preview-title"></span>
+          <button id="file-preview-close" class="preview-close" aria-label="Close">✕</button>
+        </div>
+        <div id="file-preview-body" class="preview-body"></div>
+      </dialog>
     </section>
     <section id="interactive" data-tabgroup="terminal">
       <h2>Interactive</h2>
