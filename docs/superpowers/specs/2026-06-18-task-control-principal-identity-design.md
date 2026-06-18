@@ -153,6 +153,20 @@ All on-wire bytes remain schema-described; nothing moves to convention.
    Recording *which* principal (creator task id) on the task itself is P2 lineage
    and is out of scope; P1 only distinguishes agent-origin from operator-origin.
 
+   **Resume attribution.** Today `TaskInfo.origin_kind`
+   (`runner/protocol/message.bgn:385`, `TaskEntry.OriginKind`) is set only at
+   `Create` and is **sticky** — `TaskStore.Resume` (`server/taskstore.go:200`)
+   takes no origin, so a task keeps its first creator's kind across every resume.
+   That loses the fact that, e.g., an agent resumed an operator-created task —
+   which is now expressible because `agent` is a `ClientKind`. P1 therefore adds a
+   second attribution field, `resumed_by_kind :ClientKind`:
+   - `origin_kind` stays the **first creator** (sticky, unchanged).
+   - `resumed_by_kind` records the `ClientKind` of the connection that performed
+     the **latest** resume (overwritten each resume); `Unspecified` until first
+     resumed.
+   - It records the **kind only** (agent/cli/tui/webui). Recording the resuming
+     agent's specific task id is lineage = P2, out of scope.
+
 ### Client
 
 1. **Agentboard client** (`cli/agent/conn.go` `ConnectAgent`): after PSK, send
@@ -209,6 +223,9 @@ All on-wire bytes remain schema-described; nothing moves to convention.
 - Client: in-task env present → `kind=agent` + triple; absent → `kind=cli`.
 - E2E: a task submitted over a `kind=agent` connection shows origin `agent` in
   `ls`; an operator CLI submit shows `cli`.
+- Resume attribution: a task created `cli` then resumed over a `kind=agent`
+  connection keeps `origin_kind=cli` and gains `resumed_by_kind=agent`; an
+  un-resumed task has `resumed_by_kind=Unspecified` (renders blank in `ls`).
 - Regression: operator CLI/TUI/WebUI flows unaffected (no gating added).
 
 ## Migration / rollout
