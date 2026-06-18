@@ -70,7 +70,7 @@ func main() {
 	// addSelectorFlags registers --runner/--host/--ip on fs and returns a
 	// function that resolves them to a RunnerSelector after fs.Parse.
 	addSelectorFlags := func(fs *flag.FlagSet) func() protocol.RunnerSelector {
-		runner := fs.String("runner", "", "pin to a specific runner by ConnectionID hex")
+		runner := fs.String("runner", "", "pin to a specific runner by ConnectionID (the id= value from `harness-cli ls`)")
 		host := fs.String("host", "", "pin to runner by hostname")
 		ip := fs.String("ip", "", "pin to runner by IP address")
 		return func() protocol.RunnerSelector {

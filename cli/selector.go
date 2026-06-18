@@ -9,13 +9,16 @@ import (
 	"net/netip"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // SelectorOpts holds the mutually-exclusive runner-selector flags that the
 // CLI user can supply. At most one field may be non-empty; ValidateSelector
 // enforces this constraint before buildSelector is called.
 type SelectorOpts struct {
-	// Runner is a 32-char hex ConnectionID string (RunnerID pin).
+	// Runner pins a specific runner. Accepts the ConnectionID string that
+	// `harness-cli ls` prints in the id= column (e.g. "ws:127.0.0.1:8539-123");
+	// a hex-encoded RunnerID is also accepted for back-compat.
 	Runner string
 	// Host is a plain hostname string.
 	Host string
@@ -70,17 +73,23 @@ func buildSelector(opts SelectorOpts) (protocol.RunnerSelector, error) {
 	}
 }
 
-// buildRunnerIDSelector parses a hex ConnectionID string into a ByRunnerId selector.
-// The hex string must encode a RunnerID whose IpAddr is 4 or 16 bytes; a zero
+// buildRunnerIDSelector parses a runner identifier into a ByRunnerId selector.
+// It accepts the ConnectionID string form that `harness-cli ls` prints in the
+// id= column (e.g. "ws:127.0.0.1:8539-123") and, for back-compat, a hex-encoded
+// RunnerID. The resulting RunnerID must have a 4- or 16-byte IpAddr; a zero
 // IpAddr (IpAddrLen=0) is rejected because the protocol encoder panics on it.
-func buildRunnerIDSelector(hexStr string) (protocol.RunnerSelector, error) {
-	raw, err := hex.DecodeString(hexStr)
-	if err != nil {
-		return protocol.RunnerSelector{}, fmt.Errorf("--runner: invalid hex: %w", err)
-	}
+func buildRunnerIDSelector(s string) (protocol.RunnerSelector, error) {
 	var rid protocol.RunnerID
-	if _, err := rid.Decode(raw); err != nil {
-		return protocol.RunnerSelector{}, fmt.Errorf("--runner: cannot decode RunnerID: %w", err)
+	// Prefer the ConnectionID string form (what `ls` shows). It has colons
+	// (transport:host:port-unique), so a hex string never parses as one.
+	if cid, cidErr := objproto.ParseConnectionID(s, objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr); cidErr == nil {
+		rid = protocol.ConnIDToRunnerID(cid)
+	} else if raw, hexErr := hex.DecodeString(s); hexErr == nil {
+		if _, derr := rid.Decode(raw); derr != nil {
+			return protocol.RunnerSelector{}, fmt.Errorf("--runner: cannot decode RunnerID hex: %w", derr)
+		}
+	} else {
+		return protocol.RunnerSelector{}, fmt.Errorf("--runner: %q is neither a ConnectionID (%v) nor hex (%v); copy the id= value from `harness-cli ls`", s, cidErr, hexErr)
 	}
 	// IpAddrLen must be 4 or 16; zero causes encoder panic.
 	if rid.IpAddrLen == 0 {
