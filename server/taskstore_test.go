@@ -857,6 +857,75 @@ func TestResumeRecordsResumedByKind(t *testing.T) {
 	}
 }
 
+// TestWALReplayRestoresAttribution verifies that CreatorTaskID and
+// ResumedByKind survive a full WAL persist → ReadWAL → ReplayEvents
+// round-trip. CreatorTaskID must be non-zero and unchanged after a
+// resume; ResumedByKind must reflect the most recent resumer.
+func TestWALReplayRestoresAttribution(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "attr.log")
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		t.Fatalf("OpenWAL: %v", err)
+	}
+
+	// Build a non-zero creator task ID.
+	var creatorID protocol.TaskID
+	creatorID.Id[0] = 0xCA
+	creatorID.Id[1] = 0xFE
+
+	s := NewTaskStore()
+	s.SetWAL(wal)
+
+	// Create a task with kind=agent and a non-zero creator task id.
+	id := s.Create("/repo", "agent-prompt",
+		protocol.TaskKind_Oneshot,
+		protocol.ClientKind_Agent,
+		creatorID,
+		"",
+		protocol.RunnerSelector{},
+		nil,
+	)
+
+	// Finish it (terminal state is required before Resume).
+	s.Assign(id, "runner-x", "/wt/x")
+	s.Finish(id, 0, nil)
+
+	// Resume with resumer kind = ClientKind_Tui.
+	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	wal.Close() //nolint:errcheck
+
+	// Read and replay into a fresh store.
+	events, readErr := ReadWAL(walPath)
+	if readErr != nil {
+		t.Fatalf("ReadWAL: %v", readErr)
+	}
+
+	s2 := NewTaskStore()
+	s2.ReplayEvents(events)
+
+	got, ok := s2.Get(id)
+	if !ok {
+		t.Fatalf("task %q not found after replay", id)
+	}
+
+	// CreatorTaskID must be non-zero and match the original.
+	if got.CreatorTaskID.Id == ([16]byte{}) {
+		t.Fatal("CreatorTaskID is zero after WAL replay — not persisted or not restored")
+	}
+	if got.CreatorTaskID.Id != creatorID.Id {
+		t.Fatalf("CreatorTaskID mismatch: got %x, want %x", got.CreatorTaskID.Id, creatorID.Id)
+	}
+
+	// ResumedByKind must reflect the resumer set during Resume.
+	if got.ResumedByKind != protocol.ClientKind_Tui {
+		t.Fatalf("ResumedByKind=%v after replay, want Tui", got.ResumedByKind)
+	}
+}
+
 func TestCreateRecordsCreatorTaskID(t *testing.T) {
 	s := NewTaskStore()
 	var creator protocol.TaskID

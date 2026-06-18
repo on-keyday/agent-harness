@@ -162,7 +162,7 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 		"end_to_end_cid", newConn.ConnectionID().String())
 
 	// Wrap the new objproto.Connection in a peer.Conn ready for PSK +
-	// AgentBridgeHello. The old localConn is auto-closed via the
+	// ClientHello. The old localConn is auto-closed via the
 	// proxyConnection field in handshakeInfo when newConn closes.
 	return peer.WrapAcceptedConn(ctx, newConn, peer.DialConfig{
 		Logger:       slog.Default(),

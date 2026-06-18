@@ -29,7 +29,7 @@ type Flags struct {
 	WSPath    string
 }
 
-// Conn wraps a peer.Conn that has completed an agentboard Hello handshake.
+// Conn wraps a peer.Conn that has completed a ClientHello handshake.
 type Conn struct {
 	pc       *peer.Conn
 	taskID   protocol.TaskID

@@ -8,7 +8,7 @@ import (
 // boardRunnerIDFromProto converts a wire protocol.RunnerID (as carried in
 // ClientHello.AgentInfo) to the agentboard.RunnerID the Registry/Board key on.
 // Field-for-field copy; structurally identical but distinct Go types (agentboard
-// does not import protocol). Mirrors the former client-side protoToBoardRunnerID.
+// does not import protocol).
 func boardRunnerIDFromProto(p protocol.RunnerID) agentboard.RunnerID {
 	var out agentboard.RunnerID
 	out.SetTransport(p.Transport)

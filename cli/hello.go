@@ -33,11 +33,11 @@ func (c *Client) sendClientHello(ctx context.Context, hello protocol.ClientHello
 // webui processes. Long-lived clients (tui, wasm) should call SayHello once
 // per process, right after Dial and before any other RPC.
 //
-// Short-lived per-call dial-close consumers (harness-cli subcommands) do not
-// call SayHello: each invocation would log a fresh "client hello" line per
-// subcommand, which is noisy for what is supposed to be a quiet observability
-// signal. The per-call cost is also wasted for processes that immediately
-// tear the connection down.
+// Operator surfaces (tui, wasm) call SayHello directly with their specific
+// kind. In-task harness-cli subcommands (submit, interactive, file-transfer,
+// port-forward) call SayHelloAuto, which auto-selects kind=agent when the
+// agent env (HARNESS_RUNNER_ID / HARNESS_TASK_ID / HARNESS_AUTH_TICKET) is
+// present, or the given operator kind otherwise.
 //
 // Returns an error if the round-trip fails, the response kind is not
 // ClientHello, the variant is missing, or the status is not Ok.

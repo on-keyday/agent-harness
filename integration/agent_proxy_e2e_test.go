@@ -22,8 +22,8 @@
 //     Submit+Assign+spawn-claude pipeline.
 //  5. cli.DialViaProxy → end-to-end *peer.Conn against the SERVER (handshake
 //     forwarded packet-by-packet by the runner; SetProxy is now in effect).
-//  6. Run the PSK + AgentBridgeHello dance on that conn and assert
-//     HelloStatus_Ok comes back.
+//  6. Run the PSK + ClientHello dance on that conn and assert
+//     ClientHelloStatus_Ok comes back.
 //
 // What this validates beyond Phase A:
 //   - DialGreeting vs AgentProxyControl discrimination on the runner's
@@ -69,7 +69,7 @@ func TestAgentProxyE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 1. Start the server. Board is wired in so AgentBridgeHello validation
+	// 1. Start the server. Board is wired in so ClientHello validation
 	//    has somewhere to look up tickets.
 	board := agentboard.New(agentboard.Config{
 		RingN:      32,
@@ -145,7 +145,7 @@ func TestAgentProxyE2E(t *testing.T) {
 
 	// 4. Inject a fake task on the runner so the proxy ceremony's HasTask
 	//    check passes, and register a matching auth_ticket on the board so
-	//    the server's AgentBridgeHello validation passes.
+	//    the server's ClientHello validation passes.
 	var taskID protocol.TaskID
 	if _, err := rand.Read(taskID.Id[:]); err != nil {
 		t.Fatalf("gen taskID: %v", err)
@@ -185,17 +185,6 @@ func TestAgentProxyE2E(t *testing.T) {
 
 	board.Registry().Register(protoRid, taskID, ticket)
 
-	// agentboard.RunnerID / TaskID (distinct Go types, same wire shape) for
-	// the Hello envelope.
-	var boardRid agentboard.RunnerID
-	boardRid.SetTransport(protoRid.Transport)
-	boardRid.SetIpAddr(protoRid.IpAddr)
-	boardRid.Port = protoRid.Port
-	boardRid.UniqueNumber = protoRid.UniqueNumber
-
-	var boardTid agentboard.TaskID
-	boardTid.Id = taskID.Id
-
 	// 5. End-to-end conn through the runner proxy.
 	proxyConn, err := cli.DialViaProxy(ctx, runnerCID, taskID)
 	if err != nil {
@@ -203,10 +192,10 @@ func TestAgentProxyE2E(t *testing.T) {
 	}
 	defer proxyConn.Close()
 
-	// 6. PSK + AgentBridgeHello on the proxied conn, mirroring
+	// 6. PSK + ClientHello on the proxied conn, mirroring
 	//    cli/agent/conn.go ConnectAgent's combined-handler pattern.
 	pskRespCh := make(chan appwire.PskAuthStatus, 1)
-	helloRespCh := make(chan agentboard.HelloStatus, 1)
+	helloRespCh := make(chan protocol.ClientHelloStatus, 1)
 
 	proxyConn.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		switch kind {
@@ -217,21 +206,18 @@ func TestAgentProxyE2E(t *testing.T) {
 				default:
 				}
 			}
-		case appwire.AppKind_AgentMessage:
-			msg := &agentboard.AgentMessage{}
-			if _, err := msg.Decode(payload); err != nil {
+		case appwire.AppKind_TaskControl:
+			var resp protocol.TaskControlResponse
+			if _, err := resp.Decode(payload); err != nil {
 				return
 			}
-			if msg.Kind != agentboard.AgentMessageKind_HelloResponse {
-				return
-			}
-			resp := msg.HelloResponse()
-			if resp == nil {
-				return
-			}
-			select {
-			case helloRespCh <- resp.Status:
-			default:
+			if resp.Kind == protocol.TaskControlKind_ClientHello {
+				if r := resp.ClientHello(); r != nil {
+					select {
+					case helloRespCh <- r.Status:
+					default:
+					}
+				}
 			}
 		}
 	})
@@ -249,27 +235,25 @@ func TestAgentProxyE2E(t *testing.T) {
 		t.Fatalf("SendAndWaitPSK: %v", err)
 	}
 
-	// AgentBridgeHello.
-	hello := agentboard.AgentBridgeHello{
-		RunnerId:   boardRid,
-		TaskId:     boardTid,
-		AuthTicket: ticket,
-	}
-	hello.SetHostname([]byte("proxy-e2e-agent"))
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Hello}
-	msg.SetHello(hello)
-	data := msg.MustAppend([]byte{byte(appwire.AppKind_AgentMessage)})
+	// ClientHello: send kind=agent with runner_id, task_id, auth_ticket.
+	info := protocol.AgentInfo{RunnerId: protoRid, TaskId: taskID, AuthTicket: ticket}
+	info.SetHostname([]byte("proxy-e2e-agent"))
+	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
+	hello.SetAgentInfo(info)
+	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
+	req.SetClientHello(hello)
+	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 	if _, _, err := proxyConn.Connection().SendMessage(data); err != nil {
-		t.Fatalf("send AgentBridgeHello: %v", err)
+		t.Fatalf("send ClientHello: %v", err)
 	}
 
 	select {
 	case status := <-helloRespCh:
-		if status != agentboard.HelloStatusOk {
+		if status != protocol.ClientHelloStatus_Ok {
 			t.Fatalf("hello rejected: got %v want Ok", status)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for HelloResponse on proxied conn")
+		t.Fatal("timeout waiting for ClientHelloResponse on proxied conn")
 	}
 
 	// Cleanup: cancel and drain. Server / runner shutdown is best-effort —
