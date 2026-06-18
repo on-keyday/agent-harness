@@ -123,24 +123,9 @@ func (c *Conn) FetchDeliveredPayload(ctx context.Context, streamID uint64) ([]by
 	}
 }
 
-// protoToBoardRunnerID copies field-by-field (same shape, distinct Go types).
-func protoToBoardRunnerID(p protocol.RunnerID) agentboard.RunnerID {
-	var out agentboard.RunnerID
-	out.SetTransport(p.Transport)
-	out.SetIpAddr(p.IpAddr)
-	out.Port = p.Port
-	out.UniqueNumber = p.UniqueNumber
-	return out
-}
-
-func protoToBoardTaskID(p protocol.TaskID) agentboard.TaskID {
-	var out agentboard.TaskID
-	out.Id = p.Id
-	return out
-}
-
-// ConnectAgent dials the harness server, sends AgentBridgeHello, awaits OK,
-// and returns the open Conn. Caller must Close it.
+// ConnectAgent dials the harness server, sends a ClientHello (kind=agent)
+// over the TaskControl app-kind (0x41), awaits OK, and returns the open Conn.
+// Caller must Close it.
 func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	cid, err := cliopts.ResolveServerCID(f.ServerCID)
 	if err != nil {
@@ -168,9 +153,8 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	// Proxy detection lives in cli.DialPeerConn — env-based, shared by every
 	// harness-cli subcommand. The agent path historically had its own copy
 	// of the env check; that was a design miss (admin tools and agent tools
-	// are the same binary and should share the dial strategy). tid resolved
-	// above is still used for the AgentBridgeHello below; DialPeerConn reads
-	// HARNESS_TASK_ID itself for the proxy ceremony.
+	// are the same binary and should share the dial strategy). DialPeerConn
+	// reads HARNESS_TASK_ID itself for the proxy ceremony.
 	pc, err := cli.DialPeerConn(ctx, cid)
 	if err != nil {
 		return nil, fmt.Errorf("agent dial: %w", err)
@@ -178,10 +162,10 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 
 	psk := cli.GetPSK()
 	pskRespCh := make(chan appwire.PskAuthStatus, 1)
-	helloRespCh := make(chan agentboard.HelloStatus, 1)
+	helloRespCh := make(chan protocol.ClientHelloStatus, 1)
 
 	// Combined handler: routes PskAuth responses during PSK phase,
-	// then AgentMessage HelloResponse during Hello phase.
+	// then TaskControl ClientHelloResponse during Hello phase.
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		switch kind {
 		case appwire.AppKind_PskAuth:
@@ -191,19 +175,17 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 				default:
 				}
 			}
-		case appwire.AppKind_AgentMessage:
-			msg := &agentboard.AgentMessage{}
-			if _, err := msg.Decode(payload); err != nil {
+		case appwire.AppKind_TaskControl:
+			var resp protocol.TaskControlResponse
+			if _, err := resp.Decode(payload); err != nil {
 				return
 			}
-			if msg.Kind == agentboard.AgentMessageKind_HelloResponse {
-				resp := msg.HelloResponse()
-				if resp == nil {
-					return
-				}
-				select {
-				case helloRespCh <- resp.Status:
-				default:
+			if resp.Kind == protocol.TaskControlKind_ClientHello {
+				if r := resp.ClientHello(); r != nil {
+					select {
+					case helloRespCh <- r.Status:
+					default:
+					}
 				}
 			}
 		}
@@ -229,17 +211,13 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	}
 
 	hostname := cliopts.ResolveString(f.Hostname, "HARNESS_HOSTNAME")
-	hello := agentboard.AgentBridgeHello{
-		RunnerId:   protoToBoardRunnerID(rid),
-		TaskId:     protoToBoardTaskID(tid),
-		AuthTicket: ticket,
-	}
-	if hostname != "" {
-		hello.SetHostname([]byte(hostname))
-	}
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Hello}
-	msg.SetHello(hello)
-	data := msg.MustAppend([]byte{byte(appwire.AppKind_AgentMessage)})
+	info := protocol.AgentInfo{RunnerId: rid, TaskId: tid, AuthTicket: ticket}
+	info.SetHostname([]byte(hostname)) // 0-len when empty is fine
+	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
+	hello.SetAgentInfo(info) // Kind is set first (discriminator), then the field
+	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
+	req.SetClientHello(hello)
+	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 	if _, _, err := pc.Connection().SendMessage(data); err != nil {
 		pc.Close()
 		return nil, fmt.Errorf("send hello: %w", err)
@@ -247,7 +225,7 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 
 	select {
 	case status := <-helloRespCh:
-		if status != agentboard.HelloStatusOk {
+		if status != protocol.ClientHelloStatus_Ok {
 			pc.Close()
 			return nil, fmt.Errorf("hello rejected: %v", status)
 		}
