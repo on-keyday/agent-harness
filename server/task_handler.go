@@ -99,6 +99,11 @@ type TaskHandler struct {
 	// channel registered before send.
 	ViaSendEstablishRelay func(ctx context.Context, entry *RunnerEntry, req protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error)
 
+	// OnAgentHello validates+establishes an agent principal for a kind=agent
+	// ClientHello. Implemented by Server (Validate + Board.Attach). nil => identity
+	// not established (minimal test wiring); ClientHello falls back to Ok.
+	OnAgentHello func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus
+
 	// clientKinds maps connection ID → the kind of client that announced
 	// itself via ClientHello on that connection. Submit / OpenInteractive
 	// look it up to attribute task origin (ClientKind_Cli / Tui / Webui).
@@ -271,19 +276,26 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		cid := conn.ConnectionID().String()
 		slog.Info("client hello", "kind", hello.Kind.String(), "cid", cid)
 
-		// Remember this connection's kind so subsequent Submit /
-		// OpenInteractive requests on the same connection can attribute
-		// task origin without the client having to re-send it.
-		h.clientKindsMu.Lock()
-		if h.clientKinds == nil {
-			h.clientKinds = make(map[string]protocol.ClientKind)
+		status := protocol.ClientHelloStatus_Ok
+		if hello.Kind == protocol.ClientKind_Agent {
+			if info := hello.AgentInfo(); info != nil && h.OnAgentHello != nil {
+				status = h.OnAgentHello(conn, info)
+			}
 		}
-		h.clientKinds[cid] = hello.Kind
-		h.clientKindsMu.Unlock()
+
+		// Record kind for task-origin attribution only on success, so a rejected
+		// agent is not attributed as kind=agent.
+		if status == protocol.ClientHelloStatus_Ok {
+			h.clientKindsMu.Lock()
+			if h.clientKinds == nil {
+				h.clientKinds = make(map[string]protocol.ClientKind)
+			}
+			h.clientKinds[cid] = hello.Kind
+			h.clientKindsMu.Unlock()
+		}
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ClientHello, RequestId: req.RequestId}
-		resp.SetClientHello(protocol.ClientHelloResponse{Status: protocol.ClientHelloStatus_Ok})
-
+		resp.SetClientHello(protocol.ClientHelloResponse{Status: status})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 

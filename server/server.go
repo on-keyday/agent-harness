@@ -174,6 +174,9 @@ func New(cfg Config) *Server {
 		OnChange:       s.scheduler.Tick,
 		LogsDir:        logsDir,
 		RingBufferSize: int(cfg.DetachRingBufferSize),
+		OnAgentHello: func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
+			return clientHelloStatusFromBoard(s.establishAgentIdentity(conn, info))
+		},
 		PruneFn: func(req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int) {
 			if req.TaskIdsLen == 0 {
 				cutoff := time.Unix(0, int64(req.BeforeTs))

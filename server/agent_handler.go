@@ -8,8 +8,9 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/objtrsf/trsf"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // agentConn is the per-peer state for an agent_message-bearing connection.
@@ -67,8 +68,6 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 	}
 	ac := s.getOrCreateAgentConn(conn)
 	switch msg.Kind {
-	case agentboard.AgentMessageKind_Hello:
-		s.agentHandleHello(conn, ac, msg.Hello())
 	case agentboard.AgentMessageKind_Send:
 		s.agentHandleSend(conn, ac, msg.Send())
 	case agentboard.AgentMessageKind_Subscribe:
@@ -95,22 +94,37 @@ func (s *Server) sendAgent(conn ConnHandle, msg *agentboard.AgentMessage) {
 	_, _, _ = conn.SendMessage(data)
 }
 
-func (s *Server) agentHandleHello(conn ConnHandle, ac *agentConn, h *agentboard.AgentBridgeHello) {
-	if h == nil {
-		return
+// establishAgentIdentity validates an agent's credential (from ClientHello) and,
+// on success, attaches the per-connID agentConn used by every agentboard handler
+// (ac.helloed gate + ac.state.Identity()). Reuses Registry.Validate + Board.Attach
+// unchanged — the single place agent identity is established, for both
+// task-control ops and agentboard messaging on the same connection.
+func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInfo) agentboard.HelloStatus {
+	if s.Board == nil {
+		return agentboard.HelloStatusOk // attribution-only degrade (test wiring)
 	}
-	status := s.Board.Registry().Validate(h.RunnerId, h.TaskId, h.AuthTicket)
-	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_HelloResponse}
-	resp.SetHelloResponse(agentboard.AgentBridgeHelloResponse{Status: status})
-	s.sendAgent(conn, resp)
+	rid := boardRunnerIDFromProto(info.RunnerId)
+	tid := boardTaskIDFromProto(info.TaskId)
+	status := s.Board.Registry().Validate(rid, tid, info.AuthTicket)
 	if status == agentboard.HelloStatusOk {
+		ac := s.getOrCreateAgentConn(conn)
 		ac.helloed = true
-		ac.state = s.Board.Attach(h.RunnerId, h.TaskId, string(h.Hostname))
+		ac.state = s.Board.Attach(rid, tid, string(info.Hostname))
 	}
-	// On rejection we don't close the connection: ConnHandle does not
-	// expose Close(), and subsequent agent messages are dropped by the
-	// !ac.helloed gate in every other handler. The peer's own client
-	// CLI exits after observing HelloResponse{status!=Ok}.
+	return status
+}
+
+func clientHelloStatusFromBoard(s agentboard.HelloStatus) protocol.ClientHelloStatus {
+	switch s {
+	case agentboard.HelloStatusBadTicket:
+		return protocol.ClientHelloStatus_BadTicket
+	case agentboard.HelloStatusUnknownTask:
+		return protocol.ClientHelloStatus_UnknownTask
+	case agentboard.HelloStatusRunnerMismatch:
+		return protocol.ClientHelloStatus_RunnerMismatch
+	default:
+		return protocol.ClientHelloStatus_Ok
+	}
 }
 
 func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.SendRequest) {
