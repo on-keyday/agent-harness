@@ -147,9 +147,11 @@ All on-wire bytes remain schema-described; nothing moves to convention.
    `Send`/`Subscribe`/… on the same connID find `ac.helloed` already true from
    the ClientHello. The `!ac.helloed` gates stay (now meaning "no ClientHello
    identity on this connection"). `removeAgentConn` (`Board.Detach`) is unchanged.
-4. **Attribution.** Where task origin is rendered from `ClientKind`
-   (`ls`/attribution), an agent-originated connection shows its principal task id
-   and `kind=agent` is a distinct origin from `cli`.
+4. **Attribution.** A task created over a `kind=agent` connection is tagged
+   origin `agent` (a distinct `ClientKind` from `cli`), flowing through the
+   existing origin path (`lookupClientKind` → `handleSubmit`/`handleOpenInteractive`).
+   Recording *which* principal (creator task id) on the task itself is P2 lineage
+   and is out of scope; P1 only distinguishes agent-origin from operator-origin.
 
 ### Client
 
@@ -205,8 +207,8 @@ All on-wire bytes remain schema-described; nothing moves to convention.
   `Board.Attach`/`Validate`-direct tests (`board_test.go`, `registry_test.go`)
   are unaffected.
 - Client: in-task env present → `kind=agent` + triple; absent → `kind=cli`.
-- E2E: a dispatched agent's `cancel`/`file ls` connection is attributed to its
-  principal in `ls`; operator CLI is `cli`.
+- E2E: a task submitted over a `kind=agent` connection shows origin `agent` in
+  `ls`; an operator CLI submit shows `cli`.
 - Regression: operator CLI/TUI/WebUI flows unaffected (no gating added).
 
 ## Migration / rollout
