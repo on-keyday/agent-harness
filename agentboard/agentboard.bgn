@@ -14,8 +14,6 @@ format TaskID:
 
 enum AgentMessageKind:
     :u8
-    hello
-    hello_response
     send
     send_response
     subscribe
@@ -31,22 +29,12 @@ enum AgentMessageKind:
     list_subscriptions
     list_subscriptions_response
 
-format AgentBridgeHello:
-    runner_id :RunnerID
-    task_id :TaskID
-    auth_ticket :[16]u8
-    hostname_len :u8
-    hostname :[hostname_len]u8
-
 enum HelloStatus:
     :u8
     ok
     bad_ticket
     unknown_task
     runner_mismatch
-
-format AgentBridgeHelloResponse:
-    status :HelloStatus
 
 format SendRequest:
     request_id :u32
@@ -159,8 +147,6 @@ format ListSubscriptionsResponse:
 format AgentMessage:
     kind :AgentMessageKind
     match kind:
-        AgentMessageKind.hello => hello :AgentBridgeHello
-        AgentMessageKind.hello_response => hello_response :AgentBridgeHelloResponse
         AgentMessageKind.send => send :SendRequest
         AgentMessageKind.send_response => send_response :SendResponse
         AgentMessageKind.subscribe => subscribe :SubscribeRequest

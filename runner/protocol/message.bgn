@@ -200,22 +200,37 @@ enum TaskControlKind:
     notify
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
-# Sent once right after handshake via TaskControlRequest{client_hello,...} so
-# the server can log who connected (cli / tui / webui). Runners do not send
-# this — they identify themselves via RunnerHello on a different channel.
+# `agent` is an in-task harness-cli that proves its identity via agent_info;
+# operator surfaces use cli/tui/webui and carry no agent_info.
 enum ClientKind:
     :u8
     unspecified
     cli
     tui
     webui
+    agent
+
+# AgentInfo is the per-task agent credential, mirroring the (now-removed)
+# agentboard AgentBridgeHello triple. Validated server-side via the agentboard
+# Registry. hostname is length-prefixed (0 len = absent).
+format AgentInfo:
+    runner_id :RunnerID
+    task_id :TaskID
+    auth_ticket :[16]u8
+    hostname_len :u8
+    hostname :[hostname_len]u8
 
 format ClientHello:
     kind :ClientKind
+    if kind == ClientKind.agent:
+        agent_info :AgentInfo
 
 enum ClientHelloStatus:
     :u8
     ok = "ok"
+    bad_ticket
+    unknown_task
+    runner_mismatch
 
 format ClientHelloResponse:
     status :ClientHelloStatus
@@ -385,6 +400,13 @@ format TaskInfo:
     origin_kind :ClientKind   # which kind of client submitted this task (cli / tui / webui).
                               # Set by the server from the connection's last ClientHello.
                               # Stays Unspecified for tasks created before any hello.
+    resumed_by_kind :ClientKind  # kind of the connection that performed the
+                              # LATEST resume; Unspecified until first resumed.
+                              # origin_kind stays the original creator.
+    creator_task_id :TaskID   # task id of the AGENT principal that created this
+                              # task (kind=agent connection). All-zero for
+                              # operator-created tasks. Set at Create; unchanged
+                              # on resume. Single parent link.
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     assigned_to :RunnerID
