@@ -92,7 +92,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	defer c.Close()
-	if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+	if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 		return err
 	}
 
@@ -148,7 +148,7 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	defer c.Close()
-	if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+	if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 		return err
 	}
 
