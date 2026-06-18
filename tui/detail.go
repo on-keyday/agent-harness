@@ -79,6 +79,13 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	fmt.Fprintf(&sb, "id:            %s\n", hex.EncodeToString(t.Id.Id[:]))
 	fmt.Fprintf(&sb, "kind:          %s\n", taskKindStr(t.Kind))
 	fmt.Fprintf(&sb, "status:        %s\n", taskStatusStr(t.Status))
+	fmt.Fprintf(&sb, "from:          %s\n", originCell(t.OriginKind))
+	if t.CreatorTaskId.Id != ([16]byte{}) {
+		fmt.Fprintf(&sb, "created by:    %s\n", hex.EncodeToString(t.CreatorTaskId.Id[:])[:8])
+	}
+	if t.ResumedByKind != protocol.ClientKind_Unspecified {
+		fmt.Fprintf(&sb, "resumed by:    %s\n", originCell(t.ResumedByKind))
+	}
 	fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
 	if len(t.WorktreeDir) > 0 {
 		fmt.Fprintf(&sb, "worktree:      %s\n", string(t.WorktreeDir))
