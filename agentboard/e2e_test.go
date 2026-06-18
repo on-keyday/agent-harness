@@ -53,23 +53,6 @@ func mkTid(b byte) protocol.TaskID {
 	return t
 }
 
-// mkBoardRid builds an agentboard.RunnerID to embed in AgentBridgeHello.
-// Must produce the same string key as the corresponding mkRid call.
-func mkBoardRid(n uint16) agentboard.RunnerID {
-	var r agentboard.RunnerID
-	r.SetTransport([]byte("ws"))
-	r.SetIpAddr([]byte{127, 0, 0, 1})
-	r.Port = 9000
-	r.UniqueNumber = n
-	return r
-}
-
-// mkBoardTid builds an agentboard.TaskID to embed in AgentBridgeHello.
-func mkBoardTid(b byte) agentboard.TaskID {
-	var t agentboard.TaskID
-	t.Id[0] = b
-	return t
-}
 
 // startServer constructs a server.Server with a Board, binds it to addr,
 // and starts it in a goroutine.  Returns (board, cancel) — cancel stops the
@@ -110,20 +93,20 @@ func startServer(t *testing.T, addr string) (*agentboard.Board, context.CancelFu
 }
 
 // dialAgent dials the server, completes the ECDH/trsf/peer handshake, sends
-// AgentBridgeHello, waits for the HelloResponse, and returns (conn, status).
+// a ClientHello (AppKind_TaskControl), waits for the ClientHelloResponse, and
+// returns (conn, status).
 //
-// All AgentMessage payloads received while waiting for the HelloResponse are
-// captured in the provided channel; subsequent AgentMessage payloads are
-// forwarded to msgCh (may be nil to discard them).
+// All AgentMessage payloads received after the Hello are forwarded to msgCh
+// (may be nil to discard them).
 func dialAgent(
 	t *testing.T,
 	ctx context.Context,
 	serverAddr string,
-	rid agentboard.RunnerID,
-	tid agentboard.TaskID,
+	rid protocol.RunnerID,
+	tid protocol.TaskID,
 	ticket [16]byte,
 	msgCh chan *agentboard.AgentMessage,
-) (pc *peer.Conn, helloStatus agentboard.HelloStatus) {
+) (pc *peer.Conn, helloStatus protocol.ClientHelloStatus) {
 	t.Helper()
 
 	peerCID, err := objproto.ParseConnectionID(
@@ -148,47 +131,46 @@ func dialAgent(
 		t.Fatalf("dialAgent: dial: %v", err)
 	}
 
-	// Receive channel for HelloResponse — buffered so the goroutine never blocks.
-	helloCh := make(chan agentboard.HelloStatus, 1)
+	// Receive channel for ClientHelloResponse — buffered so the goroutine never blocks.
+	helloCh := make(chan protocol.ClientHelloStatus, 1)
 	var helloOnce sync.Once
 
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
-		if kind != appwire.AppKind_AgentMessage {
-			return
-		}
-		msg := &agentboard.AgentMessage{}
-		if _, err := msg.Decode(payload); err != nil {
-			return
-		}
-		if msg.Kind == agentboard.AgentMessageKind_HelloResponse {
-			resp := msg.HelloResponse()
-			if resp != nil {
-				helloOnce.Do(func() { helloCh <- resp.Status })
+		switch kind {
+		case appwire.AppKind_TaskControl:
+			var resp protocol.TaskControlResponse
+			if _, err := resp.Decode(payload); err != nil {
+				return
 			}
-			return
-		}
-		// Forward all other AgentMessages to the caller's channel.
-		if msgCh != nil {
-			select {
-			case msgCh <- msg:
-			default:
+			if resp.Kind == protocol.TaskControlKind_ClientHello {
+				if r := resp.ClientHello(); r != nil {
+					helloOnce.Do(func() { helloCh <- r.Status })
+				}
+			}
+		case appwire.AppKind_AgentMessage:
+			msg := &agentboard.AgentMessage{}
+			if _, err := msg.Decode(payload); err != nil {
+				return
+			}
+			// Forward all AgentMessages to the caller's channel.
+			if msgCh != nil {
+				select {
+				case msgCh <- msg:
+				default:
+				}
 			}
 		}
 	})
 
 	pc.Start(ctx)
 
-	// Build and send AgentBridgeHello.
-	hello := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Hello}
-	h := agentboard.AgentBridgeHello{
-		RunnerId:   rid,
-		TaskId:     tid,
-		AuthTicket: ticket,
-	}
-	if !hello.SetHello(h) {
-		t.Fatal("dialAgent: SetHello failed")
-	}
-	helloBytes, err := hello.Append([]byte{byte(appwire.AppKind_AgentMessage)})
+	// Build and send ClientHello via AppKind_TaskControl.
+	info := protocol.AgentInfo{RunnerId: rid, TaskId: tid, AuthTicket: ticket}
+	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
+	hello.SetAgentInfo(info)
+	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
+	req.SetClientHello(hello)
+	helloBytes, err := req.Append([]byte{byte(appwire.AppKind_TaskControl)})
 	if err != nil {
 		t.Fatalf("dialAgent: encode hello: %v", err)
 	}
@@ -196,13 +178,13 @@ func dialAgent(
 		t.Fatalf("dialAgent: send hello: %v", err)
 	}
 
-	// Wait for HelloResponse.
+	// Wait for ClientHelloResponse.
 	select {
 	case status := <-helloCh:
 		return pc, status
 	case <-time.After(2 * time.Second):
-		t.Fatal("dialAgent: timed out waiting for HelloResponse")
-		return nil, agentboard.HelloStatus_BadTicket // unreachable
+		t.Fatal("dialAgent: timed out waiting for ClientHelloResponse")
+		return nil, protocol.ClientHelloStatus_BadTicket // unreachable
 	}
 }
 
@@ -241,16 +223,16 @@ func TestAgentboardE2E_HelloSendWait(t *testing.T) {
 	msgChB := make(chan *agentboard.AgentMessage, 8)
 
 	// Dial Agent A.
-	connA, statusA := dialAgent(t, ctx, addr, mkBoardRid(1), mkBoardTid(1), ticketA, msgChA)
+	connA, statusA := dialAgent(t, ctx, addr, mkRid(1), mkTid(1), ticketA, msgChA)
 	defer connA.Close()
-	if statusA != agentboard.HelloStatus_Ok {
+	if statusA != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("Agent A Hello status = %v, want Ok", statusA)
 	}
 
 	// Dial Agent B.
-	connB, statusB := dialAgent(t, ctx, addr, mkBoardRid(2), mkBoardTid(2), ticketB, msgChB)
+	connB, statusB := dialAgent(t, ctx, addr, mkRid(2), mkTid(2), ticketB, msgChB)
 	defer connB.Close()
-	if statusB != agentboard.HelloStatus_Ok {
+	if statusB != protocol.ClientHelloStatus_Ok {
 		t.Fatalf("Agent B Hello status = %v, want Ok", statusB)
 	}
 
@@ -394,10 +376,10 @@ func TestAgentboardE2E_BadTicketRejected(t *testing.T) {
 	var wrongTicket [16]byte
 	wrongTicket[0] = 0xFF
 
-	conn, status := dialAgent(t, ctx, addr, mkBoardRid(3), mkBoardTid(3), wrongTicket, nil)
+	conn, status := dialAgent(t, ctx, addr, mkRid(3), mkTid(3), wrongTicket, nil)
 	defer conn.Close()
 
-	if status != agentboard.HelloStatus_BadTicket {
-		t.Fatalf("expected HelloStatus_BadTicket, got %v", status)
+	if status != protocol.ClientHelloStatus_BadTicket {
+		t.Fatalf("expected ClientHelloStatus_BadTicket, got %v", status)
 	}
 }
