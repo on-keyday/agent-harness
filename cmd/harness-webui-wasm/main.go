@@ -39,6 +39,25 @@ var (
 	connStateHandlerM sync.Mutex
 )
 
+// clientKindLower mirrors cli.originStr's non-"-" form: lowercase kind name,
+// or "" for Unspecified so the page can omit the field. Used for the task
+// snapshot's origin / resumed-by attribution.
+func clientKindLower(k protocol.ClientKind) string {
+	if k == protocol.ClientKind_Unspecified {
+		return ""
+	}
+	return strings.ToLower(k.String())
+}
+
+// creatorShort returns the first 8 hex chars of a creator task id, or "" when
+// the task was not created by an agent (zero id).
+func creatorShort(t protocol.TaskID) string {
+	if t.Id == ([16]byte{}) {
+		return ""
+	}
+	return hex.EncodeToString(t.Id[:])[:8]
+}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -382,6 +401,9 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"createdAt":  float64(t.CreatedAt),
 					"startedAt":  float64(t.StartedAt),
 					"endedAt":    float64(t.EndedAt),
+					"origin":     clientKindLower(t.OriginKind),
+					"resumedBy":  clientKindLower(t.ResumedByKind),
+					"createdBy":  creatorShort(t.CreatorTaskId),
 				})
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{
