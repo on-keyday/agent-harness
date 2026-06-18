@@ -114,7 +114,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
 		id, err := c.SubmitWithSelectorAndArgs(ctx, repoVal, *task, sel, *extraArgs, *resume)
@@ -254,7 +254,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
 		if _, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, *extraArgs, *resume, false); err != nil {
@@ -273,7 +273,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
 		switch fsub {
@@ -394,7 +394,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHello(ctx, protocol.ClientKind_Cli); err != nil {
+		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
 		fctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
