@@ -113,6 +113,10 @@ type TaskHandler struct {
 	// (the zero value of a missing map entry).
 	clientKindsMu sync.Mutex
 	clientKinds   map[string]protocol.ClientKind
+	// principals maps connection ID → the TaskID of the agent principal for
+	// kind=agent connections. Populated at ClientHello and used at Create time
+	// to record CreatorTaskID on agent-submitted tasks.
+	principals map[string]protocol.TaskID
 }
 
 // lookupClientKind returns the ClientKind associated with connID.
@@ -121,6 +125,14 @@ func (h *TaskHandler) lookupClientKind(connID string) protocol.ClientKind {
 	h.clientKindsMu.Lock()
 	defer h.clientKindsMu.Unlock()
 	return h.clientKinds[connID]
+}
+
+// lookupPrincipal returns the agent principal TaskID associated with connID.
+// Unknown connections (or non-agent connections) return a zero TaskID.
+func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
+	h.clientKindsMu.Lock()
+	defer h.clientKindsMu.Unlock()
+	return h.principals[connID]
 }
 
 // Handle decodes a TaskControlRequest payload (bytes after the wire-kind byte) and replies via conn.SendMessage.
@@ -139,8 +151,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: Submit variant is nil")
 			return
 		}
-		origin := h.lookupClientKind(conn.ConnectionID().String())
-		submitResp := h.handleSubmit(sub, origin)
+		cid := conn.ConnectionID().String()
+		origin := h.lookupClientKind(cid)
+		creator := h.lookupPrincipal(cid)
+		submitResp := h.handleSubmit(sub, origin, creator)
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
 		resp.SetSubmit(submitResp)
@@ -212,8 +226,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenInteractive variant is nil")
 			return
 		}
-		origin := h.lookupClientKind(conn.ConnectionID().String())
-		oresp := h.handleOpenInteractive(conn, oi, origin)
+		oiCID := conn.ConnectionID().String()
+		origin := h.lookupClientKind(oiCID)
+		creator := h.lookupPrincipal(oiCID)
+		oresp := h.handleOpenInteractive(conn, oi, origin, creator)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
 		resp.SetOpenInteractive(oresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -291,6 +307,16 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				h.clientKinds = make(map[string]protocol.ClientKind)
 			}
 			h.clientKinds[cid] = hello.Kind
+			// For agent connections, record the principal TaskID so that
+			// tasks created on this connection can have CreatorTaskID set.
+			if hello.Kind == protocol.ClientKind_Agent {
+				if info := hello.AgentInfo(); info != nil {
+					if h.principals == nil {
+						h.principals = make(map[string]protocol.TaskID)
+					}
+					h.principals[cid] = info.TaskId
+				}
+			}
 			h.clientKindsMu.Unlock()
 		}
 
@@ -344,14 +370,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 //   - SubmitStatus_AmbiguousRunner — more than one candidate (error_msg lists hostnames)
 //
 // On Ok, the returned SubmitResponse carries the new TaskId.
-func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID) protocol.SubmitResponse {
 	// Resume branch: when ResumeTaskId is non-zero the server reuses that id
 	// (so the runner re-attaches the worktree to the retained `harness/<id>`
 	// branch) instead of allocating a fresh one. The repo on the request is
 	// ignored — the existing TaskEntry's RepoPath is authoritative because
 	// that's the directory claude's session storage is keyed under.
 	if !isZeroTaskID(req.ResumeTaskId) {
-		return h.handleSubmitResume(req)
+		return h.handleSubmitResume(req, origin)
 	}
 
 	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
@@ -374,7 +400,7 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 		return resp
 	}
 	bound := cands[0]
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, bound.ID, req.Selector, req.ExtraArgs.AsStrings())
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
@@ -393,7 +419,7 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 //  4. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
 //     resume_not_terminal / resume_not_found wire codes; the latter handles
 //     the (rare) race where the entry was pruned between steps 1 and 4.
-func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin protocol.ClientKind) protocol.SubmitResponse {
 	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
 	repo, kind, ok := h.Tasks.PeekRepo(idHex)
 	if !ok || kind != protocol.TaskKind_Oneshot {
@@ -417,7 +443,7 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest) protocol.S
 	}
 	bound := cands[0]
 
-	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID); err != nil {
+	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
@@ -459,7 +485,7 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // does not pick it up for a parallel AssignTask. The runner finalizes the task
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
-func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind) protocol.OpenInteractiveResponse {
+func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID) protocol.OpenInteractiveResponse {
 	errResp := func(status protocol.OpenInteractiveStatus) protocol.OpenInteractiveResponse {
 		slog.Error("handleOpenInteractive: rejecting request", "status", status.String(), "repo", string(req.RepoPath), "selector", req.Selector)
 		return protocol.OpenInteractiveResponse{Status: status}
@@ -512,7 +538,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// Allocate or revive the task entry.
 	var taskIDHex string
 	if resuming {
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -526,7 +552,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	} else {
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.
-		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, runner.ID, req.Selector, req.ExtraArgs.AsStrings())
+		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings())
 	}
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -1009,11 +1035,13 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	copy(tid.Id[:], raw)
 
 	info := protocol.TaskInfo{
-		Id:         tid,
-		Status:     t.Status,
-		Kind:       t.Kind,
-		OriginKind: t.OriginKind,
-		CreatedAt:  uint64(t.CreatedAt.UnixNano()),
+		Id:            tid,
+		Status:        t.Status,
+		Kind:          t.Kind,
+		OriginKind:    t.OriginKind,
+		ResumedByKind: t.ResumedByKind,
+		CreatorTaskId: t.CreatorTaskID,
+		CreatedAt:     uint64(t.CreatedAt.UnixNano()),
 	}
 	info.SetRepoPath([]byte(t.RepoPath))
 	info.SetWorktreeDir([]byte(t.WorktreeDir))

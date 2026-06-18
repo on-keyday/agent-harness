@@ -36,8 +36,15 @@ type WALEvent struct {
 	// the task. Encoded as the numeric protocol.ClientKind. Legacy WAL
 	// entries that pre-date this field default to 0 (Unspecified) on
 	// replay, which is the intended sentinel for "unknown origin".
-	OriginKind  uint8  `json:"origin_kind,omitempty"`
-	WorktreeDir string `json:"worktree_dir,omitempty"`
+	OriginKind uint8 `json:"origin_kind,omitempty"`
+	// ResumedByKind records the ClientKind of the most recent resumer.
+	// Written on task_resumed events; legacy entries default to 0 (Unspecified).
+	ResumedByKind uint8 `json:"resumed_by_kind,omitempty"`
+	// CreatorTaskID is the hex-encoded task id of the agent principal that
+	// created this task. Empty for operator-created tasks.
+	// Written on task_created events; legacy entries default to "" (zero).
+	CreatorTaskID string `json:"creator_task_id,omitempty"`
+	WorktreeDir   string `json:"worktree_dir,omitempty"`
 	ExitCode    *int32 `json:"exit_code,omitempty"`
 	DiffInfo    []byte `json:"diff_info,omitempty"`
 	// BoundRunnerID, when non-empty, pins the task to a specific runner.
@@ -67,6 +74,8 @@ type walEventJSON struct {
 	Prompt        string   `json:"prompt,omitempty"`
 	Kind          uint8    `json:"kind,omitempty"`
 	OriginKind    uint8    `json:"origin_kind,omitempty"`
+	ResumedByKind uint8    `json:"resumed_by_kind,omitempty"`
+	CreatorTaskID string   `json:"creator_task_id,omitempty"`
 	WorktreeDir   string   `json:"worktree_dir,omitempty"`
 	ExitCode      *int32   `json:"exit_code,omitempty"`
 	DiffInfo      []byte   `json:"diff_info,omitempty"`
@@ -90,6 +99,8 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		Prompt:        e.Prompt,
 		Kind:          e.Kind,
 		OriginKind:    e.OriginKind,
+		ResumedByKind: e.ResumedByKind,
+		CreatorTaskID: e.CreatorTaskID,
 		WorktreeDir:   e.WorktreeDir,
 		ExitCode:      e.ExitCode,
 		DiffInfo:      e.DiffInfo,
@@ -120,6 +131,8 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.Prompt = j.Prompt
 	e.Kind = j.Kind
 	e.OriginKind = j.OriginKind
+	e.ResumedByKind = j.ResumedByKind
+	e.CreatorTaskID = j.CreatorTaskID
 	e.WorktreeDir = j.WorktreeDir
 	e.ExitCode = j.ExitCode
 	e.DiffInfo = j.DiffInfo

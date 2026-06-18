@@ -160,7 +160,7 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	})
 
 	// Pre-populate TaskStore with 1 Queued task on "/x".
-	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, "", protocol.RunnerSelector{}, nil)
+	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{})
@@ -332,7 +332,7 @@ func TestHandleSubmitNoRunnerForRepo(t *testing.T) {
 	req.SetPrompt([]byte("p"))
 	// Selector is zero value == RunnerSelectorKind_Any (no pinning)
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.SubmitStatus_NoRunner {
 		t.Fatalf("status=%v want NoRunner", resp.Status)
 	}
@@ -348,7 +348,7 @@ func TestHandleSubmitAmbiguousRunner(t *testing.T) {
 	req.SetRepoPath([]byte("/shared/repo"))
 	req.SetPrompt([]byte("p"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.SubmitStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
 	}
@@ -368,7 +368,7 @@ func TestHandleSubmitPinnedNotFound(t *testing.T) {
 	req.SetRepoPath([]byte("/x/repo"))
 	req.SetPrompt([]byte("p"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.SubmitStatus_PinnedNotFound {
 		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
 	}
@@ -383,7 +383,7 @@ func TestHandleSubmitOK(t *testing.T) {
 	req.SetRepoPath([]byte("/x/repo"))
 	req.SetPrompt([]byte("p"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified)
+	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -414,7 +414,7 @@ func TestHandleOpenInteractiveNoRunnerForRepo(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/x/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
 		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
 	}
@@ -430,7 +430,7 @@ func TestHandleOpenInteractiveBusy(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/x/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.OpenInteractiveStatus_RunnerBusy {
 		t.Fatalf("status=%v want RunnerBusy", resp.Status)
 	}
@@ -445,7 +445,7 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
 	}
@@ -461,7 +461,7 @@ func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{Selector: sel}
 	req.SetRepoPath([]byte("/x/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified)
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.OpenInteractiveStatus_PinnedNotFound {
 		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
 	}
@@ -489,7 +489,7 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
 
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -548,7 +548,7 @@ func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
 	req.SetDetachable(true)
 	req.SetRepoPath([]byte("/repo"))
 
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -621,7 +621,7 @@ func TestHandleOpenInteractive_Legacy_NoSessionMux(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{} // Detachable zero value == 0
 	req.SetRepoPath([]byte("/repo"))
 
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified)
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{})
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}

@@ -23,8 +23,17 @@ type TaskEntry struct {
 	// the server from the originating connection's last ClientHello. Stays
 	// ClientKind_Unspecified when the connection didn't issue a hello (e.g.
 	// orphan tasks replayed from an older WAL with no origin field).
-	OriginKind  protocol.ClientKind
-	Status      protocol.TaskStatus
+	OriginKind protocol.ClientKind
+	// ResumedByKind records the ClientKind of the connection that performed
+	// the most recent resume. Stays ClientKind_Unspecified until the task is
+	// first resumed. OriginKind tracks the original creator and is never
+	// changed by resume.
+	ResumedByKind protocol.ClientKind
+	// CreatorTaskID holds the task id of the agent principal that created this
+	// task (kind=agent connection). Zero for operator-created tasks (cli/tui/webui).
+	// Set at Create time and never changed on resume.
+	CreatorTaskID protocol.TaskID
+	Status        protocol.TaskStatus
 	AssignedTo  string
 	WorktreeDir string
 	CreatedAt   time.Time
@@ -116,11 +125,15 @@ func newTaskID() string {
 // ClientKind_Unspecified when the caller is unknown (e.g. tests, internal
 // scheduler bookkeeping).
 //
+// creatorTaskID is the task id of the agent principal that created this task
+// (non-zero only when origin == ClientKind_Agent). Pass a zero value for
+// operator-created tasks.
+//
 // boundRunnerID pins the task to a specific runner (empty = no pinning).
 // selector is the runner-selection constraint; use a zero value for "any".
 // extraArgs are forwarded verbatim to the runner and appended to
 // --claude-args at exec time; pass nil for none.
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string) string {
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
@@ -129,6 +142,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		Prompt:        prompt,
 		Kind:          kind,
 		OriginKind:    origin,
+		CreatorTaskID: creatorTaskID,
 		Status:        protocol.TaskStatus_Queued,
 		CreatedAt:     time.Now(),
 		BoundRunnerID: boundRunnerID,
@@ -137,6 +151,10 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 	}
 	s.order = append(s.order, id)
 	if s.wal != nil {
+		creatorHex := ""
+		if creatorTaskID.Id != ([16]byte{}) {
+			creatorHex = hex.EncodeToString(creatorTaskID.Id[:])
+		}
 		if err := s.wal.Write(WALEvent{
 			Type:          "task_created",
 			TaskID:        id,
@@ -144,6 +162,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			Prompt:        prompt,
 			Kind:          uint8(kind),
 			OriginKind:    uint8(origin),
+			CreatorTaskID: creatorHex,
 			BoundRunnerID: boundRunnerID,
 			Selector:      selector,
 			ExtraArgs:     extraArgs,
@@ -197,7 +216,7 @@ func (e ResumeError) Error() string {
 // runner candidates without first holding the lock. Use it before Resume.
 //
 // Returns the post-reset TaskEntry snapshot on success.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -217,6 +236,8 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	// Reset the per-run fields. CreatedAt is preserved (first submission
 	// time stays meaningful in List output); StartedAt/EndedAt/ExitCode/
 	// DiffInfo/AssignedTo/WorktreeDir all become "fresh run" defaults.
+	// CreatorTaskID is intentionally NOT reset — it records the original
+	// creator and must not change on resume.
 	e.Status = protocol.TaskStatus_Queued
 	e.AssignedTo = ""
 	e.WorktreeDir = ""
@@ -228,6 +249,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	e.ExtraArgs = extraArgs
 	e.Selector = selector
 	e.BoundRunnerID = boundRunnerID
+	e.ResumedByKind = resumerKind
 
 	if s.wal != nil {
 		if err := s.wal.Write(WALEvent{
@@ -237,6 +259,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 			ExtraArgs:     extraArgs,
 			Selector:      selector,
 			BoundRunnerID: boundRunnerID,
+			ResumedByKind: uint8(resumerKind),
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_resumed", "task_id", id, "err", err)
 		}
@@ -562,12 +585,21 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			// which is exactly the desired default.
 			// Selector and BoundRunnerID default to zero/empty for pre-3.1
 			// WAL entries, which is the correct "any runner" sentinel.
+			// CreatorTaskID decodes from hex; empty/invalid → zero value.
+			var creatorTaskID protocol.TaskID
+			if ev.CreatorTaskID != "" {
+				raw, err := hex.DecodeString(ev.CreatorTaskID)
+				if err == nil && len(raw) == 16 {
+					copy(creatorTaskID.Id[:], raw)
+				}
+			}
 			s.tasks[ev.TaskID] = &TaskEntry{
 				ID:            ev.TaskID,
 				RepoPath:      ev.RepoPath,
 				Prompt:        ev.Prompt,
 				Kind:          protocol.TaskKind(ev.Kind),
 				OriginKind:    protocol.ClientKind(ev.OriginKind),
+				CreatorTaskID: creatorTaskID,
 				Status:        protocol.TaskStatus_Queued,
 				CreatedAt:     time.Unix(0, ev.Ts),
 				BoundRunnerID: ev.BoundRunnerID,
@@ -613,10 +645,11 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 		case "task_resumed":
 			// Resume on replay: reset the existing TaskEntry to Queued under
 			// the same id, picking up the new prompt + extra args + selector
-			// + bound runner from the event. If the entry doesn't exist
-			// (corrupt WAL ordering), drop the event silently — the
-			// task_created that should precede this would have already failed
-			// to apply too.
+			// + bound runner + resumer kind from the event. If the entry
+			// doesn't exist (corrupt WAL ordering), drop the event silently —
+			// the task_created that should precede this would have already
+			// failed to apply too. CreatorTaskID is NOT reset — it records the
+			// original creator and must survive resume replay.
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Status = protocol.TaskStatus_Queued
 				t.AssignedTo = ""
@@ -629,6 +662,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.ExtraArgs = ev.ExtraArgs
 				t.Selector = ev.Selector
 				t.BoundRunnerID = ev.BoundRunnerID
+				t.ResumedByKind = protocol.ClientKind(ev.ResumedByKind)
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {

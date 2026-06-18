@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
@@ -120,13 +121,23 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		if len(t.ErrorMessage) > 0 {
 			suffix += fmt.Sprintf("  err=%q", string(t.ErrorMessage))
 		}
-		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s  prompt=%q%s\n",
+		resumedBy := ""
+		if t.ResumedByKind != protocol.ClientKind_Unspecified {
+			resumedBy = "  resumed_by=" + originStr(t.ResumedByKind)
+		}
+		createdBy := ""
+		if t.CreatorTaskId.Id != ([16]byte{}) {
+			createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
+		}
+		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s%s%s  prompt=%q%s\n",
 			taskIDStr(t.Id.Id[:]),
 			taskStatusStr(t.Status),
 			taskKindStr(t.Kind),
 			string(t.RepoPath),
 			originStr(t.OriginKind),
 			agent,
+			resumedBy,
+			createdBy,
 			string(t.Prompt),
 			suffix,
 		)
