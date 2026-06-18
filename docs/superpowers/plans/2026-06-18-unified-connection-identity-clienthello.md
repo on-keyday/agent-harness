@@ -41,8 +41,9 @@ Non-goal (do NOT implement): per-resource gating, task lineage. P1 records/valid
 | `cli/hello.go` | agent-aware `SayHello` variant | 5 |
 | `cmd/harness-cli/main.go` | task-control commands use the agent-aware hello | 5 |
 | `agentboard/e2e_test.go` | update hello helper to `ClientHello` | 6 |
-| `server/taskstore.go`, `server/wal.go` | `ResumedByKind` field + WAL persist/replay; `Resume` records resumer kind | 7 |
-| `cli/list.go` | render `resumed_by=` in `ls` | 7 |
+| `server/taskstore.go`, `server/wal.go` | `ResumedByKind` + `CreatorTaskID` fields + WAL persist/replay; `Resume`/`Create` record them | 7 |
+| `cli/list.go` | render `resumed_by=` + `by=` in `ls` | 7 |
+| `server/task_handler.go` | `principals` map at ClientHello + `lookupPrincipal` → creator plumbing | 7 |
 
 ---
 
@@ -101,6 +102,11 @@ format ClientHelloResponse:
     resumed_by_kind :ClientKind  # kind of the connection that performed the
                               # LATEST resume; Unspecified until first resumed.
                               # origin_kind stays the original creator.
+    creator_task_id :TaskID   # task id of the AGENT principal that created this
+                              # task (kind=agent connection). All-zero for
+                              # operator-created tasks. Set at Create; unchanged
+                              # on resume. Single parent link (lineage emerges by
+                              # chasing it).
 ```
 
 (All schema edits live in this one task — see the "don't split schema" rule.)
@@ -556,18 +562,22 @@ git commit -m "test(agentboard): e2e hello uses ClientHello identity path"
 
 ---
 
-## Task 7: Resume attribution — `resumed_by_kind`
+## Task 7: Attribution fields — `resumed_by_kind` + `creator_task_id`
 
-Records the `ClientKind` of the connection that performed the latest resume, while
-`origin_kind` stays the original creator. The wire field was added in Task 1
-(Step 1b); this task wires the store, WAL, resume call sites, and `ls` render.
+Two attribution fields, sharing the same files (store/WAL/handler/render), done as
+one task to avoid editing those files twice. Wire fields were added in Task 1
+(Step 1b). Part A = `resumed_by_kind` (the `ClientKind` of the latest resumer;
+`origin_kind` stays the original creator). Part B = `creator_task_id` (the agent
+principal task id that created the task; zero for operator-created).
 
 **Files:**
-- Modify: `server/taskstore.go` (`:26` field, `:146` Create WAL, `:200` Resume, `:560-570` replay)
+- Modify: `server/taskstore.go` (`:26` fields, `:131/:146` Create + WAL, `:200` Resume, `:560-570` replay)
 - Modify: `server/wal.go` (`:39` WAL struct)
-- Modify: `server/task_handler.go` (`:1003` TaskInfo conv; `:342/:384` thread origin into resume; `:408`, `:503` Resume calls)
-- Modify: `cli/list.go` (`:123` render)
-- Test: `server/taskstore_test.go` (resume sets the field; origin sticky)
+- Modify: `server/task_handler.go` (`:265` ClientHello principal map; `:335/:365` Create plumbing; `:1003` TaskInfo conv; `:342/:384` thread origin into resume; `:408`, `:503` Resume calls)
+- Modify: `cli/list.go` (`:123` render both)
+- Test: `server/taskstore_test.go`
+
+### Part A — `resumed_by_kind`
 
 - [ ] **Step 1: Write the failing test** — append to `server/taskstore_test.go`:
 
@@ -647,11 +657,146 @@ Then insert `%s` for `resumedBy` into the `Fprintf` format string + args at the 
 Run: `go test ./server/ -run 'TestResume|TestResumeRecordsResumedByKind' -v && go build ./...`
 Expected: PASS + clean build.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 10: Commit Part A**
 
 ```bash
 git add server/taskstore.go server/wal.go server/task_handler.go cli/list.go server/taskstore_test.go
 git commit -m "feat(attribution): record resumed_by_kind; origin_kind stays original creator"
+```
+
+### Part B — `creator_task_id`
+
+- [ ] **Step 11: Write the failing test** — append to `server/taskstore_test.go`:
+
+```go
+func TestCreateRecordsCreatorTaskID(t *testing.T) {
+	s := NewTaskStore(t.TempDir()) // match the constructor used in this file
+	var creator protocol.TaskID
+	creator.Id = [16]byte{0xAA, 0xBB}
+
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent, creator, "runner1", protocol.RunnerSelector{}, nil)
+	got, _ := s.Get(id)
+	if got.CreatorTaskID.Id != creator.Id {
+		t.Fatalf("creator_task_id = %x, want %x", got.CreatorTaskID.Id, creator.Id)
+	}
+
+	// operator create => zero creator
+	var zero protocol.TaskID
+	id2 := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, zero, "runner1", protocol.RunnerSelector{}, nil)
+	got2, _ := s.Get(id2)
+	if got2.CreatorTaskID.Id != ([16]byte{}) {
+		t.Fatalf("operator creator should be zero, got %x", got2.CreatorTaskID.Id)
+	}
+
+	// resume must NOT change creator
+	s.Assign(id, "runner1", "/wt")
+	s.Finish(id, 0, "") // match the terminal-transition helper used in Part A
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	got3, _ := s.Get(id)
+	if got3.CreatorTaskID.Id != creator.Id {
+		t.Fatalf("resume changed creator: %x", got3.CreatorTaskID.Id)
+	}
+}
+```
+
+- [ ] **Step 12: Run test to verify it fails**
+
+Run: `go test ./server/ -run TestCreateRecordsCreatorTaskID -v`
+Expected: FAIL — `Create` arity / `CreatorTaskID` undefined.
+
+- [ ] **Step 13: Store layer** in `server/taskstore.go`:
+  - Add field to `TaskEntry` (after `ResumedByKind`):
+    ```go
+    // CreatorTaskID is the task id of the agent principal that created this
+    // task (kind=agent connection). All-zero for operator-created tasks. Set
+    // at Create; never changed on resume. Single parent link.
+    CreatorTaskID protocol.TaskID
+    ```
+  - `Create` (`:123`): add a `creatorTaskID protocol.TaskID` param (after `origin`); set `CreatorTaskID: creatorTaskID` in the `TaskEntry` literal (`:131`) and the WAL event (`:146`) as `CreatorTaskID: hex.EncodeToString(creatorTaskID.Id[:])` (only meaningful when non-zero; the omitempty hex string is fine for zero — it encodes 32 zeros, so guard: write "" when zero to keep WAL clean). Use:
+    ```go
+    creatorHex := ""
+    if creatorTaskID.Id != ([16]byte{}) {
+        creatorHex = hex.EncodeToString(creatorTaskID.Id[:])
+    }
+    ```
+    and set `CreatorTaskID: creatorHex` on the WAL event.
+  - Replay (`:565-570`): in the create-replay branch set `CreatorTaskID: taskIDFromHexLenient(ev.CreatorTaskID)` where the helper decodes the hex into a `protocol.TaskID` (empty/invalid → zero). Add that small helper next to the existing hex handling in this file.
+
+- [ ] **Step 14: WAL struct** in `server/wal.go` (after `ResumedByKind`):
+
+```go
+	CreatorTaskID string `json:"creator_task_id,omitempty"`
+```
+
+- [ ] **Step 15: Run the store test**
+
+Run: `go test ./server/ -run TestCreateRecordsCreatorTaskID -v`
+Expected: PASS (after also updating the other `Create` call sites in the next step so the package compiles).
+
+- [ ] **Step 16: Record the principal at ClientHello + plumb into Create** in `server/task_handler.go`:
+  - Add a principals map to `TaskHandler` (near `clientKinds`, `:109`):
+    ```go
+    // principals maps connID → the agent principal's task id, recorded on a
+    // successful kind=agent ClientHello. Used to stamp creator_task_id on
+    // tasks the agent creates. Absent => operator (zero creator).
+    principals map[string]protocol.TaskID
+    ```
+  - In `handleClientHello` (rewritten in Task 3), after a successful `kind=agent` hello, record it:
+    ```go
+    if status == protocol.ClientHelloStatus_Ok && hello.Kind == protocol.ClientKind_Agent {
+        if info := hello.AgentInfo(); info != nil {
+            h.clientKindsMu.Lock()
+            if h.principals == nil {
+                h.principals = make(map[string]protocol.TaskID)
+            }
+            h.principals[cid] = info.TaskId
+            h.clientKindsMu.Unlock()
+        }
+    }
+    ```
+  - Add a lookup (near `lookupClientKind`, `:115`):
+    ```go
+    func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
+        h.clientKindsMu.Lock()
+        defer h.clientKindsMu.Unlock()
+        return h.principals[connID]
+    }
+    ```
+  - At the `Submit` dispatch (`:137-138`) and `OpenInteractive` dispatch (`:210-211`), resolve the creator and pass it through:
+    ```go
+    creator := h.lookupPrincipal(conn.ConnectionID().String())
+    ```
+    Add a `creator protocol.TaskID` param to `handleSubmit` / `handleOpenInteractive` and pass `creator` to their `h.Tasks.Create(...)` calls (`:365`, `:517`). (Resume branches do NOT set creator — it stays from the original Create.)
+
+- [ ] **Step 17: Wire field** in `server/task_handler.go` TaskInfo conversion (`:1003`, alongside `OriginKind`/`ResumedByKind`):
+
+```go
+		CreatorTaskID: t.CreatorTaskID,
+```
+
+- [ ] **Step 18: Render in `ls`** in `cli/list.go` (`:123`), next to the `resumed_by` segment from Part A:
+
+```go
+		createdBy := ""
+		if t.CreatorTaskID.Id != ([16]byte{}) {
+			createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskID.Id[:])[:8]
+		}
+```
+
+Insert `%s` for `createdBy` into the `Fprintf` format + args (after the `resumed_by` segment). Ensure `encoding/hex` is imported in `cli/list.go`.
+
+- [ ] **Step 19: Build + run all server/cli tests**
+
+Run: `go test ./server/ ./cli/... && go build ./...`
+Expected: PASS + clean build.
+
+- [ ] **Step 20: Commit Part B**
+
+```bash
+git add server/taskstore.go server/wal.go server/task_handler.go cli/list.go server/taskstore_test.go
+git commit -m "feat(attribution): record creator_task_id (agent principal that created the task)"
 ```
 
 ---
@@ -678,7 +823,7 @@ Expected: both pass. (`make test` = `go test ./...`.)
 Run: `grep -rn "AgentBridgeHello\|AgentMessageKind_Hello\|agentHandleHello\|protoToBoardRunnerID" --include=*.go . | grep -v _gen`
 Expected: no matches (all removed).
 
-- [ ] **Step 5: Manual E2E (attribution + resume + rejection)** — with a server + runner running (per the project's restart-all flow): submit a task from inside a runner-spawned task and from an operator CLI; confirm `harness-cli ls` shows origin `agent` vs `cli` respectively. Then `submit --resume <cli-created-id>` from inside an agent task and confirm `ls` shows `from=cli  resumed_by=agent` (origin sticky, resumer recorded). Confirm an agentboard `harness-cli agent send` still works end-to-end. (Coordinate the server restart + runner rebuild per the spec's rollout: server and all hello-speaking clients must run the new build together.)
+- [ ] **Step 5: Manual E2E (attribution + resume + rejection)** — with a server + runner running (per the project's restart-all flow): submit a task from inside a runner-spawned task and from an operator CLI; confirm `harness-cli ls` shows origin `agent` vs `cli` respectively. Then `submit --resume <cli-created-id>` from inside an agent task and confirm `ls` shows `from=cli  resumed_by=agent` (origin sticky, resumer recorded), and that an agent-submitted task shows `by=<agent-short-id>` (creator link) while an operator-submitted task shows no `by=`. Confirm an agentboard `harness-cli agent send` still works end-to-end. (Coordinate the server restart + runner rebuild per the spec's rollout: server and all hello-speaking clients must run the new build together.)
 
 - [ ] **Step 6: Final commit (if any verification fixups were needed)**
 
@@ -691,6 +836,6 @@ git commit -m "chore(auth): verification fixups for unified ClientHello identity
 
 ## Self-review checklist (completed by plan author)
 
-- **Spec coverage:** schema (T1), task-control identity (T1/T3/T5), agentboard consolidation + AgentBridgeHello deletion (T1/T3/T4), validation/rejection statuses (T1/T3/T6), attribution agent-vs-operator (T3 origin via clientKinds), resume attribution `resumed_by_kind` (T1 schema + T7 wiring), Board==nil degrade (T3), rollout/verify (T8). The "no-hello commands" item is explicitly scoped OUT with rationale (T5 note) — matches spec non-goal posture.
+- **Spec coverage:** schema (T1), task-control identity (T1/T3/T5), agentboard consolidation + AgentBridgeHello deletion (T1/T3/T4), validation/rejection statuses (T1/T3/T6), attribution agent-vs-operator (T3 origin via clientKinds), resume attribution `resumed_by_kind` (T1 schema + T7 Part A), creator link `creator_task_id` (T1 schema + T7 Part B; principal recorded at the T3 ClientHello), Board==nil degrade (T3), rollout/verify (T8). The "no-hello commands" item is explicitly scoped OUT with rationale (T5 note) — matches spec non-goal posture.
 - **Placeholder scan:** test helper names in T3/T6 are marked "adapt to existing suite, grep first" with the exact grep — this is a real instruction, not a TBD, because inventing a mock when one exists violates implementation-pitfalls; the generated-API names (T4/T5) are confirmed against the X11 precedent and re-checked in T1 Step 4.
 - **Type consistency:** `boardRunnerIDFromProto`/`boardTaskIDFromProto` (T2) used in T3; `establishAgentIdentity` (T3) returns `agentboard.HelloStatus`, mapped by `clientHelloStatusFromBoard` (T3); `OnAgentHello` returns `protocol.ClientHelloStatus`; `SayHelloAuto`/`sendClientHello` (T5) names consistent across steps.

@@ -164,8 +164,24 @@ All on-wire bytes remain schema-described; nothing moves to convention.
    - `resumed_by_kind` records the `ClientKind` of the connection that performed
      the **latest** resume (overwritten each resume); `Unspecified` until first
      resumed.
-   - It records the **kind only** (agent/cli/tui/webui). Recording the resuming
-     agent's specific task id is lineage = P2, out of scope.
+   - It records the **kind only** (agent/cli/tui/webui).
+
+   **Creator link (`creator_task_id`).** P1 also records *which* agent created a
+   task — cheap now that the connection's agent principal (runner_id, task_id) is
+   established and validated at `ClientHello`. A new `TaskInfo.creator_task_id
+   :TaskID` (`TaskEntry.CreatorTaskID`) stores the **agent principal's task id**
+   at `Create`:
+   - Set only when the creating connection is `kind=agent`; zero for
+     operator-created tasks.
+   - Set at `Create` only — NOT changed on resume (the original creator is
+     preserved; the resumer is captured separately by `resumed_by_kind`).
+   - It is a **single parent link**, not a stored ancestry chain: full lineage
+     emerges by chasing `creator_task_id` from task to task. This is the cheap
+     creator-link form of lineage, enabled entirely by P1's connection identity;
+     a separately-materialized ancestry index remains out of scope.
+   - Server-side it requires recording the connection's principal task id at
+     `ClientHello` (a `principals` map alongside `clientKinds`) and reading it at
+     `Create` (`lookupPrincipal`). Rendered in `ls` as `by=<short-id>`.
 
 ### Client
 
@@ -226,6 +242,9 @@ All on-wire bytes remain schema-described; nothing moves to convention.
 - Resume attribution: a task created `cli` then resumed over a `kind=agent`
   connection keeps `origin_kind=cli` and gains `resumed_by_kind=agent`; an
   un-resumed task has `resumed_by_kind=Unspecified` (renders blank in `ls`).
+- Creator link: a task submitted over a `kind=agent` connection records that
+  agent's task id in `creator_task_id`; an operator-created task has a zero
+  `creator_task_id` (blank in `ls`); resume does not change `creator_task_id`.
 - Regression: operator CLI/TUI/WebUI flows unaffected (no gating added).
 
 ## Migration / rollout
