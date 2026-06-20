@@ -92,9 +92,32 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   confined agent can still `submit` / agentboard / file-transfer. This re-grants
   the harness control plane (a deliberate agent could spawn an unsandboxed task
   and escape) — fine for trusted dogfood, where the goal is preventing *accidental*
-  host damage, not adversarial containment. Disable per task or per runner with
-  `--claude-arg --omit-harness-cli` / `--claude-args "--omit-harness-cli"` for full
-  isolation. (Bridge assumes the server is directly reachable; behind
+  host damage, not adversarial containment.
+
+  **Two-layer model:** the podman sandbox confines local filesystem, processes,
+  and network (OS layer); the server-enforced capability bitmask confines what
+  the agent can request from the harness control plane (server layer). Neither
+  layer configures the other — they compose.
+
+  **Capability middle ground (without removing the control plane):** the
+  sandbox-escape risk above is now closable without `--omit-harness-cli`. Spawn
+  the sandboxed task with a restricted capability set via `submit --caps` or
+  `session new --caps` (the server enforces `caps_child = caps_parent ∩
+  requested` at spawn time — the sandboxed task's own caps cannot exceed what
+  its parent granted). Examples:
+
+  - `submit --caps none` — data-plane only: the agent can still use
+    `agent send` / `inbox` to talk to its parent, but the server denies
+    `spawn`, `file_read`, `file_write`, `forward_local`, `forward_remote`,
+    `exec_attach`, `notify`, and all other control-plane operations with
+    `PermissionDenied`. The escape path (spawn an unsandboxed child) is
+    closed server-side regardless of what's in the container.
+  - `submit --caps info_global` — adds the ability to read the agent's own
+    task subtree (logs, task list) without granting spawn or file-write.
+
+  For full control-plane removal (no harness-cli at all inside the container),
+  use `--claude-arg --omit-harness-cli` / `--claude-args "--omit-harness-cli"`.
+  (Bridge assumes the server is directly reachable; behind
   `HARNESS_PROXY_VIA_RUNNER` it would need `--network=host` — not handled yet.)
 - **Network: open by default; opt-in egress allowlist via `--firewall`.** Pass
   `--claude-arg --firewall` (or runner `--claude-args "--firewall"`) to apply a

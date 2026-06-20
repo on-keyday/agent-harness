@@ -15,7 +15,10 @@
 # SCOPE: one-shot (`-p`) verified end-to-end; interactive gets a container TTY
 # when stdin is one. harness-cli + the HARNESS_* env are bridged in by default so
 # the confined agent keeps the control plane (--omit-harness-cli to disable).
-# Network egress is open (allowlist firewall = TODO). See README.md.
+# Capability confinement of the bridged control plane is set at spawn time by the
+# parent: `session new --caps <names>` / `submit --caps <names>` (server-enforced
+# bitmask; the container itself plays no role). --omit-harness-cli is the
+# full-removal option (no harness-cli in the container at all). See README.md.
 set -euo pipefail
 
 IMAGE="${HARNESS_SANDBOX_IMAGE:-harness-claude-sandbox:latest}"
@@ -122,6 +125,11 @@ declare -a TTY=()
 # so the confined agent can still submit / agentboard / file-transfer. Works when
 # the server is directly reachable; behind HARNESS_PROXY_VIA_RUNNER a
 # --network=host shim would be needed (left for later).
+#
+# Control-plane authority is server-enforced via capabilities, not by what's
+# in the container: use `submit --caps none` (or other restricted sets) when
+# spawning this sandboxed task to close specific control-plane operations
+# (spawn, file_read/write, forward, exec_attach, ...) server-side.
 declare -a CLI=()
 if [ "$bridge_cli" = 1 ]; then
   hcli=$(command -v harness-cli 2>/dev/null)
