@@ -46,8 +46,8 @@ type LogHistoryMsg struct {
 }
 
 // DoSubmit issues a Submit RPC over the existing persistent client.
-func DoSubmit(c *cli.Client, repo, prompt string) tea.Cmd {
-	return DoSubmitWithOpts(c, repo, prompt, "", nil, "")
+func DoSubmit(c *cli.Client, repo, prompt string, caps protocol.Capability) tea.Cmd {
+	return DoSubmitWithOpts(c, repo, prompt, "", nil, "", caps)
 }
 
 // DoSubmitWithOpts issues a Submit RPC with an optional hostname pin,
@@ -56,7 +56,9 @@ func DoSubmit(c *cli.Client, repo, prompt string) tea.Cmd {
 // extraArgs are forwarded verbatim to the runner and appended to its
 // --claude-args baseline at exec time. resumeTaskID, when non-empty, asks
 // the server to reuse that terminal task's id and worktree branch.
-func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string) tea.Cmd {
+// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
+// for the inherit-all behaviour.
+func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -65,7 +67,7 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 		if err != nil {
 			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
 		}
-		id, err := c.SubmitWithSelectorAndArgs(ctx, repo, prompt, sel, extraArgs, resumeTaskID)
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, caps)
 		if err != nil {
 			return SubmitResultMsg{Err: err, Echo: echo}
 		}

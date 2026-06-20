@@ -43,14 +43,18 @@ type InteractiveDoneMsg struct {
 // posts InteractiveReadyMsg back to the program. The actual tea.Exec call
 // happens in the App's Update when InteractiveReadyMsg arrives — Cmds run
 // outside the Update loop, but tea.Exec must be returned from Update.
-func DoOpenInteractive(c *cli.Client, repo string) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, "", nil, "")
+// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
+// for the inherit-all behaviour.
+func DoOpenInteractive(c *cli.Client, repo string, caps protocol.Capability) tea.Cmd {
+	return DoOpenInteractiveWithOpts(c, repo, "", nil, "", caps)
 }
 
 // DoOpenInteractiveWithHost is the same as DoOpenInteractive but accepts an
 // optional hostname pin.
-func DoOpenInteractiveWithHost(c *cli.Client, repo, host string) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, host, nil, "")
+// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
+// for the inherit-all behaviour.
+func DoOpenInteractiveWithHost(c *cli.Client, repo, host string, caps protocol.Capability) tea.Cmd {
+	return DoOpenInteractiveWithOpts(c, repo, host, nil, "", caps)
 }
 
 // DoOpenDetachableSession opens a new detachable interactive session (equivalent
@@ -60,13 +64,15 @@ func DoOpenInteractiveWithHost(c *cli.Client, repo, host string) tea.Cmd {
 // resumeTaskID may be "" for a fresh session, or a 32-hex task id to resume
 // an existing terminal interactive task's worktree and branch.
 // selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
-func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string) tea.Cmd {
+// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
+// for the inherit-all behaviour.
+func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, true)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -82,13 +88,13 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 // program MUST be App's *tea.Program. The returned InteractiveReadyMsg carries
 // X11Cancel (stops the forward; App stores it and calls it on InteractiveDoneMsg)
 // and X11Warn (non-empty => forwarding without authentication).
-func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program) tea.Cmd {
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, caps protocol.Capability) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN, protocol.Capability_All)
+		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN, caps)
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 		}
@@ -109,13 +115,15 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 // (32-hex; "" = new task) for reusing an existing terminal interactive
 // task's id and worktree branch. On AmbiguousRunner the error is surfaced
 // in InteractiveReadyMsg.Err with a hint to supply a host.
-func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string) tea.Cmd {
+// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
+// for the inherit-all behaviour.
+func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, false)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, false, caps)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -147,13 +155,15 @@ type SessionStartedMsg struct {
 // closes the local stream, and returns SessionStartedMsg with the task id.
 // Equivalent to `harness-cli session new -d`.
 // selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
-func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string) tea.Cmd {
+// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
+// for the inherit-all behaviour.
+func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return SessionStartedMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorAndArgs(context.Background(), repo, sel, extraArgs, resumeTaskID, true)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps)
 		if err != nil {
 			return SessionStartedMsg{Err: err}
 		}

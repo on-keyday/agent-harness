@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/shlex"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // Action is the typed result of parsing one cmdline input.
@@ -147,6 +148,16 @@ type NotifyAction struct {
 	Text  string
 }
 
+// CapsAction sets or shows the session-default capability mask applied to
+// every spawn (submit / interactive / session new) from this TUI session.
+// Show=true (no args): display current caps in the status line.
+// Show=false: update sessionCaps to Caps.
+type CapsAction struct {
+	Caps protocol.Capability
+	Show bool // true = display current set (no args), false = set to Caps
+}
+
+
 func (SubmitAction) isAction()           {}
 func (CancelAction) isAction()           {}
 func (PruneAction) isAction()            {}
@@ -166,6 +177,7 @@ func (FilePullAction) isAction()         {}
 func (FileDeleteAction) isAction()       {}
 func (ServerDialRunnerAction) isAction() {}
 func (NotifyAction) isAction()           {}
+func (CapsAction) isAction()             {}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -205,6 +217,15 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return TrsfDebugAction{}, nil
 	case "notify":
 		return parseNotify(tokens[1:])
+	case "caps":
+		if len(tokens) == 1 {
+			return CapsAction{Show: true}, nil
+		}
+		c, err := cli.ParseCaps(strings.Join(tokens[1:], ""))
+		if err != nil {
+			return nil, err
+		}
+		return CapsAction{Caps: c}, nil
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
 	}
@@ -409,6 +430,27 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 	default:
 		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id>)", verb)
 	}
+}
+
+// capsLabel formats a Capability bitmask for human display:
+// "all", "none", or a comma-joined list of the enabled granular caps.
+func capsLabel(c protocol.Capability) string {
+	if c == protocol.Capability_All {
+		return "all"
+	}
+	if c == protocol.Capability_None {
+		return "none"
+	}
+	var names []string
+	for _, g := range cli.GrantableCaps() {
+		if g == protocol.Capability_None || g == protocol.Capability_All {
+			continue
+		}
+		if c&g == g {
+			names = append(names, g.String())
+		}
+	}
+	return strings.Join(names, ",")
 }
 
 // parseNotify parses `notify [<level>] <text>`.

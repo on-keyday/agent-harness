@@ -73,6 +73,11 @@ type App struct {
 	// session. Set when InteractiveReadyMsg carries one; called and cleared on
 	// InteractiveDoneMsg so the forward stops with the session.
 	x11Cancel context.CancelFunc
+
+	// sessionCaps is the default capability mask applied to every spawn
+	// (submit / interactive / session new) issued from this TUI session.
+	// Controlled by the `caps` command; defaults to Capability_All.
+	sessionCaps protocol.Capability
 }
 
 // NotifyResultMsg carries the result of a notify send command.
@@ -123,6 +128,7 @@ func New(cfg Config) *App {
 		status:         "connecting…",
 		tasksByID:      map[string]protocol.TaskInfo{},
 		activeForwards: map[int]*PortForwardSession{},
+		sessionCaps:    protocol.Capability_All,
 	}
 	a.tasks.Focus()
 	return a
@@ -493,7 +499,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
@@ -585,12 +591,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Reattach lives on `r` now (see below), so `i` no longer special-cases a
 		// selected Detached task.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
-			return a, DoOpenInteractive(a.client, a.defaultRepo)
+			return a, DoOpenInteractive(a.client, a.defaultRepo, a.sessionCaps)
 		}
 		// `S` (capital) opens a new detachable interactive PTY session in the
 		// default repo (equivalent to `harness-cli session new`).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
-			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "")
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps)
 		}
 		// `F` opens the file picker for the task currently focused in the
 		// tasks pane. No-op when the tasks pane is not focused or no task
@@ -648,7 +654,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case actionResume:
 				// repo is irrelevant on resume — the server reuses the task's
 				// RepoPath and worktree branch.
-				return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, act.ResumeArgs, a.tasks.SelectedID())
+				return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps)
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil
@@ -1003,10 +1009,18 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.defaultRepo = path
 		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
 		return a, nil
+	case CapsAction:
+		if v.Show {
+			a.status = "caps: " + capsLabel(a.sessionCaps)
+		} else {
+			a.sessionCaps = v.Caps
+			a.status = "caps set: " + capsLabel(a.sessionCaps)
+		}
+		return a, nil
 	case InteractiveAction:
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
 	case SubmitAction:
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -1024,12 +1038,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program)
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
 		}
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID)
+		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:

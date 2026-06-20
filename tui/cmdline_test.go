@@ -3,6 +3,8 @@ package tui
 import (
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestParseSubmitWithRepo(t *testing.T) {
@@ -460,5 +462,31 @@ func TestParseNotifyLevelOnlyNoTitle(t *testing.T) {
 	_, err := ParseCommand(`notify error`, "/cwd")
 	if err == nil {
 		t.Fatal("expected error: level consumed but no title provided")
+	}
+}
+
+func TestParseCapsCommand(t *testing.T) {
+	act, err := ParseCommand("caps spawn,file_read", "repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ca, ok := act.(CapsAction)
+	if !ok {
+		t.Fatalf("got %T, want CapsAction", act)
+	}
+	if ca.Show {
+		t.Fatal("with args, Show should be false")
+	}
+	if ca.Caps != (protocol.Capability_Spawn | protocol.Capability_FileRead) {
+		t.Fatalf("caps = %#x", ca.Caps)
+	}
+	// no args → Show
+	act, _ = ParseCommand("caps", "repo")
+	if ca, _ := act.(CapsAction); !ca.Show {
+		t.Fatal("no args → Show=true")
+	}
+	// bad name → error
+	if _, err := ParseCommand("caps bogus", "repo"); err == nil {
+		t.Fatal("expected error for unknown cap")
 	}
 }
