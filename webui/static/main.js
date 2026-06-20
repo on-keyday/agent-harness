@@ -94,6 +94,12 @@ const POLL_INTERVAL_MS = 5000;
     }
   });
 
+  // Cap chip state — declared early so the function definitions below can close
+  // over them; initCaps() is called once after connect (capList needs no conn
+  // but the DOM is always ready by then, which is what renderCaps() touches).
+  let capDefs = [];    // [{name:string, bit:number}] — populated by initCaps()
+  let spawnCaps = 0;   // bitmask; read by openInteractive / submit on spawn
+
   setStatus("connecting…");
   try {
     await window.harness.connect(SERVER_CID, { persist: true });
@@ -102,6 +108,9 @@ const POLL_INTERVAL_MS = 5000;
     setStatus(`connect failed: ${e.message}`, "error");
     return;
   }
+
+  // Cap chips: wasm is ready (harness.capList is synchronous) — build the row.
+  initCaps();
 
   // 4. Snapshot polling — single source of truth for runner-select +
   //    runner-list + task-list. Replaces the old refreshList(harness.list)
@@ -797,7 +806,7 @@ const POLL_INTERVAL_MS = 5000;
           if (!task) throw new Error("submit: missing task prompt");
           const host = hostSelect ? (hostSelect.value || "") : "";
           const claudeArgsList = currentClaudeArgs();
-          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId });
+          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps });
           break;
         }
         case "list":
@@ -1174,6 +1183,66 @@ const POLL_INTERVAL_MS = 5000;
     };
   };
 
+  // --- Cap chips (session-default capability set for new-session spawns) ---
+  // capDefs / spawnCaps declared early in the IIFE (before connect) so the
+  // wasm-independent state survives reconnects. initCaps() is called once after
+  // connect (capList is synchronous; needs no active connection).
+
+  function capsAllBits() {
+    return capDefs.reduce((m, c) => m | c.bit, 0);
+  }
+
+  function capsLabel() {
+    const allBits = capsAllBits();
+    if (spawnCaps === allBits) return "all";
+    if (spawnCaps === 0)       return "none";
+    return capDefs.filter(c => (spawnCaps & c.bit) === c.bit).map(c => c.name).join(",");
+  }
+
+  function renderCaps() {
+    const row = document.getElementById("caps-row");
+    if (!row) return;
+    // Re-render the whole row on every state change (small list — no perf concern).
+    row.innerHTML = "";
+
+    // [all] / [none] quick-set buttons
+    const allBtn = document.createElement("button");
+    allBtn.className = "cap-quick";
+    allBtn.textContent = "[all]";
+    allBtn.addEventListener("click", () => { spawnCaps = capsAllBits(); renderCaps(); });
+    row.appendChild(allBtn);
+
+    const noneBtn = document.createElement("button");
+    noneBtn.className = "cap-quick";
+    noneBtn.textContent = "[none]";
+    noneBtn.addEventListener("click", () => { spawnCaps = 0; renderCaps(); });
+    row.appendChild(noneBtn);
+
+    // One chip per granular cap
+    for (const c of capDefs) {
+      const btn = document.createElement("button");
+      btn.className = "cap-chip" + ((spawnCaps & c.bit) === c.bit ? " on" : "");
+      btn.dataset.bit = String(c.bit);
+      btn.textContent = c.name;
+      btn.addEventListener("click", () => { spawnCaps ^= c.bit; renderCaps(); });
+      row.appendChild(btn);
+    }
+
+    // Readout span
+    const readout = document.createElement("span");
+    readout.id = "caps-readout";
+    readout.className = "caps-readout";
+    readout.textContent = "caps: " + capsLabel();
+    row.appendChild(readout);
+  }
+
+  function initCaps() {
+    if (typeof window.harness.capList !== "function") return;
+    capDefs = window.harness.capList();
+    spawnCaps = capsAllBits();  // all granular bits on by default
+    renderCaps();
+  }
+
   // Quick-reattach button (terminal tab): shown after a takeover so the user
   // can re-attach to the same session in one tap, without going back to the
   // task list. Carries the task id in a data attribute.
@@ -1265,7 +1334,7 @@ const POLL_INTERVAL_MS = 5000;
     setActiveTab("terminal");
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({...req, detachable});
+      const taskID = await window.harness.startInteractive({...req, detachable, caps: spawnCaps});
       attachedTask.textContent = `attached: ${taskID} (${label})`;
     } catch (e) {
       attachedTask.textContent = "";
