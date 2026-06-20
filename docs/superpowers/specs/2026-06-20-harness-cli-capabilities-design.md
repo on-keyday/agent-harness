@@ -190,9 +190,12 @@ is the trusted root; attenuation applies only to agent-spawned children.
 
 ### Omitted-request default — policy C (inherit-all + sandbox confines)
 
-When `RequestedCaps` is omitted on a spawn, it defaults to "all bits set", so
-`caps_child = caps_creator ∩ all = caps_creator` — the child **inherits the
-parent's full set**. Existing spawn flows are unchanged (zero friction).
+When the operator/agent does not specify caps, the CLI/spawn helper sets
+`requested_caps = 0xFFFFFFFF` before encoding (see "Omitted-grant on the wire"),
+so `caps_child = caps_creator ∩ all = caps_creator` — the child **inherits the
+parent's full set**. Existing spawn flows are unchanged (zero friction). (A
+literal zero on the wire is *not* this default; it is an explicit "grant
+nothing" request.)
 
 Confinement is **explicit at the point where confinement is decided**: the
 sandbox launch path (`scripts/sandbox`, and any caller that spawns a sandboxed
@@ -248,17 +251,61 @@ re-inherited from the parent.
 
 ## Schema changes (single source of truth)
 
-Defined in **one** place — no "also add this in a later task":
+Defined in **one** place in `runner/protocol/message.bgn` — no "also add this in
+a later task".
 
-- `protocol`: a `Capabilities uint32` type (or named alias) plus the bit
-  constants for the 11 caps, in one schema location.
+### Capability bits — an explicit-value `enum Capability : u32`
+
+brgen supports explicit-value enums with a chosen backing type (`AppKind` uses
+`name = 0x40` over `:u8`, `appwire/app.bgn:10`). Capabilities are an
+`enum Capability : u32` with power-of-two values:
+
+```
+enum Capability:
+    :u32
+    spawn          = 0x001
+    cancel         = 0x002
+    exec_attach    = 0x004
+    file_read      = 0x008
+    file_write     = 0x010
+    forward_local  = 0x020
+    forward_remote = 0x040
+    notify         = 0x080
+    prune          = 0x100
+    runner_admin   = 0x200
+    info_global    = 0x400
+```
+
+**The bitmask fields are typed `:Capability`.** brgen does **not** validate enum
+membership on encode/decode (validation is opt-in via an explicit
+`field.is_defined == true` assertion), so a field typed `:Capability` round-trips
+an arbitrary OR-combination of bits unchanged. The enum gives a named Go type and
+named bit constants while the wire stays a plain `u32`.
+
+> **Do NOT add an `is_defined` / membership assertion to any `Capability`
+> field.** These fields are flag-sets (OR-combinations), not single members; a
+> membership assertion would reject every multi-bit value. This is a bitmask
+> deliberately reusing the enum mechanism for named constants only.
+
+### Fields that carry it
+
 - Spawn request bodies — `SubmitRequest`, `OpenInteractiveRequest`,
-  `AssignTaskBody` — gain `RequestedCaps uint32`.
+  `AssignTaskBody` — gain `requested_caps :Capability`.
 - The auth-ticket registry entry and the persisted task record gain
-  `Capabilities uint32`.
+  `capabilities :Capability`.
 
-Per the project rule "schema must describe every byte on the wire", the cap
-bitmask and `RequestedCaps` are explicit wire fields, not conventions.
+### Omitted-grant on the wire (no magic absence)
+
+The zero value of `requested_caps` means **grant nothing** — a legitimate
+maximally-confined request (the data-plane needs no cap). So zero **cannot**
+double as the inherit-all default. Instead the **CLI/spawn helper applies the
+inherit-all default before encoding**: when the operator/agent did not specify
+caps, it sets `requested_caps = 0xFFFFFFFF` (all bits) explicitly, and the server
+computes `caps_creator ∩ 0xFFFFFFFF = caps_creator`. The wire therefore always
+carries an explicit mask (consistent with "schema describes every byte"), and
+the server logic is pure intersection with no presence/sentinel special-casing.
+Undefined high bits in `0xFFFFFFFF` are harmless: the intersection with the
+parent's (defined-bits-only) set masks them away.
 
 ## Deferred (designed, not built): lineage-scoped `agent send`
 
