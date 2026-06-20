@@ -97,8 +97,9 @@ const POLL_INTERVAL_MS = 5000;
   // Cap chip state — declared early so the function definitions below can close
   // over them; initCaps() is called once after connect (capList needs no conn
   // but the DOM is always ready by then, which is what renderCaps() touches).
-  let capDefs = [];    // [{name:string, bit:number}] — populated by initCaps()
-  let spawnCaps = 0;   // bitmask; read by openInteractive / submit on spawn
+  let capDefs = [];          // [{name:string, bit:number}] — populated by initCaps()
+  let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
+  let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
 
   setStatus("connecting…");
   try {
@@ -806,7 +807,7 @@ const POLL_INTERVAL_MS = 5000;
           if (!task) throw new Error("submit: missing task prompt");
           const host = hostSelect ? (hostSelect.value || "") : "";
           const claudeArgsList = currentClaudeArgs();
-          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps });
+          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps, resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false });
           break;
         }
         case "list":
@@ -1241,6 +1242,13 @@ const POLL_INTERVAL_MS = 5000;
     capDefs = window.harness.capList();
     spawnCaps = capsAllBits();  // all granular bits on by default
     renderCaps();
+    const capsOnResumeCb = document.getElementById("caps-on-resume");
+    if (capsOnResumeCb) {
+      capsOnResumeCb.checked = false; // explicit default OFF
+      capsOnResumeCb.addEventListener("change", () => {
+        applyCapsOnResume = capsOnResumeCb.checked;
+      });
+    }
   }
 
   // Quick-reattach button (terminal tab): shown after a takeover so the user
@@ -1311,7 +1319,7 @@ const POLL_INTERVAL_MS = 5000;
     const args = currentClaudeArgs();
     if (!args.includes("--continue")) args.push("--continue");
     try {
-      const taskID = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true });
+      const taskID = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume });
       attachedTask.textContent = `attached: ${taskID} (resumed --continue)`;
       scrollTermToBottom();
     } catch (err) {
@@ -1334,7 +1342,7 @@ const POLL_INTERVAL_MS = 5000;
     setActiveTab("terminal");
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({...req, detachable, caps: spawnCaps});
+      const taskID = await window.harness.startInteractive({...req, detachable, caps: spawnCaps, resumeCapsOverride: req.resumeTaskId ? applyCapsOnResume : false});
       attachedTask.textContent = `attached: ${taskID} (${label})`;
     } catch (e) {
       attachedTask.textContent = "";
@@ -1428,7 +1436,7 @@ const POLL_INTERVAL_MS = 5000;
         setActiveTab("terminal");
         term.reset();
         try {
-          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true });
+          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume });
           attachedTask.textContent = `attached: ${id} (${note})`;
         } catch (err) { attachedTask.textContent = ""; alert(`resume: ${err.message}`); }
         try { fit.fit(); } catch (_) {}

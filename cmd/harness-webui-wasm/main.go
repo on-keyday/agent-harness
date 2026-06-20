@@ -326,7 +326,11 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
-			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, false)
+			resumeCapsOverride := false
+			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
+				resumeCapsOverride = rcov.Bool()
+			}
+			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -645,7 +649,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
-			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps, false)
+			resumeCapsOverride := false
+			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
+				resumeCapsOverride = rcov.Bool()
+			}
+			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps, resumeCapsOverride)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return

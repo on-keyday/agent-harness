@@ -428,11 +428,29 @@ button:hover { background: #555; }
   margin-left: 0.25rem;
   white-space: nowrap;
 }
+/* apply-caps-on-resume checkbox label (sits under the cap chips row) */
+.caps-on-resume-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  margin: 0 0 0.5rem;
+  font-size: 0.82rem;
+  color: #bbb;
+  cursor: pointer;
+  user-select: none;
+}
+.caps-on-resume-toggle input[type="checkbox"] {
+  accent-color: #2d5;
+  cursor: pointer;
+}
 @media (max-width: 600px) {
   .cap-chip, .cap-quick {
     min-height: 2.2rem;
     font-size: 0.85rem;
     padding: 0.35rem 0.6rem;
+  }
+  .caps-on-resume-toggle {
+    font-size: 0.9rem;
   }
 }
 
