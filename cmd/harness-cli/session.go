@@ -49,7 +49,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	host := fs.String("host", "", "pin to runner by hostname")
 	ip := fs.String("ip", "", "pin to runner by IP address")
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
-	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the spawned task (default: inherit all the spawner holds)")
+	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	var extraArgs repeatableStrings
 	fs.Var(&extraArgs, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
 	detach := false

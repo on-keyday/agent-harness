@@ -1019,22 +1019,22 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
 		return a, nil
 	case CapsAction:
+		onResumeLabel := "off"
+		if a.applyCapsOnResume {
+			onResumeLabel = "on"
+		}
 		if v.OnResume != nil {
 			a.applyCapsOnResume = *v.OnResume
-			onResumeLabel := "off"
+			onResumeLabel = "off"
 			if a.applyCapsOnResume {
 				onResumeLabel = "on"
 			}
-			a.status = "caps on-resume: " + onResumeLabel
+			a.cmdresult.Append(OKStyle.Render("caps on-resume: ") + onResumeLabel)
 		} else if v.Show {
-			onResumeLabel := "off"
-			if a.applyCapsOnResume {
-				onResumeLabel = "on"
-			}
-			a.status = "caps: " + capsLabel(a.sessionCaps) + " on-resume: " + onResumeLabel
+			a.cmdresult.Append("caps: " + capsLabel(a.sessionCaps) + "   on-resume: " + onResumeLabel)
 		} else {
 			a.sessionCaps = v.Caps
-			a.status = "caps set: " + capsLabel(a.sessionCaps)
+			a.cmdresult.Append(OKStyle.Render("caps set: ") + capsLabel(a.sessionCaps) + "   on-resume: " + onResumeLabel)
 		}
 		return a, nil
 	case InteractiveAction:
