@@ -129,7 +129,8 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		if t.CreatorTaskId.Id != ([16]byte{}) {
 			createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
 		}
-		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s%s%s  prompt=%q%s\n",
+		caps := "  caps=" + CapsLabel(t.Capabilities)
+		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s%s%s%s  prompt=%q%s\n",
 			taskIDStr(t.Id.Id[:]),
 			taskStatusStr(t.Status),
 			taskKindStr(t.Kind),
@@ -138,6 +139,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			agent,
 			resumedBy,
 			createdBy,
+			caps,
 			string(t.Prompt),
 			suffix,
 		)

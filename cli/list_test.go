@@ -208,6 +208,59 @@ func TestLsTaskErrorAndExitSuffix(t *testing.T) {
 	}
 }
 
+// TestLsTaskCapsSegment verifies the caps= segment appears in a task row.
+// Spawn|FileRead renders as "spawn,file_read"; zero-value Capability renders
+// as "none" (Capability_None == 0).
+func TestLsTaskCapsSegment(t *testing.T) {
+	var taskID protocol.TaskID
+	taskID.Id[0] = 0x11
+	task := protocol.TaskInfo{
+		Id:           taskID,
+		Status:       protocol.TaskStatus_Running,
+		Capabilities: protocol.Capability_Spawn | protocol.Capability_FileRead,
+	}
+	task.SetRepoPath([]byte("/repo"))
+	task.SetPrompt([]byte("do stuff"))
+
+	lr := &protocol.ListResultBody{
+		Tasks:    []protocol.TaskInfo{task},
+		TasksLen: 1,
+	}
+
+	var out strings.Builder
+	renderList(lr, &out)
+	s := out.String()
+
+	if !strings.Contains(s, "caps=spawn,file_read") {
+		t.Errorf("expected caps=spawn,file_read in output:\n%s", s)
+	}
+}
+
+// TestLsTaskCapsNone verifies that a zero-value Capabilities renders as "none".
+func TestLsTaskCapsNone(t *testing.T) {
+	var taskID protocol.TaskID
+	taskID.Id[0] = 0x22
+	task := protocol.TaskInfo{
+		Id:     taskID,
+		Status: protocol.TaskStatus_Queued,
+		// Capabilities zero-value == Capability_None
+	}
+	task.SetRepoPath([]byte("/repo"))
+
+	lr := &protocol.ListResultBody{
+		Tasks:    []protocol.TaskInfo{task},
+		TasksLen: 1,
+	}
+
+	var out strings.Builder
+	renderList(lr, &out)
+	s := out.String()
+
+	if !strings.Contains(s, "caps=none") {
+		t.Errorf("expected caps=none in output:\n%s", s)
+	}
+}
+
 // TestTaskIDStr verifies taskIDStr behaviour: full-length hex with "-" for
 // the all-zero placeholder.
 func TestTaskIDStr(t *testing.T) {

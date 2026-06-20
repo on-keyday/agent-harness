@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -86,6 +87,7 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	if t.ResumedByKind != protocol.ClientKind_Unspecified {
 		fmt.Fprintf(&sb, "resumed by:    %s\n", originCell(t.ResumedByKind))
 	}
+	fmt.Fprintf(&sb, "caps:          %s\n", cli.CapsLabel(t.Capabilities))
 	fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
 	if len(t.WorktreeDir) > 0 {
 		fmt.Fprintf(&sb, "worktree:      %s\n", string(t.WorktreeDir))
