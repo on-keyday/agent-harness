@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestHasCap(t *testing.T) {
@@ -166,5 +167,127 @@ func TestSpawnAttenuation(t *testing.T) {
 	}
 	if entry3.Capabilities != protocol.Capability_All {
 		t.Fatalf("child3 caps = %#x, want All (operator creator)", entry3.Capabilities)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 4: Capability gate via requiredCap + denyTaskControl
+// ---------------------------------------------------------------------------
+
+// lastTaskControlResponse decodes the last message sent on conn as a
+// TaskControlResponse (stripping the leading AppKind byte).
+func lastTaskControlResponse(t *testing.T, conn *fakeConn) protocol.TaskControlResponse {
+	t.Helper()
+	msgs := conn.Sent()
+	if len(msgs) == 0 {
+		t.Fatal("no messages sent")
+	}
+	raw := msgs[len(msgs)-1]
+	if len(raw) < 2 {
+		t.Fatalf("message too short: %d bytes", len(raw))
+	}
+	var resp protocol.TaskControlResponse
+	if err := resp.DecodeExact(raw[1:]); err != nil {
+		t.Fatalf("DecodeExact TaskControlResponse: %v", err)
+	}
+	return resp
+}
+
+// TestHandleDeniesWithoutCap: caller holds no caps, Cancel → PermissionDenied;
+// victim task must NOT become Cancelled.
+func TestHandleDeniesWithoutCap(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create the agent principal task holding NO caps.
+	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
+		protocol.ClientKind_Agent, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, protocol.Capability_None)
+	ptid := hexToTaskID(t, parentIDHex)
+
+	// Wire a caller conn with a distinct CID.
+	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9600-1")}
+	callerCID := callerConn.ConnectionID().String()
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.principals[callerCID] = ptid
+
+	// Victim task to attempt cancelling (with full caps — irrelevant; caller's caps are what matter).
+	victimIDHex := h.Tasks.Create("repo", "v", protocol.TaskKind_Oneshot,
+		protocol.ClientKind_Cli, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	vtid := hexToTaskID(t, victimIDHex)
+
+	// Build and encode a Cancel request targeting the victim.
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel, RequestId: 7}
+	req.SetCancel(protocol.CancelTask{TaskId: vtid})
+	h.Handle(callerConn, encodeTaskControlRequest(t, req))
+
+	// Victim must NOT be Cancelled.
+	if vt, ok := h.Tasks.Get(victimIDHex); ok && vt.Status == protocol.TaskStatus_Cancelled {
+		t.Fatal("cancel executed despite missing Cancel cap")
+	}
+
+	// Response must be PermissionDenied with correct fields.
+	resp := lastTaskControlResponse(t, callerConn)
+	if resp.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("resp.Kind = %v, want PermissionDenied", resp.Kind)
+	}
+	if resp.RequestId != 7 {
+		t.Fatalf("resp.RequestId = %d, want 7", resp.RequestId)
+	}
+	pd := resp.PermissionDenied()
+	if pd == nil {
+		t.Fatal("PermissionDenied() returned nil")
+	}
+	if pd.RequiredCap != protocol.Capability_Cancel {
+		t.Fatalf("pd.RequiredCap = %v, want Cancel", pd.RequiredCap)
+	}
+	if pd.RequestedKind != protocol.TaskControlKind_Cancel {
+		t.Fatalf("pd.RequestedKind = %v, want Cancel", pd.RequestedKind)
+	}
+}
+
+// TestHandleAllowsOperator: empty principals map → operator (Capability_All) →
+// Cancel succeeds (victim becomes Cancelled, response Kind == Cancel).
+func TestHandleAllowsOperator(t *testing.T) {
+	h := newTestHandler(t)
+	// No entry in h.principals → callerCaps returns Capability_All (operator).
+
+	// Create a Running victim task.
+	var rawID [16]byte
+	rawID[0] = 0xBB
+	victimIDHex := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[victimIDHex] = &TaskEntry{
+		ID:       victimIDHex,
+		RepoPath: "/r",
+		Status:   protocol.TaskStatus_Running,
+	}
+	h.Tasks.order = append(h.Tasks.order, victimIDHex)
+	h.Tasks.mu.Unlock()
+
+	var vtid protocol.TaskID
+	vtid.Id = rawID
+
+	operatorConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel, RequestId: 3}
+	req.SetCancel(protocol.CancelTask{TaskId: vtid})
+	h.Handle(operatorConn, encodeTaskControlRequest(t, req))
+
+	// Victim must be Cancelled.
+	if vt, ok := h.Tasks.Get(victimIDHex); !ok || vt.Status != protocol.TaskStatus_Cancelled {
+		t.Fatalf("expected victim Cancelled, got status=%v ok=%v", func() interface{} {
+			if entry, ok2 := h.Tasks.Get(victimIDHex); ok2 {
+				return entry.Status
+			}
+			return "not found"
+		}(), ok)
+	}
+
+	// Response must be Cancel (not PermissionDenied).
+	resp := lastTaskControlResponse(t, operatorConn)
+	if resp.Kind != protocol.TaskControlKind_Cancel {
+		t.Fatalf("resp.Kind = %v, want Cancel", resp.Kind)
 	}
 }

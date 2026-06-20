@@ -135,6 +135,16 @@ func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
 	return h.principals[connID]
 }
 
+// denyTaskControl rejects a capability-gated request with a typed
+// PermissionDenied response carrying the requested kind and the missing cap.
+func (h *TaskHandler) denyTaskControl(conn ConnHandle, reqKind protocol.TaskControlKind, requestID uint32, required protocol.Capability) {
+	slog.Warn("capability denied", "kind", reqKind, "required_cap", required)
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PermissionDenied, RequestId: requestID}
+	resp.SetPermissionDenied(protocol.PermissionDeniedResponse{RequestedKind: reqKind, RequiredCap: required})
+	out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+	conn.SendMessage(out) //nolint:errcheck
+}
+
 // Handle decodes a TaskControlRequest payload (bytes after the wire-kind byte) and replies via conn.SendMessage.
 // Decode failures are logged and silently dropped (no panic).
 func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
@@ -144,6 +154,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		return
 	}
 
+	cid := conn.ConnectionID().String()
+	if want, gated := requiredCap[req.Kind]; gated {
+		if !hasCap(h.callerCaps(cid), want) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			return
+		}
+	}
+
 	switch req.Kind {
 	case protocol.TaskControlKind_Submit:
 		sub := req.Submit()
@@ -151,7 +169,6 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: Submit variant is nil")
 			return
 		}
-		cid := conn.ConnectionID().String()
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		creatorCaps := h.callerCaps(cid)
@@ -227,10 +244,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenInteractive variant is nil")
 			return
 		}
-		oiCID := conn.ConnectionID().String()
-		origin := h.lookupClientKind(oiCID)
-		creator := h.lookupPrincipal(oiCID)
-		oiCreatorCaps := h.callerCaps(oiCID)
+		origin := h.lookupClientKind(cid)
+		creator := h.lookupPrincipal(cid)
+		oiCreatorCaps := h.callerCaps(cid)
 		oresp := h.handleOpenInteractive(conn, oi, origin, creator, oiCreatorCaps)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
 		resp.SetOpenInteractive(oresp)

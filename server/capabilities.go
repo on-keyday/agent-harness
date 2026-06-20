@@ -6,6 +6,20 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+// requiredCap maps a direction-independent TaskControlKind to the cap it needs.
+// Kinds absent from the map are gated elsewhere: OpenFileTransfer / ListFiles /
+// OpenPortForward are direction-dependent (Task 5); List / GetTaskLog are
+// INFO-scoped (Task 6).
+var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
+	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
+	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,
+	protocol.TaskControlKind_Cancel:          protocol.Capability_Cancel,
+	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
+	protocol.TaskControlKind_AttachSession:   protocol.Capability_ExecAttach,
+	protocol.TaskControlKind_DialRunner:      protocol.Capability_RunnerAdmin,
+}
+
 // hasCap reports whether have includes every bit in want.
 func hasCap(have, want protocol.Capability) bool {
 	return have&want == want
