@@ -788,29 +788,33 @@ git commit -m "feat(cli): inherit-all default, --caps flag, PermissionDenied rec
 
 ---
 
-### Task 8: sandbox launches with the confined preset
+### Task 8: document the capability ↔ sandbox composition (docs only)
+
+**Architecture correction:** `scripts/sandbox` is NOT a spawner — `claude-in-podman.sh`
+is a `--claude-bin` target that runs claude confined in rootless podman, bridging
+`harness-cli` + `HARNESS_*` into the container by default (`--omit-harness-cli`
+disables the control plane entirely). A task's capability confinement is set by
+its **parent at spawn time** via `session new --caps` / `submit --caps` (Task 7) —
+there is no sandbox-side spawn to inject `--caps` into. The capability system and
+the podman sandbox are the two layers of the spec's two-layer model; they compose
+but neither configures the other. Task 8 is therefore documentation: make the new
+middle ground discoverable.
 
 **Files:**
-- Modify: `scripts/sandbox` (the launcher that wraps a sandboxed agent's spawn)
-- Test: manual + a shell assertion (see Step 3)
+- Modify: `scripts/sandbox/README.md` (the "harness control plane bridged in" bullet, ~`:90`)
+- Modify: `scripts/sandbox/claude-in-podman.sh` (header comment block describing the bridge, ~`:15-17` / `:119-122`)
 
-**Interfaces:**
-- Consumes: the `--caps` flag from Task 7.
-- Produces: sandboxed tasks spawned with `--caps none` (data-plane only) or a tuned minimal set.
+- [ ] **Step 1: Update the README bullet** at `scripts/sandbox/README.md:90-98`. It currently says the bridged control plane "re-grants the harness control plane (a deliberate agent could spawn an unsandboxed task and escape) … Disable … for full isolation." Add the capability middle ground: the escape it describes is now closable WITHOUT full `--omit-harness-cli` by spawning the sandboxed task with a confined capability set — e.g. `submit --caps none` (data-plane only: the agent can still `agent send`/`inbox` to talk to its parent, but the server denies `spawn`/`file`/`forward`/`exec_attach`/etc), or `--caps info_global` if it needs to read its own subtree. Reference the spec's two-layer model (OS sandbox = local fs/proc; capabilities = control plane). Keep `--omit-harness-cli` as the "no control plane at all" option. Write the actual prose (no placeholder); keep the existing bullet's facts intact.
 
-- [ ] **Step 1: Read `scripts/sandbox`** and locate where it invokes `harness-cli session new` / `submit` (or where it sets the agent's spawn command). If the sandbox does not itself spawn via harness-cli (it wraps an already-spawned task's process), the confinement must instead be requested by *whoever spawns the sandboxed task* — document this in the script header and have the sandbox-spawn entry point pass `--caps`.
+- [ ] **Step 2: Update the `claude-in-podman.sh` header comment** (the lines describing "harness-cli + the HARNESS_* env are bridged in by default so the confined agent keeps the control plane", ~`:15-17`, and the inline block ~`:119-122`). Add one or two lines: capability confinement of the bridged control plane is set at spawn time via `--caps` on the spawning `session new`/`submit`; `--omit-harness-cli` remains the full-removal option. No behavior change to the script.
 
-- [ ] **Step 2: Pass the confined preset.** Add `--caps none` (or the tuned set, e.g. `--caps info_global` if the worker needs to read its subtree) to the spawn invocation for sandboxed tasks.
-
-- [ ] **Step 3: Assertion test.** Add a shell check (or a Go integration test under `integration/`) that spawns a sandboxed task and asserts a `harness-cli file pull` / `session new` from inside it is denied while `agent send` to its self topic succeeds. Mirror existing `integration/` test style.
-
-Run: the integration target used by the repo (`grep -n integration Makefile` / `.github`); expected: the confined task is denied control-plane ops.
+- [ ] **Step 3: Verify nothing else regressed.** This task changes only comments/markdown. Run `make check` to confirm the tree still builds (no accidental code edits) and `git diff --stat` shows only `scripts/sandbox/README.md` and `scripts/sandbox/claude-in-podman.sh`.
 
 - [ ] **Step 4: Commit.**
 
 ```bash
-git add scripts/sandbox integration/
-git commit -m "feat(sandbox): spawn sandboxed tasks with the confined capability preset"
+git add scripts/sandbox/README.md scripts/sandbox/claude-in-podman.sh
+git commit -m "docs(sandbox): document capability --caps confinement as the bridge middle ground"
 ```
 
 ---
