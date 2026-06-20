@@ -408,6 +408,7 @@ format TaskInfo:
                               # task (kind=agent connection). All-zero for
                               # operator-created tasks. Set at Create; unchanged
                               # on resume. Single parent link.
+    capabilities :Capability  # the task's server-enforced capability set
     repo_path_len :u16
     repo_path :[repo_path_len]u8
     assigned_to :RunnerID

@@ -885,3 +885,17 @@ func TestHandleAttachSession_ViewMode_NoWriterTakeover(t *testing.T) {
 	}
 	waitFor(t, func() bool { return mux.ViewerCount() == 1 })
 }
+
+func TestToTaskInfoCapabilities(t *testing.T) {
+	want := protocol.Capability_Spawn | protocol.Capability_FileRead
+	entry := TaskEntry{
+		ID:           "0000000000000000000000000000000000000000000000000000000000000001",
+		Status:       protocol.TaskStatus_Queued,
+		Capabilities: want,
+		CreatedAt:    time.Now(),
+	}
+	info := toTaskInfo(entry)
+	if info.Capabilities != want {
+		t.Fatalf("toTaskInfo Capabilities = %#x, want %#x", info.Capabilities, want)
+	}
+}

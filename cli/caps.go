@@ -37,6 +37,28 @@ func CapNames(caps []protocol.Capability) []string {
 	return names
 }
 
+// CapsLabel renders a capability bitmask as "all", "none", or a comma-joined
+// list of the set granular cap names (from Capability.String()). Single source
+// of names — no literal map.
+func CapsLabel(c protocol.Capability) string {
+	if c == protocol.Capability_All {
+		return "all"
+	}
+	if c == protocol.Capability_None {
+		return "none"
+	}
+	var names []string
+	for _, g := range GrantableCaps() {
+		if g == protocol.Capability_None || g == protocol.Capability_All {
+			continue
+		}
+		if c&g == g {
+			names = append(names, g.String())
+		}
+	}
+	return strings.Join(names, ",")
+}
+
 // ParseCaps converts a comma-separated list of capability names into a bitmask.
 // Empty/whitespace → Capability_All (inherit-all); unknown name → error.
 //

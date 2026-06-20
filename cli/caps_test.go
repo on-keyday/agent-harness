@@ -6,6 +6,19 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+// TestCapsLabel verifies the three output forms of CapsLabel.
+func TestCapsLabel(t *testing.T) {
+	if got := CapsLabel(protocol.Capability_All); got != "all" {
+		t.Fatalf("all=%q", got)
+	}
+	if got := CapsLabel(protocol.Capability_None); got != "none" {
+		t.Fatalf("none=%q", got)
+	}
+	if got := CapsLabel(protocol.Capability_Spawn | protocol.Capability_FileRead); got != "spawn,file_read" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 // TestParseCaps verifies the three behaviours of ParseCaps:
 //  1. Empty input → Capability_All (inherit-all default).
 //  2. Comma-separated valid names → correct OR mask.

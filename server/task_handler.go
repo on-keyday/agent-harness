@@ -1110,6 +1110,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		OriginKind:    t.OriginKind,
 		ResumedByKind: t.ResumedByKind,
 		CreatorTaskId: t.CreatorTaskID,
+		Capabilities:  t.Capabilities,
 		CreatedAt:     uint64(t.CreatedAt.UnixNano()),
 	}
 	info.SetRepoPath([]byte(t.RepoPath))

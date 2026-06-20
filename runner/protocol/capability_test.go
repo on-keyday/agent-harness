@@ -32,6 +32,19 @@ func TestRequestedCapsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTaskInfoCapabilitiesRoundTrip(t *testing.T) {
+	in := TaskInfo{}
+	in.Capabilities = Capability_Spawn | Capability_FileRead
+	b := in.MustAppend(nil)
+	var out TaskInfo
+	if err := out.DecodeExact(b); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Capabilities != in.Capabilities {
+		t.Fatalf("round-trip Capabilities = %#x, want %#x", out.Capabilities, in.Capabilities)
+	}
+}
+
 func TestResumeCapsOverrideRoundTrip(t *testing.T) {
 	// override = true: bit survives encode/decode
 	in := SubmitRequest{}
