@@ -17,6 +17,7 @@
 - **Schema describes every byte.** The bitmask and `requested_caps` are explicit `:Capability` wire fields. Do NOT add an `is_defined`/membership assertion to any `Capability` field — these are OR-combinations, not single members.
 - **Omitted grant = inherit-all, applied CLI-side.** A wire zero (`Capability.none`) means "grant nothing". The CLI sets `requested_caps = Capability.all` when the caller did not specify caps. The server logic is pure intersection.
 - **Enforcement is server-only.** `harness-cli`/`cli/*` issue requests unchanged; denial is authoritative only from the server.
+- **Cap names have ONE source: `Capability.String()`** (snake_case string reprs in the `.bgn`, Task 4 Step 0a). CLI name parsing/printing derives from it — never hand-write a duplicate name→bit literal map.
 - **Deny representation = a new additive `TaskControlKind.permission_denied` response** carrying `{requested_kind, required_cap}` (Task 4). Existing per-kind responses/statuses are UNCHANGED — no existing status is reused or converged onto it. CLI recognizes it at the single shared `RoundTripTaskControl` (Task 7), covering all native + wasm callers; do NOT add per-caller handling.
 - **Verify with make targets**, not ad-hoc `go build`: `make check` (compile), `make test` (`go test ./...`), `make vet`. After protoregen, run `make check` before relying on the generated types.
 - **No local env in committed content** (repo is public): placeholders only in any new docs/comments.
@@ -413,8 +414,27 @@ recognition is one change in `RoundTripTaskControl` (Task 7).
 - Consumes: `callerCaps`, `hasCap` (Task 3), `protocol.Capability_*` (PascalCase, Task 1).
 - Produces: `protocol.TaskControlKind_PermissionDenied` + `PermissionDeniedResponse{RequestedKind protocol.TaskControlKind, RequiredCap protocol.Capability}`; `requiredCap` map; `func (h *TaskHandler) denyTaskControl(conn ConnHandle, reqKind protocol.TaskControlKind, requestID uint32, required protocol.Capability)`.
 
-- [ ] **Step 0: Schema — add the PermissionDenied response.** In `runner/protocol/message.bgn`:
-  - Append to `enum TaskControlKind` (`:186`), AT THE END to keep existing ordinals stable: `permission_denied`
+- [ ] **Step 0: Schema.** In `runner/protocol/message.bgn`:
+  - **(a) Add snake_case string representations to the `Capability` enum** so `Capability.String()` returns the CLI-facing names (single source for Task 7's `parseCaps`). brgen lets a member carry BOTH an explicit value AND a string repr, comma-separated: `name = <value>, "<string>"`. Rewrite the enum block (the explicit power-of-two values are unchanged — only the string repr is added; the Go constant identifiers `Capability_Spawn` etc. are UNCHANGED, only `String()` output changes from PascalCase to snake_case):
+    ```
+    enum Capability:
+        :u32
+        none           = 0x000, "none"
+        spawn          = 0x001, "spawn"
+        cancel         = 0x002, "cancel"
+        exec_attach    = 0x004, "exec_attach"
+        file_read      = 0x008, "file_read"
+        file_write     = 0x010, "file_write"
+        forward_local  = 0x020, "forward_local"
+        forward_remote = 0x040, "forward_remote"
+        notify         = 0x080, "notify"
+        prune          = 0x100, "prune"
+        runner_admin   = 0x200, "runner_admin"
+        info_global    = 0x400, "info_global"
+        all            = 0x7ff, "all"
+    ```
+    After protoregen, VERIFY `Capability_Spawn.String() == "spawn"` (a one-line check or assert in a test). If the comma syntax is rejected by brgen, STOP and report BLOCKED with the exact codegen error (do not hand-edit message.go).
+  - **(b) Add the PermissionDenied response.** Append to `enum TaskControlKind` (`:186`), AT THE END to keep existing ordinals stable: `permission_denied`
   - Add a new format:
     ```
     format PermissionDeniedResponse:
@@ -701,7 +721,41 @@ func TestParseCapsFlag(t *testing.T) {
 
 - [ ] **Step 2: Run (fails).** Run: `go test ./cmd/harness-cli/ -run TestParseCapsFlag -v` → FAIL.
 
-- [ ] **Step 3: Implement `parseCaps`** (new helper in `cmd/harness-cli/`): empty → `Capability_All`; else split on `,`, map each lowercase name (`spawn`, `cancel`, `exec_attach`, `file_read`, `file_write`, `forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`, `info_global`, `none`, `all`) to its `protocol.Capability_*` bit, OR them, error on unknown. (Keep the CLI-facing names snake_case for usability even though the Go constants are PascalCase.)
+- [ ] **Step 3: Implement `parseCaps`** (new helper in `cmd/harness-cli/`) using `Capability.String()` (snake_case, from Task 4 Step 0a) as the single source of names — do NOT hand-write a name→bit literal map (it would drift from the enum). Build the lookup from the granular bit constants:
+
+```go
+// grantableCaps lists the individual cap bits a --caps flag may name.
+// Names come from Capability.String() (the .bgn string reprs) — single source.
+var grantableCaps = []protocol.Capability{
+	protocol.Capability_None, protocol.Capability_Spawn, protocol.Capability_Cancel,
+	protocol.Capability_ExecAttach, protocol.Capability_FileRead, protocol.Capability_FileWrite,
+	protocol.Capability_ForwardLocal, protocol.Capability_ForwardRemote, protocol.Capability_Notify,
+	protocol.Capability_Prune, protocol.Capability_RunnerAdmin, protocol.Capability_InfoGlobal,
+	protocol.Capability_All,
+}
+
+func parseCaps(s string) (protocol.Capability, error) {
+	if strings.TrimSpace(s) == "" {
+		return protocol.Capability_All, nil // omitted → inherit-all (server intersects)
+	}
+	byName := make(map[string]protocol.Capability, len(grantableCaps))
+	for _, c := range grantableCaps {
+		byName[c.String()] = c
+	}
+	var out protocol.Capability
+	for _, name := range strings.Split(s, ",") {
+		name = strings.TrimSpace(name)
+		c, ok := byName[name]
+		if !ok {
+			return 0, fmt.Errorf("unknown capability %q (valid: %s)", name, strings.Join(capNames(grantableCaps), ", "))
+		}
+		out |= c
+	}
+	return out, nil
+}
+```
+
+(`capNames` maps the slice through `.String()` for the error message. This keeps every user-facing cap name sourced from the enum's string repr.)
 
 - [ ] **Step 4: Wire `--caps` into `submit`, `session new`, `interactive`** — add `caps := fs.String("caps", "", "comma-separated capability names to grant the spawned task (default: inherit all the spawner holds)")`, parse via `parseCaps`, set `req.RequestedCaps`. Thread through the `cli` helper signatures that construct the request bodies.
 
