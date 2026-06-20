@@ -755,6 +755,21 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	}()
 
 	gate := newPSKGate(s.cfg.PSK)
+	// Wire ticket validation into the gate: an agent that fails this check
+	// must NOT fall through to operator (this is the hole the merged handshake
+	// closes). Reuses s.establishAgentIdentity which calls Board.Registry().Validate.
+	gate.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
+		if s.Board == nil {
+			return protocol.PskAuthStatus_Ok // no board → degrade to ok (test wiring)
+		}
+		rid := boardRunnerIDFromProto(info.RunnerId)
+		tid := boardTaskIDFromProto(info.TaskId)
+		status := s.Board.Registry().Validate(rid, tid, info.AuthTicket)
+		if status == agentboard.HelloStatusOk {
+			return protocol.PskAuthStatus_Ok
+		}
+		return protocol.PskAuthStatus_BadTicket
+	}
 
 	trsf.AutoReceive(connCtx, p, session, func(msg *objproto.Message, err error) {
 		if err != nil {
@@ -765,13 +780,29 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		if msg == nil || len(msg.Data) == 0 {
 			return
 		}
-		// PSK gate: first message must be PskAuth when PSK is configured.
-		if isPSKMsg, shouldClose := gate.Check(msg.Data, session.GetTranscript(), func(resp []byte) {
+		// PSK gate: first message must be [0x45]+PskAuthRequest (merged handshake).
+		// Identity is required regardless of PSK config (fail-closed).
+		isPSKMsg, shouldClose, accepted := gate.Check(msg.Data, session.GetTranscript(), func(resp []byte) {
 			session.SendMessage(resp) //nolint:errcheck
-		}); isPSKMsg || !gate.Authed() {
+		})
+		if isPSKMsg || !gate.Authed() {
 			if shouldClose {
 				trsf.SendClose(session) //nolint:errcheck
 				cancel()
+			}
+			if accepted != nil {
+				// Auth succeeded: re-dispatch the embedded hello to the normal
+				// handlers so they record identity (clientKinds/principals for
+				// client role; Registry.Add for runner role). We re-encode the
+				// embedded hello as the normal wire form the handlers already consume:
+				//   client → [0x41]+TaskControlRequest{Kind:ClientHello,...}
+				//   runner → [0x43]+RunnerMessage{Kind:Hello,...}
+				// Then call s.dispatcher.Dispatch so the same code path runs as
+				// if the hello had arrived on the wire in the old two-RTT form.
+				// Reused code: TaskHandler.Handle (task_handler.go:148) and
+				// RunnerHandler.Handle (runner_handler.go:64) — both are invoked
+				// via d.OnTaskControl / d.OnRunnerControl in Dispatch (dispatch.go:58).
+				pskDispatchIdentity(s.dispatcher, wrapped, accepted)
 			}
 			return
 		}
