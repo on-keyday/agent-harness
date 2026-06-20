@@ -18,14 +18,20 @@ import (
 
 // clearAgentEnv unsets the harness agent identity env vars for the duration
 // of t. Integration tests that connect as operators (ClientKind_Cli) must call
-// this: buildMergedClientHello auto-upgrades to Agent when all three vars are
-// set, which causes capability denials when the test server has no matching
-// task entry.
+// this: buildMergedClientHello auto-upgrades to Agent when all three identity
+// vars are set, which causes capability denials when the test server has no
+// matching task entry. It also clears the server-targeting vars so a test run
+// from inside a live harness task dials the in-test server (passed explicitly)
+// instead of the real running server — otherwise the test client picks up the
+// real server's CID/ws-path/proxy and fails the handshake (e.g. BadPsk).
 func clearAgentEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("HARNESS_RUNNER_ID", "")
 	t.Setenv("HARNESS_TASK_ID", "")
 	t.Setenv("HARNESS_AUTH_TICKET", "")
+	t.Setenv("HARNESS_SERVER_CID", "")
+	t.Setenv("HARNESS_WS_PATH", "")
+	t.Setenv("HARNESS_PROXY_VIA_RUNNER", "")
 }
 
 // TestFileTransferE2E exercises the full client → server → runner splice
