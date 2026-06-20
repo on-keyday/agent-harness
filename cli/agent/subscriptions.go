@@ -17,16 +17,12 @@ import (
 func Subscriptions(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent subscriptions", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
-	taskID := fs.String("task-id", "", "")
-	runnerID := fs.String("runner-id", "", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
-		TaskID:    *taskID,
-		RunnerID:  *runnerID,
 	})
 	if err != nil {
 		return err

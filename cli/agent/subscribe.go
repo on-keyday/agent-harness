@@ -16,8 +16,6 @@ import (
 func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind agentboard.AgentMessageKind) error {
 	fs := flag.NewFlagSet("agent subscribe", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
-	taskID := fs.String("task-id", "", "")
-	runnerID := fs.String("runner-id", "", "")
 	pattern := fs.String("topic", "", "topic to subscribe (exact match in v1)")
 	self := fs.Bool("self", false, "subscribe to this agent's inbound topic (chat.<first-8-hex-of-task-id>); mutually exclusive with --topic")
 	if err := fs.Parse(args); err != nil {
@@ -27,7 +25,7 @@ func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind
 		return errors.New("--self and --topic are mutually exclusive")
 	}
 	if *self {
-		tid, err := cliopts.ResolveTaskID(*taskID)
+		tid, err := cliopts.ResolveTaskID("")
 		if err != nil {
 			return err
 		}
@@ -40,8 +38,6 @@ func subscribeOrUnsub(ctx context.Context, args []string, stdout io.Writer, kind
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
-		TaskID:    *taskID,
-		RunnerID:  *runnerID,
 	})
 	if err != nil {
 		return err

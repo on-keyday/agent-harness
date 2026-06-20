@@ -19,8 +19,6 @@ import (
 func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent wait", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "server ConnectionID (env: HARNESS_SERVER_CID)")
-	taskID := fs.String("task-id", "", "(debug) task id hex (env: HARNESS_TASK_ID)")
-	runnerID := fs.String("runner-id", "", "(debug) runner id (env: HARNESS_RUNNER_ID)")
 	topic := fs.String("topic", "", "topic to wait on")
 	sinceLast := fs.Bool("since-last", false, "use the persisted cursor")
 	since := fs.Uint64("since", 0, "cursor to wait beyond (ignored if --since-last)")
@@ -34,8 +32,6 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
-		TaskID:    *taskID,
-		RunnerID:  *runnerID,
 	})
 	if err != nil {
 		return err

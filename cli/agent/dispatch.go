@@ -19,8 +19,6 @@ import (
 func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent dispatch", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
-	taskID := fs.String("task-id", "", "")
-	runnerID := fs.String("runner-id", "", "")
 	topic := fs.String("topic", "", "topic to send to")
 	replyTopic := fs.String("reply-topic", "", "topic to wait for reply on")
 	data := fs.String("data", "-", `payload string or "-" for stdin`)
@@ -45,8 +43,6 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
-		TaskID:    *taskID,
-		RunnerID:  *runnerID,
 	})
 	if err != nil {
 		return err

@@ -33,8 +33,6 @@ import (
 func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent inbox", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
-	taskID := fs.String("task-id", "", "")
-	runnerID := fs.String("runner-id", "", "")
 	sinceLast := fs.Bool("since-last", false, "use persisted cursor (peek; combine with --commit to advance)")
 	commit := fs.Bool("commit", false, "advance the persisted cursor (hook use only — manual callers should leave this off)")
 	since := fs.Uint64("since", 0, "cursor (ignored if --since-last)")
@@ -47,8 +45,6 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
-		TaskID:    *taskID,
-		RunnerID:  *runnerID,
 	})
 	if err != nil {
 		return err

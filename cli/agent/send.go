@@ -17,8 +17,6 @@ import (
 func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent send", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "server ConnectionID (env: HARNESS_SERVER_CID)")
-	taskID := fs.String("task-id", "", "(debug) task id hex (env: HARNESS_TASK_ID)")
-	runnerID := fs.String("runner-id", "", "(debug) runner id (env: HARNESS_RUNNER_ID)")
 	topic := fs.String("topic", "", "agentboard topic")
 	data := fs.String("data", "-", `payload string, or "-" to read stdin`)
 	if err := fs.Parse(args); err != nil {
@@ -41,8 +39,6 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
-		TaskID:    *taskID,
-		RunnerID:  *runnerID,
 	})
 	if err != nil {
 		return err

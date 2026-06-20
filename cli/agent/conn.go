@@ -20,12 +20,10 @@ import (
 func trsfStreamID(id uint64) trsf.StreamID { return trsf.StreamID(id) }
 
 // Flags is the common flag set for all `harness-cli agent ...` subcommands.
-// All fields except AuthTicket fall back to env (HARNESS_*); AuthTicket is env-only.
+// ServerCID/WSPath/PSK are flag-driven; identity (task/runner) is env-only
+// (HARNESS_TASK_ID / HARNESS_RUNNER_ID) — matching buildMergedClientHello.
 type Flags struct {
 	ServerCID string
-	TaskID    string
-	RunnerID  string
-	Hostname  string
 	WSPath    string
 }
 
@@ -135,11 +133,11 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	tid, err := cliopts.ResolveTaskID(f.TaskID)
+	tid, err := cliopts.ResolveTaskID("")
 	if err != nil {
 		return nil, err
 	}
-	rid, err := cliopts.ResolveRunnerID(f.RunnerID)
+	rid, err := cliopts.ResolveRunnerID("")
 	if err != nil {
 		return nil, err
 	}
