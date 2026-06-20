@@ -81,7 +81,7 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	fmt.Fprintf(&sb, "status:        %s\n", taskStatusStr(t.Status))
 	fmt.Fprintf(&sb, "from:          %s\n", originCell(t.OriginKind))
 	if t.CreatorTaskId.Id != ([16]byte{}) {
-		fmt.Fprintf(&sb, "created by:    %s\n", hex.EncodeToString(t.CreatorTaskId.Id[:])[:8])
+		fmt.Fprintf(&sb, "created by:    %s\n", hex.EncodeToString(t.CreatorTaskId.Id[:]))
 	}
 	if t.ResumedByKind != protocol.ClientKind_Unspecified {
 		fmt.Fprintf(&sb, "resumed by:    %s\n", originCell(t.ResumedByKind))
