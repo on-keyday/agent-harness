@@ -112,17 +112,13 @@ func main() {
 			os.Exit(2)
 		}
 		sel := resolveSelector()
-		// Hand-rolled Dial→SayHello→Submit→Close so the server records
-		// kind=cli on this connection. Used by ii (origin tracking) so
-		// the resulting task is attributed to "cli" in `harness-cli ls`.
-		c, err := cli.Dial(ctx, parseCID())
+		// Dial sends the merged PSK+identity handshake (kind=Cli or auto-upgrades
+		// to Agent when in-task env is present); no separate SayHelloAuto needed.
+		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
-			die(err)
-		}
 		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs))
 		if err != nil {
 			die(err)
@@ -259,16 +255,12 @@ func main() {
 			os.Exit(2)
 		}
 		sel := resolveSelector()
-		// Hand-rolled Dial→SayHello→Interactive→Close so the server
-		// records kind=cli on this connection (origin attribution).
-		c, err := cli.Dial(ctx, parseCID())
+		// Dial sends the merged PSK+identity handshake; no separate SayHelloAuto needed.
+		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
-			die(err)
-		}
 		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, false, caps, *resume != "" && capsExplicitlySet(fs)); err != nil {
 			die(err)
 		}
@@ -280,14 +272,11 @@ func main() {
 		}
 		fsub := args[0]
 		rest := args[1:]
-		c, err := cli.Dial(ctx, parseCID())
+		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
-			die(err)
-		}
 		switch fsub {
 		case "push":
 			fs := flag.NewFlagSet("file push", flag.ExitOnError)
@@ -401,14 +390,11 @@ func main() {
 			}
 			parsedR = append(parsedR, sp)
 		}
-		c, err := cli.Dial(ctx, parseCID())
+		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
 		if err != nil {
 			die(err)
 		}
 		defer c.Close()
-		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
-			die(err)
-		}
 		fctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 		defer cancel()
 		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
@@ -619,7 +605,7 @@ func die(err error) {
 // server still considers active (Queued/Running/Detached) are skipped with
 // a warning unless force is set.
 func classifyForLocalPrune(ctx context.Context, peerCID objproto.ConnectionID, taskIDs []string, force bool, out io.Writer) ([]string, error) {
-	c, err := cli.Dial(ctx, peerCID)
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return nil, err
 	}

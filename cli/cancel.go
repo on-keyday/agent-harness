@@ -37,7 +37,7 @@ func (c *Client) Cancel(ctx context.Context, taskIDHex string) error {
 // Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
 // should hold a *Client and call (*Client).Cancel instead.
 func Cancel(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex string) error {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}

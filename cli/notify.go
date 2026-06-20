@@ -143,7 +143,7 @@ func (c *Client) Notify(ctx context.Context, level, title, text string) error {
 // Notify (package-level) opens a fresh Client per call — for short-lived
 // harness-cli. Long-lived consumers should hold a *Client and call the method.
 func Notify(ctx context.Context, peerCID objproto.ConnectionID, level, title, text string) error {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}

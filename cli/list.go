@@ -173,7 +173,7 @@ func originStr(k protocol.ClientKind) string {
 // Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
 // should hold a *Client and call (*Client).List instead.
 func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}

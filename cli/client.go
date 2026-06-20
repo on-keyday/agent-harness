@@ -38,13 +38,20 @@ type Client struct {
 // kind responses are handled by peer.Conn directly (it routes them to its
 // pubsub.Client); TaskControl-kind responses land in c.dispatchControl below.
 //
+// kind is the ClientKind to announce in the merged PSK+identity handshake.
+// Operator surfaces pass protocol.ClientKind_Cli / _Tui / _Webui; the merged
+// builder auto-upgrades to Agent when the in-task env (HARNESS_RUNNER_ID /
+// HARNESS_TASK_ID / HARNESS_AUTH_TICKET) is fully populated. Identity is
+// established structurally in this first message — no separate SayHello call
+// is needed or expected after Dial returns.
+//
 // When HARNESS_PROXY_VIA_RUNNER is set in the env, Dial routes through the
 // Phase B objproto negotiated-proxy path (DialViaProxy) instead of dialing
 // the server directly. HARNESS_TASK_ID is read for the proxy ceremony's
 // task-binding check; if proxy_via is set but task_id is missing/invalid,
 // Dial returns an error (no silent fall-back). Admin invocations from a
 // laptop without HARNESS_PROXY_VIA_RUNNER keep dialing directly.
-func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
+func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.ClientKind) (*Client, error) {
 	pc, err := DialPeerConn(ctx, peerCID)
 	if err != nil {
 		return nil, err
@@ -55,14 +62,18 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 	}
 
 	psk := GetPSK()
-	pskRespCh := make(chan appwire.PskAuthStatus, 1)
+	// Receives exactly one PskAuthResponse (brgen-decoded) from the server.
+	pskRespCh := make(chan protocol.PskAuthResponse, 1)
 
-	// Combined handler: PSK response during handshake, TaskControl after.
+	// Combined handler: PskAuth response during merged handshake, TaskControl after.
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
-			select {
-			case pskRespCh <- appwire.PskAuthStatus(payload[0]):
-			default:
+			var resp protocol.PskAuthResponse
+			if _, err := resp.Decode(payload); err == nil {
+				select {
+				case pskRespCh <- resp:
+				default:
+				}
 			}
 			return
 		}
@@ -78,17 +89,17 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID) (*Client, error) {
 		case <-pskCtx.Done():
 		}
 	}()
-	pskErr := SendAndWaitPSK(pskCtx, func(b []byte) error {
+	pskErr := SendMergedHandshake(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pc.Connection().GetTranscript(), pskRespCh)
+	}, psk, pc.Connection().GetTranscript(), kind, pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
 		return nil, &PSKAuthError{Err: pskErr}
 	}
 
-	// PSK exchange complete — switch to the pure app handler.
+	// Merged handshake complete — switch to the pure app handler.
 	pc.SetOnControl(c.dispatchControl)
 	return c, nil
 }

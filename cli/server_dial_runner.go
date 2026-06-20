@@ -32,7 +32,7 @@ type taskControlClient interface {
 // embedders that already hold a *Client should call ServerDialRunnerWith
 // directly to skip the redundant Dial/Close.
 func ServerDialRunner(ctx context.Context, serverCID objproto.ConnectionID, targetCID objproto.ConnectionID, viaCID objproto.ConnectionID) (protocol.DialRunnerResponse, error) {
-	c, err := Dial(ctx, serverCID)
+	c, err := Dial(ctx, serverCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return protocol.DialRunnerResponse{}, fmt.Errorf("dial server: %w", err)
 	}

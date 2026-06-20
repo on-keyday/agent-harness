@@ -58,7 +58,7 @@ func (c *Client) WatchNotificationsText(ctx context.Context, out io.Writer) erro
 // WatchNotifications (package-level) opens a fresh Client per call (short-lived
 // harness-cli). Writes JSON lines. Long-lived consumers hold a *Client.
 func WatchNotifications(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
@@ -69,7 +69,7 @@ func WatchNotifications(ctx context.Context, peerCID objproto.ConnectionID, out 
 // WatchNotificationsText (package-level) is the human-readable variant for the
 // `harness-cli notify-watch` subcommand.
 func WatchNotificationsText(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}

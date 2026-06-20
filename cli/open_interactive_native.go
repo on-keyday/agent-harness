@@ -195,7 +195,7 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 // the harness-cli `interactive` subcommand. Long-lived consumers should hold
 // a *Client and call (*Client).Interactive instead.
 func Interactive(ctx context.Context, peerCID objproto.ConnectionID, repo string) (string, error) {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return "", err
 	}

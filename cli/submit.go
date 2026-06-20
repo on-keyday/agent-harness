@@ -133,7 +133,7 @@ func parseTaskIDHex(s string) (protocol.TaskID, error) {
 // cost is acceptable. Long-lived consumers should hold a *Client and call
 // (*Client).Submit instead.
 func Submit(ctx context.Context, peerCID objproto.ConnectionID, repo, prompt string) (string, error) {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return "", err
 	}

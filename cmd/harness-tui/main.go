@@ -61,7 +61,7 @@ func main() {
 		enabled := *persist && !*noPersist
 		err := cli.PersistLoop(ctx,
 			func(dialCtx context.Context) (cli.PersistHandle, error) {
-				c, err := cli.Dial(dialCtx, peerCID)
+				c, err := cli.Dial(dialCtx, peerCID, protocol.ClientKind_Tui)
 				if err != nil {
 					return nil, err
 				}
@@ -69,9 +69,6 @@ func main() {
 			},
 			func(runCtx context.Context, h cli.PersistHandle) error {
 				handle := h.(*cli.ClientHandle)
-				if err := handle.C.SayHello(runCtx, protocol.ClientKind_Tui); err != nil {
-					return err
-				}
 				program.Send(tui.BindClientMsg{Client: handle.C})
 				program.Send(tui.RefreshSnapshot(handle.C)())
 				go tui.SubscribeTaskStatus(runCtx, handle.C, program)

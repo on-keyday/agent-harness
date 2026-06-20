@@ -182,7 +182,7 @@ func harnessConnect(this js.Value, args []js.Value) any {
 			go func() {
 				err := cli.PersistLoop(rootCtx,
 					func(dialCtx context.Context) (cli.PersistHandle, error) {
-						c, derr := cli.Dial(dialCtx, peerCIDLocal)
+						c, derr := cli.Dial(dialCtx, peerCIDLocal, protocol.ClientKind_Webui)
 						if derr != nil {
 							return nil, derr
 						}
@@ -190,9 +190,6 @@ func harnessConnect(this js.Value, args []js.Value) any {
 					},
 					func(runCtx context.Context, h cli.PersistHandle) error {
 						handle := h.(*cli.ClientHandle)
-						if err := handle.C.SayHello(runCtx, protocol.ClientKind_Webui); err != nil {
-							return err
-						}
 						clientMu.Lock()
 						client = handle.C
 						clientMu.Unlock()

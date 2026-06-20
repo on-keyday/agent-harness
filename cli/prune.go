@@ -125,7 +125,7 @@ func (c *Client) PruneTasks(ctx context.Context, cutoff time.Time, taskIDs []str
 // Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
 // should hold a *Client and call (*Client).Prune instead.
 func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Duration, taskIDs []string, force bool, out io.Writer) error {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func Prune(ctx context.Context, peerCID objproto.ConnectionID, before time.Durat
 // call. Suitable for short-lived CLI processes. Long-lived consumers should
 // hold a *Client and call (*Client).PruneTasks instead.
 func PruneTasks(ctx context.Context, peerCID objproto.ConnectionID, cutoff time.Time, taskIDs []string, force bool) (PruneResult, error) {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return PruneResult{}, err
 	}

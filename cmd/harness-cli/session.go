@@ -93,14 +93,11 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	ctx := context.Background()
-	c, err := cli.Dial(ctx, cid)
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
-		return err
-	}
 
 	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
 
@@ -151,14 +148,11 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 	}
 
 	ctx := context.Background()
-	c, err := cli.Dial(ctx, cid)
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
-	if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
-		return err
-	}
 
 	if _, err := c.SessionAttach(ctx, taskIDHex, mode); err != nil {
 		return err
@@ -169,7 +163,7 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 // runSessionLs lists detachable interactive sessions as JSON Lines.
 func runSessionLs(cid objproto.ConnectionID, _ []string) error {
 	ctx := context.Background()
-	c, err := cli.Dial(ctx, cid)
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}
@@ -205,7 +199,7 @@ func runSessionKill(cid objproto.ConnectionID, args []string) error {
 		return fmt.Errorf("usage: session kill <id>")
 	}
 	ctx := context.Background()
-	c, err := cli.Dial(ctx, cid)
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}

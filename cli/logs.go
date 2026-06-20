@@ -96,7 +96,7 @@ func (c *Client) isTaskTerminal(ctx context.Context, taskIDHex string) (bool, er
 // Suitable for short-lived CLI processes (harness-cli). Long-lived consumers
 // should hold a *Client and call (*Client).Logs instead.
 func Logs(ctx context.Context, peerCID objproto.ConnectionID, taskID string, out io.Writer, follow bool) error {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return err
 	}

@@ -73,7 +73,7 @@ func (c *Client) GetTaskLog(ctx context.Context, taskIDHex string) ([]byte, bool
 // call. Suitable for short-lived CLI processes. Long-lived consumers should
 // hold a *Client and call (*Client).GetTaskLog instead.
 func GetTaskLog(ctx context.Context, peerCID objproto.ConnectionID, taskIDHex string) ([]byte, bool, error) {
-	c, err := Dial(ctx, peerCID)
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		return nil, false, err
 	}
