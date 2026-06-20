@@ -428,6 +428,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"origin":     clientKindLower(t.OriginKind),
 					"resumedBy":  clientKindLower(t.ResumedByKind),
 					"createdBy":  creatorShort(t.CreatorTaskId),
+					"caps":       cli.CapsLabel(t.Capabilities),
 				})
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{

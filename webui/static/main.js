@@ -1389,6 +1389,7 @@ const POLL_INTERVAL_MS = 5000;
       let attr = `  from=${t.origin || "-"}`;
       if (t.createdBy) attr += `  by=${t.createdBy}`;
       if (t.resumedBy) attr += `  resumed_by=${t.resumedBy}`;
+      if (t.caps) attr += `  caps=${t.caps}`;
       row.textContent = `${t.id.slice(0, 12)}…  ${t.status}  ${t.kind}  ${t.repoPath}${attr}  ${JSON.stringify(promptShort)}`;
       const sheet = document.createElement("div");
       sheet.className = "task-sheet";
