@@ -422,7 +422,7 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 	// ignored — the existing TaskEntry's RepoPath is authoritative because
 	// that's the directory claude's session storage is keyed under.
 	if !isZeroTaskID(req.ResumeTaskId) {
-		return h.handleSubmitResume(req, origin)
+		return h.handleSubmitResume(req, origin, creatorCaps)
 	}
 
 	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
@@ -465,7 +465,7 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 //  4. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
 //     resume_not_terminal / resume_not_found wire codes; the latter handles
 //     the (rare) race where the entry was pruned between steps 1 and 4.
-func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin protocol.ClientKind) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) protocol.SubmitResponse {
 	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
 	repo, kind, ok := h.Tasks.PeekRepo(idHex)
 	if !ok || kind != protocol.TaskKind_Oneshot {
@@ -489,7 +489,9 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 	}
 	bound := cands[0]
 
-	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin); err != nil {
+	override := req.ResumeCapsOverride()
+	newCaps := intersectCaps(callerCaps, req.RequestedCaps)
+	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
@@ -584,7 +586,9 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// Allocate or revive the task entry.
 	var taskIDHex string
 	if resuming {
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin); err != nil {
+		override := req.ResumeCapsOverride()
+		newCaps := intersectCaps(creatorCaps, req.RequestedCaps)
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)

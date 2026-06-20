@@ -222,7 +222,7 @@ func (e ResumeError) Error() string {
 // runner candidates without first holding the lock. Use it before Resume.
 //
 // Returns the post-reset TaskEntry snapshot on success.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -268,6 +268,15 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 			ResumedByKind: uint8(resumerKind),
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_resumed", "task_id", id, "err", err)
+		}
+	}
+
+	if capsOverride {
+		e.Capabilities = newCaps
+		if s.wal != nil {
+			if err := s.wal.Write(WALEvent{Type: "task_caps_changed", TaskID: id, Capabilities: uint32(newCaps)}); err != nil {
+				slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
+			}
 		}
 	}
 
@@ -670,6 +679,10 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Selector = ev.Selector
 				t.BoundRunnerID = ev.BoundRunnerID
 				t.ResumedByKind = protocol.ClientKind(ev.ResumedByKind)
+			}
+		case "task_caps_changed":
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				t.Capabilities = protocol.Capability(ev.Capabilities)
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {

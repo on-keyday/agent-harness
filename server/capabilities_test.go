@@ -737,3 +737,133 @@ func TestTopicsGated(t *testing.T) {
 		}
 	})
 }
+
+// ---------------------------------------------------------------------------
+// Task 2: TestResumeCapsOverride
+// ---------------------------------------------------------------------------
+
+// markTerminalForTest drives a task to a terminal state (Succeeded) by
+// assigning then finishing it. Mirrors the pattern used in resume_test.go.
+func markTerminalForTest(t *testing.T, h *TaskHandler, idHex string) {
+	t.Helper()
+	h.Tasks.Assign(idHex, "runner-x", "/wt/x")
+	h.Tasks.Finish(idHex, 0, nil)
+	e, ok := h.Tasks.Get(idHex)
+	if !ok {
+		t.Fatalf("markTerminalForTest: task %q not found", idHex)
+	}
+	if e.Status != protocol.TaskStatus_Succeeded {
+		t.Fatalf("markTerminalForTest: status = %v, want Succeeded", e.Status)
+	}
+}
+
+// TestResumeCapsOverride covers:
+//  1. operator override → caps replaced by intersect(All, requested) = requested.
+//  2. plain resume (override=false) → caps UNCHANGED (regression guard).
+//  3. limited agent override → caps = intersect(agentCaps, requested).
+func TestResumeCapsOverride(t *testing.T) {
+	// -----------------------------------------------------------------------
+	// Case 1: operator override resume → caps replaced
+	// -----------------------------------------------------------------------
+	t.Run("operator_override_replaces_caps", func(t *testing.T) {
+		h := newTestHandler(t)
+		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn)
+
+		markTerminalForTest(t, h, id)
+
+		// Operator caller: not in h.principals → callerCaps = Capability_All.
+		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
+			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead)); err != nil {
+			t.Fatalf("Resume: %v", err)
+		}
+		e, ok := h.Tasks.Get(id)
+		if !ok {
+			t.Fatalf("task %q not found after override resume", id)
+		}
+		if e.Capabilities != protocol.Capability_FileRead {
+			t.Fatalf("override caps = %#x, want FileRead (%#x)", e.Capabilities, protocol.Capability_FileRead)
+		}
+	})
+
+	// -----------------------------------------------------------------------
+	// Case 2: plain resume (override=false) → caps unchanged
+	// -----------------------------------------------------------------------
+	t.Run("plain_resume_caps_unchanged", func(t *testing.T) {
+		h := newTestHandler(t)
+		wantCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
+		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, wantCaps)
+
+		markTerminalForTest(t, h, id)
+
+		// override=false → Capabilities must stay wantCaps regardless of newCaps arg.
+		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
+			false, protocol.Capability_None); err != nil {
+			t.Fatalf("Resume: %v", err)
+		}
+		e, ok := h.Tasks.Get(id)
+		if !ok {
+			t.Fatalf("task %q not found after plain resume", id)
+		}
+		if e.Capabilities != wantCaps {
+			t.Fatalf("plain resume changed caps to %#x, want %#x", e.Capabilities, wantCaps)
+		}
+	})
+
+	// -----------------------------------------------------------------------
+	// Case 3: limited agent override → caps = intersect(agentCaps, requested)
+	// -----------------------------------------------------------------------
+	t.Run("limited_agent_override_intersects", func(t *testing.T) {
+		h := newTestHandler(t)
+
+		// Create the agent task holding limited caps (Spawn + FileRead).
+		agentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
+		agentTaskIDHex := h.Tasks.Create("/r", "agent", protocol.TaskKind_Oneshot,
+			protocol.ClientKind_Agent, protocol.TaskID{}, "",
+			protocol.RunnerSelector{}, nil, agentCaps)
+		agentTID := hexToTaskID(t, agentTaskIDHex)
+
+		// Create the target task (original caps = All).
+		targetID := h.Tasks.Create("/r", "target", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+		markTerminalForTest(t, h, targetID)
+
+		// Wire the agent as a principal on a distinct conn.
+		if h.principals == nil {
+			h.principals = make(map[string]protocol.TaskID)
+		}
+		const agentConnID = "ws:127.0.0.1:9900-1"
+		h.principals[agentConnID] = agentTID
+
+		// Agent requests All caps with override=true.
+		// intersect(agentCaps, All) = agentCaps (agent cannot widen).
+		callerCaps := h.callerCaps(agentConnID)
+		newCaps := intersectCaps(callerCaps, protocol.Capability_All)
+		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
+			true, newCaps); err != nil {
+			t.Fatalf("Resume: %v", err)
+		}
+		e, ok := h.Tasks.Get(targetID)
+		if !ok {
+			t.Fatalf("task %q not found after agent override resume", targetID)
+		}
+		if e.Capabilities != agentCaps {
+			t.Fatalf("agent override caps = %#x, want agentCaps %#x", e.Capabilities, agentCaps)
+		}
+
+		// Verify: agent requesting a cap it lacks → that cap is stripped.
+		// FileWrite is NOT in agentCaps → intersect(agentCaps, FileWrite) = None.
+		markTerminalForTest(t, h, targetID)
+		newCaps2 := intersectCaps(callerCaps, protocol.Capability_FileWrite)
+		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
+			true, newCaps2); err != nil {
+			t.Fatalf("Resume2: %v", err)
+		}
+		e2, _ := h.Tasks.Get(targetID)
+		if e2.Capabilities != protocol.Capability_None {
+			t.Fatalf("agent lacked FileWrite; caps should be None, got %#x", e2.Capabilities)
+		}
+	})
+}

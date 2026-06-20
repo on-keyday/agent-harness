@@ -845,7 +845,7 @@ func TestResumeRecordsResumedByKind(t *testing.T) {
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runner1", protocol.RunnerSelector{}, nil, protocol.Capability_All)
 	s.Assign(id, "runner1", "/wt")
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got, _ := s.Get(id)
@@ -893,7 +893,7 @@ func TestWALReplayRestoresAttribution(t *testing.T) {
 	s.Finish(id, 0, nil)
 
 	// Resume with resumer kind = ClientKind_Tui.
-	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui); err != nil {
+	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, false, protocol.Capability_None); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -944,7 +944,7 @@ func TestCreateRecordsCreatorTaskID(t *testing.T) {
 	}
 	s.Assign(id, "runner1", "/wt")
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got3, _ := s.Get(id)
@@ -966,5 +966,112 @@ func TestCapabilitiesPersistAndReplay(t *testing.T) {
 	}
 	if protocol.Capability(got.Capabilities) != caps {
 		t.Fatalf("caps round-trip = %#x, want %#x", got.Capabilities, caps)
+	}
+}
+
+// TestTaskCapsChangedWALRoundTrip verifies that task_caps_changed WAL events
+// round-trip the Capabilities field correctly, including the zero value (override-to-None).
+func TestTaskCapsChangedWALRoundTrip(t *testing.T) {
+	cases := []struct {
+		name string
+		caps protocol.Capability
+	}{
+		{"nonzero", protocol.Capability_FileRead | protocol.Capability_Spawn},
+		{"zero_override_to_none", protocol.Capability_None},
+		{"all", protocol.Capability_All},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := WALEvent{Type: "task_caps_changed", TaskID: "deadbeef", Capabilities: uint32(tc.caps)}
+			b, err := ev.MarshalJSON()
+			if err != nil {
+				t.Fatalf("MarshalJSON: %v", err)
+			}
+			var got WALEvent
+			if err := got.UnmarshalJSON(b); err != nil {
+				t.Fatalf("UnmarshalJSON: %v", err)
+			}
+			if got.Type != "task_caps_changed" {
+				t.Fatalf("Type = %q, want task_caps_changed", got.Type)
+			}
+			if protocol.Capability(got.Capabilities) != tc.caps {
+				t.Fatalf("Capabilities = %#x, want %#x", got.Capabilities, tc.caps)
+			}
+		})
+	}
+}
+
+// TestTaskCapsChangedReplayEvents verifies that ReplayEvents applies a
+// task_caps_changed event to the in-memory task entry.
+func TestTaskCapsChangedReplayEvents(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "caps_changed.log")
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		t.Fatalf("OpenWAL: %v", err)
+	}
+
+	s := NewTaskStore()
+	s.SetWAL(wal)
+
+	// Create a task with initial caps.
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn)
+	s.Assign(id, "runner-x", "/wt/x")
+	s.Finish(id, 0, nil)
+
+	// Resume with caps override to FileRead (override-to-None is also tested below).
+	newCaps := protocol.Capability_FileRead
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
+		true, newCaps); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	wal.Close() //nolint:errcheck
+
+	events, readErr := ReadWAL(walPath)
+	if readErr != nil {
+		t.Fatalf("ReadWAL: %v", readErr)
+	}
+
+	// Verify that a task_caps_changed event was written.
+	var found bool
+	for _, ev := range events {
+		if ev.Type == "task_caps_changed" && ev.TaskID == id {
+			found = true
+			if protocol.Capability(ev.Capabilities) != newCaps {
+				t.Fatalf("WAL event caps = %#x, want %#x", ev.Capabilities, newCaps)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("task_caps_changed WAL event not written")
+	}
+
+	// Replay into a fresh store and verify caps.
+	s2 := NewTaskStore()
+	s2.ReplayEvents(events)
+	got, ok := s2.Get(id)
+	if !ok {
+		t.Fatalf("task %q not found after replay", id)
+	}
+	if got.Capabilities != newCaps {
+		t.Fatalf("caps after replay = %#x, want %#x", got.Capabilities, newCaps)
+	}
+
+	// Now test override-to-None (Capabilities=0): write a task_caps_changed event directly.
+	s3 := NewTaskStore()
+	var zeroCreator protocol.TaskID
+	id3 := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0" // 32 hex chars
+	s3.mu.Lock()
+	s3.tasks[id3] = &TaskEntry{ID: id3, RepoPath: "/r", Capabilities: protocol.Capability_Spawn}
+	s3.order = append(s3.order, id3)
+	s3.mu.Unlock()
+	_ = zeroCreator
+	zeroEv := []WALEvent{{Type: "task_caps_changed", TaskID: id3, Capabilities: uint32(protocol.Capability_None)}}
+	s3.ReplayEvents(zeroEv)
+	got3, _ := s3.Get(id3)
+	if got3.Capabilities != protocol.Capability_None {
+		t.Fatalf("override-to-None replay: caps = %#x, want None", got3.Capabilities)
 	}
 }
