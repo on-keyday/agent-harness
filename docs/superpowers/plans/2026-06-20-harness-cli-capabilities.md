@@ -17,6 +17,7 @@
 - **Schema describes every byte.** The bitmask and `requested_caps` are explicit `:Capability` wire fields. Do NOT add an `is_defined`/membership assertion to any `Capability` field — these are OR-combinations, not single members.
 - **Omitted grant = inherit-all, applied CLI-side.** A wire zero (`Capability.none`) means "grant nothing". The CLI sets `requested_caps = Capability.all` when the caller did not specify caps. The server logic is pure intersection.
 - **Enforcement is server-only.** `harness-cli`/`cli/*` issue requests unchanged; denial is authoritative only from the server.
+- **Deny representation = a new additive `TaskControlKind.permission_denied` response** carrying `{requested_kind, required_cap}` (Task 4). Existing per-kind responses/statuses are UNCHANGED — no existing status is reused or converged onto it. CLI recognizes it at the single shared `RoundTripTaskControl` (Task 7), covering all native + wasm callers; do NOT add per-caller handling.
 - **Verify with make targets**, not ad-hoc `go build`: `make check` (compile), `make test` (`go test ./...`), `make vet`. After protoregen, run `make check` before relying on the generated types.
 - **No local env in committed content** (repo is public): placeholders only in any new docs/comments.
 
@@ -393,90 +394,140 @@ git commit -m "feat(server): compute caps_child = creator ∩ requested at spawn
 
 ## Phase 2 — Enforcement
 
-### Task 4: centralized gate for direction-independent task-control kinds
+### Task 4: PermissionDenied response kind + centralized gate (direction-independent)
+
+**Decision (deny representation):** capability denial is signalled by a NEW,
+additive `TaskControlKind.permission_denied` response carrying
+`{requested_kind, required_cap}`. Existing per-kind responses/statuses are
+UNCHANGED — no existing status is reused or "converged" onto this. The server
+gate, on denial, returns this response instead of the requested kind's. CLI-side
+recognition is one change in `RoundTripTaskControl` (Task 7).
 
 **Files:**
-- Modify: `server/capabilities.go` (kind→cap table + `requiredCapFor`)
-- Modify: `server/task_handler.go` (`Handle` `:140`, top of switch)
+- Modify: `runner/protocol/message.bgn` (TaskControlKind enum `:186`, TaskControlResponse union `:634`, new format) → regenerate `runner/protocol/message.go`
+- Create-or-modify: `server/capabilities.go` (kind→cap table)
+- Modify: `server/task_handler.go` (`Handle` `:140` top; add `denyTaskControl`)
 - Test: `server/capabilities_test.go`
 
 **Interfaces:**
-- Consumes: `callerCaps`, `hasCap`.
-- Produces: gating that returns the existing per-kind `*_Denied`/permission failure when the caller lacks the required cap, for: `Submit`→`spawn`, `OpenInteractive`→`spawn`, `Cancel`→`cancel`, `PruneTasks`→`prune`, `Notify`→`notify`, `AttachSession`→`exec_attach`, `DialRunner`→`runner_admin`.
+- Consumes: `callerCaps`, `hasCap` (Task 3), `protocol.Capability_*` (PascalCase, Task 1).
+- Produces: `protocol.TaskControlKind_PermissionDenied` + `PermissionDeniedResponse{RequestedKind protocol.TaskControlKind, RequiredCap protocol.Capability}`; `requiredCap` map; `func (h *TaskHandler) denyTaskControl(conn ConnHandle, reqKind protocol.TaskControlKind, requestID uint32, required protocol.Capability)`.
 
-- [ ] **Step 1: Add the table** to `server/capabilities.go`:
+- [ ] **Step 0: Schema — add the PermissionDenied response.** In `runner/protocol/message.bgn`:
+  - Append to `enum TaskControlKind` (`:186`), AT THE END to keep existing ordinals stable: `permission_denied`
+  - Add a new format:
+    ```
+    format PermissionDeniedResponse:
+        requested_kind :TaskControlKind
+        required_cap   :Capability
+    ```
+  - Add a variant to the `TaskControlResponse` union (`:634`, beside `TaskControlKind.notify => notify :NotifyResponse`):
+    ```
+        TaskControlKind.permission_denied => permission_denied :PermissionDeniedResponse
+    ```
+  - Do NOT add it to the `TaskControlRequest` union (response-only kind).
+  - Regenerate: `make protoregen ARGS='runner/protocol/message.bgn'`. If codegen requires the request union to also cover the new kind, add a matching no-op variant there and note it; if it fails for environmental reasons, STOP and report BLOCKED.
+
+- [ ] **Step 1: Add the `requiredCap` table** to `server/capabilities.go` (use PascalCase constants):
 
 ```go
 // requiredCap maps a direction-independent TaskControlKind to the cap it needs.
 // Kinds absent from the map are gated elsewhere: OpenFileTransfer / ListFiles /
 // OpenPortForward are direction-dependent (Task 5); List / GetTaskLog are
-// INFO-scoped (Task 6); Submit/OpenInteractive also run intersection at create.
+// INFO-scoped (Task 6).
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
-	protocol.TaskControlKind_Submit:          protocol.Capability_spawn,
-	protocol.TaskControlKind_OpenInteractive: protocol.Capability_spawn,
-	protocol.TaskControlKind_Cancel:          protocol.Capability_cancel,
-	protocol.TaskControlKind_PruneTasks:      protocol.Capability_prune,
-	protocol.TaskControlKind_Notify:          protocol.Capability_notify,
-	protocol.TaskControlKind_AttachSession:   protocol.Capability_exec_attach,
-	protocol.TaskControlKind_DialRunner:      protocol.Capability_runner_admin,
+	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
+	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,
+	protocol.TaskControlKind_Cancel:          protocol.Capability_Cancel,
+	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
+	protocol.TaskControlKind_AttachSession:   protocol.Capability_ExecAttach,
+	protocol.TaskControlKind_DialRunner:      protocol.Capability_RunnerAdmin,
 }
 ```
 
-- [ ] **Step 2: Write enforcement test** (append to `server/capabilities_test.go`). Drive `Handle` with a `Cancel` request from a principal lacking `cancel`; assert the task is NOT cancelled and a deny response is sent. Use the existing `ConnHandle` test double from `task_handler_test.go` to capture `SendMessage` output.
+- [ ] **Step 2: Write enforcement test** (append to `server/capabilities_test.go`). Use the REAL seams: `newTestHandler(t)`, white-box `h.principals` map, `stubConn{}` whose `ConnectionID().String()` is the caller cid, and `encodeTaskControlRequest(t, req)` to build the wire payload. To assert the deny RESPONSE (not just the side effect), use a recording ConnHandle that captures `SendMessage` bytes and decode them as a `TaskControlResponse`. Skeleton (adapt to real helpers; write real code, no `...`):
 
 ```go
 func TestHandleDeniesWithoutCap(t *testing.T) {
-	h := newTestTaskHandler(t)
-	id := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_none)
-	var tid protocol.TaskID
-	copyHexInto(&tid, id)
-	conn := newFakeConn("agent-conn") // mirror task_handler_test.go's ConnHandle double
-	h.setPrincipal(conn.ConnectionID().String(), tid)
-	// build a Cancel TaskControlRequest targeting some task, encode, Handle it.
-	target := h.Tasks.Create("repo", "victim", protocol.TaskKind_Oneshot, protocol.TaskID{}, ...) // a separate task
-	payload := encodeCancel(t, target)
-	h.Handle(conn, payload)
-	vt, _ := h.Tasks.Get(target)
-	if vt.Status == protocol.TaskStatus_Cancelled {
-		t.Fatal("cancel succeeded despite missing CANCEL cap")
+	h := newTestHandler(t)
+	// caller is an agent principal holding NO caps.
+	parent := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None)
+	var ptid protocol.TaskID
+	b, _ := hex.DecodeString(parent)
+	copy(ptid.Id[:], b)
+	conn := &recordingConn{} // ConnHandle double capturing SendMessage; ConnectionID() returns a fixed CID
+	h.principals = map[string]protocol.TaskID{conn.ConnectionID().String(): ptid}
+	// victim task to attempt cancelling
+	victim := h.Tasks.Create("repo", "v", protocol.TaskKind_Oneshot, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	var vtid protocol.TaskID
+	vb, _ := hex.DecodeString(victim); copy(vtid.Id[:], vb)
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Cancel, RequestId: 7}
+	req.SetCancel(protocol.CancelRequest{TaskId: vtid})
+	h.Handle(conn, encodeTaskControlRequest(t, req))
+	// side effect: victim NOT cancelled
+	if vt, _ := h.Tasks.Get(victim); vt.Status == protocol.TaskStatus_Cancelled {
+		t.Fatal("cancel executed despite missing CANCEL cap")
+	}
+	// response: PermissionDenied with required_cap = Cancel, requested_kind = Cancel
+	resp := conn.lastTaskControlResponse(t)
+	if resp.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("resp kind = %v, want PermissionDenied", resp.Kind)
+	}
+	pd := resp.PermissionDenied()
+	if pd.RequiredCap != protocol.Capability_Cancel || pd.RequestedKind != protocol.TaskControlKind_Cancel {
+		t.Fatalf("pd = %+v", pd)
 	}
 }
 ```
 
-- [ ] **Step 3: Run (fails — cancel still succeeds).**
+(`recordingConn` is a small ConnHandle double in the test file: it stores the last `SendMessage` payload and `lastTaskControlResponse` strips the leading app-kind byte and `DecodeExact`s a `TaskControlResponse`. Mirror `stubConn`'s method set.)
 
-Run: `go test ./server/ -run TestHandleDeniesWithoutCap -v`
-Expected: FAIL.
+- [ ] **Step 3: Run (fails — cancel still executes, no PermissionDenied).**
 
-- [ ] **Step 4: Add the gate at the top of `Handle`** (after the `DecodeExact`, `:145`, before the `switch`):
+Run: `go test ./server/ -run TestHandleDeniesWithoutCap -v`  → FAIL.
+
+- [ ] **Step 4: Add the gate at the top of `Handle`** (after `DecodeExact`, before the `switch`):
 
 ```go
 	cid := conn.ConnectionID().String()
 	if want, gated := requiredCap[req.Kind]; gated {
 		if !hasCap(h.callerCaps(cid), want) {
-			h.denyTaskControl(conn, req.Kind, req.RequestId)
+			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
 			return
 		}
 	}
 ```
 
-Add `denyTaskControl` in `server/task_handler.go` that sends the kind-appropriate failure response (reuse each kind's existing `*Status_*Denied`/permission value; for kinds without a dedicated denied status, send the existing internal-error/refused variant). Keep it a single switch on `kind`.
+Add `denyTaskControl` in `server/task_handler.go`:
+
+```go
+// denyTaskControl rejects a capability-gated request with a typed
+// PermissionDenied response carrying the requested kind and the missing cap.
+func (h *TaskHandler) denyTaskControl(conn ConnHandle, reqKind protocol.TaskControlKind, requestID uint32, required protocol.Capability) {
+	slog.Warn("capability denied", "kind", reqKind, "required_cap", required)
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_PermissionDenied, RequestId: requestID}
+	resp.SetPermissionDenied(protocol.PermissionDeniedResponse{RequestedKind: reqKind, RequiredCap: required})
+	out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+	conn.SendMessage(out) //nolint:errcheck
+}
+```
+
+(Note: the existing `cid := conn.ConnectionID().String()` computed inside the `Submit`/`OpenInteractive` cases is now redundant with the one at the top — reuse the top-level `cid` and remove the per-case duplicates to avoid drift.)
 
 - [ ] **Step 5: Run (passes).**
 
-Run: `go test ./server/ -run TestHandleDeniesWithoutCap -v`
-Expected: PASS.
+Run: `go test ./server/ -run TestHandleDeniesWithoutCap -v`  → PASS.
 
-- [ ] **Step 6: Allow-path regression** — add a sibling test where the principal HAS `cancel` (and where the connection is operator → `Capability_all`); assert the op succeeds. Run both, then `make check && make test`.
+- [ ] **Step 6: Allow-path regression** — add a test where the caller is operator (empty `h.principals` → `callerCaps` returns `Capability_All`) and a `Cancel` succeeds (victim becomes Cancelled, response Kind == Cancel). Run both, then `make check && make test`.
 
-Run: `go test ./server/ -run 'TestHandle' -v && make check`
-Expected: PASS.
+Run: `go test ./server/ -run TestHandle -v && make check`  → PASS.
 
 - [ ] **Step 7: Commit.**
 
 ```bash
-git add server/capabilities.go server/capabilities_test.go server/task_handler.go
-git commit -m "feat(server): gate direction-independent task-control ops by capability"
+git add runner/protocol/message.bgn runner/protocol/message.go server/capabilities.go server/capabilities_test.go server/task_handler.go
+git commit -m "feat(server): PermissionDenied response + gate direction-independent ops by capability"
 ```
 
 ---
@@ -501,43 +552,45 @@ Expected: FAIL.
 
 - [ ] **Step 3: Gate inside each case.** In the `OpenFileTransfer` case, after decoding `oft`, before calling `handleOpenFileTransfer`:
 
+All three reuse the SAME `denyTaskControl(conn, reqKind, requestID, requiredCap)`
+helper from Task 4 — it sends the unified `PermissionDenied` response. No new
+per-handler deny helpers. Use the top-level `cid := conn.ConnectionID().String()`
+already computed in `Handle`.
+
+For `OpenFileTransfer`, after decoding `oft`:
 ```go
-		var need protocol.Capability
+		need := protocol.Capability_FileWrite // Push / Delete / DirPush / DirDelete
 		switch oft.Direction {
 		case protocol.FileTransferDirection_Pull, protocol.FileTransferDirection_DirPull:
-			need = protocol.Capability_file_read
-		default: // Push / Delete / DirPush / DirDelete
-			need = protocol.Capability_file_write
+			need = protocol.Capability_FileRead
 		}
-		if !hasCap(h.callerCaps(conn.ConnectionID().String()), need) {
-			// send OpenFileTransferResponse{Status: ...Denied-equivalent}; mirror errResp in file_transfer.go
-			h.denyOpenFileTransfer(conn, req.RequestId)
+		if !hasCap(h.callerCaps(cid), need) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
 			return
 		}
 ```
 
-For `ListFiles`, require either file cap:
+For `ListFiles` (floor — either file cap suffices):
 ```go
-		caps := h.callerCaps(conn.ConnectionID().String())
-		if !hasCap(caps, protocol.Capability_file_read) && !hasCap(caps, protocol.Capability_file_write) {
-			h.denyListFiles(conn, req.RequestId)
+		caps := h.callerCaps(cid)
+		if !hasCap(caps, protocol.Capability_FileRead) && !hasCap(caps, protocol.Capability_FileWrite) {
+			// report FileRead as the representative requirement in the denial
+			h.denyTaskControl(conn, req.Kind, req.RequestId, protocol.Capability_FileRead)
 			return
 		}
 ```
 
 For `OpenPortForward`, after decoding the request:
 ```go
-		need := protocol.Capability_forward_local
+		need := protocol.Capability_ForwardLocal
 		if pf.Direction == protocol.PortForwardDirection_Remote {
-			need = protocol.Capability_forward_remote
+			need = protocol.Capability_ForwardRemote
 		}
-		if !hasCap(h.callerCaps(conn.ConnectionID().String()), need) {
-			h.denyOpenPortForward(conn, req.RequestId)
+		if !hasCap(h.callerCaps(cid), need) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
 			return
 		}
 ```
-
-Add the three `deny*` helpers returning the existing `*_Denied`/error status each handler already defines (`errResp` patterns in `file_transfer.go` / `port_forward.go`).
 
 - [ ] **Step 4: Run (passes).**
 
@@ -616,27 +669,28 @@ git commit -m "feat(server): scope list/logs/topics to caller subtree unless inf
 
 ## Phase 4 — CLI default & sandbox confinement
 
-### Task 7: CLI applies inherit-all default + optional `--caps`
+### Task 7: CLI inherit-all default + `--caps` + PermissionDenied recognition
 
 **Files:**
 - Modify: `cmd/harness-cli/session.go` (`runSessionNew`), `cmd/harness-cli/main.go` (`submit` `:91`, `interactive` `:237`)
 - Modify: `cli/*` spawn helpers that build `SubmitRequest` / `OpenInteractiveRequest`
-- Test: `cmd/harness-cli/main_test.go`
+- Modify: `cli/client.go` (`RoundTripTaskControl` `:138`) — single-point PermissionDenied recognition
+- Test: `cmd/harness-cli/main_test.go`, `cli/client_test.go` (or nearest existing cli test)
 
 **Interfaces:**
-- Consumes: `protocol.Capability_*`.
-- Produces: CLI sets `RequestedCaps = protocol.Capability_all` when no `--caps` given; `--caps` parses a comma list of cap names into the OR mask.
+- Consumes: `protocol.Capability_*` (PascalCase), `protocol.TaskControlKind_PermissionDenied` + `PermissionDeniedResponse` (Task 4).
+- Produces: CLI sets `RequestedCaps = protocol.Capability_All` when no `--caps`; `--caps` parses a comma list into the OR mask; `RoundTripTaskControl` returns a typed `*CapabilityDeniedError` when the server replies `PermissionDenied`.
 
-- [ ] **Step 1: Write the flag-parse test** at `cmd/harness-cli/main_test.go`:
+- [ ] **Step 1: Write the flag-parse test** at `cmd/harness-cli/main_test.go` (PascalCase constants):
 
 ```go
 func TestParseCapsFlag(t *testing.T) {
-	if got, _ := parseCaps(""); got != protocol.Capability_all {
+	if got, _ := parseCaps(""); got != protocol.Capability_All {
 		t.Fatalf("empty = %#x, want all", got)
 	}
 	got, err := parseCaps("spawn,file_read")
 	if err != nil { t.Fatal(err) }
-	if got != (protocol.Capability_spawn | protocol.Capability_file_read) {
+	if got != (protocol.Capability_Spawn | protocol.Capability_FileRead) {
 		t.Fatalf("got %#x", got)
 	}
 	if _, err := parseCaps("bogus"); err == nil {
@@ -647,17 +701,30 @@ func TestParseCapsFlag(t *testing.T) {
 
 - [ ] **Step 2: Run (fails).** Run: `go test ./cmd/harness-cli/ -run TestParseCapsFlag -v` → FAIL.
 
-- [ ] **Step 3: Implement `parseCaps`** (new helper in `cmd/harness-cli/`): empty → `Capability_all`; else split on `,`, map each name (`spawn`, `cancel`, `exec_attach`, `file_read`, `file_write`, `forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`, `info_global`, `none`, `all`) to its bit, OR them, error on unknown.
+- [ ] **Step 3: Implement `parseCaps`** (new helper in `cmd/harness-cli/`): empty → `Capability_All`; else split on `,`, map each lowercase name (`spawn`, `cancel`, `exec_attach`, `file_read`, `file_write`, `forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`, `info_global`, `none`, `all`) to its `protocol.Capability_*` bit, OR them, error on unknown. (Keep the CLI-facing names snake_case for usability even though the Go constants are PascalCase.)
 
 - [ ] **Step 4: Wire `--caps` into `submit`, `session new`, `interactive`** — add `caps := fs.String("caps", "", "comma-separated capability names to grant the spawned task (default: inherit all the spawner holds)")`, parse via `parseCaps`, set `req.RequestedCaps`. Thread through the `cli` helper signatures that construct the request bodies.
 
-- [ ] **Step 5: Run + compile.** Run: `go test ./cmd/harness-cli/ -run TestParseCapsFlag -v && make check` → PASS.
+- [ ] **Step 5: PermissionDenied recognition — single point.** In `cli/client.go` `RoundTripTaskControl` (`:138`), after the response arrives and before returning it, add:
 
-- [ ] **Step 6: Commit.**
+```go
+	if resp.Kind == protocol.TaskControlKind_PermissionDenied && req.Kind != protocol.TaskControlKind_PermissionDenied {
+		pd := resp.PermissionDenied()
+		return nil, &CapabilityDeniedError{RequestedKind: pd.RequestedKind, RequiredCap: pd.RequiredCap}
+	}
+```
+
+Define `CapabilityDeniedError` (new small type in `cli/`) implementing `error` with message like `permission denied: <kind> requires capability <cap>`. Because every gated caller funnels through `RoundTripTaskControl` (native and wasm both — `cli/open_interactive_wasm.go` calls it too; it is build-tag-free in `client.go`), this one change surfaces a clear error everywhere; no per-caller edits.
+
+- [ ] **Step 6: Test the recognition** — in a cli test, build a fake `taskControlClient`/transport returning a `TaskControlResponse{Kind: PermissionDenied, ...}` and assert `RoundTripTaskControl` returns a `*CapabilityDeniedError` with the right cap. (Mirror existing `cli/*_test.go` patterns; `cli/server_dial_runner_test.go` shows a `taskControlClient` fake.)
+
+- [ ] **Step 7: Run + compile.** Run: `go test ./cmd/harness-cli/ ./cli/ -run 'TestParseCapsFlag|TestPermissionDenied' -v && make check` → PASS.
+
+- [ ] **Step 8: Commit.**
 
 ```bash
 git add cmd/harness-cli/ cli/
-git commit -m "feat(cli): default requested_caps to all; add --caps to spawn commands"
+git commit -m "feat(cli): inherit-all default, --caps flag, PermissionDenied recognition"
 ```
 
 ---
