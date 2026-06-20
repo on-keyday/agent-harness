@@ -96,6 +96,13 @@ duplicate). The cap **names** still have exactly one source: `Capability.String(
     toggles the bit in `spawnCaps`).
   - A chip is "on" (✓, accent color) when its bit is set in `spawnCaps`, "off"
     (muted) otherwise. Reflects the current `spawnCaps`.
+  - **Effective-set readout:** alongside the chips, a read-only line shows the
+    OR-combined result as the comma-joined snake_case names of the enabled caps,
+    collapsing to `all` when every bit is set and `none` when zero (e.g.
+    `caps: spawn,file_read`). It updates live as chips toggle. This is the same
+    string `cli.ParseCaps` accepts, so it doubles as a copy-paste source for a
+    CLI `--caps` invocation. Names come from the shared source (`Capability.String()`),
+    not a separate literal list.
   - Styling matches the existing WebUI dark palette (#1e1e1e / #d4d4d4, accent
     consistent with existing controls) and the <=600px mobile layout (chips wrap;
     usable at 390px). Verify desktop + 390px in Playwright per WebUI conventions.
@@ -143,4 +150,5 @@ server: caps_child = caller_caps(=All for operator) ∩ RequestedCaps  (unchange
   and assert the created task is confined (e.g. a control-plane op from it is
   denied), OR at minimum assert the spawn request carried the reduced
   `RequestedCaps`. Verify the chip row renders and is usable at desktop width and
-  390px, dark palette.
+  390px, dark palette, and that the effective-set readout updates to the correct
+  comma-joined string (incl. the `all`/`none` collapse) as chips toggle.
