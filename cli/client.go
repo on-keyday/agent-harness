@@ -159,6 +159,20 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 		c.mu.Unlock()
 		return nil, ctx.Err()
 	case resp := <-ch:
+		// Single-point PermissionDenied recognition: if the server rejects an
+		// operation due to missing capability, surface a typed error rather than
+		// returning the raw response. All native and wasm callers funnel through
+		// RoundTripTaskControl, so this one check covers every gated operation.
+		if resp.Kind == protocol.TaskControlKind_PermissionDenied &&
+			req.Kind != protocol.TaskControlKind_PermissionDenied {
+			pd := resp.PermissionDenied()
+			if pd != nil {
+				return nil, &CapabilityDeniedError{
+					RequestedKind: pd.RequestedKind,
+					RequiredCap:   pd.RequiredCap,
+				}
+			}
+		}
 		return resp, nil
 	}
 }

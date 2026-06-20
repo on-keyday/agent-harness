@@ -116,7 +116,7 @@ func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protoc
 		warn = fmt.Sprintf("no cookie for %s (%v); forwarding WITHOUT authentication — your X server must accept unauthenticated connections", display, err)
 		cookie = nil
 	}
-	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie})
+	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie}, protocol.Capability_All)
 	if err != nil {
 		return nil, taskIDHex, RemoteForwardSpec{}, warn, err
 	}

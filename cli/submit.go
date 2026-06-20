@@ -31,13 +31,25 @@ func (c *Client) SubmitWithSelector(ctx context.Context, repo, prompt string, se
 // resumeTaskID (hex; "" means new task) that re-uses an existing terminal
 // task's id and worktree branch so claude's project key matches the previous
 // run. extraArgs default to none.
+//
+// RequestedCaps defaults to Capability_All (inherit everything the spawner
+// holds). Callers that need a narrower grant should use
+// SubmitWithSelectorArgsAndCaps instead.
 func (c *Client) SubmitWithSelectorAndArgs(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
+	return c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, protocol.Capability_All)
+}
+
+// SubmitWithSelectorArgsAndCaps is identical to SubmitWithSelectorAndArgs but
+// lets the caller specify an explicit capability mask for the spawned task.
+// Pass protocol.Capability_All for the inherit-all behaviour.
+func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
 	sub := protocol.SubmitRequest{}
 	sub.SetRepoPath([]byte(repo))
 	sub.SetPrompt([]byte(prompt))
 	sub.Selector = sel
 	sub.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
+	sub.RequestedCaps = caps
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {

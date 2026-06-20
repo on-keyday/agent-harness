@@ -102,12 +102,25 @@ func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel p
 // per-task extraArgs, optional resumeTaskID (hex; "" = new task), and a
 // detachable flag (true for session-new-style detachable sessions; false for
 // legacy kill-on-disconnect).
+//
+// RequestedCaps defaults to Capability_All (inherit everything the spawner
+// holds). Callers that need a narrower grant should use
+// InteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (string, error) {
+	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All)
+}
+
+// InteractiveWithSelectorArgsAndCaps is identical to
+// InteractiveWithSelectorAndArgs but lets the caller specify an explicit
+// capability mask for the spawned task. Pass protocol.Capability_All for the
+// inherit-all behaviour.
+func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
 	oi.Selector = sel
 	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
+	oi.RequestedCaps = caps
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {

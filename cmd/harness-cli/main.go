@@ -93,6 +93,7 @@ func main() {
 		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		task := fs.String("task", "", "prompt text")
 		resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch so claude's project key matches the previous run; --repo is ignored")
+		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the spawned task (default: inherit all the spawner holds)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addClaudeArgFlag(fs)
 		fs.Parse(args)
@@ -103,6 +104,11 @@ func main() {
 		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
 		if repoVal == "" && *resume == "" {
 			fmt.Fprintln(os.Stderr, "submit: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
+			os.Exit(2)
+		}
+		caps, err := parseCaps(*capsFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "submit: --caps:", err)
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -117,7 +123,7 @@ func main() {
 		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		id, err := c.SubmitWithSelectorAndArgs(ctx, repoVal, *task, sel, *extraArgs, *resume)
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps)
 		if err != nil {
 			die(err)
 		}
@@ -238,12 +244,18 @@ func main() {
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
 		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume; --repo is ignored")
+		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the spawned task (default: inherit all the spawner holds)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addClaudeArgFlag(fs)
 		fs.Parse(args)
 		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
 		if repoVal == "" && *resume == "" {
 			fmt.Fprintln(os.Stderr, "interactive: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
+			os.Exit(2)
+		}
+		caps, err := parseCaps(*capsFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "interactive: --caps:", err)
 			os.Exit(2)
 		}
 		sel := resolveSelector()
@@ -257,7 +269,7 @@ func main() {
 		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, *extraArgs, *resume, false); err != nil {
+		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, false, caps); err != nil {
 			die(err)
 		}
 

@@ -49,6 +49,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	host := fs.String("host", "", "pin to runner by hostname")
 	ip := fs.String("ip", "", "pin to runner by IP address")
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
+	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the spawned task (default: inherit all the spawner holds)")
 	var extraArgs repeatableStrings
 	fs.Var(&extraArgs, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
 	detach := false
@@ -76,6 +77,11 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return fmt.Errorf("session new: --x11-display must be 0..99")
 	}
 
+	caps, err := parseCaps(*capsFlag)
+	if err != nil {
+		return fmt.Errorf("session new: --caps: %w", err)
+	}
+
 	opts := cli.SelectorOpts{Runner: *runner, Host: *host, IP: *ip}
 	if err := opts.ValidateSelector(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -97,7 +103,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repoVal, sel, []string(extraArgs), *resume, true)
+		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true, caps)
 		if err != nil {
 			return err
 		}
@@ -107,6 +113,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
+		// X11 forwarding always uses Capability_All (no --caps override for x11 path).
 		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display)
 		if err != nil {
 			return err
@@ -115,7 +122,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	id, err := c.InteractiveWithSelectorAndArgs(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/)
+	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/, caps)
 	if err != nil {
 		return err
 	}
