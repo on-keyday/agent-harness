@@ -106,7 +106,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "submit: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
 			os.Exit(2)
 		}
-		caps, err := parseCaps(*capsFlag)
+		caps, err := cli.ParseCaps(*capsFlag)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "submit: --caps:", err)
 			os.Exit(2)
@@ -253,7 +253,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "interactive: --repo or HARNESS_REPO_PATH required (must match a runner's RepoPath verbatim) — except when --resume is set, which uses the existing task's repo")
 			os.Exit(2)
 		}
-		caps, err := parseCaps(*capsFlag)
+		caps, err := cli.ParseCaps(*capsFlag)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "interactive: --caps:", err)
 			os.Exit(2)

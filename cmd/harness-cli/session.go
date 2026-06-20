@@ -77,7 +77,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return fmt.Errorf("session new: --x11-display must be 0..99")
 	}
 
-	caps, err := parseCaps(*capsFlag)
+	caps, err := cli.ParseCaps(*capsFlag)
 	if err != nil {
 		return fmt.Errorf("session new: --caps: %w", err)
 	}
