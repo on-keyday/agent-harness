@@ -191,11 +191,11 @@ is the trusted root; attenuation applies only to agent-spawned children.
 ### Omitted-request default — policy C (inherit-all + sandbox confines)
 
 When the operator/agent does not specify caps, the CLI/spawn helper sets
-`requested_caps = 0xFFFFFFFF` before encoding (see "Omitted-grant on the wire"),
-so `caps_child = caps_creator ∩ all = caps_creator` — the child **inherits the
-parent's full set**. Existing spawn flows are unchanged (zero friction). (A
-literal zero on the wire is *not* this default; it is an explicit "grant
-nothing" request.)
+`requested_caps = Capability.all` before encoding (see "Omitted-grant on the
+wire"), so `caps_child = caps_creator ∩ all = caps_creator` — the child
+**inherits the parent's full set**. Existing spawn flows are unchanged (zero
+friction). (A literal `Capability.none`/zero on the wire is *not* this default;
+it is an explicit "grant nothing" request.)
 
 Confinement is **explicit at the point where confinement is decided**: the
 sandbox launch path (`scripts/sandbox`, and any caller that spawns a sandboxed
@@ -263,6 +263,7 @@ brgen supports explicit-value enums with a chosen backing type (`AppKind` uses
 ```
 enum Capability:
     :u32
+    none           = 0x000   # empty set — "grant nothing" (also the zero value)
     spawn          = 0x001
     cancel         = 0x002
     exec_attach    = 0x004
@@ -274,7 +275,14 @@ enum Capability:
     prune          = 0x100
     runner_admin   = 0x200
     info_global    = 0x400
+    all            = 0x7ff   # OR of all defined bits (spawn..info_global);
+                             # keep in sync when adding a cap
 ```
+
+`none` (0x0) is the zero value and the literal "grant nothing" request; `all`
+(0x7ff) is the full set used as the inherit-all default. (If brgen accepts
+member-OR expressions in enum values, `all = spawn | cancel | … | info_global`
+auto-tracks new bits and is preferable to the literal — author's call.)
 
 **The bitmask fields are typed `:Capability`.** brgen does **not** validate enum
 membership on encode/decode (validation is opt-in via an explicit
@@ -296,16 +304,16 @@ named bit constants while the wire stays a plain `u32`.
 
 ### Omitted-grant on the wire (no magic absence)
 
-The zero value of `requested_caps` means **grant nothing** — a legitimate
-maximally-confined request (the data-plane needs no cap). So zero **cannot**
-double as the inherit-all default. Instead the **CLI/spawn helper applies the
-inherit-all default before encoding**: when the operator/agent did not specify
-caps, it sets `requested_caps = 0xFFFFFFFF` (all bits) explicitly, and the server
-computes `caps_creator ∩ 0xFFFFFFFF = caps_creator`. The wire therefore always
-carries an explicit mask (consistent with "schema describes every byte"), and
-the server logic is pure intersection with no presence/sentinel special-casing.
-Undefined high bits in `0xFFFFFFFF` are harmless: the intersection with the
-parent's (defined-bits-only) set masks them away.
+The zero value of `requested_caps` is `Capability.none` and means **grant
+nothing** — a legitimate maximally-confined request (the data-plane needs no
+cap). So zero **cannot** double as the inherit-all default. Instead the
+**CLI/spawn helper applies the inherit-all default before encoding**: when the
+operator/agent did not specify caps, it sets `requested_caps = Capability.all`
+(0x7ff) explicitly, and the server computes `caps_creator ∩ all = caps_creator`.
+The wire therefore always carries an explicit mask (consistent with "schema
+describes every byte"), and the server logic is pure intersection with no
+presence/sentinel special-casing. Because `all` is exactly the defined bits,
+there are no undefined high bits to reason about.
 
 ## Deferred (designed, not built): lineage-scoped `agent send`
 
