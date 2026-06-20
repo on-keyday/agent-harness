@@ -78,6 +78,13 @@ type App struct {
 	// (submit / interactive / session new) issued from this TUI session.
 	// Controlled by the `caps` command; defaults to Capability_All.
 	sessionCaps protocol.Capability
+
+	// applyCapsOnResume, when true, passes resumeCapsOverride=true and the
+	// current sessionCaps on every resume RPC so the server re-grants caps
+	// instead of keeping the persisted caps from the original session.
+	// Controlled by `caps --on-resume on|off`; defaults to false (keep
+	// persisted caps on resume, no widening).
+	applyCapsOnResume bool
 }
 
 // NotifyResultMsg carries the result of a notify send command.
@@ -499,7 +506,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, a.applyCapsOnResume)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
@@ -596,7 +603,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `S` (capital) opens a new detachable interactive PTY session in the
 		// default repo (equivalent to `harness-cli session new`).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
-			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps)
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false)
 		}
 		// `F` opens the file picker for the task currently focused in the
 		// tasks pane. No-op when the tasks pane is not focused or no task
@@ -654,7 +661,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case actionResume:
 				// repo is irrelevant on resume — the server reuses the task's
 				// RepoPath and worktree branch.
-				return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps)
+				return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume)
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil
@@ -1010,17 +1017,28 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(fmt.Sprintf("default repo set to %s", path))
 		return a, nil
 	case CapsAction:
-		if v.Show {
-			a.status = "caps: " + capsLabel(a.sessionCaps)
+		if v.OnResume != nil {
+			a.applyCapsOnResume = *v.OnResume
+			onResumeLabel := "off"
+			if a.applyCapsOnResume {
+				onResumeLabel = "on"
+			}
+			a.status = "caps on-resume: " + onResumeLabel
+		} else if v.Show {
+			onResumeLabel := "off"
+			if a.applyCapsOnResume {
+				onResumeLabel = "on"
+			}
+			a.status = "caps: " + capsLabel(a.sessionCaps) + " on-resume: " + onResumeLabel
 		} else {
 			a.sessionCaps = v.Caps
 			a.status = "caps set: " + capsLabel(a.sessionCaps)
 		}
 		return a, nil
 	case InteractiveAction:
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
 	case SubmitAction:
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -1038,12 +1056,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps)
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps, a.applyCapsOnResume)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
 		}
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps)
+		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:

@@ -151,10 +151,12 @@ type NotifyAction struct {
 // CapsAction sets or shows the session-default capability mask applied to
 // every spawn (submit / interactive / session new) from this TUI session.
 // Show=true (no args): display current caps in the status line.
-// Show=false: update sessionCaps to Caps.
+// Show=false and OnResume nil: update sessionCaps to Caps.
+// OnResume non-nil: set the applyCapsOnResume toggle (true=on, false=off).
 type CapsAction struct {
-	Caps protocol.Capability
-	Show bool // true = display current set (no args), false = set to Caps
+	Caps     protocol.Capability
+	Show     bool  // true = display current set (no args), false = set to Caps
+	OnResume *bool // non-nil = --on-resume on|off command; nil = normal caps set/show
 }
 
 
@@ -220,6 +222,22 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 	case "caps":
 		if len(tokens) == 1 {
 			return CapsAction{Show: true}, nil
+		}
+		// --on-resume on|off sets the applyCapsOnResume toggle.
+		if tokens[1] == "--on-resume" {
+			if len(tokens) < 3 {
+				return nil, fmt.Errorf("caps --on-resume: missing value (on|off)")
+			}
+			switch tokens[2] {
+			case "on":
+				v := true
+				return CapsAction{OnResume: &v}, nil
+			case "off":
+				v := false
+				return CapsAction{OnResume: &v}, nil
+			default:
+				return nil, fmt.Errorf("caps --on-resume: invalid value %q (want on|off)", tokens[2])
+			}
 		}
 		c, err := cli.ParseCaps(strings.Join(tokens[1:], ""))
 		if err != nil {
