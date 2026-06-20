@@ -135,16 +135,26 @@ Read/discovery is a *scope*, not all-or-nothing. Lineage data already exists
 
 - **With `INFO_GLOBAL`** (operator default): full view — `ls` / `session ls`
   list all tasks; `logs` / `watch` / `notify-watch` work against any task;
-  `agent topics` enumerates the whole board; `agent subscribe` to a non-self
-  topic is allowed (eavesdrop).
+  `agent topics` enumerates the whole board.
 - **Without it** (confined default): the server filters to the caller's own task
   **plus its descendant subtree** (computed from the `CreatorTaskID` chain).
   `ls`/`session ls` show only that subtree; `logs`/`watch` are allowed iff the
-  target task-id is within it; `agent subscribe` is restricted to the caller's
-  self topic (`--self`); `agent topics` requires `INFO_GLOBAL`.
+  target task-id is within it; `agent topics` returns an empty list (no topics
+  visible to you — consistent with the scope model).
 
 This gives the "filter `ls` to what's mine" behavior as the *secure default*
 rather than a separate feature.
+
+**`agent subscribe` eavesdrop gating is DEFERRED** (not in scope). Restricting a
+confined task to only its "own" topic would require the server to know topic
+ownership, which today is purely a client convention
+(`chat.<first-8-hex-of-tid>`, `cli/agent/util.go`) — baking it into the server
+violates protocol-explicit and stays leaky via free-form broadcast topics
+(`harness.hello`, `build.events`). Honest eavesdrop closure needs server-owned
+identity-bound topics; it is deferred to the same future work as lineage-scoped
+send (see "Deferred"). In the single-user model the eavesdrop risk is low (all
+peers are the user's own agents; the real exfil boundaries — network egress,
+cross-worktree fs — are already gated by `FORWARD_*`/`FILE_*`).
 
 ### Always-allowed data-plane (no cap)
 
@@ -157,9 +167,11 @@ Rationale: the agentboard is the *only* sanctioned agent-to-agent channel and
 trust model already terminates destructive/permanent/secret-exposing actions at
 the *user*, not at peer-to-peer messages. `wait`/`dispatch` are blocking
 variants of `send`+`inbox` and grant no authority beyond them (the "do not call
-from an agent turn" rule is operational, orthogonal to caps). The only board
-risk worth gating — eavesdropping via non-self `subscribe` and full-board
-`topics` — is a read concern and lives under `INFO_GLOBAL`.
+from an agent turn" rule is operational, orthogonal to caps). The board read
+concern that IS gated now is full-board `topics` enumeration (under
+`INFO_GLOBAL`); the other — eavesdropping by subscribing to a non-self topic —
+is deferred (see "Visibility scope") because it needs server-owned topic
+ownership, not a baked-in client convention.
 
 ### Local-only (sandbox domain, outside the cap model)
 

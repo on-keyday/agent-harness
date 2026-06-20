@@ -633,56 +633,61 @@ git commit -m "feat(server): gate file-transfer and port-forward by direction ca
 
 ## Phase 3 — INFO_GLOBAL visibility scope
 
-### Task 6: lineage subtree scoping for list / logs + agentboard topics/subscribe
+### Task 6: lineage subtree scoping for list / logs + agentboard topics enumeration
+
+**Scope decision:** agentboard **`subscribe` eavesdrop gating is DEFERRED** — it
+requires server-side topic ownership, which only exists as a CLIENT convention
+(`chat.<first-8-hex-of-tid>`, `cli/agent/util.go`); baking that into the server
+violates protocol-explicit and is still leaky via broadcast topics. Defer it to
+the same future "identity-bound task-inbox topics" work as lineage-scoped send
+(see spec "Deferred"). This task gates ONLY: `list`/`logs` (lineage subtree) and
+`topics` enumeration (INFO_GLOBAL). Do NOT modify the `subscribe` handler.
 
 **Files:**
-- Modify: `server/capabilities.go` (`descendantSet` helper)
-- Modify: `server/task_handler.go` (`handleList`, `handleGetTaskLog` `:328`-area entry)
-- Modify: `server/agent_handler.go` (non-self `subscribe` / `topics`)
+- Modify: `server/capabilities.go` (`descendantSet` + `visibleToCaller` + `agentCallerCaps`)
+- Modify: `server/task_handler.go` (`handleList` `:927`, `handleGetTaskLog` `:981`)
+- Modify: `server/agent_handler.go` (`agentHandleListTopics` only)
 - Test: `server/capabilities_test.go`
 
 **Interfaces:**
-- Consumes: `callerCaps`, `TaskStore` (`CreatorTaskID` chain), `lookupPrincipal`.
-- Produces: `func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool)` — `all=true` when the caller holds `info_global` (or is operator); otherwise `allowed` is the caller's task id plus its `CreatorTaskID`-descendant subtree.
+- Consumes: `hasCap`/`callerCaps` (Task 3), `lookupPrincipal` (`:132`), `TaskStore.List`/`Get` (`CreatorTaskID` chain), `agentboard ConnState.Identity()`.
+- Produces: `func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool)` — `all=true` when the caller is operator (zero principal) or holds `Capability_InfoGlobal`; otherwise `allowed` = the caller's own task id (hex) plus its `CreatorTaskID`-descendant subtree.
 
-- [ ] **Step 1: Write the subtree test** (append). Build tasks A (operator), B (creator=A's principal? no — agent), C (creator=B), D (creator=A) and assert: with `info_global`, all visible; without, caller B sees {B, C} but not {A, D}.
+- [ ] **Step 1: Write the subtree test** (append; REAL seams — `newTestHandler`, white-box `h.principals`, hex-decode for TaskID; PascalCase caps):
 
 ```go
 func TestVisibleSubtree(t *testing.T) {
-	h := newTestTaskHandler(t)
-	b := h.Tasks.Create("r","B",protocol.TaskKind_Oneshot,protocol.ClientKind_Agent,protocol.TaskID{},"",protocol.RunnerSelector{},nil, protocol.Capability_spawn) // no info_global
-	var btid protocol.TaskID; copyHexInto(&btid, b)
-	c := h.Tasks.Create("r","C",protocol.TaskKind_Oneshot,protocol.ClientKind_Agent,btid,"",protocol.RunnerSelector{},nil, protocol.Capability_none)
-	d := h.Tasks.Create("r","D",protocol.TaskKind_Oneshot,protocol.ClientKind_Agent,protocol.TaskID{},"",protocol.RunnerSelector{},nil, protocol.Capability_none)
-	h.setPrincipal("b-conn", btid)
+	h := newTestHandler(t)
+	b := h.Tasks.Create("r","B",protocol.TaskKind_Oneshot,protocol.ClientKind_Agent,protocol.TaskID{},"",protocol.RunnerSelector{},nil, protocol.Capability_Spawn) // no InfoGlobal
+	var btid protocol.TaskID
+	bb, _ := hex.DecodeString(b); copy(btid.Id[:], bb)
+	c := h.Tasks.Create("r","C",protocol.TaskKind_Oneshot,protocol.ClientKind_Agent,btid,"",protocol.RunnerSelector{},nil, protocol.Capability_None)
+	d := h.Tasks.Create("r","D",protocol.TaskKind_Oneshot,protocol.ClientKind_Agent,protocol.TaskID{},"",protocol.RunnerSelector{},nil, protocol.Capability_None)
+	h.principals = map[string]protocol.TaskID{"b-conn": btid}
 	all, allowed := h.visibleToCaller("b-conn")
-	if all { t.Fatal("B lacks info_global; all should be false") }
+	if all { t.Fatal("B lacks InfoGlobal; all should be false") }
 	if !allowed[b] || !allowed[c] { t.Fatal("B should see itself and child C") }
 	if allowed[d] { t.Fatal("B should not see sibling D") }
 }
 ```
 
-- [ ] **Step 2: Run (fails).**
+- [ ] **Step 2: Run (fails — visibleToCaller undefined).** `go test ./server/ -run TestVisibleSubtree -v`
 
-Run: `go test ./server/ -run TestVisibleSubtree -v`
-Expected: FAIL.
+- [ ] **Step 3: Implement `visibleToCaller` + `descendantSet`** in `server/capabilities.go`. Operator (zero principal) or `hasCap(caps, Capability_InfoGlobal)` → `all=true, allowed=nil`. Else build a `creator-hex → []child-hex` index from `h.Tasks.List(0)` (use a limit that returns all — confirm `List`'s "all" sentinel; `List(100)` is used elsewhere, pass a large/0 value that means unbounded, else raise the cap) and BFS from the caller's own task id hex, collecting itself + all descendants into `allowed`.
 
-- [ ] **Step 3: Implement `visibleToCaller` + `descendantSet`** in `server/capabilities.go`. `descendantSet` walks `TaskStore` once, following `CreatorTaskID` edges from the caller's task downward (BFS over a `creator→children` index built from `Tasks.List()`/snapshot). Operator or `info_global` → `all=true`.
+- [ ] **Step 4: Apply to `handleList`** (`:927`) — after `tasks := h.Tasks.List(100)`, when `!all`, drop entries whose `t.ID` is not in `allowed` before building `taskInfos`. Compute `all, allowed := h.visibleToCaller(conn.ConnectionID().String())`.
 
-- [ ] **Step 4: Apply to `handleList`** — when `!all`, filter the returned task set to `allowed`. Apply to `handleGetTaskLog` — when `!all` and the target id ∉ `allowed`, send the existing not-found/denied log response. (Find `handleList` and `handleGetTaskLog`; both already iterate the store.)
+- [ ] **Step 5: Apply to `handleGetTaskLog`** (`:981`) — compute visibility; when `!all` and `!allowed[taskID]`, send the existing not-found log response (mirror its current miss path) and return, so an out-of-subtree task is indistinguishable from absent.
 
-- [ ] **Step 5: Apply to agentboard** — in `server/agent_handler.go`, the `subscribe` handler: when the requested topic is not the caller's self topic and the caller lacks `info_global`, return the existing `SubscribeStatus` denial; the `topics` handler: require `info_global`. Resolve caller caps via the agentboard principal identity already established there (`ConnState.Identity()` → task id → `Tasks.Get`).
+- [ ] **Step 6: Gate agentboard `topics` enumeration.** In `server/agent_handler.go` `agentHandleListTopics` (`*Server` method): resolve the caller's caps from the board identity and, if `Capability_InfoGlobal` is absent, respond with an EMPTY `ListTopicsResponse` (consistent with the visibility-scope model: no topics visible to you) + `slog.Warn`. Add `func (s *Server) agentCallerCaps(ac *agentConn) protocol.Capability` in `server/capabilities.go`: read `_, tid, _ := ac.state.Identity()`; `t, ok := s.tasks.Get(hex.EncodeToString(tid.Id[:]))`; return `t.Capabilities` (or `Capability_None` on miss). Do NOT touch `agentHandleSubscribe` (deferred).
 
-- [ ] **Step 6: Tests for list/log filtering + topics gating** (append two short tests using fakes). Run.
+- [ ] **Step 7: Tests** (append): `TestListFilteredToSubtree` (operator/full sees all; confined caller's `handleList` stream contains only its subtree — decode the streamed `ListResultBody` via a recording conn) and `TestTopicsGated` (a caller task without InfoGlobal → `agentHandleListTopics` yields zero topics; with InfoGlobal → all). Run `go test ./server/ -run 'TestVisibleSubtree|TestListFilteredToSubtree|TestTopicsGated' -v && make check && make test`.
 
-Run: `go test ./server/ -run 'TestVisibleSubtree|TestListFiltered|TestTopicsGated' -v && make check`
-Expected: PASS.
-
-- [ ] **Step 7: Commit.**
+- [ ] **Step 8: Commit.**
 
 ```bash
 git add server/capabilities.go server/capabilities_test.go server/task_handler.go server/agent_handler.go
-git commit -m "feat(server): scope list/logs/topics to caller subtree unless info_global"
+git commit -m "feat(server): scope list/logs to caller subtree; gate topics enum on info_global"
 ```
 
 ---
