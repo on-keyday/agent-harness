@@ -87,33 +87,3 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 	}
 }
 
-// SendAndWaitPSK is the WASM variant — identical logic to the native build:
-// the PSK is bound to the handshake transcript and only the binder crosses the
-// wire (see ComputePSKBinder). crypto/hmac + crypto/sha512 compile
-// for GOOS=js, so the browser client computes the same binder as the server.
-//
-// Retained for cli/agent and runner migration; Dial now uses SendMergedHandshake.
-func SendAndWaitPSK(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, respCh <-chan appwire.PskAuthStatus) error {
-	if len(psk) == 0 {
-		return nil
-	}
-	binder, err := ComputePSKBinder(psk, transcript)
-	if err != nil {
-		return fmt.Errorf("psk: binder: %w", err)
-	}
-	data := make([]byte, 1+len(binder))
-	data[0] = byte(appwire.AppKind_PskAuth)
-	copy(data[1:], binder)
-	if err := sendFn(data); err != nil {
-		return fmt.Errorf("psk: send: %w", err)
-	}
-	select {
-	case status := <-respCh:
-		if status != appwire.PskAuthStatus_Ok {
-			return fmt.Errorf("psk: server rejected: %v", status)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}

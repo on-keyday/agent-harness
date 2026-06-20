@@ -59,6 +59,7 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
+	clearAgentEnv(t)
 
 	repo := initRepo(t)
 	fakeClaude, err := filepath.Abs("../testdata/fake-claude.sh")
@@ -160,6 +161,7 @@ func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
+	clearAgentEnv(t)
 
 	// Plain tempdir — no git init.
 	repo := t.TempDir()

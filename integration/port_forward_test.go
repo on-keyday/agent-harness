@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/server"
@@ -32,6 +33,7 @@ func TestPortForwardE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
+	clearAgentEnv(t)
 
 	repo := initRepo(t)
 	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
@@ -131,7 +133,7 @@ func TestPortForwardE2E(t *testing.T) {
 	freeLn2.Close()
 
 	// Dial the server as a CLI client.
-	c, err := cli.Dial(ctx, peerCID)
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
@@ -303,6 +305,7 @@ func TestRemotePortForwardE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
+	clearAgentEnv(t)
 
 	repo := initRepo(t)
 	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
@@ -380,7 +383,7 @@ func TestRemotePortForwardE2E(t *testing.T) {
 	runnerPort := bindLn.Addr().(*net.TCPAddr).Port
 	bindLn.Close()
 
-	c, err := cli.Dial(ctx, peerCID)
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}

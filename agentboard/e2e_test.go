@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"sync"
 	"testing"
 	"time"
 
@@ -131,20 +130,21 @@ func dialAgent(
 		t.Fatalf("dialAgent: dial: %v", err)
 	}
 
-	// Receive channel for ClientHelloResponse — buffered so the goroutine never blocks.
-	helloCh := make(chan protocol.ClientHelloStatus, 1)
-	var helloOnce sync.Once
+	// Receive channel for PskAuthResponse — the merged handshake's sole ACK.
+	// The server wires RecordClientIdentity so no TaskControlResponse{ClientHello}
+	// is emitted; PskAuthResponse{ok} is the handshake confirmation.
+	pskCh := make(chan protocol.PskAuthResponse, 1)
 
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		switch kind {
-		case appwire.AppKind_TaskControl:
-			var resp protocol.TaskControlResponse
-			if _, err := resp.Decode(payload); err != nil {
-				return
-			}
-			if resp.Kind == protocol.TaskControlKind_ClientHello {
-				if r := resp.ClientHello(); r != nil {
-					helloOnce.Do(func() { helloCh <- r.Status })
+		case appwire.AppKind_PskAuth:
+			if len(payload) > 0 {
+				var resp protocol.PskAuthResponse
+				if _, err := resp.Decode(payload); err == nil {
+					select {
+					case pskCh <- resp:
+					default:
+					}
 				}
 			}
 		case appwire.AppKind_AgentMessage:
@@ -164,26 +164,41 @@ func dialAgent(
 
 	pc.Start(ctx)
 
-	// Build and send ClientHello via AppKind_TaskControl.
+	// Merged PSK+ClientHello handshake. No PSK is configured in these tests
+	// (binder_len=0). Server replies with exactly one PskAuthResponse; when
+	// ticket validation succeeds, status=Ok and identity is recorded via
+	// RecordClientIdentity — no second TaskControlResponse is sent.
 	info := protocol.AgentInfo{RunnerId: rid, TaskId: tid, AuthTicket: ticket}
 	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
 	hello.SetAgentInfo(info)
-	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
-	req.SetClientHello(hello)
-	helloBytes, err := req.Append([]byte{byte(appwire.AppKind_TaskControl)})
+	mergedReq := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+	mergedReq.SetBinder(nil) // no PSK
+	if !mergedReq.SetClientHello(hello) {
+		t.Fatal("dialAgent: SetClientHello failed")
+	}
+	helloBytes, err := mergedReq.Append([]byte{byte(appwire.AppKind_PskAuth)})
 	if err != nil {
-		t.Fatalf("dialAgent: encode hello: %v", err)
+		t.Fatalf("dialAgent: encode merged handshake: %v", err)
 	}
 	if _, _, err := pc.Connection().SendMessage(helloBytes); err != nil {
-		t.Fatalf("dialAgent: send hello: %v", err)
+		t.Fatalf("dialAgent: send merged handshake: %v", err)
 	}
 
-	// Wait for ClientHelloResponse.
+	// PskAuthResponse is the sole handshake ACK.
+	// Ok → accepted; BadTicket → rejected (server closes conn after sending).
 	select {
-	case status := <-helloCh:
-		return pc, status
+	case resp := <-pskCh:
+		switch resp.Status {
+		case protocol.PskAuthStatus_Ok:
+			return pc, protocol.ClientHelloStatus_Ok
+		case protocol.PskAuthStatus_BadTicket:
+			return pc, protocol.ClientHelloStatus_BadTicket
+		default:
+			t.Fatalf("dialAgent: unexpected PSK status %v", resp.Status)
+			return nil, protocol.ClientHelloStatus_BadTicket // unreachable
+		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("dialAgent: timed out waiting for ClientHelloResponse")
+		t.Fatal("dialAgent: timed out waiting for PskAuthResponse")
 		return nil, protocol.ClientHelloStatus_BadTicket // unreachable
 	}
 }

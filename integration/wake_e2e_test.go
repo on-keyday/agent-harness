@@ -49,6 +49,7 @@ func TestSubmitWakeE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E skipped in -short mode")
 	}
+	clearAgentEnv(t)
 
 	repo := initRepo(t)
 	fake, err := filepath.Abs("../testdata/fake-claude-wake.sh")

@@ -192,29 +192,19 @@ func TestAgentProxyE2E(t *testing.T) {
 	}
 	defer proxyConn.Close()
 
-	// 6. PSK + ClientHello on the proxied conn, mirroring
-	//    cli/agent/conn.go ConnectAgent's combined-handler pattern.
-	pskRespCh := make(chan appwire.PskAuthStatus, 1)
-	helloRespCh := make(chan protocol.ClientHelloStatus, 1)
+	// 6. Merged PSK+ClientHello handshake on the proxied conn.
+	// The server wires RecordClientIdentity, so PskAuthResponse{Ok} is the
+	// sole handshake ACK — no TaskControlResponse{ClientHello} is emitted.
+	pskRespCh := make(chan protocol.PskAuthResponse, 1)
 
 	proxyConn.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		switch kind {
 		case appwire.AppKind_PskAuth:
 			if len(payload) > 0 {
-				select {
-				case pskRespCh <- appwire.PskAuthStatus(payload[0]):
-				default:
-				}
-			}
-		case appwire.AppKind_TaskControl:
-			var resp protocol.TaskControlResponse
-			if _, err := resp.Decode(payload); err != nil {
-				return
-			}
-			if resp.Kind == protocol.TaskControlKind_ClientHello {
-				if r := resp.ClientHello(); r != nil {
+				var resp protocol.PskAuthResponse
+				if _, err := resp.Decode(payload); err == nil {
 					select {
-					case helloRespCh <- r.Status:
+					case pskRespCh <- resp:
 					default:
 					}
 				}
@@ -223,37 +213,38 @@ func TestAgentProxyE2E(t *testing.T) {
 	})
 	proxyConn.Start(ctx)
 
-	// PSK is not configured on the server in this test (nil) — SendAndWaitPSK
-	// short-circuits and returns nil immediately. Kept in the test for shape
-	// parity with the production ConnectAgent path.
+	// Build and send merged PskAuthRequest{role=client, binder_len=0, ClientHello}.
+	// No PSK is configured on the server in this test (nil binder).
+	// The agent_proxy_e2e test exercises the end-to-end relay/rehandshake path;
+	// we build the request manually to embed AgentInfo without setting process env.
 	pskCtx, pskCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer pskCancel()
-	if err := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
-		_, _, err := proxyConn.Connection().SendMessage(b)
-		return err
-	}, nil, proxyConn.Connection().GetTranscript(), pskRespCh); err != nil {
-		t.Fatalf("SendAndWaitPSK: %v", err)
-	}
-
-	// ClientHello: send kind=agent with runner_id, task_id, auth_ticket.
 	info := protocol.AgentInfo{RunnerId: protoRid, TaskId: taskID, AuthTicket: ticket}
 	info.SetHostname([]byte("proxy-e2e-agent"))
-	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
-	hello.SetAgentInfo(info)
-	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
-	req.SetClientHello(hello)
-	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-	if _, _, err := proxyConn.Connection().SendMessage(data); err != nil {
-		t.Fatalf("send ClientHello: %v", err)
+	{
+		req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
+		req.SetBinder(nil) // no PSK in this test
+		hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
+		hello.SetAgentInfo(info)
+		if !req.SetClientHello(hello) {
+			t.Fatal("SetClientHello failed")
+		}
+		data, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})
+		if err != nil {
+			t.Fatalf("encode PskAuthRequest: %v", err)
+		}
+		if _, _, err := proxyConn.Connection().SendMessage(data); err != nil {
+			t.Fatalf("send merged handshake: %v", err)
+		}
 	}
 
 	select {
-	case status := <-helloRespCh:
-		if status != protocol.ClientHelloStatus_Ok {
-			t.Fatalf("hello rejected: got %v want Ok", status)
+	case resp := <-pskRespCh:
+		if resp.Status != protocol.PskAuthStatus_Ok {
+			t.Fatalf("merged handshake rejected: got %v want Ok", resp.Status)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for ClientHelloResponse on proxied conn")
+	case <-pskCtx.Done():
+		t.Fatal("timeout waiting for PskAuthResponse on proxied conn")
 	}
 
 	// Cleanup: cancel and drain. Server / runner shutdown is best-effort —

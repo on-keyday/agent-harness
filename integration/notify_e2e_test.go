@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -58,6 +59,7 @@ func TestNotifyEgressHookE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
+	clearAgentEnv(t)
 
 	// Create a hook script that captures its stdin to outFile.
 	hookDir := t.TempDir()
@@ -119,6 +121,7 @@ func TestNotifyLiveReplayE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E test skipped in -short mode")
 	}
+	clearAgentEnv(t)
 
 	addr := "127.0.0.1:18553"
 	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
@@ -142,7 +145,7 @@ func TestNotifyLiveReplayE2E(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	// Client A: send a notification before client B subscribes (backlog test).
-	clientA, err := cli.Dial(ctx, peerCID)
+	clientA, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("dial A: %v", err)
 	}
@@ -155,7 +158,7 @@ func TestNotifyLiveReplayE2E(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Client B: subscribe to notifications. Ring backlog should arrive first.
-	clientB, err := cli.Dial(ctx, peerCID)
+	clientB, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("dial B: %v", err)
 	}
