@@ -123,9 +123,13 @@ func (c *Conn) FetchDeliveredPayload(ctx context.Context, streamID uint64) ([]by
 	}
 }
 
-// ConnectAgent dials the harness server, sends a ClientHello (kind=agent)
-// over the TaskControl app-kind (0x41), awaits OK, and returns the open Conn.
-// Caller must Close it.
+// ConnectAgent dials the harness server, performs the merged PSK+identity
+// handshake (PskAuthRequest{role=client, client_hello=Agent}), awaits the
+// PskAuthResponse, and returns the open Conn. Caller must Close it.
+//
+// Identity is established structurally in the merged handshake — no separate
+// TaskControl ClientHello is sent. cli.SendMergedHandshake is reused directly;
+// the binder logic lives exclusively there.
 func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	cid, err := cliopts.ResolveServerCID(f.ServerCID)
 	if err != nil {
@@ -136,10 +140,6 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		return nil, err
 	}
 	rid, err := cliopts.ResolveRunnerID(f.RunnerID)
-	if err != nil {
-		return nil, err
-	}
-	ticket, err := cliopts.ResolveAuthTicket()
 	if err != nil {
 		return nil, err
 	}
@@ -161,31 +161,19 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 	}
 
 	psk := cli.GetPSK()
-	pskRespCh := make(chan appwire.PskAuthStatus, 1)
-	helloRespCh := make(chan protocol.ClientHelloStatus, 1)
+	// Receives exactly one PskAuthResponse (brgen-decoded) from the server.
+	// Mirrors cli.Client.Dial wiring exactly.
+	pskRespCh := make(chan protocol.PskAuthResponse, 1)
 
-	// Combined handler: routes PskAuth responses during PSK phase,
-	// then TaskControl ClientHelloResponse during Hello phase.
+	// Combined handler: decodes PskAuthResponse during the merged handshake,
+	// then becomes a no-op (subcommands install their own handler via SetOnControl).
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
-		switch kind {
-		case appwire.AppKind_PskAuth:
-			if len(payload) > 0 {
+		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
+			var resp protocol.PskAuthResponse
+			if _, err := resp.Decode(payload); err == nil {
 				select {
-				case pskRespCh <- appwire.PskAuthStatus(payload[0]):
+				case pskRespCh <- resp:
 				default:
-				}
-			}
-		case appwire.AppKind_TaskControl:
-			var resp protocol.TaskControlResponse
-			if _, err := resp.Decode(payload); err != nil {
-				return
-			}
-			if resp.Kind == protocol.TaskControlKind_ClientHello {
-				if r := resp.ClientHello(); r != nil {
-					select {
-					case helloRespCh <- r.Status:
-					default:
-					}
 				}
 			}
 		}
@@ -200,38 +188,21 @@ func ConnectAgent(ctx context.Context, f Flags) (*Conn, error) {
 		case <-pskCtx.Done():
 		}
 	}()
-	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
+	// SendMergedHandshake builds PskAuthRequest{role=client, binder (or empty),
+	// client_hello=<buildMergedClientHello(Cli)>}. When the in-task agent env
+	// (HARNESS_RUNNER_ID / HARNESS_TASK_ID / HARNESS_AUTH_TICKET) is fully
+	// populated, buildMergedClientHello auto-upgrades kind to Agent with AgentInfo —
+	// agentboard connections are always in-task agents, so the ClientHello carries
+	// kind=Agent + ticket. Binder logic is not duplicated here.
+	pskErr := cli.SendMergedHandshake(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pc.Connection().GetTranscript(), pskRespCh)
+	}, psk, pc.Connection().GetTranscript(), protocol.ClientKind_Cli, pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
 		return nil, pskErr
 	}
 
-	hostname := cliopts.ResolveString(f.Hostname, "HARNESS_HOSTNAME")
-	info := protocol.AgentInfo{RunnerId: rid, TaskId: tid, AuthTicket: ticket}
-	info.SetHostname([]byte(hostname)) // 0-len when empty is fine
-	hello := protocol.ClientHello{Kind: protocol.ClientKind_Agent}
-	hello.SetAgentInfo(info) // Kind is set first (discriminator), then the field
-	req := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
-	req.SetClientHello(hello)
-	data := req.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-	if _, _, err := pc.Connection().SendMessage(data); err != nil {
-		pc.Close()
-		return nil, fmt.Errorf("send hello: %w", err)
-	}
-
-	select {
-	case status := <-helloRespCh:
-		if status != protocol.ClientHelloStatus_Ok {
-			pc.Close()
-			return nil, fmt.Errorf("hello rejected: %v", status)
-		}
-	case <-ctx.Done():
-		pc.Close()
-		return nil, ctx.Err()
-	}
 	return &Conn{pc: pc, taskID: tid, runnerID: rid}, nil
 }
