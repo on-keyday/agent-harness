@@ -75,7 +75,7 @@ type RunHandle struct {
 	sender  *peerSender
 	cfg     Config
 
-	pskRespCh chan appwire.PskAuthStatus
+	pskRespCh chan protocol.PskAuthResponse
 	closeOnce sync.Once
 }
 
@@ -184,16 +184,19 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		session:   session,
 		sender:    sender,
 		cfg:       cfg,
-		pskRespCh: make(chan appwire.PskAuthStatus, 1),
+		pskRespCh: make(chan protocol.PskAuthResponse, 1),
 	}
 
-	// During PSK phase, only route PskAuth responses; runner control messages
-	// arrive only after the server has accepted the connection.
+	// During PSK phase, only route PskAuth responses (brgen-decoded); runner
+	// control messages arrive only after the server has accepted the connection.
 	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
 		if kind == appwire.AppKind_PskAuth && len(payload) > 0 {
-			select {
-			case h.pskRespCh <- appwire.PskAuthStatus(payload[0]):
-			default:
+			var resp protocol.PskAuthResponse
+			if _, err := resp.Decode(payload); err == nil {
+				select {
+				case h.pskRespCh <- resp:
+				default:
+				}
 			}
 			return
 		}
@@ -201,6 +204,11 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	})
 	pc.Start(ctx)
 
+	// Build and send the merged PSK+identity request (role=runner).
+	// The RunnerHello is embedded here so the server's gate can register the
+	// runner in one round-trip and reply with both PskAuthResponse{ok} AND
+	// RunnerHelloResponse (carrying YourRunnerId). Do NOT use SendMergedHandshake
+	// — that is role=client only.
 	pskCtx, pskCancel := context.WithCancel(ctx)
 	go func() {
 		defer pskCancel()
@@ -209,10 +217,10 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		case <-pskCtx.Done():
 		}
 	}()
-	pskErr := cli.SendAndWaitPSK(pskCtx, func(b []byte) error {
+	pskErr := sendRunnerMergedHandshake(pskCtx, func(b []byte) error {
 		_, _, err := pc.Connection().SendMessage(b)
 		return err
-	}, psk, pc.Connection().GetTranscript(), h.pskRespCh)
+	}, psk, pc.Connection().GetTranscript(), cfg, h.pskRespCh)
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
@@ -221,23 +229,11 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	return h, nil
 }
 
-// OnConnect performs the post-PSK lifecycle: install the runner-control
-// dispatcher rooted at runCtx, send Hello, and block until the peer
-// connection terminates or runCtx is cancelled.
-func OnConnect(runCtx context.Context, h *RunHandle) error {
-	pc := h.pc
-	session := h.session
-	cfg := h.cfg
-
-	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
-		dispatchRunnerRequest(runCtx, session, cfg.Logger, kind, payload)
-	})
-
-	// Build and send Hello — the server's registry uses this to bind
-	// ConnectionID → allowed_roots / max_tasks / hostname.
-	hello := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_Hello}
+// buildRunnerHello constructs the RunnerHello from the given Config, identical
+// to the message previously sent in OnConnect. It is now embedded in the merged
+// PskAuthRequest so the server can register the runner in one round-trip.
+func buildRunnerHello(cfg Config) protocol.RunnerHello {
 	hh := protocol.RunnerHello{Version: 1}
-
 	maxTasks := cfg.MaxTasks
 	if maxTasks < 1 {
 		maxTasks = 1
@@ -255,11 +251,79 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 	hh.SetAllowedRoots(roots)
 	hh.SetAgentBin([]byte(agentBinBase(cfg.ClaudeBin)))
 	hh.SetSkillsInjected(skillsInjected(cfg.NoWorktree, cfg.ForceInjectHarnessSettings))
-	hello.SetHello(hh)
-	helloBytes := hello.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
-	if err := h.sender.Send(helloBytes); err != nil {
-		return fmt.Errorf("send Hello: %w", err)
+	return hh
+}
+
+// sendRunnerMergedHandshake builds a PskAuthRequest{binder (or empty when psk==nil),
+// role=runner, runner_hello=<RunnerHello from cfg>}, sends [0x45]+PskAuthRequest via
+// sendFn, then blocks until a PskAuthResponse arrives on respCh or ctx is cancelled.
+//
+// This is the runner-side counterpart to cli.SendMergedHandshake (which is
+// role=client). The binder computation (HMAC-SHA512 over the objproto transcript)
+// is identical to cli.ComputePSKBinder — only the role and identity union differ.
+func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, cfg Config, respCh <-chan protocol.PskAuthResponse) error {
+	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Runner}
+
+	if len(psk) > 0 {
+		binder, err := cli.ComputePSKBinder(psk, transcript)
+		if err != nil {
+			return fmt.Errorf("psk: binder: %w", err)
+		}
+		if !req.SetBinder(binder) {
+			return fmt.Errorf("psk: SetBinder failed (len=%d)", len(binder))
+		}
+	} else {
+		req.SetBinder(nil) // binder_len = 0
 	}
+
+	rh := buildRunnerHello(cfg)
+	if !req.SetRunnerHello(rh) {
+		return fmt.Errorf("psk: SetRunnerHello failed")
+	}
+
+	data, err := req.Append([]byte{byte(appwire.AppKind_PskAuth)})
+	if err != nil {
+		return fmt.Errorf("psk: encode: %w", err)
+	}
+	if err := sendFn(data); err != nil {
+		return fmt.Errorf("psk: send: %w", err)
+	}
+
+	select {
+	case resp := <-respCh:
+		switch resp.Status {
+		case protocol.PskAuthStatus_Ok:
+			return nil
+		case protocol.PskAuthStatus_BadPsk:
+			return fmt.Errorf("psk: server rejected: %v", resp.Status)
+		case protocol.PskAuthStatus_BadTicket:
+			return fmt.Errorf("psk: server rejected agent ticket: %v", resp.Status)
+		case protocol.PskAuthStatus_NoIdentity:
+			return fmt.Errorf("psk: server rejected (no identity): %v", resp.Status)
+		default:
+			return fmt.Errorf("psk: server rejected: %v", resp.Status)
+		}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// OnConnect performs the post-PSK lifecycle: install the runner-control
+// dispatcher rooted at runCtx, and block until the peer connection terminates
+// or runCtx is cancelled.
+//
+// The RunnerHello is now embedded in the merged PskAuthRequest sent during
+// driveAfterConn (Connect). The server's gate re-dispatches it to the runner
+// handler, which registers the runner and replies with RunnerHelloResponse.
+// No separate Hello send is needed here.
+func OnConnect(runCtx context.Context, h *RunHandle) error {
+	pc := h.pc
+	session := h.session
+	cfg := h.cfg
+
+	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+		dispatchRunnerRequest(runCtx, session, cfg.Logger, kind, payload)
+	})
 
 	// Block until either the connection dies or the run is cancelled.
 	select {
