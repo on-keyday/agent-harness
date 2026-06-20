@@ -107,20 +107,24 @@ func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel p
 // holds). Callers that need a narrower grant should use
 // InteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (string, error) {
-	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All)
+	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All, false)
 }
 
 // InteractiveWithSelectorArgsAndCaps is identical to
 // InteractiveWithSelectorAndArgs but lets the caller specify an explicit
 // capability mask for the spawned task. Pass protocol.Capability_All for the
 // inherit-all behaviour.
-func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability) (string, error) {
+// resumeCapsOverride, when true, instructs the server to apply caps as an
+// override on resume (re-grant) rather than inheriting the original task's
+// capability mask. Has no effect on new tasks (non-resume).
+func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability, resumeCapsOverride bool) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
 	oi.Selector = sel
 	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
 	oi.RequestedCaps = caps
+	oi.SetResumeCapsOverride(resumeCapsOverride)
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {

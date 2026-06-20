@@ -44,27 +44,33 @@ func (c *Client) OpenInteractiveWithSelector(ctx context.Context, repoPath strin
 // holds). Callers that need a narrower grant should use
 // OpenInteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (*agentexec.CommandExecutionStream, string, error) {
-	return c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoPath, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All)
+	return c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoPath, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All, false)
 }
 
 // OpenInteractiveWithSelectorArgsAndCaps is identical to
 // OpenInteractiveWithSelectorAndArgs but lets the caller specify an explicit
 // capability mask for the spawned task. Pass protocol.Capability_All for the
 // inherit-all behaviour.
-func (c *Client) OpenInteractiveWithSelectorArgsAndCaps(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability) (*agentexec.CommandExecutionStream, string, error) {
-	return c.openInteractive(ctx, repoPath, sel, extraArgs, resumeTaskID, detachable, nil, caps)
+// resumeCapsOverride, when true, instructs the server to apply caps as an
+// override on resume (re-grant) rather than inheriting the original task's
+// capability mask. Has no effect on new tasks (non-resume).
+func (c *Client) OpenInteractiveWithSelectorArgsAndCaps(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability, resumeCapsOverride bool) (*agentexec.CommandExecutionStream, string, error) {
+	return c.openInteractive(ctx, repoPath, sel, extraArgs, resumeTaskID, detachable, nil, caps, resumeCapsOverride)
 }
 
 // openInteractive is the single OpenInteractive request builder. x11 is
 // nil for non-X11 sessions; when set, x11_enabled + the X11Forward block
 // (display + cookie) are sent. caps sets RequestedCaps on the wire request.
-func (c *Client) openInteractive(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, x11 *X11Request, caps protocol.Capability) (*agentexec.CommandExecutionStream, string, error) {
+// resumeCapsOverride, when true, sets the ResumeCapsOverride bit on the wire
+// request so the server applies caps as an override rather than inheriting.
+func (c *Client) openInteractive(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, x11 *X11Request, caps protocol.Capability, resumeCapsOverride bool) (*agentexec.CommandExecutionStream, string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repoPath))
 	oi.Selector = sel
 	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
 	oi.RequestedCaps = caps
+	oi.SetResumeCapsOverride(resumeCapsOverride)
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {
@@ -156,15 +162,18 @@ func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel p
 // holds). Callers that need a narrower grant should use
 // InteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (string, error) {
-	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All)
+	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All, false)
 }
 
 // InteractiveWithSelectorArgsAndCaps is identical to
 // InteractiveWithSelectorAndArgs but lets the caller specify an explicit
 // capability mask for the spawned task. Pass protocol.Capability_All for the
 // inherit-all behaviour.
-func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability) (string, error) {
-	stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, caps)
+// resumeCapsOverride, when true, instructs the server to apply caps as an
+// override on resume (re-grant) rather than inheriting the original task's
+// capability mask. Has no effect on new tasks (non-resume).
+func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability, resumeCapsOverride bool) (string, error) {
+	stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, caps, resumeCapsOverride)
 	if err != nil {
 		return taskIDHex, err
 	}

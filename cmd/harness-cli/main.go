@@ -123,7 +123,7 @@ func main() {
 		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps)
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs))
 		if err != nil {
 			die(err)
 		}
@@ -269,7 +269,7 @@ func main() {
 		if err := c.SayHelloAuto(ctx, protocol.ClientKind_Cli); err != nil {
 			die(err)
 		}
-		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, false, caps); err != nil {
+		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, false, caps, *resume != "" && capsExplicitlySet(fs)); err != nil {
 			die(err)
 		}
 
@@ -674,4 +674,17 @@ func (r *repeatableStrings) String() string {
 func (r *repeatableStrings) Set(v string) error {
 	*r = append(*r, v)
 	return nil
+}
+
+// capsExplicitlySet reports whether the "caps" flag was explicitly provided on
+// the command line (as opposed to taking its zero-value default). It uses
+// flag.FlagSet.Visit which iterates only over flags that were actually set.
+func capsExplicitlySet(fs *flag.FlagSet) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "caps" {
+			found = true
+		}
+	})
+	return found
 }

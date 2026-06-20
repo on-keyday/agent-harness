@@ -104,7 +104,10 @@ type X11Request struct {
 // when forwarding WITHOUT authentication (no cookie). It does NOT print: the
 // caller surfaces warn (CLI → stderr; TUI → status line, since stderr would
 // corrupt the alt-screen).
-func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, displayN int, caps protocol.Capability) (*agentexec.CommandExecutionStream, string, RemoteForwardSpec, string, error) {
+// resumeCapsOverride, when true, instructs the server to apply caps as an
+// override on resume (re-grant) rather than inheriting the original task's
+// capability mask. Has no effect on new tasks (non-resume).
+func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, displayN int, caps protocol.Capability, resumeCapsOverride bool) (*agentexec.CommandExecutionStream, string, RemoteForwardSpec, string, error) {
 	display := os.Getenv("DISPLAY")
 	network, host, port, err := localXServerDialSpec(display)
 	if err != nil {
@@ -116,7 +119,7 @@ func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protoc
 		warn = fmt.Sprintf("no cookie for %s (%v); forwarding WITHOUT authentication — your X server must accept unauthenticated connections", display, err)
 		cookie = nil
 	}
-	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie}, caps)
+	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, true /*detachable*/, &X11Request{Display: displayN, Cookie: cookie}, caps, resumeCapsOverride)
 	if err != nil {
 		return nil, taskIDHex, RemoteForwardSpec{}, warn, err
 	}
@@ -129,8 +132,9 @@ func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protoc
 // server) in the background for its lifetime, and drives the PTY in the
 // foreground. displayN is the client-chosen display number. Requires xauth on
 // the client and a running, authorized local X server (via $DISPLAY).
-func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, displayN int, caps protocol.Capability) (string, error) {
-	stream, taskIDHex, sp, warn, err := c.OpenInteractiveX11(ctx, repo, sel, extraArgs, resumeTaskID, displayN, caps)
+// resumeCapsOverride is forwarded to OpenInteractiveX11 unchanged.
+func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, displayN int, caps protocol.Capability, resumeCapsOverride bool) (string, error) {
+	stream, taskIDHex, sp, warn, err := c.OpenInteractiveX11(ctx, repo, sel, extraArgs, resumeTaskID, displayN, caps, resumeCapsOverride)
 	if err != nil {
 		return taskIDHex, err
 	}

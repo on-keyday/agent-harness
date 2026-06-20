@@ -326,7 +326,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
-			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps)
+			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, false)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -645,7 +645,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
-			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps)
+			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps, false)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return

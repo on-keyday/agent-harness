@@ -102,8 +102,10 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 
+	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
+
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true, caps)
+		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true, caps, resumeCapsOverride)
 		if err != nil {
 			return err
 		}
@@ -113,7 +115,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
-		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps)
+		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride)
 		if err != nil {
 			return err
 		}
@@ -121,7 +123,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/, caps)
+	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/, caps, resumeCapsOverride)
 	if err != nil {
 		return err
 	}
