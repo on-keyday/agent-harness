@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -349,6 +350,22 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 	if !ac.helloed || req == nil {
 		return
 	}
+
+	// Gate: callers without Capability_InfoGlobal receive an empty topic list.
+	// This prevents agents from enumerating all board topics (visibility scope).
+	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_InfoGlobal) {
+		slog.Warn("agentHandleListTopics: caller lacks InfoGlobal; returning empty list",
+			"task_id", func() string {
+				_, tid, _ := ac.state.Identity()
+				return hex.EncodeToString(tid.Id[:])
+			}())
+		out := agentboard.ListTopicsResponse{RequestId: req.RequestId}
+		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopicsResponse}
+		resp.SetListTopicsResponse(out)
+		s.sendAgent(conn, resp)
+		return
+	}
+
 	rows := s.Board.ListTopics()
 
 	out := agentboard.ListTopicsResponse{RequestId: req.RequestId}

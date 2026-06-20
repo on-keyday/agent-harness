@@ -185,7 +185,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 
 	case protocol.TaskControlKind_List:
-		h.handleList(conn, req.RequestId)
+		h.handleList(conn, req.RequestId, cid)
 
 	case protocol.TaskControlKind_Cancel:
 		can := req.Cancel()
@@ -236,7 +236,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		taskID := hex.EncodeToString(gl.TaskId.Id[:])
-		h.handleGetTaskLog(conn, req.RequestId, taskID)
+		h.handleGetTaskLog(conn, req.RequestId, taskID, cid)
 
 	case protocol.TaskControlKind_OpenInteractive:
 		oi := req.OpenInteractive()
@@ -924,7 +924,7 @@ func relayBytes(src, dst trsf.BidirectionalStream) {
 // like GetTaskLog has). On stream-creation failure (test stub or
 // non-streaming connection) the response carries StreamId=0; client treats
 // that as an error.
-func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32) {
+func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID string) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
 		resp.SetList(protocol.ListResult{StreamId: streamID})
@@ -932,14 +932,25 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32) {
 		conn.SendMessage(out) //nolint:errcheck
 	}
 
+	all, allowed := h.visibleToCaller(connID)
 	runners := h.Registry.List()
 	tasks := h.Tasks.List(100)
 	runnerInfos := make([]protocol.RunnerInfo, len(runners))
 	for i, r := range runners {
 		runnerInfos[i] = toRunnerInfo(r)
 	}
-	taskInfos := make([]protocol.TaskInfo, len(tasks))
-	for i, t := range tasks {
+	var filteredTasks []TaskEntry
+	if all {
+		filteredTasks = tasks
+	} else {
+		for _, t := range tasks {
+			if allowed[t.ID] {
+				filteredTasks = append(filteredTasks, t)
+			}
+		}
+	}
+	taskInfos := make([]protocol.TaskInfo, len(filteredTasks))
+	for i, t := range filteredTasks {
 		taskInfos[i] = toTaskInfo(t)
 	}
 	var body protocol.ListResultBody
@@ -978,12 +989,19 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32) {
 //
 // If LogsDir is empty (server started without --data-dir) or the file does
 // not exist, the response carries Found=0 and StreamId=0.
-func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID string) {
+func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID string, connID string) {
 	respond := func(found uint8, streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: requestID}
 		resp.SetGetLog(protocol.GetTaskLogResponse{Found: found, StreamId: streamID})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
+	}
+
+	// Visibility gate: out-of-subtree tasks are indistinguishable from absent.
+	visAll, allowed := h.visibleToCaller(connID)
+	if !visAll && !allowed[taskID] {
+		respond(0, 0)
+		return
 	}
 
 	if h.LogsDir == "" {

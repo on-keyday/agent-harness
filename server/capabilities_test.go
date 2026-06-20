@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -423,5 +424,316 @@ func TestDirectionGate(t *testing.T) {
 		})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertPermissionDenied(t, conn, 16, protocol.Capability_ForwardRemote)
+	})
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: visibleToCaller + handleList + handleGetTaskLog subtree scoping
+// ---------------------------------------------------------------------------
+
+// TestVisibleSubtree verifies the BFS descendant set:
+//   - caller B (no InfoGlobal) sees itself + child C, not sibling D.
+//   - caller B with InfoGlobal → all=true.
+func TestVisibleSubtree(t *testing.T) {
+	h := newTestHandler(t)
+
+	// B: has Spawn but no InfoGlobal; no parent.
+	bHex := h.Tasks.Create("r", "B", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn)
+	bTID := hexToTaskID(t, bHex)
+
+	// C: child of B.
+	cHex := h.Tasks.Create("r", "C", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None)
+
+	// D: sibling (no parent), unrelated to B.
+	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None)
+
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.principals["b-conn"] = bTID
+
+	// B lacks InfoGlobal → subtree only.
+	all, allowed := h.visibleToCaller("b-conn")
+	if all {
+		t.Fatal("B lacks InfoGlobal; all should be false")
+	}
+	if !allowed[bHex] {
+		t.Errorf("B should see itself; bHex=%s allowed=%v", bHex, allowed)
+	}
+	if !allowed[cHex] {
+		t.Errorf("B should see child C; cHex=%s allowed=%v", cHex, allowed)
+	}
+	if allowed[dHex] {
+		t.Errorf("B should NOT see sibling D; dHex=%s allowed=%v", dHex, allowed)
+	}
+
+	// Now give B InfoGlobal → all=true.
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[bHex].Capabilities = protocol.Capability_InfoGlobal
+	h.Tasks.mu.Unlock()
+
+	all2, _ := h.visibleToCaller("b-conn")
+	if !all2 {
+		t.Fatal("B with InfoGlobal should have all=true")
+	}
+}
+
+// TestListFilteredToSubtree verifies that handleList (via h.Handle) returns
+// only the caller's subtree for a confined caller and all tasks for an operator.
+func TestListFilteredToSubtree(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Create two root tasks (operator-created).
+	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn)
+	_ = h.Tasks.Create("r", "B-root", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn)
+
+	// Create a child of A.
+	aTID := hexToTaskID(t, aHex)
+	aChildHex := h.Tasks.Create("r", "A-child", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		aTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None)
+
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+
+	// -- Case 1: confined caller (task A, no InfoGlobal) ---
+	callerConn := &fakeConn{
+		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9810-1"),
+		nextSendStreamID: 10,
+	}
+	h.principals[callerConn.ConnectionID().String()] = aTID
+
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req.SetList(protocol.ListQuery{})
+	h.Handle(callerConn, encodeTaskControlRequest(t, req))
+
+	if len(callerConn.sendStreams) != 1 {
+		t.Fatalf("confined caller: expected 1 send stream, got %d", len(callerConn.sendStreams))
+	}
+	body := decodeListBody(t, callerConn.sendStreams[0].bytes)
+	if body.TasksLen != 2 {
+		// A itself + A-child
+		t.Errorf("confined caller: expected 2 tasks (A + A-child), got %d", body.TasksLen)
+	}
+	taskHexes := taskIDsFromBody(t, body)
+	if !taskHexes[aHex] {
+		t.Errorf("confined caller: A must be visible; hex=%s", aHex)
+	}
+	if !taskHexes[aChildHex] {
+		t.Errorf("confined caller: A-child must be visible; hex=%s", aChildHex)
+	}
+
+	// -- Case 2: operator (no entry in principals) sees all 3 tasks ---
+	operatorConn := &fakeConn{
+		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9810-2"),
+		nextSendStreamID: 11,
+	}
+	h.Handle(operatorConn, encodeTaskControlRequest(t, req))
+
+	if len(operatorConn.sendStreams) != 1 {
+		t.Fatalf("operator: expected 1 send stream, got %d", len(operatorConn.sendStreams))
+	}
+	opBody := decodeListBody(t, operatorConn.sendStreams[0].bytes)
+	if opBody.TasksLen != 3 {
+		t.Errorf("operator: expected 3 tasks, got %d", opBody.TasksLen)
+	}
+}
+
+// decodeListBody decodes a ListResultBody from raw bytes recorded on a send stream.
+func decodeListBody(t *testing.T, raw []byte) protocol.ListResultBody {
+	t.Helper()
+	var body protocol.ListResultBody
+	if err := body.DecodeExact(raw); err != nil {
+		t.Fatalf("decodeListBody: %v", err)
+	}
+	return body
+}
+
+// taskIDsFromBody returns a set of task id hex strings from the body.
+func taskIDsFromBody(t *testing.T, body protocol.ListResultBody) map[string]bool {
+	t.Helper()
+	out := make(map[string]bool)
+	for _, ti := range body.Tasks {
+		out[hex.EncodeToString(ti.Id.Id[:])] = true
+	}
+	return out
+}
+
+// TestGetTaskLogOutOfSubtreeDenied: a confined caller requesting logs of an
+// out-of-subtree task receives the not-found response (found=0, streamId=0).
+func TestGetTaskLogOutOfSubtreeDenied(t *testing.T) {
+	h := newTestHandler(t)
+	h.LogsDir = t.TempDir() // enable log path so the gate runs before the open
+
+	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn)
+	aTID := hexToTaskID(t, aHex)
+
+	// D is an unrelated task (operator-created).
+	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None)
+	dTID := hexToTaskID(t, dHex)
+
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9811-1")}
+	h.principals[callerConn.ConnectionID().String()] = aTID
+
+	// Request logs for task D (out of A's subtree).
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 42}
+	req.SetGetLog(protocol.GetTaskLogRequest{TaskId: dTID})
+	h.Handle(callerConn, encodeTaskControlRequest(t, req))
+
+	resp := lastTaskControlResponse(t, callerConn)
+	if resp.Kind != protocol.TaskControlKind_GetTaskLog {
+		t.Fatalf("expected GetTaskLog response kind, got %v", resp.Kind)
+	}
+	gl := resp.GetLog()
+	if gl == nil {
+		t.Fatal("GetLog() returned nil")
+	}
+	if gl.Found != 0 {
+		t.Errorf("expected Found=0 (denied), got %d", gl.Found)
+	}
+	if gl.StreamId != 0 {
+		t.Errorf("expected StreamId=0 (denied), got %d", gl.StreamId)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Task 6: agentCallerCaps + TestTopicsGated
+// ---------------------------------------------------------------------------
+
+// makeTestAgentConn builds a *Server with tasks + board and an *agentConn
+// with helloed=true and an identity backed by a task in s.tasks holding caps.
+// The agentConn.state.Identity() TaskID will match the created task.
+func makeTestAgentConn(t *testing.T, caps protocol.Capability) (*Server, *agentConn) {
+	t.Helper()
+	board := newTestBoard(t)
+	tasks := NewTaskStore()
+
+	// Create a task with the desired capability set.
+	var protoTID protocol.TaskID
+	protoTID.Id = [16]byte{0x10, 0x20, 0x30, 0x40}
+	tidHex := hex.EncodeToString(protoTID.Id[:])
+	tasks.mu.Lock()
+	tasks.tasks[tidHex] = &TaskEntry{
+		ID:           tidHex,
+		RepoPath:     "r",
+		Capabilities: caps,
+	}
+	tasks.order = append(tasks.order, tidHex)
+	tasks.mu.Unlock()
+
+	// Build agentboard RunnerID/TaskID and Attach to get a ConnState.
+	var boardRID agentboard.RunnerID
+	boardRID.SetTransport([]byte("ws"))
+	boardRID.SetIpAddr([]byte{127, 0, 0, 1}) // IPv4 placeholder (IpAddrLen constraint)
+	boardRID.Port = 8539
+	boardRID.UniqueNumber = 1
+
+	var boardTID agentboard.TaskID
+	copy(boardTID.Id[:], protoTID.Id[:])
+
+	state := board.Attach(boardRID, boardTID, "testhost")
+
+	ac := &agentConn{
+		state:   state,
+		helloed: true,
+	}
+
+	s := &Server{
+		Board: board,
+		tasks: tasks,
+	}
+	return s, ac
+}
+
+// TestAgentCallerCaps verifies that agentCallerCaps resolves the task's
+// Capabilities from s.tasks using the TaskID from ac.state.Identity().
+func TestAgentCallerCaps(t *testing.T) {
+	s, ac := makeTestAgentConn(t, protocol.Capability_Spawn|protocol.Capability_FileRead)
+	got := s.agentCallerCaps(ac)
+	want := protocol.Capability_Spawn | protocol.Capability_FileRead
+	if got != want {
+		t.Fatalf("agentCallerCaps = %#x, want %#x", got, want)
+	}
+
+	// nil agentConn → Capability_None.
+	if got2 := s.agentCallerCaps(nil); got2 != protocol.Capability_None {
+		t.Fatalf("agentCallerCaps(nil) = %#x, want None", got2)
+	}
+}
+
+// TestTopicsGated verifies the InfoGlobal gate on agentHandleListTopics:
+//   - caller without InfoGlobal → zero topics returned.
+//   - caller with InfoGlobal → topics returned (Board has one published topic).
+func TestTopicsGated(t *testing.T) {
+	// Helper: decode the ListTopicsResponse from the last sent agent message.
+	decodeListTopicsResp := func(t *testing.T, conn *fakeConn) *agentboard.ListTopicsResponse {
+		t.Helper()
+		msgs := conn.Sent()
+		if len(msgs) == 0 {
+			t.Fatal("no messages sent")
+		}
+		raw := msgs[len(msgs)-1]
+		if len(raw) < 2 {
+			t.Fatalf("message too short: %d bytes", len(raw))
+		}
+		var msg agentboard.AgentMessage
+		if err := msg.DecodeExact(raw[1:]); err != nil {
+			t.Fatalf("DecodeExact AgentMessage: %v", err)
+		}
+		r := msg.ListTopicsResponse()
+		if r == nil {
+			t.Fatal("ListTopicsResponse() returned nil")
+		}
+		return r
+	}
+
+	// Publish a topic so the board is non-empty for the InfoGlobal case.
+	publishToBoard := func(t *testing.T, board *agentboard.Board) {
+		t.Helper()
+		var fromRID protocol.RunnerID
+		fromRID.SetTransport([]byte("ws"))
+		fromRID.SetIpAddr([]byte{127, 0, 0, 2})
+		fromRID.Port = 8540
+		fromRID.UniqueNumber = 2
+		var fromTID protocol.TaskID
+		fromTID.Id[0] = 0xFF
+		_, _ = board.Send("test.topic", []byte("hello"), fromRID, fromTID, "testhost")
+	}
+
+	// Case 1: no InfoGlobal → zero topics.
+	t.Run("no_info_global_zero_topics", func(t *testing.T) {
+		s, ac := makeTestAgentConn(t, protocol.Capability_Spawn) // no InfoGlobal
+		publishToBoard(t, s.Board)
+		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9820-1")}
+		req := &agentboard.ListTopicsRequest{RequestId: 1}
+		s.agentHandleListTopics(conn, ac, req)
+		resp := decodeListTopicsResp(t, conn)
+		if resp.TopicsLen != 0 || len(resp.Topics) != 0 {
+			t.Errorf("expected 0 topics without InfoGlobal, got TopicsLen=%d Topics=%v",
+				resp.TopicsLen, resp.Topics)
+		}
+	})
+
+	// Case 2: with InfoGlobal → topics returned.
+	t.Run("info_global_sees_topics", func(t *testing.T) {
+		s, ac := makeTestAgentConn(t, protocol.Capability_InfoGlobal)
+		publishToBoard(t, s.Board)
+		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9820-2")}
+		req := &agentboard.ListTopicsRequest{RequestId: 2}
+		s.agentHandleListTopics(conn, ac, req)
+		resp := decodeListTopicsResp(t, conn)
+		if resp.TopicsLen == 0 {
+			t.Error("expected non-zero topics with InfoGlobal")
+		}
 	})
 }
