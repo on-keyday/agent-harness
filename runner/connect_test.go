@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/hex"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -319,5 +320,52 @@ func TestRun_RunCtxCancelsOnPeerDone(t *testing.T) {
 	case <-taskCtx.Done():
 	case <-time.After(2 * time.Second):
 		t.Fatalf("taskCtx was not cancelled after peer Done")
+	}
+}
+
+// TestRunHandle_BufferedRunnerHelloResponse_SetsCanonicalID is the regression
+// guard for the fleet incident: the merged handshake makes the server reply
+// RunnerHelloResponse during the handshake window — before OnConnect installs
+// the dispatcher. The old handler dropped it, leaving the canonical RunnerID
+// zero, so spawned agents inherited HARNESS_RUNNER_ID=":invalid AddrPort-0".
+// The handler must buffer it and OnConnect must replay it.
+func TestRunHandle_BufferedRunnerHelloResponse_SetsCanonicalID(t *testing.T) {
+	sess := &Session{}
+	h := &RunHandle{session: sess, cfg: Config{Logger: slog.Default()}}
+
+	// A RunnerHelloResponse exactly as the server sends it (a RunnerRequest
+	// payload; the AppKind is the separate `kind` arg, not in the payload).
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{192, 168, 3, 14})
+	rid.Port = 36556
+	rid.UniqueNumber = 53625
+	req := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_RunnerHelloResponse}
+	req.SetRunnerHelloResponse(protocol.RunnerHelloResponse{YourRunnerId: rid})
+	payload, err := req.Append(nil)
+	if err != nil {
+		t.Fatalf("encode RunnerHelloResponse: %v", err)
+	}
+	want := protocol.RunnerIDToConnID(rid).String()
+
+	// Arrives during the handshake window (ctlDispatch == nil) → must be buffered,
+	// NOT yet applied to the session.
+	h.bufferOrDispatch(appwire.AppKind_RunnerControl, payload)
+	if got := sess.runnerCanonicalConnID().String(); got == want {
+		t.Fatalf("canonical id applied before activateDispatch — should have been buffered (got %q)", got)
+	}
+
+	// OnConnect activates the dispatcher and replays the buffer → SetRunnerCanonicalID.
+	h.activateDispatch(func(kind appwire.AppKind, p []byte) {
+		dispatchRunnerRequest(context.Background(), sess, h.cfg.Logger, kind, p)
+	})
+
+	if got := sess.runnerCanonicalConnID().String(); got != want {
+		t.Fatalf("buffered RunnerHelloResponse not applied on activate: got %q want %q", got, want)
+	}
+
+	// A message arriving AFTER activation is dispatched live (not buffered).
+	if len(h.ctlBuf) != 0 {
+		t.Fatalf("ctlBuf not drained after activateDispatch: %d left", len(h.ctlBuf))
 	}
 }

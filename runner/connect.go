@@ -78,6 +78,55 @@ type RunHandle struct {
 
 	pskRespCh chan protocol.PskAuthResponse
 	closeOnce sync.Once
+
+	// Control-message handling spans two phases. During the merged handshake
+	// (Connect) the server re-dispatches the embedded RunnerHello and replies
+	// RunnerHelloResponse — and may AssignTask — BEFORE OnConnect installs the
+	// runner-control dispatcher. The persistent handler set in Connect buffers
+	// such non-PSK messages here while ctlDispatch is nil, then OnConnect sets
+	// ctlDispatch and replays the buffer. Dropping these (as the old
+	// "ignore non-PSK" handler did) loses the canonical RunnerID, so spawned
+	// agents inherit HARNESS_RUNNER_ID=":invalid AddrPort-0".
+	ctlMu       sync.Mutex
+	ctlDispatch func(appwire.AppKind, []byte)
+	ctlBuf      []bufferedControl
+}
+
+// bufferedControl is a runner-control message captured during the handshake
+// window for replay once OnConnect installs the dispatcher.
+type bufferedControl struct {
+	kind    appwire.AppKind
+	payload []byte
+}
+
+// bufferOrDispatch routes a runner-control message: buffered while the
+// dispatcher is not yet active (the merged-handshake window), otherwise live.
+// Never drops — losing RunnerHelloResponse here leaves the canonical RunnerID
+// zero and spawned agents inherit HARNESS_RUNNER_ID=":invalid AddrPort-0".
+func (h *RunHandle) bufferOrDispatch(kind appwire.AppKind, payload []byte) {
+	h.ctlMu.Lock()
+	d := h.ctlDispatch
+	if d == nil {
+		h.ctlBuf = append(h.ctlBuf, bufferedControl{kind: kind, payload: append([]byte(nil), payload...)})
+		h.ctlMu.Unlock()
+		return
+	}
+	h.ctlMu.Unlock()
+	d(kind, payload)
+}
+
+// activateDispatch installs the runner-control dispatcher and replays any
+// messages buffered during the handshake window, in order. The replay holds
+// ctlMu so a concurrently-arriving live message is ordered after the buffered
+// ones and none is lost during the transition.
+func (h *RunHandle) activateDispatch(d func(appwire.AppKind, []byte)) {
+	h.ctlMu.Lock()
+	h.ctlDispatch = d
+	for _, m := range h.ctlBuf {
+		d(m.kind, m.payload)
+	}
+	h.ctlBuf = nil
+	h.ctlMu.Unlock()
 }
 
 func (h *RunHandle) Done() <-chan struct{} { return h.pc.Done() }
@@ -201,7 +250,12 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 			}
 			return
 		}
-		// pre-OnConnect: ignore non-PSK payloads.
+		// Non-PSK (runner-control) may arrive DURING the merged handshake — the
+		// server replies RunnerHelloResponse (and may AssignTask) right after
+		// PskAuthResponse, before OnConnect installs the dispatcher. Buffer until
+		// then (replayed by OnConnect); never drop, or the canonical RunnerID is
+		// lost.
+		h.bufferOrDispatch(kind, payload)
 	})
 	pc.Start(ctx)
 
@@ -326,7 +380,11 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 	session := h.session
 	cfg := h.cfg
 
-	pc.SetOnControl(func(kind appwire.AppKind, payload []byte) {
+	// Activate the runner-control dispatcher and replay any control messages
+	// buffered during the handshake window (RunnerHelloResponse / early
+	// AssignTask). The persistent handler installed in Connect keeps routing
+	// PskAuth and, once ctlDispatch is set, routes runner-control here.
+	h.activateDispatch(func(kind appwire.AppKind, payload []byte) {
 		dispatchRunnerRequest(runCtx, session, cfg.Logger, kind, payload)
 	})
 
