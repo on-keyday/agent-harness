@@ -291,3 +291,137 @@ func TestHandleAllowsOperator(t *testing.T) {
 		t.Fatalf("resp.Kind = %v, want Cancel", resp.Kind)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Task 5: direction-dependent capability gate
+// ---------------------------------------------------------------------------
+
+// makeAgentConn creates a fakeConn wired as an agent principal holding the
+// given caps, returning the conn and the handler.
+func makeAgentConn(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeConn) {
+	t.Helper()
+	h := newTestHandler(t)
+	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
+		protocol.ClientKind_Agent, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, caps)
+	ptid := hexToTaskID(t, parentIDHex)
+	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9700-1")}
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.principals[conn.ConnectionID().String()] = ptid
+	return h, conn
+}
+
+// assertPermissionDenied checks that the last response is a PermissionDenied
+// with the expected required capability and that the RequestId is echoed.
+func assertPermissionDenied(t *testing.T, conn *fakeConn, reqID uint32, wantCap protocol.Capability) {
+	t.Helper()
+	resp := lastTaskControlResponse(t, conn)
+	if resp.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("expected PermissionDenied, got %v", resp.Kind)
+	}
+	if resp.RequestId != reqID {
+		t.Fatalf("RequestId = %d, want %d", resp.RequestId, reqID)
+	}
+	pd := resp.PermissionDenied()
+	if pd == nil {
+		t.Fatal("PermissionDenied() returned nil")
+	}
+	if pd.RequiredCap != wantCap {
+		t.Fatalf("RequiredCap = %v, want %v", pd.RequiredCap, wantCap)
+	}
+}
+
+// assertNotPermissionDenied checks that the last response is NOT PermissionDenied
+// (the gate passed; the underlying handler may still return an error).
+func assertNotPermissionDenied(t *testing.T, conn *fakeConn) {
+	t.Helper()
+	resp := lastTaskControlResponse(t, conn)
+	if resp.Kind == protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("gate rejected the request unexpectedly (PermissionDenied)")
+	}
+}
+
+// TestDirectionGate covers the six direction-dependent gate cases (Task 5).
+func TestDirectionGate(t *testing.T) {
+	// Case 1: Pull without FileRead → denied (RequiredCap=FileRead).
+	t.Run("file_pull_no_read_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_FileWrite) // has Write but not Read
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_OpenFileTransfer,
+			RequestId: 11,
+		}
+		req.SetOpenFileTransfer(protocol.OpenFileTransferRequest{
+			Direction: protocol.FileTransferDirection_Pull,
+		})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 11, protocol.Capability_FileRead)
+	})
+
+	// Case 2: Push without FileWrite → denied (RequiredCap=FileWrite).
+	t.Run("file_push_no_write_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has Read but not Write
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_OpenFileTransfer,
+			RequestId: 12,
+		}
+		req.SetOpenFileTransfer(protocol.OpenFileTransferRequest{
+			Direction: protocol.FileTransferDirection_Push,
+		})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 12, protocol.Capability_FileWrite)
+	})
+
+	// Case 3: ListFiles with only FileWrite → ALLOWED (floor: either file cap suffices).
+	t.Run("file_ls_with_write_allowed", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_FileWrite) // Write but no Read
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_ListFiles,
+			RequestId: 13,
+		}
+		req.SetListFiles(protocol.ListFilesRequest{})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertNotPermissionDenied(t, conn)
+	})
+
+	// Case 4: ListFiles with NEITHER file cap → denied (RequiredCap=FileRead as representative).
+	t.Run("file_ls_no_caps_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_Spawn) // has Spawn only
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_ListFiles,
+			RequestId: 14,
+		}
+		req.SetListFiles(protocol.ListFilesRequest{})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 14, protocol.Capability_FileRead)
+	})
+
+	// Case 5: forward -L without ForwardLocal → denied (RequiredCap=ForwardLocal).
+	t.Run("forward_local_no_cap_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_OpenPortForward,
+			RequestId: 15,
+		}
+		req.SetOpenPortForward(protocol.OpenPortForwardRequest{
+			Direction: protocol.PortForwardDirection_Local,
+		})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 15, protocol.Capability_ForwardLocal)
+	})
+
+	// Case 6: forward -R with only ForwardLocal → denied (RequiredCap=ForwardRemote).
+	t.Run("forward_remote_only_local_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal) // has ForwardLocal but not ForwardRemote
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_OpenPortForward,
+			RequestId: 16,
+		}
+		req.SetOpenPortForward(protocol.OpenPortForwardRequest{
+			Direction: protocol.PortForwardDirection_Remote,
+		})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 16, protocol.Capability_ForwardRemote)
+	})
+}

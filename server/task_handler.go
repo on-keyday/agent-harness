@@ -259,6 +259,15 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenFileTransfer variant is nil")
 			return
 		}
+		need := protocol.Capability_FileWrite // Push / Delete / DirPush / DirDelete
+		switch oft.Direction {
+		case protocol.FileTransferDirection_Pull, protocol.FileTransferDirection_DirPull:
+			need = protocol.Capability_FileRead
+		}
+		if !hasCap(h.callerCaps(cid), need) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+			return
+		}
 		oresp := h.handleOpenFileTransfer(conn, oft)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.RequestId}
 		resp.SetOpenFileTransfer(oresp)
@@ -271,6 +280,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ListFiles variant is nil")
 			return
 		}
+		{
+			caps := h.callerCaps(cid)
+			if !hasCap(caps, protocol.Capability_FileRead) && !hasCap(caps, protocol.Capability_FileWrite) {
+				// report FileRead as the representative requirement in the denial
+				h.denyTaskControl(conn, req.Kind, req.RequestId, protocol.Capability_FileRead)
+				return
+			}
+		}
 		lresp := h.handleListFiles(conn, lf)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.RequestId}
 		resp.SetListFiles(lresp)
@@ -282,6 +299,16 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if pf == nil {
 			slog.Error("TaskHandler: OpenPortForward variant is nil")
 			return
+		}
+		{
+			need := protocol.Capability_ForwardLocal
+			if pf.Direction == protocol.PortForwardDirection_Remote {
+				need = protocol.Capability_ForwardRemote
+			}
+			if !hasCap(h.callerCaps(cid), need) {
+				h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+				return
+			}
 		}
 		presp := h.handleOpenPortForward(conn, pf)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
