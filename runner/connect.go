@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -224,7 +225,16 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
-		return nil, &cli.PSKAuthError{Err: pskErr}
+		// Only an explicit server rejection (PskRejectedError) is fatal — a wrong
+		// PSK/ticket won't fix itself. A transport drop / cancellation mid-handshake
+		// (e.g. a server restart) must be RETRYABLE so PersistLoop reconnects
+		// instead of killing the runner — otherwise a routine server restart wipes
+		// the whole fleet.
+		var rej *cli.PskRejectedError
+		if errors.As(pskErr, &rej) {
+			return nil, &cli.PSKAuthError{Err: pskErr}
+		}
+		return nil, pskErr
 	}
 	return h, nil
 }
@@ -291,19 +301,14 @@ func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, p
 
 	select {
 	case resp := <-respCh:
-		switch resp.Status {
-		case protocol.PskAuthStatus_Ok:
+		if resp.Status == protocol.PskAuthStatus_Ok {
 			return nil
-		case protocol.PskAuthStatus_BadPsk:
-			return fmt.Errorf("psk: server rejected: %v", resp.Status)
-		case protocol.PskAuthStatus_BadTicket:
-			return fmt.Errorf("psk: server rejected agent ticket: %v", resp.Status)
-		case protocol.PskAuthStatus_NoIdentity:
-			return fmt.Errorf("psk: server rejected (no identity): %v", resp.Status)
-		default:
-			return fmt.Errorf("psk: server rejected: %v", resp.Status)
 		}
+		// Explicit server rejection — FATAL (Connect wraps as *cli.PSKAuthError).
+		return &cli.PskRejectedError{Status: resp.Status.String()}
 	case <-ctx.Done():
+		// Transport drop / cancellation mid-handshake — RETRYABLE: a server
+		// restart that interrupts the handshake must trigger reconnect, not exit.
 		return ctx.Err()
 	}
 }

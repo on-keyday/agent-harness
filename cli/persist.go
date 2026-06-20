@@ -74,6 +74,18 @@ type PSKAuthError struct{ Err error }
 func (e *PSKAuthError) Error() string { return "psk auth: " + e.Err.Error() }
 func (e *PSKAuthError) Unwrap() error { return e.Err }
 
+// PskRejectedError marks an EXPLICIT server rejection of the merged handshake
+// (BadPsk / BadTicket / NoIdentity). This — and ONLY this — is the fatal case:
+// no retry can fix a wrong PSK or a bad ticket. A transport drop or context
+// cancellation DURING the handshake returns a plain (retryable) error instead
+// (e.g. context.Canceled), so a server restart that interrupts an in-flight
+// handshake triggers a normal reconnect rather than killing the runner/client.
+// Dial and runner.Connect wrap ONLY a PskRejectedError as *PSKAuthError (fatal);
+// everything else propagates as retryable.
+type PskRejectedError struct{ Status string }
+
+func (e *PskRejectedError) Error() string { return "psk: server rejected: " + e.Status }
+
 // PersistConfig configures PersistLoop.
 type PersistConfig struct {
 	Enabled        bool          // false → run exactly one iteration, propagate the first error

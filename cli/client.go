@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -96,7 +97,14 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
-		return nil, &PSKAuthError{Err: pskErr}
+		// Only an explicit server rejection (PskRejectedError) is fatal; a
+		// transport drop / cancellation mid-handshake is retryable, so let it
+		// propagate as a plain error (PersistLoop reconnects instead of exiting).
+		var rej *PskRejectedError
+		if errors.As(pskErr, &rej) {
+			return nil, &PSKAuthError{Err: pskErr}
+		}
+		return nil, pskErr
 	}
 
 	// Merged handshake complete — switch to the pure app handler.

@@ -95,19 +95,16 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 
 	select {
 	case resp := <-respCh:
-		switch resp.Status {
-		case protocol.PskAuthStatus_Ok:
+		if resp.Status == protocol.PskAuthStatus_Ok {
 			return nil
-		case protocol.PskAuthStatus_BadPsk:
-			return fmt.Errorf("psk: server rejected: %v", resp.Status)
-		case protocol.PskAuthStatus_BadTicket:
-			return fmt.Errorf("psk: server rejected agent ticket: %v", resp.Status)
-		case protocol.PskAuthStatus_NoIdentity:
-			return fmt.Errorf("psk: server rejected (no identity): %v", resp.Status)
-		default:
-			return fmt.Errorf("psk: server rejected: %v", resp.Status)
 		}
+		// Explicit server rejection (bad psk / bad ticket / no identity) — FATAL,
+		// not retryable. Callers wrap this as *PSKAuthError.
+		return &PskRejectedError{Status: resp.Status.String()}
 	case <-ctx.Done():
+		// Transport drop / cancellation mid-handshake — RETRYABLE (e.g. a server
+		// restart interrupting the in-flight handshake). NOT a PskRejectedError,
+		// so callers must treat it as a normal disconnect and reconnect.
 		return ctx.Err()
 	}
 }

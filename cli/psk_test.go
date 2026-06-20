@@ -320,3 +320,38 @@ func TestSendMergedHandshake_BinderUnchanged(t *testing.T) {
 		t.Errorf("binder mismatch: merged handshake binder differs from ComputePSKBinder output")
 	}
 }
+
+// TestSendMergedHandshake_RejectionFatal_CancelRetryable is the regression guard
+// for the fleet-wipeout incident: an explicit server rejection must be a
+// *PskRejectedError (callers wrap it fatal), but a transport drop / context
+// cancellation mid-handshake must NOT be — it must stay retryable so a server
+// restart that interrupts the handshake triggers reconnect, not runner exit.
+func TestSendMergedHandshake_RejectionFatal_CancelRetryable(t *testing.T) {
+	t.Setenv("HARNESS_RUNNER_ID", "")
+	t.Setenv("HARNESS_TASK_ID", "")
+	t.Setenv("HARNESS_AUTH_TICKET", "")
+
+	// Explicit server rejection → *PskRejectedError (fatal).
+	respCh := make(chan protocol.PskAuthResponse, 1)
+	respCh <- protocol.PskAuthResponse{Status: protocol.PskAuthStatus_BadPsk}
+	err := cli.SendMergedHandshake(context.Background(),
+		func([]byte) error { return nil }, nil, nil, protocol.ClientKind_Cli, respCh)
+	var rej *cli.PskRejectedError
+	if !errors.As(err, &rej) {
+		t.Fatalf("rejection: want *cli.PskRejectedError, got %T: %v", err, err)
+	}
+
+	// Cancellation mid-handshake (no response ever arrives) → context.Canceled,
+	// NOT a PskRejectedError → retryable.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = cli.SendMergedHandshake(ctx,
+		func([]byte) error { return nil }, nil, nil, protocol.ClientKind_Cli,
+		make(chan protocol.PskAuthResponse))
+	if errors.As(err, &rej) {
+		t.Fatalf("cancel: must NOT be *cli.PskRejectedError (must be retryable), got %v", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancel: want context.Canceled, got %v", err)
+	}
+}
