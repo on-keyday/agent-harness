@@ -31,3 +31,30 @@ func TestRequestedCapsRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip caps = %#x, want %#x", out.RequestedCaps, in.RequestedCaps)
 	}
 }
+
+func TestResumeCapsOverrideRoundTrip(t *testing.T) {
+	// override = true: bit survives encode/decode
+	in := SubmitRequest{}
+	in.SetResumeCapsOverride(true)
+	in.RequestedCaps = Capability_Spawn
+	b := in.MustAppend(nil)
+	var out SubmitRequest
+	if err := out.DecodeExact(b); err != nil {
+		t.Fatal(err)
+	}
+	if !out.ResumeCapsOverride() {
+		t.Fatalf("ResumeCapsOverride = false, want true")
+	}
+
+	// override = false (zero value): bit is clear after round-trip
+	in2 := SubmitRequest{}
+	in2.RequestedCaps = Capability_Spawn
+	b2 := in2.MustAppend(nil)
+	var out2 SubmitRequest
+	if err := out2.DecodeExact(b2); err != nil {
+		t.Fatal(err)
+	}
+	if out2.ResumeCapsOverride() {
+		t.Fatalf("ResumeCapsOverride = true, want false")
+	}
+}

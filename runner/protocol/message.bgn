@@ -486,6 +486,9 @@ format SubmitRequest:
     # Use Capability.all (0x7ff) to inherit the creator's full set (the default
     # when no explicit confinement is desired). A zero value grants nothing.
     requested_caps :Capability
+    # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
+    resume_caps_override :u1
+    reserved :u7
     # resume_task_id, when all-zero, means "create a new task". When non-zero,
     # the server looks up that TaskID, validates it is in a terminal state
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
@@ -554,7 +557,9 @@ format OpenInteractiveRequest:
     x11_enabled :u1   # 1 = client requested X11 forwarding; gates the
                       # conditional block below. Incompatible with detach (no
                       # client process to host the tunnel).
-    reserved :u6
+    # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
+    resume_caps_override :u1
+    reserved :u5
     resume_task_id :TaskID
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
