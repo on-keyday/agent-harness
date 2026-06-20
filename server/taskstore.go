@@ -33,6 +33,10 @@ type TaskEntry struct {
 	// task (kind=agent connection). Zero for operator-created tasks (cli/tui/webui).
 	// Set at Create time and never changed on resume.
 	CreatorTaskID protocol.TaskID
+	// Capabilities is the server-enforced authority set for this task,
+	// computed at Create as creatorCaps ∩ requested. Persisted to the WAL and
+	// restored on resume; never changed by resume.
+	Capabilities protocol.Capability
 	Status        protocol.TaskStatus
 	AssignedTo  string
 	WorktreeDir string
@@ -133,7 +137,7 @@ func newTaskID() string {
 // selector is the runner-selection constraint; use a zero value for "any".
 // extraArgs are forwarded verbatim to the runner and appended to
 // --claude-args at exec time; pass nil for none.
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string) string {
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
@@ -143,6 +147,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		Kind:          kind,
 		OriginKind:    origin,
 		CreatorTaskID: creatorTaskID,
+		Capabilities:  caps,
 		Status:        protocol.TaskStatus_Queued,
 		CreatedAt:     time.Now(),
 		BoundRunnerID: boundRunnerID,
@@ -166,6 +171,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			BoundRunnerID: boundRunnerID,
 			Selector:      selector,
 			ExtraArgs:     extraArgs,
+			Capabilities:  uint32(caps),
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
@@ -600,6 +606,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				Kind:          protocol.TaskKind(ev.Kind),
 				OriginKind:    protocol.ClientKind(ev.OriginKind),
 				CreatorTaskID: creatorTaskID,
+				Capabilities:  protocol.Capability(ev.Capabilities),
 				Status:        protocol.TaskStatus_Queued,
 				CreatedAt:     time.Unix(0, ev.Ts),
 				BoundRunnerID: ev.BoundRunnerID,

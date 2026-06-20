@@ -44,7 +44,10 @@ type WALEvent struct {
 	// created this task. Empty for operator-created tasks.
 	// Written on task_created events; legacy entries default to "" (zero).
 	CreatorTaskID string `json:"creator_task_id,omitempty"`
-	WorktreeDir   string `json:"worktree_dir,omitempty"`
+	// Capabilities is the bitmask stored at task_created time. Legacy WAL
+	// entries without this field default to 0 (Capability_None).
+	Capabilities uint32 `json:"capabilities,omitempty"`
+	WorktreeDir  string `json:"worktree_dir,omitempty"`
 	ExitCode    *int32 `json:"exit_code,omitempty"`
 	DiffInfo    []byte `json:"diff_info,omitempty"`
 	// BoundRunnerID, when non-empty, pins the task to a specific runner.
@@ -76,6 +79,7 @@ type walEventJSON struct {
 	OriginKind    uint8    `json:"origin_kind,omitempty"`
 	ResumedByKind uint8    `json:"resumed_by_kind,omitempty"`
 	CreatorTaskID string   `json:"creator_task_id,omitempty"`
+	Capabilities  uint32   `json:"capabilities,omitempty"`
 	WorktreeDir   string   `json:"worktree_dir,omitempty"`
 	ExitCode      *int32   `json:"exit_code,omitempty"`
 	DiffInfo      []byte   `json:"diff_info,omitempty"`
@@ -101,6 +105,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		OriginKind:    e.OriginKind,
 		ResumedByKind: e.ResumedByKind,
 		CreatorTaskID: e.CreatorTaskID,
+		Capabilities:  e.Capabilities,
 		WorktreeDir:   e.WorktreeDir,
 		ExitCode:      e.ExitCode,
 		DiffInfo:      e.DiffInfo,
@@ -133,6 +138,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.OriginKind = j.OriginKind
 	e.ResumedByKind = j.ResumedByKind
 	e.CreatorTaskID = j.CreatorTaskID
+	e.Capabilities = j.Capabilities
 	e.WorktreeDir = j.WorktreeDir
 	e.ExitCode = j.ExitCode
 	e.DiffInfo = j.DiffInfo

@@ -25,7 +25,7 @@ func TestSchedulerAssignsOnePair(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
 
 	var captured []string
 	assignFn := func(runnerID, tID string) error {
@@ -81,7 +81,7 @@ func TestSchedulerNoMatch(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
 
 	assignFn := func(runnerID, tID string) error {
 		t.Fatal("assignFn must not be called when there is no repo match")
@@ -131,7 +131,7 @@ func TestSchedulerSkipsBusy(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
 
 	var assigned []string
 	assignFn := func(runnerID, tID string) error {
@@ -172,7 +172,7 @@ func TestSchedulerAssignErrorLeavesQueued(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
+	taskID := store.Create("/x", "prompt-a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
 
 	assignFn := func(runnerID, tID string) error {
 		return errors.New("boom")
@@ -230,9 +230,9 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 	})
 
 	store := NewTaskStore()
-	taskA := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
-	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
-	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil)
+	taskA := store.Create("/x", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskB := store.Create("/x", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskC := store.Create("/x", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
 
 	var assigned []string
 	assignFn := func(runnerID, tID string) error {
