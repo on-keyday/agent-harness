@@ -116,7 +116,7 @@ type Config struct {
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / interactive / session / file / server / cancel / notify / prune / repo / clear / help / quit"
+	cmd.Placeholder = "submit / interactive / session / file / server / cancel / notify / prune / repo / caps / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
@@ -959,7 +959,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Clear()
 		return a, nil
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] / repo <path> / clear / help / quit")
+		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] / repo <path> / caps / clear / help / quit")
+		a.cmdresult.Append("caps [<names>]              - show, or set the session-default capability mask for spawns (e.g. caps spawn,file_read / caps all / caps none)")
+		a.cmdresult.Append("caps --on-resume on|off     - when on, resume re-grants the session caps to the task (default off: resume keeps the task's persisted caps)")
 		a.cmdresult.Append("notify [info|warn|error] <title> [<text>...]        - send a notification (shows in this feed + --notify-hook egress; keep it one line)")
 		a.cmdresult.Append("session new [--detach] [--host NAME | --runner HEX | --ip ADDR] - open detachable interactive session (--detach: background, print id)")
 		a.cmdresult.Append("session attach <id>         - reattach to a session")
