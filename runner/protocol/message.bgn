@@ -68,6 +68,38 @@ format RunnerHello:
     skills_injected :u1
     reserved :u7
 
+# AuthRole discriminates which identity type is carried in a PskAuthRequest.
+enum AuthRole:
+    :u8
+    client = 0  # ClientHello identity (operator cli/tui/webui or in-task agent)
+    runner = 1  # RunnerHello identity (runner registration)
+
+# PskAuthStatus is the outcome of the PSK + identity gate.
+# Replaces the hand-written constant in appwire/psk.go (Task 6 migrates refs).
+enum PskAuthStatus:
+    :u8
+    ok          = 0
+    bad_psk     = 1
+    bad_ticket  = 2  # binder ok but kind=agent presented an invalid auth ticket
+    no_identity = 3  # binder ok but no identity union present (fail-closed)
+
+# PskAuthRequest is the merged PSK + identity first message.
+# binder_len == 0 means no PSK is configured (dev mode); otherwise 64 bytes
+# (HMAC-SHA512 over the objproto transcript). role selects which hello type
+# is present. On-wire: [0x45] + PskAuthRequest(brgen-encoded).
+format PskAuthRequest:
+    binder_len :u16
+    binder :[binder_len]u8
+    role :AuthRole
+    match role:
+        AuthRole.client => client_hello :ClientHello
+        AuthRole.runner => runner_hello :RunnerHello
+
+# PskAuthResponse is the server's accept/reject for a PskAuthRequest.
+# On-wire: [0x45] + PskAuthResponse(brgen-encoded).
+format PskAuthResponse:
+    status :PskAuthStatus
+
 format TaskID:
     id :[16]u8
 
