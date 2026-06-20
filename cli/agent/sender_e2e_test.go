@@ -15,7 +15,7 @@ import (
 // from_hostname populated from server-side attestation.
 func TestAgentCLI_E2E_Sender_RoundTrip(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const (
 		ridStrA = "ws:1.2.3.4:9200-21"

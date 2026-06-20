@@ -12,7 +12,7 @@ import (
 
 func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const ridStr = "ws:1.2.3.4:9400-41"
 	var ticket [16]byte
@@ -51,7 +51,7 @@ func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 // without out-of-band shell expansion.
 func TestAgentCLI_E2E_SubscribeSelf(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const ridStr = "ws:1.2.3.4:9500-51"
 	var ticket [16]byte

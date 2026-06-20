@@ -17,8 +17,11 @@ import (
 )
 
 // startServerE2E starts an in-process server.Server with a Board on addr,
-// returning (board, cancel). cancel stops the server and closes the board.
-func startServerE2E(t *testing.T, addr string) *agentboard.Board {
+// returning (board, srv). The server is automatically stopped and the board
+// closed via t.Cleanup. Callers that only need the board can write:
+//
+//	board, _ := startServerE2E(t, addr)
+func startServerE2E(t *testing.T, addr string) (*agentboard.Board, *server.Server) {
 	t.Helper()
 
 	board := agentboard.New(agentboard.Config{
@@ -50,7 +53,7 @@ func startServerE2E(t *testing.T, addr string) *agentboard.Board {
 		board.Close()
 	})
 
-	return board
+	return board, s
 }
 
 // freePortE2E finds a free port on 127.0.0.1.
@@ -116,7 +119,7 @@ func setAgentEnv(serverAddr, ridStr string, tid protocol.TaskID, ticket [16]byte
 // need to subscribe before A sends.
 func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	// Synthetic agent identities. The RunnerID string must be parseable by
 	// cliopts.ResolveRunnerID: "ws:IP:PORT-UNIQUE" with a numeric ID.
@@ -181,7 +184,7 @@ func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 // Agent B subscribes first, then A sends, then B waits.
 func TestAgentCLI_E2E_SubscribeThenSendAndWait(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const (
 		ridStrA = "ws:1.2.3.4:9002-3"
@@ -254,7 +257,7 @@ func TestAgentCLI_E2E_SubscribeThenSendAndWait(t *testing.T) {
 // the auth ticket does not match the registered one.
 func TestAgentCLI_E2E_BadTicket(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const ridStr = "ws:1.2.3.4:9004-5"
 

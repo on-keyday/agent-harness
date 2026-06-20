@@ -808,6 +808,13 @@ func (s *Server) RegisteredRunners() []RunnerEntry {
 	return s.registry.List()
 }
 
+// Tasks returns the server's TaskStore. Intended for test/introspection use
+// only; production code mutates the store only through the server's lifecycle
+// hooks (Create, Assign, Finish, Cancel, etc.).
+func (s *Server) Tasks() *TaskStore {
+	return s.tasks
+}
+
 // SetBoard wires an agentboard.Board into all handlers that participate in the
 // ticket lifecycle (Dispatcher, TaskHandler, RunnerHandler). Call this after
 // New and before Run. Task 9 (cmd/harness-server/main.go) is responsible for

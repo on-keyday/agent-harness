@@ -20,7 +20,7 @@ import (
 // prompt context.
 func TestAgentCLI_E2E_Inbox_PeekIsIdempotent_AfterCommit(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const (
 		ridStrA = "ws:1.2.3.4:9300-31"

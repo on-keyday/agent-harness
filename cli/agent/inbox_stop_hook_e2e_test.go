@@ -15,7 +15,7 @@ import (
 // an empty inbox emits nothing (so the Stop hook lets the agent stop normally).
 func TestAgentCLI_E2E_Inbox_StopHook_NoMessages(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const ridStr = "ws:1.2.3.4:9100-10"
 	var ticket [16]byte
@@ -46,7 +46,7 @@ func TestAgentCLI_E2E_Inbox_StopHook_NoMessages(t *testing.T) {
 // whose reason embeds the JSON-Lines records of the buffered messages.
 func TestAgentCLI_E2E_Inbox_StopHook_WithMessages(t *testing.T) {
 	addr := freePortE2E(t)
-	board := startServerE2E(t, addr)
+	board, _ := startServerE2E(t, addr)
 
 	const (
 		ridStrA = "ws:1.2.3.4:9101-11"
