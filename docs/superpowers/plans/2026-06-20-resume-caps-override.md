@@ -15,7 +15,7 @@
 - **Override is opt-in; plain resume keeps persisted caps.** Never auto-widen on a plain resume.
 - **Authority = resumer:** `caps_resumed = callerCaps(resumer) ∩ requested_caps` (operator=All → arbitrary; agent bounded by its own caps). Mirrors the spawn `creator ∩ requested` rule.
 - **Persist via a dedicated `task_caps_changed` WAL event** (NOT an `omitempty` field on `task_resumed`) so an override to `Capability_None` (0) is unambiguous on replay.
-- **Additive builders:** existing spawn/resume builders are UNCHANGED (the new `resume_caps_override` request field defaults to 0). Override is carried only by NEW `*ResumeWithCaps` builder variants. No churn to existing callers.
+- **One builder param, not parallel builders.** Resume is NOT a separate builder — it is the existing `*WithSelectorArgsAndCaps` builders with a non-empty `resumeTaskID` (they already set `req.ResumeTaskId`). So add a trailing `resumeCapsOverride bool` to those builders and thread it through every caller (the vast majority pass `false` = plain resume/new; only the explicit-override paths pass `true`). The builder sets `req.ResumeCapsOverride = 1` iff `resumeCapsOverride` is true. On a new spawn (empty resumeTaskID) the bit is ignored by the server, so passing it is harmless. Do NOT create duplicate `*ResumeWithCaps` builders.
 - **Generated code not hand-edited** (`message.go`); `.bgn` + `make protoregen`. Build hygiene: `make check`/`wasm-check` + focused `go test`. NEVER bare `go build ./cmd/<x>/`. Commit only intended files (no `git add -A`; ignore pre-existing untracked noise).
 - Public repo: no local env in committed content.
 
@@ -27,7 +27,7 @@
 - `server/taskstore.go` → `Resume(...)` gains caps-override params; `task_caps_changed` WAL write + `ReplayEvents` case.
 - `server/wal.go` → `task_caps_changed` event handling (Capabilities already on WALEvent from the capabilities feature).
 - `server/task_handler.go` → resume branches compute `intersectCaps(callerCaps(cid), req.RequestedCaps)` and pass the override.
-- `cli/submit.go`, `cli/open_interactive_native.go`, `cli/open_interactive_wasm.go` → new `*ResumeWithCaps` builders (set the override bit).
+- `cli/submit.go`, `cli/open_interactive_native.go`, `cli/open_interactive_wasm.go` → add a trailing `resumeCapsOverride bool` to the `*WithSelectorArgsAndCaps` builders; thread it to `req.ResumeCapsOverride`. Update all callers (false default).
 - `cmd/harness-cli/main.go`, `cmd/harness-cli/session.go` → `--caps` on resume (flag.Visit) → call the override builder.
 - `tui/cmdline.go`, `tui/app.go`, `tui/interactive.go` → `applyCapsOnResume` + `caps --on-resume` + resume uses override builder when on.
 - `cmd/harness-webui-wasm/main.go`, `webui/index.html`, `webui/static/main.js`, `webui/static/style.css` → `opts.resumeCapsOverride` + checkbox.
@@ -149,9 +149,9 @@ Update both resume call sites + the `Resume` callers in tests (pass `false, prot
 **Files:** Modify `cli/submit.go`, `cli/open_interactive_native.go`, `cli/open_interactive_wasm.go` (new builders); `cmd/harness-cli/main.go`, `cmd/harness-cli/session.go` (flag.Visit → call override builder). Test: `cmd/harness-cli/caps_test.go` or a cli test.
 
 **Interfaces:**
-- Produces: `cli.(*Client).SubmitResumeWithCaps(ctx, repo, prompt string, sel, extraArgs, resumeTaskID string, caps protocol.Capability) (string, error)`; `cli.(*Client).InteractiveResumeWithCaps(ctx, repo string, sel, extraArgs, resumeTaskID string, detachable bool, caps protocol.Capability) (string, error)` (native + wasm twins). Each sets `RequestedCaps=caps`, `ResumeCapsOverride=1`, `ResumeTaskId=resumeTaskID`.
+- Produces: a trailing `resumeCapsOverride bool` on `SubmitWithSelectorArgsAndCaps`, `OpenInteractiveWithSelectorArgsAndCaps` (native), and `InteractiveWithSelectorArgsAndCaps` (wasm twin) — the builder sets `req.ResumeCapsOverride = 1` when true (else 0). `capsExplicitlySet(fs *flag.FlagSet) bool`.
 
-- [ ] **Step 1:** Add `SubmitResumeWithCaps` in `cli/submit.go` — same body as `SubmitWithSelectorArgsAndCaps` but additionally `req.ResumeCapsOverride = 1` (and resumeTaskID is required/non-empty). Add `InteractiveResumeWithCaps` in `cli/open_interactive_native.go` AND the `//go:build js` twin `cli/open_interactive_wasm.go` — same as the `*ArgsAndCaps` interactive builder plus `oi.ResumeCapsOverride = 1`. (These are additive; existing builders unchanged → they keep ResumeCapsOverride=0.)
+- [ ] **Step 1:** Add a trailing `resumeCapsOverride bool` param to the three `*WithSelectorArgsAndCaps` builders (`cli/submit.go`, `cli/open_interactive_native.go`, and the `//go:build js` twin in `cli/open_interactive_wasm.go`). In each, set the request bit: `if resumeCapsOverride { sub.ResumeCapsOverride = 1 }` (resp. `oi.ResumeCapsOverride = 1`). Update the delegating non-caps wrappers (`SubmitWithSelectorAndArgs`, `OpenInteractiveWithSelectorAndArgs`, etc.) to pass `false`. Update EVERY current AndCaps caller (cmd/harness-cli main.go:126/272, session.go:106/124; tui/client.go, tui/interactive.go incl. OpenInteractiveX11; cmd/harness-webui-wasm/main.go harnessSubmit/StartInteractive) to pass `false` for now — Tasks 4/5 flip the relevant ones to a real value. (`make check` will list every caller; none may be missed or the build breaks.)
 
 - [ ] **Step 2:** Write CLI test (`cmd/harness-cli/caps_test.go` or sibling): assert that with an explicit `--caps` on a resume invocation the resume override is requested, and without `--caps` it is not. Since the request building is in `cli`, the testable unit is the flag-detection helper: extract/assert `capsExplicitlySet(fs)` via `flag.Visit`:
 
@@ -169,7 +169,7 @@ func TestCapsFlagExplicit(t *testing.T) {
 }
 ```
 
-- [ ] **Step 3:** Implement `capsExplicitlySet(fs *flag.FlagSet) bool` (uses `fs.Visit` to check whether `"caps"` was set). In `cmd/harness-cli/main.go` (`submit`, `interactive`) and `session.go` (`session new`), where resume is active (resume id non-empty): if `capsExplicitlySet(fs)` → call the `*ResumeWithCaps` builder with `cli.ParseCaps(*caps)`; else keep the existing plain-resume builder (override stays 0).
+- [ ] **Step 3:** Implement `capsExplicitlySet(fs *flag.FlagSet) bool` (uses `fs.Visit` to check whether `"caps"` was set). In `cmd/harness-cli/main.go` (`submit`, `interactive`) and `session.go` (`session new`): pass `resumeCapsOverride = (*resume != "" && capsExplicitlySet(fs))` to the AndCaps builder. So `--caps` on a resume → bit set; `--caps` on a new spawn → irrelevant (server ignores on create); no `--caps` → false (plain resume keeps caps).
 
 - [ ] **Step 4:** `go test ./cmd/harness-cli/ -run TestCapsFlagExplicit -v && make check` → PASS.
 
@@ -181,7 +181,7 @@ func TestCapsFlagExplicit(t *testing.T) {
 
 **Files:** Modify `tui/cmdline.go` (extend `caps` command with `--on-resume`), `tui/app.go` (`applyCapsOnResume` field + handler), `tui/interactive.go` (resume sites use override builder when on). Test: `tui/cmdline_test.go`.
 
-**Interfaces:** Consumes the `*ResumeWithCaps` builders (Task 3), `App.sessionCaps` (session-default-caps feature). Produces `App.applyCapsOnResume bool` and `caps --on-resume on|off`.
+**Interfaces:** Consumes the `resumeCapsOverride` builder param (Task 3), `App.sessionCaps` (session-default-caps feature). Produces `App.applyCapsOnResume bool` and `caps --on-resume on|off`.
 
 - [ ] **Step 1:** Write test: `ParseCommand("caps --on-resume on", "r")` → a `CapsAction` with an `OnResume *bool` (true); `caps --on-resume off` → false; `caps` (plain) and `caps <names>` unchanged.
 
@@ -199,7 +199,7 @@ func TestParseCapsOnResume(t *testing.T) {
 
 - [ ] **Step 3:** Extend `CapsAction` with `OnResume *bool` (nil = not an on-resume command). In `ParseCommand`'s `case "caps"`: if first token is `--on-resume`, parse `on`/`off` into `OnResume`; else existing behavior. Add `App.applyCapsOnResume bool` (default false) to the `&App{` literal. In the `CapsAction` Update handler: if `act.OnResume != nil`, set `a.applyCapsOnResume = *act.OnResume` and status `"caps on-resume: on/off"`; the `Show` branch also prints `applyCapsOnResume`.
 
-- [ ] **Step 4:** At TUI resume call sites (the resume paths in `tui/app.go` / `tui/interactive.go` that pass a non-empty resume id — e.g. the `r`/`R` resume action and `DoOpenDetachableSession` with a resume id): when `a.applyCapsOnResume` is true, call the `InteractiveResumeWithCaps` builder with `a.sessionCaps`; else the existing plain-resume builder. Thread `applyCapsOnResume` + `sessionCaps` as params into the helper (do not read globals inside the helper).
+- [ ] **Step 4:** At TUI resume call sites (the resume paths in `tui/app.go` / `tui/interactive.go` that pass a non-empty resume id — e.g. the `r`/`R` resume action and `DoOpenDetachableSession` with a resume id): pass `resumeCapsOverride = a.applyCapsOnResume` and `a.sessionCaps` into the AndCaps builder (the resume id is already threaded). Plain resume (toggle off) → false → caps kept. Thread `applyCapsOnResume` + `sessionCaps` as params into the helper (do not read globals inside the helper).
 
 - [ ] **Step 5:** `go test ./tui/ -run TestParseCapsOnResume -v && go test ./tui/ && make check` → PASS.
 
@@ -211,9 +211,9 @@ func TestParseCapsOnResume(t *testing.T) {
 
 **Files:** Modify `cmd/harness-webui-wasm/main.go` (read `opts.resumeCapsOverride`), `webui/index.html` (checkbox), `webui/static/main.js` (`applyCapsOnResume` state + pass on resume), `webui/static/style.css` (if needed). Test: Playwright.
 
-**Interfaces:** Consumes `*ResumeWithCaps` builders (Task 3); `harness.submit`/`startInteractive` opts gain `resumeCapsOverride: bool`.
+**Interfaces:** Consumes the `resumeCapsOverride` builder param (Task 3); `harness.submit`/`startInteractive` opts gain `resumeCapsOverride: bool`.
 
-- [ ] **Step 1:** In `harnessSubmit` and `harnessStartInteractive` (`cmd/harness-webui-wasm/main.go`), read `opts.Get("resumeCapsOverride")` (bool). When it is true AND a resume id is present, call the `*ResumeWithCaps` builder (with the `caps` already read); otherwise the existing path. (`resumeCapsOverride` absent/false → unchanged behavior.)
+- [ ] **Step 1:** In `harnessSubmit` and `harnessStartInteractive` (`cmd/harness-webui-wasm/main.go`), read `opts.Get("resumeCapsOverride")` (bool, absent→false) and pass it as the new `resumeCapsOverride` arg to the AndCaps builder (alongside the `caps` already read). False → unchanged behavior.
 
 - [ ] **Step 2:** `make wasm-check && make check` → PASS.
 
@@ -229,6 +229,6 @@ func TestParseCapsOnResume(t *testing.T) {
 
 **Spec coverage:** schema bit → T1; server apply+persist (resumer ∩ requested) + task_caps_changed WAL + replay + plain-resume-unchanged → T2; CLI explicit `--caps` on resume → T3; TUI toggle → T4; WebUI checkbox → T5. Opt-in/no-silent-widening enforced (override only set by explicit paths; defaults 0). ✓
 
-**Type consistency:** `ResumeCapsOverride` (request field), `Resume(..., capsOverride bool, newCaps protocol.Capability)`, `task_caps_changed` WAL type, `*ResumeWithCaps` builders, `CapsAction.OnResume *bool`, `App.applyCapsOnResume`, `opts.resumeCapsOverride` — consistent across tasks. Authority is `intersectCaps(callerCaps(cid), RequestedCaps)` everywhere.
+**Type consistency:** `ResumeCapsOverride` (request field), `Resume(..., capsOverride bool, newCaps protocol.Capability)`, `task_caps_changed` WAL type, `resumeCapsOverride` builder param, `CapsAction.OnResume *bool`, `App.applyCapsOnResume`, `opts.resumeCapsOverride` — consistent across tasks. Authority is `intersectCaps(callerCaps(cid), RequestedCaps)` everywhere.
 
 **Placeholder scan:** test helpers `markTerminalForTest`/`capsExplicitlySet` are anchored to "use existing resume-test setup" / are defined in-task; no TBD.
