@@ -480,6 +480,11 @@ format SubmitRequest:
     prompt_len :u32
     prompt :[prompt_len]u8
     extra_args :ClaudeArgs
+    # requested_caps is a Capability bitmask the spawning principal requests for
+    # this task. The server computes caps_child = caps_creator ∩ requested_caps.
+    # Use Capability.all (0x7ff) to inherit the creator's full set (the default
+    # when no explicit confinement is desired). A zero value grants nothing.
+    requested_caps :Capability
     # resume_task_id, when all-zero, means "create a new task". When non-zero,
     # the server looks up that TaskID, validates it is in a terminal state
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
@@ -539,6 +544,8 @@ format OpenInteractiveRequest:
     repo_path :[repo_path_len]u8
     selector :RunnerSelector
     extra_args :ClaudeArgs
+    # requested_caps: same semantics as SubmitRequest.requested_caps.
+    requested_caps :Capability
     # See SubmitRequest.resume_task_id — same semantics, applied to the
     # interactive path (PTY claude with empty prompt).
     detachable :u1    # 1 = session new (detach on disconnect),
@@ -835,6 +842,25 @@ enum PortForwardDirection:
     :u8
     local    # client listens, runner dials remote_host:remote_port (SSH -L).
     remote   # runner listens on bind_addr:bind_port, client dials remote_host:remote_port (SSH -R).
+
+# Capability is a bitmask of server-mediated capabilities bound to a task at
+# spawn time. It is a u32 power-of-two flag set; do NOT add is_defined assertions
+# to fields typed :Capability — they carry OR-combinations, not single members.
+enum Capability:
+    :u32
+    none           = 0x000   # empty set — "grant nothing" (also the zero value)
+    spawn          = 0x001
+    cancel         = 0x002
+    exec_attach    = 0x004
+    file_read      = 0x008
+    file_write     = 0x010
+    forward_local  = 0x020
+    forward_remote = 0x040
+    notify         = 0x080
+    prune          = 0x100
+    runner_admin   = 0x200
+    info_global    = 0x400
+    all            = 0x7ff   # OR of all defined bits; keep in sync when adding a cap
 
 enum OpenPortForwardStatus:
     :u8
