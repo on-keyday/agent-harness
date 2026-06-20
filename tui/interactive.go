@@ -88,7 +88,7 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN)
+		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN, protocol.Capability_All)
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 		}

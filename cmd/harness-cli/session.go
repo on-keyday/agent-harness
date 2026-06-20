@@ -113,8 +113,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
-		// X11 forwarding always uses Capability_All (no --caps override for x11 path).
-		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display)
+		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps)
 		if err != nil {
 			return err
 		}
