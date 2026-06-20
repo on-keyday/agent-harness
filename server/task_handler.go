@@ -154,7 +154,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		cid := conn.ConnectionID().String()
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
-		submitResp := h.handleSubmit(sub, origin, creator)
+		creatorCaps := h.callerCaps(cid)
+		submitResp := h.handleSubmit(sub, origin, creator, creatorCaps)
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
 		resp.SetSubmit(submitResp)
@@ -229,7 +230,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		oiCID := conn.ConnectionID().String()
 		origin := h.lookupClientKind(oiCID)
 		creator := h.lookupPrincipal(oiCID)
-		oresp := h.handleOpenInteractive(conn, oi, origin, creator)
+		oiCreatorCaps := h.callerCaps(oiCID)
+		oresp := h.handleOpenInteractive(conn, oi, origin, creator, oiCreatorCaps)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
 		resp.SetOpenInteractive(oresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -370,7 +372,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 //   - SubmitStatus_AmbiguousRunner — more than one candidate (error_msg lists hostnames)
 //
 // On Ok, the returned SubmitResponse carries the new TaskId.
-func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.SubmitResponse {
 	// Resume branch: when ResumeTaskId is non-zero the server reuses that id
 	// (so the runner re-attaches the worktree to the retained `harness/<id>`
 	// branch) instead of allocating a fresh one. The repo on the request is
@@ -400,7 +402,8 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 		return resp
 	}
 	bound := cands[0]
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), protocol.Capability_All)
+	caps := intersectCaps(creatorCaps, req.RequestedCaps)
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), caps)
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
@@ -485,7 +488,7 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // does not pick it up for a parallel AssignTask. The runner finalizes the task
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
-func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID) protocol.OpenInteractiveResponse {
+func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.OpenInteractiveResponse {
 	errResp := func(status protocol.OpenInteractiveStatus) protocol.OpenInteractiveResponse {
 		slog.Error("handleOpenInteractive: rejecting request", "status", status.String(), "repo", string(req.RepoPath), "selector", req.Selector)
 		return protocol.OpenInteractiveResponse{Status: status}
@@ -552,7 +555,8 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	} else {
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.
-		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), protocol.Capability_All)
+		caps := intersectCaps(creatorCaps, req.RequestedCaps)
+		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps)
 	}
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
