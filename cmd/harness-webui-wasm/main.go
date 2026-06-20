@@ -84,6 +84,7 @@ func main() {
 		"serverDialRunner":     js.FuncOf(harnessServerDialRunner),
 		"sendNotification":     js.FuncOf(harnessSendNotification),
 		"watchNotifications":   js.FuncOf(harnessWatchNotifications),
+		"capList":              js.FuncOf(harnessCapList),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -269,6 +270,21 @@ func harnessOnConnectionChange(this js.Value, args []js.Value) any {
 	return nil
 }
 
+// harnessCapList returns the granular caps as [{name, bit}] for the UI chips
+// (excludes none/all — those are quick-set buttons). Names from Capability.String().
+//
+//	harness.capList() -> [{name: string, bit: number}, ...]
+func harnessCapList(this js.Value, args []js.Value) any {
+	var out []any
+	for _, c := range cli.GrantableCaps() {
+		if c == protocol.Capability_None || c == protocol.Capability_All {
+			continue
+		}
+		out = append(out, map[string]any{"name": c.String(), "bit": float64(uint32(c))})
+	}
+	return js.ValueOf(out)
+}
+
 // harnessSubmit submits a task and resolves with the server-assigned task id.
 // An optional "host" field pins the task to a specific runner by hostname.
 //
@@ -306,7 +322,11 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("submit: selector: %w", err))
 				return
 			}
-			id, err := c.SubmitWithSelectorAndArgs(rootCtx, repo, task, sel, extraArgs, resumeTaskID)
+			caps := protocol.Capability_All
+			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
+				caps = protocol.Capability(uint32(cv.Int()))
+			}
+			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -621,7 +641,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
 				return
 			}
-			taskID, err := c.InteractiveWithSelectorAndArgs(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable)
+			caps := protocol.Capability_All
+			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
+				caps = protocol.Capability(uint32(cv.Int()))
+			}
+			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return
