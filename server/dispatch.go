@@ -43,6 +43,15 @@ type Dispatcher struct {
 	OnTaskControl   func(ConnHandle, []byte)
 	OnAgentMessage  func(ConnHandle, []byte) // payload is the full AgentMessage bytes (kind byte stripped)
 
+	// RecordClientIdentity records the client kind / principal for the given
+	// connection WITHOUT sending a wire response. Called by pskDispatchIdentity
+	// for the client role so the merged-PSK gate does not emit a redundant
+	// TaskControlResponse{ClientHello} on top of the gate's PskAuthResponse.
+	// Wired by Server.New to s.taskHandler.RecordClientIdentity.
+	// When nil, pskDispatchIdentity falls back to the re-dispatch path (old
+	// behaviour, still correct for tests that do not wire this field).
+	RecordClientIdentity func(cid string, conn ConnHandle, hello *protocol.ClientHello) protocol.ClientHelloStatus
+
 	// Registry and Tasks are used by TryDispatch and OnCancel.
 	Registry *Registry
 	Tasks    *TaskStore

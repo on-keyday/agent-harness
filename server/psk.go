@@ -9,23 +9,22 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// pskDispatchIdentity re-dispatches the embedded hello from an accepted
-// PskAuthRequest to the normal wire handlers so they record identity.
+// pskDispatchIdentity records identity from the embedded hello in an accepted
+// PskAuthRequest without sending a redundant wire response.
 //
-// Choice: re-dispatch via Dispatcher.Dispatch (dispatch.go:58) with re-encoded
-// wire bytes, rather than calling handler internals directly. This reuses the
-// existing TaskHandler.Handle (task_handler.go:148) for client role and
-// RunnerHandler.Handle (runner_handler.go:64) for runner role unchanged.
+// Client role: calls d.RecordClientIdentity directly (no TaskControlResponse —
+// the gate's PskAuthResponse{ok} is the sole client handshake ack). If
+// RecordClientIdentity is not wired (nil), falls back to re-dispatch via the
+// TaskControl wire path (old behaviour; still correct for tests that do not wire
+// the field, though it emits an extra TaskControlResponse which legacy clients tolerate).
 //
-// Wire encoding mirrors how each hello normally arrives:
+// Runner role: re-dispatches via [0x43]+RunnerMessage{Hello} unchanged. The
+// runner NEEDS the RunnerHelloResponse (it carries YourRunnerId consumed at
+// runner/connect.go:340) so this path must NOT be suppressed.
 //
-//	client_hello → [0x41] + TaskControlRequest{Kind:ClientHello, RequestId:0, hello}
+// Wire encoding used for the runner path:
+//
 //	runner_hello → [0x43] + RunnerMessage{Kind:Hello, hello}
-//
-// The TaskHandler will also send a TaskControlResponse{ClientHello} back to the
-// conn (request_id=0). In the new merged handshake the status has already been
-// communicated via PskAuthResponse{ok}, so this extra response is a no-op for
-// the caller (Tasks 3-5 will update the client to not send a separate hello at all).
 func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRequest) {
 	switch req.Role {
 	case protocol.AuthRole_Client:
@@ -33,6 +32,15 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 		if hello == nil {
 			return
 		}
+		if d.RecordClientIdentity != nil {
+			// Fast path: record identity directly — no TaskControlResponse emitted.
+			cid := conn.ConnectionID().String()
+			d.RecordClientIdentity(cid, conn, hello)
+			return
+		}
+		// Fallback (tests without RecordClientIdentity wired): re-dispatch via
+		// the normal TaskControl wire path. This emits an extra
+		// TaskControlResponse{ClientHello} but legacy clients tolerate it.
 		tcReq := protocol.TaskControlRequest{Kind: protocol.TaskControlKind_ClientHello}
 		tcReq.SetClientHello(*hello)
 		data, err := tcReq.Append([]byte{byte(appwire.AppKind_TaskControl)})

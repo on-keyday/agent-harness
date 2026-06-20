@@ -135,6 +135,47 @@ func (h *TaskHandler) lookupPrincipal(connID string) protocol.TaskID {
 	return h.principals[connID]
 }
 
+// RecordClientIdentity records the client kind and (for agent connections) the
+// principal TaskID for the given connection, calling OnAgentHello when wired.
+// It does NOT send any wire response — the caller is responsible for that.
+// Returns the resulting ClientHelloStatus (Ok on success, or a failure code if
+// OnAgentHello rejected the agent ticket).
+//
+// This method is the recording-only half of the ClientHello case in Handle.
+// The standalone ClientHello path calls it then sends a TaskControlResponse.
+// The merged-PSK gate path calls it directly (no response — the gate's own
+// PskAuthResponse is the sole client handshake ack).
+func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *protocol.ClientHello) protocol.ClientHelloStatus {
+	status := protocol.ClientHelloStatus_Ok
+	if hello.Kind == protocol.ClientKind_Agent {
+		if info := hello.AgentInfo(); info != nil && h.OnAgentHello != nil {
+			status = h.OnAgentHello(conn, info)
+		}
+	}
+
+	// Record kind for task-origin attribution only on success, so a rejected
+	// agent is not attributed as kind=agent.
+	if status == protocol.ClientHelloStatus_Ok {
+		h.clientKindsMu.Lock()
+		if h.clientKinds == nil {
+			h.clientKinds = make(map[string]protocol.ClientKind)
+		}
+		h.clientKinds[cid] = hello.Kind
+		// For agent connections, record the principal TaskID so that
+		// tasks created on this connection can have CreatorTaskID set.
+		if hello.Kind == protocol.ClientKind_Agent {
+			if info := hello.AgentInfo(); info != nil {
+				if h.principals == nil {
+					h.principals = make(map[string]protocol.TaskID)
+				}
+				h.principals[cid] = info.TaskId
+			}
+		}
+		h.clientKindsMu.Unlock()
+	}
+	return status
+}
+
 // denyTaskControl rejects a capability-gated request with a typed
 // PermissionDenied response carrying the requested kind and the missing cap.
 func (h *TaskHandler) denyTaskControl(conn ConnHandle, reqKind protocol.TaskControlKind, requestID uint32, required protocol.Capability) {
@@ -337,33 +378,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		cid := conn.ConnectionID().String()
 		slog.Info("client hello", "kind", hello.Kind.String(), "cid", cid)
 
-		status := protocol.ClientHelloStatus_Ok
-		if hello.Kind == protocol.ClientKind_Agent {
-			if info := hello.AgentInfo(); info != nil && h.OnAgentHello != nil {
-				status = h.OnAgentHello(conn, info)
-			}
-		}
-
-		// Record kind for task-origin attribution only on success, so a rejected
-		// agent is not attributed as kind=agent.
-		if status == protocol.ClientHelloStatus_Ok {
-			h.clientKindsMu.Lock()
-			if h.clientKinds == nil {
-				h.clientKinds = make(map[string]protocol.ClientKind)
-			}
-			h.clientKinds[cid] = hello.Kind
-			// For agent connections, record the principal TaskID so that
-			// tasks created on this connection can have CreatorTaskID set.
-			if hello.Kind == protocol.ClientKind_Agent {
-				if info := hello.AgentInfo(); info != nil {
-					if h.principals == nil {
-						h.principals = make(map[string]protocol.TaskID)
-					}
-					h.principals[cid] = info.TaskId
-				}
-			}
-			h.clientKindsMu.Unlock()
-		}
+		status := h.RecordClientIdentity(cid, conn, hello)
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ClientHello, RequestId: req.RequestId}
 		resp.SetClientHello(protocol.ClientHelloResponse{Status: status})

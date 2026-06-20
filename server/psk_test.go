@@ -439,10 +439,11 @@ func TestPSKDispatchIdentity_OperatorClientKindsSet(t *testing.T) {
 	rh := newTestRunnerHandler(reg)
 
 	d := &Dispatcher{
-		OnTaskControl:   th.Handle,
-		OnRunnerControl: rh.Handle,
-		Registry:        reg,
-		Tasks:           tasks,
+		OnTaskControl:        th.Handle,
+		OnRunnerControl:      rh.Handle,
+		RecordClientIdentity: th.RecordClientIdentity,
+		Registry:             reg,
+		Tasks:                tasks,
 	}
 
 	connIDStr := "ws:127.0.0.1:9200-1"
@@ -458,6 +459,15 @@ func TestPSKDispatchIdentity_OperatorClientKindsSet(t *testing.T) {
 
 	if kind != protocol.ClientKind_Cli {
 		t.Errorf("clientKind: got %v, want Cli", kind)
+	}
+
+	// With RecordClientIdentity wired, pskDispatchIdentity must NOT emit a
+	// TaskControlResponse{ClientHello} — only the gate's PskAuthResponse is sent.
+	sent := conn.Sent()
+	for _, msg := range sent {
+		if len(msg) > 0 && appwire.AppKind(msg[0]) == appwire.AppKind_TaskControl {
+			t.Errorf("client must NOT receive a TaskControl response from the PSK dispatch path; got %d bytes", len(msg))
+		}
 	}
 }
 
@@ -488,10 +498,11 @@ func TestPSKDispatchIdentity_AgentPrincipalSet(t *testing.T) {
 	rh := newTestRunnerHandler(reg)
 
 	d := &Dispatcher{
-		OnTaskControl:   th.Handle,
-		OnRunnerControl: rh.Handle,
-		Registry:        reg,
-		Tasks:           tasks,
+		OnTaskControl:        th.Handle,
+		OnRunnerControl:      rh.Handle,
+		RecordClientIdentity: th.RecordClientIdentity,
+		Registry:             reg,
+		Tasks:                tasks,
 	}
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
@@ -513,6 +524,14 @@ func TestPSKDispatchIdentity_AgentPrincipalSet(t *testing.T) {
 
 	if principal.Id != protoTID.Id {
 		t.Errorf("principal TaskID: got %x, want %x", principal.Id, protoTID.Id)
+	}
+
+	// With RecordClientIdentity wired, no TaskControl response must be emitted.
+	sent := conn.Sent()
+	for _, msg := range sent {
+		if len(msg) > 0 && appwire.AppKind(msg[0]) == appwire.AppKind_TaskControl {
+			t.Errorf("agent client must NOT receive a TaskControl response from the PSK dispatch path; got %d bytes", len(msg))
+		}
 	}
 }
 
@@ -596,6 +615,98 @@ func TestPSKDispatchIdentity_RunnerRegistered(t *testing.T) {
 	}
 	if entry.MaxTasks != 3 {
 		t.Errorf("runner MaxTasks: got %d, want 3", entry.MaxTasks)
+	}
+}
+
+// TestPSKDispatchIdentity_ClientReceivesNoTaskControlResponse verifies that when
+// RecordClientIdentity is wired (production path), pskDispatchIdentity does NOT send
+// any TaskControlResponse{ClientHello} to the client connection — the gate's own
+// PskAuthResponse is the sole client handshake response.
+func TestPSKDispatchIdentity_ClientReceivesNoTaskControlResponse(t *testing.T) {
+	tasks := NewTaskStore()
+	th := newTestTaskHandler(tasks)
+	reg := NewRegistry()
+	rh := newTestRunnerHandler(reg)
+
+	d := &Dispatcher{
+		OnTaskControl:        th.Handle,
+		OnRunnerControl:      rh.Handle,
+		RecordClientIdentity: th.RecordClientIdentity,
+		Registry:             reg,
+		Tasks:                tasks,
+	}
+
+	connIDStr := "ws:127.0.0.1:9210-1"
+	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
+
+	req := buildOperatorClientHello(nil, nil) // operator (kind=Cli)
+	pskDispatchIdentity(d, conn, req)
+
+	// The conn must have received zero messages — pskDispatchIdentity's client
+	// branch calls RecordClientIdentity (no send) and returns.
+	sent := conn.Sent()
+	for _, msg := range sent {
+		if len(msg) > 0 && appwire.AppKind(msg[0]) == appwire.AppKind_TaskControl {
+			t.Fatalf("pskDispatchIdentity sent a TaskControl message (%d bytes) to client — redundant response not suppressed", len(msg))
+		}
+	}
+
+	// Identity must still be recorded.
+	th.clientKindsMu.Lock()
+	kind := th.clientKinds[connIDStr]
+	th.clientKindsMu.Unlock()
+	if kind != protocol.ClientKind_Cli {
+		t.Errorf("clientKind: got %v, want Cli", kind)
+	}
+}
+
+// TestPSKDispatchIdentity_RunnerReceivesRunnerHelloResponse verifies that the
+// runner path still emits a RunnerHelloResponse (carried in [0x43]+RunnerRequest)
+// via re-dispatch. The runner MUST receive this response (it carries YourRunnerId).
+func TestPSKDispatchIdentity_RunnerReceivesRunnerHelloResponse(t *testing.T) {
+	reg := NewRegistry()
+	tasks := NewTaskStore()
+	rh := &RunnerHandler{
+		Registry: reg,
+		Tasks:    tasks,
+		Now:      time.Now,
+	}
+
+	d := &Dispatcher{
+		OnRunnerControl: rh.Handle,
+		Registry:        reg,
+		Tasks:           tasks,
+	}
+
+	connIDStr := "ws:127.0.0.1:9211-1"
+	conn := &fakeConn{id: objproto.MustParseConnectionID(connIDStr)}
+
+	rh2 := protocol.RunnerHello{Version: 1, MaxTasks: 2}
+	rh2.SetHostname([]byte("runner-rhr-test"))
+
+	req := buildRunnerHelloReq(nil, nil, rh2)
+	pskDispatchIdentity(d, conn, req)
+
+	// The runner conn must have received a RunnerControl message
+	// (the RunnerHelloResponse from RunnerHandler).
+	sent := conn.Sent()
+	var gotRunnerControl bool
+	for _, msg := range sent {
+		if len(msg) > 0 && appwire.AppKind(msg[0]) == appwire.AppKind_RunnerControl {
+			gotRunnerControl = true
+		}
+	}
+	if !gotRunnerControl {
+		t.Error("runner must receive a RunnerControl message (RunnerHelloResponse) from pskDispatchIdentity")
+	}
+
+	// Registry must be populated.
+	entry, ok := reg.Get(connIDStr)
+	if !ok {
+		t.Fatal("runner must be registered in Registry after dispatch")
+	}
+	if entry.Hostname != "runner-rhr-test" {
+		t.Errorf("runner hostname: got %q, want runner-rhr-test", entry.Hostname)
 	}
 }
 

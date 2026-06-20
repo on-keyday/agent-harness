@@ -210,11 +210,12 @@ func New(cfg Config) *Server {
 	s.runnerHandler.OnRemoteForwardConn = s.taskHandler.handleRemoteForwardConn
 	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
 	s.dispatcher = &Dispatcher{
-		OnRunnerControl: s.runnerHandler.Handle,
-		OnTaskControl:   s.taskHandler.Handle,
-		OnAgentMessage:  s.handleAgentMessage,
-		Registry:        s.registry,
-		Tasks:           s.tasks,
+		OnRunnerControl:      s.runnerHandler.Handle,
+		OnTaskControl:        s.taskHandler.Handle,
+		OnAgentMessage:       s.handleAgentMessage,
+		RecordClientIdentity: s.taskHandler.RecordClientIdentity,
+		Registry:             s.registry,
+		Tasks:                s.tasks,
 		// Board is wired after construction via Server.SetBoard (Task 9).
 	}
 
