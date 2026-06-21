@@ -127,6 +127,106 @@ func TestPSKGate_ValidBinderOperatorClient(t *testing.T) {
 	}
 }
 
+// Operator-secret model: when operatorPSK is configured, operator-surface
+// connections (kind=cli/tui/webui) must prove operatorPSK via the binder. An
+// in-task agent holds only the connect psk, so a binder it computes cannot
+// authenticate as operator — this closes the kind=Client → operator escalation.
+
+func TestPSKGate_OperatorClientRejectsConnectPSK(t *testing.T) {
+	connectPSK := []byte("connect-secret")   // what runners inject into agents
+	operatorPSK := []byte("operator-secret") // operator-only, never given to agents
+	g := newPSKGate(connectPSK)
+	g.operatorPSK = operatorPSK
+
+	// Simulate an in-task agent: it has only the connect psk but claims kind=Cli
+	// to try to be treated as operator. Its binder is over the connect psk.
+	req := buildOperatorClientHello(connectPSK, testTranscript)
+	data := buildPskAuthData(t, req)
+
+	var sent []byte
+	isPSK, shouldClose, accepted := g.Check(data, testTranscript, func(b []byte) { sent = append(sent, b...) })
+
+	if !isPSK || !shouldClose {
+		t.Errorf("operator client with connect psk: isPSK=%v shouldClose=%v, want true true", isPSK, shouldClose)
+	}
+	if g.Authed() {
+		t.Error("gate must NOT auth an operator client that only proved the connect psk")
+	}
+	if accepted != nil {
+		t.Error("accepted: want nil (escalation must be rejected)")
+	}
+	if status := parsePskResponse(t, sent); status != protocol.PskAuthStatus_BadPsk {
+		t.Errorf("response status: got %v, want BadPsk", status)
+	}
+}
+
+func TestPSKGate_OperatorClientAcceptsOperatorPSK(t *testing.T) {
+	connectPSK := []byte("connect-secret")
+	operatorPSK := []byte("operator-secret")
+	g := newPSKGate(connectPSK)
+	g.operatorPSK = operatorPSK
+
+	// A real operator computes its binder with the operator secret.
+	req := buildOperatorClientHello(operatorPSK, testTranscript)
+	data := buildPskAuthData(t, req)
+
+	var sent []byte
+	isPSK, shouldClose, accepted := g.Check(data, testTranscript, func(b []byte) { sent = append(sent, b...) })
+
+	if !isPSK || shouldClose {
+		t.Errorf("operator client with operator psk: isPSK=%v shouldClose=%v, want true false", isPSK, shouldClose)
+	}
+	if !g.Authed() {
+		t.Error("gate must auth an operator client that proved the operator psk")
+	}
+	if accepted == nil {
+		t.Fatal("accepted: want non-nil")
+	}
+	if status := parsePskResponse(t, sent); status != protocol.PskAuthStatus_Ok {
+		t.Errorf("response status: got %v, want Ok", status)
+	}
+}
+
+func TestPSKGate_AgentStillUsesConnectPSKWhenOperatorPSKSet(t *testing.T) {
+	connectPSK := []byte("connect-secret")
+	operatorPSK := []byte("operator-secret")
+	g := newPSKGate(connectPSK)
+	g.operatorPSK = operatorPSK
+
+	var ticket [16]byte
+	for i := range ticket {
+		ticket[i] = byte(i + 1)
+	}
+	g.ValidateTicket = func(info *protocol.AgentInfo) protocol.PskAuthStatus {
+		if bytes.Equal(info.AuthTicket[:], ticket[:]) {
+			return protocol.PskAuthStatus_Ok
+		}
+		return protocol.PskAuthStatus_BadTicket
+	}
+
+	var protoRID protocol.RunnerID
+	protoRID.SetTransport([]byte("ws"))
+	protoRID.SetIpAddr([]byte{127, 0, 0, 1})
+	var protoTID protocol.TaskID
+	protoTID.Id = [16]byte{0xAA, 0xBB}
+	info := protocol.AgentInfo{RunnerId: protoRID, TaskId: protoTID, AuthTicket: ticket}
+	info.SetHostname([]byte("testhost"))
+
+	// Agent proves the CONNECT psk (not the operator psk) + a valid ticket.
+	req := buildAgentClientHello(connectPSK, testTranscript, info)
+	data := buildPskAuthData(t, req)
+
+	var sent []byte
+	isPSK, shouldClose, accepted := g.Check(data, testTranscript, func(b []byte) { sent = append(sent, b...) })
+
+	if !isPSK || shouldClose {
+		t.Errorf("agent with connect psk: isPSK=%v shouldClose=%v, want true false", isPSK, shouldClose)
+	}
+	if !g.Authed() || accepted == nil {
+		t.Error("agent proving connect psk + valid ticket must still be accepted when operatorPSK is set")
+	}
+}
+
 func TestPSKGate_ValidBinderAgentValidTicket(t *testing.T) {
 	psk := []byte("s3cr3t")
 	g := newPSKGate(psk)

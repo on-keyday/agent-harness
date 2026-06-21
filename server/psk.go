@@ -81,8 +81,16 @@ func pskDispatchIdentity(d *Dispatcher, conn ConnHandle, req *protocol.PskAuthRe
 // PskAuthStatus_BadTicket on failure. Nil ValidateTicket degrades to Ok (safe
 // for tests that do not wire a Board).
 type pskGate struct {
-	psk            []byte
-	authed         bool
+	psk    []byte
+	authed bool
+	// operatorPSK, when non-empty, is the separate secret that operator-surface
+	// connections (kind=cli/tui/webui, i.e. anything but agent) must prove via
+	// the binder. It is NEVER injected into agent task environments, so an
+	// in-task agent — which holds only the connect psk — cannot forge an
+	// operator binder and thus cannot claim operator authority by sending
+	// kind=Client. Empty operatorPSK preserves the legacy behaviour (operator
+	// connections validated against psk, the shared connect secret).
+	operatorPSK    []byte
 	ValidateTicket func(info *protocol.AgentInfo) protocol.PskAuthStatus
 }
 
@@ -93,6 +101,21 @@ func newPSKGate(psk []byte) *pskGate {
 }
 
 func (g *pskGate) Authed() bool { return g.authed }
+
+// binderKey selects which secret the request's binder must prove. Operator-
+// surface clients (role=Client, kind != agent: cli/tui/webui) prove operatorPSK
+// when it is configured; agents (kind=agent) and runners prove the shared
+// connect psk. When operatorPSK is empty the operator surface falls back to the
+// connect psk — the legacy behaviour — so a deployment that has not configured
+// an operator secret is unchanged (and a startup warning is emitted elsewhere).
+func (g *pskGate) binderKey(req *protocol.PskAuthRequest) []byte {
+	if req.Role == protocol.AuthRole_Client && len(g.operatorPSK) > 0 {
+		if hello := req.ClientHello(); hello != nil && hello.Kind != protocol.ClientKind_Agent {
+			return g.operatorPSK
+		}
+	}
+	return g.psk
+}
 
 // sendPskResponse encodes and sends [AppKind_PskAuth] + PskAuthResponse{status} via sendFn.
 func sendPskResponse(sendFn func([]byte), status protocol.PskAuthStatus) {
@@ -152,12 +175,14 @@ func (g *pskGate) Check(
 	}
 
 	// Step 2: Binder verification (before any identity action).
-	// ComputePSKBinder call is BYTE-IDENTICAL to the previous gate:
-	//   cli.ComputePSKBinder(g.psk, transcript)
-	// When no PSK is configured (g.psk is nil/empty), binder_len is expected 0
-	// and the compare is skipped — but the identity handshake still runs.
-	if len(g.psk) > 0 {
-		expected, err := cli.ComputePSKBinder(g.psk, transcript)
+	// The binder must prove the secret appropriate to the role: operator-surface
+	// clients (kind != agent) prove operatorPSK when it is configured; agents and
+	// runners prove the shared connect psk. binderKey resolves this; an in-task
+	// agent holds only the connect psk, so it cannot forge an operator binder.
+	// When the resolved key is empty (no PSK configured for that role) the
+	// compare is skipped — but the identity handshake still runs.
+	if key := g.binderKey(&req); len(key) > 0 {
+		expected, err := cli.ComputePSKBinder(key, transcript)
 		if err != nil || subtle.ConstantTimeCompare(req.Binder, expected) != 1 {
 			sendPskResponse(sendFn, protocol.PskAuthStatus_BadPsk)
 			return true, true, nil

@@ -32,6 +32,59 @@ func GetPSK() []byte {
 	return nil
 }
 
+// GetOperatorPSK resolves the operator-only secret (HARNESS_OPERATOR_PSK /
+// HARNESS_OPERATOR_PSK_FILE), mirroring GetPSK. It is deliberately a DISTINCT
+// env var from HARNESS_PSK: an agent-runner reads HARNESS_PSK from its own env
+// (cmd/agent-runner/main.go) and injects it into spawned agents, so if the
+// operator secret lived in HARNESS_PSK a runner launched in the same shell would
+// inherit it and leak it to agents — reopening the kind=Client → operator
+// escalation. Keeping it in HARNESS_OPERATOR_PSK keeps it off that path.
+func GetOperatorPSK() []byte {
+	if v := os.Getenv("HARNESS_OPERATOR_PSK"); v != "" {
+		return []byte(v)
+	}
+	if path := os.Getenv("HARNESS_OPERATOR_PSK_FILE"); path != "" {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			if v := strings.TrimSpace(string(data)); v != "" {
+				return []byte(v)
+			}
+		}
+	}
+	return nil
+}
+
+// isAgentContext reports whether this process is an in-task agent — the same
+// signal buildMergedClientHello uses to announce kind=Agent (runner-id +
+// task-id + auth-ticket all resolvable from the env).
+func isAgentContext() bool {
+	if _, err := cliopts.ResolveRunnerID(""); err != nil {
+		return false
+	}
+	if _, err := cliopts.ResolveTaskID(""); err != nil {
+		return false
+	}
+	if _, err := cliopts.ResolveAuthTicket(); err != nil {
+		return false
+	}
+	return true
+}
+
+// resolveBinderPSK picks the secret whose binder this process should present,
+// consistent with the kind buildMergedClientHello will announce:
+//   - in-task agent  → the connect psk (HARNESS_PSK, runner-injected).
+//   - operator surface → the operator psk (HARNESS_OPERATOR_PSK) when set,
+//     falling back to HARNESS_PSK for deployments that have not split them.
+func resolveBinderPSK() []byte {
+	if isAgentContext() {
+		return GetPSK()
+	}
+	if op := GetOperatorPSK(); len(op) > 0 {
+		return op
+	}
+	return GetPSK()
+}
+
 // buildMergedClientHello constructs the ClientHello to embed in a
 // PskAuthRequest. When the in-task agent env (HARNESS_RUNNER_ID /
 // HARNESS_TASK_ID / HARNESS_AUTH_TICKET) is fully populated, kind is

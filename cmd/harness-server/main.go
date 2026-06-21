@@ -33,6 +33,8 @@ var (
 	agentboardMaxPayload = flag.Int("agentboard-max-payload", 64*1024, "agentboard max payload bytes per message")
 	psk                  = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
 	pskFile              = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
+	operatorPSK          = flag.String("operator-psk", "", "operator-only secret (env: HARNESS_OPERATOR_PSK). Operator surfaces (cli/tui/webui) must prove this via the binder; NEVER inject it into agents. Empty = legacy behaviour (operator surfaces validated against --psk) with a startup warning, because then an in-task agent can escalate to operator by dropping its ticket.")
+	operatorPSKFile      = flag.String("operator-psk-file", "", "path to operator-psk file; auto-generated on first run if absent")
 	ringSize             = flag.Int64("detach-ring-buffer-size", 1<<20, "byte size of per-detached-session scrollback ring buffer (default 1 MiB)")
 	idleTimeout          = flag.Duration("detach-idle-timeout", 0, "auto-cancel detached sessions after this idle duration (0 = disabled, default)")
 	notifyHook           = flag.String("notify-hook", "", "external command invoked on each notify request (stdin: JSON; env: HARNESS_NOTIFY_*); empty disables egress, fallback env HARNESS_NOTIFY_HOOK")
@@ -99,6 +101,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	resolvedOperatorPSKVal := *operatorPSK
+	if resolvedOperatorPSKVal == "" {
+		resolvedOperatorPSKVal = os.Getenv("HARNESS_OPERATOR_PSK")
+	}
+	operatorPSKBytes, err := resolvePSK(resolvedOperatorPSKVal, *operatorPSKFile)
+	if err != nil {
+		slog.Error("operator-PSK setup failed", "err", err)
+		os.Exit(1)
+	}
+
 	nh := strings.TrimSpace(*notifyHook)
 	if nh == "" {
 		nh = strings.TrimSpace(os.Getenv("HARNESS_NOTIFY_HOOK"))
@@ -129,6 +141,7 @@ func main() {
 		TaskRetention:        *taskRetain,
 		Logger:               slog.Default(),
 		PSK:                  pskBytes,
+		OperatorPSK:          operatorPSKBytes,
 		WebUIFS:              webUIFS,
 		WebUINoCache:         webUINoCache,
 		DetachRingBufferSize: *ringSize,

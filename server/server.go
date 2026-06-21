@@ -40,8 +40,19 @@ type Config struct {
 
 	// PSK, when non-nil, requires every connecting client to present
 	// a matching PskAuthRequest before any other message is accepted.
-	// nil = no PSK enforcement (backward compatible).
+	// nil = no PSK enforcement (backward compatible). This is the shared
+	// "connect" secret: runners inject it into spawned agents as HARNESS_PSK
+	// so in-task harness-cli can authenticate.
 	PSK []byte
+
+	// OperatorPSK, when non-empty, is the separate secret that operator-surface
+	// connections (kind=cli/tui/webui) must prove via the binder. It is NEVER
+	// injected into agent task environments, so an in-task agent — which holds
+	// only PSK — cannot send kind=Client and be treated as operator
+	// (Capability_All). Empty = legacy behaviour (operator surfaces validated
+	// against PSK); server.Run logs a loud startup warning in that case, because
+	// without it a confined task can escalate to operator by dropping its ticket.
+	OperatorPSK []byte
 
 	// WebUIFS, when non-nil, causes server.Run to register handlers on its
 	// internal mux for "/" (serving "<root>/index.html") and "/static/" (serving
@@ -319,6 +330,12 @@ func New(cfg Config) *Server {
 // If cfg.DataDir is empty, WAL setup is skipped entirely (safe for tests that
 // do not need persistence).
 func (s *Server) Run(ctx context.Context) error {
+	if len(s.cfg.OperatorPSK) == 0 {
+		s.cfg.Logger.Warn("operator authentication NOT configured: in-task agents can " +
+			"escalate to operator (Capability_All) by connecting as kind=Client without " +
+			"a ticket. Set --operator-psk / HARNESS_OPERATOR_PSK (a secret NOT shared with " +
+			"agents) to require operator surfaces to prove it.")
+	}
 	ep, mux, httpAddr, err := s.buildEndpoint()
 	if err != nil {
 		return err
@@ -756,6 +773,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	}()
 
 	gate := newPSKGate(s.cfg.PSK)
+	gate.operatorPSK = s.cfg.OperatorPSK
 	// Wire ticket validation into the gate: an agent that fails this check
 	// must NOT fall through to operator (this is the hole the merged handshake
 	// closes). Reuses s.establishAgentIdentity which calls Board.Registry().Validate.

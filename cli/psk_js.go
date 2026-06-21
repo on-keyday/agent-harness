@@ -29,6 +29,14 @@ func GetPSK() []byte {
 	return []byte(v)
 }
 
+// resolveBinderPSK in the browser is always the operator surface: WASM never
+// runs as an in-task agent and a browser is not a runner host, so the
+// HARNESS_PSK env-inheritance footgun the non-js variant guards against does
+// not exist here. The #psk fragment IS the operator secret to prove.
+func resolveBinderPSK() []byte {
+	return GetPSK()
+}
+
 // buildMergedClientHello constructs the ClientHello for the WASM context.
 // WASM runs in the browser (operator context) so agent-env detection is not
 // applicable; the supplied operatorKind is always used.

@@ -62,7 +62,11 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 		pending: map[uint32]chan *protocol.TaskControlResponse{},
 	}
 
-	psk := GetPSK()
+	// Pick the binder secret by role: operator surfaces prove the operator psk
+	// (HARNESS_OPERATOR_PSK), in-task agents prove the connect psk (HARNESS_PSK).
+	// See resolveBinderPSK — keeping them in distinct env vars stops a runner
+	// from inheriting the operator secret and leaking it to agents.
+	psk := resolveBinderPSK()
 	// Receives exactly one PskAuthResponse (brgen-decoded) from the server.
 	pskRespCh := make(chan protocol.PskAuthResponse, 1)
 
