@@ -1391,6 +1391,7 @@ const POLL_INTERVAL_MS = 5000;
       if (t.resumedBy) attr += `  resumed_by=${t.resumedBy}`;
       if (t.caps) attr += `  caps=${t.caps}`;
       row.textContent = `${t.id.slice(0, 12)}…  ${t.status}  ${t.kind}  ${t.repoPath}${attr}  ${JSON.stringify(promptShort)}`;
+      row.title = t.id; // full id on hover (desktop); tap the row → sheet has Copy id
       const sheet = document.createElement("div");
       sheet.className = "task-sheet";
       sheet.hidden = true;
@@ -1407,6 +1408,31 @@ const POLL_INTERVAL_MS = 5000;
     }
   }
 
+  // copyText copies s to the clipboard. The WebUI is commonly served over plain
+  // http on a LAN, where navigator.clipboard is unavailable (it needs a secure
+  // context), so fall back to a hidden-textarea + execCommand("copy"). Returns
+  // whether the copy succeeded.
+  async function copyText(s) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(s);
+        return true;
+      }
+    } catch (_) { /* fall through to legacy path */ }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = s;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch (_) { return false; }
+  }
+
   // buildTaskSheet fills one task's action sheet, gating items by status/kind.
   // Each item stops propagation (so it doesn't re-toggle the row), runs its
   // harness call, and switches tabs where relevant.
@@ -1420,6 +1446,28 @@ const POLL_INTERVAL_MS = 5000;
       item.addEventListener("click", (e) => { e.stopPropagation(); fn(); });
       sheet.appendChild(item);
     };
+
+    // Full task id — selectable text + one-tap copy. The row only shows the
+    // first 12 chars (cf78719 truncated it for the tappable layout), so this is
+    // the way to recover the full id for pasting into a command (cmd-input or an
+    // external shell). user-select:all (style.css) makes one tap select it all.
+    const idRow = document.createElement("div");
+    idRow.className = "task-id";
+    const idText = document.createElement("span");
+    idText.className = "task-id-text";
+    idText.textContent = t.id;
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "task-action";
+    copyBtn.textContent = "⧉ Copy id";
+    copyBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const ok = await copyText(t.id);
+      copyBtn.textContent = ok ? "✓ copied" : "copy failed";
+      setTimeout(() => { copyBtn.textContent = "⧉ Copy id"; }, 1200);
+    });
+    idRow.append(idText, copyBtn);
+    sheet.appendChild(idRow);
 
     // Reattach / View — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {

@@ -229,6 +229,8 @@ button:hover { background: #555; }
 .task-action { background:#2a2a2a; color:#fff; border:1px solid #555; border-radius:4px; padding:0.45rem 0.7rem; font-size:0.9rem; cursor:pointer; min-height:2.4rem; }
 .task-action:hover { background:#3a3a3a; }
 .task-action.danger { color:#f88; border-color:#a44; }
+.task-id { flex-basis:100%; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
+.task-id-text { font-family:monospace; font-size:0.85rem; color:#9cdcfe; word-break:break-all; user-select:all; -webkit-user-select:all; }
 @media (max-width:600px){ .task-list { max-height:none; } }
 
 /* --- Mobile tab bar (active only at <=600px) --- */
