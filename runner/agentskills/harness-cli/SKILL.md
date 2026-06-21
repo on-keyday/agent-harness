@@ -284,6 +284,15 @@ topic).
 Without `--resume` you get a fresh task id and the peers' link to the
 previous identity is dead — they will need a new hello round.
 
+**Reuse > re-spawn, and never hand-type the id.** When you mean the *same
+role*, resume the existing task instead of spawning a fresh one — it keeps
+the chat topic and worktree (above) and avoids littering `ls` with dead
+identities. Always take the task id from the spawn command's stdout or from
+`ls` and keep it in a variable (`TASK_ID=$(harness-cli session new -d …)`);
+do **not** transcribe a 32-hex id by hand — a mistyped/merged id silently
+targets the wrong task or none. When a peer sends you an id, reconcile it
+against `ls` before acting on it.
+
 ### Listing and killing your sessions
 
 ```bash
@@ -302,6 +311,33 @@ parallel to watch or take over; that's expected.)
 `session ls` lists only detachable interactive sessions; the top-level `ls`
 shows every task (including one-shots). When more than one runner can serve the
 repo, pin a spawn with `--runner <cid>` / `--host <name>` / `--ip <addr>`.
+
+### Pruning tasks you spawned
+
+`harness-cli prune` asks the server to forget tasks (they vanish from `ls`).
+Conventions — pruning is shared-state surgery, so stay narrow:
+
+- Prune **only terminal** tasks (Succeeded / Failed / Cancelled) that **you**
+  spawned — `by=<your-short-id>` in `ls`. Leave the user's tasks, and any task
+  you did not create, alone.
+- `harness-cli prune <id>...` forgets the listed terminal tasks. With **no**
+  ids it forgets every terminal task older than `--before` (default 168h) — do
+  **not** run that bare/age form on a shared server; it sweeps everyone's tasks.
+- `--force` also forgets **non-terminal** tasks (Queued / Running / Detached).
+  Those are live or resumable, so `--force` is destructive and hard to reverse
+  — use it only with an explicit, current reason (e.g. the user asked you to
+  clear specific stale Detached workers), never as a reflex to get past a skip.
+- After verification / probe work, prune the throwaway tasks you spawned so
+  `ls` stays readable.
+
+Pipe ids straight from output; never hand-type a 32-hex id:
+
+```bash
+# forget the terminal tasks you spawned under a given repo
+harness-cli ls | sed -n '/^TASKS/,$p' | grep "$REPO" \
+  | grep -wE 'Failed|Cancelled|Succeeded' | grep "by=$MY_SHORT" \
+  | awk '{print $1}' | xargs -r harness-cli prune
+```
 
 ## Capabilities (`--caps`) — attenuate what a child task may do
 
