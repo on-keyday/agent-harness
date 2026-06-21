@@ -9,7 +9,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/mattn/go-runewidth v0.0.23
-	github.com/on-keyday/objtrsf v0.0.0-20260619034920-ca9629b7c6b8
+	github.com/on-keyday/objtrsf v0.0.0-20260621080436-17c576948aa4
 	golang.org/x/sync v0.20.0
 	golang.org/x/sys v0.45.0
 	golang.org/x/term v0.43.0

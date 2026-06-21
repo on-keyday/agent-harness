@@ -50,8 +50,8 @@ github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELU
 github.com/muesli/cancelreader v0.2.2/go.mod h1:3XuTXfFS2VjM+HTLZY9Ak0l6eUKfijIfMUZ4EgX0QYo=
 github.com/muesli/termenv v0.16.0 h1:S5AlUN9dENB57rsbnkPyfdGuWIlkmzJjbFf0Tf5FWUc=
 github.com/muesli/termenv v0.16.0/go.mod h1:ZRfOIKPFDYQoDFF4Olj7/QJbW60Ol/kL1pU3VfY/Cnk=
-github.com/on-keyday/objtrsf v0.0.0-20260619034920-ca9629b7c6b8 h1:qH3P/mboORP8wDV54y9QorY6vXz3+t+Z5+IFlxLA+M0=
-github.com/on-keyday/objtrsf v0.0.0-20260619034920-ca9629b7c6b8/go.mod h1:GjmN7lw/luwYvmetbNdctobyqiPsuT3gQDaWl01eYWY=
+github.com/on-keyday/objtrsf v0.0.0-20260621080436-17c576948aa4 h1:zY3t/VcqEc8hIZAwPh25w5Rq2vgBVjWo2OXDNKupwc8=
+github.com/on-keyday/objtrsf v0.0.0-20260621080436-17c576948aa4/go.mod h1:GjmN7lw/luwYvmetbNdctobyqiPsuT3gQDaWl01eYWY=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
 github.com/rivo/uniseg v0.4.7/go.mod h1:FN3SvrM+Zdj16jyLfmOkMNblXMcoc8DfTHruCPUcx88=
 github.com/u-root/gobusybox/src v0.0.0-20221229083637-46b2883a7f90 h1:zTk5683I9K62wtZ6eUa6vu6IWwVHXPnoKK5n2unAwv0=
