@@ -507,6 +507,28 @@ button:hover { background: #555; }
   min-height: 2.4rem;
 }
 .preview-close:hover { background: #3a3a3a; }
+.preview-toggle {
+  flex: 0 0 auto;
+  margin-left: auto;          /* group toggle + close at the right edge */
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-size: 0.8em;
+  cursor: pointer;
+  /* comfortable touch target on phones */
+  min-height: 2.4rem;
+  padding: 0 0.6em;
+}
+.preview-toggle:hover { background: #3a3a3a; }
+.preview-toggle[hidden] { display: none; }
+.preview-body iframe.preview-iframe {
+  width: 100%;
+  height: 75vh;
+  border: 0;
+  background: #fff;           /* let the page paint its own background */
+  display: block;
+}
 .preview-body {
   flex: 1 1 auto;
   padding: 0.75em;
