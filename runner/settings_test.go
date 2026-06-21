@@ -34,15 +34,20 @@ func TestWriteAgentSettings_CreatesFileWithHook(t *testing.T) {
 		t.Fatal("SessionStart hook not present")
 	}
 	{
-		// Both SessionStart hooks (harness.hello + --self) must be present
-		// and shell-portable. --self is a CLI flag rather than a shell
-		// expansion of $HARNESS_TASK_ID precisely so it works on
-		// PowerShell/cmd as well as POSIX shells.
-		if !groupCommandSearch(startGroups, "harness-cli agent subscribe --topic harness.hello") {
-			t.Errorf("SessionStart hook missing harness.hello subscription: %v", startGroups)
-		}
+		// The --self SessionStart hook (the agent's id-directed inbound
+		// channel) must be present and shell-portable. --self is a CLI flag
+		// rather than a shell expansion of $HARNESS_TASK_ID precisely so it
+		// works on PowerShell/cmd as well as POSIX shells.
 		if !groupCommandSearch(startGroups, "harness-cli agent subscribe --self") {
 			t.Errorf("SessionStart hook missing --self subscription: %v", startGroups)
+		}
+		// harness.hello is intentionally NOT auto-subscribed: a global
+		// rendezvous topic everyone subscribes to amplified every peer
+		// introduction into O(subscribers) wake noise. Discovery via
+		// harness.hello is now opt-in (agents subscribe themselves when
+		// they need it); the default path is id-directed (chat.<short-id>).
+		if groupCommandSearch(startGroups, "harness-cli agent subscribe --topic harness.hello") {
+			t.Errorf("SessionStart hook must NOT auto-subscribe to harness.hello: %v", startGroups)
 		}
 		for _, g := range startGroups {
 			group, _ := g.(map[string]any)
@@ -147,7 +152,7 @@ func TestWriteAgentSettings_MergesWithExisting(t *testing.T) {
 	if !groupCommandSearch(startGroups, "echo user-hook") {
 		t.Error("user SessionStart hook was overwritten")
 	}
-	if !groupCommandSearch(startGroups, "harness-cli agent subscribe --topic harness.hello") {
+	if !groupCommandSearch(startGroups, "harness-cli agent subscribe --self") {
 		t.Error("harness SessionStart hook missing after merge")
 	}
 
@@ -162,11 +167,11 @@ func TestWriteAgentSettings_MergesWithExisting(t *testing.T) {
 	}
 	second := readSettings(t, dir)
 	secondHooks := second["hooks"].(map[string]any)["SessionStart"].([]any)
-	if countGroupCommand(secondHooks, "harness-cli agent subscribe --topic harness.hello") != 1 {
-		t.Errorf("harness SessionStart hook duplicated after second call: %v", secondHooks)
-	}
 	if countGroupCommand(secondHooks, "harness-cli agent subscribe --self") != 1 {
 		t.Errorf("harness --self SessionStart hook duplicated after second call: %v", secondHooks)
+	}
+	if countGroupCommand(secondHooks, "harness-cli agent subscribe --topic harness.hello") != 0 {
+		t.Errorf("harness.hello hook must not be present (auto-subscribe retired): %v", secondHooks)
 	}
 	secondAllow := second["permissions"].(map[string]any)["allow"].([]any)
 	if countString(secondAllow, "Bash(harness-cli *)") != 1 {
@@ -196,6 +201,19 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 						map[string]any{
 							"type":    "command",
 							"command": "harness-cli agent inbox --since-last --stop-hook",
+						},
+					},
+				},
+			},
+			// A worktree initialised by an older runner that still
+			// auto-subscribed to harness.hello. Now retired from
+			// harnessHookEntries, so it must be pruned on this call.
+			"SessionStart": []any{
+				map[string]any{
+					"hooks": []any{
+						map[string]any{
+							"type":    "command",
+							"command": "harness-cli agent subscribe --topic harness.hello",
 						},
 					},
 				},
@@ -247,6 +265,16 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 	}
 	if !groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --commit --json") {
 		t.Errorf("current UserPromptSubmit hook missing after merge")
+	}
+
+	// Retired harness.hello auto-subscribe pruned; the current --self hook
+	// added in its place.
+	startGroups, _ := hooks["SessionStart"].([]any)
+	if groupCommandSearch(startGroups, "harness-cli agent subscribe --topic harness.hello") {
+		t.Errorf("retired harness.hello SessionStart hook should be pruned: %v", startGroups)
+	}
+	if !groupCommandSearch(startGroups, "harness-cli agent subscribe --self") {
+		t.Errorf("current --self SessionStart hook missing after merge: %v", startGroups)
 	}
 
 	// User-authored hook in a foreign event must survive.

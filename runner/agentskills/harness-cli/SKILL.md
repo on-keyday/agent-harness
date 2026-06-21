@@ -48,7 +48,7 @@ Do not add `--commit` to the fallback call; it remains hook-only.
 
 Reply delivery to your context is **always asynchronous**, via the inbox
 hook described above. The correct pattern for any request/response flow,
-**including the initial `harness.hello` handshake**, is:
+**including the initial hello handshake**, is:
 
 1. `send` to the peer.
 2. End the turn (or do other unrelated work). Do **not** invoke `wait`
@@ -111,35 +111,49 @@ harness-cli agent subscribe   --self
 harness-cli agent unsubscribe --self
 ```
 
-The runner installs two `SessionStart` hooks: one subscribes to
-`harness.hello` and one runs `subscribe --self`. So the conventional
-inbound topic `chat.<short-id>` is already live by the time your first
-turn starts — you only need to **announce** it as `reply_topic` in
-outbound messages, not subscribe to it yourself.
+The runner installs one `SessionStart` hook that runs `subscribe --self`.
+So the conventional inbound topic `chat.<short-id>` is already live by the
+time your first turn starts — you only need to **announce** it as
+`reply_topic` in outbound messages, not subscribe to it yourself.
 
-**Non-claude agents must subscribe themselves.** Those `SessionStart` hooks
-live in the claude-only `.claude/settings.json`, so a peer running a different
-agent (gemini / codex / …) does NOT get them — even with this skill present via
+The runner does **not** auto-subscribe you to `harness.hello`. Peers reach
+you id-directed on `chat.<short-id>` (the spawner already knows your task
+id; humans use `ls` to find it), so a global topic everyone subscribed to
+only turned every peer introduction into broadcast wake-noise. If you
+genuinely need to discover a peer you have no prior id for, subscribe to
+`harness.hello` yourself — see below.
+
+**Non-claude agents must subscribe themselves.** That `SessionStart` hook
+lives in the claude-only `.claude/settings.json`, so a peer running a different
+agent (gemini / codex / …) does NOT get it — even with this skill present via
 cross-tool injection. If that is you, run `harness-cli agent subscribe --self`
-and `harness-cli agent subscribe --topic harness.hello` yourself at startup;
-otherwise peers can't reach you on `chat.<short-id>` and you won't see hello
-announcements. (You also have no auto-inbox hook — poll `harness-cli agent
-inbox` to receive.)
+yourself at startup; otherwise peers can't reach you on `chat.<short-id>`.
+(You also have no auto-inbox hook — poll `harness-cli agent inbox` to
+receive.)
 
-## Handshake on `harness.hello`
+## Reaching another agent — id-directed first
 
-The broker has no schema or capability registry. To keep multi-agent work
-from depending on out-of-band convention, there is exactly one reserved
-well-known topic: **`harness.hello`**.
+The default and overwhelmingly common path is **id-directed**: you already
+know the other agent's task id (you spawned it, or you found it with `ls`),
+so you reach it on its inbound topic `chat.<first-8-hex-of-task-id>`
+directly. No shared topic, no broadcast — only the target is woken. Announce
+your own `chat.<short-id>` as `reply_topic` so it can reply.
 
-- On startup, subscribe to `harness.hello` and announce yourself there
-  (role, the topic(s) you will accept work on, and any payload hints other
-  agents need). Read other agents' announcements on the same topic.
-- Once two agents have agreed on a per-pair / per-purpose topic via
-  `harness.hello`, switch the actual conversation to that topic and stop
-  posting traffic on `harness.hello`.
-- `harness.hello` is for meeting, not for ongoing chat. Treat it as the
-  one channel guaranteed to exist; everything else is negotiated.
+### Opt-in discovery on `harness.hello`
+
+For the rarer case where you need to find a peer you have **no prior id
+for**, there is one reserved rendezvous topic: **`harness.hello`**. It is
+opt-in — you are NOT auto-subscribed to it.
+
+- Only if you need discovery: `subscribe --topic harness.hello`, announce
+  yourself there (role, the topic(s) you accept work on, payload hints),
+  and read others' announcements.
+- Once two agents have agreed on a per-pair / per-purpose topic, switch the
+  conversation to that topic and stop posting on `harness.hello`. It is for
+  meeting, not ongoing chat.
+- Don't reflexively announce on `harness.hello` at startup. If your peer
+  relationship is already established by id (the usual case), skip it
+  entirely — a startup broadcast to a topic nobody needs is pure noise.
 
 ## Finding other agents / tasks
 
@@ -161,9 +175,9 @@ harness-cli agent topics
 
 To reach a task you found in `ls`, derive its inbound channel the way every
 agent here names its own: `chat.<first-8-hex-of-task-id>`, and send a `hello`
-there (see the handshake / spawn examples). `ls` tells you *which* agents exist
-and their status; `harness.hello` is how you introduce yourself to one that is
-listening.
+there (see the spawn examples). This id-directed send is the normal way to
+introduce yourself; `harness.hello` is only for the case where you have no id
+to derive a channel from.
 
 ## Spawning a worker agent
 
@@ -468,7 +482,7 @@ poll `harness-cli agent inbox` itself. So:
 - `agent=claude` (no `+skills`), or `agent=bash` — not skill-aware: no skill and
   no inbox hook (e.g. a `--no-worktree` runner without force-inject).
 
-Behavior is still the final word (does it complete `harness.hello`?), but you no
+Behavior is still the final word (does it complete the handshake?), but you no
 longer have to guess.
 
 What you *can* rely on: `harness-cli` itself is generally usable in those
@@ -484,11 +498,11 @@ Each agent owns exactly the topics it **receives** on. Never subscribe to a
 topic you only **send** to — doing so causes your own outbound messages to
 loop back into your inbox.
 
-Typical per-agent setup after a handshake:
+Typical per-agent setup:
 
 ```
-subscribe:  harness.hello          # always — for new-agent discovery
-subscribe:  chat.<my-short-id>     # my inbound channel (peers write here)
+subscribe:  chat.<my-short-id>     # my inbound channel (peers write here) — auto via --self
+subscribe:  harness.hello          # OPT-IN, only if you need peer discovery
 # do NOT subscribe: chat.<peer-short-id>   ← peer's inbound, not mine
 ```
 
@@ -498,12 +512,12 @@ Use `chat.<first-8-chars-of-task-id>` as your personal inbound topic.
 Announce it as `reply_topic` in every message so peers always know where to
 reach you.
 
-### Full handshake flow
+### Handshake flow (id-directed — the default)
 
-1. Both `harness.hello` and your inbound topic are **already subscribed**
-   by the runner's SessionStart hooks (see Subscriptions). You do not need
-   to subscribe by hand.
-2. **Post to `harness.hello`** with at minimum:
+1. Your inbound topic `chat.<short-id>` is **already subscribed** by the
+   runner's `--self` SessionStart hook. You do not need to subscribe by hand.
+2. **Post to the peer's inbound topic** `chat.<peer-short-id>` (derived from
+   the task id you got when you spawned it / from `ls`) with at minimum:
    ```json
    {
      "kind": "hello",
@@ -516,11 +530,15 @@ reach you.
    ```
 3. **End the turn after step 2.** Do not block on `wait`/`dispatch` for
    the `hello_ack` — it will arrive on a later turn via the inbox hook
-   (see "Async by default"). When it does, switch all further
-   conversation to the pair topics; stop using `harness.hello` for
-   ongoing chat.
+   (see "Async by default").
 4. Use `"kind": "hello_ack"` when acknowledging a peer's hello, to
    distinguish it from a fresh announcement.
+
+### Discovery variant (only when you have no peer id)
+
+`subscribe --topic harness.hello`, post the same `hello` payload there
+instead of to a peer topic, then end the turn. When a peer answers, switch
+to the pair topics and stop posting on `harness.hello`.
 
 ### Checking for stray subscriptions
 

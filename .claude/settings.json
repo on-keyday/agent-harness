@@ -4,14 +4,6 @@
       {
         "hooks": [
           {
-            "command": "harness-cli agent subscribe --topic harness.hello",
-            "type": "command"
-          }
-        ]
-      },
-      {
-        "hooks": [
-          {
             "command": "harness-cli agent subscribe --self",
             "type": "command"
           }
