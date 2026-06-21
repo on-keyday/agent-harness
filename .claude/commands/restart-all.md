@@ -52,40 +52,46 @@ skip.
    other slots completes first, then this claude process may be torn down and
    re-spawned with `--continue`. That is normal, not an error.
 
-   **A severed / empty / "not executed"-looking Bash result is the SUCCESS
-   signature here, not a failure.** When the self-restart tears this process
-   down, the running `build_and_restart_all.py` call is SIGHUP'd mid-flight, so
-   its stdout never makes it back into the transcript — the tool result may show
-   as empty, truncated, or as though the command never ran. That only means the
-   connection was cut at the moment of self-restart; it says **nothing** about
-   whether the restart happened. It almost certainly did: self is torn down
-   **last**, after every other slot is already rebuilt and back. So:
-   **do NOT conclude the restart failed, and do NOT re-run the script** on the
-   strength of a missing/empty result. Confirm with step 2 instead.
+   **Why the launch may or may not be recorded — and why that is fine.** When
+   the self-restart tears this process down, the running
+   `build_and_restart_all.py` call is SIGHUP'd mid-flight. Whether its Bash
+   tool-call/result record was flushed into the transcript before the kill is
+   **timing-dependent and non-deterministic**: sometimes the record survives,
+   sometimes the transcript has a **hole** exactly where the launch was. So an
+   empty / truncated / "never executed"-looking result — or no record at all —
+   proves **nothing** either way. Do **not** infer success from its presence,
+   and do **not** infer failure from its absence. (Self is torn down **last**,
+   after every other slot is already rebuilt and back, so the restart almost
+   certainly happened regardless of what the transcript shows.)
 
-   **A bare `continue` arriving as a USER/human-side input turn — right where
-   the self-restart Bash should have been executing — is the resume-after-
-   restart SIGNAL, not a "re-run me" prompt.** (This is specifically about an
-   *input turn*, not anything inside a Bash result or tool output.) When this
-   session's own runner is torn down last, the SIGHUP severs the transcript
-   mid-call; the runner re-spawns claude with `--continue`, which surfaces on
-   the next turn as a user-side `continue` picking up at exactly that Bash
-   point. If the conversation sequence is *[the self-restart Bash point] → a
-   user input turn that just says `continue`*, read it as **"the restart
-   already completed, resume from here"** — confirm via step 2 and stop. Do
-   **NOT** read it as the command having failed, and do **NOT** re-run the
-   script in response — least of all with `--force`.
+   **Decide only from ground truth, never from the transcript.** A
+   `--continue`-resumed session is the dangerous case: it reloads history that
+   may contain that hole, sees no trace of its own triggering launch, and
+   concludes "I never ran it" — then re-runs the script. Don't. The only
+   reliable evidence is (a) the debounce-stamp age, (b) the `bin/` binary build
+   mtimes, and (c) **fresh connection IDs** in `harness-cli ls` (step 2) —
+   never whether the launch Bash appears in the transcript.
+
+   **`--continue` is a silent history reload, NOT a `continue` input token.**
+   On restart the runner re-spawns claude with `--continue`, which silently
+   reloads the prior conversation and waits — it does **not** inject any
+   user-side message. So a literal `continue` turn is the **human operator**
+   nudging the resumed session, not an auto-generated token (the harness's own
+   synthetic prompts are tagged, e.g. `<harness:...>`; a bare `continue` is not
+   one). Either reading leads to the same action: it means "resume here" —
+   confirm via step 2 and stop. Do **NOT** treat a missing record as failure,
+   and do **NOT** re-run the script — least of all with `--force`.
 
    Belt-and-suspenders: the script is **debounced** — it stamps
    `bin/.run/last-restart-stamp` and no-ops (exit 0, "a restart completed Ns
    ago … skipping") if re-run within 300s. So if a resume re-fires it anyway,
-   you get a safe skip, not a double restart. **A debounce skip that lands right
-   after such a `continue` is the safety mechanism working correctly — the
-   restart already happened; the skip is the proof, not an obstacle.** `--force`
-   is a deliberate, explicitly-requested manual action for when you genuinely
-   want another cycle inside the window. **Never reach for `--force` as a reflex
-   to get past an unexpected skip** — doing so produces exactly the redundant
-   double restart the debounce exists to prevent.
+   you get a safe skip, not a double restart. **A debounce skip is the safety
+   mechanism working correctly — it is PROOF the prior (possibly unrecorded)
+   run already happened, not an obstacle.** `--force` is a deliberate,
+   explicitly-requested manual action for when you genuinely want another cycle
+   inside the window. **Never reach for `--force` as a reflex to get past an
+   unexpected skip** — doing so produces exactly the redundant double restart
+   the debounce exists to prevent.
 
 2. Quick confirm — the Bash output is NOT the evidence (per the note above);
    these two cheap checks are, and they are **separate commands**:
