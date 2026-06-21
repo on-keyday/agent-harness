@@ -289,6 +289,32 @@ parallel to watch or take over; that's expected.)
 shows every task (including one-shots). When more than one runner can serve the
 repo, pin a spawn with `--runner <cid>` / `--host <name>` / `--ip <addr>`.
 
+## Capabilities (`--caps`) — attenuate what a child task may do
+
+`submit`, `interactive`, and `session new` all accept `--caps <names>` to bound
+what the task you spawn may do on the control plane. This is the harness's
+privilege-attenuation seam for delegated work — list the names and what each
+authorizes with `harness-cli caps` (`--json` for the machine-readable form).
+
+- **Attenuating, never amplifying.** A child receives `creator_caps ∩ requested`
+  — you can only grant a subset of what you yourself hold, and caps are
+  monotonically non-increasing down a spawn chain.
+- **Omitted ⇒ inherit-all.** No `--caps` flag means the child inherits every cap
+  you hold (the server intersects with your set). Pass `--caps none` for a
+  data-plane-only worker (agentboard + its own logs/ls), or a comma list like
+  `--caps spawn,file_read` to grant exactly those.
+- **Operator = full set.** A task launched directly by the human operator (no
+  principal task) is the trusted root and holds `all`.
+- **Visibility is a cap too.** Without `info_global`, a confined task's `ls` and
+  `agent topics` show only its own task subtree (itself + descendants), not the
+  whole board; `info_global` (part of `all`) lifts that.
+
+Granular names: `spawn`, `cancel`, `exec_attach`, `file_read`, `file_write`,
+`forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`,
+`info_global` — plus the aliases `none` / `all`. When you spawn a worker you
+intend to keep driving, grant the narrowest set that lets it finish, and widen
+only if it hits a capability-denied error.
+
 ## One-shot tasks & monitoring (`submit`, `logs`, `watch`)
 
 `submit` is the fire-and-forget counterpart to `session new -d`: it enqueues a

@@ -130,6 +130,14 @@ func main() {
 			die(err)
 		}
 
+	case "caps":
+		fs := flag.NewFlagSet("caps", flag.ExitOnError)
+		asJSON := fs.Bool("json", false, "output the capability catalog as JSON")
+		fs.Parse(args)
+		if err := cli.WriteCaps(os.Stdout, *asJSON); err != nil {
+			die(err)
+		}
+
 	case "skill":
 		name := "harness-cli"
 		if len(args) > 0 {
@@ -518,6 +526,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--claude-arg --resume <uuid>` finds claude's stored session)")
 	fmt.Fprintln(os.Stderr, "                                      --caps: comma-separated capability names to grant (e.g. spawn,file_read / all / none); default all. On --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
+	fmt.Fprintln(os.Stderr, "  caps [--json]                       list the grantable --caps capability names and what each authorizes")
 	fmt.Fprintln(os.Stderr, "  skill [NAME]                        print the embedded agent skill (default: harness-cli)")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  notify [--title T] [--level info|warn|error] <text>")
