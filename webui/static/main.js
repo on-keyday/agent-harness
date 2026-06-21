@@ -94,6 +94,24 @@ const POLL_INTERVAL_MS = 5000;
     }
   });
 
+  // Live-apply a #psk edit. A rejected connect (BadPsk) is fatal in the persist
+  // loop (cli/persist.go), so after it the wasm never re-dials and editing the
+  // #psk fragment has no effect until a reload re-runs GetPSK (cli/psk_js.go).
+  // So when the #psk value changes WHILE NOT CONNECTED, reload to pick up the
+  // new secret. Scoped to the disconnected state so a live session is never
+  // dropped, and only on an actual psk change. hashchange fires for address-bar
+  // fragment edits / location.hash= / anchors (not history.pushState — fine, the
+  // manual "add #psk" flow is an address-bar edit).
+  let lastHashPsk = new URLSearchParams(location.hash.replace(/^#/, '')).get('psk');
+  window.addEventListener('hashchange', () => {
+    const psk = new URLSearchParams(location.hash.replace(/^#/, '')).get('psk');
+    if (psk !== lastHashPsk && !connectionIsUp) {
+      location.reload();
+      return;
+    }
+    lastHashPsk = psk;
+  });
+
   // Cap chip state — declared early so the function definitions below can close
   // over them; initCaps() is called once after connect (capList needs no conn
   // but the DOM is always ready by then, which is what renderCaps() touches).
