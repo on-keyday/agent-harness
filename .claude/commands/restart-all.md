@@ -93,6 +93,30 @@ skip.
    unexpected skip** — doing so produces exactly the redundant double restart
    the debounce exists to prevent.
 
+   **Timeline of a normal self-restart** — note where the record hole opens and
+   how the decision routes around it:
+
+   ```
+   T+0s     /restart-all → you launch:  python …/build_and_restart_all.py
+   T+1–8s   every OTHER slot rebuilds + reconnects
+            → fresh connection IDs start appearing in `harness-cli ls`
+   T+~9s    the SELF slot (this session's runner) is torn down LAST, detached
+            → SIGHUP severs the launch Bash mid-flight
+            → its tool-call/result record MAY or MAY NOT reach the transcript
+   T+~12s   runner re-spawns `claude --continue` → history silently reloaded
+            → if the record was lost, the transcript now has a HOLE exactly
+              where the launch was. "Did I even run it?" is the trap — ignore it.
+   later    a bare `continue` turn may arrive → that is the HUMAN nudging the
+            resumed session (not an injected token); it proves nothing by itself
+   T+Δ      you run step 2:  fresh IDs in `harness-cli ls` + recent `bin/`
+            mtimes + a <300s debounce stamp  →  restart CONFIRMED, stop.
+            (re-firing the script here returns a safe debounce skip — and that
+             skip is itself proof the prior, possibly unrecorded, run happened)
+   ```
+
+   Whether the `T+~9s` launch record survives is the non-deterministic part;
+   every line of the decision at `T+Δ` reads ground truth, never the transcript.
+
 2. Quick confirm — the Bash output is NOT the evidence (per the note above);
    these two cheap checks are, and they are **separate commands**:
    - `harness-cli ls` → runners re-registered `Idle` with **fresh connection
