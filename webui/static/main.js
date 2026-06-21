@@ -179,6 +179,10 @@ const POLL_INTERVAL_MS = 5000;
   const filePreviewTitle  = document.getElementById("file-preview-title");
   const filePreviewBody   = document.getElementById("file-preview-body");
   const filePreviewClose  = document.getElementById("file-preview-close");
+  const filePreviewToggle = document.getElementById("file-preview-toggle");
+  // Set when the current preview is HTML, so the toggle can rebuild the body
+  // from already-fetched bytes without re-pulling. Reset on modal close.
+  let filePreviewHtml = null; // { rel, size, bytes, mode: "render" | "source" }
 
   // Preview never pulls more than this into browser memory; oversize files
   // are rejected up front using the size from fileLs (no fetch attempted).
@@ -416,6 +420,8 @@ const POLL_INTERVAL_MS = 5000;
       URL.revokeObjectURL(filePreviewObjectURL);
       filePreviewObjectURL = null;
     }
+    filePreviewHtml = null;
+    filePreviewToggle.hidden = true;
   });
 
   // openFilePreview shows the modal with a header and a body built from the
@@ -439,9 +445,46 @@ const POLL_INTERVAL_MS = 5000;
     if (!filePreviewModal.open) filePreviewModal.showModal();
   }
 
+  // showHtmlPreview renders the cached HTML bytes in the requested mode and
+  // shows/updates the toggle label. mode "render" => sandboxed iframe;
+  // mode "source" => plain text in <pre> (same as a normal text preview).
+  function showHtmlPreview() {
+    const { rel, size, bytes, mode } = filePreviewHtml;
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    let node;
+    if (mode === "render") {
+      const iframe = document.createElement("iframe");
+      iframe.className = "preview-iframe";
+      // SECURITY: allow-scripts WITHOUT allow-same-origin => opaque origin,
+      // cannot reach the WebUI origin / trsf / DOM / storage. Do not add
+      // allow-same-origin.
+      iframe.setAttribute("sandbox", "allow-scripts");
+      iframe.srcdoc = text;
+      node = iframe;
+    } else {
+      const pre = document.createElement("pre");
+      pre.textContent = text;
+      node = pre;
+    }
+    openFilePreview(rel, size, node, null);
+    filePreviewToggle.hidden = false;
+    filePreviewToggle.textContent = mode === "render" ? "View source" : "View rendered";
+  }
+
+  filePreviewToggle.addEventListener("click", () => {
+    if (!filePreviewHtml) return;
+    filePreviewHtml.mode = filePreviewHtml.mode === "render" ? "source" : "render";
+    showHtmlPreview();
+  });
+
   // renderFilePreview picks a renderer based on extension (images) and a
   // byte sniff (text vs binary), then opens the modal.
   function renderFilePreview(rel, size, name, bytes) {
+    if (isHtmlExt(name)) {
+      filePreviewHtml = { rel, size, bytes, mode: "render" };
+      showHtmlPreview();
+      return;
+    }
     if (isImageExt(name)) {
       const blob = new Blob([bytes], { type: imageMimeForName(name) });
       filePreviewObjectURL = URL.createObjectURL(blob);
@@ -1863,6 +1906,11 @@ function fileExt(name) {
 
 function isImageExt(name) {
   return Object.prototype.hasOwnProperty.call(IMAGE_MIME_BY_EXT, fileExt(name));
+}
+
+function isHtmlExt(name) {
+  const e = fileExt(name);
+  return e === "html" || e === "htm";
 }
 
 function imageMimeForName(name) {
