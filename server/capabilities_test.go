@@ -544,6 +544,82 @@ func TestListFilteredToSubtree(t *testing.T) {
 	}
 }
 
+// TestListRunnersGatedByInfoGlobal: the RUNNERS section of List is gated by
+// InfoGlobal exactly like agentHandleListTopics — a confined caller (no
+// InfoGlobal, not operator) sees zero runners; operator and InfoGlobal-holders
+// see the full runner list. Tasks remain subtree-filtered independently.
+func TestListRunnersGatedByInfoGlobal(t *testing.T) {
+	h := newTestHandler(t)
+
+	// Register two runners so the global runner list is non-empty.
+	runnerA := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-91")}
+	runnerB := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-92")}
+	h.Registry.Add(&RunnerEntry{
+		ID:          runnerA.id.String(),
+		Hostname:    "host-a",
+		MaxTasks:    2,
+		ActiveTasks: map[string]struct{}{},
+		Conn:        runnerA,
+	})
+	h.Registry.Add(&RunnerEntry{
+		ID:          runnerB.id.String(),
+		Hostname:    "host-b",
+		MaxTasks:    2,
+		ActiveTasks: map[string]struct{}{},
+		Conn:        runnerB,
+	})
+
+	// Confined caller: task A with Spawn but no InfoGlobal.
+	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn)
+	aTID := hexToTaskID(t, aHex)
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req.SetList(protocol.ListQuery{})
+
+	// -- Case 1: confined caller (no InfoGlobal) sees zero runners ---
+	confinedConn := &fakeConn{
+		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9820-1"),
+		nextSendStreamID: 10,
+	}
+	h.principals[confinedConn.ConnectionID().String()] = aTID
+	h.Handle(confinedConn, encodeTaskControlRequest(t, req))
+	if len(confinedConn.sendStreams) != 1 {
+		t.Fatalf("confined caller: expected 1 send stream, got %d", len(confinedConn.sendStreams))
+	}
+	cBody := decodeListBody(t, confinedConn.sendStreams[0].bytes)
+	if cBody.RunnersLen != 0 {
+		t.Errorf("confined caller (no InfoGlobal): expected 0 runners, got %d", cBody.RunnersLen)
+	}
+
+	// -- Case 2: operator (no principal entry) sees both runners ---
+	opConn := &fakeConn{
+		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9820-2"),
+		nextSendStreamID: 11,
+	}
+	h.Handle(opConn, encodeTaskControlRequest(t, req))
+	opBody := decodeListBody(t, opConn.sendStreams[0].bytes)
+	if opBody.RunnersLen != 2 {
+		t.Errorf("operator: expected 2 runners, got %d", opBody.RunnersLen)
+	}
+
+	// -- Case 3: confined caller WITH InfoGlobal sees both runners ---
+	h.Tasks.tasks[aHex].Capabilities = protocol.Capability_InfoGlobal
+	igConn := &fakeConn{
+		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9820-3"),
+		nextSendStreamID: 12,
+	}
+	h.principals[igConn.ConnectionID().String()] = aTID
+	h.Handle(igConn, encodeTaskControlRequest(t, req))
+	igBody := decodeListBody(t, igConn.sendStreams[0].bytes)
+	if igBody.RunnersLen != 2 {
+		t.Errorf("caller with InfoGlobal: expected 2 runners, got %d", igBody.RunnersLen)
+	}
+}
+
 // decodeListBody decodes a ListResultBody from raw bytes recorded on a send stream.
 func decodeListBody(t *testing.T, raw []byte) protocol.ListResultBody {
 	t.Helper()

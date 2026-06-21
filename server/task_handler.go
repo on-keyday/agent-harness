@@ -952,11 +952,18 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	}
 
 	all, allowed := h.visibleToCaller(connID)
-	runners := h.Registry.List()
 	tasks := h.Tasks.List(100)
-	runnerInfos := make([]protocol.RunnerInfo, len(runners))
-	for i, r := range runners {
-		runnerInfos[i] = toRunnerInfo(r)
+	// RUNNERS visibility is gated on InfoGlobal exactly like agentHandleListTopics:
+	// a confined caller (no InfoGlobal, not operator) sees zero runners, so it
+	// cannot enumerate the operator's runner topology (hostnames, dial addrs,
+	// AllowedRoots paths). Operators and InfoGlobal-holders get the full list.
+	var runnerInfos []protocol.RunnerInfo
+	if all {
+		runners := h.Registry.List()
+		runnerInfos = make([]protocol.RunnerInfo, len(runners))
+		for i, r := range runners {
+			runnerInfos[i] = toRunnerInfo(r)
+		}
 	}
 	var filteredTasks []TaskEntry
 	if all {
