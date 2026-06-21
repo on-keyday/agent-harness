@@ -49,8 +49,11 @@ skip.
 
    Expect this to eventually restart the runner serving this very session
    (`$HARNESS_RUNNER_ID`) **last**, detached — so the build + restart of all
-   other slots completes first, then this claude process may be torn down and
-   re-spawned with `--continue`. That is normal, not an error.
+   other slots completes first, then this claude process is torn down with the
+   old runner. The session does **not** come back on its own (`/restart-all`
+   cycles **runners, not sessions**; the new runner registers IDLE) — a **human**
+   resumes it later through a client. Being killed with no automatic comeback is
+   normal here, not an error.
 
    **Why the launch may or may not be recorded — and why that is fine.** When
    the self-restart tears this process down, the running
@@ -72,15 +75,17 @@ skip.
    mtimes, and (c) **fresh connection IDs** in `harness-cli ls` (step 2) —
    never whether the launch Bash appears in the transcript.
 
-   **`--continue` is a silent history reload, NOT a `continue` input token.**
-   On restart the runner re-spawns claude with `--continue`, which silently
-   reloads the prior conversation and waits — it does **not** inject any
-   user-side message. So a literal `continue` turn is the **human operator**
-   nudging the resumed session, not an auto-generated token (the harness's own
-   synthetic prompts are tagged, e.g. `<harness:...>`; a bare `continue` is not
-   one). Either reading leads to the same action: it means "resume here" —
-   confirm via step 2 and stop. Do **NOT** treat a missing record as failure,
-   and do **NOT** re-run the script — least of all with `--force`.
+   **Nothing auto-resumes you — a human does, so any resumed turn is human.**
+   The runner does **not** re-spawn the session on restart: `/restart-all`
+   cycles runners, not sessions, and the new runner comes up idle. Your session
+   returns only when a **human** resumes it through a client (TUI/WebUI/CLI) — a
+   resume RPC, optionally `--claude-arg --continue` to also reload claude's prior
+   conversation. `--continue` is a *silent history reload* that injects no
+   user-side message, so a literal `continue` turn is the human operator typing
+   it, never an auto-generated token. Either way a resumed / `continue` turn
+   means "a human brought you back — resume here": confirm via step 2 and stop.
+   Do **NOT** treat the record hole as failure, and do **NOT** re-run the script
+   — least of all with `--force`.
 
    Belt-and-suspenders: the script is **debounced** — it stamps
    `bin/.run/last-restart-stamp` and no-ops (exit 0, "a restart completed Ns
@@ -101,13 +106,15 @@ skip.
    T+1–8s   every OTHER slot rebuilds + reconnects
             → fresh connection IDs start appearing in `harness-cli ls`
    T+~9s    the SELF slot (this session's runner) is torn down LAST, detached
-            → SIGHUP severs the launch Bash mid-flight
-            → its tool-call/result record MAY or MAY NOT reach the transcript
-   T+~12s   runner re-spawns `claude --continue` → history silently reloaded
-            → if the record was lost, the transcript now has a HOLE exactly
-              where the launch was. "Did I even run it?" is the trap — ignore it.
-   later    a bare `continue` turn may arrive → that is the HUMAN nudging the
-            resumed session (not an injected token); it proves nothing by itself
+            → your claude child is killed with the old runner
+            → SIGHUP severs the launch Bash mid-flight; its tool-call/result
+              record MAY or MAY NOT have reached the transcript
+   after    the new runner comes up IDLE (new CID). The session does NOT
+            auto-resume — restart-all cycles runners, not sessions. You stay down.
+   later    a HUMAN resumes the session via a client (optionally `--continue`,
+            which silently reloads history — possibly WITH the hole). The
+            resumed / `continue` turn is therefore the human; it proves nothing
+            by itself, and "did I even run it?" is the trap — ignore it.
    T+Δ      you run step 2:  fresh IDs in `harness-cli ls` + recent `bin/`
             mtimes + a <300s debounce stamp  →  restart CONFIRMED, stop.
             (re-firing the script here returns a safe debounce skip — and that
