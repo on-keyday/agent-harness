@@ -82,6 +82,11 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `agent {send | wait | inbox | dispatch | subscribe | unsubscribe
       | topics | subscriptions}`. See `runner/agentskills/harness-cli/
       SKILL.md` for conventions.
+    - Capabilities: `submit` / `session new` / `interactive` take
+      `--caps NAMES` to grant a spawned task a restricted capability set
+      (`caps_child = caps_parent ∩ requested`, server-enforced); `caps`
+      lists the grantable names and what each authorizes. See
+      **Capabilities** below.
   - `cmd/harness-tui`: Bubble Tea interactive frontend (sections below).
   - `cmd/harness-webui-wasm`: in-browser WebUI compiled to WASM, served
     by `harness-server`.
@@ -101,8 +106,18 @@ auto-generated on first run if absent, then persisted there. Clients
 and runners *consume* an already-established PSK via `--psk` / `--psk-file`
 or env `HARNESS_PSK` / `HARNESS_PSK_FILE` (env `HARNESS_PSK_FILE` is
 read-only — it is not honored by the server, which only generates to the
-`--psk-file` flag path). Server and runner can run on
-different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
+`--psk-file` flag path). The PSK handshake is 1-RTT and carries the
+connecting party's identity (role + principal) in the same message, so
+the server knows whether a connection is a runner, an in-task agent, or
+an operator surface before the secure session opens. Operator surfaces
+(CLI / TUI / WebUI) prove a **separate** operator secret via
+`harness-server --operator-psk` (env `HARNESS_OPERATOR_PSK` /
+`HARNESS_OPERATOR_PSK_FILE`), which is deliberately never injected into
+agents — without it an in-task agent could drop its capability ticket,
+reconnect as a plain client, and escalate to operator. Leaving
+`--operator-psk` empty keeps the legacy behaviour (operator surfaces
+validated against `--psk`) with a startup warning. Server and runner can
+run on different hosts — the `--server-cid` / `HARNESS_SERVER_CID` is a
 ConnectionID (`ws:host:port-id` or `udp:host:port-id`) that the
 runner / clients dial; the transport prefix selects the underlay.
 
@@ -263,6 +278,70 @@ isolated checkout. Two flags adjust this:
   persist after task end (no auto-cleanup); manage them manually if
   desired.
 
+## Capabilities
+
+Each task carries a **capability set** — a server-enforced bitmask of
+what control-plane operations it may request (spawn, cancel,
+exec-attach, file read / write, local / remote port-forward, notify,
+prune, runner-admin, global info). `harness-cli caps` lists the
+grantable names with a one-line description of each; `caps --json`
+emits the machine-readable catalog (name / bit / description).
+
+By default a spawned task inherits everything its spawner holds.
+`--caps NAMES` (on `submit` / `session new` / `interactive`, also in the
+TUI and WebUI spawn surfaces) narrows that: the server grants
+`caps_child = caps_parent ∩ requested`, so a task can never exceed its
+parent. `NAMES` is comma-separated (e.g. `spawn,file_read`), or the
+shorthands `all` / `none`. The current set is visible per task in
+`ls`, the TUI detail popup, and the WebUI task rows.
+
+```bash
+bin/harness-cli caps                       # list grantable capabilities
+bin/harness-cli submit --repo /abs/repo --task "..." --caps none
+bin/harness-cli session new --repo /abs/repo --caps spawn,file_read
+```
+
+On **resume**, the task's persisted caps are kept by default; passing
+`--caps` (CLI), `caps --on-resume` (TUI), or the apply-on-resume
+checkbox (WebUI) re-grants the named set instead (intersected with what
+the resumer holds). This composes with the podman sandbox (see
+**Sandboxing** below) as a server-layer confinement: `--caps none`
+closes the control-plane escape path (an agent spawning an unsandboxed
+child) regardless of what is inside the container.
+
+## Sandboxing (rootless podman)
+
+An **opt-in** kit under `scripts/sandbox/` runs a runner's spawned
+`claude` inside a **rootless podman** container instead of directly on
+the host, to shrink the blast radius of an agent run with
+`--dangerously-skip-permissions`. It needs no harness core changes — it
+plugs in through the existing `--claude-bin` seam:
+
+```bash
+scripts/sandbox/build.sh                       # build harness-claude-sandbox:latest
+scripts/runner.sh up --as sandboxed \
+  --claude-bin "$PWD/scripts/sandbox/claude-in-podman.sh" \
+  --roots "$HOME/workspace/<repo>"
+```
+
+`--userns=keep-id` maps the host uid into the container so worktree
+edits land on disk owned by the host user (podman, not docker, makes
+non-root + host-owned writes coexist). The wrapper bind-mounts the repo
+root (worktree + shared `.git`) and, in the default **mount auth** mode,
+`~/.claude` + `~/.claude.json` (host login / session resume — note this
+exposes the refresh token to the container). **Token auth** (a
+dedicated revocable `CLAUDE_CODE_OAUTH_TOKEN`, no `~/.claude` mount)
+removes that exposure but disables resume. Egress is open by default;
+`--claude-arg --firewall` applies a default-deny iptables+ipset
+allowlist, and `--firewall-proxy` routes egress through an in-container
+allowlisting CONNECT proxy (raw sockets blocked, WebFetch works).
+
+This is the **OS-layer** half of a two-layer model; the **server-layer**
+half is the capability bitmask (**Capabilities** above) — e.g.
+`submit --caps none` closes the control-plane escape path. Neither layer
+configures the other. Full details, security model, and verification
+status are in [`scripts/sandbox/README.md`](scripts/sandbox/README.md).
+
 ## TUI
 
 `cmd/harness-tui` is an interactive Bubble Tea frontend that bundles
@@ -310,8 +389,10 @@ Keys:
 | `q`, `Ctrl+C` | Quit |
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ file {ls,push,pull,delete} / server dial-runner / cancel / prune / repo
-/ clear / help / quit`. `session new` supports
+/ file {ls,push,pull,delete} / caps / server dial-runner / cancel / prune
+/ repo / clear / help / quit`. `caps NAMES` sets a session-default
+capability set applied to subsequent spawns (`caps --on-resume` toggles
+re-granting that set on resume). `session new` supports
 `--host NAME | --runner HEX | --ip ADDR` for runner-pinning (mutually
 exclusive), plus `--detach` to spawn-and-exit without splicing the
 local terminal. Use `harness-cli prune-local` for local-only worktree
@@ -337,6 +418,19 @@ plus a **Host pin** dropdown for routing to a specific runner by
 hostname. The xterm-based interactive view splices the runner's PTY
 into the browser tab the same way the TUI does into its terminal.
 
+The page is organised into tabs (端末 / タスク / ファイル / 通知):
+
+- **Tasks** — runners + task list, the submit / compose form (with a
+  `--caps` selector and effective-set readout), and a command line.
+- **Files** — a per-task worktree browser: navigate directories, push
+  (upload a local file), pull (download), delete, and **Preview** a
+  selected file in a modal. `.html` files render in a **sandboxed
+  `<iframe>`** (`sandbox` with no `allow-same-origin` / scripts) with a
+  *View source* toggle to flip between the rendered page and its text.
+- **Notifications** — the live notification feed (ring backlog + live),
+  plus a form to post one by hand (level / title / body).
+- **Terminal** — the interactive PTY view with on-screen key helpers.
+
 UDP-only servers (when `--listen` is empty and only `--udp-listen` is
 configured) **do not serve the WebUI** — there is no HTTP listener.
 Run WS+UDP dualstack if you want both.
@@ -348,11 +442,13 @@ Run WS+UDP dualstack if you want both.
   `harness-cli prune` asks the server to forget terminal task records
   and per-task log files. The server can auto-prune via
   `harness-server --task-retain=DUR` (e.g. `--task-retain=720h`).
-- **No sandbox between agent and host.** Spawned agents run with
-  user-level filesystem and network access — the worktree is the CWD,
-  not a chroot. Single-user dogfood deployments only; do not point the
-  broker at networks you do not control. See the trust model section in
-  `runner/agentskills/harness-cli/SKILL.md`.
+- **No sandbox between agent and host *by default*.** Spawned agents run
+  with user-level filesystem and network access — the worktree is the
+  CWD, not a chroot. Single-user dogfood deployments only; do not point
+  the broker at networks you do not control. See the trust model section
+  in `runner/agentskills/harness-cli/SKILL.md`. An **opt-in** rootless
+  podman confinement is available via the `--claude-bin` seam — see
+  **Sandboxing** below.
 - **Built around Claude Code.** The runner spawns `claude` by default
   and the integration assumes its CLI surface (worktree →
   `--resume` / `--continue`, session storage keyed by cwd hash, etc.).
@@ -417,6 +513,9 @@ scripts/              {runner,server,restart}.{py,sh} daemon lifecycle helpers (
                       user units (Linux) / Task Scheduler tasks (Windows) for
                       boot/login persistence. build_and_restart_all.py rebuilds
                       and restarts every alive runner, self last.
+scripts/sandbox/      opt-in rootless-podman confinement kit for spawned claude
+                      (Containerfile + claude-in-podman.sh wrapper + egress
+                      firewall / CONNECT-proxy); plugs in via --claude-bin
 examples/             notify-hook samples (e.g. Discord webhook relay)
 testdata/             fake-claude.sh used by tests
 integration/          end-to-end smoke test (build tag: integration)
