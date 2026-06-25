@@ -407,6 +407,14 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	case protocol.TaskControlKind_Notify:
 		h.handleNotify(conn, &req)
 
+	case protocol.TaskControlKind_BoardTopics:
+		h.handleBoardTopics(conn, req.RequestId)
+
+	case protocol.TaskControlKind_BoardPurge:
+		if r := req.BoardPurge(); r != nil {
+			h.handleBoardPurge(conn, req.RequestId, string(r.Topic), r.Seq)
+		}
+
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
 		if dr == nil {

@@ -19,6 +19,9 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
 	protocol.TaskControlKind_AttachSession:   protocol.Capability_ExecAttach,
 	protocol.TaskControlKind_DialRunner:      protocol.Capability_RunnerAdmin,
+	protocol.TaskControlKind_BoardTopics:     protocol.Capability_InfoGlobal,
+	protocol.TaskControlKind_BoardRead:       protocol.Capability_InfoGlobal,
+	protocol.TaskControlKind_BoardPurge:      protocol.Capability_Purge,
 }
 
 // hasCap reports whether have includes every bit in want.
