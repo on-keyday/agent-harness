@@ -146,6 +146,14 @@ type Server struct {
 	// the race against process termination on shutdown, and peers must wait
 	// out AutoGarbageCollect's connectionTimeout (~1 min) to notice the death.
 	connWG sync.WaitGroup
+
+	// onConnEvent is the per-event hook wired in New to publish conn_opened /
+	// conn_identified / conn_closed events to the conns.status topic.
+	// It is stored on the struct so handleConnection (a method, not a closure)
+	// can call it without passing an extra parameter through the call chain.
+	// Nil-safe: set to a no-op when the server is constructed via makeTestServer
+	// or other test helpers that do not call New.
+	onConnEvent func(kind protocol.StatusEventKind, sc streamingConn)
 }
 
 // New constructs a Server with all components wired but NOT yet listening.
@@ -272,6 +280,64 @@ func New(cfg Config) *Server {
 		s.pubsub.Publish("server", topics.RunnersStatus(), payload)
 	}
 
+	// publishConnEvent constructs a ConnStatusEvent for sc and publishes it to
+	// the conns.status topic with per-subscriber visibility gating.
+	//
+	// All eligible subscribers see the same encoded payload (ConnInfo is not
+	// personalised per subscriber). The filter function is called per subscriber
+	// to decide whether that subscriber receives the event; it mirrors the
+	// ConnList visibility rules: operators and InfoGlobal holders see all events;
+	// confined subscribers see only agent conns whose principal is in their
+	// subtree.
+	publishConnEvent := func(kind protocol.StatusEventKind, sc streamingConn) {
+		// Build the full-visibility ConnInfo for encoding; the filter below gates
+		// delivery without altering the payload content.
+		globalInfo := s.connInfoFor(sc, nil, true)
+		if globalInfo == nil {
+			return
+		}
+		ev := protocol.ConnStatusEvent{
+			Kind: kind,
+			Ts:   uint64(time.Now().UnixNano()),
+			Info: *globalInfo,
+		}
+		payload := ev.MustAppend(nil)
+		// Per-subscriber gating: mirrors ConnList's visibility logic.
+		s.pubsub.PublishFiltered("server", topics.ConnsStatus(), payload, func(subCID objproto.ConnectionID) bool {
+			subCIDStr := subCID.String()
+			isOperator := s.taskHandler.lookupPrincipal(subCIDStr).Id == ([16]byte{})
+			if isOperator {
+				return true
+			}
+			if hasCap(s.taskHandler.callerCaps(subCIDStr), protocol.Capability_InfoGlobal) {
+				return true
+			}
+			// Confined subscriber: allowed only if this conn is visible in their subtree.
+			_, allowed := s.taskHandler.visibleToCaller(subCIDStr)
+			return s.connInfoFor(sc, allowed, false) != nil
+		})
+	}
+
+	// Wire conn_opened / conn_identified / conn_closed hooks.
+	s.taskHandler.OnConnIdentified = func(cidStr string) {
+		s.activeConnsMu.Lock()
+		sc, ok := s.activeConns[objproto.MustParseConnectionID(cidStr)]
+		s.activeConnsMu.Unlock()
+		if !ok {
+			return
+		}
+		publishConnEvent(protocol.StatusEventKind_ConnIdentified, sc)
+	}
+	s.runnerHandler.OnConnIdentified = func(cidStr string) {
+		s.activeConnsMu.Lock()
+		sc, ok := s.activeConns[objproto.MustParseConnectionID(cidStr)]
+		s.activeConnsMu.Unlock()
+		if !ok {
+			return
+		}
+		publishConnEvent(protocol.StatusEventKind_ConnIdentified, sc)
+	}
+
 	// Wire task lifecycle hooks.
 	// OnCreate publishes task_queued; Run may wrap this further for log store taps.
 	s.tasks.OnCreate = func(id string) {
@@ -312,6 +378,10 @@ func New(cfg Config) *Server {
 	s.runnerHandler.OnTaskStarted = func(taskID string) {
 		publishTaskEvent(taskID, protocol.StatusEventKind_TaskStarted, protocol.TaskStatus_Running, 0)
 	}
+
+	// Store the conn event publisher so handleConnection can emit
+	// conn_opened and conn_closed without threading a parameter.
+	s.onConnEvent = publishConnEvent
 
 	return s
 }
@@ -769,7 +839,17 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 	s.activeConnsMu.Lock()
 	s.activeConns[session.ConnectionID()] = wrapped
 	s.activeConnsMu.Unlock()
+	// conn_opened: fires before authentication so failed-handshake / probe /
+	// half-open conns are visible (role Unspecified, Identified=false).
+	if s.onConnEvent != nil {
+		s.onConnEvent(protocol.StatusEventKind_ConnOpened, wrapped)
+	}
 	defer func() {
+		// conn_closed: fires in teardown, before the activeConns entry is removed,
+		// so connInfoFor can still build the ConnInfo from the registered state.
+		if s.onConnEvent != nil {
+			s.onConnEvent(protocol.StatusEventKind_ConnClosed, wrapped)
+		}
 		s.activeConnsMu.Lock()
 		delete(s.activeConns, session.ConnectionID())
 		s.activeConnsMu.Unlock()

@@ -244,3 +244,46 @@ func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
 		t.cb(nickName, msg)
 	}
 }
+
+// PublishFiltered delivers msg to subscribers of topic whose ConnectionID
+// passes allow. Subscribers for which allow returns false are skipped.
+// Taps always receive the message regardless of the filter.
+//
+// Unlike Publish (which holds ps.m across every AppendData), PublishFiltered
+// SNAPSHOTS the matching subscriber streams + their CIDs under the lock, then
+// RELEASES the lock before calling allow() and AppendData(). This matters
+// because allow() reaches back into server state (e.g. taskHandler subtree /
+// capability lookups); calling it while ps.m is held could contend or deadlock
+// with code that touches the broker. The trade-off is that a subscriber leaving
+// concurrently may still receive one in-flight message — acceptable for an
+// at-most-once status feed.
+func (ps *PubSub) PublishFiltered(nickName string, topic string, msg []byte, allow func(objproto.ConnectionID) bool) {
+	ps.m.Lock()
+	type pending struct {
+		conn trsf.BidirectionalStream
+		id   objproto.ConnectionID
+	}
+	var toSend []pending
+	if sl, ok := ps.topics[topic]; ok {
+		for _, sub := range sl.subscribers {
+			stream, ok := sub.topics[topic]
+			if !ok {
+				continue
+			}
+			toSend = append(toSend, pending{conn: stream.conn, id: sub.id})
+		}
+	}
+	var tapsCopy []*Tap
+	if ts, ok := ps.taps[topic]; ok {
+		tapsCopy = append(tapsCopy, ts...) // snapshot
+	}
+	ps.m.Unlock()
+	for _, p := range toSend {
+		if allow == nil || allow(p.id) {
+			p.conn.AppendData(false, msg) //nolint:errcheck
+		}
+	}
+	for _, t := range tapsCopy {
+		t.cb(nickName, msg)
+	}
+}

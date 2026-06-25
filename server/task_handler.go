@@ -109,6 +109,12 @@ type TaskHandler struct {
 	// not established (minimal test wiring); ClientHello falls back to Ok.
 	OnAgentHello func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus
 
+	// OnConnIdentified, when non-nil, is called after a client connection's
+	// identity is successfully recorded (ClientHello accepted). It fires with
+	// the connection ID string so the server can emit a conn_identified event.
+	// Called outside the clientKindsMu lock. Safe to leave nil in tests.
+	OnConnIdentified func(cidStr string)
+
 	// clientKinds maps connection ID → the kind of client that announced
 	// itself via ClientHello on that connection. Submit / OpenInteractive
 	// look it up to attribute task origin (ClientKind_Cli / Tui / Webui).
@@ -177,6 +183,11 @@ func (h *TaskHandler) RecordClientIdentity(cid string, conn ConnHandle, hello *p
 			}
 		}
 		h.clientKindsMu.Unlock()
+		// Notify the server that identity is now established so it can
+		// emit a conn_identified event on conns.status.
+		if h.OnConnIdentified != nil {
+			h.OnConnIdentified(cid)
+		}
 	}
 	return status
 }
