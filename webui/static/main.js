@@ -1588,6 +1588,183 @@ const POLL_INTERVAL_MS = 5000;
       });
     }
   }
+
+  // ── Agentboard board panel ────────────────────────────────────────────────
+  // Mirrors renderTaskList (main.js:1443) for list building and the Cancel
+  // action pattern (main.js:1579) for confirm → harness.X → refresh.
+
+  const boardTopicsEl   = document.getElementById("board-topics");
+  const boardDetailEl   = document.getElementById("board-detail");
+  const boardMessagesEl = document.getElementById("board-messages");
+  const boardDetailTitle = document.getElementById("board-detail-title");
+  const boardBackBtn    = document.getElementById("board-back-btn");
+  const boardPurgeTopicBtn = document.getElementById("board-purge-topic-btn");
+  const boardRefreshBtn = document.getElementById("board-refresh-btn");
+
+  // currentBoardTopic tracks the topic open in the detail view.
+  let currentBoardTopic = null;
+
+  // prettyPayload tries JSON.parse + JSON.stringify(null,2); falls back raw.
+  function prettyPayload(raw) {
+    try {
+      return JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  // renderBoardTopics fetches and renders the topic list.
+  async function renderBoardTopics() {
+    boardDetailEl.hidden = true;
+    boardTopicsEl.hidden = false;
+    boardTopicsEl.innerHTML = "";
+    if (!window.harness) {
+      boardTopicsEl.textContent = "(not connected)";
+      return;
+    }
+    try {
+      const topics = await window.harness.boardTopics();
+      if (!topics || topics.length === 0) {
+        const empty = document.createElement("div");
+        empty.style.color = "#666";
+        empty.style.fontFamily = "monospace";
+        empty.textContent = "(no topics)";
+        boardTopicsEl.appendChild(empty);
+        return;
+      }
+      for (const t of topics) {
+        const row = document.createElement("div");
+        row.className = "board-topic-row";
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "board-topic-name";
+        nameSpan.textContent = t.name;
+        const metaSpan = document.createElement("span");
+        metaSpan.className = "board-topic-meta";
+        const lastTime = t.lastPublishedAtMs
+          ? new Date(t.lastPublishedAtMs).toISOString()
+          : "-";
+        metaSpan.textContent = `msgs=${t.msgCount}  last=${lastTime}`;
+        row.appendChild(nameSpan);
+        row.appendChild(metaSpan);
+        row.addEventListener("click", () => openBoardTopic(t.name));
+        boardTopicsEl.appendChild(row);
+      }
+    } catch (err) {
+      boardTopicsEl.textContent = `error: ${err.message}`;
+    }
+  }
+
+  // openBoardTopic shows the detail view for one topic.
+  async function openBoardTopic(topic) {
+    currentBoardTopic = topic;
+    boardTopicsEl.hidden = true;
+    boardDetailEl.hidden = false;
+    boardDetailTitle.textContent = topic;
+    boardMessagesEl.innerHTML = "";
+    if (!window.harness) {
+      boardMessagesEl.textContent = "(not connected)";
+      return;
+    }
+    try {
+      const r = await window.harness.boardRead(topic);
+      if (!r.found) {
+        boardMessagesEl.textContent = "(topic not found)";
+        return;
+      }
+      if (!r.msgs || r.msgs.length === 0) {
+        boardMessagesEl.textContent = "(no messages)";
+        return;
+      }
+      for (const m of r.msgs) {
+        const card = document.createElement("div");
+        card.className = "board-msg";
+
+        const hdr = document.createElement("div");
+        hdr.className = "board-msg-header";
+
+        const seqSpan = document.createElement("span");
+        seqSpan.className = "board-msg-seq";
+        seqSpan.textContent = `#${m.seq}`;
+
+        const fromSpan = document.createElement("span");
+        fromSpan.className = "board-msg-from";
+        fromSpan.textContent = `from=${m.fromTask ? m.fromTask.slice(0, 8) : "-"}`;
+
+        const hostSpan = document.createElement("span");
+        hostSpan.className = "board-msg-host";
+        hostSpan.textContent = `host=${m.fromHostname || "-"}`;
+
+        const timeSpan = document.createElement("span");
+        timeSpan.className = "board-msg-time";
+        timeSpan.textContent = m.receivedAtMs
+          ? new Date(m.receivedAtMs).toISOString()
+          : "-";
+
+        const purgeBtn = document.createElement("button");
+        purgeBtn.className = "board-msg-purge";
+        purgeBtn.textContent = "✕";
+        purgeBtn.title = `Purge message #${m.seq}`;
+        purgeBtn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (!window.confirm(`Purge message #${m.seq} from "${topic}"?`)) return;
+          try {
+            await window.harness.boardPurge(topic, m.seq);
+            openBoardTopic(topic);
+          } catch (err) {
+            appendCmdOutput(`boardPurge error: ${err.message}`);
+          }
+        });
+
+        hdr.appendChild(seqSpan);
+        hdr.appendChild(fromSpan);
+        hdr.appendChild(hostSpan);
+        hdr.appendChild(timeSpan);
+        hdr.appendChild(purgeBtn);
+
+        const pre = document.createElement("pre");
+        pre.textContent = prettyPayload(m.payload || "");
+
+        card.appendChild(hdr);
+        card.appendChild(pre);
+        boardMessagesEl.appendChild(card);
+      }
+    } catch (err) {
+      boardMessagesEl.textContent = `error: ${err.message}`;
+    }
+  }
+
+  if (boardBackBtn) {
+    boardBackBtn.addEventListener("click", () => renderBoardTopics());
+  }
+
+  if (boardPurgeTopicBtn) {
+    boardPurgeTopicBtn.addEventListener("click", async () => {
+      if (!currentBoardTopic) return;
+      if (!window.confirm(`Purge entire topic "${currentBoardTopic}"?`)) return;
+      try {
+        await window.harness.boardPurge(currentBoardTopic, 0);
+        renderBoardTopics();
+      } catch (err) {
+        appendCmdOutput(`boardPurge topic error: ${err.message}`);
+      }
+    });
+  }
+
+  if (boardRefreshBtn) {
+    boardRefreshBtn.addEventListener("click", () => {
+      if (boardDetailEl && !boardDetailEl.hidden && currentBoardTopic) {
+        openBoardTopic(currentBoardTopic);
+      } else {
+        renderBoardTopics();
+      }
+    });
+  }
+
+  // Activate renderBoardTopics when the board tab is selected.
+  tabbar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab-btn");
+    if (btn && btn.dataset.tab === "board") renderBoardTopics();
+  });
 })();
 
 // sortRunners returns a new array sorted by (hostname asc, connectedAt

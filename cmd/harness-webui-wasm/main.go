@@ -85,6 +85,9 @@ func main() {
 		"sendNotification":     js.FuncOf(harnessSendNotification),
 		"watchNotifications":   js.FuncOf(harnessWatchNotifications),
 		"capList":              js.FuncOf(harnessCapList),
+		"boardTopics":          js.FuncOf(harnessBoardTopics),
+		"boardRead":            js.FuncOf(harnessBoardRead),
+		"boardPurge":           js.FuncOf(harnessBoardPurge),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -508,6 +511,120 @@ func harnessCancel(this js.Value, args []js.Value) any {
 				return
 			}
 			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardTopics lists all agentboard topics with aggregate metadata.
+//
+//	harness.boardTopics() -> Promise<[{name, lastSeq, lastPublishedAtMs, msgCount}]>
+func harnessBoardTopics(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			topics, err := c.BoardTopics(rootCtx)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardTopics: %w", err))
+				return
+			}
+			out := make([]any, 0, len(topics))
+			for _, t := range topics {
+				out = append(out, map[string]any{
+					"name":              t.Name,
+					"lastSeq":           float64(t.LastSeq),
+					"lastPublishedAtMs": float64(t.LastPublishedAtMs),
+					"msgCount":          float64(t.MsgCount),
+				})
+			}
+			resolve.Invoke(js.ValueOf(out))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardRead returns all retained messages for a topic.
+//
+//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,receivedAtMs,payload}]}>
+func harnessBoardRead(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("boardRead: missing topic arg"))
+				return
+			}
+			topic := args[0].String()
+			msgs, found, err := c.BoardRead(rootCtx, topic)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardRead: %w", err))
+				return
+			}
+			msgsOut := make([]any, 0, len(msgs))
+			for _, m := range msgs {
+				msgsOut = append(msgsOut, map[string]any{
+					"seq":          float64(m.Seq),
+					"fromTask":     m.FromTaskHex,
+					"fromHostname": m.FromHostname,
+					"receivedAtMs": float64(m.ReceivedAtMs),
+					"payload":      string(m.Payload),
+				})
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"found": found,
+				"msgs":  msgsOut,
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardPurge purges one message (seq != 0) or an entire topic (seq == 0).
+//
+//	harness.boardPurge(topic, seq) -> Promise<{purged, found}>
+func harnessBoardPurge(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("boardPurge: missing topic/seq args"))
+				return
+			}
+			topic := args[0].String()
+			seq := uint64(args[1].Int())
+			purged, found, err := c.BoardPurge(rootCtx, topic, seq)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardPurge: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"purged": float64(purged),
+				"found":  found,
+			}))
 		}()
 		return nil
 	})

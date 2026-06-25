@@ -22,6 +22,7 @@
       <button type="button" class="tab-btn" data-tab="files">ファイル</button>
       <button type="button" class="tab-btn" data-tab="notify">通知</button>
       <button type="button" class="tab-btn" data-tab="conns">接続</button>
+      <button type="button" class="tab-btn" data-tab="board">Board</button>
     </nav>
     <section id="runners" data-tabgroup="tasks">
       <h2>Runners</h2>
@@ -106,6 +107,21 @@
         <button id="file-delete-btn" disabled>Delete</button>
       </div>
       <pre id="file-result"></pre>
+    </section>
+    <section id="board" data-tabgroup="board">
+      <h2>Agentboard Topics</h2>
+      <div class="actions">
+        <button id="board-refresh-btn">↻ Refresh</button>
+      </div>
+      <div id="board-topics"></div>
+      <div id="board-detail" hidden>
+        <div class="board-detail-header">
+          <button id="board-back-btn" class="board-back-btn">← Back</button>
+          <span id="board-detail-title" class="board-detail-title"></span>
+          <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>
+        </div>
+        <div id="board-messages"></div>
+      </div>
     </section>
     <section id="interactive" data-tabgroup="terminal">
       <h2>Interactive</h2>
