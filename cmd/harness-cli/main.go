@@ -505,6 +505,17 @@ func main() {
 			os.Exit(2)
 		}
 
+	case "board":
+		if len(args) == 0 {
+			boardUsage()
+			os.Exit(2)
+		}
+		bsub := args[0]
+		rest := args[1:]
+		if err := cli.RunBoardSubcmd(ctx, parseCID(), bsub, rest, os.Stdout); err != nil {
+			die(err)
+		}
+
 	case "agent":
 		if len(args) == 0 {
 			agentUsage()
@@ -591,6 +602,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: detachable interactive sessions only")
 	fmt.Fprintln(os.Stderr, "  session kill TASK_ID                cancel a session (alias of cancel)")
 	fmt.Fprintln(os.Stderr, "  server dial-runner [--via CID] RUNNER_CID  ask the server to reverse-dial a Listen-mode runner")
+	fmt.Fprintln(os.Stderr, "  board topics|read <topic>|purge <topic> [--seq N]")
+	fmt.Fprintln(os.Stderr, "                                      inspect/purge the agentboard (cap: info_global; purge: purge)")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
 	fmt.Fprintln(os.Stderr, "  file push [-r|--recursive] [-f|--force] TASK_ID LOCAL_SRC WORKTREE_REL_DST")
@@ -618,6 +631,15 @@ func serverUsage() {
 	fmt.Fprintln(os.Stderr, "                                      --via relays through an already-connected runner (Phase B)")
 	fmt.Fprintln(os.Stderr, "                                      (runner must be running in --listen / --udp-listen mode)")
 	fmt.Fprintln(os.Stderr, "                                      prints the DialRunnerStatus and exits non-zero on non-Ok")
+}
+
+func boardUsage() {
+	fmt.Fprintln(os.Stderr, "usage: harness-cli board <subcommand> [flags]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Subcommands:")
+	fmt.Fprintln(os.Stderr, "  topics                              list every topic on the board with metadata (cap: info_global)")
+	fmt.Fprintln(os.Stderr, "  read <topic>                        print retained messages for <topic> (JSON pretty-printed; not found = exit 0)")
+	fmt.Fprintln(os.Stderr, "  purge <topic> [--seq N]             drop the whole topic ring (seq=0) or one message by seq (cap: purge)")
 }
 
 func agentUsage() {
