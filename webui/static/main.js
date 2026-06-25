@@ -2047,7 +2047,11 @@ function renderConnTopology(conns) {
   }
 
   const byIP = groupConnsByIP(conns);
-  const clusters = [...byIP.keys()];
+  // Stable angular layout: sort IPs so a given IP always lands in the same
+  // slot across polls. The server's snapshot order is non-deterministic
+  // (it ranges a Go map), so without this the clusters swap positions on
+  // every refresh.
+  const clusters = [...byIP.keys()].sort();
   const nClusters = clusters.length;
 
   // SVG viewport: 700 wide × 320 tall; server at center.
@@ -2096,8 +2100,10 @@ function renderConnTopology(conns) {
     clG.appendChild(ipLabel);
     svg.appendChild(clG);
 
-    // Leaf nodes for each connection in this IP cluster
-    const clConns = byIP.get(ip);
+    // Leaf nodes for each connection in this IP cluster (sorted by cid so
+    // leaves keep a stable position within the cluster across polls).
+    const clConns = byIP.get(ip).slice().sort((a, b) =>
+      a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0);
     const nLeaves = clConns.length;
     clConns.forEach((conn, li) => {
       // Spread leaves along the spoke direction, fanning slightly perpendicular.

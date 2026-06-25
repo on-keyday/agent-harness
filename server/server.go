@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1000,6 +1001,16 @@ func (s *Server) ConnList(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []pr
 			infos = append(infos, *info)
 		}
 	}
+	// Deterministic order: activeConns is a Go map (randomized iteration), so
+	// without this the snapshot row order — and the WebUI's IP-cluster layout —
+	// would reshuffle on every poll. Sort by remote addr then cid.
+	sort.Slice(infos, func(i, j int) bool {
+		ai, aj := string(infos[i].RemoteAddr), string(infos[j].RemoteAddr)
+		if ai != aj {
+			return ai < aj
+		}
+		return string(infos[i].Cid) < string(infos[j].Cid)
+	})
 	return infos
 }
 
