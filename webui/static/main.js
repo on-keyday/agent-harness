@@ -1967,6 +1967,76 @@ function hexDump(bytes, limit) {
 // the enter/exit animation by diffing against the current set.
 const prevConnCids = new Set();
 
+// Topology zoom/pan state. The SVG is rebuilt on every ~5s poll, so the
+// current viewBox must persist HERE (module scope) and be re-applied to each
+// freshly-built SVG; otherwise a poll would snap the view back to default.
+// topoBase is the unzoomed viewBox; topoView is the current (zoomed/panned) one.
+let topoBase = null;   // {x,y,w,h} set on first render from W×H
+let topoView = null;   // {x,y,w,h} current view; null = follow topoBase
+let topoZoomWired = false;
+let topoResetBtn = null; // re-appended after each rebuild (host.innerHTML clears children)
+
+function topoApplyView(svg) {
+  const v = topoView || topoBase;
+  if (svg && v) svg.setAttribute("viewBox", `${v.x} ${v.y} ${v.w} ${v.h}`);
+}
+
+// attachTopoZoom wires wheel-zoom (around the cursor) and drag-pan onto the
+// persistent topology container exactly once, plus a reset button. Handlers
+// read the live <svg> each time (it is replaced on every poll).
+function attachTopoZoom(host) {
+  if (topoZoomWired) return;
+  topoZoomWired = true;
+  const svgOf = () => host.querySelector("svg");
+
+  host.addEventListener("wheel", (e) => {
+    const svg = svgOf();
+    if (!svg || !topoBase) return;
+    e.preventDefault();
+    const v = topoView || { ...topoBase };
+    const rect = svg.getBoundingClientRect();
+    const fx = (e.clientX - rect.left) / rect.width;
+    const fy = (e.clientY - rect.top) / rect.height;
+    const factor = e.deltaY < 0 ? 0.9 : 1 / 0.9; // wheel up = zoom in
+    let nw = v.w * factor, nh = v.h * factor;
+    // clamp zoom to [0.3x, 3x] of base
+    const minW = topoBase.w / 3, maxW = topoBase.w * 3;
+    if (nw < minW) { nw = minW; nh = topoBase.h / 3; }
+    if (nw > maxW) { nw = maxW; nh = topoBase.h * 3; }
+    topoView = { x: v.x + (v.w - nw) * fx, y: v.y + (v.h - nh) * fy, w: nw, h: nh };
+    topoApplyView(svg);
+  }, { passive: false });
+
+  let drag = null;
+  host.addEventListener("mousedown", (e) => {
+    const svg = svgOf();
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    drag = { sx: e.clientX, sy: e.clientY, rect, start: topoView || { ...topoBase } };
+    host.classList.add("ct-grabbing");
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!drag) return;
+    const sxPerPx = drag.start.w / drag.rect.width;
+    const syPerPx = drag.start.h / drag.rect.height;
+    topoView = {
+      x: drag.start.x - (e.clientX - drag.sx) * sxPerPx,
+      y: drag.start.y - (e.clientY - drag.sy) * syPerPx,
+      w: drag.start.w, h: drag.start.h,
+    };
+    topoApplyView(svgOf());
+  });
+  window.addEventListener("mouseup", () => { drag = null; host.classList.remove("ct-grabbing"); });
+
+  const reset = document.createElement("button");
+  reset.className = "ct-zoom-reset";
+  reset.type = "button";
+  reset.textContent = "⤢ reset";
+  reset.title = "reset zoom";
+  reset.addEventListener("click", () => { topoView = null; topoApplyView(svgOf()); });
+  topoResetBtn = reset; // renderConnTopology re-appends it after each rebuild
+}
+
 // connAgeSec returns the age of a connection in seconds from its connectedAt
 // unix-nano timestamp (as a JS number). Returns 0 for unset (0) values.
 function connAgeSec(connectedAtNano) {
@@ -2078,7 +2148,10 @@ function renderConnTopology(conns, tasks) {
 
   // Build a new SVG (replace the old one entirely; diff is handled via
   // class-based animation on the node group keyed by cid).
+  topoBase = { x: 0, y: 0, w: W, h: H };
+  attachTopoZoom(host);
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}` });
+  topoApplyView(svg); // re-apply any persisted zoom/pan across the poll rebuild
 
   // --- Server node ---
   const serverG = svgEl("g", { class: "ct-server-node" });
@@ -2237,6 +2310,7 @@ function renderConnTopology(conns, tasks) {
   host.innerHTML = "";
   host.appendChild(svg);
   host.appendChild(legendDiv);
+  if (topoResetBtn) host.appendChild(topoResetBtn); // survives the innerHTML clear
 
   // Handle leaving nodes: nodes that were in prevConnCids but are not in
   // currentCids. We do this before updating prevConnCids.
