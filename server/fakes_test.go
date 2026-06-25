@@ -32,12 +32,10 @@ type fakeConn struct {
 	bidiStreams []*noopBidiStream
 
 	// nextSendStreamID, when non-zero, is used as the stream ID for the next
-	// CreateSendStream call (then cleared). When zero, an auto-incrementing
-	// counter allocates the ID so tests need not set it explicitly.
+	// CreateSendStream call (then cleared). When zero, CreateSendStream returns
+	// nil (degraded/test path). Tests that exercise the streaming path must set
+	// this before invoking the handler.
 	nextSendStreamID trsf.StreamID
-	// autoStreamCounter is incremented each time CreateSendStream allocates
-	// a stream ID automatically (i.e., nextSendStreamID is zero).
-	autoStreamCounter atomic.Uint64
 	// sendStreams collects every non-nil send stream so tests can assert
 	// the streamed body was written + EOF'd.
 	sendStreams []*recordingSendStream
@@ -61,30 +59,32 @@ func (f *fakeConn) Sent() [][]byte {
 }
 
 // CreateSendStream returns a recordingSendStream whose bytes are captured for
-// test assertions. When nextSendStreamID is set it is used as the stream ID
-// (then cleared); otherwise an auto-incrementing counter allocates one so
-// callers need not set nextSendStreamID explicitly.
+// test assertions. When nextSendStreamID is non-zero it is used as the stream
+// ID (then cleared) and a stream is returned. When zero, nil is returned —
+// this is the degraded/test path that handlers must handle gracefully. Tests
+// that exercise the streaming path must set nextSendStreamID before invoking
+// the handler.
 func (f *fakeConn) CreateSendStream() trsf.SendStream {
-	id := f.nextSendStreamID
-	if id == 0 {
-		id = trsf.StreamID(f.autoStreamCounter.Add(1))
-	} else {
-		f.nextSendStreamID = 0
+	if f.nextSendStreamID == 0 {
+		return nil
 	}
+	id := f.nextSendStreamID
+	f.nextSendStreamID = 0
 	s := &recordingSendStream{streamID: id, done: make(chan struct{})}
 	f.sendStreams = append(f.sendStreams, s)
 	return s
 }
 
-// sendStreamBytes waits for the send-stream with the given id to be closed
+// sendStreamBytes waits for the send-stream with the given id to be EOF'd
 // (signalling all payload writes are complete) then returns the captured bytes.
-// Fails the test if the stream is not found.
+// EOF is signalled either by Close() or by AppendData(eof=true). Fails the
+// test if the stream is not found.
 func (f *fakeConn) sendStreamBytes(t *testing.T, streamID uint64) []byte {
 	t.Helper()
 	sid := trsf.StreamID(streamID)
 	for _, s := range f.sendStreams {
 		if s.streamID == sid {
-			<-s.done // wait for goroutine to call Close()
+			<-s.done // wait for goroutine to signal EOF (Close or AppendData(true))
 			return s.bytes
 		}
 	}
@@ -138,6 +138,10 @@ func (s *recordingSendStream) AppendData(eof bool, payloads ...[]byte) error {
 	}
 	if eof {
 		s.eofSent = true
+		// Close the done channel so sendStreamBytes unblocks. Mirrors Close().
+		if s.done != nil {
+			s.closeOnce.Do(func() { close(s.done) })
+		}
 	}
 	return nil
 }

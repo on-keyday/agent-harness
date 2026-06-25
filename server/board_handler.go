@@ -1,6 +1,8 @@
 package server
 
 import (
+	"log/slog"
+
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -85,11 +87,17 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 	}
 	respond(protocol.BoardStatus_Ok, uint64(stream.ID()), rows)
 	go func() {
-		defer stream.Close()
 		for _, p := range payloads {
 			if len(p) > 0 {
-				_ = writeStreamAll(stream, p)
+				if werr := writeStreamAll(stream, p); werr != nil {
+					slog.Warn("BoardRead: stream write failed", "topic", topic, "err", werr)
+					break
+				}
 			}
+		}
+		// Signal EOF on the stream so the client knows we're done.
+		if err := stream.AppendData(true); err != nil {
+			slog.Warn("BoardRead: stream EOF failed", "topic", topic, "err", err)
 		}
 	}()
 }

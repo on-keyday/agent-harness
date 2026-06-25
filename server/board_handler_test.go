@@ -75,6 +75,10 @@ func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
 	h.Board.Send("chat.r", []byte("alpha"), protocol.RunnerID{}, protocol.TaskID{}, "h")
 	h.Board.Send("chat.r", []byte("bravo"), protocol.RunnerID{}, protocol.TaskID{}, "h")
 
+	// Configure the send stream ID so handleBoardRead gets a non-nil stream.
+	// (fakeConn.CreateSendStream returns nil when nextSendStreamID==0.)
+	conn.nextSendStreamID = 5
+
 	h.handleBoardRead(conn, 1, "chat.r")
 
 	resp := conn.lastTaskControlResponse(t)
