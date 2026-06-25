@@ -60,6 +60,9 @@ type App struct {
 	// connections view
 	connsModal ConnsModal
 
+	// agentboard view
+	boardModal BoardModal
+
 	// port-forward state
 	portForwardModal PortForwardModal
 	forwardPicker    ForwardPicker
@@ -134,6 +137,7 @@ func New(cfg Config) *App {
 		popup:       NewPopup(cfg.DefaultRepo),
 		filepicker:  NewFilePicker(),
 		connsModal:     NewConnsModal(),
+		boardModal:     NewBoardModal(),
 		focus:          focusTasks,
 		connected:      false,
 		status:         "connecting…",
@@ -234,6 +238,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case ConnStatusMsg:
 		a.connsModal.ApplyEvent(msg.Event)
 		return a, nil
+
+	case BoardTopicsMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("topics: " + msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.ApplyTopics(msg.Rows)
+		return a, nil
+
+	case BoardReadMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("read: " + msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.ApplyMessages(msg.Topic, msg.Msgs, msg.Found)
+		return a, nil
+
+	case BoardPurgeMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("purge: " + msg.Err.Error())
+			return a, nil
+		}
+		if !msg.Found {
+			a.boardModal.SetStatus("purge: not found")
+			return a, nil
+		}
+		a.boardModal.SetStatus(fmt.Sprintf("purged %d msg(s)", msg.Purged))
+		// Kick the relevant refresh so the view reflects the deletion.
+		if msg.Seq == 0 {
+			return a, DoBoardTopics(a.client)
+		}
+		return a, DoBoardRead(a.client, msg.Topic)
 
 	case LogChunkMsg:
 		if msg.TaskID == a.logs.TaskID() {
@@ -482,6 +518,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.layout()
 		a.filepicker.SetSize(a.width, a.height)
 		a.connsModal.SetSize(a.width, a.height)
+		a.boardModal.SetSize(a.width, a.height)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -502,6 +539,54 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			a.connsModal, cmd = a.connsModal.Update(msg)
+			return a, cmd
+		}
+		// Board modal: two-mode overlay (topics / messages).
+		// The App dispatches Do* cmds for Enter/r/x/X; the modal handles
+		// table/viewport navigation itself.
+		if a.boardModal.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				if a.boardModal.Mode() == boardMessages {
+					a.boardModal.PopToTopics()
+					return a, nil
+				}
+				a.boardModal.Close()
+				return a, nil
+			}
+			if a.boardModal.Mode() == boardTopics {
+				switch msg.Type {
+				case tea.KeyEnter:
+					topic := a.boardModal.SelectedTopicName()
+					if topic != "" {
+						return a, DoBoardRead(a.client, topic)
+					}
+					return a, nil
+				}
+				switch msg.String() {
+				case "r":
+					return a, DoBoardTopics(a.client)
+				case "x":
+					topic := a.boardModal.SelectedTopicName()
+					if topic != "" {
+						return a, DoBoardPurge(a.client, topic, 0)
+					}
+					return a, nil
+				}
+			} else {
+				// boardMessages mode
+				switch msg.String() {
+				case "X":
+					seq := a.boardModal.SelectedMsgSeq()
+					if seq != 0 {
+						return a, DoBoardPurge(a.client, a.boardModal.CurTopic(), seq)
+					}
+					return a, nil
+				case "r":
+					return a, DoBoardRead(a.client, a.boardModal.CurTopic())
+				}
+			}
+			var cmd tea.Cmd
+			a.boardModal, cmd = a.boardModal.Update(msg)
 			return a, cmd
 		}
 		// File picker intercepts ALL keys when open.
@@ -628,6 +713,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connsModal.Open()
 			a.connsModal.SetSize(a.width, a.height)
 			return a, DoConnSnapshot(a.client)
+		}
+		// `O` (capital) opens the agentboard topics view. Fetches the topic
+		// list on open via DoBoardTopics (long-lived client, no new dial).
+		// Enter drills into a topic; Esc closes or returns to the topic list.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "O" {
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("board: not connected"))
+				return a, nil
+			}
+			a.boardModal.Open()
+			a.boardModal.SetSize(a.width, a.height)
+			return a, DoBoardTopics(a.client)
 		}
 		// `i` attaches to a Detached+Detachable task when one is selected in
 		// the tasks panel, otherwise opens a new interactive PTY session in
@@ -895,7 +992,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · v view-only · F file picker · d detail · c cancel · C conns · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · v view-only · F file picker · d detail · c cancel · C conns · O board · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -925,6 +1022,9 @@ func (a *App) View() string {
 	}
 	if a.connsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.connsModal.View())
+	}
+	if a.boardModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.boardModal.View())
 	}
 	return view
 }
