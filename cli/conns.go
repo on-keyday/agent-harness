@@ -121,19 +121,37 @@ func connInfoTextLine(ci *protocol.ConnInfo) string {
 	return fmt.Sprintf("%-22s  %-11s  %s  %s%s", addr, role, principal, age, unident)
 }
 
+// connInfoJSON is the single source of truth for the JSON shape of a ConnInfo.
+// Using a struct (not map[string]any) gives deterministic field order across
+// JSON Lines output. Embedded by connStatusEventJSON so the conn fields are
+// shared, not re-listed (drift risk). Field names/values are unchanged.
+type connInfoJSON struct {
+	RemoteAddr    string `json:"remote_addr"`
+	Role          string `json:"role"`
+	PrincipalTask string `json:"principal_task"`
+	AgeSec        int64  `json:"age_sec"`
+	ConnectedAt   uint64 `json:"connected_at"`
+	Identified    bool   `json:"identified"`
+}
+
+// newConnInfoJSON builds the JSON view of a ConnInfo. Values match the prior
+// map-based encoding exactly.
+func newConnInfoJSON(ci *protocol.ConnInfo) connInfoJSON {
+	return connInfoJSON{
+		RemoteAddr:    string(ci.RemoteAddr),
+		Role:          strings.ToLower(ci.Role.String()),
+		PrincipalTask: taskIDStr(ci.PrincipalTask.Id[:]),
+		AgeSec:        connAgeSec(ci.ConnectedAt),
+		ConnectedAt:   ci.ConnectedAt,
+		Identified:    ci.Identified(),
+	}
+}
+
 // connInfoJSONLine returns a JSON object (single line, no trailing newline) for
 // a ConnInfo. Fields: remote_addr, role, principal_task (hex), age_sec,
 // connected_at (unix nano), identified.
 func connInfoJSONLine(ci *protocol.ConnInfo) string {
-	m := map[string]any{
-		"remote_addr":    string(ci.RemoteAddr),
-		"role":           strings.ToLower(ci.Role.String()),
-		"principal_task": taskIDStr(ci.PrincipalTask.Id[:]),
-		"age_sec":        connAgeSec(ci.ConnectedAt),
-		"connected_at":   ci.ConnectedAt,
-		"identified":     ci.Identified(),
-	}
-	b, _ := json.Marshal(m)
+	b, _ := json.Marshal(newConnInfoJSON(ci))
 	return string(b)
 }
 
@@ -291,20 +309,24 @@ func connStatusEventTextLine(ev *protocol.ConnStatusEvent) string {
 	return fmt.Sprintf("%s [%s] %s", ts, kind, connInfoTextLine(&ev.Info))
 }
 
-// connStatusEventJSONLine renders a JSON object line for a ConnStatusEvent.
-// Embeds the ConnInfo fields plus a top-level "event" key with the kind label.
+// connStatusEventJSON wraps the shared connInfoJSON with the event-level fields.
+// Embedding shares the conn field definitions (no re-listing) and keeps the
+// output field order deterministic.
+type connStatusEventJSON struct {
+	Event string `json:"event"`
+	Ts    uint64 `json:"ts"`
+	connInfoJSON
+}
+
+// connStatusEventJSONLine renders a JSON object line for a ConnStatusEvent:
+// a top-level "event" (kind label) + "ts", followed by the shared ConnInfo
+// fields.
 func connStatusEventJSONLine(ev *protocol.ConnStatusEvent) string {
-	m := map[string]any{
-		"event":          connStatusEventKindLabel(ev.Kind),
-		"ts":             ev.Ts,
-		"remote_addr":    string(ev.Info.RemoteAddr),
-		"role":           strings.ToLower(ev.Info.Role.String()),
-		"principal_task": taskIDStr(ev.Info.PrincipalTask.Id[:]),
-		"age_sec":        connAgeSec(ev.Info.ConnectedAt),
-		"connected_at":   ev.Info.ConnectedAt,
-		"identified":     ev.Info.Identified(),
-	}
-	b, _ := json.Marshal(m)
+	b, _ := json.Marshal(connStatusEventJSON{
+		Event:        connStatusEventKindLabel(ev.Kind),
+		Ts:           ev.Ts,
+		connInfoJSON: newConnInfoJSON(&ev.Info),
+	})
 	return string(b)
 }
 
