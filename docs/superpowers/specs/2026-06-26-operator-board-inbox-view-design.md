@@ -73,10 +73,13 @@ granular operator verbs (`list`, `list_conns`):
 - `board_purge {topic, seq}` — whole (`seq==0`) or single-seq purge. cap: `purge`.
 
 `board_topics` and `board_read` are reads of *global* board state (topics are
-not task-scoped), so they gate on `info_global` exactly like `agentHandleListTopics`
-— operator (zero principal) and any `all`-holder pass. `board_purge` reuses the
-destructive `purge` capability (added 2026-06-26). All three deny with a
-`denied` status rather than a silent empty.
+not task-scoped), so they gate on `info_global` — operator (zero principal) and
+any `all`-holder pass. `board_purge` reuses the destructive `purge` capability
+(added 2026-06-26). All three are gated **centrally** via the existing
+`requiredCap` map (task_handler.go:215): a caller lacking the cap gets the
+standard `PermissionDenied` TaskControlResponse (already handled client-side by
+`cli/capability_error.go`) — the handler never runs, so the board responses do
+NOT carry a separate `denied` status.
 
 ### Bulk transport for `board_read`
 
@@ -106,7 +109,6 @@ enum BoardStatus:
     :u8
     ok
     not_found
-    denied
 
 format BoardTopicsRequest:
     request_id :u32
@@ -119,8 +121,7 @@ format BoardTopicRow:
     msg_count :u16
 
 format BoardTopicsResponse:
-    request_id :u32
-    status :BoardStatus           # ok | denied
+    request_id :u32               # no status: cap-gated centrally, otherwise always the list (possibly empty)
     topics_len :u16
     topics :[topics_len]BoardTopicRow
 
@@ -139,7 +140,7 @@ format BoardMessageRow:
 
 format BoardReadResponse:
     request_id :u32
-    status :BoardStatus           # ok | not_found | denied
+    status :BoardStatus           # ok | not_found
     stream_id :u64                # 0 unless status==ok with >=1 msg; else a server
                                   # send-stream carrying each msg's payload concatenated
                                   # in `msgs` order. Client reads msgs[i].size bytes per row.
@@ -154,7 +155,7 @@ format BoardPurgeRequest:
 
 format BoardPurgeResponse:
     request_id :u32
-    status :BoardStatus           # ok | not_found | denied
+    status :BoardStatus           # ok | not_found
     purged :u16
 ```
 
@@ -183,9 +184,11 @@ Three handlers dispatched from the TaskControl switch, each calling the existing
 - `handleBoardPurge`: `purge` gate; `seq==0` → `h.Board.PurgeTopic`, else
   `h.Board.PurgeSeq`; respond `ok`+count / `not_found` / `denied`.
 
-Caps wiring: `board_purge` → `requiredCap[...] = Capability_Purge`. The two reads
-gate on `Capability_InfoGlobal` inline in their handlers (like
-`agentHandleListTopics`), since `requiredCap` is for non-info kinds.
+Caps wiring (all central, via the `requiredCap` map at task_handler.go:215):
+`board_topics` → `Capability_InfoGlobal`, `board_read` → `Capability_InfoGlobal`,
+`board_purge` → `Capability_Purge`. A caller without the cap gets the standard
+`PermissionDenied` response before the handler runs — no per-handler cap check
+and no `denied` board status.
 
 ## Clients (thin — one shared `cli.Client`)
 
@@ -233,7 +236,9 @@ piggyback its existing snapshot poll cadence. No live streaming in MVP.
 3. **Topic-keyed navigation** with **client-side** `chat.<8hex>`→task mapping;
    per-agent multi-topic union is a non-goal.
 4. **Snapshot + manual refresh** for MVP; no live message stream.
-5. Caps: `board_topics`/`board_read` → `info_global`; `board_purge` → `purge`.
+5. Caps gated centrally via `requiredCap` (PermissionDenied, like every other
+   verb): `board_topics`/`board_read` → `info_global`; `board_purge` → `purge`.
+   No `denied` board status.
 6. Content shown as UTF-8 / pretty-JSON; raw bytes are a human's to read (no
    classifier on a UI), which is the whole reason this lives on the operator
    plane and not as another LLM-facing agent verb.
