@@ -70,6 +70,11 @@ type TaskHandler struct {
 	// cancellation propagation).
 	Ctx context.Context
 
+	// ConnListFn is wired by Server.New to s.ConnList. It is called from the
+	// list_conns TaskControl handler. When nil, list_conns responds with
+	// StreamId=0 (error; safe for tests that don't exercise the conn-list path).
+	ConnListFn func(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []protocol.ConnInfo
+
 	// RingBufferSize is the capacity of the RingBuffer allocated for each
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
 	RingBufferSize int
@@ -227,6 +232,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 
 	case protocol.TaskControlKind_List:
 		h.handleList(conn, req.RequestId, cid)
+
+	case protocol.TaskControlKind_ListConns:
+		h.handleListConns(conn, req.RequestId, cid)
 
 	case protocol.TaskControlKind_Cancel:
 		can := req.Cancel()
@@ -1002,6 +1010,66 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	}
 	if werr := stream.AppendData(true); werr != nil {
 		slog.Warn("List: stream EOF failed", "err", werr)
+		respond(0)
+		return
+	}
+	respond(uint64(stream.ID()))
+}
+
+// handleListConns streams the live-connection snapshot over a server-initiated
+// trsf send-stream. Mirrors handleList: the TaskControlResponse{ListConns}
+// carries only the stream id; the actual ConnListResultBody is encoded onto the
+// stream so the response fits in any path MTU.
+//
+// Gating mirrors ls: an operator or InfoGlobal caller gets the full set; a
+// confined caller gets only its own subtree (reusing visibleToCaller via the
+// ConnListFn closure wired in Server.New).
+//
+// When ConnListFn is nil (test stubs that don't wire the server), the response
+// carries StreamId=0 (client treats as error).
+func (h *TaskHandler) handleListConns(conn ConnHandle, requestID uint32, connID string) {
+	respond := func(streamID uint64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListConns, RequestId: requestID}
+		resp.SetListConns(protocol.ConnListResult{StreamId: streamID})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+	}
+
+	if h.ConnListFn == nil {
+		respond(0)
+		return
+	}
+
+	// Determine visibility scope using the same predicate visibleToCaller uses:
+	// operator (zero principal) → all=true; InfoGlobal cap → all=true.
+	pid := h.lookupPrincipal(connID)
+	isOperator := pid.Id == ([16]byte{})
+	hasInfoGlobal := !isOperator && hasCap(h.callerCaps(connID), protocol.Capability_InfoGlobal)
+
+	conns := h.ConnListFn(pid, isOperator || hasInfoGlobal)
+
+	var body protocol.ConnListResultBody
+	body.SetConns(conns)
+
+	bodyBytes, err := body.EncodeCopy(nil)
+	if err != nil {
+		slog.Error("ListConns: encode body failed", "err", err)
+		respond(0)
+		return
+	}
+
+	stream := conn.CreateSendStream()
+	if stream == nil {
+		respond(0)
+		return
+	}
+	if werr := stream.AppendData(false, bodyBytes); werr != nil {
+		slog.Warn("ListConns: stream write failed", "err", werr)
+		respond(0)
+		return
+	}
+	if werr := stream.AppendData(true); werr != nil {
+		slog.Warn("ListConns: stream EOF failed", "err", werr)
 		respond(0)
 		return
 	}

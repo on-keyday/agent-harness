@@ -205,6 +205,8 @@ func New(cfg Config) *Server {
 		ResolveVia:            s.registry.GetByConnectionID,
 		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
 	}
+	// Wire ConnListFn so the list_conns RPC handler can call s.ConnList.
+	s.taskHandler.ConnListFn = s.ConnList
 	// Wire notify ring + egress hook into the TaskHandler.
 	s.notifyRing = newNotifyRing(64)
 	s.taskHandler.NotifyHook = cfg.NotifyHook
@@ -673,7 +675,8 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 // streams for bulk responses (GetTaskLog, future BulkList, etc.).
 type streamingConn struct {
 	objproto.Connection
-	trans trsf.Transport
+	trans          trsf.Transport
+	connectedSince time.Time // stamped at activeConns register; used by ConnList
 }
 
 // DumpTrsfState logs each active connection's trsf internal state (debug aid;
@@ -762,7 +765,7 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 
 	go trsf.AutoSend(connCtx, p, session, nil)
 
-	wrapped := streamingConn{Connection: session, trans: p}
+	wrapped := streamingConn{Connection: session, trans: p, connectedSince: time.Now()}
 	s.activeConnsMu.Lock()
 	s.activeConns[session.ConnectionID()] = wrapped
 	s.activeConnsMu.Unlock()
@@ -856,6 +859,131 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 // independent of the internal map.
 func (s *Server) RegisteredRunners() []RunnerEntry {
 	return s.registry.List()
+}
+
+// ConnList builds a point-in-time snapshot of all live objproto connections,
+// joined with the client-identity map (ClientKind → ConnRole + principal task)
+// and the runner registry (CID → ConnRole_Runner).
+//
+// viewerTaskID is the principal TaskID of the caller (zero = operator).
+// hasInfoGlobal is true when the caller holds Capability_InfoGlobal.
+// When !hasInfoGlobal and the viewer is not an operator (non-zero viewerTaskID),
+// only the caller's own connection and descendant agent connections are returned
+// (same subtree filter that visibleToCaller applies to ls).
+//
+// This is the server-side half; TaskHandler.HandleListConns is the RPC handler
+// that calls it (wired via TaskHandler.ConnListFn in Server.New).
+func (s *Server) ConnList(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []protocol.ConnInfo {
+	s.activeConnsMu.Lock()
+	snapshot := make([]streamingConn, 0, len(s.activeConns))
+	for _, c := range s.activeConns {
+		snapshot = append(snapshot, c)
+	}
+	s.activeConnsMu.Unlock()
+
+	// Build the subtree allowed-set for confined callers.
+	// Zero viewerTaskID = operator → no filtering needed.
+	isOperator := viewerTaskID.Id == ([16]byte{})
+	var allowed map[string]bool
+	if !isOperator && !hasInfoGlobal {
+		allTasks := s.tasks.List(0)
+		callerHex := hex.EncodeToString(viewerTaskID.Id[:])
+		children := make(map[string][]string, len(allTasks))
+		for _, t := range allTasks {
+			if t.CreatorTaskID.Id != ([16]byte{}) {
+				pHex := hex.EncodeToString(t.CreatorTaskID.Id[:])
+				children[pHex] = append(children[pHex], t.ID)
+			}
+		}
+		// BFS from caller's own task.
+		allowed = make(map[string]bool)
+		queue := []string{callerHex}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			if allowed[cur] {
+				continue
+			}
+			allowed[cur] = true
+			for _, child := range children[cur] {
+				if !allowed[child] {
+					queue = append(queue, child)
+				}
+			}
+		}
+	}
+
+	infos := make([]protocol.ConnInfo, 0, len(snapshot))
+	for _, sc := range snapshot {
+		info := s.connInfoFor(sc, allowed, isOperator || hasInfoGlobal)
+		if info != nil {
+			infos = append(infos, *info)
+		}
+	}
+	return infos
+}
+
+// connInfoFor derives a protocol.ConnInfo for one active connection.
+// allowed is the subtree task-id set (nil means unrestricted).
+// globalView = true when the caller is an operator or holds InfoGlobal.
+// Returns nil when the connection is not visible to the caller.
+func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalView bool) *protocol.ConnInfo {
+	cid := sc.ConnectionID()
+	cidStr := cid.String()
+
+	// Derive role + principal from identity map and runner registry.
+	var role protocol.ConnRole
+	var principal protocol.TaskID
+	var identified bool
+
+	// Check runner registry first (runner conns may not have a ClientHello).
+	if _, ok := s.registry.GetByConnectionID(cid); ok {
+		role = protocol.ConnRole_Runner
+		identified = true
+	} else if s.taskHandler != nil {
+		kind := s.taskHandler.lookupClientKind(cidStr)
+		switch kind {
+		case protocol.ClientKind_Cli:
+			role = protocol.ConnRole_Cli
+			identified = true
+		case protocol.ClientKind_Tui:
+			role = protocol.ConnRole_Tui
+			identified = true
+		case protocol.ClientKind_Webui:
+			role = protocol.ConnRole_Webui
+			identified = true
+		case protocol.ClientKind_Agent:
+			role = protocol.ConnRole_Agent
+			identified = true
+			principal = s.taskHandler.lookupPrincipal(cidStr)
+		default:
+			// ClientKind_Unspecified: handshake not yet completed.
+			role = protocol.ConnRole_Unspecified
+			identified = false
+		}
+	}
+
+	// Subtree filter for confined callers.
+	if !globalView {
+		// A conn is visible if it is an agent whose principal task is in the
+		// allowed set. Unidentified, runner, and non-agent client conns are
+		// not visible to confined callers (they have no principal task link).
+		principalHex := hex.EncodeToString(principal.Id[:])
+		if !allowed[principalHex] {
+			return nil
+		}
+	}
+
+	info := &protocol.ConnInfo{
+		Role:        role,
+		ConnectedAt: uint64(sc.connectedSince.UnixNano()),
+		PrincipalTask: principal,
+	}
+	info.SetIdentified(identified)
+	info.SetCid([]byte(cidStr))
+	addrStr := cid.Addr.String()
+	info.SetRemoteAddr([]byte(addrStr))
+	return info
 }
 
 // Tasks returns the server's TaskStore. Intended for test/introspection use
