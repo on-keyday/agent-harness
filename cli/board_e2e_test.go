@@ -132,3 +132,36 @@ func TestClientBoard_TopicsReadPurge(t *testing.T) {
 		t.Fatalf("whole purge = (%d, found=%v)", purged, found)
 	}
 }
+
+// TestClientBoard_ZeroLengthPayload verifies that BoardRead correctly drains
+// the server-initiated send-stream even when every retained message has a
+// zero-length payload (total==0 with StreamId!=0). This is the formerly
+// uncovered path that the `StreamId != 0 && total > 0` guard would skip,
+// leaving the server stream undrained and feeding the trsf accept-queue wedge.
+func TestClientBoard_ZeroLengthPayload(t *testing.T) {
+	srv, peerCID := startOperatorServerE2E(t)
+	srv.Board().Send("empty.topic", []byte(""), protocol.RunnerID{}, protocol.TaskID{}, "h") //nolint:errcheck
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	msgs, found, err := c.BoardRead(ctx, "empty.topic")
+	if err != nil {
+		t.Fatalf("BoardRead returned unexpected error: %v", err)
+	}
+	if !found {
+		t.Fatal("BoardRead: expected found=true, got false")
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("BoardRead: expected 1 message, got %d", len(msgs))
+	}
+	if len(msgs[0].Payload) != 0 {
+		t.Fatalf("BoardRead: expected empty payload, got %q", msgs[0].Payload)
+	}
+}

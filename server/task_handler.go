@@ -413,11 +413,15 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	case protocol.TaskControlKind_BoardPurge:
 		if r := req.BoardPurge(); r != nil {
 			h.handleBoardPurge(conn, req.RequestId, string(r.Topic), r.Seq)
+		} else {
+			slog.Error("board_purge variant is nil", "request_id", req.RequestId)
 		}
 
 	case protocol.TaskControlKind_BoardRead:
 		if r := req.BoardRead(); r != nil {
 			h.handleBoardRead(conn, req.RequestId, string(r.Topic))
+		} else {
+			slog.Error("board_read variant is nil", "request_id", req.RequestId)
 		}
 
 	case protocol.TaskControlKind_DialRunner:

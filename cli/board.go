@@ -91,7 +91,7 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 		total += int(m.Size)
 	}
 
-	if br.StreamId != 0 && total > 0 {
+	if br.StreamId != 0 {
 		st := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(br.StreamId))
 		if st == nil {
 			return nil, true, fmt.Errorf("BoardRead: stream %d not visible after response", br.StreamId)
