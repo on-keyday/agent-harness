@@ -615,7 +615,9 @@ func harnessBoardPurge(this js.Value, args []js.Value) any {
 				return
 			}
 			topic := args[0].String()
-			seq := uint64(args[1].Int())
+			// JS numbers are float64; .Int() narrows to 32-bit int on wasm, so use
+			// .Float() to carry the full u64 seq range (board seq is monotonic).
+			seq := uint64(args[1].Float())
 			purged, found, err := c.BoardPurge(rootCtx, topic, seq)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("boardPurge: %w", err))
