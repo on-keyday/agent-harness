@@ -15,7 +15,6 @@ func TestConnsModalOpenedClosed(t *testing.T) {
 	openedEv := protocol.ConnStatusEvent{Kind: protocol.StatusEventKind_ConnOpened}
 	openedEv.Info.SetCid(cid)
 	openedEv.Info.Role = protocol.ConnRole_Unspecified
-	openedEv.Info.SetRemoteAddr([]byte("192.0.2.1:50000"))
 
 	m.ApplyEvent(openedEv)
 	if got := len(m.rowConns); got != 1 {
@@ -42,13 +41,11 @@ func TestConnsModalIdentifiedUpdatesRole(t *testing.T) {
 	openedEv := protocol.ConnStatusEvent{Kind: protocol.StatusEventKind_ConnOpened}
 	openedEv.Info.SetCid(cid)
 	openedEv.Info.Role = protocol.ConnRole_Unspecified
-	openedEv.Info.SetRemoteAddr([]byte("192.0.2.2:40000"))
 	m.ApplyEvent(openedEv)
 
 	identEv := protocol.ConnStatusEvent{Kind: protocol.StatusEventKind_ConnIdentified}
 	identEv.Info.SetCid(cid)
 	identEv.Info.Role = protocol.ConnRole_Tui
-	identEv.Info.SetRemoteAddr([]byte("192.0.2.2:40000"))
 	identEv.Info.SetIdentified(true)
 	m.ApplyEvent(identEv)
 
@@ -71,10 +68,8 @@ func TestConnsModalApplySnapshot(t *testing.T) {
 	conns := make([]protocol.ConnInfo, 2)
 	conns[0].SetCid([]byte("cid-a"))
 	conns[0].Role = protocol.ConnRole_Cli
-	conns[0].SetRemoteAddr([]byte("10.0.0.1:1111"))
 	conns[1].SetCid([]byte("cid-b"))
 	conns[1].Role = protocol.ConnRole_Runner
-	conns[1].SetRemoteAddr([]byte("10.0.0.2:2222"))
 
 	m.ApplySnapshot(conns)
 	if got := len(m.rowConns); got != 2 {

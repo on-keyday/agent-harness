@@ -866,11 +866,13 @@ enum ConnRole:
 # --- ConnInfo: one live (or just-opened/just-closed) connection. ---
 format ConnInfo:
     cid_len :u8
-    cid :[cid_len]u8                # ConnectionID canonical String() — the unique key
-                                    # used to correlate open/identified/closed events
+    cid :[cid_len]u8                # ConnectionID canonical String(): "transport:ip:port-id".
+                                    # The unique key used to correlate open/identified/closed
+                                    # events. Already carries the remote "ip:port" (the Addr
+                                    # part) plus transport and the per-connection id, so no
+                                    # separate remote_addr field is needed — consumers that
+                                    # want just the ip:port parse it back via ParseConnectionID.
     role :ConnRole
-    remote_addr_len :u8
-    remote_addr :[remote_addr_len]u8  # "ip:port"; WebUI groups by the ip portion
     principal_task :TaskID          # agent conn: its principal task id.
                                     # all-zero for cli/tui/webui/runner/unidentified.
     connected_at :u64               # unix nano, stamped at activeConns register

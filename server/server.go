@@ -1003,12 +1003,10 @@ func (s *Server) ConnList(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []pr
 	}
 	// Deterministic order: activeConns is a Go map (randomized iteration), so
 	// without this the snapshot row order — and the WebUI's IP-cluster layout —
-	// would reshuffle on every poll. Sort by remote addr then cid.
+	// would reshuffle on every poll. Cid is "transport:ip:port-id", so sorting
+	// by it groups connections from the same address together (the ip:port sorts
+	// before the trailing -id), then disambiguates by the per-connection id.
 	sort.Slice(infos, func(i, j int) bool {
-		ai, aj := string(infos[i].RemoteAddr), string(infos[j].RemoteAddr)
-		if ai != aj {
-			return ai < aj
-		}
 		return string(infos[i].Cid) < string(infos[j].Cid)
 	})
 	return infos
@@ -1072,8 +1070,6 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 	}
 	info.SetIdentified(identified)
 	info.SetCid([]byte(cidStr))
-	addrStr := cid.Addr.String()
-	info.SetRemoteAddr([]byte(addrStr))
 	return info
 }
 

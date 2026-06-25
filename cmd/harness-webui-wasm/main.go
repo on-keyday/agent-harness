@@ -376,6 +376,19 @@ func connRoleLower(r protocol.ConnRole) string {
 	return strings.ToLower(r.String())
 }
 
+// connRemoteAddr derives the "ip:port" portion from a cid ("transport:ip:port-id")
+// for the WebUI's IP-cluster grouping. The cid is the single source of truth for
+// the remote address (no separate wire field); ParseConnectionID is the canonical
+// reverse of ConnectionID.String(). Returns "" on parse failure (the JS side's
+// connIpPart tolerates an empty string).
+func connRemoteAddr(cid string) string {
+	c, err := objproto.ParseConnectionID(cid, 0)
+	if err != nil {
+		return ""
+	}
+	return c.Addr.String()
+}
+
 // harnessSnapshot returns the current runners + tasks + connections as a JS
 // object, shaped for direct consumption by the webui. Strings are pre-decoded,
 // TaskIDs are pre-hexed, and statuses are stringified so the JS side does
@@ -450,10 +463,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			}
 			conns := make([]any, 0, len(connInfos))
 			for _, ci := range connInfos {
+				cidStr := string(ci.Cid)
 				conns = append(conns, map[string]any{
-					"cid":           string(ci.Cid),
+					"cid":           cidStr,
 					"role":          connRoleLower(ci.Role),
-					"remoteAddr":    string(ci.RemoteAddr),
+					"remoteAddr":    connRemoteAddr(cidStr),
 					"principalTask": hex.EncodeToString(ci.PrincipalTask.Id[:]),
 					"connectedAt":   float64(ci.ConnectedAt),
 					"identified":    ci.Identified(),

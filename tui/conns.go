@@ -47,7 +47,7 @@ type ConnsModal struct {
 // NewConnsModal constructs a ConnsModal with fixed column widths.
 func NewConnsModal() ConnsModal {
 	cols := []table.Column{
-		{Title: "Remote-Addr", Width: 22},
+		{Title: "CID", Width: 30},
 		{Title: "Role", Width: 11},
 		{Title: "Principal", Width: 9},
 		{Title: "Age", Width: 8},
@@ -134,8 +134,9 @@ func (m *ConnsModal) rebuildRows() {
 }
 
 // connInfoToRow maps a ConnInfo to a table.Row (5 columns).
+// The cid is "transport:ip:port-id" — it already carries the remote ip:port.
 func connInfoToRow(ci *protocol.ConnInfo) table.Row {
-	addr := string(ci.RemoteAddr)
+	cid := string(ci.Cid)
 	role := strings.ToLower(ci.Role.String())
 	principal := principalShortTUI(ci.PrincipalTask.Id[:])
 	age := connAgeTUI(ci.ConnectedAt)
@@ -143,7 +144,7 @@ func connInfoToRow(ci *protocol.ConnInfo) table.Row {
 	if !ci.Identified() {
 		state = "unident"
 	}
-	return table.Row{addr, role, principal, age, state}
+	return table.Row{cid, role, principal, age, state}
 }
 
 // connCIDKey returns the CID as a string for use as a map key.

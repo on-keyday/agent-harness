@@ -33,9 +33,8 @@ func TestDecodeConnStatusEvent(t *testing.T) {
 		Kind: protocol.StatusEventKind_ConnOpened,
 		Ts:   9876543,
 	}
-	orig.Info.SetCid([]byte("testcid"))
+	orig.Info.SetCid([]byte("wss:127.0.0.1:12345-8"))
 	orig.Info.Role = protocol.ConnRole_Cli
-	orig.Info.SetRemoteAddr([]byte("127.0.0.1:12345"))
 	orig.Info.ConnectedAt = 1234567890
 	orig.Info.SetIdentified(false)
 	encoded := orig.MustAppend(nil)

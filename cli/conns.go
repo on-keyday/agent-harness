@@ -79,7 +79,7 @@ func ConnList(ctx context.Context, peerCID objproto.ConnectionID) ([]protocol.Co
 }
 
 // ConnInfoTextLine renders one human-readable line for a ConnInfo (exported for
-// cmd/harness-cli). Format: remote-addr  role  principal(short)  age  [unident]
+// cmd/harness-cli). Format: cid  role  principal(short)  age  [unident]
 func ConnInfoTextLine(ci *protocol.ConnInfo) string {
 	return connInfoTextLine(ci)
 }
@@ -100,7 +100,7 @@ func ConnInfoLines(conns []protocol.ConnInfo) []string {
 		lines = append(lines, "  (none)")
 		return lines
 	}
-	lines = append(lines, fmt.Sprintf("  %-22s  %-11s  %-8s  %s", "REMOTE-ADDR", "ROLE", "PRINCIPAL", "AGE"))
+	lines = append(lines, fmt.Sprintf("  %-30s  %-11s  %-8s  %s", "CID", "ROLE", "PRINCIPAL", "AGE"))
 	for i := range conns {
 		lines = append(lines, "  "+connInfoTextLine(&conns[i]))
 	}
@@ -108,9 +108,10 @@ func ConnInfoLines(conns []protocol.ConnInfo) []string {
 }
 
 // connInfoTextLine renders one human-readable line for a ConnInfo.
-// Format: remote-addr  role  principal(short)  age  [unident]
+// Format: cid  role  principal(short)  age  [unident]
+// The cid is "transport:ip:port-id" — it already carries the remote ip:port.
 func connInfoTextLine(ci *protocol.ConnInfo) string {
-	addr := string(ci.RemoteAddr)
+	cid := string(ci.Cid)
 	role := strings.ToLower(ci.Role.String())
 	principal := principalShort(ci.PrincipalTask.Id[:])
 	age := connAge(ci.ConnectedAt)
@@ -118,7 +119,7 @@ func connInfoTextLine(ci *protocol.ConnInfo) string {
 	if !ci.Identified() {
 		unident = "  unident"
 	}
-	return fmt.Sprintf("%-22s  %-11s  %s  %s%s", addr, role, principal, age, unident)
+	return fmt.Sprintf("%-30s  %-11s  %s  %s%s", cid, role, principal, age, unident)
 }
 
 // connInfoJSON is the single source of truth for the JSON shape of a ConnInfo.
@@ -126,7 +127,7 @@ func connInfoTextLine(ci *protocol.ConnInfo) string {
 // JSON Lines output. Embedded by connStatusEventJSON so the conn fields are
 // shared, not re-listed (drift risk). Field names/values are unchanged.
 type connInfoJSON struct {
-	RemoteAddr    string `json:"remote_addr"`
+	Cid           string `json:"cid"`
 	Role          string `json:"role"`
 	PrincipalTask string `json:"principal_task"`
 	AgeSec        int64  `json:"age_sec"`
@@ -134,11 +135,10 @@ type connInfoJSON struct {
 	Identified    bool   `json:"identified"`
 }
 
-// newConnInfoJSON builds the JSON view of a ConnInfo. Values match the prior
-// map-based encoding exactly.
+// newConnInfoJSON builds the JSON view of a ConnInfo.
 func newConnInfoJSON(ci *protocol.ConnInfo) connInfoJSON {
 	return connInfoJSON{
-		RemoteAddr:    string(ci.RemoteAddr),
+		Cid:           string(ci.Cid),
 		Role:          strings.ToLower(ci.Role.String()),
 		PrincipalTask: taskIDStr(ci.PrincipalTask.Id[:]),
 		AgeSec:        connAgeSec(ci.ConnectedAt),
@@ -148,8 +148,8 @@ func newConnInfoJSON(ci *protocol.ConnInfo) connInfoJSON {
 }
 
 // connInfoJSONLine returns a JSON object (single line, no trailing newline) for
-// a ConnInfo. Fields: remote_addr, role, principal_task (hex), age_sec,
-// connected_at (unix nano), identified.
+// a ConnInfo. Fields: cid ("transport:ip:port-id"), role, principal_task (hex),
+// age_sec, connected_at (unix nano), identified.
 func connInfoJSONLine(ci *protocol.ConnInfo) string {
 	b, _ := json.Marshal(newConnInfoJSON(ci))
 	return string(b)
@@ -212,7 +212,7 @@ func renderConns(conns []protocol.ConnInfo, out io.Writer) {
 		fmt.Fprintln(out, "  (none)")
 		return
 	}
-	fmt.Fprintf(out, "  %-22s  %-11s  %-8s  %s\n", "REMOTE-ADDR", "ROLE", "PRINCIPAL", "AGE")
+	fmt.Fprintf(out, "  %-30s  %-11s  %-8s  %s\n", "CID", "ROLE", "PRINCIPAL", "AGE")
 	for i := range conns {
 		fmt.Fprintln(out, " ", connInfoTextLine(&conns[i]))
 	}

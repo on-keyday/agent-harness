@@ -11,15 +11,16 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// makeConnInfo builds a ConnInfo for tests, setting CidLen/RemoteAddrLen via
-// the protocol SetX helpers so the length-prefix fields are consistent.
-func makeConnInfo(cid, remoteAddr string, role protocol.ConnRole, principalID [16]byte, connectedAt time.Time, identified bool) protocol.ConnInfo {
+// makeConnInfo builds a ConnInfo for tests, setting CidLen via the protocol
+// SetX helper so the length-prefix field is consistent. The cid is the
+// canonical ConnectionID String ("transport:ip:port-id") and is the sole
+// carrier of the remote address.
+func makeConnInfo(cid string, role protocol.ConnRole, principalID [16]byte, connectedAt time.Time, identified bool) protocol.ConnInfo {
 	ci := protocol.ConnInfo{
 		Role:        role,
 		ConnectedAt: uint64(connectedAt.UnixNano()),
 	}
 	ci.SetCid([]byte(cid))
-	ci.SetRemoteAddr([]byte(remoteAddr))
 	ci.PrincipalTask = protocol.TaskID{Id: principalID}
 	ci.SetIdentified(identified)
 	return ci
@@ -35,12 +36,12 @@ func TestConnInfoTextLine_Identified(t *testing.T) {
 	// 90 seconds ago so age shows as non-zero
 	connectedAt := now.Add(-90 * time.Second)
 
-	ci := makeConnInfo("cid1", "203.0.113.5:5000", protocol.ConnRole_Agent, principal, connectedAt, true)
+	ci := makeConnInfo("wss:203.0.113.5:5000-42619", protocol.ConnRole_Agent, principal, connectedAt, true)
 
 	line := connInfoTextLine(&ci)
 
-	if !strings.Contains(line, "203.0.113.5:5000") {
-		t.Errorf("expected remote addr in line: %q", line)
+	if !strings.Contains(line, "wss:203.0.113.5:5000-42619") {
+		t.Errorf("expected cid in line: %q", line)
 	}
 	if !strings.Contains(line, "agent") {
 		t.Errorf("expected role 'agent' in line: %q", line)
@@ -66,13 +67,13 @@ func TestConnInfoTextLine_Identified(t *testing.T) {
 // shows the unident marker and role "unspecified".
 func TestConnInfoTextLine_Unidentified(t *testing.T) {
 	var zeroPrincipal [16]byte
-	ci := makeConnInfo("cid2", "198.51.100.7:22222", protocol.ConnRole_Unspecified, zeroPrincipal,
+	ci := makeConnInfo("wss:198.51.100.7:22222-1", protocol.ConnRole_Unspecified, zeroPrincipal,
 		time.Now().Add(-5*time.Second), false)
 
 	line := connInfoTextLine(&ci)
 
-	if !strings.Contains(line, "198.51.100.7:22222") {
-		t.Errorf("expected remote addr in line: %q", line)
+	if !strings.Contains(line, "wss:198.51.100.7:22222-1") {
+		t.Errorf("expected cid in line: %q", line)
 	}
 	if !strings.Contains(line, "unident") {
 		t.Errorf("expected 'unident' marker for unidentified conn: %q", line)
@@ -85,7 +86,7 @@ func TestConnInfoJSONLine_ValidJSON(t *testing.T) {
 	principal[0] = 0xde
 	principal[1] = 0xad
 
-	ci := makeConnInfo("cid3", "10.0.0.1:9000", protocol.ConnRole_Cli, principal,
+	ci := makeConnInfo("wss:10.0.0.1:9000-7", protocol.ConnRole_Cli, principal,
 		time.Now().Add(-10*time.Second), true)
 
 	line := connInfoJSONLine(&ci)
@@ -97,13 +98,13 @@ func TestConnInfoJSONLine_ValidJSON(t *testing.T) {
 }
 
 // TestConnInfoJSONLine_Fields checks that the JSON line contains the
-// expected fields: remote_addr, role, age_sec, identified, principal_task.
+// expected fields: cid, role, age_sec, identified, principal_task.
 func TestConnInfoJSONLine_Fields(t *testing.T) {
 	var principal [16]byte
 	principal[0] = 0xbe
 	principal[1] = 0xef
 
-	ci := makeConnInfo("cid4", "172.16.0.2:8080", protocol.ConnRole_Webui, principal,
+	ci := makeConnInfo("wss:172.16.0.2:8080-99", protocol.ConnRole_Webui, principal,
 		time.Now().Add(-30*time.Second), true)
 
 	line := connInfoJSONLine(&ci)
@@ -113,7 +114,7 @@ func TestConnInfoJSONLine_Fields(t *testing.T) {
 		t.Fatalf("invalid JSON: %v", err)
 	}
 
-	for _, key := range []string{"remote_addr", "role", "age_sec", "identified", "principal_task"} {
+	for _, key := range []string{"cid", "role", "age_sec", "identified", "principal_task"} {
 		if _, ok := m[key]; !ok {
 			t.Errorf("missing key %q in JSON: %s", key, line)
 		}
@@ -122,8 +123,8 @@ func TestConnInfoJSONLine_Fields(t *testing.T) {
 	if m["role"] != "webui" {
 		t.Errorf("expected role=webui in JSON, got %q: %s", m["role"], line)
 	}
-	if m["remote_addr"] != "172.16.0.2:8080" {
-		t.Errorf("expected remote_addr in JSON: %s", line)
+	if m["cid"] != "wss:172.16.0.2:8080-99" {
+		t.Errorf("expected cid in JSON: %s", line)
 	}
 	if m["identified"] != true {
 		t.Errorf("expected identified=true in JSON: %s", line)
@@ -134,7 +135,7 @@ func TestConnInfoJSONLine_Fields(t *testing.T) {
 // represented in JSON and the unident marker exists in the text form.
 func TestConnInfoJSONLine_Unidentified(t *testing.T) {
 	var zeroPrincipal [16]byte
-	ci := makeConnInfo("cid5", "192.168.1.1:443", protocol.ConnRole_Unspecified, zeroPrincipal,
+	ci := makeConnInfo("wss:192.168.1.1:443-3", protocol.ConnRole_Unspecified, zeroPrincipal,
 		time.Now().Add(-2*time.Second), false)
 
 	line := connInfoJSONLine(&ci)
@@ -152,7 +153,7 @@ func TestConnInfoJSONLine_Unidentified(t *testing.T) {
 // A closed event must contain "closed".
 func TestConnStatusEventLine(t *testing.T) {
 	var zeroPrincipal [16]byte
-	ci := makeConnInfo("cid6", "198.51.100.9:1234", protocol.ConnRole_Unspecified, zeroPrincipal,
+	ci := makeConnInfo("wss:198.51.100.9:1234-5", protocol.ConnRole_Unspecified, zeroPrincipal,
 		time.Now().Add(-3*time.Second), false)
 
 	openedEv := protocol.ConnStatusEvent{
