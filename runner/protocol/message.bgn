@@ -234,6 +234,9 @@ enum TaskControlKind:
     list_conns      # appended (keeps existing ordinals stable): snapshot list of
                     # live objproto connections. Requires info_global; confined
                     # tasks see only their own subtree.
+    board_topics    # list all known agentboard topics (names + metadata)
+    board_read      # read messages from a topic (returns stream_id for content)
+    board_purge     # purge a single message (by seq) from a topic
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -579,6 +582,57 @@ format GetTaskLogResponse:
                       # (closed with EOF when complete). Client reads via
                       # trsf.Transport.GetReceiveStream.
 
+enum BoardStatus:
+    :u8
+    ok
+    not_found
+
+format BoardTopicsRequest:
+    request_id :u32
+
+format BoardTopicRow:
+    name_len :u16
+    name :[name_len]u8
+    last_seq :u64
+    last_published_at_unix_ms :u64
+    msg_count :u16
+
+format BoardTopicsResponse:
+    request_id :u32
+    topics_len :u16
+    topics :[topics_len]BoardTopicRow
+
+format BoardReadRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+
+format BoardMessageRow:
+    seq :u64
+    from_task :TaskID
+    from_hostname_len :u8
+    from_hostname :[from_hostname_len]u8
+    received_at_unix_ms :u64
+    size :u32
+
+format BoardReadResponse:
+    request_id :u32
+    status :BoardStatus
+    stream_id :u64
+    msgs_len :u16
+    msgs :[msgs_len]BoardMessageRow
+
+format BoardPurgeRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+    seq :u64
+
+format BoardPurgeResponse:
+    request_id :u32
+    status :BoardStatus
+    purged :u16
+
 format OpenInteractiveRequest:
     repo_path_len :u16
     repo_path :[repo_path_len]u8
@@ -669,6 +723,9 @@ format TaskControlRequest:
         TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardRequest
         TaskControlKind.notify              => notify             :NotifyRequest
         TaskControlKind.list_conns          => list_conns         :ConnListQuery
+        TaskControlKind.board_topics => board_topics :BoardTopicsRequest
+        TaskControlKind.board_read   => board_read   :BoardReadRequest
+        TaskControlKind.board_purge  => board_purge  :BoardPurgeRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -697,6 +754,9 @@ format TaskControlResponse:
         TaskControlKind.notify              => notify             :NotifyResponse
         TaskControlKind.permission_denied  => permission_denied  :PermissionDeniedResponse
         TaskControlKind.list_conns          => list_conns         :ConnListResult
+        TaskControlKind.board_topics => board_topics :BoardTopicsResponse
+        TaskControlKind.board_read   => board_read   :BoardReadResponse
+        TaskControlKind.board_purge  => board_purge  :BoardPurgeResponse
 
 enum NotifyLevel:
     :u8
