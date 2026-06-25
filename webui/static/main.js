@@ -2240,9 +2240,10 @@ function renderConnTopology(conns, tasks) {
       // Short role label below the leaf (suppressed for dense clusters, where
       // per-leaf labels would overlap; role is still conveyed by colour + legend).
       if (showLeafLabel) {
+        const lLabelY = ly < cy ? ly - LEAF_R - 3 : ly + LEAF_R + 11;
         const roleLabel = Object.assign(svgEl("text", {
           class: "ct-conn-label",
-          x: lx, y: ly + LEAF_R + 2,
+          x: lx, y: lLabelY,
         }), { textContent: conn.role ? conn.role.slice(0, 3) : "?" });
         leafG.appendChild(roleLabel);
       }
@@ -2285,8 +2286,12 @@ function renderConnTopology(conns, tasks) {
           }));
           const base = (tk.repoPath || "").split(/[\\/]/).filter(Boolean).pop();
           const label = base || (tk.id ? tk.id.slice(0, 6) : "task");
+          // Place the label on the OUTWARD side (away from centre): nodes above
+          // centre label upward into open space, nodes below label downward —
+          // keeps text out of the crowded inner region.
+          const tLabelY = ty < cy ? ty - s - 4 : ty + s + 11;
           taskG.appendChild(Object.assign(svgEl("text", {
-            class: "ct-task-label", x: tx, y: ty + s + 9,
+            class: "ct-task-label", x: tx, y: tLabelY,
           }), { textContent: label }));
           svg.appendChild(taskG);
         });
