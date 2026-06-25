@@ -366,15 +366,26 @@ func harnessList(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessSnapshot returns the current runners + tasks as a JS object,
-// shaped for direct consumption by the webui. Strings are pre-decoded,
+// connRoleLower maps a ConnRole to its lowercase string representation for the
+// JS side (mirrors clientKindLower for ClientKind but covers the ConnRole enum
+// which additionally has "runner" and "unspecified").
+func connRoleLower(r protocol.ConnRole) string {
+	if r == protocol.ConnRole_Unspecified {
+		return "unspecified"
+	}
+	return strings.ToLower(r.String())
+}
+
+// harnessSnapshot returns the current runners + tasks + connections as a JS
+// object, shaped for direct consumption by the webui. Strings are pre-decoded,
 // TaskIDs are pre-hexed, and statuses are stringified so the JS side does
 // not need a label table.
 //
 //	harness.snapshot() -> Promise<{
 //	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, skillsInjected}],
 //	  tasks:   [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
-//	             createdAt, startedAt, endedAt}]
+//	             createdAt, startedAt, endedAt}],
+//	  conns:   [{cid, role, remoteAddr, principalTask, connectedAt, identified}]
 //	}>
 func harnessSnapshot(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
@@ -428,9 +439,30 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"caps":       cli.CapsLabel(t.Capabilities),
 				})
 			}
+			// Fetch the live connection list using the same long-lived client
+			// (Pitfall 3 / feedback_reuse_long_lived_client: never dial+close here).
+			// If ConnListWith fails (e.g. server lacks the capability), we return an
+			// empty array so the topology section gracefully shows "(none)" rather than
+			// breaking the entire snapshot.
+			connInfos, connErr := c.ConnListWith(rootCtx)
+			if connErr != nil {
+				slog.Warn("snapshot: ConnListWith failed (topology will be empty)", "err", connErr)
+			}
+			conns := make([]any, 0, len(connInfos))
+			for _, ci := range connInfos {
+				conns = append(conns, map[string]any{
+					"cid":           string(ci.Cid),
+					"role":          connRoleLower(ci.Role),
+					"remoteAddr":    string(ci.RemoteAddr),
+					"principalTask": hex.EncodeToString(ci.PrincipalTask.Id[:]),
+					"connectedAt":   float64(ci.ConnectedAt),
+					"identified":    ci.Identified(),
+				})
+			}
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"runners": runners,
 				"tasks":   tasks,
+				"conns":   conns,
 			}))
 		}()
 		return nil

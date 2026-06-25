@@ -219,6 +219,12 @@ const POLL_INTERVAL_MS = 5000;
     runnerList.textContent = renderRunners(sortedRunners);
     renderTaskList(snap.tasks);
     renderFileTaskSelect(snap.tasks);
+    // Connection topology — rides the same ~5s poll (spec decision #3:
+    // no separate event subscription in wasm). snap.conns may be absent if
+    // the server doesn't have the list_conns capability yet; guard with [].
+    const conns = snap.conns || [];
+    renderConnTopology(conns);
+    renderConnList(conns);
   };
   await refreshSnapshot();
   setInterval(refreshSnapshot, POLL_INTERVAL_MS);
@@ -1950,4 +1956,323 @@ function hexDump(bytes, limit) {
     rows.push(off.toString(16).padStart(8, "0") + "  " + hex.padEnd(16 * 3, " ") + " " + ascii);
   }
   return rows.join("\n");
+}
+
+// ============================================================
+// Connection topology rendering
+// ============================================================
+
+// prevConnCids is the set of cid strings from the last render, used to key
+// the enter/exit animation by diffing against the current set.
+const prevConnCids = new Set();
+
+// connAgeSec returns the age of a connection in seconds from its connectedAt
+// unix-nano timestamp (as a JS number). Returns 0 for unset (0) values.
+function connAgeSec(connectedAtNano) {
+  if (!connectedAtNano) return 0;
+  // connectedAt is unix nano; JS Date.now() is milliseconds.
+  const nowNano = Date.now() * 1e6;
+  const ageSec = (nowNano - connectedAtNano) / 1e9;
+  return ageSec < 0 ? 0 : ageSec;
+}
+
+// connAgeStr returns a human-readable age string like "5s" or "3m12s".
+function connAgeStr(connectedAtNano) {
+  const secs = Math.floor(connAgeSec(connectedAtNano));
+  if (secs < 60) return `${secs}s`;
+  const m = Math.floor(secs / 60);
+  const s = secs % 60;
+  return `${m}m${s}s`;
+}
+
+// connIpPart extracts the IP portion from a "ip:port" remote address.
+// Falls back to the full address if there's no ":" (unusual).
+function connIpPart(remoteAddr) {
+  // IPv6 addresses look like "[::1]:8540" — strip brackets too.
+  if (remoteAddr.startsWith("[")) {
+    const close = remoteAddr.lastIndexOf("]");
+    if (close > 0) return remoteAddr.slice(1, close);
+  }
+  const lastColon = remoteAddr.lastIndexOf(":");
+  return lastColon > 0 ? remoteAddr.slice(0, lastColon) : remoteAddr;
+}
+
+// groupConnsByIP groups the conns array into a Map<ip, connInfo[]>.
+function groupConnsByIP(conns) {
+  const map = new Map();
+  for (const c of conns) {
+    const ip = connIpPart(c.remoteAddr || "");
+    if (!map.has(ip)) map.set(ip, []);
+    map.get(ip).push(c);
+  }
+  return map;
+}
+
+// svgEl creates an SVG element with the given tag name and attributes.
+function svgEl(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    el.setAttribute(k, v);
+  }
+  return el;
+}
+
+// renderConnTopology renders the radial hub-and-spoke SVG topology into
+// #conn-topology. Called on every snapshot poll.
+//
+// Layout:
+//   - Server node at center (cx, cy).
+//   - IP cluster nodes placed radially around the server at radius R1.
+//   - Each connection a smaller leaf node on a spoke from its cluster toward
+//     the server, at radius R2 (R2 < R1).
+//   - New cids (not in prevConnCids) start with class "entering" then get
+//     "visible" after a frame (CSS transition animates opacity/scale in).
+//   - Removed cids get class "leaving" and are removed after the CSS
+//     transition completes.
+function renderConnTopology(conns) {
+  const host = document.getElementById("conn-topology");
+  if (!host) return;
+
+  // On mobile, the topology container is hidden by CSS; skip heavy DOM work.
+  if (window.matchMedia("(max-width: 600px)").matches) {
+    // Still update prevConnCids so mobile list diff is correct.
+    _updatePrevConnCids(conns);
+    return;
+  }
+
+  if (!conns || conns.length === 0) {
+    host.innerHTML = '<span class="ct-empty">(no connections)</span>';
+    _updatePrevConnCids(conns);
+    return;
+  }
+
+  const byIP = groupConnsByIP(conns);
+  const clusters = [...byIP.keys()];
+  const nClusters = clusters.length;
+
+  // SVG viewport: 700 wide × 320 tall; server at center.
+  const W = 700, H = 320;
+  const cx = W / 2, cy = H / 2;
+  const R1 = 110; // cluster ring radius
+  const R2 = 65;  // leaf ring radius (between server and cluster)
+  const SERVER_R = 22;
+  const CLUSTER_R = 14;
+  const LEAF_R = 8;
+
+  // Build a new SVG (replace the old one entirely; diff is handled via
+  // class-based animation on the node group keyed by cid).
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}` });
+
+  // --- Server node ---
+  const serverG = svgEl("g", { class: "ct-server-node" });
+  serverG.appendChild(svgEl("circle", { cx, cy, r: SERVER_R }));
+  serverG.appendChild(Object.assign(svgEl("text", {
+    class: "ct-server-label", x: cx, y: cy + SERVER_R + 3,
+  }), { textContent: "server" }));
+  svg.appendChild(serverG);
+
+  // --- Cluster nodes and their leaves ---
+  const currentCids = new Set(conns.map(c => c.cid));
+
+  clusters.forEach((ip, idx) => {
+    const angle = (2 * Math.PI * idx) / nClusters - Math.PI / 2;
+    const clx = cx + R1 * Math.cos(angle);
+    const cly = cy + R1 * Math.sin(angle);
+
+    // Spoke from server to cluster
+    svg.appendChild(svgEl("line", {
+      class: "ct-spoke",
+      x1: cx, y1: cy, x2: clx, y2: cly,
+    }));
+
+    // Cluster circle
+    const clG = svgEl("g", { class: "ct-cluster-node" });
+    clG.appendChild(svgEl("circle", { cx: clx, cy: cly, r: CLUSTER_R }));
+    const ipLabel = Object.assign(svgEl("text", {
+      class: "ct-cluster-label",
+      x: clx,
+      y: cly + CLUSTER_R + 2,
+    }), { textContent: ip });
+    clG.appendChild(ipLabel);
+    svg.appendChild(clG);
+
+    // Leaf nodes for each connection in this IP cluster
+    const clConns = byIP.get(ip);
+    const nLeaves = clConns.length;
+    clConns.forEach((conn, li) => {
+      // Spread leaves along the spoke direction, fanning slightly perpendicular.
+      const fanAngle = angle + ((li - (nLeaves - 1) / 2) * 0.28);
+      const lx = cx + R2 * Math.cos(fanAngle);
+      const ly = cy + R2 * Math.sin(fanAngle);
+
+      // Thin line from cluster to leaf
+      svg.appendChild(svgEl("line", {
+        class: "ct-leaf-spoke",
+        x1: clx, y1: cly, x2: lx, y2: ly,
+      }));
+
+      // Leaf node group: keyed by cid for diff animation.
+      const isNew    = !prevConnCids.has(conn.cid);
+      const roleClass = `role-${conn.role || "unspecified"}`;
+      const unidentCls = conn.identified ? "" : " unident";
+      const leafG = svgEl("g", {
+        class: `ct-conn-node ${roleClass}${unidentCls}`,
+        "data-cid": conn.cid,
+      });
+      const leafCircle = svgEl("circle", { cx: lx, cy: ly, r: LEAF_R });
+      // Age shade (spec: opacity/shade encodes age). Newer = brighter, older =
+      // dimmer, flooring at ~0.45 for conns older than ~1h. Applied ONLY to
+      // identified leaves — unidentified nodes keep the CSS dashed+dim (0.55)
+      // styling, so we must not set an inline opacity that would override it.
+      if (conn.identified) {
+        const ageSec = connAgeSec(conn.connectedAt);
+        const ageOpacity = Math.max(0.45, Math.min(1.0, 1 - ageSec / 3600));
+        leafCircle.setAttribute("opacity", ageOpacity.toFixed(3));
+      }
+      leafG.appendChild(leafCircle);
+      // Short role label below the leaf
+      const roleLabel = Object.assign(svgEl("text", {
+        class: "ct-conn-label",
+        x: lx, y: ly + LEAF_R + 2,
+      }), { textContent: conn.role ? conn.role.slice(0, 3) : "?" });
+      leafG.appendChild(roleLabel);
+      svg.appendChild(leafG);
+
+      // Trigger enter animation: start "entering", flip to "visible" next frame.
+      if (isNew) {
+        leafG.classList.add("entering");
+        requestAnimationFrame(() => {
+          leafG.classList.remove("entering");
+          leafG.classList.add("visible");
+        });
+      } else {
+        leafG.classList.add("visible");
+      }
+    });
+  });
+
+  // --- Legend ---
+  const legendDiv = document.createElement("div");
+  legendDiv.className = "ct-legend";
+  const roles = ["cli", "tui", "webui", "agent", "runner", "unspecified"];
+  for (const r of roles) {
+    const item = document.createElement("span");
+    item.className = "ct-legend-item";
+    const dot = document.createElement("span");
+    dot.className = `ct-legend-dot role-${r}`;
+    item.appendChild(dot);
+    item.appendChild(document.createTextNode(r));
+    legendDiv.appendChild(item);
+  }
+
+  // Replace existing content
+  host.innerHTML = "";
+  host.appendChild(svg);
+  host.appendChild(legendDiv);
+
+  // Handle leaving nodes: nodes that were in prevConnCids but are not in
+  // currentCids. We do this before updating prevConnCids.
+  // Since we rebuild the SVG each poll, we can't animate removals from the
+  // OLD SVG (it's been replaced). Instead we track departures and add a
+  // brief "phantom" leaving node to the NEW svg.
+  const leavingCids = [...prevConnCids].filter(cid => !currentCids.has(cid));
+  if (leavingCids.length > 0) {
+    // Briefly show a dimmed leaving indicator at the server center.
+    for (const cid of leavingCids) {
+      const phantom = svgEl("circle", {
+        cx: String(cx + (Math.random() - 0.5) * 30),
+        cy: String(cy + (Math.random() - 0.5) * 30),
+        r: String(LEAF_R),
+        class: "leaving",
+        fill: "#444",
+        stroke: "#777",
+        "stroke-width": "1",
+        opacity: "0.7",
+      });
+      svg.appendChild(phantom);
+      setTimeout(() => phantom.remove(), 400);
+    }
+  }
+
+  _updatePrevConnCids(conns);
+}
+
+// _updatePrevConnCids syncs prevConnCids to the current conn set.
+function _updatePrevConnCids(conns) {
+  prevConnCids.clear();
+  for (const c of conns || []) prevConnCids.add(c.cid);
+}
+
+// renderConnList renders the mobile grouped-list view into #conn-list.
+// One card per IP, listing its connections with role badge, age, principal.
+function renderConnList(conns) {
+  const host = document.getElementById("conn-list");
+  if (!host) return;
+
+  host.innerHTML = "";
+
+  if (!conns || conns.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "conn-list-empty";
+    empty.textContent = "(no connections)";
+    host.appendChild(empty);
+    return;
+  }
+
+  const byIP = groupConnsByIP(conns);
+  for (const [ip, ipConns] of byIP) {
+    const card = document.createElement("div");
+    card.className = "conn-ip-card";
+
+    // IP header with a server-connector indicator
+    const header = document.createElement("div");
+    header.className = "conn-ip-header";
+    const dot = document.createElement("span");
+    dot.className = "conn-ip-connector";
+    dot.title = "connected to server";
+    header.appendChild(dot);
+    header.appendChild(document.createTextNode(ip));
+    card.appendChild(header);
+
+    // One row per connection
+    for (const conn of ipConns) {
+      const row = document.createElement("div");
+      row.className = "conn-row";
+
+      // Role badge
+      const badge = document.createElement("span");
+      badge.className = `conn-role-badge role-${conn.role || "unspecified"}`;
+      badge.textContent = conn.role || "?";
+      row.appendChild(badge);
+
+      // Unidentified badge
+      if (!conn.identified) {
+        const unidentBadge = document.createElement("span");
+        unidentBadge.className = "conn-unident-badge";
+        unidentBadge.textContent = "unident";
+        unidentBadge.title = "handshake not yet completed (probe / failed auth)";
+        row.appendChild(unidentBadge);
+      }
+
+      // Principal task (agent conns only — non-zero hex)
+      const princ = conn.principalTask || "";
+      // principalTask is 32 hex chars; all-zero means no principal
+      if (princ && princ !== "0".repeat(32)) {
+        const pEl = document.createElement("span");
+        pEl.className = "conn-principal";
+        pEl.title = `principal: ${princ}`;
+        pEl.textContent = princ.slice(0, 8) + "…";
+        row.appendChild(pEl);
+      }
+
+      // Age (right-aligned)
+      const ageEl = document.createElement("span");
+      ageEl.className = "conn-age";
+      ageEl.textContent = connAgeStr(conn.connectedAt);
+      row.appendChild(ageEl);
+
+      card.appendChild(row);
+    }
+    host.appendChild(card);
+  }
 }

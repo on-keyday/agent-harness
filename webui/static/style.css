@@ -262,7 +262,8 @@ button:hover { background: #555; }
   body[data-active-tab="terminal"] [data-tabgroup]:not([data-tabgroup="terminal"]),
   body[data-active-tab="tasks"]    [data-tabgroup]:not([data-tabgroup="tasks"]),
   body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]),
-  body[data-active-tab="notify"]   [data-tabgroup]:not([data-tabgroup="notify"]) {
+  body[data-active-tab="notify"]   [data-tabgroup]:not([data-tabgroup="notify"]),
+  body[data-active-tab="conns"]    [data-tabgroup]:not([data-tabgroup="conns"]) {
     display: none;
   }
 }
@@ -567,4 +568,243 @@ button:hover { background: #555; }
   }
   .preview-header { padding: 0.6em 0.75em; }
   .preview-title { font-size: 0.8em; }
+}
+
+/* ============================================================
+ * Connection topology (#connections section)
+ * Desktop: radial SVG hub-and-spoke. Mobile (<=600px): grouped card list.
+ * Both share the dark #1e1e1e / #d4d4d4 theme.
+ * ============================================================ */
+
+/* --- Radial SVG topology (desktop) --- */
+.conn-topology {
+  width: 100%;
+  min-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #111;
+  border-radius: 6px;
+  border: 1px solid #333;
+  padding: 0.5rem;
+  box-sizing: border-box;
+}
+.conn-topology svg {
+  width: 100%;
+  height: 320px;
+  max-width: 700px;
+  overflow: visible;
+}
+/* SVG node base: server center node */
+.ct-server-node circle {
+  fill: #2a2a2a;
+  stroke: #2d5;
+  stroke-width: 2;
+}
+.ct-server-label {
+  fill: #d4d4d4;
+  font-size: 11px;
+  font-family: monospace;
+  text-anchor: middle;
+  dominant-baseline: hanging;
+}
+/* IP cluster node */
+.ct-cluster-node circle {
+  fill: #252526;
+  stroke: #555;
+  stroke-width: 1.5;
+}
+.ct-cluster-label {
+  fill: #aaa;
+  font-size: 10px;
+  font-family: monospace;
+  text-anchor: middle;
+  dominant-baseline: hanging;
+}
+/* Individual connection leaf nodes — color by role */
+.ct-conn-node {
+  /* Anchor the enter/leave scale at each node's own center. Without
+     transform-box:fill-box an SVG CSS transform scales toward the viewport
+     origin (0,0), making nodes fly in from the corner instead of in place. */
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.ct-conn-node circle {
+  stroke-width: 1.5;
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.ct-conn-node.role-cli      circle { fill: #1a3d5c; stroke: #5aabf7; }
+.ct-conn-node.role-tui      circle { fill: #3d3a1a; stroke: #f7d05a; }
+.ct-conn-node.role-webui    circle { fill: #1a3d2a; stroke: #2d5; }
+.ct-conn-node.role-agent    circle { fill: #3d1a3d; stroke: #c080f0; }
+.ct-conn-node.role-runner   circle { fill: #3d2a1a; stroke: #f0a060; }
+.ct-conn-node.role-unspecified circle { fill: #2a2a2a; stroke: #777; }
+/* Unidentified (probe / failed-handshake): dashed stroke, dimmed */
+.ct-conn-node.unident circle {
+  stroke-dasharray: 3 2;
+  opacity: 0.55;
+}
+/* In/out animation driven by JS class toggling */
+.ct-conn-node.entering {
+  opacity: 0;
+  transform: scale(0.4);
+}
+.ct-conn-node.visible {
+  opacity: 1;
+  transform: scale(1);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+.ct-conn-node.leaving {
+  opacity: 0;
+  transform: scale(0.4);
+  transition: opacity 0.35s ease, transform 0.35s ease;
+}
+/* Spoke / cluster lines */
+.ct-spoke {
+  stroke: #333;
+  stroke-width: 1;
+}
+.ct-leaf-spoke {
+  stroke: #2a2a2a;
+  stroke-width: 1;
+}
+.ct-conn-label {
+  fill: #999;
+  font-size: 9px;
+  font-family: monospace;
+  text-anchor: middle;
+  pointer-events: none;
+}
+/* Legend */
+.ct-legend {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  font-family: monospace;
+  color: #aaa;
+}
+.ct-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.ct-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  flex-shrink: 0;
+}
+.ct-legend-dot.role-cli    { background: #1a3d5c; color: #5aabf7; }
+.ct-legend-dot.role-tui    { background: #3d3a1a; color: #f7d05a; }
+.ct-legend-dot.role-webui  { background: #1a3d2a; color: #2d5; }
+.ct-legend-dot.role-agent  { background: #3d1a3d; color: #c080f0; }
+.ct-legend-dot.role-runner { background: #3d2a1a; color: #f0a060; }
+.ct-legend-dot.role-unspecified { background: #2a2a2a; color: #777; }
+
+/* Empty-state message inside the topology area */
+.ct-empty {
+  color: #555;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+/* --- Mobile grouped list (<=600px) --- */
+/* On desktop the mobile list is hidden; on mobile the SVG topology is hidden. */
+.conn-list-mobile { display: none; }
+@media (max-width: 600px) {
+  .conn-topology  { display: none; }
+  .conn-topology + .conn-list-mobile { display: block; }
+  .conn-list-mobile { display: block; }
+}
+
+.conn-ip-card {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+.conn-ip-header {
+  background: #252526;
+  padding: 0.45rem 0.7rem;
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #9cdcfe;
+  border-bottom: 1px solid #333;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.conn-ip-connector {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid #2d5;
+  background: #1a3d2a;
+  flex-shrink: 0;
+}
+.conn-row {
+  padding: 0.3rem 0.7rem;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #d4d4d4;
+  border-bottom: 1px solid #222;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.conn-row:last-child { border-bottom: none; }
+.conn-role-badge {
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #000;
+}
+.conn-role-badge.role-cli    { background: #5aabf7; }
+.conn-role-badge.role-tui    { background: #f7d05a; }
+.conn-role-badge.role-webui  { background: #2d5; }
+.conn-role-badge.role-agent  { background: #c080f0; }
+.conn-role-badge.role-runner { background: #f0a060; }
+.conn-role-badge.role-unspecified { background: #777; color: #fff; }
+.conn-unident-badge {
+  background: #444;
+  color: #f88;
+  border: 1px solid #a44;
+  border-radius: 3px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  font-family: monospace;
+}
+.conn-age {
+  color: #888;
+  font-size: 0.75rem;
+  margin-left: auto;
+}
+.conn-principal {
+  color: #aaa;
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 10rem;
+}
+.conn-list-empty {
+  color: #555;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+}
+
+/* On desktop show the topology, hide the mobile list. */
+@media (min-width: 601px) {
+  .conn-list-mobile { display: none !important; }
+  .conn-topology    { display: flex; }
 }

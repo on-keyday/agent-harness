@@ -21,6 +21,7 @@
       <button type="button" class="tab-btn is-active" data-tab="tasks">タスク</button>
       <button type="button" class="tab-btn" data-tab="files">ファイル</button>
       <button type="button" class="tab-btn" data-tab="notify">通知</button>
+      <button type="button" class="tab-btn" data-tab="conns">接続</button>
     </nav>
     <section id="runners" data-tabgroup="tasks">
       <h2>Runners</h2>
@@ -78,6 +79,14 @@
       <label class="notify-sound-toggle"><input type="checkbox" id="notify-sound"> 🔔 通知音</label>
       <h3>Feed</h3>
       <div id="notify-feed"></div>
+    </section>
+    <!-- Connection topology: desktop radial SVG, mobile grouped list. -->
+    <section id="connections" data-tabgroup="conns">
+      <h2>Connections</h2>
+      <!-- Desktop: radial hub-and-spoke SVG topology. Hidden on mobile via CSS. -->
+      <div id="conn-topology" class="conn-topology" aria-label="Connection topology diagram"></div>
+      <!-- Mobile (<=600px): grouped list view. Hidden on desktop via CSS. -->
+      <div id="conn-list" class="conn-list-mobile" aria-label="Connection list"></div>
     </section>
     <section id="files" data-tabgroup="files">
       <h2>Files</h2>
