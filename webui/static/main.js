@@ -2138,7 +2138,9 @@ function renderConnTopology(conns, tasks) {
   // from the centre, so depth reads as distance and the outer rings (longer
   // circumference) give crowded hosts more room. Squarer viewport since a
   // radial layout needs vertical room, not just width.
-  const W = 640, H = 480;
+  const W = 640, H = 560; // taller so the outermost ring (dense cluster's
+                          // tier-2 leaves + their tasks + labels) fits with
+                          // margin; overflow:hidden then only clips on zoom-in
   const cx = W / 2, cy = H / 2;
   const R1 = 95;  // cluster ring (inner — closest to server)
   const R2 = 165; // connection-leaf ring (outside its cluster)
