@@ -53,21 +53,44 @@ topic TTL-expires, or the task that exclusively subscribes it ends. A
 from the **server side** entirely:
 
 ```bash
-harness-cli agent purge --topic chat.<short-id>   # exact topic
-harness-cli agent purge --self                    # your own inbound channel
+harness-cli agent purge --topic chat.<short-id>            # whole topic ring
+harness-cli agent purge --self                             # your own inbound channel
+harness-cli agent purge --self --seq <N>                   # drop just message seq N
 ```
 
-`purge` deletes the topic's whole retained ring and reports how many messages
-were dropped (`{"status":"ok","topic":"...","purged":N}`); an already-empty /
-unknown topic returns `not_found` (a no-op, exit 0). The board seq counter is
-global, so purging does NOT reset sequence numbers — your persisted cursor
-stays valid and a post-purge message is delivered exactly once.
+With no `--seq` (or `--seq 0`) `purge` deletes the topic's whole retained ring
+and reports how many messages were dropped
+(`{"status":"ok","topic":"...","purged":N}`). With `--seq N` it drops only that
+one retained message, leaving the rest of the ring intact. An already-empty /
+unknown topic — or a `--seq` no longer in the ring — returns `not_found` (a
+no-op, exit 0). The board seq counter is global, so purging does NOT reset
+sequence numbers — your persisted cursor stays valid and a post-purge message
+is delivered exactly once.
 
 Because purge destroys live retained messages on a possibly-shared topic (it
 can wipe another agent's unconsumed inbound channel), it is gated by its own
 `purge` capability — distinct from `prune` (which only forgets terminal task
 records). An operator task holds it via `all`; a confined worker must be
 granted `--caps ...,purge` explicitly or it gets `denied`.
+
+### Targeting a single message — `agent retained` (metadata only)
+
+To choose a `--seq` without reading payloads (handy when a payload itself is
+what you want gone — e.g. it trips a moderation gate the moment it enters your
+context), list the ring as **metadata only**:
+
+```bash
+harness-cli agent retained --self                 # your inbound channel
+harness-cli agent retained --topic chat.<short-id>
+# {"seq":42,"from_task":"<hex>","from_hostname":"...","size":1234,"received_at_ms":...}
+```
+
+`retained` returns one JSON line per retained message — seq, sender task id,
+size, receive time — and **never the payload bytes**. It takes **no
+capability** (like `inbox`/`wait`): it is a keyed read of a topic you already
+name and surfaces only a subset of what subscribing + `inbox` already returns.
+Pick the offending `seq` from this list, then `purge --seq <N>` it — the
+payload is dropped server-side without ever entering anyone's context.
 
 ## Async by default — never block on a reply
 

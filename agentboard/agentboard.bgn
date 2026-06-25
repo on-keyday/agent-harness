@@ -30,6 +30,8 @@ enum AgentMessageKind:
     list_subscriptions_response
     purge
     purge_response
+    list_retained
+    list_retained_response
 
 enum HelloStatus:
     :u8
@@ -146,14 +148,18 @@ format ListSubscriptionsResponse:
     subscriptions_len :u16
     subscriptions :[subscriptions_len]SubscriptionSummary
 
-# PurgeRequest destroys a single topic's retained-message ring on the server
-# (exact match, no wildcards — same as subscribe in v1). Used to flush a
+# PurgeRequest drops retained messages from a topic's ring on the server (exact
+# topic match, no wildcards — same as subscribe in v1). Used to flush a
 # poisoned/unwanted payload out of the server-side buffer so a since=0 re-read
 # can't resurface it. Gated by Capability.purge.
+#   seq == 0 → purge the WHOLE topic (delete the ring entirely).
+#   seq  > 0 → drop only the single retained message with that seq, leaving the
+#             rest intact (board seq starts at 1, so 0 is never a real message).
 format PurgeRequest:
     request_id :u32
     topic_len :u16
     topic :[topic_len]u8
+    seq :u64
 
 enum PurgeStatus:
     :u8
@@ -167,6 +173,36 @@ format PurgeResponse:
     # purged is the number of retained messages dropped from the ring (0 when
     # not_found or denied).
     purged :u16
+
+# ListRetainedRequest enumerates a topic's retained ring as METADATA ONLY — no
+# payload bytes cross the wire. This is the content-blind way to identify which
+# retained message to purge (by seq / sender / size / time) without ingesting a
+# payload that might itself trip a moderation gate. No cap gate (helloed only),
+# like inbox/wait: it is a keyed read of an already-named topic (not a discovery
+# sweep — that is list_topics), and everything it surfaces is a strict subset of
+# what subscribing + inbox already returns uncapped. Destruction (purge) needs
+# Capability.purge; this read does not. Single named topic, not a board sweep.
+format ListRetainedRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+
+# RetainedMeta is one retained-ring entry without its payload: just enough to
+# decide what to purge. size is the payload length in bytes.
+format RetainedMeta:
+    seq :u64
+    from_runner :RunnerID
+    from_task :TaskID
+    from_hostname_len :u8
+    from_hostname :[from_hostname_len]u8
+    size :u32
+    received_at_unix_ms :u64
+
+format ListRetainedResponse:
+    request_id :u32
+    status :PurgeStatus
+    metas_len :u16
+    metas :[metas_len]RetainedMeta
 
 format AgentMessage:
     kind :AgentMessageKind
@@ -187,4 +223,6 @@ format AgentMessage:
         AgentMessageKind.list_subscriptions_response => list_subscriptions_response :ListSubscriptionsResponse
         AgentMessageKind.purge => purge :PurgeRequest
         AgentMessageKind.purge_response => purge_response :PurgeResponse
+        AgentMessageKind.list_retained => list_retained :ListRetainedRequest
+        AgentMessageKind.list_retained_response => list_retained_response :ListRetainedResponse
         .. => error("Unexpected agent message kind")

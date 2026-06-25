@@ -347,6 +347,34 @@ func (b *Board) PurgeTopic(name string) (purged int, found bool) {
 	return n, true
 }
 
+// PurgeSeq drops a single retained message (by seq) from a topic's ring,
+// leaving every other message and the topic itself intact. found reports
+// whether the topic existed; removed reports whether a message with that seq
+// was present and dropped. A topic left empty is harmless — it TTL-evicts like
+// any quiet topic.
+func (b *Board) PurgeSeq(name string, seq uint64) (removed, found bool) {
+	b.mu.Lock()
+	t, ok := b.topics[name]
+	b.mu.Unlock()
+	if !ok {
+		return false, false
+	}
+	return t.removeSeq(seq), true
+}
+
+// ListRetained returns metadata for every message in a topic's ring (no
+// payload bytes are surfaced by callers). found reports whether the topic
+// exists. This is the content-blind targeting step for PurgeSeq.
+func (b *Board) ListRetained(name string) (msgs []RetainedMessage, found bool) {
+	b.mu.Lock()
+	t, ok := b.topics[name]
+	b.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	return t.snapshot(), true
+}
+
 // BoardTopicSummary is one row of ListTopics output. It uses Go-native types
 // (string, time.Time, int) and is distinct from the generated wire type TopicSummary.
 type BoardTopicSummary struct {

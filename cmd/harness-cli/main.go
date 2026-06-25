@@ -532,6 +532,8 @@ func main() {
 			err = agent.Subscriptions(ctx, rest, os.Stdout)
 		case "purge":
 			err = agent.Purge(ctx, rest, os.Stdout)
+		case "retained":
+			err = agent.Retained(ctx, rest, os.Stdout)
 		default:
 			agentUsage()
 			os.Exit(2)
@@ -635,7 +637,8 @@ func agentUsage() {
 	fmt.Fprintln(os.Stderr, "                                       send + wait for reply (sugar)")
 	fmt.Fprintln(os.Stderr, "  topics                              list every topic on the board (JSON Lines)")
 	fmt.Fprintln(os.Stderr, "  subscriptions                       list this agent's registered patterns (JSON Lines)")
-	fmt.Fprintln(os.Stderr, "  purge --topic T | --self             drop a topic's retained-message buffer (cap: purge)")
+	fmt.Fprintln(os.Stderr, "  retained --topic T | --self          list a topic's retained ring as metadata only, no payload (no cap)")
+	fmt.Fprintln(os.Stderr, "  purge --topic T | --self [--seq N]   drop a topic's retained buffer, or one message by seq (cap: purge)")
 }
 
 func die(err error) {

@@ -23,6 +23,7 @@ func Purge(ctx context.Context, args []string, stdout io.Writer) error {
 	serverCID := fs.String("server-cid", "", "")
 	topic := fs.String("topic", "", "topic whose retained buffer to purge (exact match in v1)")
 	self := fs.Bool("self", false, "purge this agent's own inbound topic (chat.<first-8-hex-of-task-id>); mutually exclusive with --topic")
+	seq := fs.Uint64("seq", 0, "drop only the retained message with this seq (0 = the whole topic). Find seqs with `agent retained`.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -71,7 +72,7 @@ func Purge(ctx context.Context, args []string, stdout io.Writer) error {
 	})
 
 	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Purge}
-	req := agentboard.PurgeRequest{RequestId: reqID}
+	req := agentboard.PurgeRequest{RequestId: reqID, Seq: *seq}
 	req.SetTopic([]byte(*topic))
 	msg.SetPurge(req)
 	if err := conn.SendRaw(msg); err != nil {
@@ -85,8 +86,8 @@ func Purge(ctx context.Context, args []string, stdout io.Writer) error {
 			fmt.Fprintf(stdout, "{\"status\":\"ok\",\"topic\":%q,\"purged\":%d}\n", *topic, r.Purged)
 			return nil
 		case agentboard.PurgeStatus_NotFound:
-			// Idempotent: nothing retained for that topic (never created or
-			// already evicted). Not an error.
+			// Idempotent: nothing matched (topic never created / already evicted,
+			// or --seq named a message no longer in the ring). Not an error.
 			fmt.Fprintf(stdout, "{\"status\":\"not_found\",\"topic\":%q,\"purged\":0}\n", *topic)
 			return nil
 		case agentboard.PurgeStatus_Denied:

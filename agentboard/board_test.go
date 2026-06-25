@@ -297,6 +297,65 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 	}
 }
 
+func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
+	defer b.Detach(conn)
+	if err := b.Subscribe(conn, "chat.mix"); err != nil {
+		t.Fatal(err)
+	}
+
+	var seqs []uint64
+	for _, p := range []string{"a", "b", "c"} {
+		s, err := b.Send("chat.mix", []byte(p), testRid, testTid, "test-host")
+		if err != nil {
+			t.Fatal(err)
+		}
+		seqs = append(seqs, s)
+	}
+
+	// ListRetained exposes metadata for all three (incl. a populated ReceivedAt).
+	msgs, found := b.ListRetained("chat.mix")
+	if !found || len(msgs) != 3 {
+		t.Fatalf("ListRetained = (%d msgs, found=%v), want (3, true)", len(msgs), found)
+	}
+	if msgs[0].ReceivedAt.IsZero() {
+		t.Fatalf("ReceivedAt not populated on retained message")
+	}
+
+	// Drop only the middle seq; the other two and the topic itself survive.
+	removed, found := b.PurgeSeq("chat.mix", seqs[1])
+	if !found || !removed {
+		t.Fatalf("PurgeSeq middle = (removed=%v, found=%v), want (true, true)", removed, found)
+	}
+	after, _ := b.ListRetained("chat.mix")
+	if len(after) != 2 {
+		t.Fatalf("after seq-purge ListRetained len=%d, want 2", len(after))
+	}
+	for _, m := range after {
+		if m.Seq == seqs[1] {
+			t.Fatalf("purged seq %d still present", seqs[1])
+		}
+	}
+	in, _ := b.Inbox(conn, 0)
+	if len(in) != 2 || string(in[0].Payload) != "a" || string(in[1].Payload) != "c" {
+		t.Fatalf("inbox after seq-purge = %+v, want payloads [a c]", in)
+	}
+
+	// A seq not in the ring: topic found, nothing removed.
+	if removed, found := b.PurgeSeq("chat.mix", 999999); !found || removed {
+		t.Fatalf("PurgeSeq absent = (removed=%v, found=%v), want (false, true)", removed, found)
+	}
+	// Unknown topic: not found for both list and seq-purge.
+	if _, found := b.ListRetained("nope"); found {
+		t.Fatalf("ListRetained unknown topic returned found=true")
+	}
+	if _, found := b.PurgeSeq("nope", 1); found {
+		t.Fatalf("PurgeSeq unknown topic returned found=true")
+	}
+}
+
 // protoRunnerIDFromBoard / protoTaskIDFromBoard are test-only helpers to
 // bridge the agentboard.RunnerID/TaskID (Hello-side) and protocol.RunnerID/
 // TaskID (server-dispatch side). The two have the same field shape; both

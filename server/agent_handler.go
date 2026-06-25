@@ -85,6 +85,8 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		s.agentHandleListSubscriptions(conn, ac, msg.ListSubscriptions())
 	case agentboard.AgentMessageKind_Purge:
 		s.agentHandlePurge(conn, ac, msg.Purge())
+	case agentboard.AgentMessageKind_ListRetained:
+		s.agentHandleListRetained(conn, ac, msg.ListRetained())
 	}
 }
 
@@ -429,14 +431,75 @@ func (s *Server) agentHandlePurge(conn ConnHandle, ac *agentConn, r *agentboard.
 		return
 	}
 
-	purged, found := s.Board.PurgeTopic(string(r.Topic))
-	if !found {
+	// seq == 0 → whole topic; seq > 0 → drop just that one retained message.
+	if r.Seq == 0 {
+		purged, found := s.Board.PurgeTopic(string(r.Topic))
+		if !found {
+			reply(agentboard.PurgeStatus_NotFound, 0)
+			return
+		}
+		n := purged
+		if n > 65535 {
+			n = 65535
+		}
+		reply(agentboard.PurgeStatus_Ok, uint16(n))
+		return
+	}
+
+	removed, found := s.Board.PurgeSeq(string(r.Topic), r.Seq)
+	if !found || !removed {
+		// Topic gone, or no retained message carried that seq.
 		reply(agentboard.PurgeStatus_NotFound, 0)
 		return
 	}
-	n := purged
-	if n > 65535 {
-		n = 65535
+	reply(agentboard.PurgeStatus_Ok, 1)
+}
+
+// agentHandleListRetained returns a topic's retained ring as metadata only (no
+// payload bytes). It is the content-blind targeting step for a seq-scoped
+// purge: the caller picks a seq by sender / size / time without ingesting a
+// payload that might itself trip a moderation gate.
+//
+// No capability gate (helloed only), like inbox/wait/send/subscribe. It is a
+// KEYED read of a topic the caller must already name — not a discovery sweep
+// (that is list_topics, which info_global gates). Everything it surfaces (seq /
+// sender task id / size / time) is already obtainable uncapped by subscribing
+// and reading inbox/wait — metadata is a strict subset of that content — so a
+// cap here would gate a read more tightly than the content it summarizes, for
+// no gain. Destruction (purge) still needs Capability_Purge; reading does not.
+func (s *Server) agentHandleListRetained(conn ConnHandle, ac *agentConn, req *agentboard.ListRetainedRequest) {
+	if !ac.helloed || req == nil {
+		return
 	}
-	reply(agentboard.PurgeStatus_Ok, uint16(n))
+	out := agentboard.ListRetainedResponse{RequestId: req.RequestId}
+	send := func() {
+		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListRetainedResponse}
+		resp.SetListRetainedResponse(out)
+		s.sendAgent(conn, resp)
+	}
+
+	msgs, found := s.Board.ListRetained(string(req.Topic))
+	if !found {
+		out.Status = agentboard.PurgeStatus_NotFound
+		send()
+		return
+	}
+	out.Status = agentboard.PurgeStatus_Ok
+	for _, m := range msgs {
+		size := len(m.Payload)
+		if size > 0xffffffff {
+			size = 0xffffffff
+		}
+		meta := agentboard.RetainedMeta{
+			Seq:              m.Seq,
+			FromRunner:       protoToAgentboardRunnerID(m),
+			FromTask:         protoToAgentboardTaskID(m),
+			Size:             uint32(size),
+			ReceivedAtUnixMs: uint64(m.ReceivedAt.UnixMilli()),
+		}
+		meta.SetFromHostname([]byte(m.FromHostname))
+		out.Metas = append(out.Metas, meta)
+	}
+	out.MetasLen = uint16(len(out.Metas))
+	send()
 }
