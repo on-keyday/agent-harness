@@ -223,8 +223,9 @@ const POLL_INTERVAL_MS = 5000;
     // no separate event subscription in wasm). snap.conns may be absent if
     // the server doesn't have the list_conns capability yet; guard with [].
     const conns = snap.conns || [];
-    renderConnTopology(conns);
-    renderConnList(conns);
+    const allTasks = snap.tasks || [];
+    renderConnTopology(conns, allTasks);
+    renderConnList(conns, allTasks);
   };
   await refreshSnapshot();
   setInterval(refreshSnapshot, POLL_INTERVAL_MS);
@@ -1998,6 +1999,13 @@ function connIpPart(remoteAddr) {
 }
 
 // groupConnsByIP groups the conns array into a Map<ip, connInfo[]>.
+// isActiveTask: a task currently alive on its runner. Running = actively
+// executing; Detached = interactive session alive with no client attached.
+// Terminal (Succeeded/Failed/Cancelled) and not-yet-assigned Queued are excluded.
+function isActiveTask(tk) {
+  return tk && (tk.status === "Running" || tk.status === "Detached");
+}
+
 function groupConnsByIP(conns) {
   const map = new Map();
   for (const c of conns) {
@@ -2029,9 +2037,10 @@ function svgEl(tag, attrs) {
 //     "visible" after a frame (CSS transition animates opacity/scale in).
 //   - Removed cids get class "leaving" and are removed after the CSS
 //     transition completes.
-function renderConnTopology(conns) {
+function renderConnTopology(conns, tasks) {
   const host = document.getElementById("conn-topology");
   if (!host) return;
+  tasks = tasks || [];
 
   // On mobile, the topology container is hidden by CSS; skip heavy DOM work.
   if (window.matchMedia("(max-width: 600px)").matches) {
@@ -2170,6 +2179,39 @@ function renderConnTopology(conns) {
       } else {
         leafG.classList.add("visible");
       }
+
+      // Hang this runner's currently-active tasks off its leaf. This is an
+      // ASSIGNMENT relationship (distinct from the connection lines), so tasks
+      // render as squares on dashed branches. Pure client-side join: a runner
+      // conn's cid equals the runner's registry id equals task.assignedTo.
+      if (conn.role === "runner") {
+        const myTasks = tasks
+          .filter(tk => isActiveTask(tk) && tk.assignedTo === conn.cid)
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        const nT = myTasks.length;
+        const tFanHalf = Math.min(fanHalf, 0.12 * Math.max(1, nT - 1));
+        myTasks.forEach((tk, ti) => {
+          const tt = nT > 1 ? ti / (nT - 1) - 0.5 : 0; // -0.5..0.5
+          const tAngle = fanAngle + tt * 2 * tFanHalf;
+          const tr = R1 + 20 + (ti % 2) * 12; // beyond the cluster ring, staggered
+          const tx = cx + tr * Math.cos(tAngle);
+          const ty = cy + tr * Math.sin(tAngle);
+          svg.appendChild(svgEl("line", {
+            class: "ct-task-spoke", x1: lx, y1: ly, x2: tx, y2: ty,
+          }));
+          const taskG = svgEl("g", { class: "ct-task-node", "data-task": tk.id });
+          const s = 6;
+          taskG.appendChild(svgEl("rect", {
+            x: tx - s, y: ty - s, width: 2 * s, height: 2 * s, rx: 1.5,
+          }));
+          const base = (tk.repoPath || "").split(/[\\/]/).filter(Boolean).pop();
+          const label = base || (tk.id ? tk.id.slice(0, 6) : "task");
+          taskG.appendChild(Object.assign(svgEl("text", {
+            class: "ct-task-label", x: tx, y: ty + s + 9,
+          }), { textContent: label }));
+          svg.appendChild(taskG);
+        });
+      }
     });
   });
 
@@ -2227,9 +2269,10 @@ function _updatePrevConnCids(conns) {
 
 // renderConnList renders the mobile grouped-list view into #conn-list.
 // One card per IP, listing its connections with role badge, age, principal.
-function renderConnList(conns) {
+function renderConnList(conns, tasks) {
   const host = document.getElementById("conn-list");
   if (!host) return;
+  tasks = tasks || [];
 
   host.innerHTML = "";
 
@@ -2294,6 +2337,21 @@ function renderConnList(conns) {
       row.appendChild(ageEl);
 
       card.appendChild(row);
+
+      // Active tasks running on this runner (assignment join: cid == assignedTo).
+      if (conn.role === "runner") {
+        const myTasks = tasks
+          .filter(tk => isActiveTask(tk) && tk.assignedTo === conn.cid)
+          .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        for (const tk of myTasks) {
+          const trow = document.createElement("div");
+          trow.className = "conn-task-row";
+          const base = (tk.repoPath || "").split(/[\\/]/).filter(Boolean).pop();
+          trow.textContent = "↳ " + (base || (tk.id ? tk.id.slice(0, 6) : "task"));
+          if (tk.id) trow.title = tk.id;
+          card.appendChild(trow);
+        }
+      }
     }
     host.appendChild(card);
   }

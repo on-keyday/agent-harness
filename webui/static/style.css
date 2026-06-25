@@ -675,6 +675,25 @@ button:hover { background: #555; }
   text-anchor: middle;
   pointer-events: none;
 }
+/* Active tasks hung off a runner leaf — an ASSIGNMENT, drawn distinctly from
+   the (circular) connection nodes: dashed branch + square marker. */
+.ct-task-spoke {
+  stroke: #6b5836;
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+.ct-task-node rect {
+  fill: #2a2412;
+  stroke: #d9a441;
+  stroke-width: 1.5;
+}
+.ct-task-label {
+  fill: #d9a441;
+  font-size: 8px;
+  font-family: monospace;
+  text-anchor: middle;
+  pointer-events: none;
+}
 /* Legend */
 .ct-legend {
   margin-top: 0.4rem;
@@ -760,6 +779,13 @@ button:hover { background: #555; }
   align-items: center;
 }
 .conn-row:last-child { border-bottom: none; }
+/* Active task under a runner row (mobile) */
+.conn-task-row {
+  padding: 0.15rem 0.7rem 0.15rem 1.8rem;
+  font-family: monospace;
+  font-size: 0.74rem;
+  color: #d9a441;
+}
 .conn-role-badge {
   border-radius: 3px;
   padding: 0.1rem 0.4rem;
