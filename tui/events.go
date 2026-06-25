@@ -28,6 +28,11 @@ type RunnerEventMsg struct {
 	Event protocol.RunnerStatusEvent
 }
 
+// ConnStatusMsg carries a decoded ConnStatusEvent from the conns.status topic.
+type ConnStatusMsg struct {
+	Event protocol.ConnStatusEvent
+}
+
 type LogChunkMsg struct {
 	TaskID string // hex
 	Chunk  []byte
@@ -95,6 +100,28 @@ func SubscribeRunnerStatus(ctx context.Context, c *cli.Client, program *tea.Prog
 			return nil
 		}
 		return RunnerEventMsg{Event: ev}
+	})
+}
+
+// DecodeConnStatus decodes a ConnStatusEvent payload.
+func DecodeConnStatus(payload []byte) (protocol.ConnStatusEvent, error) {
+	var ev protocol.ConnStatusEvent
+	if _, err := ev.Decode(payload); err != nil {
+		return protocol.ConnStatusEvent{}, fmt.Errorf("decode ConnStatusEvent: %w", err)
+	}
+	return ev, nil
+}
+
+// SubscribeConnStatus mirrors SubscribeTaskStatus for the conns.status topic.
+// It forwards each decoded ConnStatusEvent as a ConnStatusMsg via program.Send.
+func SubscribeConnStatus(ctx context.Context, c *cli.Client, program *tea.Program) {
+	subscribeAndStream(ctx, c, topics.ConnsStatus(), program, func(payload []byte) tea.Msg {
+		ev, err := DecodeConnStatus(payload)
+		if err != nil {
+			slog.Warn("decode conn event", "err", err)
+			return nil
+		}
+		return ConnStatusMsg{Event: ev}
 	})
 }
 

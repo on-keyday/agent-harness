@@ -57,6 +57,9 @@ type App struct {
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
+	// connections view
+	connsModal ConnsModal
+
 	// port-forward state
 	portForwardModal PortForwardModal
 	forwardPicker    ForwardPicker
@@ -130,6 +133,7 @@ func New(cfg Config) *App {
 		cmdline:     cmd,
 		popup:       NewPopup(cfg.DefaultRepo),
 		filepicker:  NewFilePicker(),
+		connsModal:     NewConnsModal(),
 		focus:          focusTasks,
 		connected:      false,
 		status:         "connecting…",
@@ -218,6 +222,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// server-side RunnerStatusEvent.RunnerId is a placeholder (not keyable),
 		// so we kick a full snapshot refresh on every runner event.
 		return a, RefreshSnapshot(a.client)
+
+	case ConnSnapshotMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(WarnStyle.Render("conns snapshot: " + msg.Err.Error()))
+			return a, nil
+		}
+		a.connsModal.ApplySnapshot(msg.Conns)
+		return a, nil
+
+	case ConnStatusMsg:
+		a.connsModal.ApplyEvent(msg.Event)
+		return a, nil
 
 	case LogChunkMsg:
 		if msg.TaskID == a.logs.TaskID() {
@@ -465,6 +481,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 		a.layout()
 		a.filepicker.SetSize(a.width, a.height)
+		a.connsModal.SetSize(a.width, a.height)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -475,6 +492,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.detail.Close()
 			}
 			return a, nil
+		}
+		// Connections modal: Esc closes; arrow keys scroll the table; all
+		// other keys (q, s, etc.) are swallowed so they don't leak through.
+		if a.connsModal.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				a.connsModal.Close()
+				return a, nil
+			}
+			var cmd tea.Cmd
+			a.connsModal, cmd = a.connsModal.Update(msg)
+			return a, cmd
 		}
 		// File picker intercepts ALL keys when open.
 		if a.filepicker.IsOpen() {
@@ -588,6 +616,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.popup.SetHostChoices(uniqueHostnames(a.runnersSnapshot))
 			a.popup.Open()
 			return a, nil
+		}
+		// `C` (capital) opens the live connections view. It fetches the
+		// initial snapshot via ConnListWith (long-lived client, no new dial)
+		// and subscribes to conns.status for live updates. Esc closes.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "C" {
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("conns: not connected"))
+				return a, nil
+			}
+			a.connsModal.Open()
+			a.connsModal.SetSize(a.width, a.height)
+			return a, DoConnSnapshot(a.client)
 		}
 		// `i` attaches to a Detached+Detachable task when one is selected in
 		// the tasks panel, otherwise opens a new interactive PTY session in
@@ -855,7 +895,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · v view-only · F file picker · d detail · c cancel · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · v view-only · F file picker · d detail · c cancel · C conns · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -882,6 +922,9 @@ func (a *App) View() string {
 	}
 	if a.forwardPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardPicker.View())
+	}
+	if a.connsModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.connsModal.View())
 	}
 	return view
 }
