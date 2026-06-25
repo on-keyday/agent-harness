@@ -2063,11 +2063,15 @@ function renderConnTopology(conns, tasks) {
   const clusters = [...byIP.keys()].sort();
   const nClusters = clusters.length;
 
-  // SVG viewport: 700 wide × 320 tall; server at center.
-  const W = 700, H = 320;
+  // SVG viewport: server at center, hierarchy radiates strictly OUTWARD —
+  // server → cluster ring → connection leaves → tasks. Each level is further
+  // from the centre, so depth reads as distance and the outer rings (longer
+  // circumference) give crowded hosts more room. Squarer viewport since a
+  // radial layout needs vertical room, not just width.
+  const W = 640, H = 480;
   const cx = W / 2, cy = H / 2;
-  const R1 = 110; // cluster ring radius
-  const R2 = 65;  // leaf ring radius (between server and cluster)
+  const R1 = 95;  // cluster ring (inner — closest to server)
+  const R2 = 165; // connection-leaf ring (outside its cluster)
   const SERVER_R = 22;
   const CLUSTER_R = 14;
   const LEAF_R = 8;
@@ -2193,7 +2197,7 @@ function renderConnTopology(conns, tasks) {
         myTasks.forEach((tk, ti) => {
           const tt = nT > 1 ? ti / (nT - 1) - 0.5 : 0; // -0.5..0.5
           const tAngle = fanAngle + tt * 2 * tFanHalf;
-          const tr = R1 + 20 + (ti % 2) * 12; // beyond the cluster ring, staggered
+          const tr = r + 24 + (ti % 2) * 12; // just OUTWARD from this leaf, staggered
           const tx = cx + tr * Math.cos(tAngle);
           const ty = cy + tr * Math.sin(tAngle);
           svg.appendChild(svgEl("line", {
