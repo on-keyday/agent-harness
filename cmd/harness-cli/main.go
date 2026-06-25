@@ -130,6 +130,24 @@ func main() {
 			die(err)
 		}
 
+	case "conns":
+		fs := flag.NewFlagSet("conns", flag.ExitOnError)
+		asJSON := fs.Bool("json", false, "output JSON lines instead of a human-readable table")
+		fs.Parse(args)
+		conns, err := cli.ConnList(ctx, parseCID())
+		if err != nil {
+			die(err)
+		}
+		if *asJSON {
+			for i := range conns {
+				fmt.Fprintln(os.Stdout, cli.ConnInfoJSONLine(&conns[i]))
+			}
+		} else {
+			for _, line := range cli.ConnInfoLines(conns) {
+				fmt.Fprintln(os.Stdout, line)
+			}
+		}
+
 	case "caps":
 		fs := flag.NewFlagSet("caps", flag.ExitOnError)
 		asJSON := fs.Bool("json", false, "output the capability catalog as JSON")
@@ -526,6 +544,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--claude-arg --resume <uuid>` finds claude's stored session)")
 	fmt.Fprintln(os.Stderr, "                                      --caps: comma-separated capability names to grant (e.g. spawn,file_read / all / none); default all. On --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
+	fmt.Fprintln(os.Stderr, "  conns [--json]                      snapshot live connections (requires info_global cap); --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  caps [--json]                       list the grantable --caps capability names and what each authorizes")
 	fmt.Fprintln(os.Stderr, "  skill [NAME]                        print the embedded agent skill (default: harness-cli)")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
