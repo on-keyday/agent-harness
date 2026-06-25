@@ -231,6 +231,9 @@ enum TaskControlKind:
     open_port_forward
     notify
     permission_denied
+    list_conns      # appended (keeps existing ordinals stable): snapshot list of
+                    # live objproto connections. Requires info_global; confined
+                    # tasks see only their own subtree.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -665,6 +668,7 @@ format TaskControlRequest:
         TaskControlKind.dial_runner        => dial_runner        :DialRunnerRequest
         TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardRequest
         TaskControlKind.notify              => notify             :NotifyRequest
+        TaskControlKind.list_conns          => list_conns         :ConnListQuery
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -692,6 +696,7 @@ format TaskControlResponse:
         TaskControlKind.open_port_forward  => open_port_forward  :OpenPortForwardResponse
         TaskControlKind.notify              => notify             :NotifyResponse
         TaskControlKind.permission_denied  => permission_denied  :PermissionDeniedResponse
+        TaskControlKind.list_conns          => list_conns         :ConnListResult
 
 enum NotifyLevel:
     :u8
@@ -760,6 +765,12 @@ enum StatusEventKind:
                       # forgot a terminal task; clients remove its row. Carries
                       # task_id + kind only — task_status/task_kind are unset
                       # because the TaskStore entry is already gone.
+    conn_opened       # appended: activeConns register; role likely unspecified
+                      # (handshake not yet completed). Makes failed-handshake /
+                      # probe / half-open conns visible.
+    conn_identified   # appended: identity established (ClientHello or RunnerHello);
+                      # carries the now-known role.
+    conn_closed       # appended: activeConns teardown.
 
 format TaskStatusEvent:
     kind :StatusEventKind
@@ -777,6 +788,55 @@ format RunnerStatusEvent:
     runner_id :RunnerID
     ts :u64
     runner_status :RunnerStatus
+
+# --- ConnRole: the kind of a LIVE objproto connection. Distinct from
+# ClientKind (which tags a TaskControl caller in ClientHello and never carries
+# `runner`, since a runner does RunnerHello, not ClientHello). ConnRole is
+# derived server-side and covers every conn kind including runner + the
+# not-yet-identified state.
+enum ConnRole:
+    :u8
+    unspecified   # handshake not yet completed (ConnOpened but not ConnIdentified)
+    cli
+    tui
+    webui
+    agent
+    runner
+
+# --- ConnInfo: one live (or just-opened/just-closed) connection. ---
+format ConnInfo:
+    cid_len :u8
+    cid :[cid_len]u8                # ConnectionID canonical String() — the unique key
+                                    # used to correlate open/identified/closed events
+    role :ConnRole
+    remote_addr_len :u8
+    remote_addr :[remote_addr_len]u8  # "ip:port"; WebUI groups by the ip portion
+    principal_task :TaskID          # agent conn: its principal task id.
+                                    # all-zero for cli/tui/webui/runner/unidentified.
+    connected_at :u64               # unix nano, stamped at activeConns register
+    identified :u1                  # 1 once role is established (handshake done);
+                                    # 0 = opened-but-never-authed (probe / failed)
+    reserved :u7
+
+# --- (a) snapshot: streamed body, mirrors ListResult / ListResultBody ---
+format ConnListQuery:
+    reserved :u8    # no filters in v1; reserved for forward-compat
+                    # (server always returns the caller's visible set)
+
+format ConnListResult:
+    stream_id :u64  # server-initiated send-stream; client reads
+                    # ConnListResultBody until EOF then decodes.
+                    # 0 = no stream available (treat as error).
+
+format ConnListResultBody:
+    conns_len :u16
+    conns :[conns_len]ConnInfo
+
+# --- (c) live event, mirrors TaskStatusEvent / RunnerStatusEvent ---
+format ConnStatusEvent:
+    kind :StatusEventKind  # conn_opened | conn_identified | conn_closed
+    ts :u64
+    info :ConnInfo
 
 # === File transfer (client ↔ runner; see specs/2026-05-10-file-transfer-design.md) ===
 
