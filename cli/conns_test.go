@@ -146,3 +146,36 @@ func TestConnInfoJSONLine_Unidentified(t *testing.T) {
 		t.Errorf("expected identified=false in JSON for unidentified conn: %s", line)
 	}
 }
+
+// TestConnStatusEventLine verifies the event-line formatters for ConnStatusEvent.
+// An opened event for an unidentified conn must contain "opened" and "unident".
+// A closed event must contain "closed".
+func TestConnStatusEventLine(t *testing.T) {
+	var zeroPrincipal [16]byte
+	ci := makeConnInfo("cid6", "198.51.100.9:1234", protocol.ConnRole_Unspecified, zeroPrincipal,
+		time.Now().Add(-3*time.Second), false)
+
+	openedEv := protocol.ConnStatusEvent{
+		Kind: protocol.StatusEventKind_ConnOpened,
+		Ts:   uint64(time.Now().UnixNano()),
+		Info: ci,
+	}
+	closedEv := protocol.ConnStatusEvent{
+		Kind: protocol.StatusEventKind_ConnClosed,
+		Ts:   uint64(time.Now().UnixNano()),
+		Info: ci,
+	}
+
+	openedLine := connStatusEventTextLine(&openedEv)
+	if !strings.Contains(openedLine, "opened") {
+		t.Errorf("opened event line missing 'opened': %q", openedLine)
+	}
+	if !strings.Contains(openedLine, "unident") {
+		t.Errorf("opened event line for unidentified conn missing 'unident': %q", openedLine)
+	}
+
+	closedLine := connStatusEventTextLine(&closedEv)
+	if !strings.Contains(closedLine, "closed") {
+		t.Errorf("closed event line missing 'closed': %q", closedLine)
+	}
+}

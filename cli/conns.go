@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/topics"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -195,5 +197,129 @@ func renderConns(conns []protocol.ConnInfo, out io.Writer) {
 	fmt.Fprintf(out, "  %-22s  %-11s  %-8s  %s\n", "REMOTE-ADDR", "ROLE", "PRINCIPAL", "AGE")
 	for i := range conns {
 		fmt.Fprintln(out, " ", connInfoTextLine(&conns[i]))
+	}
+}
+
+// watchConnStatusEvents subscribes to the conns.status topic and writes one
+// formatted line per ConnStatusEvent to out (ring backlog first, then live),
+// using the given per-event line formatter. Blocks until ctx is done.
+// Mirrors watchNotifications in notify_watch.go.
+func (c *Client) watchConnStatusEvents(ctx context.Context, out io.Writer, line func(*protocol.ConnStatusEvent) string) error {
+	topic := topics.ConnsStatus()
+	stream, err := c.Peer().JoinAndGetStream(ctx, "conns-watch", topic)
+	if err != nil {
+		return fmt.Errorf("join %s: %w", topic, err)
+	}
+	var mu sync.Mutex
+	go func() {
+		var buf []byte
+		for {
+			data, eof, rerr := stream.ReadDirect(4096)
+			if rerr != nil {
+				return
+			}
+			if len(data) > 0 {
+				buf = append(buf, data...)
+				buf = drainConnStatusEvents(buf, out, &mu, line)
+			}
+			if eof {
+				return
+			}
+		}
+	}()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// WatchConnsWith subscribes to conns.status and writes one human-readable line
+// per ConnStatusEvent to out. Method form: callable on an existing *Client (for
+// TUI/WebUI which hold a long-lived client). Blocks until ctx is done.
+func (c *Client) WatchConnsWith(ctx context.Context, out io.Writer) error {
+	return c.watchConnStatusEvents(ctx, out, connStatusEventTextLine)
+}
+
+// WatchConnsJSONWith is the JSON-lines variant for long-lived callers.
+func (c *Client) WatchConnsJSONWith(ctx context.Context, out io.Writer) error {
+	return c.watchConnStatusEvents(ctx, out, connStatusEventJSONLine)
+}
+
+// WatchConns opens a fresh Client, calls WatchConnsWith, and closes the client.
+// Suitable for short-lived harness-cli invocations. Long-lived consumers (TUI,
+// WebUI) should hold a *Client and call WatchConnsWith instead.
+func WatchConns(ctx context.Context, serverCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, serverCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.WatchConnsWith(ctx, out)
+}
+
+// WatchConnsJSON is the JSON-lines package-level variant for harness-cli --json.
+func WatchConnsJSON(ctx context.Context, serverCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, serverCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.WatchConnsJSONWith(ctx, out)
+}
+
+// drainConnStatusEvents decodes as many whole ConnStatusEvents as buf holds,
+// writing one formatted line each, and returns the undrained remainder.
+// Mirrors drainNotifyEvents in notify_watch.go.
+func drainConnStatusEvents(buf []byte, out io.Writer, mu *sync.Mutex, line func(*protocol.ConnStatusEvent) string) []byte {
+	for {
+		ev := &protocol.ConnStatusEvent{}
+		rest, err := ev.Decode(buf)
+		if err != nil {
+			break
+		}
+		mu.Lock()
+		fmt.Fprintln(out, line(ev))
+		mu.Unlock()
+		buf = rest
+	}
+	return buf
+}
+
+// connStatusEventTextLine renders one human-readable line for a ConnStatusEvent.
+// Format: HH:MM:SS [opened|identified|closed] <connInfoTextLine>
+func connStatusEventTextLine(ev *protocol.ConnStatusEvent) string {
+	ts := time.Unix(0, int64(ev.Ts)).Local().Format("15:04:05")
+	kind := connStatusEventKindLabel(ev.Kind)
+	return fmt.Sprintf("%s [%s] %s", ts, kind, connInfoTextLine(&ev.Info))
+}
+
+// connStatusEventJSONLine renders a JSON object line for a ConnStatusEvent.
+// Embeds the ConnInfo fields plus a top-level "event" key with the kind label.
+func connStatusEventJSONLine(ev *protocol.ConnStatusEvent) string {
+	m := map[string]any{
+		"event":          connStatusEventKindLabel(ev.Kind),
+		"ts":             ev.Ts,
+		"remote_addr":    string(ev.Info.RemoteAddr),
+		"role":           strings.ToLower(ev.Info.Role.String()),
+		"principal_task": taskIDStr(ev.Info.PrincipalTask.Id[:]),
+		"age_sec":        connAgeSec(ev.Info.ConnectedAt),
+		"connected_at":   ev.Info.ConnectedAt,
+		"identified":     ev.Info.Identified(),
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
+}
+
+// connStatusEventKindLabel maps a StatusEventKind to a short label used in
+// formatted output ("opened", "identified", "closed"). Unknown kinds fall back
+// to the kind's String() representation.
+func connStatusEventKindLabel(k protocol.StatusEventKind) string {
+	switch k {
+	case protocol.StatusEventKind_ConnOpened:
+		return "opened"
+	case protocol.StatusEventKind_ConnIdentified:
+		return "identified"
+	case protocol.StatusEventKind_ConnClosed:
+		return "closed"
+	default:
+		return strings.ToLower(k.String())
 	}
 }
