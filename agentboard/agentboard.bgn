@@ -28,6 +28,8 @@ enum AgentMessageKind:
     list_topics_response
     list_subscriptions
     list_subscriptions_response
+    purge
+    purge_response
 
 enum HelloStatus:
     :u8
@@ -144,6 +146,28 @@ format ListSubscriptionsResponse:
     subscriptions_len :u16
     subscriptions :[subscriptions_len]SubscriptionSummary
 
+# PurgeRequest destroys a single topic's retained-message ring on the server
+# (exact match, no wildcards — same as subscribe in v1). Used to flush a
+# poisoned/unwanted payload out of the server-side buffer so a since=0 re-read
+# can't resurface it. Gated by Capability.purge.
+format PurgeRequest:
+    request_id :u32
+    topic_len :u16
+    topic :[topic_len]u8
+
+enum PurgeStatus:
+    :u8
+    ok
+    not_found
+    denied
+
+format PurgeResponse:
+    request_id :u32
+    status :PurgeStatus
+    # purged is the number of retained messages dropped from the ring (0 when
+    # not_found or denied).
+    purged :u16
+
 format AgentMessage:
     kind :AgentMessageKind
     match kind:
@@ -161,4 +185,6 @@ format AgentMessage:
         AgentMessageKind.list_topics_response => list_topics_response :ListTopicsResponse
         AgentMessageKind.list_subscriptions => list_subscriptions :ListSubscriptionsRequest
         AgentMessageKind.list_subscriptions_response => list_subscriptions_response :ListSubscriptionsResponse
+        AgentMessageKind.purge => purge :PurgeRequest
+        AgentMessageKind.purge_response => purge_response :PurgeResponse
         .. => error("Unexpected agent message kind")

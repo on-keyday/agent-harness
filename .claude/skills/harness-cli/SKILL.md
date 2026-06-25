@@ -44,6 +44,31 @@ seqs. As a fallback, run `harness-cli agent inbox --json` (no
 If it returns content, treat it as the missed batch and act on it.
 Do not add `--commit` to the fallback call; it remains hook-only.
 
+## Purging a topic's server-side buffer (`agent purge`)
+
+The cursor only governs what *you* re-read; the message itself stays in the
+server's per-topic ring buffer (default 64 entries) until it rotates out, the
+topic TTL-expires, or the task that exclusively subscribes it ends. A
+`since=0` fallback read (above) therefore re-surfaces it. To drop a payload
+from the **server side** entirely:
+
+```bash
+harness-cli agent purge --topic chat.<short-id>   # exact topic
+harness-cli agent purge --self                    # your own inbound channel
+```
+
+`purge` deletes the topic's whole retained ring and reports how many messages
+were dropped (`{"status":"ok","topic":"...","purged":N}`); an already-empty /
+unknown topic returns `not_found` (a no-op, exit 0). The board seq counter is
+global, so purging does NOT reset sequence numbers — your persisted cursor
+stays valid and a post-purge message is delivered exactly once.
+
+Because purge destroys live retained messages on a possibly-shared topic (it
+can wipe another agent's unconsumed inbound channel), it is gated by its own
+`purge` capability — distinct from `prune` (which only forgets terminal task
+records). An operator task holds it via `all`; a confined worker must be
+granted `--caps ...,purge` explicitly or it gets `denied`.
+
 ## Async by default — never block on a reply
 
 Reply delivery to your context is **always asynchronous**, via the inbox
@@ -361,7 +386,7 @@ authorizes with `harness-cli caps` (`--json` for the machine-readable form).
 
 Granular names: `spawn`, `cancel`, `exec_attach`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`,
-`info_global` — plus the aliases `none` / `all`. When you spawn a worker you
+`info_global`, `purge` — plus the aliases `none` / `all`. When you spawn a worker you
 intend to keep driving, grant the narrowest set that lets it finish, and widen
 only if it hits a capability-denied error.
 

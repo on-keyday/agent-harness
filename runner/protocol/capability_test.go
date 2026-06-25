@@ -3,8 +3,8 @@ package protocol
 import "testing"
 
 func TestCapabilityBits(t *testing.T) {
-	if Capability_All != 0x7ff {
-		t.Fatalf("All = %#x, want 0x7ff", Capability_All)
+	if Capability_All != 0xfff {
+		t.Fatalf("All = %#x, want 0xfff", Capability_All)
 	}
 	if Capability_None != 0 {
 		t.Fatalf("None = %#x, want 0", Capability_None)
@@ -13,7 +13,7 @@ func TestCapabilityBits(t *testing.T) {
 	or := Capability_Spawn | Capability_Cancel | Capability_ExecAttach |
 		Capability_FileRead | Capability_FileWrite | Capability_ForwardLocal |
 		Capability_ForwardRemote | Capability_Notify | Capability_Prune |
-		Capability_RunnerAdmin | Capability_InfoGlobal
+		Capability_RunnerAdmin | Capability_InfoGlobal | Capability_Purge
 	if or != Capability_All {
 		t.Fatalf("OR of bits = %#x, want All = %#x", or, Capability_All)
 	}

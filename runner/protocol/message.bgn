@@ -519,7 +519,7 @@ format SubmitRequest:
     extra_args :ClaudeArgs
     # requested_caps is a Capability bitmask the spawning principal requests for
     # this task. The server computes caps_child = caps_creator ∩ requested_caps.
-    # Use Capability.all (0x7ff) to inherit the creator's full set (the default
+    # Use Capability.all (0xfff) to inherit the creator's full set (the default
     # when no explicit confinement is desired). A zero value grants nothing.
     requested_caps :Capability
     # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
@@ -964,7 +964,13 @@ enum Capability:
     prune          = 0x100, "prune"
     runner_admin   = 0x200, "runner_admin"
     info_global    = 0x400, "info_global"
-    all            = 0x7ff, "all"
+    # purge authorizes destroying an agentboard topic's retained-message ring
+    # (agent purge --topic). Distinct from prune (which forgets TERMINAL TASK
+    # records, self-scoped/benign): purge drops LIVE retained messages on a
+    # possibly-shared topic, so it can wipe another agent's unconsumed inbound
+    # channel. Different blast radius → its own bit, default-off.
+    purge          = 0x800, "purge"
+    all            = 0xfff, "all"
 
 enum OpenPortForwardStatus:
     :u8

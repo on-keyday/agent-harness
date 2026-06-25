@@ -328,6 +328,25 @@ func (b *Board) evictOldestTopicLocked() {
 	}
 }
 
+// PurgeTopic destroys a single topic's retained-message ring, removing the
+// topic from the board entirely (the same operation as TTL / Revoke eviction).
+// Returns the number of retained messages dropped and whether the topic
+// existed. Subscriptions live on each taskState's pattern set, not on the
+// topic, so a later publish recreates the topic fresh; the seq counter is
+// board-global (b.seq), so it is unaffected by deletion and consumer cursors
+// stay valid across a purge (a post-purge message gets a strictly higher seq).
+func (b *Board) PurgeTopic(name string) (purged int, found bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	t, ok := b.topics[name]
+	if !ok {
+		return 0, false
+	}
+	_, _, n := t.summary()
+	delete(b.topics, name)
+	return n, true
+}
+
 // BoardTopicSummary is one row of ListTopics output. It uses Go-native types
 // (string, time.Time, int) and is distinct from the generated wire type TopicSummary.
 type BoardTopicSummary struct {

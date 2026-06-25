@@ -27,6 +27,7 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_Prune,
 		protocol.Capability_RunnerAdmin,
 		protocol.Capability_InfoGlobal,
+		protocol.Capability_Purge,
 		protocol.Capability_All,
 	}
 }
@@ -62,6 +63,8 @@ func CapDescription(c protocol.Capability) string {
 		return "runner administration (server dial-runner)"
 	case protocol.Capability_InfoGlobal:
 		return "see all tasks and agentboard topics globally (not just own subtree)"
+	case protocol.Capability_Purge:
+		return "purge an agentboard topic's retained-message buffer (agent purge)"
 	case protocol.Capability_All:
 		return "full capability set (operator-equivalent)"
 	default:

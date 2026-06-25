@@ -245,6 +245,58 @@ func TestBoard_SendSkipsOnDeliverForPublisher(t *testing.T) {
 	}
 }
 
+func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
+	defer b.Detach(conn)
+	if err := b.Subscribe(conn, "chat.poison"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Retain three messages, advance the consumer cursor past them.
+	for _, p := range []string{"m1", "m2", "m3"} {
+		if _, err := b.Send("chat.poison", []byte(p), testRid, testTid, "test-host"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, cursor := b.Inbox(conn, 0)
+	if cursor == 0 {
+		t.Fatalf("cursor = 0 after three sends, want > 0")
+	}
+
+	// Purge drops the whole ring and reports the count.
+	purged, found := b.PurgeTopic("chat.poison")
+	if !found || purged != 3 {
+		t.Fatalf("PurgeTopic = (purged=%d, found=%v), want (3, true)", purged, found)
+	}
+
+	// A since=0 re-read no longer resurfaces the purged payloads — this is the
+	// whole point (a desync fallback that reads from 0 must come back empty).
+	if msgs, _ := b.Inbox(conn, 0); len(msgs) != 0 {
+		t.Fatalf("post-purge since=0 inbox = %+v, want empty", msgs)
+	}
+
+	// Purging again (or any unknown topic) is a no-op not_found.
+	if purged, found := b.PurgeTopic("chat.poison"); found || purged != 0 {
+		t.Fatalf("re-purge = (purged=%d, found=%v), want (0, false)", purged, found)
+	}
+
+	// seq is board-global, so a post-purge message gets a strictly higher seq
+	// than the old cursor: the consumer's persisted cursor stays valid and the
+	// fresh message is delivered exactly once.
+	if _, err := b.Send("chat.poison", []byte("after"), testRid, testTid, "test-host"); err != nil {
+		t.Fatal(err)
+	}
+	msgs, newCursor := b.Inbox(conn, cursor)
+	if len(msgs) != 1 || string(msgs[0].Payload) != "after" {
+		t.Fatalf("post-purge inbox(since=cursor) = %+v, want one message 'after'", msgs)
+	}
+	if newCursor <= cursor {
+		t.Fatalf("post-purge seq = %d, want > old cursor %d", newCursor, cursor)
+	}
+}
+
 // protoRunnerIDFromBoard / protoTaskIDFromBoard are test-only helpers to
 // bridge the agentboard.RunnerID/TaskID (Hello-side) and protocol.RunnerID/
 // TaskID (server-dispatch side). The two have the same field shape; both

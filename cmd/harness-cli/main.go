@@ -530,6 +530,8 @@ func main() {
 			err = agent.Topics(ctx, rest, os.Stdout)
 		case "subscriptions":
 			err = agent.Subscriptions(ctx, rest, os.Stdout)
+		case "purge":
+			err = agent.Purge(ctx, rest, os.Stdout)
 		default:
 			agentUsage()
 			os.Exit(2)
@@ -633,6 +635,7 @@ func agentUsage() {
 	fmt.Fprintln(os.Stderr, "                                       send + wait for reply (sugar)")
 	fmt.Fprintln(os.Stderr, "  topics                              list every topic on the board (JSON Lines)")
 	fmt.Fprintln(os.Stderr, "  subscriptions                       list this agent's registered patterns (JSON Lines)")
+	fmt.Fprintln(os.Stderr, "  purge --topic T | --self             drop a topic's retained-message buffer (cap: purge)")
 }
 
 func die(err error) {

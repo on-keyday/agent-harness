@@ -83,6 +83,8 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		s.agentHandleListTopics(conn, ac, msg.ListTopics())
 	case agentboard.AgentMessageKind_ListSubscriptions:
 		s.agentHandleListSubscriptions(conn, ac, msg.ListSubscriptions())
+	case agentboard.AgentMessageKind_Purge:
+		s.agentHandlePurge(conn, ac, msg.Purge())
 	}
 }
 
@@ -404,4 +406,37 @@ func (s *Server) agentHandleListSubscriptions(conn ConnHandle, ac *agentConn, re
 	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListSubscriptionsResponse}
 	resp.SetListSubscriptionsResponse(out)
 	s.sendAgent(conn, resp)
+}
+
+// agentHandlePurge destroys a topic's retained-message ring. Gated by
+// Capability_Purge (distinct from Prune): purge drops live retained messages on
+// a possibly-shared topic, so a confined task must be granted it explicitly.
+func (s *Server) agentHandlePurge(conn ConnHandle, ac *agentConn, r *agentboard.PurgeRequest) {
+	if !ac.helloed || r == nil {
+		return
+	}
+	reply := func(status agentboard.PurgeStatus, purged uint16) {
+		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_PurgeResponse}
+		resp.SetPurgeResponse(agentboard.PurgeResponse{RequestId: r.RequestId, Status: status, Purged: purged})
+		s.sendAgent(conn, resp)
+	}
+
+	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_Purge) {
+		_, tid, _ := ac.state.Identity()
+		slog.Warn("agentHandlePurge: caller lacks Purge cap; denying",
+			"task_id", hex.EncodeToString(tid.Id[:]), "topic", string(r.Topic))
+		reply(agentboard.PurgeStatus_Denied, 0)
+		return
+	}
+
+	purged, found := s.Board.PurgeTopic(string(r.Topic))
+	if !found {
+		reply(agentboard.PurgeStatus_NotFound, 0)
+		return
+	}
+	n := purged
+	if n > 65535 {
+		n = 65535
+	}
+	reply(agentboard.PurgeStatus_Ok, uint16(n))
 }
