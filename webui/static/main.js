@@ -2105,11 +2105,24 @@ function renderConnTopology(conns) {
     const clConns = byIP.get(ip).slice().sort((a, b) =>
       a.cid < b.cid ? -1 : a.cid > b.cid ? 1 : 0);
     const nLeaves = clConns.length;
+    // Bounded, tiered leaf layout. Keep each cluster's leaves inside its OWN
+    // angular sector (2π/nClusters) so a crowded host can't overlap neighbouring
+    // clusters, and spill onto concentric arcs (tiers) once one arc would pack
+    // the circles too tightly — so leaves never overlap each other either.
+    const sector = (2 * Math.PI) / nClusters;
+    const fanHalf = Math.min(sector * 0.38, 0.55); // half-fan, with a gutter to neighbours
+    const perTier = Math.max(1, Math.floor((2 * fanHalf * R2) / (LEAF_R * 2.6)));
+    const showLeafLabel = nLeaves <= 6;            // hide per-leaf labels when dense
     clConns.forEach((conn, li) => {
-      // Spread leaves along the spoke direction, fanning slightly perpendicular.
-      const fanAngle = angle + ((li - (nLeaves - 1) / 2) * 0.28);
-      const lx = cx + R2 * Math.cos(fanAngle);
-      const ly = cy + R2 * Math.sin(fanAngle);
+      // Distribute within the bounded fan; extra leaves go to outer arcs.
+      const tier = Math.floor(li / perTier);
+      const inTier = li % perTier;
+      const cntInTier = Math.min(perTier, nLeaves - tier * perTier);
+      const t = cntInTier > 1 ? inTier / (cntInTier - 1) - 0.5 : 0; // -0.5..0.5
+      const fanAngle = angle + t * 2 * fanHalf;
+      const r = R2 + tier * (LEAF_R * 2.4);
+      const lx = cx + r * Math.cos(fanAngle);
+      const ly = cy + r * Math.sin(fanAngle);
 
       // Thin line from cluster to leaf
       svg.appendChild(svgEl("line", {
@@ -2136,12 +2149,15 @@ function renderConnTopology(conns) {
         leafCircle.setAttribute("opacity", ageOpacity.toFixed(3));
       }
       leafG.appendChild(leafCircle);
-      // Short role label below the leaf
-      const roleLabel = Object.assign(svgEl("text", {
-        class: "ct-conn-label",
-        x: lx, y: ly + LEAF_R + 2,
-      }), { textContent: conn.role ? conn.role.slice(0, 3) : "?" });
-      leafG.appendChild(roleLabel);
+      // Short role label below the leaf (suppressed for dense clusters, where
+      // per-leaf labels would overlap; role is still conveyed by colour + legend).
+      if (showLeafLabel) {
+        const roleLabel = Object.assign(svgEl("text", {
+          class: "ct-conn-label",
+          x: lx, y: ly + LEAF_R + 2,
+        }), { textContent: conn.role ? conn.role.slice(0, 3) : "?" });
+        leafG.appendChild(roleLabel);
+      }
       svg.appendChild(leafG);
 
       // Trigger enter animation: start "entering", flip to "visible" next frame.
