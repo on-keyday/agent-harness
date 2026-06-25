@@ -69,3 +69,32 @@ func TestHandleBoardPurge_WholeAndSeq(t *testing.T) {
 	}
 	_ = agentboard.RetainedMessage{} // keep import if unused otherwise
 }
+
+func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
+	h, conn := newBoardTestHandler(t)
+	h.Board.Send("chat.r", []byte("alpha"), protocol.RunnerID{}, protocol.TaskID{}, "h")
+	h.Board.Send("chat.r", []byte("bravo"), protocol.RunnerID{}, protocol.TaskID{}, "h")
+
+	h.handleBoardRead(conn, 1, "chat.r")
+
+	resp := conn.lastTaskControlResponse(t)
+	br := resp.BoardRead()
+	if br == nil || br.Status != protocol.BoardStatus_Ok || br.MsgsLen != 2 {
+		t.Fatalf("board_read resp = %+v, want ok/2", br)
+	}
+	if br.Msgs[0].Size != 5 || br.Msgs[1].Size != 5 {
+		t.Fatalf("sizes = %d,%d want 5,5", br.Msgs[0].Size, br.Msgs[1].Size)
+	}
+	// The recording conn captures the send-stream bytes; concatenation is row order.
+	got := conn.sendStreamBytes(t, br.StreamId)
+	if string(got) != "alphabravo" {
+		t.Fatalf("stream payload = %q, want alphabravo", got)
+	}
+
+	// unknown topic → not_found, stream_id 0
+	h.handleBoardRead(conn, 2, "nope")
+	br = conn.lastTaskControlResponse(t).BoardRead()
+	if br.Status != protocol.BoardStatus_NotFound || br.StreamId != 0 {
+		t.Fatalf("unknown read = %+v, want not_found/0", br)
+	}
+}

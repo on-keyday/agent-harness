@@ -5,7 +5,9 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"testing"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -29,9 +31,13 @@ type fakeConn struct {
 	// that they were torn down via CloseBoth.
 	bidiStreams []*noopBidiStream
 
-	// nextSendStreamID is the StreamID to assign to the next CreateSendStream
-	// result. When zero, CreateSendStream returns nil (legacy behaviour).
+	// nextSendStreamID, when non-zero, is used as the stream ID for the next
+	// CreateSendStream call (then cleared). When zero, an auto-incrementing
+	// counter allocates the ID so tests need not set it explicitly.
 	nextSendStreamID trsf.StreamID
+	// autoStreamCounter is incremented each time CreateSendStream allocates
+	// a stream ID automatically (i.e., nextSendStreamID is zero).
+	autoStreamCounter atomic.Uint64
 	// sendStreams collects every non-nil send stream so tests can assert
 	// the streamed body was written + EOF'd.
 	sendStreams []*recordingSendStream
@@ -54,29 +60,61 @@ func (f *fakeConn) Sent() [][]byte {
 	return out
 }
 
-// CreateSendStream returns a recordingSendStream when nextSendStreamID is
-// set, otherwise nil. Tests exercising the streamed-response path
-// (handleList, handleGetTaskLog) set nextSendStreamID before calling
-// the handler so the body is captured.
+// CreateSendStream returns a recordingSendStream whose bytes are captured for
+// test assertions. When nextSendStreamID is set it is used as the stream ID
+// (then cleared); otherwise an auto-incrementing counter allocates one so
+// callers need not set nextSendStreamID explicitly.
 func (f *fakeConn) CreateSendStream() trsf.SendStream {
-	if f.nextSendStreamID == 0 {
-		return nil
+	id := f.nextSendStreamID
+	if id == 0 {
+		id = trsf.StreamID(f.autoStreamCounter.Add(1))
+	} else {
+		f.nextSendStreamID = 0
 	}
-	s := &recordingSendStream{streamID: f.nextSendStreamID}
+	s := &recordingSendStream{streamID: id, done: make(chan struct{})}
 	f.sendStreams = append(f.sendStreams, s)
-	f.nextSendStreamID = 0
 	return s
 }
 
-// recordingSendStream captures AppendData calls so tests can decode and
-// assert on the streamed body.
-type recordingSendStream struct {
-	streamID trsf.StreamID
-	bytes    []byte
-	eofSent  bool
+// sendStreamBytes waits for the send-stream with the given id to be closed
+// (signalling all payload writes are complete) then returns the captured bytes.
+// Fails the test if the stream is not found.
+func (f *fakeConn) sendStreamBytes(t *testing.T, streamID uint64) []byte {
+	t.Helper()
+	sid := trsf.StreamID(streamID)
+	for _, s := range f.sendStreams {
+		if s.streamID == sid {
+			<-s.done // wait for goroutine to call Close()
+			return s.bytes
+		}
+	}
+	t.Fatalf("sendStreamBytes: stream id %d not found in sendStreams (len=%d)", streamID, len(f.sendStreams))
+	return nil
 }
 
-func (s *recordingSendStream) ID() trsf.StreamID         { return s.streamID }
+// lastTaskControlResponse decodes the last message sent on this conn as a
+// TaskControlResponse (stripping the leading AppKind byte). Returns a pointer
+// so callers can chain pointer-receiver methods (e.g. .BoardRead()) directly
+// on the result. Both this method form and the package-level
+// lastTaskControlResponse(t, conn) helper coexist; existing callers are unaffected.
+func (f *fakeConn) lastTaskControlResponse(t *testing.T) *protocol.TaskControlResponse {
+	t.Helper()
+	resp := lastTaskControlResponse(t, f)
+	return &resp
+}
+
+// recordingSendStream captures AppendData calls so tests can decode and
+// assert on the streamed body. done is closed by Close() to let
+// sendStreamBytes wait for the goroutine to finish writing.
+type recordingSendStream struct {
+	streamID  trsf.StreamID
+	bytes     []byte
+	eofSent   bool
+	done      chan struct{}
+	closeOnce sync.Once
+}
+
+func (s *recordingSendStream) ID() trsf.StreamID { return s.streamID }
 func (s *recordingSendStream) Write(p []byte) (int, error) {
 	s.bytes = append(s.bytes, p...)
 	return len(p), nil
@@ -84,8 +122,14 @@ func (s *recordingSendStream) Write(p []byte) (int, error) {
 func (s *recordingSendStream) WriteContext(_ context.Context, p []byte) (int, error) {
 	return s.Write(p)
 }
-func (s *recordingSendStream) Close() error    { s.eofSent = true; return nil }
-func (s *recordingSendStream) Cancel()         {}
+func (s *recordingSendStream) Close() error {
+	s.eofSent = true
+	if s.done != nil {
+		s.closeOnce.Do(func() { close(s.done) })
+	}
+	return nil
+}
+func (s *recordingSendStream) Cancel() {}
 func (s *recordingSendStream) HasSendData() bool { return len(s.bytes) > 0 }
 func (s *recordingSendStream) Completed() bool   { return s.eofSent }
 func (s *recordingSendStream) AppendData(eof bool, payloads ...[]byte) error {

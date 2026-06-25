@@ -415,6 +415,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			h.handleBoardPurge(conn, req.RequestId, string(r.Topic), r.Seq)
 		}
 
+	case protocol.TaskControlKind_BoardRead:
+		if r := req.BoardRead(); r != nil {
+			h.handleBoardRead(conn, req.RequestId, string(r.Topic))
+		}
+
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
 		if dr == nil {
@@ -1095,6 +1100,15 @@ func (h *TaskHandler) handleListConns(conn ConnHandle, requestID uint32, connID 
 	respond(uint64(stream.ID()))
 }
 
+// writeStreamAll writes p to s as a single non-EOF AppendData call.
+// The caller is responsible for signalling EOF (e.g. via s.Close() or
+// AppendData(true)). This is the canonical write helper reused by any
+// handler that streams pre-assembled byte slices (handleGetTaskLog chunk
+// writes, handleBoardRead payload writes).
+func writeStreamAll(s trsf.SendStream, p []byte) error {
+	return s.AppendData(false, p)
+}
+
 // handleGetTaskLog responds to a GetTaskLog request by opening the per-task
 // log file at <LogsDir>/<taskID>.log, allocating a server-initiated
 // unidirectional stream, sending a TaskControlResponse referencing that
@@ -1145,7 +1159,7 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 		for {
 			n, rerr := f.Read(buf)
 			if n > 0 {
-				if werr := stream.AppendData(false, buf[:n]); werr != nil {
+				if werr := writeStreamAll(stream, buf[:n]); werr != nil {
 					slog.Warn("GetTaskLog: stream write failed", "task_id", taskID, "err", werr)
 					break
 				}
