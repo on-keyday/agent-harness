@@ -13,6 +13,20 @@ const POLL_INTERVAL_MS = 5000;
     status.className = cls || "";
   };
 
+  // Explicit reload button (header). Pull-to-refresh is intentionally blocked
+  // on mobile, so this is the deliberate way to force a reload. Wired before
+  // the wasm load so it stays usable even if wasm never finishes loading.
+  // The confirm() keeps the "no accidental reload" property the overscroll
+  // guard provides.
+  const reloadBtn = document.getElementById("reload-btn");
+  if (reloadBtn) {
+    reloadBtn.addEventListener("click", () => {
+      if (confirm("ページを再読み込みしますか？\n(端末セッションの表示はリセットされます)")) {
+        location.reload();
+      }
+    });
+  }
+
   // 1. Load and start the wasm module.
   const go = new Go();
   setStatus("loading wasm…");
