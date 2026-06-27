@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -79,6 +80,16 @@ func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows,
 	}
 
 	emu := vt.NewEmulator(int(cols), int(rows))
+	// Full-screen apps (claude, vim, …) emit terminal QUERIES early in their
+	// output — DA1 (ESC[c), DA2 (ESC[>c), DSR (ESC[5n). x/vt answers these by
+	// WRITING a response to its own output side (readable via emu.Read). If
+	// nobody drains that, emu.Write blocks forever on the response and the
+	// snapshot hangs. A headless render has no app to send the answers to, so
+	// drain and discard them. (Bash never sends queries, which is why only
+	// full-screen sessions hit this.)
+	go io.Copy(io.Discard, emu)
 	emu.Write(captured)
-	return emu.String(), nil
+	s := emu.String()
+	_ = emu.Close() // unblocks the drain goroutine
+	return s, nil
 }
