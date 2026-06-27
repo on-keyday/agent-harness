@@ -194,9 +194,15 @@ const POLL_INTERVAL_MS = 5000;
   const filePreviewBody   = document.getElementById("file-preview-body");
   const filePreviewClose  = document.getElementById("file-preview-close");
   const filePreviewToggle = document.getElementById("file-preview-toggle");
+  const filePreviewCopy   = document.getElementById("file-preview-copy");
   // Set when the current preview is HTML, so the toggle can rebuild the body
   // from already-fetched bytes without re-pulling. Reset on modal close.
   let filePreviewHtml = null; // { rel, size, bytes, mode: "render" | "source" }
+  // What the Copy button writes to the clipboard for the current preview:
+  //   { text }            => clipboard.writeText
+  //   { blob, type }      => clipboard.write (image, best-effort by MIME)
+  // null while showing an error/oversize note (nothing copyable) => button hidden.
+  let filePreviewCopyPayload = null;
 
   // Preview never pulls more than this into browser memory; oversize files
   // are rejected up front using the size from fileLs (no fetch attempted).
@@ -443,7 +449,18 @@ const POLL_INTERVAL_MS = 5000;
     }
     filePreviewHtml = null;
     filePreviewToggle.hidden = true;
+    filePreviewCopyPayload = null;
+    filePreviewCopy.hidden = true;
   });
+
+  // showPreviewCopy enables the Copy button for the current preview with the
+  // given clipboard payload. Render paths call this after openFilePreview,
+  // which clears the payload up front, so error/oversize paths stay hidden.
+  function showPreviewCopy(payload) {
+    filePreviewCopyPayload = payload;
+    filePreviewCopy.hidden = false;
+    filePreviewCopy.textContent = "Copy";
+  }
 
   // openFilePreview shows the modal with a header and a body built from the
   // given DOM node (or a plain note string for errors / oversize messages).
@@ -452,6 +469,9 @@ const POLL_INTERVAL_MS = 5000;
       URL.revokeObjectURL(filePreviewObjectURL);
       filePreviewObjectURL = null;
     }
+    // Default to no copy target; render paths re-enable it via showPreviewCopy.
+    filePreviewCopyPayload = null;
+    filePreviewCopy.hidden = true;
     filePreviewTitle.textContent = `${rel}  (${size} bytes)`;
     filePreviewBody.innerHTML = "";
     if (bodyNode) {
@@ -490,12 +510,41 @@ const POLL_INTERVAL_MS = 5000;
     openFilePreview(rel, size, node, null);
     filePreviewToggle.hidden = false;
     filePreviewToggle.textContent = mode === "render" ? "View source" : "View rendered";
+    // Copy always yields the raw HTML source, regardless of render/source view.
+    showPreviewCopy({ text });
   }
 
   filePreviewToggle.addEventListener("click", () => {
     if (!filePreviewHtml) return;
     filePreviewHtml.mode = filePreviewHtml.mode === "render" ? "source" : "render";
     showHtmlPreview();
+  });
+
+  // Copy the current preview to the clipboard: text/hex via writeText, images
+  // via the async clipboard write (best-effort — browsers only reliably accept
+  // image/png, so other types may be rejected and surface "copy failed").
+  let filePreviewCopyTimer = null;
+  function flashCopyLabel(label) {
+    filePreviewCopy.textContent = label;
+    if (filePreviewCopyTimer) clearTimeout(filePreviewCopyTimer);
+    filePreviewCopyTimer = setTimeout(() => {
+      if (!filePreviewCopy.hidden) filePreviewCopy.textContent = "Copy";
+    }, 1500);
+  }
+  filePreviewCopy.addEventListener("click", async () => {
+    const p = filePreviewCopyPayload;
+    if (!p) return;
+    try {
+      if (!navigator.clipboard) throw new Error("clipboard unavailable");
+      if (p.text != null) {
+        await navigator.clipboard.writeText(p.text);
+      } else if (p.blob) {
+        await navigator.clipboard.write([new ClipboardItem({ [p.type]: p.blob })]);
+      }
+      flashCopyLabel("Copied ✓");
+    } catch (e) {
+      flashCopyLabel("Copy failed");
+    }
   });
 
   // renderFilePreview picks a renderer based on extension (images) and a
@@ -513,19 +562,25 @@ const POLL_INTERVAL_MS = 5000;
       img.src = filePreviewObjectURL;
       img.alt = name;
       openFilePreview(rel, size, img, null);
+      showPreviewCopy({ blob, type: imageMimeForName(name) });
       return;
     }
     if (isLikelyBinary(bytes)) {
       const pre = document.createElement("pre");
-      pre.textContent = hexDump(bytes, HEX_PREVIEW_MAX_BYTES);
+      const hex = hexDump(bytes, HEX_PREVIEW_MAX_BYTES);
+      pre.textContent = hex;
       const truncated = bytes.byteLength > HEX_PREVIEW_MAX_BYTES;
       openFilePreview(rel, size, pre,
         truncated ? `binary — showing first ${HEX_PREVIEW_MAX_BYTES} of ${bytes.byteLength} bytes` : "binary");
+      // Copy the displayed hex dump (which may be truncated), matching the view.
+      showPreviewCopy({ text: hex });
       return;
     }
     const pre = document.createElement("pre");
-    pre.textContent = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    pre.textContent = text;
     openFilePreview(rel, size, pre, null);
+    showPreviewCopy({ text });
   }
 
   fileDeleteBtn.addEventListener("click", async () => {
