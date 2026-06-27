@@ -344,17 +344,34 @@ against `ls` before acting on it.
 ### Listing and killing your sessions
 
 ```bash
-harness-cli session ls          # JSON Lines: detachable interactive sessions only (id, status, runner)
-harness-cli session kill <id>   # terminate one (alias of `cancel`)
-harness-cli session attach <id> # HUMAN ONLY — see warning below
+harness-cli session ls            # JSON Lines: detachable interactive sessions only (id, status, runner)
+harness-cli session kill <id>     # terminate one (alias of `cancel`)
+harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
+harness-cli session send <id> "…" # inject input into the session (non-TTY; non-intrusive co-write)
+harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
 ```
 
-**`session attach` is for humans, not for you (the agent).** It runs
-`RemoteShell`, which flips the local terminal into raw mode and splices it to
-the remote PTY — it needs a real interactive TTY, which the human operator has
-(TUI / WebUI) but you do not. Driving a worker is your job too, but you do it by
-**sending it agentboard messages**, never by attaching. (The human may attach in
-parallel to watch or take over; that's expected.)
+**Reading / driving a session as the agent (you have no TTY).** `session attach`
+runs `RemoteShell`, which flips the *local* terminal into raw mode and splices it
+to the remote PTY — it needs a real interactive TTY, which the human operator has
+(TUI / WebUI) but you do not. For your own observation and driving, use the
+non-TTY pair instead (both authenticate with your task ticket's `exec_attach`
+capability — no operator PSK):
+
+- **`session snapshot <id>`** renders the session's current screen to plain text
+  via a headless VT emulator. It is a read-only `view` attach — it never disturbs
+  whoever is driving. Use it to SEE what a shell / TUI / REPL / claude session is
+  showing (`--rows/--cols` are a fallback if the session reports no size).
+- **`session send <id> "text" [--enter] [-e]`** injects keystrokes via a
+  `cowrite` attach: it forwards your input WITHOUT taking over the human
+  controller and WITHOUT resizing the PTY. `-e` interprets `\n \r \t \e \xHH \\`
+  for control keys (e.g. `-e '\x03'` = Ctrl-C, `-e '\x1b'` = Esc). A stateless
+  drive loop is just: `send`, then `snapshot` to read the result.
+
+These suit **terminal-level** work (shells, TUIs, REPLs, or watching a screen).
+To coordinate a *claude worker* (hand it tasks / corrections), still prefer
+**agentboard messages** — the worker's claude reads its inbox; you don't need to
+puppeteer its keyboard. (The human may also attach in parallel; that's expected.)
 
 `session ls` lists only detachable interactive sessions; the top-level `ls`
 shows every task (including one-shots). When more than one runner can serve the
