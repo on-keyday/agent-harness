@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"io"
 	"os"
 	"strings"
@@ -114,13 +115,13 @@ func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows,
 // looks identical to real input; this side-channel surfaces the attribute the
 // flattened text throws away — without re-emitting raw escapes (which an LLM
 // reader can't use). Returns (plainText, styleReport).
-func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (string, string, error) {
+func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (string, string, error) {
 	emu, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
 	if err != nil {
 		return taskIDHex, "", err
 	}
 	text := emu.String()
-	report := scanStyleSpans(emu, cols, rows)
+	report := scanSpans(emu, cols, rows, withAttrs, withColor)
 	_ = emu.Close() // unblocks the drain goroutine
 	return text, report, nil
 }
@@ -130,39 +131,89 @@ func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, de
 const notableAttrs = uv.AttrBold | uv.AttrFaint | uv.AttrItalic | uv.AttrBlink |
 	uv.AttrReverse | uv.AttrConceal | uv.AttrStrikethrough
 
-// scanStyleSpans walks the VT grid and reports maximal horizontal runs that
-// share the same non-empty attribute set, one per line:
+// cellStyleLabel returns a label for the cell's notable styling, limited to the
+// requested dimensions; "" = nothing notable (the cell is skipped). The label
+// doubles as the run-merge key: adjacent cells with the same label coalesce into
+// one span.
+func cellStyleLabel(cell *uv.Cell, withAttrs, withColor bool) string {
+	if cell == nil {
+		return ""
+	}
+	var parts []string
+	if withAttrs {
+		if a := cell.Style.Attrs & notableAttrs; a != 0 {
+			parts = append(parts, attrNames(a))
+		}
+	}
+	if withColor {
+		if fg := colorHex(cell.Style.Fg); fg != "" {
+			parts = append(parts, "fg"+fg)
+		}
+		if bg := colorHex(cell.Style.Bg); bg != "" {
+			parts = append(parts, "bg"+bg)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+// colorHex renders a cell color as #rrggbb, or "" for the terminal default
+// (nil Fg/Bg). Every color.Color answers RGBA(), so this handles 16-color,
+// 256-color, and truecolor cells uniformly — color is cheap to render; the
+// reason it is opt-in (--color) is volume: most cells carry a color, so the
+// report balloons, unlike the rare faint/bold attribute spans.
+func colorHex(c color.Color) string {
+	if c == nil {
+		return ""
+	}
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(b>>8))
+}
+
+// cellWidth is the column span of a cell's grapheme (2 for CJK/wide, 1 for
+// normal). Advancing the scan cursor by this — rather than always +1 — skips the
+// blank continuation cell that follows a wide char, so a CJK run isn't split
+// into one span per character (the continuation cell carries no/other style and
+// would otherwise break the run). Guards 0/negative to never stall the loop.
+func cellWidth(cell *uv.Cell) int {
+	if cell == nil || cell.Width < 1 {
+		return 1
+	}
+	return cell.Width
+}
+
+// scanSpans walks the VT grid and reports maximal horizontal runs that share
+// the same non-empty style label, one per line:
 //
-//	r<row> c<start>-<end> <attrs>: "<text>"
+//	r<row> c<start>-<end> <label>: "<text>"
 //
-// Cells with no attributes (the common case) are skipped, so a clean screen
-// yields "(no styled spans)".
-func scanStyleSpans(emu *vt.Emulator, cols, rows int) string {
+// withAttrs includes faint/bold/etc; withColor includes fg/bg hex. Cells with
+// nothing notable are skipped, so a clean screen yields "(no styled spans)".
+func scanSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) string {
 	var b strings.Builder
 	for y := 0; y < rows; y++ {
 		x := 0
 		for x < cols {
 			cell := emu.CellAt(x, y)
-			if cell == nil || cell.Style.Attrs&notableAttrs == 0 {
-				x++
+			key := cellStyleLabel(cell, withAttrs, withColor)
+			if key == "" {
+				x += cellWidth(cell)
 				continue
 			}
-			attrs := cell.Style.Attrs & notableAttrs
 			start := x
 			var run strings.Builder
 			for x < cols {
 				cur := emu.CellAt(x, y)
-				if cur == nil || cur.Style.Attrs&notableAttrs != attrs {
+				if cellStyleLabel(cur, withAttrs, withColor) != key {
 					break
 				}
 				run.WriteString(cur.Content)
-				x++
+				x += cellWidth(cur)
 			}
 			txt := strings.TrimRight(run.String(), " ")
 			if txt == "" {
 				continue
 			}
-			fmt.Fprintf(&b, "r%d c%d-%d %s: %q\n", y, start, x-1, attrNames(attrs), txt)
+			fmt.Fprintf(&b, "r%d c%d-%d %s: %q\n", y, start, x-1, key, txt)
 		}
 	}
 	if b.Len() == 0 {

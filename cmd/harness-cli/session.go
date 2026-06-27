@@ -80,13 +80,14 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	rows := fs.Uint("rows", 40, "fallback rows when the session reports no size")
 	cols := fs.Uint("cols", 120, "fallback cols when the session reports no size")
 	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
-	style := fs.Bool("style", false, "also print style spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
+	style := fs.Bool("style", false, "also print attribute spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
+	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
 	pos, err := parsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] <id>")
+		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] <id>")
 	}
 	taskIDHex := pos[0]
 
@@ -97,8 +98,8 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	}
 	defer c.Close()
 
-	if *style {
-		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond)
+	if *style || *colorOut {
+		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond, *style, *colorOut)
 		if err != nil {
 			return err
 		}

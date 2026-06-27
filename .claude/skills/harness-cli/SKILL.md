@@ -369,7 +369,10 @@ capability — no operator PSK):
   spans (`r<row> c<a>-<b> faint: "..."`). The plain render drops SGR, so a *faint*
   placeholder / ghost-autocomplete / dim hint looks identical to real input —
   `--style` is how you tell them apart (e.g. an input-box line that shows up as
-  `faint` is a placeholder, not something that was typed).
+  `faint` is a placeholder, not something that was typed). **`--color`**
+  additionally reports fg/bg as hex (`fg#ff87af: "Error: ..."` — error-red,
+  status colors); it is verbose (most cells carry a color), so it is a separate
+  opt-in. CJK/wide runs are coalesced (not split per character).
 - **`session send [-enter] [-e] [--flush-ms MS] <id> <text>...`** injects
   keystrokes via a `cowrite` attach: it forwards your input WITHOUT taking over
   the human controller and WITHOUT resizing the PTY. `-enter` appends a carriage
