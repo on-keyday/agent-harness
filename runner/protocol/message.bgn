@@ -683,8 +683,10 @@ format OpenInteractiveResponse:
 
 enum AttachMode:
     :u8
-    control = "control"   # default (ordinal 0): takeover-writer behavior
+    control = "control"   # default (ordinal 0): sole writer + size authority; takeover among controls
     view    = "view"      # read-only observer; no input, no takeover
+    cowrite = "cowrite"   # input-forwarding writer; keystrokes forwarded but resize stripped
+                          # (NO size authority); non-takeover, coexists with one control + viewers
 
 format AttachSessionRequest:
     task_id :TaskID

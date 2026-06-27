@@ -885,8 +885,11 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 	}
 
 	attach := mux.Attach
-	if req.Mode == protocol.AttachMode_View {
+	switch req.Mode {
+	case protocol.AttachMode_View:
 		attach = mux.AttachViewer
+	case protocol.AttachMode_Cowrite:
+		attach = mux.AttachCoWriter
 	}
 	if err := attach(parentCtx, tuiStream); err != nil {
 		slog.Error("AttachSession: attach", "task", idHex, "mode", req.Mode, "err", err)

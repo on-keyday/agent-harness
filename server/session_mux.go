@@ -89,6 +89,14 @@ type SessionMux struct {
 	ring   *RingBuffer
 	modes  *modeTracker
 
+	// runnerWriteMu serializes writes to the runner stream and keeps them
+	// frame-atomic. With multi-writer (one control tui + N cowriters all
+	// forwarding input), an unsynchronised write could interleave a cowriter
+	// frame into the middle of a control frame and desync the runner's
+	// frame-aligned reader. Every forwarder writes ONE complete frame under
+	// this lock. Distinct from mu (which guards attach/viewer state).
+	runnerWriteMu sync.Mutex
+
 	// mainMark is the ring append-index of the frame at which the session last
 	// returned to the primary screen (a full-screen app's alt-screen exit).
 	// On reattach, when the session is currently on the primary screen, replay
@@ -256,10 +264,26 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 	return nil
 }
 
-// AttachViewer adds a read-only observer. Unlike Attach it does NOT take over
-// the writer slot, fire onAttach, or forward input to the runner. It replays
-// the ring (and mode preamble) to the viewer, then streams live frames.
+// AttachViewer adds a read-only observer (its input is discarded). Unlike
+// Attach it does NOT take the writer slot or fire onAttach.
 func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.BidirectionalStream) error {
+	return m.attachObserver(stream, false)
+}
+
+// AttachCoWriter adds a non-takeover writer: it observes output like a viewer
+// AND forwards its input to the runner, EXCEPT TerminalWindowSize frames, which
+// are dropped — a cowriter has no size authority (only the control client owns
+// the PTY size). Lets an agent co-drive a session alongside a human controller
+// without kicking them; the human keeps size ownership so the PTY isn't resized
+// out from under them.
+func (m *SessionMux) AttachCoWriter(ctx context.Context, stream trsf.BidirectionalStream) error {
+	return m.attachObserver(stream, true)
+}
+
+// attachObserver registers a viewer (forwardInput=false) or cowriter
+// (forwardInput=true): adds it to the output fan-out, replays size+modes+ring,
+// and starts its output pump plus either an input drain or an input forwarder.
+func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInput bool) error {
 	m.mu.Lock()
 	if m.ctx.Err() != nil {
 		m.mu.Unlock()
@@ -271,7 +295,7 @@ func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.Bidirectional
 	// Snapshot replay state under the SAME lock as the insert so runnerPump's
 	// fan-out cannot interleave between "added" and "snapshotted".
 	var replay []byte
-	// PTY size first, so the viewer's emulator resizes before consuming the
+	// PTY size first, so the observer's emulator resizes before consuming the
 	// absolute-positioned ring content. Verbatim wire frame (already a complete
 	// TerminalWindowSize control frame).
 	if len(m.lastWinSize) > 0 {
@@ -292,7 +316,11 @@ func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.Bidirectional
 		}
 	}
 	go m.viewerOutputPump(vctx, v)
-	go m.viewerInputDrain(vctx, v)
+	if forwardInput {
+		go m.cowriterInputForward(vctx, v)
+	} else {
+		go m.viewerInputDrain(vctx, v)
+	}
 	return nil
 }
 
@@ -352,31 +380,30 @@ func (m *SessionMux) ViewerCount() int {
 	return len(m.viewers)
 }
 
-// tuiPump forwards tui→runner bytes. It detaches (without closing the runner)
-// when the tui signals EOF or an error.
+// tuiPump forwards control-client input frames to the runner, frame-atomically
+// (under runnerWriteMu, so they never interleave with a cowriter's frames). The
+// control client is the session's sole size authority: its TerminalWindowSize
+// frames are forwarded AND recorded as m.lastWinSize for replay to
+// viewers/cowriters. Detaches (without closing the runner) on tui EOF/error.
 func (m *SessionMux) tuiPump(ctx context.Context, tui trsf.BidirectionalStream) {
 	const maxRead = 32 * 1024
-	var acc []byte // frame-reassembly buffer for size tracking (inspection only)
+	var acc []byte
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		data, eof, err := tui.ReadDirect(maxRead)
 		if len(data) > 0 {
-			// tuiPump: client → runner forward.
-			// On runner write failure, the entire session is unrecoverable (peer runner
-			// gone or wire error), so we Stop the whole mux. We do NOT fire onDetach
-			// here — onDetach is for "client left, runner alive" transitions only.
-			// onStop will fire from Stop() and the controller's transition rule will
-			// move the task to a terminal state (Failed via runner_unreachable etc).
-			if werr := m.runner.AppendData(false, data); werr != nil {
+			var ok bool
+			acc, ok = m.forwardControlFrames(append(acc, data...))
+			if !ok {
+				// Runner write failed: session unrecoverable (peer runner gone
+				// or wire error). Stop the whole mux; onStop fires and the
+				// controller moves the task to a terminal state. We do NOT fire
+				// onDetach (that's for "client left, runner alive").
 				m.Stop()
 				return
 			}
-			// Inspect (do not alter) the forwarded bytes for the controlling
-			// client's terminal size, to replay to future viewers. This
-			// direction is low-volume (keystrokes + occasional resize).
-			acc = m.trackTuiWindowSize(append(acc, data...))
 		}
 		if eof || err != nil {
 			m.detachOnly(tui)
@@ -385,35 +412,103 @@ func (m *SessionMux) tuiPump(ctx context.Context, tui trsf.BidirectionalStream) 
 	}
 }
 
-// trackTuiWindowSize scans complete frames out of the accumulated tui→runner
-// bytes and records the most recent TerminalWindowSize control frame's raw wire
-// bytes in m.lastWinSize. Returns the unconsumed tail (a frame straddling the
-// next read). Inspection only: the caller forwards the original bytes to the
-// runner verbatim; this never mutates or reorders the stream.
-func (m *SessionMux) trackTuiWindowSize(acc []byte) []byte {
+// forwardControlFrames forwards each COMPLETE frame from acc to the runner under
+// runnerWriteMu, recording any TerminalWindowSize frame in m.lastWinSize (the
+// control client owns the size). Returns the unconsumed tail and false on runner
+// write failure.
+func (m *SessionMux) forwardControlFrames(acc []byte) ([]byte, bool) {
 	for len(acc) >= frameHeaderSize {
 		total := frameHeaderSize + int(binary.BigEndian.Uint32(acc[1:5]))
 		if len(acc) < total {
-			break // incomplete frame; carry over to the next read
+			break // incomplete frame; carry to next read
 		}
 		fb := acc[:total]
-		if frame.FrameType(fb[0]) == frame.FrameType_Control {
-			f := &frame.Frame{}
-			if err := f.Read(bytes.NewReader(fb)); err == nil {
-				if ctrl := f.Control(); ctrl != nil && ctrl.Type == frame.ControlType_TerminalWindowSize {
-					cp := append([]byte(nil), fb...)
-					m.mu.Lock()
-					m.lastWinSize = cp
-					m.mu.Unlock()
-				}
+		if frameIsWinSize(fb) {
+			cp := append([]byte(nil), fb...)
+			m.mu.Lock()
+			m.lastWinSize = cp
+			m.mu.Unlock()
+		}
+		if err := m.writeFrameToRunner(fb); err != nil {
+			return nil, false
+		}
+		acc = acc[total:]
+	}
+	return carryTail(acc), true
+}
+
+// cowriterInputForward forwards a cowriter's input frames to the runner,
+// frame-atomically, but DROPS TerminalWindowSize frames — a cowriter has no size
+// authority (only the control client owns the PTY size). Drops the cowriter on
+// EOF/error; Stops the mux on runner write failure.
+func (m *SessionMux) cowriterInputForward(ctx context.Context, v *viewerConn) {
+	const maxRead = 32 * 1024
+	var acc []byte
+	for {
+		data, eof, err := v.stream.ReadDirectContext(ctx, maxRead)
+		if len(data) > 0 {
+			var ok bool
+			acc, ok = m.forwardCowriterFrames(append(acc, data...))
+			if !ok {
+				m.Stop()
+				return
+			}
+		}
+		if eof || err != nil {
+			m.dropViewer(v)
+			return
+		}
+	}
+}
+
+// forwardCowriterFrames forwards each COMPLETE non-TerminalWindowSize frame to
+// the runner under runnerWriteMu; resize frames are silently dropped. Returns
+// the unconsumed tail and false on runner write failure.
+func (m *SessionMux) forwardCowriterFrames(acc []byte) ([]byte, bool) {
+	for len(acc) >= frameHeaderSize {
+		total := frameHeaderSize + int(binary.BigEndian.Uint32(acc[1:5]))
+		if len(acc) < total {
+			break
+		}
+		fb := acc[:total]
+		if !frameIsWinSize(fb) {
+			if err := m.writeFrameToRunner(fb); err != nil {
+				return nil, false
 			}
 		}
 		acc = acc[total:]
 	}
+	return carryTail(acc), true
+}
+
+// writeFrameToRunner writes one complete frame to the runner under
+// runnerWriteMu, keeping multi-writer forwards frame-atomic.
+func (m *SessionMux) writeFrameToRunner(fb []byte) error {
+	m.runnerWriteMu.Lock()
+	defer m.runnerWriteMu.Unlock()
+	return m.runner.AppendData(false, fb)
+}
+
+// frameIsWinSize reports whether fb is a complete TerminalWindowSize control frame.
+func frameIsWinSize(fb []byte) bool {
+	if len(fb) < frameHeaderSize || frame.FrameType(fb[0]) != frame.FrameType_Control {
+		return false
+	}
+	f := &frame.Frame{}
+	if err := f.Read(bytes.NewReader(fb)); err != nil {
+		return false
+	}
+	ctrl := f.Control()
+	return ctrl != nil && ctrl.Type == frame.ControlType_TerminalWindowSize
+}
+
+// carryTail copies a partial-frame remainder off the read buffer so a later
+// append cannot alias it.
+func carryTail(acc []byte) []byte {
 	if len(acc) == 0 {
 		return nil
 	}
-	return append([]byte(nil), acc...) // copy tail off the read buffer
+	return append([]byte(nil), acc...)
 }
 
 func (m *SessionMux) detachOnly(tui trsf.BidirectionalStream) {

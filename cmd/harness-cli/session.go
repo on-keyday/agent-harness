@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +22,7 @@ import (
 // cid is the already-resolved server ConnectionID from main()'s parseCID().
 func runSession(cid objproto.ConnectionID, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|ls|kill> [args]")
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|ls|kill> [args]")
 		os.Exit(2)
 	}
 	verb := args[0]
@@ -33,6 +34,8 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 		return runSessionAttach(cid, rest)
 	case "snapshot":
 		return runSessionSnapshot(cid, rest)
+	case "send":
+		return runSessionSend(cid, rest)
 	case "ls":
 		return runSessionLs(cid, rest)
 	case "kill":
@@ -194,6 +197,83 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	return nil
+}
+
+// runSessionSend injects input into a session via a co-writer attach
+// (non-takeover, no size authority). Pair with `session snapshot` to drive a
+// session statelessly: send keystrokes, then snapshot to read the result.
+func runSessionSend(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session send", flag.ExitOnError)
+	enter := fs.Bool("enter", false, "append a carriage return (Enter) after the text")
+	interp := fs.Bool("e", false, `interpret backslash escapes (\n \r \t \e \xHH \\)`)
+	flushMs := fs.Uint("flush-ms", 400, "ms to let the input drain to the runner before detaching")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 2 {
+		return fmt.Errorf(`usage: session send [--enter] [-e] [--flush-ms MS] <id> <text>`)
+	}
+	taskIDHex := fs.Arg(0)
+	data := []byte(fs.Arg(1))
+	if *interp {
+		d, err := unescapeInput(fs.Arg(1))
+		if err != nil {
+			return err
+		}
+		data = d
+	}
+	if *enter {
+		data = append(data, '\r')
+	}
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.SessionSend(ctx, taskIDHex, data, time.Duration(*flushMs)*time.Millisecond)
+}
+
+// unescapeInput expands a small set of backslash escapes for sending control
+// keys: \n \r \t \e (ESC) \\ and \xHH (one byte).
+func unescapeInput(s string) ([]byte, error) {
+	var out []byte
+	for i := 0; i < len(s); i++ {
+		if s[i] != '\\' {
+			out = append(out, s[i])
+			continue
+		}
+		i++
+		if i >= len(s) {
+			return nil, fmt.Errorf("trailing backslash")
+		}
+		switch s[i] {
+		case 'n':
+			out = append(out, '\n')
+		case 'r':
+			out = append(out, '\r')
+		case 't':
+			out = append(out, '\t')
+		case 'e':
+			out = append(out, 0x1b)
+		case '\\':
+			out = append(out, '\\')
+		case 'x':
+			if i+2 >= len(s) {
+				return nil, fmt.Errorf(`\x needs 2 hex digits`)
+			}
+			b, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			if err != nil {
+				return nil, fmt.Errorf(`bad \x escape: %w`, err)
+			}
+			out = append(out, byte(b))
+			i += 2
+		default:
+			return nil, fmt.Errorf(`unknown escape \%c`, s[i])
+		}
+	}
+	return out, nil
 }
 
 // runSessionLs lists detachable interactive sessions as JSON Lines.

@@ -76,3 +76,68 @@ func TestSessionMux_AttachViewer_NoSizeWhenNoneSeen(t *testing.T) {
 		t.Fatalf("replay got %q want %q (no size frame expected)", got, pre)
 	}
 }
+
+// A cowriter forwards its input frames to the runner but its resize (size
+// authority belongs to the control client) is dropped.
+func TestSessionMux_CoWriter_ForwardsInputDropsResize(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	cw := newFakeStream(t)
+	if err := mux.AttachCoWriter(ctx, cw); err != nil {
+		t.Fatalf("AttachCoWriter: %v", err)
+	}
+
+	stdin1 := makeWireFrame(byte(frame.FrameType_Stdin), []byte("alpha"))
+	resize := makeWinSizeFrame(99, 99)
+	stdin2 := makeWireFrame(byte(frame.FrameType_Stdin), []byte("omega"))
+	cw.QueueRead(stdin1)
+	cw.QueueRead(resize)
+	cw.QueueRead(stdin2)
+
+	// Once stdin2 (sent AFTER resize) reached the runner, the resize — had it
+	// been forwarded — would already be present too. So absence is reliable.
+	waitFor(t, func() bool { return bytes.Contains(runner.Written(), stdin2) })
+	w := runner.Written()
+	if !bytes.Contains(w, stdin1) {
+		t.Fatal("cowriter stdin1 was not forwarded to the runner")
+	}
+	if bytes.Contains(w, resize) {
+		t.Fatal("cowriter resize must be DROPPED, not forwarded (no size authority)")
+	}
+}
+
+// A cowriter joins without taking the writer slot and without claiming size
+// authority (its resize must not become m.lastWinSize).
+func TestSessionMux_CoWriter_NoTakeoverNoSizeAuthority(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	tui := newFakeStream(t)
+	if err := mux.Attach(ctx, tui); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	cw := newFakeStream(t)
+	if err := mux.AttachCoWriter(ctx, cw); err != nil {
+		t.Fatalf("AttachCoWriter: %v", err)
+	}
+	if !mux.IsAttached() {
+		t.Fatal("control tui must remain attached after a cowriter joins (no takeover)")
+	}
+
+	cw.QueueRead(makeWinSizeFrame(99, 99)) // cowriter resize — must be ignored
+	barrier := makeWireFrame(byte(frame.FrameType_Stdin), []byte("x"))
+	cw.QueueRead(barrier)
+	waitFor(t, func() bool { return bytes.Contains(runner.Written(), barrier) })
+
+	mux.mu.Lock()
+	gotSize := len(mux.lastWinSize)
+	mux.mu.Unlock()
+	if gotSize != 0 {
+		t.Fatalf("cowriter resize must NOT set lastWinSize (got %d bytes)", gotSize)
+	}
+}
