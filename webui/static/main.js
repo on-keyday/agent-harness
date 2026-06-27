@@ -520,30 +520,81 @@ const POLL_INTERVAL_MS = 5000;
     showHtmlPreview();
   });
 
-  // Copy the current preview to the clipboard: text/hex via writeText, images
-  // via the async clipboard write (best-effort — browsers only reliably accept
-  // image/png, so other types may be rejected and surface "copy failed").
   let filePreviewCopyTimer = null;
   function flashCopyLabel(label) {
     filePreviewCopy.textContent = label;
     if (filePreviewCopyTimer) clearTimeout(filePreviewCopyTimer);
     filePreviewCopyTimer = setTimeout(() => {
       if (!filePreviewCopy.hidden) filePreviewCopy.textContent = "Copy";
-    }, 1500);
+    }, 1800);
   }
+
+  // writeClipboardText copies text in a way that also works over plain http.
+  // The async Clipboard API requires a secure context (https/localhost), which
+  // the WebUI does NOT have when served over plain ws — so we fall back to the
+  // legacy execCommand("copy") path, which has no secure-context requirement.
+  // Returns true on success, false if both paths fail.
+  async function writeClipboardText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* fall through */ }
+    }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      // Keep it on-screen-but-invisible: off-screen elements can make the
+      // selection/copy a no-op on some mobile browsers.
+      ta.style.position = "fixed";
+      ta.style.top = "0";
+      ta.style.left = "0";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // selectNodeText highlights a node's contents so the user can copy manually
+  // (Ctrl/⌘-C, or the mobile selection menu) — the last-resort path when even
+  // execCommand is blocked.
+  function selectNodeText(node) {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
   filePreviewCopy.addEventListener("click", async () => {
     const p = filePreviewCopyPayload;
     if (!p) return;
-    try {
-      if (!navigator.clipboard) throw new Error("clipboard unavailable");
-      if (p.text != null) {
-        await navigator.clipboard.writeText(p.text);
-      } else if (p.blob) {
+    // Text/hex/HTML-source: clipboard write with an execCommand fallback that
+    // works over plain http; if that also fails, fall back to selecting the
+    // visible text so the user can copy it by hand.
+    if (p.text != null) {
+      if (await writeClipboardText(p.text)) { flashCopyLabel("Copied ✓"); return; }
+      const node = filePreviewBody.querySelector("pre") || filePreviewBody;
+      selectNodeText(node);
+      flashCopyLabel("Selected ✓");
+      return;
+    }
+    // Images: only the async Clipboard API can carry a blob, and it needs a
+    // secure context — so this works on https/localhost but not plain ws.
+    if (p.blob) {
+      try {
+        if (!navigator.clipboard || !window.isSecureContext) throw new Error("needs https");
         await navigator.clipboard.write([new ClipboardItem({ [p.type]: p.blob })]);
+        flashCopyLabel("Copied ✓");
+      } catch (e) {
+        flashCopyLabel("Needs https");
       }
-      flashCopyLabel("Copied ✓");
-    } catch (e) {
-      flashCopyLabel("Copy failed");
     }
   });
 
