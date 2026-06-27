@@ -364,7 +364,12 @@ capability — no operator PSK):
 - **`session snapshot <id>`** renders the session's current screen to plain text
   via a headless VT emulator. It is a read-only `view` attach — it never disturbs
   whoever is driving. Use it to SEE what a shell / TUI / REPL / claude session is
-  showing (`--rows/--cols` are a fallback if the session reports no size).
+  showing (`--rows/--cols` are a fallback if the session reports no size). Add
+  **`--style`** to also print a `--- styles ---` section listing faint/bold/etc.
+  spans (`r<row> c<a>-<b> faint: "..."`). The plain render drops SGR, so a *faint*
+  placeholder / ghost-autocomplete / dim hint looks identical to real input —
+  `--style` is how you tell them apart (e.g. an input-box line that shows up as
+  `faint` is a placeholder, not something that was typed).
 - **`session send [-enter] [-e] [--flush-ms MS] <id> <text>...`** injects
   keystrokes via a `cowrite` attach: it forwards your input WITHOUT taking over
   the human controller and WITHOUT resizing the PTY. `-enter` appends a carriage

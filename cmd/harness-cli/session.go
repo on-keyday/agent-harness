@@ -80,12 +80,13 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	rows := fs.Uint("rows", 40, "fallback rows when the session reports no size")
 	cols := fs.Uint("cols", 120, "fallback cols when the session reports no size")
 	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
+	style := fs.Bool("style", false, "also print style spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
 	pos, err := parsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] <id>")
+		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] <id>")
 	}
 	taskIDHex := pos[0]
 
@@ -95,6 +96,17 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	defer c.Close()
+
+	if *style {
+		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond)
+		if err != nil {
+			return err
+		}
+		fmt.Println(strings.TrimRight(text, "\n"))
+		fmt.Println("\n--- styles ---")
+		fmt.Println(report)
+		return nil
+	}
 
 	snap, err := c.SessionSnapshot(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond)
 	if err != nil {
