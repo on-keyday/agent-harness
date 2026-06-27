@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -102,6 +103,15 @@ type SessionMux struct {
 	tuiCancel context.CancelFunc
 
 	viewers map[*viewerConn]struct{}
+
+	// lastWinSize is the raw wire bytes of the most recent TerminalWindowSize
+	// control frame seen on the tui→runner direction (the controlling client's
+	// PTY size). Replayed verbatim to a new viewer ahead of the ring so a
+	// read-only snapshot can size its terminal grid to match the size the
+	// absolute-positioned output was painted at. A viewer never sends its own
+	// size (viewerInputDrain discards its input), so without this it could not
+	// learn the size and would mis-render full-screen TUIs. Guarded by mu.
+	lastWinSize []byte
 
 	onDetach func(taskID string)
 	onAttach func(taskID string)
@@ -261,6 +271,12 @@ func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.Bidirectional
 	// Snapshot replay state under the SAME lock as the insert so runnerPump's
 	// fan-out cannot interleave between "added" and "snapshotted".
 	var replay []byte
+	// PTY size first, so the viewer's emulator resizes before consuming the
+	// absolute-positioned ring content. Verbatim wire frame (already a complete
+	// TerminalWindowSize control frame).
+	if len(m.lastWinSize) > 0 {
+		replay = append(replay, m.lastWinSize...)
+	}
 	if pre := m.modes.preamble(); len(pre) > 0 {
 		replay = append(replay, encodeStdoutFrame(pre)...)
 	}
@@ -340,6 +356,7 @@ func (m *SessionMux) ViewerCount() int {
 // when the tui signals EOF or an error.
 func (m *SessionMux) tuiPump(ctx context.Context, tui trsf.BidirectionalStream) {
 	const maxRead = 32 * 1024
+	var acc []byte // frame-reassembly buffer for size tracking (inspection only)
 	for {
 		if ctx.Err() != nil {
 			return
@@ -356,12 +373,47 @@ func (m *SessionMux) tuiPump(ctx context.Context, tui trsf.BidirectionalStream) 
 				m.Stop()
 				return
 			}
+			// Inspect (do not alter) the forwarded bytes for the controlling
+			// client's terminal size, to replay to future viewers. This
+			// direction is low-volume (keystrokes + occasional resize).
+			acc = m.trackTuiWindowSize(append(acc, data...))
 		}
 		if eof || err != nil {
 			m.detachOnly(tui)
 			return
 		}
 	}
+}
+
+// trackTuiWindowSize scans complete frames out of the accumulated tui→runner
+// bytes and records the most recent TerminalWindowSize control frame's raw wire
+// bytes in m.lastWinSize. Returns the unconsumed tail (a frame straddling the
+// next read). Inspection only: the caller forwards the original bytes to the
+// runner verbatim; this never mutates or reorders the stream.
+func (m *SessionMux) trackTuiWindowSize(acc []byte) []byte {
+	for len(acc) >= frameHeaderSize {
+		total := frameHeaderSize + int(binary.BigEndian.Uint32(acc[1:5]))
+		if len(acc) < total {
+			break // incomplete frame; carry over to the next read
+		}
+		fb := acc[:total]
+		if frame.FrameType(fb[0]) == frame.FrameType_Control {
+			f := &frame.Frame{}
+			if err := f.Read(bytes.NewReader(fb)); err == nil {
+				if ctrl := f.Control(); ctrl != nil && ctrl.Type == frame.ControlType_TerminalWindowSize {
+					cp := append([]byte(nil), fb...)
+					m.mu.Lock()
+					m.lastWinSize = cp
+					m.mu.Unlock()
+				}
+			}
+		}
+		acc = acc[total:]
+	}
+	if len(acc) == 0 {
+		return nil
+	}
+	return append([]byte(nil), acc...) // copy tail off the read buffer
 }
 
 func (m *SessionMux) detachOnly(tui trsf.BidirectionalStream) {

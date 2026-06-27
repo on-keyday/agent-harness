@@ -9,17 +9,19 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// runSession dispatches session sub-verbs: new / attach / ls / kill.
+// runSession dispatches session sub-verbs: new / attach / snapshot / ls / kill.
 // cid is the already-resolved server ConnectionID from main()'s parseCID().
 func runSession(cid objproto.ConnectionID, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|ls|kill> [args]")
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|ls|kill> [args]")
 		os.Exit(2)
 	}
 	verb := args[0]
@@ -29,6 +31,8 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 		return runSessionNew(cid, rest)
 	case "attach":
 		return runSessionAttach(cid, rest)
+	case "snapshot":
+		return runSessionSnapshot(cid, rest)
 	case "ls":
 		return runSessionLs(cid, rest)
 	case "kill":
@@ -36,6 +40,38 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 	default:
 		return fmt.Errorf("unknown session verb %q", verb)
 	}
+}
+
+// runSessionSnapshot view-attaches to a detachable session and prints its
+// current screen as plain text (headless VT render). Non-intrusive: it does not
+// take over the controlling client. Works from a non-TTY context (no raw mode),
+// unlike `session attach`.
+func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session snapshot", flag.ExitOnError)
+	rows := fs.Uint("rows", 40, "fallback rows when the session reports no size")
+	cols := fs.Uint("cols", 120, "fallback cols when the session reports no size")
+	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 1 {
+		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] <id>")
+	}
+	taskIDHex := fs.Arg(0)
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	snap, err := c.SessionSnapshot(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	fmt.Println(strings.TrimRight(snap, "\n"))
+	return nil
 }
 
 // runSessionNew opens a new detachable interactive PTY session on a runner
