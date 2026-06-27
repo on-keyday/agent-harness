@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/agent-harness/exec/frame"
+	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
 // makeWinSizeFrame builds a wire-encoded TerminalWindowSize control frame,

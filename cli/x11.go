@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	agentexec "github.com/on-keyday/agent-harness/exec"
+	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 

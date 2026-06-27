@@ -7,7 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
-	agentexec "github.com/on-keyday/agent-harness/exec"
+	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 

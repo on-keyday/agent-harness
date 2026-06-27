@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/on-keyday/agent-harness/exec/frame"
+	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 

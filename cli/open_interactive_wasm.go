@@ -14,7 +14,7 @@ import (
 	"syscall/js"
 	"time"
 
-	"github.com/on-keyday/agent-harness/exec/frame"
+	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"

@@ -47,15 +47,8 @@ wasm-check:
 test:
 	go test ./...
 
-# Packages that contain only brgen-generated Go (no hand-written .go alongside).
-# Excluded from vet because the generated emit can hit benign vet warnings
-# (notably 'unreachable code' from the bgn-driven switches) that we don't
-# want to gate CI on. Mixed packages like runner/protocol stay in vet's scope
-# because their hand-written code still benefits from the check.
-VET_GENERATED_PKGS := github.com/on-keyday/agent-harness/exec/frame
-
 vet:
-	@go list ./... | grep -v -F -x $(addprefix -e ,$(VET_GENERATED_PKGS)) | xargs go vet
+	@go vet ./...
 
 clean:
 	# Remove only the binaries; leave bin/.run/ alone so scripts/runner.sh

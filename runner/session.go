@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	agentexec "github.com/on-keyday/agent-harness/exec"
+	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
