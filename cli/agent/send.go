@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
@@ -26,15 +27,31 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 		return errors.New("--topic required")
 	}
 
+	dataSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "data" {
+			dataSet = true
+		}
+	})
+
 	var payload []byte
-	if *data == "-" {
+	switch {
+	case dataSet && *data != "-":
+		// explicit literal payload via --data
+		payload = []byte(*data)
+	case !dataSet && fs.NArg() > 0:
+		// payload given as positional argument(s), joined ssh-style. This matches
+		// the common `cmd <payload>` instinct so a forgotten --data doesn't
+		// silently send an empty body (we used to ignore positionals entirely and
+		// fall through to reading stdin).
+		payload = []byte(strings.Join(fs.Args(), " "))
+	default:
+		// explicit `--data -`, or neither --data nor a positional given: read stdin.
 		b, err := io.ReadAll(stdin)
 		if err != nil {
 			return err
 		}
 		payload = b
-	} else {
-		payload = []byte(*data)
 	}
 
 	conn, err := ConnectAgent(ctx, Flags{

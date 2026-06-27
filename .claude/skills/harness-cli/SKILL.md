@@ -130,6 +130,9 @@ Topics in v1 are **exact match** — no wildcards.
 ```bash
 # Publish a message to topic T.
 harness-cli agent send --topic T --data 'hello'
+# The payload may also be given as a positional arg (joined ssh-style if
+# multi-word), so a forgotten --data still sends a non-empty body:
+harness-cli agent send --topic T 'hello'
 # Or read --data from stdin with `-`:
 echo 'hello' | harness-cli agent send --topic T --data -
 ```
@@ -347,7 +350,7 @@ against `ls` before acting on it.
 harness-cli session ls            # JSON Lines: detachable interactive sessions only (id, status, runner)
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
-harness-cli session send <id> "…" # inject input into the session (non-TTY; non-intrusive co-write)
+harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
 harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
 ```
 
@@ -362,11 +365,23 @@ capability — no operator PSK):
   via a headless VT emulator. It is a read-only `view` attach — it never disturbs
   whoever is driving. Use it to SEE what a shell / TUI / REPL / claude session is
   showing (`--rows/--cols` are a fallback if the session reports no size).
-- **`session send <id> "text" [--enter] [-e]`** injects keystrokes via a
-  `cowrite` attach: it forwards your input WITHOUT taking over the human
-  controller and WITHOUT resizing the PTY. `-e` interprets `\n \r \t \e \xHH \\`
-  for control keys (e.g. `-e '\x03'` = Ctrl-C, `-e '\x1b'` = Esc). A stateless
-  drive loop is just: `send`, then `snapshot` to read the result.
+- **`session send [-enter] [-e] [--flush-ms MS] <id> <text>...`** injects
+  keystrokes via a `cowrite` attach: it forwards your input WITHOUT taking over
+  the human controller and WITHOUT resizing the PTY. `-enter` appends a carriage
+  return (Enter) — a CR, so it submits on Windows cmd.exe too. `-e` interprets
+  `\n \r \t \e \xHH \\` for control keys (e.g. `-e '\x03'` = Ctrl-C, `-e '\x1b'`
+  = Esc). A stateless drive loop is just: `send`, then `snapshot` to read it.
+
+  **`send` flags go before `<id>`; everything after `<id>` is the text**, joined
+  ssh-style (`ssh host cmd args...`) — so multi-word input needs no quoting
+  (`send -enter <id> echo hello world` sends `echo hello world`). Quote it as one
+  argument to preserve exact whitespace. Keep flags before `<id>`: a `-enter`
+  placed AFTER the text is taken as literal text (you'll see it typed in the
+  snapshot instead of submitting), so it won't act as the Enter flag.
+
+- **`session snapshot` / `session attach` flags are order-free** — their only
+  positional is the `<id>` (never `-`-leading), so `snapshot <id> --rows 50` and
+  `snapshot --rows 50 <id>` are equivalent.
 
 These suit **terminal-level** work (shells, TUIs, REPLs, or watching a screen).
 To coordinate a *claude worker* (hand it tasks / corrections), still prefer

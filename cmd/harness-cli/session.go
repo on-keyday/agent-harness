@@ -45,6 +45,32 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 	}
 }
 
+// parsePermuted parses fs but tolerates flags appearing after positional args.
+// Go's stdlib flag stops at the first non-flag token, so `cmd <id> --flag` would
+// otherwise silently drop --flag (it lands in fs.Args() and is ignored). We peel
+// positionals one at a time and re-parse the remainder, making flag position
+// irrelevant — the model can write the flag before or after the id and it works.
+//
+// Use this ONLY for commands whose positionals can never begin with '-' (e.g. a
+// hex task id). For free-form text positionals, keep flags strictly before the
+// positional instead: a '-'-leading word is indistinguishable from a flag, and a
+// '--' terminator would not survive the peel loop.
+func parsePermuted(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionals []string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positionals = append(positionals, rest[0])
+		args = rest[1:]
+	}
+	return positionals, nil
+}
+
 // runSessionSnapshot view-attaches to a detachable session and prints its
 // current screen as plain text (headless VT render). Non-intrusive: it does not
 // take over the controlling client. Works from a non-TTY context (no raw mode),
@@ -54,13 +80,14 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	rows := fs.Uint("rows", 40, "fallback rows when the session reports no size")
 	cols := fs.Uint("cols", 120, "fallback cols when the session reports no size")
 	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
-	if err := fs.Parse(args); err != nil {
+	pos, err := parsePermuted(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(pos) < 1 {
 		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] <id>")
 	}
-	taskIDHex := fs.Arg(0)
+	taskIDHex := pos[0]
 
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -173,13 +200,14 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 	fs := flag.NewFlagSet("session attach", flag.ExitOnError)
 	view := fs.Bool("view", false, "attach in view-only mode (output only; your input is discarded by the server)")
-	if err := fs.Parse(args); err != nil {
+	pos, err := parsePermuted(fs, args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() < 1 {
+	if len(pos) < 1 {
 		return fmt.Errorf("usage: session attach [--view] <id>")
 	}
-	taskIDHex := fs.Arg(0)
+	taskIDHex := pos[0]
 
 	mode := protocol.AttachMode_Control
 	if *view {
@@ -211,12 +239,21 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [--enter] [-e] [--flush-ms MS] <id> <text>`)
+		return fmt.Errorf(`usage: session send [--enter] [-e] [--flush-ms MS] <id> <text>...
+flags must precede <id>; everything after <id> is joined with spaces and sent
+literally (ssh-style), so multi-word text needs no quoting. Quote it as one
+argument to preserve exact whitespace.`)
 	}
 	taskIDHex := fs.Arg(0)
-	data := []byte(fs.Arg(1))
+	// Join everything after <id> as the text to send, ssh-style (`ssh host cmd
+	// args...`). This matches the common instinct of typing words without
+	// quoting; otherwise a stray space would silently drop all but the first
+	// word (we only ever read fs.Arg(1) before). Flags stay strictly before
+	// <id> so a '-'-leading word here is still sent literally.
+	text := strings.Join(fs.Args()[1:], " ")
+	data := []byte(text)
 	if *interp {
-		d, err := unescapeInput(fs.Arg(1))
+		d, err := unescapeInput(text)
 		if err != nil {
 			return err
 		}
