@@ -281,10 +281,10 @@ const POLL_INTERVAL_MS = 5000;
     // so a single context-switching button would strand you on "file mode"
     // with no path back to dir-pull):
     //   Pull      — the selected file's raw bytes (needs a selection).
-    //   Pull dir  — the current directory as a .tar (needs to be inside one,
-    //               so we never tar the whole worktree incl. .git from root).
+    //   Pull dir  — the current directory as a .tar; available whenever a task
+    //               is picked, including the worktree root (rel ".").
     filePullBtn.disabled = !hasTask || !hasSel;
-    filePullDirBtn.disabled = !hasTask || filePickerCurDir === "";
+    filePullDirBtn.disabled = !hasTask;
     filePreviewBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
     fileDeleteBtn.disabled = !hasTask || !hasSel;
   }
@@ -427,9 +427,11 @@ const POLL_INTERVAL_MS = 5000;
 
   filePullDirBtn.addEventListener("click", async () => {
     const taskID = fileTaskSelect.value;
-    if (!taskID || !filePickerCurDir) return;
-    const rel = filePickerCurDir;
-    const name = basename(rel) + ".tar";
+    if (!taskID) return;
+    // At root filePickerCurDir is "" — the runner rejects an empty rel, so
+    // send "." (resolves to the worktree root) and name the archive for it.
+    const rel = filePickerCurDir || ".";
+    const name = (filePickerCurDir ? basename(filePickerCurDir) : "worktree") + ".tar";
     try {
       const bytes = await window.harness.filePullDirBytes(taskID, rel);
       triggerDownload(bytes, name);
