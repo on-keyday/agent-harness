@@ -1230,7 +1230,23 @@ func harnessFileDelete(this js.Value, args []js.Value) any {
 // rejects with code="already_exists" if the destination is present,
 // letting the JS layer drive a confirm() prompt before retrying.
 //
-//	harness.filePushBytes(taskID, remoteRel, data, force) -> Promise<void>
+//	harness.filePushBytes(taskID, remoteRel, data, force[, onProgress]) -> Promise<void>
+//	onProgress(transferred, total) is called ~10/s with byte counts.
+// jsProgress adapts an optional JS progress callback at args[idx] into a
+// cli.ProgressFunc forwarding (transferred, total) as JS numbers (total 0 =
+// unknown). Returns nil when no function is supplied, so the transfer runs
+// without reporting. cli throttles these to ~10/s, so forwarding straight into
+// JS is safe for the single event loop.
+func jsProgress(args []js.Value, idx int) cli.ProgressFunc {
+	if len(args) <= idx || args[idx].Type() != js.TypeFunction {
+		return nil
+	}
+	cb := args[idx]
+	return func(transferred, total uint64) {
+		cb.Invoke(float64(transferred), float64(total))
+	}
+}
+
 func harnessFilePushBytes(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1249,13 +1265,14 @@ func harnessFilePushBytes(this js.Value, args []js.Value) any {
 		length := dataJS.Length()
 		data := make([]byte, length)
 		js.CopyBytesToGo(data, dataJS)
+		onProgress := jsProgress(args, 4)
 		go func() {
 			c, err := currentClient()
 			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			if err := c.FilePushBytes(rootCtx, taskID, data, remoteRel, force); err != nil {
+			if err := c.FilePushBytes(rootCtx, taskID, data, remoteRel, force, onProgress); err != nil {
 				rejectFileErr(reject, err)
 				return
 			}
@@ -1271,7 +1288,8 @@ func harnessFilePushBytes(this js.Value, args []js.Value) any {
 // resolves with a Uint8Array of the file contents. The JS layer wraps
 // the bytes in a Blob and triggers a download to save them.
 //
-//	harness.filePullBytes(taskID, remoteRel) -> Promise<Uint8Array>
+//	harness.filePullBytes(taskID, remoteRel[, onProgress]) -> Promise<Uint8Array>
+//	onProgress(transferred, total) is called ~10/s; total is the file size.
 func harnessFilePullBytes(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1288,7 +1306,7 @@ func harnessFilePullBytes(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			remoteRel := args[1].String()
-			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel)
+			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel, jsProgress(args, 2))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return
@@ -1309,7 +1327,8 @@ func harnessFilePullBytes(this js.Value, args []js.Value) any {
 // download (the runner streams tar regardless of host OS; the user
 // extracts locally — Windows 11 / `tar -xf` handle it).
 //
-//	harness.filePullDirBytes(taskID, remoteRel) -> Promise<Uint8Array>
+//	harness.filePullDirBytes(taskID, remoteRel[, onProgress]) -> Promise<Uint8Array>
+//	onProgress(transferred, 0) is called ~10/s; total is 0 (tar size unknown).
 func harnessFilePullDirBytes(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1326,7 +1345,7 @@ func harnessFilePullDirBytes(this js.Value, args []js.Value) any {
 			}
 			taskID := args[0].String()
 			remoteRel := args[1].String()
-			data, err := c.FilePullDirBytes(rootCtx, taskID, remoteRel)
+			data, err := c.FilePullDirBytes(rootCtx, taskID, remoteRel, jsProgress(args, 2))
 			if err != nil {
 				rejectFileErr(reject, err)
 				return

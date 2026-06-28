@@ -388,40 +388,46 @@ const POLL_INTERVAL_MS = 5000;
     }
     const buf = new Uint8Array(await file.arrayBuffer());
     const remoteRel = joinFsPath(filePickerCurDir, file.name);
+    const fp = beginFileProgress(file.name);
     try {
-      await window.harness.filePushBytes(taskID, remoteRel, buf, false);
-      fileResultPre.textContent = `push ok: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
-    } catch (e) {
-      if (e && e.code === "already_exists") {
-        if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
-          fileResultPre.textContent = "push cancelled (overwrite declined)";
-          return;
-        }
+      let force = false;
+      for (;;) {
         try {
-          await window.harness.filePushBytes(taskID, remoteRel, buf, true);
-          fileResultPre.textContent = `push ok (overwritten): ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
-        } catch (e2) {
-          fileResultPre.textContent = `push error: ${e2.message}`;
+          await window.harness.filePushBytes(taskID, remoteRel, buf, force, fp.onProgress);
+          fileResultPre.textContent = `${force ? "push ok (overwritten)" : "push ok"}: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
+          break;
+        } catch (e) {
+          if (!force && e && e.code === "already_exists") {
+            if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
+              fileResultPre.textContent = "push cancelled (overwrite declined)";
+              return;
+            }
+            force = true;
+            continue; // retry with overwrite
+          }
+          fileResultPre.textContent = `push error: ${e.message}`;
           return;
         }
-      } else {
-        fileResultPre.textContent = `push error: ${e.message}`;
-        return;
       }
+      refreshFilePicker();
+    } finally {
+      fp.end();
     }
-    refreshFilePicker();
   });
 
   filePullBtn.addEventListener("click", async () => {
     const taskID = fileTaskSelect.value;
     if (!taskID || !filePickerSelected) return;
     const rel = joinFsPath(filePickerCurDir, filePickerSelected.name);
+    const fp = beginFileProgress(filePickerSelected.name);
     try {
-      const bytes = await window.harness.filePullBytes(taskID, rel);
+      const bytes = await window.harness.filePullBytes(taskID, rel, fp.onProgress);
       triggerDownload(bytes, filePickerSelected.name);
       fileResultPre.textContent = `pull ok: ${rel} (${bytes.byteLength} bytes) — browser save dialog`;
     } catch (e) {
       fileResultPre.textContent = `pull error: ${e.message}`;
+    } finally {
+      fp.end();
     }
   });
 
@@ -432,12 +438,15 @@ const POLL_INTERVAL_MS = 5000;
     // send "." (resolves to the worktree root) and name the archive for it.
     const rel = filePickerCurDir || ".";
     const name = (filePickerCurDir ? basename(filePickerCurDir) : "worktree") + ".tar";
+    const fp = beginFileProgress(name);
     try {
-      const bytes = await window.harness.filePullDirBytes(taskID, rel);
+      const bytes = await window.harness.filePullDirBytes(taskID, rel, fp.onProgress);
       triggerDownload(bytes, name);
       fileResultPre.textContent = `pull ok (tar): ${rel} (${bytes.byteLength} bytes) -> ${name} — browser save dialog`;
     } catch (e) {
       fileResultPre.textContent = `pull error: ${e.message}`;
+    } finally {
+      fp.end();
     }
   });
 
@@ -2141,18 +2150,23 @@ async function filePushCmd(args) {
   const file = await pickLocalFile();
   if (!file) return "push cancelled (no file selected)";
   const buf = new Uint8Array(await file.arrayBuffer());
+  const fp = beginFileProgress(file.name);
   try {
-    await window.harness.filePushBytes(taskID, remoteRel, buf, false);
-    return `push ok: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
-  } catch (e) {
-    if (e && e.code === "already_exists") {
-      if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
-        return "push cancelled (overwrite declined)";
+    try {
+      await window.harness.filePushBytes(taskID, remoteRel, buf, false, fp.onProgress);
+      return `push ok: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
+    } catch (e) {
+      if (e && e.code === "already_exists") {
+        if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
+          return "push cancelled (overwrite declined)";
+        }
+        await window.harness.filePushBytes(taskID, remoteRel, buf, true, fp.onProgress);
+        return `push ok (overwritten): ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
       }
-      await window.harness.filePushBytes(taskID, remoteRel, buf, true);
-      return `push ok (overwritten): ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
+      throw e;
     }
-    throw e;
+  } finally {
+    fp.end();
   }
 }
 
@@ -2168,14 +2182,19 @@ async function filePullCmd(args) {
     throw new Error("usage: file pull [-r] <task-id> <worktree-rel-src>");
   }
   const [taskID, remoteRel] = pos;
-  if (recursive) {
-    const bytes = await window.harness.filePullDirBytes(taskID, remoteRel);
-    triggerDownload(bytes, basename(remoteRel) + ".tar");
-    return `pull ok (tar): ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;
+  const fp = beginFileProgress(basename(remoteRel) + (recursive ? ".tar" : ""));
+  try {
+    if (recursive) {
+      const bytes = await window.harness.filePullDirBytes(taskID, remoteRel, fp.onProgress);
+      triggerDownload(bytes, basename(remoteRel) + ".tar");
+      return `pull ok (tar): ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;
+    }
+    const bytes = await window.harness.filePullBytes(taskID, remoteRel, fp.onProgress);
+    triggerDownload(bytes, basename(remoteRel));
+    return `pull ok: ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;
+  } finally {
+    fp.end();
   }
-  const bytes = await window.harness.filePullBytes(taskID, remoteRel);
-  triggerDownload(bytes, basename(remoteRel));
-  return `pull ok: ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;
 }
 
 // pickLocalFile programmatically opens the hidden <input type="file">
@@ -2202,6 +2221,48 @@ function pickLocalFile() {
     input.addEventListener("cancel", onCancel);
     input.click();
   });
+}
+
+// formatBytes renders a byte count as B / KB / MB for progress display.
+function formatBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+// beginFileProgress creates a dedicated progress row for ONE transfer and
+// returns { onProgress, end }. Each concurrent push/pull gets its own row, so
+// parallel transfers don't clobber a shared bar (and one finishing doesn't
+// wipe another's progress). Pass .onProgress to harness.file{Pull,PullDir,
+// Push}Bytes (the wasm side throttles to ~10/s; total 0 = unknown size → an
+// indeterminate bar) and call .end() in a finally to remove the row.
+let fileProgressSeq = 0;
+function beginFileProgress(label) {
+  const list = document.getElementById("file-progress-list");
+  if (!list) return { onProgress: undefined, end: () => {} };
+  const id = ++fileProgressSeq;
+  const row = document.createElement("div");
+  row.className = "file-progress-row";
+  row.dataset.fpid = String(id);
+  const bar = document.createElement("progress");
+  const txt = document.createElement("span");
+  txt.className = "file-progress-text";
+  txt.textContent = `${label}: starting…`;
+  row.appendChild(bar);
+  row.appendChild(txt);
+  list.appendChild(row);
+  const onProgress = (transferred, total) => {
+    if (total > 0) {
+      bar.max = total;
+      bar.value = transferred;
+      const pct = Math.floor((transferred / total) * 100);
+      txt.textContent = `${label}: ${pct}%  (${formatBytes(transferred)} / ${formatBytes(total)})`;
+    } else {
+      bar.removeAttribute("value"); // no value attr => indeterminate animation
+      txt.textContent = `${label}: ${formatBytes(transferred)} transferred…`;
+    }
+  };
+  return { onProgress, end: () => row.remove() };
 }
 
 // triggerDownload wraps bytes (Uint8Array) in a Blob and programmatically

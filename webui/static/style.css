@@ -93,6 +93,22 @@ button {
   cursor: pointer;
 }
 button:hover { background: #555; }
+#file-progress-list { display: flex; flex-direction: column; gap: 0.25rem; }
+.file-progress-row { display: flex; align-items: center; gap: 0.5rem; }
+.file-progress-row progress {
+  width: 14rem;
+  height: 0.9rem;
+  accent-color: #2d5;
+  background: #111;
+  border: 1px solid #666;
+}
+.file-progress-row progress::-webkit-progress-bar { background: #111; }
+.file-progress-row progress::-webkit-progress-value { background: #2d5; }
+.file-progress-text {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #8af;
+}
 #attached-task {
   font-family: monospace;
   font-size: 0.85rem;

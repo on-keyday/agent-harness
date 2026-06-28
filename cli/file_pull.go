@@ -48,15 +48,15 @@ func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath s
 // is no local fs to write into on that side. Returns the file contents
 // in a freshly allocated slice; the caller is responsible for whatever
 // download / save flow it needs to drive next.
-func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string) ([]byte, error) {
+func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string, onProgress ProgressFunc) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := c.filePullDo(ctx, taskIDHex, remoteRel, func(stream trsf.BidirectionalStream, expectedSize uint64) error {
 		buf.Grow(int(expectedSize))
-		n, err := io.Copy(&buf, stream)
+		n, err := copyWithProgress(&buf, stream, expectedSize, onProgress)
 		if err != nil {
 			return fmt.Errorf("file pull: stream read: %w", err)
 		}
-		if uint64(n) != expectedSize {
+		if n != expectedSize {
 			return fmt.Errorf("file pull: short read (got %d, expected %d)", n, expectedSize)
 		}
 		return nil
@@ -196,7 +196,7 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 // WebUI wasm bridge, which has no local filesystem to stage into — the
 // browser saves the bytes as a .tar for the user to extract. The returned
 // bytes are a complete tar archive (the same stream FilePullDir untars).
-func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel string) ([]byte, error) {
+func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel string, onProgress ProgressFunc) ([]byte, error) {
 	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false)
 	if err != nil {
 		return nil, err
@@ -213,7 +213,9 @@ func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel stri
 		return nil, err
 	}
 	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, stream); err != nil {
+	// total is unknown for a dir tar (the runner doesn't announce it), so pass
+	// 0 — the UI shows bytes-so-far without a percentage.
+	if _, err := copyWithProgress(&buf, stream, 0, onProgress); err != nil {
 		return nil, fmt.Errorf("file pull --recursive: stream read: %w", err)
 	}
 	return buf.Bytes(), nil
