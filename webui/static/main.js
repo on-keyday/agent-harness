@@ -186,6 +186,7 @@ const POLL_INTERVAL_MS = 5000;
   const fileEntriesUL     = document.getElementById("file-entries");
   const filePushBtn       = document.getElementById("file-push-btn");
   const filePullBtn       = document.getElementById("file-pull-btn");
+  const filePullDirBtn    = document.getElementById("file-pull-dir-btn");
   const filePreviewBtn    = document.getElementById("file-preview-btn");
   const fileDeleteBtn     = document.getElementById("file-delete-btn");
   const fileResultPre     = document.getElementById("file-result");
@@ -275,7 +276,15 @@ const POLL_INTERVAL_MS = 5000;
     fileUpBtn.disabled = !hasTask || filePickerCurDir === "";
     fileRefreshBtn.disabled = !hasTask;
     filePushBtn.disabled = !hasTask;
-    filePullBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
+    // Two always-present pull buttons (kept independent because there is no
+    // way to *deselect* a file in-place — clicking only moves the highlight —
+    // so a single context-switching button would strand you on "file mode"
+    // with no path back to dir-pull):
+    //   Pull      — the selected file's raw bytes (needs a selection).
+    //   Pull dir  — the current directory as a .tar (needs to be inside one,
+    //               so we never tar the whole worktree incl. .git from root).
+    filePullBtn.disabled = !hasTask || !hasSel;
+    filePullDirBtn.disabled = !hasTask || filePickerCurDir === "";
     filePreviewBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
     fileDeleteBtn.disabled = !hasTask || !hasSel;
   }
@@ -405,12 +414,26 @@ const POLL_INTERVAL_MS = 5000;
 
   filePullBtn.addEventListener("click", async () => {
     const taskID = fileTaskSelect.value;
-    if (!taskID || !filePickerSelected || filePickerSelected.isDir) return;
+    if (!taskID || !filePickerSelected) return;
     const rel = joinFsPath(filePickerCurDir, filePickerSelected.name);
     try {
       const bytes = await window.harness.filePullBytes(taskID, rel);
       triggerDownload(bytes, filePickerSelected.name);
       fileResultPre.textContent = `pull ok: ${rel} (${bytes.byteLength} bytes) — browser save dialog`;
+    } catch (e) {
+      fileResultPre.textContent = `pull error: ${e.message}`;
+    }
+  });
+
+  filePullDirBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID || !filePickerCurDir) return;
+    const rel = filePickerCurDir;
+    const name = basename(rel) + ".tar";
+    try {
+      const bytes = await window.harness.filePullDirBytes(taskID, rel);
+      triggerDownload(bytes, name);
+      fileResultPre.textContent = `pull ok (tar): ${rel} (${bytes.byteLength} bytes) -> ${name} — browser save dialog`;
     } catch (e) {
       fileResultPre.textContent = `pull error: ${e.message}`;
     }
@@ -1054,7 +1077,8 @@ const POLL_INTERVAL_MS = 5000;
             "  file delete [-r] [-f] <task> <rel>",
             "                            remove a file (no -r) or directory (-r [-f])",
             "  file push <task> <rel>    upload a local file (file picker opens)",
-            "  file pull <task> <rel>    download a remote file (browser save dialog)",
+            "  file pull [-r] <task> <rel>",
+            "                            download a remote file, or -r for a directory as a .tar",
             "  server dial-runner <cid> [--via <cid>]",
             "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
             "  help                      this list",
@@ -2131,10 +2155,22 @@ async function filePushCmd(args) {
 }
 
 async function filePullCmd(args) {
-  if (args.length !== 2) {
-    throw new Error("usage: file pull <task-id> <worktree-rel-src>");
+  // Parse flags before positional args (-r / --recursive => tar a directory).
+  let recursive = false;
+  const pos = [];
+  for (const a of args) {
+    if (a === "-r" || a === "--recursive") recursive = true;
+    else pos.push(a);
   }
-  const [taskID, remoteRel] = args;
+  if (pos.length !== 2) {
+    throw new Error("usage: file pull [-r] <task-id> <worktree-rel-src>");
+  }
+  const [taskID, remoteRel] = pos;
+  if (recursive) {
+    const bytes = await window.harness.filePullDirBytes(taskID, remoteRel);
+    triggerDownload(bytes, basename(remoteRel) + ".tar");
+    return `pull ok (tar): ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;
+  }
   const bytes = await window.harness.filePullBytes(taskID, remoteRel);
   triggerDownload(bytes, basename(remoteRel));
   return `pull ok: ${remoteRel} (${bytes.byteLength} bytes) — browser save dialog`;

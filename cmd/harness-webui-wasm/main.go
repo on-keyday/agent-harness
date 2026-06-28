@@ -81,6 +81,7 @@ func main() {
 		"fileDelete":           js.FuncOf(harnessFileDelete),
 		"filePushBytes":        js.FuncOf(harnessFilePushBytes),
 		"filePullBytes":        js.FuncOf(harnessFilePullBytes),
+		"filePullDirBytes":     js.FuncOf(harnessFilePullDirBytes),
 		"serverDialRunner":     js.FuncOf(harnessServerDialRunner),
 		"sendNotification":     js.FuncOf(harnessSendNotification),
 		"watchNotifications":   js.FuncOf(harnessWatchNotifications),
@@ -1288,6 +1289,44 @@ func harnessFilePullBytes(this js.Value, args []js.Value) any {
 			taskID := args[0].String()
 			remoteRel := args[1].String()
 			data, err := c.FilePullBytes(rootCtx, taskID, remoteRel)
+			if err != nil {
+				rejectFileErr(reject, err)
+				return
+			}
+			out := js.Global().Get("Uint8Array").New(len(data))
+			js.CopyBytesToJS(out, data)
+			resolve.Invoke(out)
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFilePullDirBytes fetches the directory at remoteRel from taskID's
+// worktree and resolves with a Uint8Array holding a tar archive of the
+// tree. The JS layer wraps it in a Blob and triggers a "<name>.tar"
+// download (the runner streams tar regardless of host OS; the user
+// extracts locally — Windows 11 / `tar -xf` handle it).
+//
+//	harness.filePullDirBytes(taskID, remoteRel) -> Promise<Uint8Array>
+func harnessFilePullDirBytes(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("filePullDirBytes: missing taskID / remoteRel args"))
+				return
+			}
+			taskID := args[0].String()
+			remoteRel := args[1].String()
+			data, err := c.FilePullDirBytes(rootCtx, taskID, remoteRel)
 			if err != nil {
 				rejectFileErr(reject, err)
 				return

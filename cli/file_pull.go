@@ -190,6 +190,35 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 	return nil
 }
 
+// FilePullDirBytes is the bytes-out variant of FilePullDir: it pulls the
+// worktree directory at remoteRel and returns the raw tar stream as a
+// freshly allocated slice, without extracting to any local fs. Used by the
+// WebUI wasm bridge, which has no local filesystem to stage into — the
+// browser saves the bytes as a .tar for the user to extract. The returned
+// bytes are a complete tar archive (the same stream FilePullDir untars).
+func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel string) ([]byte, error) {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.CloseBoth()
+	if err := stream.AppendData(true); err != nil {
+		return nil, fmt.Errorf("file pull --recursive: half-close: %w", err)
+	}
+	ack, err := ReadFileTransferAck(stream)
+	if err != nil {
+		return nil, fmt.Errorf("file pull --recursive: read ack: %w", err)
+	}
+	if err := ackError("pull --recursive", ack); err != nil {
+		return nil, err
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, stream); err != nil {
+		return nil, fmt.Errorf("file pull --recursive: stream read: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
 // mkLocalStaging creates <localDir>.staging-<random>/ as a sibling of
 // localDir and returns its path. Sibling placement guarantees the rename
 // stays on the same filesystem.
