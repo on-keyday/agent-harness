@@ -98,6 +98,30 @@ func Dial(ctx context.Context, ep objproto.Endpoint, peerCID objproto.Connection
 //
 // The caller must call (*Conn).Start once any SetOnControl wiring is in
 // place, identical to the post-Dial protocol.
+// StreamMTU is the trsf packet size used over stream transports (ws/wss),
+// where the underlying TCP/WebSocket carries arbitrary-length frames so there
+// is no datagram-fragmentation limit. Far above the 1500-byte datagram cap, it
+// cuts trsf packet count ~10x (less per-packet ack/cwnd/framing CPU) and — since
+// the NewReno initial cwnd is 2*MTU — widens the initial congestion window ~14x,
+// the two limiters that pin loopback file transfer to <1% of line rate. Kept
+// under the 16-bit wire length fields (<65535) and well within the x/net and
+// browser WebSocket message-size limits.
+const StreamMTU = 16384
+
+// MTUForTransport returns the (initial, max) trsf MTU for an objproto transport
+// scheme. Stream transports (ws/wss) get StreamMTU; datagram transports (udp)
+// keep the path-MTU-safe trsf defaults so real-network datagrams never
+// fragment. Both ends of a connection derive it from the same scheme, so the
+// choice is always symmetric.
+func MTUForTransport(transport string) (initialMTU, maxMTU int) {
+	switch transport {
+	case "ws", "wss":
+		return StreamMTU, StreamMTU
+	default:
+		return trsf.DefaultInitialMTU, trsf.DefaultMaxMTU
+	}
+}
+
 func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialConfig) *Conn {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -118,7 +142,8 @@ func WrapAcceptedConn(ctx context.Context, conn objproto.Connection, cfg DialCon
 		}
 		streamCancel()
 	}()
-	p := trsf.NewStreams(streamCtx, false, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, conn, cfg.Logger)
+	initialMTU, maxMTU := MTUForTransport(conn.ConnectionID().Transport)
+	p := trsf.NewStreams(streamCtx, false, initialMTU, maxMTU, conn, cfg.Logger)
 
 	c := &Conn{
 		conn:      conn,

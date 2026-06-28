@@ -22,6 +22,7 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/pubsub"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
@@ -830,7 +831,8 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		}
 		cancel()
 	}()
-	p := trsf.NewStreams(connCtx, true, trsf.DefaultInitialMTU, trsf.DefaultMaxMTU, session, s.cfg.Logger)
+	initialMTU, maxMTU := peer.MTUForTransport(session.ConnectionID().Transport)
+	p := trsf.NewStreams(connCtx, true, initialMTU, maxMTU, session, s.cfg.Logger)
 	subscriber := pubsub.NewSubscriber(session.ConnectionID(), p)
 	defer subscriber.LeaveAll(s.pubsub)
 
