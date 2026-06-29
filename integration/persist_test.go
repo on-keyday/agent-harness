@@ -12,6 +12,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // persistRunnerHandle wraps a PersistLoop goroutine and exposes a way to
@@ -118,7 +119,7 @@ func waitForRunnerWithRoot(t *testing.T, serverCID objproto.ConnectionID, root s
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		c, err := cli.Dial(context.Background(), serverCID)
+		c, err := cli.Dial(context.Background(), serverCID, protocol.ClientKind_Cli)
 		if err == nil {
 			snap, lerr := c.Snapshot(context.Background())
 			c.Close()
@@ -246,7 +247,7 @@ func TestRunnerNoPersistExitsOnDisconnect(t *testing.T) {
 	// After cancellation, confirm the runner is deregistered from the server
 	// (or at least that it does NOT re-appear under a fresh dial).
 	time.Sleep(300 * time.Millisecond)
-	c, cerr := cli.Dial(context.Background(), serverCID)
+	c, cerr := cli.Dial(context.Background(), serverCID, protocol.ClientKind_Cli)
 	if cerr != nil {
 		t.Logf("dial after runner exit: %v (server may have cleaned up)", cerr)
 		return

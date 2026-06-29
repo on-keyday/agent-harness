@@ -40,3 +40,21 @@ jobs:
 
       - name: go build ./... (compile-check everything)
         run: go build ./...
+
+  integration:
+    name: integration tests (-tags integration)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The integration suite is behind the `integration` build tag and so is
+      # NOT compiled by `go test ./...` — without this job it silently rots when
+      # shared signatures (e.g. cli.Dial) change. The fake-claude testdata
+      # scripts require bash, which ubuntu-latest provides.
+      - name: go test -tags integration ./integration/...
+        run: go test -tags integration ./integration/... -count=1 -timeout 600s

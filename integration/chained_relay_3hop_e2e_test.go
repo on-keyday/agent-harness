@@ -222,7 +222,7 @@ func TestChainedRelay_3Hop_E2E(t *testing.T) {
 	dialCtx2, dialCancel2 := context.WithTimeout(ctx, 30*time.Second)
 	defer dialCancel2()
 
-	client, dialErr := cli.Dial(dialCtx2, serverCID)
+	client, dialErr := cli.Dial(dialCtx2, serverCID, protocol.ClientKind_Cli)
 	if dialErr != nil {
 		t.Fatalf("cli.Dial through 3-hop chained relay failed: %v", dialErr)
 	}

@@ -17,22 +17,18 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// collectScreen view-attaches to a detachable interactive session, drains the
-// replayed (and briefly-live) PTY byte burst for `settle`, and feeds it through
-// a headless VT emulator. It returns the built emulator (the CALLER must Close
-// it) plus the resolved grid size. Shared by SessionSnapshot (plain text) and
-// SessionSnapshotStyled (text + style spans).
-//
-// It uses AttachMode_View, so it never takes over the controlling client (a
-// live operator keeps typing undisturbed). The emulator is sized from the
-// TerminalWindowSize the server replays ahead of the ring (the controlling
-// client's PTY size); defRows/defCols are the fallback when the session reports
-// no size (e.g. an older server), in which case a full-screen TUI may
-// mis-render.
-func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vt.Emulator, int, int, error) {
+// collectRaw view-attaches to a detachable interactive session and drains the
+// replayed (and briefly-live) PTY byte burst for `settle`, returning the
+// verbatim bytes — escape sequences intact — plus the terminal size the server
+// replays ahead of the ring (hasSize=false when the session reports none, e.g.
+// an older server). It uses AttachMode_View, so it never takes over the
+// controlling client (a live operator keeps typing undisturbed). Shared by the
+// raw path (SessionSnapshotRaw, which returns these bytes as-is) and the
+// rendered path (collectScreen, which feeds them through a VT emulator).
+func (c *Client) collectRaw(ctx context.Context, taskIDHex string, settle time.Duration) (captured []byte, rows, cols uint16, hasSize bool, err error) {
 	stream, _, err := c.AttachSession(ctx, taskIDHex, protocol.AttachMode_View)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, 0, false, err
 	}
 	defer stream.Close()
 
@@ -67,10 +63,27 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 	}
 
 	mu.Lock()
-	captured := append([]byte(nil), data...)
+	captured = append([]byte(nil), data...)
 	mu.Unlock()
 
-	rows, cols, ok := stream.LastWindowSize()
+	rows, cols, hasSize = stream.LastWindowSize()
+	return captured, rows, cols, hasSize, nil
+}
+
+// collectScreen view-attaches via collectRaw and feeds the captured byte burst
+// through a headless VT emulator. It returns the built emulator (the CALLER
+// must Close it) plus the resolved grid size. Shared by SessionSnapshot (plain
+// text) and SessionSnapshotStyled (text + style spans).
+//
+// The emulator is sized from the TerminalWindowSize the server replays ahead of
+// the ring (the controlling client's PTY size); defRows/defCols are the
+// fallback when the session reports no size, in which case a full-screen TUI
+// may mis-render.
+func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vt.Emulator, int, int, error) {
+	captured, rows, cols, ok, err := c.collectRaw(ctx, taskIDHex, settle)
+	if err != nil {
+		return nil, 0, 0, err
+	}
 	if !ok || rows == 0 || cols == 0 {
 		rows, cols = defRows, defCols
 		fmt.Fprintf(os.Stderr,
@@ -107,6 +120,19 @@ func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows,
 	s := emu.String()
 	_ = emu.Close() // unblocks the drain goroutine
 	return s, nil
+}
+
+// SessionSnapshotRaw view-attaches to a detachable interactive session and
+// returns the verbatim PTY replay burst — escape sequences intact — without
+// running it through the VT emulator. Unlike SessionSnapshot's flattened text,
+// the result can be written straight to a real terminal to reproduce the screen
+// exactly, or diffed byte-for-byte when the rendered text looks wrong.
+func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settle time.Duration) ([]byte, error) {
+	captured, _, _, _, err := c.collectRaw(ctx, taskIDHex, settle)
+	if err != nil {
+		return nil, err
+	}
+	return captured, nil
 }
 
 // SessionSnapshotStyled is SessionSnapshot plus a textual report of styled

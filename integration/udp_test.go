@@ -167,7 +167,7 @@ func TestUDPRunner_RegistersAndCompletesTask(t *testing.T) {
 	repo := tempRepo(t)
 	_ = startRunnerWithCID(t, serverCID, repo, "udp-runner-host")
 
-	c, err := cli.Dial(context.Background(), serverCID)
+	c, err := cli.Dial(context.Background(), serverCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("cli.Dial(udp): %v", err)
 	}
@@ -199,7 +199,7 @@ func TestDualStackServer_AcceptsBothLegs(t *testing.T) {
 	_ = startRunnerWithCID(t, wsCID, repoWS, "ws-leg-host")
 	_ = startRunnerWithCID(t, udpCID, repoUDP, "udp-leg-host")
 
-	cWS, err := cli.Dial(context.Background(), wsCID)
+	cWS, err := cli.Dial(context.Background(), wsCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("cli.Dial(ws): %v", err)
 	}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
 )
 
@@ -50,7 +51,7 @@ func TestPSKBinderE2E_CorrectPSK(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, err := cli.Dial(ctx, cid)
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("Dial with correct PSK must succeed (client/server transcripts must match): %v", err)
 	}
@@ -65,7 +66,7 @@ func TestPSKBinderE2E_WrongPSK(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	c, err := cli.Dial(ctx, cid)
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
 	if err == nil {
 		c.Close()
 		t.Fatal("Dial with wrong PSK must fail")

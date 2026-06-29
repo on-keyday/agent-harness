@@ -82,12 +82,16 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
 	style := fs.Bool("style", false, "also print attribute spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
 	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
+	raw := fs.Bool("raw", false, "write the verbatim PTY replay bytes (escape sequences intact) to stdout instead of the VT-rendered screen — cat into a real terminal to reproduce it exactly; --rows/--cols are ignored and --style/--color are not allowed")
 	pos, err := parsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] <id>")
+		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--raw] <id>")
+	}
+	if *raw && (*style || *colorOut) {
+		return fmt.Errorf("--raw cannot be combined with --style/--color (those report the VT render, which --raw bypasses)")
 	}
 	taskIDHex := pos[0]
 
@@ -97,6 +101,15 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	defer c.Close()
+
+	if *raw {
+		b, err := c.SessionSnapshotRaw(ctx, taskIDHex, time.Duration(*settleMs)*time.Millisecond)
+		if err != nil {
+			return err
+		}
+		_, err = os.Stdout.Write(b)
+		return err
+	}
 
 	if *style || *colorOut {
 		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond, *style, *colorOut)

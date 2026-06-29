@@ -158,7 +158,7 @@ func dialClient(t *testing.T, serverCID objproto.ConnectionID) *cli.Client {
 	// Use a background context so the connection lives beyond the dial call.
 	// The test's Cancel (registered via t.Cleanup) will cancel the server,
 	// which closes the connection. cli.Client.Close handles the teardown.
-	c, err := cli.Dial(context.Background(), serverCID)
+	c, err := cli.Dial(context.Background(), serverCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("dial client: %v", err)
 	}

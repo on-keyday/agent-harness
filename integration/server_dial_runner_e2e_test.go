@@ -96,7 +96,7 @@ func TestReverseDialRunnerE2E(t *testing.T) {
 	// with the chosen hostname shows up (or we time out). The dial returns
 	// Ok the moment ECDH succeeds; PSK + Hello + Registry insert happen
 	// asynchronously inside handleConnection, so we have to wait.
-	c, err := cli.Dial(ctx, serverCID)
+	c, err := cli.Dial(ctx, serverCID, protocol.ClientKind_Cli)
 	if err != nil {
 		t.Fatalf("cli.Dial (verify): %v", err)
 	}

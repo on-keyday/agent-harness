@@ -47,6 +47,12 @@ wasm-check:
 test:
 	go test ./...
 
+# The integration suite lives behind the `integration` build tag and is NOT
+# part of `make test` / `go test ./...`. Run it explicitly (CI mirrors this in
+# its own job). Requires bash for the fake-claude testdata scripts.
+test-integration:
+	go test -tags integration ./integration/... -count=1 -timeout 600s
+
 vet:
 	@go vet ./...
 
@@ -79,6 +85,7 @@ help:
 	@echo "  check         webui-build + go build ./... (compile-check, no artifacts)"
 	@echo "  wasm-check    GOOS=js GOARCH=wasm go build (lint level)"
 	@echo "  test          go test ./..."
+	@echo "  test-integration  go test -tags integration ./integration/..."
 	@echo "  vet           go vet ./..."
 	@echo "  protoregen    regenerate Go from .bgn via brgen api server"
 	@echo "  clean         remove bin/ and build artifacts"

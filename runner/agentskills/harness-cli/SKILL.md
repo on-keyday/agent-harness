@@ -372,7 +372,12 @@ capability — no operator PSK):
   `faint` is a placeholder, not something that was typed). **`--color`**
   additionally reports fg/bg as hex (`fg#ff87af: "Error: ..."` — error-red,
   status colors); it is verbose (most cells carry a color), so it is a separate
-  opt-in. CJK/wide runs are coalesced (not split per character).
+  opt-in. CJK/wide runs are coalesced (not split per character). **`--raw`**
+  instead writes the verbatim PTY replay bytes (escape sequences intact) to
+  stdout with no VT render — `cat` it into a real terminal to reproduce the
+  screen exactly, or inspect the actual bytes when the rendered text looks
+  wrong. `--raw` cannot be combined with `--style`/`--color` (those describe the
+  render it bypasses), and `--rows/--cols` are ignored.
 - **`session send [-enter] [-e] [--flush-ms MS] <id> <text>...`** injects
   keystrokes via a `cowrite` attach: it forwards your input WITHOUT taking over
   the human controller and WITHOUT resizing the PTY. `-enter` appends a carriage
