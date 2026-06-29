@@ -170,6 +170,18 @@ func main() {
 			die(err)
 		}
 
+	case "whoami":
+		fs := flag.NewFlagSet("whoami", flag.ExitOnError)
+		asJSON := fs.Bool("json", false, "output the identity as a JSON object")
+		fs.Parse(args)
+		resp, err := cli.WhoAmI(ctx, parseCID())
+		if err != nil {
+			die(err)
+		}
+		if err := cli.WriteWhoAmI(os.Stdout, resp, *asJSON); err != nil {
+			die(err)
+		}
+
 	case "skill":
 		name := "harness-cli"
 		if len(args) > 0 {
@@ -575,6 +587,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  conns [-f|--follow] [--json]        snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  caps [--json]                       list the grantable --caps capability names and what each authorizes")
+	fmt.Fprintln(os.Stderr, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps (no cap required)")
 	fmt.Fprintln(os.Stderr, "  skill [NAME]                        print the embedded agent skill (default: harness-cli)")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  notify [--title T] [--level info|warn|error] <text>")

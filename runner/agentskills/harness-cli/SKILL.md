@@ -446,6 +446,11 @@ authorizes with `harness-cli caps` (`--json` for the machine-readable form).
 - **Visibility is a cap too.** Without `info_global`, a confined task's `ls` and
   `agent topics` show only its own task subtree (itself + descendants), not the
   whole board; `info_global` (part of `all`) lifts that.
+- **Check your own caps with `harness-cli whoami`.** It prints THIS connection's
+  own principal task id and the exact capability set the server enforces for you
+  (`--json` for the machine-readable form). No cap is required — it is
+  self-introspection, not a peek at another task's record. Use it when unsure
+  whether a denied RPC is a missing cap vs. a real error.
 
 Granular names: `spawn`, `cancel`, `exec_attach`, `file_read`, `file_write`,
 `forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`,

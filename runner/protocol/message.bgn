@@ -237,6 +237,9 @@ enum TaskControlKind:
     board_topics    # list all known agentboard topics (names + metadata)
     board_read      # read messages from a topic (returns stream_id for content)
     board_purge     # purge a single message (by seq) from a topic
+    whoami          # report the caller's own principal + enforced capability set
+                    # (no cap required: self-introspection of THIS connection's
+                    # server-resolved identity, not another task's record)
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -707,6 +710,23 @@ format AttachSessionResponse:
     stream_id :u64
     replay_bytes :u64
 
+# WhoAmIRequest carries no fields: the server resolves the caller's identity
+# from the connection principal (the agent ticket recorded at hello), never
+# from anything the client sends. A field-less body keeps the envelope honest.
+format WhoAmIRequest:
+    reserved :u8  # always 0; placeholder so the variant body is non-empty
+
+# WhoAmIResponse reports what the SERVER enforces for THIS connection:
+#   - principal_task_id: the caller's own task id; all-zero means an operator
+#     connection (no confined principal → full authority).
+#   - creator_task_id: the principal's spawner; all-zero when operator or a
+#     top-level (operator-spawned) task.
+#   - capabilities: the exact bitmask checked on every gated RPC (callerCaps).
+format WhoAmIResponse:
+    principal_task_id :TaskID
+    creator_task_id   :TaskID
+    capabilities      :Capability
+
 format TaskControlRequest:
     kind :TaskControlKind
     request_id :u32
@@ -728,6 +748,7 @@ format TaskControlRequest:
         TaskControlKind.board_topics => board_topics :BoardTopicsRequest
         TaskControlKind.board_read   => board_read   :BoardReadRequest
         TaskControlKind.board_purge  => board_purge  :BoardPurgeRequest
+        TaskControlKind.whoami       => whoami       :WhoAmIRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -759,6 +780,7 @@ format TaskControlResponse:
         TaskControlKind.board_topics => board_topics :BoardTopicsResponse
         TaskControlKind.board_read   => board_read   :BoardReadResponse
         TaskControlKind.board_purge  => board_purge  :BoardPurgeResponse
+        TaskControlKind.whoami       => whoami       :WhoAmIResponse
 
 enum NotifyLevel:
     :u8

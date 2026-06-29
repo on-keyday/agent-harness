@@ -424,6 +424,28 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("board_read variant is nil", "request_id", req.RequestId)
 		}
 
+	case protocol.TaskControlKind_Whoami:
+		// Self-introspection: report what the SERVER enforces for THIS
+		// connection. No cap gate — the answer is the caller's own identity,
+		// resolved from the connection principal (never from request bytes),
+		// so an unprivileged (Capability_None) agent can still ask.
+		pid := h.lookupPrincipal(cid)
+		caps := h.callerCaps(cid)
+		var creator protocol.TaskID
+		if pid.Id != ([16]byte{}) {
+			if t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:])); ok {
+				creator = t.CreatorTaskID
+			}
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.RequestId}
+		resp.SetWhoami(protocol.WhoAmIResponse{
+			PrincipalTaskId: pid,
+			CreatorTaskId:   creator,
+			Capabilities:    caps,
+		})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
 		if dr == nil {
