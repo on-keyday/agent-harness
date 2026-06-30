@@ -32,7 +32,8 @@ const POLL_INTERVAL_MS = 5000;
   // screen-timeout fast. Two-tier, mirroring the clipboard fallbacks elsewhere:
   // the Screen Wake Lock API needs a secure context (https/wss) which the
   // plain-ws deployment lacks, so we fall back to the NoSleep technique — a
-  // muted looping <video> keeps the screen lit even over plain http. Wired here
+  // looping <video> with a silent audio track, played unmuted, keeps the screen
+  // lit even over plain http (see makeVideo for why audio, not size). Wired here
   // (before the wasm load) so it works regardless of connection state. Default
   // off — the user opts in, so there's no silent battery drain.
   const KEEPAWAKE_KEY = "harness.keepAwake";
@@ -48,13 +49,21 @@ const POLL_INTERVAL_MS = 5000;
 
     function makeVideo() {
       const v = document.createElement("video");
-      v.muted = true;                       // muted + playsinline ⇒ autoplay allowed
-      v.setAttribute("muted", "");
+      // NOT muted, on purpose. Blink's VideoWakeLock (core/html/media/
+      // video_wake_lock.cc) only takes the screen lock for a hidden video via
+      // its has_audio branch — `HasAudio() && EffectiveMediaVolume() > 0`. A
+      // muted video falls to the size/visibility branch (>20% of viewport AND
+      // ≥75% on-screen), which a 1px hidden element can never satisfy. So the
+      // keepawake.{webm,mp4} carry a SILENT audio track and we play unmuted —
+      // the NoSleep.js technique. Autoplay is fine because engage() runs inside
+      // the toggle's click gesture. (Caveat: playing audio takes Android audio
+      // focus, so it can pause other apps' background playback.)
+      v.volume = 1;
       v.setAttribute("playsinline", "");
       v.setAttribute("loop", "");
       v.setAttribute("aria-hidden", "true");
-      // Near-invisible but NOT display:none — some browsers won't play a hidden
-      // video, which is exactly what keeps the screen awake.
+      // 1px / opacity:0 is fine now that the has_audio branch ignores size and
+      // visibility — no visible artifact. NOT display:none (won't play hidden).
       v.style.cssText = "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;";
       const webm = document.createElement("source");
       webm.src = "/static/keepawake.webm"; webm.type = "video/webm";
