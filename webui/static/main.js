@@ -27,6 +27,133 @@ const POLL_INTERVAL_MS = 5000;
     });
   }
 
+  // Keep-awake toggle (header). The session/terminal view is static — no playing
+  // media — so nothing holds the phone screen awake and it hits the OS
+  // screen-timeout fast. Two-tier, mirroring the clipboard fallbacks elsewhere:
+  // the Screen Wake Lock API needs a secure context (https/wss) which the
+  // plain-ws deployment lacks, so we fall back to the NoSleep technique — a
+  // muted looping <video> keeps the screen lit even over plain http. Wired here
+  // (before the wasm load) so it works regardless of connection state. Default
+  // off — the user opts in, so there's no silent battery drain.
+  const KEEPAWAKE_KEY = "harness.keepAwake";
+  const keepAwakeBtn = document.getElementById("keepawake-btn");
+  const keepAwake = (() => {
+    let wantOn = localStorage.getItem(KEEPAWAKE_KEY) === "on";
+    let lock = null;      // WakeLockSentinel when the API path is engaged
+    let video = null;     // fallback <video> when the API is unavailable
+    let engaged = false;  // true once a real lock/video is actually active
+    // Re-checked lazily (not cached) so a secure context that appears later — or
+    // a test that strips navigator.wakeLock — is honoured at engage time.
+    const hasWakeLock = () => !!(navigator.wakeLock && typeof navigator.wakeLock.request === "function");
+
+    function makeVideo() {
+      const v = document.createElement("video");
+      v.muted = true;                       // muted + playsinline ⇒ autoplay allowed
+      v.setAttribute("muted", "");
+      v.setAttribute("playsinline", "");
+      v.setAttribute("loop", "");
+      v.setAttribute("aria-hidden", "true");
+      // Near-invisible but NOT display:none — some browsers won't play a hidden
+      // video, which is exactly what keeps the screen awake.
+      v.style.cssText = "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0;pointer-events:none;";
+      const webm = document.createElement("source");
+      webm.src = "/static/keepawake.webm"; webm.type = "video/webm";
+      const mp4 = document.createElement("source");
+      mp4.src = "/static/keepawake.mp4"; mp4.type = "video/mp4";
+      v.append(webm, mp4);
+      document.body.appendChild(v);
+      return v;
+    }
+
+    async function engage() {
+      if (engaged) return true;
+      if (hasWakeLock()) {
+        try {
+          lock = await navigator.wakeLock.request("screen");
+          // The sentinel auto-releases when the tab is hidden; note it so the
+          // visibilitychange handler knows to re-acquire on return.
+          lock.addEventListener("release", () => { lock = null; engaged = false; reflect(); });
+          engaged = true;
+          reflect();
+          return true;
+        } catch (e) { /* fall through to the video path */ }
+      }
+      try {
+        if (!video) video = makeVideo();
+        await video.play();
+        engaged = true;
+        reflect();
+        return true;
+      } catch (e) {
+        return false; // autoplay blocked — needs a fresh user gesture
+      }
+    }
+
+    function disengage() {
+      engaged = false;
+      if (lock) { lock.release().catch(() => {}); lock = null; }
+      if (video) video.pause();
+      reflect();
+    }
+
+    function reflect() {
+      if (!keepAwakeBtn) return;
+      keepAwakeBtn.setAttribute("aria-pressed", wantOn ? "true" : "false");
+      keepAwakeBtn.classList.toggle("is-active", wantOn && engaged);
+      keepAwakeBtn.classList.toggle("is-pending", wantOn && !engaged);
+      keepAwakeBtn.title = !wantOn ? "画面の自動消灯を抑止"
+        : engaged ? "画面の自動消灯を抑止中（タップで解除）"
+                  : "タップで消灯抑止を有効化";
+    }
+
+    async function turnOn() {
+      wantOn = true;
+      localStorage.setItem(KEEPAWAKE_KEY, "on");
+      reflect();
+      const ok = await engage();
+      if (!ok) {
+        // Couldn't engage (autoplay needs a gesture). Keep wantOn so the next
+        // tap retries; surface a hint via the existing toast path.
+        showToast({ level: "warn", title: "消灯抑止を有効化できませんでした",
+          text: "端末の自動再生制限の可能性。もう一度タップしてください。" });
+        reflect();
+      }
+    }
+
+    function turnOff() {
+      wantOn = false;
+      localStorage.setItem(KEEPAWAKE_KEY, "off");
+      disengage();
+    }
+
+    function toggle() { return wantOn ? turnOff() : turnOn(); }
+
+    // The Wake Lock sentinel auto-releases on tab-hide and the fallback video
+    // pauses; re-engage when we become visible again and the toggle is still on.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "visible" || !wantOn) return;
+      if (!engaged) engage();
+      else if (video) video.play().catch(() => {});
+    });
+
+    if (keepAwakeBtn) keepAwakeBtn.addEventListener("click", toggle);
+
+    // On load, honour persisted intent. The Wake Lock path can re-acquire now
+    // (no gesture needed while visible); the video fallback needs a gesture, so
+    // if engage() can't, arm a one-shot that engages on the first tap anywhere.
+    reflect();
+    if (wantOn) {
+      engage().then((ok) => {
+        if (ok) return;
+        const once = () => { if (wantOn && !engaged) engage(); };
+        document.addEventListener("pointerdown", once, { once: true });
+      });
+    }
+
+    return { toggle, turnOn, turnOff, isEngaged: () => engaged, wants: () => wantOn };
+  })();
+  void keepAwake; // referenced for debugging / future programmatic control
+
   // 1. Load and start the wasm module.
   const go = new Go();
   setStatus("loading wasm…");

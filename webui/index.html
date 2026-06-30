@@ -17,6 +17,10 @@
       <!-- Explicit reload: pull-to-refresh is intentionally blocked on mobile
            (overscroll-behavior-y: contain in style.css), so this is the only
            in-page way to force a reload without the browser chrome menu. -->
+      <!-- Keep-awake toggle: the session/terminal view is static (no playing
+           media), so nothing holds the phone screen awake and it hits the OS
+           screen-timeout fast. ☕ = off, lit = on. See keepAwake in main.js. -->
+      <button id="keepawake-btn" type="button" aria-pressed="false" title="画面の自動消灯を抑止" aria-label="画面の自動消灯を抑止">☕</button>
       <button id="reload-btn" type="button" title="再読み込み" aria-label="再読み込み">↻</button>
       <div id="status">disconnected</div>
     </div>

@@ -33,6 +33,21 @@ header h1 { margin: 0; font-size: 1.2rem; }
   cursor: pointer;
 }
 #reload-btn:hover { background: #555; }
+#keepawake-btn {
+  background: #444;
+  color: #d4d4d4;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  cursor: pointer;
+}
+#keepawake-btn:hover { background: #555; }
+/* Engaged: lit green (matches #status.connected). Pending: armed-but-waiting
+   for the gesture that iOS autoplay needs — amber so it reads as "tap me". */
+#keepawake-btn.is-active { background: #2d5; color: #000; border-color: #2d5; }
+#keepawake-btn.is-pending { background: #a86; color: #000; border-color: #a86; }
 #status {
   padding: 0.2rem 0.6rem;
   border-radius: 4px;
@@ -150,7 +165,8 @@ button:hover { background: #555; }
         font-size: 1.1rem;
     }
     /* Comfortable tap target for the header reload button. */
-    #reload-btn {
+    #reload-btn,
+    #keepawake-btn {
         min-width: 2.6rem;
         min-height: 2.4rem;
         font-size: 1.2rem;
