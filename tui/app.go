@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -69,6 +70,13 @@ type App struct {
 	activeForwards   map[int]*PortForwardSession // keyed by client-side unique id
 	nextForwardID    int
 
+	// runnerPicker shows candidate runners when an interactive open returns
+	// AmbiguousRunner; a pick re-issues the request pinned to the chosen cid.
+	runnerPicker RunnerPickerModel
+	// pendingInteractive holds the params of the in-flight interactive open so
+	// the picker can re-issue it pinned to a chosen runner.
+	pendingInteractive pendingInteractive
+
 	// log-following state
 	logsCancel context.CancelFunc
 	client     *cli.Client
@@ -91,6 +99,17 @@ type App struct {
 	// Controlled by `caps --on-resume on|off`; defaults to false (keep
 	// persisted caps on resume, no widening).
 	applyCapsOnResume bool
+}
+
+// pendingInteractive captures what an interactive open needs so a runner-picker
+// selection can re-issue it. repo is "" for resume (server reuses the task's
+// repo); resumeTaskID is "" for a fresh session.
+type pendingInteractive struct {
+	repo         string
+	resumeTaskID string
+	extraArgs    []string
+	caps         protocol.Capability
+	capsOverride bool
 }
 
 // NotifyResultMsg carries the result of a notify send command.
@@ -422,6 +441,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case InteractiveReadyMsg:
 		if msg.Err != nil {
+			var are *cli.AmbiguousRunnerError
+			if errors.As(msg.Err, &are) {
+				a.runnerPicker.Open(are.Candidates)
+				return a, nil
+			}
 			a.cmdresult.Append(ErrorStyle.Render("open interactive failed: " + msg.Err.Error()))
 			return a, nil
 		}
@@ -634,6 +658,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.popup, pcmd = a.popup.Update(msg)
 			return a, pcmd
 		}
+		// Runner picker intercepts keys when open (digit picks, Esc cancels).
+		if a.runnerPicker.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				a.runnerPicker.Close()
+				a.cmdresult.Append(WarnStyle.Render("runner pick cancelled"))
+				return a, nil
+			}
+			if c := a.runnerPicker.Pick(msg.String()); c != nil {
+				p := a.pendingInteractive
+				a.runnerPicker.Close()
+				a.cmdresult.Append(OKStyle.Render("pinned runner: ") + c.Hostname + "  " + c.Cid)
+				return a, DoOpenDetachableSession(a.client, p.repo, cli.SelectorOpts{Runner: c.Cid}, p.extraArgs, p.resumeTaskID, p.caps, p.capsOverride)
+			}
+			return a, nil
+		}
 		// Forward-stop picker intercepts keys when open (digit selects, Esc cancels).
 		if a.forwardPicker.IsOpen() {
 			if msg.Type == tea.KeyEsc {
@@ -740,6 +779,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `S` (capital) opens a new detachable interactive PTY session in the
 		// default repo (equivalent to `harness-cli session new`).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
+			a.pendingInteractive = pendingInteractive{
+				repo: a.defaultRepo, resumeTaskID: "", extraArgs: nil,
+				caps: a.sessionCaps, capsOverride: false,
+			}
 			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false)
 		}
 		// `F` opens the file picker for the task currently focused in the
@@ -801,6 +844,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// RepoPath and worktree branch. Prefer the runner the task last
 				// ran on (t.AssignedTo) so resume stays one keypress even when
 				// another runner ties on this repo's roots score.
+				a.pendingInteractive = pendingInteractive{
+					repo: "", resumeTaskID: a.tasks.SelectedID(),
+					extraArgs: act.ResumeArgs, caps: a.sessionCaps, capsOverride: a.applyCapsOnResume,
+				}
 				return a, DoResumeSession(a.client, t.AssignedTo, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume)
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
@@ -1022,6 +1069,9 @@ func (a *App) View() string {
 	}
 	if a.forwardPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardPicker.View())
+	}
+	if a.runnerPicker.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.runnerPicker.View())
 	}
 	if a.connsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.connsModal.View())
