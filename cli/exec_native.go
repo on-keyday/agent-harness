@@ -22,10 +22,11 @@ type ExecOptions struct {
 
 // ExecResult is the outcome of a SessionExec.
 type ExecResult struct {
-	ExitCode int           // command exit code; -1 when TimedOut / unknown
-	Output   []byte        // interpreted plain text (default) or verbatim bytes (Raw)
-	TimedOut bool          // completion sentinel not seen before Timeout
-	Duration time.Duration // wall time from injection to completion/timeout
+	ExitCode    int           // command exit code; -1 when TimedOut/ShellExited/unknown
+	Output      []byte        // interpreted plain text (default) or verbatim bytes (Raw)
+	TimedOut    bool          // command still running when Timeout elapsed
+	ShellExited bool          // the PTY stream closed before completion — the foreground shell exited (command ran exit/exec, or session/attach dropped); distinct from a timeout
+	Duration    time.Duration // wall time from injection to completion/timeout
 }
 
 const execDefaultTimeout = 30 * time.Second
@@ -110,16 +111,42 @@ func (c *Client) SessionExec(ctx context.Context, taskIDHex, cmd string, opts Ex
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
+	// partial builds a best-effort result when no END sentinel arrived. It
+	// re-scans first (the sentinel may have landed in the final bytes just before
+	// the stream closed), otherwise returns the output after the START line with
+	// an unknown exit code, flagged either ShellExited (stream closed → the
+	// foreground shell exited) or TimedOut (the timer fired while it still ran).
+	partial := func(shellExited bool) ExecResult {
+		mu.Lock()
+		snap := append([]byte(nil), acc...)
+		mu.Unlock()
+		if r := scanExec(snap, s); r.done {
+			return buildExecResult(r, opts, time.Since(start))
+		}
+		out := partialOutput(snap, s)
+		if !opts.Raw {
+			out = []byte(interpretPlain(out))
+		}
+		res := ExecResult{ExitCode: -1, Output: out, Duration: time.Since(start)}
+		res.ShellExited = shellExited
+		res.TimedOut = !shellExited
+		return res
+	}
+
 	select {
 	case r := <-resultCh:
 		if r.done {
 			return buildExecResult(r, opts, time.Since(start)), nil
 		}
-		return partialExecResult(&mu, &acc, s, opts, time.Since(start)), nil
+		// The reader returned without a sentinel because the PTY stream closed:
+		// the foreground shell exited (the command ran exit/exec, or the session
+		// went terminal). This is NOT a timeout.
+		return partial(true), nil
 	case <-timer.C:
-		return partialExecResult(&mu, &acc, s, opts, time.Since(start)), nil
+		return partial(false), nil
 	case <-ctx.Done():
-		return partialExecResult(&mu, &acc, s, opts, time.Since(start)), ctx.Err()
+		res := partial(false)
+		return res, ctx.Err()
 	}
 }
 
@@ -130,25 +157,5 @@ func buildExecResult(r execScan, opts ExecOptions, dur time.Duration) ExecResult
 	if !opts.Raw {
 		out = []byte(interpretPlain(r.output))
 	}
-	return ExecResult{ExitCode: r.exitCode, Output: out, TimedOut: false, Duration: dur}
-}
-
-// partialExecResult is used when the END sentinel never arrived (timeout or an
-// early stream close). It re-scans (in case the sentinel landed in the final
-// bytes) and otherwise returns best-effort output after the START line, marked
-// TimedOut with an unknown exit code.
-func partialExecResult(mu *sync.Mutex, acc *[]byte, s execSentinels, opts ExecOptions, dur time.Duration) ExecResult {
-	mu.Lock()
-	snap := append([]byte(nil), (*acc)...)
-	mu.Unlock()
-
-	if r := scanExec(snap, s); r.done {
-		return buildExecResult(r, opts, dur)
-	}
-	part := partialOutput(snap, s)
-	out := part
-	if !opts.Raw {
-		out = []byte(interpretPlain(part))
-	}
-	return ExecResult{ExitCode: -1, Output: out, TimedOut: true, Duration: dur}
+	return ExecResult{ExitCode: r.exitCode, Output: out, Duration: dur}
 }

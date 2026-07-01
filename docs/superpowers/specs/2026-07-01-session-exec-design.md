@@ -87,6 +87,22 @@ Behavioral contract:
 - Implemented as `cli.SessionExec(ctx, taskIDHex, cmd, opts)` plus a `cli.SessionExecWith(client, …)` variant that takes a caller-provided long-lived `*cli.Client`, mirroring the existing `SessionSend` structure (`cli/cowrite_native.go`) and honoring the "reuse the long-lived client" rule.
 - `exec` is a CLI/programmatic primitive in the same family as `send`/`snapshot` (non-TTY callers: agents, scripts). A human on the TUI/WebUI already has a live interactive terminal, so a synchronous-exec-return has no distinct human UI affordance there; `SessionExecWith(client)` is nonetheless exported so a future TUI/WebUI caller could reuse it. This is the one deliberate deviation from "every feature spans all three UIs," and it is functional, not an omission.
 
+## Foreground shell exiting mid-command (detected, distinct from timeout)
+
+If the command terminates the foreground shell itself — it runs `exit`, `exec`,
+kills its own shell, etc. — the final sentinel `printf` never runs and the PTY
+stream closes. The session then goes terminal (a later exec gets
+`already_terminal`). exec distinguishes this from a real timeout by *how* the
+read ended: the reader returning on stream-close (no sentinel) → `ShellExited`
+(exit 126, "the foreground shell exited … did the command run exit/exec?");
+the timer firing while the reader still runs → `TimedOut` (exit 124). Reporting
+a shell-death as a timeout would misdirect diagnosis, so the two are separate
+result flags and separate exit codes. Note: interactive bash prints its own
+`exit` farewell line as it leaves, so it may appear in the partial output — that
+is bash's message, not a sentinel leak. (v1 deliberately does NOT reject
+exit/exec or subshell-wrap the command: subshell wrapping would break the cd/env
+persistence that sharing one live foreground shell provides.)
+
 ## Known limitations (documented, not solved in v1)
 
 - **Combined output only** — stdout/stderr are not separable on a PTY (see the key constraint). Inherent.

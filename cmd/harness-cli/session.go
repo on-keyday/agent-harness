@@ -340,9 +340,10 @@ The foreground must be a POSIX shell (bash/zsh/sh); otherwise use send/snapshot.
 
 	if *jsonOut {
 		obj := map[string]any{
-			"exit":        res.ExitCode,
-			"timed_out":   res.TimedOut,
-			"duration_ms": res.Duration.Milliseconds(),
+			"exit":         res.ExitCode,
+			"timed_out":    res.TimedOut,
+			"shell_exited": res.ShellExited,
+			"duration_ms":  res.Duration.Milliseconds(),
 		}
 		if !*exitOnly {
 			obj["output"] = string(res.Output)
@@ -353,10 +354,14 @@ The foreground must be a POSIX shell (bash/zsh/sh); otherwise use send/snapshot.
 	}
 
 	code := res.ExitCode
-	if res.TimedOut {
-		fmt.Fprintf(os.Stderr, "session exec: no completion within %s; the session foreground may not be a POSIX shell (exec needs bash/zsh/sh) — use session send/snapshot instead\n", *timeout)
+	switch {
+	case res.ShellExited:
+		fmt.Fprintln(os.Stderr, "session exec: the session's foreground shell exited before the command finished — did the command run `exit`/`exec` (or otherwise terminate the shell)? the session is likely now terminal (dead). This is NOT a timeout.")
+		code = 126
+	case res.TimedOut:
+		fmt.Fprintf(os.Stderr, "session exec: no completion within %s; the command is still running, or the session foreground is not a POSIX shell (exec needs bash/zsh/sh) — use session send/snapshot instead\n", *timeout)
 		code = 124
-	} else if code < 0 {
+	case code < 0:
 		code = 125
 	}
 	os.Exit(code)
