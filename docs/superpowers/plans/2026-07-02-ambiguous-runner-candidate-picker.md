@@ -174,8 +174,10 @@ git commit -m "feat(protocol): OpenInteractiveResponse carries runner candidates
 - Test: `server/task_handler_test.go` (extend `TestHandleOpenInteractiveAmbiguous`, ~line 439)
 
 **Interfaces:**
-- Consumes: `protocol.RunnerCandidate`, `OpenInteractiveResponse.Candidates` (Task 1); `RunnerEntry{ID, Hostname, AllowedRoots, ActiveTasks, MaxTasks}`; `protocol.MatchLen`.
-- Produces: `handleOpenInteractive` returns an `OpenInteractiveResponse{Status: AmbiguousRunner, Candidates: [...]}` for ≥2 candidates.
+- Consumes: `protocol.RunnerCandidate`, `OpenInteractiveResponse` (Task 1); `RunnerEntry{ID, Hostname, AllowedRoots, ActiveTasks, MaxTasks}`; `protocol.MatchLen`.
+- Produces: `handleOpenInteractive` returns an `OpenInteractiveResponse{Status: AmbiguousRunner}` with candidates set for ≥2 candidates.
+
+> **Codegen shape (from Task 1):** because `candidates` lives in a conditional block, the generated Go exposes it as **variant accessor methods**, NOT plain struct fields: setter `resp.SetCandidates(list)` (sets the slice, its len, and activates the ambiguous variant) and getter `resp.Candidates()` (returns `[]RunnerCandidate`). Assigning `resp.Candidates = ...`/`resp.CandidatesLen = ...` directly does NOT compile / fails encode with "invalid union type for encoding". `RunnerCandidate`'s own byte fields use setters `SetCid/SetHostname/SetMatchedRoot`; `ActiveTasks`/`MaxTasks` are plain `uint16` fields. Confirm the exact `SetCandidates` signature in `runner/protocol/message.go` before use (it may return a bool length-check like `SetRepoPath`).
 
 - [ ] **Step 1: Extend the failing test.** Replace the body of `TestHandleOpenInteractiveAmbiguous` in `server/task_handler_test.go` with:
 
@@ -193,11 +195,11 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
 	}
-	if len(resp.Candidates) != 2 {
-		t.Fatalf("candidates=%d want 2", len(resp.Candidates))
+	if len(resp.Candidates()) != 2 {
+		t.Fatalf("candidates=%d want 2", len(resp.Candidates()))
 	}
 	byCid := map[string]protocol.RunnerCandidate{}
-	for _, c := range resp.Candidates {
+	for _, c := range resp.Candidates() {
 		byCid[string(c.Cid)] = c
 	}
 	a, ok := byCid["ws:10.0.0.1:1-1"]
@@ -255,8 +257,7 @@ with:
 			rc.MaxTasks = uint16(c.MaxTasks)
 			list = append(list, rc)
 		}
-		resp.CandidatesLen = uint16(len(list))
-		resp.Candidates = list
+		resp.SetCandidates(list) // sets slice+len AND activates the ambiguous variant; direct field assignment fails encode
 		return resp
 ```
 
@@ -313,8 +314,7 @@ func TestCandidatesFromResponse(t *testing.T) {
 	c.ActiveTasks = 3
 	c.MaxTasks = 8
 	resp := &protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_AmbiguousRunner}
-	resp.Candidates = []protocol.RunnerCandidate{c}
-	resp.CandidatesLen = 1
+	resp.SetCandidates([]protocol.RunnerCandidate{c})
 
 	got := candidatesFromResponse(resp)
 	if len(got) != 1 {
@@ -381,8 +381,8 @@ func (e *AmbiguousRunnerError) Error() string {
 
 // candidatesFromResponse maps the wire candidates into the client-facing slice.
 func candidatesFromResponse(oir *protocol.OpenInteractiveResponse) []RunnerCandidate {
-	out := make([]RunnerCandidate, 0, len(oir.Candidates))
-	for _, c := range oir.Candidates {
+	out := make([]RunnerCandidate, 0, len(oir.Candidates()))
+	for _, c := range oir.Candidates() {
 		out = append(out, RunnerCandidate{
 			Cid:         string(c.Cid),
 			Hostname:    string(c.Hostname),
