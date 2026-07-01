@@ -18,11 +18,12 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// runSession dispatches session sub-verbs: new / attach / snapshot / ls / kill.
-// cid is the already-resolved server ConnectionID from main()'s parseCID().
+// runSession dispatches session sub-verbs: new / attach / snapshot / send /
+// exec / ls / kill. cid is the already-resolved server ConnectionID from
+// main()'s parseCID().
 func runSession(cid objproto.ConnectionID, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|ls|kill> [args]")
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill> [args]")
 		os.Exit(2)
 	}
 	verb := args[0]
@@ -36,6 +37,8 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 		return runSessionSnapshot(cid, rest)
 	case "send":
 		return runSessionSend(cid, rest)
+	case "exec":
+		return runSessionExec(cid, rest)
 	case "ls":
 		return runSessionLs(cid, rest)
 	case "kill":
@@ -296,6 +299,68 @@ argument to preserve exact whitespace.`)
 	}
 	defer c.Close()
 	return c.SessionSend(ctx, taskIDHex, data, time.Duration(*flushMs)*time.Millisecond)
+}
+
+// runSessionExec runs a single shell command line synchronously in a session's
+// foreground shell (via a cowrite attach + sentinel-bounded output) and returns
+// its combined output plus exit code. Unlike send+snapshot it blocks until the
+// command finishes, so no sleep-guessing is needed. The process exits with the
+// command's own exit code (124 on timeout, 125 on transport/attach error).
+// Flags must precede <id>; everything after <id> is one shell command line.
+func runSessionExec(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session exec", flag.ExitOnError)
+	timeout := fs.Duration("timeout", 30*time.Second, "max wait for the command to finish before giving up (exit 124)")
+	jsonOut := fs.Bool("json", false, `emit {"exit":N,"output":"…","timed_out":bool,"duration_ms":N} as one JSON object`)
+	exitOnly := fs.Bool("exit-only", false, "print no output; only propagate the exit code")
+	raw := fs.Bool("raw", false, "return the verbatim output bytes (escape sequences intact) instead of the interpreted plain text")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 2 {
+		return fmt.Errorf(`usage: session exec [--timeout D] [--json] [--exit-only] [--raw] <id> <cmd>...
+flags must precede <id>; everything after <id> is joined with spaces and run as
+one shell command line (ssh-style) in the session's foreground shell. The
+process exits with the command's exit code (124 on timeout, 125 on error).
+The foreground must be a POSIX shell (bash/zsh/sh); otherwise use send/snapshot.`)
+	}
+	taskIDHex := fs.Arg(0)
+	cmd := strings.Join(fs.Args()[1:], " ")
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	res, execErr := c.SessionExec(ctx, taskIDHex, cmd, cli.ExecOptions{Timeout: *timeout, Raw: *raw})
+	c.Close()
+	if execErr != nil {
+		fmt.Fprintln(os.Stderr, "session exec:", execErr)
+		os.Exit(125)
+	}
+
+	if *jsonOut {
+		obj := map[string]any{
+			"exit":        res.ExitCode,
+			"timed_out":   res.TimedOut,
+			"duration_ms": res.Duration.Milliseconds(),
+		}
+		if !*exitOnly {
+			obj["output"] = string(res.Output)
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(obj)
+	} else if !*exitOnly {
+		_, _ = os.Stdout.Write(res.Output)
+	}
+
+	code := res.ExitCode
+	if res.TimedOut {
+		fmt.Fprintf(os.Stderr, "session exec: no completion within %s; the session foreground may not be a POSIX shell (exec needs bash/zsh/sh) — use session send/snapshot instead\n", *timeout)
+		code = 124
+	} else if code < 0 {
+		code = 125
+	}
+	os.Exit(code)
+	return nil // unreachable
 }
 
 // unescapeInput expands a small set of backslash escapes for sending control
