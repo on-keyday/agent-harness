@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -28,6 +28,7 @@ Arguments: $ARGUMENTS
    | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--claude-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --claude-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
+   | `codex`      | `--claude-bin codex --agent-oneshot-argv "exec {args} {prompt}" --agent-resume-interactive-argv "resume --last {args}"`     | Codex CLI runner |
 
    **The `sandbox` preset is NOT a shell preset.** It runs the *full* claude
    inside a rootless-podman container (`scripts/sandbox/`), confining the agent's
@@ -50,6 +51,33 @@ Arguments: $ARGUMENTS
    usually overlap a broad existing slot (e.g. the `bash` runner serving
    `$HOME/workspace`), inject `--hostname $HARNESS_HOSTNAME-sandbox` so the slot
    is unambiguously pinnable via `--host`.
+
+   **Codex preset details.** The runner still uses the historical
+   `--claude-bin` / `--claude-args` flag names, but `--claude-bin codex` is now
+   supported by runner-side argv templates:
+
+   - `--agent-oneshot-argv "exec {args} {prompt}"` makes one-shot tasks run as
+     `codex exec <global/per-task args> <prompt>` instead of Claude's default
+     `<args> -p <prompt>`.
+   - `--agent-resume-interactive-argv "resume --last {args}"` makes
+     `resume_conversation` interactive resumes run as
+     `codex resume --last <global/per-task args>` instead of appending
+     `--continue`.
+   - `{args}` expands to runner-global `--claude-args` plus per-task
+     `--claude-arg` values. `{prompt}` expands to the one-shot prompt as a
+     single argv element. These templates are parsed with shlex and executed via
+     argv, not through a shell.
+
+   The Claude-compatible defaults are:
+
+   ```
+   --agent-oneshot-argv "{args} -p {prompt}"
+   --agent-resume-interactive-argv "{args} --continue"
+   ```
+
+   A Codex slot usually needs explicit `--hostname $HARNESS_HOSTNAME-codex`
+   when its roots overlap an existing Claude slot, for the same dispatch
+   ambiguity reason as the sandbox slot.
 
    **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 
@@ -80,7 +108,9 @@ Arguments: $ARGUMENTS
          [--no-worktree] \
          [--claude-bin <path>] \
          [--psk-file <path>] \
-         [--claude-args "<...>"]
+         [--claude-args "<...>"] \
+         [--agent-oneshot-argv "<...>"] \
+         [--agent-resume-interactive-argv "<...>"]
      ```
 
    - **`persist` in `$ARGUMENTS`** — runner is also registered with the OS login-autostart (Linux systemd user unit / Windows Task Scheduler) so it comes back after reboot / sign-out. Build instead:
@@ -94,7 +124,9 @@ Arguments: $ARGUMENTS
          [--no-worktree] \
          [--claude-bin <path>] \
          [--psk-file <path>] \
-         [--claude-args "<...>"]
+         [--claude-args "<...>"] \
+         [--agent-oneshot-argv "<...>"] \
+         [--agent-resume-interactive-argv "<...>"]
      ```
 
      `runner-autostart.py register` writes the autostart entry, then starts the slot immediately by default (same as `--now` semantics), so a single invocation registers + brings it up.
