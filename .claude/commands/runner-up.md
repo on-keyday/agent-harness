@@ -24,7 +24,7 @@ Arguments: $ARGUMENTS
 
    | tag          | default flags                                                                                                              | target |
    |--------------|----------------------------------------------------------------------------------------------------------------------------|--------|
-   | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace`                                                                  | Linux / macOS (existing sandbox slot) |
+   | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace --agent-oneshot-argv "{args} -c {prompt}" --agent-resume-interactive-argv "{args}"` | Linux / macOS shell runner |
    | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--claude-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --claude-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
@@ -78,6 +78,12 @@ Arguments: $ARGUMENTS
    A Codex slot usually needs explicit `--hostname $HARNESS_HOSTNAME-codex`
    when its roots overlap an existing Claude slot, for the same dispatch
    ambiguity reason as the sandbox slot.
+
+   **Bash preset details.** The bash slot is a shell runner, not an agent with
+   conversation state. Its preset uses `--agent-oneshot-argv "{args} -c
+   {prompt}"` so one-shot submits execute the prompt as a shell command, and
+   `--agent-resume-interactive-argv "{args}"` so `resume_conversation` is
+   ignored instead of adding Claude's `--continue`.
 
    **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 
