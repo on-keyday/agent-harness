@@ -351,6 +351,7 @@ harness-cli session ls            # JSON Lines: detachable interactive sessions 
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
+harness-cli session exec <id> <cmd>...  # RUN one shell cmd, wait, return combined output + exit code (POSIX-shell foreground)
 harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
 ```
 
@@ -392,9 +393,32 @@ capability — no operator PSK):
   placed AFTER the text is taken as literal text (you'll see it typed in the
   snapshot instead of submitting), so it won't act as the Enter flag.
 
+- **`session exec [--timeout D] [--json] [--exit-only] [--raw] <id> <cmd>...`**
+  is the synchronous shortcut for the send + snapshot + guess-a-sleep loop when
+  the session's foreground is a POSIX shell (bash/zsh/sh, incl. one reached over
+  ssh or inside a netns — it types through the live PTY). It injects the command
+  (flags before `<id>`, the rest joined ssh-style like `send`), WAITS for it to
+  finish, and returns the command's **combined stdout+stderr** as greppable
+  logical lines (SGR stripped, `\r`-overwrite/erase-line applied, and NOT
+  re-wrapped — unlike snapshot's width-wrapped grid, so a long line/SID stays
+  intact) plus its exit code. The `exec` process exits with the command's exit
+  code (124 timeout, 125 error, 126 the foreground shell exited), so it composes:
+  `if harness-cli session exec <id> test -f /flag; then …`. `--json` returns
+  `{exit,output,timed_out,shell_exited,duration_ms}`; `--raw` returns verbatim
+  bytes (escapes intact); `--exit-only` suppresses output. **Footguns:** (1) it
+  types into the **LIVE foreground shell**, so state persists across calls
+  (`cd`/`export` carry over) AND shell-terminating commands bite — `exit`/`exec`
+  end the shell and KILL the session; to test an exit code wrap it as
+  `bash -c 'exit N'` or `(exit N)`, never a bare `exit N`. (2) stdout/stderr
+  can't be separated (one PTY). (3) v1 is a single logical line (`;`/`&&`/`|`/
+  `$()` compose fine; a literal newline is rejected). (4) if the foreground is
+  NOT a POSIX shell (an sdplane/claude REPL), no completion marker appears → it
+  times out with a diagnostic; use send/snapshot there instead.
+
 - **`session snapshot` / `session attach` flags are order-free** — their only
   positional is the `<id>` (never `-`-leading), so `snapshot <id> --rows 50` and
-  `snapshot --rows 50 <id>` are equivalent.
+  `snapshot --rows 50 <id>` are equivalent. (`send`/`exec` are NOT order-free:
+  their text/cmd is free-form, so flags must stay before `<id>`.)
 
 These suit **terminal-level** work (shells, TUIs, REPLs, or watching a screen).
 To coordinate a *claude worker* (hand it tasks / corrections), still prefer
