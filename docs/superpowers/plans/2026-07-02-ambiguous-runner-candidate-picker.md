@@ -380,9 +380,16 @@ func (e *AmbiguousRunnerError) Error() string {
 }
 
 // candidatesFromResponse maps the wire candidates into the client-facing slice.
+// NOTE (from Task 2): the generated getter Candidates() returns a POINTER
+// (*[]protocol.RunnerCandidate) — nil unless Status == ambiguous_runner — so
+// deref with a nil guard.
 func candidatesFromResponse(oir *protocol.OpenInteractiveResponse) []RunnerCandidate {
-	out := make([]RunnerCandidate, 0, len(oir.Candidates()))
-	for _, c := range oir.Candidates() {
+	cands := oir.Candidates()
+	if cands == nil {
+		return nil
+	}
+	out := make([]RunnerCandidate, 0, len(*cands))
+	for _, c := range *cands {
 		out = append(out, RunnerCandidate{
 			Cid:         string(c.Cid),
 			Hostname:    string(c.Hostname),
