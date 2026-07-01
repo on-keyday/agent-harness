@@ -439,8 +439,8 @@ func TestHandleOpenInteractiveBusy(t *testing.T) {
 func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
-	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
-	h.Registry.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: "ws:10.0.0.1:1-1", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{"t": {}}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: "ws:10.0.0.2:1-1", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 8, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
 
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
@@ -448,6 +448,20 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
+	}
+	if len(*resp.Candidates()) != 2 {
+		t.Fatalf("candidates=%d want 2", len(*resp.Candidates()))
+	}
+	byCid := map[string]protocol.RunnerCandidate{}
+	for _, c := range *resp.Candidates() {
+		byCid[string(c.Cid)] = c
+	}
+	a, ok := byCid["ws:10.0.0.1:1-1"]
+	if !ok {
+		t.Fatalf("missing candidate h1; got %v", byCid)
+	}
+	if string(a.Hostname) != "h1" || string(a.MatchedRoot) != "/shared" || a.ActiveTasks != 1 || a.MaxTasks != 8 {
+		t.Fatalf("h1 candidate mismatch: %+v", a)
 	}
 }
 

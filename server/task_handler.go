@@ -640,7 +640,20 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	case len(cands) == 0:
 		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
 	case len(cands) > 1:
-		return errResp(protocol.OpenInteractiveStatus_AmbiguousRunner)
+		slog.Error("handleOpenInteractive: ambiguous", "repo", repo, "candidates", len(cands))
+		resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_AmbiguousRunner}
+		list := make([]protocol.RunnerCandidate, 0, len(cands))
+		for _, c := range cands {
+			var rc protocol.RunnerCandidate
+			rc.SetCid([]byte(c.ID))
+			rc.SetHostname([]byte(c.Hostname))
+			rc.SetMatchedRoot([]byte(matchedRoot(c.AllowedRoots, repo)))
+			rc.ActiveTasks = uint16(len(c.ActiveTasks))
+			rc.MaxTasks = uint16(c.MaxTasks)
+			list = append(list, rc)
+		}
+		resp.SetCandidates(list) // sets slice+len AND activates the ambiguous variant; direct field assignment fails encode
+		return resp
 	}
 	runner := cands[0]
 
@@ -1356,4 +1369,17 @@ func placeholderRunnerID() protocol.RunnerID {
 	rid.SetTransport([]byte("ws"))
 	rid.SetIpAddr([]byte{127, 0, 0, 1})
 	return rid
+}
+
+// matchedRoot returns the first AllowedRoots entry whose MatchLen(root, repo)
+// equals the runner's best score — the display reason this runner is a
+// candidate. Display metadata only; does not affect selection.
+func matchedRoot(roots []string, repo string) string {
+	best, bestRoot := 0, ""
+	for _, root := range roots {
+		if s := protocol.MatchLen(root, repo); s > best {
+			best, bestRoot = s, root
+		}
+	}
+	return bestRoot
 }
