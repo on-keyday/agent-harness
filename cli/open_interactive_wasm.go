@@ -20,6 +20,11 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
+// ErrPinnedNotFound is wrapped into the error returned for
+// OpenInteractiveStatus_PinnedNotFound so callers can retry with a broader
+// selector (e.g. Any) via errors.Is, instead of string-matching the message.
+var ErrPinnedNotFound = errors.New("pinned runner not found")
+
 // InteractiveSession holds the state of an active wasm-side interactive PTY
 // session: the bidirectional stream with the runner, the recv goroutine
 // cancel hook, and a closed flag guarded by mu.
@@ -157,7 +162,7 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 	case protocol.OpenInteractiveStatus_AmbiguousRunner:
 		return "", fmt.Errorf("ambiguous_runner: multiple runners match; pin one with host")
 	case protocol.OpenInteractiveStatus_PinnedNotFound:
-		return "", fmt.Errorf("pinned_not_found: the specified runner was not found")
+		return "", fmt.Errorf("pinned_not_found: the specified runner was not found: %w", ErrPinnedNotFound)
 	case protocol.OpenInteractiveStatus_ResumeNotFound:
 		return "", fmt.Errorf("resume_not_found: the specified resume task id is unknown")
 	case protocol.OpenInteractiveStatus_ResumeNotTerminal:

@@ -791,14 +791,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// session, or resume a finished task into a new detachable session.
 		// r resumes with --continue (keep claude's memory); R resumes fresh.
 		if a.focus == focusTasks && (msg.String() == "r" || msg.String() == "R") {
-			act := resumeReattachAction(a.tasks.SelectedTask(), msg.String() == "r")
+			t := a.tasks.SelectedTask()
+			act := resumeReattachAction(t, msg.String() == "r")
 			switch act.Kind {
 			case actionReattach:
 				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_Control)
 			case actionResume:
 				// repo is irrelevant on resume — the server reuses the task's
-				// RepoPath and worktree branch.
-				return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume)
+				// RepoPath and worktree branch. Prefer the runner the task last
+				// ran on (t.AssignedTo) so resume stays one keypress even when
+				// another runner ties on this repo's roots score.
+				return a, DoResumeSession(a.client, t.AssignedTo, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume)
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil

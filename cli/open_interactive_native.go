@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 
@@ -14,6 +15,11 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
 )
+
+// ErrPinnedNotFound is wrapped into the error returned for
+// OpenInteractiveStatus_PinnedNotFound so callers can retry with a broader
+// selector (e.g. Any) via errors.Is, instead of string-matching the message.
+var ErrPinnedNotFound = errors.New("pinned runner not found")
 
 // OpenInteractive asks the server to allocate an interactive PTY claude
 // session in repoPath on an idle runner, splices the per-side streams, and
@@ -126,7 +132,7 @@ func openInteractiveStatusError(repo string, status protocol.OpenInteractiveStat
 	case protocol.OpenInteractiveStatus_AmbiguousRunner:
 		return fmt.Errorf("interactive ambiguous_runner: multiple runners match; pin one with --runner/--host/--ip")
 	case protocol.OpenInteractiveStatus_PinnedNotFound:
-		return fmt.Errorf("interactive pinned_not_found: the specified runner was not found")
+		return fmt.Errorf("interactive pinned_not_found: the specified runner was not found: %w", ErrPinnedNotFound)
 	case protocol.OpenInteractiveStatus_ResumeNotFound:
 		return fmt.Errorf("interactive resume_not_found: the specified resume task id is unknown (was it pruned, or is the kind a mismatch?)")
 	case protocol.OpenInteractiveStatus_ResumeNotTerminal:

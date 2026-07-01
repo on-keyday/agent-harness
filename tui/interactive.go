@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -76,6 +77,45 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
 		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride)
+		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
+	}
+}
+
+// resumeSelectorOpts returns the SelectorOpts the r/R resume keybinding
+// should try first: pin to the runner the task last ran on (assignedTo) so
+// that resume stays a single keypress even when other runners tie on the
+// same repo's roots score. A zero-value assignedTo (task never assigned)
+// falls back to the Any selector.
+func resumeSelectorOpts(assignedTo protocol.RunnerID) cli.SelectorOpts {
+	if assignedTo.IpAddrLen == 0 {
+		return cli.SelectorOpts{}
+	}
+	return cli.SelectorOpts{Runner: protocol.RunnerIDToConnID(assignedTo).String()}
+}
+
+// DoResumeSession resumes a terminal task into a new detachable session,
+// preferring the runner it last ran on (assignedTo, from the task's
+// AssignedTo field) over the default Any selector. This keeps the r/R
+// keybinding a single keypress even when another runner ties on the same
+// repo's roots score (which would otherwise make Any ambiguous). If that
+// runner has since disconnected (e.g. restarted with a new RunnerID), the
+// pinned attempt fails with ErrPinnedNotFound and this retries once with
+// the Any selector.
+func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool) tea.Cmd {
+	return func() tea.Msg {
+		opts := resumeSelectorOpts(assignedTo)
+		sel, err := cli.BuildSelector(opts)
+		if err != nil {
+			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
+		}
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride)
+		if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
+			sel, err = cli.BuildSelector(cli.SelectorOpts{})
+			if err != nil {
+				return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
+			}
+			stream, taskID, err = c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride)
+		}
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
