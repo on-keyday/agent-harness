@@ -86,3 +86,41 @@ func TestServerCIDOnlyMode(t *testing.T) {
 		t.Errorf("expected isListenMode() false with only --server-cid set")
 	}
 }
+
+func TestParseAgentArgsFlag(t *testing.T) {
+	got, err := parseAgentArgsFlag("--agent-oneshot-argv", `exec {args} "{prompt}"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"exec", "{args}", "{prompt}"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestAgentArgvFlagsParseAndValidate(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	cfg := newMainConfig()
+	cfg.bindFlags(fs)
+
+	if err := fs.Parse([]string{
+		"--agent-oneshot-argv", "exec {args} {prompt}",
+		"--agent-resume-interactive-argv", "resume --last {args}",
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	oneshot, err := parseAgentArgsFlag("--agent-oneshot-argv", cfg.AgentOneshotArgv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(oneshot, " ") != "exec {args} {prompt}" {
+		t.Fatalf("oneshot argv = %#v", oneshot)
+	}
+	resume, err := parseAgentArgsFlag("--agent-resume-interactive-argv", cfg.AgentResumeInteractiveArgv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(resume, " ") != "resume --last {args}" {
+		t.Fatalf("resume argv = %#v", resume)
+	}
+}

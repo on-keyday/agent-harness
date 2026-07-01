@@ -15,9 +15,9 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/transport"
 	"github.com/on-keyday/objtrsf/trsf"
-	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // agentBinBase is the basename of the agent binary the runner runs, for peer
@@ -38,13 +38,15 @@ func skillsInjected(noWorktree, forceInject bool) bool {
 
 // Config holds the configuration for the runner connection.
 type Config struct {
-	ServerCID       objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
-	AllowedRoots    []string              // absolute repo paths (or root prefixes) this runner serves
-	MaxTasks        int                   // maximum concurrent tasks (0 → defaults to 1)
-	Hostname        string                // hostname reported in Hello (empty → no hostname sent)
-	ClaudeBin       string                // path to the claude binary
-	ExtraClaudeArgs []string              // forwarded to every claude invocation (before -p)
-	Logger          *slog.Logger
+	ServerCID                     objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
+	AllowedRoots                  []string              // absolute repo paths (or root prefixes) this runner serves
+	MaxTasks                      int                   // maximum concurrent tasks (0 → defaults to 1)
+	Hostname                      string                // hostname reported in Hello (empty → no hostname sent)
+	ClaudeBin                     string                // path to the claude binary
+	ExtraClaudeArgs               []string              // forwarded to every claude invocation (before -p)
+	OneshotArgvTemplate           []string              // argv template for oneshot tasks
+	ResumeInteractiveArgvTemplate []string              // argv template used when resuming an interactive conversation
+	Logger                        *slog.Logger
 	// PSK, when non-nil, overrides the HARNESS_PSK / HARNESS_PSK_FILE env vars.
 	PSK []byte
 
@@ -209,22 +211,24 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
-		AllowedRoots:               cfg.AllowedRoots,
-		ClaudeBin:                  cfg.ClaudeBin,
-		ExtraClaudeArgs:            cfg.ExtraClaudeArgs,
-		ServerCID:                  serverCID,
-		Hostname:                   cfg.Hostname,
-		WSPath:                     cli.WebSocketPath,
-		BinDir:                     binDir,
-		PSK:                        psk,
-		ProxyVia:                   cfg.ProxyVia,
-		Sender:                     sender,
-		Streams:                    pc.Transport(),
-		creator:                    pc.Transport(),
-		Logger:                     cfg.Logger,
-		Now:                        time.Now,
-		NoWorktree:                 cfg.NoWorktree,
-		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
+		AllowedRoots:                  cfg.AllowedRoots,
+		ClaudeBin:                     cfg.ClaudeBin,
+		ExtraClaudeArgs:               cfg.ExtraClaudeArgs,
+		OneshotArgvTemplate:           cfg.OneshotArgvTemplate,
+		ResumeInteractiveArgvTemplate: cfg.ResumeInteractiveArgvTemplate,
+		ServerCID:                     serverCID,
+		Hostname:                      cfg.Hostname,
+		WSPath:                        cli.WebSocketPath,
+		BinDir:                        binDir,
+		PSK:                           psk,
+		ProxyVia:                      cfg.ProxyVia,
+		Sender:                        sender,
+		Streams:                       pc.Transport(),
+		creator:                       pc.Transport(),
+		Logger:                        cfg.Logger,
+		Now:                           time.Now,
+		NoWorktree:                    cfg.NoWorktree,
+		ForceInjectHarnessSettings:    cfg.ForceInjectHarnessSettings,
 		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
 		// mode) after driveAfterConn returns, so the ep is available.
 	}

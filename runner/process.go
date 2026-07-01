@@ -17,11 +17,12 @@ type LogSink func(data []byte)
 
 // Process wraps a single execution of the claude binary in a worktree.
 type Process struct {
-	ClaudeBin string        // path to the claude executable (or fake-claude.sh in tests)
-	CWD       string        // worktree directory; cmd.Dir = CWD
-	Timeout   time.Duration // max wall time; if zero, defaults to 30 minutes
-	ExtraArgs []string      // additional args inserted before "-p <prompt>" (e.g. --dangerously-skip-permissions)
-	Env       []string      // additional env vars to merge with os.Environ()
+	ClaudeBin           string        // path to the claude executable (or fake-claude.sh in tests)
+	CWD                 string        // worktree directory; cmd.Dir = CWD
+	Timeout             time.Duration // max wall time; if zero, defaults to 30 minutes
+	ExtraArgs           []string      // runner-global args plus per-task args
+	OneshotArgvTemplate []string      // argv template for oneshot mode; defaults to "{args} -p {prompt}"
+	Env                 []string      // additional env vars to merge with os.Environ()
 
 	// OnStdinWriter, if non-nil, is called once after the process stdin pipe
 	// is ready. The argument is a write fn that can be used to inject bytes
@@ -46,8 +47,10 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	args := append([]string{}, p.ExtraArgs...)
-	args = append(args, "-p", prompt)
+	args, err := buildOneshotArgs(p.OneshotArgvTemplate, p.ExtraArgs, prompt)
+	if err != nil {
+		return -1, err
+	}
 	cmd := exec.CommandContext(runCtx, p.ClaudeBin, args...)
 	cmd.Dir = p.CWD
 	if len(p.Env) > 0 {

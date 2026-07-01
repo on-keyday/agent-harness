@@ -82,14 +82,16 @@ type taskEntry struct {
 // Session manages the runner's task lifecycle. It is created once per connection
 // and handles concurrent tasks through its internal maps.
 type Session struct {
-	AllowedRoots    []string // absolute paths this runner is allowed to serve
-	ClaudeBin       string
-	ExtraClaudeArgs []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
-	Timeout         time.Duration
-	Sender          Sender
-	Streams         peer.BidirectionalStreamLookup // optional; required for handleOpenExec
-	Logger          *slog.Logger                   // optional; defaults to slog.Default()
-	Now             func() time.Time
+	AllowedRoots                  []string // absolute paths this runner is allowed to serve
+	ClaudeBin                     string
+	ExtraClaudeArgs               []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
+	OneshotArgvTemplate           []string
+	ResumeInteractiveArgvTemplate []string
+	Timeout                       time.Duration
+	Sender                        Sender
+	Streams                       peer.BidirectionalStreamLookup // optional; required for handleOpenExec
+	Logger                        *slog.Logger                   // optional; defaults to slog.Default()
+	Now                           func() time.Time
 
 	// creator makes bidi streams toward the server. Set to pc.Transport() for
 	// live runner connections; required by remote port-forward (one stream per
@@ -435,14 +437,12 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	// so that a per-task --resume / --add-dir / etc. wins on conflict (claude
 	// flags are largely last-wins).
 	proc := &Process{
-		ClaudeBin: s.ClaudeBin,
-		CWD:       dir,
-		Timeout:   s.Timeout,
-		ExtraArgs: withResumeConversationArgs(
-			mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
-			body.ResumeConversation(),
-		),
-		Env: env,
+		ClaudeBin:           s.ClaudeBin,
+		CWD:                 dir,
+		Timeout:             s.Timeout,
+		ExtraArgs:           mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
+		OneshotArgvTemplate: s.OneshotArgvTemplate,
+		Env:                 env,
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
 			if e := s.tasks[taskIDHex]; e != nil {
@@ -649,19 +649,23 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommandWithOption defers stream.CloseBoth() so we don't double-close here.
 	// Args order matches handleAssign: runner-global baseline first, per-task extras appended.
-	mergedArgs := withResumeConversationArgs(
+	mergedArgs, err := buildInteractiveArgs(
 		mergeExtraArgs(s.ExtraClaudeArgs, oer.ExtraArgs.AsStrings()),
+		s.ResumeInteractiveArgvTemplate,
 		oer.ResumeConversation(),
 	)
-	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, s.ClaudeBin, mergedArgs, dir, true, env, agentexec.ExecuteOption{
-		OnStdinWriter: func(write func([]byte) (int, error)) {
-			s.mu.Lock()
-			if e := s.tasks[taskIDHex]; e != nil {
-				e.wakeWrite = write
-			}
-			s.mu.Unlock()
-		},
-	})
+	runErr := err
+	if runErr == nil {
+		runErr = agentexec.ExecuteCommandWithOption(taskCtx, stream, log, s.ClaudeBin, mergedArgs, dir, true, env, agentexec.ExecuteOption{
+			OnStdinWriter: func(write func([]byte) (int, error)) {
+				s.mu.Lock()
+				if e := s.tasks[taskIDHex]; e != nil {
+					e.wakeWrite = write
+				}
+				s.mu.Unlock()
+			},
+		})
+	}
 
 	if runErr != nil {
 		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)

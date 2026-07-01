@@ -12,9 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/shlex"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func resolvePSK(pskVal, pskFile string) []byte {
@@ -36,22 +37,24 @@ func resolvePSK(pskVal, pskFile string) []byte {
 // instead of package-level flag vars makes validate() and bindFlags()
 // testable without touching the global flag.CommandLine.
 type mainConfig struct {
-	ServerCID    string
-	Roots        string
-	MaxTasks     int
-	ClaudeBin    string
-	ClaudeArgs   string
-	WSPath       string
-	Hostname     string
-	PSK          string
-	PSKFile      string
-	NoWorktree   bool
+	ServerCID                  string
+	Roots                      string
+	MaxTasks                   int
+	ClaudeBin                  string
+	ClaudeArgs                 string
+	AgentOneshotArgv           string
+	AgentResumeInteractiveArgv string
+	WSPath                     string
+	Hostname                   string
+	PSK                        string
+	PSKFile                    string
+	NoWorktree                 bool
 	ForceInjectHarnessSettings bool
-	Persist      bool
-	NoPersist    bool
-	PingInterval  time.Duration
-	ReconnectInit time.Duration
-	ReconnectMax  time.Duration
+	Persist                    bool
+	NoPersist                  bool
+	PingInterval               time.Duration
+	ReconnectInit              time.Duration
+	ReconnectMax               time.Duration
 
 	// Phase A reverse-dial:
 	WSListen  string
@@ -93,6 +96,8 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.IntVar(&c.MaxTasks, "max-tasks", c.MaxTasks, "maximum number of concurrent tasks (>= 1)")
 	fs.StringVar(&c.ClaudeBin, "claude-bin", c.ClaudeBin, "path to the claude binary")
 	fs.StringVar(&c.ClaudeArgs, "claude-args", c.ClaudeArgs, "extra args passed to claude before -p (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
+	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for oneshot tasks; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
+	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; token {args}; default \"{args} --continue\"")
 	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
 	fs.StringVar(&c.PSK, "psk", c.PSK, "PSK passphrase (env: HARNESS_PSK)")
@@ -126,6 +131,17 @@ func (c *mainConfig) validate() error {
 		return fmt.Errorf("--max-tasks must be >= 1, got %d", c.MaxTasks)
 	}
 	return nil
+}
+
+func parseAgentArgsFlag(name, value string) ([]string, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	args, err := shlex.Split(value)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", name, err)
+	}
+	return args, nil
 }
 
 func main() {
@@ -173,6 +189,24 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agent-runner: --roots must contain at least one non-empty path\n")
 		os.Exit(1)
 	}
+	oneshotArgv, err := parseAgentArgsFlag("--agent-oneshot-argv", cfg.AgentOneshotArgv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runner.ValidateOneshotArgvTemplate(oneshotArgv); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: --agent-oneshot-argv: %v\n", err)
+		os.Exit(1)
+	}
+	resumeInteractiveArgv, err := parseAgentArgsFlag("--agent-resume-interactive-argv", cfg.AgentResumeInteractiveArgv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runner.ValidateResumeInteractiveArgvTemplate(resumeInteractiveArgv); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: --agent-resume-interactive-argv: %v\n", err)
+		os.Exit(1)
+	}
 
 	hostname := cfg.Hostname
 	if hostname == "" {
@@ -204,16 +238,18 @@ func main() {
 	resolvedPSK := resolvePSK(pskVal, cfg.PSKFile)
 
 	runCfg := runner.Config{
-		AllowedRoots:               abs,
-		MaxTasks:                   cfg.MaxTasks,
-		Hostname:                   hostname,
-		ClaudeBin:                  cfg.ClaudeBin,
-		ExtraClaudeArgs:            strings.Fields(cfg.ClaudeArgs),
-		Logger:                     slog.Default(),
-		PSK:                        resolvedPSK,
-		NoWorktree:                 cfg.NoWorktree,
-		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
-		PingInterval:               cfg.PingInterval,
+		AllowedRoots:                  abs,
+		MaxTasks:                      cfg.MaxTasks,
+		Hostname:                      hostname,
+		ClaudeBin:                     cfg.ClaudeBin,
+		ExtraClaudeArgs:               strings.Fields(cfg.ClaudeArgs),
+		OneshotArgvTemplate:           oneshotArgv,
+		ResumeInteractiveArgvTemplate: resumeInteractiveArgv,
+		Logger:                        slog.Default(),
+		PSK:                           resolvedPSK,
+		NoWorktree:                    cfg.NoWorktree,
+		ForceInjectHarnessSettings:    cfg.ForceInjectHarnessSettings,
+		PingInterval:                  cfg.PingInterval,
 	}
 
 	if cfg.isListenMode() {
