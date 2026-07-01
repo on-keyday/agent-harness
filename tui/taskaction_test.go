@@ -30,11 +30,11 @@ func TestResumeReattachAction(t *testing.T) {
 	} {
 		task := &protocol.TaskInfo{Status: st}
 		if got := resumeReattachAction(task, true); got.Kind != actionResume ||
-			len(got.ResumeArgs) != 1 || got.ResumeArgs[0] != "--continue" {
-			t.Errorf("status=%v r: want resume [--continue], got %v %v", st, got.Kind, got.ResumeArgs)
+			!got.ResumeConversation {
+			t.Errorf("status=%v r: want resume conversation, got %v %v", st, got.Kind, got.ResumeConversation)
 		}
-		if got := resumeReattachAction(task, false); got.Kind != actionResume || got.ResumeArgs != nil {
-			t.Errorf("status=%v R: want resume nil, got %v %v", st, got.Kind, got.ResumeArgs)
+		if got := resumeReattachAction(task, false); got.Kind != actionResume || got.ResumeConversation {
+			t.Errorf("status=%v R: want resume without conversation, got %v %v", st, got.Kind, got.ResumeConversation)
 		}
 	}
 	// Running but non-detachable (oneshot) has no PTY to attach → actionNone.

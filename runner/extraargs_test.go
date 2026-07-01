@@ -42,3 +42,24 @@ func TestMergeExtraArgsReturnsFreshSlice(t *testing.T) {
 		t.Errorf("global slice was mutated through merge result: got %q", global[0])
 	}
 }
+
+func TestWithResumeConversationArgs(t *testing.T) {
+	cases := []struct {
+		name               string
+		args               []string
+		resumeConversation bool
+		want               []string
+	}{
+		{"disabled", []string{"--foo"}, false, []string{"--foo"}},
+		{"enabled appends continue", []string{"--foo"}, true, []string{"--foo", "--continue"}},
+		{"enabled does not duplicate", []string{"--foo", "--continue"}, true, []string{"--foo", "--continue"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := withResumeConversationArgs(tc.args, tc.resumeConversation)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("got %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}

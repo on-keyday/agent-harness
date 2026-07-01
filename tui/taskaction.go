@@ -13,9 +13,9 @@ const (
 
 // taskAction is what the r/R keys should do for the selected task.
 type taskAction struct {
-	Kind       taskActionKind
-	ResumeArgs []string // claude args for actionResume (["--continue"] or nil)
-	Hint       string   // shown for actionNone
+	Kind               taskActionKind
+	ResumeConversation bool   // actionResume only; asks the runner to continue agent memory
+	Hint               string // shown for actionNone
 }
 
 // resumeReattachAction decides what r (withContinue=true) / R (withContinue=false)
@@ -37,11 +37,7 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	}
 	switch t.Status {
 	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
-		var args []string
-		if withContinue {
-			args = []string{"--continue"}
-		}
-		return taskAction{Kind: actionResume, ResumeArgs: args}
+		return taskAction{Kind: actionResume, ResumeConversation: withContinue}
 	}
 	return taskAction{Kind: actionNone,
 		Hint: "r/R: pick a detached session (reattach) or a finished task (resume)"}

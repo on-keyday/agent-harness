@@ -1668,19 +1668,17 @@ const POLL_INTERVAL_MS = 5000;
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   };
 
-  // resumeTaskById opens a (terminal) task's worktree as a fresh interactive
-  // session with --continue — "pick up where it left off". Shared by the notify
-  // feed tap; mirrors the task sheet's Resume (--continue) action.
+  // resumeTaskById opens a terminal task's worktree as a fresh interactive
+  // session and asks the runner to resume the agent conversation too.
   const resumeTaskById = async (id) => {
     if (!id) return;
     setActiveTab("terminal");
     term.reset();
     const args = currentClaudeArgs();
-    if (!args.includes("--continue")) args.push("--continue");
-    const req = { repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume };
+    const req = { repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation: true };
     try {
       const taskID = await window.harness.startInteractive(req);
-      attachedTask.textContent = `attached: ${taskID} (resumed --continue)`;
+      attachedTask.textContent = `attached: ${taskID} (resumed conversation)`;
       scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";
@@ -1905,13 +1903,13 @@ const POLL_INTERVAL_MS = 5000;
     // Resume — finished task's worktree, opened as a fresh interactive session.
     // Reflect the Compose "Extra claude args" box (same as Submit / Open) so a
     // resume can carry --permission-mode etc. without going through the cmdline.
-    // Two variants mirror the TUI's r/R: plain Resume (R) and Resume (--continue)
-    // (r), the latter appending --continue so claude reloads its prior session.
+    // Two variants mirror the TUI's r/R: plain Resume (R) and Resume conversation
+    // (r), the latter asks the runner to reload agent-side conversation state.
     if (isTerminal) {
-      const doResume = async (claudeArgs, note) => {
+      const doResume = async (claudeArgs, note, resumeConversation = false) => {
         setActiveTab("terminal");
         term.reset();
-        const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume };
+        const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
         try {
           const id = await window.harness.startInteractive(req);
           attachedTask.textContent = `attached: ${id} (${note})`;
@@ -1920,11 +1918,7 @@ const POLL_INTERVAL_MS = 5000;
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
       };
       addItem("▶ Resume", "", () => doResume(currentClaudeArgs(), "resumed"));
-      addItem("▶ Resume (--continue)", "", () => {
-        const args = currentClaudeArgs();
-        if (!args.includes("--continue")) args.push("--continue");
-        doResume(args, "resumed --continue");
-      });
+      addItem("▶ Resume conversation", "", () => doResume(currentClaudeArgs(), "resumed conversation", true));
     }
 
     // Files — always available.

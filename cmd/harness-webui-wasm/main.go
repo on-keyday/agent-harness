@@ -25,8 +25,8 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 var (
@@ -64,31 +64,31 @@ func main() {
 	rootCtx = ctx
 
 	js.Global().Set("harness", js.ValueOf(map[string]any{
-		"connect":           js.FuncOf(harnessConnect),
-		"submit":            js.FuncOf(harnessSubmit),
-		"list":              js.FuncOf(harnessList),
-		"snapshot":          js.FuncOf(harnessSnapshot),
-		"cancel":            js.FuncOf(harnessCancel),
-		"watch":             js.FuncOf(harnessWatch),
-		"prune":             js.FuncOf(harnessPrune),
-		"startInteractive":  js.FuncOf(harnessStartInteractive),
-		"sendInteractive":   js.FuncOf(harnessSendInteractive),
-		"resizeInteractive": js.FuncOf(harnessResizeInteractive),
-		"detachInteractive": js.FuncOf(harnessDetachInteractive),
-		"attachSession":        js.FuncOf(harnessAttachSession),
-		"onConnectionChange":   js.FuncOf(harnessOnConnectionChange),
-		"fileLs":               js.FuncOf(harnessFileLs),
-		"fileDelete":           js.FuncOf(harnessFileDelete),
-		"filePushBytes":        js.FuncOf(harnessFilePushBytes),
-		"filePullBytes":        js.FuncOf(harnessFilePullBytes),
-		"filePullDirBytes":     js.FuncOf(harnessFilePullDirBytes),
-		"serverDialRunner":     js.FuncOf(harnessServerDialRunner),
-		"sendNotification":     js.FuncOf(harnessSendNotification),
-		"watchNotifications":   js.FuncOf(harnessWatchNotifications),
-		"capList":              js.FuncOf(harnessCapList),
-		"boardTopics":          js.FuncOf(harnessBoardTopics),
-		"boardRead":            js.FuncOf(harnessBoardRead),
-		"boardPurge":           js.FuncOf(harnessBoardPurge),
+		"connect":            js.FuncOf(harnessConnect),
+		"submit":             js.FuncOf(harnessSubmit),
+		"list":               js.FuncOf(harnessList),
+		"snapshot":           js.FuncOf(harnessSnapshot),
+		"cancel":             js.FuncOf(harnessCancel),
+		"watch":              js.FuncOf(harnessWatch),
+		"prune":              js.FuncOf(harnessPrune),
+		"startInteractive":   js.FuncOf(harnessStartInteractive),
+		"sendInteractive":    js.FuncOf(harnessSendInteractive),
+		"resizeInteractive":  js.FuncOf(harnessResizeInteractive),
+		"detachInteractive":  js.FuncOf(harnessDetachInteractive),
+		"attachSession":      js.FuncOf(harnessAttachSession),
+		"onConnectionChange": js.FuncOf(harnessOnConnectionChange),
+		"fileLs":             js.FuncOf(harnessFileLs),
+		"fileDelete":         js.FuncOf(harnessFileDelete),
+		"filePushBytes":      js.FuncOf(harnessFilePushBytes),
+		"filePullBytes":      js.FuncOf(harnessFilePullBytes),
+		"filePullDirBytes":   js.FuncOf(harnessFilePullDirBytes),
+		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
+		"sendNotification":   js.FuncOf(harnessSendNotification),
+		"watchNotifications": js.FuncOf(harnessWatchNotifications),
+		"capList":            js.FuncOf(harnessCapList),
+		"boardTopics":        js.FuncOf(harnessBoardTopics),
+		"boardRead":          js.FuncOf(harnessBoardRead),
+		"boardPurge":         js.FuncOf(harnessBoardPurge),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -331,7 +331,11 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
 				resumeCapsOverride = rcov.Bool()
 			}
-			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride)
+			resumeConversation := false
+			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
+				resumeConversation = rc.Bool()
+			}
+			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -839,7 +843,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
 				resumeCapsOverride = rcov.Bool()
 			}
-			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps, resumeCapsOverride)
+			resumeConversation := false
+			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
+				resumeConversation = rc.Bool()
+			}
+			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps, resumeCapsOverride, resumeConversation)
 			if err != nil {
 				var are *cli.AmbiguousRunnerError
 				if errors.As(err, &are) {
@@ -1145,11 +1153,11 @@ func (n *notifyPipe) Write(p []byte) (int, error) {
 // side can branch on the underlying FileTransferStatus without having
 // to string-match the error message. Recognised codes:
 //
-//   already_exists  – push destination present, retry with force=true
-//   not_found       – source missing on the runner side
-//   path_invalid    – worktree-escape attempt or empty path
-//   not_a_directory – delete/dir-delete called on a wrong kind of path
-//   not_empty       – dir_delete without recursive on a non-empty dir
+//	already_exists  – push destination present, retry with force=true
+//	not_found       – source missing on the runner side
+//	path_invalid    – worktree-escape attempt or empty path
+//	not_a_directory – delete/dir-delete called on a wrong kind of path
+//	not_empty       – dir_delete without recursive on a non-empty dir
 //
 // All other ack codes (io_error / canceled / internal / etc.) reject
 // with code="error" so the JS catch can fall through to a generic
@@ -1269,6 +1277,7 @@ func harnessFileDelete(this js.Value, args []js.Value) any {
 //
 //	harness.filePushBytes(taskID, remoteRel, data, force[, onProgress]) -> Promise<void>
 //	onProgress(transferred, total) is called ~10/s with byte counts.
+//
 // jsProgress adapts an optional JS progress callback at args[idx] into a
 // cli.ProgressFunc forwarding (transferred, total) as JS numbers (total 0 =
 // unknown). Returns nil when no function is supplied, so the transfer runs

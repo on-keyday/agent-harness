@@ -114,11 +114,12 @@ type App struct {
 // selection can re-issue it. repo is "" for resume (server reuses the task's
 // repo); resumeTaskID is "" for a fresh session.
 type pendingInteractive struct {
-	repo         string
-	resumeTaskID string
-	extraArgs    []string
-	caps         protocol.Capability
-	capsOverride bool
+	repo               string
+	resumeTaskID       string
+	extraArgs          []string
+	caps               protocol.Capability
+	capsOverride       bool
+	resumeConversation bool
 }
 
 // NotifyResultMsg carries the result of a notify send command.
@@ -154,16 +155,16 @@ func New(cfg Config) *App {
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
-		server:      cfg.Server,
-		defaultRepo: cfg.DefaultRepo,
-		runners:     NewRunners(),
-		tasks:       NewTasks(),
-		logs:        NewLogs(),
-		notify:      NewNotify(),
-		cmdresult:   NewCmdResult(),
-		cmdline:     cmd,
-		popup:       NewPopup(cfg.DefaultRepo),
-		filepicker:  NewFilePicker(),
+		server:         cfg.Server,
+		defaultRepo:    cfg.DefaultRepo,
+		runners:        NewRunners(),
+		tasks:          NewTasks(),
+		logs:           NewLogs(),
+		notify:         NewNotify(),
+		cmdresult:      NewCmdResult(),
+		cmdline:        cmd,
+		popup:          NewPopup(cfg.DefaultRepo),
+		filepicker:     NewFilePicker(),
 		connsModal:     NewConnsModal(),
 		boardModal:     NewBoardModal(),
 		focus:          focusTasks,
@@ -659,7 +660,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, a.applyCapsOnResume)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, a.applyCapsOnResume, false)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
@@ -685,7 +686,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				p := a.pendingInteractive
 				a.runnerPicker.Close()
 				a.cmdresult.Append(OKStyle.Render("pinned runner: ") + c.Hostname + "  " + c.Cid)
-				return a, DoOpenDetachableSession(a.client, p.repo, cli.SelectorOpts{Runner: c.Cid}, p.extraArgs, p.resumeTaskID, p.caps, p.capsOverride)
+				return a, DoOpenDetachableSession(a.client, p.repo, cli.SelectorOpts{Runner: c.Cid}, p.extraArgs, p.resumeTaskID, p.caps, p.capsOverride, p.resumeConversation)
 			}
 			return a, nil
 		}
@@ -800,7 +801,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				caps: a.sessionCaps, capsOverride: false,
 			}
 			a.pickerArmed = true
-			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false)
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false, false)
 		}
 		// `F` opens the file picker for the task currently focused in the
 		// tasks pane. No-op when the tasks pane is not focused or no task
@@ -863,10 +864,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// another runner ties on this repo's roots score.
 				a.pendingInteractive = pendingInteractive{
 					repo: "", resumeTaskID: a.tasks.SelectedID(),
-					extraArgs: act.ResumeArgs, caps: a.sessionCaps, capsOverride: a.applyCapsOnResume,
+					extraArgs: nil, caps: a.sessionCaps, capsOverride: a.applyCapsOnResume,
+					resumeConversation: act.ResumeConversation,
 				}
 				a.pickerArmed = true
-				return a, DoResumeSession(a.client, t.AssignedTo, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume)
+				return a, DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume, act.ResumeConversation)
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil
@@ -1252,9 +1254,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case InteractiveAction:
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
 	case SubmitAction:
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -1272,12 +1274,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps, a.applyCapsOnResume)
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps, a.applyCapsOnResume, false)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
 		}
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume)
+		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:

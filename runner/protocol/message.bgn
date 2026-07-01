@@ -128,6 +128,8 @@ format AssignTaskBody:
     prompt_len :u32
     prompt :[prompt_len]u8
     extra_args :ClaudeArgs
+    resume_conversation :u1
+    reserved :u7
 
 format CancelTask:
     task_id :TaskID
@@ -155,7 +157,8 @@ format OpenExecRunnerRequest:
     detachable :u1    # 1 = stream EOF → keep claude alive,
                       # 0 = stream EOF → SIGHUP ladder (legacy)
     x11_enabled :u1   # relayed from OpenInteractiveRequest.x11_enabled
-    reserved :u6
+    resume_conversation :u1 # relayed from OpenInteractiveRequest.resume_conversation
+    reserved :u5
     if x11_enabled == 1:
         x11 :X11Forward  # relayed verbatim from OpenInteractiveRequest.x11
 
@@ -530,7 +533,11 @@ format SubmitRequest:
     requested_caps :Capability
     # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
     resume_caps_override :u1
-    reserved :u7
+    # resume only: 1 = ask the runner to resume the agent's own conversation
+    # state in addition to reusing the harness task/worktree. The runner maps
+    # this intent to the configured agent CLI (for Claude Code, --continue).
+    resume_conversation :u1
+    reserved :u6
     # resume_task_id, when all-zero, means "create a new task". When non-zero,
     # the server looks up that TaskID, validates it is in a terminal state
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
@@ -652,7 +659,11 @@ format OpenInteractiveRequest:
                       # client process to host the tunnel).
     # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
     resume_caps_override :u1
-    reserved :u5
+    # resume only: 1 = ask the runner to resume the agent's own conversation
+    # state in addition to reusing the harness task/worktree. The runner maps
+    # this intent to the configured agent CLI (for Claude Code, --continue).
+    resume_conversation :u1
+    reserved :u4
     resume_task_id :TaskID
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).

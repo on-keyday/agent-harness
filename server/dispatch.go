@@ -8,8 +8,8 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // ConnHandle is the minimal interface a handler needs to identify, reply to,
@@ -117,6 +117,7 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, [
 		AuthTicket: ticket,
 		ExtraArgs:  protocol.ClaudeArgsFromStrings(task.ExtraArgs),
 	}
+	body.SetResumeConversation(task.ResumeConversation)
 	body.SetRepoPath([]byte(task.RepoPath))
 	body.SetPrompt([]byte(task.Prompt))
 	bodyBytes, err := body.EncodeCopy(nil)

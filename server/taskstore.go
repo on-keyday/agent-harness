@@ -37,14 +37,14 @@ type TaskEntry struct {
 	// computed at Create as creatorCaps ∩ requested. Persisted to the WAL and
 	// restored on resume; never changed by resume.
 	Capabilities protocol.Capability
-	Status        protocol.TaskStatus
-	AssignedTo  string
-	WorktreeDir string
-	CreatedAt   time.Time
-	StartedAt   *time.Time
-	EndedAt     *time.Time
-	ExitCode    *int32
-	ErrorMsg    []byte
+	Status       protocol.TaskStatus
+	AssignedTo   string
+	WorktreeDir  string
+	CreatedAt    time.Time
+	StartedAt    *time.Time
+	EndedAt      *time.Time
+	ExitCode     *int32
+	ErrorMsg     []byte
 
 	// Selector is the runner-selection constraint supplied at task submission.
 	// A zero value (Kind == RunnerSelectorKind_Any) means "any available runner".
@@ -59,6 +59,9 @@ type TaskEntry struct {
 	// at task creation time and forwarded verbatim through AssignTask /
 	// OpenExecRunnerRequest to the runner.
 	ExtraArgs []string
+	// ResumeConversation asks the runner to resume agent-side conversation
+	// state for this run, separate from the harness task/worktree resume.
+	ResumeConversation bool
 
 	// Detachable is true for sessions started via session new (detach-on-disconnect).
 	// Set immediately after Create via SetDetachableFlag — Create's signature is
@@ -253,6 +256,7 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	e.ErrorMsg = nil
 	e.Prompt = prompt
 	e.ExtraArgs = extraArgs
+	e.ResumeConversation = false
 	e.Selector = selector
 	e.BoundRunnerID = boundRunnerID
 	e.ResumedByKind = resumerKind
@@ -502,6 +506,19 @@ func (s *TaskStore) SetDetachableFlag(id string, detachable bool) bool {
 		return false
 	}
 	t.Detachable = detachable
+	return true
+}
+
+// SetResumeConversation records whether this queued/run task should ask the
+// runner to resume agent-side conversation state when it starts.
+func (s *TaskStore) SetResumeConversation(id string, resumeConversation bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return false
+	}
+	t.ResumeConversation = resumeConversation
 	return true
 }
 

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // Submit asks the server to enqueue a new task. Returns the assigned task ID
@@ -36,7 +36,7 @@ func (c *Client) SubmitWithSelector(ctx context.Context, repo, prompt string, se
 // holds). Callers that need a narrower grant should use
 // SubmitWithSelectorArgsAndCaps instead.
 func (c *Client) SubmitWithSelectorAndArgs(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
-	return c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, protocol.Capability_All, false)
+	return c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false)
 }
 
 // SubmitWithSelectorArgsAndCaps is identical to SubmitWithSelectorAndArgs but
@@ -45,7 +45,9 @@ func (c *Client) SubmitWithSelectorAndArgs(ctx context.Context, repo, prompt str
 // resumeCapsOverride, when true, instructs the server to apply caps as an
 // override on resume (re-grant) rather than inheriting the original task's
 // capability mask. Has no effect on new tasks (non-resume).
-func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool) (string, error) {
+// resumeConversation, when true, asks the runner to resume the agent's own
+// conversation state in addition to the harness task/worktree.
+func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
 	sub := protocol.SubmitRequest{}
 	sub.SetRepoPath([]byte(repo))
@@ -54,6 +56,7 @@ func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt
 	sub.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
 	sub.RequestedCaps = caps
 	sub.SetResumeCapsOverride(resumeCapsOverride)
+	sub.SetResumeConversation(resumeConversation)
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {

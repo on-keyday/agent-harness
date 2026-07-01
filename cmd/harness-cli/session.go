@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // formatAmbiguousCandidates renders the candidate runners for the non-TUI CLI:
@@ -168,6 +168,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	host := fs.String("host", "", "pin to runner by hostname")
 	ip := fs.String("ip", "", "pin to runner by IP address")
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
+	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	var extraArgs repeatableStrings
 	fs.Var(&extraArgs, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
@@ -221,7 +222,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
 
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true, caps, resumeCapsOverride)
+		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true, caps, resumeCapsOverride, *resumeConversation)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -231,7 +232,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
-		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride)
+		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride, *resumeConversation)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -239,7 +240,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/, caps, resumeCapsOverride)
+	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/, caps, resumeCapsOverride, *resumeConversation)
 	if err != nil {
 		return exitOnAmbiguous(err)
 	}

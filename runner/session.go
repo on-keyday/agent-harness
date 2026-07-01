@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
-	"github.com/on-keyday/objtrsf/trsf"
+	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // wakeDebounceWindow is the minimum interval between successive wake
@@ -438,8 +438,11 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		ClaudeBin: s.ClaudeBin,
 		CWD:       dir,
 		Timeout:   s.Timeout,
-		ExtraArgs: mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
-		Env:       env,
+		ExtraArgs: withResumeConversationArgs(
+			mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
+			body.ResumeConversation(),
+		),
+		Env: env,
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
 			if e := s.tasks[taskIDHex]; e != nil {
@@ -646,7 +649,10 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommandWithOption defers stream.CloseBoth() so we don't double-close here.
 	// Args order matches handleAssign: runner-global baseline first, per-task extras appended.
-	mergedArgs := mergeExtraArgs(s.ExtraClaudeArgs, oer.ExtraArgs.AsStrings())
+	mergedArgs := withResumeConversationArgs(
+		mergeExtraArgs(s.ExtraClaudeArgs, oer.ExtraArgs.AsStrings()),
+		oer.ResumeConversation(),
+	)
 	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, s.ClaudeBin, mergedArgs, dir, true, env, agentexec.ExecuteOption{
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()

@@ -14,9 +14,9 @@ import (
 	"syscall/js"
 	"time"
 
-	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -112,7 +112,7 @@ func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel p
 // holds). Callers that need a narrower grant should use
 // InteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (string, error) {
-	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All, false)
+	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All, false, false)
 }
 
 // InteractiveWithSelectorArgsAndCaps is identical to
@@ -122,7 +122,9 @@ func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string
 // resumeCapsOverride, when true, instructs the server to apply caps as an
 // override on resume (re-grant) rather than inheriting the original task's
 // capability mask. Has no effect on new tasks (non-resume).
-func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability, resumeCapsOverride bool) (string, error) {
+// resumeConversation, when true, asks the runner to resume the agent's own
+// conversation state in addition to the harness task/worktree.
+func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
@@ -130,6 +132,7 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
 	oi.RequestedCaps = caps
 	oi.SetResumeCapsOverride(resumeCapsOverride)
+	oi.SetResumeConversation(resumeConversation)
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {

@@ -71,3 +71,62 @@ func TestResumeCapsOverrideRoundTrip(t *testing.T) {
 		t.Fatalf("ResumeCapsOverride = true, want false")
 	}
 }
+
+func TestResumeConversationRoundTrip(t *testing.T) {
+	submit := SubmitRequest{}
+	submit.SetResumeCapsOverride(true)
+	submit.SetResumeConversation(true)
+	submitBytes := submit.MustAppend(nil)
+	var submitOut SubmitRequest
+	if err := submitOut.DecodeExact(submitBytes); err != nil {
+		t.Fatal(err)
+	}
+	if !submitOut.ResumeCapsOverride() {
+		t.Fatalf("SubmitRequest.ResumeCapsOverride = false, want true")
+	}
+	if !submitOut.ResumeConversation() {
+		t.Fatalf("SubmitRequest.ResumeConversation = false, want true")
+	}
+
+	open := OpenInteractiveRequest{}
+	open.SetDetachable(true)
+	open.SetX11Enabled(true)
+	open.SetResumeCapsOverride(true)
+	open.SetResumeConversation(true)
+	open.SetX11(X11Forward{Display: 10})
+	openBytes := open.MustAppend(nil)
+	var openOut OpenInteractiveRequest
+	if err := openOut.DecodeExact(openBytes); err != nil {
+		t.Fatal(err)
+	}
+	if !openOut.Detachable() || !openOut.X11Enabled() || !openOut.ResumeCapsOverride() || !openOut.ResumeConversation() {
+		t.Fatalf("OpenInteractive flags lost: detachable=%v x11=%v caps=%v conversation=%v",
+			openOut.Detachable(), openOut.X11Enabled(), openOut.ResumeCapsOverride(), openOut.ResumeConversation())
+	}
+
+	assign := AssignTaskBody{}
+	assign.SetResumeConversation(true)
+	assignBytes := assign.MustAppend(nil)
+	var assignOut AssignTaskBody
+	if err := assignOut.DecodeExact(assignBytes); err != nil {
+		t.Fatal(err)
+	}
+	if !assignOut.ResumeConversation() {
+		t.Fatalf("AssignTaskBody.ResumeConversation = false, want true")
+	}
+
+	exec := OpenExecRunnerRequest{}
+	exec.SetDetachable(true)
+	exec.SetX11Enabled(true)
+	exec.SetResumeConversation(true)
+	exec.SetX11(X11Forward{Display: 11})
+	execBytes := exec.MustAppend(nil)
+	var execOut OpenExecRunnerRequest
+	if err := execOut.DecodeExact(execBytes); err != nil {
+		t.Fatal(err)
+	}
+	if !execOut.Detachable() || !execOut.X11Enabled() || !execOut.ResumeConversation() {
+		t.Fatalf("OpenExec flags lost: detachable=%v x11=%v conversation=%v",
+			execOut.Detachable(), execOut.X11Enabled(), execOut.ResumeConversation())
+	}
+}

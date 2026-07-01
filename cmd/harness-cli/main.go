@@ -17,9 +17,9 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func main() {
@@ -93,6 +93,7 @@ func main() {
 		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		task := fs.String("task", "", "prompt text")
 		resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch so claude's project key matches the previous run; --repo is ignored")
+		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addClaudeArgFlag(fs)
@@ -119,7 +120,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs))
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation)
 		if err != nil {
 			die(err)
 		}
@@ -292,6 +293,7 @@ func main() {
 		fs := flag.NewFlagSet("interactive", flag.ExitOnError)
 		repo := fs.String("repo", "", "repo identifier (env: HARNESS_REPO_PATH); must match a runner-registered RepoPath verbatim")
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume; --repo is ignored")
+		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addClaudeArgFlag(fs)
@@ -313,7 +315,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, false, caps, *resume != "" && capsExplicitlySet(fs)); err != nil {
+		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, false, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation); err != nil {
 			die(err)
 		}
 

@@ -8,8 +8,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
-	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
 // InteractiveReadyMsg lands in the App's Update once OpenInteractive has
@@ -47,7 +47,7 @@ type InteractiveDoneMsg struct {
 // caps sets RequestedCaps on the wire request; pass protocol.Capability_All
 // for the inherit-all behaviour.
 func DoOpenInteractive(c *cli.Client, repo string, caps protocol.Capability) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, "", nil, "", caps, false)
+	return DoOpenInteractiveWithOpts(c, repo, "", nil, "", caps, false, false)
 }
 
 // DoOpenInteractiveWithHost is the same as DoOpenInteractive but accepts an
@@ -55,7 +55,7 @@ func DoOpenInteractive(c *cli.Client, repo string, caps protocol.Capability) tea
 // caps sets RequestedCaps on the wire request; pass protocol.Capability_All
 // for the inherit-all behaviour.
 func DoOpenInteractiveWithHost(c *cli.Client, repo, host string, caps protocol.Capability) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, host, nil, "", caps, false)
+	return DoOpenInteractiveWithOpts(c, repo, host, nil, "", caps, false, false)
 }
 
 // DoOpenDetachableSession opens a new detachable interactive session (equivalent
@@ -70,13 +70,13 @@ func DoOpenInteractiveWithHost(c *cli.Client, repo, host string, caps protocol.C
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool) tea.Cmd {
+func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride, resumeConversation)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -101,20 +101,20 @@ func resumeSelectorOpts(assignedTo protocol.RunnerID) cli.SelectorOpts {
 // runner has since disconnected (e.g. restarted with a new RunnerID), the
 // pinned attempt fails with ErrPinnedNotFound and this retries once with
 // the Any selector.
-func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool) tea.Cmd {
+func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) tea.Cmd {
 	return func() tea.Msg {
 		opts := resumeSelectorOpts(assignedTo)
 		sel, err := cli.BuildSelector(opts)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride, resumeConversation)
 		if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
 			sel, err = cli.BuildSelector(cli.SelectorOpts{})
 			if err != nil {
 				return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 			}
-			stream, taskID, err = c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride)
+			stream, taskID, err = c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride, resumeConversation)
 		}
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
@@ -134,13 +134,13 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, caps protocol.Capability, resumeCapsOverride bool) tea.Cmd {
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN, caps, resumeCapsOverride)
+		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN, caps, resumeCapsOverride, resumeConversation)
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 		}
@@ -170,13 +170,13 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool) tea.Cmd {
+func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, false, caps, resumeCapsOverride)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, false, caps, resumeCapsOverride, resumeConversation)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -213,13 +213,13 @@ type SessionStartedMsg struct {
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool) tea.Cmd {
+func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
 			return SessionStartedMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride, resumeConversation)
 		if err != nil {
 			return SessionStartedMsg{Err: err}
 		}

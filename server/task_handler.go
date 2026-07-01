@@ -16,8 +16,8 @@ import (
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // TaskHandler decodes inbound TaskControlRequest payloads from the CLI
@@ -520,6 +520,7 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 	bound := cands[0]
 	caps := intersectCaps(creatorCaps, req.RequestedCaps)
 	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), caps)
+	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
 	copy(tid.Id[:], raw)
@@ -576,6 +577,7 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 			return resp
 		}
 	}
+	h.Tasks.SetResumeConversation(idHex, req.ResumeConversation())
 	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: req.ResumeTaskId}
 }
 
@@ -687,11 +689,13 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 			}
 		}
 		taskIDHex = existingTaskIDHex
+		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	} else {
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.
 		caps := intersectCaps(creatorCaps, req.RequestedCaps)
 		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps)
+		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -752,6 +756,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		AuthTicket: ticket,
 		ExtraArgs:  req.ExtraArgs,
 	}
+	oer.SetResumeConversation(req.ResumeConversation())
 	oer.SetRepoPath([]byte(repo))
 	if req.Detachable() {
 		oer.SetDetachable(true)
