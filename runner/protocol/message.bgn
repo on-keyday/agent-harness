@@ -671,6 +671,21 @@ enum OpenInteractiveStatus:
     resume_not_found    = "resume_not_found"
     resume_not_terminal = "resume_not_terminal"
 
+# One candidate runner returned when an OpenInteractive request is ambiguous
+# (>=2 runners tie on longest-prefix roots score under an Any selector). `cid`
+# is ConnectionID.String() — the exact string the --runner selector accepts, so
+# a client pins the retry with SelectorOpts{Runner: cid}. Carrying the string
+# (not a typed RunnerID) also sidesteps the zero-value RunnerID encoder panic.
+format RunnerCandidate:
+    cid_len          :u16
+    cid              :[cid_len]u8
+    hostname_len     :u16
+    hostname         :[hostname_len]u8
+    matched_root_len :u16
+    matched_root     :[matched_root_len]u8
+    active_tasks     :u16
+    max_tasks        :u16
+
 format OpenInteractiveResponse:
     status :OpenInteractiveStatus
     task_id :TaskID    # populated when status == 0
@@ -683,6 +698,11 @@ format OpenInteractiveResponse:
                        # via RunnerRequest{open_exec, task_id, stream_id} and
                        # feeds it to exec.ExecuteCommand for an interactive
                        # PTY claude session.
+    # Populated ONLY when status == ambiguous_runner: the runners that tied for
+    # this repo. The client shows a picker and re-issues pinned to a chosen cid.
+    if status == OpenInteractiveStatus.ambiguous_runner:
+        candidates_len :u16
+        candidates     :[candidates_len]RunnerCandidate
 
 enum AttachMode:
     :u8
