@@ -160,7 +160,7 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 	case protocol.OpenInteractiveStatus_RunnerBusy:
 		return "", fmt.Errorf("runner busy")
 	case protocol.OpenInteractiveStatus_AmbiguousRunner:
-		return "", fmt.Errorf("ambiguous_runner: multiple runners match; pin one with host")
+		return "", &AmbiguousRunnerError{Candidates: candidatesFromResponse(oiResp)}
 	case protocol.OpenInteractiveStatus_PinnedNotFound:
 		return "", fmt.Errorf("pinned_not_found: the specified runner was not found: %w", ErrPinnedNotFound)
 	case protocol.OpenInteractiveStatus_ResumeNotFound:

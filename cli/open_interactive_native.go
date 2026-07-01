@@ -106,6 +106,9 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, sel proto
 	if oir == nil {
 		return nil, "", fmt.Errorf("OpenInteractive response variant missing")
 	}
+	if oir.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
+		return nil, "", &AmbiguousRunnerError{Candidates: candidatesFromResponse(oir)}
+	}
 	if err := openInteractiveStatusError(repoPath, oir.Status); err != nil {
 		return nil, "", err
 	}
