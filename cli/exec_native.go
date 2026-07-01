@@ -51,7 +51,7 @@ const execDefaultTimeout = 30 * time.Second
 // cmd must be a single logical line; it may compose with ; && || | $().
 func (c *Client) SessionExec(ctx context.Context, taskIDHex, cmd string, opts ExecOptions) (ExecResult, error) {
 	if strings.ContainsAny(cmd, "\n\r") {
-		return ExecResult{}, fmt.Errorf("session exec: multi-line command not supported; join with ';' or '&&' into one line")
+		return ExecResult{}, fmt.Errorf("multi-line command not supported; join with ';' or '&&' into one line")
 	}
 	timeout := opts.Timeout
 	if timeout <= 0 {
@@ -60,7 +60,7 @@ func (c *Client) SessionExec(ctx context.Context, taskIDHex, cmd string, opts Ex
 
 	var nb [8]byte
 	if _, err := rand.Read(nb[:]); err != nil {
-		return ExecResult{}, fmt.Errorf("session exec: nonce: %w", err)
+		return ExecResult{}, fmt.Errorf("nonce: %w", err)
 	}
 	nonce := hex.EncodeToString(nb[:])
 	s := execSentinels{start: "__HEXEC_" + nonce + "_S__", end: "__HEXEC_" + nonce + "_E__"}
@@ -75,7 +75,7 @@ func (c *Client) SessionExec(ctx context.Context, taskIDHex, cmd string, opts Ex
 	// next element of the list, so "$?" is <cmd>'s exit status.
 	inject := "printf '" + s.start + `\n'; ` + cmd + "; printf '" + s.end + `%s\n' "$?"` + "\r"
 	if _, err := stream.Stdin().Write([]byte(inject)); err != nil {
-		return ExecResult{}, fmt.Errorf("session exec: inject: %w", err)
+		return ExecResult{}, fmt.Errorf("inject: %w", err)
 	}
 
 	start := time.Now()

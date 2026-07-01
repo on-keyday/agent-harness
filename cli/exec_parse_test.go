@@ -47,6 +47,31 @@ func TestScanExec_Basic_CRLF(t *testing.T) {
 	}
 }
 
+func TestScanExec_StartPrecededByBareCR(t *testing.T) {
+	// Regression: a real bash PTY echoes the injected Enter as a bare CR (no LF)
+	// immediately before the START sentinel's output line. Line matching that
+	// keys only on '\n' misses this START, falling back to output-from-0 and
+	// leaking the prompt + echoed input + ring replay. The boundary must accept
+	// '\r' too.
+	s := sent("T")
+	buf := []byte(
+		`[kforfk@host ~]$ printf '__HEXEC_T_S__\n'; echo hi; printf '__HEXEC_T_E__%s\n' "$?"` +
+			"\r" + // echoed Enter: bare CR, NO LF
+			"__HEXEC_T_S__\r\n" +
+			"hi\r\n" +
+			"__HEXEC_T_E__0\r\n")
+	r := scanExec(buf, s)
+	if !r.done {
+		t.Fatalf("expected done")
+	}
+	if r.exitCode != 0 {
+		t.Fatalf("exit=%d want 0", r.exitCode)
+	}
+	if string(r.output) != "hi\r\n" {
+		t.Fatalf("output=%q want %q (prompt/echo/ring must be excluded)", r.output, "hi\r\n")
+	}
+}
+
 func TestScanExec_LF_only(t *testing.T) {
 	s := sent("T")
 	buf := []byte("__HEXEC_T_S__\nhi\n__HEXEC_T_E__0\n")
