@@ -320,8 +320,14 @@ func runSessionExec(cid objproto.ConnectionID, args []string) error {
 		return fmt.Errorf(`usage: session exec [--timeout D] [--json] [--exit-only] [--raw] <id> <cmd>...
 flags must precede <id>; everything after <id> is joined with spaces and run as
 one shell command line (ssh-style) in the session's foreground shell. The
-process exits with the command's exit code (124 on timeout, 125 on error).
-The foreground must be a POSIX shell (bash/zsh/sh); otherwise use send/snapshot.`)
+process exits with the command's exit code (124 timeout, 125 error, 126 the
+foreground shell exited). The foreground must be a POSIX shell (bash/zsh/sh);
+otherwise use send/snapshot.
+
+exec types into the LIVE foreground shell, so state persists across calls AND
+shell-terminating commands bite: exit/exec end the shell (killing the session),
+and cd/export carry over to later calls. To test an exit code without killing
+the shell, wrap it: bash -c 'exit N' or (exit N).`)
 	}
 	taskIDHex := fs.Arg(0)
 	cmd := strings.Join(fs.Args()[1:], " ")
@@ -356,7 +362,7 @@ The foreground must be a POSIX shell (bash/zsh/sh); otherwise use send/snapshot.
 	code := res.ExitCode
 	switch {
 	case res.ShellExited:
-		fmt.Fprintln(os.Stderr, "session exec: the session's foreground shell exited before the command finished — did the command run `exit`/`exec` (or otherwise terminate the shell)? the session is likely now terminal (dead). This is NOT a timeout.")
+		fmt.Fprintln(os.Stderr, "session exec: the session's foreground shell exited before the command finished — did the command run `exit`/`exec` (or otherwise terminate the shell)? the session is likely now terminal (dead). This is NOT a timeout. Note: exec types into the LIVE foreground shell, so `exit N` kills it; to test an exit code use `bash -c '...'` or a subshell `(exit N)` instead.")
 		code = 126
 	case res.TimedOut:
 		fmt.Fprintf(os.Stderr, "session exec: no completion within %s; the command is still running, or the session foreground is not a POSIX shell (exec needs bash/zsh/sh) — use session send/snapshot instead\n", *timeout)
