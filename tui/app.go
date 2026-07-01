@@ -76,6 +76,15 @@ type App struct {
 	// pendingInteractive holds the params of the in-flight interactive open so
 	// the picker can re-issue it pinned to a chosen runner.
 	pendingInteractive pendingInteractive
+	// pickerArmed is true only while an in-flight interactive open was
+	// dispatched from one of the two sites that also populate
+	// pendingInteractive (the `S` key and the `actionResume` case of `r`/`R`).
+	// InteractiveReadyMsg's handler checks-and-clears this so an AmbiguousRunner
+	// from any OTHER interactive-open path (`i`, InteractiveAction,
+	// SessionNewAction, X11) falls back to a flat error instead of opening the
+	// picker with stale or zero pendingInteractive. See the S/r/R scope note on
+	// the InteractiveReadyMsg case below.
+	pickerArmed bool
 
 	// log-following state
 	logsCancel context.CancelFunc
@@ -440,9 +449,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, pcmd
 
 	case InteractiveReadyMsg:
+		// armed is true only when this open was dispatched from the `S` key
+		// or the `actionResume` case of `r`/`R` (the only two sites that set
+		// pendingInteractive). Capture-and-clear here so a stray AmbiguousRunner
+		// from an unrelated in-flight open (e.g. a slow `i` request that
+		// resolves after a later `S`) can't misuse this cycle's arm state.
+		armed := a.pickerArmed
+		a.pickerArmed = false
 		if msg.Err != nil {
 			var are *cli.AmbiguousRunnerError
-			if errors.As(msg.Err, &are) {
+			if armed && errors.As(msg.Err, &are) {
 				a.runnerPicker.Open(are.Candidates)
 				return a, nil
 			}
@@ -783,6 +799,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				repo: a.defaultRepo, resumeTaskID: "", extraArgs: nil,
 				caps: a.sessionCaps, capsOverride: false,
 			}
+			a.pickerArmed = true
 			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false)
 		}
 		// `F` opens the file picker for the task currently focused in the
@@ -848,6 +865,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					repo: "", resumeTaskID: a.tasks.SelectedID(),
 					extraArgs: act.ResumeArgs, caps: a.sessionCaps, capsOverride: a.applyCapsOnResume,
 				}
+				a.pickerArmed = true
 				return a, DoResumeSession(a.client, t.AssignedTo, act.ResumeArgs, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume)
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))

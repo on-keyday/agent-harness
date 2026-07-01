@@ -159,8 +159,12 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 // DoOpenInteractiveWithOpts is the full-featured form: optional hostname
 // pin, per-task extraArgs (forwarded verbatim), and optional resumeTaskID
 // (32-hex; "" = new task) for reusing an existing terminal interactive
-// task's id and worktree branch. On AmbiguousRunner the error is surfaced
-// in InteractiveReadyMsg.Err with a hint to supply a host.
+// task's id and worktree branch. This path is NOT armed for the runner
+// picker (App.pickerArmed is only set by the `S` key and the `actionResume`
+// case of `r`/`R`, via DoOpenDetachableSession / DoResumeSession); on
+// AmbiguousRunner here the error is surfaced as a flat line in
+// InteractiveReadyMsg.Err with a hint to supply a host, rather than opening
+// the picker.
 // caps sets RequestedCaps on the wire request; pass protocol.Capability_All
 // for the inherit-all behaviour.
 // resumeCapsOverride, when true, signals the server to re-grant caps from

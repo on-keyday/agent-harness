@@ -765,8 +765,10 @@ func harnessPrune(this js.Value, args []js.Value) any {
 // the taskID back, not the other way around. An optional "host" field pins
 // the session to a specific runner by hostname; an optional "runner" field
 // pins by ConnectionID (as returned in an ambiguous_runner rejection's
-// candidates — see below) and takes precedence when both would otherwise
-// resolve (BuildSelector rejects supplying both).
+// candidates — see below). BuildSelector does NOT reject supplying both —
+// its switch just prefers Runner when both are set — so this relies on the
+// caller (pickRunnerAndRetry in main.js) deliberately clearing host on the
+// picker retry, leaving only runner set.
 //
 // If the selector is ambiguous (Any/ByHostname matches >=2 runners), the
 // returned Promise rejects with a JS Error whose .code === "ambiguous_runner"

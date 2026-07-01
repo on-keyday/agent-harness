@@ -640,7 +640,9 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	case len(cands) == 0:
 		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
 	case len(cands) > 1:
-		slog.Error("handleOpenInteractive: ambiguous", "repo", repo, "candidates", len(cands))
+		// Ambiguous is an expected, user-recoverable condition (the caller
+		// re-issues pinned to a candidate cid) — not a server-side error.
+		slog.Info("handleOpenInteractive: ambiguous", "repo", repo, "candidates", len(cands))
 		resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_AmbiguousRunner}
 		list := make([]protocol.RunnerCandidate, 0, len(cands))
 		for _, c := range cands {

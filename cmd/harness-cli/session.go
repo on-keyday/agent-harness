@@ -36,6 +36,7 @@ func exitOnAmbiguous(err error) error {
 	var are *cli.AmbiguousRunnerError
 	if errors.As(err, &are) {
 		fmt.Fprint(os.Stderr, formatAmbiguousCandidates(are.Candidates))
+		// 3 = ambiguous runner (distinct from 1=generic, 2=usage).
 		os.Exit(3)
 	}
 	return err
