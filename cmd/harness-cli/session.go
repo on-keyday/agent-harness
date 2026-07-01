@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -17,6 +18,28 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
+
+// formatAmbiguousCandidates renders the candidate runners for the non-TUI CLI:
+// a table plus a hint to re-run pinned with --runner <cid>.
+func formatAmbiguousCandidates(cands []cli.RunnerCandidate) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "ambiguous runner: %d runners match this repo; re-run pinned with --runner <cid>:\n", len(cands))
+	for _, c := range cands {
+		fmt.Fprintf(&b, "  %-18s [%d/%d]  %s  --runner %s\n", c.Hostname, c.ActiveTasks, c.MaxTasks, c.MatchedRoot, c.Cid)
+	}
+	return b.String()
+}
+
+// exitOnAmbiguous prints the candidate table and exits non-zero when err is an
+// AmbiguousRunnerError; otherwise returns err unchanged.
+func exitOnAmbiguous(err error) error {
+	var are *cli.AmbiguousRunnerError
+	if errors.As(err, &are) {
+		fmt.Fprint(os.Stderr, formatAmbiguousCandidates(are.Candidates))
+		os.Exit(3)
+	}
+	return err
+}
 
 // runSession dispatches session sub-verbs: new / attach / snapshot / send /
 // exec / ls / kill. cid is the already-resolved server ConnectionID from
@@ -199,7 +222,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	if detach {
 		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true, caps, resumeCapsOverride)
 		if err != nil {
-			return err
+			return exitOnAmbiguous(err)
 		}
 		_ = stream.Close() // immediately detach → server transitions Running -> Detached
 		fmt.Println(taskIDHex)
@@ -209,7 +232,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	if x11 {
 		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride)
 		if err != nil {
-			return err
+			return exitOnAmbiguous(err)
 		}
 		fmt.Printf("session %s ended\n", id)
 		return nil
@@ -217,7 +240,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 
 	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/, caps, resumeCapsOverride)
 	if err != nil {
-		return err
+		return exitOnAmbiguous(err)
 	}
 	fmt.Printf("session %s ended\n", id)
 	return nil
