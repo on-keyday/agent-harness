@@ -173,6 +173,18 @@
   </div>
   <div id="file-preview-body" class="preview-body"></div>
 </dialog>
+<!-- Runner-picker modal: shown when an interactive open hits ambiguous_runner
+     (>=2 candidate runners for the selector). Body-level for the same
+     top-layer reason as file-preview-modal above. -->
+<dialog id="runner-picker-modal" class="picker-modal">
+  <form method="dialog" style="min-width:320px">
+    <h3 style="margin-top:0">Ambiguous runner — pick one</h3>
+    <div id="runner-picker-list"></div>
+    <menu style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+      <button value="cancel">Cancel</button>
+    </menu>
+  </form>
+</dialog>
 <script src="/static/wasm_exec.js"></script>
 <script src="/static/xterm.js"></script>
 <script src="/static/addon-fit.js"></script>

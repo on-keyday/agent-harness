@@ -763,7 +763,16 @@ func harnessPrune(this js.Value, args []js.Value) any {
 // mirrors cli.Interactive (native+wasm) — the server allocates the TaskID
 // from OpenInteractiveRequest{RepoPath}, so JS supplies the repo and gets
 // the taskID back, not the other way around. An optional "host" field pins
-// the session to a specific runner by hostname.
+// the session to a specific runner by hostname; an optional "runner" field
+// pins by ConnectionID (as returned in an ambiguous_runner rejection's
+// candidates — see below) and takes precedence when both would otherwise
+// resolve (BuildSelector rejects supplying both).
+//
+// If the selector is ambiguous (Any/ByHostname matches >=2 runners), the
+// returned Promise rejects with a JS Error whose .code === "ambiguous_runner"
+// and .candidates is an array of {cid, hostname, matchedRoot, activeTasks,
+// maxTasks}; the caller re-invokes startInteractive with runner: candidate.cid
+// to pin the retry.
 //
 //	harness.startInteractive({repo: "/abs/path", host: "raspi"}) -> Promise<taskIDHex>
 func harnessStartInteractive(this js.Value, args []js.Value) any {
@@ -793,6 +802,17 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, errors.New("startInteractive: opts.repo is required (unless opts.resumeTaskId is set)"))
 				return
 			}
+			// Both fields are optional; opts.Get(...) returns a TypeUndefined
+			// js.Value when the JS caller omits the property (composeRequest()
+			// never sets "runner" — only the runner-picker retry does), and
+			// js.Value.String() on a non-string type stringifies as "<TYPE>"
+			// rather than "" (see syscall/js), so gate on Type() explicitly
+			// instead of comparing the stringified form.
+			runnerVal := opts.Get("runner")
+			runnerCid := ""
+			if runnerVal.Type() == js.TypeString {
+				runnerCid = runnerVal.String()
+			}
 			hostVal := opts.Get("host")
 			host := ""
 			if hostVal.Type() == js.TypeString {
@@ -804,7 +824,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if detachableVal.Type() == js.TypeBoolean {
 				detachable = detachableVal.Bool()
 			}
-			sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
+			sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: runnerCid, Host: host})
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
 				return
@@ -819,6 +839,21 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			}
 			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps, resumeCapsOverride)
 			if err != nil {
+				var are *cli.AmbiguousRunnerError
+				if errors.As(err, &are) {
+					cands := make([]any, 0, len(are.Candidates))
+					for _, cc := range are.Candidates {
+						cands = append(cands, map[string]any{
+							"cid": cc.Cid, "hostname": cc.Hostname, "matchedRoot": cc.MatchedRoot,
+							"activeTasks": cc.ActiveTasks, "maxTasks": cc.MaxTasks,
+						})
+					}
+					jsErr := js.Global().Get("Error").New("ambiguous_runner")
+					jsErr.Set("code", "ambiguous_runner")
+					jsErr.Set("candidates", js.ValueOf(cands))
+					reject.Invoke(jsErr)
+					return
+				}
 				rejectErr(reject, fmt.Errorf("interactive: %w", err))
 				return
 			}

@@ -1689,6 +1689,57 @@ const POLL_INTERVAL_MS = 5000;
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   };
 
+  // onInteractiveOpened is the taskID-handling tail shared by every successful
+  // startInteractive call: the initial (non-ambiguous) open below, and the
+  // cid-pinned retry from pickRunnerAndRetry after the runner-picker modal.
+  // Factored out so the two call sites can't drift (see pickRunnerAndRetry).
+  const onInteractiveOpened = (taskID, label) => {
+    attachedTask.textContent = `attached: ${taskID} (${label})`;
+  };
+
+  // pickRunnerAndRetry shows the runner-picker modal for an ambiguous_runner
+  // rejection and, on a candidate click, re-issues startInteractive pinned by
+  // that candidate's cid. baseReq is the original compose-request plus
+  // `detachable` (the request that just failed); host is cleared and runner
+  // set instead, because pinning by cid is unambiguous even when host is not
+  // (a hostname can itself be shared by >=2 runners, which is the whole
+  // reason this modal exists).
+  function pickRunnerAndRetry(candidates, baseReq) {
+    const modal = document.getElementById("runner-picker-modal");
+    const list = document.getElementById("runner-picker-list");
+    list.innerHTML = "";
+    candidates.forEach((c) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.style.cssText = "display:block;width:100%;text-align:left;margin:4px 0;padding:6px";
+      btn.textContent = `${c.hostname}  [${c.activeTasks}/${c.maxTasks}]  ${c.matchedRoot}  ${c.cid}`;
+      btn.onclick = async () => {
+        modal.close();
+        try {
+          // Pin by cid (host can itself be ambiguous). Clear host so the selector is unambiguous.
+          const taskID = await window.harness.startInteractive({
+            ...baseReq, host: "", runner: c.cid,
+            caps: spawnCaps, resumeCapsOverride: baseReq.resumeTaskId ? applyCapsOnResume : false,
+          });
+          // mirrors the success path used by openInteractive; reconstruct the
+          // same "one-shot"/"detachable" label openInteractive would have used
+          // (baseReq carries `detachable`, not the label string itself).
+          onInteractiveOpened(taskID, baseReq.detachable ? "detachable" : "one-shot");
+        } catch (e2) {
+          alert(`startInteractive: ${e2.message}`);
+        }
+        // Same trailing fit/resize tail as openInteractive/reattachTo/
+        // resumeTaskById, run unconditionally so a freshly-attached PTY gets
+        // the actual terminal size instead of waiting on the next incidental
+        // ResizeObserver fire.
+        try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+        window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
+      };
+      list.appendChild(btn);
+    });
+    modal.showModal();
+  }
+
   // openInteractive is the shared helper for one-shot and detachable opens.
   const openInteractive = async (detachable, label) => {
     const req = composeRequest();
@@ -1702,9 +1753,13 @@ const POLL_INTERVAL_MS = 5000;
     term.reset();
     try {
       const taskID = await window.harness.startInteractive({...req, detachable, caps: spawnCaps, resumeCapsOverride: req.resumeTaskId ? applyCapsOnResume : false});
-      attachedTask.textContent = `attached: ${taskID} (${label})`;
+      onInteractiveOpened(taskID, label);
     } catch (e) {
       attachedTask.textContent = "";
+      if (e && e.code === "ambiguous_runner" && Array.isArray(e.candidates)) {
+        pickRunnerAndRetry(e.candidates, { ...req, detachable });
+        return;
+      }
       alert(`startInteractive: ${e.message}`);
     }
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
