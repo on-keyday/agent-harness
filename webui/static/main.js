@@ -1677,12 +1677,14 @@ const POLL_INTERVAL_MS = 5000;
     term.reset();
     const args = currentClaudeArgs();
     if (!args.includes("--continue")) args.push("--continue");
+    const req = { repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume };
     try {
-      const taskID = await window.harness.startInteractive({ repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume });
+      const taskID = await window.harness.startInteractive(req);
       attachedTask.textContent = `attached: ${taskID} (resumed --continue)`;
       scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";
+      if (routeAmbiguous(err, req)) return;
       showError(err);
     }
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
@@ -1740,6 +1742,20 @@ const POLL_INTERVAL_MS = 5000;
     modal.showModal();
   }
 
+  // routeAmbiguous opens the runner-picker modal when e is an ambiguous_runner
+  // rejection and returns true (the caller should then `return`); false
+  // otherwise. Shared by openInteractive AND the resume paths (resumeTaskById /
+  // doResume) so every interactive-open surface gets the picker — not just the
+  // Compose "Open" button. baseReq is the request that just failed; its
+  // resumeTaskId/claudeArgs/detachable are reused for the cid-pinned retry.
+  function routeAmbiguous(e, baseReq) {
+    if (e && e.code === "ambiguous_runner" && Array.isArray(e.candidates)) {
+      pickRunnerAndRetry(e.candidates, baseReq);
+      return true;
+    }
+    return false;
+  }
+
   // openInteractive is the shared helper for one-shot and detachable opens.
   const openInteractive = async (detachable, label) => {
     const req = composeRequest();
@@ -1756,10 +1772,7 @@ const POLL_INTERVAL_MS = 5000;
       onInteractiveOpened(taskID, label);
     } catch (e) {
       attachedTask.textContent = "";
-      if (e && e.code === "ambiguous_runner" && Array.isArray(e.candidates)) {
-        pickRunnerAndRetry(e.candidates, { ...req, detachable });
-        return;
-      }
+      if (routeAmbiguous(e, { ...req, detachable })) return;
       alert(`startInteractive: ${e.message}`);
     }
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
@@ -1898,10 +1911,11 @@ const POLL_INTERVAL_MS = 5000;
       const doResume = async (claudeArgs, note) => {
         setActiveTab("terminal");
         term.reset();
+        const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume };
         try {
-          const id = await window.harness.startInteractive({ repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume });
+          const id = await window.harness.startInteractive(req);
           attachedTask.textContent = `attached: ${id} (${note})`;
-        } catch (err) { attachedTask.textContent = ""; alert(`resume: ${err.message}`); }
+        } catch (err) { attachedTask.textContent = ""; if (routeAmbiguous(err, req)) return; alert(`resume: ${err.message}`); }
         try { fit.fit(); } catch (_) {}
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
       };
