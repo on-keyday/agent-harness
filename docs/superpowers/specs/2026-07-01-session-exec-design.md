@@ -36,7 +36,7 @@ This also means: **stdout and stderr cannot be separated.** A PTY carries one in
    - The trailing `printf` runs as the next element of the list, so `"$?"` is `<cmd>`'s exit status — the exit status of the shell that is *currently in the foreground* (local, ssh-remote, whatever), which is exactly what we want.
 3. Read the cowrite output stream, accumulating into a buffer, until a line matching `^__HEXEC_<nonce>_E__(\d+)\r?$` appears. This content match is the **synchronous completion signal** — no `sleep` guessing.
 4. Slice the buffer to the region strictly between the *output* occurrence of `__HEXEC_<nonce>_S__` (a line that is exactly the start sentinel, not the echoed `printf '...'` input line) and the end-sentinel line. That region is the pure command output.
-5. Clean the sliced region: strip ANSI/SGR escape sequences but **do not re-wrap**. Because a PTY does not insert a newline byte at a terminal soft-wrap, the raw byte stream already preserves logical lines — reading the raw stream (rather than a VT grid render) recovers un-wrapped logical lines for free. This directly fixes the "wrapped SID defeats grep" pain.
+5. Interpret the sliced region into the plain text a terminal would have displayed, then emit it line by line. Concretely: strip SGR (color/style) sequences; apply carriage-return (`\r`) overwrites (a `\r` resets to column 0, so text after it overwrites the earlier text on that line — the collapsed final text is kept); apply erase-line sequences (`ESC[K`, `ESC[2K`); keep `\n` as a logical line break; and **impose no terminal width, so nothing is re-wrapped**. Because a PTY does not insert a newline byte at a soft-wrap, not imposing a width means long logical lines stay intact — directly fixing the "wrapped SID defeats grep" pain. This is a line-oriented interpretation of the byte stream, not a fixed-width VT grid render (which is what `snapshot` does and what causes the soft-wrap splitting).
 6. Parse the end-sentinel's digits as the exit code.
 
 ### Why dual sentinels
@@ -75,7 +75,7 @@ Flags (placed **before** `<task-id>`, consistent with the `send`/`snapshot` orde
 | `--timeout DUR` | `30s` | Max wait for the end sentinel. On expiry, return partial output flagged `timed_out` and exit `124`. |
 | `--json` | off | Emit `{"exit":N,"output":"…","timed_out":bool,"duration_ms":N}` — the structured form the feedback asked for. |
 | `--exit-only` | off | Suppress captured output; report only the exit code. |
-| `--keep-ansi` | off | Do not strip escape sequences; return the raw sliced bytes. |
+| `--raw` | off | Skip the interpretation in step 5; return the verbatim bytes of the command-output region. Parity with `snapshot --raw`, but sliced to just this command's output rather than the whole screen. |
 
 Behavioral contract:
 
@@ -96,7 +96,7 @@ Behavioral contract:
 
 ## Testing
 
-- **Parser unit tests** (pure, on canned byte streams): start/end sentinel slicing; SGR/ANSI stripping with logical lines preserved (no re-wrap); sentinel split across frame boundaries; `CRLF` vs `LF`; echoed-input line not mistaken for a boundary; exit-code extraction incl. multi-digit and `130` (signal) cases.
+- **Parser unit tests** (pure, on canned byte streams): start/end sentinel slicing; SGR stripping; carriage-return (`\r`) overwrite collapsed to the final text; erase-line (`ESC[K`/`ESC[2K`) applied; logical lines preserved with no re-wrap; sentinel split across frame boundaries; `CRLF` vs `LF`; echoed-input line not mistaken for a boundary; exit-code extraction incl. multi-digit and `130` (signal) cases.
 - **Integration tests** against a live `bash` runner session (a cheap PTY, per the existing snapshot/verify pattern): `echo hi` → output `hi`, exit `0`; `false` → exit `1`; a command emitting ANSI color → color stripped, text intact; `sleep 5` with `--timeout 1s` → exit `124`, `timed_out` set; a wide single logical line → returned un-wrapped.
 
 ## Out of scope for v1
