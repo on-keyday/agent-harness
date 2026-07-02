@@ -1711,8 +1711,24 @@ const POLL_INTERVAL_MS = 5000;
     candidates.forEach((c) => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.style.cssText = "display:block;width:100%;text-align:left;margin:4px 0;padding:6px";
-      btn.textContent = `${c.hostname}  [${c.activeTasks}/${c.maxTasks}]  ${c.matchedRoot}  ${c.cid}`;
+      btn.className = "runner-choice";
+      btn.innerHTML = "";
+      const head = document.createElement("span");
+      head.className = "runner-choice-head";
+      const host = document.createElement("span");
+      host.className = "runner-choice-host";
+      host.textContent = c.hostname || "(unknown)";
+      const load = document.createElement("span");
+      load.className = "runner-choice-load";
+      load.textContent = `[${c.activeTasks}/${c.maxTasks}]`;
+      head.append(host, load);
+      const root = document.createElement("span");
+      root.className = "runner-choice-root";
+      root.textContent = c.matchedRoot || "(no matched root)";
+      const cid = document.createElement("span");
+      cid.className = "runner-choice-cid";
+      cid.textContent = c.cid || "";
+      btn.append(head, root, cid);
       btn.onclick = async () => {
         modal.close();
         try {
