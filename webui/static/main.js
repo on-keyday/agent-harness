@@ -1707,6 +1707,24 @@ const POLL_INTERVAL_MS = 5000;
   function pickRunnerAndRetry(candidates, baseReq) {
     const modal = document.getElementById("runner-picker-modal");
     const list = document.getElementById("runner-picker-list");
+    const cancel = document.getElementById("runner-picker-cancel");
+    if (modal && !modal.dataset.stopBackdropClick) {
+      // Some mobile browsers can retarget the closing tap to the page behind
+      // the top-layer dialog. Keep picker pointer/click events inside it so
+      // Cancel cannot also activate the terminal tab underneath.
+      for (const evName of ["pointerdown", "pointerup", "click"]) {
+        modal.addEventListener(evName, (ev) => ev.stopPropagation());
+      }
+      modal.dataset.stopBackdropClick = "1";
+    }
+    if (cancel && !cancel.dataset.bound) {
+      cancel.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        modal.close();
+      });
+      cancel.dataset.bound = "1";
+    }
     list.innerHTML = "";
     candidates.forEach((c) => {
       const btn = document.createElement("button");
@@ -1729,7 +1747,9 @@ const POLL_INTERVAL_MS = 5000;
       cid.className = "runner-choice-cid";
       cid.textContent = c.cid || "";
       btn.append(head, root, cid);
-      btn.onclick = async () => {
+      btn.onclick = async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
         modal.close();
         try {
           // Pin by cid (host can itself be ambiguous). Clear host so the selector is unambiguous.
@@ -1737,6 +1757,7 @@ const POLL_INTERVAL_MS = 5000;
             ...baseReq, host: "", runner: c.cid,
             caps: spawnCaps, resumeCapsOverride: baseReq.resumeTaskId ? applyCapsOnResume : false,
           });
+          setActiveTab("terminal");
           // mirrors the success path used by openInteractive; reconstruct the
           // same "one-shot"/"detachable" label openInteractive would have used
           // (baseReq carries `detachable`, not the label string itself).
@@ -1779,10 +1800,10 @@ const POLL_INTERVAL_MS = 5000;
     }
     attachEpoch++;            // invalidate any in-flight close handler
     hideQuickReattach();
-    setActiveTab("terminal");
     term.reset();
     try {
       const taskID = await window.harness.startInteractive({...req, detachable, caps: spawnCaps, resumeCapsOverride: req.resumeTaskId ? applyCapsOnResume : false});
+      setActiveTab("terminal");
       onInteractiveOpened(taskID, label);
     } catch (e) {
       attachedTask.textContent = "";
