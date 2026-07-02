@@ -1157,15 +1157,24 @@ const POLL_INTERVAL_MS = 5000;
           if (!repo && !resumeTaskId) {
             throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
           }
-          // Everything after `submit` is the task prompt. We join the
+          let resumeConversation = false;
+          const promptTokens = [];
+          for (const t of tokens.slice(1)) {
+            if (t === "--resume-conversation") {
+              resumeConversation = true;
+            } else {
+              promptTokens.push(t);
+            }
+          }
+          // Everything after `submit` (except command flags) is the task prompt. We join the
           // tokenize() result with single spaces — quoted segments have
           // already been collapsed into single tokens, so a multi-word
           // task is preserved verbatim.
-          const task = tokens.slice(1).join(" ");
+          const task = promptTokens.join(" ");
           if (!task) throw new Error("submit: missing task prompt");
           const host = hostSelect ? (hostSelect.value || "") : "";
           const claudeArgsList = currentClaudeArgs();
-          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps, resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false });
+          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps, resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false, resumeConversation });
           break;
         }
         case "list":
@@ -1216,7 +1225,8 @@ const POLL_INTERVAL_MS = 5000;
         case "help":
           out = [
             "commands:",
-            "  submit <prompt...>        submit task (use repo dropdown / Resume task id)",
+            "  submit [--resume-conversation] <prompt...>",
+            "                            submit task (use repo dropdown / Resume task id)",
             "  list                      refresh the snapshot",
             "  cancel <task-id>          cancel a task",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",

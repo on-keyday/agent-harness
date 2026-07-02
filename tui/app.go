@@ -655,6 +655,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				host := a.popup.Host()
 				extraArgs := a.popup.ExtraArgs()
 				resumeID := a.popup.ResumeTaskID()
+				resumeConversation := a.popup.ResumeConversation()
 				a.popup.Close()
 				if prompt == "" {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (empty prompt)"))
@@ -666,7 +667,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, a.applyCapsOnResume, false)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, a.applyCapsOnResume, resumeConversation)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
@@ -675,6 +676,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			case tea.KeyCtrlE:
 				a.popup.ToggleFocus()
+				return a, nil
+			case tea.KeyCtrlR:
+				a.popup.ToggleResumeConversation()
 				return a, nil
 			}
 			var pcmd tea.Cmd
@@ -1242,6 +1246,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, nil
 	case HelpAction:
 		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] / repo <path> / caps / clear / help / quit")
+		a.cmdresult.Append("submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task")
+		a.cmdresult.Append("interactive [--resume ID] [--resume-conversation]      - open/resume one-shot interactive")
+		a.cmdresult.Append("session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive")
 		a.cmdresult.Append("caps [<names>]              - show, or set the session-default capability mask for spawns (e.g. caps spawn,file_read / caps all / caps none)")
 		a.cmdresult.Append("caps --on-resume on|off     - when on, resume re-grants the session caps to the task (default off: resume keeps the task's persisted caps)")
 		a.cmdresult.Append("notify [info|warn|error] <title> [<text>...]        - send a notification (shows in this feed + --notify-hook egress; keep it one line)")
@@ -1320,9 +1327,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case InteractiveAction:
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
 	case SubmitAction:
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -1340,12 +1347,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps, a.applyCapsOnResume, false)
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
 		}
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, false)
+		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:

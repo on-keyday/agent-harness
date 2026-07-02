@@ -78,3 +78,19 @@ func TestPopupSetRepoSingle(t *testing.T) {
 		t.Errorf("after SetRepo(\"\") Repo()=%q, want empty", got)
 	}
 }
+
+func TestPopupResumeConversationToggle(t *testing.T) {
+	p := NewPopup("/repo")
+	p.Open()
+	if p.ResumeConversation() {
+		t.Fatal("ResumeConversation default = true, want false")
+	}
+	p.ToggleResumeConversation()
+	if !p.ResumeConversation() {
+		t.Fatal("ResumeConversation after toggle = false, want true")
+	}
+	p.Open()
+	if p.ResumeConversation() {
+		t.Fatal("ResumeConversation should reset when popup opens")
+	}
+}

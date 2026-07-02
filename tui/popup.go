@@ -32,6 +32,7 @@ type PopupModel struct {
 	ta          textarea.Model
 	args        textinput.Model
 	resume      textinput.Model
+	resumeConv  bool
 	focus       popupFocus
 	open        bool
 }
@@ -64,6 +65,7 @@ func (m *PopupModel) Open() {
 	m.ta.Reset()
 	m.args.SetValue("")
 	m.resume.SetValue("")
+	m.resumeConv = false
 	m.focus = popupFocusPrompt
 	m.ta.Focus()
 	m.args.Blur()
@@ -113,6 +115,12 @@ func (m *PopupModel) ResumeTaskID() string {
 		v = v[:len(v)-1]
 	}
 	return v
+}
+
+func (m *PopupModel) ResumeConversation() bool { return m.resumeConv }
+
+func (m *PopupModel) ToggleResumeConversation() {
+	m.resumeConv = !m.resumeConv
 }
 
 // ExtraArgs returns the current args input, parsed via shlex so quoted values
@@ -265,6 +273,11 @@ func (m PopupModel) View() string {
 	if n := len(m.hostChoices); n > 1 {
 		header += fmt.Sprintf("  [Shift+Tab: cycle (%d/%d)]", m.hostIdx+1, n)
 	}
+	resumeConv := "off"
+	if m.resumeConv {
+		resumeConv = "on"
+	}
+	header += "\nresume conversation: " + resumeConv + "  [Ctrl+R: toggle]"
 	argsLabel := "args:"
 	switch {
 	case m.focus == popupFocusArgs:
@@ -279,7 +292,7 @@ func (m PopupModel) View() string {
 	case m.resume.Value() == "":
 		resumeLabel = "resume (Ctrl+E to edit; empty = new task):"
 	}
-	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Ctrl+E: cycle args/resume  ·  Esc: cancel")
+	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Ctrl+E: cycle args/resume  ·  Ctrl+R: resume conversation  ·  Esc: cancel")
 	return box.Render(header + "\n\n" + m.ta.View() +
 		"\n\n" + argsLabel + "\n" + m.args.View() +
 		"\n\n" + resumeLabel + "\n" + m.resume.View() +

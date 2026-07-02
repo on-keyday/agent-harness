@@ -17,10 +17,11 @@ import (
 type Action interface{ isAction() }
 
 type SubmitAction struct {
-	Repo         string
-	Prompt       string
-	ExtraArgs    []string
-	ResumeTaskID string
+	Repo               string
+	Prompt             string
+	ExtraArgs          []string
+	ResumeTaskID       string
+	ResumeConversation bool
 }
 
 type CancelAction struct {
@@ -47,15 +48,16 @@ type TrsfDebugAction struct{}
 // Host / Runner / IP carry the runner pin selector, mutually exclusive and
 // validated at parse time via cli.SelectorOpts.ValidateSelector.
 type SessionNewAction struct {
-	Repo         string
-	ExtraArgs    []string
-	ResumeTaskID string
-	Detach       bool
-	Host         string
-	Runner       string
-	IP           string
-	X11          bool
-	X11Display   int
+	Repo               string
+	ExtraArgs          []string
+	ResumeTaskID       string
+	ResumeConversation bool
+	Detach             bool
+	Host               string
+	Runner             string
+	IP                 string
+	X11                bool
+	X11Display         int
 }
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
@@ -123,9 +125,10 @@ type FileDeleteAction struct {
 // the slash-command equivalent of the 'i' key, useful when chaining
 // after /repo or when the user is already in cmdline focus.
 type InteractiveAction struct {
-	Repo         string
-	ExtraArgs    []string
-	ResumeTaskID string
+	Repo               string
+	ExtraArgs          []string
+	ResumeTaskID       string
+	ResumeConversation bool
 }
 
 // ServerDialRunnerAction asks the server to dial out to a Listen-mode
@@ -158,7 +161,6 @@ type CapsAction struct {
 	Show     bool  // true = display current set (no args), false = set to Caps
 	OnResume *bool // non-nil = --on-resume on|off command; nil = normal caps set/show
 }
-
 
 func (SubmitAction) isAction()           {}
 func (CancelAction) isAction()           {}
@@ -306,6 +308,7 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", defaultRepo, "")
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume")
+	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 	var extra repeatableStrings
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -314,7 +317,7 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("interactive: unexpected positional argument %q", fs.Arg(0))
 	}
-	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume}, nil
+	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation}, nil
 }
 
 func parseRepo(args []string) (Action, error) {
@@ -332,6 +335,7 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", defaultRepo, "")
 	resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch")
+	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 	var extra repeatableStrings
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -341,7 +345,7 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	if len(rest) == 0 {
 		return nil, fmt.Errorf("submit: prompt is required")
 	}
-	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume}, nil
+	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation}, nil
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence,
@@ -396,6 +400,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		fs := flag.NewFlagSet("session new", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
+		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		detach := fs.Bool("detach", false, "start the session and immediately detach (run in background, print task id)")
 		host := fs.String("host", "", "pin to a runner by reported hostname (mutually exclusive with --runner / --ip)")
 		runner := fs.String("runner", "", "pin to a runner by 32-hex RunnerID (mutually exclusive with --host / --ip)")
@@ -417,15 +422,16 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			return nil, fmt.Errorf("session new: --x11 is incompatible with --detach")
 		}
 		return SessionNewAction{
-			Repo:         defaultRepo,
-			ExtraArgs:    []string(extra),
-			ResumeTaskID: *resume,
-			Detach:       *detach,
-			Host:         *host,
-			Runner:       *runner,
-			IP:           *ip,
-			X11:          *x11,
-			X11Display:   *x11Display,
+			Repo:               defaultRepo,
+			ExtraArgs:          []string(extra),
+			ResumeTaskID:       *resume,
+			ResumeConversation: *resumeConversation,
+			Detach:             *detach,
+			Host:               *host,
+			Runner:             *runner,
+			IP:                 *ip,
+			X11:                *x11,
+			X11Display:         *x11Display,
 		}, nil
 	case "attach":
 		if len(rest) == 0 {

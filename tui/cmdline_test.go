@@ -65,6 +65,23 @@ func TestParseSubmitWithClaudeArgs(t *testing.T) {
 	}
 }
 
+func TestParseSubmitResumeConversation(t *testing.T) {
+	got, err := ParseCommand(`submit --resume abc123 --resume-conversation "do work"`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SubmitAction)
+	if a.ResumeTaskID != "abc123" {
+		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
+	}
+	if !a.ResumeConversation {
+		t.Fatal("ResumeConversation=false want true")
+	}
+	if a.Prompt != "do work" {
+		t.Errorf("Prompt=%q want do work", a.Prompt)
+	}
+}
+
 func TestParseInteractiveWithClaudeArgs(t *testing.T) {
 	got, err := ParseCommand(`interactive --repo /r --claude-arg --add-dir --claude-arg /other`, "/cwd")
 	if err != nil {
@@ -82,6 +99,20 @@ func TestParseInteractiveWithClaudeArgs(t *testing.T) {
 		if a.ExtraArgs[i] != want[i] {
 			t.Errorf("ExtraArgs[%d]=%q want %q", i, a.ExtraArgs[i], want[i])
 		}
+	}
+}
+
+func TestParseInteractiveResumeConversation(t *testing.T) {
+	got, err := ParseCommand(`interactive --resume abc123 --resume-conversation`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(InteractiveAction)
+	if a.ResumeTaskID != "abc123" {
+		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
+	}
+	if !a.ResumeConversation {
+		t.Fatal("ResumeConversation=false want true")
 	}
 }
 
@@ -202,6 +233,20 @@ func TestParseSessionNewWithHost(t *testing.T) {
 	}
 	if a.Runner != "" || a.IP != "" {
 		t.Errorf("expected only Host set, got Runner=%q IP=%q", a.Runner, a.IP)
+	}
+}
+
+func TestParseSessionNewResumeConversation(t *testing.T) {
+	got, err := ParseCommand(`session new --resume abc123 --resume-conversation`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if a.ResumeTaskID != "abc123" {
+		t.Errorf("ResumeTaskID=%q want abc123", a.ResumeTaskID)
+	}
+	if !a.ResumeConversation {
+		t.Fatal("ResumeConversation=false want true")
 	}
 }
 
@@ -346,10 +391,10 @@ func TestParseServerDialRunner(t *testing.T) {
 
 func TestParseServerUsageErrors(t *testing.T) {
 	cases := []string{
-		`server`,                            // missing sub-verb
-		`server unknown`,                    // unknown sub-verb
-		`server dial-runner`,                // missing CID
-		`server dial-runner one two-extra`,  // too many positionals
+		`server`,                           // missing sub-verb
+		`server unknown`,                   // unknown sub-verb
+		`server dial-runner`,               // missing CID
+		`server dial-runner one two-extra`, // too many positionals
 	}
 	for _, in := range cases {
 		if _, err := ParseCommand(in, "/cwd"); err == nil {
@@ -360,12 +405,12 @@ func TestParseServerUsageErrors(t *testing.T) {
 
 func TestParseFileUsageErrors(t *testing.T) {
 	cases := []string{
-		`file`,                             // no sub-verb
-		`file unknown`,                     // unknown sub-verb
-		`file ls`,                          // missing task id
-		`file push deadbeef onlyone`,       // missing remote
-		`file pull deadbeef onlyone`,       // missing local
-		`file delete deadbeef`,             // missing rel
+		`file`,                                // no sub-verb
+		`file unknown`,                        // unknown sub-verb
+		`file ls`,                             // missing task id
+		`file push deadbeef onlyone`,          // missing remote
+		`file pull deadbeef onlyone`,          // missing local
+		`file delete deadbeef`,                // missing rel
 		`file ls deadbeef sub extra-trailing`, // too many positionals
 	}
 	for _, in := range cases {
