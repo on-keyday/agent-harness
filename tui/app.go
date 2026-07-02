@@ -83,11 +83,11 @@ type App struct {
 	pendingInteractive pendingInteractive
 	// pickerArmed is true only while an in-flight interactive open was
 	// dispatched from one of the two sites that also populate
-	// pendingInteractive (the `S` key and the `actionResume` case of `r`/`R`).
+	// pendingInteractive (the `S` key and the resume cases of `r`/`R`/`u`/`U`).
 	// InteractiveReadyMsg's handler checks-and-clears this so an AmbiguousRunner
 	// from any OTHER interactive-open path (`i`, InteractiveAction,
 	// SessionNewAction, X11) falls back to a flat error instead of opening the
-	// picker with stale or zero pendingInteractive. See the S/r/R scope note on
+	// picker with stale or zero pendingInteractive. See the S/resume scope note on
 	// the InteractiveReadyMsg case below.
 	pickerArmed bool
 
@@ -457,7 +457,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case InteractiveReadyMsg:
 		// armed is true only when this open was dispatched from the `S` key
-		// or the `actionResume` case of `r`/`R` (the only two sites that set
+		// or the resume cases of `r`/`R`/`u`/`U` (the only sites that set
 		// pendingInteractive). Capture-and-clear here so a stray AmbiguousRunner
 		// from an unrelated in-flight open (e.g. a slow `i` request that
 		// resolves after a later `S`) can't misuse this cycle's arm state.
@@ -857,23 +857,35 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `r` / `R` re-enter the selected session: reattach a live Detached
 		// session, or resume a finished task into a new detachable session.
 		// r resumes with --continue (keep claude's memory); R resumes fresh.
-		if a.focus == focusTasks && (msg.String() == "r" || msg.String() == "R") {
+		// `u` / `U` are the same resume variants but intentionally skip the
+		// assigned-runner preference so ambiguous runner selection can be
+		// reopened even when the previous runner is still available.
+		if a.focus == focusTasks && (msg.String() == "r" || msg.String() == "R" || msg.String() == "u" || msg.String() == "U") {
 			t := a.tasks.SelectedTask()
-			act := resumeReattachAction(t, msg.String() == "r")
+			unpinnedResume := msg.String() == "u" || msg.String() == "U"
+			act := resumeReattachAction(t, msg.String() == "r" || msg.String() == "u")
 			switch act.Kind {
 			case actionReattach:
+				if unpinnedResume {
+					a.cmdresult.Append(WarnStyle.Render("u/U: pick a finished task to resume without assigned runner"))
+					return a, nil
+				}
 				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_Control)
 			case actionResume:
 				// repo is irrelevant on resume — the server reuses the task's
 				// RepoPath and worktree branch. Prefer the runner the task last
 				// ran on (t.AssignedTo) so resume stays one keypress even when
-				// another runner ties on this repo's roots score.
+				// another runner ties on this repo's roots score. u/U deliberately
+				// use Any instead, which can reopen the ambiguous runner picker.
 				a.pendingInteractive = pendingInteractive{
 					repo: "", resumeTaskID: a.tasks.SelectedID(),
 					extraArgs: nil, caps: a.sessionCaps, capsOverride: a.applyCapsOnResume,
 					resumeConversation: act.ResumeConversation,
 				}
 				a.pickerArmed = true
+				if unpinnedResume {
+					return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, nil, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume, act.ResumeConversation)
+				}
 				return a, DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume, act.ResumeConversation)
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
@@ -1116,7 +1128,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r reattach/resume · R resume-fresh · v view-only · F file picker · d detail · c cancel · C conns · O board · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · F file picker · d detail · c cancel · C conns · O board · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 

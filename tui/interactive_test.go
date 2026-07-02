@@ -1,9 +1,11 @@
 package tui
 
 import (
+	"encoding/hex"
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -76,4 +78,63 @@ func TestInteractiveReadyMsg_PickerArmGate(t *testing.T) {
 			t.Fatal("pickerArmed should be cleared after handling InteractiveReadyMsg")
 		}
 	})
+}
+
+func TestUnpinnedResumeKeyArmsPickerWithAnySelector(t *testing.T) {
+	a := New(Config{})
+	var tid protocol.TaskID
+	for i := range tid.Id {
+		tid.Id[i] = byte(i + 1)
+	}
+	task := protocol.TaskInfo{Id: tid, Status: protocol.TaskStatus_Succeeded, Kind: protocol.TaskKind_Interactive}
+	var assigned protocol.RunnerID
+	assigned.SetTransport([]byte("ws"))
+	assigned.SetIpAddr([]byte{192, 168, 3, 14})
+	assigned.Port = 37386
+	assigned.UniqueNumber = 6360
+	task.AssignedTo = assigned
+	a.tasks.SetRows([]protocol.TaskInfo{task}, nil)
+
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	a = m.(*App)
+	if cmd == nil {
+		t.Fatal("u should dispatch a resume command")
+	}
+	if !a.pickerArmed {
+		t.Fatal("u should arm the ambiguous-runner picker")
+	}
+	wantID := hex.EncodeToString(tid.Id[:])
+	if a.pendingInteractive.resumeTaskID != wantID {
+		t.Fatalf("resumeTaskID = %q, want %q", a.pendingInteractive.resumeTaskID, wantID)
+	}
+	if a.pendingInteractive.resumeConversation != true {
+		t.Fatal("u should request conversation resume")
+	}
+}
+
+func TestUnpinnedResumeKeyDoesNotReattachLiveSession(t *testing.T) {
+	a := New(Config{})
+	var tid protocol.TaskID
+	tid.Id[0] = 0xaa
+	task := protocol.TaskInfo{Id: tid, Status: protocol.TaskStatus_Detached, Kind: protocol.TaskKind_Interactive}
+	task.SetDetachable(true)
+	a.tasks.SetRows([]protocol.TaskInfo{task}, nil)
+
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	a = m.(*App)
+	if cmd != nil {
+		t.Fatal("u on a live session should not dispatch reattach")
+	}
+	if a.pickerArmed {
+		t.Fatal("u on a live session should not arm the picker")
+	}
+	found := false
+	for _, line := range a.cmdresult.lines {
+		if strings.Contains(line, "pick a finished task") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected warning about finished task, got %v", a.cmdresult.lines)
+	}
 }
