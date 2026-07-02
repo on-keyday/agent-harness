@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildOneshotArgsDefaultClaudeCompatible(t *testing.T) {
-	got, err := buildOneshotArgs(nil, []string{"--dangerously-skip-permissions"}, "hello")
+	got, err := buildOneshotArgs(nil, []string{"--dangerously-skip-permissions"}, "hello", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,11 +21,23 @@ func TestBuildOneshotArgsCodexTemplate(t *testing.T) {
 		[]string{"exec", agentTemplateArgs, agentTemplatePrompt},
 		[]string{"--search"},
 		"hello",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"exec", "--search", "hello"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildOneshotArgsResumeConversation(t *testing.T) {
+	got, err := buildOneshotArgs(nil, []string{"--dangerously-skip-permissions"}, "hello", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--dangerously-skip-permissions", "--continue", "-p", "hello"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}

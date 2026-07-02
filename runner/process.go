@@ -21,6 +21,7 @@ type Process struct {
 	CWD                 string        // worktree directory; cmd.Dir = CWD
 	Timeout             time.Duration // max wall time; if zero, defaults to 30 minutes
 	ExtraArgs           []string      // runner-global args plus per-task args
+	ResumeConversation  bool          // when true, ask the agent CLI to resume its prior conversation
 	OneshotArgvTemplate []string      // argv template for oneshot mode; defaults to "{args} -p {prompt}"
 	Env                 []string      // additional env vars to merge with os.Environ()
 
@@ -47,7 +48,7 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	args, err := buildOneshotArgs(p.OneshotArgvTemplate, p.ExtraArgs, prompt)
+	args, err := buildOneshotArgs(p.OneshotArgvTemplate, p.ExtraArgs, prompt, p.ResumeConversation)
 	if err != nil {
 		return -1, err
 	}

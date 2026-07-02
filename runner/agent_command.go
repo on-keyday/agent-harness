@@ -9,13 +9,14 @@ const (
 
 var defaultOneshotArgvTemplate = []string{agentTemplateArgs, "-p", agentTemplatePrompt}
 
-func buildOneshotArgs(template, extra []string, prompt string) ([]string, error) {
+func buildOneshotArgs(template, extra []string, prompt string, resumeConversation bool) ([]string, error) {
 	if len(template) == 0 {
 		template = defaultOneshotArgvTemplate
 	}
 	if err := ValidateOneshotArgvTemplate(template); err != nil {
 		return nil, err
 	}
+	extra = withResumeConversationArgs(extra, resumeConversation)
 	return expandAgentArgvTemplate(template, extra, prompt), nil
 }
 

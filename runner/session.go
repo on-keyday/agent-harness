@@ -441,6 +441,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		CWD:                 dir,
 		Timeout:             s.Timeout,
 		ExtraArgs:           mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
+		ResumeConversation:  body.ResumeConversation(),
 		OneshotArgvTemplate: s.OneshotArgvTemplate,
 		Env:                 env,
 		OnStdinWriter: func(write func([]byte) (int, error)) {

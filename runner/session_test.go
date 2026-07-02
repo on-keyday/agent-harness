@@ -17,8 +17,8 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
-	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 type mockSender struct {
@@ -114,6 +114,45 @@ func TestHandleAssignSuccessSequence(t *testing.T) {
 	}
 	if !strings.Contains(string(combined), "hello") {
 		t.Fatalf("prompt not echoed in logs: %q", combined)
+	}
+}
+
+func TestHandleAssignResumeConversationAddsOneshotContinue(t *testing.T) {
+	repo := initRepo(t)
+	ms := &mockSender{}
+	fake := writeFakeClaude(t, `echo "ARGS=$*"`)
+	s := &Session{
+		AllowedRoots: []string{repo},
+		ClaudeBin:    fake,
+		Timeout:      5 * time.Second,
+		Sender:       ms,
+		Now:          time.Now,
+	}
+
+	var taskIDBytes [16]byte
+	taskIDBytes[0] = 0xAB
+	taskID := protocol.TaskID{Id: taskIDBytes}
+	body := &protocol.AssignTaskBody{Prompt: []byte("hello")}
+	body.SetRepoPath([]byte(repo))
+	body.SetResumeConversation(true)
+
+	s.handleAssign(context.Background(), taskID, body)
+
+	ms.mu.Lock()
+	var combined []byte
+	for _, p := range ms.publishes {
+		combined = append(combined, p.data...)
+	}
+	ms.mu.Unlock()
+
+	output := string(combined)
+	if !strings.Contains(output, "--continue") {
+		t.Fatalf("resume conversation was not forwarded to oneshot args; output=%q", output)
+	}
+	idxContinue := strings.Index(output, "--continue")
+	idxPrompt := strings.Index(output, "-p hello")
+	if idxPrompt < 0 || idxContinue > idxPrompt {
+		t.Fatalf("--continue should be inserted before -p prompt args; output=%q", output)
 	}
 }
 
