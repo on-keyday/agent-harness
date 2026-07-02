@@ -617,6 +617,13 @@ agent-runner flags):
   can point it at `bash` or any other program. Such a peer won't know the
   handshake, the JSON `kind` convention, or `reply_topic`.
   `--claude-bin` remains accepted as a deprecated alias.
+- Agent command lines are template-driven. Claude defaults use
+  `--continue` for resume-conversation, but non-Claude runners should set
+  `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`, and
+  `--agent-resume-interactive-argv` to the target CLI's own submit/resume
+  syntax. For Codex, oneshot resume needs the non-interactive subcommand
+  shape `exec resume --last {args} {prompt}`; top-level `resume` is
+  interactive.
 - `--no-worktree` (without `--force-inject-harness-settings`) skips injecting
   `.claude/settings.json` and `.claude/skills/` — so even a claude peer there
   has neither this skill nor the automatic inbox hook: it won't auto-receive

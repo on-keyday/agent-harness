@@ -6,7 +6,7 @@ import (
 )
 
 func TestBuildOneshotArgsDefaultClaudeCompatible(t *testing.T) {
-	got, err := buildOneshotArgs(nil, []string{"--dangerously-skip-permissions"}, "hello", false)
+	got, err := buildOneshotArgs(nil, nil, []string{"--dangerously-skip-permissions"}, "hello", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -19,6 +19,7 @@ func TestBuildOneshotArgsDefaultClaudeCompatible(t *testing.T) {
 func TestBuildOneshotArgsCodexTemplate(t *testing.T) {
 	got, err := buildOneshotArgs(
 		[]string{"exec", agentTemplateArgs, agentTemplatePrompt},
+		nil,
 		[]string{"--search"},
 		"hello",
 		false,
@@ -33,11 +34,28 @@ func TestBuildOneshotArgsCodexTemplate(t *testing.T) {
 }
 
 func TestBuildOneshotArgsResumeConversation(t *testing.T) {
-	got, err := buildOneshotArgs(nil, []string{"--dangerously-skip-permissions"}, "hello", true)
+	got, err := buildOneshotArgs(nil, nil, []string{"--dangerously-skip-permissions"}, "hello", true)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"--dangerously-skip-permissions", "--continue", "-p", "hello"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildOneshotArgsResumeConversationTemplate(t *testing.T) {
+	got, err := buildOneshotArgs(
+		[]string{"exec", agentTemplateArgs, agentTemplatePrompt},
+		[]string{"exec", "resume", "--last", agentTemplateArgs, agentTemplatePrompt},
+		[]string{"--json"},
+		"hello",
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"exec", "resume", "--last", "--json", "hello"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %#v, want %#v", got, want)
 	}

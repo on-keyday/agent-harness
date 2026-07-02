@@ -105,6 +105,7 @@ func TestAgentArgvFlagsParseAndValidate(t *testing.T) {
 
 	if err := fs.Parse([]string{
 		"--agent-oneshot-argv", "exec {args} {prompt}",
+		"--agent-resume-oneshot-argv", "exec resume --last {args} {prompt}",
 		"--agent-resume-interactive-argv", "resume --last {args}",
 	}); err != nil {
 		t.Fatalf("parse: %v", err)
@@ -115,6 +116,13 @@ func TestAgentArgvFlagsParseAndValidate(t *testing.T) {
 	}
 	if strings.Join(oneshot, " ") != "exec {args} {prompt}" {
 		t.Fatalf("oneshot argv = %#v", oneshot)
+	}
+	resumeOneshot, err := parseAgentArgsFlag("--agent-resume-oneshot-argv", cfg.AgentResumeOneshotArgv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(resumeOneshot, " ") != "exec resume --last {args} {prompt}" {
+		t.Fatalf("resume oneshot argv = %#v", resumeOneshot)
 	}
 	resume, err := parseAgentArgsFlag("--agent-resume-interactive-argv", cfg.AgentResumeInteractiveArgv)
 	if err != nil {

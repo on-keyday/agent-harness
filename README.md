@@ -142,6 +142,11 @@ bin/harness-server --listen :8539 --data-dir ./harness-data
 bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
                  --roots /abs/path/to/repo,/abs/path/to/other-repo \
                  --max-tasks 4
+# Non-Claude agents can be wired with argv templates, for example:
+#   --agent-bin codex
+#   --agent-oneshot-argv 'exec {args} {prompt}'
+#   --agent-resume-oneshot-argv 'exec resume --last {args} {prompt}'
+#   --agent-resume-interactive-argv 'resume --last {args}'
 
 # 3. Submit a task. --repo is required (or set HARNESS_REPO_PATH); it must
 # match a runner's --roots entry verbatim (no client-side normalisation).
@@ -449,16 +454,16 @@ Run WS+UDP dualstack if you want both.
   in `runner/agentskills/harness-cli/SKILL.md`. An **opt-in** rootless
   podman confinement is available via the `--claude-bin` seam — see
   **Sandboxing** below.
-- **Built around Claude Code.** The runner spawns `claude` by default
-  and the integration assumes its CLI surface (worktree →
-  `--resume` / `--continue`, session storage keyed by cwd hash, etc.).
-  `--claude-bin` accepts any executable, and `--no-worktree
-  --claude-bin {bash,cmd.exe,powershell.exe}` is a supported pattern
-  for generic-process sandbox slots — but you trade away the
-  claude-specific niceties (worktree-based isolation, session resume
-  across runner restart). No protocol-level integration with other
-  agent CLIs (Aider, Cursor, etc.); they would have to be treated as
-  opaque `--claude-bin` targets the same way.
+- **Agent CLI integration is argv-template based.** The runner spawns
+  `claude` by default and its default templates target Claude Code
+  (`{args} -p {prompt}`, `{args} --continue -p {prompt}`, and
+  `{args} --continue`). Non-Claude agents can use `--agent-bin`,
+  `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`, and
+  `--agent-resume-interactive-argv` to map harness submit/resume
+  intent onto their own CLI surface. `--claude-bin` remains as a
+  deprecated alias for `--agent-bin`; `--no-worktree --agent-bin
+  {bash,cmd.exe,powershell.exe}` is also a supported pattern for
+  generic-process sandbox slots.
 
 ## Testing
 
@@ -530,4 +535,3 @@ The in-browser WebUI vendors third-party assets under `webui/static/`
 (xterm.js + `addon-fit.js` / `xterm.css`, MIT; `wasm_exec.js` from the Go
 distribution, BSD-3-Clause). Their license texts and copyright notices are
 reproduced in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
-

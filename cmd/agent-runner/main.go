@@ -43,6 +43,7 @@ type mainConfig struct {
 	ClaudeBin                  string
 	ClaudeArgs                 string
 	AgentOneshotArgv           string
+	AgentResumeOneshotArgv     string
 	AgentResumeInteractiveArgv string
 	WSPath                     string
 	Hostname                   string
@@ -99,6 +100,7 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ClaudeArgs, "agent-args", c.ClaudeArgs, "extra args passed to the agent before the task args (whitespace-separated, e.g. \"--dangerously-skip-permissions\")")
 	fs.StringVar(&c.ClaudeArgs, "claude-args", c.ClaudeArgs, "deprecated alias for --agent-args")
 	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for oneshot tasks; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
+	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; token {args}; default \"{args} --continue\"")
 	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
@@ -200,6 +202,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agent-runner: --agent-oneshot-argv: %v\n", err)
 		os.Exit(1)
 	}
+	resumeOneshotArgv, err := parseAgentArgsFlag("--agent-resume-oneshot-argv", cfg.AgentResumeOneshotArgv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runner.ValidateOneshotArgvTemplate(resumeOneshotArgv); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: --agent-resume-oneshot-argv: %v\n", err)
+		os.Exit(1)
+	}
 	resumeInteractiveArgv, err := parseAgentArgsFlag("--agent-resume-interactive-argv", cfg.AgentResumeInteractiveArgv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
@@ -246,6 +257,7 @@ func main() {
 		ClaudeBin:                     cfg.ClaudeBin,
 		ExtraClaudeArgs:               strings.Fields(cfg.ClaudeArgs),
 		OneshotArgvTemplate:           oneshotArgv,
+		ResumeOneshotArgvTemplate:     resumeOneshotArgv,
 		ResumeInteractiveArgvTemplate: resumeInteractiveArgv,
 		Logger:                        slog.Default(),
 		PSK:                           resolvedPSK,

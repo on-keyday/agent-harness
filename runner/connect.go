@@ -45,6 +45,7 @@ type Config struct {
 	ClaudeBin                     string                // path to the claude binary
 	ExtraClaudeArgs               []string              // forwarded to every claude invocation (before -p)
 	OneshotArgvTemplate           []string              // argv template for oneshot tasks
+	ResumeOneshotArgvTemplate     []string              // argv template used when resuming a oneshot conversation
 	ResumeInteractiveArgvTemplate []string              // argv template used when resuming an interactive conversation
 	Logger                        *slog.Logger
 	// PSK, when non-nil, overrides the HARNESS_PSK / HARNESS_PSK_FILE env vars.
@@ -215,6 +216,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		ClaudeBin:                     cfg.ClaudeBin,
 		ExtraClaudeArgs:               cfg.ExtraClaudeArgs,
 		OneshotArgvTemplate:           cfg.OneshotArgvTemplate,
+		ResumeOneshotArgvTemplate:     cfg.ResumeOneshotArgvTemplate,
 		ResumeInteractiveArgvTemplate: cfg.ResumeInteractiveArgvTemplate,
 		ServerCID:                     serverCID,
 		Hostname:                      cfg.Hostname,

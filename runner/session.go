@@ -86,6 +86,7 @@ type Session struct {
 	ClaudeBin                     string
 	ExtraClaudeArgs               []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
 	OneshotArgvTemplate           []string
+	ResumeOneshotArgvTemplate     []string
 	ResumeInteractiveArgvTemplate []string
 	Timeout                       time.Duration
 	Sender                        Sender
@@ -437,13 +438,14 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	// so that a per-task --resume / --add-dir / etc. wins on conflict (claude
 	// flags are largely last-wins).
 	proc := &Process{
-		ClaudeBin:           s.ClaudeBin,
-		CWD:                 dir,
-		Timeout:             s.Timeout,
-		ExtraArgs:           mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
-		ResumeConversation:  body.ResumeConversation(),
-		OneshotArgvTemplate: s.OneshotArgvTemplate,
-		Env:                 env,
+		ClaudeBin:                 s.ClaudeBin,
+		CWD:                       dir,
+		Timeout:                   s.Timeout,
+		ExtraArgs:                 mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
+		ResumeConversation:        body.ResumeConversation(),
+		OneshotArgvTemplate:       s.OneshotArgvTemplate,
+		ResumeOneshotArgvTemplate: s.ResumeOneshotArgvTemplate,
+		Env:                       env,
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
 			if e := s.tasks[taskIDHex]; e != nil {
