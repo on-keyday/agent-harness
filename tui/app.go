@@ -38,9 +38,14 @@ type App struct {
 	notify     NotifyModel
 	cmdresult  CmdResultModel
 	cmdline    textinput.Model
-	popup      PopupModel
-	detail     DetailPopup
-	filepicker FilePickerModel
+	cmdHistory []string
+	// cmdHistoryIndex is -1 while editing a fresh command; otherwise it points
+	// at cmdHistory while Up/Down is browsing prior entries.
+	cmdHistoryIndex int
+	cmdHistoryDraft string
+	popup           PopupModel
+	detail          DetailPopup
+	filepicker      FilePickerModel
 
 	focus  focus
 	width  int
@@ -155,24 +160,25 @@ func New(cfg Config) *App {
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
-		server:         cfg.Server,
-		defaultRepo:    cfg.DefaultRepo,
-		runners:        NewRunners(),
-		tasks:          NewTasks(),
-		logs:           NewLogs(),
-		notify:         NewNotify(),
-		cmdresult:      NewCmdResult(),
-		cmdline:        cmd,
-		popup:          NewPopup(cfg.DefaultRepo),
-		filepicker:     NewFilePicker(),
-		connsModal:     NewConnsModal(),
-		boardModal:     NewBoardModal(),
-		focus:          focusTasks,
-		connected:      false,
-		status:         "connecting…",
-		tasksByID:      map[string]protocol.TaskInfo{},
-		activeForwards: map[int]*PortForwardSession{},
-		sessionCaps:    protocol.Capability_All,
+		server:          cfg.Server,
+		defaultRepo:     cfg.DefaultRepo,
+		runners:         NewRunners(),
+		tasks:           NewTasks(),
+		logs:            NewLogs(),
+		notify:          NewNotify(),
+		cmdresult:       NewCmdResult(),
+		cmdline:         cmd,
+		cmdHistoryIndex: -1,
+		popup:           NewPopup(cfg.DefaultRepo),
+		filepicker:      NewFilePicker(),
+		connsModal:      NewConnsModal(),
+		boardModal:      NewBoardModal(),
+		focus:           focusTasks,
+		connected:       false,
+		status:          "connecting…",
+		tasksByID:       map[string]protocol.TaskInfo{},
+		activeForwards:  map[int]*PortForwardSession{},
+		sessionCaps:     protocol.Capability_All,
 	}
 	a.tasks.Focus()
 	return a
@@ -921,8 +927,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		// Cmdline submit.
+		if a.focus == focusCmdline && (msg.Type == tea.KeyUp || msg.Type == tea.KeyDown) {
+			if a.navigateCmdHistory(msg.Type == tea.KeyUp) {
+				return a, nil
+			}
+		}
 		if a.focus == focusCmdline && msg.Type == tea.KeyEnter {
 			input := a.cmdline.Value()
+			a.addCmdHistory(input)
 			a.cmdline.SetValue("")
 			act, err := ParseCommand(input, a.defaultRepo)
 			if err != nil {
@@ -962,6 +974,48 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdline, cmd = a.cmdline.Update(msg)
 	}
 	return a, cmd
+}
+
+func (a *App) addCmdHistory(input string) {
+	if strings.TrimSpace(input) == "" {
+		a.cmdHistoryIndex = -1
+		a.cmdHistoryDraft = ""
+		return
+	}
+	if len(a.cmdHistory) == 0 || a.cmdHistory[len(a.cmdHistory)-1] != input {
+		a.cmdHistory = append(a.cmdHistory, input)
+		const maxCmdHistory = 100
+		if len(a.cmdHistory) > maxCmdHistory {
+			a.cmdHistory = a.cmdHistory[len(a.cmdHistory)-maxCmdHistory:]
+		}
+	}
+	a.cmdHistoryIndex = -1
+	a.cmdHistoryDraft = ""
+}
+
+func (a *App) navigateCmdHistory(previous bool) bool {
+	if len(a.cmdHistory) == 0 {
+		return false
+	}
+	switch {
+	case previous && a.cmdHistoryIndex == -1:
+		a.cmdHistoryDraft = a.cmdline.Value()
+		a.cmdHistoryIndex = len(a.cmdHistory) - 1
+	case previous && a.cmdHistoryIndex > 0:
+		a.cmdHistoryIndex--
+	case !previous && a.cmdHistoryIndex == -1:
+		return false
+	case !previous && a.cmdHistoryIndex < len(a.cmdHistory)-1:
+		a.cmdHistoryIndex++
+	case !previous:
+		a.cmdHistoryIndex = -1
+		a.cmdline.SetValue(a.cmdHistoryDraft)
+		a.cmdline.CursorEnd()
+		return true
+	}
+	a.cmdline.SetValue(a.cmdHistory[a.cmdHistoryIndex])
+	a.cmdline.CursorEnd()
+	return true
 }
 
 func (a *App) cycleFocus(delta int) {
