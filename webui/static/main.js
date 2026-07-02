@@ -1941,11 +1941,13 @@ const POLL_INTERVAL_MS = 5000;
     // Resume — finished task's worktree, opened as a fresh interactive session.
     // Reflect the Compose "Extra claude args" box (same as Submit / Open) so a
     // resume can carry --permission-mode etc. without going through the cmdline.
-    // Two variants mirror the TUI's r/R: plain Resume (R) and Resume conversation
-    // (r), the latter asks the runner to reload agent-side conversation state.
+    // Assigned variants mirror the TUI's r/R; any-runner variants mirror u/U and
+    // intentionally skip t.assignedTo so the ambiguous runner picker can reopen.
     if (isTerminal) {
-      const doResume = async (claudeArgs, note, resumeConversation = false) => {
+      const assignedRunner = typeof t.assignedTo === "string" && t.assignedTo && !t.assignedTo.startsWith(":") ? t.assignedTo : "";
+      const doResume = async (claudeArgs, note, resumeConversation = false, runner = "") => {
         const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
+        if (runner) req.runner = runner;
         try {
           const id = await window.harness.startInteractive(req);
           setActiveTab("terminal");
@@ -1955,8 +1957,12 @@ const POLL_INTERVAL_MS = 5000;
         try { fit.fit(); } catch (_) {}
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
       };
-      addItem("▶ Resume", "", () => doResume(currentClaudeArgs(), "resumed"));
-      addItem("▶ Resume conversation", "", () => doResume(currentClaudeArgs(), "resumed conversation", true));
+      if (assignedRunner) {
+        addItem("▶ Resume assigned", "", () => doResume(currentClaudeArgs(), "resumed assigned", false, assignedRunner));
+        addItem("▶ Resume conversation assigned", "", () => doResume(currentClaudeArgs(), "resumed conversation assigned", true, assignedRunner));
+      }
+      addItem("▶ Resume any runner", "", () => doResume(currentClaudeArgs(), "resumed any runner"));
+      addItem("▶ Resume conversation any runner", "", () => doResume(currentClaudeArgs(), "resumed conversation any runner", true));
     }
 
     // Files — always available.

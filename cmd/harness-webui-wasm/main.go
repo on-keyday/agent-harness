@@ -809,8 +809,8 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				return
 			}
 			// Both fields are optional; opts.Get(...) returns a TypeUndefined
-			// js.Value when the JS caller omits the property (composeRequest()
-			// never sets "runner" — only the runner-picker retry does), and
+			// js.Value when the JS caller omits the property. runner is set by
+			// the runner-picker retry and by assigned-runner resume actions.
 			// js.Value.String() on a non-string type stringifies as "<TYPE>"
 			// rather than "" (see syscall/js), so gate on Type() explicitly
 			// instead of comparing the stringified form.
