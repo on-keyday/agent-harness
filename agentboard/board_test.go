@@ -136,6 +136,70 @@ func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
 	}
 }
 
+// TestBoard_AttachHostOverridesRegisterTaskSeed pins the sender-attribution
+// property: RegisterTask seeds the task's identity with an EMPTY hostname
+// (it runs at assignment, before the agent has said hello), but the agent's
+// Attach then overwrites it with the real hostname from ClientHello. The send
+// path (server agent_handler reads ac.state.Identity() and passes the host to
+// Board.Send) must therefore stamp the real hostname on published messages —
+// the RegisterTask "" seed must never leak into from_hostname. If a future
+// change reordered these writes or dropped the Attach overwrite, this test
+// fails instead of silently shipping empty attribution.
+func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{127, 0, 0, 1})
+	rid.Port = 9100
+	rid.UniqueNumber = 7
+	var tid protocol.TaskID
+	tid.Id[0] = 0x5e
+	tid.Id[1] = 0xed
+	var ticket [16]byte
+	ticket[0] = 9
+
+	// Assignment: seeds identity with hostname "" (and the self topic).
+	b.RegisterTask(rid, tid, ticket)
+
+	// Agent hello: Attach carries the real hostname, overwriting the "" seed.
+	sender := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "real-host")
+	defer b.Detach(sender)
+
+	// This is exactly what server agent_handler.go does on a Send RPC: it
+	// derives the from_* attribution from the sending conn's Identity().
+	gotRid, gotTid, gotHost := sender.Identity()
+	if gotHost != "real-host" {
+		t.Fatalf("Identity host = %q, want %q (Attach must overwrite RegisterTask's empty seed)", gotHost, "real-host")
+	}
+
+	// End-to-end: a receiver on the sender's self topic must see the real
+	// hostname in from_hostname, never the "" seed.
+	var rrid protocol.RunnerID
+	rrid.SetTransport([]byte("ws"))
+	rrid.SetIpAddr([]byte{127, 0, 0, 1})
+	rrid.Port = 9200
+	rrid.UniqueNumber = 8
+	var rtid protocol.TaskID
+	rtid.Id[0] = 0xcc
+	recv := b.Attach(toAgentboardRunnerID(rrid), toAgentboardTaskID(rtid), "recv-host")
+	defer b.Detach(recv)
+	if err := b.Subscribe(recv, "chat.attr-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Send("chat.attr-test", []byte("x"), gotRid, gotTid, gotHost); err != nil {
+		t.Fatal(err)
+	}
+	msgs, _ := b.Inbox(recv, 0)
+	if len(msgs) != 1 {
+		t.Fatalf("receiver inbox = %d messages, want 1", len(msgs))
+	}
+	if msgs[0].FromHostname != "real-host" {
+		t.Fatalf("delivered from_hostname = %q, want %q (RegisterTask's empty seed leaked into attribution)", msgs[0].FromHostname, "real-host")
+	}
+}
+
 // TestBoard_RevokeDestroysTaskState verifies that Revoke clears the persistent
 // subscription set, so a subsequent reconnect with the same (rid, tid) does
 // NOT see the old subscriptions.
