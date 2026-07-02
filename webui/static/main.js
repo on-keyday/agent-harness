@@ -1672,12 +1672,12 @@ const POLL_INTERVAL_MS = 5000;
   // session and asks the runner to resume the agent conversation too.
   const resumeTaskById = async (id) => {
     if (!id) return;
-    setActiveTab("terminal");
-    term.reset();
     const args = currentClaudeArgs();
     const req = { repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation: true };
     try {
       const taskID = await window.harness.startInteractive(req);
+      setActiveTab("terminal");
+      term.reset();
       attachedTask.textContent = `attached: ${taskID} (resumed conversation)`;
       scrollTermToBottom();
     } catch (err) {
@@ -1758,6 +1758,7 @@ const POLL_INTERVAL_MS = 5000;
             caps: spawnCaps, resumeCapsOverride: baseReq.resumeTaskId ? applyCapsOnResume : false,
           });
           setActiveTab("terminal");
+          term.reset();
           // mirrors the success path used by openInteractive; reconstruct the
           // same "one-shot"/"detachable" label openInteractive would have used
           // (baseReq carries `detachable`, not the label string itself).
@@ -1944,11 +1945,11 @@ const POLL_INTERVAL_MS = 5000;
     // (r), the latter asks the runner to reload agent-side conversation state.
     if (isTerminal) {
       const doResume = async (claudeArgs, note, resumeConversation = false) => {
-        setActiveTab("terminal");
-        term.reset();
         const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
         try {
           const id = await window.harness.startInteractive(req);
+          setActiveTab("terminal");
+          term.reset();
           attachedTask.textContent = `attached: ${id} (${note})`;
         } catch (err) { attachedTask.textContent = ""; if (routeAmbiguous(err, req)) return; alert(`resume: ${err.message}`); }
         try { fit.fit(); } catch (_) {}
