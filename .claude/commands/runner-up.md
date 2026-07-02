@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -24,11 +24,11 @@ Arguments: $ARGUMENTS
 
    | tag          | default flags                                                                                                              | target |
    |--------------|----------------------------------------------------------------------------------------------------------------------------|--------|
-   | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace --agent-oneshot-argv "{args} -c {prompt}" --agent-resume-interactive-argv "{args}"` | Linux / macOS shell runner |
+   | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace --agent-oneshot-argv "{args} -c {prompt}" --agent-resume-oneshot-argv "{args} -c {prompt}" --agent-resume-interactive-argv "{args}"` | Linux / macOS shell runner |
    | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--claude-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --claude-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
-   | `codex`      | `--claude-bin codex --agent-oneshot-argv "exec {args} {prompt}" --agent-resume-interactive-argv "resume --last {args}"`     | Codex CLI runner |
+   | `codex`      | `--claude-bin codex --agent-oneshot-argv "exec {args} {prompt}" --agent-resume-oneshot-argv "exec resume --last {args} {prompt}" --agent-resume-interactive-argv "resume --last {args}"` | Codex CLI runner |
 
    **The `sandbox` preset is NOT a shell preset.** It runs the *full* claude
    inside a rootless-podman container (`scripts/sandbox/`), confining the agent's
@@ -59,6 +59,11 @@ Arguments: $ARGUMENTS
    - `--agent-oneshot-argv "exec {args} {prompt}"` makes one-shot tasks run as
      `codex exec <global/per-task args> <prompt>` instead of Claude's default
      `<args> -p <prompt>`.
+   - `--agent-resume-oneshot-argv "exec resume --last {args} {prompt}"` makes
+     `resume_conversation` one-shot resumes run as
+     `codex exec resume --last <global/per-task args> <prompt>`. The
+     non-interactive subcommand shape matters: top-level `codex resume` is
+     interactive-only.
    - `--agent-resume-interactive-argv "resume --last {args}"` makes
      `resume_conversation` interactive resumes run as
      `codex resume --last <global/per-task args>` instead of appending
@@ -72,8 +77,14 @@ Arguments: $ARGUMENTS
 
    ```
    --agent-oneshot-argv "{args} -p {prompt}"
+   --agent-resume-oneshot-argv "{args} --continue -p {prompt}"
    --agent-resume-interactive-argv "{args} --continue"
    ```
+
+   **Pairing is enforced at startup**: customizing `--agent-oneshot-argv`
+   without also supplying `--agent-resume-oneshot-argv` fails agent-runner
+   startup validation (the Claude-shaped resume default would silently
+   misfire on a non-Claude CLI). Every preset above therefore carries both.
 
    A Codex slot usually needs explicit `--hostname $HARNESS_HOSTNAME-codex`
    when its roots overlap an existing Claude slot, for the same dispatch
@@ -81,7 +92,9 @@ Arguments: $ARGUMENTS
 
    **Bash preset details.** The bash slot is a shell runner, not an agent with
    conversation state. Its preset uses `--agent-oneshot-argv "{args} -c
-   {prompt}"` so one-shot submits execute the prompt as a shell command, and
+   {prompt}"` so one-shot submits execute the prompt as a shell command,
+   `--agent-resume-oneshot-argv "{args} -c {prompt}"` (identical — a "resumed"
+   one-shot just runs the prompt again; bash has nothing to continue), and
    `--agent-resume-interactive-argv "{args}"` so `resume_conversation` is
    ignored instead of adding Claude's `--continue`.
 
@@ -116,6 +129,7 @@ Arguments: $ARGUMENTS
          [--psk-file <path>] \
          [--claude-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
+         [--agent-resume-oneshot-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"]
      ```
 
@@ -132,6 +146,7 @@ Arguments: $ARGUMENTS
          [--psk-file <path>] \
          [--claude-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
+         [--agent-resume-oneshot-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"]
      ```
 
