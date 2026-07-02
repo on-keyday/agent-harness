@@ -166,6 +166,44 @@ Root mechanism:
 
 ---
 
+## Pitfall 9 — Operator-surface skew: CLI-only / TUI-only / WebUI-only changes
+
+**What went wrong (2026-07-03)**: Resume-conversation and runner-selection work was repeatedly checked through only one operator surface at a time. The CLI had explicit `--resume-conversation` flags in `submit`, `interactive`, and `session new`; the TUI task-list keybindings had equivalent behavior via `r`/`u` versus `R`/`U`; WebUI task-sheet actions later gained assigned-runner and any-runner resume variants. But the separate command-entry surfaces were not checked at the same time:
+
+- TUI has a bottom command line (`tui/cmdline.go`) distinct from its task-list keybindings. It parses `--resume` for `submit`, `interactive`, and `session new`, but does not parse `--resume-conversation`.
+- WebUI has a command input (`webui/static/main.js` `runCmd`) distinct from its task-sheet buttons. Its `submit` command uses the Resume task id field but does not set `resumeConversation`.
+
+So "TUI supports resume conversation" was true for task-list keys but false for the TUI command-line route. "WebUI supports resume conversation" was true for task-sheet buttons and `resumeTaskById`, but false for the WebUI command input. These are different user-visible entry points and must not be collapsed into one mental bucket.
+
+**Why it slipped review**: The controller asked "does TUI have it?" and answered from the most visible TUI path. It did not enumerate every operator entry point. The same happened for WebUI: task-sheet buttons were treated as the whole WebUI, while the command input was a separate parser with different request construction.
+
+**Mitigation — before implementing or reviewing any operator-visible flag/option:**
+
+Build an explicit surface matrix and fill every cell before claiming coverage:
+
+| Surface | Check |
+| --- | --- |
+| CLI binary | `cmd/harness-cli/main.go`, `cmd/harness-cli/session.go`, help text, CLI tests |
+| TUI keybindings | `tui/app.go`, action helpers, keybinding tests |
+| TUI command line | `tui/cmdline.go`, `tui/cmdline_test.go`, `runAction` wiring |
+| TUI popups/forms | `tui/popup.go` and submit/session popup state |
+| WebUI forms/buttons | `webui/static/main.js` direct event handlers |
+| WebUI command input | `webui/static/main.js` `runCmd`, help text, tokenizer/flag parser |
+| WASM bridge | `cmd/harness-webui-wasm/main.go` option parsing and request construction |
+| Shared client/protocol | `cli/*`, `server/task_handler.go`, `runner/session.go`, protocol round-trip tests |
+
+If a feature intentionally omits a surface, document the omission in the diff or spec. "No parser there" is not an implicit excuse; the absence itself is a design decision.
+
+**Mitigation — insert into IMPLEMENTER prompts for operator-facing features:**
+
+> Before editing, enumerate CLI, TUI keybindings, TUI cmdline, TUI popups, WebUI buttons/forms, WebUI cmdline, WASM bridge, shared cli/server/runner handling. For each, say "implemented", "not applicable", or "intentionally omitted because ...". Do not report "TUI/WebUI done" unless both their direct controls and command-entry surfaces were checked.
+
+**Mitigation — insert into REVIEWER prompts:**
+
+> Audit operator-surface parity. For every new flag/option/request bit, verify CLI, TUI keybindings, TUI cmdline, WebUI buttons/forms, WebUI cmdline, and WASM bridge separately. Flag any surface where the parser accepts a related option like `--resume` but drops the companion option like `--resume-conversation`.
+
+---
+
 ## Subagent dispatch checklist (controller-side)
 
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:
@@ -177,12 +215,14 @@ When dispatching an implementer or reviewer subagent in this project, include in
 ### Implementer prompt augmentations
 - [ ] Quote the spec's **Problem statement** verbatim. Report which bullets the diff addresses; justify omissions.
 - [ ] **Sibling-code grep**: before adding code to TUI/WebUI/server handlers, grep how adjacent files in the same layer invoke the same helper category. Match the existing pattern.
+- [ ] **Operator-surface matrix**: for operator-visible flags/options, check CLI, TUI keybindings, TUI cmdline, TUI popups, WebUI buttons/forms, WebUI cmdline, WASM bridge, and shared cli/server/runner handling separately. Do not collapse "TUI" or "WebUI" into a single surface.
 - [ ] Beware `peer.Conn.Close()` vs `pc.Connection().Close()` when working with relays.
 - [ ] **Build hygiene — keep the worktree clean.** Compile-check with `go build ./...` (builds everything, writes NO binary) or `go build -o /dev/null ./cmd/<x>` / `go vet ./cmd/<x>`. NEVER bare `go build ./cmd/<x>/` — that drops a `<x>` executable into the worktree root. `go test ./...` cleans up after itself; don't `go test -c` without `-o /dev/null`. Stray `harness-tui` / `*.test` binaries pollute `git status`, get caught by `git add -A`, and leave junk in the user's worktree. The cwd must be exactly as clean after your checks as before.
 
 ### Reviewer prompt augmentations
 - [ ] Read BOTH the Problem statement AND the Implementation section. Flag uncovered problem-statement bullets.
 - [ ] Check layer-internal consistency: does this diff's caller pattern match adjacent code in the same layer?
+- [ ] Check operator-surface parity: CLI, TUI keybindings, TUI cmdline, TUI popups, WebUI buttons/forms, WebUI cmdline, WASM bridge, and shared cli/server/runner code must either all support the feature or have explicit documented omissions.
 - [ ] Check for silent fallback paths: if a config / env is set, does any combination cause it to be ignored without log?
 
 ### Spec-writing checklist (controller-side, before commiting a spec)
