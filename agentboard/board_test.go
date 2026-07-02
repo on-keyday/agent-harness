@@ -376,3 +376,63 @@ func protoTaskIDFromBoard(t TaskID) protocol.TaskID {
 	copy(p.Id[:], t.Id[:])
 	return p
 }
+
+// TestBoard_SeqSeedDefaultsToLegacy pins the backward-compatible default:
+// with no SeqSeed (the value tests and pre-fix callers pass), the first
+// published message still gets seq 1.
+func TestBoard_SeqSeedDefaultsToLegacy(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	seq, err := b.Send("topic/first", []byte("x"), testRid, testTid, "test-host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 1 {
+		t.Fatalf("first seq = %d, want 1 (legacy default when SeqSeed=0)", seq)
+	}
+}
+
+// TestBoard_SeqSeedKeepsCursorValidAcrossRestart reproduces the auto-inbox
+// wedge: the board-global seq lives only in memory, so a bare restart resets
+// it to 0 and re-issues low seqs, but a consumer's persisted --since-last
+// cursor survives the restart. If the post-restart seq lands at or below that
+// cursor, Inbox(conn, cursor) filters out every new message and the hook goes
+// silent. Seeding the new board with a strictly-higher boot epoch keeps the
+// stale cursor valid.
+func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
+	// Boot 1: publish enough to advance a consumer cursor to a high value.
+	b1 := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	c1 := b1.Attach(RunnerID{}, TaskID{}, "test-host")
+	_ = b1.Subscribe(c1, "chat.task")
+	var cursor uint64
+	for i := 0; i < 56; i++ {
+		if _, err := b1.Send("chat.task", []byte("old"), testRid, testTid, "test-host"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, cursor = b1.Inbox(c1, 0) // cursor now == 56 (max seq seen)
+	b1.Close()
+	if cursor == 0 {
+		t.Fatalf("precondition: cursor should have advanced, got %d", cursor)
+	}
+
+	// Boot 2 (simulated restart) with a strictly-higher boot epoch seed.
+	// Without the seed this new board would restart at seq 0 and the message
+	// below would get seq 1 <= cursor, so Inbox(c2, cursor) would return it
+	// as empty — the bug.
+	b2 := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024, SeqSeed: cursor + 1000})
+	defer b2.Close()
+	c2 := b2.Attach(RunnerID{}, TaskID{}, "test-host")
+	_ = b2.Subscribe(c2, "chat.task")
+	newSeq, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newSeq <= cursor {
+		t.Fatalf("post-restart seq %d must exceed stale cursor %d", newSeq, cursor)
+	}
+	msgs, _ := b2.Inbox(c2, cursor) // the hook's `--since-last` read
+	if len(msgs) != 1 || string(msgs[0].Payload) != "new" {
+		t.Fatalf("since-last inbox = %+v, want the post-restart 'new' message (stale cursor %d)", msgs, cursor)
+	}
+}

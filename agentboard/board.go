@@ -15,6 +15,18 @@ type Config struct {
 	TopicTTL   time.Duration
 	MaxTopics  int
 	MaxPayload int
+	// SeqSeed is the starting value for the board-global publish sequence
+	// counter (b.seq). It exists to keep seq monotonic ACROSS server
+	// restarts: b.seq lives only in memory, so a bare restart would reset it
+	// to 0 and re-issue low seqs — but consumer `--since-last` cursors are
+	// persisted on disk (~/.cache/harness/agent-cursor-<task>) and survive
+	// the restart. A cursor left above the post-restart seq range then
+	// filters out every new message (seq > cursor is false), silently
+	// wedging the auto-inbox hook. The server seeds this with a
+	// strictly-increasing boot epoch (wall-clock ms << 20) so every restart
+	// begins in a higher range than any prior boot's cursors. Zero (the
+	// default, used by tests) preserves the legacy seq=1,2,3… behavior.
+	SeqSeed uint64
 }
 
 type Board struct {
@@ -42,6 +54,9 @@ func New(cfg Config) *Board {
 		reg:    newRegistry(),
 		stopCh: make(chan struct{}),
 	}
+	// Seed the publish sequence so it stays monotonic across restarts; see
+	// Config.SeqSeed. The first published message gets SeqSeed+1 (b.seq.Add(1)).
+	b.seq.Store(cfg.SeqSeed)
 	go b.evictLoop()
 	return b
 }

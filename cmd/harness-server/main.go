@@ -153,6 +153,11 @@ func main() {
 		TopicTTL:   *agentboardTTL,
 		MaxTopics:  *agentboardMaxTopics,
 		MaxPayload: *agentboardMaxPayload,
+		// Boot epoch: start the publish seq strictly above any prior boot's
+		// range so persisted --since-last cursors stay valid across restarts.
+		// (wall-clock ms << 20 leaves ~1M headroom per boot before the next
+		// boot's epoch; a restart always advances because time advances.)
+		SeqSeed: uint64(time.Now().UnixMilli()) << 20,
 	})
 	defer board.Close()
 	s.SetBoard(board)
