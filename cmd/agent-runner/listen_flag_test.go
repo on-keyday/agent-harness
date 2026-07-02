@@ -133,6 +133,23 @@ func TestAgentArgvFlagsParseAndValidate(t *testing.T) {
 	}
 }
 
+func TestAgentOneshotArgvRequiresResumeOneshotArgv(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	cfg := newMainConfig()
+	cfg.bindFlags(fs)
+
+	if err := fs.Parse([]string{
+		"--roots", "/tmp",
+		"--agent-oneshot-argv", "exec {args} {prompt}",
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	err := cfg.validate()
+	if err == nil || !strings.Contains(err.Error(), "--agent-resume-oneshot-argv") {
+		t.Fatalf("expected resume oneshot argv error, got %v", err)
+	}
+}
+
 func TestAgentRuntimeAliasFlags(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	cfg := newMainConfig()

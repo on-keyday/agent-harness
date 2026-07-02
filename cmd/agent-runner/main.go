@@ -134,6 +134,9 @@ func (c *mainConfig) validate() error {
 	if c.MaxTasks < 1 {
 		return fmt.Errorf("--max-tasks must be >= 1, got %d", c.MaxTasks)
 	}
+	if strings.TrimSpace(c.AgentOneshotArgv) != "" && strings.TrimSpace(c.AgentResumeOneshotArgv) == "" {
+		return fmt.Errorf("--agent-resume-oneshot-argv is required when --agent-oneshot-argv is customized")
+	}
 	return nil
 }
 
