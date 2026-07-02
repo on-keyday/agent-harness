@@ -105,6 +105,37 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 	}
 }
 
+func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{127, 0, 0, 1})
+	rid.Port = 9000
+	rid.UniqueNumber = 1
+	var tid protocol.TaskID
+	tid.Id[0] = 0xab
+	tid.Id[1] = 0xcd
+	tid.Id[2] = 0xef
+	tid.Id[3] = 0x01
+	var ticket [16]byte
+	ticket[0] = 1
+
+	b.RegisterTask(rid, tid, ticket)
+
+	if _, err := b.Send(SelfTopic(tid), []byte("hello"), testRid, testTid, "sender"); err != nil {
+		t.Fatal(err)
+	}
+
+	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "agent-host")
+	defer b.Detach(c)
+	msgs, _ := b.Inbox(c, 0)
+	if len(msgs) != 1 || string(msgs[0].Payload) != "hello" {
+		t.Fatalf("inbox after RegisterTask = %+v, want one message 'hello'", msgs)
+	}
+}
+
 // TestBoard_RevokeDestroysTaskState verifies that Revoke clears the persistent
 // subscription set, so a subsequent reconnect with the same (rid, tid) does
 // NOT see the old subscriptions.
@@ -150,7 +181,7 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	c1 := b.Attach(rid1, tid1, "host1")
 	c2 := b.Attach(rid2, tid2, "host2")
 
-	_ = b.Subscribe(c1, "chat.task1")  // exclusive to task1
+	_ = b.Subscribe(c1, "chat.task1")    // exclusive to task1
 	_ = b.Subscribe(c1, "harness.hello") // shared
 	_ = b.Subscribe(c2, "harness.hello") // shared
 

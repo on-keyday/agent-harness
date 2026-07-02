@@ -54,7 +54,7 @@ type TaskEntry struct {
 	// when the caller supplies a ByRunnerId selector.
 	BoundRunnerID string
 	// ExtraArgs are per-task CLI arguments that the runner appends to its
-	// runner-global --claude-args baseline before exec'ing claude.
+	// runner-global --agent-args baseline before exec'ing the agent.
 	// Sourced from SubmitRequest.ExtraArgs / OpenInteractiveRequest.ExtraArgs
 	// at task creation time and forwarded verbatim through AssignTask /
 	// OpenExecRunnerRequest to the runner.
@@ -139,7 +139,7 @@ func newTaskID() string {
 // boundRunnerID pins the task to a specific runner (empty = no pinning).
 // selector is the runner-selection constraint; use a zero value for "any".
 // extraArgs are forwarded verbatim to the runner and appended to
-// --claude-args at exec time; pass nil for none.
+// --agent-args at exec time; pass nil for none.
 func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability) string {
 	s.mu.Lock()
 	id := newTaskID()

@@ -194,7 +194,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 			continue
 		}
 		if d.Board != nil {
-			d.Board.Registry().Register(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID), ticket)
+			d.Board.RegisterTask(runnerIDFromConnID(runner.ID), taskIDFromHex(task.ID), ticket)
 		}
 
 		// Allocate the body stream up-front so the AssignTask envelope

@@ -8,10 +8,11 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// TestSelfTopic asserts the chat.<first-8-hex-of-task-id> convention used
-// by `harness-cli agent subscribe --self`. SKILL.md ("Naming inbound
-// channels") publishes this exact shape; if it ever drifts from
-// SelfTopic, peers that hand-derive `reply_topic` will miss messages.
+// TestSelfTopic asserts the chat.<first-8-hex-of-task-id> convention used by
+// server-seeded task subscriptions and `harness-cli agent subscribe --self`.
+// SKILL.md ("Naming inbound channels") publishes this exact shape; if it ever
+// drifts from SelfTopic, peers that hand-derive `reply_topic` will miss
+// messages.
 func TestSelfTopic(t *testing.T) {
 	cases := []struct {
 		name string

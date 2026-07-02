@@ -74,6 +74,24 @@ func (b *Board) Close() {
 // Registry returns the ticket registry for server lifecycle code (TryDispatch / TaskFinished).
 func (b *Board) Registry() *registry { return b.reg }
 
+// RegisterTask stores the task's auth ticket and seeds its id-directed inbound
+// topic. This is the server-side equivalent of the historical
+// `harness-cli agent subscribe --self` SessionStart hook, but it runs when the
+// task is assigned to a runner, before any runtime-specific agent hook exists.
+func (b *Board) RegisterTask(rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) {
+	b.reg.Register(rid, tid, ticket)
+	key := ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}
+	b.mu.Lock()
+	ts, ok := b.tasks[key]
+	if !ok {
+		ts = newTaskState()
+		b.tasks[key] = ts
+	}
+	b.mu.Unlock()
+	ts.setIdentity(rid, tid, "")
+	ts.addPattern(SelfTopic(tid))
+}
+
 // SetOnDeliver registers a callback fired once per matched subscriber
 // after Send has appended the message to the topic ring. Non-blocking
 // expected; runs on the publisher's goroutine. Safe to call once at

@@ -124,3 +124,41 @@ func TestAgentArgvFlagsParseAndValidate(t *testing.T) {
 		t.Fatalf("resume argv = %#v", resume)
 	}
 }
+
+func TestAgentRuntimeAliasFlags(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	cfg := newMainConfig()
+	cfg.bindFlags(fs)
+
+	if err := fs.Parse([]string{
+		"--agent-bin", "codex",
+		"--agent-args", `--profile "agent default"`,
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.ClaudeBin != "codex" {
+		t.Fatalf("ClaudeBin = %q, want codex", cfg.ClaudeBin)
+	}
+	if cfg.ClaudeArgs != `--profile "agent default"` {
+		t.Fatalf("ClaudeArgs = %q", cfg.ClaudeArgs)
+	}
+}
+
+func TestClaudeRuntimeAliasFlagsRemainSupported(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	cfg := newMainConfig()
+	cfg.bindFlags(fs)
+
+	if err := fs.Parse([]string{
+		"--claude-bin", "claude",
+		"--claude-args", "--permission-mode auto",
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cfg.ClaudeBin != "claude" {
+		t.Fatalf("ClaudeBin = %q, want claude", cfg.ClaudeBin)
+	}
+	if cfg.ClaudeArgs != "--permission-mode auto" {
+		t.Fatalf("ClaudeArgs = %q", cfg.ClaudeArgs)
+	}
+}

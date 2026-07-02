@@ -171,7 +171,8 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	var extraArgs repeatableStrings
-	fs.Var(&extraArgs, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
+	fs.Var(&extraArgs, "agent-arg", "extra CLI arg to forward to the agent (repeatable; appended after runner-global --agent-args)")
+	fs.Var(&extraArgs, "claude-arg", "deprecated alias for --agent-arg")
 	detach := false
 	fs.BoolVar(&detach, "detach", false, "start the session and immediately detach (run in background, print task id, exit)")
 	fs.BoolVar(&detach, "d", false, "shorthand for --detach")

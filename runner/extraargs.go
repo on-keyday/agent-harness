@@ -1,6 +1,6 @@
 package runner
 
-// mergeExtraArgs concatenates the runner-global --claude-args baseline with
+// mergeExtraArgs concatenates the runner-global --agent-args baseline with
 // per-task extras supplied by the originating client (cli / tui / webui).
 // The global baseline comes first so that per-task flags appear later on
 // the claude command line — claude's flag parser is largely last-wins,

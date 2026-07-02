@@ -149,7 +149,7 @@ Independent flag. `NoWorktree=true` + `OpenInteractive(Detachable=1)` is support
 
 ## Agentboard hook loss (trade-off)
 
-`WriteAgentSettings` is what installs the runner's hooks (`SessionStart` × 2 for `harness.hello` / `--self` subscriptions, `UserPromptSubmit` for inbox flush). Skipping it in `NoWorktree=true` means an agent in this mode is not auto-subscribed to agentboard topics and does not auto-flush its inbox.
+`WriteAgentSettings` is what installs the runner's runtime hooks, currently `UserPromptSubmit` for inbox flush. The id-directed inbound topic is now seeded by the server when a task is assigned, so `NoWorktree=true` agents do not need a `.claude` SessionStart hook to receive on `chat.<short-id>`. Skipping settings injection still means the agent does not auto-flush its inbox.
 
 For the target use case (`--claude-bin bash` etc.), this does not matter — bash does not read `.claude/settings.json`. For users who want both `NoWorktree` and agentboard integration with real `claude`, the escape hatch is `--force-inject-harness-settings`: the runner will then merge its hooks into `<repoPath>/.claude/settings.json` and write `<repoPath>/.claude/skills/<harness>/`. The merge logic is idempotent (deduplicated by command prefix) so re-running is safe; user-defined hooks under other keys are preserved. README notes this.
 

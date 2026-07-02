@@ -1066,8 +1066,8 @@ func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalVi
 	}
 
 	info := &protocol.ConnInfo{
-		Role:        role,
-		ConnectedAt: uint64(sc.connectedSince.UnixNano()),
+		Role:          role,
+		ConnectedAt:   uint64(sc.connectedSince.UnixNano()),
 		PrincipalTask: principal,
 	}
 	info.SetIdentified(identified)
@@ -1113,7 +1113,7 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 		return fmt.Errorf("ticket gen: %w", err)
 	}
 	if s.Board != nil {
-		s.Board.Registry().Register(runnerIDFromConnID(runnerID), taskIDFromHex(taskID), ticket)
+		s.Board.RegisterTask(runnerIDFromConnID(runnerID), taskIDFromHex(taskID), ticket)
 	}
 	stream := entry.Conn.CreateSendStream()
 	if stream == nil {

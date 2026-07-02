@@ -35,7 +35,6 @@ var harnessHookEntries = []struct {
 	Event   string
 	Command string
 }{
-	{"SessionStart", "harness-cli agent subscribe --self"},
 	{"UserPromptSubmit", "harness-cli agent inbox --since-last --commit --json"},
 }
 
@@ -48,35 +47,17 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 // content rather than overwriting it.
 //
 // Hooks injected:
-//   - SessionStart: subscribes the agent to its own inbound topic
-//     `chat.<first-8-hex-of-task-id>` (resolved by `harness-cli agent
-//     subscribe --self` from HARNESS_TASK_ID). This is the id-directed
-//     channel peers reach the agent on; it follows the SKILL.md convention
-//     so the agent does not need to remember to subscribe. The agent is
-//     deliberately NOT auto-subscribed to the reserved rendezvous topic
-//     `harness.hello`: in practice peers are reached id-directed (the
-//     spawner already knows the child's task id, and humans use `ls` to
-//     find one), so a global broadcast topic everyone subscribes to only
-//     amplified every introduction into O(subscribers) wake noise.
-//     `harness.hello` still exists as an opt-in discovery channel — an
-//     agent that genuinely needs to find a peer it has no prior id for
-//     subscribes to it itself (see SKILL.md). Because this entry was
-//     removed from harnessHookEntries, pruneStaleHarnessHooks drops the
-//     old `--topic harness.hello` SessionStart hook from any worktree a
-//     previous runner initialised, on the next WriteAgentSettings call.
-//     Subscriptions are keyed by (rid, tid) on the broker and
-//     de-duplicated via a map, so re-firing this hook on /clear or
-//     /resume is a no-op. The command is left bare (no shell redirect or
-//     expansion) for cross-OS portability — `>/dev/null` is not valid in
-//     PowerShell / cmd, and the runner OS is not pinned; this is also why
-//     --self is resolved by the CLI rather than by shell-substituting
-//     $HARNESS_TASK_ID, whose syntax differs per shell. The resulting
-//     `{"status":"ok"}` line is injected as additionalContext at session
-//     start; the noise is negligible.
 //   - UserPromptSubmit: injects pending agentboard messages on each user
 //     prompt submission. This covers both normal user turns and the
 //     synthetic wake prompt written by Session.WakeStdin when the runner
 //     detects new agentboard messages while the agent is idle.
+//
+// There is deliberately no SessionStart hook. The server seeds every task's
+// id-directed inbound topic (`chat.<first-8-hex-of-task-id>`) when it issues
+// the agentboard auth ticket for a runner assignment. That path is
+// agent-runtime-neutral, covers no-worktree and non-Claude agents, and
+// re-applies on resume or runner reassignment where the `(runner, task)` broker
+// key changes. `harness.hello` remains opt-in discovery only.
 //
 // There is deliberately no Stop hook. A Stop-hook-based re-entry blocks
 // Claude Code's stdin while the agent continues its current turn, which

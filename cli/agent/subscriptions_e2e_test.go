@@ -45,9 +45,8 @@ func TestAgentCLI_E2E_Subscriptions(t *testing.T) {
 	}
 }
 
-// TestAgentCLI_E2E_SubscribeSelf verifies that `subscribe --self` derives
-// the inbound topic from HARNESS_TASK_ID via SelfTopic and successfully
-// subscribes — i.e. the runner's auto-injected SessionStart hook works
+// TestAgentCLI_E2E_SubscribeSelf verifies that the manual repair command still
+// derives the inbound topic from HARNESS_TASK_ID via SelfTopic and subscribes
 // without out-of-band shell expansion.
 func TestAgentCLI_E2E_SubscribeSelf(t *testing.T) {
 	addr := freePortE2E(t)

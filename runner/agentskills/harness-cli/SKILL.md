@@ -156,15 +156,14 @@ harness-cli agent subscriptions   # JSON Lines: this agent's patterns
 harness-cli agent topics          # JSON Lines: every topic on the board
 
 # Shorthand for "subscribe to my own inbound topic" — derives
-# chat.<first-8-hex-of-HARNESS_TASK_ID>. Used by the SessionStart hook
-# below; rarely needed by hand.
+# chat.<first-8-hex-of-HARNESS_TASK_ID>. The server normally seeds this
+# subscription when it assigns the task; this remains as a manual repair tool.
 harness-cli agent subscribe   --self
 harness-cli agent unsubscribe --self
 ```
 
-The runner installs one `SessionStart` hook that runs `subscribe --self`.
-So the conventional inbound topic `chat.<short-id>` is already live by the
-time your first turn starts — you only need to **announce** it as
+The server seeds the conventional inbound topic `chat.<short-id>` when it
+assigns the task to a runner. You only need to **announce** it as
 `reply_topic` in outbound messages, not subscribe to it yourself.
 
 The runner does **not** auto-subscribe you to `harness.hello`. Peers reach
@@ -174,13 +173,11 @@ only turned every peer introduction into broadcast wake-noise. If you
 genuinely need to discover a peer you have no prior id for, subscribe to
 `harness.hello` yourself — see below.
 
-**Non-claude agents must subscribe themselves.** That `SessionStart` hook
-lives in the claude-only `.claude/settings.json`, so a peer running a different
-agent (gemini / codex / …) does NOT get it — even with this skill present via
-cross-tool injection. If that is you, run `harness-cli agent subscribe --self`
-yourself at startup; otherwise peers can't reach you on `chat.<short-id>`.
-(You also have no auto-inbox hook — poll `harness-cli agent inbox` to
-receive.)
+**Non-Claude agents still need an inbox path.** The inbound subscription is
+server-seeded for every agent runtime, but the auto-inbox hook still lives in
+Claude's `.claude/settings.json`. If you are running under gemini / codex / …
+and no runtime adapter has injected an equivalent hook, poll
+`harness-cli agent inbox` to receive messages.
 
 ## Reaching another agent — id-directed first
 
@@ -274,11 +271,11 @@ Why detached sessions over `submit`:
 
 For any non-trivial worker — anything that will require multiple tool
 calls, file edits, or long autonomous stretches — start the worker in
-**auto permission mode** by forwarding the flag through `--claude-arg`:
+**auto permission mode** by forwarding the flag through `--agent-arg`:
 
 ```bash
 harness-cli session new -d --repo /path/to/repo \
-  --claude-arg --permission-mode --claude-arg auto
+  --agent-arg --permission-mode --agent-arg auto
 ```
 
 Without this the worker spawns in the default permission mode and will
@@ -288,6 +285,8 @@ through routine tool calls on its own while still respecting harder
 safety boundaries (it is not the same as `bypassPermissions`). Use it
 as the default for delegated work; reserve narrower modes for cases
 where you have an explicit reason.
+
+`--claude-arg` remains accepted as a deprecated alias for older scripts.
 
 ### Reuse the same task id with `--resume`
 
@@ -310,13 +309,13 @@ But **`--resume` alone only restores the harness-level identity** — same
 task id, same topic, same worktree. The new session still boots a fresh
 claude process with no memory of the previous conversation. To also
 resume at the claude conversation level (so the worker remembers what it
-was doing), pass `--claude-arg --continue` as well:
+was doing), pass `--agent-arg --continue` as well:
 
 ```bash
 harness-cli session new -d --repo /path/to/repo \
   --resume "$TASK_ID" \
-  --claude-arg --permission-mode --claude-arg auto \
-  --claude-arg --continue
+  --agent-arg --permission-mode --agent-arg auto \
+  --agent-arg --continue
 ```
 
 Think of it as two independent layers:
@@ -324,7 +323,7 @@ Think of it as two independent layers:
 | Layer | Flag | What it restores |
 |-------|------|------------------|
 | harness task | `--resume <id>` | task id, chat topic, worktree branch |
-| claude conversation | `--claude-arg --continue` | claude's in-directory session memory |
+| claude conversation | `--agent-arg --continue` | claude's in-directory session memory |
 
 You almost always want both for a "pick up where it left off" restart.
 Use `--resume` alone only when you specifically want a clean claude
@@ -610,13 +609,14 @@ message lands on the other side. Recommended:
 
 ## Peers may not be claude — or skill-injected
 
-Don't assume the agent on the other end of a topic is a claude that has read
+Don't assume the agent on the other end of a topic is a Claude process that has read
 this skill. A runner decides what it spawns and how it injects (see the
 agent-runner flags):
 
-- `--claude-bin` sets the peer binary — it defaults to `claude`, but a runner
+- `--agent-bin` sets the peer binary — it defaults to `claude`, but a runner
   can point it at `bash` or any other program. Such a peer won't know the
   handshake, the JSON `kind` convention, or `reply_topic`.
+  `--claude-bin` remains accepted as a deprecated alias.
 - `--no-worktree` (without `--force-inject-harness-settings`) skips injecting
   `.claude/settings.json` and `.claude/skills/` — so even a claude peer there
   has neither this skill nor the automatic inbox hook: it won't auto-receive
@@ -659,7 +659,7 @@ loop back into your inbox.
 Typical per-agent setup:
 
 ```
-subscribe:  chat.<my-short-id>     # my inbound channel (peers write here) — auto via --self
+subscribe:  chat.<my-short-id>     # my inbound channel (peers write here) — server-seeded
 subscribe:  harness.hello          # OPT-IN, only if you need peer discovery
 # do NOT subscribe: chat.<peer-short-id>   ← peer's inbound, not mine
 ```
@@ -673,7 +673,7 @@ reach you.
 ### Handshake flow (id-directed — the default)
 
 1. Your inbound topic `chat.<short-id>` is **already subscribed** by the
-   runner's `--self` SessionStart hook. You do not need to subscribe by hand.
+   server when it assigns your task. You do not need to subscribe by hand.
 2. **Post to the peer's inbound topic** `chat.<peer-short-id>` (derived from
    the task id you got when you spawned it / from `ls`) with at minimum:
    ```json

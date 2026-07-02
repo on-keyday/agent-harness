@@ -54,16 +54,17 @@ func main() {
 		return cid
 	}
 
-	// addClaudeArgFlag registers --claude-arg as a repeatable flag and returns
+	// addAgentArgFlags registers --agent-arg as a repeatable flag and returns
 	// the underlying slice (populated after fs.Parse). Each occurrence appends
-	// one CLI argument forwarded verbatim to the spawned claude process; e.g.
-	//   submit --claude-arg --resume --claude-arg <uuid>
+	// one CLI argument forwarded verbatim to the spawned agent process; e.g.
+	//   submit --agent-arg --resume --agent-arg <uuid>
 	// works around the 2.1.123 /resume picker regression that requires the
 	// caller to be in the original CWD by letting the user push --resume
 	// through harness-cli without an interactive picker.
-	addClaudeArgFlag := func(fs *flag.FlagSet) *[]string {
+	addAgentArgFlags := func(fs *flag.FlagSet) *[]string {
 		var args repeatableStrings
-		fs.Var(&args, "claude-arg", "extra CLI arg to forward to claude (repeatable; appended after runner-global --claude-args)")
+		fs.Var(&args, "agent-arg", "extra CLI arg to forward to the agent (repeatable; appended after runner-global --agent-args)")
+		fs.Var(&args, "claude-arg", "deprecated alias for --agent-arg")
 		return (*[]string)(&args)
 	}
 
@@ -96,7 +97,7 @@ func main() {
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 		resolveSelector := addSelectorFlags(fs)
-		extraArgs := addClaudeArgFlag(fs)
+		extraArgs := addAgentArgFlags(fs)
 		fs.Parse(args)
 		if *task == "" {
 			fmt.Fprintln(os.Stderr, "submit: --task is required")
@@ -296,7 +297,7 @@ func main() {
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 		resolveSelector := addSelectorFlags(fs)
-		extraArgs := addClaudeArgFlag(fs)
+		extraArgs := addAgentArgFlags(fs)
 		fs.Parse(args)
 		repoVal := cliopts.ResolveString(*repo, "HARNESS_REPO_PATH")
 		if repoVal == "" && *resume == "" {
@@ -581,10 +582,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (default /ws)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
-	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--caps NAMES]")
 	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
-	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--claude-arg --resume <uuid>` finds claude's stored session)")
+	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
+	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)")
 	fmt.Fprintln(os.Stderr, "                                      --caps: comma-separated capability names to grant (e.g. spawn,file_read / all / none); default all. On --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
 	fmt.Fprintln(os.Stderr, "  conns [-f|--follow] [--json]        snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines")
@@ -605,13 +606,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  logs [-f|--follow] TASK_ID          dump task log history; -f also streams live chunks until task terminal")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  notify-watch                        stream notifications (backlog + live); one human-readable line each")
-	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID] [--caps NAMES]")
-	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY claude (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
+	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY agent (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal interactive task id + worktree branch")
-	fmt.Fprintln(os.Stderr, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--claude-arg ARG ...] [--resume TASK_ID] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--caps NAMES]")
 	fmt.Fprintln(os.Stderr, "                                      open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)")
-	fmt.Fprintln(os.Stderr, "                                      --claude-arg is repeatable; appended after runner-global --claude-args")
+	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
 	fmt.Fprintln(os.Stderr, "                                      -d / --detach: start the session and exit immediately (don't attach the terminal)")
 	fmt.Fprintln(os.Stderr, "  session attach TASK_ID              reattach to a detached/running session")
 	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: detachable interactive sessions only")
@@ -728,12 +729,12 @@ func classifyForLocalPrune(ctx context.Context, peerCID objproto.ConnectionID, t
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence.
-// Used for --claude-arg so callers can write
+// Used for --agent-arg so callers can write
 //
-//	harness-cli submit --claude-arg --resume --claude-arg <uuid> ...
+//	harness-cli submit --agent-arg --resume --agent-arg <uuid> ...
 //
 // without shell-quoting concerns. The value is appended in the order the
-// flags appear, which is the order forwarded to claude.
+// flags appear, which is the order forwarded to the agent.
 type repeatableStrings []string
 
 func (r *repeatableStrings) String() string {
