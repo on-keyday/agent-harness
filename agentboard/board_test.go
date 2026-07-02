@@ -136,6 +136,44 @@ func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
 	}
 }
 
+func TestBoard_RegisterTaskReseedsSelfTopicOnRunnerChange(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid1 protocol.RunnerID
+	rid1.SetTransport([]byte("ws"))
+	rid1.SetIpAddr([]byte{127, 0, 0, 1})
+	rid1.Port = 9001
+	rid1.UniqueNumber = 1
+
+	rid2 := rid1
+	rid2.Port = 9002
+	rid2.UniqueNumber = 2
+
+	var tid protocol.TaskID
+	tid.Id[0] = 0xca
+	tid.Id[1] = 0xfe
+	tid.Id[2] = 0xba
+	tid.Id[3] = 0xbe
+	var ticket1, ticket2 [16]byte
+	ticket1[0] = 1
+	ticket2[0] = 2
+
+	b.RegisterTask(rid1, tid, ticket1)
+	b.RegisterTask(rid2, tid, ticket2)
+
+	c2 := b.Attach(toAgentboardRunnerID(rid2), toAgentboardTaskID(tid), "host2")
+	defer b.Detach(c2)
+	if _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender"); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, _ := b.Inbox(c2, 0)
+	if len(msgs) != 1 || string(msgs[0].Payload) != "after-resume" {
+		t.Fatalf("inbox after runner change = %+v, want one message 'after-resume'", msgs)
+	}
+}
+
 // TestBoard_AttachHostOverridesRegisterTaskSeed pins the sender-attribution
 // property: RegisterTask seeds the task's identity with an EMPTY hostname
 // (it runs at assignment, before the agent has said hello), but the agent's
