@@ -32,6 +32,16 @@ func TestSkillLandingToMain(t *testing.T) {
 	}
 }
 
+func TestSkillSessionDebugging(t *testing.T) {
+	b, err := Skill("session-debugging")
+	if err != nil {
+		t.Fatalf("Skill(session-debugging): %v", err)
+	}
+	if len(b) == 0 {
+		t.Fatal("session-debugging skill is empty")
+	}
+}
+
 func TestSkillUnknown(t *testing.T) {
 	if _, err := Skill("nope"); err == nil {
 		t.Fatal("expected error for unknown skill")

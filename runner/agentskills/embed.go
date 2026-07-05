@@ -5,7 +5,7 @@ package agentskills
 
 import "embed"
 
-//go:embed all:harness-cli all:independent-review all:landing-to-main
+//go:embed all:harness-cli all:independent-review all:landing-to-main all:session-debugging
 var FS embed.FS
 
 // Skill returns the SKILL.md bytes for a named skill (e.g. "harness-cli").

@@ -357,67 +357,17 @@ harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
 **Reading / driving a session as the agent (you have no TTY).** `session attach`
 runs `RemoteShell`, which flips the *local* terminal into raw mode and splices it
 to the remote PTY — it needs a real interactive TTY, which the human operator has
-(TUI / WebUI) but you do not. For your own observation and driving, use the
-non-TTY pair instead (both authenticate with your task ticket's `exec_attach`
-capability — no operator PSK):
-
-- **`session snapshot <id>`** renders the session's current screen to plain text
-  via a headless VT emulator. It is a read-only `view` attach — it never disturbs
-  whoever is driving. Use it to SEE what a shell / TUI / REPL / claude session is
-  showing (`--rows/--cols` are a fallback if the session reports no size). Add
-  **`--style`** to also print a `--- styles ---` section listing faint/bold/etc.
-  spans (`r<row> c<a>-<b> faint: "..."`). The plain render drops SGR, so a *faint*
-  placeholder / ghost-autocomplete / dim hint looks identical to real input —
-  `--style` is how you tell them apart (e.g. an input-box line that shows up as
-  `faint` is a placeholder, not something that was typed). **`--color`**
-  additionally reports fg/bg as hex (`fg#ff87af: "Error: ..."` — error-red,
-  status colors); it is verbose (most cells carry a color), so it is a separate
-  opt-in. CJK/wide runs are coalesced (not split per character). **`--raw`**
-  instead writes the verbatim PTY replay bytes (escape sequences intact) to
-  stdout with no VT render — `cat` it into a real terminal to reproduce the
-  screen exactly, or inspect the actual bytes when the rendered text looks
-  wrong. `--raw` cannot be combined with `--style`/`--color` (those describe the
-  render it bypasses), and `--rows/--cols` are ignored.
-- **`session send [-enter] [-e] [--flush-ms MS] <id> <text>...`** injects
-  keystrokes via a `cowrite` attach: it forwards your input WITHOUT taking over
-  the human controller and WITHOUT resizing the PTY. `-enter` appends a carriage
-  return (Enter) — a CR, so it submits on Windows cmd.exe too. `-e` interprets
-  `\n \r \t \e \xHH \\` for control keys (e.g. `-e '\x03'` = Ctrl-C, `-e '\x1b'`
-  = Esc). A stateless drive loop is just: `send`, then `snapshot` to read it.
-
-  **`send` flags go before `<id>`; everything after `<id>` is the text**, joined
-  ssh-style (`ssh host cmd args...`) — so multi-word input needs no quoting
-  (`send -enter <id> echo hello world` sends `echo hello world`). Quote it as one
-  argument to preserve exact whitespace. Keep flags before `<id>`: a `-enter`
-  placed AFTER the text is taken as literal text (you'll see it typed in the
-  snapshot instead of submitting), so it won't act as the Enter flag.
-
-- **`session exec [--timeout D] [--json] [--exit-only] [--raw] <id> <cmd>...`**
-  is the synchronous shortcut for the send + snapshot + guess-a-sleep loop when
-  the session's foreground is a POSIX shell (bash/zsh/sh, incl. one reached over
-  ssh or inside a netns — it types through the live PTY). It injects the command
-  (flags before `<id>`, the rest joined ssh-style like `send`), WAITS for it to
-  finish, and returns the command's **combined stdout+stderr** as greppable
-  logical lines (SGR stripped, `\r`-overwrite/erase-line applied, and NOT
-  re-wrapped — unlike snapshot's width-wrapped grid, so a long line/SID stays
-  intact) plus its exit code. The `exec` process exits with the command's exit
-  code (124 timeout, 125 error, 126 the foreground shell exited), so it composes:
-  `if harness-cli session exec <id> test -f /flag; then …`. `--json` returns
-  `{exit,output,timed_out,shell_exited,duration_ms}`; `--raw` returns verbatim
-  bytes (escapes intact); `--exit-only` suppresses output. **Footguns:** (1) it
-  types into the **LIVE foreground shell**, so state persists across calls
-  (`cd`/`export` carry over) AND shell-terminating commands bite — `exit`/`exec`
-  end the shell and KILL the session; to test an exit code wrap it as
-  `bash -c 'exit N'` or `(exit N)`, never a bare `exit N`. (2) stdout/stderr
-  can't be separated (one PTY). (3) v1 is a single logical line (`;`/`&&`/`|`/
-  `$()` compose fine; a literal newline is rejected). (4) if the foreground is
-  NOT a POSIX shell (an sdplane/claude REPL), no completion marker appears → it
-  times out with a diagnostic; use send/snapshot there instead.
-
-- **`session snapshot` / `session attach` flags are order-free** — their only
-  positional is the `<id>` (never `-`-leading), so `snapshot <id> --rows 50` and
-  `snapshot --rows 50 <id>` are equivalent. (`send`/`exec` are NOT order-free:
-  their text/cmd is free-form, so flags must stay before `<id>`.)
+(TUI / WebUI) but you do not. Your tools are the non-TTY trio above —
+`snapshot` (read the screen), `send` (inject keystrokes), `exec` (run one shell
+command synchronously) — all authenticated by your task ticket's `exec_attach`
+capability, no operator PSK. The full playbook lives in the
+**session-debugging** skill (`harness-cli skill session-debugging`, or open
+`.claude/skills/session-debugging/SKILL.md` /
+`.agents/skills/session-debugging/SKILL.md`): tool choice (exec only fits a
+POSIX-shell foreground), the send → snapshot drive loop, screen-reading flags
+(`--style`/`--color`/`--raw`), and the footguns (flags go BEFORE `<id>` for
+`send`/`exec`; a bare `exit` typed via `exec` kills the session; `exec` on a
+TUI/REPL/claude foreground times out by design).
 
 These suit **terminal-level** work (shells, TUIs, REPLs, or watching a screen).
 To coordinate a *claude worker* (hand it tasks / corrections), still prefer
