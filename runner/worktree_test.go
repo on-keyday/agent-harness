@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -109,6 +110,89 @@ func TestCreateReusesExistingWorktreeOnResume(t *testing.T) {
 	}
 }
 
+// gitIn runs a git command inside dir with a hermetic identity/config env,
+// failing the test on error. Returns combined output for assertions.
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
+
+// TestCreateReusesWorktreeOnOtherBranch covers the deliberate-branch-switch
+// resume: the user sometimes checks out a different branch inside the task
+// worktree to work there, and the session ends with that checkout in place.
+// Create must reuse the dir as-is — preserving uncommitted work AND leaving
+// HEAD on the user's chosen branch — instead of treating the branch mismatch
+// as an orphan dir and wiping it (which destroyed uncommitted work and then
+// failed with "missing but already registered", incident 2026-07-06).
+func TestCreateReusesWorktreeOnOtherBranch(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+
+	dir, err := wm.Create("other-branch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, dir, "checkout", "-b", "user/side-work")
+	uncommitted := filepath.Join(dir, "in-flight.txt")
+	if err := os.WriteFile(uncommitted, []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir2, err := wm.Create("other-branch")
+	if err != nil {
+		t.Fatalf("resume Create on other-branch worktree failed: %v", err)
+	}
+	if dir2 != dir {
+		t.Errorf("resume returned different dir: got %q want %q", dir2, dir)
+	}
+	if data, err := os.ReadFile(uncommitted); err != nil || string(data) != "wip\n" {
+		t.Errorf("uncommitted file not preserved: data=%q err=%v", data, err)
+	}
+	if head := strings.TrimSpace(gitIn(t, dir, "rev-parse", "--abbrev-ref", "HEAD")); head != "user/side-work" {
+		t.Errorf("HEAD moved off the user's branch: got %q want %q", head, "user/side-work")
+	}
+}
+
+// TestCreateReusesWorktreeDetachedHead is the same reuse guarantee for a
+// detached HEAD (e.g. a session killed mid-rebase leaves the worktree
+// detached). Same incident class as TestCreateReusesWorktreeOnOtherBranch.
+func TestCreateReusesWorktreeDetachedHead(t *testing.T) {
+	repo := initRepo(t)
+	wm := &WorktreeManager{Repo: repo}
+
+	dir, err := wm.Create("detached")
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, dir, "checkout", "--detach", "HEAD")
+	uncommitted := filepath.Join(dir, "in-flight.txt")
+	if err := os.WriteFile(uncommitted, []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dir2, err := wm.Create("detached")
+	if err != nil {
+		t.Fatalf("resume Create on detached worktree failed: %v", err)
+	}
+	if dir2 != dir {
+		t.Errorf("resume returned different dir: got %q want %q", dir2, dir)
+	}
+	if data, err := os.ReadFile(uncommitted); err != nil || string(data) != "wip\n" {
+		t.Errorf("uncommitted file not preserved: data=%q err=%v", data, err)
+	}
+}
+
 // TestCreateAfterStaleRegistration verifies that when the worktree dir is
 // gone but its git registration lingers (e.g., someone removed the dir
 // directly), Create prunes the stale entry and re-attaches successfully.
@@ -134,13 +218,13 @@ func TestCreateAfterStaleRegistration(t *testing.T) {
 	}
 }
 
-// TestWorktreeRegisteredFromPorcelainNormalizesSeparators is a regression
+// TestWorktreeAttachedFromPorcelainNormalizesSeparators is a regression
 // guard for the Windows resume bug: git emits worktree paths with forward
 // slashes on every platform, but filepath.Join on Windows produces
 // backslashes. The parser must compare in slash-normalised form so the
 // resume-idempotent reuse path fires on Windows. (On Linux both sides are
 // already slash-form, so this also covers that case.)
-func TestWorktreeRegisteredFromPorcelainNormalizesSeparators(t *testing.T) {
+func TestWorktreeAttachedFromPorcelainNormalizesSeparators(t *testing.T) {
 	porcelain := []byte("worktree C:/repo/main\n" +
 		"HEAD abcd1234\n" +
 		"branch refs/heads/main\n" +
@@ -152,7 +236,7 @@ func TestWorktreeRegisteredFromPorcelainNormalizesSeparators(t *testing.T) {
 
 	// Windows-style dir produced by filepath.Join on a Windows runner.
 	winDir := `C:\repo\.harness-worktrees\task-w`
-	if !worktreeRegisteredFromPorcelain(porcelain, winDir, "harness/task-w") {
+	if !worktreeAttachedFromPorcelain(porcelain, winDir) {
 		t.Errorf("Windows-style dir %q failed to match porcelain forward-slash entry", winDir)
 	}
 
@@ -166,8 +250,19 @@ func TestWorktreeRegisteredFromPorcelainNormalizesSeparators(t *testing.T) {
 		"HEAD deadbeef\n" +
 		"branch refs/heads/harness/task-l\n" +
 		"\n")
-	if !worktreeRegisteredFromPorcelain(linPorcelain, linDir, "harness/task-l") {
+	if !worktreeAttachedFromPorcelain(linPorcelain, linDir) {
 		t.Errorf("Linux-style dir %q failed to match its porcelain entry", linDir)
+	}
+
+	// A detached entry (no branch line) is still attached — requiring a
+	// branch here is what turned deliberate branch switches / interrupted
+	// rebases into resume-time wipes.
+	detached := []byte("worktree /srv/repo/.harness-worktrees/task-d\n" +
+		"HEAD deadbeef\n" +
+		"detached\n" +
+		"\n")
+	if !worktreeAttachedFromPorcelain(detached, "/srv/repo/.harness-worktrees/task-d") {
+		t.Errorf("detached record should match")
 	}
 
 	// Negative: prunable record must not match.
@@ -177,7 +272,7 @@ func TestWorktreeRegisteredFromPorcelainNormalizesSeparators(t *testing.T) {
 		"prunable gitdir file points to non-existent location\n" +
 		"\n")
 	winPrunable := `C:\repo\.harness-worktrees\task-p`
-	if worktreeRegisteredFromPorcelain(prunable, winPrunable, "harness/task-p") {
+	if worktreeAttachedFromPorcelain(prunable, winPrunable) {
 		t.Errorf("prunable record should not match")
 	}
 }

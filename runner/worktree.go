@@ -34,12 +34,23 @@ type WorktreeManager struct {
 // the user can then `--resume <session-uuid>` and have claude find its
 // stored conversation.
 //
-// Resume-idempotent: if <dir> is already a registered worktree for
-// `harness/<taskID>` (because the previous run's wm.Remove failed or the
-// runner crashed before cleanup), the existing dir is reused as-is —
-// re-running `git worktree add` would fail with "already exists", and
-// destructively wiping the dir would also drop any uncommitted work claude
-// left behind. Reuse preserves that work across the resume.
+// Resume-idempotent: if <dir> is already a registered worktree of this repo
+// (because the previous run's wm.Remove failed or the runner crashed before
+// cleanup), the existing dir is reused as-is — re-running `git worktree add`
+// would fail with "already exists", and destructively wiping the dir would
+// also drop any uncommitted work claude left behind. Reuse preserves that
+// work across the resume.
+//
+// Reuse deliberately does NOT require HEAD to be on `harness/<taskID>`: the
+// user sometimes checks out a different branch (or ends up detached, e.g. a
+// session killed mid-rebase) inside the task worktree, and the session ends
+// with that checkout in place. Requiring the branch to match turned every
+// such resume into a wipe-and-fail: the dir was rm -rf'ed (destroying
+// uncommitted work without the RemoveIfClean dirty-guard) while its live
+// registration survived, so the same call's `git worktree add` died with
+// "missing but already registered" and only a second attempt — after the
+// wipe — succeeded (incident 2026-07-06, agent-runner-sisaku.log). HEAD is
+// left wherever the user put it.
 //
 // Concurrent calls on the same WorktreeManager are serialized by an internal mutex.
 func (wm *WorktreeManager) Create(taskID string) (string, error) {
@@ -48,7 +59,7 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	dir := filepath.Join(wm.Repo, ".harness-worktrees", taskID)
 	branch := "harness/" + taskID
 
-	if wm.worktreeRegisteredLocked(dir, branch) {
+	if wm.worktreeAttachedLocked(dir) {
 		return dir, nil
 	}
 
@@ -68,22 +79,29 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	// runner cleanup never ran, or the registration was pruned but the dir
 	// remained). `git worktree add` would fail with "already exists". Try
 	// `git worktree repair` first — if the .git pointer is intact it will
-	// re-establish registration without losing uncommitted work. If that
-	// also fails to register the expected (dir, branch) pair, fall back to
-	// rm -rf so the subsequent add can succeed (the user explicitly resumed
-	// so they have accepted that uncommitted state in this dir is gone;
-	// committed work is preserved on the branch).
+	// re-establish registration without losing uncommitted work. If <dir>
+	// still isn't an attached worktree after that, fall back to rm -rf so
+	// the subsequent add can succeed (the user explicitly resumed so they
+	// have accepted that uncommitted state in this dir is gone; committed
+	// work is preserved on the branch). A second prune follows the rm: if a
+	// live registration for <dir> survived (it wasn't prunable while the
+	// dir existed, so the earlier prune skipped it), it just became stale
+	// and would make the add below fail with "missing but already
+	// registered".
 	if _, err := os.Stat(dir); err == nil {
 		repairCmd := exec.Command("git", "worktree", "repair", dir)
 		repairCmd.Dir = wm.Repo
 		_ = repairCmd.Run()
-		if wm.worktreeRegisteredLocked(dir, branch) {
+		if wm.worktreeAttachedLocked(dir) {
 			return dir, nil
 		}
-		slog.Warn("worktree dir present without matching registration; removing for re-add", "dir", dir, "branch", branch)
+		slog.Warn("worktree dir present but not attachable as a worktree; removing for re-add", "dir", dir, "branch", branch)
 		if rmErr := os.RemoveAll(dir); rmErr != nil {
 			return "", fmt.Errorf("worktree orphan dir removal: %w", rmErr)
 		}
+		pruneCmd := exec.Command("git", "worktree", "prune", "--expire=now")
+		pruneCmd.Dir = wm.Repo
+		_ = pruneCmd.Run()
 	}
 
 	args := []string{"worktree", "add", "-b", branch, dir}
@@ -100,24 +118,26 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	return dir, nil
 }
 
-// worktreeRegisteredLocked reports whether <dir> is currently a non-prunable
-// worktree of wm.Repo checked out at refs/heads/<branch>. Caller must hold
-// wm.mu.
-func (wm *WorktreeManager) worktreeRegisteredLocked(dir, branch string) bool {
+// worktreeAttachedLocked reports whether <dir> is currently a non-prunable
+// worktree of wm.Repo, regardless of which branch (or detached commit) it
+// has checked out. Caller must hold wm.mu.
+func (wm *WorktreeManager) worktreeAttachedLocked(dir string) bool {
 	cmd := exec.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = wm.Repo
 	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
-	return worktreeRegisteredFromPorcelain(out, dir, branch)
+	return worktreeAttachedFromPorcelain(out, dir)
 }
 
-// worktreeRegisteredFromPorcelain parses `git worktree list --porcelain` and
-// reports whether <dir> matches a non-prunable record on `refs/heads/<branch>`.
-// Split out from worktreeRegisteredLocked so tests can exercise the parser
-// against handcrafted output (in particular, the Windows separator case
-// documented below).
+// worktreeAttachedFromPorcelain parses `git worktree list --porcelain` and
+// reports whether <dir> matches a non-prunable record. The checked-out ref
+// is deliberately not part of the match — see Create's doc comment for why
+// a branch requirement here caused resume-time data loss. Split out from
+// worktreeAttachedLocked so tests can exercise the parser against
+// handcrafted output (in particular, the Windows separator case documented
+// below).
 //
 // Format: one block per worktree, blocks separated by a blank line. Each
 // block starts with "worktree <abs-path>" and may include "branch
@@ -132,27 +152,24 @@ func (wm *WorktreeManager) worktreeRegisteredLocked(dir, branch string) bool {
 // "already exists". `filepath.ToSlash` is not used because it is OS-aware
 // (no-op on Linux) and would silently regress on a Linux build that
 // happens to inspect Windows-style paths in tests or fixtures.
-func worktreeRegisteredFromPorcelain(out []byte, dir, branch string) bool {
+func worktreeAttachedFromPorcelain(out []byte, dir string) bool {
 	wantWT := slashPath(dir)
-	wantRef := "refs/heads/" + branch
-	var curWT, curBranch string
+	var curWT string
 	var curPrunable bool
 	matches := func() bool {
-		return curWT == wantWT && curBranch == wantRef && !curPrunable
+		return curWT == wantWT && !curPrunable
 	}
 	for line := range strings.SplitSeq(string(out), "\n") {
 		if line == "" {
 			if matches() {
 				return true
 			}
-			curWT, curBranch, curPrunable = "", "", false
+			curWT, curPrunable = "", false
 			continue
 		}
 		switch {
 		case strings.HasPrefix(line, "worktree "):
 			curWT = slashPath(strings.TrimPrefix(line, "worktree "))
-		case strings.HasPrefix(line, "branch "):
-			curBranch = strings.TrimPrefix(line, "branch ")
 		case line == "prunable" || strings.HasPrefix(line, "prunable "):
 			curPrunable = true
 		}
@@ -162,7 +179,7 @@ func worktreeRegisteredFromPorcelain(out []byte, dir, branch string) bool {
 
 // slashPath converts every backslash in p to a forward slash. Used to
 // normalise paths for cross-OS comparison; see the comment on
-// worktreeRegisteredFromPorcelain.
+// worktreeAttachedFromPorcelain.
 func slashPath(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 
 // branchExistsLocked reports whether the given branch ref exists in wm.Repo.
