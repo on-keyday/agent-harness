@@ -791,10 +791,12 @@ button:hover { background: #555; }
   cursor: pointer;
 }
 .ct-zoom-reset:hover { background: #333; border-color: #666; }
-/* SVG node base: server center node */
+/* SVG node base: server center node. Stroke colour must stay unique — it
+   previously reused the webui-role green (#2d5), which made the hub read as
+   a giant webui connection in screenshots. */
 .ct-server-node circle {
   fill: #2a2a2a;
-  stroke: #2d5;
+  stroke: #3fc1c9;
   stroke-width: 2;
 }
 .ct-server-label {
@@ -804,10 +806,11 @@ button:hover { background: #555; }
   text-anchor: middle;
   dominant-baseline: hanging;
 }
-/* IP cluster node */
+/* IP cluster node. Slate-blue stroke so a host cluster cannot be mistaken
+   for a role-unspecified connection leaf (both were near-identical greys). */
 .ct-cluster-node circle {
   fill: #252526;
-  stroke: #555;
+  stroke: #7d8fa3;
   stroke-width: 1.5;
 }
 .ct-cluster-label {
@@ -918,7 +921,15 @@ button:hover { background: #555; }
 .ct-legend-dot.role-webui  { background: #1a3d2a; color: #2d5; }
 .ct-legend-dot.role-agent  { background: #3d1a3d; color: #c080f0; }
 .ct-legend-dot.role-runner { background: #3d2a1a; color: #f0a060; }
-.ct-legend-dot.role-unspecified { background: #2a2a2a; color: #777; }
+/* Dashed border mirrors the actual node styling: an unspecified conn is
+   always unidentified, and unidentified leaves render with a dashed stroke. */
+.ct-legend-dot.role-unspecified { background: #2a2a2a; color: #777; border-style: dashed; }
+/* Non-role markers that also appear in the graph (server hub, per-IP host
+   cluster, task square). Colours mirror .ct-server-node / .ct-cluster-node /
+   .ct-task-node exactly. */
+.ct-legend-dot.kind-server { background: #2a2a2a; color: #3fc1c9; }
+.ct-legend-dot.kind-host   { background: #252526; color: #7d8fa3; }
+.ct-legend-dot.kind-task   { background: #2a2412; color: #d9a441; border-radius: 2px; }
 
 /* Empty-state message inside the topology area */
 .ct-empty {

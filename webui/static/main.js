@@ -2949,16 +2949,30 @@ function renderConnTopology(conns, tasks) {
   });
 
   // --- Legend ---
+  // Cover every distinct marker in the graph, not just conn-role colours:
+  // the server hub, the per-IP host clusters, and the task squares hung off
+  // runner leaves each get an entry, so a screenshot of the topology is
+  // self-describing (LLMs and humans alike misread unlabeled markers).
   const legendDiv = document.createElement("div");
   legendDiv.className = "ct-legend";
-  const roles = ["cli", "tui", "webui", "agent", "runner", "unspecified"];
-  for (const r of roles) {
+  const legendEntries = [
+    ["kind-server", "server"],
+    ["kind-host", "host (ip)"],
+    ["role-cli", "cli"],
+    ["role-tui", "tui"],
+    ["role-webui", "webui"],
+    ["role-agent", "agent"],
+    ["role-runner", "runner"],
+    ["role-unspecified", "unspecified"],
+    ["kind-task", "task"],
+  ];
+  for (const [cls, label] of legendEntries) {
     const item = document.createElement("span");
     item.className = "ct-legend-item";
     const dot = document.createElement("span");
-    dot.className = `ct-legend-dot role-${r}`;
+    dot.className = `ct-legend-dot ${cls}`;
     item.appendChild(dot);
-    item.appendChild(document.createTextNode(r));
+    item.appendChild(document.createTextNode(label));
     legendDiv.appendChild(item);
   }
 
