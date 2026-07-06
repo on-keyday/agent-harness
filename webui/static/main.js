@@ -2810,6 +2810,13 @@ function renderConnTopology(conns, tasks) {
   serverG.appendChild(Object.assign(svgEl("text", {
     class: "ct-server-label", x: cx, y: cy + SERVER_R + 3,
   }), { textContent: "server" }));
+  // The server's address as this browser reached it. The WebUI is served by
+  // the same process that owns the WS transport (see SERVER_CID), so
+  // location.host IS the server address from this client's viewpoint —
+  // there is no separate wire field for it.
+  serverG.appendChild(Object.assign(svgEl("text", {
+    class: "ct-server-addr", x: cx, y: cy + SERVER_R + 16,
+  }), { textContent: location.host }));
   svg.appendChild(serverG);
 
   // --- Cluster nodes and their leaves ---

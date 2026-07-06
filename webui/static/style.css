@@ -806,6 +806,15 @@ button:hover { background: #555; }
   text-anchor: middle;
   dominant-baseline: hanging;
 }
+/* Server address line under the "server" label (location.host — the address
+   this browser reached the server at, not its bind address). */
+.ct-server-addr {
+  fill: #7a7a7a;
+  font-size: 9px;
+  font-family: monospace;
+  text-anchor: middle;
+  dominant-baseline: hanging;
+}
 /* IP cluster node. Slate-blue stroke so a host cluster cannot be mistaken
    for a role-unspecified connection leaf (both were near-identical greys). */
 .ct-cluster-node circle {
