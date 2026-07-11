@@ -43,11 +43,11 @@ func exitOnAmbiguous(err error) error {
 }
 
 // runSession dispatches session sub-verbs: new / attach / snapshot / send /
-// exec / ls / kill. cid is the already-resolved server ConnectionID from
-// main()'s parseCID().
+// exec / ls / kill / await-idle. cid is the already-resolved server
+// ConnectionID from main()'s parseCID().
 func runSession(cid objproto.ConnectionID, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill> [args]")
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill|await-idle> [args]")
 		os.Exit(2)
 	}
 	verb := args[0]
@@ -67,6 +67,8 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 		return runSessionLs(cid, rest)
 	case "kill":
 		return runSessionKill(cid, rest)
+	case "await-idle":
+		return runSessionAwaitIdle(cid, rest)
 	default:
 		return fmt.Errorf("unknown session verb %q", verb)
 	}
@@ -460,6 +462,12 @@ func runSessionLs(cid objproto.ConnectionID, _ []string) error {
 		if t.Kind != protocol.TaskKind_Interactive || !t.Detachable() {
 			continue
 		}
+		// idle_ms: server-clock idle age (cross-host clock skew safe);
+		// -1 = no output observed (no live mux or nothing emitted yet).
+		idleMs := int64(-1)
+		if t.LastOutputAt > 0 {
+			idleMs = int64(t.OutputIdleMs)
+		}
 		_ = enc.Encode(map[string]any{
 			"id":                hex.EncodeToString(t.Id.Id[:]),
 			"status":            t.Status.String(),
@@ -469,6 +477,8 @@ func runSessionLs(cid objproto.ConnectionID, _ []string) error {
 			"created_at":        t.CreatedAt,
 			"started_at":        t.StartedAt,
 			"ring_buffer_bytes": t.RingBufferBytes,
+			"last_output_at":    t.LastOutputAt,
+			"idle_ms":           idleMs,
 		})
 	}
 	return nil
@@ -486,4 +496,79 @@ func runSessionKill(cid objproto.ConnectionID, args []string) error {
 	}
 	defer c.Close()
 	return c.Cancel(ctx, args[0])
+}
+
+// runSessionAwaitIdle arms a one-shot idle watcher on a live interactive
+// session. Default sink long-polls (the process blocks until the session's
+// PTY output goes quiescent, then prints the result); --notify / --topic arm
+// a server-side sink and return immediately — an agent uses
+// `--topic chat.<its-short-id>` and ends its turn, the fire arrives via its
+// inbox hook.
+func runSessionAwaitIdle(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session await-idle", flag.ExitOnError)
+	thresholdMs := fs.Uint("threshold-ms", 0, "quiescence threshold in ms (0 = server default 2500)")
+	notify := fs.Bool("notify", false, "fire as an operator notification instead of long-polling")
+	topic := fs.String("topic", "", "fire as an agentboard message to this topic instead of long-polling")
+	// Positional is a hex task id (never '-'-leading), so flag position is free.
+	pargs, err := parsePermuted(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pargs) != 1 {
+		return fmt.Errorf("usage: session await-idle [--threshold-ms N] [--notify | --topic T] <id>")
+	}
+	if *notify && *topic != "" {
+		return fmt.Errorf("--notify and --topic are mutually exclusive")
+	}
+	sink := protocol.AwaitIdleSink_Reply
+	switch {
+	case *notify:
+		sink = protocol.AwaitIdleSink_Notify
+	case *topic != "":
+		sink = protocol.AwaitIdleSink_Board
+	}
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	resp, err := c.AwaitIdle(ctx, pargs[0], uint32(*thresholdMs), sink, *topic)
+	if err != nil {
+		return err
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+		"status":         awaitIdleStatusStr(resp.Status),
+		"last_output_at": resp.LastOutputAt,
+	})
+	switch resp.Status {
+	case protocol.AwaitIdleStatus_Fired, protocol.AwaitIdleStatus_Armed:
+		return nil
+	case protocol.AwaitIdleStatus_SessionStopped:
+		os.Exit(3) // distinct from fired so scripts can branch
+	}
+	os.Exit(1) // not_found / bad_request
+	return nil
+}
+
+// awaitIdleStatusStr renders the wire enum in the snake_case the schema uses
+// (the generated String() is CamelCase, which would JSON-encode as
+// "SessionStopped").
+func awaitIdleStatusStr(s protocol.AwaitIdleStatus) string {
+	switch s {
+	case protocol.AwaitIdleStatus_Fired:
+		return "fired"
+	case protocol.AwaitIdleStatus_Armed:
+		return "armed"
+	case protocol.AwaitIdleStatus_SessionStopped:
+		return "session_stopped"
+	case protocol.AwaitIdleStatus_NotFound:
+		return "not_found"
+	case protocol.AwaitIdleStatus_BadRequest:
+		return "bad_request"
+	default:
+		return s.String()
+	}
 }

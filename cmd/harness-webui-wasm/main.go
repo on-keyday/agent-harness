@@ -58,6 +58,17 @@ func creatorShort(t protocol.TaskID) string {
 	return hex.EncodeToString(t.Id[:])[:8]
 }
 
+// outputIdleMs maps the wire pair (last_output_at, output_idle_ms) to the JS
+// convention: the server-computed idle age in ms, or -1 when the task has no
+// live interactive session output (last_output_at == 0, where output_idle_ms
+// would ambiguously read as "0ms ago").
+func outputIdleMs(t protocol.TaskInfo) float64 {
+	if t.LastOutputAt == 0 {
+		return -1
+	}
+	return float64(t.OutputIdleMs)
+}
+
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -458,6 +469,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"resumedBy":  clientKindLower(t.ResumedByKind),
 					"createdBy":  creatorShort(t.CreatorTaskId),
 					"caps":       cli.CapsLabel(t.Capabilities),
+					// Server-clock idle age of the live session's PTY output;
+					// -1 = no live interactive session / no output yet. JS
+					// derives the busy/idle badge from this (never from local
+					// clock math — cross-host skew).
+					"outputIdleMs": outputIdleMs(t),
 				})
 			}
 			// Fetch the live connection list using the same long-lived client

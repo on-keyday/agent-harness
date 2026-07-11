@@ -8,6 +8,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -97,6 +98,14 @@ type SessionMux struct {
 	// this lock. Distinct from mu (which guards attach/viewer state).
 	runnerWriteMu sync.Mutex
 
+	// lastOutput is the unix-nano timestamp of the most recent Stdout/Stderr
+	// frame received from the runner (0 = none yet). Control frames do not
+	// count. Stamped by runnerPump on every output frame; read by List
+	// enrichment and idle watchers. Byte-level quiescence of this value is
+	// the busy/idle signal: an in-flight agent TUI repaints its spinner
+	// ~every 100ms, an idle prompt emits nothing at all.
+	lastOutput atomic.Int64
+
 	// mainMark is the ring append-index of the frame at which the session last
 	// returned to the primary screen (a full-screen app's alt-screen exit).
 	// On reattach, when the session is currently on the primary screen, replay
@@ -176,6 +185,7 @@ func (m *SessionMux) runnerPump() {
 			switch frame.FrameType(frameBytes[0]) {
 			case frame.FrameType_Stdout, frame.FrameType_Stderr:
 				m.modes.feed(frameBytes[frameHeaderSize:])
+				m.lastOutput.Store(time.Now().UnixNano())
 			}
 		}
 		m.ring.Append(frameBytes)
@@ -558,6 +568,47 @@ func (m *SessionMux) replaySnapshot() []byte {
 
 // RingBufferLen returns the number of bytes currently stored in the ring buffer.
 func (m *SessionMux) RingBufferLen() int { return m.ring.Len() }
+
+// LastOutputUnixNano returns the unix-nano timestamp of the most recent
+// Stdout/Stderr frame from the runner, or 0 if none has arrived yet.
+func (m *SessionMux) LastOutputUnixNano() int64 { return m.lastOutput.Load() }
+
+// idleWatchTick is the poll interval of an armed idle watcher. Worst-case
+// fire latency is threshold+idleWatchTick — irrelevant at human/agent
+// timescales, and polling an atomic avoids any per-frame timer churn.
+const idleWatchTick = 500 * time.Millisecond
+
+// ArmIdleWatcher registers fn to be called EXACTLY ONCE, from its own
+// goroutine, when the session's PTY output has been quiescent for threshold
+// — or with stopped=true when the session stops first. Semantics:
+//   - already idle at arm time => fires immediately;
+//   - no output ever yet (lastOutput==0) => waits for the first output frame,
+//     then for the idle edge (arming during process boot means the caller
+//     wants the boot turn's end, not an instant fire);
+//   - one-shot: the watcher is gone after firing either way.
+func (m *SessionMux) ArmIdleWatcher(threshold time.Duration, fn func(stopped bool, lastOutputUnixNano int64)) {
+	go func() {
+		t := time.NewTicker(idleWatchTick)
+		defer t.Stop()
+		for {
+			lo := m.lastOutput.Load()
+			if m.ctx.Err() != nil {
+				fn(true, lo)
+				return
+			}
+			if lo != 0 && time.Now().UnixNano()-lo >= threshold.Nanoseconds() {
+				fn(false, lo)
+				return
+			}
+			select {
+			case <-m.ctx.Done():
+				fn(true, m.lastOutput.Load())
+				return
+			case <-t.C:
+			}
+		}
+	}()
+}
 
 // Stop shuts down the mux: cancels the context, closes both the tui (if any)
 // and the runner stream, and fires onStop. Idempotent.

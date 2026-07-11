@@ -446,6 +446,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_AwaitIdle:
+		h.handleAwaitIdle(conn, &req)
+
 	case protocol.TaskControlKind_DialRunner:
 		dr := req.DialRunner()
 		if dr == nil {
@@ -1024,6 +1027,15 @@ func relayBytes(src, dst trsf.BidirectionalStream) {
 // like GetTaskLog has). On stream-creation failure (test stub or
 // non-streaming connection) the response carries StreamId=0; client treats
 // that as an error.
+// sessionMux returns the live SessionMux for a task, or nil (unknown task,
+// session already ended, or Sessions not wired — some tests run without it).
+func (h *TaskHandler) sessionMux(taskID string) *SessionMux {
+	if h.Sessions == nil {
+		return nil
+	}
+	return h.Sessions.Get(taskID)
+}
+
 func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID string) {
 	respond := func(streamID uint64) {
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_List, RequestId: requestID}
@@ -1059,6 +1071,19 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	taskInfos := make([]protocol.TaskInfo, len(filteredTasks))
 	for i, t := range filteredTasks {
 		taskInfos[i] = toTaskInfo(t)
+		// Live-session enrichment: these are point-in-time reads of the
+		// SessionMux, not stored task state (the mux is gone once the session
+		// ends, and idleness of a dead session is meaningless).
+		if mux := h.sessionMux(t.ID); mux != nil {
+			if lo := mux.LastOutputUnixNano(); lo > 0 {
+				taskInfos[i].LastOutputAt = uint64(lo)
+				// Server-clock idle age: consumers use this instead of
+				// now()-last_output_at so cross-host clock skew cannot
+				// distort the busy/idle derivation.
+				taskInfos[i].OutputIdleMs = uint64(time.Since(time.Unix(0, lo)) / time.Millisecond)
+			}
+			taskInfos[i].RingBufferBytes = uint64(mux.RingBufferLen())
+		}
 	}
 	var body protocol.ListResultBody
 	body.SetRunners(runnerInfos)

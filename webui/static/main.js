@@ -1845,6 +1845,14 @@ const POLL_INTERVAL_MS = 5000;
   // user never copies a 32-hex id by hand. Modeled on the file-picker list.
   // Function declaration so refreshSnapshot() (called earlier textually) can
   // invoke it via hoisting.
+  // activityBadge renders the busy/idle label from a server-computed idle
+  // age in ms (caller filters out the -1 "no output" sentinel).
+  function activityBadge(idleMs) {
+    if (idleMs < 3000) return "busy";
+    if (idleMs >= 60000) return `idle:${Math.floor(idleMs / 60000)}m`;
+    return `idle:${Math.floor(idleMs / 1000)}s`;
+  }
+
   function renderTaskList(tasks) {
     taskList.innerHTML = "";
     if (!tasks || tasks.length === 0) {
@@ -1862,6 +1870,11 @@ const POLL_INTERVAL_MS = 5000;
       let attr = `  from=${t.origin || "-"}`;
       if (t.createdBy) attr += `  by=${t.createdBy}`;
       if (t.resumedBy) attr += `  resumed_by=${t.resumedBy}`;
+      // Busy/idle badge from the server-computed idle age (-1 = no live
+      // session output). Threshold mirrors cli.ActivityBusyThreshold (3s):
+      // an in-flight agent TUI repaints ~every 100ms, an idle prompt emits
+      // nothing, so 3s separates the two with wide margin.
+      if (t.outputIdleMs >= 0) attr += `  act=${activityBadge(t.outputIdleMs)}`;
       if (t.caps) attr += `  caps=${t.caps}`;
       row.textContent = `${t.id.slice(0, 12)}…  ${t.status}  ${t.kind}  ${t.repoPath}${attr}  ${JSON.stringify(promptShort)}`;
       row.title = t.id; // full id on hover (desktop); tap the row → sheet has Copy id

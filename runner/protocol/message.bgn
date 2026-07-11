@@ -243,6 +243,8 @@ enum TaskControlKind:
     whoami          # report the caller's own principal + enforced capability set
                     # (no cap required: self-introspection of THIS connection's
                     # server-resolved identity, not another task's record)
+    await_idle      # one-shot: fire when an interactive session's PTY output
+                    # goes quiescent (see AwaitIdleRequest). Requires exec_attach.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -470,6 +472,17 @@ format TaskInfo:
     is_attached :u1       # client tuiStream is currently spliced
     reserved :u6
     ring_buffer_bytes :u64    # current bytes buffered (0 for non-detachable)
+    last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
+                          # frame the server received from this session's runner
+                          # stream. 0 = not an interactive session, no output
+                          # yet, or the session mux is already gone. Populated
+                          # at List time from the live SessionMux (not stored).
+    output_idle_ms :u64   # ms elapsed between last_output_at and List time,
+                          # computed on the server clock so cross-host clock
+                          # skew cannot distort it. Meaningful ONLY when
+                          # last_output_at > 0 (otherwise 0, which would be
+                          # ambiguous with "0ms ago"). Consumers must use this,
+                          # not now()-last_output_at, to derive busy/idle.
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -757,6 +770,40 @@ format WhoAmIResponse:
     principal_task_id :TaskID
     creator_task_id   :TaskID
     capabilities      :Capability
+# await_idle: one-shot idle-edge watch on an interactive session's PTY output.
+# Fires when now - last_output >= threshold (byte-level quiescence; measured
+# claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),
+# or when the session stops first. A watcher fires exactly once, then is
+# removed. Armed while already idle => fires immediately. Armed before any
+# output (last_output==0) => waits for first output, then the edge.
+enum AwaitIdleSink:
+    :u8
+    reply = 0                 # long-poll: the TaskControlResponse is delayed
+                              # until the watcher fires
+    notify = 1                # reply `armed` now; operator notification on fire
+    board = 2                 # reply `armed` now; agentboard publish to `topic`
+                              # on fire (JSON {"kind":"session_idle",...})
+
+# NOTE: a caller lacking exec_attach is rejected via the shared
+# permission_denied response (requiredCap map), never via this enum.
+enum AwaitIdleStatus:
+    :u8
+    fired = 0                 # idle edge observed
+    armed = 1                 # watcher registered (sink=notify/board)
+    session_stopped = 2       # session ended before the idle edge
+    not_found = 3             # unknown task id or no live session mux
+    bad_request = 4           # e.g. sink=board with empty topic, unknown sink
+
+format AwaitIdleRequest:
+    task_id :TaskID
+    threshold_ms :u32         # 0 => server default (2500)
+    sink :AwaitIdleSink
+    topic_len :u16            # sink=board: agentboard topic to publish to
+    topic :[topic_len]u8      # ignored for other sinks
+
+format AwaitIdleResponse:
+    status :AwaitIdleStatus
+    last_output_at :u64       # unix nanos at decision time (0 if none)
 
 format TaskControlRequest:
     kind :TaskControlKind
@@ -780,6 +827,7 @@ format TaskControlRequest:
         TaskControlKind.board_read   => board_read   :BoardReadRequest
         TaskControlKind.board_purge  => board_purge  :BoardPurgeRequest
         TaskControlKind.whoami       => whoami       :WhoAmIRequest
+        TaskControlKind.await_idle   => await_idle   :AwaitIdleRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -812,6 +860,7 @@ format TaskControlResponse:
         TaskControlKind.board_read   => board_read   :BoardReadResponse
         TaskControlKind.board_purge  => board_purge  :BoardPurgeResponse
         TaskControlKind.whoami       => whoami       :WhoAmIResponse
+        TaskControlKind.await_idle   => await_idle   :AwaitIdleResponse
 
 enum NotifyLevel:
     :u8

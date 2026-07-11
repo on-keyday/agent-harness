@@ -6,11 +6,38 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
 )
+
+// ActivityBusyThreshold is the display heuristic separating "busy" from
+// "idle" for a live interactive session, applied to the server-computed
+// output_idle_ms. Byte-level basis (measured 2026-07-12 against claude): an
+// in-flight agent TUI repaints its spinner ~every 100ms with a max observed
+// gap of ~0.5s, while an idle prompt emits nothing at all — so 3s cleanly
+// separates the two with wide margin. Display-only; the await-idle RPC has
+// its own server-side default.
+const ActivityBusyThreshold = 3 * time.Second
+
+// ActivityStr renders the busy/idle badge for a live interactive session
+// from the server-computed idle age (TaskInfo.output_idle_ms; caller must
+// have checked last_output_at > 0). Shared by the CLI `ls` renderer and the
+// TUI task table. Takes the wire value, NOT a locally-derived age: client
+// and server run on different hosts and clock skew would distort a local
+// now()-timestamp derivation.
+func ActivityStr(outputIdleMs uint64) string {
+	idle := time.Duration(outputIdleMs) * time.Millisecond
+	if idle < ActivityBusyThreshold {
+		return "busy"
+	}
+	if idle >= time.Minute {
+		return fmt.Sprintf("idle:%dm", int(idle/time.Minute))
+	}
+	return fmt.Sprintf("idle:%ds", int(idle/time.Second))
+}
 
 // Snapshot queries the server for all runners + recent tasks and returns the
 // decoded ListResultBody. The wire response carries only a stream id; the
@@ -125,12 +152,16 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		if t.ResumedByKind != protocol.ClientKind_Unspecified {
 			resumedBy = "  resumed_by=" + originStr(t.ResumedByKind)
 		}
+		act := ""
+		if t.LastOutputAt > 0 {
+			act = "  act=" + ActivityStr(t.OutputIdleMs)
+		}
 		createdBy := ""
 		if t.CreatorTaskId.Id != ([16]byte{}) {
 			createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
 		}
 		caps := "  caps=" + CapsLabel(t.Capabilities)
-		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s%s%s%s  prompt=%q%s\n",
+		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s%s%s%s%s  prompt=%q%s\n",
 			taskIDStr(t.Id.Id[:]),
 			taskStatusStr(t.Status),
 			taskKindStr(t.Kind),
@@ -138,6 +169,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			originStr(t.OriginKind),
 			agent,
 			resumedBy,
+			act,
 			createdBy,
 			caps,
 			string(t.Prompt),

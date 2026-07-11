@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -27,6 +28,7 @@ func NewTasks() TasksModel {
 		{Title: "ID", Width: 12},
 		{Title: "From", Width: 6},
 		{Title: "Agent", Width: 14},
+		{Title: "Act", Width: 8},
 		{Title: "Repo", Width: 28},
 		{Title: "Prompt", Width: 0}, // resized later via SetSize
 	}
@@ -75,11 +77,19 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
 			agent = agentDescriptor(string(r.AgentBin), r.SkillsInjected())
 		}
+		// Busy/idle badge from the live session's server-computed idle age;
+		// blank for tasks without a live interactive session (the server
+		// leaves last_output_at at 0 for those).
+		act := ""
+		if t.LastOutputAt > 0 {
+			act = cli.ActivityStr(t.OutputIdleMs)
+		}
 		rows = append(rows, table.Row{
 			taskStatusStr(t.Status),
 			idHex[:12],
 			originCell(t.OriginKind),
 			agent,
+			act,
 			truncateLeft(string(t.RepoPath), 28),
 			renderPromptCell(t),
 		})
