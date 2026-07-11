@@ -156,7 +156,13 @@ Notify-sink fire text: `session <short-id> idle (Xs since last output)` /
   per-watcher goroutines beat a shared list + arm/disarm machinery on
   simplicity; worst-case fire latency is threshold+500ms.
 - **Capability**: `exec_attach` (same gate as snapshot/view attach — this is
-  read-only observation of a session).
+  read-only observation of a session). The **notify sink additionally
+  requires `notify`** (checked in the handler): it reaches the same
+  operator-notification egress the Notify RPC gates, and an egress gate that
+  depends on which RPC you arrive by is not a gate — without this, a
+  confined exec_attach-only task could spam operator notifications it could
+  not send via `harness-cli notify`. The board sink needs no extra cap
+  (agentboard sends are deliberately ungated for authenticated agents).
 - **Long-poll transport**: request_id-correlated delayed response on the same
   conn; the CLI holds the connection open. If the conn drops, the watcher is
   NOT garbage — it fires into a closed conn send which is a no-op error;

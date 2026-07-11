@@ -12,6 +12,7 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // --- SessionMux.lastOutput stamping ---
@@ -201,6 +202,63 @@ func TestHandleAwaitIdle_BadRequest_BoardWithoutTopic(t *testing.T) {
 	resp := awaitIdleViaHandle(t, h, conn, req)
 	if resp.Status != protocol.AwaitIdleStatus_BadRequest {
 		t.Fatalf("status = %v, want BadRequest", resp.Status)
+	}
+}
+
+// TestHandleAwaitIdle_NotifySinkRequiresNotifyCap: the notify sink reaches
+// the operator-notification egress, which the Notify RPC gates behind
+// Capability_Notify — arriving via await_idle (kind gate: exec_attach) must
+// not bypass that. A caller holding ONLY exec_attach gets permission_denied
+// for sink=notify, while sink=reply on the same caller proceeds normally.
+func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	runner := newFakeStream(t)
+	reg := NewSessionRegistry()
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+	defer mux.Stop()
+	var target protocol.TaskID
+	target.Id[0] = 0xEE
+	reg.Add("ee000000000000000000000000000000", mux)
+
+	h := newTestHandler(t)
+	h.Sessions = reg
+
+	// Confined agent principal holding exec_attach but NOT notify.
+	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
+		protocol.ClientKind_Agent, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, protocol.Capability_ExecAttach)
+	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, pidHex)
+
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 7}
+	nreq := protocol.AwaitIdleRequest{TaskId: target, Sink: protocol.AwaitIdleSink_Notify}
+	req.SetAwaitIdle(nreq)
+	h.Handle(callerConn, encodeTaskControlRequest(t, req))
+	waitFor(t, func() bool { return len(callerConn.Sent()) == 1 })
+	resp := lastTaskControlResponse(t, callerConn)
+	if resp.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("sink=notify without Notify cap: response kind = %v, want PermissionDenied", resp.Kind)
+	}
+	if pd := resp.PermissionDenied(); pd == nil || pd.RequiredCap != protocol.Capability_Notify {
+		t.Fatalf("PermissionDenied.RequiredCap = %+v, want Capability_Notify", resp.PermissionDenied())
+	}
+
+	// Positive control: the SAME caller may still use sink=reply.
+	runner.QueueRead(makeWireFrame(byte(frame.FrameType_Stdout), []byte("x")))
+	waitFor(t, func() bool { return mux.LastOutputUnixNano() != 0 })
+	req2 := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AwaitIdle, RequestId: 8}
+	req2.SetAwaitIdle(protocol.AwaitIdleRequest{TaskId: target, ThresholdMs: 50, Sink: protocol.AwaitIdleSink_Reply})
+	h.Handle(callerConn, encodeTaskControlRequest(t, req2))
+	waitForWithin(t, 3*time.Second, func() bool { return len(callerConn.Sent()) == 2 })
+	resp2 := lastTaskControlResponse(t, callerConn)
+	if resp2.Kind != protocol.TaskControlKind_AwaitIdle || resp2.AwaitIdle() == nil ||
+		resp2.AwaitIdle().Status != protocol.AwaitIdleStatus_Fired {
+		t.Fatalf("sink=reply with exec_attach: got kind=%v, want AwaitIdle/Fired", resp2.Kind)
 	}
 }
 

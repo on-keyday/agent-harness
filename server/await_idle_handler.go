@@ -46,7 +46,22 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 
 	topic := string(ai.Topic)
 	switch ai.Sink {
-	case protocol.AwaitIdleSink_Reply, protocol.AwaitIdleSink_Notify:
+	case protocol.AwaitIdleSink_Reply:
+	case protocol.AwaitIdleSink_Notify:
+		// The notify sink reaches the operator-notification egress
+		// (notify-hook → e.g. the operator's phone), which the Notify RPC
+		// gates behind Capability_Notify. Require the SAME cap here — the
+		// kind-level gate only checked exec_attach, and without this a
+		// confined task could spam operator notifications through await-idle
+		// that it could not send via `harness-cli notify`. (The fire text is
+		// server-synthesized, so this is a noise vector, not spoofing — but
+		// an egress gate that depends on which RPC you arrive by is not a
+		// gate.) The board sink needs no extra cap: agentboard sends are
+		// deliberately ungated for authenticated agents.
+		if !hasCap(h.callerCaps(conn.ConnectionID().String()), protocol.Capability_Notify) {
+			h.denyTaskControl(conn, protocol.TaskControlKind_AwaitIdle, requestID, protocol.Capability_Notify)
+			return
+		}
 	case protocol.AwaitIdleSink_Board:
 		if topic == "" || h.Board == nil {
 			respond(protocol.AwaitIdleStatus_BadRequest, 0)
