@@ -351,8 +351,37 @@ harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
 harness-cli session exec <id> <cmd>...  # RUN one shell cmd, wait, return combined output + exit code (POSIX-shell foreground)
+harness-cli session await-idle --topic chat.<your-short-id> <id>  # one-shot "tell me when its turn ends"
 harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
 ```
+
+### Busy/idle detection — stop polling snapshots
+
+An interactive session's PTY output is byte-quiescent exactly when the
+foreground program is waiting for input: an in-flight agent turn repaints its
+spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
+
+- **Pull**: `session ls` includes `last_output_at` (unix nanos; 0 = no live
+  session output) and `idle_ms` (server-clock idle age; -1 = none). The
+  top-level `ls` renders the same as an `act=busy` / `act=idle:Xs` badge.
+- **Edge (one-shot)**: `session await-idle <id>` fires ONCE when the session
+  next goes quiescent for the threshold (default 2500ms; `--threshold-ms N`
+  to override), then disarms itself. Sinks:
+  - default (no flag): LONG-POLLS — blocks until the fire, prints
+    `{"status":"fired",...}` (exit 3 = session ended first). Fine for shell
+    scripts; **never use this blocking form from an agent turn** (same rule
+    as `agent wait`).
+  - `--topic T`: replies `armed` immediately; on fire the server publishes
+    `{"kind":"session_idle","task":"<32-hex>","status":"fired"|"session_stopped"}`
+    to T. THE agent pattern: arm with your own `chat.<short-id>`, end the
+    turn, and the fire wakes you via the inbox hook — replaces snapshot
+    polling when babysitting a worker session.
+  - `--notify`: replies `armed` immediately; on fire the operator gets a
+    notification. For "tell the human when it's done" (they may be away).
+
+An idle fire means "waiting for input" — turn finished, permission prompt,
+or a menu all look the same at the byte level. `snapshot` once after the
+fire to see which; requires `exec_attach` (same cap as snapshot/send).
 
 **Reading / driving a session as the agent (you have no TTY).** `session attach`
 runs `RemoteShell`, which flips the *local* terminal into raw mode and splices it
