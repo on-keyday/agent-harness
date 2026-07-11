@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // persistRunnerHandle wraps a PersistLoop goroutine and exposes a way to

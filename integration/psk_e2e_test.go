@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // startServerWithPSK is startServerAt + a configured PSK. Kept local because
