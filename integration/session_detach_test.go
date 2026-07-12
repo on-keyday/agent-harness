@@ -87,7 +87,7 @@ func TestSessionDetachReattach(t *testing.T) {
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
 	stream1, taskIDHex, err := c1.OpenInteractiveWithSelectorAndArgs(
-		context.Background(), repo, sel, nil, "", true,
+		context.Background(), repo, sel, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("OpenInteractiveWithSelectorAndArgs: %v", err)
@@ -183,7 +183,7 @@ func TestSessionDetach_RingBufferWrap(t *testing.T) {
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
 	stream1, taskIDHex, err := c1.OpenInteractiveWithSelectorAndArgs(
-		context.Background(), repo, sel, nil, "", true,
+		context.Background(), repo, sel, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("OpenInteractiveWithSelectorAndArgs: %v", err)

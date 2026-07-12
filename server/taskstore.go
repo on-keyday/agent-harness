@@ -63,11 +63,6 @@ type TaskEntry struct {
 	// state for this run, separate from the harness task/worktree resume.
 	ResumeConversation bool
 
-	// Detachable is true for sessions started via session new (detach-on-disconnect).
-	// Set immediately after Create via SetDetachableFlag — Create's signature is
-	// not extended to keep call sites narrow (matches existing SetWorktreeDir
-	// pattern).
-	Detachable bool
 	// IsAttached tracks whether a client is currently attached to the session.
 	// True while a client holds the interactive channel; false after
 	// SetDetached or before first attach. Updated by MarkAttached.
@@ -491,21 +486,6 @@ func (s *TaskStore) SetWorktreeDir(id, wt string) bool {
 		return false
 	}
 	t.WorktreeDir = wt
-	return true
-}
-
-// SetDetachableFlag marks a task as detachable (or not). Should be called
-// immediately after Create when the caller knows the task is being launched
-// with detach support (e.g. OpenInteractiveRequest.Detachable == true).
-// Returns false if the task is not present.
-func (s *TaskStore) SetDetachableFlag(id string, detachable bool) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	t, ok := s.tasks[id]
-	if !ok {
-		return false
-	}
-	t.Detachable = detachable
 	return true
 }
 

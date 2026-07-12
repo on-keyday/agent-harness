@@ -31,6 +31,9 @@ func newTestHandler(t *testing.T) *TaskHandler {
 	return &TaskHandler{
 		Tasks:    NewTaskStore(),
 		Registry: NewRegistry(),
+		// Every interactive open registers a SessionMux, so a wired Sessions
+		// registry is part of the minimal production-shaped handler.
+		Sessions: NewSessionRegistry(),
 	}
 }
 
@@ -538,13 +541,13 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Task 6: Detachable branch of handleOpenInteractive
+// Task 6: handleOpenInteractive session wiring
 // ---------------------------------------------------------------------------
 
-// TestHandleOpenInteractive_Detachable_RegistersSessionMux verifies that a
-// Detachable=1 request creates and registers a SessionMux, sets the
-// Detachable flag on the task, and returns Ok with the TUI stream ID.
-func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
+// TestHandleOpenInteractive_RegistersSessionMux verifies that every open
+// creates and registers a SessionMux (all interactive sessions are
+// detachable) and returns Ok with the TUI stream ID.
+func TestHandleOpenInteractive_RegistersSessionMux(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = NewSessionRegistry()
 	now := time.Now()
@@ -559,7 +562,6 @@ func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
 	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9201-2"), nextStreamID: 11}
 
 	req := &protocol.OpenInteractiveRequest{}
-	req.SetDetachable(true)
 	req.SetRepoPath([]byte("/repo"))
 
 	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
@@ -584,13 +586,9 @@ func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
 		t.Fatalf("Sessions.Get(%q) = nil, want non-nil SessionMux", taskIDHex)
 	}
 
-	// Task must have Detachable flag set.
 	entry, ok := h.Tasks.Get(taskIDHex)
 	if !ok {
 		t.Fatalf("task %q not found in store", taskIDHex)
-	}
-	if !entry.Detachable {
-		t.Errorf("task.Detachable=false, want true")
 	}
 
 	// Task status should be Running (Assign was called).
@@ -598,7 +596,7 @@ func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
 		t.Errorf("task.Status=%v want Running", entry.Status)
 	}
 
-	// OpenExec to runner must have Detachable flag set.
+	// OpenExec must have reached the runner.
 	if len(runnerConn.sent) != 1 {
 		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
 	}
@@ -607,70 +605,8 @@ func TestHandleOpenInteractive_Detachable_RegistersSessionMux(t *testing.T) {
 	if _, err := rr.Decode(raw[1:]); err != nil {
 		t.Fatalf("decode RunnerRequest: %v", err)
 	}
-	oer := rr.OpenExec()
-	if oer == nil {
+	if rr.OpenExec() == nil {
 		t.Fatal("OpenExec variant nil")
-	}
-	if !oer.Detachable() {
-		t.Errorf("OpenExecRunnerRequest.Detachable()=false, want true")
-	}
-}
-
-// TestHandleOpenInteractive_Legacy_NoSessionMux verifies that a Detachable=0
-// request does NOT register a SessionMux (the legacy spliceBidi path is used).
-func TestHandleOpenInteractive_Legacy_NoSessionMux(t *testing.T) {
-	h := newTestHandler(t)
-	h.Sessions = NewSessionRegistry()
-	now := time.Now()
-
-	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-1"), nextStreamID: 77}
-	h.Registry.Add(&RunnerEntry{
-		ID: "A", Hostname: "h", AllowedRoots: []string{"/repo"}, MaxTasks: 1,
-		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
-		Conn: runnerConn,
-	})
-
-	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9301-2"), nextStreamID: 22}
-
-	req := &protocol.OpenInteractiveRequest{} // Detachable zero value == 0
-	req.SetRepoPath([]byte("/repo"))
-
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
-	if resp.Status != protocol.OpenInteractiveStatus_Ok {
-		t.Fatalf("status=%v want Ok", resp.Status)
-	}
-
-	taskIDHex := hex.EncodeToString(resp.TaskId.Id[:])
-
-	// Sessions registry must remain empty — legacy path does not register a SessionMux.
-	if mux := h.Sessions.Get(taskIDHex); mux != nil {
-		t.Errorf("Sessions.Get(%q) != nil for legacy (Detachable=0) path", taskIDHex)
-	}
-
-	// Task should NOT have Detachable flag set.
-	entry, ok := h.Tasks.Get(taskIDHex)
-	if !ok {
-		t.Fatalf("task %q not found in store", taskIDHex)
-	}
-	if entry.Detachable {
-		t.Errorf("task.Detachable=true for legacy path, want false")
-	}
-
-	// OpenExec to runner must NOT have Detachable flag set.
-	if len(runnerConn.sent) != 1 {
-		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
-	}
-	raw := runnerConn.sent[0]
-	rr := &protocol.RunnerRequest{}
-	if _, err := rr.Decode(raw[1:]); err != nil {
-		t.Fatalf("decode RunnerRequest: %v", err)
-	}
-	oer := rr.OpenExec()
-	if oer == nil {
-		t.Fatal("OpenExec variant nil")
-	}
-	if oer.Detachable() {
-		t.Errorf("OpenExecRunnerRequest.Detachable()=true for legacy path, want false")
 	}
 }
 
@@ -678,10 +614,9 @@ func TestHandleOpenInteractive_Legacy_NoSessionMux(t *testing.T) {
 // Task 7: handleAttachSession error paths and Ok path
 // ---------------------------------------------------------------------------
 
-// makeDetachableTask is a helper that injects a task entry directly into the
-// TaskStore with the given status, Kind=Interactive, and Detachable=true.
-// Returns the hex task ID.
-func makeDetachableTask(t *testing.T, tasks *TaskStore, status protocol.TaskStatus) string {
+// makeSessionTask is a helper that injects an interactive task entry directly
+// into the TaskStore with the given status. Returns the hex task ID.
+func makeSessionTask(t *testing.T, tasks *TaskStore, status protocol.TaskStatus) string {
 	t.Helper()
 	var rawID [16]byte
 	rawID[0] = 0xDE
@@ -691,11 +626,10 @@ func makeDetachableTask(t *testing.T, tasks *TaskStore, status protocol.TaskStat
 	id := hex.EncodeToString(rawID[:])
 	tasks.mu.Lock()
 	tasks.tasks[id] = &TaskEntry{
-		ID:         id,
-		RepoPath:   "/repo",
-		Status:     status,
-		Kind:       protocol.TaskKind_Interactive,
-		Detachable: true,
+		ID:       id,
+		RepoPath: "/repo",
+		Status:   status,
+		Kind:     protocol.TaskKind_Interactive,
 	}
 	tasks.order = append(tasks.order, id)
 	tasks.mu.Unlock()
@@ -754,38 +688,12 @@ func TestHandleAttachSession_NotInteractive(t *testing.T) {
 	}
 }
 
-// TestHandleAttachSession_NotDetachable: interactive but Detachable=false → NotDetachable.
-func TestHandleAttachSession_NotDetachable(t *testing.T) {
-	h := newTestHandler(t)
-	h.Sessions = NewSessionRegistry()
-
-	var rawID [16]byte
-	rawID[0] = 0xA2
-	id := hex.EncodeToString(rawID[:])
-	h.Tasks.mu.Lock()
-	h.Tasks.tasks[id] = &TaskEntry{
-		ID:         id,
-		RepoPath:   "/repo",
-		Status:     protocol.TaskStatus_Running,
-		Kind:       protocol.TaskKind_Interactive,
-		Detachable: false,
-	}
-	h.Tasks.order = append(h.Tasks.order, id)
-	h.Tasks.mu.Unlock()
-
-	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
-	resp := h.handleAttachSession(&fakeConn{}, req)
-	if resp.Status != protocol.AttachSessionStatus_NotDetachable {
-		t.Fatalf("status=%v want NotDetachable", resp.Status)
-	}
-}
-
 // TestHandleAttachSession_AlreadyTerminal: Cancelled task → AlreadyTerminal.
 func TestHandleAttachSession_AlreadyTerminal(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = NewSessionRegistry()
 
-	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Cancelled)
+	id := makeSessionTask(t, h.Tasks, protocol.TaskStatus_Cancelled)
 
 	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
 	resp := h.handleAttachSession(&fakeConn{}, req)
@@ -799,7 +707,7 @@ func TestHandleAttachSession_RunnerUnreachable(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = NewSessionRegistry()
 
-	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Running)
+	id := makeSessionTask(t, h.Tasks, protocol.TaskStatus_Running)
 	// Do NOT register a SessionMux for this task.
 
 	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id)}
@@ -817,7 +725,7 @@ func TestHandleAttachSession_Ok_FromDetached(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = NewSessionRegistry()
 
-	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Running)
+	id := makeSessionTask(t, h.Tasks, protocol.TaskStatus_Running)
 	if err := h.Tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)
 	}
@@ -869,7 +777,7 @@ func TestHandleAttachSession_ViewMode_NoWriterTakeover(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = NewSessionRegistry()
 
-	id := makeDetachableTask(t, h.Tasks, protocol.TaskStatus_Running)
+	id := makeSessionTask(t, h.Tasks, protocol.TaskStatus_Running)
 	if err := h.Tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)
 	}

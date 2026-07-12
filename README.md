@@ -167,7 +167,7 @@ bin/harness-cli prune-local --before 168h   # remove old local worktrees
 # <id>`. `-d` returns immediately without splicing the local terminal (spawn
 # only). This is the recommended interactive path.
 bin/harness-cli session new --repo /abs/path/to/repo
-bin/harness-cli session ls                       # detachable sessions only
+bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
 

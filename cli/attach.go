@@ -55,8 +55,6 @@ func attachStatusError(taskID string, status protocol.AttachSessionStatus) error
 		return fmt.Errorf("attach not_found: task %q not found (pruned, or wrong id?)", taskID)
 	case protocol.AttachSessionStatus_NotInteractive:
 		return fmt.Errorf("attach not_interactive: task %q is not an interactive session", taskID)
-	case protocol.AttachSessionStatus_NotDetachable:
-		return fmt.Errorf("attach not_detachable: task %q was not started as a detachable session", taskID)
 	case protocol.AttachSessionStatus_AlreadyTerminal:
 		return fmt.Errorf("attach already_terminal: task %q has already finished", taskID)
 	case protocol.AttachSessionStatus_RunnerUnreachable:

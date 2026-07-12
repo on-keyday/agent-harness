@@ -122,7 +122,7 @@ func TestActivityEventE2E(t *testing.T) {
 	}()
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
-	stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "", true)
+	stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
 	if err != nil {
 		t.Fatalf("OpenInteractive: %v", err)
 	}

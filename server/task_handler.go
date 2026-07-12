@@ -714,9 +714,6 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
 	h.Tasks.Assign(taskIDHex, runner.ID, "")
-	if req.Detachable() {
-		h.Tasks.SetDetachableFlag(taskIDHex, true)
-	}
 	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	finishWithError := func(reason string) {
@@ -767,9 +764,6 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	}
 	oer.SetResumeConversation(req.ResumeConversation())
 	oer.SetRepoPath([]byte(repo))
-	if req.Detachable() {
-		oer.SetDetachable(true)
-	}
 	if req.X11Enabled() {
 		oer.SetX11Enabled(true) // discriminator first
 		if f := req.X11(); f != nil {
@@ -785,100 +779,71 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 
-	if req.Detachable() {
-		// Detachable path: spawn a SessionMux that owns the runner stream and
-		// supports attach/detach of successive TUI streams. The initial TUI
-		// stream (tuiStream) is attached after registration.
-		//
-		// Sessions must be wired before calling handleOpenInteractive with
-		// Detachable=1. A nil Sessions registry is a programming error.
-		if h.Sessions == nil {
-			_ = tuiStream.CloseBoth()
-			_ = runnerStream.CloseBoth()
-			finishWithError("Sessions registry not wired (programming error)")
-			return errResp(protocol.OpenInteractiveStatus_InternalError)
-		}
-
-		// RingBufferSize defaults to 1 MiB when not configured. This will be
-		// made configurable via Config.DetachRingBufferSize in Task 8.
-		ringSize := h.RingBufferSize
-		if ringSize <= 0 {
-			ringSize = 1 << 20 // 1 MiB default
-		}
-
-		hooks := SessionHooks{
-			OnAttach: func(id string) { h.Tasks.MarkAttached(id, true) },
-			OnDetach: func(id string) { _ = h.Tasks.SetDetached(id) },
-			OnStop:   func(id string) { h.Sessions.Remove(id) },
-			OnActivity: func(id string, busy bool, lo int64) {
-				if h.OnSessionActivity != nil {
-					h.OnSessionActivity(id, busy, lo)
-				}
-			},
-		}
-
-		parentCtx := h.Ctx
-		if parentCtx == nil {
-			parentCtx = context.Background()
-		}
-
-		mux := NewSessionMux(parentCtx, taskIDHex, runnerStream, NewRingBuffer(ringSize), hooks)
-		h.Sessions.Add(taskIDHex, mux)
-
-		if err := mux.Attach(parentCtx, tuiStream); err != nil {
-			mux.Stop()
-			h.Sessions.Remove(taskIDHex)
-			finishWithError("initial attach failed: " + err.Error())
-			return errResp(protocol.OpenInteractiveStatus_InternalError)
-		}
-
-		// The SessionMux's onStop hook (above) handles Sessions.Remove.
-		// When the mux stops (runner EOF or Stop()), we also clean up task
-		// state and registry binding — same defensive cleanup as the legacy path.
-		go func() {
-			<-mux.Wait()
-			h.Sessions.Remove(taskIDHex) // NEW: defensive — handles race where OnStop fired before Sessions.Add
-			if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
-				h.Tasks.Cancel(taskIDHex)
-			}
-			h.Registry.UnbindTask(runner.ID, taskIDHex)
-			if h.OnChange != nil {
-				h.OnChange()
-			}
-		}()
-	} else {
-		// Legacy (non-detachable) path: direct splice between TUI and runner streams.
-		go func() {
-			spliceBidi(tuiStream, runnerStream, taskIDHex)
-
-			// Defensive cleanup. The expected path is that the runner's
-			// ExecuteCommand returns once the splice tears down both stream
-			// ends, and the runner sends TaskFinished — RunnerHandler then
-			// flips the task to Succeeded/Failed and the runner back to Idle.
-			//
-			// But if the runner crashed mid-session, the runner connection
-			// dropped, or the runner is wedged before it can reach the
-			// TaskFinished step, the task we marked Running in this handler
-			// (and the runner we marked Busy) would otherwise stay that way
-			// forever. Finalize them here, but only if the state we set is
-			// still in place — a TaskFinished that genuinely arrived first
-			// already moved the task terminal and the runner Idle, and we
-			// must not undo that (the scheduler may have re-bound the
-			// runner to a different task by now).
-			// Cancel is idempotent (skips terminal states), so a TaskFinished
-			// that genuinely arrived first is unaffected. UnbindTask is
-			// idempotent (no-op if the task slot is no longer present), so it
-			// cannot clobber a fresh scheduler assignment that already moved the
-			// runner to a different task.
-			if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
-				h.Tasks.Cancel(taskIDHex)
-			}
-			h.Registry.UnbindTask(runner.ID, taskIDHex)
-			if h.OnChange != nil {
-				h.OnChange()
-			}
-		}()
+	// Spawn a SessionMux that owns the runner stream and supports
+	// attach/detach of successive TUI streams — every interactive session is
+	// detachable. The initial TUI stream (tuiStream) is attached after
+	// registration.
+	//
+	// Sessions must be wired before calling handleOpenInteractive. A nil
+	// Sessions registry is a programming error.
+	if h.Sessions == nil {
+		_ = tuiStream.CloseBoth()
+		_ = runnerStream.CloseBoth()
+		finishWithError("Sessions registry not wired (programming error)")
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
+
+	// RingBufferSize defaults to 1 MiB when not configured.
+	ringSize := h.RingBufferSize
+	if ringSize <= 0 {
+		ringSize = 1 << 20 // 1 MiB default
+	}
+
+	hooks := SessionHooks{
+		OnAttach: func(id string) { h.Tasks.MarkAttached(id, true) },
+		OnDetach: func(id string) { _ = h.Tasks.SetDetached(id) },
+		OnStop:   func(id string) { h.Sessions.Remove(id) },
+		OnActivity: func(id string, busy bool, lo int64) {
+			if h.OnSessionActivity != nil {
+				h.OnSessionActivity(id, busy, lo)
+			}
+		},
+	}
+
+	parentCtx := h.Ctx
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+
+	mux := NewSessionMux(parentCtx, taskIDHex, runnerStream, NewRingBuffer(ringSize), hooks)
+	h.Sessions.Add(taskIDHex, mux)
+
+	if err := mux.Attach(parentCtx, tuiStream); err != nil {
+		mux.Stop()
+		h.Sessions.Remove(taskIDHex)
+		finishWithError("initial attach failed: " + err.Error())
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	}
+
+	// The SessionMux's onStop hook (above) handles Sessions.Remove. When the
+	// mux stops (runner EOF or Stop()), also clean up task state and the
+	// registry binding, but only if the state we set is still in place: a
+	// TaskFinished that genuinely arrived first already moved the task
+	// terminal and the runner Idle, and must not be undone. Cancel is
+	// idempotent (skips terminal states) and UnbindTask is idempotent (no-op
+	// if the task slot is no longer present), so neither can clobber a fresh
+	// scheduler assignment.
+	go func() {
+		<-mux.Wait()
+		h.Sessions.Remove(taskIDHex) // defensive — handles race where OnStop fired before Sessions.Add
+		if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
+			h.Tasks.Cancel(taskIDHex)
+		}
+		h.Registry.UnbindTask(runner.ID, taskIDHex)
+		if h.OnChange != nil {
+			h.OnChange()
+		}
+	}()
 
 	return protocol.OpenInteractiveResponse{
 		Status:   protocol.OpenInteractiveStatus_Ok,
@@ -887,9 +852,9 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	}
 }
 
-// handleAttachSession re-attaches a client to an existing detachable interactive
+// handleAttachSession re-attaches a client to an existing interactive
 // session identified by req.TaskId. It validates that the task exists, is
-// interactive, is detachable, is non-terminal, and has a live SessionMux.
+// interactive, is non-terminal, and has a live SessionMux.
 // On success it allocates a new bidi stream toward the client and calls
 // mux.Attach, which replays the ring buffer and resumes the splice.
 func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachSessionRequest) protocol.AttachSessionResponse {
@@ -905,9 +870,6 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 	}
 	if info.Kind != protocol.TaskKind_Interactive {
 		return errResp(protocol.AttachSessionStatus_NotInteractive)
-	}
-	if !info.Detachable {
-		return errResp(protocol.AttachSessionStatus_NotDetachable)
 	}
 	switch info.Status {
 	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
@@ -1340,7 +1302,6 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		info.ExitCode = *t.ExitCode
 	}
 	// Detach/reattach fields.
-	info.SetDetachable(t.Detachable)
 	info.SetIsAttached(t.IsAttached)
 	info.RingBufferBytes = t.RingBufferBytes
 	return info

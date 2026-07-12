@@ -1727,7 +1727,7 @@ const POLL_INTERVAL_MS = 5000;
   const resumeTaskById = async (id) => {
     if (!id) return;
     const args = currentClaudeArgs();
-    const req = { repo: "", host: "", claudeArgs: args, resumeTaskId: id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation: true };
+    const req = { repo: "", host: "", claudeArgs: args, resumeTaskId: id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation: true };
     try {
       const taskID = await window.harness.startInteractive(req);
       setActiveTab("terminal");
@@ -1757,7 +1757,7 @@ const POLL_INTERVAL_MS = 5000;
   // pickRunnerAndRetry shows the runner-picker modal for an ambiguous_runner
   // rejection and, on a candidate click, re-issues startInteractive pinned by
   // that candidate's cid. baseReq is the original compose-request plus
-  // `detachable` (the request that just failed); host is cleared and runner
+  // (the request that just failed); host is cleared and runner
   // set instead, because pinning by cid is unambiguous even when host is not
   // (a hostname can itself be shared by >=2 runners, which is the whole
   // reason this modal exists).
@@ -1839,7 +1839,7 @@ const POLL_INTERVAL_MS = 5000;
   // otherwise. Shared by openInteractive AND the resume paths (resumeTaskById /
   // doResume) so every interactive-open surface gets the picker — not just the
   // Compose "Open" button. baseReq is the request that just failed; its
-  // resumeTaskId/claudeArgs/detachable are reused for the cid-pinned retry.
+  // resumeTaskId/claudeArgs are reused for the cid-pinned retry.
   function routeAmbiguous(e, baseReq) {
     if (e && e.code === "ambiguous_runner" && Array.isArray(e.candidates)) {
       pickRunnerAndRetry(e.candidates, baseReq);
@@ -1848,10 +1848,10 @@ const POLL_INTERVAL_MS = 5000;
     return false;
   }
 
-  // openInteractive opens a new detachable interactive session — every
-  // interactive PTY is a takeover-able session (the one-shot/non-detachable
+  // openInteractive opens a new interactive session — every interactive PTY
+  // is a detachable, takeover-able session (the one-shot/non-detachable
   // variant was removed; a session you cannot re-enter had no upside).
-  const openInteractive = async (detachable, label) => {
+  const openInteractive = async (label) => {
     const req = composeRequest();
     if (!req.repo && !req.resumeTaskId) {
       alert("select a repo or fill in Resume task id");
@@ -1861,20 +1861,20 @@ const POLL_INTERVAL_MS = 5000;
     hideQuickReattach();
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({...req, detachable, caps: spawnCaps, resumeCapsOverride: req.resumeTaskId ? applyCapsOnResume : false});
+      const taskID = await window.harness.startInteractive({...req, caps: spawnCaps, resumeCapsOverride: req.resumeTaskId ? applyCapsOnResume : false});
       setActiveTab("terminal");
       onInteractiveOpened(taskID, label);
     } catch (e) {
       attachedTask.textContent = "";
       currentSessionTaskId = "";
-      if (routeAmbiguous(e, { ...req, detachable })) return;
+      if (routeAmbiguous(e, req)) return;
       alert(`startInteractive: ${e.message}`);
     }
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   };
 
-  document.getElementById("open-detachable").addEventListener("click", () => openInteractive(true, "session"));
+  document.getElementById("open-detachable").addEventListener("click", () => openInteractive("session"));
 
   document.getElementById("stop-streaming").addEventListener("click", () => {
     window.harness.detachInteractive();
@@ -2051,7 +2051,7 @@ const POLL_INTERVAL_MS = 5000;
     if (isTerminal) {
       const assignedRunner = typeof t.assignedTo === "string" && t.assignedTo && !t.assignedTo.startsWith(":") ? t.assignedTo : "";
       const doResume = async (claudeArgs, note, resumeConversation = false, runner = "") => {
-        const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, detachable: true, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
+        const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
         if (runner) req.runner = runner;
         try {
           const id = await window.harness.startInteractive(req);

@@ -65,7 +65,6 @@ func TestHandleOpenFileTransfer_DetachedTaskAccepted(t *testing.T) {
 		RepoPath:   "/repo",
 		Status:     protocol.TaskStatus_Detached,
 		Kind:       protocol.TaskKind_Interactive,
-		Detachable: true,
 		AssignedTo: "fake-runner-id",
 	}
 	h.Tasks.order = append(h.Tasks.order, idHex)
@@ -101,7 +100,6 @@ func TestHandleListFiles_DetachedTaskAccepted(t *testing.T) {
 		RepoPath:   "/repo",
 		Status:     protocol.TaskStatus_Detached,
 		Kind:       protocol.TaskKind_Interactive,
-		Detachable: true,
 		AssignedTo: "fake-runner-id",
 	}
 	h.Tasks.order = append(h.Tasks.order, idHex)

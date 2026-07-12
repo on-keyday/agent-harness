@@ -202,7 +202,7 @@ func DoSessionList(c *cli.Client) tea.Cmd {
 		}
 		var sessions []protocol.TaskInfo
 		for _, t := range lr.Tasks {
-			if t.Kind == protocol.TaskKind_Interactive && t.Detachable() {
+			if t.Kind == protocol.TaskKind_Interactive {
 				sessions = append(sessions, t)
 			}
 		}

@@ -89,7 +89,6 @@ func TestResumeConversationRoundTrip(t *testing.T) {
 	}
 
 	open := OpenInteractiveRequest{}
-	open.SetDetachable(true)
 	open.SetX11Enabled(true)
 	open.SetResumeCapsOverride(true)
 	open.SetResumeConversation(true)
@@ -99,9 +98,9 @@ func TestResumeConversationRoundTrip(t *testing.T) {
 	if err := openOut.DecodeExact(openBytes); err != nil {
 		t.Fatal(err)
 	}
-	if !openOut.Detachable() || !openOut.X11Enabled() || !openOut.ResumeCapsOverride() || !openOut.ResumeConversation() {
-		t.Fatalf("OpenInteractive flags lost: detachable=%v x11=%v caps=%v conversation=%v",
-			openOut.Detachable(), openOut.X11Enabled(), openOut.ResumeCapsOverride(), openOut.ResumeConversation())
+	if !openOut.X11Enabled() || !openOut.ResumeCapsOverride() || !openOut.ResumeConversation() {
+		t.Fatalf("OpenInteractive flags lost: x11=%v caps=%v conversation=%v",
+			openOut.X11Enabled(), openOut.ResumeCapsOverride(), openOut.ResumeConversation())
 	}
 
 	assign := AssignTaskBody{}
@@ -116,7 +115,6 @@ func TestResumeConversationRoundTrip(t *testing.T) {
 	}
 
 	exec := OpenExecRunnerRequest{}
-	exec.SetDetachable(true)
 	exec.SetX11Enabled(true)
 	exec.SetResumeConversation(true)
 	exec.SetX11(X11Forward{Display: 11})
@@ -125,8 +123,8 @@ func TestResumeConversationRoundTrip(t *testing.T) {
 	if err := execOut.DecodeExact(execBytes); err != nil {
 		t.Fatal(err)
 	}
-	if !execOut.Detachable() || !execOut.X11Enabled() || !execOut.ResumeConversation() {
-		t.Fatalf("OpenExec flags lost: detachable=%v x11=%v conversation=%v",
-			execOut.Detachable(), execOut.X11Enabled(), execOut.ResumeConversation())
+	if !execOut.X11Enabled() || !execOut.ResumeConversation() {
+		t.Fatalf("OpenExec flags lost: x11=%v conversation=%v",
+			execOut.X11Enabled(), execOut.ResumeConversation())
 	}
 }

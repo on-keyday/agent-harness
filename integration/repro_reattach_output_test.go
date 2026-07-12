@@ -66,7 +66,7 @@ func TestSessionReattach_PostReattachOutput(t *testing.T) {
 	c1 := dialClient(t, serverCID)
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
 	stream1, taskIDHex, err := c1.OpenInteractiveWithSelectorAndArgs(
-		context.Background(), repo, sel, nil, "", true,
+		context.Background(), repo, sel, nil, "",
 	)
 	if err != nil {
 		t.Fatalf("OpenInteractive: %v", err)

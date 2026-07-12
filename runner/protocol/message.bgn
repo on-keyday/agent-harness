@@ -154,11 +154,9 @@ format OpenExecRunnerRequest:
                       # Transport.GetBidirectionalStream(id) and feeds it to
                       # exec.ExecuteCommand for an interactive PTY claude.
     extra_args :ClaudeArgs
-    detachable :u1    # 1 = stream EOF → keep claude alive,
-                      # 0 = stream EOF → SIGHUP ladder (legacy)
     x11_enabled :u1   # relayed from OpenInteractiveRequest.x11_enabled
     resume_conversation :u1 # relayed from OpenInteractiveRequest.resume_conversation
-    reserved :u5
+    reserved :u6
     if x11_enabled == 1:
         x11 :X11Forward  # relayed verbatim from OpenInteractiveRequest.x11
 
@@ -468,10 +466,10 @@ format TaskInfo:
     prompt :[prompt_len]u8
     error_len :u32
     error_message :[error_len]u8
-    detachable :u1        # immutable, set at OpenInteractive time
     is_attached :u1       # client tuiStream is currently spliced
-    reserved :u6
-    ring_buffer_bytes :u64    # current bytes buffered (0 for non-detachable)
+    reserved :u7
+    ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
+                              # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr
                           # frame the server received from this session's runner
                           # stream. 0 = not an interactive session, no output
@@ -665,18 +663,19 @@ format OpenInteractiveRequest:
     requested_caps :Capability
     # See SubmitRequest.resume_task_id — same semantics, applied to the
     # interactive path (PTY claude with empty prompt).
-    detachable :u1    # 1 = session new (detach on disconnect),
-                      # 0 = legacy interactive (kill on disconnect)
+    # Every interactive open is a detachable session (detach on disconnect,
+    # reattach from any operator client) — the legacy kill-on-disconnect
+    # variant was removed along with its wire bit.
     x11_enabled :u1   # 1 = client requested X11 forwarding; gates the
-                      # conditional block below. Incompatible with detach (no
-                      # client process to host the tunnel).
+                      # conditional block below. Incompatible with the -d
+                      # spawn-only mode (a live client must host the tunnel).
     # resume only: 1 = set caps to caps_resumer ∩ requested_caps on resume; 0 = keep persisted. Ignored on create.
     resume_caps_override :u1
     # resume only: 1 = ask the runner to resume the agent's own conversation
     # state in addition to reusing the harness task/worktree. The runner maps
     # this intent to the configured agent CLI (for Claude Code, --continue).
     resume_conversation :u1
-    reserved :u4
+    reserved :u5
     resume_task_id :TaskID
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
@@ -744,7 +743,6 @@ enum AttachSessionStatus:
     ok                  = "ok"
     not_found           = "not_found"
     not_interactive     = "not_interactive"
-    not_detachable      = "not_detachable"
     already_terminal    = "already_terminal"
     runner_unreachable  = "runner_unreachable"
     internal_error      = "internal_error"

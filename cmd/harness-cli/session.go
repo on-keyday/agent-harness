@@ -225,7 +225,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
 
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true, caps, resumeCapsOverride, *resumeConversation)
+		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -243,7 +243,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, true /*detachable*/, caps, resumeCapsOverride, *resumeConversation)
+	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation)
 	if err != nil {
 		return exitOnAmbiguous(err)
 	}
@@ -443,7 +443,7 @@ func unescapeInput(s string) ([]byte, error) {
 	return out, nil
 }
 
-// runSessionLs lists detachable interactive sessions as JSON Lines.
+// runSessionLs lists interactive sessions as JSON Lines.
 func runSessionLs(cid objproto.ConnectionID, _ []string) error {
 	ctx := context.Background()
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -459,7 +459,7 @@ func runSessionLs(cid objproto.ConnectionID, _ []string) error {
 
 	enc := json.NewEncoder(os.Stdout)
 	for _, t := range lr.Tasks {
-		if t.Kind != protocol.TaskKind_Interactive || !t.Detachable() {
+		if t.Kind != protocol.TaskKind_Interactive {
 			continue
 		}
 		// idle_ms: server-clock idle age (cross-host clock skew safe);

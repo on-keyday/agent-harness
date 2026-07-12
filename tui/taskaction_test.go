@@ -9,9 +9,7 @@ import (
 
 func TestResumeReattachAction(t *testing.T) {
 	detached := &protocol.TaskInfo{Status: protocol.TaskStatus_Detached, Kind: protocol.TaskKind_Interactive}
-	detached.SetDetachable(true)
 	runningDetachable := &protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
-	runningDetachable.SetDetachable(true)
 	// A row stubbed from a tasks.status event: kind+status only, NO detachable
 	// bit (TaskStatusEvent doesn't carry it). Must still be reattachable — the
 	// server, not this local bit, is the authority (regression: real `session

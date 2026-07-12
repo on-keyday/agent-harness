@@ -608,12 +608,11 @@ func TestTaskStoreMarkFailedIdempotentOnTerminal(t *testing.T) {
 	}
 }
 
-// createDetachableTask is a helper that creates a task, marks it detachable,
-// and assigns it to a runner (transitioning it to Running).
-func createDetachableTask(ts *TaskStore) string {
+// createSessionTask is a helper that creates an interactive task and assigns
+// it to a runner (transitioning it to Running).
+func createSessionTask(ts *TaskStore) string {
 	id := ts.Create("/repo", "detach-test", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
-	ts.SetDetachableFlag(id, true)
 	ts.Assign(id, "runner-det", "/wt/det")
 	return id
 }
@@ -621,7 +620,7 @@ func createDetachableTask(ts *TaskStore) string {
 func TestTaskStore_DetachedTransitions(t *testing.T) {
 	t.Run("Running_to_Detached", func(t *testing.T) {
 		ts := NewTaskStore()
-		id := createDetachableTask(ts)
+		id := createSessionTask(ts)
 
 		if err := ts.SetDetached(id); err != nil {
 			t.Fatalf("SetDetached: %v", err)
@@ -660,7 +659,7 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 
 	t.Run("Detached_to_Running_via_Assign", func(t *testing.T) {
 		ts := NewTaskStore()
-		id := createDetachableTask(ts)
+		id := createSessionTask(ts)
 		ts.SetDetached(id) //nolint:errcheck
 
 		// Re-attach: Assign from Detached state.
@@ -682,7 +681,7 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 
 	t.Run("MarkAttached_Detached_to_Running", func(t *testing.T) {
 		ts := NewTaskStore()
-		id := createDetachableTask(ts)
+		id := createSessionTask(ts)
 		ts.SetDetached(id) //nolint:errcheck
 
 		// MarkAttached on a Detached task transitions it to Running.
@@ -700,7 +699,7 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 
 	t.Run("Detached_to_Cancelled", func(t *testing.T) {
 		ts := NewTaskStore()
-		id := createDetachableTask(ts)
+		id := createSessionTask(ts)
 		ts.SetDetached(id) //nolint:errcheck
 
 		ts.Cancel(id)
@@ -715,7 +714,7 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 
 	t.Run("Detached_to_Succeeded", func(t *testing.T) {
 		ts := NewTaskStore()
-		id := createDetachableTask(ts)
+		id := createSessionTask(ts)
 		ts.SetDetached(id) //nolint:errcheck
 
 		ts.Finish(id, 0, nil)
@@ -727,7 +726,7 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 
 	t.Run("Detached_to_Failed_via_Finish", func(t *testing.T) {
 		ts := NewTaskStore()
-		id := createDetachableTask(ts)
+		id := createSessionTask(ts)
 		ts.SetDetached(id) //nolint:errcheck
 
 		ts.Finish(id, 1, []byte("timeout"))
@@ -739,7 +738,7 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 
 	t.Run("Detached_to_Failed_via_MarkFailed", func(t *testing.T) {
 		ts := NewTaskStore()
-		id := createDetachableTask(ts)
+		id := createSessionTask(ts)
 		ts.SetDetached(id) //nolint:errcheck
 
 		ts.MarkFailed(id, "runner_unreachable")
@@ -751,32 +750,6 @@ func TestTaskStore_DetachedTransitions(t *testing.T) {
 			t.Fatalf("ErrorMsg=%q want runner_unreachable", string(info.ErrorMsg))
 		}
 	})
-}
-
-func TestTaskStore_DetachableFlag(t *testing.T) {
-	ts := NewTaskStore()
-	id := ts.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
-
-	// Default: not detachable.
-	got, _ := ts.Get(id)
-	if got.Detachable {
-		t.Fatal("new task should not be detachable by default")
-	}
-
-	// Set detachable.
-	if !ts.SetDetachableFlag(id, true) {
-		t.Fatal("SetDetachableFlag returned false for existing task")
-	}
-	got, _ = ts.Get(id)
-	if !got.Detachable {
-		t.Fatal("Detachable should be true after SetDetachableFlag")
-	}
-
-	// Unknown task returns false.
-	if ts.SetDetachableFlag("nope", true) {
-		t.Fatal("SetDetachableFlag should return false for unknown task")
-	}
 }
 
 func TestTaskStore_SetRingBufferBytes(t *testing.T) {
@@ -799,7 +772,7 @@ func TestTaskStore_SetRingBufferBytes(t *testing.T) {
 
 func TestTaskStore_MarkAttached(t *testing.T) {
 	ts := NewTaskStore()
-	id := createDetachableTask(ts)
+	id := createSessionTask(ts)
 
 	// Default: not attached (task just assigned, no explicit mark).
 	got, _ := ts.Get(id)

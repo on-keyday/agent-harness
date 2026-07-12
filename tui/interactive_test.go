@@ -117,7 +117,6 @@ func TestUnpinnedResumeKeyDoesNotReattachLiveSession(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 0xaa
 	task := protocol.TaskInfo{Id: tid, Status: protocol.TaskStatus_Detached, Kind: protocol.TaskKind_Interactive}
-	task.SetDetachable(true)
 	a.tasks.SetRows([]protocol.TaskInfo{task}, nil)
 
 	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})

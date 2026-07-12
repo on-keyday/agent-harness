@@ -316,9 +316,9 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		// Detachable so the session survives a client disconnect (tmux-like)
-		// and any operator client can take it over via reattach.
-		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, true, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation); err != nil {
+		// The session survives a client disconnect (tmux-like) and any
+		// operator client can take it over via reattach.
+		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation); err != nil {
 			die(err)
 		}
 
@@ -617,7 +617,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
 	fmt.Fprintln(os.Stderr, "                                      -d / --detach: start the session and exit immediately (don't attach the terminal)")
 	fmt.Fprintln(os.Stderr, "  session attach TASK_ID              reattach to a detached/running session")
-	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: detachable interactive sessions only")
+	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: interactive sessions only")
 	fmt.Fprintln(os.Stderr, "  session kill TASK_ID                cancel a session (alias of cancel)")
 	fmt.Fprintln(os.Stderr, "  session await-idle [--threshold-ms N] [--notify | --topic T] TASK_ID")
 	fmt.Fprintln(os.Stderr, "                                      one-shot: fire when the session's PTY output goes quiescent.")

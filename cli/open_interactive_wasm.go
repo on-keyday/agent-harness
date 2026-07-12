@@ -94,25 +94,24 @@ const detachDrainTimeout = time.Second
 // The active session is stored in activeInteractiveSession; subsequent calls
 // to SendInteractive / ResizeInteractive / DetachInteractive operate on it.
 func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "", false)
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
 }
 
 // InteractiveWithSelector is the same as Interactive but accepts an explicit
 // runner selector. extraArgs default to none.
 func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "", false)
+	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
 }
 
 // InteractiveWithSelectorAndArgs is the full-featured form: selector pinning,
-// per-task extraArgs, optional resumeTaskID (hex; "" = new task), and a
-// detachable flag (true for session-new-style detachable sessions; false for
-// legacy kill-on-disconnect).
+// per-task extraArgs, and an optional resumeTaskID (hex; "" = new task).
+// Every session is detachable.
 //
 // RequestedCaps defaults to Capability_All (inherit everything the spawner
 // holds). Callers that need a narrower grant should use
 // InteractiveWithSelectorArgsAndCaps instead.
-func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool) (string, error) {
-	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, detachable, protocol.Capability_All, false, false)
+func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
+	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false)
 }
 
 // InteractiveWithSelectorArgsAndCaps is identical to
@@ -124,7 +123,7 @@ func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string
 // capability mask. Has no effect on new tasks (non-resume).
 // resumeConversation, when true, asks the runner to resume the agent's own
 // conversation state in addition to the harness task/worktree.
-func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, detachable bool, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (string, error) {
+func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
@@ -139,9 +138,6 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 			return "", fmt.Errorf("Interactive: parse resume id: %w", err)
 		}
 		oi.ResumeTaskId = tid
-	}
-	if detachable {
-		oi.SetDetachable(true)
 	}
 	req.SetOpenInteractive(oi)
 

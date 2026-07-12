@@ -842,14 +842,6 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				host = hostVal.String()
 			}
 			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
-			// Detachable by default: every interactive PTY is a takeover-able
-			// session. An explicit boolean still wins for compatibility with
-			// callers that pass it.
-			detachableVal := opts.Get("detachable")
-			detachable := true
-			if detachableVal.Type() == js.TypeBoolean {
-				detachable = detachableVal.Bool()
-			}
 			sel, err := cli.BuildSelector(cli.SelectorOpts{Runner: runnerCid, Host: host})
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
@@ -867,7 +859,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
 			}
-			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, detachable, caps, resumeCapsOverride, resumeConversation)
+			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
 			if err != nil {
 				var are *cli.AmbiguousRunnerError
 				if errors.As(err, &are) {
