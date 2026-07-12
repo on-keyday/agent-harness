@@ -252,6 +252,14 @@ def _register_linux(tag: str, args: list[str], start_now: bool) -> int:
     # tries to spawn it. Snapshot the registering shell's PATH into the
     # unit so the spawned runner sees the same lookup the user does.
     env_path = os.environ.get("PATH", "")
+    # Dedupe entries (keep first occurrence). Registering from inside an
+    # agent session inherits a PATH with runner-injected duplicates; baking
+    # them into the unit re-amplifies them for every process the runner
+    # spawns. First-occurrence order preserves lookup semantics exactly.
+    seen: set[str] = set()
+    env_path = os.pathsep.join(
+        p for p in env_path.split(os.pathsep) if not (p in seen or seen.add(p))
+    )
     # Same reason for TERM: systemd doesn't pass it through, so PTY
     # children agent-runner spawns (claude / bash / etc.) see TERM unset
     # and strip ANSI colour. Snapshot the registering terminal's TERM;
