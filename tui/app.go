@@ -199,12 +199,40 @@ func (a *App) BindClient(c *cli.Client) {
 // dispatch LogChunkMsg back to the model.
 func (a *App) BindProgram(p *tea.Program) { a.program = p }
 
+// snapshotPollInterval matches the WebUI's 5s snapshot poll. The poll is the
+// backstop for everything pubsub events don't carry: the Act column /
+// detail's idle age (server-computed at List time only — no status event
+// fires on a busy↔idle transition) and any state missed while a
+// subscription stream is dead.
+const snapshotPollInterval = 5 * time.Second
+
+// snapshotTickMsg re-arms the periodic snapshot poll; emitted by snapshotTick.
+type snapshotTickMsg struct{}
+
+func snapshotTick() tea.Cmd {
+	return tea.Tick(snapshotPollInterval, func(time.Time) tea.Msg { return snapshotTickMsg{} })
+}
+
+// shouldPeriodicRefresh gates the poll to a live connection with a bound
+// client — otherwise each tick during an outage would spam "snapshot: ..."
+// errors into cmdresult (reconnect already kicks its own refresh on rebind).
+func (a *App) shouldPeriodicRefresh() bool {
+	return a.connected && a.client != nil
+}
+
 func (a *App) Init() tea.Cmd {
-	return textinput.Blink
+	return tea.Batch(textinput.Blink, snapshotTick())
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case snapshotTickMsg:
+		// Always re-arm first so the poll loop survives disconnects.
+		if a.shouldPeriodicRefresh() {
+			return a, tea.Batch(snapshotTick(), RefreshSnapshot(a.client))
+		}
+		return a, snapshotTick()
+
 	case SnapshotMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("snapshot: " + msg.Err.Error()))

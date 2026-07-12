@@ -80,6 +80,13 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	fmt.Fprintf(&sb, "id:            %s\n", hex.EncodeToString(t.Id.Id[:]))
 	fmt.Fprintf(&sb, "kind:          %s\n", taskKindStr(t.Kind))
 	fmt.Fprintf(&sb, "status:        %s\n", taskStatusStr(t.Status))
+	// Busy/idle badge + last-output timestamp for a live interactive session,
+	// mirroring the task table's Act column (blank there for tasks without a
+	// live session — the server leaves last_output_at at 0 for those).
+	if t.LastOutputAt > 0 {
+		fmt.Fprintf(&sb, "act:           %s\n", cli.ActivityStr(t.OutputIdleMs))
+		fmt.Fprintf(&sb, "last output:   %s\n", formatNanoTs(t.LastOutputAt))
+	}
 	fmt.Fprintf(&sb, "from:          %s\n", originCell(t.OriginKind))
 	if t.CreatorTaskId.Id != ([16]byte{}) {
 		fmt.Fprintf(&sb, "created by:    %s\n", hex.EncodeToString(t.CreatorTaskId.Id[:]))
