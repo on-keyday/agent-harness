@@ -19,7 +19,7 @@ type taskAction struct {
 }
 
 // resumeReattachAction decides what r (withContinue=true) / R (withContinue=false)
-// do for the selected task: reattach a live detachable session (Detached, or
+// do for the selected task: reattach a live interactive session (Detached, or
 // Running via takeover — the server force-closes the prior client), resume a
 // finished task into a new detachable session (with or without --continue), or
 // nothing (with a hint) for anything else.
@@ -27,11 +27,17 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	if t == nil {
 		return taskAction{Kind: actionNone, Hint: "no task selected"}
 	}
-	// A detachable session can be re-entered whether it is Detached (no client)
-	// or Running (takeover — SessionMux.Attach force-closes the prior client),
-	// matching the WebUI's Running||Detached reattach gate. Non-detachable
-	// (oneshot) Running tasks have no PTY to attach to, so they fall through.
-	if t.Detachable() &&
+	// A live interactive session can be re-entered whether it is Detached (no
+	// client) or Running (takeover — SessionMux.Attach force-closes the prior
+	// client), matching the WebUI's kind==Interactive && Running||Detached
+	// reattach gate. Deliberately NOT gated on t.Detachable(): a task first
+	// seen via a tasks.status event is stubbed into the table from
+	// TaskStatusEvent, which carries kind+status but no detachable bit, so a
+	// real `session new` session would show Detachable=false until a snapshot
+	// refresh lands — and be spuriously refused here. The server is the
+	// authority anyway: attaching something truly non-attachable returns a
+	// clean AttachSession error (not_detachable / not_interactive).
+	if t.Kind == protocol.TaskKind_Interactive &&
 		(t.Status == protocol.TaskStatus_Detached || t.Status == protocol.TaskStatus_Running) {
 		return taskAction{Kind: actionReattach}
 	}
@@ -49,12 +55,6 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 		// keystrokes instead of hiding behind r.
 		return taskAction{Kind: actionNone,
 			Hint: "one-shot task is still running: no PTY to attach — c cancels it, then r reopens the conversation as an interactive session"}
-	case t.Status == protocol.TaskStatus_Running:
-		// Interactive but the server did not mark it detachable — only
-		// possible for sessions opened by a pre-unification client (every
-		// current surface requests detachable).
-		return taskAction{Kind: actionNone,
-			Hint: "running non-detachable session (opened by an old client): cannot take over — r works once it finishes"}
 	case t.Status == protocol.TaskStatus_Queued:
 		return taskAction{Kind: actionNone,
 			Hint: "task is still queued: nothing to reattach yet — r resumes it after it runs, c cancels it"}

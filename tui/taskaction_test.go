@@ -8,10 +8,15 @@ import (
 )
 
 func TestResumeReattachAction(t *testing.T) {
-	detached := &protocol.TaskInfo{Status: protocol.TaskStatus_Detached}
+	detached := &protocol.TaskInfo{Status: protocol.TaskStatus_Detached, Kind: protocol.TaskKind_Interactive}
 	detached.SetDetachable(true)
-	runningDetachable := &protocol.TaskInfo{Status: protocol.TaskStatus_Running}
+	runningDetachable := &protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
 	runningDetachable.SetDetachable(true)
+	// A row stubbed from a tasks.status event: kind+status only, NO detachable
+	// bit (TaskStatusEvent doesn't carry it). Must still be reattachable — the
+	// server, not this local bit, is the authority (regression: real `session
+	// new` sessions were refused until a snapshot refresh happened to land).
+	runningEventStub := &protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
 	runningOneshot := &protocol.TaskInfo{Status: protocol.TaskStatus_Running}
 
 	if got := resumeReattachAction(nil, true); got.Kind != actionNone {
@@ -21,9 +26,12 @@ func TestResumeReattachAction(t *testing.T) {
 		if got := resumeReattachAction(detached, wc); got.Kind != actionReattach {
 			t.Errorf("detached wc=%v: want actionReattach, got %v", wc, got.Kind)
 		}
-		// Running + detachable → takeover reattach (matches WebUI gate).
+		// Running + interactive → takeover reattach (matches WebUI gate).
 		if got := resumeReattachAction(runningDetachable, wc); got.Kind != actionReattach {
 			t.Errorf("running+detachable wc=%v: want actionReattach, got %v", wc, got.Kind)
+		}
+		if got := resumeReattachAction(runningEventStub, wc); got.Kind != actionReattach {
+			t.Errorf("running+event-stub wc=%v: want actionReattach, got %v", wc, got.Kind)
 		}
 	}
 	for _, st := range []protocol.TaskStatus{
@@ -38,20 +46,13 @@ func TestResumeReattachAction(t *testing.T) {
 			t.Errorf("status=%v R: want resume without conversation, got %v %v", st, got.Kind, got.ResumeConversation)
 		}
 	}
-	// Running but non-detachable (oneshot) has no PTY to attach → actionNone,
-	// and the hint must explain the one-shot case specifically (cancel-then-
-	// resume takeover path), not the generic line.
+	// Running one-shot has no PTY to attach → actionNone, and the hint must
+	// explain the one-shot case specifically (cancel-then-resume takeover
+	// path), not the generic line.
 	runningOneshot.Kind = protocol.TaskKind_Oneshot
 	if got := resumeReattachAction(runningOneshot, true); got.Kind != actionNone ||
 		!strings.Contains(got.Hint, "one-shot") {
 		t.Errorf("running+oneshot: want actionNone with one-shot hint, got %v %q", got.Kind, got.Hint)
-	}
-	// Running interactive without the detachable flag (pre-unification
-	// client) → actionNone with the old-client explanation.
-	runningLegacy := &protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
-	if got := resumeReattachAction(runningLegacy, true); got.Kind != actionNone ||
-		!strings.Contains(got.Hint, "non-detachable") {
-		t.Errorf("running+legacy-interactive: want actionNone with non-detachable hint, got %v %q", got.Kind, got.Hint)
 	}
 	// Queued → actionNone with the queued explanation.
 	queued := &protocol.TaskInfo{Status: protocol.TaskStatus_Queued}
