@@ -1816,10 +1816,9 @@ const POLL_INTERVAL_MS = 5000;
           });
           setActiveTab("terminal");
           term.reset();
-          // mirrors the success path used by openInteractive; reconstruct the
-          // same "one-shot"/"detachable" label openInteractive would have used
-          // (baseReq carries `detachable`, not the label string itself).
-          onInteractiveOpened(taskID, baseReq.detachable ? "detachable" : "one-shot");
+          // mirrors the success path used by openInteractive; every
+          // interactive open is a detachable session now.
+          onInteractiveOpened(taskID, "session");
         } catch (e2) {
           alert(`startInteractive: ${e2.message}`);
         }
@@ -1849,7 +1848,9 @@ const POLL_INTERVAL_MS = 5000;
     return false;
   }
 
-  // openInteractive is the shared helper for one-shot and detachable opens.
+  // openInteractive opens a new detachable interactive session — every
+  // interactive PTY is a takeover-able session (the one-shot/non-detachable
+  // variant was removed; a session you cannot re-enter had no upside).
   const openInteractive = async (detachable, label) => {
     const req = composeRequest();
     if (!req.repo && !req.resumeTaskId) {
@@ -1873,8 +1874,7 @@ const POLL_INTERVAL_MS = 5000;
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   };
 
-  document.getElementById("open-oneshot").addEventListener("click", () => openInteractive(false, "one-shot"));
-  document.getElementById("open-detachable").addEventListener("click", () => openInteractive(true, "detachable"));
+  document.getElementById("open-detachable").addEventListener("click", () => openInteractive(true, "session"));
 
   document.getElementById("stop-streaming").addEventListener("click", () => {
     window.harness.detachInteractive();

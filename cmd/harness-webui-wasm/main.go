@@ -842,8 +842,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				host = hostVal.String()
 			}
 			extraArgs := jsArrayToStringSlice(opts.Get("claudeArgs"))
+			// Detachable by default: every interactive PTY is a takeover-able
+			// session. An explicit boolean still wins for compatibility with
+			// callers that pass it.
 			detachableVal := opts.Get("detachable")
-			detachable := false
+			detachable := true
 			if detachableVal.Type() == js.TypeBoolean {
 				detachable = detachableVal.Bool()
 			}

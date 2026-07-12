@@ -39,6 +39,26 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
 		return taskAction{Kind: actionResume, ResumeConversation: withContinue}
 	}
+	// Nothing applies — say WHY for this specific task, not just what r/R
+	// could have done on some other one.
+	switch {
+	case t.Status == protocol.TaskStatus_Running && t.Kind == protocol.TaskKind_Oneshot:
+		// A prompt-driven one-shot (claude -p) has no PTY, so there is
+		// nothing to attach while it runs. The takeover path is manual and
+		// destructive (kills the in-flight turn), so it stays two explicit
+		// keystrokes instead of hiding behind r.
+		return taskAction{Kind: actionNone,
+			Hint: "one-shot task is still running: no PTY to attach — c cancels it, then r reopens the conversation as an interactive session"}
+	case t.Status == protocol.TaskStatus_Running:
+		// Interactive but the server did not mark it detachable — only
+		// possible for sessions opened by a pre-unification client (every
+		// current surface requests detachable).
+		return taskAction{Kind: actionNone,
+			Hint: "running non-detachable session (opened by an old client): cannot take over — r works once it finishes"}
+	case t.Status == protocol.TaskStatus_Queued:
+		return taskAction{Kind: actionNone,
+			Hint: "task is still queued: nothing to reattach yet — r resumes it after it runs, c cancels it"}
+	}
 	return taskAction{Kind: actionNone,
-		Hint: "r/R: pick a detached session (reattach) or a finished task (resume)"}
+		Hint: "r/R: pick a live session (take over) or a finished task (resume)"}
 }

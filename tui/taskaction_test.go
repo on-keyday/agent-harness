@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -37,8 +38,25 @@ func TestResumeReattachAction(t *testing.T) {
 			t.Errorf("status=%v R: want resume without conversation, got %v %v", st, got.Kind, got.ResumeConversation)
 		}
 	}
-	// Running but non-detachable (oneshot) has no PTY to attach → actionNone.
-	if got := resumeReattachAction(runningOneshot, true); got.Kind != actionNone {
-		t.Errorf("running+oneshot: want actionNone, got %v", got.Kind)
+	// Running but non-detachable (oneshot) has no PTY to attach → actionNone,
+	// and the hint must explain the one-shot case specifically (cancel-then-
+	// resume takeover path), not the generic line.
+	runningOneshot.Kind = protocol.TaskKind_Oneshot
+	if got := resumeReattachAction(runningOneshot, true); got.Kind != actionNone ||
+		!strings.Contains(got.Hint, "one-shot") {
+		t.Errorf("running+oneshot: want actionNone with one-shot hint, got %v %q", got.Kind, got.Hint)
+	}
+	// Running interactive without the detachable flag (pre-unification
+	// client) → actionNone with the old-client explanation.
+	runningLegacy := &protocol.TaskInfo{Status: protocol.TaskStatus_Running, Kind: protocol.TaskKind_Interactive}
+	if got := resumeReattachAction(runningLegacy, true); got.Kind != actionNone ||
+		!strings.Contains(got.Hint, "non-detachable") {
+		t.Errorf("running+legacy-interactive: want actionNone with non-detachable hint, got %v %q", got.Kind, got.Hint)
+	}
+	// Queued → actionNone with the queued explanation.
+	queued := &protocol.TaskInfo{Status: protocol.TaskStatus_Queued}
+	if got := resumeReattachAction(queued, true); got.Kind != actionNone ||
+		!strings.Contains(got.Hint, "queued") {
+		t.Errorf("queued: want actionNone with queued hint, got %v %q", got.Kind, got.Hint)
 	}
 }

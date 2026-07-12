@@ -886,14 +886,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.boardModal.SetSize(a.width, a.height)
 			return a, DoBoardTopics(a.client)
 		}
-		// `i` attaches to a Detached+Detachable task when one is selected in
-		// the tasks panel, otherwise opens a new interactive PTY session in
-		// the default repo. The RPC + tea.Exec dance is two-stage: the Cmd
-		// dispatches the RPC, the response arrives as InteractiveReadyMsg,
-		// and Update returns tea.Exec then to actually suspend the TUI.
-		// `i` opens a new (non-detachable) interactive PTY in the default repo.
-		// Reattach lives on `r` now (see below), so `i` no longer special-cases a
-		// selected Detached task.
+		// `i` opens a new interactive PTY session in the default repo. The
+		// RPC + tea.Exec dance is two-stage: the Cmd dispatches the RPC, the
+		// response arrives as InteractiveReadyMsg, and Update returns
+		// tea.Exec then to actually suspend the TUI. The session is
+		// detachable (like `S`); `i` differs only in skipping the ambiguous-
+		// runner picker. Reattach lives on `r` (see below).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
 			return a, DoOpenInteractive(a.client, a.defaultRepo, a.sessionCaps)
 		}
@@ -1401,7 +1399,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] / repo <path> / caps / refresh / clear / help / quit")
 		a.cmdresult.Append("refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now")
 		a.cmdresult.Append("submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task")
-		a.cmdresult.Append("interactive [--resume ID] [--resume-conversation]      - open/resume one-shot interactive")
+		a.cmdresult.Append("interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)")
 		a.cmdresult.Append("session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive")
 		a.cmdresult.Append("caps [<names>]              - show, or set the session-default capability mask for spawns (e.g. caps spawn,file_read / caps all / caps none)")
 		a.cmdresult.Append("caps --on-resume on|off     - when on, resume re-grants the session caps to the task (default off: resume keeps the task's persisted caps)")

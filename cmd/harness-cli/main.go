@@ -316,7 +316,9 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, false, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation); err != nil {
+		// Detachable so the session survives a client disconnect (tmux-like)
+		// and any operator client can take it over via reattach.
+		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, true, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation); err != nil {
 			die(err)
 		}
 
@@ -607,7 +609,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  notify-watch                        stream notifications (backlog + live); one human-readable line each")
 	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
-	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY agent (--repo: HARNESS_REPO_PATH)")
+	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal interactive task id + worktree branch")
 	fmt.Fprintln(os.Stderr, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")

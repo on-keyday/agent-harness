@@ -159,7 +159,9 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 // DoOpenInteractiveWithOpts is the full-featured form: optional hostname
 // pin, per-task extraArgs (forwarded verbatim), and optional resumeTaskID
 // (32-hex; "" = new task) for reusing an existing terminal interactive
-// task's id and worktree branch. This path is NOT armed for the runner
+// task's id and worktree branch. The session is detachable — like every
+// interactive PTY path — so it survives a client disconnect and can be
+// taken over from any operator surface. This path is NOT armed for the runner
 // picker (App.pickerArmed is only set by the `S` key and the `actionResume`
 // case of `r`/`R`, via DoOpenDetachableSession / DoResumeSession); on
 // AmbiguousRunner here the error is surfaced as a flat line in
@@ -176,7 +178,7 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, false, caps, resumeCapsOverride, resumeConversation)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, true, caps, resumeCapsOverride, resumeConversation)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }

@@ -69,9 +69,9 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `prune-local`, `watch`.
     - Interactive: `session new` (detachable PTY: client disconnect
       leaves claude running on the runner), `session attach <id>`,
-      `session ls`, `session kill <id>`; `interactive` is a one-off
-      PTY spliced to the client that dies on disconnect (the older
-      non-detachable mode).
+      `session ls`, `session kill <id>`; `interactive` opens the same
+      kind of detachable session and splices it to the client
+      immediately (shorthand for `session new`).
     - File transfer: `file ls`, `file push`, `file pull`, `file delete`
       against a task's worktree (recursive variants via `-r`, force
       overwrite via `-f`; paths are confined to the worktree root).
@@ -171,9 +171,9 @@ bin/harness-cli session ls                       # detachable sessions only
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
 
-# 5b. Or a one-off interactive PTY (stdin / stdout / SIGWINCH spliced to your
-# terminal): client disconnect KILLS claude. The older non-detachable mode —
-# ephemeral and self-cleaning, so there is no session to kill afterwards.
+# 5b. `interactive` is shorthand for the same thing: it opens a detachable
+# session and splices it to your terminal in one step. Disconnecting leaves
+# the session alive (Detached) — reattach or kill it via `session ...`.
 bin/harness-cli interactive --repo /abs/path/to/repo
 
 # 6. File transfer against a running task's worktree (paths are confined
@@ -199,11 +199,17 @@ bin/harness-cli forward <task-id> -L 3000:127.0.0.1:3000
 bin/harness-cli notify --level warn "need a decision on approach X"
 bin/harness-cli notify-watch          # stream notifications (ring backlog + live)
 
-# External delivery: start the SERVER with --notify-hook CMD. The server runs
-# CMD per notification (stdin: JSON event; env: HARNESS_NOTIFY_*); CMD relays it
-# onward (phone, chat, …) — no live client needed. examples/notify-hooks/discord.py
-# is a ready Discord-webhook hook (URL from DISCORD_WEBHOOK_URL / _FILE).
-# bin/harness-server --listen :8539 --notify-hook /abs/examples/notify-hooks/discord.py
+# External delivery: give the SERVER a notify-hook command line. The server
+# runs it per notification (stdin: JSON event; env: HARNESS_NOTIFY_*); it
+# relays the event onward (phone, chat, …) — no live client needed. The command
+# is whitespace-split into executable + args. Resolution order: --notify-hook
+# flag → HARNESS_NOTIFY_HOOK env → first non-# line of <data-dir>/notify-hook.
+# Flag/env are forgotten on a restart from a clean shell — write the file once
+# instead and every future restart keeps the hook:
+#   echo '/abs/examples/notify-hooks/discord.py --url-file /secret/discord-url' \
+#     > harness-data/notify-hook
+# examples/notify-hooks/discord.py is a ready Discord-webhook hook (URL from
+# --url / --url-file args or DISCORD_WEBHOOK_URL / _FILE env).
 ```
 
 ### X11 forwarding
@@ -383,8 +389,8 @@ Keys:
 | `Tab` / `Shift+Tab` | Cycle focus runners → tasks → logs → cmdresult → cmdline |
 | `s` | Open the multi-line submit popup (`Ctrl+J` / `Ctrl+Enter` to send, `Esc` to cancel) |
 | `S` | Open a detachable session in the default repo (equivalent to `harness-cli session new`) |
-| `i` | Open a new (non-detachable) interactive PTY in the default repo (equivalent to `harness-cli interactive`). Does not attach to the focused task — reattach/resume lives on `r` / `R`. |
-| `r` / `R` (tasks focus) | `r`: reattach a Detached / Running detachable session, or resume a finished task with `--continue`. `R`: resume fresh (no `--continue`). |
+| `i` | Open a new interactive PTY session in the default repo (equivalent to `harness-cli interactive`; detachable, like `S`, but skips the ambiguous-runner picker). Does not attach to the focused task — reattach/resume lives on `r` / `R`. |
+| `r` / `R` (tasks focus) | `r`: reattach (take over) a Detached / Running session, or resume a finished task with `--continue`. `R`: resume fresh (no `--continue`). A running one-shot has no PTY: `c` cancel it first, then `r` reopens the conversation interactively. |
 | `F` (tasks focus) | Open the file browser for the selected task's worktree (push / pull / delete). |
 | `p` / `P` (tasks focus) | `p`: open the port-forward prompt (enter a `-L` spec) for the selected task; the forward runs in the background. `P`: stop that task's active forward. |
 | `d` | Detail popup for the focused row (runners or tasks) |

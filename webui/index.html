@@ -54,15 +54,14 @@
       <div id="caps-row" class="caps-row" aria-label="Capability chips"></div>
       <label class="caps-on-resume-toggle"><input type="checkbox" id="caps-on-resume"> apply caps on resume</label>
       <div class="actions">
-        <button id="open-oneshot">Open one-shot interactive</button>
-        <button id="open-detachable">Open detachable session</button>
+        <button id="open-detachable">Open interactive session</button>
       </div>
       <div class="actions">
         <label for="task-id-input">Task id:</label>
         <input type="text" id="task-id-input" placeholder="32 hex chars" size="40" pattern="[0-9a-fA-F]*">
         <button id="reattach">Reattach</button>
       </div>
-      <small>One task id for every id-driven action: <b>Reattach</b> to a detached (live) session, or <b>resume</b> a terminal task's worktree branch via Submit / Open one-shot / Open detachable (Repo is ignored on resume). Leave empty to open a fresh task.</small>
+      <small>One task id for every id-driven action: <b>Reattach</b> to a live session, or <b>resume</b> a terminal task's worktree branch via Submit / Open interactive session (Repo is ignored on resume). Leave empty to open a fresh task.</small>
     </section>
     <section id="cmdline" data-tabgroup="tasks">
       <h2>Command</h2>
