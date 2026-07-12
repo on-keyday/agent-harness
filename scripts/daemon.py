@@ -157,11 +157,15 @@ def _spawn_detached(args: list[str], log_path: Path) -> int:
 
 
 def _strip_flag(args: list[str], name: str) -> list[str]:
-    """Remove all occurrences of ``--<name> <value>`` and ``--<name>=<value>``
-    from *args*. Used to dedup flags daemon_up injects (currently just
-    ``--shutdown-file``) when re-spawning a process whose previous argv
-    already contained the same flag from a prior daemon_up. Trailing
-    ``--<name>`` with no value is also dropped silently."""
+    """Remove all occurrences of ``--<name>``, ``--<name> <value>`` and
+    ``--<name>=<value>`` from *args*. Used to dedup flags when re-spawning a
+    process whose previous argv already contained them (daemon_up's
+    ``--shutdown-file`` injection, restart.py's override flags).
+
+    A token following ``--<name>`` is treated as its value ONLY when it does
+    not itself start with ``--`` — Go's flag package accepts bare boolean
+    flags (``--no-worktree``), and blindly skipping the next token would eat
+    the flag that follows a boolean."""
     out: list[str] = []
     long = f"--{name}"
     long_eq = f"--{name}="
@@ -169,7 +173,9 @@ def _strip_flag(args: list[str], name: str) -> list[str]:
     while i < len(args):
         a = args[i]
         if a == long:
-            i += 2  # skip flag + (possibly missing) value
+            i += 1
+            if i < len(args) and not args[i].startswith("--"):
+                i += 1  # skip the flag's value
             continue
         if a.startswith(long_eq):
             i += 1

@@ -9,7 +9,7 @@ Claude Code agent restarting its own agent-runner parent).
 
 Usage::
 
-    python scripts/restart.py <slot>
+    python scripts/restart.py <slot> [override flags...]
 
 ``<slot>`` is the ``bin/.run/<slot>.pid`` name — i.e. the binary name for
 primary instances (``agent-runner``, ``harness-server``) or
@@ -17,10 +17,22 @@ primary instances (``agent-runner``, ``harness-server``) or
 underlying binary are read from the running process so the new instance
 comes up identically.
 
+Anything after the slot is an *override*: each ``--flag`` named there is
+stripped from the inherited argv and the overrides are appended, so the
+new instance comes up with just those flags changed. The main use case is
+secret rotation without retyping the full flag set::
+
+    python scripts/restart.py harness-server --operator-psk NEWSECRET
+    python scripts/restart.py harness-server --operator-psk-file /path/to/new-psk
+
+(``--operator-psk`` / ``--psk`` values are redacted in the restart log,
+but the value form is still visible in ``ps`` on the new process — use
+the ``-file`` form when that matters.)
+
 Examples::
 
     python scripts/restart.py agent-runner
-    python scripts/restart.py agent-runner-2
+    python scripts/restart.py agent-runner-2 --max-tasks 4
     python scripts/restart.py harness-server
 
 Output and the restart sequence's stdout/stderr go to
@@ -45,6 +57,55 @@ import psutil
 import daemon as _daemon
 
 _DETACHED_FLAG = "--__detached"
+
+# Flag names whose values are secrets: redacted in the restart log's
+# "flags=" line so a rotation doesn't archive the new secret in plaintext.
+_SECRET_FLAGS = frozenset({"psk", "operator-psk"})
+
+
+def _override_names(overrides: list[str]) -> list[str]:
+    """The ``--flag`` names present in *overrides* (``--name`` / ``--name=v``)."""
+    names: list[str] = []
+    for tok in overrides:
+        if tok.startswith("--"):
+            name = tok[2:].split("=", 1)[0]
+            if name:
+                names.append(name)
+    return names
+
+
+def _merge_flags(inherited: list[str], overrides: list[str]) -> list[str]:
+    """Inherited argv with every override-named flag stripped, overrides
+    appended. Appending alone would usually work (Go flag parsing is
+    last-wins), but stripping keeps ``ps`` output honest — no stale
+    ``--operator-psk`` value lingering in front of the new one."""
+    merged = list(inherited)
+    for name in _override_names(overrides):
+        merged = _daemon._strip_flag(merged, name)
+    return merged + list(overrides)
+
+
+def _redact(flags: list[str]) -> list[str]:
+    """Copy of *flags* with secret flag values replaced by ``<redacted>``."""
+    out: list[str] = []
+    i = 0
+    while i < len(flags):
+        tok = flags[i]
+        name = tok[2:].split("=", 1)[0] if tok.startswith("--") else ""
+        if name in _SECRET_FLAGS:
+            if "=" in tok:
+                out.append(f"--{name}=<redacted>")
+                i += 1
+            else:
+                out.append(tok)
+                if i + 1 < len(flags) and not flags[i + 1].startswith("--"):
+                    out.append("<redacted>")
+                    i += 1
+                i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return out
 
 
 def _spawn_detached_child(args: list[str], log_path: Path) -> int:
@@ -114,7 +175,7 @@ def _do_restart(slot: str, bin_name: str, flags: list[str], orig_cwd: str) -> No
 
         emit(
             f"[{_ts()}] restart {slot} (bin={bin_name}) begin "
-            f"(cwd={orig_cwd} flags={' '.join(flags)})"
+            f"(cwd={orig_cwd} flags={' '.join(_redact(flags))})"
         )
         try:
             os.chdir(orig_cwd)
@@ -145,8 +206,8 @@ def _do_restart(slot: str, bin_name: str, flags: list[str], orig_cwd: str) -> No
 
 def _usage_and_exit() -> None:
     sys.stderr.write(
-        "usage: restart.py <slot>   "
-        "(e.g. agent-runner, agent-runner-2, harness-server)\n"
+        "usage: restart.py <slot> [override flags...]   "
+        "(e.g. agent-runner, harness-server --operator-psk NEW)\n"
     )
     sys.exit(2)
 
@@ -163,9 +224,12 @@ def main(argv: list[str]) -> int:
         _do_restart(slot, bin_name, flags, cwd)
         return 0
 
-    if len(argv) != 1:
+    if not argv:
         _usage_and_exit()
     slot = argv[0]
+    overrides = list(argv[1:])
+    if overrides and not overrides[0].startswith("--"):
+        _usage_and_exit()  # a second positional is a typo, not an override
 
     pf = _daemon.pid_file(slot)
     if not pf.is_file():
@@ -191,6 +255,8 @@ def main(argv: list[str]) -> int:
     except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
         sys.stderr.write(f"[{slot}] cannot inspect pid={pid}: {e}\n")
         return 1
+    if overrides:
+        flags = _merge_flags(flags, overrides)
 
     log = _daemon.restart_log(slot)
     log.parent.mkdir(parents=True, exist_ok=True)
