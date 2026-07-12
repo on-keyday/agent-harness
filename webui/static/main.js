@@ -847,6 +847,11 @@ const POLL_INTERVAL_MS = 5000;
   window.harness_onTaskEvent = (jsonStr) => {
     try {
       const evt = JSON.parse(jsonStr);
+      // task_activity events fire on every busy/idle edge of every live
+      // session — routine badge refreshes, not lifecycle changes. Skip the
+      // banner AND the snapshot kick (the 5s poll keeps the table current);
+      // rendering each edge would spam the cmd output.
+      if (evt.line && evt.line.includes("kind=TaskActivity")) return;
       const banner = `[${new Date().toISOString()}] ${evt.line}`;
       appendCmdOutput(banner);
     } catch (e) { /* ignore */ }
@@ -1184,6 +1189,12 @@ const POLL_INTERVAL_MS = 5000;
           out = Array.from(taskList.querySelectorAll(".task-row"))
                   .map(r => r.textContent).join("\n") || "(none)";
           break;
+        case "refresh":
+        case "sync":
+          // Force a snapshot re-sync without echoing the rows (TUI parity).
+          await refreshSnapshot();
+          out = "snapshot refreshed";
+          break;
         case "cancel":
           if (!tokens[1]) throw new Error("cancel: missing task id");
           await window.harness.cancel(tokens[1]);
@@ -1227,7 +1238,8 @@ const POLL_INTERVAL_MS = 5000;
             "commands:",
             "  submit [--resume-conversation] <prompt...>",
             "                            submit task (use repo dropdown / Resume task id)",
-            "  list                      refresh the snapshot",
+            "  list                      refresh the snapshot and echo task rows",
+            "  refresh (alias: sync)     force a snapshot re-sync",
             "  cancel <task-id>          cancel a task",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  file ls <task> [rel]      list a worktree directory",

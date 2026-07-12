@@ -260,6 +260,16 @@ func New(cfg Config) *Server {
 			TaskKind:   taskKind,
 			ExitCode:   exitCode,
 		}
+		// Live-session act enrichment on EVERY task event (same point-in-time
+		// mux read as List enrichment in handleList): any event keeps a
+		// subscriber's busy/idle badge current, and task_activity events get
+		// their payload of interest here. Zero fields = no live session.
+		if mux := s.taskHandler.sessionMux(taskID); mux != nil {
+			if lo := mux.LastOutputUnixNano(); lo > 0 {
+				ev.LastOutputAt = uint64(lo)
+				ev.OutputIdleMs = uint64(time.Since(time.Unix(0, lo)) / time.Millisecond)
+			}
+		}
 		raw, err := hex.DecodeString(taskID)
 		if err == nil {
 			copy(ev.TaskId.Id[:], raw)
@@ -267,6 +277,17 @@ func New(cfg Config) *Server {
 		payload := ev.MustAppend(nil)
 		s.pubsub.Publish("server", topics.TasksStatus(), payload)
 		s.pubsub.Publish("server", topics.TaskStatus(taskID), payload)
+	}
+
+	// Busy/idle edges from live detachable sessions (SessionMux activity
+	// watcher) publish as task_activity events, carrying the task's current
+	// stored status so consumers can treat any event as a row refresh.
+	s.taskHandler.OnSessionActivity = func(taskID string, busy bool, lastOutputUnixNano int64) {
+		t, ok := s.tasks.Get(taskID)
+		if !ok {
+			return // task already forgotten; a badge refresh for it is meaningless
+		}
+		publishTaskEvent(taskID, protocol.StatusEventKind_TaskActivity, t.Status, 0)
 	}
 
 	// publishRunnerEvent constructs and publishes a RunnerStatusEvent to

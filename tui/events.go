@@ -11,6 +11,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // Messages dispatched into the tea.Program from the pubsub bridge.
@@ -160,71 +161,119 @@ func drainNotifyEvents(buf []byte, emit func(protocol.NotifyEvent)) []byte {
 // NotifyEvent as NotifyEventMsg via program.Send. Unlike subscribeAndStream, this
 // accumulates bytes across ReadDirect calls and drains ALL complete events per read,
 // correctly handling the server-side ring replay path that may coalesce multiple
-// AppendData calls into a single ReadDirect payload.
+// AppendData calls into a single ReadDirect payload. The accumulation buffer is
+// reset per (re)subscribe: a new stream starts at a ring-replay boundary, so a
+// partial event left over from a dead stream must not prefix it.
 func SubscribeNotifications(ctx context.Context, c *cli.Client, program *tea.Program) {
-	stream, err := c.Peer().JoinAndGetStream(ctx, "tui", topics.Notifications())
-	if err != nil {
-		if ctx.Err() == nil {
-			slog.Warn("subscribe notifications", "err", err)
+	resubscribeLoop(ctx, c, topics.Notifications(), program, func(stream trsf.BidirectionalStream) {
+		var buf []byte
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			data, eof, rerr := stream.ReadDirect(64 * 1024)
+			if rerr != nil {
+				return
+			}
+			if len(data) > 0 {
+				buf = append(buf, data...)
+				buf = drainNotifyEvents(buf, func(ev protocol.NotifyEvent) {
+					program.Send(NotifyEventMsg{Event: ev})
+				})
+			}
+			if eof {
+				return
+			}
 		}
-		return
-	}
-	var buf []byte
+	})
+}
+
+// SubscribedMsg reports a successful JOIN of a pubsub topic. Resubscribed is
+// true when this join replaced an earlier stream that died mid-connection —
+// the App uses that to gap-fill state the dead stream missed (snapshot
+// refresh for status topics, history re-fetch for a followed task log).
+type SubscribedMsg struct {
+	Topic        string
+	Resubscribed bool
+}
+
+const (
+	resubscribeInitialBackoff = 500 * time.Millisecond
+	resubscribeMaxBackoff     = 10 * time.Second
+)
+
+// resubscribeLoop joins topic and runs pump on the stream, rejoining with
+// exponential backoff whenever the join fails or the pump returns (stream
+// error / EOF) while ctx is still live. Every successful join dispatches a
+// SubscribedMsg. This is what keeps event delivery robust across mid-
+// connection stream death: a dead stream costs one backoff round, not the
+// rest of the session (a full disconnect cancels ctx via PersistLoop and
+// ends the loop; the reconnect spawns fresh subscriptions).
+func resubscribeLoop(ctx context.Context, c *cli.Client, topic string, program *tea.Program, pump func(trsf.BidirectionalStream)) {
+	backoff := resubscribeInitialBackoff
+	joined := false
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		st, err := c.Peer().JoinAndGetStream(ctx, "tui", topic)
+		if err != nil {
+			// context.Canceled is the normal path when the user switches
+			// tasks (followTask cancels the prior subscription's ctx) or the
+			// connection drops — don't log, don't retry.
+			if ctx.Err() != nil {
+				return
+			}
+			slog.Warn("subscribe", "topic", topic, "err", err, "retry_in", backoff)
+		} else {
+			program.Send(SubscribedMsg{Topic: topic, Resubscribed: joined})
+			joined = true
+			backoff = resubscribeInitialBackoff
+			pump(st)
+			if ctx.Err() != nil {
+				return
+			}
+			slog.Warn("subscription stream ended; rejoining", "topic", topic, "retry_in", backoff)
+		}
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-time.After(backoff):
 		}
-		data, eof, rerr := stream.ReadDirect(64 * 1024)
-		if rerr != nil {
-			return
-		}
-		if len(data) > 0 {
-			buf = append(buf, data...)
-			buf = drainNotifyEvents(buf, func(ev protocol.NotifyEvent) {
-				program.Send(NotifyEventMsg{Event: ev})
-			})
-		}
-		if eof {
-			return
+		backoff *= 2
+		if backoff > resubscribeMaxBackoff {
+			backoff = resubscribeMaxBackoff
 		}
 	}
 }
 
 // subscribeAndStream uses peer.Conn.JoinAndGetStream to do the JOIN+lookup+
-// header-discard dance, then pumps payload chunks through fn → program.Send
-// until ctx is cancelled or the stream EOFs.
+// header-discard dance, then pumps payload chunks through fn → program.Send.
+// Runs until ctx is cancelled; stream death resubscribes via resubscribeLoop.
 func subscribeAndStream(ctx context.Context, c *cli.Client, topic string, program *tea.Program, fn func([]byte) tea.Msg) {
-	st, err := c.Peer().JoinAndGetStream(ctx, "tui", topic)
-	if err != nil {
-		// context.Canceled is the normal path when the user switches tasks
-		// (followTask cancels the prior subscription's ctx) — don't log.
-		if ctx.Err() == nil {
-			slog.Warn("subscribe", "topic", topic, "err", err)
-		}
-		return
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		data, eof, err := st.ReadDirect(64 * 1024)
-		if err != nil {
-			return
-		}
-		if len(data) > 0 {
-			if msg := fn(data); msg != nil {
-				program.Send(msg)
+	resubscribeLoop(ctx, c, topic, program, func(st trsf.BidirectionalStream) {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			data, eof, err := st.ReadDirect(64 * 1024)
+			if err != nil {
+				return
+			}
+			if len(data) > 0 {
+				if msg := fn(data); msg != nil {
+					program.Send(msg)
+				}
+			}
+			if eof {
+				return
 			}
 		}
-		if eof {
-			return
-		}
-	}
+	})
 }
 
 // FormatTaskID returns the hex string for a TaskID, exposed for app.go.

@@ -12,6 +12,7 @@ import (
 
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // frameHeaderSize is the wire size of exec/frame.FrameHeader: 1-byte Type
@@ -75,6 +76,12 @@ type SessionHooks struct {
 	OnAttach func(taskID string)
 	OnDetach func(taskID string)
 	OnStop   func(taskID string)
+	// OnActivity fires when the session's PTY output quiescence crosses the
+	// protocol.ActivityBusyThreshold edge in either direction (busy=true on
+	// the first tick that sees fresh output, busy=false once output has been
+	// quiet for the threshold). Edge-triggered with idleWatchTick granularity;
+	// no per-frame cost. lastOutputUnixNano is the timestamp at detection.
+	OnActivity func(taskID string, busy bool, lastOutputUnixNano int64)
 }
 
 // SessionMux owns the runner-side bidi stream for a detachable interactive
@@ -157,7 +164,36 @@ func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.Bidirec
 		onStop:   hooks.OnStop,
 	}
 	go m.runnerPump()
+	if hooks.OnActivity != nil {
+		go m.activityWatcher(hooks.OnActivity, protocol.ActivityBusyThreshold, idleWatchTick)
+	}
 	return m
+}
+
+// activityWatcher is the resident busy/idle edge detector behind
+// SessionHooks.OnActivity. Same lazy-poll idiom as ArmIdleWatcher: sample the
+// lastOutput atomic every tick instead of touching the per-frame hot path.
+// Initial state is idle (no output yet renders no badge anyway), so the
+// first output frame produces a busy edge within one tick. threshold/tick are
+// parameters only so tests can run the edge logic at fast timescales;
+// production always passes protocol.ActivityBusyThreshold / idleWatchTick.
+func (m *SessionMux) activityWatcher(fn func(taskID string, busy bool, lastOutputUnixNano int64), threshold, tick time.Duration) {
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	busy := false
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-t.C:
+		}
+		lo := m.lastOutput.Load()
+		nowBusy := lo != 0 && time.Now().UnixNano()-lo < threshold.Nanoseconds()
+		if nowBusy != busy {
+			busy = nowBusy
+			fn(m.taskID, busy, lo)
+		}
+	}
 }
 
 // runnerPump reads ONE frame at a time from the runner stream, appends the

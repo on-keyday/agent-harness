@@ -935,6 +935,10 @@ enum StatusEventKind:
     conn_identified   # appended: identity established (ClientHello or RunnerHello);
                       # carries the now-known role.
     conn_closed       # appended: activeConns teardown.
+    task_activity     # appended: a live interactive session's PTY output
+                      # crossed the busy/idle edge (server-side byte-quiescence
+                      # watcher). Carries the same task_status the store holds;
+                      # the payload of interest is last_output_at/output_idle_ms.
 
 format TaskStatusEvent:
     kind :StatusEventKind
@@ -946,6 +950,14 @@ format TaskStatusEvent:
                           # can already render the right kind without waiting for
                           # the next List snapshot.
     exit_code :i32
+    last_output_at :u64   # unix-nano of the session's most recent PTY output
+                          # frame at emission; 0 = no live interactive session.
+                          # Mirrors TaskInfo.last_output_at and is stamped on
+                          # EVERY task event (not just task_activity) so any
+                          # event keeps a client's act badge current.
+    output_idle_ms :u64   # server-computed now-last_output_at at emission, in
+                          # ms (clock-skew-safe for clients on other hosts).
+                          # Meaningless when last_output_at == 0.
 
 format RunnerStatusEvent:
     kind :StatusEventKind

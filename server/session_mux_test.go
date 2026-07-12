@@ -489,3 +489,58 @@ func TestSessionMux_TakeoverLeavesViewersStreaming(t *testing.T) {
 		t.Fatalf("viewer stopped streaming after writer takeover: got %q want %q", got, fr)
 	}
 }
+
+// TestSessionMux_ActivityWatcherEdges drives the busy/idle edge detector at
+// fast timescales: no edge before any output, busy on the first Stdout frame,
+// idle after threshold quiescence, busy again on new output. Production wires
+// the same loop with protocol.ActivityBusyThreshold / idleWatchTick.
+func TestSessionMux_ActivityWatcherEdges(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task-act", runner, NewRingBuffer(256), SessionHooks{})
+
+	var mu sync.Mutex
+	var edges []bool
+	go mux.activityWatcher(func(taskID string, busy bool, lo int64) {
+		if taskID != "task-act" {
+			t.Errorf("taskID = %q, want task-act", taskID)
+		}
+		if busy && lo == 0 {
+			t.Error("busy edge with lastOutputUnixNano == 0")
+		}
+		mu.Lock()
+		edges = append(edges, busy)
+		mu.Unlock()
+	}, 200*time.Millisecond, 20*time.Millisecond)
+
+	edgeCount := func() int { mu.Lock(); defer mu.Unlock(); return len(edges) }
+	edgeAt := func(i int) bool { mu.Lock(); defer mu.Unlock(); return edges[i] }
+
+	// Initial state is idle: no output yet must not fire any edge.
+	time.Sleep(100 * time.Millisecond)
+	if n := edgeCount(); n != 0 {
+		t.Fatalf("edges fired before any output: %d", n)
+	}
+
+	// First Stdout frame → busy edge.
+	runner.QueueRead(makeWireFrame(1, []byte("boot output")))
+	waitFor(t, func() bool { return edgeCount() == 1 })
+	if !edgeAt(0) {
+		t.Fatal("first edge should be busy=true")
+	}
+
+	// Quiescence past the threshold → idle edge.
+	waitFor(t, func() bool { return edgeCount() == 2 })
+	if edgeAt(1) {
+		t.Fatal("second edge should be busy=false")
+	}
+
+	// Fresh output → busy edge again.
+	runner.QueueRead(makeWireFrame(1, []byte("more output")))
+	waitFor(t, func() bool { return edgeCount() == 3 })
+	if !edgeAt(2) {
+		t.Fatal("third edge should be busy=true")
+	}
+}

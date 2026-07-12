@@ -36,6 +36,10 @@ type ClearAction struct{}
 type QuitAction struct{}
 type HelpAction struct{}
 
+// RefreshAction forces a full snapshot re-sync (runners + tasks) right now,
+// without waiting for the next event or resubscribe gap-fill.
+type RefreshAction struct{}
+
 // TrsfDebugAction dumps the client↔server trsf transport's internal state into
 // the command-result panel (debug aid).
 type TrsfDebugAction struct{}
@@ -168,6 +172,7 @@ func (PruneAction) isAction()            {}
 func (ClearAction) isAction()            {}
 func (QuitAction) isAction()             {}
 func (HelpAction) isAction()             {}
+func (RefreshAction) isAction()          {}
 func (TrsfDebugAction) isAction()        {}
 func (RepoAction) isAction()             {}
 func (InteractiveAction) isAction()      {}
@@ -203,6 +208,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parsePrune(tokens[1:])
 	case "clear":
 		return ClearAction{}, nil
+	case "refresh", "sync":
+		return RefreshAction{}, nil
 	case "quit", "exit":
 		return QuitAction{}, nil
 	case "help":

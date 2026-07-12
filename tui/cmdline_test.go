@@ -589,3 +589,17 @@ func TestParseCapsOnResume(t *testing.T) {
 		t.Fatal("expected error for missing on-resume value")
 	}
 }
+
+// TestParseRefresh verifies `refresh` and its `sync` alias parse to a
+// RefreshAction (force full snapshot re-sync).
+func TestParseRefresh(t *testing.T) {
+	for _, in := range []string{"refresh", "sync"} {
+		act, err := ParseCommand(in, "")
+		if err != nil {
+			t.Fatalf("ParseCommand(%q): %v", in, err)
+		}
+		if _, ok := act.(RefreshAction); !ok {
+			t.Errorf("ParseCommand(%q) = %T, want RefreshAction", in, act)
+		}
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/topics"
 )
 
 type focus int
@@ -60,6 +61,13 @@ type App struct {
 
 	// tasksByID holds the latest TaskInfo keyed by FormatTaskID(t.Id).
 	tasksByID map[string]protocol.TaskInfo
+	// actRecvAt records the LOCAL receipt time of each task's act fields
+	// (last_output_at / output_idle_ms), whether they arrived via snapshot or
+	// task event. Rendering ages an idle badge by the local elapsed time
+	// since receipt (clock-skew-free: wire idle age + local duration); a busy
+	// badge is never aged — it flips only when the server's idle-edge
+	// task_activity event arrives.
+	actRecvAt map[string]time.Time
 	// runnersSnapshot holds the latest runners from the most recent snapshot.
 	runnersSnapshot []protocol.RunnerInfo
 
@@ -177,6 +185,7 @@ func New(cfg Config) *App {
 		connected:       false,
 		status:          "connecting…",
 		tasksByID:       map[string]protocol.TaskInfo{},
+		actRecvAt:       map[string]time.Time{},
 		activeForwards:  map[int]*PortForwardSession{},
 		sessionCaps:     protocol.Capability_All,
 	}
@@ -199,39 +208,44 @@ func (a *App) BindClient(c *cli.Client) {
 // dispatch LogChunkMsg back to the model.
 func (a *App) BindProgram(p *tea.Program) { a.program = p }
 
-// snapshotPollInterval matches the WebUI's 5s snapshot poll. The poll is the
-// backstop for everything pubsub events don't carry: the Act column /
-// detail's idle age (server-computed at List time only — no status event
-// fires on a busy↔idle transition) and any state missed while a
-// subscription stream is dead.
-const snapshotPollInterval = 5 * time.Second
+// actAgeTickInterval drives the LOCAL re-render that ages idle badges
+// ("idle:4s" → "idle:5s"). Purely cosmetic — no RPC: act data itself arrives
+// via task_activity events (server-side busy/idle edge watcher) and snapshot
+// refreshes; the tick just advances the displayed age between them.
+const actAgeTickInterval = time.Second
 
-// snapshotTickMsg re-arms the periodic snapshot poll; emitted by snapshotTick.
-type snapshotTickMsg struct{}
+// actAgeTickMsg re-arms the aging re-render tick; emitted by actAgeTick.
+type actAgeTickMsg struct{}
 
-func snapshotTick() tea.Cmd {
-	return tea.Tick(snapshotPollInterval, func(time.Time) tea.Msg { return snapshotTickMsg{} })
+func actAgeTick() tea.Cmd {
+	return tea.Tick(actAgeTickInterval, func(time.Time) tea.Msg { return actAgeTickMsg{} })
 }
 
-// shouldPeriodicRefresh gates the poll to a live connection with a bound
-// client — otherwise each tick during an outage would spam "snapshot: ..."
-// errors into cmdresult (reconnect already kicks its own refresh on rebind).
-func (a *App) shouldPeriodicRefresh() bool {
-	return a.connected && a.client != nil
+// hasAgingActRow reports whether any known task currently shows an idle
+// badge — the only rows whose rendering changes with wall time. Gates the
+// per-tick table rebuild so an all-busy/no-session table costs nothing.
+func (a *App) hasAgingActRow() bool {
+	for _, t := range a.tasksByID {
+		if t.LastOutputAt > 0 && time.Duration(t.OutputIdleMs)*time.Millisecond >= protocol.ActivityBusyThreshold {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) Init() tea.Cmd {
-	return tea.Batch(textinput.Blink, snapshotTick())
+	return tea.Batch(textinput.Blink, actAgeTick())
 }
 
 func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case snapshotTickMsg:
-		// Always re-arm first so the poll loop survives disconnects.
-		if a.shouldPeriodicRefresh() {
-			return a, tea.Batch(snapshotTick(), RefreshSnapshot(a.client))
+	case actAgeTickMsg:
+		// Local aging re-render only; always re-arm so the tick survives
+		// disconnects. No RPC here — act data arrives via events/snapshots.
+		if a.hasAgingActRow() {
+			a.refreshTasksTable()
 		}
-		return a, snapshotTick()
+		return a, actAgeTick()
 
 	case SnapshotMsg:
 		if msg.Err != nil {
@@ -241,8 +255,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.runnersSnapshot = msg.Runners
 		a.runners.SetRows(msg.Runners)
 		a.tasksByID = make(map[string]protocol.TaskInfo, len(msg.Tasks))
+		now := time.Now()
+		a.actRecvAt = make(map[string]time.Time, len(msg.Tasks))
 		for _, t := range msg.Tasks {
-			a.tasksByID[FormatTaskID(t.Id)] = t
+			id := FormatTaskID(t.Id)
+			a.tasksByID[id] = t
+			if t.LastOutputAt > 0 {
+				a.actRecvAt[id] = now
+			}
 		}
 		a.refreshTasksTable()
 		return a, nil
@@ -251,9 +271,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		id := FormatTaskID(msg.Event.TaskId)
 		if msg.Event.Kind == protocol.StatusEventKind_TaskPruned {
 			// Server forgot this task — drop its row immediately instead of
-			// waiting for the next incidental snapshot refresh (the TUI has no
-			// periodic poll; the WebUI's 5s poll is its own backstop).
+			// waiting for the next incidental snapshot refresh.
 			delete(a.tasksByID, id)
+			delete(a.actRecvAt, id)
 			a.refreshTasksTable()
 			return a, nil
 		}
@@ -264,14 +284,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// WorktreeDir — those live only in the full TaskInfo from
 			// List. Stub the row so the table reflects the new task
 			// immediately (with the correct interactive/oneshot kind),
-			// then kick a snapshot refresh so the remaining fields fill
-			// in on the next tick rather than waiting for the periodic
-			// refresh cadence.
+			// then kick a snapshot refresh so the remaining fields fill in.
 			var ti protocol.TaskInfo
 			ti.Id = msg.Event.TaskId
 			ti.Status = msg.Event.TaskStatus
 			ti.Kind = msg.Event.TaskKind
 			ti.CreatedAt = msg.Event.Ts
+			a.applyEventAct(&ti, id, msg.Event)
 			a.tasksByID[id] = ti
 			a.refreshTasksTable()
 			return a, RefreshSnapshot(a.client)
@@ -281,6 +300,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cur.ExitCode = msg.Event.ExitCode
 			cur.EndedAt = msg.Event.Ts
 		}
+		a.applyEventAct(&cur, id, msg.Event)
 		a.tasksByID[id] = cur
 		a.refreshTasksTable()
 		return a, nil
@@ -366,6 +386,28 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case BindClientMsg:
 		a.client = msg.Client
+		return a, nil
+
+	case SubscribedMsg:
+		switch {
+		case msg.Topic == topics.TasksStatus():
+			// Initial join: this IS the post-subscribe snapshot — ordering
+			// it after the join closes the connect-time race where events
+			// landing between snapshot and join were lost. Resubscribe:
+			// gap-fill whatever the dead stream missed.
+			if a.client != nil {
+				return a, RefreshSnapshot(a.client)
+			}
+		case msg.Topic == topics.RunnersStatus():
+			if msg.Resubscribed && a.client != nil {
+				return a, RefreshSnapshot(a.client)
+			}
+		case msg.Resubscribed && a.logs.TaskID() != "" && msg.Topic == topics.TaskLog(a.logs.TaskID()):
+			// The followed task-log stream died and rejoined; chunks in
+			// between are gone from the live feed. Re-follow: history
+			// fetch + fresh subscription repaints the panel completely.
+			return a, a.followTask(a.logs.TaskID())
+		}
 		return a, nil
 
 	case ConnectionMsg:
@@ -1230,11 +1272,40 @@ func (a *App) followTask(taskID string) tea.Cmd {
 	)
 }
 
+// applyEventAct copies the act fields (last_output_at / output_idle_ms) from
+// a task event into ti and stamps the local receipt time. Every task event
+// carries current act enrichment (zero = no live session); a terminal status
+// clears the badge outright — idleness of a dead session is meaningless, and
+// a TaskEnded event may still carry the just-stopped mux's timestamps.
+func (a *App) applyEventAct(ti *protocol.TaskInfo, id string, ev protocol.TaskStatusEvent) {
+	terminal := ev.TaskStatus == protocol.TaskStatus_Succeeded ||
+		ev.TaskStatus == protocol.TaskStatus_Failed ||
+		ev.TaskStatus == protocol.TaskStatus_Cancelled
+	if terminal || ev.LastOutputAt == 0 {
+		ti.LastOutputAt = 0
+		ti.OutputIdleMs = 0
+		delete(a.actRecvAt, id)
+		return
+	}
+	ti.LastOutputAt = ev.LastOutputAt
+	ti.OutputIdleMs = ev.OutputIdleMs
+	a.actRecvAt[id] = time.Now()
+}
+
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by
-// descending CreatedAt, capped at 100 rows.
+// descending CreatedAt, capped at 100 rows. Idle badges are aged here: the
+// rendered idle duration is the wire value plus the local time elapsed since
+// receipt (wire age is server-clock, elapsed is local — no cross-host skew).
+// Busy badges are NOT aged; they flip only via the server's idle-edge event.
 func (a *App) refreshTasksTable() {
 	all := make([]protocol.TaskInfo, 0, len(a.tasksByID))
-	for _, t := range a.tasksByID {
+	now := time.Now()
+	for id, t := range a.tasksByID {
+		if t.LastOutputAt > 0 && time.Duration(t.OutputIdleMs)*time.Millisecond >= protocol.ActivityBusyThreshold {
+			if rt, ok := a.actRecvAt[id]; ok {
+				t.OutputIdleMs += uint64(now.Sub(rt) / time.Millisecond)
+			}
+		}
 		all = append(all, t)
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].CreatedAt > all[j].CreatedAt })
@@ -1272,8 +1343,16 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	case ClearAction:
 		a.cmdresult.Clear()
 		return a, nil
+	case RefreshAction:
+		if a.client == nil {
+			a.cmdresult.Append(WarnStyle.Render("refresh: not connected"))
+			return a, nil
+		}
+		a.cmdresult.Append("refreshing snapshot…")
+		return a, RefreshSnapshot(a.client)
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] / repo <path> / caps / clear / help / quit")
+		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] / repo <path> / caps / refresh / clear / help / quit")
+		a.cmdresult.Append("refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now")
 		a.cmdresult.Append("submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task")
 		a.cmdresult.Append("interactive [--resume ID] [--resume-conversation]      - open/resume one-shot interactive")
 		a.cmdresult.Append("session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive")

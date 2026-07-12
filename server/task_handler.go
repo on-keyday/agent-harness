@@ -28,6 +28,12 @@ type TaskHandler struct {
 	Registry *Registry
 	OnChange func() // called after Submit / Cancel mutations
 
+	// OnSessionActivity fires when a live detachable session's PTY output
+	// crosses the busy/idle edge (SessionHooks.OnActivity, forwarded per
+	// mux). Server.New wires this to a task_activity event publish; nil-safe
+	// for tests that construct TaskHandler directly.
+	OnSessionActivity func(taskID string, busy bool, lastOutputUnixNano int64)
+
 	// NotifyHook is the configured external command for the egress leg of
 	// notify (empty = egress disabled). See server/notify_hook.go.
 	NotifyHook string
@@ -804,6 +810,11 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 			OnAttach: func(id string) { h.Tasks.MarkAttached(id, true) },
 			OnDetach: func(id string) { _ = h.Tasks.SetDetached(id) },
 			OnStop:   func(id string) { h.Sessions.Remove(id) },
+			OnActivity: func(id string, busy bool, lo int64) {
+				if h.OnSessionActivity != nil {
+					h.OnSessionActivity(id, busy, lo)
+				}
+			},
 		}
 
 		parentCtx := h.Ctx

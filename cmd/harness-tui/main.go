@@ -70,7 +70,9 @@ func main() {
 			func(runCtx context.Context, h cli.PersistHandle) error {
 				handle := h.(*cli.ClientHandle)
 				program.Send(tui.BindClientMsg{Client: handle.C})
-				program.Send(tui.RefreshSnapshot(handle.C)())
+				// No eager snapshot here: the tasks.status subscription's
+				// SubscribedMsg triggers it AFTER the join completes, so no
+				// event can fall between the snapshot and the subscription.
 				go tui.SubscribeTaskStatus(runCtx, handle.C, program)
 				go tui.SubscribeRunnerStatus(runCtx, handle.C, program)
 				go tui.SubscribeNotifications(runCtx, handle.C, program)

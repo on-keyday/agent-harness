@@ -13,14 +13,10 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// ActivityBusyThreshold is the display heuristic separating "busy" from
-// "idle" for a live interactive session, applied to the server-computed
-// output_idle_ms. Byte-level basis (measured 2026-07-12 against claude): an
-// in-flight agent TUI repaints its spinner ~every 100ms with a max observed
-// gap of ~0.5s, while an idle prompt emits nothing at all — so 3s cleanly
-// separates the two with wide margin. Display-only; the await-idle RPC has
-// its own server-side default.
-const ActivityBusyThreshold = 3 * time.Second
+// ActivityBusyThreshold aliases the wire-shared busy/idle cut so existing
+// cli callers keep compiling; see protocol.ActivityBusyThreshold for the
+// basis and the server-side counterpart (the task_activity event watcher).
+const ActivityBusyThreshold = protocol.ActivityBusyThreshold
 
 // ActivityStr renders the busy/idle badge for a live interactive session
 // from the server-computed idle age (TaskInfo.output_idle_ms; caller must
