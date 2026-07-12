@@ -12,26 +12,34 @@ Setup
 1. Create a Discord webhook: Server Settings -> Integrations -> Webhooks ->
    New Webhook, then "Copy Webhook URL".
 2. Make this file executable and provide the webhook URL where the harness
-   *server* runs (its environment is inherited by the hook). Either way the URL
-   stays out of this (public) repo:
+   *server* runs. Either way the URL stays out of this (public) repo:
 
        chmod +x examples/notify-hooks/discord.py
 
-       # option A — env var:
-       export DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/XXXX/YYYY'
-
-       # option B — a file that holds the URL (set once, gitignored), and point
-       # an env var at its path:
+       # option A (recommended — survives server restarts): a file that holds
+       # the URL (set once, gitignored), passed as an argument:
        printf '%s' 'https://discord.com/api/webhooks/XXXX/YYYY' > /secret/discord-url
        chmod 600 /secret/discord-url
+       # then --notify-hook '/abs/discord.py --url-file /secret/discord-url'
+
+       # option B — env vars, inherited from the server's environment (these
+       # are forgotten when the server is respawned from a clean shell):
+       export DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/XXXX/YYYY'
+       # or point at the URL file instead:
        export DISCORD_WEBHOOK_FILE=/secret/discord-url
 
-   Resolution order is DISCORD_WEBHOOK_URL, then DISCORD_WEBHOOK_FILE. There is
-   no hardcoded default path.
+   Resolution order is --url, --url-file, DISCORD_WEBHOOK_URL, then
+   DISCORD_WEBHOOK_FILE. There is no hardcoded default path.
 
-3. Start the server with the hook (absolute path; invoked directly, no shell):
+3. Start the server with the hook (absolute path; invoked directly, no shell;
+   the hook command line is whitespace-split, so the args work but no path in
+   it may contain spaces). To make the hook survive restarts, write the same
+   command line into `<data-dir>/notify-hook` once instead of passing the flag:
 
-       harness-server --listen <addr> --notify-hook /abs/path/to/discord.py
+       harness-server --listen <addr> \
+           --notify-hook '/abs/discord.py --url-file /secret/discord-url'
+       # or, persistent across restarts:
+       echo '/abs/discord.py --url-file /secret/discord-url' > harness-data/notify-hook
 
    Then `harness-cli notify --level warn "needs your call"` reaches Discord.
 
@@ -72,24 +80,38 @@ COLORS = {
 USER_AGENT = "harness-notify/1.0 (+https://github.com/on-keyday/agent-harness)"
 
 
-def resolve_url() -> str:
-    """Resolve the webhook URL: DISCORD_WEBHOOK_URL, else the contents of the
-    file at DISCORD_WEBHOOK_FILE. No secret is hardcoded and no default path is
-    assumed — both sources come from the environment, so nothing leaks into the
-    (public) repo. Returns "" when neither is configured."""
+def _read_url_file(path: str, label: str) -> str:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError as e:
+        print(f"discord notify: cannot read {label} {path!r}: {e}", file=sys.stderr)
+        return ""
+
+
+def resolve_url(argv: list[str]) -> str:
+    """Resolve the webhook URL: --url VALUE, --url-file PATH (argv, preferred —
+    argv comes from the persisted notify-hook command line, so it survives
+    server restarts), then DISCORD_WEBHOOK_URL / DISCORD_WEBHOOK_FILE env. No
+    secret is hardcoded and no default path is assumed, so nothing leaks into
+    the (public) repo. Returns "" when nothing is configured."""
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--url" and i + 1 < len(argv):
+            url = argv[i + 1].strip()
+            if url:
+                return url
+        elif argv[i] == "--url-file" and i + 1 < len(argv):
+            url = _read_url_file(argv[i + 1], "--url-file")
+            if url:
+                return url
+        i += 1
     url = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
     if url:
         return url
     path = os.environ.get("DISCORD_WEBHOOK_FILE", "").strip()
     if path:
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                return f.read().strip()
-        except OSError as e:
-            print(
-                f"discord notify: cannot read DISCORD_WEBHOOK_FILE {path!r}: {e}",
-                file=sys.stderr,
-            )
+        return _read_url_file(path, "DISCORD_WEBHOOK_FILE")
     return ""
 
 
@@ -135,11 +157,12 @@ def build_payload(ev: dict) -> dict:
 
 
 def main() -> int:
-    url = resolve_url()
+    url = resolve_url(sys.argv[1:])
     if not url:
         print(
             "discord notify: no webhook URL "
-            "(set DISCORD_WEBHOOK_URL, or DISCORD_WEBHOOK_FILE to a file holding it)",
+            "(pass --url URL / --url-file PATH, or set DISCORD_WEBHOOK_URL / "
+            "DISCORD_WEBHOOK_FILE)",
             file=sys.stderr,
         )
         return 1

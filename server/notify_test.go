@@ -111,6 +111,65 @@ func TestRunNotifyHook_Accepted_DeliversPayload(t *testing.T) {
 	}
 }
 
+func TestRunNotifyHook_ArgsPassedThrough(t *testing.T) {
+	dir := t.TempDir()
+	outFile := filepath.Join(dir, "out.txt")
+	script := filepath.Join(dir, "hook.sh")
+	body := "#!/bin/sh\necho \"ARGS=$*\" > " + outFile + "\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	status := runNotifyHook(script+" --flag value", notifyHookPayload{Text: "x"})
+	if status != protocol.NotifyStatus_Accepted {
+		t.Fatalf("status = %v, want accepted", status)
+	}
+	var data []byte
+	for i := 0; i < 100; i++ {
+		if b, err := os.ReadFile(outFile); err == nil && len(b) > 0 {
+			data = b
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := strings.TrimSpace(string(data)); got != "ARGS=--flag value" {
+		t.Fatalf("hook argv = %q, want %q", got, "ARGS=--flag value")
+	}
+}
+
+func TestResolveNotifyHook_Precedence(t *testing.T) {
+	dir := t.TempDir()
+	hookFile := filepath.Join(dir, NotifyHookFileName)
+	if err := os.WriteFile(hookFile, []byte("# comment\n\n/from/file --arg\n/ignored/second-line\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Flag wins over env and file.
+	if cmd, src := ResolveNotifyHook("/from/flag", "/from/env", dir); cmd != "/from/flag" || src != "flag" {
+		t.Fatalf("flag precedence: got (%q, %q)", cmd, src)
+	}
+	// Env wins over file.
+	if cmd, src := ResolveNotifyHook("", "/from/env", dir); cmd != "/from/env" || src != "env" {
+		t.Fatalf("env precedence: got (%q, %q)", cmd, src)
+	}
+	// File: comments and blank lines skipped, first real line only (args kept).
+	if cmd, src := ResolveNotifyHook("", "", dir); cmd != "/from/file --arg" || src != "file" {
+		t.Fatalf("file fallback: got (%q, %q)", cmd, src)
+	}
+	// Absent file → no hook, no error.
+	if cmd, src := ResolveNotifyHook("", "", t.TempDir()); cmd != "" || src != "" {
+		t.Fatalf("absent file: got (%q, %q), want empty", cmd, src)
+	}
+	// Comment-only file → no hook.
+	dir2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir2, NotifyHookFileName), []byte("# only a comment\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if cmd, src := ResolveNotifyHook("", "", dir2); cmd != "" || src != "" {
+		t.Fatalf("comment-only file: got (%q, %q), want empty", cmd, src)
+	}
+}
+
 func TestNotifyRing_AppendEvicts(t *testing.T) {
 	r := newNotifyRing(3)
 	for i := 0; i < 5; i++ {

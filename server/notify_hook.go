@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +51,44 @@ func (c *capBuf) String() string {
 	return strings.TrimSpace(string(c.buf))
 }
 
+// NotifyHookFileName is the well-known file under the server's data-dir that
+// persists the notify-hook command line across restarts. Flag and env are
+// per-invocation and get forgotten whenever the server is respawned from a
+// clean shell; the data-dir survives, so a hook written there once stays
+// configured forever.
+const NotifyHookFileName = "notify-hook"
+
+// ResolveNotifyHook picks the notify-hook command line: --notify-hook flag →
+// HARNESS_NOTIFY_HOOK env → first non-empty, non-# line of
+// <dataDir>/notify-hook. Every value is a whitespace-split command line (see
+// runNotifyHook). Returns the command and its source ("flag", "env", "file")
+// for logging; "" command means no hook (egress disabled). A file read error
+// other than not-exist is logged, not fatal — notify egress is best-effort.
+func ResolveNotifyHook(flagVal, envVal, dataDir string) (cmd, source string) {
+	if v := strings.TrimSpace(flagVal); v != "" {
+		return v, "flag"
+	}
+	if v := strings.TrimSpace(envVal); v != "" {
+		return v, "env"
+	}
+	path := filepath.Join(dataDir, NotifyHookFileName)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("notify hook: config file unreadable — egress disabled", "path", path, "err", err)
+		}
+		return "", ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		return line, "file"
+	}
+	return "", ""
+}
+
 // notifyHookPayload is the JSON written to the hook's stdin. Worker fields are
 // empty for origin=external. conn_id + ts are server-injected.
 type notifyHookPayload struct {
@@ -65,11 +105,14 @@ type notifyHookPayload struct {
 }
 
 // runNotifyHook launches hookCmd (no shell), passing payload as stdin JSON and
-// HARNESS_NOTIFY_* env. It does NOT wait for completion: Start success →
+// HARNESS_NOTIFY_* env. hookCmd is whitespace-split into executable + args —
+// no quoting, so the executable path itself must not contain spaces (wrap it
+// in a script if it does). It does NOT wait for completion: Start success →
 // accepted (launched, not delivered); the process is reaped + timeout-killed in
 // a background goroutine. Empty hookCmd → no_hook; Start failure → spawn_failed.
 func runNotifyHook(hookCmd string, payload notifyHookPayload) protocol.NotifyStatus {
-	if hookCmd == "" {
+	argv := strings.Fields(hookCmd)
+	if len(argv) == 0 {
 		return protocol.NotifyStatus_NoHook
 	}
 	body, err := json.Marshal(payload)
@@ -78,7 +121,7 @@ func runNotifyHook(hookCmd string, payload notifyHookPayload) protocol.NotifySta
 		return protocol.NotifyStatus_SpawnFailed
 	}
 	cctx, cancel := context.WithTimeout(context.Background(), notifyHookTimeout)
-	cmd := exec.CommandContext(cctx, hookCmd)
+	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
 	cmd.Stdin = bytes.NewReader(body)
 	cmd.Env = append(os.Environ(),
 		"HARNESS_NOTIFY_LEVEL="+payload.Level,
