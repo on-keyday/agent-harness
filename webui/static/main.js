@@ -1195,6 +1195,30 @@ const POLL_INTERVAL_MS = 5000;
           await refreshSnapshot();
           out = "snapshot refreshed";
           break;
+        case "await-idle": {
+          // await-idle <task-id> [--notify | --topic T] [--threshold-ms N]
+          // Default (reply sink) keeps the promise open until the session
+          // goes idle, then prints; --notify arms and returns immediately
+          // (fire lands in the notification feed + notify-hook egress).
+          let notify = false, topic = null, thresholdMs = 0, target = null;
+          for (let i = 1; i < tokens.length; i++) {
+            const t = tokens[i];
+            if (t === "--notify") notify = true;
+            else if (t === "--topic") { i++; topic = tokens[i]; }
+            else if (t.startsWith("--topic=")) topic = t.slice("--topic=".length);
+            else if (t === "--threshold-ms") { i++; thresholdMs = parseInt(tokens[i], 10) || 0; }
+            else if (t.startsWith("--threshold-ms=")) thresholdMs = parseInt(t.slice("--threshold-ms=".length), 10) || 0;
+            else if (!target) target = t;
+            else throw new Error(`await-idle: unexpected arg ${t}`);
+          }
+          if (!target) throw new Error("await-idle: missing task id (32 hex)");
+          if (notify && topic) throw new Error("await-idle: --notify and --topic are mutually exclusive");
+          const sink = notify ? "notify" : (topic ? "board" : "reply");
+          if (sink === "reply") appendCmdOutput("await-idle: waiting for the session to go idle…", true);
+          const r = await window.harness.awaitIdle({ taskId: target, thresholdMs, sink, topic: topic || undefined });
+          out = `await-idle ${target.slice(0, 12)}: ${r.status}`;
+          break;
+        }
         case "cancel":
           if (!tokens[1]) throw new Error("cancel: missing task id");
           await window.harness.cancel(tokens[1]);
@@ -1240,6 +1264,8 @@ const POLL_INTERVAL_MS = 5000;
             "                            submit task (use repo dropdown / Resume task id)",
             "  list                      refresh the snapshot and echo task rows",
             "  refresh (alias: sync)     force a snapshot re-sync",
+            "  await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
+            "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
             "  cancel <task-id>          cancel a task",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  file ls <task> [rel]      list a worktree directory",
@@ -1549,6 +1575,10 @@ const POLL_INTERVAL_MS = 5000;
   ro.observe(document.getElementById("terminal"));
 
   const attachedTask = document.getElementById("attached-task");
+  // currentSessionTaskId mirrors the task id of the session the terminal is
+  // attached to ("" when none). Kept in lockstep with attachedTask's text by
+  // every attach/open/stop path; the await-idle button reads it.
+  let currentSessionTaskId = "";
 
   // showError appends an error into attachedTask for inline feedback.
   const showError = (err) => {
@@ -1681,9 +1711,11 @@ const POLL_INTERVAL_MS = 5000;
     try {
       const taskID = await window.harness.attachSession(id, view ? "view" : "control");
       attachedTask.textContent = `attached: ${taskID} (${view ? "view" : "reattached"})`;
+      currentSessionTaskId = taskID;
       scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";
+      currentSessionTaskId = "";
       showError(err);
     }
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
@@ -1701,9 +1733,11 @@ const POLL_INTERVAL_MS = 5000;
       setActiveTab("terminal");
       term.reset();
       attachedTask.textContent = `attached: ${taskID} (resumed conversation)`;
+      currentSessionTaskId = taskID;
       scrollTermToBottom();
     } catch (err) {
       attachedTask.textContent = "";
+      currentSessionTaskId = "";
       if (routeAmbiguous(err, req)) return;
       showError(err);
     }
@@ -1717,6 +1751,7 @@ const POLL_INTERVAL_MS = 5000;
   // Factored out so the two call sites can't drift (see pickRunnerAndRetry).
   const onInteractiveOpened = (taskID, label) => {
     attachedTask.textContent = `attached: ${taskID} (${label})`;
+    currentSessionTaskId = taskID;
   };
 
   // pickRunnerAndRetry shows the runner-picker modal for an ambiguous_runner
@@ -1830,6 +1865,7 @@ const POLL_INTERVAL_MS = 5000;
       onInteractiveOpened(taskID, label);
     } catch (e) {
       attachedTask.textContent = "";
+      currentSessionTaskId = "";
       if (routeAmbiguous(e, { ...req, detachable })) return;
       alert(`startInteractive: ${e.message}`);
     }
@@ -1843,8 +1879,34 @@ const POLL_INTERVAL_MS = 5000;
   document.getElementById("stop-streaming").addEventListener("click", () => {
     window.harness.detachInteractive();
     attachedTask.textContent = "";
+    currentSessionTaskId = "";
     hideQuickReattach();
   });
+
+  // "🔔 idleで通知": arm a one-shot await-idle watcher (sink=notify) on the
+  // session the terminal is attached to. The fire arrives in the notification
+  // feed AND the server's --notify-hook egress (e.g. the phone), so this is
+  // the "tell me when it's done thinking" button before walking away.
+  {
+    const awaitIdleBtn = document.getElementById("await-idle-btn");
+    const origLabel = awaitIdleBtn.textContent;
+    let revertTimer = 0;
+    const flash = (text) => {
+      awaitIdleBtn.textContent = text;
+      clearTimeout(revertTimer);
+      revertTimer = setTimeout(() => { awaitIdleBtn.textContent = origLabel; }, 2500);
+    };
+    awaitIdleBtn.addEventListener("click", async () => {
+      if (!currentSessionTaskId) { flash("🔔 セッション未接続"); return; }
+      try {
+        const r = await window.harness.awaitIdle({ taskId: currentSessionTaskId, sink: "notify" });
+        flash(r.status === "armed" ? "🔔 armed ✓" : `🔔 ${r.status}`);
+      } catch (e) {
+        console.error("awaitIdle:", e);
+        flash("🔔 error");
+      }
+    });
+  }
 
   if (reattachQuick) {
     reattachQuick.addEventListener("click", () => reattachTo(reattachQuick.dataset.taskId));
@@ -1967,10 +2029,18 @@ const POLL_INTERVAL_MS = 5000;
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
 
-    // Reattach / View — live interactive session only.
+    // Reattach / View / idle-notify — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
       addItem("↪ Reattach", "", () => reattachTo(t.id, false));
       addItem("👁 View", "", () => reattachTo(t.id, true));
+      addItem("🔔 idleで通知", "", async () => {
+        try {
+          const r = await window.harness.awaitIdle({ taskId: t.id, sink: "notify" });
+          appendCmdOutput(`await-idle ${t.id.slice(0, 12)}: ${r.status}`, true);
+        } catch (e) {
+          appendCmdOutput(`await-idle: ${e.message}`, true);
+        }
+      });
     }
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
@@ -1988,7 +2058,13 @@ const POLL_INTERVAL_MS = 5000;
           setActiveTab("terminal");
           term.reset();
           attachedTask.textContent = `attached: ${id} (${note})`;
-        } catch (err) { attachedTask.textContent = ""; if (routeAmbiguous(err, req)) return; alert(`resume: ${err.message}`); }
+          currentSessionTaskId = id;
+        } catch (err) {
+          attachedTask.textContent = "";
+          currentSessionTaskId = "";
+          if (routeAmbiguous(err, req)) return;
+          alert(`resume: ${err.message}`);
+        }
         try { fit.fit(); } catch (_) {}
         window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
       };

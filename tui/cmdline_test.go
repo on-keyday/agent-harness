@@ -603,3 +603,43 @@ func TestParseRefresh(t *testing.T) {
 		}
 	}
 }
+
+// TestParseSessionAwaitIdle covers the session await-idle sub-verb: default
+// reply sink, --notify / --topic routing, mutual exclusion, and id required.
+func TestParseSessionAwaitIdle(t *testing.T) {
+	act, err := ParseCommand("session await-idle abc123", "")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	ai, ok := act.(SessionAwaitIdleAction)
+	if !ok {
+		t.Fatalf("got %T, want SessionAwaitIdleAction", act)
+	}
+	if ai.IDPrefix != "abc123" || ai.Notify || ai.Topic != "" || ai.ThresholdMs != 0 {
+		t.Errorf("unexpected defaults: %+v", ai)
+	}
+
+	act, err = ParseCommand("session await-idle --notify --threshold-ms 5000 abc123", "")
+	if err != nil {
+		t.Fatalf("parse notify: %v", err)
+	}
+	ai = act.(SessionAwaitIdleAction)
+	if !ai.Notify || ai.ThresholdMs != 5000 {
+		t.Errorf("notify/threshold not parsed: %+v", ai)
+	}
+
+	act, err = ParseCommand("session await-idle --topic chat.me abc123", "")
+	if err != nil {
+		t.Fatalf("parse topic: %v", err)
+	}
+	if ai = act.(SessionAwaitIdleAction); ai.Topic != "chat.me" {
+		t.Errorf("topic not parsed: %+v", ai)
+	}
+
+	if _, err = ParseCommand("session await-idle --notify --topic t abc", ""); err == nil {
+		t.Error("want error for --notify with --topic")
+	}
+	if _, err = ParseCommand("session await-idle", ""); err == nil {
+		t.Error("want error for missing task id")
+	}
+}

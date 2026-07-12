@@ -78,6 +78,18 @@ type SessionKillAction struct {
 	IDPrefix string
 }
 
+// SessionAwaitIdleAction arms a one-shot idle watcher on a live session.
+// Default sink is reply: the long-poll runs in a tea.Cmd goroutine and the
+// fire lands in cmdresult as an AwaitIdleResultMsg (non-blocking for the UI).
+// Notify routes the fire through the operator-notification egress; Topic
+// publishes it to an agentboard topic instead.
+type SessionAwaitIdleAction struct {
+	IDPrefix    string
+	ThresholdMs uint32
+	Notify      bool
+	Topic       string
+}
+
 // RepoAction switches the TUI session's default repo. Subsequent submit
 // popups, interactive opens, and slash-command --repo defaults all use the
 // new value. Per-action --repo overrides still win on a single call.
@@ -180,6 +192,7 @@ func (SessionNewAction) isAction()       {}
 func (SessionAttachAction) isAction()    {}
 func (SessionLsAction) isAction()        {}
 func (SessionKillAction) isAction()      {}
+func (SessionAwaitIdleAction) isAction() {}
 func (FileLsAction) isAction()           {}
 func (FilePushAction) isAction()         {}
 func (FilePullAction) isAction()         {}
@@ -458,8 +471,32 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			return nil, fmt.Errorf("session kill: too many arguments (got %d, want 1)", len(rest))
 		}
 		return SessionKillAction{IDPrefix: rest[0]}, nil
+	case "await-idle":
+		fs := flag.NewFlagSet("session await-idle", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		thresholdMs := fs.Uint("threshold-ms", 0, "quiescence threshold in ms (0 = server default)")
+		notify := fs.Bool("notify", false, "fire via the operator-notification egress instead of an in-TUI result line")
+		topic := fs.String("topic", "", "fire via an agentboard publish to this topic")
+		if err := fs.Parse(rest); err != nil {
+			return nil, fmt.Errorf("session await-idle: %w", err)
+		}
+		if fs.NArg() == 0 {
+			return nil, fmt.Errorf("session await-idle: task id required")
+		}
+		if fs.NArg() > 1 {
+			return nil, fmt.Errorf("session await-idle: too many arguments (got %d, want 1)", fs.NArg())
+		}
+		if *notify && *topic != "" {
+			return nil, fmt.Errorf("session await-idle: --notify and --topic are mutually exclusive")
+		}
+		return SessionAwaitIdleAction{
+			IDPrefix:    fs.Arg(0),
+			ThresholdMs: uint32(*thresholdMs),
+			Notify:      *notify,
+			Topic:       *topic,
+		}, nil
 	default:
-		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id>)", verb)
+		return nil, fmt.Errorf("session: unknown sub-verb %q (new | attach <id> | ls | kill <id> | await-idle <id>)", verb)
 	}
 }
 

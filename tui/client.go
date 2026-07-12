@@ -144,6 +144,30 @@ func DoPruneTasks(c *cli.Client, before time.Duration) tea.Cmd {
 	}
 }
 
+// AwaitIdleResultMsg carries the outcome of a session await-idle command.
+// For the reply sink this arrives when the watcher FIRES (or the session
+// stops) — potentially minutes after the command. For notify/board sinks it
+// arrives immediately with Status=Armed.
+type AwaitIdleResultMsg struct {
+	TaskID       string
+	Status       protocol.AwaitIdleStatus
+	LastOutputAt uint64
+	Err          error
+}
+
+// DoAwaitIdle arms a one-shot idle watcher via the persistent client. ctx
+// must be the long-lived app context, NOT a 10s round-trip timeout: the
+// reply sink's response is deferred until the session actually goes idle.
+func DoAwaitIdle(ctx context.Context, c *cli.Client, taskID string, thresholdMs uint32, sink protocol.AwaitIdleSink, topic string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := c.AwaitIdle(ctx, taskID, thresholdMs, sink, topic)
+		if err != nil {
+			return AwaitIdleResultMsg{TaskID: taskID, Err: err}
+		}
+		return AwaitIdleResultMsg{TaskID: taskID, Status: resp.Status, LastOutputAt: resp.LastOutputAt}
+	}
+}
+
 // RefreshSnapshot wraps (*cli.Client).Snapshot with the SnapshotMsg envelope
 // the TUI's update loop expects. The RoundTripTaskControl + decode lives in
 // the cli package so the wasm bridge and other consumers can share it.

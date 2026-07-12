@@ -465,6 +465,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render("cancelled ") + short)
 		return a, nil
 
+	case AwaitIdleResultMsg:
+		short := shortTaskID(msg.TaskID)
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("await-idle " + short + ": " + msg.Err.Error()))
+			return a, nil
+		}
+		switch msg.Status {
+		case protocol.AwaitIdleStatus_Fired:
+			line := "await-idle " + short + ": session is idle"
+			if msg.LastOutputAt > 0 {
+				line += " (last output " + formatNanoTs(msg.LastOutputAt) + ")"
+			}
+			a.cmdresult.Append(OKStyle.Render(line))
+		case protocol.AwaitIdleStatus_Armed:
+			a.cmdresult.Append(OKStyle.Render("await-idle " + short + ": armed"))
+		case protocol.AwaitIdleStatus_SessionStopped:
+			a.cmdresult.Append(WarnStyle.Render("await-idle " + short + ": session stopped before going idle"))
+		case protocol.AwaitIdleStatus_NotFound:
+			a.cmdresult.Append(WarnStyle.Render("await-idle " + short + ": no live session for this task"))
+		default:
+			a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf("await-idle %s: %v", short, msg.Status)))
+		}
+		return a, nil
+
 	case PruneResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("prune failed: " + msg.Err.Error()))
@@ -900,6 +924,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.filepicker.SetSize(a.width, a.height)
 			return a, cmd
 		}
+		// `w` arms an await-idle watcher on the selected task: the fire lands
+		// as a result line in cmdresult when the session's output goes idle.
+		// `W` routes the fire through the operator-notification egress
+		// instead (notify feed + --notify-hook, e.g. the phone) — for when
+		// you're about to walk away.
+		if a.focus == focusTasks && !logsEditing && (msg.String() == "w" || msg.String() == "W") {
+			taskID := a.tasks.SelectedID()
+			if taskID == "" {
+				a.cmdresult.Append(WarnStyle.Render("await-idle: no task selected"))
+				return a, nil
+			}
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("await-idle: not connected"))
+				return a, nil
+			}
+			sink := protocol.AwaitIdleSink_Reply
+			if msg.String() == "W" {
+				sink = protocol.AwaitIdleSink_Notify
+			} else {
+				a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(taskID)))
+			}
+			return a, DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, "")
+		}
 		// `d` opens the detail popup for the focused row (runners or tasks).
 		if !logsEditing && msg.String() == "d" {
 			switch a.focus {
@@ -1202,7 +1249,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · F file picker · d detail · c cancel · C conns · O board · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -1363,6 +1410,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("session attach <id>         - reattach to a session")
 		a.cmdresult.Append("session ls                  - list detachable sessions")
 		a.cmdresult.Append("session kill <id>           - terminate a session")
+		a.cmdresult.Append("session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)")
 		a.cmdresult.Append("file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)")
 		a.cmdresult.Append("file push [-r] [-f] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite)")
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
@@ -1471,6 +1519,26 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoCancel(a.client, v.IDPrefix, full)
+	case SessionAwaitIdleAction:
+		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		sink := protocol.AwaitIdleSink_Reply
+		switch {
+		case v.Notify:
+			sink = protocol.AwaitIdleSink_Notify
+		case v.Topic != "":
+			sink = protocol.AwaitIdleSink_Board
+		}
+		if sink == protocol.AwaitIdleSink_Reply {
+			a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(full)))
+		}
+		// appCtx, not a round-trip timeout: the reply sink long-polls until
+		// the session actually goes idle. The cmd goroutine carries it; the
+		// UI stays fully interactive meanwhile.
+		return a, DoAwaitIdle(a.appCtx, a.client, full, v.ThresholdMs, sink, v.Topic)
 	case FileLsAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {

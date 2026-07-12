@@ -95,6 +95,7 @@ func main() {
 		"filePullDirBytes":   js.FuncOf(harnessFilePullDirBytes),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
+		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
 		"capList":            js.FuncOf(harnessCapList),
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
@@ -1102,6 +1103,81 @@ func harnessSendNotification(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessAwaitIdle arms a one-shot idle watcher on a live interactive
+// session. For the default reply sink the Promise resolves when the watcher
+// FIRES (potentially minutes later — callers should not await it inline in a
+// UI handler unless that is the point); for notify/board sinks it resolves
+// immediately with status "armed".
+//
+//	harness.awaitIdle({taskId: "...", thresholdMs?: N, sink?: "reply"|"notify"|"board", topic?: "..."})
+//	  -> Promise<{status: string, lastOutputAt: number}>
+func harnessAwaitIdle(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("awaitIdle: missing options arg"))
+				return
+			}
+			opts := args[0]
+			taskID := opts.Get("taskId").String()
+			thresholdMs := uint32(0)
+			if v := opts.Get("thresholdMs"); v.Type() == js.TypeNumber {
+				thresholdMs = uint32(v.Int())
+			}
+			sink := protocol.AwaitIdleSink_Reply
+			topic := ""
+			switch s := opts.Get("sink"); {
+			case s.Type() == js.TypeString && s.String() == "notify":
+				sink = protocol.AwaitIdleSink_Notify
+			case s.Type() == js.TypeString && s.String() == "board":
+				sink = protocol.AwaitIdleSink_Board
+				if t := opts.Get("topic"); t.Type() == js.TypeString {
+					topic = t.String()
+				}
+			}
+			// rootCtx, not a round-trip timeout: the reply sink's response is
+			// deferred until the session actually goes idle.
+			resp, err := c.AwaitIdle(rootCtx, taskID, thresholdMs, sink, topic)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("awaitIdle: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"status":       awaitIdleStatusStr(resp.Status),
+				"lastOutputAt": float64(resp.LastOutputAt),
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// awaitIdleStatusStr renders the AwaitIdleStatus enum for the JS side.
+func awaitIdleStatusStr(s protocol.AwaitIdleStatus) string {
+	switch s {
+	case protocol.AwaitIdleStatus_Fired:
+		return "fired"
+	case protocol.AwaitIdleStatus_Armed:
+		return "armed"
+	case protocol.AwaitIdleStatus_SessionStopped:
+		return "session_stopped"
+	case protocol.AwaitIdleStatus_NotFound:
+		return "not_found"
+	case protocol.AwaitIdleStatus_BadRequest:
+		return "bad_request"
+	default:
+		return fmt.Sprintf("unknown(%d)", int(s))
+	}
 }
 
 // harnessWatchNotifications starts a notification-watch goroutine. Events are
