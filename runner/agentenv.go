@@ -71,7 +71,21 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 	if s.BinDir != "" {
 		path := s.BinDir
 		if existing := os.Getenv("PATH"); existing != "" {
-			path += string(os.PathListSeparator) + existing
+			// Drop prior occurrences of BinDir before prepending: a runner
+			// restarted from inside an agent session inherits a PATH that
+			// already contains BinDir, and without filtering each runner
+			// generation would grow the spawned agents' PATH by one copy.
+			sep := string(os.PathListSeparator)
+			parts := strings.Split(existing, sep)
+			kept := parts[:0]
+			for _, p := range parts {
+				if p != s.BinDir {
+					kept = append(kept, p)
+				}
+			}
+			if rest := strings.Join(kept, sep); rest != "" {
+				path += sep + rest
+			}
 		}
 		env = append(env, "PATH="+path)
 	}

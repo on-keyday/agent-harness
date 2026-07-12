@@ -92,6 +92,49 @@ func TestBuildAgentEnv_BinDirPrependsPATH(t *testing.T) {
 	}
 }
 
+// TestBuildAgentEnv_BinDirDedupedInPATH verifies prior occurrences of BinDir
+// are dropped before prepending. A runner restarted from inside an agent
+// session inherits a PATH that already contains BinDir (possibly many copies
+// from earlier generations); without filtering, every restart cycle grows the
+// spawned agents' PATH by one more copy.
+func TestBuildAgentEnv_BinDirDedupedInPATH(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", strings.Join([]string{
+		"/opt/harness/bin", "/usr/bin", "/opt/harness/bin", "/bin",
+	}, sep))
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+		BinDir:    "/opt/harness/bin",
+	}
+	env := BuildAgentEnv(spec)
+	got := envMap(env)
+	want := strings.Join([]string{"/opt/harness/bin", "/usr/bin", "/bin"}, sep)
+	if got["PATH"] != want {
+		t.Errorf("PATH = %q, want %q", got["PATH"], want)
+	}
+}
+
+// TestBuildAgentEnv_BinDirOnlyEntryInParentPATH verifies the degenerate case
+// where the parent PATH consists solely of BinDir copies: the result must be
+// exactly BinDir with no trailing separator.
+func TestBuildAgentEnv_BinDirOnlyEntryInParentPATH(t *testing.T) {
+	sep := string(os.PathListSeparator)
+	t.Setenv("PATH", "/opt/harness/bin"+sep+"/opt/harness/bin")
+	spec := AgentEnvSpec{
+		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
+		RunnerID:  mustParseCID(t, "ws:1.2.3.4:9999-1"),
+		WSPath:    "/ws",
+		BinDir:    "/opt/harness/bin",
+	}
+	env := BuildAgentEnv(spec)
+	got := envMap(env)
+	if got["PATH"] != "/opt/harness/bin" {
+		t.Errorf("PATH = %q, want %q", got["PATH"], "/opt/harness/bin")
+	}
+}
+
 func TestBuildAgentEnv_BinDirEmpty_NoPATHEntry(t *testing.T) {
 	spec := AgentEnvSpec{
 		ServerCID: mustParseCID(t, "ws:127.0.0.1:8539-1"),
