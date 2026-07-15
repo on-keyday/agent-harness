@@ -425,6 +425,47 @@ TUI, and WebUI together.
   additionally reopen a finished oneshot worktree as an interactive session
   under the other agent and confirm the worktree state carried over.
 
+## Wiring inventory (every callsite to thread `agent_profile` / mode)
+
+Per "features span all three UIs" and "enumerate all callsites when
+intercepting a shared operation" — the full route map for session
+create/resume, so no surface is missed (line numbers drift; verify by symbol):
+
+**Wire construction (2 kinds, native + wasm parity):**
+
+- `SubmitRequest` — `cli/submit.go` (`Submit*` funnel).
+- `OpenInteractiveRequest` — `cli/open_interactive_native.go` **and**
+  `cli/open_interactive_wasm.go` (separate build-tag implementations — both
+  must be edited or WebUI silently diverges).
+
+**`cli.Client` funnels — add an `agentProfile` param, set the wire field:**
+
+- `SubmitWithSelectorArgsAndCaps` (`cli/submit.go`).
+- `OpenInteractiveWithSelectorArgsAndCaps` → `openInteractive` (native + wasm).
+- `OpenInteractiveX11` / `RunInteractiveX11` (`cli/x11.go`).
+- The narrower `Interactive*` / `SubmitWithSelector*` wrappers delegate down —
+  extend signatures or add an `...AndAgent` funnel; keep native/wasm in lockstep.
+
+**UI callers (pass the chosen profile; add the selection affordance):**
+
+- **CLI** — `cmd/harness-cli/main.go` (`submit`, `interactive`) and
+  `cmd/harness-cli/session.go` (open-detachable, x11, interactive). Add an
+  `--agent <name>` flag to these commands.
+- **TUI** — `tui/client.go` (`DoSubmit` / `DoSubmitWithOpts`) and
+  `tui/interactive.go` (`DoOpenDetachableSession`, `DoResumeSession`, and their
+  callsites). The Do\* helpers gain a profile param; the compose/new-session
+  flow and the `(runner, profile)` resume picker (§4a) supply it.
+- **WebUI** — wasm bridge `harnessSubmit` / `harnessStartInteractive` in
+  `cmd/harness-webui-wasm/main.go`, exported as `harness.submit` /
+  `harness.startInteractive`; JS `webui/static/main.js` (new-session form +
+  resume modal). Runner `agentBin` is already surfaced to JS
+  (`main.go` list mapping) — extend it to the `agent_profiles` set for the
+  dropdown / picker.
+
+Mode (§4c) rides the same callers: the CLI/TUI/WebUI action invoked (submit vs
+open-interactive) already selects the mode; no extra field is needed on the
+client — only the relaxed server-side guards.
+
 ## Tradeoffs
 
 **Functional**
