@@ -36,7 +36,7 @@ func (c *Client) SubmitWithSelector(ctx context.Context, repo, prompt string, se
 // holds). Callers that need a narrower grant should use
 // SubmitWithSelectorArgsAndCaps instead.
 func (c *Client) SubmitWithSelectorAndArgs(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
-	return c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false)
+	return c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false, "")
 }
 
 // SubmitWithSelectorArgsAndCaps is identical to SubmitWithSelectorAndArgs but
@@ -47,8 +47,14 @@ func (c *Client) SubmitWithSelectorAndArgs(ctx context.Context, repo, prompt str
 // capability mask. Has no effect on new tasks (non-resume).
 // resumeConversation, when true, asks the runner to resume the agent's own
 // conversation state in addition to the harness task/worktree.
-func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (string, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
+// agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
+// for the spawned task instead of the runner's default. "" means default.
+// buildSubmitRequest constructs the wire SubmitRequest for
+// SubmitWithSelectorArgsAndCaps, minus the resumeTaskID field (which needs
+// hex-parse error handling the caller does separately). Split out so unit
+// tests can assert on the built request's fields (e.g. AgentProfile) without
+// a live connection.
+func buildSubmitRequest(repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) protocol.SubmitRequest {
 	sub := protocol.SubmitRequest{}
 	sub.SetRepoPath([]byte(repo))
 	sub.SetPrompt([]byte(prompt))
@@ -57,6 +63,13 @@ func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt
 	sub.RequestedCaps = caps
 	sub.SetResumeCapsOverride(resumeCapsOverride)
 	sub.SetResumeConversation(resumeConversation)
+	sub.SetAgentProfile([]byte(agentProfile))
+	return sub
+}
+
+func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (string, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
+	sub := buildSubmitRequest(repo, prompt, sel, extraArgs, caps, resumeCapsOverride, resumeConversation, agentProfile)
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {

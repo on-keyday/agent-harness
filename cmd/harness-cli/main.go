@@ -121,7 +121,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation)
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation, "")
 		if err != nil {
 			die(err)
 		}
@@ -318,7 +318,7 @@ func main() {
 		defer c.Close()
 		// The session survives a client disconnect (tmux-like) and any
 		// operator client can take it over via reattach.
-		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation); err != nil {
+		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation, ""); err != nil {
 			die(err)
 		}
 

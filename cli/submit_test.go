@@ -144,6 +144,26 @@ func TestSubmitStatusError(t *testing.T) {
 	}
 }
 
+// TestBuildSubmitRequestAgentProfile verifies that a non-empty agentProfile
+// passed to buildSubmitRequest (and therefore SubmitWithSelectorArgsAndCaps)
+// ends up set on the wire SubmitRequest.
+func TestBuildSubmitRequestAgentProfile(t *testing.T) {
+	sub := buildSubmitRequest("/repo", "prompt", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "codex")
+	if string(sub.AgentProfile) != "codex" {
+		t.Errorf("AgentProfile = %q, want %q", sub.AgentProfile, "codex")
+	}
+}
+
+// TestBuildSubmitRequestAgentProfileEmpty verifies the default ("") case
+// leaves AgentProfile empty, so existing callers that don't pass a profile
+// are unaffected.
+func TestBuildSubmitRequestAgentProfileEmpty(t *testing.T) {
+	sub := buildSubmitRequest("/repo", "prompt", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "")
+	if len(sub.AgentProfile) != 0 {
+		t.Errorf("AgentProfile = %q, want empty", sub.AgentProfile)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(sub) == 0 || indexStr(s, sub) >= 0)
 }

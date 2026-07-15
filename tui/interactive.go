@@ -76,7 +76,7 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -108,13 +108,13 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 		if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
 			sel, err = cli.BuildSelector(cli.SelectorOpts{})
 			if err != nil {
 				return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 			}
-			stream, taskID, err = c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+			stream, taskID, err = c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), "", sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 		}
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
@@ -140,7 +140,7 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN, caps, resumeCapsOverride, resumeConversation)
+		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, sel, extraArgs, resumeTaskID, displayN, caps, resumeCapsOverride, resumeConversation, "")
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 		}
@@ -178,7 +178,7 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -221,7 +221,7 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 		if err != nil {
 			return SessionStartedMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+		stream, taskID, err := c.OpenInteractiveWithSelectorArgsAndCaps(context.Background(), repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 		if err != nil {
 			return SessionStartedMsg{Err: err}
 		}

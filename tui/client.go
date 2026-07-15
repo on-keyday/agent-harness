@@ -70,7 +70,7 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 		if err != nil {
 			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
 		}
-		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 		if err != nil {
 			return SubmitResultMsg{Err: err, Echo: echo}
 		}

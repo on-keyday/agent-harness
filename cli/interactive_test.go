@@ -76,6 +76,27 @@ func TestOpenInteractiveStatusError(t *testing.T) {
 	}
 }
 
+// TestBuildOpenInteractiveRequestAgentProfile verifies that a non-empty
+// agentProfile passed to buildOpenInteractiveRequest (and therefore
+// OpenInteractiveWithSelectorArgsAndCaps / openInteractive) ends up set on
+// the wire OpenInteractiveRequest.
+func TestBuildOpenInteractiveRequestAgentProfile(t *testing.T) {
+	oi := buildOpenInteractiveRequest("/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "codex")
+	if string(oi.AgentProfile) != "codex" {
+		t.Errorf("AgentProfile = %q, want %q", oi.AgentProfile, "codex")
+	}
+}
+
+// TestBuildOpenInteractiveRequestAgentProfileEmpty verifies the default ("")
+// case leaves AgentProfile empty, so existing callers that don't pass a
+// profile are unaffected.
+func TestBuildOpenInteractiveRequestAgentProfileEmpty(t *testing.T) {
+	oi := buildOpenInteractiveRequest("/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "")
+	if len(oi.AgentProfile) != 0 {
+		t.Errorf("AgentProfile = %q, want empty", oi.AgentProfile)
+	}
+}
+
 // TestInteractiveE2E is deferred to integration tests (requires live server + runner PTY).
 func TestInteractiveE2E(t *testing.T) {
 	t.Skip("deferred to E2E integration tests — requires live server and runner with PTY")

@@ -49,7 +49,7 @@ func (c *Client) OpenInteractiveWithSelector(ctx context.Context, repoPath strin
 // holds). Callers that need a narrower grant should use
 // OpenInteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (*agentexec.CommandExecutionStream, string, error) {
-	return c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoPath, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false)
+	return c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoPath, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false, "")
 }
 
 // OpenInteractiveWithSelectorArgsAndCaps is identical to
@@ -61,17 +61,18 @@ func (c *Client) OpenInteractiveWithSelectorAndArgs(ctx context.Context, repoPat
 // capability mask. Has no effect on new tasks (non-resume).
 // resumeConversation, when true, asks the runner to resume the agent's own
 // conversation state in addition to the harness task/worktree.
-func (c *Client) OpenInteractiveWithSelectorArgsAndCaps(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (*agentexec.CommandExecutionStream, string, error) {
-	return c.openInteractive(ctx, repoPath, sel, extraArgs, resumeTaskID, nil, caps, resumeCapsOverride, resumeConversation)
+// agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
+// for the spawned task instead of the runner's default. "" means default.
+func (c *Client) OpenInteractiveWithSelectorArgsAndCaps(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (*agentexec.CommandExecutionStream, string, error) {
+	return c.openInteractive(ctx, repoPath, sel, extraArgs, resumeTaskID, nil, caps, resumeCapsOverride, resumeConversation, agentProfile)
 }
 
-// openInteractive is the single OpenInteractive request builder. x11 is
-// nil for non-X11 sessions; when set, x11_enabled + the X11Forward block
-// (display + cookie) are sent. caps sets RequestedCaps on the wire request.
-// resumeCapsOverride, when true, sets the ResumeCapsOverride bit on the wire
-// request so the server applies caps as an override rather than inheriting.
-func (c *Client) openInteractive(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, x11 *X11Request, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (*agentexec.CommandExecutionStream, string, error) {
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
+// buildOpenInteractiveRequest constructs the wire OpenInteractiveRequest for
+// openInteractive, minus resumeTaskID (hex-parse error handled by the caller)
+// and the X11 fields (set by the caller when x11 != nil). Split out so unit
+// tests can assert on the built request's fields (e.g. AgentProfile) without
+// a live connection.
+func buildOpenInteractiveRequest(repoPath string, sel protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) protocol.OpenInteractiveRequest {
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repoPath))
 	oi.Selector = sel
@@ -79,6 +80,20 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, sel proto
 	oi.RequestedCaps = caps
 	oi.SetResumeCapsOverride(resumeCapsOverride)
 	oi.SetResumeConversation(resumeConversation)
+	oi.SetAgentProfile([]byte(agentProfile))
+	return oi
+}
+
+// openInteractive is the single OpenInteractive request builder. x11 is
+// nil for non-X11 sessions; when set, x11_enabled + the X11Forward block
+// (display + cookie) are sent. caps sets RequestedCaps on the wire request.
+// resumeCapsOverride, when true, sets the ResumeCapsOverride bit on the wire
+// request so the server applies caps as an override rather than inheriting.
+// agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
+// for the spawned task instead of the runner's default. "" means default.
+func (c *Client) openInteractive(ctx context.Context, repoPath string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, x11 *X11Request, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (*agentexec.CommandExecutionStream, string, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
+	oi := buildOpenInteractiveRequest(repoPath, sel, extraArgs, caps, resumeCapsOverride, resumeConversation, agentProfile)
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {
@@ -169,7 +184,7 @@ func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel p
 // holds). Callers that need a narrower grant should use
 // InteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
-	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false)
+	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false, "")
 }
 
 // InteractiveWithSelectorArgsAndCaps is identical to
@@ -179,8 +194,10 @@ func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string
 // resumeCapsOverride, when true, instructs the server to apply caps as an
 // override on resume (re-grant) rather than inheriting the original task's
 // capability mask. Has no effect on new tasks (non-resume).
-func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (string, error) {
-	stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+// agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
+// for the spawned task instead of the runner's default. "" means default.
+func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (string, error) {
+	stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, agentProfile)
 	if err != nil {
 		return taskIDHex, err
 	}

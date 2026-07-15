@@ -225,7 +225,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
 
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation)
+		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, "")
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -235,7 +235,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
-		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride, *resumeConversation)
+		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride, *resumeConversation, "")
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -243,7 +243,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation)
+	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, "")
 	if err != nil {
 		return exitOnAmbiguous(err)
 	}

@@ -111,7 +111,7 @@ func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel p
 // holds). Callers that need a narrower grant should use
 // InteractiveWithSelectorArgsAndCaps instead.
 func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
-	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false)
+	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false, "")
 }
 
 // InteractiveWithSelectorArgsAndCaps is identical to
@@ -123,7 +123,9 @@ func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string
 // capability mask. Has no effect on new tasks (non-resume).
 // resumeConversation, when true, asks the runner to resume the agent's own
 // conversation state in addition to the harness task/worktree.
-func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) (string, error) {
+// agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
+// for the spawned task instead of the runner's default. "" means default.
+func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
 	oi := protocol.OpenInteractiveRequest{}
 	oi.SetRepoPath([]byte(repo))
@@ -132,6 +134,7 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 	oi.RequestedCaps = caps
 	oi.SetResumeCapsOverride(resumeCapsOverride)
 	oi.SetResumeConversation(resumeConversation)
+	oi.SetAgentProfile([]byte(agentProfile))
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {

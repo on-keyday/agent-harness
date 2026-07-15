@@ -347,7 +347,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
 			}
-			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -859,7 +859,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
 			}
-			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation)
+			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
 			if err != nil {
 				var are *cli.AmbiguousRunnerError
 				if errors.As(err, &are) {
