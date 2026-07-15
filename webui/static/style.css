@@ -281,7 +281,15 @@ button:hover { background: #555; }
 .task-action.danger { color:#f88; border-color:#a44; }
 .task-id { flex-basis:100%; display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; }
 .task-id-text { font-family:monospace; font-size:0.85rem; color:#9cdcfe; word-break:break-all; user-select:all; -webkit-user-select:all; }
-@media (max-width:600px){ .task-list { max-height:none; } }
+/* Per-task resume agent dropdown (multi-agent-profile design §6). Full-width
+   row like .task-id so it doesn't get squeezed between action buttons. */
+.task-agent-row { flex-basis:100%; display:flex; align-items:center; gap:0.5rem; }
+.task-agent-label { font-size:0.85rem; color:#aaa; }
+.task-agent-select { min-width:8rem; }
+@media (max-width:600px){
+  .task-list { max-height:none; }
+  .task-agent-select { flex:1 1 auto; min-width:0; }
+}
 
 /* --- Mobile tab bar (active only at <=600px) --- */
 .tabbar { display: none; }
@@ -689,6 +697,12 @@ button:hover { background: #555; }
   min-width: 0;
   overflow-wrap: anywhere;
   font-weight: 600;
+}
+.runner-choice-agent {
+  flex: 0 0 auto;
+  color: #ce9178;
+  font-family: monospace;
+  font-size: 0.85rem;
 }
 .runner-choice-load {
   flex: 0 0 auto;

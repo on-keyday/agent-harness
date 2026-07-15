@@ -301,7 +301,7 @@ func harnessCapList(this js.Value, args []js.Value) any {
 // harnessSubmit submits a task and resolves with the server-assigned task id.
 // An optional "host" field pins the task to a specific runner by hostname.
 //
-//	harness.submit({repo: "/abs/path", task: "...", host: "raspi"}) -> Promise<taskIDHex>
+//	harness.submit({repo: "/abs/path", task: "...", host: "raspi", agent: "codex"}) -> Promise<taskIDHex>
 func harnessSubmit(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -347,7 +347,14 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
 			}
-			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
+			// agent selects a named agent profile advertised by the target
+			// runner (multi-agent-profile design §6); empty = runner default
+			// / (on resume) the resumed task's own profile.
+			agentProfile := ""
+			if av := opts.Get("agent"); av.Type() == js.TypeString {
+				agentProfile = av.String()
+			}
+			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, agentProfile)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -415,9 +422,9 @@ func connRemoteAddr(cid string) string {
 // not need a label table.
 //
 //	harness.snapshot() -> Promise<{
-//	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, skillsInjected}],
+//	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:   [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
-//	             createdAt, startedAt, endedAt}],
+//	             createdAt, startedAt, endedAt, agentProfile}],
 //	  conns:   [{cid, role, remoteAddr, principalTask, connectedAt, identified}]
 //	}>
 func harnessSnapshot(this js.Value, args []js.Value) any {
@@ -441,6 +448,14 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 				for _, root := range r.AllowedRoots {
 					roots = append(roots, string(root.Path))
 				}
+				// agentProfiles is the runner's advertised named-profile set
+				// (multi-agent-profile design §2/§6); the new-session form and
+				// each task-sheet's resume agent dropdown populate their
+				// options from the union of this across runners.
+				profiles := make([]any, 0, len(r.AgentProfiles))
+				for _, p := range r.AgentProfiles {
+					profiles = append(profiles, string(p.Name))
+				}
 				runners = append(runners, map[string]any{
 					"hostname":       string(r.Hostname),
 					"status":         r.Status.String(),
@@ -450,6 +465,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"connectedAt":    float64(r.ConnectedAt),
 					"lastSeen":       float64(r.LastSeen),
 					"agentBin":       string(r.AgentBin),
+					"agentProfiles":  profiles,
 					"skillsInjected": r.SkillsInjected(),
 				})
 			}
@@ -470,6 +486,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"resumedBy":  clientKindLower(t.ResumedByKind),
 					"createdBy":  creatorShort(t.CreatorTaskId),
 					"caps":       cli.CapsLabel(t.Capabilities),
+					// agentProfile is the named profile this task last ran under
+					// (empty = runner default); the resume action sheet's agent
+					// dropdown defaults to this (multi-agent-profile design §4b).
+					"agentProfile": string(t.AgentProfile),
 					// Server-clock idle age of the live session's PTY output;
 					// -1 = no live interactive session / no output yet. JS
 					// derives the busy/idle badge from this (never from local
@@ -791,13 +811,14 @@ func harnessPrune(this js.Value, args []js.Value) any {
 // caller (pickRunnerAndRetry in main.js) deliberately clearing host on the
 // picker retry, leaving only runner set.
 //
-// If the selector is ambiguous (Any/ByHostname matches >=2 runners), the
-// returned Promise rejects with a JS Error whose .code === "ambiguous_runner"
-// and .candidates is an array of {cid, hostname, matchedRoot, activeTasks,
-// maxTasks}; the caller re-invokes startInteractive with runner: candidate.cid
-// to pin the retry.
+// If the selector is ambiguous (Any/ByHostname matches >=2 runners, or,
+// once profile-expanded, >=2 (runner,profile) combos), the returned Promise
+// rejects with a JS Error whose .code === "ambiguous_runner" and .candidates
+// is an array of {cid, hostname, matchedRoot, activeTasks, maxTasks, profile};
+// the caller re-invokes startInteractive with runner: candidate.cid and
+// agent: candidate.profile to pin the retry (multi-agent-profile design §4a).
 //
-//	harness.startInteractive({repo: "/abs/path", host: "raspi"}) -> Promise<taskIDHex>
+//	harness.startInteractive({repo: "/abs/path", host: "raspi", agent: "codex"}) -> Promise<taskIDHex>
 func harnessStartInteractive(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -859,7 +880,14 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
 			}
-			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
+			// agent selects a named agent profile advertised by the target
+			// runner (multi-agent-profile design §6); empty = runner default
+			// / (on resume) the resumed task's own profile.
+			agentProfile := ""
+			if av := opts.Get("agent"); av.Type() == js.TypeString {
+				agentProfile = av.String()
+			}
+			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, agentProfile)
 			if err != nil {
 				var are *cli.AmbiguousRunnerError
 				if errors.As(err, &are) {
@@ -868,6 +896,10 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 						cands = append(cands, map[string]any{
 							"cid": cc.Cid, "hostname": cc.Hostname, "matchedRoot": cc.MatchedRoot,
 							"activeTasks": cc.ActiveTasks, "maxTasks": cc.MaxTasks,
+							// profile is the agent profile this (runner,profile) combo
+							// represents (§4a); the picker modal shows it per-row and
+							// re-issues pinned to both cid and profile on selection.
+							"profile": cc.Profile,
 						})
 					}
 					jsErr := js.Global().Get("Error").New("ambiguous_runner")

@@ -286,6 +286,7 @@ const POLL_INTERVAL_MS = 5000;
   //    string-based renderer.
   const runnerSelect = document.getElementById("runner-select");
   const hostSelect   = document.getElementById("host-select");
+  const agentSelect  = document.getElementById("agent-select");
   const claudeArgs   = document.getElementById("claude-args-input");
   // Single unified task-id field, shared by reattach (target a detached
   // session) and resume (reuse a terminal task's worktree via Submit / Open).
@@ -356,6 +357,12 @@ const POLL_INTERVAL_MS = 5000;
   // Terminal (finished) task states; gates Resume vs Cancel in the action sheet.
   const TERMINAL_STATES = new Set(["Succeeded", "Failed", "Cancelled"]);
 
+  // knownAgentProfiles is the deduplicated union of every connected runner's
+  // advertised agent_profiles, refreshed each snapshot poll. Shared by the
+  // Compose agent dropdown (#agent-select) and each task-sheet's per-resume
+  // agent dropdown (multi-agent-profile design §6).
+  let knownAgentProfiles = [];
+
   const refreshSnapshot = async () => {
     let snap;
     try {
@@ -373,6 +380,8 @@ const POLL_INTERVAL_MS = 5000;
     const sortedRunners = sortRunners(snap.runners || []);
     renderRunnerSelect(runnerSelect, sortedRunners);
     renderHostSelect(hostSelect, sortedRunners);
+    knownAgentProfiles = collectAgentProfiles(sortedRunners);
+    renderAgentSelect(agentSelect, knownAgentProfiles);
     runnerList.textContent = renderRunners(sortedRunners);
     renderTaskList(snap.tasks);
     renderFileTaskSelect(snap.tasks);
@@ -1163,10 +1172,21 @@ const POLL_INTERVAL_MS = 5000;
             throw new Error("no runner selected (pick one from the dropdown, or fill in Resume task id)");
           }
           let resumeConversation = false;
+          // agent defaults to the Compose dropdown's current selection (mirrors
+          // repo/host, which also fall back to the Compose selects); --agent
+          // overrides it, same pattern as the TUI cmdline's --agent (Task 9/10).
+          let agent = agentSelect ? (agentSelect.value || "") : "";
           const promptTokens = [];
-          for (const t of tokens.slice(1)) {
+          for (let i = 1; i < tokens.length; i++) {
+            const t = tokens[i];
             if (t === "--resume-conversation") {
               resumeConversation = true;
+            } else if (t === "--agent") {
+              i++;
+              if (i >= tokens.length) throw new Error("--agent: missing profile name");
+              agent = tokens[i];
+            } else if (t.startsWith("--agent=")) {
+              agent = t.slice("--agent=".length);
             } else {
               promptTokens.push(t);
             }
@@ -1179,7 +1199,7 @@ const POLL_INTERVAL_MS = 5000;
           if (!task) throw new Error("submit: missing task prompt");
           const host = hostSelect ? (hostSelect.value || "") : "";
           const claudeArgsList = currentClaudeArgs();
-          out = await window.harness.submit({ repo, task, host, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps, resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false, resumeConversation });
+          out = await window.harness.submit({ repo, task, host, agent, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps, resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false, resumeConversation });
           break;
         }
         case "list":
@@ -1260,8 +1280,8 @@ const POLL_INTERVAL_MS = 5000;
         case "help":
           out = [
             "commands:",
-            "  submit [--resume-conversation] <prompt...>",
-            "                            submit task (use repo dropdown / Resume task id)",
+            "  submit [--resume-conversation] [--agent <name>] <prompt...>",
+            "                            submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)",
             "  list                      refresh the snapshot and echo task rows",
             "  refresh (alias: sync)     force a snapshot re-sync",
             "  await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
@@ -1590,6 +1610,7 @@ const POLL_INTERVAL_MS = 5000;
     return {
       repo: runnerSelect.value || "",
       host: hostSelect ? (hostSelect.value || "") : "",
+      agent: agentSelect ? (agentSelect.value || "") : "",
       claudeArgs: currentClaudeArgs(),
       resumeTaskId: currentResumeTaskID(),
     };
@@ -1727,7 +1748,12 @@ const POLL_INTERVAL_MS = 5000;
   const resumeTaskById = async (id) => {
     if (!id) return;
     const args = currentClaudeArgs();
-    const req = { repo: "", host: "", claudeArgs: args, resumeTaskId: id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation: true };
+    // agent reuses the Compose dropdown's current selection (this quick-resume
+    // path — from the notification feed — only has the task id, not the task's
+    // own AgentProfile, so it can't default per-task the way buildTaskSheet's
+    // per-row dropdown does).
+    const agent = agentSelect ? (agentSelect.value || "") : "";
+    const req = { repo: "", host: "", agent, claudeArgs: args, resumeTaskId: id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation: true };
     try {
       const taskID = await window.harness.startInteractive(req);
       setActiveTab("terminal");
@@ -1793,10 +1819,15 @@ const POLL_INTERVAL_MS = 5000;
       const host = document.createElement("span");
       host.className = "runner-choice-host";
       host.textContent = c.hostname || "(unknown)";
+      // agent — each candidate row is a (runner, profile) combo (§4a); with a
+      // single multi-profile runner this is what makes the two rows distinct.
+      const agent = document.createElement("span");
+      agent.className = "runner-choice-agent";
+      agent.textContent = c.profile || "(default)";
       const load = document.createElement("span");
       load.className = "runner-choice-load";
       load.textContent = `[${c.activeTasks}/${c.maxTasks}]`;
-      head.append(host, load);
+      head.append(host, agent, load);
       const root = document.createElement("span");
       root.className = "runner-choice-root";
       root.textContent = c.matchedRoot || "(no matched root)";
@@ -1809,9 +1840,12 @@ const POLL_INTERVAL_MS = 5000;
         ev.stopPropagation();
         modal.close();
         try {
-          // Pin by cid (host can itself be ambiguous). Clear host so the selector is unambiguous.
+          // Pin by cid (host can itself be ambiguous) and by profile — this
+          // candidate row *is* the (runner, profile) combo the user picked
+          // (§4a), so agent overrides whatever baseReq carried. Clear host so
+          // the selector is unambiguous.
           const taskID = await window.harness.startInteractive({
-            ...baseReq, host: "", runner: c.cid,
+            ...baseReq, host: "", runner: c.cid, agent: c.profile || "",
             caps: spawnCaps, resumeCapsOverride: baseReq.resumeTaskId ? applyCapsOnResume : false,
           });
           setActiveTab("terminal");
@@ -2050,8 +2084,26 @@ const POLL_INTERVAL_MS = 5000;
     // intentionally skip t.assignedTo so the ambiguous runner picker can reopen.
     if (isTerminal) {
       const assignedRunner = typeof t.assignedTo === "string" && t.assignedTo && !t.assignedTo.startsWith(":") ? t.assignedTo : "";
+
+      // Agent dropdown — defaults to this task's own last-run profile (§4b:
+      // pinned resume resolves to the resumed task's own agent_profile unless
+      // the caller overrides). Picking a different advertised profile here
+      // reopens the same worktree under a different agent directly, without
+      // needing the ambiguous-runner picker to supply it. `extra` keeps the
+      // task's own profile selectable even if its runner is offline.
+      const agentRow = document.createElement("div");
+      agentRow.className = "task-agent-row";
+      const agentLabel = document.createElement("span");
+      agentLabel.className = "task-agent-label";
+      agentLabel.textContent = "Agent:";
+      const agentSel = document.createElement("select");
+      agentSel.className = "task-agent-select";
+      populateAgentSelect(agentSel, knownAgentProfiles, t.agentProfile || "", t.agentProfile);
+      agentRow.append(agentLabel, agentSel);
+      sheet.appendChild(agentRow);
+
       const doResume = async (claudeArgs, note, resumeConversation = false, runner = "") => {
-        const req = { repo: "", host: "", claudeArgs, resumeTaskId: t.id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
+        const req = { repo: "", host: "", agent: agentSel.value || "", claudeArgs, resumeTaskId: t.id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
         if (runner) req.runner = runner;
         try {
           const id = await window.harness.startInteractive(req);
@@ -2373,11 +2425,58 @@ function renderHostSelect(sel, runners) {
   if (prev && seen.has(prev)) sel.value = prev;
 }
 
+// collectAgentProfiles returns the deduplicated union of every runner's
+// advertised agent_profiles (in first-seen order). Shared by the Compose
+// agent dropdown and each task-sheet's per-resume agent dropdown
+// (multi-agent-profile design §6).
+function collectAgentProfiles(runners) {
+  const seen = new Set();
+  const out = [];
+  for (const r of (runners || [])) {
+    for (const p of (r.agentProfiles || [])) {
+      if (p && !seen.has(p)) { seen.add(p); out.push(p); }
+    }
+  }
+  return out;
+}
+
+// populateAgentSelect rebuilds sel's options: "(default)" (value "") first,
+// then one option per name in profiles. `extra`, when set and not already in
+// profiles, is appended too — used to keep a task's own last-run profile
+// selectable even if its runner is currently offline / not advertising it
+// (e.g. a task resumed under "codex" while only a "claude" runner is up).
+// Selects `selected` if present among the options, else falls back to "".
+function populateAgentSelect(sel, profiles, selected, extra) {
+  if (!sel) return;
+  sel.innerHTML = "";
+  const defOpt = document.createElement("option");
+  defOpt.value = "";
+  defOpt.textContent = "(default)";
+  sel.appendChild(defOpt);
+  const names = (profiles || []).slice();
+  if (extra && !names.includes(extra)) names.push(extra);
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  }
+  sel.value = names.includes(selected) ? selected : "";
+}
+
+// renderAgentSelect rebuilds the Compose agent <select>, preserving the
+// previously-selected profile when it is still advertised.
+function renderAgentSelect(sel, profiles) {
+  if (!sel) return;
+  populateAgentSelect(sel, profiles, sel.value);
+}
+
 function renderRunners(runners) {
   if (!runners || runners.length === 0) return "(none)";
   return runners.map(r => {
     const roots = (r.roots && r.roots.length > 0) ? r.roots.join(", ") : "(any)";
-    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  tasks=${r.tasks}/${r.maxTasks}  roots=${roots}`;
+    const agents = (r.agentProfiles && r.agentProfiles.length > 0) ? r.agentProfiles.join(",") : (r.agentBin || "-");
+    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  tasks=${r.tasks}/${r.maxTasks}  agents=${agents}  roots=${roots}`;
   }).join("\n");
 }
 
