@@ -562,10 +562,10 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 // so the same "roots-matching runner set narrowed by profile before the
 // ambiguity check" shape applies to both):
 //  1. Existing TaskEntry must exist (else resume_not_found).
-//  2. Its TaskKind must be Oneshot — interactive resumes go through the
-//     OpenInteractive path; a Submit asking to resume an interactive task is
-//     a category mismatch that we reject up front (resume_not_found, since
-//     no Oneshot entry by that id exists from this handler's perspective).
+//  2. Its previously recorded TaskKind is NOT checked — mode is per-open,
+//     latest-recorded (spec §4c). A Submit resuming a task last opened
+//     Interactive is a valid "reopen this worktree headless" flow; Tasks.Resume
+//     records the invoked mode (Oneshot, since this is the submit path).
 //  3. Runner candidates against the existing repo + the request's selector.
 //     Empty candidates map to NoRunner / PinnedNotFound.
 //  4. Profile filter — resolved is the explicit request profile, or else
@@ -584,8 +584,12 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 //     the (rare) race where the entry was pruned between steps 1 and 6.
 func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) protocol.SubmitResponse {
 	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
-	repo, kind, ok := h.Tasks.PeekRepo(idHex)
-	if !ok || kind != protocol.TaskKind_Oneshot {
+	// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume through
+	// the submit path is valid regardless of the task's previously recorded
+	// Kind; the invoked path (submit ⇒ Oneshot) is what Tasks.Resume records
+	// below. Existence/terminal-state are the only preconditions here.
+	repo, _, ok := h.Tasks.PeekRepo(idHex)
+	if !ok {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
 	}
 	cands := h.Registry.Candidates(repo, req.Selector)
@@ -637,7 +641,12 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 
 	override := req.ResumeCapsOverride()
 	newCaps := intersectCaps(callerCaps, req.RequestedCaps)
-	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps); err != nil {
+	// Invoked mode is Oneshot (this is the submit path); resolved is the
+	// profile computed above (explicit --agent, else the task's recorded
+	// AgentProfile) — persisting it here closes the Task 4/6 gap where
+	// handleSubmitResume computed `resolved` but never wrote it back through
+	// Tasks.Resume.
+	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps, protocol.TaskKind_Oneshot, resolved); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
@@ -796,10 +805,14 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	var existingTaskIDHex string
 	if resuming {
 		idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
-		var kind protocol.TaskKind
+		// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume
+		// through the interactive-open path is valid regardless of the
+		// task's previously recorded Kind; the invoked path (open ⇒
+		// Interactive) is what Tasks.Resume records below. Existence is the
+		// only precondition here.
 		var ok bool
-		repo, kind, ok = h.Tasks.PeekRepo(idHex)
-		if !ok || kind != protocol.TaskKind_Interactive {
+		repo, _, ok = h.Tasks.PeekRepo(idHex)
+		if !ok {
 			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 		}
 		existingTaskIDHex = idHex
@@ -882,7 +895,12 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	if resuming {
 		override := req.ResumeCapsOverride()
 		newCaps := intersectCaps(creatorCaps, req.RequestedCaps)
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps); err != nil {
+		// Invoked mode is Interactive (this is the open_interactive path);
+		// resolved is the (runner,profile) combo's profile computed above —
+		// persisting it here closes the Task 6 gap where handleOpenInteractive
+		// threaded `resolved` to OpenExec but never wrote it back through
+		// Tasks.Resume.
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, protocol.TaskKind_Interactive, resolved); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)

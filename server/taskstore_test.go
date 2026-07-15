@@ -880,7 +880,7 @@ func TestResumeRecordsResumedByKind(t *testing.T) {
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runner1", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	s.Assign(id, "runner1", "/wt")
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, protocol.TaskKind_Oneshot, ""); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got, _ := s.Get(id)
@@ -929,7 +929,7 @@ func TestWALReplayRestoresAttribution(t *testing.T) {
 	s.Finish(id, 0, nil)
 
 	// Resume with resumer kind = ClientKind_Tui.
-	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, false, protocol.Capability_None); err != nil {
+	if _, err := s.Resume(id, "agent-prompt-v2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Tui, false, protocol.Capability_None, protocol.TaskKind_Oneshot, ""); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -980,7 +980,7 @@ func TestCreateRecordsCreatorTaskID(t *testing.T) {
 	}
 	s.Assign(id, "runner1", "/wt")
 	s.Finish(id, 0, nil)
-	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None); err != nil {
+	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "runner1", protocol.ClientKind_Agent, false, protocol.Capability_None, protocol.TaskKind_Oneshot, ""); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 	got3, _ := s.Get(id)
@@ -1059,7 +1059,7 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 	// Resume with caps override to FileRead (override-to-None is also tested below).
 	newCaps := protocol.Capability_FileRead
 	if _, err := s.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-		true, newCaps); err != nil {
+		true, newCaps, protocol.TaskKind_Oneshot, ""); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
 
@@ -1109,5 +1109,67 @@ func TestTaskCapsChangedReplayEvents(t *testing.T) {
 	got3, _ := s3.Get(id3)
 	if got3.Capabilities != protocol.Capability_None {
 		t.Fatalf("override-to-None replay: caps = %#x, want None", got3.Capabilities)
+	}
+}
+
+// TestResumeSwitchesKindAndReplays verifies spec §4c: mode (Kind) and
+// AgentProfile are per-open, latest-recorded attributes, not
+// creation-immutable. A task created Interactive and resumed with
+// newKind=Oneshot + a different agentProfile must reflect BOTH the new Kind
+// and the new profile immediately after Resume, and both must survive a
+// WAL persist → ReadWAL → ReplayEvents round-trip (mirrors the
+// OpenWAL/SetWAL/ReadWAL/ReplayEvents pattern used by
+// TestWALReplayRestoresAttribution above).
+func TestResumeSwitchesKindAndReplays(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "kind_switch.log")
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		t.Fatalf("OpenWAL: %v", err)
+	}
+
+	s := NewTaskStore()
+	s.SetWAL(wal)
+
+	id := s.Create("/repo", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Tui,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "claude")
+	s.Assign(id, "runner-x", "/wt/x")
+	s.Finish(id, 0, nil)
+
+	if _, err := s.Resume(id, "prompt", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
+		false, protocol.Capability_All, protocol.TaskKind_Oneshot, "codex"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+
+	got, ok := s.Get(id)
+	if !ok {
+		t.Fatalf("task %q not found after resume", id)
+	}
+	if got.Kind != protocol.TaskKind_Oneshot {
+		t.Fatalf("Kind after resume = %v, want Oneshot", got.Kind)
+	}
+	if got.AgentProfile != "codex" {
+		t.Fatalf("AgentProfile after resume = %q, want codex", got.AgentProfile)
+	}
+
+	wal.Close() //nolint:errcheck
+
+	events, readErr := ReadWAL(walPath)
+	if readErr != nil {
+		t.Fatalf("ReadWAL: %v", readErr)
+	}
+
+	s2 := NewTaskStore()
+	s2.ReplayEvents(events)
+
+	got2, ok := s2.Get(id)
+	if !ok {
+		t.Fatalf("task %q not found after replay", id)
+	}
+	if got2.Kind != protocol.TaskKind_Oneshot {
+		t.Fatalf("Kind after replay = %v, want Oneshot", got2.Kind)
+	}
+	if got2.AgentProfile != "codex" {
+		t.Fatalf("AgentProfile after replay = %q, want codex", got2.AgentProfile)
 	}
 }

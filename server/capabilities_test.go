@@ -851,7 +851,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		// Operator caller: not in h.principals → callerCaps = Capability_All.
 		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead)); err != nil {
+			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -876,7 +876,7 @@ func TestResumeCapsOverride(t *testing.T) {
 
 		// override=false → Capabilities must stay wantCaps regardless of newCaps arg.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None); err != nil {
+			false, protocol.Capability_None, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -918,7 +918,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		callerCaps := h.callerCaps(agentConnID)
 		newCaps := intersectCaps(callerCaps, protocol.Capability_All)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps); err != nil {
+			true, newCaps, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(targetID)
@@ -934,7 +934,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		markTerminalForTest(t, h, targetID)
 		newCaps2 := intersectCaps(callerCaps, protocol.Capability_FileWrite)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps2); err != nil {
+			true, newCaps2, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume2: %v", err)
 		}
 		e2, _ := h.Tasks.Get(targetID)

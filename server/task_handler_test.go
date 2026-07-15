@@ -919,6 +919,56 @@ func TestHandleOpenInteractive_RegistersSessionMux(t *testing.T) {
 	}
 }
 
+// TestOpenInteractiveResumeCrossModeNotRejected verifies the guard relaxation
+// for mode-switchable resume (spec §4c): a task created and finished as
+// Oneshot, then resumed through handleOpenInteractive (the Interactive-mode
+// open path), is no longer rejected up front with ResumeNotFound because of
+// a Kind mismatch — PeekRepo's Kind is no longer consulted by the guard.
+// The request proceeds through the full candidate/capacity pipeline,
+// succeeds, and Tasks.Resume persists the invoked mode: the stored
+// TaskEntry.Kind flips to Interactive (latest-recorded, not the original
+// Oneshot), closing the Task 6 persistence gap.
+func TestOpenInteractiveResumeCrossModeNotRejected(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+
+	// Original task created (and finished) as Oneshot.
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Finish(taskIDHex, 0, nil)
+
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9210-1"), nextStreamID: 5}
+	h.Registry.Add(&RunnerEntry{
+		ID: "A", Hostname: "h", AllowedRoots: []string{"/shared"}, MaxTasks: 1,
+		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,
+		Conn: runnerConn,
+	})
+
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9211-2"), nextStreamID: 9}
+
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+
+	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid}
+
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status == protocol.OpenInteractiveStatus_ResumeNotFound {
+		t.Fatalf("status=%v — cross-mode resume still rejected; Kind guard not relaxed", resp.Status)
+	}
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("status=%v want Ok", resp.Status)
+	}
+
+	got, ok := h.Tasks.Get(taskIDHex)
+	if !ok {
+		t.Fatalf("task not found")
+	}
+	if got.Kind != protocol.TaskKind_Interactive {
+		t.Fatalf("Kind after cross-mode resume = %v, want Interactive (invoked mode, latest-recorded)", got.Kind)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Task 7: handleAttachSession error paths and Ok path
 // ---------------------------------------------------------------------------

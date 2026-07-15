@@ -230,7 +230,13 @@ func (e ResumeError) Error() string {
 // runner candidates without first holding the lock. Use it before Resume.
 //
 // Returns the post-reset TaskEntry snapshot on success.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability) (TaskEntry, error) {
+//
+// newKind and agentProfile make mode (Kind) and profile per-open,
+// latest-recorded attributes (spec §4c / §4b): each resume records which
+// mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
+// and which profile was resolved for this open, independent of the values
+// the task was originally Created with.
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, newKind protocol.TaskKind, agentProfile string) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -265,6 +271,8 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	e.Selector = selector
 	e.BoundRunnerID = boundRunnerID
 	e.ResumedByKind = resumerKind
+	e.Kind = newKind
+	e.AgentProfile = agentProfile
 
 	if s.wal != nil {
 		if err := s.wal.Write(WALEvent{
@@ -275,6 +283,8 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 			Selector:      selector,
 			BoundRunnerID: boundRunnerID,
 			ResumedByKind: uint8(resumerKind),
+			Kind:          uint8(newKind),
+			AgentProfile:  agentProfile,
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_resumed", "task_id", id, "err", err)
 		}
@@ -673,7 +683,12 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			// doesn't exist (corrupt WAL ordering), drop the event silently —
 			// the task_created that should precede this would have already
 			// failed to apply too. CreatorTaskID is NOT reset — it records the
-			// original creator and must survive resume replay.
+			// original creator and must survive resume replay. Kind and
+			// AgentProfile ARE reset unconditionally — mode and profile are
+			// per-open, latest-recorded attributes (spec §4c/§4b), not
+			// creation-immutable; TaskKind_Oneshot == 0 so legacy WAL entries
+			// that pre-date these fields replay as "stayed Oneshot / no
+			// profile change", which matches their actual behavior.
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Status = protocol.TaskStatus_Queued
 				t.AssignedTo = ""
@@ -687,6 +702,8 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Selector = ev.Selector
 				t.BoundRunnerID = ev.BoundRunnerID
 				t.ResumedByKind = protocol.ClientKind(ev.ResumedByKind)
+				t.Kind = protocol.TaskKind(ev.Kind)
+				t.AgentProfile = ev.AgentProfile
 			}
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
