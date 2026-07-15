@@ -47,7 +47,7 @@ type LogHistoryMsg struct {
 
 // DoSubmit issues a Submit RPC over the existing persistent client.
 func DoSubmit(c *cli.Client, repo, prompt string, caps protocol.Capability) tea.Cmd {
-	return DoSubmitWithOpts(c, repo, prompt, "", nil, "", caps, false, false)
+	return DoSubmitWithOpts(c, repo, prompt, "", nil, "", caps, false, false, "")
 }
 
 // DoSubmitWithOpts issues a Submit RPC with an optional hostname pin,
@@ -61,16 +61,21 @@ func DoSubmit(c *cli.Client, repo, prompt string, caps protocol.Capability) tea.
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh submit).
-func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool) tea.Cmd {
+// agentProfile selects a named agent profile (e.g. "codex"); "" defers to the
+// bound runner's default (or, on resume with an empty profile, the resumed
+// task's own recorded profile — resolved server-side). Submit has no picker
+// (§4a scope boundary): a profile no runner serves comes back as the flat
+// SubmitStatus.profile_unavailable, surfaced as an error here.
+func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		echo := buildSubmitEcho(repo, prompt, host, extraArgs, resumeTaskID)
+		echo := buildSubmitEcho(repo, prompt, host, extraArgs, resumeTaskID, agentProfile)
 		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 		if err != nil {
 			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
 		}
-		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, "")
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, agentProfile)
 		if err != nil {
 			return SubmitResultMsg{Err: err, Echo: echo}
 		}
@@ -81,10 +86,13 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 // buildSubmitEcho formats the human-readable echo string for the cmdline
 // result panel. Annotations are added only when the corresponding option is
 // set so the common case (just repo + prompt) stays readable.
-func buildSubmitEcho(repo, prompt, host string, extraArgs []string, resumeTaskID string) string {
+func buildSubmitEcho(repo, prompt, host string, extraArgs []string, resumeTaskID, agentProfile string) string {
 	annot := ""
 	if host != "" {
 		annot += fmt.Sprintf(" --host %q", host)
+	}
+	if agentProfile != "" {
+		annot += fmt.Sprintf(" --agent %q", agentProfile)
 	}
 	if len(extraArgs) > 0 {
 		annot += fmt.Sprintf(" (+%d claude-args)", len(extraArgs))

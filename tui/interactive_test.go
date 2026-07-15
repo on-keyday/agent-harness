@@ -80,6 +80,47 @@ func TestInteractiveReadyMsg_PickerArmGate(t *testing.T) {
 	})
 }
 
+// TestPickerSelection guards the (runner, profile) generalization of the
+// ambiguous-runner picker (§4a of the multi-agent-profile design): choosing
+// a candidate row must re-issue pinned to BOTH the chosen Cid (as
+// SelectorOpts{Runner: cid}) AND the chosen Profile (as the agentProfile
+// forwarded to the Do* funnels). Mirrors TestResumeSelectorOpts for the
+// picker path.
+func TestPickerSelection(t *testing.T) {
+	c := &cli.RunnerCandidate{
+		Cid:         "ws:10.0.0.2:1-1",
+		Hostname:    "gmkhost-codex",
+		MatchedRoot: "/home/x/repo",
+		ActiveTasks: 1,
+		MaxTasks:    8,
+		Profile:     "codex",
+	}
+	sel, agentProfile := pickerSelection(c)
+	wantSel := cli.SelectorOpts{Runner: "ws:10.0.0.2:1-1"}
+	if sel != wantSel {
+		t.Errorf("SelectorOpts = %+v, want %+v", sel, wantSel)
+	}
+	if agentProfile != c.Profile {
+		t.Errorf("agentProfile = %q, want candidate.Profile = %q", agentProfile, c.Profile)
+	}
+	// Round-trips back through the same selector-building path used
+	// elsewhere (--runner / u / U reissue).
+	if _, err := cli.BuildSelector(sel); err != nil {
+		t.Errorf("BuildSelector(%+v): %v", sel, err)
+	}
+}
+
+func TestPickerSelectionEmptyProfile(t *testing.T) {
+	c := &cli.RunnerCandidate{Cid: "ws:10.0.0.1:1-1", Hostname: "h1"}
+	sel, agentProfile := pickerSelection(c)
+	if sel.Runner != "ws:10.0.0.1:1-1" {
+		t.Errorf("SelectorOpts.Runner = %q, want ws:10.0.0.1:1-1", sel.Runner)
+	}
+	if agentProfile != "" {
+		t.Errorf("agentProfile = %q, want empty (candidate.Profile was empty)", agentProfile)
+	}
+}
+
 func TestUnpinnedResumeKeyArmsPickerWithAnySelector(t *testing.T) {
 	a := New(Config{})
 	var tid protocol.TaskID
@@ -135,5 +176,38 @@ func TestUnpinnedResumeKeyDoesNotReattachLiveSession(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected warning about finished task, got %v", a.cmdresult.lines)
+	}
+}
+
+// TestRunnerPickerPickDispatchesWithProfile drives the picker digit-press
+// through App.Update end to end: opening the picker with (runner, profile)
+// combos and pressing a digit must dispatch a command AND surface the picked
+// profile in the cmdresult label, confirming app.go's Pick handler actually
+// threads pickerSelection's agentProfile through (not just the pure
+// function in isolation).
+func TestRunnerPickerPickDispatchesWithProfile(t *testing.T) {
+	a := New(Config{})
+	a.pendingInteractive = pendingInteractive{repo: "/repo"}
+	a.runnerPicker.Open([]cli.RunnerCandidate{
+		{Cid: "ws:10.0.0.1:1-1", Hostname: "h1", Profile: "claude"},
+		{Cid: "ws:10.0.0.2:1-1", Hostname: "h2", Profile: "codex"},
+	})
+
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'2'}})
+	a = m.(*App)
+	if cmd == nil {
+		t.Fatal("picking a candidate should dispatch a command")
+	}
+	if a.runnerPicker.IsOpen() {
+		t.Fatal("picker should close after a pick")
+	}
+	found := false
+	for _, line := range a.cmdresult.lines {
+		if strings.Contains(line, "h2") && strings.Contains(line, "codex") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a cmdresult line naming h2 and codex, got %v", a.cmdresult.lines)
 	}
 }

@@ -22,6 +22,7 @@ type SubmitAction struct {
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
+	AgentProfile       string
 }
 
 type CancelAction struct {
@@ -62,6 +63,7 @@ type SessionNewAction struct {
 	IP                 string
 	X11                bool
 	X11Display         int
+	AgentProfile       string
 }
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
@@ -145,6 +147,7 @@ type InteractiveAction struct {
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
+	AgentProfile       string
 }
 
 // ServerDialRunnerAction asks the server to dial out to a Listen-mode
@@ -329,6 +332,7 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	repo := fs.String("repo", defaultRepo, "")
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume")
 	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
+	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 	var extra repeatableStrings
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -337,7 +341,7 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("interactive: unexpected positional argument %q", fs.Arg(0))
 	}
-	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation}, nil
+	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent}, nil
 }
 
 func parseRepo(args []string) (Action, error) {
@@ -356,6 +360,7 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	repo := fs.String("repo", defaultRepo, "")
 	resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch")
 	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
+	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 	var extra repeatableStrings
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -365,7 +370,7 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	if len(rest) == 0 {
 		return nil, fmt.Errorf("submit: prompt is required")
 	}
-	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation}, nil
+	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent}, nil
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence,
@@ -427,6 +432,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		ip := fs.String("ip", "", "pin to a runner by IP address (mutually exclusive with --host / --runner)")
 		x11 := fs.Bool("x11", false, "X11-forward GUI apps to your local X server")
 		x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N)")
+		agent := fs.String("agent", "", "agent profile name (empty = runner default; on --resume, the resumed task's own profile)")
 		var extra repeatableStrings
 		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 		if err := fs.Parse(rest); err != nil {
@@ -452,6 +458,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			IP:                 *ip,
 			X11:                *x11,
 			X11Display:         *x11Display,
+			AgentProfile:       *agent,
 		}, nil
 	case "attach":
 		if len(rest) == 0 {

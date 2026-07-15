@@ -29,7 +29,13 @@ type PopupModel struct {
 	// hostIdx 0 means no pin (Any selector).
 	hostChoices []string
 	hostIdx     int
-	ta          textarea.Model
+	// agentChoices holds "(default)" followed by the union of agent profiles
+	// advertised by currently-known runners. agentIdx 0 means no explicit
+	// pick (server resolves the bound runner's default / the resumed task's
+	// own profile). Mirrors hostChoices/hostIdx exactly.
+	agentChoices []string
+	agentIdx     int
+	ta           textarea.Model
 	args        textinput.Model
 	resume      textinput.Model
 	resumeConv  bool
@@ -39,7 +45,7 @@ type PopupModel struct {
 
 func NewPopup(defaultRepo string) PopupModel {
 	ta := textarea.New()
-	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to submit, Tab to switch repo, Shift+Tab to cycle host pin, Ctrl+E to cycle through args/resume fields, Esc to cancel."
+	ta.Placeholder = "Type the prompt for claude. Ctrl+J (Ctrl+Enter) to submit, Tab to switch repo, Shift+Tab to cycle host pin, Ctrl+A to cycle agent, Ctrl+E to cycle through args/resume fields, Esc to cancel."
 	ta.SetWidth(60)
 	ta.SetHeight(10)
 	args := textinput.New()
@@ -50,7 +56,7 @@ func NewPopup(defaultRepo string) PopupModel {
 	resume.Placeholder = "resume task id (32 hex; empty = new task)"
 	resume.CharLimit = 64
 	resume.Width = 60
-	pm := PopupModel{ta: ta, args: args, resume: resume, hostChoices: []string{"(any)"}}
+	pm := PopupModel{ta: ta, args: args, resume: resume, hostChoices: []string{"(any)"}, agentChoices: []string{"(default)"}}
 	if defaultRepo != "" {
 		pm.repoChoices = []string{defaultRepo}
 	}
@@ -62,6 +68,7 @@ func (m *PopupModel) IsOpen() bool { return m.open }
 func (m *PopupModel) Open() {
 	m.open = true
 	m.hostIdx = 0
+	m.agentIdx = 0
 	m.ta.Reset()
 	m.args.SetValue("")
 	m.resume.SetValue("")
@@ -193,6 +200,39 @@ func (m *PopupModel) CycleHost(step int) {
 	m.hostIdx = ((m.hostIdx+step)%n + n) % n
 }
 
+// Agent returns the selected agent profile, or "" when "(default)" is
+// selected (server resolves the bound runner's default profile).
+func (m *PopupModel) Agent() string {
+	if m.agentIdx == 0 || len(m.agentChoices) == 0 {
+		return ""
+	}
+	return m.agentChoices[m.agentIdx]
+}
+
+// SetAgentChoices replaces the list of selectable agent profiles.
+// The first entry is always "(default)" (no explicit pick); then the
+// supplied profile names follow. Empty strings in profiles are skipped.
+func (m *PopupModel) SetAgentChoices(profiles []string) {
+	final := []string{"(default)"}
+	for _, p := range profiles {
+		if p != "" {
+			final = append(final, p)
+		}
+	}
+	m.agentChoices = final
+	m.agentIdx = 0
+}
+
+// CycleAgent advances agent-profile selection by step (1 = next, -1 = prev),
+// wrapping around. No-op when there are 0 or 1 choices.
+func (m *PopupModel) CycleAgent(step int) {
+	n := len(m.agentChoices)
+	if n <= 1 {
+		return
+	}
+	m.agentIdx = ((m.agentIdx+step)%n + n) % n
+}
+
 // SetRepo sets a single-choice repo (no cycling). Convenience for callers
 // that only have a default and no runner registry context.
 func (m *PopupModel) SetRepo(r string) {
@@ -273,6 +313,14 @@ func (m PopupModel) View() string {
 	if n := len(m.hostChoices); n > 1 {
 		header += fmt.Sprintf("  [Shift+Tab: cycle (%d/%d)]", m.hostIdx+1, n)
 	}
+	agent := m.Agent()
+	if agent == "" {
+		agent = "(default)"
+	}
+	header += "\n            agent: " + agent
+	if n := len(m.agentChoices); n > 1 {
+		header += fmt.Sprintf("  [Ctrl+A: cycle (%d/%d)]", m.agentIdx+1, n)
+	}
 	resumeConv := "off"
 	if m.resumeConv {
 		resumeConv = "on"
@@ -292,7 +340,7 @@ func (m PopupModel) View() string {
 	case m.resume.Value() == "":
 		resumeLabel = "resume (Ctrl+E to edit; empty = new task):"
 	}
-	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Ctrl+E: cycle args/resume  ·  Ctrl+R: resume conversation  ·  Esc: cancel")
+	footer := FooterStyle.Render("Ctrl+J: submit  ·  Tab: next repo  ·  Shift+Tab: cycle host  ·  Ctrl+A: cycle agent  ·  Ctrl+E: cycle args/resume  ·  Ctrl+R: resume conversation  ·  Esc: cancel")
 	return box.Render(header + "\n\n" + m.ta.View() +
 		"\n\n" + argsLabel + "\n" + m.args.View() +
 		"\n\n" + resumeLabel + "\n" + m.resume.View() +

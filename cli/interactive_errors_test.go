@@ -14,6 +14,7 @@ func TestCandidatesFromResponse(t *testing.T) {
 	c.SetMatchedRoot([]byte("/home/x/repo"))
 	c.ActiveTasks = 3
 	c.MaxTasks = 8
+	c.SetProfile([]byte("codex"))
 	resp := &protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_AmbiguousRunner}
 	resp.SetCandidates([]protocol.RunnerCandidate{c})
 
@@ -22,7 +23,8 @@ func TestCandidatesFromResponse(t *testing.T) {
 		t.Fatalf("len=%d want 1", len(got))
 	}
 	if got[0].Cid != "ws:10.0.0.2:1-1" || got[0].Hostname != "gmkhost-codex" ||
-		got[0].MatchedRoot != "/home/x/repo" || got[0].ActiveTasks != 3 || got[0].MaxTasks != 8 {
+		got[0].MatchedRoot != "/home/x/repo" || got[0].ActiveTasks != 3 || got[0].MaxTasks != 8 ||
+		got[0].Profile != "codex" {
 		t.Fatalf("mapping mismatch: %+v", got[0])
 	}
 }

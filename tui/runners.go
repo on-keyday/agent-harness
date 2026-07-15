@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -131,7 +132,27 @@ func agentDescriptor(bin string, injected bool) string {
 
 // runnerAgentCell renders the Agent column for a runner row.
 func runnerAgentCell(r protocol.RunnerInfo) string {
-	return agentDescriptor(string(r.AgentBin), r.SkillsInjected())
+	return agentProfilesDescriptor(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected())
+}
+
+// agentProfilesDescriptor renders a runner's agent identity, extended to the
+// full profile set (§6 of the multi-agent-profile design): a multi-profile
+// runner shows "claude,codex" instead of just its process-level AgentBin.
+// A legacy runner that never advertised AgentProfiles falls back to
+// agentDescriptor(bin, injected), unchanged from before this feature.
+func agentProfilesDescriptor(profiles []protocol.AgentProfileName, bin string, injected bool) string {
+	if len(profiles) == 0 {
+		return agentDescriptor(bin, injected)
+	}
+	names := make([]string, len(profiles))
+	for i, p := range profiles {
+		names[i] = string(p.Name)
+	}
+	desc := strings.Join(names, ",")
+	if injected {
+		desc += "+skills"
+	}
+	return desc
 }
 
 // runnerRootsCell renders the first AllowedRoot path (truncated) for the table.

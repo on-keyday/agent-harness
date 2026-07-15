@@ -73,8 +73,16 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 	ids := make([]string, 0, len(ts))
 	for _, t := range ts {
 		idHex := hex.EncodeToString(t.Id.Id[:])
+		// Prefer the task's own resolved AgentProfile (§6 of the
+		// multi-agent-profile design) — the agent this task actually ran
+		// (or will run) under, which may differ from its assigned runner's
+		// process-level AgentBin on a multi-profile runner. Falls back to
+		// the runner-derived descriptor for tasks predating this field
+		// (WAL-replayed from before the feature landed).
 		agent := "-"
-		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+		if len(t.AgentProfile) > 0 {
+			agent = string(t.AgentProfile)
+		} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
 			agent = agentDescriptor(string(r.AgentBin), r.SkillsInjected())
 		}
 		// Busy/idle badge from the live session's server-computed idle age;

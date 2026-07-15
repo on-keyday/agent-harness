@@ -8,8 +8,11 @@ import (
 )
 
 // RunnerPickerModel is a digit-select popup shown when an interactive open
-// returns AmbiguousRunner: it lists the candidate runners so the user picks one
-// with a single keypress. Mirrors ForwardPicker.
+// returns AmbiguousRunner: it lists the candidate (runner, profile) combos so
+// the user picks one with a single keypress. Mirrors ForwardPicker. Per the
+// multi-agent-profile design (§4a), the candidate unit is a (runner, profile)
+// pair, not a bare runner — picking a row pins both the runner (Cid) and the
+// agent (Profile) for the re-issued open.
 type RunnerPickerModel struct {
 	open       bool
 	candidates []cli.RunnerCandidate
@@ -47,8 +50,16 @@ func (p *RunnerPickerModel) View() string {
 		Padding(1, 2)
 	body := "Ambiguous runner — pick one:\n\n"
 	for i, c := range p.candidates {
-		body += fmt.Sprintf("%d) %-16s [%d/%d]  %s  %s\n",
-			i+1, c.Hostname, c.ActiveTasks, c.MaxTasks, c.MatchedRoot, c.Cid)
+		profile := c.Profile
+		if profile == "" {
+			// Defensive fallback: every real combo from the server's
+			// expandInteractiveCombos already carries a resolved profile
+			// (DefaultProfile/AgentBin), so this only fires for a
+			// legacy/malformed response.
+			profile = "(default)"
+		}
+		body += fmt.Sprintf("%d) %-16s · %-10s · %s · %s  [%d/%d]\n",
+			i+1, c.Hostname, profile, c.MatchedRoot, c.Cid, c.ActiveTasks, c.MaxTasks)
 	}
 	body += "\n" + FooterStyle.Render("press number to pick · Esc to cancel")
 	return box.Render(body)

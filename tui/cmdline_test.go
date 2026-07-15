@@ -82,6 +82,28 @@ func TestParseSubmitResumeConversation(t *testing.T) {
 	}
 }
 
+func TestParseSubmitWithAgent(t *testing.T) {
+	got, err := ParseCommand(`submit --agent codex "do work"`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SubmitAction)
+	if a.AgentProfile != "codex" {
+		t.Errorf("AgentProfile=%q want codex", a.AgentProfile)
+	}
+}
+
+func TestParseSubmitDefaultAgentEmpty(t *testing.T) {
+	got, err := ParseCommand(`submit hello`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SubmitAction)
+	if a.AgentProfile != "" {
+		t.Errorf("AgentProfile=%q want empty (runner default)", a.AgentProfile)
+	}
+}
+
 func TestParseInteractiveWithClaudeArgs(t *testing.T) {
 	got, err := ParseCommand(`interactive --repo /r --claude-arg --add-dir --claude-arg /other`, "/cwd")
 	if err != nil {
@@ -113,6 +135,17 @@ func TestParseInteractiveResumeConversation(t *testing.T) {
 	}
 	if !a.ResumeConversation {
 		t.Fatal("ResumeConversation=false want true")
+	}
+}
+
+func TestParseInteractiveWithAgent(t *testing.T) {
+	got, err := ParseCommand(`interactive --agent codex`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(InteractiveAction)
+	if a.AgentProfile != "codex" {
+		t.Errorf("AgentProfile=%q want codex", a.AgentProfile)
 	}
 }
 
@@ -233,6 +266,17 @@ func TestParseSessionNewWithHost(t *testing.T) {
 	}
 	if a.Runner != "" || a.IP != "" {
 		t.Errorf("expected only Host set, got Runner=%q IP=%q", a.Runner, a.IP)
+	}
+}
+
+func TestParseSessionNewWithAgent(t *testing.T) {
+	got, err := ParseCommand(`session new --agent codex`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if a.AgentProfile != "codex" {
+		t.Errorf("AgentProfile=%q want codex", a.AgentProfile)
 	}
 }
 

@@ -54,7 +54,7 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
 	fmt.Fprintf(&sb, "id:            %s\n", protocol.RunnerIDToConnID(r.Id).String())
 	fmt.Fprintf(&sb, "host:          %s\n", string(r.Hostname))
-	fmt.Fprintf(&sb, "agent:         %s\n", agentDescriptor(string(r.AgentBin), r.SkillsInjected()))
+	fmt.Fprintf(&sb, "agent:         %s\n", agentProfilesDescriptor(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()))
 	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
 	for i, root := range r.AllowedRoots {
 		fmt.Fprintf(&sb, "root[%d]:       %s\n", i, string(root.Path))
@@ -80,6 +80,9 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	fmt.Fprintf(&sb, "id:            %s\n", hex.EncodeToString(t.Id.Id[:]))
 	fmt.Fprintf(&sb, "kind:          %s\n", taskKindStr(t.Kind))
 	fmt.Fprintf(&sb, "status:        %s\n", taskStatusStr(t.Status))
+	if len(t.AgentProfile) > 0 {
+		fmt.Fprintf(&sb, "agent:         %s\n", string(t.AgentProfile))
+	}
 	// Busy/idle badge + last-output timestamp for a live interactive session,
 	// mirroring the task table's Act column (blank there for tasks without a
 	// live session — the server leaves last_output_at at 0 for those).

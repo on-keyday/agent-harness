@@ -747,6 +747,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				repo := a.popup.Repo()
 				prompt := a.popup.Prompt()
 				host := a.popup.Host()
+				agent := a.popup.Agent()
 				extraArgs := a.popup.ExtraArgs()
 				resumeID := a.popup.ResumeTaskID()
 				resumeConversation := a.popup.ResumeConversation()
@@ -761,12 +762,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, a.applyCapsOnResume, resumeConversation)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, a.applyCapsOnResume, resumeConversation, agent)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
 			case tea.KeyShiftTab:
 				a.popup.CycleHost(+1)
+				return a, nil
+			case tea.KeyCtrlA:
+				a.popup.CycleAgent(+1)
 				return a, nil
 			case tea.KeyCtrlE:
 				a.popup.ToggleFocus()
@@ -788,9 +792,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if c := a.runnerPicker.Pick(msg.String()); c != nil {
 				p := a.pendingInteractive
+				sel, agentProfile := pickerSelection(c)
 				a.runnerPicker.Close()
-				a.cmdresult.Append(OKStyle.Render("pinned runner: ") + c.Hostname + "  " + c.Cid)
-				return a, DoOpenDetachableSession(a.client, p.repo, cli.SelectorOpts{Runner: c.Cid}, p.extraArgs, p.resumeTaskID, p.caps, p.capsOverride, p.resumeConversation)
+				pickLabel := c.Hostname + "  " + c.Cid
+				if agentProfile != "" {
+					pickLabel += "  (" + agentProfile + ")"
+				}
+				a.cmdresult.Append(OKStyle.Render("pinned runner: ") + pickLabel)
+				return a, DoOpenDetachableSession(a.client, p.repo, sel, p.extraArgs, p.resumeTaskID, p.caps, p.capsOverride, p.resumeConversation, agentProfile)
 			}
 			return a, nil
 		}
@@ -859,6 +868,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "s" {
 			a.popup.SetRepoChoices(uniqueRepoPaths(a.runnersSnapshot), a.defaultRepo)
 			a.popup.SetHostChoices(uniqueHostnames(a.runnersSnapshot))
+			a.popup.SetAgentChoices(uniqueAgentProfiles(a.runnersSnapshot))
 			a.popup.Open()
 			return a, nil
 		}
@@ -903,7 +913,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				caps: a.sessionCaps, capsOverride: false,
 			}
 			a.pickerArmed = true
-			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false, false)
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false, false, "")
 		}
 		// `F` opens the file picker for the task currently focused in the
 		// tasks pane. No-op when the tasks pane is not focused or no task
@@ -1003,9 +1013,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				a.pickerArmed = true
 				if unpinnedResume {
-					return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, nil, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume, act.ResumeConversation)
+					// Unpinned (u/U): leave agentProfile unresolved — the
+					// (runner, profile) picker (§4a) supplies both when the
+					// combo set is ambiguous, exactly like the Any-selector
+					// runner pin above.
+					return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, nil, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume, act.ResumeConversation, "")
 				}
-				return a, DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume, act.ResumeConversation)
+				// Pinned (r/R): default to the task's own recorded profile
+				// (§4b) so the pinned path stays one keypress — no picker.
+				return a, DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.sessionCaps, a.applyCapsOnResume, act.ResumeConversation, string(t.AgentProfile))
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil
@@ -1480,9 +1496,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case InteractiveAction:
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation, v.AgentProfile)
 	case SubmitAction:
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation, v.AgentProfile)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -1500,12 +1516,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation, v.AgentProfile)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation, v.AgentProfile)
 		}
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation)
+		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, a.sessionCaps, a.applyCapsOnResume, v.ResumeConversation, v.AgentProfile)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:
@@ -1621,6 +1637,40 @@ func uniqueHostnames(rs []protocol.RunnerInfo) []string {
 		}
 		seen[h] = struct{}{}
 		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// uniqueAgentProfiles returns the de-duplicated union of agent profiles
+// advertised across a runner snapshot, in stable (sorted) order — used to
+// populate the submit popup's agent selector (§6 TUI compose flow). A
+// runner that advertises no explicit AgentProfiles (legacy runner) falls
+// back to its single implicit AgentBin profile, mirroring the server's
+// RunnerEntry.DefaultProfile/advertisedProfiles fallback (server/registry.go,
+// server/task_handler.go) so the choices shown here match what the server
+// will actually accept.
+func uniqueAgentProfiles(rs []protocol.RunnerInfo) []string {
+	seen := make(map[string]struct{}, len(rs))
+	out := make([]string, 0, len(rs))
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		if _, ok := seen[p]; ok {
+			return
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	for _, r := range rs {
+		if len(r.AgentProfiles) == 0 {
+			add(string(r.AgentBin))
+			continue
+		}
+		for _, p := range r.AgentProfiles {
+			add(string(p.Name))
+		}
 	}
 	sort.Strings(out)
 	return out

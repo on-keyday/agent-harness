@@ -15,6 +15,13 @@ type RunnerCandidate struct {
 	MatchedRoot string
 	ActiveTasks int
 	MaxTasks    int
+	// Profile is the agent profile this (runner, profile) combo represents
+	// (e.g. "claude" / "codex"). Set by the server's combo expansion
+	// (§4a of the multi-agent-profile design); may be "" for a legacy
+	// runner/response that never populated it. Picking this candidate
+	// re-issues pinned to BOTH Cid (SelectorOpts{Runner: Cid}) AND Profile
+	// (the agentProfile passed to the Do*/*WithSelectorArgsAndCaps funnels).
+	Profile string
 }
 
 // AmbiguousRunnerError is returned when opening/resuming an interactive session
@@ -45,6 +52,7 @@ func candidatesFromResponse(oir *protocol.OpenInteractiveResponse) []RunnerCandi
 			MatchedRoot: string(c.MatchedRoot),
 			ActiveTasks: int(c.ActiveTasks),
 			MaxTasks:    int(c.MaxTasks),
+			Profile:     string(c.Profile),
 		})
 	}
 	return out

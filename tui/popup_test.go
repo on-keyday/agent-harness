@@ -79,6 +79,55 @@ func TestPopupSetRepoSingle(t *testing.T) {
 	}
 }
 
+func TestPopupAgentDefaultsToEmpty(t *testing.T) {
+	p := NewPopup("/repo")
+	if got := p.Agent(); got != "" {
+		t.Errorf("Agent()=%q, want empty (default) before SetAgentChoices", got)
+	}
+}
+
+func TestPopupSetAgentChoicesAndCycle(t *testing.T) {
+	var p PopupModel
+	p.SetAgentChoices([]string{"claude", "codex"})
+	if got := p.Agent(); got != "" {
+		t.Errorf("Agent()=%q, want empty (index 0 = default) right after SetAgentChoices", got)
+	}
+	p.CycleAgent(+1)
+	if got := p.Agent(); got != "claude" {
+		t.Errorf("after +1 Agent()=%q, want claude", got)
+	}
+	p.CycleAgent(+1)
+	if got := p.Agent(); got != "codex" {
+		t.Errorf("after +2 Agent()=%q, want codex", got)
+	}
+	p.CycleAgent(+1)
+	if got := p.Agent(); got != "" {
+		t.Errorf("after wrap Agent()=%q, want empty (back to default)", got)
+	}
+}
+
+func TestPopupSetAgentChoicesSkipsEmpty(t *testing.T) {
+	var p PopupModel
+	p.SetAgentChoices([]string{"", "claude", ""})
+	p.CycleAgent(+1)
+	if got := p.Agent(); got != "claude" {
+		t.Errorf("Agent()=%q, want claude (empties dropped)", got)
+	}
+}
+
+func TestPopupOpenResetsAgentIdx(t *testing.T) {
+	p := NewPopup("/repo")
+	p.SetAgentChoices([]string{"claude", "codex"})
+	p.CycleAgent(+1)
+	if got := p.Agent(); got != "claude" {
+		t.Fatalf("Agent()=%q, want claude before reopen", got)
+	}
+	p.Open()
+	if got := p.Agent(); got != "" {
+		t.Errorf("Agent()=%q, want empty (default) after Open() resets agentIdx", got)
+	}
+}
+
 func TestPopupResumeConversationToggle(t *testing.T) {
 	p := NewPopup("/repo")
 	p.Open()
