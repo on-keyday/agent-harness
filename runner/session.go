@@ -81,17 +81,20 @@ type taskEntry struct {
 // Session manages the runner's task lifecycle. It is created once per connection
 // and handles concurrent tasks through its internal maps.
 type Session struct {
-	AllowedRoots                  []string // absolute paths this runner is allowed to serve
-	ClaudeBin                     string
-	ExtraClaudeArgs               []string // forwarded to Process.ExtraArgs (e.g. --dangerously-skip-permissions)
-	OneshotArgvTemplate           []string
-	ResumeOneshotArgvTemplate     []string
-	ResumeInteractiveArgvTemplate []string
-	Timeout                       time.Duration
-	Sender                        Sender
-	Streams                       peer.BidirectionalStreamLookup // optional; required for handleOpenExec
-	Logger                        *slog.Logger                   // optional; defaults to slog.Default()
-	Now                           func() time.Time
+	AllowedRoots []string // absolute paths this runner is allowed to serve
+
+	// Profiles is the set of agent launch profiles this runner was
+	// configured with: the default profile (from --agent-bin/--agent-args/
+	// --agent-*-argv) plus any extra profiles from --agent-profiles. Each
+	// AssignTask / OpenExec request carries an AgentProfile name (empty ==
+	// default) that handleAssign / handleOpenExec resolve against this set
+	// via resolveExec to pick the bin + argv actually exec'd.
+	Profiles ProfileSet
+	Timeout  time.Duration
+	Sender   Sender
+	Streams  peer.BidirectionalStreamLookup // optional; required for handleOpenExec
+	Logger   *slog.Logger                   // optional; defaults to slog.Default()
+	Now      func() time.Time
 
 	// creator makes bidi streams toward the server. Set to pc.Transport() for
 	// live runner connections; required by remote port-forward (one stream per
@@ -288,6 +291,36 @@ func (s *Session) DeliverChainedRelayResponse(resp protocol.ChainedRelayResponse
 	return true
 }
 
+// resolveExec resolves profile against ps (empty name == the default
+// profile) and builds the argv for either a oneshot invocation
+// (oneshot=true — templated with prompt via buildOneshotArgs) or an
+// interactive/PTY invocation (oneshot=false — via buildInteractiveArgs,
+// prompt ignored). resume selects the resume-conversation argv templates.
+// extra is the caller-supplied per-task extra args; it is merged after the
+// profile's own AgentArgs baseline (profile args first, per-task extras
+// last, so a per-task flag wins on conflict — same ordering as the old
+// session-level ExtraClaudeArgs/body.ExtraArgs merge).
+//
+// Returns an error (never a silent fallback to the default profile) if the
+// profile name is unknown or its argv templates are invalid — callers must
+// fail the task rather than guess a substitute binary.
+func resolveExec(ps ProfileSet, profile string, oneshot, resume bool, extra []string, prompt string) (bin string, argv []string, err error) {
+	p, err := ps.Resolve(profile)
+	if err != nil {
+		return "", nil, err
+	}
+	args := mergeExtraArgs(p.AgentArgs, extra)
+	if oneshot {
+		argv, err = buildOneshotArgs(p.OneshotArgv, p.ResumeOneshotArgv, args, prompt, resume)
+	} else {
+		argv, err = buildInteractiveArgs(args, p.ResumeInteractiveArgv, resume)
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	return p.Bin, argv, nil
+}
+
 // handleAssign performs the full lifecycle for one assigned task:
 //  1. TaskAccepted control message
 //  2. Worktree creation (failure → TaskFinished with error info)
@@ -354,6 +387,16 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	// so existing tests that don't set AllowedRoots continue to work).
 	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
 		finishWithError(-1, "repo_not_allowed: "+repoPath)
+		return
+	}
+
+	// Gate: resolve the requested agent profile up front. An unknown profile
+	// name (or a misconfigured profile's argv templates) fails the task
+	// immediately with a clear error — never a silent fallback to the
+	// default profile.
+	agentProfile, err := s.Profiles.Resolve(string(body.AgentProfile))
+	if err != nil {
+		finishWithError(-1, "agent_profile: "+err.Error())
 		return
 	}
 
@@ -433,17 +476,17 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 	})
 
 	// Step 4: Execute the process, publishing log lines to the task log topic.
-	// Args order: runner-global baseline first, per-task extras appended last
+	// Args order: profile baseline first, per-task extras appended last
 	// so that a per-task --resume / --add-dir / etc. wins on conflict (claude
 	// flags are largely last-wins).
 	proc := &Process{
-		ClaudeBin:                 s.ClaudeBin,
+		ClaudeBin:                 agentProfile.Bin,
 		CWD:                       dir,
 		Timeout:                   s.Timeout,
-		ExtraArgs:                 mergeExtraArgs(s.ExtraClaudeArgs, body.ExtraArgs.AsStrings()),
+		ExtraArgs:                 mergeExtraArgs(agentProfile.AgentArgs, body.ExtraArgs.AsStrings()),
 		ResumeConversation:        body.ResumeConversation(),
-		OneshotArgvTemplate:       s.OneshotArgvTemplate,
-		ResumeOneshotArgvTemplate: s.ResumeOneshotArgvTemplate,
+		OneshotArgvTemplate:       agentProfile.OneshotArgv,
+		ResumeOneshotArgvTemplate: agentProfile.ResumeOneshotArgv,
 		Env:                       env,
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
@@ -553,6 +596,18 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
+	// Gate: resolve the requested agent profile + build the interactive argv
+	// up front (see resolveExec). An unknown profile fails the task clearly
+	// — no silent fallback to the default profile — and, same as the gate
+	// above, the server-allocated stream must be closed here or the
+	// server's splice goroutine blocks on ReadDirect forever.
+	agentBin, agentArgv, err := resolveExec(s.Profiles, string(oer.AgentProfile), false, oer.ResumeConversation(), oer.ExtraArgs.AsStrings(), "")
+	if err != nil {
+		_ = stream.CloseBoth()
+		finishWithError(-1, "agent_profile: "+err.Error())
+		return
+	}
+
 	// Fallback if RepoPath not set.
 	if repoPath == "" && len(s.AllowedRoots) > 0 {
 		repoPath = s.AllowedRoots[0]
@@ -650,24 +705,18 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 	// Step 4: spawn claude under PTY, hand the stream to exec.
 	// ExecuteCommandWithOption defers stream.CloseBoth() so we don't double-close here.
-	// Args order matches handleAssign: runner-global baseline first, per-task extras appended.
-	mergedArgs, err := buildInteractiveArgs(
-		mergeExtraArgs(s.ExtraClaudeArgs, oer.ExtraArgs.AsStrings()),
-		s.ResumeInteractiveArgvTemplate,
-		oer.ResumeConversation(),
-	)
-	runErr := err
-	if runErr == nil {
-		runErr = agentexec.ExecuteCommandWithOption(taskCtx, stream, log, s.ClaudeBin, mergedArgs, dir, true, env, agentexec.ExecuteOption{
-			OnStdinWriter: func(write func([]byte) (int, error)) {
-				s.mu.Lock()
-				if e := s.tasks[taskIDHex]; e != nil {
-					e.wakeWrite = write
-				}
-				s.mu.Unlock()
-			},
-		})
-	}
+	// agentBin/agentArgv were already resolved from the requested profile by
+	// the gate above. Args order matches handleAssign: profile baseline
+	// first, per-task extras appended.
+	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
+		OnStdinWriter: func(write func([]byte) (int, error)) {
+			s.mu.Lock()
+			if e := s.tasks[taskIDHex]; e != nil {
+				e.wakeWrite = write
+			}
+			s.mu.Unlock()
+		},
+	})
 
 	if runErr != nil {
 		log.Error("ExecuteCommand error", "task_id", taskIDHex, "error", runErr)

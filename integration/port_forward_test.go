@@ -61,7 +61,7 @@ func TestPortForwardE2E(t *testing.T) {
 		runnerDone <- runner.Run(ctx, runner.Config{
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
-			ClaudeBin:    fakeClaude,
+			Profiles:     singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)
@@ -333,7 +333,7 @@ func TestRemotePortForwardE2E(t *testing.T) {
 		runnerDone <- runner.Run(ctx, runner.Config{
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
-			ClaudeBin:    fakeClaude,
+			Profiles:     singleAgentProfile(fakeClaude),
 		})
 	}()
 	time.Sleep(500 * time.Millisecond)

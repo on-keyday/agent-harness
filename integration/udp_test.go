@@ -121,7 +121,7 @@ func startRunnerWithCID(t *testing.T, serverCID objproto.ConnectionID, repo, hos
 			AllowedRoots: []string{repo},
 			MaxTasks:     1,
 			Hostname:     hostname,
-			ClaudeBin:    claudeBin,
+			Profiles:     singleAgentProfile(claudeBin),
 		})
 	}()
 

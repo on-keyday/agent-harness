@@ -38,16 +38,18 @@ func skillsInjected(noWorktree, forceInject bool) bool {
 
 // Config holds the configuration for the runner connection.
 type Config struct {
-	ServerCID                     objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
-	AllowedRoots                  []string              // absolute repo paths (or root prefixes) this runner serves
-	MaxTasks                      int                   // maximum concurrent tasks (0 → defaults to 1)
-	Hostname                      string                // hostname reported in Hello (empty → no hostname sent)
-	ClaudeBin                     string                // path to the claude binary
-	ExtraClaudeArgs               []string              // forwarded to every claude invocation (before -p)
-	OneshotArgvTemplate           []string              // argv template for oneshot tasks
-	ResumeOneshotArgvTemplate     []string              // argv template used when resuming a oneshot conversation
-	ResumeInteractiveArgvTemplate []string              // argv template used when resuming an interactive conversation
-	Logger                        *slog.Logger
+	ServerCID    objproto.ConnectionID // server peer ConnectionID (parsed from --server-cid)
+	AllowedRoots []string              // absolute repo paths (or root prefixes) this runner serves
+	MaxTasks     int                   // maximum concurrent tasks (0 → defaults to 1)
+	Hostname     string                // hostname reported in Hello (empty → no hostname sent)
+
+	// Profiles is the set of agent launch profiles this runner exec's: the
+	// default profile (basename becomes RunnerHello.agent_bin) plus any
+	// extra profiles (advertised as RunnerHello.agent_profiles). See
+	// runner/agent_profile.go and buildRunnerHello.
+	Profiles ProfileSet
+
+	Logger *slog.Logger
 	// PSK, when non-nil, overrides the HARNESS_PSK / HARNESS_PSK_FILE env vars.
 	PSK []byte
 
@@ -212,25 +214,21 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 
 	sender := &peerSender{pc: pc, ctx: ctx}
 	session := &Session{
-		AllowedRoots:                  cfg.AllowedRoots,
-		ClaudeBin:                     cfg.ClaudeBin,
-		ExtraClaudeArgs:               cfg.ExtraClaudeArgs,
-		OneshotArgvTemplate:           cfg.OneshotArgvTemplate,
-		ResumeOneshotArgvTemplate:     cfg.ResumeOneshotArgvTemplate,
-		ResumeInteractiveArgvTemplate: cfg.ResumeInteractiveArgvTemplate,
-		ServerCID:                     serverCID,
-		Hostname:                      cfg.Hostname,
-		WSPath:                        cli.WebSocketPath,
-		BinDir:                        binDir,
-		PSK:                           psk,
-		ProxyVia:                      cfg.ProxyVia,
-		Sender:                        sender,
-		Streams:                       pc.Transport(),
-		creator:                       pc.Transport(),
-		Logger:                        cfg.Logger,
-		Now:                           time.Now,
-		NoWorktree:                    cfg.NoWorktree,
-		ForceInjectHarnessSettings:    cfg.ForceInjectHarnessSettings,
+		AllowedRoots:               cfg.AllowedRoots,
+		Profiles:                   cfg.Profiles,
+		ServerCID:                  serverCID,
+		Hostname:                   cfg.Hostname,
+		WSPath:                     cli.WebSocketPath,
+		BinDir:                     binDir,
+		PSK:                        psk,
+		ProxyVia:                   cfg.ProxyVia,
+		Sender:                     sender,
+		Streams:                    pc.Transport(),
+		creator:                    pc.Transport(),
+		Logger:                     cfg.Logger,
+		Now:                        time.Now,
+		NoWorktree:                 cfg.NoWorktree,
+		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
 		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
 		// mode) after driveAfterConn returns, so the ep is available.
 	}
@@ -319,7 +317,19 @@ func buildRunnerHello(cfg Config) protocol.RunnerHello {
 		roots = append(roots, ar)
 	}
 	hh.SetAllowedRoots(roots)
-	hh.SetAgentBin([]byte(agentBinBase(cfg.ClaudeBin)))
+	// agent_bin advertises the default profile's basename (empty ProfileSet →
+	// Resolve("") errors and the zero-value AgentProfile{} yields "", the same
+	// as an unset --agent-bin previously did).
+	defaultProfile, _ := cfg.Profiles.Resolve("")
+	hh.SetAgentBin([]byte(agentBinBase(defaultProfile.Bin)))
+	names := cfg.Profiles.Names()
+	profileNames := make([]protocol.AgentProfileName, 0, len(names))
+	for _, n := range names {
+		var pn protocol.AgentProfileName
+		pn.SetName([]byte(n))
+		profileNames = append(profileNames, pn)
+	}
+	hh.SetAgentProfiles(profileNames)
 	hh.SetSkillsInjected(skillsInjected(cfg.NoWorktree, cfg.ForceInjectHarnessSettings))
 	return hh
 }

@@ -75,7 +75,7 @@ func TestActivityEventE2E(t *testing.T) {
 		runnerDone <- runner.Run(ctx, runner.Config{
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
-			ClaudeBin:    fake,
+			Profiles:     singleAgentProfile(fake),
 		})
 	}()
 	time.Sleep(400 * time.Millisecond)

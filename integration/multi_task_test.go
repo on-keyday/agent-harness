@@ -127,7 +127,7 @@ func startRunner(t *testing.T, serverCID objproto.ConnectionID, opts runnerOpts)
 			AllowedRoots: roots,
 			MaxTasks:     maxTasks,
 			Hostname:     opts.Hostname,
-			ClaudeBin:    claudeBin,
+			Profiles:     singleAgentProfile(claudeBin),
 		})
 	}()
 

@@ -21,6 +21,20 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
+// singleProfile builds a minimal ProfileSet with one profile ("default") at
+// the given bin path and no argv templates (buildOneshotArgs/
+// buildInteractiveArgs fall back to their built-in defaults). This is the
+// test-local equivalent of the old Session.ClaudeBin single-binary field,
+// now that Session carries a full ProfileSet.
+func singleProfile(t *testing.T, bin string) ProfileSet {
+	t.Helper()
+	ps, err := NewProfileSet(AgentProfile{Name: "default", Bin: bin}, nil)
+	if err != nil {
+		t.Fatalf("singleProfile(%q): %v", bin, err)
+	}
+	return ps
+}
+
 type mockSender struct {
 	mu        sync.Mutex
 	sent      [][]byte
@@ -46,13 +60,34 @@ func (m *mockSender) Publish(topic string, data []byte) error {
 	return nil
 }
 
+// TestSessionResolvesProfile verifies that resolveExec picks the named
+// profile's bin + argv (the codex case), and falls back to the default
+// profile (index 0) when the requested profile name is empty.
+func TestSessionResolvesProfile(t *testing.T) {
+	ps, _ := NewProfileSet(
+		AgentProfile{Name: "claude", Bin: "claude", OneshotArgv: []string{"{args}", "-p", "{prompt}"}},
+		[]AgentProfile{{Name: "codex", Bin: "codex", OneshotArgv: []string{"exec", "{args}", "{prompt}"}}},
+	)
+	bin, argv, err := resolveExec(ps, "codex" /*oneshot*/, true, false, nil, "do it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bin != "codex" || argv[0] != "exec" {
+		t.Fatalf("got bin=%q argv=%v", bin, argv)
+	}
+	bin, _, _ = resolveExec(ps, "", true, false, nil, "do it")
+	if bin != "claude" {
+		t.Fatalf("empty→default got %q", bin)
+	}
+}
+
 func TestHandleAssignSuccessSequence(t *testing.T) {
 	repo := initRepo(t)
 	ms := &mockSender{}
 	fakePath, _ := filepath.Abs("../testdata/fake-claude.sh") // relative from runner/
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fakePath,
+		Profiles:     singleProfile(t, fakePath),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -123,7 +158,7 @@ func TestHandleAssignResumeConversationAddsOneshotContinue(t *testing.T) {
 	fake := writeFakeClaude(t, `echo "ARGS=$*"`)
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -161,7 +196,7 @@ func TestHandleAssignWorktreeFailureReportsFinished(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{"/no/such/repo"},
-		ClaudeBin:    "/bin/true",
+		Profiles:     singleProfile(t, "/bin/true"),
 		Timeout:      1 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -194,7 +229,7 @@ func TestHandleAssignPanicSendsTaskFinished(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{"/some/repo"},
-		ClaudeBin:    "/bin/true",
+		Profiles:     singleProfile(t, "/bin/true"),
 		Timeout:      1 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -306,7 +341,7 @@ func TestSessionPanicIsolatesSiblingTask(t *testing.T) {
 
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fakePath,
+		Profiles:     singleProfile(t, fakePath),
 		Timeout:      10 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -381,7 +416,7 @@ echo "TASK=$HARNESS_TASK_ID"`)
 	ms := &mockSender{}
 	sess := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
@@ -495,7 +530,7 @@ func TestHandleAssign_OmitsEmptyHostname(t *testing.T) {
 	ms := &mockSender{}
 	sess := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
@@ -541,7 +576,7 @@ echo "TICKET=$HARNESS_AUTH_TICKET"`)
 	ms := &mockSender{}
 	sess := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		ServerCID:    mustParseCID(t, "ws:127.0.0.1:8539-1"),
@@ -605,7 +640,7 @@ func TestHandleOpenExecGateFailureClosesStream(t *testing.T) {
 
 	s := &Session{
 		AllowedRoots: []string{"/allowed"},
-		ClaudeBin:    "/bin/true",
+		Profiles:     singleProfile(t, "/bin/true"),
 		Sender:       ms,
 		Streams:      lookup,
 		Now:          time.Now,
@@ -661,7 +696,7 @@ echo "done"`)
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -743,7 +778,7 @@ func TestHandleAssign_NoWorktree_GitDir_HEADUntouched(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -802,7 +837,7 @@ func TestHandleAssign_NoWorktree_ConcurrentTasks(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -849,7 +884,7 @@ func TestHandleAssign_NoWorktree_Resume(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    fake,
+		Profiles:     singleProfile(t, fake),
 		Timeout:      5 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,
@@ -901,7 +936,7 @@ func TestHandleOpenExec_NoWorktree_NoGitDir(t *testing.T) {
 
 	s := &Session{
 		AllowedRoots: []string{repo},
-		ClaudeBin:    "/bin/true",
+		Profiles:     singleProfile(t, "/bin/true"),
 		Sender:       ms,
 		Streams:      lookup,
 		Now:          time.Now,
@@ -970,7 +1005,7 @@ func TestHandleAssign_NoWorktree_ForceInject(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots:               []string{repo},
-		ClaudeBin:                  fake,
+		Profiles:                   singleProfile(t, fake),
 		Timeout:                    5 * time.Second,
 		Sender:                     ms,
 		Now:                        time.Now,

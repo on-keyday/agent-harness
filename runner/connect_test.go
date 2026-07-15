@@ -32,7 +32,7 @@ func TestRunnerHandlesCancelTaskCallsCancelFunc(t *testing.T) {
 	ms := &mockSender{}
 	s := &Session{
 		AllowedRoots: []string{"/repo"},
-		ClaudeBin:    "/bin/true",
+		Profiles:     singleProfile(t, "/bin/true"),
 		Timeout:      30 * time.Second,
 		Sender:       ms,
 		Now:          time.Now,

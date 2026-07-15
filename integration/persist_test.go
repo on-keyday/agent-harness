@@ -69,7 +69,7 @@ func startPersistentRunnerHandle(t *testing.T, serverCID objproto.ConnectionID, 
 		AllowedRoots: roots,
 		MaxTasks:     maxTasks,
 		Hostname:     opts.Hostname,
-		ClaudeBin:    claudeBin,
+		Profiles:     singleAgentProfile(claudeBin),
 		PingInterval: 2 * time.Second,
 	}
 
@@ -223,7 +223,7 @@ func TestRunnerNoPersistExitsOnDisconnect(t *testing.T) {
 			AllowedRoots: []string{repo},
 			MaxTasks:     1,
 			Hostname:     "no-persist-test",
-			ClaudeBin:    claudeBin,
+			Profiles:     singleAgentProfile(claudeBin),
 		})
 	}()
 

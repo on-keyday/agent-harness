@@ -112,7 +112,7 @@ func TestSubmitWakeE2E(t *testing.T) {
 		runnerDone <- runner.Run(ctx, runner.Config{
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
-			ClaudeBin:    fake,
+			Profiles:     singleAgentProfile(fake),
 		})
 	}()
 	// Give the runner time to connect and become Idle.

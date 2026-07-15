@@ -98,7 +98,7 @@ func TestSubmitFakeClaudeE2E(t *testing.T) {
 		runnerDone <- runner.Run(ctx, runner.Config{
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
-			ClaudeBin:    fakeClaude,
+			Profiles:     singleAgentProfile(fakeClaude),
 		})
 	}()
 
@@ -193,7 +193,7 @@ func TestSubmitFakeClaudeE2E_NoWorktree(t *testing.T) {
 		runnerDone <- runner.Run(ctx, runner.Config{
 			ServerCID:    peerCID,
 			AllowedRoots: []string{repo},
-			ClaudeBin:    fakeClaude,
+			Profiles:     singleAgentProfile(fakeClaude),
 			NoWorktree:   true,
 		})
 	}()

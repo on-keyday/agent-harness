@@ -69,9 +69,8 @@ type mainConfig struct {
 
 	// Profiles is derived (not flag-bound): built in main() after flag
 	// parsing from the default single-agent flags (ClaudeBin/ClaudeArgs/
-	// AgentOneshotArgv/...) plus AgentProfilesJSON. Exists on mainConfig so
-	// later wiring (threading the resolved profile set into runner.Config)
-	// can read it without re-parsing.
+	// AgentOneshotArgv/...) plus AgentProfilesJSON, then threaded into
+	// runCfg.Profiles (runner.Config) below.
 	Profiles runner.ProfileSet
 
 	// ShutdownFile, when non-empty, is polled by cli.WatchShutdownFile every
@@ -287,19 +286,15 @@ func main() {
 	resolvedPSK := resolvePSK(pskVal, cfg.PSKFile)
 
 	runCfg := runner.Config{
-		AllowedRoots:                  abs,
-		MaxTasks:                      cfg.MaxTasks,
-		Hostname:                      hostname,
-		ClaudeBin:                     cfg.ClaudeBin,
-		ExtraClaudeArgs:               strings.Fields(cfg.ClaudeArgs),
-		OneshotArgvTemplate:           oneshotArgv,
-		ResumeOneshotArgvTemplate:     resumeOneshotArgv,
-		ResumeInteractiveArgvTemplate: resumeInteractiveArgv,
-		Logger:                        slog.Default(),
-		PSK:                           resolvedPSK,
-		NoWorktree:                    cfg.NoWorktree,
-		ForceInjectHarnessSettings:    cfg.ForceInjectHarnessSettings,
-		PingInterval:                  cfg.PingInterval,
+		AllowedRoots:               abs,
+		MaxTasks:                   cfg.MaxTasks,
+		Hostname:                   hostname,
+		Profiles:                   cfg.Profiles,
+		Logger:                     slog.Default(),
+		PSK:                        resolvedPSK,
+		NoWorktree:                 cfg.NoWorktree,
+		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
+		PingInterval:               cfg.PingInterval,
 	}
 
 	if cfg.isListenMode() {
