@@ -828,13 +828,20 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
 	}
 
-	// Resolve the requested agent profile. On resume with an empty request
-	// profile, default to the resumed task's recorded AgentProfile — resuming
-	// stays on the same agent unless the caller explicitly switches (§4b). A
-	// fresh open with no --agent leaves profile "" and takes the expansion
-	// path below.
+	// Resolve the requested agent profile. On a PINNED resume (selector Kind
+	// != Any, e.g. TUI r/R which pin to the last runner via by_runner_id)
+	// with an empty request profile, default to the resumed task's recorded
+	// AgentProfile — resuming stays on the same agent unless the caller
+	// explicitly switches (§4b), and the pin already chose the runner so
+	// there is no picker to fire. An UNPINNED resume (selector Kind == Any,
+	// e.g. TUI u/U) with an empty request profile must NOT default to the
+	// recorded profile: leaving it "" routes into expandInteractiveCombos's
+	// Any-expansion branch below, which expands each candidate runner across
+	// its advertised profiles so the (runner, profile) picker can re-fire and
+	// let the caller pick a different agent. A fresh open (not resuming) with
+	// no --agent also leaves profile "" and takes the same expansion path.
 	profile := string(req.AgentProfile)
-	if profile == "" && resuming {
+	if profile == "" && resuming && req.Selector.Kind != protocol.RunnerSelectorKind_Any {
 		if existing, ok := h.Tasks.Get(existingTaskIDHex); ok {
 			profile = existing.AgentProfile
 		}

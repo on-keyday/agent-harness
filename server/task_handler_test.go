@@ -849,6 +849,86 @@ func TestOpenInteractivePinnedEmptyProfileUsesDefault(t *testing.T) {
 	}
 }
 
+// TestOpenInteractiveUnpinnedResumeExpandsToPicker is the regression guard
+// for the resume-profile-resolution bug (spec §4b): an UNPINNED resume
+// (selector Kind == Any, the TUI u/U path) with an empty agent_profile must
+// NOT default to the resumed task's recorded AgentProfile. Defaulting would
+// collapse expandInteractiveCombos to a single (runner, recorded-profile)
+// combo and the picker would never fire, making "reopen under a different
+// agent" unreachable. Leaving profile "" instead routes into the Any-
+// expansion branch, which fans a single multi-profile runner out into one
+// combo per advertised profile — AmbiguousRunner with 2 candidates.
+func TestOpenInteractiveUnpinnedResumeExpandsToPicker(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+
+	// Terminal interactive task, recorded profile "codex".
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Finish(taskIDHex, 0, nil)
+
+	// The runner advertises both profiles the task could resume under.
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+
+	// Selector left at its zero value: Kind == RunnerSelectorKind_Any (unpinned).
+	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid}
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
+		t.Fatalf("status=%v want AmbiguousRunner (picker must fire on unpinned resume)", resp.Status)
+	}
+	cands := *resp.Candidates()
+	if len(cands) != 2 {
+		t.Fatalf("want 2 combos, got %d: %+v", len(cands), cands)
+	}
+	got := map[string]bool{string(cands[0].Profile): true, string(cands[1].Profile): true}
+	if !got["claude"] || !got["codex"] {
+		t.Fatalf("combos missing a profile: %v", got)
+	}
+}
+
+// TestOpenInteractivePinnedResumeStillDefaultsProfile is the no-regression
+// companion to TestOpenInteractiveUnpinnedResumeExpandsToPicker: a PINNED
+// resume (selector Kind != Any, the TUI r/R path — pinned via by_runner_id)
+// with an empty agent_profile must still default to the resumed task's
+// recorded AgentProfile, producing exactly one combo (no picker).
+func TestOpenInteractivePinnedResumeStillDefaultsProfile(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+
+	runnerCID := objproto.MustParseConnectionID("ws:127.0.0.1:9300-1")
+	runnerIDHex := runnerCID.String()
+
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, runnerIDHex, protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	h.Tasks.Assign(taskIDHex, runnerIDHex, "/wt")
+	h.Tasks.Finish(taskIDHex, 0, nil)
+
+	h.Registry.Add(&RunnerEntry{ID: runnerIDHex, Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+
+	// Pinned by_runner_id selector, targeting the same runner the task last
+	// ran on — mirrors the TUI r/R "reattach" path.
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByRunnerId}
+	sel.SetRunnerId(protocol.ConnIDToRunnerID(runnerCID))
+
+	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid, Selector: sel}
+
+	// tuiConn is nil: fine for asserting non-ambiguity — the Ok path itself
+	// would hit the nil-tuiConn InternalError guard, but that only proves
+	// the request cleared the ambiguity check with exactly one combo.
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
+		t.Fatalf("status=%v — pinned resume must not expand to the picker (1 combo using recorded profile)", resp.Status)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Task 6: handleOpenInteractive session wiring
 // ---------------------------------------------------------------------------
