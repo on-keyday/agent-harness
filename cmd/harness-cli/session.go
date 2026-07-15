@@ -172,6 +172,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
 	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
+	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 	var extraArgs repeatableStrings
 	fs.Var(&extraArgs, "agent-arg", "extra CLI arg to forward to the agent (repeatable; appended after runner-global --agent-args)")
 	fs.Var(&extraArgs, "claude-arg", "deprecated alias for --agent-arg")
@@ -225,7 +226,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
 
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, "")
+		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, *agent)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -235,7 +236,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
-		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride, *resumeConversation, "")
+		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride, *resumeConversation, *agent)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -243,7 +244,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, "")
+	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, *agent)
 	if err != nil {
 		return exitOnAmbiguous(err)
 	}

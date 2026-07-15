@@ -96,6 +96,7 @@ func main() {
 		resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch so claude's project key matches the previous run; --repo is ignored")
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
+		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
 		fs.Parse(args)
@@ -121,7 +122,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation, "")
+		id, err := c.SubmitWithSelectorArgsAndCaps(ctx, repoVal, *task, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation, *agent)
 		if err != nil {
 			die(err)
 		}
@@ -296,6 +297,7 @@ func main() {
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume; --repo is ignored")
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
+		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
 		fs.Parse(args)
@@ -318,7 +320,7 @@ func main() {
 		defer c.Close()
 		// The session survives a client disconnect (tmux-like) and any
 		// operator client can take it over via reattach.
-		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation, ""); err != nil {
+		if _, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, *extraArgs, *resume, caps, *resume != "" && capsExplicitlySet(fs), *resumeConversation, *agent); err != nil {
 			die(err)
 		}
 
@@ -584,9 +586,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (default /ws)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
-	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
 	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
+	fmt.Fprintln(os.Stderr, "                                      --agent: agent profile name to run this task under (empty = runner default; not to be confused with --agent-arg)")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)")
 	fmt.Fprintln(os.Stderr, "                                      --caps: comma-separated capability names to grant (e.g. spawn,file_read / all / none); default all. On --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
@@ -608,13 +611,15 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  logs [-f|--follow] TASK_ID          dump task log history; -f also streams live chunks until task terminal")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  notify-watch                        stream notifications (backlog + live); one human-readable line each")
-	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
+	fmt.Fprintln(os.Stderr, "                                      --agent: agent profile name to run this session under (empty = runner default; not to be confused with --agent-arg)")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal interactive task id + worktree branch")
-	fmt.Fprintln(os.Stderr, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
 	fmt.Fprintln(os.Stderr, "                                      open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
+	fmt.Fprintln(os.Stderr, "                                      --agent: agent profile name to run this session under (empty = runner default; not to be confused with --agent-arg)")
 	fmt.Fprintln(os.Stderr, "                                      -d / --detach: start the session and exit immediately (don't attach the terminal)")
 	fmt.Fprintln(os.Stderr, "  session attach TASK_ID              reattach to a detached/running session")
 	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: interactive sessions only")

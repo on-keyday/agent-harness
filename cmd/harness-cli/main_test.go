@@ -80,3 +80,55 @@ func TestCLI_RepoEnvFallback(t *testing.T) {
 		t.Errorf("did not reach dial step: %s", s)
 	}
 }
+
+// TestCLI_SubmitAgentFlagParses: --agent must be a recognized flag on submit
+// (not "flag provided but not defined") and parsing must proceed all the way
+// to the dial step, which is the only observable signal in this black-box,
+// no-server harness — the funnel forwarding itself (agentProfile arg to
+// SubmitWithSelectorArgsAndCaps) is exercised by this same code path.
+func TestCLI_SubmitAgentFlagParses(t *testing.T) {
+	cmd := exec.Command("go", "run", ".",
+		"--server-cid=ws:127.0.0.1:19996-1",
+		"submit", "--repo=/tmp/from-flag", "--task=x", "--agent=codex")
+	out, _ := cmd.CombinedOutput()
+	s := string(out)
+	if strings.Contains(s, "flag provided but not defined") {
+		t.Errorf("--agent not recognized on submit: %s", s)
+	}
+	if !strings.Contains(s, "127.0.0.1:19996") {
+		t.Errorf("did not reach dial step: %s", s)
+	}
+}
+
+// TestCLI_InteractiveAgentFlagParses: same as above for `interactive`.
+func TestCLI_InteractiveAgentFlagParses(t *testing.T) {
+	cmd := exec.Command("go", "run", ".",
+		"--server-cid=ws:127.0.0.1:19997-1",
+		"interactive", "--repo=/tmp/from-flag", "--agent=codex")
+	out, _ := cmd.CombinedOutput()
+	s := string(out)
+	if strings.Contains(s, "flag provided but not defined") {
+		t.Errorf("--agent not recognized on interactive: %s", s)
+	}
+	if !strings.Contains(s, "127.0.0.1:19997") {
+		t.Errorf("did not reach dial step: %s", s)
+	}
+}
+
+// TestCLI_SessionNewAgentFlagParses: same as above for `session new`, which
+// has its own independent flag.FlagSet (runSessionNew in session.go) and
+// feeds all three interactive-open call sites (OpenInteractiveWithSelectorArgsAndCaps,
+// RunInteractiveX11, InteractiveWithSelectorArgsAndCaps).
+func TestCLI_SessionNewAgentFlagParses(t *testing.T) {
+	cmd := exec.Command("go", "run", ".",
+		"--server-cid=ws:127.0.0.1:19998-1",
+		"session", "new", "--repo=/tmp/from-flag", "--agent=codex")
+	out, _ := cmd.CombinedOutput()
+	s := string(out)
+	if strings.Contains(s, "flag provided but not defined") {
+		t.Errorf("--agent not recognized on session new: %s", s)
+	}
+	if !strings.Contains(s, "127.0.0.1:19998") {
+		t.Errorf("did not reach dial step: %s", s)
+	}
+}
