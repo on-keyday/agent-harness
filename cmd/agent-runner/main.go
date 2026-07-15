@@ -45,6 +45,7 @@ type mainConfig struct {
 	AgentOneshotArgv           string
 	AgentResumeOneshotArgv     string
 	AgentResumeInteractiveArgv string
+	AgentProfilesJSON          string
 	WSPath                     string
 	Hostname                   string
 	PSK                        string
@@ -65,6 +66,13 @@ type mainConfig struct {
 	// Used by validate to distinguish "user set --server-cid AND --listen"
 	// (which is an error) from "default --server-cid + --listen" (fine).
 	serverCIDExplicit bool
+
+	// Profiles is derived (not flag-bound): built in main() after flag
+	// parsing from the default single-agent flags (ClaudeBin/ClaudeArgs/
+	// AgentOneshotArgv/...) plus AgentProfilesJSON. Exists on mainConfig so
+	// later wiring (threading the resolved profile set into runner.Config)
+	// can read it without re-parsing.
+	Profiles runner.ProfileSet
 
 	// ShutdownFile, when non-empty, is polled by cli.WatchShutdownFile every
 	// 250ms; once the file appears the runner triggers a graceful shutdown.
@@ -102,6 +110,7 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for oneshot tasks; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
 	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; token {args}; default \"{args} --continue\"")
+	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,resumeInteractiveArgv,agentArgs}]")
 	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
 	fs.StringVar(&c.PSK, "psk", c.PSK, "PSK passphrase (env: HARNESS_PSK)")
@@ -223,6 +232,30 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agent-runner: --agent-resume-interactive-argv: %v\n", err)
 		os.Exit(1)
 	}
+
+	// The single-agent flags above (--agent-bin/--agent-args/--agent-*-argv)
+	// define the default (first) agent profile. --agent-profiles adds extra
+	// profiles appended after it. Default profile name = basename of
+	// --agent-bin.
+	defaultProfile := runner.AgentProfile{
+		Name:                  filepath.Base(cfg.ClaudeBin),
+		Bin:                   cfg.ClaudeBin,
+		AgentArgs:             strings.Fields(cfg.ClaudeArgs),
+		OneshotArgv:           oneshotArgv,
+		ResumeOneshotArgv:     resumeOneshotArgv,
+		ResumeInteractiveArgv: resumeInteractiveArgv,
+	}
+	extraProfiles, err := runner.ParseAgentProfilesJSON(cfg.AgentProfilesJSON)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: --agent-profiles: %v\n", err)
+		os.Exit(1)
+	}
+	profiles, err := runner.NewProfileSet(defaultProfile, extraProfiles)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: --agent-profiles: %v\n", err)
+		os.Exit(1)
+	}
+	cfg.Profiles = profiles
 
 	hostname := cfg.Hostname
 	if hostname == "" {
