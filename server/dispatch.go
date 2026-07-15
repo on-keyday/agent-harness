@@ -120,6 +120,7 @@ func buildAssignMsg(task TaskEntry, ticket [16]byte, streamID uint64) ([]byte, [
 	body.SetResumeConversation(task.ResumeConversation)
 	body.SetRepoPath([]byte(task.RepoPath))
 	body.SetPrompt([]byte(task.Prompt))
+	body.SetAgentProfile([]byte(task.AgentProfile))
 	bodyBytes, err := body.EncodeCopy(nil)
 	if err != nil {
 		return nil, nil, err
