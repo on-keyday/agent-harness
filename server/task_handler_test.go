@@ -562,6 +562,52 @@ func TestSubmitResumeEmptyProfileReusesOriginal(t *testing.T) {
 	}
 }
 
+// TestSubmitResumeProfileFilterNarrowsAmbiguity is the resume-path analogue
+// of TestSubmitProfileFilterNarrowsAmbiguity: two runners serve the same
+// root, only one (B) advertises the task's recorded profile ("codex").
+// Resuming with no --agent must narrow to B via the profile filter BEFORE
+// the len(cands)>1 ambiguity check, exactly like the fresh-submit path —
+// not bind to cands[0] (A) first and reject with ProfileUnavailable/
+// AmbiguousRunner.
+func TestSubmitResumeProfileFilterNarrowsAmbiguity(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+
+	// Original task recorded as bound to the "codex" profile.
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "B", protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	h.Tasks.Assign(taskIDHex, "B", "/wt")
+	h.Tasks.Finish(taskIDHex, 0, nil)
+
+	// Two runners now serve the same root; only B advertises "codex".
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+	h.Registry.Add(&RunnerEntry{ID: "B", Hostname: "h2", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+
+	req := &protocol.SubmitRequest{ResumeTaskId: tid}
+	req.SetPrompt([]byte("resume")) // no agent_profile -> falls back to recorded "codex"
+
+	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.SubmitStatus_Ok {
+		t.Fatalf("status=%v want Ok, error_msg=%q", resp.Status, resp.ErrorMsg)
+	}
+	got, ok := h.Tasks.Get(taskIDHex)
+	if !ok {
+		t.Fatalf("task not found")
+	}
+	if got.BoundRunnerID != "B" {
+		t.Fatalf("BoundRunnerID=%q want B (only codex-advertising runner)", got.BoundRunnerID)
+	}
+}
+
+// Note: TestSubmitResumeProfileUnavailableWhenRunnerLostProfile (above)
+// already covers the "keep/verify" requirement that resuming a "codex" task
+// when no candidate runner advertises "codex" still returns
+// ProfileUnavailable — that behavior is preserved by construction since the
+// pre-ambiguity filter still empty-checks before returning ProfileUnavailable.
+
 // ---------------------------------------------------------------------------
 // Task 4.2: handleOpenInteractive synchronous error codes
 // ---------------------------------------------------------------------------

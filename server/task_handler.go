@@ -558,17 +558,30 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 }
 
 // handleSubmitResume implements the resume_task_id branch of handleSubmit.
-// Validation order:
+// Validation order (mirrors the fresh-submit path in handleSubmit exactly,
+// so the same "roots-matching runner set narrowed by profile before the
+// ambiguity check" shape applies to both):
 //  1. Existing TaskEntry must exist (else resume_not_found).
 //  2. Its TaskKind must be Oneshot — interactive resumes go through the
 //     OpenInteractive path; a Submit asking to resume an interactive task is
 //     a category mismatch that we reject up front (resume_not_found, since
 //     no Oneshot entry by that id exists from this handler's perspective).
 //  3. Runner candidates against the existing repo + the request's selector.
-//     Same NoRunner / Ambiguous / PinnedNotFound mapping as the fresh path.
-//  4. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
+//     Empty candidates map to NoRunner / PinnedNotFound.
+//  4. Profile filter — resolved is the explicit request profile, or else
+//     the task's recorded AgentProfile (unlike fresh-submit, an empty
+//     resume profile defaults to the original profile, not the bound
+//     runner's own default). Narrows cands to profile-advertising runners
+//     BEFORE the ambiguity check, exactly like the fresh-submit path — so a
+//     resume with no --agent unambiguously picks the one runner still
+//     advertising the recorded profile even when other roots-matching
+//     runners exist. A nonempty pre-filter set filtering down to empty maps
+//     to ProfileUnavailable.
+//  5. Ambiguity check on the (possibly filtered) cands: >1 remaining maps
+//     to AmbiguousRunner.
+//  6. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
 //     resume_not_terminal / resume_not_found wire codes; the latter handles
-//     the (rare) race where the entry was pruned between steps 1 and 4.
+//     the (rare) race where the entry was pruned between steps 1 and 6.
 func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) protocol.SubmitResponse {
 	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
 	repo, kind, ok := h.Tasks.PeekRepo(idHex)
@@ -583,14 +596,28 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
 	}
 
-	// Same profile filter as the fresh-submit path: only narrows candidates
-	// when the caller explicitly asked for a profile on this resume.
-	profile := string(req.AgentProfile)
-	if profile != "" {
-		filtered := filterByProfile(cands, profile)
+	// Unlike the fresh-submit path, an empty request profile on resume falls
+	// back to the profile the task was originally bound to (not the bound
+	// runner's own default) — resuming should stay on the same agent profile
+	// unless the caller explicitly asks to switch.
+	resolved := string(req.AgentProfile)
+	if resolved == "" {
+		if existing, ok := h.Tasks.Get(idHex); ok {
+			resolved = existing.AgentProfile
+		}
+	}
+
+	// Same profile filter as the fresh-submit path, applied BEFORE the
+	// ambiguity check below: narrows cands whenever there's a profile to
+	// resolve to (explicit request or recorded resume profile). This lets a
+	// resume with no --agent unambiguously narrow to the one runner that
+	// still advertises the recorded profile, instead of first binding to
+	// cands[0] and only then checking that single runner's profile support.
+	if resolved != "" {
+		filtered := filterByProfile(cands, resolved)
 		if len(filtered) == 0 {
 			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
-			resp.SetErrorMsg(profileUnavailableMsg(profile, cands))
+			resp.SetErrorMsg(profileUnavailableMsg(resolved, cands))
 			return resp
 		}
 		cands = filtered
@@ -607,23 +634,6 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 		return resp
 	}
 	bound := cands[0]
-
-	// Unlike the fresh-submit path, an empty request profile on resume falls
-	// back to the profile the task was originally bound to (not the bound
-	// runner's own default) — resuming should stay on the same agent profile
-	// unless the caller explicitly asks to switch. If the bound runner no
-	// longer advertises that profile, reject rather than silently switching.
-	resolved := profile
-	if resolved == "" {
-		if existing, ok := h.Tasks.Get(idHex); ok {
-			resolved = existing.AgentProfile
-		}
-	}
-	if resolved != "" && !bound.HasProfile(resolved) {
-		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
-		resp.SetErrorMsg(profileUnavailableMsg(resolved, []RunnerEntry{bound}))
-		return resp
-	}
 
 	override := req.ResumeCapsOverride()
 	newCaps := intersectCaps(callerCaps, req.RequestedCaps)
