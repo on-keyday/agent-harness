@@ -178,6 +178,11 @@ format AgentProfileName:
 - Add `profile_unavailable = "profile_unavailable"` to `SubmitStatus`. The
   interactive open path returns the analogous error through its existing status
   channel.
+- Resume profile resolution (§4b) happens in the same handler: when
+  `resume_task_id` is set and no `--agent` was given, the requested profile
+  defaults to the resumed task's `TaskInfo.agent_profile`; an explicit `--agent`
+  overrides it freely. There is **no** cross-agent conflict to reject
+  (`resume_conversation` is profile-relative — see §4b).
 
 ### 4a. Relationship to the AmbiguousRunner candidate picker
 
@@ -215,6 +220,57 @@ is the flat `SubmitStatus.profile_unavailable` (no picker), exactly as the
 picker spec keeps the oneshot path status-string-only. No picker code is
 reworked to be "profile-aware" — it simply receives fewer candidates.
 
+### 4b. Resume, worktree reuse, and profile switching
+
+Reopening a worktree under a **different** agent (e.g. "the directory I had open
+in Claude, reopen in Codex to work on it") is a **first-class, common use
+case**, not an edge case. The design supports it by keeping two independent axes
+separate (see `tui/app.go` r/R/u/U and
+`SubmitRequest`/`OpenInteractiveRequest.resume_conversation`):
+
+- **Worktree/task reuse** (`resume_task_id`): re-queues the same TaskID, reusing
+  the `harness/<id>` branch, worktree dir, and working state. **Agent-agnostic.**
+- **Conversation continuation** (`resume_conversation` / `--continue`):
+  **profile-relative.** Each coding agent maintains its *own* conversation
+  history, keyed by the working directory (Claude:
+  `~/.claude/projects/<cwd-hash>/`; Codex/Gemini: their own stores). Reusing the
+  worktree lines up the cwd, so `resume_conversation=true` maps to the
+  **selected profile's** resume argv and continues **that agent's own** thread
+  for this worktree. It never asks one agent to read another's session.
+
+Because conversation state is per-`(agent, worktree)`, the two agents' threads
+**coexist independently** on the same worktree. There is therefore **no
+cross-agent conflict**: any profile may be selected on resume, with or without
+conversation continuation.
+
+**Profile resolution rules:**
+
+| Case | Requested profile |
+|------|-------------------|
+| Fresh create (`resume_task_id` zero) | client `--agent`, else runner default |
+| Resume (`resume_task_id` set), any conversation mode | client `--agent` if given, **else the resumed task's `TaskInfo.agent_profile`** — freely switchable |
+
+`resume_conversation` is resolved **against the selected profile** (its
+`resumeOneshotArgv` / `resumeInteractiveArgv`), independently of which profile
+the task last ran under. Defaulting the requested profile to the task's own
+`agent_profile` keeps existing `R`/`U`/`r`/`u` behavior non-regressive; an
+explicit `--agent` reopens under a different agent.
+
+**First continuation under a not-yet-used profile:** if you continue
+(`resume_conversation=true`) under a profile that has never run in this worktree,
+that agent finds no prior conversation for the cwd and behaves per its own CLI
+(starts fresh, or errors). The harness does not police this — it passes the
+selected profile's resume argv and lets the agent handle "no prior
+conversation." The common agent-switch flow (`R`/`U`, fresh) sidesteps it
+entirely.
+
+**u/U interaction:** `u`/`U` (unpinned resume) keep their sole job — clearing
+the assigned-runner pin so the candidate picker can re-open runner choice. The
+profile filter (from the resolved profile above) runs first, so `u`/`U`
+enumerate runners that can serve that profile. `U` (fresh conversation) is the
+natural path for "reopen this worktree under a different agent, on a possibly
+different runner"; `u` (continue) reopens the selected agent's own thread there.
+
 ### 5. Runner exec (`runner/session.go`)
 
 `SessionConfig` currently carries a single `ClaudeBin` + the three argv
@@ -228,15 +284,24 @@ clear error rather than silently falling back.
 
 ### 6. Operator surfaces (all three)
 
-- **CLI** (`cmd/harness-cli`): `session new --agent <name>` and the submit path
-  gain `--agent <name>`. `list` / task detail show the resolved profile
-  (`cli/list.go` already renders `agent`; extend to show the profile set for
-  runners and the resolved profile for tasks).
+- **CLI** (`cmd/harness-cli`): `session new --agent <name>` on both create and
+  the submit path; `--agent` is also honored on the resume path (`--resume
+  <id> --agent codex` reopens under a different agent — §4b). `list` / task
+  detail show the resolved profile (`cli/list.go` already renders `agent`;
+  extend to show the profile set for runners and the resolved profile for
+  tasks).
 - **TUI** (`tui/*`): the compose / new-session flow gains an agent picker
-  populated from the target runner's advertised `agent_profiles`; runner and
-  task rows reuse the existing agent-descriptor rendering, extended to the set.
+  populated from the target runner's advertised `agent_profiles`. **Resume
+  reopen**: `r`/`R`/`u`/`U` keep one-keypress behavior by defaulting to the
+  task's recorded `agent_profile` (non-regressive); the TUI adds an affordance
+  to reopen the selected task under a *different* agent (an agent picker,
+  following the existing candidate-picker/popup conventions) for the "reopen
+  Claude's worktree under Codex" flow. Runner and task rows reuse the existing
+  agent-descriptor rendering, extended to the set. Exact keybinding is an
+  implementation-plan detail.
 - **WebUI** (`webui/`, wasm): the new-session form gains an agent dropdown fed
-  by `agent_profiles`; the WebUI already surfaces `agentBin`
+  by `agent_profiles`; the reopen/resume modal offers the same dropdown
+  (default = task's profile). The WebUI already surfaces `agentBin`
   (`cmd/harness-webui-wasm/main.go`), extended to the set.
 
 Per the repo rule "features span all three UIs", the selector ships on CLI,
