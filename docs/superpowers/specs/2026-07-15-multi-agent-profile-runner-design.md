@@ -70,8 +70,14 @@ why per-profile injection differentiation is out of scope here (see Non-Goals).
   keeps its current meaning. Differentiating injection *by selected profile* is
   a natural follow-on but is deferred.
 - No per-profile capability model, no per-profile resource limits.
-- No change to the resume/`--continue` semantics beyond routing them through
-  the selected profile's `resumeOneshotArgv` / `resumeInteractiveArgv`.
+- Conversation continuation stays profile-relative (§4b); the harness does not
+  attempt to migrate one agent's conversation into another's store.
+
+**In scope (added during design):** resume becomes able to switch both the
+**agent profile** (§4b) and the **mode / Kind** (§4c) per open — `resume_task_id`
+identity is decoupled from the `(mode, profile, runner)` chosen at each open.
+Both were found to be incidental (handler-guard-level), not essential,
+constraints.
 
 ## Design
 
@@ -155,8 +161,9 @@ format AgentProfileName:
   agent_profile_len :u8
   agent_profile :[agent_profile_len]u8
   ```
-- **TaskInfo** — the resolved profile the task ran under, for display on task
-  detail:
+- **TaskInfo** — the **latest** resolved profile (updated on each Create/Resume,
+  a per-open mutable field like `assigned_to`/`resumed_by_kind`; see §4c), for
+  display and as the next resume's default:
   ```
   agent_profile_len :u8
   agent_profile :[agent_profile_len]u8
@@ -287,6 +294,62 @@ that agent finds no prior conversation for the cwd and behaves per its own CLI
 selected profile's resume argv and lets the agent handle "no prior
 conversation." The common agent-switch flow (`U`, fresh) sidesteps it entirely.
 
+### 4c. Task identity vs per-open attributes — mode (Kind) is per-open too
+
+Once agent profile is a per-open property, the same logic exposes that **task
+`Kind` (oneshot vs interactive) is also incidentally, not essentially,
+creation-immutable.** A task is really a *worktree/branch/conversation
+identity* (`resume_task_id` → `harness/<id>` branch, worktree dir, cwd-keyed
+conversation store, caps). **Each open picks `(mode, profile, runner)` — all
+three are per-open, latest-recorded, and the store is mode-agnostic.**
+
+**Evidence the Kind lock is incidental (shallow):**
+
+- `WorktreeManager.Create(taskID)` (`runner/worktree.go:56`) keys the worktree
+  purely on `taskID` (`dir = <repo>/.harness-worktrees/<taskID>`, branch
+  `harness/<taskID>`); **zero Kind dependence.** Cross-mode reuse reattaches the
+  same branch.
+- `TaskStore.Resume` (`server/taskstore.go:223`) never reads or changes `Kind`.
+- The mode lock is only two handler guards: `handleSubmitResume`
+  (`server/task_handler.go:554`, requires `Kind==Oneshot`) and the resume branch
+  of `handleOpenInteractive` (`:639`, requires `Kind==Interactive`).
+- The scheduler dispatches any `Queued` task irrespective of Kind
+  (`server/scheduler.go:75`); the *mode a process runs in* is set by **which
+  message the runner receives** — `AssignTask` (→ `claude -p`, headless) vs
+  `OpenExec` (→ PTY claude) — which the invoked handler path chooses, not by the
+  `Kind` field.
+
+**What stays essential (unchanged, enforced structurally):**
+
+- One process is headless **xor** PTY. Still decided per-open by the dispatch
+  message; nothing here changes that.
+- Interactive cannot queue (it needs a live attached client at open time):
+  `handleOpenInteractive` keeps its synchronous bind + `RunnerBusy` fail-fast.
+  A oneshot-created task reopened interactively goes through that path and gets
+  the synchronous treatment; an interactive-created task reopened via `submit`
+  goes `Queued` → scheduler → `claude -p`. Both correct.
+
+**Change to allow mode switching on reopen:**
+
+1. Relax the two guards (`:554`, `:639`) from `kind != X → ResumeNotFound` to an
+   existence/terminal check only (delegated to `TaskStore.Resume`). The
+   requested mode is the one implied by the path invoked (`submit` = oneshot,
+   `open_interactive` = interactive).
+2. `TaskStore.Resume` gains a `newKind` parameter, sets `e.Kind = newKind`, and
+   populates the **already-present** `WALEvent.Kind` field (no WAL format
+   migration).
+3. `ReplayEvents` `task_resumed` case **unconditionally** applies
+   `t.Kind = protocol.TaskKind(ev.Kind)` (safe with `omitempty`, since
+   `TaskKind_Oneshot == 0` and the field is always assigned).
+4. `TaskInfo.kind` (already carried and displayed) now reflects the **latest
+   open mode**, exactly like `agent_profile` (latest profile) and `AssignedTo`
+   (latest runner).
+
+This makes "run a headless oneshot in a worktree, then open it interactively to
+inspect/continue" (and the reverse) a first-class flow, mirroring the
+"reopen under a different agent" flow of §4b — same `resume_task_id` identity,
+different per-open `(mode, profile)`.
+
 ### 5. Runner exec (`runner/session.go`)
 
 `SessionConfig` currently carries a single `ClaudeBin` + the three argv
@@ -349,9 +412,18 @@ TUI, and WebUI together.
   `--agent codex` and assert the codex bin/argv were used (existing integration
   tag-gated tests are the template); submit with no `--agent` and assert the
   default profile ran.
+- **Cross-mode / cross-profile resume (§4c)** — unit: `TaskStore.Resume` with a
+  `newKind` updates `Kind` and writes it to the WAL; `ReplayEvents` restores the
+  switched Kind after a resume (create Interactive → resume as Oneshot → replay
+  → Kind==Oneshot). Integration: submit a oneshot under `claude`, then
+  `open_interactive --resume <id> --agent codex` and assert the same
+  `harness/<id>` worktree is reused under a PTY codex process; assert the
+  guards no longer reject the cross-Kind resume.
 - **Verify (real drive)** — per the repo `verify` skill: stand up a single
   runner with two profiles, create one session per profile from the CLI, and
-  observe each launches the correct binary (not just a passing unit test).
+  observe each launches the correct binary (not just a passing unit test);
+  additionally reopen a finished oneshot worktree as an interactive session
+  under the other agent and confirm the worktree state carried over.
 
 ## Tradeoffs
 
