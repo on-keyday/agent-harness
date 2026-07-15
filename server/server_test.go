@@ -26,7 +26,7 @@ func TestSendAssignReachesRunner(t *testing.T) {
 		ActiveTasks:  map[string]struct{}{},
 		Conn:         fc,
 	})
-	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskID := s.tasks.Create("/r", "do-the-thing", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	if err := s.sendAssign(fc.id.String(), taskID); err != nil {
 		t.Fatalf("send: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestSendAssignDisconnected(t *testing.T) {
 func TestSweepIdleDetached_CancelsExpiredSessions(t *testing.T) {
 	s := New(Config{DetachIdleTimeout: time.Minute})
 
-	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	// Transition through Running → Detached manually.
 	s.tasks.Assign(taskID, "runner-1", "/wt")
 	if err := s.tasks.SetDetached(taskID); err != nil {
@@ -108,7 +108,7 @@ func TestSweepIdleDetached_CancelsExpiredSessions(t *testing.T) {
 func TestSweepIdleDetached_KeepsRecentSessions(t *testing.T) {
 	s := New(Config{DetachIdleTimeout: time.Hour})
 
-	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	s.tasks.Assign(taskID, "runner-1", "/wt")
 	if err := s.tasks.SetDetached(taskID); err != nil {
 		t.Fatalf("SetDetached: %v", err)
@@ -131,7 +131,7 @@ func TestSweepIdleDetached_KeepsRecentSessions(t *testing.T) {
 func TestRestartCancelsDetached(t *testing.T) {
 	s := New(Config{})
 
-	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskID := s.tasks.Create("/r", "p", protocol.TaskKind_Interactive, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	s.tasks.Assign(taskID, "runner-1", "/wt")
 	if err := s.tasks.SetDetached(taskID); err != nil {
 		t.Fatalf("SetDetached: %v", err)

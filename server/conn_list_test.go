@@ -100,7 +100,7 @@ func TestConnList_JoinAndRoles(t *testing.T) {
 	var principalID protocol.TaskID
 	copy(principalID.Id[:], []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
 	agentTaskID := hex.EncodeToString(principalID.Id[:])
-	s.tasks.Create("/repo", "agent-task", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	s.tasks.Create("/repo", "agent-task", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	// Override the auto-generated ID with our known principal:
 	s.taskHandler.clientKinds[agentCID.String()] = protocol.ClientKind_Agent
 	if s.taskHandler.principals == nil {
@@ -200,13 +200,13 @@ func TestConnList_SubtreeGating(t *testing.T) {
 
 	// Create tasks P, C, G in TaskStore.
 	var pidTask, cidTask, gidTask, otherTask protocol.TaskID
-	pHex := s.tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	pHex := s.tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	copyHexToID(t, pHex, &pidTask)
-	cHex := s.tasks.Create("/r", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, pidTask, "", protocol.RunnerSelector{}, nil, protocol.Capability_None)
+	cHex := s.tasks.Create("/r", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, pidTask, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, "")
 	copyHexToID(t, cHex, &cidTask)
-	gHex := s.tasks.Create("/r", "g", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, cidTask, "", protocol.RunnerSelector{}, nil, protocol.Capability_None)
+	gHex := s.tasks.Create("/r", "g", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, cidTask, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, "")
 	copyHexToID(t, gHex, &gidTask)
-	otherHex := s.tasks.Create("/r", "other", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	otherHex := s.tasks.Create("/r", "other", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	copyHexToID(t, otherHex, &otherTask)
 
 	// Agent conn with principal=P

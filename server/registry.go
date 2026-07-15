@@ -29,6 +29,11 @@ type RunnerEntry struct {
 	AllowedRoots []string            // POSIX '/'-paths, path.Clean'd at Hello receipt (wire-format)
 	MaxTasks     int                 // from RunnerHello.max_tasks (>=1)
 	AgentBin       string            // from RunnerHello.agent_bin (basename of --claude-bin)
+	// AgentProfiles is the ordered list of agent profile names advertised in
+	// RunnerHello.AgentProfiles. The first entry is this runner's default
+	// (see DefaultProfile). Empty for legacy runners that don't advertise any
+	// profiles — HasProfile/DefaultProfile fall back to AgentBin in that case.
+	AgentProfiles []string
 	SkillsInjected bool              // from RunnerHello.skills_injected
 	ActiveTasks  map[string]struct{} // task_id (hex) set; len() = current load
 	ConnectedAt  time.Time
@@ -61,6 +66,31 @@ func (e *RunnerEntry) Status() protocol.RunnerStatus {
 		return protocol.RunnerStatus_Busy
 	}
 	return protocol.RunnerStatus_Idle
+}
+
+// HasProfile reports whether name is among the profiles this runner
+// advertised at Hello time. Legacy runners that advertised no profiles at
+// all are treated as advertising exactly one, implicit profile: AgentBin.
+func (e RunnerEntry) HasProfile(name string) bool {
+	if len(e.AgentProfiles) == 0 {
+		return name == e.AgentBin
+	}
+	for _, p := range e.AgentProfiles {
+		if p == name {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultProfile returns the profile to use when a submit/resume request
+// doesn't specify one explicitly: the first advertised profile, or AgentBin
+// as the legacy fallback when the runner advertised none.
+func (e RunnerEntry) DefaultProfile() string {
+	if len(e.AgentProfiles) > 0 {
+		return e.AgentProfiles[0]
+	}
+	return e.AgentBin
 }
 
 // Registry tracks connected runners. All public methods are concurrency-safe.

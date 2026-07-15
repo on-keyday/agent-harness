@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -516,7 +517,23 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}
 	case len(cands) == 0:
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
-	case len(cands) > 1:
+	}
+
+	// Profile filter: only narrows candidates when the caller explicitly
+	// asked for a profile. An empty request profile means "any candidate is
+	// fine" — the eventual bound runner's own default is used below.
+	profile := string(req.AgentProfile)
+	if profile != "" {
+		filtered := filterByProfile(cands, profile)
+		if len(filtered) == 0 {
+			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
+			resp.SetErrorMsg(profileUnavailableMsg(profile, cands))
+			return resp
+		}
+		cands = filtered
+	}
+
+	if len(cands) > 1 {
 		hostnames := make([]string, len(cands))
 		for i, c := range cands {
 			hostnames[i] = c.Hostname
@@ -527,8 +544,12 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 		return resp
 	}
 	bound := cands[0]
+	resolved := profile
+	if resolved == "" {
+		resolved = bound.DefaultProfile()
+	}
 	caps := intersectCaps(creatorCaps, req.RequestedCaps)
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), caps)
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, resolved)
 	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -560,7 +581,22 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_PinnedNotFound}
 	case len(cands) == 0:
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_NoRunner}
-	case len(cands) > 1:
+	}
+
+	// Same profile filter as the fresh-submit path: only narrows candidates
+	// when the caller explicitly asked for a profile on this resume.
+	profile := string(req.AgentProfile)
+	if profile != "" {
+		filtered := filterByProfile(cands, profile)
+		if len(filtered) == 0 {
+			resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
+			resp.SetErrorMsg(profileUnavailableMsg(profile, cands))
+			return resp
+		}
+		cands = filtered
+	}
+
+	if len(cands) > 1 {
 		hostnames := make([]string, len(cands))
 		for i, c := range cands {
 			hostnames[i] = c.Hostname
@@ -571,6 +607,23 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 		return resp
 	}
 	bound := cands[0]
+
+	// Unlike the fresh-submit path, an empty request profile on resume falls
+	// back to the profile the task was originally bound to (not the bound
+	// runner's own default) — resuming should stay on the same agent profile
+	// unless the caller explicitly asks to switch. If the bound runner no
+	// longer advertises that profile, reject rather than silently switching.
+	resolved := profile
+	if resolved == "" {
+		if existing, ok := h.Tasks.Get(idHex); ok {
+			resolved = existing.AgentProfile
+		}
+	}
+	if resolved != "" && !bound.HasProfile(resolved) {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ProfileUnavailable}
+		resp.SetErrorMsg(profileUnavailableMsg(resolved, []RunnerEntry{bound}))
+		return resp
+	}
 
 	override := req.ResumeCapsOverride()
 	newCaps := intersectCaps(callerCaps, req.RequestedCaps)
@@ -588,6 +641,48 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 	}
 	h.Tasks.SetResumeConversation(idHex, req.ResumeConversation())
 	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: req.ResumeTaskId}
+}
+
+// filterByProfile narrows cands to those whose HasProfile(profile) is true.
+// Preserves the input order (Candidates already returns a deterministic
+// ConnectedAt/ID-sorted slice).
+func filterByProfile(cands []RunnerEntry, profile string) []RunnerEntry {
+	var out []RunnerEntry
+	for _, c := range cands {
+		if c.HasProfile(profile) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// profileUnavailableMsg builds the SubmitStatus_ProfileUnavailable error_msg:
+// the requested profile plus the deduped, sorted union of profile names
+// advertised across cands (the pre-filter candidate set).
+func profileUnavailableMsg(requested string, cands []RunnerEntry) []byte {
+	seen := make(map[string]struct{})
+	var names []string
+	for _, c := range cands {
+		if len(c.AgentProfiles) == 0 {
+			// Legacy runner: its implicit profile is AgentBin (see HasProfile).
+			if c.AgentBin == "" {
+				continue
+			}
+			if _, ok := seen[c.AgentBin]; !ok {
+				seen[c.AgentBin] = struct{}{}
+				names = append(names, c.AgentBin)
+			}
+			continue
+		}
+		for _, p := range c.AgentProfiles {
+			if _, ok := seen[p]; !ok {
+				seen[p] = struct{}{}
+				names = append(names, p)
+			}
+		}
+	}
+	sort.Strings(names)
+	return []byte("profile unavailable: " + requested + "; advertised: " + strings.Join(names, ", "))
 }
 
 // isZeroTaskID reports whether t is the all-zero sentinel used by the wire
@@ -703,7 +798,12 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.
 		caps := intersectCaps(creatorCaps, req.RequestedCaps)
-		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps)
+		// TODO(profile): interactive submit doesn't yet accept/resolve an
+		// agent profile on the wire (OpenInteractiveRequest has no
+		// AgentProfile field) — Task 6 wires this surface. Pass "" for now,
+		// which stores an unresolved TaskEntry.AgentProfile (the runner falls
+		// back to its own AgentBin default at exec time).
+		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, "")
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID

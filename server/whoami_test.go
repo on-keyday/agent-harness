@@ -57,13 +57,13 @@ func TestWhoamiConfinedAgent(t *testing.T) {
 	// A creator task (the spawner) so we can assert creator propagation.
 	creatorHex := h.Tasks.Create("repo", "creator", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All)
+		protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	creatorTID := hexToTaskID(t, creatorHex)
 
 	wantCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 	childHex := h.Tasks.Create("repo", "child", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, creatorTID, "",
-		protocol.RunnerSelector{}, nil, wantCaps)
+		protocol.RunnerSelector{}, nil, wantCaps, "")
 	childTID := hexToTaskID(t, childHex)
 
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9651-1")}

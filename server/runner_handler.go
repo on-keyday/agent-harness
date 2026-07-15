@@ -95,12 +95,17 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 			// boundary predicate.
 			roots[i] = path.Clean(string(ar.Path))
 		}
+		profiles := make([]string, len(hello.AgentProfiles))
+		for i, p := range hello.AgentProfiles {
+			profiles[i] = string(p.Name)
+		}
 		entry := &RunnerEntry{
 			ID:             runnerID,
 			Hostname:       string(hello.Hostname),
 			AllowedRoots:   roots,
 			MaxTasks:       maxTasks,
 			AgentBin:       string(hello.AgentBin),
+			AgentProfiles:  profiles,
 			SkillsInjected: hello.SkillsInjected(),
 			ActiveTasks:    make(map[string]struct{}),
 			ConnectedAt:    now,

@@ -55,7 +55,7 @@ func TestDispatcherOnCancel_ForwardsToRunner(t *testing.T) {
 	})
 
 	// Create a task and manually assign it (simulating TryDispatch success).
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	tasks.Assign(taskID, runnerID, "")
 	// Also bind it in the registry (as TryDispatch would have done).
 	reg.BindTask(runnerID, taskID)
@@ -85,7 +85,7 @@ func TestDispatcherOnCancel_NoRunner(t *testing.T) {
 	tasks := NewTaskStore()
 	d := &Dispatcher{Registry: reg, Tasks: tasks}
 
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 
 	// Should not panic; no runner to forward to.
 	d.OnCancel(taskID)
@@ -113,7 +113,7 @@ func TestDispatcherOnCancel_WiredViaTaskStoreCallback(t *testing.T) {
 		Conn:         fc,
 	})
 
-	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All)
+	taskID := tasks.Create("/repo", "work", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
 	tasks.Assign(taskID, runnerID, "")
 	reg.BindTask(runnerID, taskID)
 

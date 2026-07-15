@@ -47,6 +47,10 @@ type WALEvent struct {
 	// Capabilities is the bitmask stored at task_created time. Legacy WAL
 	// entries without this field default to 0 (Capability_None).
 	Capabilities uint32 `json:"capabilities,omitempty"`
+	// AgentProfile is the resolved agent profile name for this task (see
+	// TaskEntry.AgentProfile). Written on task_created events; legacy
+	// entries default to "" (zero). Also reused by task_resumed events.
+	AgentProfile string `json:"agent_profile,omitempty"`
 	WorktreeDir  string `json:"worktree_dir,omitempty"`
 	ExitCode    *int32 `json:"exit_code,omitempty"`
 	DiffInfo    []byte `json:"diff_info,omitempty"`
@@ -80,6 +84,7 @@ type walEventJSON struct {
 	ResumedByKind uint8    `json:"resumed_by_kind,omitempty"`
 	CreatorTaskID string   `json:"creator_task_id,omitempty"`
 	Capabilities  uint32   `json:"capabilities,omitempty"`
+	AgentProfile  string   `json:"agent_profile,omitempty"`
 	WorktreeDir   string   `json:"worktree_dir,omitempty"`
 	ExitCode      *int32   `json:"exit_code,omitempty"`
 	DiffInfo      []byte   `json:"diff_info,omitempty"`
@@ -106,6 +111,7 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		ResumedByKind: e.ResumedByKind,
 		CreatorTaskID: e.CreatorTaskID,
 		Capabilities:  e.Capabilities,
+		AgentProfile:  e.AgentProfile,
 		WorktreeDir:   e.WorktreeDir,
 		ExitCode:      e.ExitCode,
 		DiffInfo:      e.DiffInfo,
@@ -139,6 +145,7 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.ResumedByKind = j.ResumedByKind
 	e.CreatorTaskID = j.CreatorTaskID
 	e.Capabilities = j.Capabilities
+	e.AgentProfile = j.AgentProfile
 	e.WorktreeDir = j.WorktreeDir
 	e.ExitCode = j.ExitCode
 	e.DiffInfo = j.DiffInfo

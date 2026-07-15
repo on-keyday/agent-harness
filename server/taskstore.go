@@ -37,6 +37,12 @@ type TaskEntry struct {
 	// computed at Create as creatorCaps ∩ requested. Persisted to the WAL and
 	// restored on resume; never changed by resume.
 	Capabilities protocol.Capability
+	// AgentProfile is the resolved agent profile name for this task, chosen
+	// by the submit-path filter/resolution (server/task_handler.go) from the
+	// bound runner's advertised RunnerHello.AgentProfiles. Set at Create time;
+	// empty for legacy runners that advertised no profiles (the runner falls
+	// back to its AgentBin at exec time; see RunnerEntry.DefaultProfile).
+	AgentProfile string
 	Status       protocol.TaskStatus
 	AssignedTo   string
 	WorktreeDir  string
@@ -135,7 +141,9 @@ func newTaskID() string {
 // selector is the runner-selection constraint; use a zero value for "any".
 // extraArgs are forwarded verbatim to the runner and appended to
 // --agent-args at exec time; pass nil for none.
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability) string {
+// agentProfile is the resolved agent profile name (see TaskEntry.AgentProfile);
+// pass "" when the bound runner advertised no profiles (legacy runner).
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, agentProfile string) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
@@ -146,6 +154,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		OriginKind:    origin,
 		CreatorTaskID: creatorTaskID,
 		Capabilities:  caps,
+		AgentProfile:  agentProfile,
 		Status:        protocol.TaskStatus_Queued,
 		CreatedAt:     time.Now(),
 		BoundRunnerID: boundRunnerID,
@@ -170,6 +179,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			Selector:      selector,
 			ExtraArgs:     extraArgs,
 			Capabilities:  uint32(caps),
+			AgentProfile:  agentProfile,
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
@@ -613,6 +623,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				OriginKind:    protocol.ClientKind(ev.OriginKind),
 				CreatorTaskID: creatorTaskID,
 				Capabilities:  protocol.Capability(ev.Capabilities),
+				AgentProfile:  ev.AgentProfile,
 				Status:        protocol.TaskStatus_Queued,
 				CreatedAt:     time.Unix(0, ev.Ts),
 				BoundRunnerID: ev.BoundRunnerID,

@@ -228,7 +228,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	// Confined agent principal holding exec_attach but NOT notify.
 	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_ExecAttach)
+		protocol.RunnerSelector{}, nil, protocol.Capability_ExecAttach, "")
 	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
