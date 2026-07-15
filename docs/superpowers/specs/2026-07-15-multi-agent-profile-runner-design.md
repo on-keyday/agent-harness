@@ -161,6 +161,15 @@ format AgentProfileName:
   agent_profile_len :u8
   agent_profile :[agent_profile_len]u8
   ```
+- **RunnerCandidate** (from the AmbiguousRunner candidate-picker design, if that
+  lands first — otherwise introduced here) — gains a `profile` field so each
+  picker row carries which `(runner, profile)` combo it represents (§4a):
+  ```
+  profile_len :u16
+  profile :[profile_len]u8
+  ```
+  The `OpenInteractiveResponse` candidates block then enumerates one entry per
+  combo instead of one per runner.
 
 ### 4. Server dispatch (`server/task_handler.go`)
 
@@ -184,41 +193,48 @@ format AgentProfileName:
   overrides it freely. There is **no** cross-agent conflict to reject
   (`resume_conversation` is profile-relative — see §4b).
 
-### 4a. Relationship to the AmbiguousRunner candidate picker
+### 4a. The candidate picker is generalized to (runner × profile)
 
 `docs/superpowers/specs/2026-07-02-ambiguous-runner-candidate-picker-design.md`
-lets the client pick **which runner** (by cid / hostname / matched-root) when
-≥2 runners tie on longest-prefix roots score. That picker has **no agent
-axis** — it never selected an agent, so nothing in it is literally replaced.
+lets the client pick **which runner** when ≥2 runners tie on longest-prefix
+roots score. Today, the picker is *also the de-facto agent selector*: the
+canonical reason to have ≥2 same-roots runners is running different agents on
+`--hostname`-differentiated slots (a `claude` runner and a `codex` runner), so
+"pick candidate A vs B" **is** "pick Claude vs Codex". Collapsing those two
+runners into one multi-profile runner would make the resume non-ambiguous
+(one candidate → auto-select), **removing that agent choice** — a regression in
+the current `u`/`U` experience.
 
-The two designs **compose as an ordered pipeline**, they do not overlap:
+To preserve it, the picker's **candidate unit becomes a `(runner, profile)`
+pair**, not a bare runner. The trigger changes from "≥2 runners" to "**≥2
+`(runner, profile)` combos**".
 
 ```
-submit / open  (--agent codex?)
-  [1] profile filter   — keep only runners advertising the requested profile   (this spec)
-  [2] roots / selector — longest-prefix candidate set                          (existing)
-  [3] if ≥2 candidates — candidate picker (OpenInteractive only)               (picker spec)
+open (interactive)  — no --agent given
+  [1] roots / selector — candidate runners (longest-prefix)         (existing)
+  [2] expand           — each candidate runner × its advertised profiles = combos   (this spec)
+  [3] if ≥2 combos     — picker: user picks (runner, profile)        (generalized picker)
 ```
 
-The profile filter is the **front stage**: the picker enumerates the
-**already-profile-filtered** candidate set. Practical effects:
+- **One multi-profile runner advertising `claude,codex`** → combos =
+  `{(r,claude), (r,codex)}` → **2 combos → picker fires** → picking a row picks
+  the agent. This reproduces today's `u`/`U` experience even though it is now a
+  single runner. **No regression.**
+- **`--agent <name>` given** → the combo set is pre-filtered to that profile, so
+  the picker only disambiguates residual runner ties (or auto-selects one).
+- Genuine multi-runner ties (different hosts, load-split slots) still surface,
+  now with the profile shown per row.
 
-- The picker's *primary motivating scenario* (a second `--hostname`-only runner
-  on the same roots, spawned solely to run a different agent) **stops
-  occurring**, because that reason to run two same-roots runners is gone. The
-  agent choice that was previously smuggled into "pick runner A (claude) vs
-  runner B (codex)" becomes the explicit `--agent` selector.
-- The picker is **not** obsoleted: genuine ties remain (different hosts serving
-  the same repo, load-split slots, failover replicas). Two multi-profile
-  runners on the same roots that both advertise `codex` still tie under
-  `--agent codex` → the picker fires as before, just over a profile-filtered
-  set.
+Wire/UI impact on the picker design: the `RunnerCandidate` record gains a
+`profile` field (which profile this candidate row represents), and selection
+re-issues pinned to **both** the chosen `cid` **and** the chosen `agent_profile`.
+The picker rows render `host · agent · matched_root · cid`.
 
-Scope boundary preserved: the picker stays **OpenInteractive-only**. The
-profile filter applies to **both** submit and open, but a oneshot profile miss
-is the flat `SubmitStatus.profile_unavailable` (no picker), exactly as the
-picker spec keeps the oneshot path status-string-only. No picker code is
-reworked to be "profile-aware" — it simply receives fewer candidates.
+Scope boundary preserved: the picker stays **OpenInteractive-only**. On the
+oneshot (`Submit`) path a profile that no runner serves is the flat
+`SubmitStatus.profile_unavailable` (no picker), and an ambiguous oneshot still
+returns `ambiguous_runner` as a status string — the oneshot path is not given a
+picker, exactly as the picker spec scopes it.
 
 ### 4b. Resume, worktree reuse, and profile switching
 
@@ -243,33 +259,33 @@ Because conversation state is per-`(agent, worktree)`, the two agents' threads
 cross-agent conflict**: any profile may be selected on resume, with or without
 conversation continuation.
 
-**Profile resolution rules:**
+**Profile resolution rules** (the profile axis is orthogonal to the
+conversation and runner-pin axes of `r`/`R`/`u`/`U`):
 
 | Case | Requested profile |
 |------|-------------------|
 | Fresh create (`resume_task_id` zero) | client `--agent`, else runner default |
-| Resume (`resume_task_id` set), any conversation mode | client `--agent` if given, **else the resumed task's `TaskInfo.agent_profile`** — freely switchable |
+| Resume, **pinned** (`r`/`R`) | client `--agent` if given, else the resumed task's `TaskInfo.agent_profile`. No picker — one keypress. |
+| Resume, **unpinned** (`u`/`U`) | client `--agent` if given; **else unresolved → the `(runner, profile)` picker (§4a) supplies both**, so the agent choice happens here |
 
 `resume_conversation` is resolved **against the selected profile** (its
 `resumeOneshotArgv` / `resumeInteractiveArgv`), independently of which profile
-the task last ran under. Defaulting the requested profile to the task's own
-`agent_profile` keeps existing `R`/`U`/`r`/`u` behavior non-regressive; an
-explicit `--agent` reopens under a different agent.
+the task last ran under.
+
+- `r`/`R` (pinned): runner = `AssignedTo`, profile defaults to the task's own
+  `agent_profile`. Same runner, same agent, one keypress — **non-regressive**.
+- `u`/`U` (unpinned): the picker enumerates `(runner, profile)` combos (§4a).
+  With one multi-profile runner this shows `{claude, codex}`, so **`u`/`U`
+  remains the agent selector it is today** — the choice is not defaulted away.
+  `U` (fresh) is the clean "reopen this worktree under a different agent" path;
+  `u` (continue) reopens the *selected* agent's own thread for the worktree.
 
 **First continuation under a not-yet-used profile:** if you continue
 (`resume_conversation=true`) under a profile that has never run in this worktree,
 that agent finds no prior conversation for the cwd and behaves per its own CLI
 (starts fresh, or errors). The harness does not police this — it passes the
 selected profile's resume argv and lets the agent handle "no prior
-conversation." The common agent-switch flow (`R`/`U`, fresh) sidesteps it
-entirely.
-
-**u/U interaction:** `u`/`U` (unpinned resume) keep their sole job — clearing
-the assigned-runner pin so the candidate picker can re-open runner choice. The
-profile filter (from the resolved profile above) runs first, so `u`/`U`
-enumerate runners that can serve that profile. `U` (fresh conversation) is the
-natural path for "reopen this worktree under a different agent, on a possibly
-different runner"; `u` (continue) reopens the selected agent's own thread there.
+conversation." The common agent-switch flow (`U`, fresh) sidesteps it entirely.
 
 ### 5. Runner exec (`runner/session.go`)
 
@@ -292,16 +308,18 @@ clear error rather than silently falling back.
   tasks).
 - **TUI** (`tui/*`): the compose / new-session flow gains an agent picker
   populated from the target runner's advertised `agent_profiles`. **Resume
-  reopen**: `r`/`R`/`u`/`U` keep one-keypress behavior by defaulting to the
-  task's recorded `agent_profile` (non-regressive); the TUI adds an affordance
-  to reopen the selected task under a *different* agent (an agent picker,
-  following the existing candidate-picker/popup conventions) for the "reopen
-  Claude's worktree under Codex" flow. Runner and task rows reuse the existing
-  agent-descriptor rendering, extended to the set. Exact keybinding is an
-  implementation-plan detail.
+  reopen**: agent selection is carried by the **generalized `(runner, profile)`
+  candidate picker** (§4a), which is exactly the existing `u`/`U` surface — no
+  new keybinding. `r`/`R` (pinned) stay one-keypress on the task's own agent;
+  `u`/`U` (unpinned) open the picker, whose rows now read
+  `host · agent · matched_root · cid`, so choosing a row chooses the agent (as
+  it effectively does today with two runners). This directly preserves the
+  current "u/U to pick claude-or-codex" experience. Runner/task rows reuse the
+  existing agent-descriptor rendering, extended to the profile set.
 - **WebUI** (`webui/`, wasm): the new-session form gains an agent dropdown fed
-  by `agent_profiles`; the reopen/resume modal offers the same dropdown
-  (default = task's profile). The WebUI already surfaces `agentBin`
+  by `agent_profiles`; the ambiguous-resume modal (the WebUI form of the
+  candidate picker) lists `(runner, profile)` combos so the agent is chosen
+  there. The WebUI already surfaces `agentBin`
   (`cmd/harness-webui-wasm/main.go`), extended to the set.
 
 Per the repo rule "features span all three UIs", the selector ships on CLI,
