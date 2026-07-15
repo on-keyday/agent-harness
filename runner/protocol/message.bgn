@@ -47,6 +47,13 @@ format ClaudeArgs:
     args_len :u16
     args :[args_len]ClaudeArg
 
+# AgentProfileName is one named agent-profile a runner advertises (e.g.
+# "claude" / "codex" / a custom launch profile). Carried in RunnerHello /
+# RunnerInfo so clients can offer a per-session profile picker.
+format AgentProfileName:
+    name_len :u8
+    name :[name_len]u8
+
 # RunnerHello replaces the old single-repo shape.
 # hostname is the runner's short hostname (for display / pinning).
 # max_tasks is the concurrency limit this runner enforces (>=1; 0 -> server rejects).
@@ -67,6 +74,10 @@ format RunnerHello:
     # of the skill conventions even if it is an agent CLI.
     skills_injected :u1
     reserved :u7
+    # named agent profiles this runner can launch a session under (empty =
+    # runner has no profile concept beyond its single --claude-bin).
+    agent_profiles_len :u8
+    agent_profiles :[agent_profiles_len]AgentProfileName
 
 # AuthRole discriminates which identity type is carried in a PskAuthRequest.
 enum AuthRole:
@@ -130,6 +141,9 @@ format AssignTaskBody:
     extra_args :ClaudeArgs
     resume_conversation :u1
     reserved :u7
+    # agent_profile: same semantics as SubmitRequest.agent_profile.
+    agent_profile_len :u8
+    agent_profile :[agent_profile_len]u8
 
 format CancelTask:
     task_id :TaskID
@@ -157,6 +171,10 @@ format OpenExecRunnerRequest:
     x11_enabled :u1   # relayed from OpenInteractiveRequest.x11_enabled
     resume_conversation :u1 # relayed from OpenInteractiveRequest.resume_conversation
     reserved :u6
+    # agent_profile: relayed from OpenInteractiveRequest.agent_profile /
+    # AssignTaskBody.agent_profile.
+    agent_profile_len :u8
+    agent_profile :[agent_profile_len]u8
     if x11_enabled == 1:
         x11 :X11Forward  # relayed verbatim from OpenInteractiveRequest.x11
 
@@ -437,6 +455,10 @@ format RunnerInfo:
     agent_bin :[agent_bin_len]u8
     skills_injected :u1
     reserved :u7
+    # named agent profiles this runner can launch a session under (mirrors
+    # RunnerHello.agent_profiles). Echoed by the server.
+    agent_profiles_len :u8
+    agent_profiles :[agent_profiles_len]AgentProfileName
 
 format TaskInfo:
     id :TaskID
@@ -481,6 +503,8 @@ format TaskInfo:
                           # last_output_at > 0 (otherwise 0, which would be
                           # ambiguous with "0ms ago"). Consumers must use this,
                           # not now()-last_output_at, to derive busy/idle.
+    agent_profile_len :u8   # named agent profile this task was launched under
+    agent_profile :[agent_profile_len]u8  # (empty = runner default).
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -557,6 +581,11 @@ format SubmitRequest:
     # up with the previous run, which is what makes `--claude-arg --resume
     # <session-uuid>` actually work after the 2.1.123 picker regression.
     resume_task_id :TaskID
+    # agent_profile selects a named agent profile advertised by the target
+    # runner (see AgentProfileName / RunnerHello.agent_profiles). Empty =
+    # runner default (--claude-bin).
+    agent_profile_len :u8
+    agent_profile :[agent_profile_len]u8
 
 # SubmitStatus indicates the outcome of a SubmitRequest.
 enum SubmitStatus:
@@ -573,6 +602,9 @@ enum SubmitStatus:
     # first transitioned the status back to Queued under TaskStore.mu.
     resume_not_found    = "resume_not_found"
     resume_not_terminal = "resume_not_terminal"
+    # requested agent_profile is not among the target runner's advertised
+    # AgentProfileName list.
+    profile_unavailable = "profile_unavailable"
 
 # SubmitResponse replaces the old bare task_id with a status + optional error.
 format SubmitResponse:
@@ -677,6 +709,9 @@ format OpenInteractiveRequest:
     resume_conversation :u1
     reserved :u5
     resume_task_id :TaskID
+    # agent_profile: same semantics as SubmitRequest.agent_profile.
+    agent_profile_len :u8
+    agent_profile :[agent_profile_len]u8
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
     if x11_enabled == 1:
@@ -708,6 +743,11 @@ format RunnerCandidate:
     matched_root     :[matched_root_len]u8
     active_tasks     :u16
     max_tasks        :u16
+    # requested agent profile this candidate advertises (empty = not
+    # requested / runner default). Lets a client's ambiguous-runner picker
+    # show which candidates actually support the profile the caller asked for.
+    profile_len      :u16
+    profile          :[profile_len]u8
 
 format OpenInteractiveResponse:
     status :OpenInteractiveStatus
