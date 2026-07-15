@@ -86,6 +86,12 @@ Arguments: $ARGUMENTS
    startup validation (the Claude-shaped resume default would silently
    misfire on a non-Claude CLI). Every preset above therefore carries both.
 
+   **Multi-profile shortcut**: `scripts/runner.py up --agents claude,codex`
+   expands the first name into the default `--agent-bin`/`--agent-*-argv`
+   flags above and the rest into a generated `--agent-profiles` JSON flag —
+   this table stays the source of truth for the per-agent argv shapes
+   (`scripts/agent_presets.py` copies them verbatim).
+
    A Codex slot usually needs explicit `--hostname $HARNESS_HOSTNAME-codex`
    when its roots overlap an existing Claude slot, for the same dispatch
    ambiguity reason as the sandbox slot.
