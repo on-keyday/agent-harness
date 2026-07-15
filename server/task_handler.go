@@ -666,6 +666,64 @@ func filterByProfile(cands []RunnerEntry, profile string) []RunnerEntry {
 	return out
 }
 
+// interactiveCombo is one (runner, profile) candidate for the interactive
+// picker. The picker's unit is a combo, not a bare runner, so a single
+// multi-profile runner still surfaces one row per advertised profile (§4a).
+type interactiveCombo struct {
+	Entry   RunnerEntry
+	Profile string
+}
+
+// expandInteractiveCombos turns the roots/selector-matched candidate runners
+// into (runner, profile) combos, following the §4a/§4b rules:
+//
+//   - profile != "" (explicit --agent, or the resume-defaulted recorded
+//     profile): one combo per candidate that advertises it. None → empty
+//     result (caller maps to the no-runner/pinned-not-found status).
+//   - profile == "" AND selector is Any (unpinned): expand each candidate ×
+//     each of its advertised profiles. A multi-profile runner thus yields ≥2
+//     combos → the picker fires and stays the agent selector (u/U experience).
+//   - profile == "" AND pinned (selector != Any): one combo per candidate using
+//     its DefaultProfile() — no expansion, the pin already chose the runner.
+func expandInteractiveCombos(cands []RunnerEntry, profile string, selKind protocol.RunnerSelectorKind) []interactiveCombo {
+	var combos []interactiveCombo
+	switch {
+	case profile != "":
+		for _, c := range cands {
+			if c.HasProfile(profile) {
+				combos = append(combos, interactiveCombo{Entry: c, Profile: profile})
+			}
+		}
+	case selKind == protocol.RunnerSelectorKind_Any:
+		for _, c := range cands {
+			for _, p := range advertisedProfiles(c) {
+				combos = append(combos, interactiveCombo{Entry: c, Profile: p})
+			}
+		}
+	default:
+		for _, c := range cands {
+			combos = append(combos, interactiveCombo{Entry: c, Profile: c.DefaultProfile()})
+		}
+	}
+	return combos
+}
+
+// advertisedProfiles returns the profile names to expand a runner over: its
+// advertised AgentProfiles, or the single implicit AgentBin profile for a
+// legacy runner that advertised none (mirrors HasProfile/DefaultProfile's
+// legacy fallback). A runner with neither still contributes exactly one combo
+// with an empty profile name, resolving to the runner's own default at exec
+// time — so the Any-expansion never silently drops a matched runner.
+func advertisedProfiles(e RunnerEntry) []string {
+	if len(e.AgentProfiles) > 0 {
+		return e.AgentProfiles
+	}
+	if e.AgentBin != "" {
+		return []string{e.AgentBin}
+	}
+	return []string{""}
+}
+
 // profileUnavailableMsg builds the SubmitStatus_ProfileUnavailable error_msg:
 // the requested profile plus the deduped, sorted union of profile names
 // advertised across cands (the pre-filter candidate set).
@@ -755,25 +813,57 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return errResp(protocol.OpenInteractiveStatus_PinnedNotFound)
 	case len(cands) == 0:
 		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
-	case len(cands) > 1:
+	}
+
+	// Resolve the requested agent profile. On resume with an empty request
+	// profile, default to the resumed task's recorded AgentProfile — resuming
+	// stays on the same agent unless the caller explicitly switches (§4b). A
+	// fresh open with no --agent leaves profile "" and takes the expansion
+	// path below.
+	profile := string(req.AgentProfile)
+	if profile == "" && resuming {
+		if existing, ok := h.Tasks.Get(existingTaskIDHex); ok {
+			profile = existing.AgentProfile
+		}
+	}
+
+	// Expand candidate runners into (runner, profile) combos (§4a). The picker
+	// unit is a combo, not a bare runner, so one multi-profile runner produces
+	// ≥2 combos and the picker (=the agent selector) still fires.
+	combos := expandInteractiveCombos(cands, profile, req.Selector.Kind)
+	switch {
+	case len(combos) == 0:
+		// A requested/resolved profile is served by no candidate runner (or the
+		// candidates advertise no profile at all). The interactive status set
+		// has no dedicated profile-unavailable code, so surface the closest
+		// existing "no runner for this repo" condition (pinned → PinnedNotFound)
+		// rather than silently succeeding on the runner's own default.
+		if req.Selector.Kind != protocol.RunnerSelectorKind_Any {
+			return errResp(protocol.OpenInteractiveStatus_PinnedNotFound)
+		}
+		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
+	case len(combos) > 1:
 		// Ambiguous is an expected, user-recoverable condition (the caller
-		// re-issues pinned to a candidate cid) — not a server-side error.
-		slog.Info("handleOpenInteractive: ambiguous", "repo", repo, "candidates", len(cands))
+		// re-issues pinned to a candidate cid + profile) — not a server-side error.
+		slog.Info("handleOpenInteractive: ambiguous", "repo", repo, "combos", len(combos))
 		resp := protocol.OpenInteractiveResponse{Status: protocol.OpenInteractiveStatus_AmbiguousRunner}
-		list := make([]protocol.RunnerCandidate, 0, len(cands))
-		for _, c := range cands {
+		list := make([]protocol.RunnerCandidate, 0, len(combos))
+		for _, combo := range combos {
+			c := combo.Entry
 			var rc protocol.RunnerCandidate
 			rc.SetCid([]byte(c.ID))
 			rc.SetHostname([]byte(c.Hostname))
 			rc.SetMatchedRoot([]byte(matchedRoot(c.AllowedRoots, repo)))
 			rc.ActiveTasks = uint16(len(c.ActiveTasks))
 			rc.MaxTasks = uint16(c.MaxTasks)
+			rc.SetProfile([]byte(combo.Profile)) // which (runner,profile) combo this row represents
 			list = append(list, rc)
 		}
 		resp.SetCandidates(list) // sets slice+len AND activates the ambiguous variant; direct field assignment fails encode
 		return resp
 	}
-	runner := cands[0]
+	runner := combos[0].Entry
+	resolved := combos[0].Profile
 
 	// Capacity gate — interactive sessions cannot queue; fail fast if runner is full.
 	if len(runner.ActiveTasks) >= runner.MaxTasks {
@@ -808,12 +898,10 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		// The TaskKind_Interactive value is the authoritative marker — empty
 		// prompt is incidental.
 		caps := intersectCaps(creatorCaps, req.RequestedCaps)
-		// TODO(profile): interactive submit doesn't yet accept/resolve an
-		// agent profile on the wire (OpenInteractiveRequest has no
-		// AgentProfile field) — Task 6 wires this surface. Pass "" for now,
-		// which stores an unresolved TaskEntry.AgentProfile (the runner falls
-		// back to its own AgentBin default at exec time).
-		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, "")
+		// resolved is the (runner,profile) combo's profile — the server-chosen
+		// profile the runner must exec with (empty only when the sole candidate
+		// advertises no profile, i.e. a legacy runner → its AgentBin default).
+		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, resolved)
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID
@@ -874,6 +962,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	}
 	oer.SetResumeConversation(req.ResumeConversation())
 	oer.SetRepoPath([]byte(repo))
+	oer.SetAgentProfile([]byte(resolved)) // server-resolved profile the runner execs with (empty → runner default)
 	if req.X11Enabled() {
 		oer.SetX11Enabled(true) // discriminator first
 		if f := req.X11(); f != nil {

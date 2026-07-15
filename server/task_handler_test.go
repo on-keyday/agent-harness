@@ -742,6 +742,114 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Task 6: interactive (runner × profile) combo picker + resume resolution
+// ---------------------------------------------------------------------------
+
+// One runner advertising ["claude","codex"], Any selector, no agent_profile →
+// the two profiles expand into two picker combos (AmbiguousRunner), preserving
+// the u/U agent-selection experience with a single multi-profile runner (§4a).
+func TestOpenInteractiveMultiProfileBecomesCombos(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/repo")) // Selector defaults to Any
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
+		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
+	}
+	cands := *resp.Candidates()
+	if len(cands) != 2 {
+		t.Fatalf("want 2 combos, got %d", len(cands))
+	}
+	got := map[string]bool{string(cands[0].Profile): true, string(cands[1].Profile): true}
+	if !got["claude"] || !got["codex"] {
+		t.Fatalf("combos missing a profile: %v", got)
+	}
+	// Both combos are the same runner; only the profile differs.
+	if string(cands[0].Cid) != "A" || string(cands[1].Cid) != "A" {
+		t.Fatalf("both combos should be runner A: %q %q", cands[0].Cid, cands[1].Cid)
+	}
+}
+
+// --agent codex on that same multi-profile runner pre-filters the combo set to
+// one → not ambiguous → proceeds (nil tuiConn is fine for the non-Ok branches;
+// here it reaches the Ok path guard which returns InternalError on nil conn —
+// what matters is it is NOT AmbiguousRunner).
+func TestOpenInteractiveAgentFilterPicksProfile(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/repo"))
+	req.SetAgentProfile([]byte("codex"))
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
+		t.Fatal("filtered to codex should not be ambiguous")
+	}
+}
+
+// --agent for a profile no candidate advertises → no combo. The interactive
+// status set has no profile-unavailable code, so an unpinned request surfaces
+// NoRunnerForRepo (the closest "can't place this" condition) rather than
+// silently launching the runner's default agent.
+func TestOpenInteractiveAgentUnavailableNoRunner(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	req := &protocol.OpenInteractiveRequest{}
+	req.SetRepoPath([]byte("/repo"))
+	req.SetAgentProfile([]byte("gemini")) // not advertised
+
+	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
+		t.Fatalf("status=%v want NoRunnerForRepo (profile unavailable)", resp.Status)
+	}
+}
+
+// Pinned (selector != Any) + empty profile → one combo using the runner's
+// default profile, NOT expanded across all advertised profiles. The pin already
+// chose the runner, so there is no agent picker to fire.
+func TestOpenInteractivePinnedEmptyProfileUsesDefault(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9300-1"), nextStreamID: 71}
+	h.Registry.Add(&RunnerEntry{ID: "ws:127.0.0.1:9300-1", Hostname: "pinhost", AllowedRoots: []string{"/repo"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: runnerConn})
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_ByHostname}
+	sel.SetHostname(mustHostname(t, "pinhost"))
+	tuiConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9301-2"), nextStreamID: 12}
+
+	req := &protocol.OpenInteractiveRequest{Selector: sel}
+	req.SetRepoPath([]byte("/repo")) // empty agent_profile
+
+	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.OpenInteractiveStatus_Ok {
+		t.Fatalf("status=%v want Ok (one combo, default profile)", resp.Status)
+	}
+	// The OpenExec must carry the runner's default profile ("claude").
+	if len(runnerConn.sent) != 1 {
+		t.Fatalf("runner conn: want 1 sent message, got %d", len(runnerConn.sent))
+	}
+	rr := &protocol.RunnerRequest{}
+	if _, err := rr.Decode(runnerConn.sent[0][1:]); err != nil {
+		t.Fatalf("decode RunnerRequest: %v", err)
+	}
+	oer := rr.OpenExec()
+	if oer == nil {
+		t.Fatal("OpenExec variant nil")
+	}
+	if got := string(oer.AgentProfile); got != "claude" {
+		t.Fatalf("OpenExec.AgentProfile=%q want claude (default)", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Task 6: handleOpenInteractive session wiring
 // ---------------------------------------------------------------------------
 
