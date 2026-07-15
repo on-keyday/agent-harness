@@ -179,6 +179,42 @@ format AgentProfileName:
   interactive open path returns the analogous error through its existing status
   channel.
 
+### 4a. Relationship to the AmbiguousRunner candidate picker
+
+`docs/superpowers/specs/2026-07-02-ambiguous-runner-candidate-picker-design.md`
+lets the client pick **which runner** (by cid / hostname / matched-root) when
+≥2 runners tie on longest-prefix roots score. That picker has **no agent
+axis** — it never selected an agent, so nothing in it is literally replaced.
+
+The two designs **compose as an ordered pipeline**, they do not overlap:
+
+```
+submit / open  (--agent codex?)
+  [1] profile filter   — keep only runners advertising the requested profile   (this spec)
+  [2] roots / selector — longest-prefix candidate set                          (existing)
+  [3] if ≥2 candidates — candidate picker (OpenInteractive only)               (picker spec)
+```
+
+The profile filter is the **front stage**: the picker enumerates the
+**already-profile-filtered** candidate set. Practical effects:
+
+- The picker's *primary motivating scenario* (a second `--hostname`-only runner
+  on the same roots, spawned solely to run a different agent) **stops
+  occurring**, because that reason to run two same-roots runners is gone. The
+  agent choice that was previously smuggled into "pick runner A (claude) vs
+  runner B (codex)" becomes the explicit `--agent` selector.
+- The picker is **not** obsoleted: genuine ties remain (different hosts serving
+  the same repo, load-split slots, failover replicas). Two multi-profile
+  runners on the same roots that both advertise `codex` still tie under
+  `--agent codex` → the picker fires as before, just over a profile-filtered
+  set.
+
+Scope boundary preserved: the picker stays **OpenInteractive-only**. The
+profile filter applies to **both** submit and open, but a oneshot profile miss
+is the flat `SubmitStatus.profile_unavailable` (no picker), exactly as the
+picker spec keeps the oneshot path status-string-only. No picker code is
+reworked to be "profile-aware" — it simply receives fewer candidates.
+
 ### 5. Runner exec (`runner/session.go`)
 
 `SessionConfig` currently carries a single `ClaudeBin` + the three argv
