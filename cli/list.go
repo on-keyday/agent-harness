@@ -129,8 +129,14 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		fmt.Fprintln(out, "  (none)")
 	}
 	for _, t := range lr.Tasks {
+		// Prefer the task's own resolved agent profile (which can differ from
+		// its runner's default AgentBin on a multi-profile runner or after a
+		// cross-agent resume); fall back to the runner descriptor for tasks
+		// predating the field.
 		agent := ""
-		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+		if len(t.AgentProfile) > 0 {
+			agent = "  agent=" + string(t.AgentProfile)
+		} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
 			agent = "  " + agentStr(string(r.AgentBin), r.SkillsInjected())
 		}
 		// exit= / err= render only when meaningful so the common rows stay

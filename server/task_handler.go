@@ -1521,6 +1521,10 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.SetWorktreeDir([]byte(t.WorktreeDir))
 	info.SetPrompt([]byte(t.Prompt))
 	info.SetErrorMessage([]byte(t.ErrorMsg))
+	// The resolved agent profile this task ran under (latest per-open value);
+	// without this, operator surfaces fall back to the runner's default AgentBin
+	// and never show that a task was resumed under a different agent.
+	info.SetAgentProfile([]byte(t.AgentProfile))
 	parsed, err := objproto.ParseConnectionID(t.AssignedTo, 0)
 	if err == nil {
 		info.AssignedTo = protocol.ConnIDToRunnerID(parsed)

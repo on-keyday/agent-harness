@@ -23,3 +23,15 @@ func TestToRunnerInfoEchoesAgentProfiles(t *testing.T) {
 			info.AgentProfiles[0].Name, info.AgentProfiles[1].Name)
 	}
 }
+
+// toTaskInfo must echo the task's resolved agent profile, else operator surfaces
+// fall back to the runner's default AgentBin and never show that a task ran (or
+// was resumed) under a different agent. Same serializer-omission class as the
+// RunnerInfo bug above; caught by driving a codex resume in the live TUI.
+func TestToTaskInfoEchoesAgentProfile(t *testing.T) {
+	e := TaskEntry{ID: "00112233445566778899aabbccddeeff", AgentProfile: "codex"}
+	info := toTaskInfo(e)
+	if string(info.AgentProfile) != "codex" {
+		t.Fatalf("TaskInfo.AgentProfile = %q, want codex", info.AgentProfile)
+	}
+}
