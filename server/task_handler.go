@@ -1463,6 +1463,16 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 	}
 	info.SetHostname([]byte(r.Hostname))
 	info.SetAgentBin([]byte(r.AgentBin))
+	// Echo the advertised profile set so operator surfaces (TUI/WebUI agent
+	// pickers, CLI list) can offer every selectable profile — not just the
+	// default AgentBin. Without this the pickers only ever show the default.
+	profs := make([]protocol.AgentProfileName, len(r.AgentProfiles))
+	for i, p := range r.AgentProfiles {
+		var ap protocol.AgentProfileName
+		ap.SetName([]byte(p))
+		profs[i] = ap
+	}
+	info.SetAgentProfiles(profs)
 	info.SetSkillsInjected(r.SkillsInjected)
 	info.Id = protocol.ConnIDToRunnerID(r.Conn.ConnectionID())
 
