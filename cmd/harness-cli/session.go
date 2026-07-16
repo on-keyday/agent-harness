@@ -252,9 +252,14 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	defer c.Close()
 
 	resumeCapsOverride := *resume != "" && capsExplicitlySet(fs)
+	sopts := cli.SessionOpts{
+		Selector: sel, ExtraArgs: []string(extraArgs), ResumeTaskID: *resume,
+		Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+		ResumeConversation: *resumeConversation, AgentProfile: *agent,
+	}
 
 	if detach {
-		stream, taskIDHex, err := c.OpenInteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, *agent)
+		stream, taskIDHex, err := c.OpenInteractive(ctx, repoVal, sopts)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -264,7 +269,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	}
 
 	if x11 {
-		id, err := c.RunInteractiveX11(ctx, repoVal, sel, []string(extraArgs), *resume, *x11Display, caps, resumeCapsOverride, *resumeConversation, *agent)
+		id, err := c.RunInteractiveX11(ctx, repoVal, sopts, *x11Display)
 		if err != nil {
 			return exitOnAmbiguous(err)
 		}
@@ -272,7 +277,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	id, err := c.InteractiveWithSelectorArgsAndCaps(ctx, repoVal, sel, []string(extraArgs), *resume, caps, resumeCapsOverride, *resumeConversation, *agent)
+	id, err := c.Interactive(ctx, repoVal, sopts)
 	if err != nil {
 		return exitOnAmbiguous(err)
 	}

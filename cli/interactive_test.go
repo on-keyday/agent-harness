@@ -82,7 +82,7 @@ func TestOpenInteractiveStatusError(t *testing.T) {
 // OpenInteractiveWithSelectorArgsAndCaps / openInteractive) ends up set on
 // the wire OpenInteractiveRequest.
 func TestBuildOpenInteractiveRequestAgentProfile(t *testing.T) {
-	oi := buildOpenInteractiveRequest("/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "codex")
+	oi := buildOpenInteractiveRequest("/repo", SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, Caps: CapsPtr(protocol.Capability_All), AgentProfile: "codex"})
 	if string(oi.AgentProfile) != "codex" {
 		t.Errorf("AgentProfile = %q, want %q", oi.AgentProfile, "codex")
 	}
@@ -92,7 +92,7 @@ func TestBuildOpenInteractiveRequestAgentProfile(t *testing.T) {
 // case leaves AgentProfile empty, so existing callers that don't pass a
 // profile are unaffected.
 func TestBuildOpenInteractiveRequestAgentProfileEmpty(t *testing.T) {
-	oi := buildOpenInteractiveRequest("/repo", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "")
+	oi := buildOpenInteractiveRequest("/repo", SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, Caps: CapsPtr(protocol.Capability_All)})
 	if len(oi.AgentProfile) != 0 {
 		t.Errorf("AgentProfile = %q, want empty", oi.AgentProfile)
 	}

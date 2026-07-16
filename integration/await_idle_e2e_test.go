@@ -85,7 +85,7 @@ func TestAwaitIdleE2E(t *testing.T) {
 	defer c.Close()
 
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
-	stream, taskIDHex, err := c.OpenInteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
+	stream, taskIDHex, err := c.OpenInteractive(ctx, repo, cli.SessionOpts{Selector: sel})
 	if err != nil {
 		t.Fatalf("OpenInteractive: %v", err)
 	}

@@ -14,10 +14,10 @@ import (
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TestSubmitWakeE2E asserts that publishing to an agentboard topic causes the

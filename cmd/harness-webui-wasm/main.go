@@ -354,7 +354,11 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if av := opts.Get("agent"); av.Type() == js.TypeString {
 				agentProfile = av.String()
 			}
-			id, err := c.SubmitWithSelectorArgsAndCaps(rootCtx, repo, task, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, agentProfile)
+			id, err := c.Submit(rootCtx, repo, task, cli.SessionOpts{
+				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
+				Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+			})
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("submit: %w", err))
 				return
@@ -887,7 +891,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if av := opts.Get("agent"); av.Type() == js.TypeString {
 				agentProfile = av.String()
 			}
-			taskID, err := c.InteractiveWithSelectorArgsAndCaps(rootCtx, repo, sel, extraArgs, resumeTaskID, caps, resumeCapsOverride, resumeConversation, agentProfile)
+			taskID, err := c.Interactive(rootCtx, repo, cli.SessionOpts{
+				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
+				Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+			})
 			if err != nil {
 				var are *cli.AmbiguousRunnerError
 				if errors.As(err, &are) {

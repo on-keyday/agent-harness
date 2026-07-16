@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/on-keyday/agent-harness/runner/protocol"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
@@ -109,7 +108,7 @@ type X11Request struct {
 // capability mask. Has no effect on new tasks (non-resume).
 // agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
 // for the spawned task instead of the runner's default. "" means default.
-func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, displayN int, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (*agentexec.CommandExecutionStream, string, RemoteForwardSpec, string, error) {
+func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, opts SessionOpts, displayN int) (*agentexec.CommandExecutionStream, string, RemoteForwardSpec, string, error) {
 	display := os.Getenv("DISPLAY")
 	network, host, port, err := localXServerDialSpec(display)
 	if err != nil {
@@ -121,7 +120,7 @@ func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protoc
 		warn = fmt.Sprintf("no cookie for %s (%v); forwarding WITHOUT authentication — your X server must accept unauthenticated connections", display, err)
 		cookie = nil
 	}
-	stream, taskIDHex, err := c.openInteractive(ctx, repo, sel, extraArgs, resumeTaskID, &X11Request{Display: displayN, Cookie: cookie}, caps, resumeCapsOverride, resumeConversation, agentProfile)
+	stream, taskIDHex, err := c.openInteractive(ctx, repo, opts, &X11Request{Display: displayN, Cookie: cookie})
 	if err != nil {
 		return nil, taskIDHex, RemoteForwardSpec{}, warn, err
 	}
@@ -136,8 +135,8 @@ func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, sel protoc
 // the client and a running, authorized local X server (via $DISPLAY).
 // resumeCapsOverride is forwarded to OpenInteractiveX11 unchanged.
 // agentProfile is forwarded to OpenInteractiveX11 unchanged.
-func (c *Client) RunInteractiveX11(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, displayN int, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (string, error) {
-	stream, taskIDHex, sp, warn, err := c.OpenInteractiveX11(ctx, repo, sel, extraArgs, resumeTaskID, displayN, caps, resumeCapsOverride, resumeConversation, agentProfile)
+func (c *Client) RunInteractiveX11(ctx context.Context, repo string, opts SessionOpts, displayN int) (string, error) {
+	stream, taskIDHex, sp, warn, err := c.OpenInteractiveX11(ctx, repo, opts, displayN)
 	if err != nil {
 		return taskIDHex, err
 	}

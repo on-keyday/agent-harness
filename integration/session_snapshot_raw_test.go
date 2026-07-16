@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -46,9 +47,7 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 
 	c1 := dialClient(t, serverCID)
 	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
-	stream1, taskIDHex, err := c1.OpenInteractiveWithSelectorAndArgs(
-		context.Background(), repo, sel, nil, "",
-	)
+	stream1, taskIDHex, err := c1.OpenInteractive(context.Background(), repo, cli.SessionOpts{Selector: sel})
 	if err != nil {
 		t.Fatalf("OpenInteractiveWithSelectorAndArgs: %v", err)
 	}

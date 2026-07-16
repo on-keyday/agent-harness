@@ -148,7 +148,7 @@ func TestSubmitStatusError(t *testing.T) {
 // passed to buildSubmitRequest (and therefore SubmitWithSelectorArgsAndCaps)
 // ends up set on the wire SubmitRequest.
 func TestBuildSubmitRequestAgentProfile(t *testing.T) {
-	sub := buildSubmitRequest("/repo", "prompt", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "codex")
+	sub := buildSubmitRequest("/repo", "prompt", SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, Caps: CapsPtr(protocol.Capability_All), AgentProfile: "codex"})
 	if string(sub.AgentProfile) != "codex" {
 		t.Errorf("AgentProfile = %q, want %q", sub.AgentProfile, "codex")
 	}
@@ -158,7 +158,7 @@ func TestBuildSubmitRequestAgentProfile(t *testing.T) {
 // leaves AgentProfile empty, so existing callers that don't pass a profile
 // are unaffected.
 func TestBuildSubmitRequestAgentProfileEmpty(t *testing.T) {
-	sub := buildSubmitRequest("/repo", "prompt", protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, protocol.Capability_All, false, false, "")
+	sub := buildSubmitRequest("/repo", "prompt", SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, Caps: CapsPtr(protocol.Capability_All)})
 	if len(sub.AgentProfile) != 0 {
 		t.Errorf("AgentProfile = %q, want empty", sub.AgentProfile)
 	}

@@ -10,10 +10,10 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // clearAgentEnv unsets the harness agent identity env vars for the duration

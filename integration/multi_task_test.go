@@ -169,7 +169,7 @@ func dialClient(t *testing.T, serverCID objproto.ConnectionID) *cli.Client {
 // mustSubmit submits a task and fails the test on error.
 func mustSubmit(t *testing.T, c *cli.Client, repo, prompt string) string {
 	t.Helper()
-	id, err := c.Submit(context.Background(), repo, prompt)
+	id, err := c.Submit(context.Background(), repo, prompt, cli.SessionOpts{})
 	if err != nil {
 		t.Fatalf("submit(%q): %v", prompt, err)
 	}
@@ -311,8 +311,7 @@ func TestIntegrationAmbiguousRunner(t *testing.T) {
 	c := dialClient(t, serverCID)
 
 	// Both runners serve the same repo. With Any selector, submit should return ambiguous_runner.
-	_, err := c.SubmitWithSelector(context.Background(), repo, "echo test",
-		protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any})
+	_, err := c.Submit(context.Background(), repo, "echo test", cli.SessionOpts{Selector: protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}})
 	if err == nil {
 		t.Fatal("expected ambiguous_runner error, got nil")
 	}
@@ -340,7 +339,7 @@ func TestIntegrationPinByHostnameSuccess(t *testing.T) {
 		t.Fatalf("build selector: %v", err)
 	}
 
-	id, err := c.SubmitWithSelector(context.Background(), repo, "echo pinned", sel)
+	id, err := c.Submit(context.Background(), repo, "echo pinned", cli.SessionOpts{Selector: sel})
 	if err != nil {
 		t.Fatalf("submit with hostname pin: %v", err)
 	}
@@ -370,7 +369,7 @@ func TestIntegrationPinNotFound(t *testing.T) {
 		t.Fatalf("build selector: %v", err)
 	}
 
-	_, err = c.SubmitWithSelector(context.Background(), repo, "echo pinned", sel)
+	_, err = c.Submit(context.Background(), repo, "echo pinned", cli.SessionOpts{Selector: sel})
 	if err == nil {
 		t.Fatal("expected pinned_not_found error, got nil")
 	}

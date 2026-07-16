@@ -93,48 +93,10 @@ const detachDrainTimeout = time.Second
 // On success this returns immediately after the recv goroutine is started.
 // The active session is stored in activeInteractiveSession; subsequent calls
 // to SendInteractive / ResizeInteractive / DetachInteractive operate on it.
-func (c *Client) Interactive(ctx context.Context, repo string) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
-}
-
-// InteractiveWithSelector is the same as Interactive but accepts an explicit
-// runner selector. extraArgs default to none.
-func (c *Client) InteractiveWithSelector(ctx context.Context, repo string, sel protocol.RunnerSelector) (string, error) {
-	return c.InteractiveWithSelectorAndArgs(ctx, repo, sel, nil, "")
-}
-
-// InteractiveWithSelectorAndArgs is the full-featured form: selector pinning,
-// per-task extraArgs, and an optional resumeTaskID (hex; "" = new task).
-// Every session is detachable.
-//
-// RequestedCaps defaults to Capability_All (inherit everything the spawner
-// holds). Callers that need a narrower grant should use
-// InteractiveWithSelectorArgsAndCaps instead.
-func (c *Client) InteractiveWithSelectorAndArgs(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
-	return c.InteractiveWithSelectorArgsAndCaps(ctx, repo, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false, "")
-}
-
-// InteractiveWithSelectorArgsAndCaps is identical to
-// InteractiveWithSelectorAndArgs but lets the caller specify an explicit
-// capability mask for the spawned task. Pass protocol.Capability_All for the
-// inherit-all behaviour.
-// resumeCapsOverride, when true, instructs the server to apply caps as an
-// override on resume (re-grant) rather than inheriting the original task's
-// capability mask. Has no effect on new tasks (non-resume).
-// resumeConversation, when true, asks the runner to resume the agent's own
-// conversation state in addition to the harness task/worktree.
-// agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
-// for the spawned task instead of the runner's default. "" means default.
-func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (string, error) {
+func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenInteractive}
-	oi := protocol.OpenInteractiveRequest{}
-	oi.SetRepoPath([]byte(repo))
-	oi.Selector = sel
-	oi.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
-	oi.RequestedCaps = caps
-	oi.SetResumeCapsOverride(resumeCapsOverride)
-	oi.SetResumeConversation(resumeConversation)
-	oi.SetAgentProfile([]byte(agentProfile))
+	oi := buildOpenInteractiveRequest(repo, opts)
+	resumeTaskID := opts.ResumeTaskID
 	if resumeTaskID != "" {
 		tid, err := parseTaskIDHex(resumeTaskID)
 		if err != nil {
@@ -160,8 +122,8 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 	case protocol.OpenInteractiveStatus_NoRunnerForRepo:
 		return "", fmt.Errorf("no idle runner for repo %q", repo)
 	case protocol.OpenInteractiveStatus_ProfileUnavailable:
-		if agentProfile != "" {
-			return "", fmt.Errorf("profile_unavailable: agent profile %q is advertised by no runner serving repo %q", agentProfile, repo)
+		if opts.AgentProfile != "" {
+			return "", fmt.Errorf("profile_unavailable: agent profile %q is advertised by no runner serving repo %q", opts.AgentProfile, repo)
 		}
 		return "", fmt.Errorf("profile_unavailable: the resumed task's agent profile is advertised by no runner serving repo %q", repo)
 	case protocol.OpenInteractiveStatus_RunnerBusy:

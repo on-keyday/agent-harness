@@ -13,65 +13,13 @@ import (
 // Submit asks the server to enqueue a new task. Returns the assigned task ID
 // (32 hex chars). Method form: callable repeatedly without re-dialing — used
 // by long-lived consumers (tui, wasm) that hold one *Client for the lifetime
-// of the process.
-func (c *Client) Submit(ctx context.Context, repo, prompt string) (string, error) {
-	return c.SubmitWithSelectorAndArgs(ctx, repo, prompt, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, nil, "")
-}
-
-// SubmitWithSelector is the same as Submit but accepts an explicit runner
-// selector. Callers that want the Any-runner behaviour can use Submit directly.
-// extraArgs default to none; use SubmitWithSelectorAndArgs to forward a
-// per-task list of CLI args to the spawned claude process.
-func (c *Client) SubmitWithSelector(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector) (string, error) {
-	return c.SubmitWithSelectorAndArgs(ctx, repo, prompt, sel, nil, "")
-}
-
-// SubmitWithSelectorAndArgs is the full-featured form: selector pinning plus
-// per-task extraArgs forwarded verbatim to the runner, plus an optional
-// resumeTaskID (hex; "" means new task) that re-uses an existing terminal
-// task's id and worktree branch so claude's project key matches the previous
-// run. extraArgs default to none.
-//
-// RequestedCaps defaults to Capability_All (inherit everything the spawner
-// holds). Callers that need a narrower grant should use
-// SubmitWithSelectorArgsAndCaps instead.
-func (c *Client) SubmitWithSelectorAndArgs(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string) (string, error) {
-	return c.SubmitWithSelectorArgsAndCaps(ctx, repo, prompt, sel, extraArgs, resumeTaskID, protocol.Capability_All, false, false, "")
-}
-
-// SubmitWithSelectorArgsAndCaps is identical to SubmitWithSelectorAndArgs but
-// lets the caller specify an explicit capability mask for the spawned task.
-// Pass protocol.Capability_All for the inherit-all behaviour.
-// resumeCapsOverride, when true, instructs the server to apply caps as an
-// override on resume (re-grant) rather than inheriting the original task's
-// capability mask. Has no effect on new tasks (non-resume).
-// resumeConversation, when true, asks the runner to resume the agent's own
-// conversation state in addition to the harness task/worktree.
-// agentProfile, when non-empty, selects a named agent profile (e.g. "codex")
-// for the spawned task instead of the runner's default. "" means default.
-// buildSubmitRequest constructs the wire SubmitRequest for
-// SubmitWithSelectorArgsAndCaps, minus the resumeTaskID field (which needs
-// hex-parse error handling the caller does separately). Split out so unit
-// tests can assert on the built request's fields (e.g. AgentProfile) without
-// a live connection.
-func buildSubmitRequest(repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) protocol.SubmitRequest {
-	sub := protocol.SubmitRequest{}
-	sub.SetRepoPath([]byte(repo))
-	sub.SetPrompt([]byte(prompt))
-	sub.Selector = sel
-	sub.ExtraArgs = protocol.ClaudeArgsFromStrings(extraArgs)
-	sub.RequestedCaps = caps
-	sub.SetResumeCapsOverride(resumeCapsOverride)
-	sub.SetResumeConversation(resumeConversation)
-	sub.SetAgentProfile([]byte(agentProfile))
-	return sub
-}
-
-func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt string, sel protocol.RunnerSelector, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) (string, error) {
+// of the process. opts zero value = new task, any runner, default agent,
+// inherit-all caps (see SessionOpts).
+func (c *Client) Submit(ctx context.Context, repo, prompt string, opts SessionOpts) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
-	sub := buildSubmitRequest(repo, prompt, sel, extraArgs, caps, resumeCapsOverride, resumeConversation, agentProfile)
-	if resumeTaskID != "" {
-		tid, err := parseTaskIDHex(resumeTaskID)
+	sub := buildSubmitRequest(repo, prompt, opts)
+	if opts.ResumeTaskID != "" {
+		tid, err := parseTaskIDHex(opts.ResumeTaskID)
 		if err != nil {
 			return "", fmt.Errorf("submit: parse resume id: %w", err)
 		}
@@ -79,6 +27,27 @@ func (c *Client) SubmitWithSelectorArgsAndCaps(ctx context.Context, repo, prompt
 	}
 	req.SetSubmit(sub)
 
+	return c.roundTripSubmit(ctx, req)
+}
+
+// buildSubmitRequest constructs the wire SubmitRequest from SessionOpts, minus
+// the resumeTaskID field (which needs hex-parse error handling the caller does
+// separately). Split out so unit tests can assert on the built request's fields
+// (e.g. AgentProfile) without a live connection.
+func buildSubmitRequest(repo, prompt string, opts SessionOpts) protocol.SubmitRequest {
+	sub := protocol.SubmitRequest{}
+	sub.SetRepoPath([]byte(repo))
+	sub.SetPrompt([]byte(prompt))
+	sub.Selector = opts.Selector
+	sub.ExtraArgs = protocol.ClaudeArgsFromStrings(opts.ExtraArgs)
+	sub.RequestedCaps = opts.resolvedCaps()
+	sub.SetResumeCapsOverride(opts.ResumeCapsOverride)
+	sub.SetResumeConversation(opts.ResumeConversation)
+	sub.SetAgentProfile([]byte(opts.AgentProfile))
+	return sub
+}
+
+func (c *Client) roundTripSubmit(ctx context.Context, req *protocol.TaskControlRequest) (string, error) {
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return "", err
@@ -154,5 +123,5 @@ func Submit(ctx context.Context, peerCID objproto.ConnectionID, repo, prompt str
 		return "", err
 	}
 	defer c.Close()
-	return c.Submit(ctx, repo, prompt)
+	return c.Submit(ctx, repo, prompt, SessionOpts{})
 }

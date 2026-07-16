@@ -36,8 +36,8 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
-	"github.com/on-keyday/objtrsf/transport"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/transport"
 )
 
 // chainEndpoint bundles one endpoint with the listen-addr the next-lower
