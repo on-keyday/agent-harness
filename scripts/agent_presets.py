@@ -31,6 +31,10 @@ import json
 # whitespace into the argv-array form runner.ParseAgentProfilesJSON expects
 # (runner/agent_profile.go); none of these templates need shell quoting, so
 # a plain .split() matches what shlex.Split would produce.
+# SINGLE SOURCE OF TRUTH for the built-in agent presets' bin + argv templates
+# (claude / codex / bash). `.claude/commands/runner-up.md` references this table
+# via `runner.sh up --agents <names>` and MUST NOT restate the literal argv
+# strings — keep the values here only, so the doc and the code cannot diverge.
 KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
     "claude": {
         "bin": "claude",

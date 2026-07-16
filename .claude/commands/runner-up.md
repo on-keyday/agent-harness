@@ -24,11 +24,11 @@ Arguments: $ARGUMENTS
 
    | tag          | default flags                                                                                                              | target |
    |--------------|----------------------------------------------------------------------------------------------------------------------------|--------|
-   | `bash`       | `--no-worktree --claude-bin bash --roots $HOME/workspace --agent-oneshot-argv "{args} -c {prompt}" --agent-resume-oneshot-argv "{args} -c {prompt}" --agent-resume-interactive-argv "{args}"` | Linux / macOS shell runner |
+   | `bash`       | `--agents bash --no-worktree --roots $HOME/workspace` (bin+argv from `scripts/agent_presets.py`) | Linux / macOS shell runner |
    | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--claude-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --claude-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
-   | `codex`      | `--claude-bin codex --agent-oneshot-argv "exec {args} {prompt}" --agent-resume-oneshot-argv "exec resume --last {args} {prompt}" --agent-resume-interactive-argv "resume --last {args}"` | Codex CLI runner |
+   | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
 
    **The `sandbox` preset is NOT a shell preset.** It runs the *full* claude
    inside a rootless-podman container (`scripts/sandbox/`), confining the agent's
@@ -52,34 +52,21 @@ Arguments: $ARGUMENTS
    `$HOME/workspace`), inject `--hostname $HARNESS_HOSTNAME-sandbox` so the slot
    is unambiguously pinnable via `--host`.
 
-   **Codex preset details.** The runner still uses the historical
-   `--claude-bin` / `--claude-args` flag names, but `--claude-bin codex` is now
-   supported by runner-side argv templates:
+   **Codex preset details.** The exact bin + argv templates for `codex` (and
+   `claude` / `bash`) live in ONE place — `scripts/agent_presets.py`
+   (`KNOWN_AGENT_PRESETS`); this doc no longer restates the literal flag strings
+   so the two cannot drift. Prefer `runner.sh up --agents codex`. Why codex's
+   templates differ from Claude's default one-shot `<args> -p <prompt>`:
 
-   - `--agent-oneshot-argv "exec {args} {prompt}"` makes one-shot tasks run as
-     `codex exec <global/per-task args> <prompt>` instead of Claude's default
-     `<args> -p <prompt>`.
-   - `--agent-resume-oneshot-argv "exec resume --last {args} {prompt}"` makes
-     `resume_conversation` one-shot resumes run as
-     `codex exec resume --last <global/per-task args> <prompt>`. The
-     non-interactive subcommand shape matters: top-level `codex resume` is
-     interactive-only.
-   - `--agent-resume-interactive-argv "resume --last {args}"` makes
-     `resume_conversation` interactive resumes run as
-     `codex resume --last <global/per-task args>` instead of appending
-     `--continue`.
-   - `{args}` expands to runner-global `--claude-args` plus per-task
-     `--claude-arg` values. `{prompt}` expands to the one-shot prompt as a
-     single argv element. These templates are parsed with shlex and executed via
-     argv, not through a shell.
-
-   The Claude-compatible defaults are:
-
-   ```
-   --agent-oneshot-argv "{args} -p {prompt}"
-   --agent-resume-oneshot-argv "{args} --continue -p {prompt}"
-   --agent-resume-interactive-argv "{args} --continue"
-   ```
+   - one-shot runs as `codex exec <args> <prompt>`.
+   - `resume_conversation` one-shot runs as `codex exec resume --last <args>
+     <prompt>` — the non-interactive subcommand shape matters: top-level
+     `codex resume` is interactive-only.
+   - `resume_conversation` interactive runs as `codex resume --last <args>`
+     (codex does not take `--continue`).
+   - `{args}` = runner-global `--claude-args` + per-task `--claude-arg`;
+     `{prompt}` = the one-shot prompt as a single argv element. Templates are
+     shlex-split and executed via argv, not a shell.
 
    **Pairing is enforced at startup**: customizing `--agent-oneshot-argv`
    without also supplying `--agent-resume-oneshot-argv` fails agent-runner
@@ -88,21 +75,21 @@ Arguments: $ARGUMENTS
 
    **Multi-profile shortcut**: `scripts/runner.py up --agents claude,codex`
    expands the first name into the default `--agent-bin`/`--agent-*-argv`
-   flags above and the rest into a generated `--agent-profiles` JSON flag —
-   this table stays the source of truth for the per-agent argv shapes
-   (`scripts/agent_presets.py` copies them verbatim).
+   flags and the rest into a generated `--agent-profiles` JSON flag. The
+   per-agent bin+argv shapes are defined once in `scripts/agent_presets.py`
+   (`KNOWN_AGENT_PRESETS`) — the single source of truth this doc references.
 
    A Codex slot usually needs explicit `--hostname $HARNESS_HOSTNAME-codex`
    when its roots overlap an existing Claude slot, for the same dispatch
    ambiguity reason as the sandbox slot.
 
    **Bash preset details.** The bash slot is a shell runner, not an agent with
-   conversation state. Its preset uses `--agent-oneshot-argv "{args} -c
-   {prompt}"` so one-shot submits execute the prompt as a shell command,
-   `--agent-resume-oneshot-argv "{args} -c {prompt}"` (identical — a "resumed"
-   one-shot just runs the prompt again; bash has nothing to continue), and
-   `--agent-resume-interactive-argv "{args}"` so `resume_conversation` is
-   ignored instead of adding Claude's `--continue`.
+   conversation state. Its argv (defined in `scripts/agent_presets.py`) runs
+   one-shot submits as a shell command (`bash -c <prompt>`); a "resumed"
+   one-shot just runs the prompt again (bash has nothing to continue), and
+   `resume_conversation` interactive is a plain re-open (no `--continue`).
+   `--agents bash` emits only that bin+argv; a real bash slot still needs
+   `--no-worktree` and `--roots` (see the table row).
 
    **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 
