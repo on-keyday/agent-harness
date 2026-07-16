@@ -269,6 +269,30 @@ const POLL_INTERVAL_MS = 5000;
   let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
 
+  // sessionReq builds the ONE request object shape the harness.submit /
+  // harness.startInteractive wasm bridges consume. Every session request goes
+  // through here so the JS↔Go key names cannot drift and the caps logic is not
+  // hand-copied per call site (it was: five sites, and two of them dropped the
+  // "override only applies on resume" guard — harmless only because those two
+  // always had a resumeTaskId, i.e. a latent footgun). Callers pass just what
+  // varies; spawnCaps / applyCapsOnResume are read from the live closure here.
+  //   resumeCapsOverride is forced false for a NEW task (no resumeTaskId): the
+  //   override re-grants caps on RESUME and is a no-op / misleading otherwise.
+  // Keys here MUST match cmd/harness-webui-wasm/main.go's opts.Get("…") names.
+  function sessionReq({ repo = "", task = "", host = "", runner = "", agent = "",
+                        claudeArgs = [], resumeTaskId = "", resumeConversation = false }) {
+    const req = {
+      repo, task, host, agent,
+      claudeArgs,
+      resumeTaskId,
+      resumeConversation,
+      caps: spawnCaps,
+      resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false,
+    };
+    if (runner) req.runner = runner;
+    return req;
+  }
+
   setStatus("connecting…");
   try {
     await window.harness.connect(SERVER_CID, { persist: true });
@@ -1199,7 +1223,7 @@ const POLL_INTERVAL_MS = 5000;
           if (!task) throw new Error("submit: missing task prompt");
           const host = hostSelect ? (hostSelect.value || "") : "";
           const claudeArgsList = currentClaudeArgs();
-          out = await window.harness.submit({ repo, task, host, agent, claudeArgs: claudeArgsList, resumeTaskId, caps: spawnCaps, resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false, resumeConversation });
+          out = await window.harness.submit(sessionReq({ repo, task, host, agent, claudeArgs: claudeArgsList, resumeTaskId, resumeConversation }));
           break;
         }
         case "list":
@@ -1606,15 +1630,13 @@ const POLL_INTERVAL_MS = 5000;
   };
 
   // composeRequest assembles the shared fields from the Compose section.
-  const composeRequest = () => {
-    return {
-      repo: runnerSelect.value || "",
-      host: hostSelect ? (hostSelect.value || "") : "",
-      agent: agentSelect ? (agentSelect.value || "") : "",
-      claudeArgs: currentClaudeArgs(),
-      resumeTaskId: currentResumeTaskID(),
-    };
-  };
+  const composeRequest = () => sessionReq({
+    repo: runnerSelect.value || "",
+    host: hostSelect ? (hostSelect.value || "") : "",
+    agent: agentSelect ? (agentSelect.value || "") : "",
+    claudeArgs: currentClaudeArgs(),
+    resumeTaskId: currentResumeTaskID(),
+  });
 
   // --- Cap chips (session-default capability set for new-session spawns) ---
   // capDefs / spawnCaps declared early in the IIFE (before connect) so the
@@ -1753,7 +1775,7 @@ const POLL_INTERVAL_MS = 5000;
     // own AgentProfile, so it can't default per-task the way buildTaskSheet's
     // per-row dropdown does).
     const agent = agentSelect ? (agentSelect.value || "") : "";
-    const req = { repo: "", host: "", agent, claudeArgs: args, resumeTaskId: id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation: true };
+    const req = sessionReq({ agent, claudeArgs: args, resumeTaskId: id, resumeConversation: true });
     try {
       const taskID = await window.harness.startInteractive(req);
       setActiveTab("terminal");
@@ -1844,9 +1866,10 @@ const POLL_INTERVAL_MS = 5000;
           // candidate row *is* the (runner, profile) combo the user picked
           // (§4a), so agent overrides whatever baseReq carried. Clear host so
           // the selector is unambiguous.
+          // baseReq came from sessionReq, so caps/resumeCapsOverride are already
+          // correct; only the picked (runner, profile) overrides differ.
           const taskID = await window.harness.startInteractive({
             ...baseReq, host: "", runner: c.cid, agent: c.profile || "",
-            caps: spawnCaps, resumeCapsOverride: baseReq.resumeTaskId ? applyCapsOnResume : false,
           });
           setActiveTab("terminal");
           term.reset();
@@ -1895,7 +1918,7 @@ const POLL_INTERVAL_MS = 5000;
     hideQuickReattach();
     term.reset();
     try {
-      const taskID = await window.harness.startInteractive({...req, caps: spawnCaps, resumeCapsOverride: req.resumeTaskId ? applyCapsOnResume : false});
+      const taskID = await window.harness.startInteractive(req);
       setActiveTab("terminal");
       onInteractiveOpened(taskID, label);
     } catch (e) {
@@ -2103,8 +2126,7 @@ const POLL_INTERVAL_MS = 5000;
       sheet.appendChild(agentRow);
 
       const doResume = async (claudeArgs, note, resumeConversation = false, runner = "") => {
-        const req = { repo: "", host: "", agent: agentSel.value || "", claudeArgs, resumeTaskId: t.id, caps: spawnCaps, resumeCapsOverride: applyCapsOnResume, resumeConversation };
-        if (runner) req.runner = runner;
+        const req = sessionReq({ agent: agentSel.value || "", claudeArgs, resumeTaskId: t.id, resumeConversation, runner });
         try {
           const id = await window.harness.startInteractive(req);
           setActiveTab("terminal");
