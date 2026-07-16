@@ -101,11 +101,13 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
-		// Only an explicit server rejection (PskRejectedError) is fatal; a
-		// transport drop / cancellation mid-handshake is retryable, so let it
-		// propagate as a plain error (PersistLoop reconnects instead of exiting).
+		// Only a NON-retryable explicit rejection (wrong PSK / bad ticket) is
+		// fatal. A transport drop mid-handshake, or a RETRYABLE rejection
+		// (NoIdentity = the server could not decode our hello, i.e. wire skew),
+		// propagates as a plain error so PersistLoop reconnects instead of
+		// exiting. See PskRejectedError.Retryable.
 		var rej *PskRejectedError
-		if errors.As(pskErr, &rej) {
+		if errors.As(pskErr, &rej) && !rej.Retryable() {
 			return nil, &PSKAuthError{Err: pskErr}
 		}
 		return nil, pskErr

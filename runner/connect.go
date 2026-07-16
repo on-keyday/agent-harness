@@ -283,13 +283,15 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 	pskCancel()
 	if pskErr != nil {
 		pc.Close()
-		// Only an explicit server rejection (PskRejectedError) is fatal — a wrong
-		// PSK/ticket won't fix itself. A transport drop / cancellation mid-handshake
-		// (e.g. a server restart) must be RETRYABLE so PersistLoop reconnects
-		// instead of killing the runner — otherwise a routine server restart wipes
-		// the whole fleet.
+		// Only a NON-retryable rejection is fatal — a wrong PSK/ticket won't fix
+		// itself. Everything else must be RETRYABLE so PersistLoop reconnects
+		// instead of killing the runner — otherwise a routine server restart, or
+		// a server that is briefly behind us on the wire schema, wipes the whole
+		// fleet. Both cases are real: a transport drop mid-handshake, and a
+		// NoIdentity rejection from a version-skewed server that cannot decode
+		// our RunnerHello (see cli.PskRejectedError.Retryable).
 		var rej *cli.PskRejectedError
-		if errors.As(pskErr, &rej) {
+		if errors.As(pskErr, &rej) && !rej.Retryable() {
 			return nil, &cli.PSKAuthError{Err: pskErr}
 		}
 		return nil, pskErr

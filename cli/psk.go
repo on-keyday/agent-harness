@@ -117,7 +117,10 @@ func buildMergedClientHello(operatorKind protocol.ClientKind) protocol.ClientHel
 // Error mapping:
 //   - PskAuthStatus_BadPsk      → error (wrong PSK)
 //   - PskAuthStatus_BadTicket   → error (binder ok, invalid agent ticket)
-//   - PskAuthStatus_NoIdentity  → error (should not happen: we always embed a hello)
+//   - PskAuthStatus_NoIdentity  → RETRYABLE error: we always embed a hello, so this
+//     means the server could not DECODE it — in practice a wire/schema skew
+//     (server older than us). Resolves when the server is upgraded; must not
+//     be fatal (see PskRejectedError.Retryable).
 func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, transcript []byte, operatorKind protocol.ClientKind, respCh <-chan protocol.PskAuthResponse) error {
 	req := protocol.PskAuthRequest{Role: protocol.AuthRole_Client}
 
@@ -153,7 +156,7 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 		}
 		// Explicit server rejection (bad psk / bad ticket / no identity) — FATAL,
 		// not retryable. Callers wrap this as *PSKAuthError.
-		return &PskRejectedError{Status: resp.Status.String()}
+		return &PskRejectedError{Status: resp.Status.String(), Code: resp.Status}
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE (e.g. a server
 		// restart interrupting the in-flight handshake). NOT a PskRejectedError,

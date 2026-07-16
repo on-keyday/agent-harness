@@ -9,6 +9,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // ClientHandle wraps a *Client as a PersistHandle. Done() comes from the
@@ -75,16 +77,39 @@ func (e *PSKAuthError) Error() string { return "psk auth: " + e.Err.Error() }
 func (e *PSKAuthError) Unwrap() error { return e.Err }
 
 // PskRejectedError marks an EXPLICIT server rejection of the merged handshake
-// (BadPsk / BadTicket / NoIdentity). This — and ONLY this — is the fatal case:
-// no retry can fix a wrong PSK or a bad ticket. A transport drop or context
-// cancellation DURING the handshake returns a plain (retryable) error instead
-// (e.g. context.Canceled), so a server restart that interrupts an in-flight
-// handshake triggers a normal reconnect rather than killing the runner/client.
-// Dial and runner.Connect wrap ONLY a PskRejectedError as *PSKAuthError (fatal);
-// everything else propagates as retryable.
-type PskRejectedError struct{ Status string }
+// (BadPsk / BadTicket / NoIdentity). A transport drop or context cancellation
+// DURING the handshake returns a plain (retryable) error instead (e.g.
+// context.Canceled), so a server restart that interrupts an in-flight handshake
+// triggers a normal reconnect rather than killing the runner/client.
+//
+// An explicit rejection is fatal ONLY when it is a credential failure — see
+// Retryable. Dial and runner.Connect wrap a PskRejectedError as *PSKAuthError
+// (fatal) only when !Retryable(); everything else propagates as retryable.
+type PskRejectedError struct {
+	Status string                 // human-readable status, for the message
+	Code   protocol.PskAuthStatus // typed status, for classification
+}
 
 func (e *PskRejectedError) Error() string { return "psk: server rejected: " + e.Status }
+
+// Retryable reports whether reconnecting could plausibly succeed.
+//
+// BadPsk / BadTicket are credential failures: no retry fixes a wrong PSK or an
+// invalid ticket, so they stay fatal.
+//
+// NoIdentity is NOT a credential failure. It means the server accepted the
+// binder but could not read an identity union — which psk.go long assumed could
+// only be our own bug ("should not happen: we always embed a hello"). It ALSO
+// happens when a version-skewed server cannot DECODE the hello we did send: e.g.
+// the runner was upgraded past a wire/schema change before the server was. That
+// fixes itself the moment the server is upgraded, so it MUST back off and retry.
+// Treating it as fatal is what turned a restart-order mistake into a permanent
+// fleet-wide wipe (2026-07-16: every runner exited within ~1s and none returned
+// when the server was upgraded) — the exact failure this fatal/retryable split
+// was drawn to prevent.
+func (e *PskRejectedError) Retryable() bool {
+	return e.Code == protocol.PskAuthStatus_NoIdentity
+}
 
 // PersistConfig configures PersistLoop.
 type PersistConfig struct {
