@@ -191,9 +191,12 @@ format AgentProfileName:
     `TaskInfo.agent_profile`.
   - Multiple → existing `ambiguous_runner` path (now far less likely, since one
     runner serves both runtimes).
-- Add `profile_unavailable = "profile_unavailable"` to `SubmitStatus`. The
-  interactive open path returns the analogous error through its existing status
-  channel.
+- Add `profile_unavailable = "profile_unavailable"` to `SubmitStatus`, and a
+  matching `OpenInteractiveStatus.profile_unavailable` for the interactive path
+  (in `handleOpenInteractive`, `len(combos)==0` with `len(cands)>0` means
+  exactly this). Both surfaces thus distinguish "no runner for this repo" from
+  "no runner advertises this profile"; the cli maps each to a message naming the
+  requested agent.
 - Resume profile resolution (§4b) happens in the same handler: when
   `resume_task_id` is set and no `--agent` was given, the requested profile
   defaults to the resumed task's `TaskInfo.agent_profile`; an explicit `--agent`
