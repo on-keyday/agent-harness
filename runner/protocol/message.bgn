@@ -724,6 +724,9 @@ enum OpenInteractiveStatus:
     runner_busy         = "runner_busy"
     ambiguous_runner    = "ambiguous_runner"
     pinned_not_found    = "pinned_not_found"
+    # A requested/resolved agent profile is advertised by no runner serving the
+    # repo (mirrors SubmitStatus.profile_unavailable on the oneshot path).
+    profile_unavailable = "profile_unavailable"
     internal_error      = "internal_error"
     # See SubmitStatus — same resume semantics for the interactive path.
     resume_not_found    = "resume_not_found"

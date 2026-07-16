@@ -159,6 +159,11 @@ func (c *Client) InteractiveWithSelectorArgsAndCaps(ctx context.Context, repo st
 	case protocol.OpenInteractiveStatus_Ok:
 	case protocol.OpenInteractiveStatus_NoRunnerForRepo:
 		return "", fmt.Errorf("no idle runner for repo %q", repo)
+	case protocol.OpenInteractiveStatus_ProfileUnavailable:
+		if agentProfile != "" {
+			return "", fmt.Errorf("profile_unavailable: agent profile %q is advertised by no runner serving repo %q", agentProfile, repo)
+		}
+		return "", fmt.Errorf("profile_unavailable: the resumed task's agent profile is advertised by no runner serving repo %q", repo)
 	case protocol.OpenInteractiveStatus_RunnerBusy:
 		return "", fmt.Errorf("runner busy")
 	case protocol.OpenInteractiveStatus_AmbiguousRunner:

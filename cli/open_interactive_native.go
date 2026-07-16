@@ -123,7 +123,7 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, sel proto
 	if oir.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
 		return nil, "", &AmbiguousRunnerError{Candidates: candidatesFromResponse(oir)}
 	}
-	if err := openInteractiveStatusError(repoPath, oir.Status); err != nil {
+	if err := openInteractiveStatusError(repoPath, agentProfile, oir.Status); err != nil {
 		return nil, "", err
 	}
 
@@ -138,12 +138,17 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, sel proto
 
 // openInteractiveStatusError converts a non-Ok OpenInteractiveStatus into a
 // Go error. Returns nil for OpenInteractiveStatus_Ok.
-func openInteractiveStatusError(repo string, status protocol.OpenInteractiveStatus) error {
+func openInteractiveStatusError(repo, agentProfile string, status protocol.OpenInteractiveStatus) error {
 	switch status {
 	case protocol.OpenInteractiveStatus_Ok:
 		return nil
 	case protocol.OpenInteractiveStatus_NoRunnerForRepo:
 		return fmt.Errorf("interactive no_runner_for_repo: no idle runner for repo %q", repo)
+	case protocol.OpenInteractiveStatus_ProfileUnavailable:
+		if agentProfile != "" {
+			return fmt.Errorf("interactive profile_unavailable: agent profile %q is advertised by no runner serving repo %q", agentProfile, repo)
+		}
+		return fmt.Errorf("interactive profile_unavailable: the resumed task's agent profile is advertised by no runner serving repo %q (pick a different runner/agent)", repo)
 	case protocol.OpenInteractiveStatus_RunnerBusy:
 		return fmt.Errorf("interactive runner_busy: runner is at capacity")
 	case protocol.OpenInteractiveStatus_AmbiguousRunner:

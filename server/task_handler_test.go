@@ -795,9 +795,10 @@ func TestOpenInteractiveAgentFilterPicksProfile(t *testing.T) {
 
 // --agent for a profile no candidate advertises → no combo. The interactive
 // status set has no profile-unavailable code, so an unpinned request surfaces
-// NoRunnerForRepo (the closest "can't place this" condition) rather than
-// silently launching the runner's default agent.
-func TestOpenInteractiveAgentUnavailableNoRunner(t *testing.T) {
+// the dedicated ProfileUnavailable status (candidates exist for the repo but
+// none advertise the requested profile) rather than silently launching the
+// runner's default agent or a generic no-runner error.
+func TestOpenInteractiveAgentUnavailable(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
 	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
@@ -807,8 +808,8 @@ func TestOpenInteractiveAgentUnavailableNoRunner(t *testing.T) {
 	req.SetAgentProfile([]byte("gemini")) // not advertised
 
 	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
-	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
-		t.Fatalf("status=%v want NoRunnerForRepo (profile unavailable)", resp.Status)
+	if resp.Status != protocol.OpenInteractiveStatus_ProfileUnavailable {
+		t.Fatalf("status=%v want ProfileUnavailable", resp.Status)
 	}
 }
 

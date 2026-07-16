@@ -55,11 +55,12 @@ func TestOpenInteractiveStatusError(t *testing.T) {
 		{protocol.OpenInteractiveStatus_RunnerBusy, "runner_busy"},
 		{protocol.OpenInteractiveStatus_AmbiguousRunner, "ambiguous_runner"},
 		{protocol.OpenInteractiveStatus_PinnedNotFound, "pinned_not_found"},
+		{protocol.OpenInteractiveStatus_ProfileUnavailable, "profile_unavailable"},
 		{protocol.OpenInteractiveStatus_InternalError, "internal_error"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.status.String(), func(t *testing.T) {
-			err := openInteractiveStatusError("/repo/path", tc.status)
+			err := openInteractiveStatusError("/repo/path", "codex", tc.status)
 			if tc.wantSub == "" {
 				if err != nil {
 					t.Errorf("expected nil, got %v", err)

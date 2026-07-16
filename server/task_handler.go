@@ -853,15 +853,14 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	combos := expandInteractiveCombos(cands, profile, req.Selector.Kind)
 	switch {
 	case len(combos) == 0:
-		// A requested/resolved profile is served by no candidate runner (or the
-		// candidates advertise no profile at all). The interactive status set
-		// has no dedicated profile-unavailable code, so surface the closest
-		// existing "no runner for this repo" condition (pinned → PinnedNotFound)
-		// rather than silently succeeding on the runner's own default.
-		if req.Selector.Kind != protocol.RunnerSelectorKind_Any {
-			return errResp(protocol.OpenInteractiveStatus_PinnedNotFound)
-		}
-		return errResp(protocol.OpenInteractiveStatus_NoRunnerForRepo)
+		// len(cands) > 0 is guaranteed here (the cands==0 cases returned above),
+		// so zero combos means exactly one thing: the requested/resolved profile
+		// is advertised by none of the repo's candidate runners. Report the
+		// dedicated interactive profile-unavailable status (mirrors the oneshot
+		// SubmitStatus.profile_unavailable) rather than a generic "no runner" —
+		// never silently fall back to a runner's own default.
+		slog.Info("handleOpenInteractive: profile unavailable", "repo", repo, "profile", profile)
+		return errResp(protocol.OpenInteractiveStatus_ProfileUnavailable)
 	case len(combos) > 1:
 		// Ambiguous is an expected, user-recoverable condition (the caller
 		// re-issues pinned to a candidate cid + profile) — not a server-side error.
