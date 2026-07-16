@@ -19,13 +19,41 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-// formatAmbiguousCandidates renders the candidate runners for the non-TUI CLI:
-// a table plus a hint to re-run pinned with --runner <cid>.
+// formatAmbiguousCandidates renders the candidate (runner, agent-profile) combos
+// for the non-TUI CLI: a table plus a per-row hint to re-run pinned. Each row
+// shows its agent profile — on a single multi-profile runner the rows share a
+// cid and differ only by agent, so --runner alone cannot disambiguate and the
+// hint must include --agent.
 func formatAmbiguousCandidates(cands []cli.RunnerCandidate) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "ambiguous runner: %d runners match this repo; re-run pinned with --runner <cid>:\n", len(cands))
+	sameCid := true
+	for _, c := range cands[1:] {
+		if c.Cid != cands[0].Cid {
+			sameCid = false
+			break
+		}
+	}
+	if sameCid && len(cands) > 1 {
+		fmt.Fprintf(&b, "ambiguous agent: %d profiles on this runner; re-run with --agent <name>:\n", len(cands))
+	} else {
+		fmt.Fprintf(&b, "ambiguous runner: %d (runner, agent) candidates match this repo; re-run pinned with the flags shown:\n", len(cands))
+	}
 	for _, c := range cands {
-		fmt.Fprintf(&b, "  %-18s [%d/%d]  %s  --runner %s\n", c.Hostname, c.ActiveTasks, c.MaxTasks, c.MatchedRoot, c.Cid)
+		profile := c.Profile
+		if profile == "" {
+			profile = "(default)"
+		}
+		hint := ""
+		if !sameCid {
+			hint = "--runner " + c.Cid
+		}
+		if c.Profile != "" {
+			if hint != "" {
+				hint += " "
+			}
+			hint += "--agent " + c.Profile
+		}
+		fmt.Fprintf(&b, "  %-18s agent=%-10s [%d/%d]  %s  %s\n", c.Hostname, profile, c.ActiveTasks, c.MaxTasks, c.MatchedRoot, hint)
 	}
 	return b.String()
 }

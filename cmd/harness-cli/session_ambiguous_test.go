@@ -18,3 +18,21 @@ func TestFormatAmbiguousCandidates(t *testing.T) {
 		}
 	}
 }
+
+// Single multi-profile runner: the combos share a cid and differ only by agent,
+// so --runner cannot disambiguate — the hint must steer to --agent, and each
+// row must show its profile.
+func TestFormatAmbiguousCandidatesSameRunnerProfiles(t *testing.T) {
+	out := formatAmbiguousCandidates([]cli.RunnerCandidate{
+		{Cid: "ws:10.0.0.1:1-1", Hostname: "gmkhost", MatchedRoot: "/repo", Profile: "claude", MaxTasks: 8},
+		{Cid: "ws:10.0.0.1:1-1", Hostname: "gmkhost", MatchedRoot: "/repo", Profile: "codex", MaxTasks: 8},
+	})
+	for _, want := range []string{"ambiguous agent", "--agent claude", "--agent codex", "agent=claude", "agent=codex"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "--runner") {
+		t.Errorf("same-cid ambiguity should not suggest --runner:\n%s", out)
+	}
+}
