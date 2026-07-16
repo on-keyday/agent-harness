@@ -156,7 +156,7 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 		}
 		// Explicit server rejection (bad psk / bad ticket / no identity) — FATAL,
 		// not retryable. Callers wrap this as *PSKAuthError.
-		return &PskRejectedError{Status: resp.Status.String(), Code: resp.Status}
+		return NewPskRejectedError(resp.Status)
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE (e.g. a server
 		// restart interrupting the in-flight handshake). NOT a PskRejectedError,

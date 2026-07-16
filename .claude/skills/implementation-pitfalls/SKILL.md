@@ -204,6 +204,69 @@ If a feature intentionally omits a surface, document the omission in the diff or
 
 ---
 
+## Pitfall 10 — A `.bgn` wire change wipes the runner fleet (server-first, and prove the skew is recoverable)
+
+**What went wrong (2026-07-16)**: landing appended fields on `RunnerHello`
+(`agent_profiles`) while the server — which runs on a DIFFERENT host — still ran
+the old binary. The old server could not decode the new hello, found no identity
+union, and answered `PskAuthStatus.no_identity`. That was classified FATAL, so
+`PersistLoop` exited instead of retrying: **all 12 runner slots died within ~1s
+and none returned when the server was upgraded.** Each needed manual recovery
+(flags recovered from `bin/.run/agent-runner-<tag>.restart.log`).
+
+The asymmetry that makes this easy to trip: `make build` + `/restart-all` on the
+runner host upgrades ONLY the runners. The server is a separate host and stays
+old unless you restart it too — **restart the SERVER first.**
+
+Fixed in `d4f7a5a` + follow-up: `no_identity` is now RETRYABLE
+(`cli.PskRejectedError.Retryable`) — BadPsk/BadTicket stay fatal (credential
+failures no retry can fix), a version skew now costs a reconnect, not a wipe.
+That only helps once BOTH ends carry it, so the restart order still matters.
+
+**Why it slipped**: the fatal/retryable line was drawn at "explicit rejection vs
+transport drop", and `no_identity` was swept into the fatal set on an unexamined
+assumption — `cli/psk.go` literally said *"should not happen: we always embed a
+hello"*. True for our own bugs; false for a version-skewed server that cannot
+DECODE a hello we DID send.
+
+**Mitigation — before landing any `.bgn` change:**
+
+```
+scripts/wire-skew-check.sh          # OLD_REF defaults to merge-base with origin/main
+```
+
+It builds both sides, runs NEW runner × OLD server, and asserts the failure is
+RECOVERABLE (rejected → retries → self-heals when the server is upgraded). It is
+a no-op (exit 0) when no `.bgn` changed, so it is safe to run unconditionally.
+Note what it deliberately does NOT assert: that skew *works*. This project has no
+compat shims by design; asserting "works" would push us toward shims we do not
+want.
+
+**Two sub-lessons, both learned the hard way while building that check:**
+
+1. **A guard that cannot fail is worse than none.** The check's first version
+   passed on everything: a fresh `git worktree add` has no
+   `webui/static/main.wasm` (gitignored build artifact) and `harness-server`
+   refuses to start without it, so the runner only ever saw "connection refused"
+   and "it retried" was trivially true. It now proves the skew was *exercised*
+   (a real rejection reached the runner) before it may report PASS — and a
+   non-starting old server is a setup error (exit 2), never a pass. **Always run
+   the negative control: make the fix absent and confirm the check goes red.**
+2. **Don't hand-build the same struct at N sites — give it a constructor.**
+   `PskRejectedError` was built raw at three sites; the fix added a `Code` field
+   and a `grep` scoped to `cli/` missed the third — the runner has its OWN
+   handshake (`sendRunnerMergedHandshake` in `runner/connect.go`, because it
+   sends a `RunnerHello` not a `ClientHello`). The zero `Code` read as
+   `PskAuthStatus_Ok`, `Retryable()` returned false, and the fatal behaviour was
+   silently restored. Unit tests could not catch it: they hand-built the struct
+   too, so they never exercised a creation site. Now there is one field and one
+   `cli.NewPskRejectedError(status)`. **When adding a field to a struct built in
+   several places, add a constructor (or delete the derived field) rather than
+   trusting a grep** — and grep the whole repo, not the package you expect.
+   See also Pitfall 3 and `feedback_enumerate_all_callsites_when_intercepting`.
+
+---
+
 ## Subagent dispatch checklist (controller-side)
 
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:

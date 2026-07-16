@@ -376,8 +376,14 @@ func sendRunnerMergedHandshake(ctx context.Context, sendFn func([]byte) error, p
 		if resp.Status == protocol.PskAuthStatus_Ok {
 			return nil
 		}
-		// Explicit server rejection — FATAL (Connect wraps as *cli.PSKAuthError).
-		return &cli.PskRejectedError{Status: resp.Status.String()}
+		// Explicit server rejection. Connect wraps it as *cli.PSKAuthError (fatal)
+		// ONLY when !Retryable() — so Code MUST be set: a zero Code reads as
+		// PskAuthStatus_Ok, makes Retryable() false, and silently restores the
+		// fatal-on-wire-skew behaviour that wiped the fleet on 2026-07-16.
+		// (The runner sends a RunnerHello, so it has its own handshake here and
+		// does NOT go through cli.SendMergedHandshake — this is a third creation
+		// site, easy to miss when grepping only cli/.)
+		return cli.NewPskRejectedError(resp.Status)
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE: a server
 		// restart that interrupts the handshake must trigger reconnect, not exit.

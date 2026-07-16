@@ -85,12 +85,25 @@ func (e *PSKAuthError) Unwrap() error { return e.Err }
 // An explicit rejection is fatal ONLY when it is a credential failure — see
 // Retryable. Dial and runner.Connect wrap a PskRejectedError as *PSKAuthError
 // (fatal) only when !Retryable(); everything else propagates as retryable.
+// Code is the ONLY field on purpose. An earlier version also carried a
+// human-readable `Status string`, and every construction site had to set both
+// from the same resp.Status — three sites, hand-built. One of them (the runner's
+// own RunnerHello handshake in runner/connect.go, easy to miss when grepping
+// cli/) set Status but not Code; the zero Code read as PskAuthStatus_Ok, made
+// Retryable() false, and silently restored fatal-on-wire-skew. Deriving the
+// message from Code makes that whole class unrepresentable. Construct via
+// NewPskRejectedError so a field can never be forgotten.
 type PskRejectedError struct {
-	Status string                 // human-readable status, for the message
-	Code   protocol.PskAuthStatus // typed status, for classification
+	Code protocol.PskAuthStatus
 }
 
-func (e *PskRejectedError) Error() string { return "psk: server rejected: " + e.Status }
+// NewPskRejectedError builds the error from the wire status. Use this instead of
+// a struct literal: it is the single place that knows what a rejection needs.
+func NewPskRejectedError(status protocol.PskAuthStatus) *PskRejectedError {
+	return &PskRejectedError{Code: status}
+}
+
+func (e *PskRejectedError) Error() string { return "psk: server rejected: " + e.Code.String() }
 
 // Retryable reports whether reconnecting could plausibly succeed.
 //

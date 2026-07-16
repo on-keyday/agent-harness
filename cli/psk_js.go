@@ -82,7 +82,7 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 			return nil
 		}
 		// Explicit server rejection — FATAL, not retryable (see persist.go).
-		return &PskRejectedError{Status: resp.Status.String(), Code: resp.Status}
+		return NewPskRejectedError(resp.Status)
 	case <-ctx.Done():
 		// Transport drop / cancellation mid-handshake — RETRYABLE.
 		return ctx.Err()

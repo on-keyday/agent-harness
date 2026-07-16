@@ -23,7 +23,7 @@ func TestPskRejectedErrorRetryable(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.code.String(), func(t *testing.T) {
-			e := &PskRejectedError{Status: tc.code.String(), Code: tc.code}
+			e := NewPskRejectedError(tc.code)
 			if got := e.Retryable(); got != tc.wantRetryable {
 				t.Errorf("Retryable() = %v, want %v for %v", got, tc.wantRetryable, tc.code)
 			}
