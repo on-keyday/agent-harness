@@ -113,7 +113,7 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			string(r.Hostname),
 			len(r.ActiveTasks),
 			r.MaxTasks,
-			agentStr(string(r.AgentBin), r.SkillsInjected()),
+			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
 			strings.Join(roots, ","),
 			protocol.RunnerIDToConnID(r.Id).String(),
 		)
@@ -191,6 +191,27 @@ func agentStr(bin string, injected bool) string {
 		return "agent=" + bin + "+skills"
 	}
 	return "agent=" + bin
+}
+
+// agentProfilesStr renders a runner's agent descriptor extended to its full
+// advertised profile set: a multi-profile runner shows
+// "agent=claude,codex" (or "+skills") instead of just its process-level
+// AgentBin. A legacy runner that advertised no AgentProfiles falls back to
+// agentStr(bin, injected), unchanged. Mirrors the TUI's
+// agentProfilesDescriptor / WebUI picker so all three UIs agree.
+func agentProfilesStr(profiles []protocol.AgentProfileName, bin string, injected bool) string {
+	if len(profiles) == 0 {
+		return agentStr(bin, injected)
+	}
+	names := make([]string, len(profiles))
+	for i, p := range profiles {
+		names[i] = string(p.Name)
+	}
+	desc := "agent=" + strings.Join(names, ",")
+	if injected {
+		desc += "+skills"
+	}
+	return desc
 }
 
 // originStr formats a ClientKind for the `from=` column. Unspecified renders
