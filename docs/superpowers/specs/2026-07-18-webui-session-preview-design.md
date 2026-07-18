@@ -57,16 +57,21 @@ emulator (which is `!js`-tagged and stays that way).
 
 ### JS / UI side
 
-3. **Preview button**: task rows that offer ↪ Reattach / 👁 View (interactive
-   kind, Running/Detached — same gating) additionally get a "🔍 プレビュー"
-   button. Terminal-status and non-interactive rows never show it.
+3. **Entry points** (operator-surface parity within the WebUI — the task
+   sheet is not the only route to a session):
+   - Task sheet: rows that offer ↪ Reattach / 👁 View (interactive kind,
+     Running/Detached — same gating) additionally get a "🔍 プレビュー"
+     button. Terminal-status and non-interactive rows never show it.
+   - Notification feed: actionable entries that offer Reattach/View get the
+     same プレビュー action.
+   - WebUI cmdline: `preview <task-id>` opens the same modal (+ help text).
 4. **Preview pane**: modal-style pane. On open, create a throwaway read-only
    xterm.Terminal sized to the session's real `rows×cols` (80×24 fallback
    when `hasSize` is false), write the bytes into it, and fit the pane with
-   CSS `transform: scale()`. Pane header: shortened task id, 🔄 refresh
-   (dispose + recreate xterm, re-run `sessionPreview`), ✕ close (dispose
-   xterm). Pane body also offers an "↪ Reattach" shortcut that closes the
-   pane and calls the existing `reattachTo(id, false)`.
+   CSS `transform: scale()`. Pane header: shortened task id, an "↪ Reattach"
+   shortcut (closes the pane and calls the existing `reattachTo(id, false)`),
+   🔄 refresh (dispose + recreate xterm, re-run `sessionPreview`), ✕ close
+   (dispose xterm).
 5. **Style**: match the existing dark theme (#1e1e1e / #d4d4d4). At ≤600px
    the pane becomes a full-width bottom-sheet-style panel. Verify desktop and
    390px layouts.
