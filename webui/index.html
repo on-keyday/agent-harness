@@ -197,7 +197,12 @@
     <span id="session-preview-title" class="preview-title"></span>
     <button id="session-preview-reattach" class="preview-toggle">↪ Reattach</button>
     <button id="session-preview-pause" class="preview-toggle" title="一時停止">⏸</button>
-    <button id="session-preview-close" class="preview-close" aria-label="Close">✕</button>
+    <!-- autofocus: showModal() otherwise focuses the FIRST focusable control,
+         which is the ↪ Reattach button — a stray Enter (e.g. typing aimed at
+         the inert page behind the modal) would then trigger a surprise
+         control-takeover attach. Landing initial focus on ✕ makes Enter a
+         harmless close instead. -->
+    <button id="session-preview-close" class="preview-close" aria-label="Close" autofocus>✕</button>
   </div>
   <div id="session-preview-body" class="preview-body session-preview-body"></div>
 </dialog>

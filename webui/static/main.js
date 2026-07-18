@@ -1346,7 +1346,7 @@ const POLL_INTERVAL_MS = 5000;
             "  await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
             "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
             "  cancel <task-id>          cancel a task",
-            "  preview <task-id>         one-shot screen preview of a live session",
+            "  preview <task-id>         live read-only screen preview of a session (⏸/▶ pause-resume)",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  file ls <task> [rel]      list a worktree directory",
             "  file delete [-r] [-f] <task> <rel>",
@@ -2167,7 +2167,10 @@ const POLL_INTERVAL_MS = 5000;
   });
   sessionPreviewReattach.addEventListener("click", () => {
     const id = sessionPreviewTaskId;
-    sessionPreviewModal.close();   // close handler stops the stream
+    // close() queues the "close" event as a task, so previewStop runs just
+    // AFTER reattachTo below kicks off — harmless: the view stream is
+    // independent of the control attach and is torn down moments later.
+    sessionPreviewModal.close();
     reattachTo(id, false);
   });
 
