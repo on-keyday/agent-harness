@@ -161,6 +161,33 @@ func TestFileTransferE2E(t *testing.T) {
 		t.Errorf("escape push should fail")
 	}
 
+	// 7. Missing-parent push without -p: diagnosable not_found.
+	if err := c.FilePush(ctx, taskID, srcPath, "newdir/sub/pushed.txt", cli.FilePushOpts{}); err == nil || !cli.IsNotFound(err) {
+		t.Fatalf("push into missing dir: got %v, want not_found", err)
+	}
+	// Same push with MkdirParents: succeeds.
+	if err := c.FilePush(ctx, taskID, srcPath, "newdir/sub/pushed.txt", cli.FilePushOpts{MkdirParents: true}); err != nil {
+		t.Fatalf("push -p: %v", err)
+	}
+	// Strict mkdir: parent now exists → ok; repeat → already_exists.
+	if err := c.FileMkdir(ctx, taskID, "newdir/made", false); err != nil {
+		t.Fatalf("strict mkdir: %v", err)
+	}
+	if err := c.FileMkdir(ctx, taskID, "newdir/made", false); err == nil || !cli.IsAlreadyExists(err) {
+		t.Fatalf("strict mkdir repeat: got %v, want already_exists", err)
+	}
+	// -p mkdir: deep chain + idempotent.
+	if err := c.FileMkdir(ctx, taskID, "p1/p2/p3", true); err != nil {
+		t.Fatalf("mkdir -p: %v", err)
+	}
+	if err := c.FileMkdir(ctx, taskID, "p1/p2/p3", true); err != nil {
+		t.Fatalf("mkdir -p repeat: %v", err)
+	}
+	// Strict mkdir with missing parent → not_found.
+	if err := c.FileMkdir(ctx, taskID, "q1/q2/q3", false); err == nil || !cli.IsNotFound(err) {
+		t.Fatalf("strict mkdir missing parent: got %v, want not_found", err)
+	}
+
 	// Tear down.
 	cancel()
 	select {
