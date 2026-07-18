@@ -79,6 +79,7 @@ func main() {
 		"submit":             js.FuncOf(harnessSubmit),
 		"list":               js.FuncOf(harnessList),
 		"snapshot":           js.FuncOf(harnessSnapshot),
+		"sessionPreview":     js.FuncOf(harnessSessionPreview),
 		"cancel":             js.FuncOf(harnessCancel),
 		"watch":              js.FuncOf(harnessWatch),
 		"prune":              js.FuncOf(harnessPrune),
@@ -1023,6 +1024,55 @@ func harnessAttachSession(this js.Value, args []js.Value) any {
 				return
 			}
 			resolve.Invoke(js.ValueOf(resultID))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessSessionPreview view-attaches (AttachMode_View — non-takeover) to a
+// detachable interactive session on an independent stream, collects the
+// replayed PTY byte burst for settleMs, and resolves with the verbatim bytes
+// plus the terminal size the server replays ahead of the ring. It never
+// touches the activeInteractiveSession singleton, so the user's live attached
+// session keeps working while a preview loads. The JS layer feeds the bytes
+// to a throwaway xterm sized rows×cols (hasSize=false → caller falls back).
+//
+//	harness.sessionPreview(taskIDHex[, settleMs]) ->
+//	    Promise<{bytes: Uint8Array, rows, cols, hasSize}>
+func harnessSessionPreview(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("sessionPreview: missing taskIDHex arg"))
+				return
+			}
+			taskID := args[0].String()
+			settle := 1500 * time.Millisecond // default matches `session snapshot --settle-ms`
+			if len(args) >= 2 && args[1].Type() == js.TypeNumber && args[1].Int() > 0 {
+				settle = time.Duration(args[1].Int()) * time.Millisecond
+			}
+			data, rows, cols, hasSize, err := c.CollectRaw(rootCtx, taskID, settle)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			u8 := js.Global().Get("Uint8Array").New(len(data))
+			js.CopyBytesToJS(u8, data)
+			out := js.Global().Get("Object").New()
+			out.Set("bytes", u8)
+			out.Set("rows", int(rows))
+			out.Set("cols", int(cols))
+			out.Set("hasSize", hasSize)
+			resolve.Invoke(out)
 		}()
 		return nil
 	})
