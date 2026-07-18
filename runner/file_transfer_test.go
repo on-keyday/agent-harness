@@ -1180,3 +1180,32 @@ func TestHandleOpenFileTransfer_Mkdir(t *testing.T) {
 		t.Errorf("-p on file = %v want not_a_directory", got)
 	}
 }
+
+// TestHandleOpenFileTransfer_MkdirRejectSymlinkParent covers the mkdir
+// dispatch's use of rejectIfSymlinkInPath: a symlinked intermediate
+// directory must reject the request so no directory is ever created under
+// the symlink's target, mirroring TestHandleOpenFileTransfer_PushRejectSymlinkParent
+// above.
+func TestHandleOpenFileTransfer_MkdirRejectSymlinkParent(t *testing.T) {
+	tmp := t.TempDir()
+	outsideDir := t.TempDir() // real dir; the symlink points here so a misdirected mkdir would land outside `tmp`
+	if err := os.Symlink(outsideDir, filepath.Join(tmp, "outside")); err != nil {
+		t.Skipf("symlink create failed: %v", err)
+	}
+	taskIDHex := "00000000000000000000000000000014"
+	sess, clientEnd := newFileSession(t, tmp, taskIDHex)
+	req := pushReq(t, taskIDHex, "outside/new", protocol.FileTransferDirection_Mkdir, true)
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	if err := clientEnd.AppendData(true); err != nil {
+		t.Fatalf("client EOF: %v", err)
+	}
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_PathInvalid {
+		t.Fatalf("mkdir under symlinked parent must be rejected, got status=%v", ack.Status)
+	}
+	// Defense in depth: confirm nothing actually landed in the symlink target.
+	if _, err := os.Stat(filepath.Join(outsideDir, "new")); err == nil {
+		t.Fatalf("dir leaked outside the worktree at %s/new", outsideDir)
+	}
+}
