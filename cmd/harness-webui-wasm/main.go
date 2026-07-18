@@ -431,7 +431,7 @@ func connRemoteAddr(cid string) string {
 //	harness.snapshot() -> Promise<{
 //	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:   [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
-//	             createdAt, startedAt, endedAt, agentProfile}],
+//	             createdAt, startedAt, endedAt, agentProfile, errorMsg}],
 //	  conns:   [{cid, role, remoteAddr, principalTask, connectedAt, identified}]
 //	}>
 func harnessSnapshot(this js.Value, args []js.Value) any {
@@ -497,6 +497,9 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// (empty = runner default); the resume action sheet's agent
 					// dropdown defaults to this (multi-agent-profile design §4b).
 					"agentProfile": string(t.AgentProfile),
+					// Terminal-failure reason (e.g. "runner_disconnected"); empty
+					// for non-failed tasks. Rendered in red on the task card.
+					"errorMsg": string(t.ErrorMessage),
 					// Server-clock idle age of the live session's PTY output;
 					// -1 = no live interactive session / no output yet. JS
 					// derives the busy/idle badge from this (never from local
