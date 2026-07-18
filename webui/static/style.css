@@ -760,6 +760,15 @@ button:hover { background: #555; }
   }
 }
 
+/* Session preview modal: the body hosts a throwaway xterm at the session's
+   TRUE grid size (re-rendering at a smaller grid would corrupt full-screen
+   TUI layouts), scaled down with transform to fit the pane width. transform
+   doesn't affect layout, so the spacer gets an explicit scaled height to
+   avoid a dead scroll area below the screen. */
+.session-preview-body { padding: 0.5em; }
+.session-preview-spacer { overflow: hidden; }
+.session-preview-scale { transform-origin: top left; }
+
 /* ============================================================
  * Connection topology (#connections section)
  * Desktop: radial SVG hub-and-spoke. Mobile (<=600px): grouped card list.

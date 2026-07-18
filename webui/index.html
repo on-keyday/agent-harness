@@ -188,6 +188,19 @@
     </menu>
   </form>
 </dialog>
+<!-- Session preview modal: one-shot read-only screen snapshot of a live
+     interactive session (view-attach — never takes over the controlling
+     client). Body-level for the same top-layer reason as file-preview-modal
+     above. -->
+<dialog id="session-preview-modal" class="preview-modal">
+  <div class="preview-header">
+    <span id="session-preview-title" class="preview-title"></span>
+    <button id="session-preview-reattach" class="preview-toggle">↪ Reattach</button>
+    <button id="session-preview-refresh" class="preview-toggle" title="再取得">🔄</button>
+    <button id="session-preview-close" class="preview-close" aria-label="Close">✕</button>
+  </div>
+  <div id="session-preview-body" class="preview-body session-preview-body"></div>
+</dialog>
 <script src="/static/wasm_exec.js"></script>
 <script src="/static/xterm.js"></script>
 <script src="/static/addon-fit.js"></script>

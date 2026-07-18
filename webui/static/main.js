@@ -1122,11 +1122,13 @@ const POLL_INTERVAL_MS = 5000;
           const live = t && t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached");
           const terminal = t && TERMINAL_STATES.has(t.status);
           if (live) {
+            mkBtn("🔍 プレビュー", openSessionPreview);
             mkBtn("↪ Reattach", (id) => reattachTo(id, false));
             mkBtn("👁 View", (id) => reattachTo(id, true));
           }
           if (terminal) mkBtn("▶ Resume", resumeTaskById);
           if (!t) { // not in the snapshot (pruned/unknown) — offer both as a fallback
+            mkBtn("🔍 プレビュー", openSessionPreview);
             mkBtn("↪ Reattach", (id) => reattachTo(id, false));
             mkBtn("👁 View", (id) => reattachTo(id, true));
             mkBtn("▶ Resume", resumeTaskById);
@@ -1296,6 +1298,11 @@ const POLL_INTERVAL_MS = 5000;
           await window.harness.cancel(tokens[1]);
           out = "cancelled";
           break;
+        case "preview":
+          if (!tokens[1]) throw new Error("preview: missing task id");
+          openSessionPreview(tokens[1]);
+          out = `preview ${tokens[1].slice(0, 12)}…`;
+          break;
         case "prune": {
           const flags = parseFlags(tokens.slice(1));
           out = await window.harness.prune({ before: flags.before || "168h" });
@@ -1339,6 +1346,7 @@ const POLL_INTERVAL_MS = 5000;
             "  await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
             "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
             "  cancel <task-id>          cancel a task",
+            "  preview <task-id>         one-shot screen preview of a live session",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  file ls <task> [rel]      list a worktree directory",
             "  file delete [-r] [-f] <task> <rel>",
@@ -2001,6 +2009,99 @@ const POLL_INTERVAL_MS = 5000;
 
   document.getElementById("reattach").addEventListener("click", () => reattachTo(taskIdInput.value.trim()));
 
+  // --- Session preview modal: one-shot view-attach snapshot of a live
+  //     interactive session, rendered in a throwaway read-only xterm sized to
+  //     the session's real grid and CSS-scaled to fit the pane. View mode
+  //     never takes over the controlling client, and the preview stream is
+  //     independent of the main terminal's singleton, so peeking is always
+  //     safe — including at the session currently attached here.
+  const sessionPreviewModal    = document.getElementById("session-preview-modal");
+  const sessionPreviewTitle    = document.getElementById("session-preview-title");
+  const sessionPreviewBody     = document.getElementById("session-preview-body");
+  const sessionPreviewRefresh  = document.getElementById("session-preview-refresh");
+  const sessionPreviewReattach = document.getElementById("session-preview-reattach");
+  const sessionPreviewClose    = document.getElementById("session-preview-close");
+  let sessionPreviewTerm = null;   // throwaway xterm; disposed on close/refresh
+  let sessionPreviewTaskId = "";
+  let sessionPreviewEpoch = 0;     // guards against a stale load resolving after close/refresh
+
+  function disposeSessionPreviewTerm() {
+    if (sessionPreviewTerm) { sessionPreviewTerm.dispose(); sessionPreviewTerm = null; }
+    sessionPreviewBody.replaceChildren();
+  }
+
+  async function renderSessionPreview() {
+    const epoch = ++sessionPreviewEpoch;
+    disposeSessionPreviewTerm();
+    const note = document.createElement("p");
+    note.className = "preview-note";
+    note.textContent = "loading… (収集 ~1.5s)";
+    sessionPreviewBody.appendChild(note);
+    let snap;
+    try {
+      snap = await window.harness.sessionPreview(sessionPreviewTaskId);
+    } catch (e) {
+      if (epoch === sessionPreviewEpoch) note.textContent = `preview error: ${e.message}`;
+      return;
+    }
+    // Closed or superseded (refresh / another row) while collecting — drop it.
+    if (epoch !== sessionPreviewEpoch || !sessionPreviewModal.open) return;
+    sessionPreviewBody.replaceChildren();
+    const rows = snap.hasSize && snap.rows > 0 ? snap.rows : 24;
+    const cols = snap.hasSize && snap.cols > 0 ? snap.cols : 80;
+    const spacer = document.createElement("div");
+    spacer.className = "session-preview-spacer";
+    const scaleBox = document.createElement("div");
+    scaleBox.className = "session-preview-scale";
+    const termBox = document.createElement("div");
+    scaleBox.appendChild(termBox);
+    spacer.appendChild(scaleBox);
+    sessionPreviewBody.appendChild(spacer);
+    sessionPreviewTerm = new Terminal({
+      cols, rows,
+      disableStdin: true,
+      convertEol: true,  // match the main terminal so the replay renders identically
+      fontSize: 13,
+      fontFamily: '"Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace',
+    });
+    sessionPreviewTerm.open(termBox);
+    sessionPreviewTerm.write(snap.bytes);
+    // Fit-to-width: measure the rendered screen and scale the whole grid down.
+    const screenEl = termBox.querySelector(".xterm-screen");
+    const rect = screenEl ? screenEl.getBoundingClientRect() : termBox.getBoundingClientRect();
+    const avail = sessionPreviewBody.clientWidth - 12; // body padding allowance
+    if (rect.width > 0 && avail > 0) {
+      const scale = Math.min(1, avail / rect.width);
+      scaleBox.style.width = `${rect.width}px`;
+      scaleBox.style.transform = `scale(${scale})`;
+      spacer.style.height = `${Math.ceil(rect.height * scale)}px`;
+    }
+  }
+
+  function openSessionPreview(id) {
+    sessionPreviewTaskId = id;
+    sessionPreviewTitle.textContent = `🔍 ${id.slice(0, 12)}…`;
+    if (!sessionPreviewModal.open) sessionPreviewModal.showModal();
+    renderSessionPreview();
+  }
+
+  sessionPreviewClose.addEventListener("click", () => sessionPreviewModal.close());
+  // Backdrop click (the dialog element itself, outside its content) closes —
+  // same convention as file-preview-modal.
+  sessionPreviewModal.addEventListener("click", (ev) => {
+    if (ev.target === sessionPreviewModal) sessionPreviewModal.close();
+  });
+  sessionPreviewModal.addEventListener("close", () => {
+    sessionPreviewEpoch++;         // invalidate any in-flight load
+    disposeSessionPreviewTerm();
+  });
+  sessionPreviewRefresh.addEventListener("click", renderSessionPreview);
+  sessionPreviewReattach.addEventListener("click", () => {
+    const id = sessionPreviewTaskId;
+    sessionPreviewModal.close();
+    reattachTo(id, false);
+  });
+
   // renderTaskList builds clickable task rows into #task-list. Each row toggles
   // an inline action sheet; every action derives the id from the row, so the
   // user never copies a 32-hex id by hand. Modeled on the file-picker list.
@@ -2118,6 +2219,7 @@ const POLL_INTERVAL_MS = 5000;
 
     // Reattach / View / idle-notify — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
+      addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
       addItem("↪ Reattach", "", () => reattachTo(t.id, false));
       addItem("👁 View", "", () => reattachTo(t.id, true));
       addItem("🔔 idleで通知", "", async () => {
