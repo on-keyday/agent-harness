@@ -2227,15 +2227,19 @@ const POLL_INTERVAL_MS = 5000;
     return Math.max(t.endedAt || 0, t.startedAt || 0, t.createdAt || 0) / 1e6;
   }
 
-  // taskMatchesFilter applies the status chip + lowercased needle. Search
-  // keys: id, repoPath, status, agentProfile, prompt (prompt is usually
-  // empty on interactive tasks — repo and id are the effective keys).
-  function taskMatchesFilter(t, needle) {
+  // taskMatchesFilter applies the status chip + lowercased search terms.
+  // Terms are whitespace-split and ANDed: every term must substring-match at
+  // least one search key (terms may hit different keys — "failed harness" =
+  // status Failed AND repo contains harness). Keys: id, repoPath, status,
+  // agentProfile, prompt (prompt is usually empty on interactive tasks —
+  // repo and id are the effective keys).
+  function taskMatchesFilter(t, terms) {
     if (taskStatusFilter === "active" && TERMINAL_STATES.has(t.status)) return false;
     if (taskStatusFilter === "finished" && !TERMINAL_STATES.has(t.status)) return false;
-    if (!needle) return true;
-    return [t.id, t.repoPath, t.status, t.agentProfile, t.prompt]
-      .some((v) => (v || "").toLowerCase().includes(needle));
+    if (terms.length === 0) return true;
+    const keys = [t.id, t.repoPath, t.status, t.agentProfile, t.prompt]
+      .map((v) => (v || "").toLowerCase());
+    return terms.every((term) => keys.some((k) => k.includes(term)));
   }
 
   // repoTail returns the last path segment for display ("/a/b/repo" -> "repo",
@@ -2267,10 +2271,19 @@ const POLL_INTERVAL_MS = 5000;
     taskChips.active.textContent   = `Active (${lastTasks.length - finished})`;
     taskChips.finished.textContent = `Finished (${finished})`;
     taskChips.all.textContent      = `All (${lastTasks.length})`;
-    const needle = taskFilterInput.value.trim().toLowerCase();
+    const terms = taskFilterInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const visible = lastTasks
-      .filter((t) => taskMatchesFilter(t, needle))
+      .filter((t) => taskMatchesFilter(t, terms))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
+    // The rebuild below wipes all sheet DOM, which would close the open sheet
+    // and reset any agent dropdown the user changed — every 5s poll. Capture
+    // that per-task UI state first and restore it after the rebuild.
+    const openSheetTaskId = taskList.querySelector(".task-sheet:not([hidden])")?.dataset.taskId ?? null;
+    const agentPicks = {};
+    for (const s of taskList.querySelectorAll(".task-sheet")) {
+      const sel = s.querySelector(".task-agent-select");
+      if (sel && s.dataset.taskId) agentPicks[s.dataset.taskId] = sel.value;
+    }
     taskList.innerHTML = "";
     if (visible.length === 0) {
       const empty = document.createElement("div");
@@ -2338,8 +2351,18 @@ const POLL_INTERVAL_MS = 5000;
       }
       const sheet = document.createElement("div");
       sheet.className = "task-sheet";
-      sheet.hidden = true;
+      sheet.dataset.taskId = t.id;
+      sheet.hidden = t.id !== openSheetTaskId;
       buildTaskSheet(sheet, t);
+      // Restore the user's agent pick from before the rebuild (only if that
+      // profile is still among the options — otherwise keep the default).
+      const savedAgent = agentPicks[t.id];
+      if (savedAgent !== undefined) {
+        const agentSel = sheet.querySelector(".task-agent-select");
+        if (agentSel && [...agentSel.options].some((o) => o.value === savedAgent)) {
+          agentSel.value = savedAgent;
+        }
+      }
       row.addEventListener("click", () => {
         for (const s of taskList.querySelectorAll(".task-sheet")) {
           if (s !== sheet) s.hidden = true;   // single open sheet at a time

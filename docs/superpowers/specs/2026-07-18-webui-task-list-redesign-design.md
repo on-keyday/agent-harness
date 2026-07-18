@@ -64,10 +64,12 @@ the 5s snapshot poll never steals input focus or resets chip state:
   - `All`: everything.
   - Each chip shows a live count computed from the latest snapshot.
 - **Text filter** — case-insensitive substring match over `id`,
-  `repoPath`, `status`, `agentProfile`, and `prompt`. (In practice
-  interactive tasks have empty prompts, so repo path and id are the
-  effective search keys.) Applies on `input` against the cached snapshot;
-  no server round-trip.
+  `repoPath`, `status`, `agentProfile`, and `prompt`. Whitespace-split
+  terms are ANDed; each term may match a different key (`failed harness`
+  = status Failed AND repo contains harness). (In practice interactive
+  tasks have empty prompts, so repo path and id are the effective search
+  keys.) Applies on `input` against the cached snapshot; no server
+  round-trip.
 - Chip selection and filter text live in JS memory only — a page reload
   resets to Active/empty. No persistence.
 
