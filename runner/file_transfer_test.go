@@ -1013,3 +1013,170 @@ func TestHandleOpenFileTransfer_DirDeleteNotFound(t *testing.T) {
 		t.Fatalf("ack status = %v want not_found", ack.Status)
 	}
 }
+
+// pushReq builds a RunnerOpenFileTransferRequest for tests below.
+func pushReq(t *testing.T, taskIDHex, rel string, dir protocol.FileTransferDirection, parents bool) *protocol.RunnerOpenFileTransferRequest {
+	t.Helper()
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    mustParseTaskID(t, taskIDHex),
+		StreamId:  1,
+		Direction: dir,
+	}
+	req.SetRelPath([]byte(rel))
+	req.SetMkdirParents(parents)
+	return req
+}
+
+func newFileSession(t *testing.T, tmp, taskIDHex string) (*Session, trsf.BidirectionalStream) {
+	t.Helper()
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+	return sess, clientEnd
+}
+
+func TestHandleOpenFileTransfer_PushMissingParentNotFound(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000010"
+	sess, clientEnd := newFileSession(t, tmp, taskIDHex)
+	req := pushReq(t, taskIDHex, "no/such/dir/f.txt", protocol.FileTransferDirection_Push, false)
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	// Runner fails at OpenFile before reading any payload; just close
+	// our write side (same shape as the AlreadyExists test).
+	if err := clientEnd.AppendData(true); err != nil {
+		t.Fatalf("client EOF: %v", err)
+	}
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_NotFound {
+		t.Fatalf("ack status = %v want not_found", ack.Status)
+	}
+}
+
+func TestHandleOpenFileTransfer_PushMkdirParentsOK(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000011"
+	sess, clientEnd := newFileSession(t, tmp, taskIDHex)
+	req := pushReq(t, taskIDHex, "a/b/f.txt", protocol.FileTransferDirection_Push, true)
+	req.ExpectedSize = 5
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	// Payload writes happen in a background goroutine (not inline) because
+	// the runner may reject the push before reading any payload (e.g. the
+	// RED phase against the old runPush, which fails at OpenFile without
+	// ever draining the stream); an inline AppendData would then block
+	// forever on the unread io_error ack. Errors are ignored here — the
+	// ack assertion below is the real check.
+	go func() {
+		_ = clientEnd.AppendData(false, []byte("hello"))
+		_ = clientEnd.AppendData(true)
+	}()
+	ack := readAck(t, clientEnd)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("ack status = %v want ok", ack.Status)
+	}
+	got, err := os.ReadFile(filepath.Join(tmp, "a", "b", "f.txt"))
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "hello" {
+		t.Errorf("content = %q want hello", got)
+	}
+}
+
+func TestHandleOpenFileTransfer_DirPushMissingParent(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000012"
+
+	// Without parents: not_found.
+	sess, clientEnd := newFileSession(t, tmp, taskIDHex)
+	req := pushReq(t, taskIDHex, "no/such/dest", protocol.FileTransferDirection_DirPush, false)
+	go sess.handleOpenFileTransfer(context.Background(), req)
+	var tarBuf bytes.Buffer
+	tw := tar.NewWriter(&tarBuf)
+	if err := tw.WriteHeader(&tar.Header{Name: "inner.txt", Typeflag: tar.TypeReg, Size: 2, Mode: 0o644}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("hi")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientEnd.AppendData(false, tarBuf.Bytes()); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	if err := clientEnd.AppendData(true); err != nil {
+		t.Fatalf("client EOF: %v", err)
+	}
+	if ack := readAck(t, clientEnd); ack.Status != protocol.FileTransferStatus_NotFound {
+		t.Fatalf("no-parents ack = %v want not_found", ack.Status)
+	}
+
+	// With parents: ok, tree lands.
+	sess2, clientEnd2 := newFileSession(t, tmp, taskIDHex)
+	req2 := pushReq(t, taskIDHex, "no/such/dest", protocol.FileTransferDirection_DirPush, true)
+	go sess2.handleOpenFileTransfer(context.Background(), req2)
+	if err := clientEnd2.AppendData(false, tarBuf.Bytes()); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	if err := clientEnd2.AppendData(true); err != nil {
+		t.Fatalf("client EOF: %v", err)
+	}
+	if ack := readAck(t, clientEnd2); ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("parents ack = %v want ok", ack.Status)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "no", "such", "dest", "inner.txt")); err != nil {
+		t.Errorf("pushed tree missing: %v", err)
+	}
+}
+
+func TestHandleOpenFileTransfer_Mkdir(t *testing.T) {
+	tmp := t.TempDir()
+	taskIDHex := "00000000000000000000000000000013"
+
+	run := func(rel string, parents bool) protocol.FileTransferStatus {
+		sess, clientEnd := newFileSession(t, tmp, taskIDHex)
+		req := pushReq(t, taskIDHex, rel, protocol.FileTransferDirection_Mkdir, parents)
+		go sess.handleOpenFileTransfer(context.Background(), req)
+		if err := clientEnd.AppendData(true); err != nil {
+			t.Fatalf("client EOF: %v", err)
+		}
+		return readAck(t, clientEnd).Status
+	}
+
+	// Strict mkdir with missing parent → not_found.
+	if got := run("deep/nested/dir", false); got != protocol.FileTransferStatus_NotFound {
+		t.Errorf("strict missing parent = %v want not_found", got)
+	}
+	// -p creates the whole chain.
+	if got := run("deep/nested/dir", true); got != protocol.FileTransferStatus_Ok {
+		t.Errorf("-p nested = %v want ok", got)
+	}
+	if fi, err := os.Stat(filepath.Join(tmp, "deep", "nested", "dir")); err != nil || !fi.IsDir() {
+		t.Fatalf("dir not created: fi=%v err=%v", fi, err)
+	}
+	// Strict on an existing dir → already_exists; -p is idempotent ok.
+	if got := run("deep/nested/dir", false); got != protocol.FileTransferStatus_AlreadyExists {
+		t.Errorf("strict existing = %v want already_exists", got)
+	}
+	if got := run("deep/nested/dir", true); got != protocol.FileTransferStatus_Ok {
+		t.Errorf("-p existing = %v want ok", got)
+	}
+	// Strict with existing parent → ok.
+	if got := run("deep/sibling", false); got != protocol.FileTransferStatus_Ok {
+		t.Errorf("strict existing parent = %v want ok", got)
+	}
+	// Leaf is a regular file → not_a_directory in both modes.
+	if err := os.WriteFile(filepath.Join(tmp, "plainfile"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := run("plainfile", false); got != protocol.FileTransferStatus_NotADirectory {
+		t.Errorf("strict on file = %v want not_a_directory", got)
+	}
+	if got := run("plainfile", true); got != protocol.FileTransferStatus_NotADirectory {
+		t.Errorf("-p on file = %v want not_a_directory", got)
+	}
+}

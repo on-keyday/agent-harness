@@ -180,15 +180,17 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 	case protocol.FileTransferDirection_Pull:
 		s.runPull(stream, full)
 	case protocol.FileTransferDirection_Push:
-		s.runPush(stream, full, req.Force())
+		s.runPush(stream, full, req.Force(), req.MkdirParents())
 	case protocol.FileTransferDirection_Delete:
 		s.runDelete(stream, full)
 	case protocol.FileTransferDirection_DirPush:
-		s.runDirPush(stream, worktreeDir, full, req.Force())
+		s.runDirPush(stream, worktreeDir, full, req.Force(), req.MkdirParents())
 	case protocol.FileTransferDirection_DirPull:
 		s.runDirPull(stream, full)
 	case protocol.FileTransferDirection_DirDelete:
 		s.runDirDelete(stream, full, req.Force())
+	case protocol.FileTransferDirection_Mkdir:
+		s.runMkdir(stream, full, req.MkdirParents())
 	default:
 		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 	}
@@ -270,6 +272,45 @@ func (s *Session) runDelete(stream trsf.BidirectionalStream, full string) {
 	_ = writeAck(stream, protocol.FileTransferStatus_Ok, 0)
 }
 
+// runMkdir creates the directory at full. parents=false is strict
+// os.Mkdir: a missing parent acks not_found, an existing directory acks
+// already_exists. parents=true is os.MkdirAll: parents are created and
+// an existing directory is ok (idempotent). A regular file at the leaf
+// acks not_a_directory in both modes. Mirrors Unix mkdir / mkdir -p.
+// Path validation + symlink rejection already ran in the dispatcher.
+func (s *Session) runMkdir(stream trsf.BidirectionalStream, full string, parents bool) {
+	if fi, err := os.Lstat(full); err == nil {
+		if !fi.IsDir() {
+			_ = writeAck(stream, protocol.FileTransferStatus_NotADirectory, 0)
+			return
+		}
+		if parents {
+			_ = writeAck(stream, protocol.FileTransferStatus_Ok, 0)
+		} else {
+			_ = writeAck(stream, protocol.FileTransferStatus_AlreadyExists, 0)
+		}
+		return
+	} else if !os.IsNotExist(err) {
+		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		return
+	}
+	var err error
+	if parents {
+		err = os.MkdirAll(full, 0o755)
+	} else {
+		err = os.Mkdir(full, 0o755)
+	}
+	if err != nil {
+		if os.IsNotExist(err) {
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		} else {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
+		return
+	}
+	_ = writeAck(stream, protocol.FileTransferStatus_Ok, 0)
+}
+
 func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
 	f, err := os.Open(full)
 	if err != nil {
@@ -296,7 +337,13 @@ func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
 	_ = stream.AppendData(true)
 }
 
-func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force bool) {
+func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force, mkdirParents bool) {
+	if mkdirParents {
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+	}
 	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
 	if force {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
@@ -306,6 +353,10 @@ func (s *Session) runPush(stream trsf.BidirectionalStream, full string, force bo
 		switch {
 		case os.IsExist(err):
 			_ = writeAck(stream, protocol.FileTransferStatus_AlreadyExists, 0)
+		case os.IsNotExist(err):
+			// The leaf is created by O_CREATE, so ENOENT can only mean
+			// a missing parent directory — diagnosable, unlike io_error.
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
 		default:
 			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 		}
@@ -402,7 +453,7 @@ const stagingRoot = ".harness-staging"
 // runDirPush extracts a tar stream into <worktree>/<rel_path>, staging via
 // a sibling directory and renaming atomically on success. Refuses to clobber
 // an existing dest unless force is set.
-func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest string, force bool) {
+func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest string, force, mkdirParents bool) {
 	// Reject existing dest when !force; reject when dest is a regular file
 	// (we won't replace a file with a directory regardless of force).
 	if fi, err := os.Lstat(dest); err == nil {
@@ -495,8 +546,18 @@ func (s *Session) runDirPush(stream trsf.BidirectionalStream, worktreeDir, dest 
 			return
 		}
 	}
+	if mkdirParents {
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+			return
+		}
+	}
 	if err := os.Rename(staging, dest); err != nil {
-		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		if os.IsNotExist(err) {
+			_ = writeAck(stream, protocol.FileTransferStatus_NotFound, 0)
+		} else {
+			_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
+		}
 		return
 	}
 	cleanupStaging = false
