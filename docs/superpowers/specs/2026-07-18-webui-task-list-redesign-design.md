@@ -24,7 +24,11 @@ grows this becomes hard to scan:
 ## Scope
 
 Client-side only: `webui/index.html`, `webui/static/main.js`,
-`webui/static/style.css`. No server, protocol, or wasm-bridge changes.
+`webui/static/style.css`, plus ONE wasm-bridge mapping addition in
+`cmd/harness-webui-wasm/main.go`: `TaskInfo.ErrorMessage` is already on
+the wire (`toTaskInfo` calls `SetErrorMessage`) but is not mapped into
+the JS task object; add `"errorMsg": string(t.ErrorMessage)` so failed
+rows can show their error. No server or protocol changes.
 
 - The List RPC's most-recent-100 cap (`server/task_handler.go`,
   `h.Tasks.List(100)`) is **intentionally untouched** — the live install
@@ -35,10 +39,11 @@ Client-side only: `webui/index.html`, `webui/static/main.js`,
   TUI's selection-based list has different mechanics. Activity-sort for
   the TUI can be a separate change if wanted later.
 
-All data needed is already delivered to JS by the wasm bridge
+All other data needed is already delivered to JS by the wasm bridge
 (`cmd/harness-webui-wasm/main.go` `harnessSnapshot`): `createdAt`,
 `startedAt`, `endedAt`, `outputIdleMs`, `status`, `repoPath`, `prompt`,
-`agentProfile`, `caps`, origin attrs.
+`agentProfile`, `caps`, origin attrs. Wire timestamps are UnixNano
+(`toTaskInfo` uses `UnixNano()`); JS converts to ms with `/1e6`.
 
 ## Design
 
