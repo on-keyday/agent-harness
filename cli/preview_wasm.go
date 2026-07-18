@@ -20,6 +20,11 @@ import (
 // JS hooks and exits. Pause in the UI is just StopPreview (the frozen xterm
 // stays client-side); resume is a fresh StartPreview whose ring replay
 // reconstructs the current screen — no bytes are buffered while paused.
+// StartPreview reserves its generation BEFORE the attach RPC (not after), so
+// a StopPreview or a newer StartPreview landing while the RPC is still in
+// flight supersedes it and the stop-wins invariant holds across that window
+// too — the attach result is discarded instead of silently installing a
+// stream nobody asked for anymore.
 var (
 	previewMu     sync.Mutex
 	previewStream *agentexec.CommandExecutionStream
@@ -31,6 +36,20 @@ var (
 // and closed first. The attach uses AttachMode_View, so it never takes over
 // the session's controlling client.
 func (c *Client) StartPreview(ctx context.Context, taskIDHex string) error {
+	// Reserve a generation BEFORE the RPC: a StopPreview (modal close) or a
+	// newer StartPreview that lands while our attach is still in flight
+	// supersedes us, and we discard our stream instead of installing it
+	// (stop-wins). The old stream is closed here too so it cannot outlive
+	// its (now stale) generation while our RPC runs.
+	previewMu.Lock()
+	old := previewStream
+	previewStream = nil
+	gen := previewGen.Add(1)
+	previewMu.Unlock()
+	if old != nil {
+		_ = old.Close()
+	}
+
 	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View)
 	if err != nil {
 		return err
@@ -38,13 +57,15 @@ func (c *Client) StartPreview(ctx context.Context, taskIDHex string) error {
 	stream := agentexec.NewCommandExecutionStream(st)
 
 	previewMu.Lock()
-	old := previewStream
-	gen := previewGen.Add(1)
+	if previewGen.Load() != gen {
+		// Superseded while attaching — whoever superseded us owns the UI
+		// state; just discard the freshly-opened stream.
+		previewMu.Unlock()
+		_ = stream.Close()
+		return nil
+	}
 	previewStream = stream
 	previewMu.Unlock()
-	if old != nil {
-		_ = old.Close()
-	}
 
 	go previewPump(stream, gen)
 	return nil
