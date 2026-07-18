@@ -2009,46 +2009,74 @@ const POLL_INTERVAL_MS = 5000;
 
   document.getElementById("reattach").addEventListener("click", () => reattachTo(taskIdInput.value.trim()));
 
-  // --- Session preview modal: one-shot view-attach snapshot of a live
-  //     interactive session, rendered in a throwaway read-only xterm sized to
-  //     the session's real grid and CSS-scaled to fit the pane. View mode
-  //     never takes over the controlling client, and the preview stream is
-  //     independent of the main terminal's singleton, so peeking is always
-  //     safe — including at the session currently attached here.
+  // --- Session preview modal: LIVE read-only view of an interactive
+  //     session. A view-mode attach stream stays open while the modal shows;
+  //     bytes flow into a throwaway xterm sized to the session's real grid
+  //     and CSS-scaled to fit. ⏸ pauses by CLOSING the stream (the frozen
+  //     frame stays; zero load while paused); ▶ re-attaches — the server's
+  //     ring replay reconstructs the current screen, so resume jumps to now.
+  //     Closing the modal disconnects immediately. View mode never takes
+  //     over the controlling client, and the stream is independent of the
+  //     main terminal's singleton, so peeking is always safe — including at
+  //     the session currently attached here.
   const sessionPreviewModal    = document.getElementById("session-preview-modal");
   const sessionPreviewTitle    = document.getElementById("session-preview-title");
   const sessionPreviewBody     = document.getElementById("session-preview-body");
-  const sessionPreviewRefresh  = document.getElementById("session-preview-refresh");
+  const sessionPreviewPause    = document.getElementById("session-preview-pause");
   const sessionPreviewReattach = document.getElementById("session-preview-reattach");
   const sessionPreviewClose    = document.getElementById("session-preview-close");
-  let sessionPreviewTerm = null;   // throwaway xterm; disposed on close/refresh
+  let sessionPreviewTerm = null;   // throwaway xterm; disposed on close/resume
   let sessionPreviewTaskId = "";
-  let sessionPreviewEpoch = 0;     // guards against a stale load resolving after close/refresh
+  let sessionPreviewEpoch = 0;     // guards the async previewStart promise across close/reopen
+  let sessionPreviewLive = false;  // stream open (⏸ offered) vs paused/dead (▶ offered)
 
   function disposeSessionPreviewTerm() {
     if (sessionPreviewTerm) { sessionPreviewTerm.dispose(); sessionPreviewTerm = null; }
     sessionPreviewBody.replaceChildren();
   }
 
-  async function renderSessionPreview() {
+  function setPreviewPauseLabel() {
+    sessionPreviewPause.textContent = sessionPreviewLive ? "⏸" : "▶";
+    sessionPreviewPause.title = sessionPreviewLive ? "一時停止" : "再開";
+  }
+
+  function previewNote(text) {
+    const p = document.createElement("p");
+    p.className = "preview-note";
+    p.textContent = text;
+    sessionPreviewBody.appendChild(p);
+    return p;
+  }
+
+  // startSessionPreviewStream (re)opens the live stream for the current
+  // task. The grid size arrives asynchronously via harness_previewOpen,
+  // which builds the term; until then the pane shows a connecting note.
+  async function startSessionPreviewStream() {
     const epoch = ++sessionPreviewEpoch;
     disposeSessionPreviewTerm();
-    const note = document.createElement("p");
-    note.className = "preview-note";
-    note.textContent = "loading… (収集 ~1.5s)";
-    sessionPreviewBody.appendChild(note);
-    let snap;
+    const note = previewNote("connecting…");
+    sessionPreviewLive = true;
+    setPreviewPauseLabel();
     try {
-      snap = await window.harness.sessionPreview(sessionPreviewTaskId);
+      await window.harness.previewStart(sessionPreviewTaskId);
     } catch (e) {
-      if (epoch === sessionPreviewEpoch) note.textContent = `preview error: ${e.message}`;
-      return;
+      if (epoch !== sessionPreviewEpoch) return; // superseded/closed meanwhile
+      note.textContent = `preview error: ${e.message}`;
+      sessionPreviewLive = false;
+      setPreviewPauseLabel();
     }
-    // Closed or superseded (refresh / another row) while collecting — drop it.
-    if (epoch !== sessionPreviewEpoch || !sessionPreviewModal.open) return;
-    sessionPreviewBody.replaceChildren();
-    const rows = snap.hasSize && snap.rows > 0 ? snap.rows : 24;
-    const cols = snap.hasSize && snap.cols > 0 ? snap.cols : 80;
+  }
+
+  function pauseSessionPreview() {
+    sessionPreviewLive = false;   // flip BEFORE stop: raced late hooks below no-op
+    setPreviewPauseLabel();
+    window.harness.previewStop();
+  }
+
+  // buildPreviewTerm creates the throwaway xterm at the session's true grid
+  // (re-rendering at a smaller grid would corrupt full-screen TUI layouts)
+  // inside the scale/spacer pair, then fits it to the pane width.
+  function buildPreviewTerm(rows, cols) {
     const spacer = document.createElement("div");
     spacer.className = "session-preview-spacer";
     const scaleBox = document.createElement("div");
@@ -2060,15 +2088,24 @@ const POLL_INTERVAL_MS = 5000;
     sessionPreviewTerm = new Terminal({
       cols, rows,
       disableStdin: true,
-      convertEol: true,  // match the main terminal so the replay renders identically
+      convertEol: true,  // match the main terminal so the stream renders identically
       fontSize: 13,
       fontFamily: '"Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace',
     });
     sessionPreviewTerm.open(termBox);
-    sessionPreviewTerm.write(snap.bytes);
-    // Fit-to-width: measure the rendered screen and scale the whole grid down.
-    const screenEl = termBox.querySelector(".xterm-screen");
-    const rect = screenEl ? screenEl.getBoundingClientRect() : termBox.getBoundingClientRect();
+    fitPreviewScale();
+  }
+
+  // fitPreviewScale measures the rendered screen at scale 1 (transform reset
+  // first — getBoundingClientRect returns the TRANSFORMED box, so measuring
+  // with a leftover scale would compound) and scales the grid to the pane.
+  function fitPreviewScale() {
+    const scaleBox = sessionPreviewBody.querySelector(".session-preview-scale");
+    const spacer = sessionPreviewBody.querySelector(".session-preview-spacer");
+    if (!scaleBox || !spacer) return;
+    scaleBox.style.transform = "";
+    const screenEl = scaleBox.querySelector(".xterm-screen");
+    const rect = screenEl ? screenEl.getBoundingClientRect() : scaleBox.getBoundingClientRect();
     const avail = sessionPreviewBody.clientWidth - 12; // body padding allowance
     if (rect.width > 0 && avail > 0) {
       const scale = Math.min(1, avail / rect.width);
@@ -2078,11 +2115,38 @@ const POLL_INTERVAL_MS = 5000;
     }
   }
 
+  // wasm→JS hooks. The wasm pump is generation-gated (stale pumps go
+  // silent); these flags close the residual check-then-invoke race: after a
+  // pause/close, sessionPreviewLive is already false, so a late hook no-ops.
+  window.harness_previewOpen = (rows, cols, hasSize) => {
+    if (!sessionPreviewModal.open || !sessionPreviewLive) return;
+    sessionPreviewBody.replaceChildren();  // drop the connecting note
+    const r = hasSize && rows > 0 ? rows : 24;
+    const c = hasSize && cols > 0 ? cols : 80;
+    buildPreviewTerm(r, c);
+  };
+  window.harness_previewWrite = (u8) => {
+    if (!sessionPreviewModal.open || !sessionPreviewLive || !sessionPreviewTerm) return;
+    sessionPreviewTerm.write(u8);
+  };
+  window.harness_previewResize = (rows, cols) => {
+    if (!sessionPreviewModal.open || !sessionPreviewLive || !sessionPreviewTerm) return;
+    sessionPreviewTerm.resize(cols, rows);
+    fitPreviewScale();
+  };
+  window.harness_previewClosed = () => {
+    if (!sessionPreviewModal.open || !sessionPreviewLive) return;
+    sessionPreviewLive = false;
+    setPreviewPauseLabel();
+    if (!sessionPreviewTerm) sessionPreviewBody.replaceChildren(); // died before the grid arrived
+    previewNote("(ストリーム終了 — ▶ で再接続)");
+  };
+
   function openSessionPreview(id) {
     sessionPreviewTaskId = id;
     sessionPreviewTitle.textContent = `🔍 ${id.slice(0, 12)}…`;
     if (!sessionPreviewModal.open) sessionPreviewModal.showModal();
-    renderSessionPreview();
+    startSessionPreviewStream();
   }
 
   sessionPreviewClose.addEventListener("click", () => sessionPreviewModal.close());
@@ -2092,13 +2156,18 @@ const POLL_INTERVAL_MS = 5000;
     if (ev.target === sessionPreviewModal) sessionPreviewModal.close();
   });
   sessionPreviewModal.addEventListener("close", () => {
-    sessionPreviewEpoch++;         // invalidate any in-flight load
+    sessionPreviewEpoch++;         // invalidate any in-flight previewStart
+    sessionPreviewLive = false;    // silence raced late hooks
+    window.harness.previewStop();  // close = disconnect immediately
     disposeSessionPreviewTerm();
   });
-  sessionPreviewRefresh.addEventListener("click", renderSessionPreview);
+  sessionPreviewPause.addEventListener("click", () => {
+    if (sessionPreviewLive) pauseSessionPreview();
+    else startSessionPreviewStream();
+  });
   sessionPreviewReattach.addEventListener("click", () => {
     const id = sessionPreviewTaskId;
-    sessionPreviewModal.close();
+    sessionPreviewModal.close();   // close handler stops the stream
     reattachTo(id, false);
   });
 
