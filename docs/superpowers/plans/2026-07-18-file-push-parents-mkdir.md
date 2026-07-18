@@ -218,12 +218,14 @@ func TestHandleOpenFileTransfer_PushMkdirParentsOK(t *testing.T) {
 	req.ExpectedSize = 5
 
 	go sess.handleOpenFileTransfer(context.Background(), req)
-	if err := clientEnd.AppendData(false, []byte("hello")); err != nil {
-		t.Fatalf("client write: %v", err)
-	}
-	if err := clientEnd.AppendData(true); err != nil {
-		t.Fatalf("client EOF: %v", err)
-	}
+	// Payload writes go in a goroutine: the in-memory bidi pair
+	// rendezvous, and a runner that error-acks before reading the
+	// payload (the RED-phase behavior) would deadlock against a
+	// main-goroutine write. readAck is the real assertion.
+	go func() {
+		_ = clientEnd.AppendData(false, []byte("hello"))
+		_ = clientEnd.AppendData(true)
+	}()
 	ack := readAck(t, clientEnd)
 	if ack.Status != protocol.FileTransferStatus_Ok {
 		t.Fatalf("ack status = %v want ok", ack.Status)
