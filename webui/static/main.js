@@ -1123,14 +1123,12 @@ const POLL_INTERVAL_MS = 5000;
           const terminal = t && TERMINAL_STATES.has(t.status);
           if (live) {
             mkBtn("🔍 プレビュー", openSessionPreview);
-            mkBtn("↪ Reattach", (id) => reattachTo(id, false));
-            mkBtn("👁 View", (id) => reattachTo(id, true));
+            mkBtn("↪ Reattach", (id) => reattachTo(id));
           }
           if (terminal) mkBtn("▶ Resume", resumeTaskById);
           if (!t) { // not in the snapshot (pruned/unknown) — offer both as a fallback
             mkBtn("🔍 プレビュー", openSessionPreview);
-            mkBtn("↪ Reattach", (id) => reattachTo(id, false));
-            mkBtn("👁 View", (id) => reattachTo(id, true));
+            mkBtn("↪ Reattach", (id) => reattachTo(id));
             mkBtn("▶ Resume", resumeTaskById);
           }
           if (!actions.childElementCount) { // known, but neither applies (e.g. a running one-shot)
@@ -1779,19 +1777,23 @@ const POLL_INTERVAL_MS = 5000;
     } catch (_) { /* still flaky — leave the button as-is for the next reconnect */ }
   });
 
-  // reattachTo re-attaches to an existing live session by id. Shared by the
-  // Reattach button, the task-row Reattach action, and the post-takeover quick
-  // button (DRY). Switches to the terminal tab, replays, and pins to the bottom.
-  // Pass view=true for read-only attach (AttachMode_View); default is control.
-  const reattachTo = async (id, view = false) => {
+  // reattachTo re-attaches (control mode) to an existing live session by id.
+  // Shared by the Reattach button, the task-row Reattach action, the preview
+  // modal's shortcut, and the post-takeover quick button (DRY). Switches to
+  // the terminal tab, replays, and pins to the bottom. Read-only observation
+  // is the session-preview modal's job (live view-attach at the true grid) —
+  // the old 👁 View route that view-attached the MAIN xterm was removed: a
+  // viewer has no size authority, so it mis-rendered whenever the grids
+  // differed, and it cost the browser its own control attach to boot.
+  const reattachTo = async (id) => {
     if (!id) { attachedTask.textContent = "(session id required)"; return; }
     attachEpoch++;            // invalidate any in-flight close handler
     hideQuickReattach();
     setActiveTab("terminal");
     term.reset();
     try {
-      const taskID = await window.harness.attachSession(id, view ? "view" : "control");
-      attachedTask.textContent = `attached: ${taskID} (${view ? "view" : "reattached"})`;
+      const taskID = await window.harness.attachSession(id, "control");
+      attachedTask.textContent = `attached: ${taskID} (reattached)`;
       currentSessionTaskId = taskID;
       scrollTermToBottom();
     } catch (err) {
@@ -2179,7 +2181,7 @@ const POLL_INTERVAL_MS = 5000;
     // AFTER reattachTo below kicks off — harmless: the view stream is
     // independent of the control attach and is torn down moments later.
     sessionPreviewModal.close();
-    reattachTo(id, false);
+    reattachTo(id);
   });
 
   // renderTaskList builds clickable task rows into #task-list. Each row toggles
@@ -2297,11 +2299,10 @@ const POLL_INTERVAL_MS = 5000;
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
 
-    // Reattach / View / idle-notify — live interactive session only.
+    // Preview / Reattach / idle-notify — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
       addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
-      addItem("↪ Reattach", "", () => reattachTo(t.id, false));
-      addItem("👁 View", "", () => reattachTo(t.id, true));
+      addItem("↪ Reattach", "", () => reattachTo(t.id));
       addItem("🔔 idleで通知", "", async () => {
         try {
           const r = await window.harness.awaitIdle({ taskId: t.id, sink: "notify" });
