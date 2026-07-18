@@ -40,6 +40,12 @@
     </section>
     <section id="tasks" data-tabgroup="tasks">
       <h2>Tasks</h2>
+      <div class="task-filter-bar">
+        <button type="button" id="task-chip-active" class="task-chip is-active">Active</button>
+        <button type="button" id="task-chip-finished" class="task-chip">Finished</button>
+        <button type="button" id="task-chip-all" class="task-chip">All</button>
+        <input id="task-filter-input" type="search" placeholder="filter: repo / id / status">
+      </div>
       <div id="task-list" class="task-list"></div>
     </section>
     <section id="compose" data-tabgroup="tasks">

@@ -318,6 +318,25 @@ const POLL_INTERVAL_MS = 5000;
   const runnerList   = document.getElementById("runner-list");
   const taskList     = document.getElementById("task-list");
 
+  // Task-list filter bar. Lives OUTSIDE #task-list so the snapshot poll's
+  // re-render never steals input focus or resets chip selection.
+  const taskFilterInput = document.getElementById("task-filter-input");
+  const taskChips = {
+    active:   document.getElementById("task-chip-active"),
+    finished: document.getElementById("task-chip-finished"),
+    all:      document.getElementById("task-chip-all"),
+  };
+  let taskStatusFilter = "active"; // "active" | "finished" | "all"
+  let lastTasks = [];              // latest snapshot; re-render source for filter events
+  for (const [key, btn] of Object.entries(taskChips)) {
+    btn.addEventListener("click", () => {
+      taskStatusFilter = key;
+      for (const b of Object.values(taskChips)) b.classList.toggle("is-active", b === btn);
+      renderTaskList(lastTasks);
+    });
+  }
+  taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
+
   // currentClaudeArgs returns the shell-tokenised args from the input box.
   // Reused by submit (cmdline) and Open buttons so the user only edits one field.
   const currentClaudeArgs = () => {
@@ -2197,16 +2216,47 @@ const POLL_INTERVAL_MS = 5000;
     return `idle:${Math.floor(idleMs / 1000)}s`;
   }
 
+  // taskActivityMs returns the task's last-activity time in unix-ms, for
+  // most-recently-active-first sorting. Live sessions (outputIdleMs >= 0)
+  // derive from the server-computed idle age; finished / never-started tasks
+  // fall back to wire timestamps, which are unix NANOseconds (toTaskInfo uses
+  // UnixNano) — divide by 1e6. Zero wire values mean "unset" and lose to any
+  // set value inside max().
+  function taskActivityMs(t) {
+    if (t.outputIdleMs >= 0) return Date.now() - t.outputIdleMs;
+    return Math.max(t.endedAt || 0, t.startedAt || 0, t.createdAt || 0) / 1e6;
+  }
+
+  // taskMatchesFilter applies the status chip + lowercased needle. Search
+  // keys: id, repoPath, status, agentProfile, prompt (prompt is usually
+  // empty on interactive tasks — repo and id are the effective keys).
+  function taskMatchesFilter(t, needle) {
+    if (taskStatusFilter === "active" && TERMINAL_STATES.has(t.status)) return false;
+    if (taskStatusFilter === "finished" && !TERMINAL_STATES.has(t.status)) return false;
+    if (!needle) return true;
+    return [t.id, t.repoPath, t.status, t.agentProfile, t.prompt]
+      .some((v) => (v || "").toLowerCase().includes(needle));
+  }
+
   function renderTaskList(tasks) {
+    lastTasks = tasks || [];
+    const finished = lastTasks.filter((t) => TERMINAL_STATES.has(t.status)).length;
+    taskChips.active.textContent   = `Active (${lastTasks.length - finished})`;
+    taskChips.finished.textContent = `Finished (${finished})`;
+    taskChips.all.textContent      = `All (${lastTasks.length})`;
+    const needle = taskFilterInput.value.trim().toLowerCase();
+    const visible = lastTasks
+      .filter((t) => taskMatchesFilter(t, needle))
+      .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
     taskList.innerHTML = "";
-    if (!tasks || tasks.length === 0) {
+    if (visible.length === 0) {
       const empty = document.createElement("div");
       empty.className = "task-empty";
-      empty.textContent = "(none)";
+      empty.textContent = lastTasks.length === 0 ? "(none)" : "(no matching tasks)";
       taskList.appendChild(empty);
       return;
     }
-    for (const t of tasks) {
+    for (const t of visible) {
       const wrap = document.createElement("div");
       const row = document.createElement("div");
       row.className = "task-row";
