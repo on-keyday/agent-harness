@@ -358,11 +358,11 @@ func main() {
 				os.Exit(2)
 			}
 			if *recursive {
-				if err := c.FilePushDir(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
+				if err := c.FilePushDir(ctx, pargs[0], pargs[1], pargs[2], cli.FilePushOpts{Force: *force}); err != nil {
 					die(err)
 				}
 			} else {
-				if err := c.FilePush(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
+				if err := c.FilePush(ctx, pargs[0], pargs[1], pargs[2], cli.FilePushOpts{Force: *force}); err != nil {
 					die(err)
 				}
 			}

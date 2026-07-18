@@ -26,7 +26,7 @@ func (c *Client) FileDeleteDir(ctx context.Context, taskIDHex, remoteRel string,
 }
 
 func (c *Client) fileDeleteCommon(ctx context.Context, taskIDHex string, dir protocol.FileTransferDirection, remoteRel string, force bool, label string) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, dir, remoteRel, 0, force)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, dir, remoteRel, 0, force, false)
 	if err != nil {
 		return err
 	}

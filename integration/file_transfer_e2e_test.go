@@ -111,7 +111,7 @@ func TestFileTransferE2E(t *testing.T) {
 	if err := os.WriteFile(srcPath, []byte("hello world"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin", false); err != nil {
+	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin", cli.FilePushOpts{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(worktree, "uploaded.bin"))
@@ -145,7 +145,7 @@ func TestFileTransferE2E(t *testing.T) {
 	}
 
 	// 4. PUSH AGAIN: same path → already_exists.
-	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin", false); err == nil {
+	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin", cli.FilePushOpts{}); err == nil {
 		t.Errorf("second push should fail with already_exists")
 	} else if !strings.Contains(err.Error(), "already exists") {
 		t.Errorf("second push error mismatch: %v", err)
@@ -157,7 +157,7 @@ func TestFileTransferE2E(t *testing.T) {
 	}
 
 	// 6. PATH ESCAPE: push with .. → path_invalid.
-	if err := c.FilePush(ctx, taskID, srcPath, "../escape.bin", false); err == nil {
+	if err := c.FilePush(ctx, taskID, srcPath, "../escape.bin", cli.FilePushOpts{}); err == nil {
 		t.Errorf("escape push should fail")
 	}
 
@@ -248,7 +248,7 @@ func TestFileDirTransferE2E(t *testing.T) {
 	}
 
 	// 2. Push the directory.
-	if err := c.FilePushDir(ctx, taskID, localSrc, "incoming", false); err != nil {
+	if err := c.FilePushDir(ctx, taskID, localSrc, "incoming", cli.FilePushOpts{}); err != nil {
 		t.Fatalf("dir push: %v", err)
 	}
 
@@ -261,7 +261,7 @@ func TestFileDirTransferE2E(t *testing.T) {
 	}
 
 	// 4. Push again without --force: must fail.
-	if err := c.FilePushDir(ctx, taskID, localSrc, "incoming", false); err == nil {
+	if err := c.FilePushDir(ctx, taskID, localSrc, "incoming", cli.FilePushOpts{}); err == nil {
 		t.Errorf("second push without --force should fail")
 	}
 
@@ -273,7 +273,7 @@ func TestFileDirTransferE2E(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(localSrc2, "fresh.txt"), []byte("NEW"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.FilePushDir(ctx, taskID, localSrc2, "incoming", true); err != nil {
+	if err := c.FilePushDir(ctx, taskID, localSrc2, "incoming", cli.FilePushOpts{Force: true}); err != nil {
 		t.Fatalf("force push: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(worktree, "incoming", "a.txt")); !os.IsNotExist(err) {

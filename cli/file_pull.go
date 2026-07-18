@@ -76,7 +76,7 @@ func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string,
 // read-only op on the runner side); body decides what client-side
 // "force" means (overwrite vs. always-new-buffer).
 func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, body func(stream trsf.BidirectionalStream, expectedSize uint64) error) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, false)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, false, false)
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 		return fmt.Errorf("file pull --recursive: stat local: %w", err)
 	}
 
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false, false)
 	if err != nil {
 		return err
 	}
@@ -197,7 +197,7 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 // browser saves the bytes as a .tar for the user to extract. The returned
 // bytes are a complete tar archive (the same stream FilePullDir untars).
 func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel string, onProgress ProgressFunc) ([]byte, error) {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false, false)
 	if err != nil {
 		return nil, err
 	}

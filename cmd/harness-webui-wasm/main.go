@@ -1445,7 +1445,7 @@ func harnessFilePushBytes(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			if err := c.FilePushBytes(rootCtx, taskID, data, remoteRel, force, onProgress); err != nil {
+			if err := c.FilePushBytes(rootCtx, taskID, data, remoteRel, cli.FilePushOpts{Force: force}, onProgress); err != nil {
 				rejectFileErr(reject, err)
 				return
 			}

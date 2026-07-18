@@ -31,6 +31,7 @@ func (c *Client) OpenFileTransfer(
 	relPath string,
 	expectedSize uint64,
 	force bool,
+	mkdirParents bool,
 ) (trsf.BidirectionalStream, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
@@ -44,6 +45,7 @@ func (c *Client) OpenFileTransfer(
 	}
 	body.SetRelPath([]byte(relPath))
 	body.SetForce(force)
+	body.SetMkdirParents(mkdirParents)
 	req.SetOpenFileTransfer(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)

@@ -14,10 +14,18 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+// FilePushOpts controls push behavior. Force overwrites an existing
+// destination. MkdirParents creates missing parent directories of the
+// destination on the runner (mkdir -p semantics) before writing.
+type FilePushOpts struct {
+	Force        bool
+	MkdirParents bool
+}
+
 // FilePush copies localPath into the worktree of taskIDHex at remoteRel.
 // Returns an error if the runner rejects (already_exists, path_invalid)
 // or the local file cannot be read.
-func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel string, force bool) error {
+func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel string, opts FilePushOpts) error {
 	src, err := os.Open(localPath)
 	if err != nil {
 		return fmt.Errorf("file push: open local: %w", err)
@@ -27,7 +35,7 @@ func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel s
 	if err != nil {
 		return fmt.Errorf("file push: stat local: %w", err)
 	}
-	return c.filePushFromReader(ctx, taskIDHex, src, uint64(st.Size()), remoteRel, force, nil)
+	return c.filePushFromReader(ctx, taskIDHex, src, uint64(st.Size()), remoteRel, opts, nil)
 }
 
 // FilePushBytes is the bytes-in variant of FilePush. Used by the WebUI
@@ -35,16 +43,16 @@ func (c *Client) FilePush(ctx context.Context, taskIDHex, localPath, remoteRel s
 // FileReader / File.arrayBuffer() APIs — there is no local fs path on
 // that side, so the runner-facing protocol is driven directly from a
 // byte slice.
-func (c *Client) FilePushBytes(ctx context.Context, taskIDHex string, data []byte, remoteRel string, force bool, onProgress ProgressFunc) error {
-	return c.filePushFromReader(ctx, taskIDHex, bytes.NewReader(data), uint64(len(data)), remoteRel, force, onProgress)
+func (c *Client) FilePushBytes(ctx context.Context, taskIDHex string, data []byte, remoteRel string, opts FilePushOpts, onProgress ProgressFunc) error {
+	return c.filePushFromReader(ctx, taskIDHex, bytes.NewReader(data), uint64(len(data)), remoteRel, opts, onProgress)
 }
 
 // filePushFromReader is the shared protocol path: open the push stream,
 // copy size bytes from src into it, EOF, and wait for the ack. Both the
 // file-backed FilePush and the bytes-backed FilePushBytes go through
 // here so the wire side has one well-tested code path.
-func (c *Client) filePushFromReader(ctx context.Context, taskIDHex string, src io.Reader, size uint64, remoteRel string, force bool, onProgress ProgressFunc) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, force)
+func (c *Client) filePushFromReader(ctx context.Context, taskIDHex string, src io.Reader, size uint64, remoteRel string, opts FilePushOpts, onProgress ProgressFunc) error {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, opts.Force, opts.MkdirParents)
 	if err != nil {
 		return err
 	}
@@ -64,8 +72,8 @@ func (c *Client) filePushFromReader(ctx context.Context, taskIDHex string, src i
 
 // FilePushDir packs localDir into a tar stream and pushes it to the runner,
 // which extracts it under worktreeRel using staging-dir + atomic rename.
-// Refuses to overwrite an existing remote dest unless force is set.
-func (c *Client) FilePushDir(ctx context.Context, taskIDHex, localDir, remoteRel string, force bool) error {
+// Refuses to overwrite an existing remote dest unless opts.Force is set.
+func (c *Client) FilePushDir(ctx context.Context, taskIDHex, localDir, remoteRel string, opts FilePushOpts) error {
 	info, err := os.Stat(localDir)
 	if err != nil {
 		return fmt.Errorf("file push --recursive: stat local: %w", err)
@@ -73,7 +81,7 @@ func (c *Client) FilePushDir(ctx context.Context, taskIDHex, localDir, remoteRel
 	if !info.IsDir() {
 		return fmt.Errorf("file push --recursive: %s is not a directory", localDir)
 	}
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPush, remoteRel, 0, force)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPush, remoteRel, 0, opts.Force, opts.MkdirParents)
 	if err != nil {
 		return err
 	}
@@ -159,6 +167,15 @@ func IsAlreadyExists(err error) bool {
 	return errors.As(err, &fe) && fe.Status == protocol.FileTransferStatus_AlreadyExists
 }
 
+// IsNotFound reports whether err originated as a
+// FileTransferStatus_NotFound ack from the runner — for push ops this
+// means the destination's parent directory is missing. Used by
+// interactive callers (WebUI) to offer a create-parents retry.
+func IsNotFound(err error) bool {
+	var fe *FileAckError
+	return errors.As(err, &fe) && fe.Status == protocol.FileTransferStatus_NotFound
+}
+
 func ackError(op string, ack *protocol.FileTransferAck) error {
 	if ack.Status == protocol.FileTransferStatus_Ok {
 		return nil
@@ -168,9 +185,20 @@ func ackError(op string, ack *protocol.FileTransferAck) error {
 	case protocol.FileTransferStatus_PathInvalid:
 		msg = fmt.Sprintf("file %s: path invalid (escapes worktree or empty)", op)
 	case protocol.FileTransferStatus_NotFound:
-		msg = fmt.Sprintf("file %s: not found", op)
+		switch op {
+		case "push", "push --recursive":
+			msg = fmt.Sprintf("file %s: destination parent directory does not exist (use -p/--parents or file mkdir)", op)
+		case "mkdir":
+			msg = "file mkdir: parent directory does not exist (use -p/--parents)"
+		default:
+			msg = fmt.Sprintf("file %s: not found", op)
+		}
 	case protocol.FileTransferStatus_AlreadyExists:
-		msg = fmt.Sprintf("file %s: destination already exists (use --force to overwrite)", op)
+		if op == "mkdir" {
+			msg = "file mkdir: directory already exists"
+		} else {
+			msg = fmt.Sprintf("file %s: destination already exists (use --force to overwrite)", op)
+		}
 	case protocol.FileTransferStatus_IoError:
 		msg = fmt.Sprintf("file %s: runner I/O error", op)
 	case protocol.FileTransferStatus_Canceled:
@@ -178,7 +206,11 @@ func ackError(op string, ack *protocol.FileTransferAck) error {
 	case protocol.FileTransferStatus_IsDirectory:
 		msg = fmt.Sprintf("file %s: is a directory", op)
 	case protocol.FileTransferStatus_NotADirectory:
-		msg = fmt.Sprintf("file %s: not a directory", op)
+		if op == "mkdir" {
+			msg = "file mkdir: exists and is not a directory"
+		} else {
+			msg = fmt.Sprintf("file %s: not a directory", op)
+		}
 	case protocol.FileTransferStatus_NotEmpty:
 		msg = fmt.Sprintf("file %s: directory not empty (use --force to remove recursively)", op)
 	default:

@@ -54,9 +54,9 @@ func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, fo
 		defer cancel()
 		var err error
 		if recursive {
-			err = c.FilePushDir(ctx, taskID, localSrc, remoteDst, force)
+			err = c.FilePushDir(ctx, taskID, localSrc, remoteDst, cli.FilePushOpts{Force: force})
 		} else {
-			err = c.FilePush(ctx, taskID, localSrc, remoteDst, force)
+			err = c.FilePush(ctx, taskID, localSrc, remoteDst, cli.FilePushOpts{Force: force})
 		}
 		return FileResultMsg{
 			Op:     "push",
