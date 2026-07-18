@@ -30,6 +30,7 @@ const (
 	pickerNone pickerInputMode = iota
 	pickerAskPushSrc
 	pickerAskPullDst
+	pickerAskNewDirName
 	pickerConfirmDelete
 	pickerConfirmPullOverwrite
 	pickerConfirmPushOverwrite
@@ -247,6 +248,8 @@ func (m FilePickerModel) handleKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
 	switch m.inputMode {
 	case pickerAskPushSrc, pickerAskPullDst:
 		return m.handleInputKey(k)
+	case pickerAskNewDirName:
+		return m.handleNewDirKey(k)
 	case pickerConfirmDelete:
 		return m.handleConfirmKey(k)
 	case pickerConfirmPullOverwrite:
@@ -357,8 +360,44 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 		m.deleteReturnMode = pickerNone
 		m.inputMode = pickerConfirmDelete
 		return m, nil
+	case "+":
+		// New folder: prompt for a directory name, created under the
+		// current directory with mkdir -p semantics — the typed name
+		// may be nested (a/b/c) and the result shows up in the
+		// listing right after the auto-refresh.
+		m.inputMode = pickerAskNewDirName
+		m.input.Reset()
+		m.input.Placeholder = "new directory name (nested ok, e.g. a/b/c)"
+		m.input.Focus()
+		return m, nil
 	}
 	return m, nil
+}
+
+// handleNewDirKey drives the pickerAskNewDirName prompt: Enter commits
+// a FileMkdir (parents=true) under curDir, Esc cancels, anything else
+// edits the input. Unlike handleInputKey there is no Tab/local-browser
+// integration — the input is a remote-relative name, not a local path.
+func (m FilePickerModel) handleNewDirKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
+	switch k.Type {
+	case tea.KeyEsc:
+		m.inputMode = pickerNone
+		m.input.Blur()
+		return m, nil
+	case tea.KeyEnter:
+		name := strings.TrimSpace(m.input.Value())
+		if name == "" {
+			return m, nil
+		}
+		rel := joinRel(m.curDir, name)
+		m.inputMode = pickerNone
+		m.input.Blur()
+		m.msg = "creating " + rel + "..."
+		return m, DoFileMkdir(m.client, m.taskID, rel, true)
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(k)
+	return m, cmd
 }
 
 func (m FilePickerModel) handleInputKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd) {
@@ -745,7 +784,7 @@ func (m FilePickerModel) View() string {
 	var header strings.Builder
 	fmt.Fprintf(&header, "File picker · task %s · /%s\n", m.taskShort, m.curDir)
 	if !m.localBrowseActive {
-		header.WriteString("↑↓ nav · → / Enter descend · ← / Backspace back · u push · g pull · d delete · D rm -rf · r reload · Esc close\n")
+		header.WriteString("↑↓ nav · → / Enter descend · ← / Backspace back · u push · g pull · d delete · D rm -rf · + new dir · r reload · Esc close\n")
 	} else {
 		header.WriteString("Tab → typing (pre-fills selected file) · ↑↓ → / Enter descend · ← / Backspace back · . use this dir · d/D delete · r reload · Esc cancel\n")
 	}
@@ -796,6 +835,13 @@ func (m FilePickerModel) View() string {
 		} else {
 			fmt.Fprintf(&footer, "\n%s: %s\n(Tab: browse local fs · Esc: cancel)\n", label, m.input.View())
 		}
+	case pickerAskNewDirName:
+		dir := m.curDir
+		if dir == "" {
+			dir = "."
+		}
+		fmt.Fprintf(&footer, "\nnew directory under %s: %s\n(Enter: create (mkdir -p) · Esc: cancel)\n",
+			dir, m.input.View())
 	case pickerConfirmDelete:
 		mode := "rm"
 		if m.deleteRecursive {
