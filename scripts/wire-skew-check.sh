@@ -25,6 +25,19 @@
 #   NOT asserted: OLD runner x NEW server. Pre-fix runners exit fatally by
 #   construction; that is history and cannot be fixed retroactively.
 #
+#   THIRD OUTCOME: HANDSHAKE-COMPATIBLE SKEW
+#   Not every .bgn change touches the handshake wire format (RunnerHello /
+#   PskAuthRequest) — e.g. a change to file-transfer request bits or an
+#   unrelated direction enum. When it doesn't, the OLD server may simply
+#   ACCEPT the NEW runner's hello outright: no rejection is ever exercised,
+#   and the runner logs "persist: connected" and registers normally. That is
+#   NOT a failure of this check — it is strictly SAFER than "rejected but
+#   recoverable" (there was never a broken connection to recover from). It
+#   PASSes because the guarded failure mode — a fatal exit that wipes the
+#   fleet — cannot occur when the runner is connected and alive. A fatal exit
+#   (runner logs "runner exit", or the process dies) still FAILs, whether or
+#   not a rejection was seen first.
+#
 # THIS SCRIPT MUST BE ABLE TO FAIL
 #   Its first version passed on everything — the old server never started (a
 #   fresh `git worktree add` has no webui/static/main.wasm, which the server
@@ -107,19 +120,30 @@ start_server "$TMP/old-server" || { echo "wire-skew-check: OLD server ($OLD_SHA)
 RPID=$!
 sleep 8   # several backoff cycles
 
-# POSITIVE CONTROL FIRST: prove the skew actually happened. Without this, a dead
-# server / refused connection would sail through as "it retried!".
-if ! grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed" "$TMP/runner.log"; then
-  if grep -qi "connection refused" "$TMP/runner.log"; then
-    fail "the OLD server was not reachable — skew never exercised (setup broken, not a pass)"
-  fi
+# POSITIVE CONTROL: prove the skew was actually EXERCISED — either a rejection
+# reached the runner, or the runner connected. Without this, a dead server /
+# refused connection would sail through as "it retried!".
+if grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed" "$TMP/runner.log"; then
+  # Outcome 1: rejection observed — the classic incident-shaped skew.
+  echo "        skew exercised: $(grep -oiE 'server rejected: [A-Za-z]+' "$TMP/runner.log" | head -1)"
+  runner_alive || fail "runner EXITED against the old server — a wire-skew rejection is being classified FATAL again (see cli.PskRejectedError.Retryable). A landing would wipe the fleet."
+  grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' (fatal path taken on skew)"
+  echo "  [1/2] PASS — rejected, stayed alive, kept retrying"
+elif grep -q "persist: connected" "$TMP/runner.log"; then
+  # Outcome 2: NO rejection, but the OLD server accepted the NEW runner's hello
+  # outright — a HANDSHAKE-COMPATIBLE skew (see header). Still require the
+  # runner to actually be alive, and still fail on any fatal-exit log line.
+  runner_alive || fail "runner connected to the OLD server, then EXITED — investigate before landing (a fatal path was apparently taken after a successful handshake)."
+  grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' despite being connected (fatal path taken on a supposedly compatible skew)"
+  echo "  [1/2] PASS — no rejection: OLD server accepted the new hello (handshake-compatible skew); runner registered and stays alive"
+elif grep -qi "connection refused" "$TMP/runner.log"; then
+  # Outcome 3a: setup broken — the OLD server was never reachable at all.
+  fail "the OLD server was not reachable — skew never exercised (setup broken, not a pass)"
+else
+  # Outcome 3b: neither rejected nor connected (e.g. a silent drop loop) — an
+  # unexplained state must stay red.
   fail "no handshake rejection reached the runner — the skew was NOT exercised, so this check proves nothing. Did the old server accept the new hello? Investigate before landing."
 fi
-echo "        skew exercised: $(grep -oiE 'server rejected: [A-Za-z]+' "$TMP/runner.log" | head -1)"
-
-runner_alive || fail "runner EXITED against the old server — a wire-skew rejection is being classified FATAL again (see cli.PskRejectedError.Retryable). A landing would wipe the fleet."
-grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' (fatal path taken on skew)"
-echo "  [1/2] PASS — rejected, stayed alive, kept retrying"
 
 # --- 2) upgrade the server: runner must SELF-HEAL ----------------------------
 echo
