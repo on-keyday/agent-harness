@@ -79,7 +79,8 @@ func main() {
 		"submit":             js.FuncOf(harnessSubmit),
 		"list":               js.FuncOf(harnessList),
 		"snapshot":           js.FuncOf(harnessSnapshot),
-		"sessionPreview":     js.FuncOf(harnessSessionPreview),
+		"previewStart":       js.FuncOf(harnessPreviewStart),
+		"previewStop":        js.FuncOf(harnessPreviewStop),
 		"cancel":             js.FuncOf(harnessCancel),
 		"watch":              js.FuncOf(harnessWatch),
 		"prune":              js.FuncOf(harnessPrune),
@@ -1031,17 +1032,15 @@ func harnessAttachSession(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessSessionPreview view-attaches (AttachMode_View — non-takeover) to a
-// detachable interactive session on an independent stream, collects the
-// replayed PTY byte burst for settleMs, and resolves with the verbatim bytes
-// plus the terminal size the server replays ahead of the ring. It never
-// touches the activeInteractiveSession singleton, so the user's live attached
-// session keeps working while a preview loads. The JS layer feeds the bytes
-// to a throwaway xterm sized rows×cols (hasSize=false → caller falls back).
+// harnessPreviewStart opens a LIVE read-only preview of a detachable
+// interactive session: AttachMode_View (non-takeover), independent of the
+// activeInteractiveSession singleton. Output flows via the JS hooks
+// harness_previewOpen / harness_previewWrite / harness_previewResize /
+// harness_previewClosed until harness.previewStop() or a fresh
+// previewStart supersedes it.
 //
-//	harness.sessionPreview(taskIDHex[, settleMs]) ->
-//	    Promise<{bytes: Uint8Array, rows, cols, hasSize}>
-func harnessSessionPreview(this js.Value, args []js.Value) any {
+//	harness.previewStart(taskIDHex) -> Promise<taskIDHex>
+func harnessPreviewStart(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
@@ -1052,32 +1051,29 @@ func harnessSessionPreview(this js.Value, args []js.Value) any {
 				return
 			}
 			if len(args) < 1 {
-				rejectErr(reject, errors.New("sessionPreview: missing taskIDHex arg"))
+				rejectErr(reject, errors.New("previewStart: missing taskIDHex arg"))
 				return
 			}
 			taskID := args[0].String()
-			settle := 1500 * time.Millisecond // default matches `session snapshot --settle-ms`
-			if len(args) >= 2 && args[1].Type() == js.TypeNumber && args[1].Int() > 0 {
-				settle = time.Duration(args[1].Int()) * time.Millisecond
-			}
-			data, rows, cols, hasSize, err := c.CollectRaw(rootCtx, taskID, settle)
-			if err != nil {
+			if err := c.StartPreview(rootCtx, taskID); err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			u8 := js.Global().Get("Uint8Array").New(len(data))
-			js.CopyBytesToJS(u8, data)
-			out := js.Global().Get("Object").New()
-			out.Set("bytes", u8)
-			out.Set("rows", int(rows))
-			out.Set("cols", int(cols))
-			out.Set("hasSize", hasSize)
-			resolve.Invoke(out)
+			resolve.Invoke(taskID)
 		}()
 		return nil
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessPreviewStop tears down the live preview stream, if any.
+// Synchronous and idempotent; a paused/never-started preview is a no-op.
+//
+//	harness.previewStop()
+func harnessPreviewStop(this js.Value, args []js.Value) any {
+	cli.StopPreview()
+	return js.Undefined()
 }
 
 // bytesBuffer is a minimal io.Writer used for collecting cli output before
