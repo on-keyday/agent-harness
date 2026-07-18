@@ -687,3 +687,28 @@ func TestParseSessionAwaitIdle(t *testing.T) {
 		t.Error("want error for missing task id")
 	}
 }
+
+func TestParseFilePushParents(t *testing.T) {
+	got, err := ParseCommand(`file push -p deadbeef ./f rel/dir/f`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FilePushAction)
+	if !a.Parents || a.Force || a.Recursive {
+		t.Errorf("flags = %+v want Parents only", a)
+	}
+}
+
+func TestParseFileMkdir(t *testing.T) {
+	got, err := ParseCommand(`file mkdir -p deadbeef rel/new/dir`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(FileMkdirAction)
+	if a.TaskID != "deadbeef" || a.RelPath != "rel/new/dir" || !a.Parents {
+		t.Errorf("parsed = %+v", a)
+	}
+	if _, err := ParseCommand(`file mkdir deadbeef`, "/cwd"); err == nil {
+		t.Error("missing rel arg accepted")
+	}
+}

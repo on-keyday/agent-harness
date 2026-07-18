@@ -1426,7 +1426,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("session kill <id>           - terminate a session")
 		a.cmdresult.Append("session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)")
 		a.cmdresult.Append("file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)")
-		a.cmdresult.Append("file push [-r] [-f] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite)")
+		a.cmdresult.Append("file push [-r] [-f] [-p] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)")
+		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
@@ -1566,7 +1567,14 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
-		return a, DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force)
+		return a, DoFilePush(a.client, full, v.LocalSrc, v.RemoteDst, v.Recursive, v.Force, v.Parents)
+	case FileMkdirAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoFileMkdir(a.client, full, v.RelPath, v.Parents)
 	case FilePullAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {

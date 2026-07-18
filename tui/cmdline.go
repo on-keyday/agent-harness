@@ -109,13 +109,24 @@ type FileLsAction struct {
 // FilePushAction copies a local source into a task's worktree.
 // Recursive=true uses dir_push (tar over the wire). Force overwrites an
 // existing destination (push) or replaces an existing directory tree
-// (dir_push).
+// (dir_push). Parents creates missing parent directories of RemoteDst
+// (mkdir -p semantics) before the push.
 type FilePushAction struct {
 	TaskID    string
 	LocalSrc  string
 	RemoteDst string
 	Recursive bool
 	Force     bool
+	Parents   bool // create missing parent dirs of RemoteDst (mkdir -p)
+}
+
+// FileMkdirAction creates a directory under a task's worktree.
+// Parents=false is strict mkdir (missing parent → error, existing dir
+// → error); Parents=true is mkdir -p (parents created, idempotent).
+type FileMkdirAction struct {
+	TaskID  string
+	RelPath string
+	Parents bool
 }
 
 // FilePullAction copies from a task's worktree to a local destination.
@@ -198,6 +209,7 @@ func (SessionKillAction) isAction()      {}
 func (SessionAwaitIdleAction) isAction() {}
 func (FileLsAction) isAction()           {}
 func (FilePushAction) isAction()         {}
+func (FileMkdirAction) isAction()        {}
 func (FilePullAction) isAction()         {}
 func (FileDeleteAction) isAction()       {}
 func (ServerDialRunnerAction) isAction() {}
@@ -559,15 +571,16 @@ func parseNotify(args []string) (Action, error) {
 	return NotifyAction{Level: level, Title: title, Text: text}, nil
 }
 
-// parseFile dispatches file sub-verbs: ls / push / pull / delete. All
-// paths use the same -r / --recursive and -f / --force aliases as the
-// CLI so the typing is interchangeable between `harness-cli file ...`
-// and the TUI cmdline. Local paths are resolved on the host running
-// the TUI; remote paths are interpreted relative to the task's
-// worktree by the runner and confined to it (no `..` escape).
+// parseFile dispatches file sub-verbs: ls / push / pull / mkdir /
+// delete. All paths use the same -r / --recursive and -f / --force
+// aliases as the CLI so the typing is interchangeable between
+// `harness-cli file ...` and the TUI cmdline. Local paths are resolved
+// on the host running the TUI; remote paths are interpreted relative
+// to the task's worktree by the runner and confined to it (no `..`
+// escape).
 func parseFile(args []string) (Action, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("file: sub-verb required (ls | push | pull | delete)")
+		return nil, fmt.Errorf("file: sub-verb required (ls | push | pull | mkdir | delete)")
 	}
 	verb := args[0]
 	rest := args[1:]
@@ -588,16 +601,18 @@ func parseFile(args []string) (Action, error) {
 		fs.BoolVar(recursive, "r", false, "")
 		force := fs.Bool("force", false, "")
 		fs.BoolVar(force, "f", false, "")
+		parents := fs.Bool("parents", false, "")
+		fs.BoolVar(parents, "p", false, "")
 		if err := fs.Parse(rest); err != nil {
 			return nil, fmt.Errorf("file push: %w", err)
 		}
 		pargs := fs.Args()
 		if len(pargs) != 3 {
-			return nil, fmt.Errorf("file push: usage: file push [-r] [-f] <task-id> <local-src> <worktree-rel-dst>")
+			return nil, fmt.Errorf("file push: usage: file push [-r] [-f] [-p] <task-id> <local-src> <worktree-rel-dst>")
 		}
 		return FilePushAction{
 			TaskID: pargs[0], LocalSrc: pargs[1], RemoteDst: pargs[2],
-			Recursive: *recursive, Force: *force,
+			Recursive: *recursive, Force: *force, Parents: *parents,
 		}, nil
 	case "pull":
 		fs := flag.NewFlagSet("file pull", flag.ContinueOnError)
@@ -635,7 +650,20 @@ func parseFile(args []string) (Action, error) {
 			TaskID: pargs[0], RelPath: pargs[1],
 			Recursive: *recursive, Force: *force,
 		}, nil
+	case "mkdir":
+		fs := flag.NewFlagSet("file mkdir", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		parents := fs.Bool("parents", false, "")
+		fs.BoolVar(parents, "p", false, "")
+		if err := fs.Parse(rest); err != nil {
+			return nil, fmt.Errorf("file mkdir: %w", err)
+		}
+		pargs := fs.Args()
+		if len(pargs) != 2 {
+			return nil, fmt.Errorf("file mkdir: usage: file mkdir [-p] <task-id> <worktree-rel-dir>")
+		}
+		return FileMkdirAction{TaskID: pargs[0], RelPath: pargs[1], Parents: *parents}, nil
 	default:
-		return nil, fmt.Errorf("file: unknown sub-verb %q (ls | push | pull | delete)", verb)
+		return nil, fmt.Errorf("file: unknown sub-verb %q (ls | push | pull | mkdir | delete)", verb)
 	}
 }

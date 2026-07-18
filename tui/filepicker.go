@@ -458,7 +458,7 @@ func (m FilePickerModel) commitInputPath(path string) (FilePickerModel, tea.Cmd)
 		m.pendingPushLocal = path
 		m.pendingPushRemote = dest
 		m.pendingPushRecursive = recursive
-		return m, DoFilePush(m.client, m.taskID, path, dest, recursive, false)
+		return m, DoFilePush(m.client, m.taskID, path, dest, recursive, false, false)
 	case pickerAskPullDst:
 		if m.cursor < 0 || m.cursor >= len(m.entries) {
 			m.inputMode = pickerNone
@@ -677,7 +677,7 @@ func (m FilePickerModel) handlePushOverwriteKey(k tea.KeyMsg) (FilePickerModel, 
 		m.pendingPushRemote = ""
 		m.pendingPushRecursive = false
 		m.inputMode = pickerNone
-		return m, DoFilePush(m.client, m.taskID, local, remote, rec, true)
+		return m, DoFilePush(m.client, m.taskID, local, remote, rec, true, false)
 	case "n", "N", "esc":
 		m.pendingPushLocal = ""
 		m.pendingPushRemote = ""

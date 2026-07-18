@@ -11,12 +11,12 @@ import (
 )
 
 // FileResultMsg is delivered to App.Update after a file op completes.
-// Op is a short verb ("ls", "push", "pull", "delete") used to compose
-// the cmdresult line. Output is non-empty on `ls` success (the listing
-// to render); Err is non-nil on failure for any verb. Both empty
-// indicates a silent success for a write op (`push`, `pull`,
-// `delete`); the dispatch handler renders an "ok: ..." line in that
-// case.
+// Op is a short verb ("ls", "push", "pull", "mkdir", "delete") used to
+// compose the cmdresult line. Output is non-empty on `ls` success (the
+// listing to render); Err is non-nil on failure for any verb. Both
+// empty indicates a silent success for a write op (`push`, `pull`,
+// `mkdir`, `delete`); the dispatch handler renders an "ok: ..." line
+// in that case.
 type FileResultMsg struct {
 	Op     string
 	TaskID string
@@ -47,21 +47,44 @@ func DoFileLs(c *cli.Client, taskID, relPath string) tea.Cmd {
 // DoFilePush copies a local source into the task's worktree. The
 // recursive variant uses dir_push (tar over the wire); the
 // non-recursive variant uses the single-file push path with optional
-// force overwrite.
-func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, force bool) tea.Cmd {
+// force overwrite. Parents creates missing parent directories of
+// remoteDst before the push (mkdir -p semantics).
+func DoFilePush(c *cli.Client, taskID, localSrc, remoteDst string, recursive, force, parents bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
+		opts := cli.FilePushOpts{Force: force, MkdirParents: parents}
 		var err error
 		if recursive {
-			err = c.FilePushDir(ctx, taskID, localSrc, remoteDst, cli.FilePushOpts{Force: force})
+			err = c.FilePushDir(ctx, taskID, localSrc, remoteDst, opts)
 		} else {
-			err = c.FilePush(ctx, taskID, localSrc, remoteDst, cli.FilePushOpts{Force: force})
+			err = c.FilePush(ctx, taskID, localSrc, remoteDst, opts)
 		}
 		return FileResultMsg{
 			Op:     "push",
 			TaskID: taskID,
 			Detail: fmt.Sprintf("%s -> %s", localSrc, remoteDst),
+			Err:    err,
+		}
+	}
+}
+
+// DoFileMkdir creates a directory under the task's worktree. parents
+// mirrors mkdir -p (create missing parents, existing dir is ok);
+// without it the runner is strict.
+func DoFileMkdir(c *cli.Client, taskID, relPath string, parents bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := c.FileMkdir(ctx, taskID, relPath, parents)
+		label := relPath
+		if parents {
+			label += " (-p)"
+		}
+		return FileResultMsg{
+			Op:     "mkdir",
+			TaskID: taskID,
+			Detail: label,
 			Err:    err,
 		}
 	}
