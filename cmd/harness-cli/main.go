@@ -334,7 +334,7 @@ func main() {
 
 	case "file":
 		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli file {push|pull|ls|delete} ...")
+			fmt.Fprintln(os.Stderr, "usage: harness-cli file {push|pull|ls|mkdir|delete} ...")
 			os.Exit(2)
 		}
 		fsub := args[0]
@@ -351,18 +351,21 @@ func main() {
 			fs.BoolVar(recursive, "r", false, "alias for --recursive")
 			force := fs.Bool("force", false, "overwrite existing destination")
 			fs.BoolVar(force, "f", false, "alias for --force")
+			parents := fs.Bool("parents", false, "create missing parent directories of the destination (mkdir -p)")
+			fs.BoolVar(parents, "p", false, "alias for --parents")
 			fs.Parse(rest)
 			pargs := fs.Args()
 			if len(pargs) != 3 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file push [-r] [-f] <task-id> <local-src> <worktree-rel-dst>")
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file push [-r] [-f] [-p] <task-id> <local-src> <worktree-rel-dst>")
 				os.Exit(2)
 			}
+			opts := cli.FilePushOpts{Force: *force, MkdirParents: *parents}
 			if *recursive {
-				if err := c.FilePushDir(ctx, pargs[0], pargs[1], pargs[2], cli.FilePushOpts{Force: *force}); err != nil {
+				if err := c.FilePushDir(ctx, pargs[0], pargs[1], pargs[2], opts); err != nil {
 					die(err)
 				}
 			} else {
-				if err := c.FilePush(ctx, pargs[0], pargs[1], pargs[2], cli.FilePushOpts{Force: *force}); err != nil {
+				if err := c.FilePush(ctx, pargs[0], pargs[1], pargs[2], opts); err != nil {
 					die(err)
 				}
 			}
@@ -397,6 +400,19 @@ func main() {
 				rel = rest[1]
 			}
 			if err := c.FileLs(ctx, rest[0], rel, os.Stdout); err != nil {
+				die(err)
+			}
+		case "mkdir":
+			fs := flag.NewFlagSet("file mkdir", flag.ExitOnError)
+			parents := fs.Bool("parents", false, "create missing parent directories (mkdir -p); also makes an existing directory a success")
+			fs.BoolVar(parents, "p", false, "alias for --parents")
+			fs.Parse(rest)
+			pargs := fs.Args()
+			if len(pargs) != 2 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file mkdir [-p] <task-id> <worktree-rel-dir>")
+				os.Exit(2)
+			}
+			if err := c.FileMkdir(ctx, pargs[0], pargs[1], *parents); err != nil {
 				die(err)
 			}
 		case "delete":
@@ -640,9 +656,11 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      inspect/purge the agentboard (cap: info_global; purge: purge)")
 	fmt.Fprintln(os.Stderr, "  agent {send|wait|inbox|subscribe|unsubscribe|dispatch|topics|subscriptions}")
 	fmt.Fprintln(os.Stderr, "                                      agent-to-agent message ops (env-primary; HARNESS_AUTH_TICKET required)")
-	fmt.Fprintln(os.Stderr, "  file push [-r|--recursive] [-f|--force] TASK_ID LOCAL_SRC WORKTREE_REL_DST")
+	fmt.Fprintln(os.Stderr, "  file push [-r|--recursive] [-f|--force] [-p|--parents] TASK_ID LOCAL_SRC WORKTREE_REL_DST")
 	fmt.Fprintln(os.Stderr, "                                      copy a local file (or directory tree with -r) into the worktree")
 	fmt.Fprintln(os.Stderr, "                                      default: O_EXCL refuses to overwrite; -f permits replacement")
+	fmt.Fprintln(os.Stderr, "  file mkdir [-p|--parents] TASK_ID WORKTREE_REL_DIR")
+	fmt.Fprintln(os.Stderr, "                                      create a directory in the worktree")
 	fmt.Fprintln(os.Stderr, "  file pull [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_SRC LOCAL_DST")
 	fmt.Fprintln(os.Stderr, "                                      copy a worktree file (or directory tree with -r) to a local path")
 	fmt.Fprintln(os.Stderr, "                                      default: O_EXCL refuses to overwrite local; -f permits replacement")
