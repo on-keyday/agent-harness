@@ -1,5 +1,3 @@
-//go:build !js
-
 package cli
 
 import (
@@ -7,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -20,11 +19,18 @@ import (
 // path (collectScreen, which feeds them through a VT emulator), and the wasm
 // WebUI preview (which renders them in the browser's xterm instead — the VT
 // emulator stays native-only).
+//
+// This file is untagged: CommandExecutionStream lives in objtrsf's untagged
+// exec_stream.go, so the same frame-demux wrapper serves native and js builds.
+// It wraps attachSessionRPC directly instead of AttachSession because the two
+// builds define AttachSession with different signatures (the js variant
+// installs the browser xterm singleton — the wrong tool for a peek).
 func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.Duration) (captured []byte, rows, cols uint16, hasSize bool, err error) {
-	stream, _, err := c.AttachSession(ctx, taskIDHex, protocol.AttachMode_View)
+	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View)
 	if err != nil {
 		return nil, 0, 0, false, err
 	}
+	stream := agentexec.NewCommandExecutionStream(st)
 	defer stream.Close()
 
 	var mu sync.Mutex
