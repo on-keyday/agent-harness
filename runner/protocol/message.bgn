@@ -1069,6 +1069,11 @@ enum FileTransferDirection:
     dir_delete   # remove a directory from the worktree. force=0 → empty
                  # dir only (fails on non-empty); force=1 → recursive
                  # (os.RemoveAll). Rejects regular files (use `delete`).
+    mkdir        # create a directory. mkdir_parents=0 → strict os.Mkdir
+                 # (parent must exist, existing dir → already_exists);
+                 # mkdir_parents=1 → os.MkdirAll (parents created, existing
+                 # dir → ok). Mirrors Unix mkdir / mkdir -p. No body bytes;
+                 # ack only, like delete. force / expected_size are ignored.
 
 enum FileTransferStatus:
     :u8
@@ -1110,7 +1115,11 @@ format OpenFileTransferRequest:
     rel_path      :[rel_path_len]u8
     expected_size :u64
     force         :u1
-    reserved      :u7
+    mkdir_parents :u1     # push / dir_push: create missing parent
+                          # directories of the destination before writing.
+                          # mkdir: MkdirAll instead of strict Mkdir.
+                          # Ignored by pull / delete / dir_pull / dir_delete.
+    reserved      :u6
 
 enum OpenFileTransferStatus:
     :u8
@@ -1151,7 +1160,11 @@ format RunnerOpenFileTransferRequest:
     rel_path      :[rel_path_len]u8
     expected_size :u64
     force         :u1
-    reserved      :u7
+    mkdir_parents :u1     # push / dir_push: create missing parent
+                          # directories of the destination before writing.
+                          # mkdir: MkdirAll instead of strict Mkdir.
+                          # Ignored by pull / delete / dir_pull / dir_delete.
+    reserved      :u6
 
 format RunnerListFilesRequest:
     task_id      :TaskID
