@@ -1,7 +1,9 @@
 # WebUI Session Preview — Design
 
 Date: 2026-07-18
-Status: approved (brainstormed with user)
+Status: shipped; snapshot engine SUPERSEDED by
+`2026-07-18-webui-live-session-preview-design.md` (live stream + ⏸/▶ —
+the modal, entry points, gating, and scale-to-fit here remain accurate)
 
 ## Problem
 

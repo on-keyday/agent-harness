@@ -2064,6 +2064,14 @@ const POLL_INTERVAL_MS = 5000;
       note.textContent = `preview error: ${e.message}`;
       sessionPreviewLive = false;
       setPreviewPauseLabel();
+      return;
+    }
+    // Reconcile a narrow race: if the PREVIOUS stream's death was delivered
+    // while our attach RPC was in flight, harness_previewClosed already
+    // flipped sessionPreviewLive off — the stream we just installed would run
+    // unrendered behind a paused (▶) UI. Stop it; the death note stands.
+    if (epoch === sessionPreviewEpoch && !sessionPreviewLive) {
+      window.harness.previewStop();
     }
   }
 

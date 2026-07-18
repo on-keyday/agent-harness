@@ -89,9 +89,13 @@ a pause/resume control (⏸/▶). Closing the modal disconnects immediately.
      the frozen term and flip the button to ▶.
    - Modal `close` event (✕ / backdrop / Esc / Reattach shortcut):
      `previewStop()` + dispose, immediately.
-   - All JS callbacks check the modal's epoch (existing `sessionPreviewEpoch`)
-     so late wasm callbacks after close/pause/reopen cannot touch a
-     torn-down or repurposed DOM.
+   - As-shipped guard shape: the wasm hooks check the modal-open +
+     `sessionPreviewLive` flags (flipped BEFORE any stop, so a raced late
+     hook after close/pause no-ops); `sessionPreviewEpoch` guards the async
+     `previewStart` promise across close/reopen, and the success path
+     reconciles — if a stream-death hook flipped `live` off during the
+     connect window, the freshly-installed stream is stopped rather than
+     left running unrendered behind a paused UI.
 
 ## Error handling
 
