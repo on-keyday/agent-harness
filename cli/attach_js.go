@@ -22,6 +22,15 @@ import (
 //
 // Returns the task's hex id (same as taskIDHex) on success.
 func (c *Client) AttachSession(ctx context.Context, taskIDHex string, mode protocol.AttachMode) (string, error) {
+	// Mark the attach as in flight BEFORE the RPC: when this browser is
+	// already the controlling client of taskIDHex, the server closes that old
+	// stream while this RPC is still running, and the old recv pump must not
+	// report the closure as a foreign takeover (see pendingAttachTask in
+	// open_interactive_wasm.go). Cleared on every exit path; an attach that
+	// fails leaves the JS error path in charge of the indicator.
+	setPendingAttach(taskIDHex)
+	defer clearPendingAttach()
+
 	stream, _, err := c.attachSessionRPC(ctx, taskIDHex, mode)
 	if err != nil {
 		return "", err

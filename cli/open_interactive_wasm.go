@@ -69,6 +69,40 @@ var (
 	interactiveGen           atomic.Uint64
 )
 
+// pendingAttachTask is the task id of an AttachSession RPC currently in
+// flight, "" when none. It closes a notification race in the SELF-reattach
+// path: the server tears the old attach stream down while our new
+// AttachSession RPC is still in flight, so the old recv pump can observe a
+// REMOTE close before installAndPumpSession has superseded it locally —
+// making a self-supersede look exactly like a foreign takeover. The JS-side
+// attachEpoch guard cannot catch this ordering either: the epoch is bumped
+// before the RPC starts, so the close handler already captures the new epoch.
+// notifyInteractiveClosed therefore suppresses the notice for a task whose
+// attach is pending — extending installAndPumpSession's "local supersede is
+// silent" invariant across the RPC window.
+var (
+	pendingAttachMu   sync.Mutex
+	pendingAttachTask string
+)
+
+func setPendingAttach(taskIDHex string) {
+	pendingAttachMu.Lock()
+	pendingAttachTask = taskIDHex
+	pendingAttachMu.Unlock()
+}
+
+func clearPendingAttach() {
+	pendingAttachMu.Lock()
+	pendingAttachTask = ""
+	pendingAttachMu.Unlock()
+}
+
+func isPendingAttach(taskIDHex string) bool {
+	pendingAttachMu.Lock()
+	defer pendingAttachMu.Unlock()
+	return pendingAttachTask != "" && pendingAttachTask == taskIDHex
+}
+
 // detachDrainTimeout bounds how long installAndPumpSession waits for a
 // superseded session's recv goroutine to stop before installing the new one.
 // On a healthy transport CloseBoth unblocks the read well under this; the
@@ -393,6 +427,12 @@ func (s *InteractiveSession) markClosed() {
 // surface it and intentionally does NOT clear the terminal. The call is guarded
 // so a missing handler (e.g. a non-WebUI wasm host) is a no-op.
 func notifyInteractiveClosed(taskIDHex string) {
+	// Self-supersede in disguise: our own AttachSession RPC for this task is
+	// in flight, and this close is the server tearing down the stream we are
+	// replacing — not a foreign takeover. Stay silent (see pendingAttachTask).
+	if isPendingAttach(taskIDHex) {
+		return
+	}
 	fn := js.Global().Get("harness_onInteractiveClosed")
 	if fn.Type() != js.TypeFunction {
 		return
