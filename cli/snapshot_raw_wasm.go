@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
 // CollectRaw view-attaches to a detachable interactive session and drains the
@@ -20,6 +21,11 @@ import (
 // path (collectScreen, which feeds them through a VT emulator), and the wasm
 // WebUI preview (which renders them in the browser's xterm instead — the VT
 // emulator stays native-only).
+//
+// On wasm, the stream carries the exec frame mux (frame.Frame with Stdout/Stderr/Control
+// types), not raw PTY bytes. This implementation parses frames directly because
+// objtrsf/exec (CommandExecutionStream) is excluded from js builds. Payload bytes and
+// the TerminalWindowSize control frame mirror what native LastWindowSize sees.
 func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.Duration) (captured []byte, rows, cols uint16, hasSize bool, err error) {
 	stream, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View)
 	if err != nil {
@@ -29,23 +35,39 @@ func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.D
 
 	var mu sync.Mutex
 	var data []byte
+	var szRows, szCols uint16
+	var szOK bool
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		buf := make([]byte, 32*1024)
 		for {
-			n, rerr := stream.Read(buf)
-			if n > 0 {
+			f := &frame.Frame{}
+			if rerr := f.Read(stream); rerr != nil {
+				return
+			}
+			switch f.Header.Type {
+			case frame.FrameType_Stdout, frame.FrameType_Stderr:
+				if f.Header.Len == 0 {
+					continue
+				}
+				payload := *f.Data()
+				if len(payload) == 0 {
+					continue
+				}
 				mu.Lock()
-				data = append(data, buf[:n]...)
+				data = append(data, payload...)
 				full := len(data) > 8*1024*1024
 				mu.Unlock()
 				if full {
 					return
 				}
-			}
-			if rerr != nil {
-				return
+			default:
+				if ctrl := f.Control(); ctrl != nil && ctrl.Type == frame.ControlType_TerminalWindowSize {
+					ws := ctrl.TerminalWindowSize()
+					mu.Lock()
+					szRows, szCols, szOK = ws.Rows, ws.Columns, true
+					mu.Unlock()
+				}
 			}
 		}
 	}()
@@ -58,7 +80,7 @@ func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.D
 
 	mu.Lock()
 	captured = append([]byte(nil), data...)
+	rows, cols, hasSize = szRows, szCols, szOK
 	mu.Unlock()
-
-	return captured, 0, 0, false, nil
+	return captured, rows, cols, hasSize, nil
 }
