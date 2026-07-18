@@ -2238,6 +2238,20 @@ const POLL_INTERVAL_MS = 5000;
       .some((v) => (v || "").toLowerCase().includes(needle));
   }
 
+  // repoTail returns the last path segment for display ("/a/b/repo" -> "repo",
+  // "C:/x/y" -> "y"); full path stays available via the row's title attr.
+  function repoTail(p) {
+    const parts = (p || "").split(/[\\/]/).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : (p || "-");
+  }
+
+  // Status dot/label colors. Terminal states are muted so live rows pop;
+  // unknown (Pending/Assigned/...) falls back to blue.
+  const TASK_STATUS_COLORS = {
+    Running: "#2d5", Detached: "#e5c07b",
+    Failed: "#f14c4c", Succeeded: "#888", Cancelled: "#888",
+  };
+
   function renderTaskList(tasks) {
     lastTasks = tasks || [];
     const finished = lastTasks.filter((t) => TERMINAL_STATES.has(t.status)).length;
@@ -2260,18 +2274,59 @@ const POLL_INTERVAL_MS = 5000;
       const wrap = document.createElement("div");
       const row = document.createElement("div");
       row.className = "task-row";
-      const promptShort = (t.prompt || "").slice(0, 60);
-      let attr = `  from=${t.origin || "-"}`;
-      if (t.createdBy) attr += `  by=${t.createdBy}`;
-      if (t.resumedBy) attr += `  resumed_by=${t.resumedBy}`;
+      row.title = `${t.id}\n${t.repoPath}`; // full id + path on hover; sheet has Copy id
+
+      const line1 = document.createElement("div");
+      line1.className = "task-row-line1";
+      const dot = document.createElement("span");
+      dot.className = "task-status-dot";
+      dot.style.background = TASK_STATUS_COLORS[t.status] || "#61afef";
+      const statusEl = document.createElement("span");
+      statusEl.className = "task-status-label";
+      statusEl.style.color = TASK_STATUS_COLORS[t.status] || "#61afef";
+      statusEl.textContent = t.status;
+      const repoEl = document.createElement("span");
+      repoEl.className = "task-repo";
+      repoEl.textContent = repoTail(t.repoPath);
+      line1.append(dot, statusEl, repoEl);
       // Busy/idle badge from the server-computed idle age (-1 = no live
       // session output). Threshold mirrors cli.ActivityBusyThreshold (3s):
       // an in-flight agent TUI repaints ~every 100ms, an idle prompt emits
       // nothing, so 3s separates the two with wide margin.
-      if (t.outputIdleMs >= 0) attr += `  act=${activityBadge(t.outputIdleMs)}`;
-      if (t.caps) attr += `  caps=${t.caps}`;
-      row.textContent = `${t.id.slice(0, 12)}…  ${t.status}  ${t.kind}  ${t.repoPath}${attr}  ${JSON.stringify(promptShort)}`;
-      row.title = t.id; // full id on hover (desktop); tap the row → sheet has Copy id
+      if (t.outputIdleMs >= 0) {
+        const act = document.createElement("span");
+        act.className = "task-act";
+        act.textContent = activityBadge(t.outputIdleMs);
+        line1.appendChild(act);
+      }
+      if (t.agentProfile) {
+        const ag = document.createElement("span");
+        ag.className = "task-agent";
+        ag.textContent = t.agentProfile;
+        line1.appendChild(ag);
+      }
+
+      const meta = document.createElement("div");
+      meta.className = "task-row-meta";
+      let metaText = `${t.id.slice(0, 12)}…  ${t.kind}  from=${t.origin || "-"}`;
+      if (t.createdBy) metaText += `  by=${t.createdBy}`;
+      if (t.resumedBy) metaText += `  resumed_by=${t.resumedBy}`;
+      if (t.caps) metaText += `  caps=${t.caps}`;
+      meta.textContent = metaText;
+      if (t.errorMsg) {
+        const err = document.createElement("span");
+        err.className = "task-err";
+        err.textContent = `  err=${t.errorMsg}`;
+        meta.appendChild(err);
+      }
+
+      row.append(line1, meta);
+      if (t.prompt) {
+        const promptEl = document.createElement("div");
+        promptEl.className = "task-prompt";
+        promptEl.textContent = t.prompt;
+        row.appendChild(promptEl);
+      }
       const sheet = document.createElement("div");
       sheet.className = "task-sheet";
       sheet.hidden = true;
