@@ -90,6 +90,7 @@ func main() {
 		"onConnectionChange": js.FuncOf(harnessOnConnectionChange),
 		"fileLs":             js.FuncOf(harnessFileLs),
 		"fileDelete":         js.FuncOf(harnessFileDelete),
+		"fileMkdir":          js.FuncOf(harnessFileMkdir),
 		"filePushBytes":      js.FuncOf(harnessFilePushBytes),
 		"filePullBytes":      js.FuncOf(harnessFilePullBytes),
 		"filePullDirBytes":   js.FuncOf(harnessFilePullDirBytes),
@@ -1397,12 +1398,49 @@ func harnessFileDelete(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
+// harnessFileMkdir creates a directory at rel inside taskID's worktree.
+// parents=false is strict mkdir (missing parent rejects with
+// code="not_found", existing dir with code="already_exists");
+// parents=true is mkdir -p (parents created, existing dir resolves).
+//
+//	harness.fileMkdir(taskID, rel, parents) -> Promise<void>
+func harnessFileMkdir(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		if len(args) < 3 {
+			rejectErr(reject, errors.New("fileMkdir: missing taskID / rel / parents args"))
+			return nil
+		}
+		taskID := args[0].String()
+		rel := args[1].String()
+		parents := args[2].Truthy()
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if err := c.FileMkdir(rootCtx, taskID, rel, parents); err != nil {
+				rejectFileErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
 // harnessFilePushBytes uploads data (a Uint8Array of file contents)
 // into taskID's worktree at remoteRel. force=true overwrites; false
-// rejects with code="already_exists" if the destination is present,
-// letting the JS layer drive a confirm() prompt before retrying.
+// rejects with code="already_exists" if the destination is present.
+// parents=true creates missing parent directories (mkdir -p semantics);
+// false rejects with code="not_found" if the parent is missing, letting
+// the JS layer drive a confirm() prompt before retrying either case.
 //
-//	harness.filePushBytes(taskID, remoteRel, data, force[, onProgress]) -> Promise<void>
+//	harness.filePushBytes(taskID, remoteRel, data, force, parents[, onProgress]) -> Promise<void>
 //	onProgress(transferred, total) is called ~10/s with byte counts.
 //
 // jsProgress adapts an optional JS progress callback at args[idx] into a
@@ -1427,25 +1465,26 @@ func harnessFilePushBytes(this js.Value, args []js.Value) any {
 		// Copy bytes out of the Uint8Array on the JS heap into a Go
 		// []byte while we're still on the main thread; the goroutine
 		// below cannot reach JS values directly.
-		if len(args) < 4 {
-			rejectErr(reject, errors.New("filePushBytes: missing taskID / remoteRel / data / force args"))
+		if len(args) < 5 {
+			rejectErr(reject, errors.New("filePushBytes: missing taskID / remoteRel / data / force / parents args"))
 			return nil
 		}
 		taskID := args[0].String()
 		remoteRel := args[1].String()
 		dataJS := args[2]
 		force := args[3].Truthy()
+		parents := args[4].Truthy()
 		length := dataJS.Length()
 		data := make([]byte, length)
 		js.CopyBytesToGo(data, dataJS)
-		onProgress := jsProgress(args, 4)
+		onProgress := jsProgress(args, 5)
 		go func() {
 			c, err := currentClient()
 			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			if err := c.FilePushBytes(rootCtx, taskID, data, remoteRel, cli.FilePushOpts{Force: force}, onProgress); err != nil {
+			if err := c.FilePushBytes(rootCtx, taskID, data, remoteRel, cli.FilePushOpts{Force: force, MkdirParents: parents}, onProgress); err != nil {
 				rejectFileErr(reject, err)
 				return
 			}
