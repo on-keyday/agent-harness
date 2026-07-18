@@ -38,9 +38,20 @@ emulator (which is `!js`-tagged and stays that way).
 ### Go / wasm side
 
 1. **Move `collectRaw`** from `cli/snapshot_native.go` (build tag `!js`) into
-   a new shared file `cli/snapshot_raw.go` with **no build tag**. Zero logic
-   change — it depends only on `protocol` + the attach stream, not on the VT
-   emulator. `collectScreen` / `SessionSnapshot*` stay in the `!js` file.
+   a new shared file `cli/snapshot_raw.go` with **no build tag**, exported as
+   `CollectRaw` (the wasm bridge calls it cross-package). Same collection
+   logic; `collectScreen` / `SessionSnapshot*` stay in the `!js` file.
+
+   As-shipped amendment: an untagged file was impossible against the objtrsf
+   version this branch started from — the whole `objtrsf/exec` package
+   (including the client-side `CommandExecutionStream`) carried a file-level
+   `//go:build !js`. objtrsf therefore split the client wrapper into an
+   untagged `exec/exec_stream.go` (upstream commit dfc8b85, consumed here by
+   bumping go.mod to v0.0.0-20260718082007-dfc8b85c3762). `CollectRaw` also
+   wraps `attachSessionRPC` + `NewCommandExecutionStream` directly instead of
+   calling `AttachSession`, because the native and js builds define
+   `AttachSession` with different signatures (the js variant installs the
+   browser-xterm singleton — the wrong tool for a peek).
 2. **New wasm bridge function** in `cmd/harness-webui-wasm`:
 
    ```
@@ -48,7 +59,7 @@ emulator (which is `!js`-tagged and stays that way).
        Promise<{bytes: Uint8Array, rows, cols, hasSize}>
    ```
 
-   Implementation: `currentClient()` → `c.collectRaw(ctx, id, settle)` →
+   Implementation: `currentClient()` → `c.CollectRaw(ctx, id, settle)` →
    resolve with the captured bytes + replayed terminal size. `settleMs`
    defaults to the same settle value the CLI uses. It uses an independent
    view-mode exec stream and must NOT touch the `activeInteractiveSession`

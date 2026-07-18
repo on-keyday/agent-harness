@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
 // CollectRaw view-attaches to a detachable interactive session and drains the

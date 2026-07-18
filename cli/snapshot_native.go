@@ -15,7 +15,7 @@ import (
 	"github.com/charmbracelet/x/vt"
 )
 
-// collectScreen view-attaches via collectRaw and feeds the captured byte burst
+// collectScreen view-attaches via CollectRaw and feeds the captured byte burst
 // through a headless VT emulator. It returns the built emulator (the CALLER
 // must Close it) plus the resolved grid size. Shared by SessionSnapshot (plain
 // text) and SessionSnapshotStyled (text + style spans).
