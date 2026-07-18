@@ -2245,12 +2245,21 @@ const POLL_INTERVAL_MS = 5000;
     return parts.length ? parts[parts.length - 1] : (p || "-");
   }
 
-  // Status dot/label colors. Terminal states are muted so live rows pop;
-  // unknown (Pending/Assigned/...) falls back to blue.
-  const TASK_STATUS_COLORS = {
-    Running: "#2d5", Detached: "#e5c07b",
-    Failed: "#f14c4c", Succeeded: "#888", Cancelled: "#888",
-  };
+  // taskStatusColor returns the dot/label color for a status. Terminal states
+  // are muted so live rows pop; unknown (Pending/Assigned/...) falls back to
+  // blue. Function declaration (not a const map) so the initial
+  // refreshSnapshot() — which runs before this point in the file — can reach
+  // it through hoisting without a TDZ error.
+  function taskStatusColor(status) {
+    switch (status) {
+      case "Running":   return "#2d5";
+      case "Detached":  return "#e5c07b";
+      case "Failed":    return "#f14c4c";
+      case "Succeeded":
+      case "Cancelled": return "#888";
+      default:          return "#61afef";
+    }
+  }
 
   function renderTaskList(tasks) {
     lastTasks = tasks || [];
@@ -2280,10 +2289,10 @@ const POLL_INTERVAL_MS = 5000;
       line1.className = "task-row-line1";
       const dot = document.createElement("span");
       dot.className = "task-status-dot";
-      dot.style.background = TASK_STATUS_COLORS[t.status] || "#61afef";
+      dot.style.background = taskStatusColor(t.status);
       const statusEl = document.createElement("span");
       statusEl.className = "task-status-label";
-      statusEl.style.color = TASK_STATUS_COLORS[t.status] || "#61afef";
+      statusEl.style.color = taskStatusColor(t.status);
       statusEl.textContent = t.status;
       const repoEl = document.createElement("span");
       repoEl.className = "task-repo";
