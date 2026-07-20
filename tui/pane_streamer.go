@@ -1,0 +1,189 @@
+package tui
+
+import (
+	"context"
+	"strings"
+	"sync"
+
+	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/charmbracelet/x/vt"
+
+	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
+	agentexec "github.com/on-keyday/objtrsf/exec"
+)
+
+// PaneStreamer view-attaches one session read-only and renders its live screen
+// into a headless VT emulator, croppable to a pane. It NEVER sends a size — the
+// grid has no size authority (Global Constraint) — it sizes its emulator to the
+// size the server replays and resizes on mid-stream winsize frames.
+type PaneStreamer struct {
+	taskID string
+
+	mu     sync.Mutex
+	emu    *vt.Emulator
+	cols   int
+	rows   int
+	err    error
+	stream *agentexec.CommandExecutionStream
+	cancel context.CancelFunc
+	drainC chan struct{} // closed to stop the emulator drain goroutine
+}
+
+func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
+	if defRows <= 0 {
+		defRows = 24
+	}
+	if defCols <= 0 {
+		defCols = 80
+	}
+	emu := vt.NewEmulator(defCols, defRows)
+	return &PaneStreamer{taskID: taskID, emu: emu, cols: defCols, rows: defRows}
+}
+
+func (p *PaneStreamer) TaskID() string { return p.taskID }
+
+func (p *PaneStreamer) Err() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.err
+}
+
+func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client) {
+	cctx, cancel := context.WithCancel(ctx)
+	p.mu.Lock()
+	p.cancel = cancel
+	p.drainC = make(chan struct{})
+	drainC := p.drainC
+	emu := p.emu
+	p.mu.Unlock()
+
+	// x/vt answers DA1/DA2/DSR queries by writing to its own output side; drain
+	// and discard or emu.Write blocks forever (cli/snapshot_native.go pattern).
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			select {
+			case <-drainC:
+				return
+			default:
+			}
+			if _, err := emu.Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	go p.pump(cctx, c)
+}
+
+func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
+	stream, _, err := c.AttachSession(ctx, p.taskID, protocol.AttachMode_View)
+	if err != nil {
+		p.setErr(err)
+		return
+	}
+	p.mu.Lock()
+	p.stream = stream
+	p.mu.Unlock()
+
+	out := stream.Stdout()
+	buf := make([]byte, 32*1024)
+	lastRows, lastCols := 0, 0
+	for {
+		n, rerr := out.Read(buf)
+		if n > 0 {
+			rows, cols, ok := stream.LastWindowSize()
+			p.mu.Lock()
+			if ok && (int(rows) != lastRows || int(cols) != lastCols) && rows > 0 && cols > 0 {
+				p.emu.Resize(int(cols), int(rows))
+				p.cols, p.rows = int(cols), int(rows)
+				lastRows, lastCols = int(rows), int(cols)
+			}
+			p.emu.Write(buf[:n])
+			p.mu.Unlock()
+		}
+		if rerr != nil {
+			p.setErr(rerr)
+			return
+		}
+	}
+}
+
+func (p *PaneStreamer) setErr(err error) {
+	p.mu.Lock()
+	if p.err == nil {
+		p.err = err
+	}
+	p.mu.Unlock()
+}
+
+func (p *PaneStreamer) Stop() {
+	p.mu.Lock()
+	cancel := p.cancel
+	stream := p.stream
+	emu := p.emu
+	drainC := p.drainC
+	p.cancel = nil
+	p.stream = nil
+	p.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if stream != nil {
+		_ = stream.Close()
+	}
+	if drainC != nil {
+		close(drainC)
+	}
+	if emu != nil {
+		_ = emu.Close()
+	}
+}
+
+// Render returns a bottom-left crop of the emulator grid at width×height cells,
+// plain text. Activity in shells and full-screen agents concentrates at the
+// bottom, so the bottom rows are the informative ones when a pane is smaller
+// than the real grid. Wide (CJK) cells advance the scan by cell.Width.
+func (p *PaneStreamer) Render(width, height int) string {
+	p.mu.Lock()
+	emu := p.emu
+	cols, rows := p.cols, p.rows
+	p.mu.Unlock()
+	if emu == nil || width <= 0 || height <= 0 {
+		return ""
+	}
+	startY := rows - height
+	if startY < 0 {
+		startY = 0
+	}
+	var b strings.Builder
+	for y := startY; y < rows; y++ {
+		if y > startY {
+			b.WriteByte('\n')
+		}
+		x := 0
+		painted := 0
+		for x < cols && painted < width {
+			cell := emu.CellAt(x, y)
+			w := cellPaneWidth(cell)
+			if cell == nil || cell.Content == "" {
+				b.WriteByte(' ')
+				painted++
+				x++
+				continue
+			}
+			b.WriteString(cell.Content)
+			painted += w
+			x += w
+		}
+	}
+	return b.String()
+}
+
+func cellPaneWidth(cell *uv.Cell) int {
+	if cell == nil || cell.Width < 1 {
+		return 1
+	}
+	return cell.Width
+}
