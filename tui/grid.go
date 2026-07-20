@@ -18,6 +18,10 @@ import (
 const (
 	gridPerPage  = 6  // panes shown per page (3x2)
 	gridMaxPanes = 24 // total cap across all pages (bounds concurrent view streams)
+	// gridStagger spaces successive panes' first attach (by pane index) so
+	// opening the grid doesn't fire all attaches simultaneously — see the storm
+	// note in GridModel.Open / PaneStreamer.startDelay.
+	gridStagger = 60 * time.Millisecond
 )
 
 // gridDiag is set once at startup from HARNESS_GRID_DIAG: when on, each pane
@@ -116,8 +120,14 @@ func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.Ta
 		live = live[:gridMaxPanes]
 	}
 	m.panes = m.panes[:0]
-	for _, t := range live {
+	for i, t := range live {
 		p := NewPaneStreamer(FormatTaskID(t.Id), 24, 80)
+		// Stagger first attaches: firing all N at once storms the shared client and
+		// starves some panes' attach responses (they hang at rx=0 = permanent
+		// black). Space them so the connection isn't saturated by simultaneous
+		// replay bursts; the reattach loop + per-attach timeout still recover any
+		// that slip through.
+		p.startDelay = time.Duration(i) * gridStagger
 		p.Start(ctx, c)
 		m.panes = append(m.panes, p)
 	}

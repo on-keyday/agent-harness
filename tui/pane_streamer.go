@@ -34,6 +34,12 @@ type PaneStreamer struct {
 	cancel  context.CancelFunc
 	stopped bool // Stop() ran; a still-attaching pump must close its stream
 
+	// startDelay staggers this pane's FIRST attach (set by GridModel.Open per
+	// pane index). Opening N panes fires N attaches over the one shared client at
+	// once; their replay bursts starve the later attaches' control responses so
+	// some hang at rx=0 forever. Spacing the first attach out avoids the storm.
+	startDelay time.Duration
+
 	// Diagnostics (HARNESS_GRID_DIAG): count bytes/reads/attaches/panics so a
 	// black pane can render its own state — is this "no bytes arrived" or "bytes
 	// arrived but the emulator is blank"? Guarded by mu.
@@ -124,6 +130,13 @@ const (
 	paneReattachMax  = 3 * time.Second
 )
 
+// paneAttachTimeout bounds ONE attach attempt. RoundTripTaskControl has no
+// timeout of its own, so a control response starved behind other panes' replay
+// bursts (or otherwise lost) would block the attach — and the pane — FOREVER at
+// rx=0 (the confirmed permanent-black case). Capping each attempt turns that
+// hang into a retryable error the reattach loop recovers from.
+const paneAttachTimeout = 8 * time.Second
+
 // pump attaches the pane's cowrite observer and streams output into the
 // emulator, REATTACHING with backoff whenever the stream ends without us
 // stopping it. That non-stop end is the normal, expected outcome of the
@@ -139,16 +152,27 @@ const (
 // staying small; idle panes send nothing, so cowrite is output-equivalent to
 // view until the user types.
 func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
+	// Stagger the first attach so N panes don't storm the shared client at once.
+	if p.startDelay > 0 && !sleepCtx(ctx, p.startDelay) {
+		return
+	}
 	backoff := paneReattachBase
 	for {
 		if ctx.Err() != nil {
 			return
 		}
-		stream, _, err := c.AttachSessionWithReplayLimit(ctx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
+		// Bound each attempt: a hung attach must become a retryable error, not a
+		// permanent rx=0 black pane. The returned stream outlives attachCtx (it
+		// only scopes the RPC + stream-visibility wait), so cancelling here is safe.
+		attachCtx, cancelAttach := context.WithTimeout(ctx, paneAttachTimeout)
+		stream, _, err := c.AttachSessionWithReplayLimit(attachCtx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
+		cancelAttach()
 		if err != nil {
 			if ctx.Err() != nil {
 				return // Stop()/Close() cancelled us — not a failure to surface.
 			}
+			// attachCtx timeout (DeadlineExceeded) falls through here as a normal
+			// retryable error since the long-lived ctx is still alive.
 			p.setErr(err)
 			if cli.IsAttachPermanent(err) {
 				return // session gone/finished: reattach can never succeed.
