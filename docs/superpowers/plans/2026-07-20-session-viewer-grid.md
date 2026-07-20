@@ -30,7 +30,7 @@
 - `webui/static/main.js` — arrayify preview state to a per-pane record keyed by `paneKey`; route the four `harness_preview*` hooks by key; add the grid `<dialog>` engine, a `grid` runCmd case, and a task-list entry. (Task 4)
 - `webui/index.html` — add the grid `<dialog>`. (Task 4)
 - `webui/static/style.css` — grid pane layout (dark, responsive). (Task 4)
-- `tui/pane_streamer.go` (new) — native `PaneStreamer`: owns one view-attach stream + one `vt.Emulator`, pumps `Stdout()` into it, tracks a dirty flag, applies mid-stream resize, renders a bottom-left crop. (Task 3)
+- `tui/pane_streamer.go` (new) — native `PaneStreamer`: owns one view-attach stream + one `vt.Emulator`, pumps `Stdout()` into it, applies mid-stream resize, renders a bottom-left crop. (Task 3)
 - `tui/pane_streamer_test.go` (new) — TDD for the crop renderer + resize handling with a fake stream. (Task 3)
 - `tui/grid.go` (new) — `GridModel`: `connsModal`-style overlay holding N `*PaneStreamer`, focus movement, Enter=attach, `x`=dismiss. (Task 5)
 - `tui/grid_test.go` (new) — GridModel layout/focus tests. (Task 5)
@@ -384,7 +384,7 @@ git commit -m "feat(webui): pane-keyed preview engine (wasm)"
 
 ## Task 3: TUI — native PaneStreamer (view-attach → vt.Emulator pump)
 
-Build the native continuous pump that does not exist today: one view-attach stream feeding one `vt.Emulator`, with a dirty flag for repaint coalescing, mid-stream resize handling, and a bottom-left crop renderer.
+Build the native continuous pump that does not exist today: one view-attach stream feeding one `vt.Emulator`, with mid-stream resize handling and a bottom-left crop renderer.
 
 **Files:**
 - Create: `tui/pane_streamer.go`
@@ -397,7 +397,6 @@ Build the native continuous pump that does not exist today: one view-attach stre
   - `func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer`
   - `func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client)` — spawns the read pump goroutine.
   - `func (p *PaneStreamer) Stop()` — closes stream + emulator, idempotent.
-  - `func (p *PaneStreamer) TakeDirty() bool` — returns true and clears if new bytes arrived since last call (repaint gate).
   - `func (p *PaneStreamer) Render(width, height int) string` — bottom-left crop of the emulator grid to `width`×`height` cells, plain text (no SGR in v1).
   - `func (p *PaneStreamer) TaskID() string`
   - `func (p *PaneStreamer) Err() error` — non-nil once the stream ended (drives the "(stream ended)" pane note).
@@ -495,7 +494,6 @@ type PaneStreamer struct {
 	emu    *vt.Emulator
 	cols   int
 	rows   int
-	dirty  bool
 	err    error
 	stream *agentexec.CommandExecutionStream
 	cancel context.CancelFunc
@@ -519,16 +517,6 @@ func (p *PaneStreamer) Err() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.err
-}
-
-// TakeDirty reports whether new bytes arrived since the last call, clearing the
-// flag. The grid polls this on a repaint tick to avoid re-rendering idle panes.
-func (p *PaneStreamer) TakeDirty() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	d := p.dirty
-	p.dirty = false
-	return d
 }
 
 func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client) {
@@ -583,7 +571,6 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 				lastRows, lastCols = int(rows), int(cols)
 			}
 			p.emu.Write(buf[:n])
-			p.dirty = true
 			p.mu.Unlock()
 		}
 		if rerr != nil {
@@ -598,7 +585,6 @@ func (p *PaneStreamer) setErr(err error) {
 	if p.err == nil {
 		p.err = err
 	}
-	p.dirty = true
 	p.mu.Unlock()
 }
 
@@ -915,7 +901,7 @@ Add a full-screen bubbletea overlay (the `connsModal` template) tiling N `PaneSt
 - Modify: `tui/app.go` (App struct field; `WindowSizeMsg` ~L656-663; `tea.KeyMsg` open key + intercept ~L665-886; `View()` render ~L1279-1302; footer hint ~L1266; a repaint tick)
 
 **Interfaces:**
-- Consumes: `NewPaneStreamer`, `(*PaneStreamer).Start/Stop/TakeDirty/Render/TaskID/Err`, `a.client *cli.Client`, `a.program *tea.Program`, `protocol.TaskInfo` from `a.tasksByID`, `DoAttachSession(a.client, id, protocol.AttachMode_View)` for Enter, `lipgloss.JoinHorizontal/JoinVertical`, `PanelStyle`/`PanelStyleFocused`, `lipgloss.Place`.
+- Consumes: `NewPaneStreamer`, `(*PaneStreamer).Start/Stop/Render/TaskID/Err`, `a.client *cli.Client`, `a.program *tea.Program`, `protocol.TaskInfo` from `a.tasksByID`, `DoAttachSession(a.client, id, protocol.AttachMode_View)` for Enter, `lipgloss.JoinHorizontal/JoinVertical`, `PanelStyle`/`PanelStyleFocused`, `lipgloss.Place`.
 - Produces:
   - `type GridModel struct { ... }`
   - `func NewGridModel() GridModel`
@@ -926,7 +912,7 @@ Add a full-screen bubbletea overlay (the `connsModal` template) tiling N `PaneSt
   - `func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd)` — focus keys (h/j/k/l + arrows), `x` dismiss focused, Esc/`q` close, Enter returns an attach cmd.
   - `func (m GridModel) View() string` — tiled panes, focused pane bordered `PanelStyleFocused`.
   - `func (m GridModel) FocusedTaskID() string`
-  - A `gridTickMsg` + `gridTick() tea.Cmd` repaint pump (~10 Hz) that re-renders only when some pane `TakeDirty()` is true.
+  - A `gridTickMsg` + `gridTick() tea.Cmd` repaint pump (~10 Hz) that drives an unconditional re-render while the grid is open.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1213,7 +1199,7 @@ func (m GridModel) renderPane(idx, w, h int) string {
 
 Notes for the implementer:
 - `IdHex()`, `LastActivityUnixNano`, `TaskKind_Interactive`, `TaskStatus_Running/Detached` — confirm the EXACT `protocol.TaskInfo` field/method names by grepping `runner/protocol` and existing `tui/` usage (the task list already reads status + activity; copy its accessors). If `IdHex()` isn't the accessor, use whatever the task list uses to get the hex id.
-- The tick is started when the grid opens (Step 4 wires `gridTick()` into the open path). The View re-renders every frame; `TakeDirty` is an optimization — for v1 correctness, re-rendering each tick is acceptable and simpler; keep `TakeDirty` on `PaneStreamer` for a later optimization but the grid may ignore it in v1. (Decision: v1 re-renders each tick; do NOT gate on TakeDirty yet — simpler and 10 Hz over ≤9 small crops is cheap.)
+- The tick is started when the grid opens (Step 4 wires `gridTick()` into the open path). v1 re-renders unconditionally each tick — 10 Hz over ≤9 small crops is cheap, so no dirty-flag gating. The pump writes into each emulator under its lock; `View`/`Render` reads the same emulator under the same lock, so every tick reflects the current screen.
 
 - [ ] **Step 4: Wire into `tui/app.go`**
 
@@ -1312,4 +1298,4 @@ git commit -m "feat(tui): live session viewer grid overlay (g)"
 
 **Placeholder scan:** No "TBD"/"implement later". Two explicit "confirm the exact field/accessor name by grepping" notes (protocol.TaskInfo accessors, the error-marshal helper, the snapshot task field) are verification instructions, not deferred decisions — the surrounding code is fully specified and the names are the only repo-specific unknowns an implementer must confirm against real symbols.
 
-**Type consistency:** `paneKey` string threads identically through StartPreview/StopPreview/previewPump/previewCall (Task 2) and the JS hooks + registry (Task 4). `PaneStreamer` method set (Start/Stop/TakeDirty/Render/TaskID/Err) is defined in Task 3 and consumed unchanged in Task 5. `GridModel` method set matches between grid.go and the app.go wiring. `DoAttachSession(c, id, protocol.AttachMode_View)` is the existing signature reused in both Task 5 Enter and the current `v` key.
+**Type consistency:** `paneKey` string threads identically through StartPreview/StopPreview/previewPump/previewCall (Task 2) and the JS hooks + registry (Task 4). `PaneStreamer` method set (Start/Stop/Render/TaskID/Err) is defined in Task 3 and consumed unchanged in Task 5. `GridModel` method set matches between grid.go and the app.go wiring. `DoAttachSession(c, id, protocol.AttachMode_View)` is the existing signature reused in both Task 5 Enter and the current `v` key.
