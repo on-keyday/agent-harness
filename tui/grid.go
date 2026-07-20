@@ -105,6 +105,19 @@ func (m *GridModel) Close() {
 	m.focus = 0
 }
 
+// attachFocused closes the grid and returns a cmd that attaches the focused
+// session in the given mode (Control = takeover, View = read-only). No-op if
+// no pane is focused or there is no client.
+func (m GridModel) attachFocused(mode protocol.AttachMode) (GridModel, tea.Cmd) {
+	id := m.FocusedTaskID()
+	if id == "" || m.client == nil {
+		return m, nil
+	}
+	cmd := DoAttachSession(m.client, id, mode)
+	m.Close()
+	return m, cmd
+}
+
 func (m GridModel) FocusedTaskID() string {
 	if m.focus < 0 || m.focus >= len(m.panes) {
 		return ""
@@ -120,12 +133,12 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 			m.Close()
 			return m, nil
 		case "enter":
-			if id := m.FocusedTaskID(); id != "" && m.client != nil {
-				cmd := DoAttachSession(m.client, id, protocol.AttachMode_View)
-				m.Close()
-				return m, cmd
-			}
-			return m, nil
+			// Enter = control (takeover) attach: go from monitoring straight to
+			// interacting, mirroring the task list's r/R. Use v for read-only.
+			return m.attachFocused(protocol.AttachMode_Control)
+		case "v":
+			// v = read-only view attach (mirrors the task list's v key).
+			return m.attachFocused(protocol.AttachMode_View)
 		case "x":
 			m.dismissFocused()
 			return m, nil
