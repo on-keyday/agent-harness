@@ -71,7 +71,12 @@ func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client) {
 }
 
 func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
-	stream, _, err := c.AttachSession(ctx, p.taskID, protocol.AttachMode_View)
+	// Cowrite (not View): observes output exactly like a viewer AND can forward
+	// input without taking over the controlling client or claiming size
+	// authority — this is what lets the grid type into a focused pane
+	// (SendInput) while it stays small. Idle panes send nothing, so cowrite is
+	// output-equivalent to view until the user enters input mode.
+	stream, _, err := c.AttachSession(ctx, p.taskID, protocol.AttachMode_Cowrite)
 	if err != nil {
 		p.setErr(err)
 		return
@@ -140,6 +145,20 @@ func (p *PaneStreamer) setErr(err error) {
 		p.err = err
 	}
 	p.mu.Unlock()
+}
+
+// SendInput forwards raw key bytes to the session over the cowrite stream (the
+// server relays them to the runner's PTY without taking over the controlling
+// client). No-op before the stream is attached or after Stop. Errors are
+// ignored — a dropped keystroke on a monitoring pane is not worth surfacing.
+func (p *PaneStreamer) SendInput(data []byte) {
+	p.mu.Lock()
+	s := p.stream
+	p.mu.Unlock()
+	if s == nil || len(data) == 0 {
+		return
+	}
+	_, _ = s.Stdin().Write(data)
 }
 
 // Stop is idempotent: a second call captures all-nil fields and does nothing.

@@ -40,6 +40,7 @@ type GridModel struct {
 	panes  []*PaneStreamer
 	focus  int // global index into panes
 	page   int
+	input  bool // input mode: keystrokes go to the focused pane (cowrite)
 	client *cli.Client
 }
 
@@ -129,6 +130,7 @@ func (m *GridModel) Close() {
 	m.open = false
 	m.focus = 0
 	m.page = 0
+	m.input = false
 }
 
 // attachFocused closes the grid and returns a cmd that attaches the focused
@@ -145,18 +147,90 @@ func (m GridModel) attachFocused(mode protocol.AttachMode) (GridModel, tea.Cmd) 
 }
 
 func (m GridModel) FocusedTaskID() string {
-	if m.focus < 0 || m.focus >= len(m.panes) {
-		return ""
+	if p := m.focusedPane(); p != nil {
+		return p.TaskID()
 	}
-	return m.panes[m.focus].TaskID()
+	return ""
+}
+
+func (m GridModel) focusedPane() *PaneStreamer {
+	if m.focus < 0 || m.focus >= len(m.panes) {
+		return nil
+	}
+	return m.panes[m.focus]
+}
+
+// keyToBytes encodes a bubbletea key event into the raw PTY bytes to forward to
+// a session in input mode. Printable runes and the common control/navigation
+// keys are covered; an unmapped exotic key returns nil (silently dropped —
+// acceptable for in-grid typing). Alt prefixes ESC.
+func keyToBytes(m tea.KeyMsg) []byte {
+	var b []byte
+	switch m.Type {
+	case tea.KeyRunes:
+		b = []byte(string(m.Runes))
+	case tea.KeySpace:
+		b = []byte(" ")
+	case tea.KeyUp:
+		b = []byte("\x1b[A")
+	case tea.KeyDown:
+		b = []byte("\x1b[B")
+	case tea.KeyRight:
+		b = []byte("\x1b[C")
+	case tea.KeyLeft:
+		b = []byte("\x1b[D")
+	case tea.KeyHome:
+		b = []byte("\x1b[H")
+	case tea.KeyEnd:
+		b = []byte("\x1b[F")
+	case tea.KeyPgUp:
+		b = []byte("\x1b[5~")
+	case tea.KeyPgDown:
+		b = []byte("\x1b[6~")
+	case tea.KeyDelete:
+		b = []byte("\x1b[3~")
+	default:
+		// The C0/named-control KeyTypes (Enter=CR, Tab=HT, Esc=ESC, Backspace=DEL,
+		// Ctrl+A..Z, …) hold the raw control byte as their value.
+		if m.Type >= 0 && m.Type <= 127 {
+			b = []byte{byte(m.Type)}
+		} else {
+			return nil
+		}
+	}
+	if m.Alt {
+		b = append([]byte{0x1b}, b...)
+	}
+	return b
 }
 
 func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Input mode: every keystroke is forwarded to the focused pane's session
+		// (cowrite), EXCEPT Ctrl+] which exits back to navigation. Esc is passed
+		// through so it still reaches apps in the pane (vim, claude, …).
+		if m.input {
+			if msg.String() == "ctrl+]" {
+				m.input = false
+				return m, nil
+			}
+			if b := keyToBytes(msg); len(b) > 0 {
+				if p := m.focusedPane(); p != nil {
+					p.SendInput(b)
+				}
+			}
+			return m, nil
+		}
 		switch msg.String() {
 		case "esc", "q":
 			m.Close()
+			return m, nil
+		case "i":
+			// Enter input mode on the focused pane (type into it in place).
+			if m.FocusedTaskID() != "" {
+				m.input = true
+			}
 			return m, nil
 		case "enter":
 			// Enter = control (takeover) attach: go from monitoring straight to
@@ -262,15 +336,26 @@ func (m *GridModel) dismissFocused() {
 }
 
 // statusLine is the one-row header: page position, session count, and key hints.
+// In input mode it flips to an INPUT bar so it is obvious keystrokes go to the
+// pane, not the grid.
 func (m GridModel) statusLine() string {
-	txt := fmt.Sprintf(" grid  page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  ⏎:attach  v:view  x:close  q:quit ",
+	bg, fg := lipgloss.Color("236"), lipgloss.Color("252")
+	txt := fmt.Sprintf(" grid  page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  i:input  ⏎:attach  v:view  x:close  q:quit ",
 		m.page+1, m.pageCount(), len(m.panes))
+	if m.input {
+		bg, fg = lipgloss.Color("22"), lipgloss.Color("231") // green bar
+		id := m.FocusedTaskID()
+		if len(id) > 8 {
+			id = id[:8]
+		}
+		txt = fmt.Sprintf(" ● INPUT → %s   (keys go to this session · Ctrl+]:exit input) ", id)
+	}
 	// MaxHeight(1) keeps the bar a single row even when the hint text is wider
 	// than the terminal (Width would otherwise wrap it and steal a pane row,
 	// overflowing the grid).
 	return lipgloss.NewStyle().
 		Width(m.width).MaxWidth(m.width).MaxHeight(1).
-		Background(lipgloss.Color("236")).Foreground(lipgloss.Color("252")).
+		Background(bg).Foreground(fg).
 		Render(txt)
 }
 
@@ -333,6 +418,15 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	style := PanelStyle
 	if idx == m.focus {
 		style = PanelStyleFocused
+		if m.input {
+			// Green border on the focused pane while typing into it, matching the
+			// INPUT status bar.
+			style = PanelStyle.BorderForeground(lipgloss.Color("42"))
+			head = "● " + head
+			if len(head) > w {
+				head = head[:w]
+			}
+		}
 	}
 	// MaxHeight/MaxWidth are a belt-and-suspenders clamp: even if some content
 	// still rendered taller/wider than the cell, the pane can never exceed its
