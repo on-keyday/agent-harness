@@ -2,10 +2,13 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"image/color"
 	"io"
 	"strings"
 	"sync"
 
+	"github.com/charmbracelet/lipgloss"
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
 
@@ -185,7 +188,9 @@ func (p *PaneStreamer) Stop() {
 }
 
 // Render returns a bottom-left crop of the emulator grid at width×height cells,
-// plain text. Activity in shells and full-screen agents concentrates at the
+// WITH color/attributes: adjacent cells sharing a style are coalesced into one
+// lipgloss-styled run so the pane looks like the session (claude/vim colors are
+// preserved). Activity in shells and full-screen agents concentrates at the
 // bottom, so the bottom rows are the informative ones when a pane is smaller
 // than the real grid. Wide (CJK) cells advance the scan by cell.Width.
 func (p *PaneStreamer) Render(width, height int) string {
@@ -232,6 +237,17 @@ func (p *PaneStreamer) Render(width, height int) string {
 		}
 		x := 0
 		painted := 0
+		// Coalesce adjacent cells with the same style into one lipgloss run to
+		// keep the escape volume down.
+		var run strings.Builder
+		runKey := ""
+		runStyle := lipgloss.NewStyle()
+		flush := func() {
+			if run.Len() > 0 {
+				b.WriteString(runStyle.Render(run.String()))
+				run.Reset()
+			}
+		}
 		for x < cols && painted < width {
 			cell := emu.CellAt(x, y)
 			w := cellPaneWidth(cell)
@@ -242,24 +258,92 @@ func (p *PaneStreamer) Render(width, height int) string {
 			// height (the whole grid then overflows the terminal and the top is
 			// clipped). Pad the remaining columns with spaces and stop instead.
 			if painted+w > width {
+				flush()
 				for painted < width {
 					b.WriteByte(' ')
 					painted++
 				}
 				break
 			}
+			if key := cellStyleKey(cell); key != runKey {
+				flush()
+				runKey = key
+				runStyle = cellLipgloss(cell)
+			}
 			if cell == nil || cell.Content == "" {
-				b.WriteByte(' ')
+				run.WriteByte(' ')
 				painted++
 				x++
 				continue
 			}
-			b.WriteString(cell.Content)
+			run.WriteString(cell.Content)
 			painted += w
 			x += w
 		}
+		flush()
 	}
 	return b.String()
+}
+
+// cellStyleKey is a cheap comparable identity for a cell's style, used to
+// coalesce equal-styled runs. "" is the default (unstyled) cell.
+func cellStyleKey(cell *uv.Cell) string {
+	if cell == nil {
+		return ""
+	}
+	s := cell.Style
+	fg, bg := paneColorHex(s.Fg), paneColorHex(s.Bg)
+	if fg == "" && bg == "" && s.Attrs == 0 && s.Underline == uv.UnderlineNone {
+		return "" // unstyled: coalesce with default runs
+	}
+	return fmt.Sprintf("%s|%s|%d|%d", fg, bg, s.Attrs, s.Underline)
+}
+
+// cellLipgloss builds the lipgloss style for a cell (fg/bg + notable attrs), so
+// a run rendered through it reproduces the session's colors and emphasis.
+func cellLipgloss(cell *uv.Cell) lipgloss.Style {
+	st := lipgloss.NewStyle()
+	if cell == nil {
+		return st
+	}
+	s := cell.Style
+	if h := paneColorHex(s.Fg); h != "" {
+		st = st.Foreground(lipgloss.Color(h))
+	}
+	if h := paneColorHex(s.Bg); h != "" {
+		st = st.Background(lipgloss.Color(h))
+	}
+	a := s.Attrs
+	if a&uv.AttrBold != 0 {
+		st = st.Bold(true)
+	}
+	if a&uv.AttrFaint != 0 {
+		st = st.Faint(true)
+	}
+	if a&uv.AttrItalic != 0 {
+		st = st.Italic(true)
+	}
+	if a&uv.AttrReverse != 0 {
+		st = st.Reverse(true)
+	}
+	if a&uv.AttrStrikethrough != 0 {
+		st = st.Strikethrough(true)
+	}
+	if s.Underline != uv.UnderlineNone {
+		st = st.Underline(true)
+	}
+	return st
+}
+
+// paneColorHex renders a cell color as #rrggbb, or "" for the terminal default
+// (nil). Every color.Color answers RGBA(), so 16/256/truecolor are uniform;
+// lipgloss downsamples #rrggbb to the terminal's real profile at render time.
+func paneColorHex(c color.Color) string {
+	if c == nil {
+		return ""
+	}
+	r, g, bl, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(bl>>8))
 }
 
 // lastContentRow returns the highest row index that has any non-blank cell, or
