@@ -3,7 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,6 +19,11 @@ const (
 	gridPerPage  = 6  // panes shown per page (3x2)
 	gridMaxPanes = 24 // total cap across all pages (bounds concurrent view streams)
 )
+
+// gridDiag is set once at startup from HARNESS_GRID_DIAG: when on, each pane
+// renders its DiagLine as the first body row so a black pane reveals its own
+// state (bytes received, emulator size, content row) in a screenshot.
+var gridDiag = os.Getenv("HARNESS_GRID_DIAG") != ""
 
 type gridTickMsg struct{}
 
@@ -417,6 +424,20 @@ func (m GridModel) renderPane(idx, w, h int) string {
 		head = head[:w]
 	}
 	body := p.Render(w, h)
+	if gridDiag {
+		// Overlay the pane's own state on its first row (truncated to width) so a
+		// black pane shows WHY. Replaces the top body row rather than adding one,
+		// keeping the pane within its budgeted height.
+		diag := p.DiagLine()
+		if len(diag) > w {
+			diag = diag[:w]
+		}
+		if nl := strings.IndexByte(body, '\n'); nl >= 0 {
+			body = diag + body[nl:]
+		} else {
+			body = diag
+		}
+	}
 	style := PanelStyle
 	if idx == m.focus {
 		style = PanelStyleFocused

@@ -33,6 +33,14 @@ type PaneStreamer struct {
 	stream  *agentexec.CommandExecutionStream
 	cancel  context.CancelFunc
 	stopped bool // Stop() ran; a still-attaching pump must close its stream
+
+	// Diagnostics (HARNESS_GRID_DIAG): count bytes/reads/attaches/panics so a
+	// black pane can render its own state — is this "no bytes arrived" or "bytes
+	// arrived but the emulator is blank"? Guarded by mu.
+	rxBytes   int
+	reads     int
+	attaches  int
+	vtPanics  int
 }
 
 func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
@@ -47,6 +55,30 @@ func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
 }
 
 func (p *PaneStreamer) TaskID() string { return p.taskID }
+
+// DiagLine reports the pane's internal state as a single line, so a black pane
+// can render WHY it's black instead of leaving us to guess. It bisects the two
+// hypotheses from one screenshot: rx=0 => no bytes ever arrived (attach/stream
+// problem); rx>0 with lc=-1 => bytes arrived but the emulator painted nothing
+// (VT processing / sizing / panic). Gated by HARNESS_GRID_DIAG at the call site.
+func (p *PaneStreamer) DiagLine() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.emu == nil {
+		return "diag: emu=nil (stopped)"
+	}
+	lc := lastContentRow(p.emu, p.cols, p.rows)
+	cur := p.emu.CursorPosition()
+	errS := "-"
+	if p.err != nil {
+		errS = p.err.Error()
+		if len(errS) > 24 {
+			errS = errS[:24]
+		}
+	}
+	return fmt.Sprintf("rx=%d rd=%d at=%d vtp=%d sz=%dx%d lc=%d cy=%d err=%s",
+		p.rxBytes, p.reads, p.attaches, p.vtPanics, p.cols, p.rows, lc, cur.Y, errS)
+}
 
 func (p *PaneStreamer) Err() error {
 	p.mu.Lock()
@@ -138,6 +170,7 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 		}
 		p.stream = stream
 		p.err = nil // reattached: clear any prior drop error / "(ended)" header.
+		p.attaches++
 		p.mu.Unlock()
 
 		start := time.Now()
@@ -177,6 +210,9 @@ func (p *PaneStreamer) readStream(stream *agentexec.CommandExecutionStream) erro
 	for {
 		n, rerr := out.Read(buf)
 		if n > 0 {
+			p.mu.Lock()
+			p.reads++
+			p.mu.Unlock()
 			rows, cols, ok := stream.LastWindowSize()
 			resize := ok && (int(rows) != lastRows || int(cols) != lastCols) && rows > 0 && cols > 0
 			if !p.feed(buf[:n], int(rows), int(cols), resize) {
@@ -239,6 +275,7 @@ func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive boo
 	// Resetting the region lets the rest of the replay and live output render.
 	defer func() {
 		if r := recover(); r != nil && p.emu != nil {
+			p.vtPanics++
 			func() {
 				defer func() { _ = recover() }() // the reset write must not re-panic out
 				p.emu.Write([]byte("\x1b[r"))
@@ -254,6 +291,7 @@ func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive boo
 		p.emu.Write([]byte("\x1b[r"))
 		p.cols, p.rows = cols, rows
 	}
+	p.rxBytes += len(data)
 	p.emu.Write(data)
 	return alive
 }
