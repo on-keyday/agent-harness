@@ -1344,7 +1344,11 @@ func (a *App) View() string {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.boardModal.View())
 	}
 	if a.grid.IsOpen() {
-		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.grid.View())
+		// Top-align vertically (not Center): if the grid is ever fractionally
+		// taller than the terminal, the overflow must clip the BOTTOM, never the
+		// top — the top row carries the pane headers. MaxHeight clamps it too.
+		return lipgloss.NewStyle().MaxHeight(a.height).Render(
+			lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Top, a.grid.View()))
 	}
 	return view
 }

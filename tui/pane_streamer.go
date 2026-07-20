@@ -162,6 +162,19 @@ func (p *PaneStreamer) Render(width, height int) string {
 		for x < cols && painted < width {
 			cell := emu.CellAt(x, y)
 			w := cellPaneWidth(cell)
+			// A wide (CJK/box-drawing) cell that would straddle the right edge
+			// must NOT be emitted: its visual width would push the line past
+			// `width`, and the caller's fixed-width lipgloss box then WRAPS the
+			// overflow onto a new row, inflating the pane past its budgeted
+			// height (the whole grid then overflows the terminal and the top is
+			// clipped). Pad the remaining columns with spaces and stop instead.
+			if painted+w > width {
+				for painted < width {
+					b.WriteByte(' ')
+					painted++
+				}
+				break
+			}
 			if cell == nil || cell.Content == "" {
 				b.WriteByte(' ')
 				painted++

@@ -215,10 +215,20 @@ func (m GridModel) renderPane(idx, w, h int) string {
 	if err := p.Err(); err != nil {
 		head += " (ended)"
 	}
+	// Truncate the header to the cell width so a long id + " (ended)" can never
+	// wrap onto a second line (which would push the pane past its budgeted
+	// height and overflow the grid).
+	if len(head) > w {
+		head = head[:w]
+	}
 	body := p.Render(w, h)
 	style := PanelStyle
 	if idx == m.focus {
 		style = PanelStyleFocused
 	}
-	return style.Width(w).Height(h + 1).Render(head + "\n" + body)
+	// MaxHeight/MaxWidth are a belt-and-suspenders clamp: even if some content
+	// still rendered taller/wider than the cell, the pane can never exceed its
+	// border-inclusive budget (w+2 × h+3), so the grid total stays within the
+	// terminal and lipgloss.Place cannot clip the header row.
+	return style.Width(w).Height(h + 1).MaxWidth(w + 2).MaxHeight(h + 3).Render(head + "\n" + body)
 }
