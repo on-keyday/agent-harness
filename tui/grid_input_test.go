@@ -24,6 +24,7 @@ func TestKeyToBytes(t *testing.T) {
 		{"down", tea.KeyMsg{Type: tea.KeyDown}, "\x1b[B"},
 		{"left", tea.KeyMsg{Type: tea.KeyLeft}, "\x1b[D"},
 		{"alt-x", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("x"), Alt: true}, "\x1bx"},
+		{"ctrl-at-nul", tea.KeyMsg{Type: tea.KeyCtrlAt}, ""}, // bare Ctrl / Ctrl+@ -> dropped, not ^@
 	}
 	for _, c := range cases {
 		if got := string(keyToBytes(c.m)); got != c.want {

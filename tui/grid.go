@@ -191,8 +191,10 @@ func keyToBytes(m tea.KeyMsg) []byte {
 		b = []byte("\x1b[3~")
 	default:
 		// The C0/named-control KeyTypes (Enter=CR, Tab=HT, Esc=ESC, Backspace=DEL,
-		// Ctrl+A..Z, …) hold the raw control byte as their value.
-		if m.Type >= 0 && m.Type <= 127 {
+		// Ctrl+A..Z, …) hold the raw control byte as their value. Start at 1: a
+		// bare Ctrl / Ctrl+Space reports Type 0 (NUL / Ctrl+@) on some terminals,
+		// and forwarding that spurious ^@ into the session is just noise.
+		if m.Type > 0 && m.Type <= 127 {
 			b = []byte{byte(m.Type)}
 		} else {
 			return nil
