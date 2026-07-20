@@ -300,6 +300,9 @@ button:hover { background: #555; }
 .task-filter-bar { display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center; margin-bottom:0.4rem; }
 .task-chip { background:#2a2a2a; color:#ccc; border:1px solid #555; border-radius:12px; padding:0.3rem 0.7rem; font-size:0.85rem; cursor:pointer; }
 .task-chip.is-active { background:#2d5; color:#000; border-color:#2d5; font-weight:bold; }
+.grid-control-bar { display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center; margin-bottom:0.5rem; }
+.grid-control-bar .grid-show { background:#264f78; color:#d4d4d4; border-color:#3a6ea5; font-weight:bold; }
+.grid-control-sep { color:#888; font-size:0.8rem; margin-left:0.2rem; }
 #task-filter-input { flex:1 1 8rem; min-width:6rem; background:#111; color:#d4d4d4; border:1px solid #555; border-radius:4px; padding:0.35rem 0.5rem; font-size:0.85rem; }
 @media (max-width:600px){
   .task-list { max-height:none; }

@@ -337,6 +337,32 @@ const POLL_INTERVAL_MS = 5000;
   }
   taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
 
+  // Grid selection. A live interactive session is INCLUDED in the grid by
+  // default; gridExcluded holds the ids the user unchecked. Keyed by id so it
+  // survives the snapshot poll's task-list re-render, and a newly-created
+  // session is auto-included. The global "グリッド表示" button opens the grid of
+  // all currently-included sessions (activity-desc).
+  const gridExcluded = new Set();
+  const gridShowBtn = document.getElementById("grid-show-btn");
+  const gridAllOn   = document.getElementById("grid-all-on");
+  const gridAllOff  = document.getElementById("grid-all-off");
+  const liveInteractiveTasks = () =>
+    (lastTasks || []).filter(
+      (t) => t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached"));
+  gridShowBtn.addEventListener("click", () => {
+    const ids = liveInteractiveTasks()
+      .filter((t) => !gridExcluded.has(t.id))
+      .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
+      .map((t) => t.id);
+    if (!ids.length) { appendCmdOutput("grid: no sessions selected", true); return; }
+    openSessionGrid(ids);
+  });
+  gridAllOn.addEventListener("click", () => { gridExcluded.clear(); renderTaskList(lastTasks); });
+  gridAllOff.addEventListener("click", () => {
+    for (const t of liveInteractiveTasks()) gridExcluded.add(t.id);
+    renderTaskList(lastTasks);
+  });
+
   // currentClaudeArgs returns the shell-tokenised args from the input box.
   // Reused by submit (cmdline) and Open buttons so the user only edits one field.
   const currentClaudeArgs = () => {
@@ -1324,8 +1350,12 @@ const POLL_INTERVAL_MS = 5000;
           // grid [id...] — explicit ids, else every live interactive session
           // (activity-desc, same ordering as the task list — taskActivityMs).
           let ids = tokens.slice(1);
-          if (ids.length === 0) ids = await liveInteractiveIds();
-          if (ids.length === 0) { out = "grid: no live interactive sessions"; break; }
+          if (ids.length === 0) {
+            // no explicit ids: the currently-included live sessions (respects
+            // the per-session グリッドに含める toggles), same as the show button.
+            ids = (await liveInteractiveIds()).filter((id) => !gridExcluded.has(id));
+          }
+          if (ids.length === 0) { out = "grid: no included live interactive sessions"; break; }
           openSessionGrid(ids);
           out = `grid: ${ids.length} pane(s)${ids.length > 9 ? " (capped at 9)" : ""}`;
           break;
@@ -2308,17 +2338,14 @@ const POLL_INTERVAL_MS = 5000;
   }
 
   // liveInteractiveIds returns every live (Running/Detached) interactive
-  // session id, activity-desc (same ordering as the task list). If firstId is
-  // given it is moved to the front so an entry point tied to one task leads
-  // with that task's pane while still showing the whole grid.
-  async function liveInteractiveIds(firstId) {
+  // session id, activity-desc (same ordering as the task list). Used by the
+  // `grid` command's no-arg path; the show button reads lastTasks directly.
+  async function liveInteractiveIds() {
     const snap = await window.harness.snapshot();
-    let ids = (snap.tasks || [])
+    return (snap.tasks || [])
       .filter((t) => t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached"))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
-    if (firstId) ids = [firstId, ...ids.filter((x) => x !== firstId)];
-    return ids;
   }
 
   function openSessionGrid(ids) {
@@ -2624,16 +2651,30 @@ const POLL_INTERVAL_MS = 5000;
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
 
-    // Preview / Grid / Reattach / idle-notify — live interactive session only.
+    // Reattach / Preview / grid-include toggle / idle-notify — live interactive
+    // session only. Order: Reattach first, then Preview, then the grid toggle.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
-      addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
-      addItem("🔲 グリッド", "", async () => {
-        // Open the FULL grid of all live interactive sessions (this task first),
-        // not a 1-pane grid — a grid of one is just a preview.
-        const ids = await liveInteractiveIds(t.id);
-        openSessionGrid(ids.length ? ids : [t.id]);
-      });
       addItem("↪ Reattach", "", () => reattachTo(t.id));
+      addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
+      // Grid include/exclude toggle (default included). Updates its own label in
+      // place so the whole sheet need not re-render on each click; the global
+      // "グリッド表示" button reads the same gridExcluded set.
+      const gridToggle = document.createElement("button");
+      gridToggle.type = "button";
+      gridToggle.className = "task-action";
+      const paintGridToggle = () => {
+        gridToggle.textContent = gridExcluded.has(t.id)
+          ? "☐ グリッドから除外中"
+          : "☑ グリッドに含める";
+      };
+      paintGridToggle();
+      gridToggle.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (gridExcluded.has(t.id)) gridExcluded.delete(t.id);
+        else gridExcluded.add(t.id);
+        paintGridToggle();
+      });
+      sheet.appendChild(gridToggle);
       addItem("🔔 idleで通知", "", async () => {
         try {
           const r = await window.harness.awaitIdle({ taskId: t.id, sink: "notify" });
