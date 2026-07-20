@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"io"
 	"strings"
 	"sync"
 
@@ -27,7 +28,6 @@ type PaneStreamer struct {
 	err    error
 	stream *agentexec.CommandExecutionStream
 	cancel context.CancelFunc
-	drainC chan struct{} // closed to stop the emulator drain goroutine
 }
 
 func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
@@ -53,26 +53,15 @@ func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client) {
 	cctx, cancel := context.WithCancel(ctx)
 	p.mu.Lock()
 	p.cancel = cancel
-	p.drainC = make(chan struct{})
-	drainC := p.drainC
 	emu := p.emu
 	p.mu.Unlock()
 
 	// x/vt answers DA1/DA2/DSR queries by writing to its own output side; drain
 	// and discard or emu.Write blocks forever (cli/snapshot_native.go pattern).
-	go func() {
-		buf := make([]byte, 4096)
-		for {
-			select {
-			case <-drainC:
-				return
-			default:
-			}
-			if _, err := emu.Read(buf); err != nil {
-				return
-			}
-		}
-	}()
+	// This goroutine exits when emu.Close() (in Stop) makes emu.Read return an
+	// error — same lifecycle as the sibling in cli/snapshot_native.go, no
+	// separate stop channel to manage.
+	go io.Copy(io.Discard, emu)
 
 	go p.pump(cctx, c)
 }
@@ -95,6 +84,12 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 		if n > 0 {
 			rows, cols, ok := stream.LastWindowSize()
 			p.mu.Lock()
+			if p.emu == nil {
+				// Stop() already nil'd the emulator (racing against this
+				// still-in-flight read); nothing left to write into.
+				p.mu.Unlock()
+				return
+			}
 			if ok && (int(rows) != lastRows || int(cols) != lastCols) && rows > 0 && cols > 0 {
 				p.emu.Resize(int(cols), int(rows))
 				p.cols, p.rows = int(cols), int(rows)
@@ -118,23 +113,23 @@ func (p *PaneStreamer) setErr(err error) {
 	p.mu.Unlock()
 }
 
+// Stop is idempotent: a second call captures all-nil fields and does nothing.
+// Render already snapshots p.emu under p.mu and returns "" if nil, so nil-ing
+// p.emu here is safe against a concurrent Render.
 func (p *PaneStreamer) Stop() {
 	p.mu.Lock()
 	cancel := p.cancel
 	stream := p.stream
 	emu := p.emu
-	drainC := p.drainC
 	p.cancel = nil
 	p.stream = nil
+	p.emu = nil
 	p.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
 	if stream != nil {
 		_ = stream.Close()
-	}
-	if drainC != nil {
-		close(drainC)
 	}
 	if emu != nil {
 		_ = emu.Close()
@@ -147,9 +142,9 @@ func (p *PaneStreamer) Stop() {
 // than the real grid. Wide (CJK) cells advance the scan by cell.Width.
 func (p *PaneStreamer) Render(width, height int) string {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	emu := p.emu
 	cols, rows := p.cols, p.rows
-	p.mu.Unlock()
 	if emu == nil || width <= 0 || height <= 0 {
 		return ""
 	}
