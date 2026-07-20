@@ -148,14 +148,21 @@ func (p *PaneStreamer) Render(width, height int) string {
 	if emu == nil || width <= 0 || height <= 0 {
 		return ""
 	}
-	// Anchor the crop's bottom to the cursor row (the live line), not the
-	// geometric bottom. A shell with only a few lines at the top of a TALL
-	// screen — e.g. after a control attach resized its PTY taller than the pane
-	// — leaves the bottom region empty; cropping there shows a blank pane (the
-	// "grid goes black after reattach" bug). Showing the `height` rows ending at
-	// the cursor keeps a full-screen app's live bottom visible while also
-	// showing a short shell's content near the top.
-	bottom := emu.CursorPosition().Y + 1
+	// Anchor the crop's bottom to where content actually ends, NOT the geometric
+	// bottom. Two cases must both work:
+	//   - a short shell at the TOP of a tall screen (e.g. after a control attach
+	//     resized its PTY taller than the pane) — the geometric bottom is empty,
+	//     so cropping there shows a blank pane (the "grid black after reattach"
+	//     bug);
+	//   - a full screen that SCROLLED (recent output at the bottom) whose app
+	//     parked the cursor higher up (claude, vim, …) — anchoring to the cursor
+	//     alone would show stale top content and hide the recent bottom.
+	// The last non-blank row handles both; max with the cursor keeps the live
+	// line visible if it sits below the last painted content.
+	bottom := lastContentRow(emu, cols, rows) + 1
+	if c := emu.CursorPosition().Y + 1; c > bottom {
+		bottom = c
+	}
 	if bottom < 1 {
 		bottom = 1
 	}
@@ -205,6 +212,21 @@ func (p *PaneStreamer) Render(width, height int) string {
 		}
 	}
 	return b.String()
+}
+
+// lastContentRow returns the highest row index that has any non-blank cell, or
+// -1 if the whole grid is blank. Scans from the bottom up and stops at the
+// first non-blank row, so it is cheap for the common full-screen case.
+func lastContentRow(emu *vt.Emulator, cols, rows int) int {
+	for y := rows - 1; y >= 0; y-- {
+		for x := 0; x < cols; x++ {
+			c := emu.CellAt(x, y)
+			if c != nil && c.Content != "" && c.Content != " " {
+				return y
+			}
+		}
+	}
+	return -1
 }
 
 func cellPaneWidth(cell *uv.Cell) int {
