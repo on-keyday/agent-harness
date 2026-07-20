@@ -44,7 +44,12 @@ type previewSlot struct {
 // paneKey is superseded and closed first. The attach uses
 // AttachMode_View, so it never takes over the session's controlling
 // client.
-func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string) error {
+// gridPreviewReplayLimit caps a grid pane's replay the same way the TUI does —
+// a pane shows a small crop, not the full ~1 MiB ring. The single preview
+// (cowrite=false) keeps the full replay (limit 0).
+const gridPreviewReplayLimit = 128 * 1024
+
+func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string, cowrite bool) error {
 	// Reserve a generation BEFORE the RPC: a StopPreview (modal close) or a
 	// newer StartPreview for this paneKey that lands while our attach is
 	// still in flight supersedes us, and we discard our stream instead of
@@ -60,7 +65,15 @@ func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string) er
 		_ = old.stream.Close()
 	}
 
-	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View, 0)
+	// Cowrite (grid panes) observes output like a viewer AND can forward input;
+	// view (single preview) is read-only. Grid panes also cap the replay.
+	mode := protocol.AttachMode_View
+	var replayLimit uint32
+	if cowrite {
+		mode = protocol.AttachMode_Cowrite
+		replayLimit = gridPreviewReplayLimit
+	}
+	st, _, err := c.attachSessionRPC(ctx, taskIDHex, mode, replayLimit)
 	if err != nil {
 		return err
 	}
@@ -94,6 +107,23 @@ func StopPreview(paneKey string) {
 	if old != nil && old.stream != nil {
 		_ = old.stream.Close()
 	}
+}
+
+// SendPreviewInput forwards raw bytes (a key's xterm data) to paneKey's session
+// over its cowrite stream. No-op if the pane has no stream, or was attached
+// read-only (view) — a view stream's input is discarded by the server anyway.
+func SendPreviewInput(paneKey string, data []byte) {
+	previewMu.Lock()
+	slot := previewSlots[paneKey]
+	var s *agentexec.CommandExecutionStream
+	if slot != nil {
+		s = slot.stream
+	}
+	previewMu.Unlock()
+	if s == nil || len(data) == 0 {
+		return
+	}
+	_, _ = s.Stdin().Write(data)
 }
 
 // previewPump reads paneKey's view stream and forwards it to the JS hooks.

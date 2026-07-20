@@ -81,6 +81,7 @@ func main() {
 		"snapshot":           js.FuncOf(harnessSnapshot),
 		"previewStart":       js.FuncOf(harnessPreviewStart),
 		"previewStop":        js.FuncOf(harnessPreviewStop),
+		"previewInput":       js.FuncOf(harnessPreviewInput),
 		"cancel":             js.FuncOf(harnessCancel),
 		"watch":              js.FuncOf(harnessWatch),
 		"prune":              js.FuncOf(harnessPrune),
@@ -1035,17 +1036,22 @@ func harnessAttachSession(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessPreviewStart opens a LIVE read-only preview of a detachable
-// interactive session: AttachMode_View (non-takeover), independent of the
-// activeInteractiveSession singleton. paneKey identifies which pane's JS
-// hooks receive the output, so multiple panes can each hold an
-// independent preview stream over the one shared client. Output flows via
+// harnessPreviewStart opens a LIVE preview of a detachable interactive
+// session, independent of the activeInteractiveSession singleton. paneKey
+// identifies which pane's JS hooks receive the output, so multiple panes can
+// each hold an independent stream over the one shared client. Output flows via
 // the JS hooks harness_previewOpen / harness_previewWrite /
-// harness_previewResize / harness_previewClosed — each now called with
-// paneKey as their first argument — until harness.previewStop(paneKey) or
-// a fresh previewStart for the same paneKey supersedes it.
+// harness_previewResize / harness_previewClosed — each called with paneKey as
+// their first argument — until harness.previewStop(paneKey) or a fresh
+// previewStart for the same paneKey supersedes it.
 //
-//	harness.previewStart(paneKey, taskIDHex) -> Promise<taskIDHex>
+// The optional third argument selects the attach mode: cowrite=true
+// (AttachMode_Cowrite) lets the pane forward keystrokes via
+// harness.previewInput (the session grid's per-cell typing); cowrite falsey
+// (AttachMode_View) is strictly read-only (the single session preview). Both
+// are non-takeover and claim no size authority.
+//
+//	harness.previewStart(paneKey, taskIDHex, cowrite?) -> Promise<taskIDHex>
 func harnessPreviewStart(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1062,7 +1068,8 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 			}
 			paneKey := args[0].String()
 			taskID := args[1].String()
-			if err := c.StartPreview(rootCtx, paneKey, taskID); err != nil {
+			cowrite := len(args) >= 3 && args[2].Truthy()
+			if err := c.StartPreview(rootCtx, paneKey, taskID, cowrite); err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -1072,6 +1079,21 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessPreviewInput forwards a focused grid pane's keystrokes to its session
+// over the pane's cowrite stream. No-op for a read-only (view) pane — the
+// server discards a viewer's input — or an unknown/closed paneKey. Synchronous
+// and panic-safe (a missing arg is a no-op, not a wasm-crashing args[i] panic),
+// matching harnessPreviewStop.
+//
+//	harness.previewInput(paneKey, data)
+func harnessPreviewInput(this js.Value, args []js.Value) any {
+	if len(args) < 2 {
+		return js.Undefined()
+	}
+	cli.SendPreviewInput(args[0].String(), []byte(args[1].String()))
+	return js.Undefined()
 }
 
 // harnessPreviewStop tears down the named pane's live preview stream, if

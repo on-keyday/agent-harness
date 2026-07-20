@@ -2140,7 +2140,7 @@ const POLL_INTERVAL_MS = 5000;
     const note = paneNote(p, "connecting…");
     p.live = true;
     try {
-      await window.harness.previewStart(key, p.taskId);
+      await window.harness.previewStart(key, p.taskId, !!p.cowrite);
     } catch (e) {
       // Guard against a stale continuation: teardown paths (stopPane /
       // teardownGridPanes / dismissPane) flip p.live off and stop the wasm
@@ -2201,12 +2201,25 @@ const POLL_INTERVAL_MS = 5000;
     p.scaleBox = scaleBox;
     p.term = new Terminal({
       cols, rows,
-      disableStdin: true,
+      // A cowrite pane (session grid) accepts keystrokes when focused; the
+      // single session preview stays strictly read-only. xterm fires onData
+      // only for the focused terminal, so click/tap-to-focus routes typing to
+      // exactly one pane — no explicit focus bookkeeping needed.
+      disableStdin: !p.cowrite,
       convertEol: true,  // match the main terminal so the stream renders identically
       fontSize: 13,
       fontFamily: '"Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace',
     });
     p.term.open(termBox);
+    if (p.cowrite) {
+      // Forward this pane's keystrokes to its session over the cowrite stream.
+      // Guarded by p.live so a keystroke racing teardown is dropped rather than
+      // sent to a stopped stream (the wasm side additionally no-ops an unknown
+      // paneKey). The pane claims no size authority, so no resize is forwarded.
+      p.term.onData((data) => {
+        if (p.live) window.harness.previewInput(p.key, data);
+      });
+    }
     p.onResize = () => fitPaneScale(p);
     p.onResize();
   }
@@ -2273,6 +2286,7 @@ const POLL_INTERVAL_MS = 5000;
       bodyEl: sessionPreviewBody, scaleBox: null, spacer: null, noteEl: null,
       onResize: null,
       onClosed: () => setPreviewPauseLabel(),
+      key, cowrite: false, // single preview is strictly read-only (view attach)
     };
     previewPanes.set(key, p);
     if (!sessionPreviewModal.open) sessionPreviewModal.showModal();
@@ -2397,6 +2411,7 @@ const POLL_INTERVAL_MS = 5000;
         taskId: id, live: false, epoch: 0, term: null,
         bodyEl: body, scaleBox: null, spacer: null, noteEl: null,
         onResize: null, onClosed: null,
+        key, cowrite: true, // grid cells forward keystrokes (click-to-focus)
       };
       previewPanes.set(key, p);
       gridKeys.push(key);
