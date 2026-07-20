@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	uv "github.com/charmbracelet/ultraviolet"
@@ -74,37 +75,102 @@ func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client) {
 	go p.pump(cctx, c)
 }
 
-func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
-	// Cowrite (not View): observes output exactly like a viewer AND can forward
-	// input without taking over the controlling client or claiming size
-	// authority — this is what lets the grid type into a focused pane
-	// (SendInput) while it stays small. Idle panes send nothing, so cowrite is
-	// output-equivalent to view until the user enters input mode.
-	// gridReplayLimit caps the scrollback the server replays: a pane shows only
-	// a small bottom crop, so it does NOT need the full ~1 MiB ring. Without
-	// this, opening a grid of N sessions pulls ~1 MiB × N of replay, which is
-	// slow enough over a real link that panes torn down on a repeated
-	// open/close never finish their replay and render black. The mode preamble
-	// (alt-screen, DEC modes) is sent separately, so a full-screen app repaints
-	// correctly from a capped replay.
-	const gridReplayLimit = 128 * 1024
-	stream, _, err := c.AttachSessionWithReplayLimit(ctx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
-	if err != nil {
-		p.setErr(err)
-		return
-	}
-	p.mu.Lock()
-	if p.stopped {
-		// Stop() ran while AttachSession was in flight: it captured a nil stream
-		// (this one didn't exist yet), so if we kept it, the stream would leak —
-		// a server-side observer that never detaches. Close it and exit.
-		p.mu.Unlock()
-		_ = stream.Close()
-		return
-	}
-	p.stream = stream
-	p.mu.Unlock()
+// gridReplayLimit caps the scrollback the server replays to a pane: it shows
+// only a small bottom crop, so it does NOT need the full ~1 MiB ring. Opening a
+// grid of N sessions otherwise pulls ~1 MiB × N of replay over the one shared
+// client connection; the mode preamble (alt-screen, DEC modes) is sent
+// separately, so a full-screen app still repaints correctly from a capped
+// replay.
+const gridReplayLimit = 128 * 1024
 
+// paneReattachBase / paneReattachMax bound the backoff between reattach
+// attempts (see pump). Base is short so a transient drop heals almost
+// invisibly; the cap stops N panes from re-flooding the shared link if a
+// session stays too fast for the link.
+const (
+	paneReattachBase = 300 * time.Millisecond
+	paneReattachMax  = 3 * time.Second
+)
+
+// pump attaches the pane's cowrite observer and streams output into the
+// emulator, REATTACHING with backoff whenever the stream ends without us
+// stopping it. That non-stop end is the normal, expected outcome of the
+// server's slow-observer policy: each observer is fed through a bounded
+// fan-out queue and is DROPPED (its stream force-closed) the moment it can't
+// keep up — which a busy session on a slow or heavily-multiplexed link (e.g. N
+// grid panes sharing one connection) trips routinely. Without reattach a
+// dropped pane goes permanently black; with it the pane simply resyncs from
+// the replay snapshot. A truly finished/pruned session is not retried: its
+// reattach returns a terminal status (IsAttachPermanent) and the loop exits.
+//
+// Cowrite (not View) so a focused pane can forward input (SendInput) while
+// staying small; idle panes send nothing, so cowrite is output-equivalent to
+// view until the user types.
+func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
+	backoff := paneReattachBase
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		stream, _, err := c.AttachSessionWithReplayLimit(ctx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
+		if err != nil {
+			if ctx.Err() != nil {
+				return // Stop()/Close() cancelled us — not a failure to surface.
+			}
+			p.setErr(err)
+			if cli.IsAttachPermanent(err) {
+				return // session gone/finished: reattach can never succeed.
+			}
+			if !sleepCtx(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff)
+			continue
+		}
+		p.mu.Lock()
+		if p.stopped {
+			// Stop() ran while AttachSession was in flight: it captured a nil stream
+			// (this one didn't exist yet), so if we kept it, the stream would leak —
+			// a server-side observer that never detaches. Close it and exit.
+			p.mu.Unlock()
+			_ = stream.Close()
+			return
+		}
+		p.stream = stream
+		p.err = nil // reattached: clear any prior drop error / "(ended)" header.
+		p.mu.Unlock()
+
+		start := time.Now()
+		rerr := p.readStream(stream)
+		_ = stream.Close()
+
+		p.mu.Lock()
+		p.stream = nil
+		stopped := p.stopped
+		p.mu.Unlock()
+		if stopped || ctx.Err() != nil {
+			return // torn down by Stop()/Close(): don't reattach.
+		}
+		// The stream ended on its own: server dropped this observer (fell behind)
+		// or the session ended. Record the reason, then reattach — the next
+		// attach either resyncs (drop) or returns a terminal status (ended) and
+		// the loop above stops. A long-lived attach that only just dropped
+		// recovers fast; a drop-storm keeps the escalated backoff.
+		p.setErr(rerr)
+		if time.Since(start) > 5*time.Second {
+			backoff = paneReattachBase
+		}
+		if !sleepCtx(ctx, backoff) {
+			return
+		}
+		backoff = nextBackoff(backoff)
+	}
+}
+
+// readStream copies one attached stream into the emulator until it errors
+// (EOF, drop, or wire error), returning that error. Returns nil only when the
+// emulator was torn down mid-read (Stop raced), which pump treats as a stop.
+func (p *PaneStreamer) readStream(stream *agentexec.CommandExecutionStream) error {
 	out := stream.Stdout()
 	buf := make([]byte, 32*1024)
 	lastRows, lastCols := 0, 0
@@ -114,16 +180,37 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 			rows, cols, ok := stream.LastWindowSize()
 			resize := ok && (int(rows) != lastRows || int(cols) != lastCols) && rows > 0 && cols > 0
 			if !p.feed(buf[:n], int(rows), int(cols), resize) {
-				return // emulator torn down (Stop raced)
+				return nil // emulator torn down (Stop raced)
 			}
 			if resize {
 				lastRows, lastCols = int(rows), int(cols)
 			}
 		}
 		if rerr != nil {
-			p.setErr(rerr)
-			return
+			return rerr
 		}
+	}
+}
+
+// nextBackoff doubles cur, clamped to paneReattachMax.
+func nextBackoff(cur time.Duration) time.Duration {
+	n := cur * 2
+	if n > paneReattachMax {
+		n = paneReattachMax
+	}
+	return n
+}
+
+// sleepCtx waits d or until ctx ends; returns false if ctx ended first (caller
+// should stop rather than retry).
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
 	}
 }
 
@@ -171,11 +258,13 @@ func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive boo
 	return alive
 }
 
+// setErr records the pane's latest stream error (shown as "(ended)" in the
+// header). It overwrites rather than latching the first error: the pump clears
+// p.err on a successful reattach and re-sets it on the next drop, so the header
+// tracks the pane's current state instead of a stale one-shot failure.
 func (p *PaneStreamer) setErr(err error) {
 	p.mu.Lock()
-	if p.err == nil {
-		p.err = err
-	}
+	p.err = err
 	p.mu.Unlock()
 }
 

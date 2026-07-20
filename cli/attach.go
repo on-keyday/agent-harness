@@ -2,12 +2,31 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
 )
+
+// ErrAttachNotFound / ErrAttachTerminal mark AttachSession failures that can
+// never succeed on retry: the task is gone (pruned/unknown) or has already
+// finished. A monitoring caller that reattaches on drop (the TUI grid) uses
+// IsAttachPermanent to stop retrying these, while treating every other error
+// (runner briefly unreachable, wire hiccup, a fell-behind observer dropped by
+// the server) as transient and worth another attach.
+var (
+	ErrAttachNotFound = errors.New("attach: task not found")
+	ErrAttachTerminal = errors.New("attach: task already finished")
+)
+
+// IsAttachPermanent reports whether an AttachSession error will never succeed on
+// retry, so a reattaching caller should give up rather than back off and try
+// again.
+func IsAttachPermanent(err error) bool {
+	return errors.Is(err, ErrAttachNotFound) || errors.Is(err, ErrAttachTerminal)
+}
 
 // attachSessionRPC performs the AttachSession RPC round-trip and returns the
 // raw bidirectional stream plus the server-reported replayBytes count.
@@ -55,11 +74,11 @@ func attachStatusError(taskID string, status protocol.AttachSessionStatus) error
 	case protocol.AttachSessionStatus_Ok:
 		return nil
 	case protocol.AttachSessionStatus_NotFound:
-		return fmt.Errorf("attach not_found: task %q not found (pruned, or wrong id?)", taskID)
+		return fmt.Errorf("attach not_found: task %q not found (pruned, or wrong id?): %w", taskID, ErrAttachNotFound)
 	case protocol.AttachSessionStatus_NotInteractive:
 		return fmt.Errorf("attach not_interactive: task %q is not an interactive session", taskID)
 	case protocol.AttachSessionStatus_AlreadyTerminal:
-		return fmt.Errorf("attach already_terminal: task %q has already finished", taskID)
+		return fmt.Errorf("attach already_terminal: task %q has already finished: %w", taskID, ErrAttachTerminal)
 	case protocol.AttachSessionStatus_RunnerUnreachable:
 		return fmt.Errorf("attach runner_unreachable: the runner hosting task %q is not connected", taskID)
 	case protocol.AttachSessionStatus_InternalError:
