@@ -2118,7 +2118,14 @@ const POLL_INTERVAL_MS = 5000;
     try {
       await window.harness.previewStart(key, p.taskId);
     } catch (e) {
+      // Guard against a stale continuation: teardown paths (stopPane /
+      // teardownGridPanes / dismissPane) flip p.live off and stop the wasm
+      // stream but never bump p.epoch, so a torn-down-then-recreated
+      // same-key pane looks identical to "still current" under the epoch
+      // check alone. Confirming the registry still maps key -> this exact
+      // object is what actually distinguishes them.
       if (epoch !== p.epoch) return; // superseded/closed meanwhile
+      if (previewPanes.get(key) !== p) return; // key now owned by a different (recreated) pane
       note.textContent = `preview error: ${e.message}`;
       p.live = false;
       if (p.onClosed) p.onClosed();
@@ -2128,7 +2135,16 @@ const POLL_INTERVAL_MS = 5000;
     // while our attach RPC was in flight, harness_previewClosed already
     // flipped p.live off — the stream we just installed would run
     // unrendered behind a paused (▶) UI. Stop it; the death note stands.
-    if (epoch === p.epoch && !p.live) {
+    //
+    // The `previewPanes.get(key) === p` check additionally guards against a
+    // dismissed-then-recreated same-key pane: grid teardown (stopPane /
+    // teardownGridPanes / dismissPane) sets live=false and calls
+    // previewStop(key) but never bumps epoch, so a stale in-flight
+    // previewStart for the OLD pane can land here with epoch === p.epoch &&
+    // !p.live even after a brand-new pane has taken over `key`. Without this
+    // identity check, the stale continuation would call previewStop(key)
+    // and kill the NEW pane's live stream.
+    if (epoch === p.epoch && !p.live && previewPanes.get(key) === p) {
       window.harness.previewStop(key);
     }
   }
@@ -2300,7 +2316,7 @@ const POLL_INTERVAL_MS = 5000;
   function openSessionGrid(ids) {
     teardownGridPanes();
     gridBody.replaceChildren();
-    const capped = ids.slice(0, 9); // pane cap (v1)
+    const capped = [...new Set(ids)].slice(0, 9); // dedupe (same id twice must not orphan a cell), then pane cap (v1)
     for (const id of capped) {
       const key = "grid:" + id;
       const cell = document.createElement("div");
