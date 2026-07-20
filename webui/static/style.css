@@ -784,6 +784,78 @@ button:hover { background: #555; }
 .session-preview-spacer { overflow: hidden; }
 .session-preview-scale { transform-origin: top left; }
 
+/* Session grid modal: an at-a-glance live monitor of several sessions'
+   panes at once. Shares .preview-modal/.preview-header/.preview-title/
+   .preview-close from the single-preview modal above (same header pattern)
+   and .session-preview-spacer/.session-preview-scale for each cell's
+   scale-to-fit xterm (buildPaneTerm reuses those classes). .grid-modal only
+   overrides sizing to something much larger than the single-preview dialog. */
+.grid-modal { width: 96vw; max-width: 1600px; height: 90vh; max-height: 90vh; }
+.grid-body {
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 8px;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px;
+  background: #1e1e1e;
+}
+.grid-cell {
+  border: 1px solid #333;
+  background: #1e1e1e;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.grid-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  color: #d4d4d4;
+  background: #252526;
+  font-size: 12px;
+  flex: 0 0 auto;
+}
+.grid-cell-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+}
+.grid-cell-btn {
+  flex: 0 0 auto;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-size: 0.8em;
+  line-height: 1;
+  cursor: pointer;
+  min-width: 1.8rem;
+  min-height: 1.8rem;
+}
+.grid-cell-btn:hover { background: #3a3a3a; }
+.grid-cell-body {
+  flex: 1 1 auto;
+  overflow: hidden;
+  min-height: 120px;
+  padding: 0.4em;
+}
+
+@media (max-width: 600px) {
+  .grid-modal {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+  .grid-body { grid-template-columns: 1fr; }
+}
+
 /* ============================================================
  * Connection topology (#connections section)
  * Desktop: radial SVG hub-and-spoke. Mobile (<=600px): grouped card list.

@@ -212,6 +212,18 @@
   </div>
   <div id="session-preview-body" class="preview-body session-preview-body"></div>
 </dialog>
+<!-- Session grid modal: at-a-glance live monitor of multiple interactive
+     sessions at once, each cell its own read-only view-attach pane (shares
+     the previewPanes registry / start-stop engine with the single preview
+     modal above, keyed "grid:<taskId>"). Body-level for the same top-layer
+     reason as file-preview-modal above. -->
+<dialog id="session-grid-modal" class="preview-modal grid-modal">
+  <div class="preview-header">
+    <span id="session-grid-title" class="preview-title">セッショングリッド</span>
+    <button id="session-grid-close" class="preview-close" aria-label="Close" autofocus>✕</button>
+  </div>
+  <div id="session-grid-body" class="grid-body"></div>
+</dialog>
 <script src="/static/wasm_exec.js"></script>
 <script src="/static/xterm.js"></script>
 <script src="/static/addon-fit.js"></script>

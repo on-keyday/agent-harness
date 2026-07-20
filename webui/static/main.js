@@ -1320,6 +1320,22 @@ const POLL_INTERVAL_MS = 5000;
           openSessionPreview(tokens[1]);
           out = `preview ${tokens[1].slice(0, 12)}…`;
           break;
+        case "grid": {
+          // grid [id...] — explicit ids, else every live interactive session
+          // (activity-desc, same ordering as the task list — taskActivityMs).
+          let ids = tokens.slice(1);
+          if (ids.length === 0) {
+            const snap = await window.harness.snapshot();
+            ids = (snap.tasks || [])
+              .filter((t) => t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached"))
+              .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
+              .map((t) => t.id);
+          }
+          if (ids.length === 0) { out = "grid: no live interactive sessions"; break; }
+          openSessionGrid(ids);
+          out = `grid: ${ids.length} pane(s)${ids.length > 9 ? " (capped at 9)" : ""}`;
+          break;
+        }
         case "prune": {
           const flags = parseFlags(tokens.slice(1));
           out = await window.harness.prune({ before: flags.before || "168h" });
@@ -1364,6 +1380,7 @@ const POLL_INTERVAL_MS = 5000;
             "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
             "  cancel <task-id>          cancel a task",
             "  preview <task-id>         live read-only screen preview of a session (⏸/▶ pause-resume)",
+            "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  file ls <task> [rel]      list a worktree directory",
             "  file delete [-r] [-f] <task> <rel>",
@@ -2030,82 +2047,108 @@ const POLL_INTERVAL_MS = 5000;
 
   document.getElementById("reattach").addEventListener("click", () => reattachTo(taskIdInput.value.trim()));
 
-  // --- Session preview modal: LIVE read-only view of an interactive
-  //     session. A view-mode attach stream stays open while the modal shows;
-  //     bytes flow into a throwaway xterm sized to the session's real grid
-  //     and CSS-scaled to fit. ⏸ pauses by CLOSING the stream (the frozen
-  //     frame stays; zero load while paused); ▶ re-attaches — the server's
-  //     ring replay reconstructs the current screen, so resume jumps to now.
-  //     Closing the modal disconnects immediately. View mode never takes
-  //     over the controlling client, and the stream is independent of the
-  //     main terminal's singleton, so peeking is always safe — including at
-  //     the session currently attached here.
+  // --- Session preview: LIVE read-only view of interactive session(s). A
+  //     view-mode attach stream stays open per pane while shown; bytes flow
+  //     into a throwaway xterm sized to the session's real grid and
+  //     CSS-scaled to fit. ⏸ pauses by CLOSING the stream (the frozen frame
+  //     stays; zero load while paused); ▶ re-attaches — the server's ring
+  //     replay reconstructs the current screen, so resume jumps to now.
+  //     Closing disconnects immediately. View mode never takes over the
+  //     controlling client, and each stream is independent of the main
+  //     terminal's singleton, so peeking is always safe — including at the
+  //     session currently attached here.
+  //
+  //     previewPanes is a registry of every live pane, keyed by an opaque
+  //     paneKey that matches the wasm side's previewSlots map
+  //     (cli/preview_wasm.go) 1:1 — the wasm pump tags every
+  //     harness_preview* hook call with the same paneKey, so N independent
+  //     panes can share the one wasm client. The single-preview modal
+  //     registers exactly one pane under the fixed key "preview"; the
+  //     session grid registers one pane per cell under "grid:<taskId>".
+  //     Record shape: { taskId, live, epoch, term, bodyEl, scaleBox, spacer,
+  //     noteEl, onResize, onClosed }.
   const sessionPreviewModal    = document.getElementById("session-preview-modal");
   const sessionPreviewTitle    = document.getElementById("session-preview-title");
   const sessionPreviewBody     = document.getElementById("session-preview-body");
   const sessionPreviewPause    = document.getElementById("session-preview-pause");
   const sessionPreviewReattach = document.getElementById("session-preview-reattach");
   const sessionPreviewClose    = document.getElementById("session-preview-close");
-  let sessionPreviewTerm = null;   // throwaway xterm; disposed on close/resume
-  let sessionPreviewTaskId = "";
-  let sessionPreviewEpoch = 0;     // guards the async previewStart promise across close/reopen
-  let sessionPreviewLive = false;  // stream open (⏸ offered) vs paused/dead (▶ offered)
 
-  function disposeSessionPreviewTerm() {
-    if (sessionPreviewTerm) { sessionPreviewTerm.dispose(); sessionPreviewTerm = null; }
-    sessionPreviewBody.replaceChildren();
+  const previewPanes = new Map();
+
+  function disposePaneTerm(p) {
+    if (p.term) { p.term.dispose(); p.term = null; }
+    if (p.bodyEl) p.bodyEl.replaceChildren();
+    p.scaleBox = null;
+    p.spacer = null;
+    p.noteEl = null;
   }
 
+  function paneNote(p, text) {
+    const el = document.createElement("p");
+    el.className = "preview-note";
+    el.textContent = text;
+    if (p.bodyEl) p.bodyEl.appendChild(el);
+    p.noteEl = el;
+    return el;
+  }
+
+  // setPreviewPauseLabel reflects the "preview" pane's live flag onto the
+  // single-preview modal's ⏸/▶ toggle. Grid panes have no such per-pane
+  // control (dismiss (✕) is the only lifecycle action there), so this stays
+  // specific to the "preview" key rather than becoming a per-pane callback.
   function setPreviewPauseLabel() {
-    sessionPreviewPause.textContent = sessionPreviewLive ? "⏸" : "▶";
-    sessionPreviewPause.title = sessionPreviewLive ? "一時停止" : "再開";
+    const live = !!previewPanes.get("preview")?.live;
+    sessionPreviewPause.textContent = live ? "⏸" : "▶";
+    sessionPreviewPause.title = live ? "一時停止" : "再開";
   }
 
-  function previewNote(text) {
-    const p = document.createElement("p");
-    p.className = "preview-note";
-    p.textContent = text;
-    sessionPreviewBody.appendChild(p);
-    return p;
-  }
-
-  // startSessionPreviewStream (re)opens the live stream for the current
-  // task. The grid size arrives asynchronously via harness_previewOpen,
-  // which builds the term; until then the pane shows a connecting note.
-  async function startSessionPreviewStream() {
-    const epoch = ++sessionPreviewEpoch;
-    disposeSessionPreviewTerm();
-    const note = previewNote("connecting…");
-    sessionPreviewLive = true;
-    setPreviewPauseLabel();
+  // startPane (re)opens the live stream for paneKey/p.taskId, generalizing
+  // the single preview's former startSessionPreviewStream over the pane
+  // registry so grid cells share the same start/stop/epoch-guard logic. The
+  // grid size arrives asynchronously via harness_previewOpen, which builds
+  // the term; until then the pane shows a connecting note. p.live flips to
+  // true synchronously (before the awaited RPC settles), matching the
+  // original's immediate ⏸-available feedback.
+  async function startPane(key, p) {
+    const epoch = ++p.epoch;
+    disposePaneTerm(p);
+    const note = paneNote(p, "connecting…");
+    p.live = true;
     try {
-      await window.harness.previewStart(sessionPreviewTaskId);
+      await window.harness.previewStart(key, p.taskId);
     } catch (e) {
-      if (epoch !== sessionPreviewEpoch) return; // superseded/closed meanwhile
+      if (epoch !== p.epoch) return; // superseded/closed meanwhile
       note.textContent = `preview error: ${e.message}`;
-      sessionPreviewLive = false;
-      setPreviewPauseLabel();
+      p.live = false;
+      if (p.onClosed) p.onClosed();
       return;
     }
     // Reconcile a narrow race: if the PREVIOUS stream's death was delivered
     // while our attach RPC was in flight, harness_previewClosed already
-    // flipped sessionPreviewLive off — the stream we just installed would run
+    // flipped p.live off — the stream we just installed would run
     // unrendered behind a paused (▶) UI. Stop it; the death note stands.
-    if (epoch === sessionPreviewEpoch && !sessionPreviewLive) {
-      window.harness.previewStop();
+    if (epoch === p.epoch && !p.live) {
+      window.harness.previewStop(key);
     }
   }
 
-  function pauseSessionPreview() {
-    sessionPreviewLive = false;   // flip BEFORE stop: raced late hooks below no-op
-    setPreviewPauseLabel();
-    window.harness.previewStop();
+  // stopPane flips paneKey's pane to not-live (BEFORE calling previewStop,
+  // so any hook racing the wasm-side teardown no-ops) then disconnects the
+  // stream. Idempotent — a no-op if paneKey isn't registered.
+  function stopPane(key) {
+    const p = previewPanes.get(key);
+    if (!p) return;
+    p.live = false;
+    window.harness.previewStop(key);
   }
 
-  // buildPreviewTerm creates the throwaway xterm at the session's true grid
+  // buildPaneTerm creates the throwaway xterm at the session's true grid
   // (re-rendering at a smaller grid would corrupt full-screen TUI layouts)
-  // inside the scale/spacer pair, then fits it to the pane width.
-  function buildPreviewTerm(rows, cols) {
+  // inside the scale/spacer pair, then fits it to the pane's own width.
+  function buildPaneTerm(p, rows, cols) {
+    if (!p.bodyEl) return;
+    p.bodyEl.replaceChildren(); // drop the connecting note
     const spacer = document.createElement("div");
     spacer.className = "session-preview-spacer";
     const scaleBox = document.createElement("div");
@@ -2113,69 +2156,88 @@ const POLL_INTERVAL_MS = 5000;
     const termBox = document.createElement("div");
     scaleBox.appendChild(termBox);
     spacer.appendChild(scaleBox);
-    sessionPreviewBody.appendChild(spacer);
-    sessionPreviewTerm = new Terminal({
+    p.bodyEl.appendChild(spacer);
+    p.spacer = spacer;
+    p.scaleBox = scaleBox;
+    p.term = new Terminal({
       cols, rows,
       disableStdin: true,
       convertEol: true,  // match the main terminal so the stream renders identically
       fontSize: 13,
       fontFamily: '"Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace',
     });
-    sessionPreviewTerm.open(termBox);
-    fitPreviewScale();
+    p.term.open(termBox);
+    p.onResize = () => fitPaneScale(p);
+    p.onResize();
   }
 
-  // fitPreviewScale measures the rendered screen at scale 1 (transform reset
+  // fitPaneScale measures the rendered screen at scale 1 (transform reset
   // first — getBoundingClientRect returns the TRANSFORMED box, so measuring
-  // with a leftover scale would compound) and scales the grid to the pane.
-  function fitPreviewScale() {
-    const scaleBox = sessionPreviewBody.querySelector(".session-preview-scale");
-    const spacer = sessionPreviewBody.querySelector(".session-preview-spacer");
-    if (!scaleBox || !spacer) return;
-    scaleBox.style.transform = "";
-    const screenEl = scaleBox.querySelector(".xterm-screen");
-    const rect = screenEl ? screenEl.getBoundingClientRect() : scaleBox.getBoundingClientRect();
-    const avail = sessionPreviewBody.clientWidth - 12; // body padding allowance
+  // with a leftover scale would compound) and scales the grid to fit the
+  // PANE's own body width (p.bodyEl) — for a grid cell that's the cell body,
+  // not the whole modal, so each pane fits independently of the others.
+  function fitPaneScale(p) {
+    if (!p.scaleBox || !p.spacer || !p.bodyEl) return;
+    p.scaleBox.style.transform = "";
+    const screenEl = p.scaleBox.querySelector(".xterm-screen");
+    const rect = screenEl ? screenEl.getBoundingClientRect() : p.scaleBox.getBoundingClientRect();
+    const avail = p.bodyEl.clientWidth - 12; // body padding allowance
     if (rect.width > 0 && avail > 0) {
       const scale = Math.min(1, avail / rect.width);
-      scaleBox.style.width = `${rect.width}px`;
-      scaleBox.style.transform = `scale(${scale})`;
-      spacer.style.height = `${Math.ceil(rect.height * scale)}px`;
+      p.scaleBox.style.width = `${rect.width}px`;
+      p.scaleBox.style.transform = `scale(${scale})`;
+      p.spacer.style.height = `${Math.ceil(rect.height * scale)}px`;
     }
   }
 
-  // wasm→JS hooks. The wasm pump is generation-gated (stale pumps go
-  // silent); these flags close the residual check-then-invoke race: after a
-  // pause/close, sessionPreviewLive is already false, so a late hook no-ops.
-  window.harness_previewOpen = (rows, cols, hasSize) => {
-    if (!sessionPreviewModal.open || !sessionPreviewLive) return;
-    sessionPreviewBody.replaceChildren();  // drop the connecting note
+  // wasm→JS hooks, routed by paneKey (cli/preview_wasm.go tags every call
+  // with the pane's key; see previewCall there). The wasm pump is
+  // generation-gated (stale pumps go silent); p.live additionally closes the
+  // residual check-then-invoke race: after a pause/close, p.live is already
+  // false, so a late hook no-ops. An unknown/already-dismissed paneKey is
+  // silently ignored.
+  window.harness_previewOpen = (paneKey, rows, cols, hasSize) => {
+    const p = previewPanes.get(paneKey);
+    if (!p || !p.live) return;
     const r = hasSize && rows > 0 ? rows : 24;
     const c = hasSize && cols > 0 ? cols : 80;
-    buildPreviewTerm(r, c);
+    buildPaneTerm(p, r, c);
   };
-  window.harness_previewWrite = (u8) => {
-    if (!sessionPreviewModal.open || !sessionPreviewLive || !sessionPreviewTerm) return;
-    sessionPreviewTerm.write(u8);
+  window.harness_previewWrite = (paneKey, u8) => {
+    const p = previewPanes.get(paneKey);
+    if (!p || !p.live || !p.term) return;
+    p.term.write(u8);
   };
-  window.harness_previewResize = (rows, cols) => {
-    if (!sessionPreviewModal.open || !sessionPreviewLive || !sessionPreviewTerm) return;
-    sessionPreviewTerm.resize(cols, rows);
-    fitPreviewScale();
+  window.harness_previewResize = (paneKey, rows, cols) => {
+    const p = previewPanes.get(paneKey);
+    if (!p || !p.live || !p.term) return;
+    p.term.resize(cols, rows);
+    if (p.onResize) p.onResize();
   };
-  window.harness_previewClosed = () => {
-    if (!sessionPreviewModal.open || !sessionPreviewLive) return;
-    sessionPreviewLive = false;
-    setPreviewPauseLabel();
-    if (!sessionPreviewTerm) sessionPreviewBody.replaceChildren(); // died before the grid arrived
-    previewNote("(ストリーム終了 — ▶ で再接続)");
+  window.harness_previewClosed = (paneKey) => {
+    const p = previewPanes.get(paneKey);
+    if (!p || !p.live) return;
+    p.live = false;
+    if (!p.term && p.bodyEl) p.bodyEl.replaceChildren(); // died before the grid arrived
+    paneNote(p, "(ストリーム終了 — ▶ で再接続)");
+    if (p.onClosed) p.onClosed();
   };
 
+  // openSessionPreview shows the single-preview modal for `id`, registering
+  // its pane under the fixed key "preview".
   function openSessionPreview(id) {
-    sessionPreviewTaskId = id;
+    const key = "preview";
     sessionPreviewTitle.textContent = `🔍 ${id.slice(0, 12)}…`;
+    const p = {
+      taskId: id, live: false, epoch: 0, term: null,
+      bodyEl: sessionPreviewBody, scaleBox: null, spacer: null, noteEl: null,
+      onResize: null,
+      onClosed: () => setPreviewPauseLabel(),
+    };
+    previewPanes.set(key, p);
     if (!sessionPreviewModal.open) sessionPreviewModal.showModal();
-    startSessionPreviewStream();
+    startPane(key, p);       // p.live flips true synchronously before the first await
+    setPreviewPauseLabel();
   }
 
   sessionPreviewClose.addEventListener("click", () => sessionPreviewModal.close());
@@ -2185,23 +2247,125 @@ const POLL_INTERVAL_MS = 5000;
     if (ev.target === sessionPreviewModal) sessionPreviewModal.close();
   });
   sessionPreviewModal.addEventListener("close", () => {
-    sessionPreviewEpoch++;         // invalidate any in-flight previewStart
-    sessionPreviewLive = false;    // silence raced late hooks
-    window.harness.previewStop();  // close = disconnect immediately
-    disposeSessionPreviewTerm();
+    const p = previewPanes.get("preview");
+    if (p) p.epoch++;              // invalidate any in-flight previewStart
+    stopPane("preview");            // close = disconnect immediately
+    if (p) disposePaneTerm(p);
+    previewPanes.delete("preview");
   });
   sessionPreviewPause.addEventListener("click", () => {
-    if (sessionPreviewLive) pauseSessionPreview();
-    else startSessionPreviewStream();
+    const p = previewPanes.get("preview");
+    if (!p) return;
+    if (p.live) stopPane("preview");
+    else startPane("preview", p);
+    setPreviewPauseLabel();
   });
   sessionPreviewReattach.addEventListener("click", () => {
-    const id = sessionPreviewTaskId;
+    const p = previewPanes.get("preview");
+    const id = p ? p.taskId : "";
     // close() queues the "close" event as a task, so previewStop runs just
     // AFTER reattachTo below kicks off — harmless: the view stream is
     // independent of the control attach and is torn down moments later.
     sessionPreviewModal.close();
     reattachTo(id);
   });
+
+  // --- Session grid: an at-a-glance live monitor of multiple interactive
+  //     sessions at once, each cell its own pane over the same previewPanes
+  //     registry (key "grid:<taskId>"), so start/stop/hook-routing is shared
+  //     verbatim with the single preview above. Pane cap: 9 (v1).
+  const gridModal = document.getElementById("session-grid-modal");
+  const gridBody  = document.getElementById("session-grid-body");
+  let gridKeys = [];
+
+  // teardownGridPanes stops every current grid pane's stream and clears the
+  // registry, WITHOUT touching the dialog's open state. Kept separate from
+  // closeSessionGrid because dialog.close() fires "close" as a queued task
+  // (HTML spec), not synchronously — calling it from inside openSessionGrid
+  // (to reset a currently-open grid before repopulating it) would otherwise
+  // let that queued event tear down the brand-new panes we're about to
+  // build, and showModal() throws InvalidStateError on an already-open
+  // dialog. openSessionGrid calls this directly and never closes/reopens
+  // the dialog when it's already showing.
+  function teardownGridPanes() {
+    for (const key of gridKeys) {
+      stopPane(key);
+      const p = previewPanes.get(key);
+      if (p) disposePaneTerm(p);
+      previewPanes.delete(key);
+    }
+    gridKeys = [];
+  }
+
+  function openSessionGrid(ids) {
+    teardownGridPanes();
+    gridBody.replaceChildren();
+    const capped = ids.slice(0, 9); // pane cap (v1)
+    for (const id of capped) {
+      const key = "grid:" + id;
+      const cell = document.createElement("div");
+      cell.className = "grid-cell";
+      const head = document.createElement("div");
+      head.className = "grid-cell-head";
+      const label = document.createElement("span");
+      label.className = "grid-cell-label";
+      label.textContent = id.slice(0, 8);
+      label.title = id;
+      const attach = document.createElement("button");
+      attach.type = "button";
+      attach.className = "grid-cell-btn";
+      attach.textContent = "↪";
+      attach.title = "リアタッチ";
+      attach.addEventListener("click", () => { closeSessionGrid(); reattachTo(id); });
+      const dismiss = document.createElement("button");
+      dismiss.type = "button";
+      dismiss.className = "grid-cell-btn";
+      dismiss.textContent = "✕";
+      dismiss.title = "閉じる";
+      dismiss.addEventListener("click", () => dismissPane(key, cell));
+      head.append(label, attach, dismiss);
+      const body = document.createElement("div");
+      body.className = "grid-cell-body";
+      cell.append(head, body);
+      gridBody.append(cell);
+
+      const p = {
+        taskId: id, live: false, epoch: 0, term: null,
+        bodyEl: body, scaleBox: null, spacer: null, noteEl: null,
+        onResize: null, onClosed: null,
+      };
+      previewPanes.set(key, p);
+      gridKeys.push(key);
+      startPane(key, p);
+    }
+    if (!gridModal.open) gridModal.showModal();
+  }
+
+  function dismissPane(key, cell) {
+    stopPane(key);
+    const p = previewPanes.get(key);
+    if (p) disposePaneTerm(p);
+    previewPanes.delete(key);
+    gridKeys = gridKeys.filter((k) => k !== key);
+    cell.remove();
+  }
+
+  function closeSessionGrid() {
+    teardownGridPanes();
+    if (gridModal.open) gridModal.close();
+  }
+
+  // The dialog's native "close" (user hit Escape, or the ✕/backdrop handlers
+  // below called .close()) only needs the pane teardown — calling
+  // closeSessionGrid() here too would re-invoke .close() on an already-
+  // closing dialog, which is harmless but redundant; teardownGridPanes is
+  // the correct, minimal action for this event.
+  gridModal.addEventListener("close", teardownGridPanes);
+  // Backdrop click closes — same convention as the single-preview modal.
+  gridModal.addEventListener("click", (ev) => {
+    if (ev.target === gridModal) gridModal.close();
+  });
+  document.getElementById("session-grid-close").addEventListener("click", () => gridModal.close());
 
   // renderTaskList builds clickable task rows into #task-list. Each row toggles
   // an inline action sheet; every action derives the id from the row, so the
@@ -2436,9 +2600,10 @@ const POLL_INTERVAL_MS = 5000;
     idRow.append(idText, copyBtn);
     sheet.appendChild(idRow);
 
-    // Preview / Reattach / idle-notify — live interactive session only.
+    // Preview / Grid / Reattach / idle-notify — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
       addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
+      addItem("🔲 グリッド", "", () => openSessionGrid([t.id])); // 1-pane grid centered on this task; the `grid` command opens the full set
       addItem("↪ Reattach", "", () => reattachTo(t.id));
       addItem("🔔 idleで通知", "", async () => {
         try {
