@@ -60,8 +60,12 @@ func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client) {
 	// and discard or emu.Write blocks forever (cli/snapshot_native.go pattern).
 	// This goroutine exits when emu.Close() (in Stop) makes emu.Read return an
 	// error — same lifecycle as the sibling in cli/snapshot_native.go, no
-	// separate stop channel to manage.
-	go io.Copy(io.Discard, emu)
+	// separate stop channel to manage. Recover so a VT-layer panic can never
+	// take down the whole TUI.
+	go func() {
+		defer func() { _ = recover() }()
+		_, _ = io.Copy(io.Discard, emu)
+	}()
 
 	go p.pump(cctx, c)
 }
@@ -83,26 +87,51 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 		n, rerr := out.Read(buf)
 		if n > 0 {
 			rows, cols, ok := stream.LastWindowSize()
-			p.mu.Lock()
-			if p.emu == nil {
-				// Stop() already nil'd the emulator (racing against this
-				// still-in-flight read); nothing left to write into.
-				p.mu.Unlock()
-				return
+			resize := ok && (int(rows) != lastRows || int(cols) != lastCols) && rows > 0 && cols > 0
+			if !p.feed(buf[:n], int(rows), int(cols), resize) {
+				return // emulator torn down (Stop raced)
 			}
-			if ok && (int(rows) != lastRows || int(cols) != lastCols) && rows > 0 && cols > 0 {
-				p.emu.Resize(int(cols), int(rows))
-				p.cols, p.rows = int(cols), int(rows)
+			if resize {
 				lastRows, lastCols = int(rows), int(cols)
 			}
-			p.emu.Write(buf[:n])
-			p.mu.Unlock()
 		}
 		if rerr != nil {
 			p.setErr(rerr)
 			return
 		}
 	}
+}
+
+// feed applies one chunk of PTY bytes to the emulator under the lock, resizing
+// first when the session's window size changed. It RECOVERS from panics inside
+// the VT emulator: x/vt can index out of range on some escape sequences — e.g. a
+// reverseIndex (ESC M) against a scroll region left stale by a resize panics in
+// ScrollDown/InsertLineArea (index N into a shorter buffer). A read-only
+// monitoring pane must never crash the whole TUI, so a bad sequence is swallowed
+// and the pump keeps going; the session's next full repaint recovers the view.
+// Returns false only if the emulator was already torn down (Stop raced).
+func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.emu == nil {
+		return false
+	}
+	alive = true
+	// recover is registered AFTER the Unlock defer, so on panic it runs first
+	// (swallowing), then the lock is released; alive stays true so the pump
+	// continues rather than treating a recovered panic as teardown.
+	defer func() { _ = recover() }()
+	if resize {
+		p.emu.Resize(cols, rows)
+		// Reset the scroll region (DECSTBM) to the new full screen. x/vt does
+		// not clamp a stale region on resize, which later panics in
+		// ScrollDown/reverseIndex when the old bottom margin exceeds the new
+		// height. The session re-establishes its own region on its next redraw.
+		p.emu.Write([]byte("\x1b[r"))
+		p.cols, p.rows = cols, rows
+	}
+	p.emu.Write(data)
+	return alive
 }
 
 func (p *PaneStreamer) setErr(err error) {
