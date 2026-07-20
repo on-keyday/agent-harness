@@ -148,12 +148,30 @@ func (p *PaneStreamer) Render(width, height int) string {
 	if emu == nil || width <= 0 || height <= 0 {
 		return ""
 	}
-	startY := rows - height
+	// Anchor the crop's bottom to the cursor row (the live line), not the
+	// geometric bottom. A shell with only a few lines at the top of a TALL
+	// screen — e.g. after a control attach resized its PTY taller than the pane
+	// — leaves the bottom region empty; cropping there shows a blank pane (the
+	// "grid goes black after reattach" bug). Showing the `height` rows ending at
+	// the cursor keeps a full-screen app's live bottom visible while also
+	// showing a short shell's content near the top.
+	bottom := emu.CursorPosition().Y + 1
+	if bottom < 1 {
+		bottom = 1
+	}
+	if bottom > rows {
+		bottom = rows
+	}
+	startY := bottom - height
 	if startY < 0 {
 		startY = 0
 	}
+	endY := startY + height
+	if endY > rows {
+		endY = rows
+	}
 	var b strings.Builder
-	for y := startY; y < rows; y++ {
+	for y := startY; y < endY; y++ {
 		if y > startY {
 			b.WriteByte('\n')
 		}
