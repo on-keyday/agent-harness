@@ -20,7 +20,15 @@ import (
 // On success the caller owns the returned stream and is responsible for
 // calling RemoteShell (or Stdin/Stdout/Stderr individually) and Close.
 func (c *Client) AttachSession(ctx context.Context, taskIDHex string, mode protocol.AttachMode) (*agentexec.CommandExecutionStream, uint64, error) {
-	st, replayBytes, err := c.attachSessionRPC(ctx, taskIDHex, mode)
+	return c.AttachSessionWithReplayLimit(ctx, taskIDHex, mode, 0)
+}
+
+// AttachSessionWithReplayLimit is AttachSession with a replay cap (bytes; 0 =
+// full ring). Only observer attaches (view/cowrite) honor the cap server-side;
+// a control reattach always replays the full ring. Used by the monitoring grid
+// so a pane isn't shipped scrollback it will never render.
+func (c *Client) AttachSessionWithReplayLimit(ctx context.Context, taskIDHex string, mode protocol.AttachMode, replayLimit uint32) (*agentexec.CommandExecutionStream, uint64, error) {
+	st, replayBytes, err := c.attachSessionRPC(ctx, taskIDHex, mode, replayLimit)
 	if err != nil {
 		return nil, 0, err
 	}

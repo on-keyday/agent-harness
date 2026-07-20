@@ -780,6 +780,12 @@ enum AttachMode:
 format AttachSessionRequest:
     task_id :TaskID
     mode :AttachMode
+    replay_limit :u32   # 0 = unlimited (full ring, default); >0 = cap the replay
+                        # to the last replay_limit bytes (rounded to a frame
+                        # boundary). Only honored for observer attaches
+                        # (view/cowrite) — control reattach always gets the full
+                        # ring. A monitoring grid pane shows only a small crop, so
+                        # it requests a small limit instead of pulling ~1 MiB.
 
 enum AttachSessionStatus:
     :u8

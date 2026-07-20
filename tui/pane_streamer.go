@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image/color"
 	"io"
-	"os"
 	"strings"
 	"sync"
 
@@ -81,21 +80,25 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 	// authority — this is what lets the grid type into a focused pane
 	// (SendInput) while it stays small. Idle panes send nothing, so cowrite is
 	// output-equivalent to view until the user enters input mode.
-	gridDebugf("[%s] attach-start", p.dbgID())
-	stream, replayBytes, err := c.AttachSession(ctx, p.taskID, protocol.AttachMode_Cowrite)
+	// gridReplayLimit caps the scrollback the server replays: a pane shows only
+	// a small bottom crop, so it does NOT need the full ~1 MiB ring. Without
+	// this, opening a grid of N sessions pulls ~1 MiB × N of replay, which is
+	// slow enough over a real link that panes torn down on a repeated
+	// open/close never finish their replay and render black. The mode preamble
+	// (alt-screen, DEC modes) is sent separately, so a full-screen app repaints
+	// correctly from a capped replay.
+	const gridReplayLimit = 128 * 1024
+	stream, _, err := c.AttachSessionWithReplayLimit(ctx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
 	if err != nil {
-		gridDebugf("[%s] attach-ERR %v", p.dbgID(), err)
 		p.setErr(err)
 		return
 	}
-	gridDebugf("[%s] attach-ok replayBytes=%d", p.dbgID(), replayBytes)
 	p.mu.Lock()
 	if p.stopped {
 		// Stop() ran while AttachSession was in flight: it captured a nil stream
 		// (this one didn't exist yet), so if we kept it, the stream would leak —
 		// a server-side observer that never detaches. Close it and exit.
 		p.mu.Unlock()
-		gridDebugf("[%s] attach-ok-but-stopped: closing leaked stream", p.dbgID())
 		_ = stream.Close()
 		return
 	}
@@ -105,18 +108,12 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 	out := stream.Stdout()
 	buf := make([]byte, 32*1024)
 	lastRows, lastCols := 0, 0
-	firstByte := false
 	for {
 		n, rerr := out.Read(buf)
 		if n > 0 {
-			if !firstByte {
-				firstByte = true
-				gridDebugf("[%s] first-byte n=%d", p.dbgID(), n)
-			}
 			rows, cols, ok := stream.LastWindowSize()
 			resize := ok && (int(rows) != lastRows || int(cols) != lastCols) && rows > 0 && cols > 0
 			if !p.feed(buf[:n], int(rows), int(cols), resize) {
-				gridDebugf("[%s] feed-dead(stopped)", p.dbgID())
 				return // emulator torn down (Stop raced)
 			}
 			if resize {
@@ -124,34 +121,10 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 			}
 		}
 		if rerr != nil {
-			gridDebugf("[%s] read-ERR %v (gotFirstByte=%v)", p.dbgID(), rerr, firstByte)
 			p.setErr(rerr)
 			return
 		}
 	}
-}
-
-func (p *PaneStreamer) dbgID() string {
-	if len(p.taskID) >= 8 {
-		return p.taskID[:8]
-	}
-	return p.taskID
-}
-
-// gridDebugPath is the diagnostic log file, written to the current working
-// directory (where harness-tui was launched) so it is easy to find/collect.
-func gridDebugPath() string { return "harness-gridpane.log" }
-
-func gridDebugf(format string, a ...any) {
-	if os.Getenv("HARNESS_GRID_DEBUG") == "" {
-		return
-	}
-	f, err := os.OpenFile(gridDebugPath(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, format+"\n", a...)
 }
 
 // feed applies one chunk of PTY bytes to the emulator under the lock, resizing

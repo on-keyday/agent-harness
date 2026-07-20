@@ -60,7 +60,7 @@ func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string) er
 		_ = old.stream.Close()
 	}
 
-	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View)
+	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View, 0)
 	if err != nil {
 		return err
 	}

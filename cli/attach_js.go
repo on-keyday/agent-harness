@@ -31,7 +31,7 @@ func (c *Client) AttachSession(ctx context.Context, taskIDHex string, mode proto
 	setPendingAttach(taskIDHex)
 	defer clearPendingAttach()
 
-	stream, _, err := c.attachSessionRPC(ctx, taskIDHex, mode)
+	stream, _, err := c.attachSessionRPC(ctx, taskIDHex, mode, 0)
 	if err != nil {
 		return "", err
 	}

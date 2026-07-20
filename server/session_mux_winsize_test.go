@@ -45,7 +45,7 @@ func TestSessionMux_AttachViewer_ReplaysWindowSize(t *testing.T) {
 
 	// A new viewer must receive the size frame as the first bytes of its replay.
 	viewer := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, viewer); err != nil {
+	if err := mux.AttachViewer(ctx, viewer, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	got := viewer.WaitWritten(t, len(winFrame))
@@ -68,7 +68,7 @@ func TestSessionMux_AttachViewer_NoSizeWhenNoneSeen(t *testing.T) {
 	waitFor(t, func() bool { return mux.RingBufferLen() == len(pre) })
 
 	viewer := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, viewer); err != nil {
+	if err := mux.AttachViewer(ctx, viewer, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	// Replay should be exactly the ring content, no leading size frame.
@@ -86,7 +86,7 @@ func TestSessionMux_CoWriter_ForwardsInputDropsResize(t *testing.T) {
 	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
 
 	cw := newFakeStream(t)
-	if err := mux.AttachCoWriter(ctx, cw); err != nil {
+	if err := mux.AttachCoWriter(ctx, cw, 0); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func TestSessionMux_CoWriter_NoTakeoverNoSizeAuthority(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 	cw := newFakeStream(t)
-	if err := mux.AttachCoWriter(ctx, cw); err != nil {
+	if err := mux.AttachCoWriter(ctx, cw, 0); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
 	}
 	if !mux.IsAttached() {
@@ -164,7 +164,7 @@ func TestSessionMux_ControlResize_FansOutToViewer(t *testing.T) {
 		return bytes.Equal(mux.lastWinSize, first)
 	})
 	viewer := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, viewer); err != nil {
+	if err := mux.AttachViewer(ctx, viewer, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	viewer.WaitWritten(t, len(first)) // drain the attach preamble
@@ -189,7 +189,7 @@ func TestSessionMux_ControlResize_FansOutToCoWriter(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 	cw := newFakeStream(t)
-	if err := mux.AttachCoWriter(ctx, cw); err != nil {
+	if err := mux.AttachCoWriter(ctx, cw, 0); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
 	}
 	resize := makeWinSizeFrame(50, 200)

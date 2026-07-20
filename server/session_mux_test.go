@@ -319,7 +319,7 @@ func TestSessionMux_AttachViewer_ReplaysThenStreams(t *testing.T) {
 	waitFor(t, func() bool { return mux.RingBufferLen() == len(pre) })
 
 	viewer := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, viewer); err != nil {
+	if err := mux.AttachViewer(ctx, viewer, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	if got := viewer.WaitWritten(t, len(pre)); !bytes.Equal(got, pre) {
@@ -348,11 +348,11 @@ func TestSessionMux_FanOutWriterAndViewers(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 	v1 := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, v1); err != nil {
+	if err := mux.AttachViewer(ctx, v1, 0); err != nil {
 		t.Fatalf("v1: %v", err)
 	}
 	v2 := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, v2); err != nil {
+	if err := mux.AttachViewer(ctx, v2, 0); err != nil {
 		t.Fatalf("v2: %v", err)
 	}
 
@@ -377,7 +377,7 @@ func TestSessionMux_SlowViewerDroppedWithoutWedge(t *testing.T) {
 	}
 	slow := newFakeStream(t)
 	slow.SetBlockWrites(true) // its output pump blocks on the first frame
-	if err := mux.AttachViewer(ctx, slow); err != nil {
+	if err := mux.AttachViewer(ctx, slow, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 
@@ -404,7 +404,7 @@ func TestSessionMux_ViewerInputDiscarded(t *testing.T) {
 	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
 
 	viewer := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, viewer); err != nil {
+	if err := mux.AttachViewer(ctx, viewer, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	viewer.QueueRead([]byte("rm -rf / # should never reach runner\n"))
@@ -424,7 +424,7 @@ func TestSessionMux_ViewerDoesNotFireOnAttach(t *testing.T) {
 	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), hooks)
 
 	v := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, v); err != nil {
+	if err := mux.AttachViewer(ctx, v, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	time.Sleep(50 * time.Millisecond)
@@ -445,7 +445,7 @@ func TestSessionMux_StopClosesViewers(t *testing.T) {
 	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
 
 	v := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, v); err != nil {
+	if err := mux.AttachViewer(ctx, v, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	mux.Stop()
@@ -466,7 +466,7 @@ func TestSessionMux_TakeoverLeavesViewersStreaming(t *testing.T) {
 		t.Fatalf("w1 Attach: %v", err)
 	}
 	viewer := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, viewer); err != nil {
+	if err := mux.AttachViewer(ctx, viewer, 0); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 

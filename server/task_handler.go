@@ -1149,12 +1149,19 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 		parentCtx = context.Background()
 	}
 
+	// Control reattach always gets the full ring; only observer attaches honor
+	// the client's replay cap (0 = full), so a monitoring grid pane isn't
+	// shipped ~1 MiB of scrollback it will never render.
 	attach := mux.Attach
 	switch req.Mode {
 	case protocol.AttachMode_View:
-		attach = mux.AttachViewer
+		attach = func(ctx context.Context, s trsf.BidirectionalStream) error {
+			return mux.AttachViewer(ctx, s, req.ReplayLimit)
+		}
 	case protocol.AttachMode_Cowrite:
-		attach = mux.AttachCoWriter
+		attach = func(ctx context.Context, s trsf.BidirectionalStream) error {
+			return mux.AttachCoWriter(ctx, s, req.ReplayLimit)
+		}
 	}
 	if err := attach(parentCtx, tuiStream); err != nil {
 		slog.Error("AttachSession: attach", "task", idHex, "mode", req.Mode, "err", err)

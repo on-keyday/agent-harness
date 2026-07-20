@@ -14,14 +14,17 @@ import (
 // It is shared between native (cli/attach_native.go) and WASM
 // (cli/attach_js.go) callers; neither syscall nor exec dependencies are
 // introduced here.
-func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string, mode protocol.AttachMode) (trsf.BidirectionalStream, uint64, error) {
+// replayLimit caps the replay the server sends back (0 = full ring); only
+// observer attaches (view/cowrite) honor it. A monitoring grid pane passes a
+// small limit so it isn't shipped ~1 MiB of scrollback it will never show.
+func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string, mode protocol.AttachMode, replayLimit uint32) (trsf.BidirectionalStream, uint64, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, 0, fmt.Errorf("AttachSession: parse task id: %w", err)
 	}
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AttachSession}
-	req.SetAttach(protocol.AttachSessionRequest{TaskId: tid, Mode: mode})
+	req.SetAttach(protocol.AttachSessionRequest{TaskId: tid, Mode: mode, ReplayLimit: replayLimit})
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {

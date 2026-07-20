@@ -26,7 +26,7 @@ import (
 // builds define AttachSession with different signatures (the js variant
 // installs the browser xterm singleton — the wrong tool for a peek).
 func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.Duration) (captured []byte, rows, cols uint16, hasSize bool, err error) {
-	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View)
+	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View, 0)
 	if err != nil {
 		return nil, 0, 0, false, err
 	}

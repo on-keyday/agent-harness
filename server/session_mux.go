@@ -55,6 +55,38 @@ func readOneFrame(r io.Reader) ([]byte, error) {
 	return out, nil
 }
 
+// capReplayTail returns the suffix of frame-aligned replay data whose length is
+// ≤ limit, starting at a frame boundary. limit==0 (or data already within
+// limit) returns data unchanged. The ring stores complete frames, so dropping
+// whole LEADING frames keeps the client's frame parser aligned; the dropped
+// frames are older scrollback an observer does not need to render the current
+// screen. The last frame is always kept whole even if it alone exceeds limit,
+// so the result is never empty and never a split frame.
+func capReplayTail(data []byte, limit uint32) []byte {
+	if limit == 0 || len(data) <= int(limit) {
+		return data
+	}
+	lim := int(limit)
+	off := 0
+	for off < len(data) {
+		if len(data)-off <= lim {
+			return data[off:]
+		}
+		if len(data)-off < frameHeaderSize {
+			return data[off:] // malformed tail; return what's left
+		}
+		total := frameHeaderSize + int(binary.BigEndian.Uint32(data[off+1:off+5]))
+		if total <= 0 || off+total > len(data) {
+			return data[off:] // malformed frame; don't split it
+		}
+		if off+total >= len(data) {
+			return data[off:] // last frame — keep it whole even if > limit
+		}
+		off += total
+	}
+	return data[off:]
+}
+
 // encodeStdoutFrame wraps payload in one exec/frame Stdout frame (1-byte type +
 // 4-byte big-endian length + payload), matching the wire format runnerPump
 // forwards and the ring stores, so a synthesised frame is indistinguishable
@@ -327,9 +359,10 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 }
 
 // AttachViewer adds a read-only observer (its input is discarded). Unlike
-// Attach it does NOT take the writer slot or fire onAttach.
-func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.BidirectionalStream) error {
-	return m.attachObserver(stream, false)
+// Attach it does NOT take the writer slot or fire onAttach. replayLimit caps the
+// replayed ring bytes (0 = full).
+func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.BidirectionalStream, replayLimit uint32) error {
+	return m.attachObserver(stream, false, replayLimit)
 }
 
 // AttachCoWriter adds a non-takeover writer: it observes output like a viewer
@@ -338,14 +371,14 @@ func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.Bidirectional
 // the PTY size). Lets an agent co-drive a session alongside a human controller
 // without kicking them; the human keeps size ownership so the PTY isn't resized
 // out from under them.
-func (m *SessionMux) AttachCoWriter(ctx context.Context, stream trsf.BidirectionalStream) error {
-	return m.attachObserver(stream, true)
+func (m *SessionMux) AttachCoWriter(ctx context.Context, stream trsf.BidirectionalStream, replayLimit uint32) error {
+	return m.attachObserver(stream, true, replayLimit)
 }
 
 // attachObserver registers a viewer (forwardInput=false) or cowriter
 // (forwardInput=true): adds it to the output fan-out, replays size+modes+ring,
 // and starts its output pump plus either an input drain or an input forwarder.
-func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInput bool) error {
+func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInput bool, replayLimit uint32) error {
 	m.mu.Lock()
 	if m.ctx.Err() != nil {
 		m.mu.Unlock()
@@ -366,7 +399,12 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 	if pre := m.modes.preamble(); len(pre) > 0 {
 		replay = append(replay, encodeStdoutFrame(pre)...)
 	}
-	replay = append(replay, m.replaySnapshot()...)
+	// The winsize + mode preamble above are always sent in full (small, and the
+	// preamble carries the alt-screen/DEC-mode state). Only the ring SNAPSHOT is
+	// capped: an observer that requested a limit (a monitoring grid pane) gets
+	// just the last replayLimit bytes, frame-aligned, instead of the whole ~1 MiB
+	// ring it would never render.
+	replay = append(replay, capReplayTail(m.replaySnapshot(), replayLimit)...)
 	m.mu.Unlock()
 
 	// Replay BEFORE starting the output pump, so replayed bytes always precede
