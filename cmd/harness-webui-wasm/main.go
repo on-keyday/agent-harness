@@ -1037,12 +1037,15 @@ func harnessAttachSession(this js.Value, args []js.Value) any {
 
 // harnessPreviewStart opens a LIVE read-only preview of a detachable
 // interactive session: AttachMode_View (non-takeover), independent of the
-// activeInteractiveSession singleton. Output flows via the JS hooks
-// harness_previewOpen / harness_previewWrite / harness_previewResize /
-// harness_previewClosed until harness.previewStop() or a fresh
-// previewStart supersedes it.
+// activeInteractiveSession singleton. paneKey identifies which pane's JS
+// hooks receive the output, so multiple panes can each hold an
+// independent preview stream over the one shared client. Output flows via
+// the JS hooks harness_previewOpen / harness_previewWrite /
+// harness_previewResize / harness_previewClosed — each now called with
+// paneKey as their first argument — until harness.previewStop(paneKey) or
+// a fresh previewStart for the same paneKey supersedes it.
 //
-//	harness.previewStart(taskIDHex) -> Promise<taskIDHex>
+//	harness.previewStart(paneKey, taskIDHex) -> Promise<taskIDHex>
 func harnessPreviewStart(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1053,12 +1056,13 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			if len(args) < 1 {
-				rejectErr(reject, errors.New("previewStart: missing taskIDHex arg"))
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("previewStart: missing paneKey/taskIDHex arg"))
 				return
 			}
-			taskID := args[0].String()
-			if err := c.StartPreview(rootCtx, taskID); err != nil {
+			paneKey := args[0].String()
+			taskID := args[1].String()
+			if err := c.StartPreview(rootCtx, paneKey, taskID); err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -1070,12 +1074,19 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessPreviewStop tears down the live preview stream, if any.
-// Synchronous and idempotent; a paused/never-started preview is a no-op.
+// harnessPreviewStop tears down the named pane's live preview stream, if
+// any. Synchronous and idempotent; a paused/never-started preview is a
+// no-op. A missing paneKey arg is also treated as a no-op (rather than
+// panicking on args[0]) since this bridge function is synchronous, not a
+// promise executor — a panic here would crash the whole wasm module
+// instead of just rejecting one call.
 //
-//	harness.previewStop()
+//	harness.previewStop(paneKey)
 func harnessPreviewStop(this js.Value, args []js.Value) any {
-	cli.StopPreview()
+	if len(args) < 1 {
+		return js.Undefined()
+	}
+	cli.StopPreview(args[0].String())
 	return js.Undefined()
 }
 
