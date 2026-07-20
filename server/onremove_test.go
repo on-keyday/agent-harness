@@ -148,3 +148,96 @@ func TestOnRemoveMarks_EmptyActiveTasks(t *testing.T) {
 		t.Errorf("expected no tasks, got %d", len(tasks.List(0)))
 	}
 }
+
+// TestAfterMuxStopped_DetachedStaysBoundUntilOnRemove verifies the
+// runner-death-while-detached path: when a Detached session's mux stops
+// (runner died without sending TaskFinished), afterMuxStopped must NOT
+// release the registry slot — the task has to stay in ActiveTasks so the
+// later Registry.Remove → OnRemove sweep can MarkFailed it
+// "runner_disconnected". Regression: an unconditional UnbindTask emptied the
+// OnRemove snapshot and the task stayed Detached forever.
+func TestAfterMuxStopped_DetachedStaysBoundUntilOnRemove(t *testing.T) {
+	reg := NewRegistry()
+	tasks := NewTaskStore()
+	h := &TaskHandler{Tasks: tasks, Registry: reg, Sessions: NewSessionRegistry()}
+
+	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-31")}
+	runnerID := fc.id.String()
+
+	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+	tasks.Assign(id, runnerID, "")
+	if err := tasks.SetDetached(id); err != nil {
+		t.Fatalf("SetDetached: %v", err)
+	}
+
+	reg.Add(&RunnerEntry{
+		ID:          runnerID,
+		MaxTasks:    2,
+		ActiveTasks: map[string]struct{}{id: {}},
+		ConnectedAt: time.Unix(1, 0),
+		LastSeen:    time.Unix(1, 0),
+		Conn:        fc,
+	})
+	reg.OnRemove = func(_ string, snap RunnerEntry) {
+		for taskID := range snap.ActiveTasks {
+			tasks.MarkFailed(taskID, "runner_disconnected")
+		}
+	}
+
+	// Mux teardown fires first (observed ordering on abrupt runner death:
+	// the stream dies before the conn-GC deregisters the runner).
+	h.afterMuxStopped(id, runnerID)
+
+	if e, ok := reg.Get(runnerID); !ok || len(e.ActiveTasks) != 1 {
+		t.Fatalf("detached task must stay bound after afterMuxStopped; ActiveTasks=%v", e.ActiveTasks)
+	}
+
+	// Conn GC deregisters the runner ~a minute later.
+	reg.Remove(runnerID)
+
+	te, ok := tasks.Get(id)
+	if !ok {
+		t.Fatal("task vanished")
+	}
+	if te.Status != protocol.TaskStatus_Failed {
+		t.Errorf("status = %v, want Failed", te.Status)
+	}
+	if string(te.ErrorMsg) != "runner_disconnected" {
+		t.Errorf("reason = %q, want runner_disconnected", te.ErrorMsg)
+	}
+}
+
+// TestAfterMuxStopped_RunningIsCancelledAndUnbound preserves the existing
+// attached-session semantics: mux stop while the task is Running cancels it
+// (a provisional terminal state a late TaskFinished may overwrite) and
+// releases the slot immediately.
+func TestAfterMuxStopped_RunningIsCancelledAndUnbound(t *testing.T) {
+	reg := NewRegistry()
+	tasks := NewTaskStore()
+	h := &TaskHandler{Tasks: tasks, Registry: reg, Sessions: NewSessionRegistry()}
+
+	fc := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:8539-32")}
+	runnerID := fc.id.String()
+
+	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+	tasks.Assign(id, runnerID, "")
+
+	reg.Add(&RunnerEntry{
+		ID:          runnerID,
+		MaxTasks:    2,
+		ActiveTasks: map[string]struct{}{id: {}},
+		ConnectedAt: time.Unix(1, 0),
+		LastSeen:    time.Unix(1, 0),
+		Conn:        fc,
+	})
+
+	h.afterMuxStopped(id, runnerID)
+
+	te, _ := tasks.Get(id)
+	if te.Status != protocol.TaskStatus_Cancelled {
+		t.Errorf("status = %v, want Cancelled", te.Status)
+	}
+	if e, _ := reg.Get(runnerID); len(e.ActiveTasks) != 0 {
+		t.Errorf("slot must be released for a terminal task; ActiveTasks=%v", e.ActiveTasks)
+	}
+}

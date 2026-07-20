@@ -1050,28 +1050,52 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 
 	// The SessionMux's onStop hook (above) handles Sessions.Remove. When the
 	// mux stops (runner EOF or Stop()), also clean up task state and the
-	// registry binding, but only if the state we set is still in place: a
-	// TaskFinished that genuinely arrived first already moved the task
-	// terminal and the runner Idle, and must not be undone. Cancel is
-	// idempotent (skips terminal states) and UnbindTask is idempotent (no-op
-	// if the task slot is no longer present), so neither can clobber a fresh
-	// scheduler assignment.
+	// registry binding — see afterMuxStopped for the exact rules.
 	go func() {
 		<-mux.Wait()
-		h.Sessions.Remove(taskIDHex) // defensive — handles race where OnStop fired before Sessions.Add
-		if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
-			h.Tasks.Cancel(taskIDHex)
-		}
-		h.Registry.UnbindTask(runner.ID, taskIDHex)
-		if h.OnChange != nil {
-			h.OnChange()
-		}
+		h.afterMuxStopped(taskIDHex, runner.ID)
 	}()
 
 	return protocol.OpenInteractiveResponse{
 		Status:   protocol.OpenInteractiveStatus_Ok,
 		TaskId:   tid,
 		StreamId: uint64(tuiStream.ID()),
+	}
+}
+
+// afterMuxStopped cleans up task and registry state once an interactive
+// session's mux has stopped (runner EOF or Stop()), but only if the state we
+// set is still in place: a TaskFinished that genuinely arrived first already
+// moved the task terminal and the runner Idle, and must not be undone. Cancel
+// is idempotent (skips terminal states) and UnbindTask is idempotent (no-op
+// if the task slot is no longer present), so neither can clobber a fresh
+// scheduler assignment.
+//
+// The slot is released only once the task is terminal. A Detached task whose
+// mux died without a TaskFinished (runner death) must STAY in the runner's
+// ActiveTasks so Registry.OnRemove can MarkFailed it "runner_disconnected" —
+// unbinding it here would empty the OnRemove snapshot and strand the task in
+// Detached forever. For a still-non-terminal task the slot is instead released
+// by whichever event lands next: TaskFinished (Finish + UnbindTask in the
+// runner_handler) or runner deregistration (the whole entry is deleted).
+func (h *TaskHandler) afterMuxStopped(taskIDHex, runnerID string) {
+	h.Sessions.Remove(taskIDHex) // defensive — handles race where OnStop fired before Sessions.Add
+	if t, ok := h.Tasks.Get(taskIDHex); ok && t.Status == protocol.TaskStatus_Running {
+		h.Tasks.Cancel(taskIDHex)
+	}
+	terminal := true
+	if t, ok := h.Tasks.Get(taskIDHex); ok {
+		switch t.Status {
+		case protocol.TaskStatus_Succeeded, protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled:
+		default:
+			terminal = false
+		}
+	}
+	if terminal {
+		h.Registry.UnbindTask(runnerID, taskIDHex)
+	}
+	if h.OnChange != nil {
+		h.OnChange()
 	}
 }
 

@@ -252,3 +252,69 @@ func TestSessionDetach_RingBufferWrap(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	stream2.Close()
 }
+
+// TestSessionDetach_RunnerDeath_MarksFailed verifies that a session that is
+// Detached when its runner dies is transitioned to Failed with reason
+// "runner_disconnected" — the same transition oneshot tasks get via
+// Registry.OnRemove. Regression test: the SessionMux teardown goroutine used
+// to UnbindTask unconditionally, emptying the runner's ActiveTasks before
+// OnRemove could snapshot it, so the task stayed Detached forever.
+func TestSessionDetach_RunnerDeath_MarksFailed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test skipped in -short mode")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("fake-claude scripts require bash — skipping on Windows")
+	}
+
+	serverCID := startServer(t)
+	repo := tempRepo(t)
+
+	rh := startRunner(t, serverCID, runnerOpts{
+		MaxTasks:  1,
+		Roots:     []string{repo},
+		ClaudeBin: fakeClaudeSlowPath(t),
+	})
+
+	c1 := dialClient(t, serverCID)
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
+	stream1, taskIDHex, err := c1.OpenInteractive(context.Background(), repo, cli.SessionOpts{Selector: sel})
+	if err != nil {
+		t.Fatalf("OpenInteractive: %v", err)
+	}
+
+	drainDone := make(chan struct{})
+	go func() {
+		defer close(drainDone)
+		buf := make([]byte, 4096)
+		for {
+			if _, err := stream1.Stdout().Read(buf); err != nil {
+				return
+			}
+		}
+	}()
+
+	eventually(t, func() bool {
+		return getTask(t, c1, taskIDHex).Status == protocol.TaskStatus_Running
+	}, 10*time.Second, 100*time.Millisecond, "task to reach Running")
+
+	// Detach: close the client stream and wait for the server-side flip.
+	stream1.Close()
+	<-drainDone
+	eventually(t, func() bool {
+		return getTask(t, c1, taskIDHex).Status == protocol.TaskStatus_Detached
+	}, 5*time.Second, 100*time.Millisecond, "task to reach Detached after stream close")
+
+	// Kill the runner while the session is Detached.
+	rh.Close()
+
+	// The task must go terminal — Failed with reason runner_disconnected.
+	eventually(t, func() bool {
+		return getTask(t, c1, taskIDHex).Status == protocol.TaskStatus_Failed
+	}, 10*time.Second, 100*time.Millisecond, "detached task to reach Failed after runner death")
+
+	if got := string(getTask(t, c1, taskIDHex).ErrorMessage); got != "runner_disconnected" {
+		t.Errorf("ErrorMessage = %q, want %q", got, "runner_disconnected")
+	}
+}
