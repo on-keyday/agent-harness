@@ -1324,13 +1324,7 @@ const POLL_INTERVAL_MS = 5000;
           // grid [id...] — explicit ids, else every live interactive session
           // (activity-desc, same ordering as the task list — taskActivityMs).
           let ids = tokens.slice(1);
-          if (ids.length === 0) {
-            const snap = await window.harness.snapshot();
-            ids = (snap.tasks || [])
-              .filter((t) => t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached"))
-              .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
-              .map((t) => t.id);
-          }
+          if (ids.length === 0) ids = await liveInteractiveIds();
           if (ids.length === 0) { out = "grid: no live interactive sessions"; break; }
           openSessionGrid(ids);
           out = `grid: ${ids.length} pane(s)${ids.length > 9 ? " (capped at 9)" : ""}`;
@@ -2313,6 +2307,20 @@ const POLL_INTERVAL_MS = 5000;
     gridKeys = [];
   }
 
+  // liveInteractiveIds returns every live (Running/Detached) interactive
+  // session id, activity-desc (same ordering as the task list). If firstId is
+  // given it is moved to the front so an entry point tied to one task leads
+  // with that task's pane while still showing the whole grid.
+  async function liveInteractiveIds(firstId) {
+    const snap = await window.harness.snapshot();
+    let ids = (snap.tasks || [])
+      .filter((t) => t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached"))
+      .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
+      .map((t) => t.id);
+    if (firstId) ids = [firstId, ...ids.filter((x) => x !== firstId)];
+    return ids;
+  }
+
   function openSessionGrid(ids) {
     teardownGridPanes();
     gridBody.replaceChildren();
@@ -2619,7 +2627,12 @@ const POLL_INTERVAL_MS = 5000;
     // Preview / Grid / Reattach / idle-notify — live interactive session only.
     if (t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached")) {
       addItem("🔍 プレビュー", "", () => openSessionPreview(t.id));
-      addItem("🔲 グリッド", "", () => openSessionGrid([t.id])); // 1-pane grid centered on this task; the `grid` command opens the full set
+      addItem("🔲 グリッド", "", async () => {
+        // Open the FULL grid of all live interactive sessions (this task first),
+        // not a 1-pane grid — a grid of one is just a preview.
+        const ids = await liveInteractiveIds(t.id);
+        openSessionGrid(ids.length ? ids : [t.id]);
+      });
       addItem("↪ Reattach", "", () => reattachTo(t.id));
       addItem("🔔 idleで通知", "", async () => {
         try {
