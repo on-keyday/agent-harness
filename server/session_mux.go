@@ -257,6 +257,22 @@ func (m *SessionMux) runnerPump() {
 	}
 }
 
+// fanoutToViewersLocked delivers one complete frame to every observer
+// (viewers AND cowriters, both live in m.viewers) non-blocking, dropping any
+// whose bounded queue is full — identical policy to runnerPump's output
+// fan-out. Caller MUST hold m.mu. Used to propagate a control-client resize to
+// observers so a long-lived read-only renderer tracks the current PTY size
+// instead of the stale attach-time size.
+func (m *SessionMux) fanoutToViewersLocked(fb []byte) {
+	for v := range m.viewers {
+		select {
+		case v.ch <- fb:
+		default:
+			m.dropViewerLocked(v)
+		}
+	}
+}
+
 // Attach installs a new tui stream. If one is already attached it is
 // force-closed (takeover semantics). The ring buffer contents are replayed
 // to the new tui before live forwarding resumes.
@@ -473,6 +489,7 @@ func (m *SessionMux) forwardControlFrames(acc []byte) ([]byte, bool) {
 			cp := append([]byte(nil), fb...)
 			m.mu.Lock()
 			m.lastWinSize = cp
+			m.fanoutToViewersLocked(cp)
 			m.mu.Unlock()
 		}
 		if err := m.writeFrameToRunner(fb); err != nil {

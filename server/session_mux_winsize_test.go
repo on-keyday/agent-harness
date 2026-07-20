@@ -141,3 +141,58 @@ func TestSessionMux_CoWriter_NoTakeoverNoSizeAuthority(t *testing.T) {
 		t.Fatalf("cowriter resize must NOT set lastWinSize (got %d bytes)", gotSize)
 	}
 }
+
+// After a viewer is attached, a mid-stream resize from the control client must
+// reach the viewer too — not only be recorded in lastWinSize. Without fan-out a
+// long-lived observer keeps rendering at the stale attach-time size.
+func TestSessionMux_ControlResize_FansOutToViewer(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	tui := newFakeStream(t)
+	if err := mux.Attach(ctx, tui); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	// Establish an initial size and a viewer that consumes the preamble.
+	first := makeWinSizeFrame(24, 80)
+	tui.QueueRead(first)
+	waitFor(t, func() bool {
+		mux.mu.Lock()
+		defer mux.mu.Unlock()
+		return bytes.Equal(mux.lastWinSize, first)
+	})
+	viewer := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, viewer); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	viewer.WaitWritten(t, len(first)) // drain the attach preamble
+
+	// Control client resizes mid-stream. The NEW frame must arrive at the viewer.
+	second := makeWinSizeFrame(50, 200)
+	tui.QueueRead(second)
+	waitFor(t, func() bool { return bytes.Contains(viewer.Written(), second) })
+}
+
+// A cowriter is also an observer and must receive the fanned-out resize (so a
+// cowriter's local renderer, if any, tracks size) even though its OWN resize is
+// still dropped.
+func TestSessionMux_ControlResize_FansOutToCoWriter(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
+
+	tui := newFakeStream(t)
+	if err := mux.Attach(ctx, tui); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	cw := newFakeStream(t)
+	if err := mux.AttachCoWriter(ctx, cw); err != nil {
+		t.Fatalf("AttachCoWriter: %v", err)
+	}
+	resize := makeWinSizeFrame(50, 200)
+	tui.QueueRead(resize)
+	waitFor(t, func() bool { return bytes.Contains(cw.Written(), resize) })
+}
