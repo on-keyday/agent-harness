@@ -143,9 +143,21 @@ func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive boo
 	}
 	alive = true
 	// recover is registered AFTER the Unlock defer, so on panic it runs first
-	// (swallowing), then the lock is released; alive stays true so the pump
-	// continues rather than treating a recovered panic as teardown.
-	defer func() { _ = recover() }()
+	// (while the lock is still held), then the lock is released; alive stays
+	// true so the pump continues rather than treating a recovered panic as
+	// teardown. On panic we RESET the scroll region (ESC[r): the panic is almost
+	// always a scroll against a region taller than the current buffer (a stale
+	// DECSTBM before a resize landed), and if left as-is the emulator keeps
+	// panicking on every later scroll and the pane goes PERMANENTLY BLACK.
+	// Resetting the region lets the rest of the replay and live output render.
+	defer func() {
+		if r := recover(); r != nil && p.emu != nil {
+			func() {
+				defer func() { _ = recover() }() // the reset write must not re-panic out
+				p.emu.Write([]byte("\x1b[r"))
+			}()
+		}
+	}()
 	if resize {
 		p.emu.Resize(cols, rows)
 		// Reset the scroll region (DECSTBM) to the new full screen. x/vt does
