@@ -923,7 +923,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, t := range a.tasksByID {
 				tasks = append(tasks, t)
 			}
-			a.grid.Open(a.appCtx, a.client, a.program, tasks)
+			a.grid.Open(a.appCtx, a.client, tasks)
 			a.grid.SetSize(a.width, a.height)
 			return a, gridTick()
 		}

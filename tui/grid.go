@@ -26,15 +26,13 @@ func gridTick() tea.Cmd {
 // tea.Exec would freeze the Update loop and only one live pane could ever be
 // shown at a time).
 type GridModel struct {
-	open    bool
-	width   int
-	height  int
-	panes   []*PaneStreamer
-	focus   int
-	cols    int // computed pane columns for the current size
-	ctx     context.Context
-	client  *cli.Client
-	program *tea.Program
+	open   bool
+	width  int
+	height int
+	panes  []*PaneStreamer
+	focus  int
+	cols   int // computed pane columns for the current size
+	client *cli.Client
 }
 
 func NewGridModel() GridModel { return GridModel{} }
@@ -65,7 +63,7 @@ func gridCols(n int) int {
 // dials a fresh connection and never sends a PTY size — the grid has no size
 // authority (Global Constraint); each PaneStreamer sizes its own emulator to
 // whatever the server replays.
-func (m *GridModel) Open(ctx context.Context, c *cli.Client, program *tea.Program, tasks []protocol.TaskInfo) {
+func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.TaskInfo) {
 	live := make([]protocol.TaskInfo, 0, len(tasks))
 	for _, t := range tasks {
 		if t.Kind == protocol.TaskKind_Interactive &&
@@ -92,7 +90,7 @@ func (m *GridModel) Open(ctx context.Context, c *cli.Client, program *tea.Progra
 	}
 	m.open = true
 	m.focus = 0
-	m.ctx, m.client, m.program = ctx, c, program
+	m.client = c
 	m.cols = gridCols(len(m.panes))
 }
 
