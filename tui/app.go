@@ -74,6 +74,9 @@ type App struct {
 	// connections view
 	connsModal ConnsModal
 
+	// live session viewer grid (full-screen overlay, `g` key)
+	grid GridModel
+
 	// agentboard view
 	boardModal BoardModal
 
@@ -181,6 +184,7 @@ func New(cfg Config) *App {
 		filepicker:      NewFilePicker(),
 		connsModal:      NewConnsModal(),
 		boardModal:      NewBoardModal(),
+		grid:            NewGridModel(),
 		focus:           focusTasks,
 		connected:       false,
 		status:          "connecting…",
@@ -246,6 +250,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.refreshTasksTable()
 		}
 		return a, actAgeTick()
+
+	case gridTickMsg:
+		// Repaint pump for the live session viewer grid: re-render
+		// unconditionally (v1 has no dirty-flag gating — 10Hz over ≤9 small
+		// crops is cheap) and re-arm only while the grid stays open.
+		if a.grid.IsOpen() {
+			var cmd tea.Cmd
+			a.grid, cmd = a.grid.Update(msg)
+			return a, cmd
+		}
+		return a, nil
 
 	case SnapshotMsg:
 		if msg.Err != nil {
@@ -660,6 +675,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.filepicker.SetSize(a.width, a.height)
 		a.connsModal.SetSize(a.width, a.height)
 		a.boardModal.SetSize(a.width, a.height)
+		a.grid.SetSize(a.width, a.height)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -680,6 +696,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			a.connsModal, cmd = a.connsModal.Update(msg)
+			return a, cmd
+		}
+		// Live session viewer grid: full-screen overlay, intercepts ALL
+		// keys when open (focus movement / Enter / x / Esc-q are handled
+		// inside GridModel.Update).
+		if a.grid.IsOpen() {
+			var cmd tea.Cmd
+			a.grid, cmd = a.grid.Update(msg)
 			return a, cmd
 		}
 		// Board modal: two-mode overlay (topics / messages).
@@ -883,6 +907,25 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connsModal.Open()
 			a.connsModal.SetSize(a.width, a.height)
 			return a, DoConnSnapshot(a.client)
+		}
+		// `g` opens the live session viewer grid: a full-screen overlay
+		// tiling read-only PaneStreamers for the live interactive sessions,
+		// replacing the task-list view (task-list model state is preserved
+		// and restored on Esc/q — this is a full-screen takeover, not a
+		// split). Reuses the long-lived client (no fresh dial) and never
+		// sends a PTY size (the grid has no size authority).
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "g" {
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("grid: not connected"))
+				return a, nil
+			}
+			tasks := make([]protocol.TaskInfo, 0, len(a.tasksByID))
+			for _, t := range a.tasksByID {
+				tasks = append(tasks, t)
+			}
+			a.grid.Open(a.appCtx, a.client, a.program, tasks)
+			a.grid.SetSize(a.width, a.height)
+			return a, gridTick()
 		}
 		// `O` (capital) opens the agentboard topics view. Fetches the topic
 		// list on open via DoBoardTopics (long-lived client, no new dial).
@@ -1263,7 +1306,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -1299,6 +1342,9 @@ func (a *App) View() string {
 	}
 	if a.boardModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.boardModal.View())
+	}
+	if a.grid.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.grid.View())
 	}
 	return view
 }
