@@ -2368,13 +2368,26 @@ const POLL_INTERVAL_MS = 5000;
       attach.textContent = "↪";
       attach.title = "リアタッチ";
       attach.addEventListener("click", () => { closeSessionGrid(); reattachTo(id); });
+      const notify = document.createElement("button");
+      notify.type = "button";
+      notify.className = "grid-cell-btn";
+      notify.textContent = "🔔";
+      notify.title = "idleで通知";
+      notify.addEventListener("click", async () => {
+        try {
+          const r = await window.harness.awaitIdle({ taskId: id, sink: "notify" });
+          appendCmdOutput(`await-idle ${id.slice(0, 12)}: ${r.status}`, true);
+        } catch (e) {
+          appendCmdOutput(`await-idle: ${e.message}`, true);
+        }
+      });
       const dismiss = document.createElement("button");
       dismiss.type = "button";
       dismiss.className = "grid-cell-btn";
       dismiss.textContent = "✕";
       dismiss.title = "閉じる";
       dismiss.addEventListener("click", () => dismissPane(key, cell));
-      head.append(label, attach, dismiss);
+      head.append(label, attach, notify, dismiss);
       const body = document.createElement("div");
       body.className = "grid-cell-body";
       cell.append(head, body);
