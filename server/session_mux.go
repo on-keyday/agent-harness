@@ -56,35 +56,51 @@ func readOneFrame(r io.Reader) ([]byte, error) {
 }
 
 // capReplayTail returns the suffix of frame-aligned replay data whose length is
-// ≤ limit, starting at a frame boundary. limit==0 (or data already within
-// limit) returns data unchanged. The ring stores complete frames, so dropping
-// whole LEADING frames keeps the client's frame parser aligned; the dropped
-// frames are older scrollback an observer does not need to render the current
-// screen. The last frame is always kept whole even if it alone exceeds limit,
-// so the result is never empty and never a split frame.
+// ≤ limit, starting at a frame boundary that is ALSO a VT ground-state boundary.
+// limit==0 (or data already within limit) returns data unchanged.
+//
+// The ring stores complete frames, so dropping whole LEADING frames keeps the
+// client's exec/frame parser aligned; the dropped frames are older scrollback an
+// observer does not need to render the current screen. But a frame boundary is
+// NOT a VT escape-sequence boundary: cropping in the middle of an OSC/DCS/CSI
+// sequence delivers that sequence's TAIL to the client's emulator, which — fresh
+// in ground state — renders it as stray printable text (the reported symptom: a
+// window-title OSC whose head was evicted bleeds its trailing characters into
+// the grid pane; see TestCapReplayTail_NoOSCLeak). So the crop must start where
+// vtGroundScan reports ground state.
+//
+// Among ground-safe frame boundaries the smallest fitting suffix wins. If none
+// fits the limit, we fall back to the LATEST ground-safe boundary seen (backing
+// up to include a sequence's head is safe and cannot bleed a tail — correctness
+// over the soft byte cap). The last frame is thus never split, and the result is
+// never empty.
 func capReplayTail(data []byte, limit uint32) []byte {
 	if limit == 0 || len(data) <= int(limit) {
 		return data
 	}
 	lim := int(limit)
+	var sc vtGroundScan
 	off := 0
+	lastGround := 0 // start-of-stream is a ground-state boundary by definition
 	for off < len(data) {
-		if len(data)-off <= lim {
-			return data[off:]
+		if sc.ground() {
+			// Smallest ground-safe suffix that fits the limit: take it.
+			if off > 0 && len(data)-off <= lim {
+				return data[off:]
+			}
+			lastGround = off
 		}
 		if len(data)-off < frameHeaderSize {
-			return data[off:] // malformed tail; return what's left
+			break // malformed tail
 		}
 		total := frameHeaderSize + int(binary.BigEndian.Uint32(data[off+1:off+5]))
 		if total <= 0 || off+total > len(data) {
-			return data[off:] // malformed frame; don't split it
+			break // malformed frame; don't split it
 		}
-		if off+total >= len(data) {
-			return data[off:] // last frame — keep it whole even if > limit
-		}
+		sc.scan(data[off+frameHeaderSize : off+total])
 		off += total
 	}
-	return data[off:]
+	return data[lastGround:]
 }
 
 // encodeStdoutFrame wraps payload in one exec/frame Stdout frame (1-byte type +
