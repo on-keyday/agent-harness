@@ -48,6 +48,54 @@ func TestGridModel_Paging(t *testing.T) {
 	}
 }
 
+func TestGridModel_HorizontalFocusCrossesPage(t *testing.T) {
+	m := NewGridModel()
+	m.panes = mkPanes("A", "B", "C", "D", "E", "F", "G", "H") // 8 panes, 2 pages
+	m.open = true
+	m.SetSize(120, 40)
+	m.focus = 5 // last pane on page 0
+	m.page = 0
+
+	// right on the page's last pane lands on the next page's first pane,
+	// flipping the page so focus stays visible.
+	m2, _ := m.Update(keyMsg("l"))
+	if m2.focus != 6 || m2.page != 1 {
+		t.Fatalf("l on last pane of page 0 should land focus 6 on page 1, got focus %d page %d", m2.focus, m2.page)
+	}
+	// left on the page's first pane goes back to the previous page's last pane.
+	m3, _ := m2.Update(keyMsg("h"))
+	if m3.focus != 5 || m3.page != 0 {
+		t.Fatalf("h on first pane of page 1 should return to focus 5 on page 0, got focus %d page %d", m3.focus, m3.page)
+	}
+	// right at the very last pane is a no-op (nothing past it).
+	m4 := m
+	m4.focus = 7
+	m4.page = 1
+	m5, _ := m4.Update(keyMsg("l"))
+	if m5.focus != 7 || m5.page != 1 {
+		t.Fatalf("l at the last pane should clamp, got focus %d page %d", m5.focus, m5.page)
+	}
+}
+
+func TestGridModel_VerticalFocusStaysOnPage(t *testing.T) {
+	m := NewGridModel()
+	m.panes = mkPanes("A", "B", "C", "D", "E", "F", "G", "H") // 8 panes, 2 pages
+	m.open = true
+	m.SetSize(120, 40)
+	m.focus = 5 // last pane on page 0 (bottom-right of the 3x2 tiling)
+	m.page = 0
+
+	// down (j) must not cross into the next page — vertical delta is the current
+	// page's column count, which need not match the destination page's tiling.
+	m2, _ := m.Update(keyMsg("j"))
+	if m2.page != 0 {
+		t.Fatalf("j must not flip the page, got page %d", m2.page)
+	}
+	if m2.focus < m2.pageStart() || m2.focus >= m2.pageEnd() {
+		t.Fatalf("j must keep focus within page 0 [%d,%d), got %d", m2.pageStart(), m2.pageEnd(), m2.focus)
+	}
+}
+
 func TestGridModel_MovePane(t *testing.T) {
 	m := NewGridModel()
 	m.panes = mkPanes("AAAAAAAA", "BBBBBBBB", "CCCCCCCC")

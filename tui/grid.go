@@ -42,8 +42,10 @@ func gridTick() tea.Cmd {
 // shown at a time).
 //
 // Panes form one ordered list; a page shows a gridPerPage-sized window of it.
-// [ ] switch pages; Shift+H/J/K/L reorder the focused pane (crossing page
-// boundaries), so specific sessions can be grouped onto the same page.
+// h/l move focus along that list and flip the page at a boundary, so left/right
+// and paging are one motion; [ ] still jump a whole page at a time. k/j move
+// focus within the current page. Shift+H/J/K/L reorder the focused pane
+// (crossing page boundaries), so specific sessions can be grouped onto one page.
 type GridModel struct {
 	open   bool
 	width  int
@@ -267,11 +269,13 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 		case "]":
 			m.setPage(m.page + 1)
 			return m, nil
-		// h/j/k/l (+ arrows): move focus within the current page.
+		// h/l (+ arrows): move focus left/right across the whole pane list,
+		// flipping the page at a boundary so left/right and paging are one
+		// motion ([ ] still jumps a whole page). k/j stay within the page.
 		case "left", "h":
-			m.moveFocus(-1)
+			m.moveFocusLinear(-1)
 		case "right", "l":
-			m.moveFocus(1)
+			m.moveFocusLinear(1)
 		case "up", "k":
 			m.moveFocus(-m.pageCols())
 		case "down", "j":
@@ -295,8 +299,10 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 	return m, nil
 }
 
-// moveFocus shifts focus by delta but clamps to the current page, so focus
-// movement never silently jumps pages (use [ ] for that).
+// moveFocus shifts focus by delta but clamps to the current page. Used by
+// vertical (k/j) movement: the delta is the current page's column count, which
+// need not match the destination page's tiling, so a cross-page vertical jump
+// would be ill-defined.
 func (m *GridModel) moveFocus(delta int) {
 	if len(m.panes) == 0 {
 		return
@@ -306,6 +312,22 @@ func (m *GridModel) moveFocus(delta int) {
 		return
 	}
 	m.focus = j
+}
+
+// moveFocusLinear shifts focus by delta across the whole ordered pane list,
+// flipping the page to keep focus visible. Used by horizontal (h/l) movement so
+// that pressing right on a page's last pane lands on the next page's first pane
+// — left/right and page switching become one motion. [ ] still jumps a page.
+func (m *GridModel) moveFocusLinear(delta int) {
+	if len(m.panes) == 0 {
+		return
+	}
+	j := m.focus + delta
+	if j < 0 || j >= len(m.panes) {
+		return
+	}
+	m.focus = j
+	m.page = m.focus / gridPerPage
 }
 
 // movePane swaps the focused pane with the one delta positions away in the
