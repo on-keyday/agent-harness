@@ -72,7 +72,8 @@ type App struct {
 	runnersSnapshot []protocol.RunnerInfo
 
 	// connections view
-	connsModal ConnsModal
+	connsModal    ConnsModal
+	forwardsModal ForwardsModal
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
@@ -183,6 +184,7 @@ func New(cfg Config) *App {
 		popup:           NewPopup(cfg.DefaultRepo),
 		filepicker:      NewFilePicker(),
 		connsModal:      NewConnsModal(),
+		forwardsModal:   NewForwardsModal(),
 		boardModal:      NewBoardModal(),
 		grid:            NewGridModel(),
 		focus:           focusTasks,
@@ -651,6 +653,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PortForwardStartedMsg:
 		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel}
 		a.cmdresult.Append(OKStyle.Render("forward started: ") + pfShortID(msg.TaskID) + "  " + msg.Direction.flag() + " " + msg.Spec)
+		if a.forwardsModal.IsOpen() {
+			a.forwardsModal.SetSessions(sortedForwards(a.activeForwards))
+		}
 		return a, nil
 
 	case PortForwardStoppedMsg:
@@ -661,6 +666,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if _, ok := a.activeForwards[msg.ID]; ok {
 			delete(a.activeForwards, msg.ID)
 			a.cmdresult.Append("forward stopped: " + pfShortID(msg.TaskID))
+		}
+		if a.forwardsModal.IsOpen() {
+			a.forwardsModal.SetSessions(sortedForwards(a.activeForwards))
 		}
 		return a, nil
 
@@ -674,6 +682,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.layout()
 		a.filepicker.SetSize(a.width, a.height)
 		a.connsModal.SetSize(a.width, a.height)
+		a.forwardsModal.SetSize(a.width, a.height)
 		a.boardModal.SetSize(a.width, a.height)
 		a.grid.SetSize(a.width, a.height)
 		return a, nil
@@ -696,6 +705,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			a.connsModal, cmd = a.connsModal.Update(msg)
+			return a, cmd
+		}
+		// Forwards list modal: Esc closes; arrow keys scroll the table; all
+		// other keys are swallowed so they don't leak through to the panels.
+		if a.forwardsModal.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				a.forwardsModal.Close()
+				return a, nil
+			}
+			var cmd tea.Cmd
+			a.forwardsModal, cmd = a.forwardsModal.Update(msg)
 			return a, cmd
 		}
 		// Live session viewer grid: full-screen overlay, intercepts ALL
@@ -907,6 +927,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connsModal.Open()
 			a.connsModal.SetSize(a.width, a.height)
 			return a, DoConnSnapshot(a.client)
+		}
+		// `f` opens the active port-forward list: a read-only full-screen
+		// overlay of every forward this TUI currently holds (App.activeForwards).
+		// Esc closes. Stopping stays on the tasks pane's P/B keys.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == "f" {
+			a.forwardsModal.SetSessions(sortedForwards(a.activeForwards))
+			a.forwardsModal.SetSize(a.width, a.height)
+			a.forwardsModal.Open()
+			return a, nil
 		}
 		// `g` opens the live session viewer grid: a full-screen overlay
 		// tiling read-only PaneStreamers for the live interactive sessions,
@@ -1339,6 +1368,9 @@ func (a *App) View() string {
 	}
 	if a.connsModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.connsModal.View())
+	}
+	if a.forwardsModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardsModal.View())
 	}
 	if a.boardModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.boardModal.View())

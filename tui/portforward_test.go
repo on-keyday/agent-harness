@@ -3,10 +3,8 @@ package tui
 import (
 	"testing"
 
-	"github.com/charmbracelet/bubbles/table"
+	tea "github.com/charmbracelet/bubbletea"
 )
-
-var _ = table.Row(nil)
 
 func TestPortForwardModal_OpenClose(t *testing.T) {
 	var m PortForwardModal
@@ -158,5 +156,37 @@ func TestForwardsModal_SetSessions_CountAndEmpty(t *testing.T) {
 	})
 	if len(m.sessions) != 2 {
 		t.Fatalf("sessions = %d, want 2", len(m.sessions))
+	}
+}
+
+func TestForwardsModal_KeyOpensAndEscCloses(t *testing.T) {
+	a := New(Config{})
+	// Seed one active forward (default focus is focusTasks, logs not editing,
+	// so the `f` guard passes).
+	m, _ := a.Update(PortForwardStartedMsg{ID: 1, TaskID: "abcdef012345", Direction: ForwardLocal, Spec: "8080:h:80"})
+	a = m.(*App)
+
+	// Press `f` → modal opens, seeded with the active forwards snapshot.
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	a = m.(*App)
+	if !a.forwardsModal.IsOpen() {
+		t.Fatal("`f` should open the forwards modal")
+	}
+	if len(a.forwardsModal.sessions) != 1 {
+		t.Fatalf("modal sessions = %d, want 1", len(a.forwardsModal.sessions))
+	}
+
+	// A forward that stops while the modal is open updates the snapshot live.
+	m, _ = a.Update(PortForwardStoppedMsg{ID: 1, TaskID: "abcdef012345"})
+	a = m.(*App)
+	if len(a.forwardsModal.sessions) != 0 {
+		t.Fatalf("after stop while open: sessions = %d, want 0", len(a.forwardsModal.sessions))
+	}
+
+	// Esc closes.
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = m.(*App)
+	if a.forwardsModal.IsOpen() {
+		t.Fatal("Esc should close the forwards modal")
 	}
 }
