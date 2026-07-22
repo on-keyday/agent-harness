@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -188,5 +189,30 @@ func TestForwardsModal_KeyOpensAndEscCloses(t *testing.T) {
 	a = m.(*App)
 	if a.forwardsModal.IsOpen() {
 		t.Fatal("Esc should close the forwards modal")
+	}
+}
+
+func TestForwardsModal_View_CountAndEmptyState(t *testing.T) {
+	m := NewForwardsModal()
+	m.SetSessions(nil)
+	empty := m.View()
+	if !strings.Contains(empty, "active port forwards (0)") {
+		t.Fatalf("empty View missing count-0 header:\n%s", empty)
+	}
+	if !strings.Contains(empty, "no active forwards") {
+		t.Fatalf("empty View missing empty-state text:\n%s", empty)
+	}
+
+	m.SetSessions([]*PortForwardSession{
+		{ID: 1, TaskID: "abcdef012345aa", Direction: ForwardLocal, Spec: "8080:h:80"},
+		{ID: 2, TaskID: "abcdef012345aa", Direction: ForwardRemote, Spec: "9000:h:9000"},
+	})
+	m.Open()
+	full := m.View()
+	if !strings.Contains(full, "active port forwards (2)") {
+		t.Fatalf("populated View missing count-2 header:\n%s", full)
+	}
+	if strings.Contains(full, "no active forwards") {
+		t.Fatalf("populated View should not show empty-state text:\n%s", full)
 	}
 }
