@@ -1,6 +1,12 @@
 package tui
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/charmbracelet/bubbles/table"
+)
+
+var _ = table.Row(nil)
 
 func TestPortForwardModal_OpenClose(t *testing.T) {
 	var m PortForwardModal
@@ -84,5 +90,73 @@ func TestForwardLifecycle_StoppedRemovesEntry(t *testing.T) {
 	}
 	if got := selectForwards(a.activeForwards, "abcdef", ForwardRemote); len(got) != 0 {
 		t.Fatalf("stop picker should be empty, got %d", len(got))
+	}
+}
+
+func TestSortedForwards_Order(t *testing.T) {
+	// ForwardLocal=0 < ForwardRemote=1, so within a task -L sorts before -R.
+	m := map[int]*PortForwardSession{
+		3: {ID: 3, TaskID: "b", Direction: ForwardLocal, Spec: "7:h:7"},
+		1: {ID: 1, TaskID: "a", Direction: ForwardRemote, Spec: "1:h:2"},
+		2: {ID: 2, TaskID: "a", Direction: ForwardLocal, Spec: "8080:h:80"},
+		4: {ID: 4, TaskID: "a", Direction: ForwardLocal, Spec: "9090:h:90"},
+	}
+	got := sortedForwards(m)
+	want := []int{2, 4, 1, 3} // a/-L/2, a/-L/4, a/-R/1, b/-L/3
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Fatalf("pos %d: got ID %d, want %d", i, got[i].ID, id)
+		}
+	}
+}
+
+func TestForwardRow_Cells(t *testing.T) {
+	s := &PortForwardSession{ID: 1, TaskID: "abcdef012345aa", Direction: ForwardLocal, Spec: "8080:h:80"}
+	row := forwardRow(s)
+	if row[0] != "abcdef012345" { // pfShortID truncates to 12
+		t.Fatalf("task cell = %q, want abcdef012345", row[0])
+	}
+	if row[1] != "-L" {
+		t.Fatalf("dir cell = %q, want -L", row[1])
+	}
+	if row[2] != "8080:h:80" {
+		t.Fatalf("spec cell = %q, want 8080:h:80", row[2])
+	}
+	r := forwardRow(&PortForwardSession{TaskID: "x", Direction: ForwardRemote, Spec: "1:h:2"})
+	if r[1] != "-R" {
+		t.Fatalf("remote dir cell = %q, want -R", r[1])
+	}
+}
+
+func TestForwardsModal_OpenClose(t *testing.T) {
+	m := NewForwardsModal()
+	if m.IsOpen() {
+		t.Fatal("new modal should be closed")
+	}
+	m.Open()
+	if !m.IsOpen() {
+		t.Fatal("after Open: should be open")
+	}
+	m.Close()
+	if m.IsOpen() {
+		t.Fatal("after Close: should be closed")
+	}
+}
+
+func TestForwardsModal_SetSessions_CountAndEmpty(t *testing.T) {
+	m := NewForwardsModal()
+	m.SetSessions(nil)
+	if len(m.sessions) != 0 {
+		t.Fatalf("empty: sessions = %d, want 0", len(m.sessions))
+	}
+	m.SetSessions([]*PortForwardSession{
+		{ID: 1, TaskID: "abcdef012345aa", Direction: ForwardLocal, Spec: "8080:h:80"},
+		{ID: 2, TaskID: "abcdef012345aa", Direction: ForwardRemote, Spec: "9000:h:9000"},
+	})
+	if len(m.sessions) != 2 {
+		t.Fatalf("sessions = %d, want 2", len(m.sessions))
 	}
 }

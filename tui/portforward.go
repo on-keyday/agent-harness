@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -270,4 +271,92 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 		}()
 		return nil
 	}
+}
+
+// sortedForwards returns all active forwards across every task, ordered by
+// (TaskID, Direction, ID) for a stable list. Unlike selectForwards it does not
+// filter by task/direction — the forwards modal shows the whole set.
+func sortedForwards(m map[int]*PortForwardSession) []*PortForwardSession {
+	out := make([]*PortForwardSession, 0, len(m))
+	for _, s := range m {
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].TaskID != out[j].TaskID {
+			return out[i].TaskID < out[j].TaskID
+		}
+		if out[i].Direction != out[j].Direction {
+			return out[i].Direction < out[j].Direction
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// forwardRow maps one session to its table row (task short id / dir flag / spec).
+func forwardRow(s *PortForwardSession) table.Row {
+	return table.Row{pfShortID(s.TaskID), s.Direction.flag(), s.Spec}
+}
+
+// ForwardsModal is a read-only full-screen overlay listing every port forward
+// this TUI currently holds (App.activeForwards). Opened with `f`, closed with
+// Esc. It mirrors ConnsModal but has no live subscription of its own: the App
+// feeds it a pre-sorted slice via SetSessions on open and whenever the active
+// set changes while it is open. It keeps that snapshot (sessions) so its
+// contents are inspectable and the header count is exact.
+type ForwardsModal struct {
+	open     bool
+	table    table.Model
+	sessions []*PortForwardSession
+}
+
+// NewForwardsModal constructs a ForwardsModal with fixed column widths.
+func NewForwardsModal() ForwardsModal {
+	cols := []table.Column{
+		{Title: "task", Width: 12},
+		{Title: "dir", Width: 4},
+		{Title: "spec", Width: 40},
+	}
+	t := table.New(table.WithColumns(cols), table.WithFocused(true))
+	return ForwardsModal{table: t}
+}
+
+func (m *ForwardsModal) IsOpen() bool { return m.open }
+func (m *ForwardsModal) Open()        { m.open = true }
+func (m *ForwardsModal) Close()       { m.open = false }
+
+// SetSize propagates terminal dimensions into the table (full-screen overlay).
+// Reserve 4 rows for border + header + footer (as ConnsModal.SetSize).
+func (m *ForwardsModal) SetSize(w, h int) {
+	m.table.SetWidth(w - 4)
+	m.table.SetHeight(h - 4)
+}
+
+// SetSessions replaces the snapshot and rebuilds the table rows.
+func (m *ForwardsModal) SetSessions(sessions []*PortForwardSession) {
+	m.sessions = sessions
+	rows := make([]table.Row, 0, len(sessions))
+	for _, s := range sessions {
+		rows = append(rows, forwardRow(s))
+	}
+	m.table.SetRows(rows)
+}
+
+func (m ForwardsModal) Update(msg tea.Msg) (ForwardsModal, tea.Cmd) {
+	if !m.open {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.table, cmd = m.table.Update(msg)
+	return m, cmd
+}
+
+func (m ForwardsModal) View() string {
+	header := HeaderStyle.Render(fmt.Sprintf("active port forwards (%d)", len(m.sessions)))
+	footer := FooterStyle.Render("Esc: close · P/B stop from tasks pane")
+	box := PanelStyleFocused.Padding(0, 1)
+	if len(m.sessions) == 0 {
+		return box.Render(header + "\n" + "no active forwards" + "\n" + footer)
+	}
+	return box.Render(header + "\n" + m.table.View() + "\n" + footer)
 }
