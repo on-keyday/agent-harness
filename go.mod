@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/vt v0.0.0-20260622092256-25656177ba8e
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/mattn/go-runewidth v0.0.23
-	github.com/on-keyday/objtrsf v0.0.0-20260718082007-dfc8b85c3762
+	github.com/on-keyday/objtrsf v0.0.0-20260722092037-2a730bad18fa
 )
 
 require (
