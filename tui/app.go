@@ -1335,7 +1335,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
