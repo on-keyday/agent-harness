@@ -215,6 +215,8 @@ harness-cli ls
 #   Idle    host=<h>  tasks=N/M  roots=<paths>  id=<runner-cid>
 # TASKS
 #   <task-id>  <status>  repo=<path>  from=<origin>  prompt="..."
+harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...]}
+                        # jq-friendly; e.g. `harness-cli ls --json | jq -r '.tasks[].id'`
 
 # Agentboard view: every active topic (JSON Lines). Reveals who is listening —
 # e.g. chat.<short-id> inbound channels and any per-purpose topics in use.
@@ -346,7 +348,7 @@ against `ls` before acting on it.
 ### Listing and killing your sessions
 
 ```bash
-harness-cli session ls            # JSON Lines: detachable interactive sessions only (id, status, runner)
+harness-cli session ls            # JSON Lines: detachable interactive sessions only. Each row shares the `ls --json` task vocabulary (id, status, kind, repo, from, agent, caps, created_by, prompt, exit_code, created_at/started_at/ended_at, last_output_at, output_idle_ms) plus session-only is_attached + ring_buffer_bytes; it differs from `ls --json` ONLY by the interactive filter
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
@@ -362,8 +364,11 @@ foreground program is waiting for input: an in-flight agent turn repaints its
 spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
 
 - **Pull**: `session ls` includes `last_output_at` (unix nanos; 0 = no live
-  session output) and `idle_ms` (server-clock idle age; -1 = none). The
-  top-level `ls` renders the same as an `act=busy` / `act=idle:Xs` badge.
+  session output) and `output_idle_ms` (server-clock idle age; only meaningful
+  when `last_output_at > 0`), plus an `activity` string (`busy` / `idle:Xs`)
+  when output has been seen. The top-level `ls` renders the same as an
+  `act=busy` / `act=idle:Xs` badge, and `ls --json` carries the identical
+  `activity` / `output_idle_ms` / `last_output_at` fields.
 - **Edge (one-shot)**: `session await-idle <id>` fires ONCE when the session
   next goes quiescent for the threshold (default 2500ms; `--threshold-ms N`
   to override), then disarms itself. Sinks:

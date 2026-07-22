@@ -133,8 +133,17 @@ func main() {
 		fmt.Println(id)
 
 	case "ls":
-		if err := cli.List(ctx, parseCID(), os.Stdout); err != nil {
-			die(err)
+		fs := flag.NewFlagSet("ls", flag.ExitOnError)
+		asJSON := fs.Bool("json", false, "emit a single JSON object {\"runners\":[...],\"tasks\":[...]} instead of the human-readable table")
+		fs.Parse(args)
+		if *asJSON {
+			if err := cli.ListJSON(ctx, parseCID(), os.Stdout); err != nil {
+				die(err)
+			}
+		} else {
+			if err := cli.List(ctx, parseCID(), os.Stdout); err != nil {
+				die(err)
+			}
 		}
 
 	case "conns":
@@ -616,7 +625,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      --agent: agent profile name to run this task under (empty = runner default; not to be confused with --agent-arg)")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)")
 	fmt.Fprintln(os.Stderr, "                                      --caps: comma-separated capability names to grant (e.g. spawn,file_read / all / none); default all. On --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
-	fmt.Fprintln(os.Stderr, "  ls                                  list runners and recent tasks")
+	fmt.Fprintln(os.Stderr, "  ls [--json]                         list runners and recent tasks; --json emits one {runners,tasks} object")
 	fmt.Fprintln(os.Stderr, "  conns [-f|--follow] [--json]        snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  caps [--json]                       list the grantable --caps capability names and what each authorizes")
 	fmt.Fprintln(os.Stderr, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps (no cap required)")

@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -477,45 +476,12 @@ func unescapeInput(s string) ([]byte, error) {
 	return out, nil
 }
 
-// runSessionLs lists interactive sessions as JSON Lines.
+// runSessionLs lists interactive sessions as JSON Lines. Each row shares the
+// `ls --json` task vocabulary (via cli.SessionListJSON) plus the session-only
+// is_attached / ring_buffer_bytes fields, so `session ls` differs from
+// `ls --json` only by the interactive filter and those two extra fields.
 func runSessionLs(cid objproto.ConnectionID, _ []string) error {
-	ctx := context.Background()
-	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-
-	lr, err := c.Snapshot(ctx)
-	if err != nil {
-		return err
-	}
-
-	enc := json.NewEncoder(os.Stdout)
-	for _, t := range lr.Tasks {
-		if t.Kind != protocol.TaskKind_Interactive {
-			continue
-		}
-		// idle_ms: server-clock idle age (cross-host clock skew safe);
-		// -1 = no output observed (no live mux or nothing emitted yet).
-		idleMs := int64(-1)
-		if t.LastOutputAt > 0 {
-			idleMs = int64(t.OutputIdleMs)
-		}
-		_ = enc.Encode(map[string]any{
-			"id":                hex.EncodeToString(t.Id.Id[:]),
-			"status":            t.Status.String(),
-			"is_attached":       t.IsAttached(),
-			"repo":              string(t.RepoPath),
-			"runner":            protocol.RunnerIDToConnID(t.AssignedTo).String(),
-			"created_at":        t.CreatedAt,
-			"started_at":        t.StartedAt,
-			"ring_buffer_bytes": t.RingBufferBytes,
-			"last_output_at":    t.LastOutputAt,
-			"idle_ms":           idleMs,
-		})
-	}
-	return nil
+	return cli.SessionListJSON(context.Background(), cid, os.Stdout)
 }
 
 // runSessionKill cancels a session (alias of 'harness-cli cancel <id>').
