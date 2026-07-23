@@ -4,6 +4,32 @@ import (
 	"testing"
 )
 
+func TestDescription(t *testing.T) {
+	// Every listed skill must expose a non-empty frontmatter description.
+	names, err := List()
+	if err != nil {
+		t.Fatalf("List(): %v", err)
+	}
+	for _, n := range names {
+		d, err := Description(n)
+		if err != nil {
+			t.Errorf("Description(%q): %v", n, err)
+			continue
+		}
+		if d == "" {
+			t.Errorf("skill %q has an empty description", n)
+		}
+	}
+	// A skill without frontmatter yields "" (not an error path we can hit via
+	// real skills, so exercise the parser directly).
+	if got := frontmatterField([]byte("# no frontmatter\n"), "description"); got != "" {
+		t.Errorf("frontmatterField(no frontmatter) = %q, want empty", got)
+	}
+	if got := frontmatterField([]byte("---\ndescription: hi there\n---\n"), "description"); got != "hi there" {
+		t.Errorf("frontmatterField = %q, want %q", got, "hi there")
+	}
+}
+
 func TestList(t *testing.T) {
 	names, err := List()
 	if err != nil {

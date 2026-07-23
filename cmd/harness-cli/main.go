@@ -206,6 +206,9 @@ func main() {
 			}
 			for _, n := range names {
 				fmt.Println(n)
+				if d, derr := agentskills.Description(n); derr == nil && d != "" {
+					fmt.Printf("    %s\n", d)
+				}
 			}
 			break
 		}

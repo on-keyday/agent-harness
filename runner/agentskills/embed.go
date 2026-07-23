@@ -6,6 +6,7 @@ package agentskills
 import (
 	"embed"
 	"sort"
+	"strings"
 )
 
 //go:embed all:harness-cli all:independent-review all:landing-to-main all:session-debugging
@@ -37,4 +38,37 @@ func List() ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// Description returns the `description:` value from a skill's YAML
+// frontmatter, or "" if it has none. It reads the same embedded SKILL.md
+// that Skill() serves, so the listing never drifts from the printed doc.
+func Description(name string) (string, error) {
+	b, err := Skill(name)
+	if err != nil {
+		return "", err
+	}
+	return frontmatterField(b, "description"), nil
+}
+
+// frontmatterField extracts a single-line `key: value` from a leading
+// `---`-delimited YAML frontmatter block. Returns "" if the doc has no
+// frontmatter or the key is absent.
+func frontmatterField(md []byte, key string) string {
+	s := string(md)
+	if !strings.HasPrefix(s, "---\n") && !strings.HasPrefix(s, "---\r\n") {
+		return ""
+	}
+	prefix := key + ":"
+	lines := strings.Split(s, "\n")
+	for _, raw := range lines[1:] {
+		line := strings.TrimRight(raw, "\r")
+		if line == "---" {
+			break // end of frontmatter
+		}
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(line[len(prefix):])
+		}
+	}
+	return ""
 }

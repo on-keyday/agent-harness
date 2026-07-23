@@ -21,7 +21,7 @@ skill mechanism, and this works even where `.claude/skills/` was never injected:
 
 ```bash
 harness-cli skill            # print this skill (harness-cli) — the default
-harness-cli skill ls         # list the embedded skill names (alias: --list / -l)
+harness-cli skill ls         # list the embedded skills + descriptions (alias: --list / -l)
 harness-cli skill <name>     # print another one, e.g. `harness-cli skill landing-to-main`
 ```
 
