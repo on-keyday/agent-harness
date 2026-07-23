@@ -1488,6 +1488,24 @@ func (a *App) resolveTaskIDPrefix(prefix string) (string, string) {
 
 // runAction dispatches a parsed cmdline Action.
 func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
+	// Client-requiring actions dispatch a Do* closure that calls a method on
+	// a.client; with a nil client (initial dial still pending / failed under
+	// --persist) that closure nil-panics inside cli.(*Client).<RPC> when
+	// bubbletea executes it — observed as a runtime panic on `prune <id>` while
+	// disconnected. Reject them early here with the same "not connected" notice
+	// the per-modal guards use. The listed actions need no client (Refresh /
+	// Trsf self-guard below and so fall through here); anything not listed is
+	// treated as client-requiring, so a future Do*-dispatching action is
+	// guarded by default rather than silently re-opening this panic.
+	switch act.(type) {
+	case QuitAction, ClearAction, HelpAction, RepoAction, CapsAction, RefreshAction, TrsfDebugAction:
+		// no client needed (Refresh/Trsf carry their own nil-client notice)
+	default:
+		if a.client == nil {
+			a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
+			return a, nil
+		}
+	}
 	switch v := act.(type) {
 	case QuitAction:
 		return a, tea.Quit
