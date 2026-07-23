@@ -13,6 +13,24 @@ and operator notifications (`notify`). All required credentials are passed
 via `HARNESS_*` environment variables (already set by the runner) — never pass
 them as flags.
 
+## Reading the skills — `harness-cli skill`
+
+This document, and the other harness agent skills, are embedded in the
+`harness-cli` binary. Print them from any runtime — you do NOT need Claude's
+skill mechanism, and this works even where `.claude/skills/` was never injected:
+
+```bash
+harness-cli skill            # print this skill (harness-cli) — the default
+harness-cli skill ls         # list the embedded skill names (alias: --list / -l)
+harness-cli skill <name>     # print another one, e.g. `harness-cli skill landing-to-main`
+```
+
+`skill ls` enumerates whatever is embedded (currently `harness-cli`,
+`independent-review`, `landing-to-main`, `session-debugging`); an unknown name
+errors and echoes the available names. The agentboard wake prompt tells you to
+run `harness-cli skill` precisely because the command — unlike a Claude skill
+reference — resolves in any runtime, including non-claude / non-injected peers.
+
 ## Inbox is automatic — do not poll
 
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
