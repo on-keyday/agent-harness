@@ -1,6 +1,42 @@
 package agentskills
 
-import "testing"
+import (
+	"testing"
+)
+
+func TestList(t *testing.T) {
+	names, err := List()
+	if err != nil {
+		t.Fatalf("List(): %v", err)
+	}
+	// Every listed name must resolve to a non-empty skill, and the list must
+	// stay sorted. Names are enumerated from the embed FS, so this also guards
+	// against a directory sneaking in without a SKILL.md.
+	if len(names) == 0 {
+		t.Fatal("List() returned no skills")
+	}
+	for i, n := range names {
+		if i > 0 && names[i-1] > n {
+			t.Errorf("List() not sorted: %q before %q", names[i-1], n)
+		}
+		b, err := Skill(n)
+		if err != nil || len(b) == 0 {
+			t.Errorf("listed skill %q does not resolve: err=%v len=%d", n, err, len(b))
+		}
+	}
+	// The core skills must be present.
+	want := map[string]bool{"harness-cli": false, "independent-review": false, "landing-to-main": false, "session-debugging": false}
+	for _, n := range names {
+		if _, ok := want[n]; ok {
+			want[n] = true
+		}
+	}
+	for n, seen := range want {
+		if !seen {
+			t.Errorf("List() missing expected skill %q", n)
+		}
+	}
+}
 
 func TestSkillHarnessCLI(t *testing.T) {
 	b, err := Skill("harness-cli")

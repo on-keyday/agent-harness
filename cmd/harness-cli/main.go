@@ -199,12 +199,26 @@ func main() {
 		}
 
 	case "skill":
+		if len(args) > 0 && (args[0] == "--list" || args[0] == "-l" || args[0] == "ls") {
+			names, err := agentskills.List()
+			if err != nil {
+				die(fmt.Errorf("skill list: %w", err))
+			}
+			for _, n := range names {
+				fmt.Println(n)
+			}
+			break
+		}
 		name := "harness-cli"
 		if len(args) > 0 {
 			name = args[0]
 		}
 		md, err := agentskills.Skill(name)
 		if err != nil {
+			avail, lerr := agentskills.List()
+			if lerr == nil {
+				die(fmt.Errorf("skill %q: %w (available: %s)", name, err, strings.Join(avail, ", ")))
+			}
 			die(fmt.Errorf("skill %q: %w", name, err))
 		}
 		os.Stdout.Write(md)
@@ -629,7 +643,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  conns [-f|--follow] [--json]        snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  caps [--json]                       list the grantable --caps capability names and what each authorizes")
 	fmt.Fprintln(os.Stderr, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps (no cap required)")
-	fmt.Fprintln(os.Stderr, "  skill [NAME]                        print the embedded agent skill (default: harness-cli)")
+	fmt.Fprintln(os.Stderr, "  skill [NAME | --list]               print the embedded agent skill (default: harness-cli); --list/ls names them all")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  notify [--title T] [--level info|warn|error] <text>")
 	fmt.Fprintln(os.Stderr, "                                      send a notification (one short line; detail goes in the task log)")
