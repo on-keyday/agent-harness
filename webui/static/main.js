@@ -1361,8 +1361,34 @@ const POLL_INTERVAL_MS = 5000;
           break;
         }
         case "prune": {
-          const flags = parseFlags(tokens.slice(1));
-          out = await window.harness.prune({ before: flags.before || "168h" });
+          // Two modes, mirroring harness-cli: positional task-ids switch to
+          // id mode (--before ignored; active tasks skipped unless --force);
+          // no ids = time mode. Ids are full 32-hex, no prefix resolution —
+          // a mistype misses (safe no-op) rather than hitting another task.
+          let before = null, force = false;
+          const taskIds = [];
+          const rest = tokens.slice(1);
+          for (let i = 0; i < rest.length; i++) {
+            const t = rest[i];
+            if (t === "--force" || t === "-f") {
+              force = true;
+            } else if (t === "--before") {
+              i++;
+              if (i >= rest.length) throw new Error("prune: --before: missing DUR");
+              before = rest[i];
+            } else if (t.startsWith("--before=")) {
+              before = t.slice("--before=".length);
+            } else if (t.startsWith("-")) {
+              throw new Error(`prune: unknown flag ${t}`);
+            } else {
+              taskIds.push(t);
+            }
+          }
+          if (taskIds.length > 0) {
+            out = await window.harness.prune({ taskIds, force });
+          } else {
+            out = await window.harness.prune({ before: before || "168h" });
+          }
           break;
         }
         case "file": {
@@ -1406,6 +1432,8 @@ const POLL_INTERVAL_MS = 5000;
             "  preview <task-id>         live read-only screen preview of a session (⏸/▶ pause-resume)",
             "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
+            "  prune [--force] <task-id>...",
+            "                            forget specific tasks by id (--force: also active tasks)",
             "  file ls <task> [rel]      list a worktree directory",
             "  file delete [-r] [-f] <task> <rel>",
             "                            remove a file (no -r) or directory (-r [-f])",

@@ -772,11 +772,14 @@ func harnessWatch(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessPrune asks the server to forget terminal tasks older than the
-// given duration string (e.g. "168h"). Resolves with the cli.Prune
-// human-readable summary text.
+// harnessPrune asks the server to forget tasks, mirroring `harness-cli prune`'s
+// two modes. With taskIds empty it runs in time mode (terminal tasks older than
+// `before` are removed; force ignored). With taskIds non-empty it runs in id
+// mode (before ignored; each id must be full 32-hex; active tasks are skipped
+// unless force). Resolves with the cli.Prune human-readable summary text.
 //
-//	harness.prune({before: "168h"}) -> Promise<string>
+//	harness.prune({before: "168h"}) -> Promise<string>                       // time mode
+//	harness.prune({taskIds: ["<32hex>", ...], force: true}) -> Promise<string> // id mode
 func harnessPrune(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -791,14 +794,20 @@ func harnessPrune(this js.Value, args []js.Value) any {
 				rejectErr(reject, errors.New("prune: missing options arg"))
 				return
 			}
-			beforeStr := args[0].Get("before").String()
-			before, err := time.ParseDuration(beforeStr)
-			if err != nil {
-				rejectErr(reject, fmt.Errorf("invalid before duration: %w", err))
-				return
+			taskIDs := jsArrayToStringSlice(args[0].Get("taskIds"))
+			force := args[0].Get("force").Truthy()
+			// before is only consulted in time mode; skip parsing (which would
+			// reject an empty/absent value) when ids were supplied.
+			var before time.Duration
+			if len(taskIDs) == 0 {
+				before, err = time.ParseDuration(args[0].Get("before").String())
+				if err != nil {
+					rejectErr(reject, fmt.Errorf("invalid before duration: %w", err))
+					return
+				}
 			}
 			var buf bytesBuffer
-			if err := c.Prune(rootCtx, before, nil, false, &buf); err != nil {
+			if err := c.Prune(rootCtx, before, taskIDs, force, &buf); err != nil {
 				rejectErr(reject, fmt.Errorf("prune: %w", err))
 				return
 			}

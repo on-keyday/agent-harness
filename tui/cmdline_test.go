@@ -189,6 +189,37 @@ func TestParsePruneFlags(t *testing.T) {
 	}
 }
 
+func TestParsePruneByID(t *testing.T) {
+	id1 := "0123456789abcdef0123456789abcdef"
+	id2 := "fedcba9876543210fedcba9876543210"
+	got, err := ParseCommand(`prune --force `+id1+` `+id2, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(PruneAction)
+	if !a.Force {
+		t.Errorf("Force=false, want true")
+	}
+	if len(a.TaskIDs) != 2 || a.TaskIDs[0] != id1 || a.TaskIDs[1] != id2 {
+		t.Errorf("TaskIDs=%v, want [%s %s]", a.TaskIDs, id1, id2)
+	}
+	// --before must still carry its default even in id mode (dispatch ignores it).
+	if a.Before != 7*24*time.Hour {
+		t.Errorf("Before=%v, want 168h", a.Before)
+	}
+}
+
+func TestParsePruneShortForceFlag(t *testing.T) {
+	got, err := ParseCommand(`prune -f deadbeefdeadbeefdeadbeefdeadbeef`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(PruneAction)
+	if !a.Force || len(a.TaskIDs) != 1 {
+		t.Errorf("got Force=%v TaskIDs=%v, want Force=true, 1 id", a.Force, a.TaskIDs)
+	}
+}
+
 func TestParseClear(t *testing.T) {
 	got, err := ParseCommand(`clear`, "/cwd")
 	if err != nil {

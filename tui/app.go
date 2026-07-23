@@ -511,7 +511,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render("prune failed: " + msg.Err.Error()))
 			return a, nil
 		}
-		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))
+		if msg.IDMode {
+			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d, skipped %d (active=%d, missing=%d)",
+				msg.Removed, msg.SkippedActive+msg.SkippedMissing, msg.SkippedActive, msg.SkippedMissing)))
+			if msg.SkippedActive > 0 && !msg.Forced {
+				a.cmdresult.Append(WarnStyle.Render("prune: pass --force to also drop active (Queued/Running/Detached) tasks"))
+			}
+		} else {
+			a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("pruned %d task(s)", msg.Removed)))
+		}
 		return a, RefreshSnapshot(a.client)
 
 	case FileResultMsg:
@@ -1494,7 +1502,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("refreshing snapshot…")
 		return a, RefreshSnapshot(a.client)
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] / repo <path> / caps / refresh / clear / help / quit")
+		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] [--force] [<task-id>...] / repo <path> / caps / refresh / clear / help / quit")
 		a.cmdresult.Append("refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now")
 		a.cmdresult.Append("submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task")
 		a.cmdresult.Append("interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)")
@@ -1590,8 +1598,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, DoCancel(a.client, v.IDPrefix, full)
 	case PruneAction:
-		a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
-		return a, DoPruneTasks(a.client, v.Before)
+		if len(v.TaskIDs) > 0 {
+			a.cmdresult.Append(fmt.Sprintf("prune: asking server to forget %d task id(s) (force=%t)", len(v.TaskIDs), v.Force))
+		} else {
+			a.cmdresult.Append(fmt.Sprintf("prune: cutoff = %s; asking server to forget terminal tasks", cli.FormatPruneCutoff(v.Before)))
+		}
+		return a, DoPruneTasks(a.client, v.Before, v.TaskIDs, v.Force)
 	case SessionNewAction:
 		repo := v.Repo
 		if repo == "" {

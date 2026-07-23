@@ -29,8 +29,18 @@ type CancelAction struct {
 	IDPrefix string
 }
 
+// PruneAction forgets tasks server-side. Two mutually-exclusive modes,
+// mirroring `harness-cli prune`:
+//   - time mode (TaskIDs empty): terminal tasks older than Before are removed;
+//     Force is ignored.
+//   - id mode (TaskIDs non-empty): only those ids are considered, Before is
+//     ignored, and active (Queued/Running/Detached) tasks are skipped unless
+//     Force. Ids must be full 32-hex — no prefix resolution, deliberately, so a
+//     mistype misses (safe no-op) rather than resolving onto the wrong task.
 type PruneAction struct {
-	Before time.Duration
+	Before  time.Duration
+	TaskIDs []string
+	Force   bool
 }
 
 type ClearAction struct{}
@@ -419,10 +429,12 @@ func parsePrune(args []string) (Action, error) {
 	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	before := fs.Duration("before", 7*24*time.Hour, "")
+	force := fs.Bool("force", false, "")
+	fs.BoolVar(force, "f", false, "")
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("prune: %w", err)
 	}
-	return PruneAction{Before: *before}, nil
+	return PruneAction{Before: *before, TaskIDs: fs.Args(), Force: *force}, nil
 }
 
 // parseSession dispatches session sub-verbs: new / attach / ls / kill.
