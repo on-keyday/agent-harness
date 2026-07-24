@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall/js"
@@ -592,8 +593,12 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 			out := make([]any, 0, len(topics))
 			for _, t := range topics {
 				out = append(out, map[string]any{
-					"name":              t.Name,
-					"lastSeq":           float64(t.LastSeq),
+					"name": t.Name,
+					// Board seq is UnixNano-seeded (~1.9e18), well beyond
+					// JS Number.MAX_SAFE_INTEGER (2^53-1). Emit as a decimal
+					// string so precision survives the JS boundary; a float64
+					// here silently rounds to the nearest ULP (~256).
+					"lastSeq":           strconv.FormatUint(t.LastSeq, 10),
 					"lastPublishedAtMs": float64(t.LastPublishedAtMs),
 					"msgCount":          float64(t.MsgCount),
 				})
@@ -632,7 +637,10 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 			msgsOut := make([]any, 0, len(msgs))
 			for _, m := range msgs {
 				msgsOut = append(msgsOut, map[string]any{
-					"seq":          float64(m.Seq),
+					// Decimal string, not float64: board seq exceeds JS's
+					// 2^53 safe-integer range and would round, so a purge
+					// keyed on the rounded seq never matches server-side.
+					"seq":          strconv.FormatUint(m.Seq, 10),
 					"fromTask":     m.FromTaskHex,
 					"fromHostname": m.FromHostname,
 					"receivedAtMs": float64(m.ReceivedAtMs),
@@ -668,9 +676,23 @@ func harnessBoardPurge(this js.Value, args []js.Value) any {
 				return
 			}
 			topic := args[0].String()
-			// JS numbers are float64; .Int() narrows to 32-bit int on wasm, so use
-			// .Float() to carry the full u64 seq range (board seq is monotonic).
-			seq := uint64(args[1].Float())
+			// Per-message seq arrives as a decimal string (see boardRead):
+			// board seq is UnixNano-seeded and exceeds JS's 2^53 safe-integer
+			// range, so a float64 round-trip rounds it and the purge misses the
+			// retained message. Whole-topic purge passes a JS number 0. Branch
+			// on the JS type: parse the exact u64 from a string, take .Float()
+			// only for the (small, exact) numeric case.
+			var seq uint64
+			if args[1].Type() == js.TypeString {
+				parsed, perr := strconv.ParseUint(args[1].String(), 10, 64)
+				if perr != nil {
+					rejectErr(reject, fmt.Errorf("boardPurge: bad seq %q: %w", args[1].String(), perr))
+					return
+				}
+				seq = parsed
+			} else {
+				seq = uint64(args[1].Float())
+			}
 			purged, found, err := c.BoardPurge(rootCtx, topic, seq)
 			if err != nil {
 				rejectErr(reject, fmt.Errorf("boardPurge: %w", err))
