@@ -24,14 +24,24 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 
 // wakeMarker is the body of the synthetic prompt written to the agent's
 // stdin. The leading "<harness:agentboard-wake>" tag is machine-detectable
-// for future hook post-processing; the rest is action-agnostic so the LLM
-// is not forced into a reply when the message does not warrant one. The
-// trailing pointer is conditional ("if you do reply, here is how") and
-// names a runnable command, not a Claude "skill": `harness-cli skill`
-// prints the embedded skill in ANY runtime, whereas telling the agent to
-// "use the harness-cli skill" makes a non-Claude / non-injected runtime
-// answer "no such skill". It aids a context-free auto-wake without
-// pushing the agent toward an unwarranted reply.
+// (hook post-processing) and is the ONLY place the word "agentboard"
+// appears: the prose deliberately omits it, because "agentboard message"
+// tempts the agent to GUESS a command, and the plausible guess `harness-cli
+// board read` is a real but wrong tool (topic-scoped retained dump, needs a
+// <topic> arg) rather than the subscribed-inbox read. Instead the prose
+// names the exact read command, `harness-cli agent inbox --json`, framed as
+// a fallback since the UserPromptSubmit hook usually injects the message
+// already.
+//
+// `harness-cli skill` is the general agentboard reference (peer messaging,
+// worker sessions, delegation, operator notify, discovery — not reply-only,
+// hence "how to act"). BOTH pointers are guarded by an "if": an agent that
+// already has the message and already knows the conventions runs neither
+// command, and the marker degenerates to "new message(s) … reply only if
+// warranted" — no reflexive `harness-cli skill` read on every wake. Both
+// are plain binary invocations, so the marker works as a context-free
+// auto-wake in ANY runtime; and it stays action-agnostic ("reply only if
+// warranted") so the LLM is not forced into an unwarranted reply.
 //
 // IMPORTANT: wakeMarker has NO trailing newline / carriage return. The
 // submit keystroke is sent as a separate write after wakeSubmitDelay (see
@@ -43,7 +53,7 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 // human still has to press Enter manually. Splitting the write — text,
 // short pause, lone "\r" — makes the second write parse as a real
 // keystroke and the prompt is submitted automatically.
-const wakeMarker = "<harness:agentboard-wake> new agentboard message(s) — review and act as appropriate; run `harness-cli skill` for how to respond"
+const wakeMarker = "<harness:agentboard-wake> new message(s) — read via `harness-cli agent inbox --json` if not already in context; consult `harness-cli skill` if unsure how to act. Reply only if warranted."
 
 // wakeSubmitDelay is the gap between the marker text write and the lone
 // submit byte write. Long enough for Ink's input parser to flush the
