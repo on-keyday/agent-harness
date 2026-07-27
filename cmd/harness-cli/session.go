@@ -329,7 +329,11 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [--enter] [-e] [--flush-ms MS] <id> <text>...
+		return fmt.Errorf(`usage: session send [-enter] [-e] [--flush-ms MS] <id> <text>...
+  -enter  append a carriage return, i.e. actually SUBMIT the line
+  -e      interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
+          -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
+          without -enter the text is typed onto the prompt and just sits there.
 flags must precede <id>; everything after <id> is joined with spaces and sent
 literally (ssh-style), so multi-word text needs no quoting. Quote it as one
 argument to preserve exact whitespace.`)
