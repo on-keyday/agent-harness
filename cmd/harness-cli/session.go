@@ -325,15 +325,17 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	enter := fs.Bool("enter", false, "append a carriage return (Enter) after the text")
 	interp := fs.Bool("e", false, `interpret backslash escapes (\n \r \t \e \xHH \\)`)
 	flushMs := fs.Uint("flush-ms", 400, "ms to let the input drain to the runner before detaching")
+	quiet := fs.Bool("quiet", false, "suppress the one-line summary of what was sent (stderr)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [-enter] [-e] [--flush-ms MS] <id> <text>...
+		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] <id> <text>...
   -enter  append a carriage return, i.e. actually SUBMIT the line
   -e      interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
           -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
           without -enter the text is typed onto the prompt and just sits there.
+  -quiet  suppress the one-line summary of what was sent (stderr)
 flags must precede <id>; everything after <id> is joined with spaces and sent
 literally (ssh-style), so multi-word text needs no quoting. Quote it as one
 argument to preserve exact whitespace.`)
@@ -363,7 +365,37 @@ argument to preserve exact whitespace.`)
 		return err
 	}
 	defer c.Close()
-	return c.SessionSend(ctx, taskIDHex, data, time.Duration(*flushMs)*time.Millisecond)
+	if err := c.SessionSend(ctx, taskIDHex, data, time.Duration(*flushMs)*time.Millisecond); err != nil {
+		return err
+	}
+	// Disclose what went onto the wire. The harness is a byte pipe with no
+	// notion of a "line" or of submission — that lives in whichever program
+	// holds the foreground, and differs between a readline shell, an agent TUI
+	// and vim — so this reports only what this command did, never what the
+	// session made of it. Both branches print: sending WITHOUT a CR is the
+	// documented way to drive an agent TUI (text first, CR in a separate call),
+	// so this is disclosure, not a warning, and stays silent about whether
+	// anything was submitted. It exists because omitting -enter otherwise fails
+	// completely silently — the text lands on the prompt and sits there, and a
+	// later snapshot renders it echoed on the input line, which reads exactly
+	// like it ran. -quiet drops it for callers that only want the exit code.
+	if *quiet {
+		return nil
+	}
+	unit := "bytes"
+	if len(data) == 1 {
+		unit = "byte"
+	}
+	esc := ""
+	if *interp {
+		esc = ", escapes interpreted"
+	}
+	cr := "no trailing CR (-enter not given)"
+	if *enter {
+		cr = "trailing CR appended (-enter)"
+	}
+	fmt.Fprintf(os.Stderr, "session send: %d %s%s, %s\n", len(data), unit, esc, cr)
+	return nil
 }
 
 // runSessionExec runs a single shell command line synchronously in a session's
