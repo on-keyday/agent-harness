@@ -2211,6 +2211,18 @@ const POLL_INTERVAL_MS = 5000;
     window.harness.previewStop(key);
   }
 
+  // Pane terminals open at PANE_FONT_BASE and are shrunk by fitPaneScale to fit
+  // their pane. PANE_FONT_MIN is only a positivity guard, NOT a legibility
+  // choice: xterm's cell width tracks fontSize proportionally and sub-pixel all
+  // the way down (measured — 240 cols is 1560px at 13px and exactly 240px at
+  // 2px, cell width 1px), so anything higher would clip wide terminals instead
+  // of shrinking them. A grid pane that small is an activity indicator rather
+  // than readable text, which was equally true of the CSS transform this
+  // replaced — a 240-col session scaled into a 300px cell is ~2.4px of glyph
+  // either way.
+  const PANE_FONT_BASE = 13;
+  const PANE_FONT_MIN = 1;
+
   // buildPaneTerm creates the throwaway xterm at the session's true grid
   // (re-rendering at a smaller grid would corrupt full-screen TUI layouts)
   // inside the scale/spacer pair, then fits it to the pane's own width.
@@ -2235,7 +2247,7 @@ const POLL_INTERVAL_MS = 5000;
       // exactly one pane — no explicit focus bookkeeping needed.
       disableStdin: !p.cowrite,
       convertEol: true,  // match the main terminal so the stream renders identically
-      fontSize: 13,
+      fontSize: PANE_FONT_BASE,
       fontFamily: '"Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace',
     });
     p.term.open(termBox);
@@ -2252,23 +2264,50 @@ const POLL_INTERVAL_MS = 5000;
     p.onResize();
   }
 
-  // fitPaneScale measures the rendered screen at scale 1 (transform reset
-  // first — getBoundingClientRect returns the TRANSFORMED box, so measuring
-  // with a leftover scale would compound) and scales the grid to fit the
-  // PANE's own body width (p.bodyEl) — for a grid cell that's the cell body,
-  // not the whole modal, so each pane fits independently of the others.
+  // fitPaneScale shrinks the pane's terminal to the PANE's own body width
+  // (p.bodyEl) — for a grid cell that's the cell body, not the whole modal, so
+  // each pane fits independently of the others.
+  //
+  // It scales by lowering the FONT SIZE, not with a CSS transform. xterm derives
+  // mouse -> cell coordinates from the screen element's getBoundingClientRect()
+  // (which DOES reflect a CSS transform) divided by the cell size it measured
+  // when the terminal opened (which does NOT). A transform applied after open()
+  // therefore desyncs selection from the pointer by exactly 1/scale: the
+  // highlight lands at scale x the pointer's distance from the pane's top-left,
+  // so dragging across a 0.67-scaled pane selected text a quarter of a
+  // pane-width to the left of the cursor. Driving fontSize instead keeps
+  // cols x rows intact and keeps both sides of that division in one space.
   function fitPaneScale(p) {
-    if (!p.scaleBox || !p.spacer || !p.bodyEl) return;
-    p.scaleBox.style.transform = "";
+    if (!p.term || !p.scaleBox || !p.spacer || !p.bodyEl) return;
     const screenEl = p.scaleBox.querySelector(".xterm-screen");
-    const rect = screenEl ? screenEl.getBoundingClientRect() : p.scaleBox.getBoundingClientRect();
+    if (!screenEl) return;
     const avail = p.bodyEl.clientWidth - 12; // body padding allowance
-    if (rect.width > 0 && avail > 0) {
-      const scale = Math.min(1, avail / rect.width);
-      p.scaleBox.style.width = `${rect.width}px`;
-      p.scaleBox.style.transform = `scale(${scale})`;
-      p.spacer.style.height = `${Math.ceil(rect.height * scale)}px`;
+    if (avail <= 0) return;
+
+    // Cell width is proportional to font size, so a single measurement at the
+    // base size solves for the size that fits. Cached per CELL (not per pane
+    // width) so a previewResize, which changes cols, can reuse it.
+    if (!p.baseCellW) {
+      if (p.term.options.fontSize !== PANE_FONT_BASE) {
+        p.term.options.fontSize = PANE_FONT_BASE;
+      }
+      const w = screenEl.getBoundingClientRect().width;
+      if (w <= 0) return;
+      p.baseCellW = w / p.term.cols;
     }
+
+    const needed = p.baseCellW * p.term.cols;
+    const size = Math.max(
+      PANE_FONT_MIN,
+      Math.min(PANE_FONT_BASE, (PANE_FONT_BASE * avail) / needed),
+    );
+    if (p.term.options.fontSize !== size) p.term.options.fontSize = size;
+
+    // Layout tracks the font now, so the transform-era overrides — which only
+    // existed because a transform leaves layout untouched — are cleared.
+    p.scaleBox.style.transform = "";
+    p.scaleBox.style.width = "";
+    p.spacer.style.height = "";
   }
 
   // wasm→JS hooks, routed by paneKey (cli/preview_wasm.go tags every call
