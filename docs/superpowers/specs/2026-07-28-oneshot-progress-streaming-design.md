@@ -177,9 +177,27 @@ done
 ✓ 5180ms $0.016467
 ```
 
-`KindThinking` renders as the fixed string `· thinking` regardless of the
-thinking text: it is a liveness signal, and the full text would multiply log
-volume against the TUI's ring buffer and the persisted log file. `KindToolStart`
+`KindThinking` renders as the fixed string `· thinking` and never carries text.
+This is forced, not merely preferred. Measured with one prompt across three
+models, reading the `thinking` content block out of `--output-format
+stream-json`:
+
+| model | `thinking` text | `signature` | final text |
+| --- | --- | --- | --- |
+| Haiku 4.5 | 2192 chars | — | 775 chars |
+| Sonnet 5 | 0 chars | 10260 chars | 664 chars |
+| Opus 5 | 0 chars | 3532 chars | 1219 chars |
+
+The Claude 5 family does not expose thinking text at all — the block carries
+only an encrypted signature. A renderer that printed `.thinking` would emit
+blank lines for every model this harness actually runs. Two consequences for
+the decoder: it must emit `KindThinking` on the block's presence rather than on
+its content being non-empty, and it must never render `signature`, which is
+kilobytes of opaque base64 per turn. Where plaintext thinking does exist
+(Haiku 4.5) it ran roughly 3x the length of the final answer, so printing it
+would have tripled log volume on that model alone.
+
+`KindToolStart`
 truncates `Args` and `KindToolEnd` truncates `Result` at 200 bytes on a rune
 boundary, with a trailing `…` when truncated. `KindSessionStart` renders the
 session/thread id. `KindRaw` renders the line verbatim.
