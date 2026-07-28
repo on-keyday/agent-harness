@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // AgentProfile is one named agent launch profile: a binary plus the argv
@@ -51,10 +52,11 @@ func NewProfileSet(defaultP AgentProfile, extra []AgentProfile) (ProfileSet, err
 
 	seen := make(map[string]bool, len(all))
 	for _, p := range all {
-		if seen[p.Name] {
-			return ProfileSet{}, fmt.Errorf("duplicate agent profile name %q", p.Name)
+		norm := protocol.NormalizeAgentProfileName(p.Name)
+		if seen[norm] {
+			return ProfileSet{}, fmt.Errorf("duplicate agent profile name %q (names are compared modulo Windows executable extension)", p.Name)
 		}
-		seen[p.Name] = true
+		seen[norm] = true
 
 		if err := ValidateOneshotArgvTemplate(p.OneshotArgv); err != nil {
 			return ProfileSet{}, fmt.Errorf("agent profile %q: oneshotArgv: %w", p.Name, err)
@@ -71,7 +73,10 @@ func NewProfileSet(defaultP AgentProfile, extra []AgentProfile) (ProfileSet, err
 
 // Resolve looks up a profile by name. An empty name resolves to the default
 // profile (index 0). An unknown non-empty name is an error listing the
-// available names.
+// available names. Matching is EqualAgentProfileName (modulo Windows
+// executable extension), mirroring the server's RunnerEntry.HasProfile, so a
+// dispatch carrying a task's recorded "claude.exe" resolves against a
+// profile now named "claude".
 func (ps ProfileSet) Resolve(name string) (AgentProfile, error) {
 	if name == "" {
 		if len(ps.profiles) == 0 {
@@ -80,7 +85,7 @@ func (ps ProfileSet) Resolve(name string) (AgentProfile, error) {
 		return ps.profiles[0], nil
 	}
 	for _, p := range ps.profiles {
-		if p.Name == name {
+		if protocol.EqualAgentProfileName(p.Name, name) {
 			return p, nil
 		}
 	}

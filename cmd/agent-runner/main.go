@@ -16,6 +16,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/agentlog"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -238,9 +239,11 @@ func main() {
 	// The single-agent flags above (--agent-bin/--agent-args/--agent-*-argv)
 	// define the default (first) agent profile. --agent-profiles adds extra
 	// profiles appended after it. Default profile name = basename of
-	// --agent-bin.
+	// --agent-bin, minus any Windows executable extension so
+	// `--agent-bin C:/.../claude.exe` and `--agent-bin claude` advertise the
+	// same profile name across the mixed-OS fleet.
 	defaultProfile := runner.AgentProfile{
-		Name:                  filepath.Base(cfg.ClaudeBin),
+		Name:                  protocol.NormalizeAgentProfileName(filepath.Base(cfg.ClaudeBin)),
 		Bin:                   cfg.ClaudeBin,
 		AgentArgs:             strings.Fields(cfg.ClaudeArgs),
 		OneshotArgv:           oneshotArgv,

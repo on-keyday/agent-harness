@@ -31,6 +31,27 @@ func TestProfileSetDupName(t *testing.T) {
 	}
 }
 
+func TestProfileSetDupNameAcrossExeSuffix(t *testing.T) {
+	_, err := NewProfileSet(AgentProfile{Name: "claude"}, []AgentProfile{{Name: "claude.exe"}})
+	if err == nil {
+		t.Fatal("claude + claude.exe denote the same profile; dup must error")
+	}
+}
+
+func TestProfileSetResolveAcrossExeSuffix(t *testing.T) {
+	ps, err := NewProfileSet(AgentProfile{Name: "claude.exe", Bin: "C:/bin/claude.exe"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := ps.Resolve("claude")
+	if err != nil {
+		t.Fatalf("Resolve(claude) against profile claude.exe: %v", err)
+	}
+	if p.Bin != "C:/bin/claude.exe" {
+		t.Fatalf("got Bin %q", p.Bin)
+	}
+}
+
 func TestParseAgentProfilesJSON(t *testing.T) {
 	ps, err := ParseAgentProfilesJSON(`[{"name":"codex","bin":"codex","oneshotArgv":["exec","{args}","{prompt}"],"resumeOneshotArgv":["exec","resume","--last","{args}","{prompt}"]}]`)
 	if err != nil {

@@ -1261,3 +1261,30 @@ func TestToTaskInfoCapabilities(t *testing.T) {
 		t.Fatalf("toTaskInfo Capabilities = %#x, want %#x", info.Capabilities, want)
 	}
 }
+
+func TestSubmitResumeProfileMatchesAcrossExeSuffix(t *testing.T) {
+	h := newTestHandler(t)
+	now := time.Now()
+
+	// Task recorded under the Windows spelling "claude.exe" (absolute
+	// --agent-bin era); the runner has since been reconfigured with a bare
+	// bin and now advertises "claude". Same binary, two spellings — pinned
+	// resume must keep working.
+	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "claude.exe")
+	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Finish(taskIDHex, 0, nil)
+
+	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
+
+	var tid protocol.TaskID
+	raw, _ := hex.DecodeString(taskIDHex)
+	copy(tid.Id[:], raw)
+
+	req := &protocol.SubmitRequest{ResumeTaskId: tid}
+	req.SetPrompt([]byte("resume"))
+
+	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	if resp.Status != protocol.SubmitStatus_Ok {
+		t.Fatalf("status=%v want Ok (claude.exe task on claude runner)", resp.Status)
+	}
+}

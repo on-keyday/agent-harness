@@ -71,12 +71,14 @@ func (e *RunnerEntry) Status() protocol.RunnerStatus {
 // HasProfile reports whether name is among the profiles this runner
 // advertised at Hello time. Legacy runners that advertised no profiles at
 // all are treated as advertising exactly one, implicit profile: AgentBin.
+// Matching is EqualAgentProfileName, so a task recorded under a Windows
+// spelling ("claude.exe") still matches a runner now advertising "claude".
 func (e RunnerEntry) HasProfile(name string) bool {
 	if len(e.AgentProfiles) == 0 {
-		return name == e.AgentBin
+		return protocol.EqualAgentProfileName(name, e.AgentBin)
 	}
 	for _, p := range e.AgentProfiles {
-		if p == name {
+		if protocol.EqualAgentProfileName(p, name) {
 			return true
 		}
 	}

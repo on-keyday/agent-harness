@@ -463,3 +463,22 @@ func TestRegistryCandidatesLongestPrefixScopedToSelector(t *testing.T) {
 		t.Fatalf("selector pin to broad-host must return B even though A has a more specific root, got %v", cs)
 	}
 }
+
+func TestHasProfileAcrossExeSuffix(t *testing.T) {
+	e := RunnerEntry{AgentProfiles: []string{"claude"}}
+	if !e.HasProfile("claude.exe") {
+		t.Error("recorded claude.exe must match advertised claude")
+	}
+	e = RunnerEntry{AgentProfiles: []string{"claude.exe"}}
+	if !e.HasProfile("claude") {
+		t.Error("recorded claude must match advertised claude.exe")
+	}
+	if e.HasProfile("codex") {
+		t.Error("distinct profile must not match")
+	}
+	// Legacy runner: implicit AgentBin profile follows the same equivalence.
+	legacy := RunnerEntry{AgentBin: "claude.exe"}
+	if !legacy.HasProfile("claude") {
+		t.Error("legacy AgentBin claude.exe must match claude")
+	}
+}
