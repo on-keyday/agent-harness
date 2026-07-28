@@ -1,10 +1,11 @@
-////go:build integration
+//go:build integration
 
 package integration
 
 import (
 	"context"
 	"encoding/hex"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,32 +21,47 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
-// TestSubmitWakeE2E asserts that publishing to an agentboard topic causes the
-// agent process running under agent-runner to receive the wake marker on its
-// stdin within ~2s.
+// TestOpenInteractiveWakeE2E asserts that publishing to an agentboard topic
+// causes the agent process running under an interactive agent-runner session
+// to receive the wake marker on its stdin within ~2s.
+//
+// This exercises the interactive wake path (handleOpenExec / WakeStdin
+// writing to the PTY master), not the oneshot stdin-pipe path: Task 6
+// deleted the oneshot mechanism (claude -p reads stdin once with a ~3s
+// deadline and never again, so a mid-turn marker went nowhere, and the
+// never-EOF pipe it required hung every codex exec oneshot task). The
+// interactive path is what remains live in production.
 //
 // Architecture of the positive path:
 //
 //  1. An in-process server + board are started, and a runner is dialled in.
-//  2. A task is submitted via cli.Submit; the runner spawns fake-claude-wake.sh.
+//  2. A cli.Client dials the server and calls OpenInteractive, which asks the
+//     runner to spawn fake-claude-wake.sh under a PTY in a fresh worktree.
 //  3. fake-claude-wake.sh writes WAKE_OUT (empty sentinel) at startup, then
-//     blocks on stdin, appending every line it reads to that file.
+//     execs into `cat -`, which copies everything it reads from stdin to
+//     WAKE_OUT unbuffered.
 //  4. Once WAKE_OUT appears the test synthesises a board subscriber for the
 //     real task's (anyRid, realTid), subscribes it to "topic/wake-smoke", and
 //     calls board.Send.  The board's onDeliver hook calls emitTaskWake(realTid),
 //     which resolves the live runner via the server's task store + registry and
 //     sends a RunnerRequest{TaskWake} to it.
 //  5. The runner handles TaskWake → session.WakeStdin(taskIDHex) → writes the
-//     wakeMarker into the fake-claude pipe.  The script appends that line to
-//     WAKE_OUT.
+//     wake marker into the PTY master backing fake-claude-wake.sh's stdin.
+//     `cat` copies those bytes straight into WAKE_OUT.
 //  6. The test asserts WAKE_OUT contains "<harness:agentboard-wake>" within 2s.
+//
+// Scope: this proves the runner delivers the wake marker onto the PTY and
+// that a process reading stdin from that PTY receives it. It does NOT prove
+// that any particular real agent treats the marker as a new turn —
+// fake-claude-wake.sh is a cooperating fake that blocks on stdin by
+// construction, not a claude/codex process with its own turn-taking logic.
 //
 // The synthetic RunnerID passed to board.Attach is intentionally arbitrary:
 // server.wireAgentBoardWake ignores the RunnerID from the onDeliver callback
 // (it is _ in the closure) and resolves the runner exclusively from the TaskID
 // via the server's task store.  So the rid passed to board.Attach need not
 // match the real runner's RunnerID.
-func TestSubmitWakeE2E(t *testing.T) {
+func TestOpenInteractiveWakeE2E(t *testing.T) {
 	if testing.Short() {
 		t.Skip("E2E skipped in -short mode")
 	}
@@ -118,11 +134,29 @@ func TestSubmitWakeE2E(t *testing.T) {
 	// Give the runner time to connect and become Idle.
 	time.Sleep(400 * time.Millisecond)
 
-	taskID, err := cli.Submit(ctx, peerCID, repo, "wake-test-prompt")
+	// Open the interactive session. Calling convention copied from
+	// integration/session_detach_test.go:90 — the established
+	// (stream, taskIDHex, err) pattern for OpenInteractive.
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {
-		t.Fatalf("submit: %v", err)
+		t.Fatalf("dial client: %v", err)
 	}
-	t.Logf("submitted %s", taskID)
+	defer c.Close()
+
+	sel := protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}
+	stream, taskID, err := c.OpenInteractive(ctx, repo, cli.SessionOpts{Selector: sel})
+	if err != nil {
+		t.Fatalf("OpenInteractive: %v", err)
+	}
+	defer stream.Close()
+	t.Logf("opened interactive session %s", taskID)
+
+	// Drain stdout/stderr in the background: CommandExecutionStream demuxes
+	// PTY output through unbuffered io.Pipes, so an unread pipe would block
+	// the runner's demux goroutine (and, transitively, WakeStdin's PTY
+	// write) once the PTY echoes the wake keystrokes back.
+	go func() { io.Copy(io.Discard, stream.Stdout()) }()
+	go func() { io.Copy(io.Discard, stream.Stderr()) }()
 
 	// Wait for fake-claude to start: it writes an empty WAKE_OUT at startup.
 	if !waitForFile(t, wakeOut, 10*time.Second) {
@@ -141,7 +175,7 @@ func TestSubmitWakeE2E(t *testing.T) {
 
 	// --- Positive path: synthesise a subscriber and publish ---------------
 	//
-	// Build the real TaskID from the hex string returned by cli.Submit.
+	// Build the real TaskID from the hex string returned by OpenInteractive.
 	var realTid agentboard.TaskID
 	rawTid, err := hex.DecodeString(taskID)
 	if err != nil || len(rawTid) != 16 {
@@ -204,7 +238,10 @@ func TestSubmitWakeE2E(t *testing.T) {
 		t.Errorf("wake marker %q not found in WAKE_OUT within 2s; content: %q", wakeMarker, lastContent)
 	}
 
-	// Tear down.
+	// Tear down. Close the interactive session before tearing down the
+	// server/runner so shutdown isn't racing an open client connection.
+	stream.Close()
+	c.Close()
 	cancel()
 	select {
 	case <-serverDone:
