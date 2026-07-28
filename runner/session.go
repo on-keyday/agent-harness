@@ -84,8 +84,9 @@ type taskEntry struct {
 	repoPath string
 
 	// wakeWrite is the closure handed to OnStdinWriter — writes bytes
-	// directly to the running claude's stdin pipe. nil until the agent
-	// process is spawned.
+	// directly to the running agent's stdin pipe. Only handleOpenExec (the
+	// interactive PTY path) wires this; a oneshot task run via handleAssign
+	// never sets it, so it stays nil for that task's whole lifetime.
 	wakeWrite func([]byte) (int, error)
 
 	// lastWakeAt is the most recent time WakeStdin actually wrote to
@@ -761,8 +762,11 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 
 // WakeStdin writes the wake marker to the agent's stdin pipe for the given
 // task, debounced per task to one write per wakeDebounceWindow. Safe to
-// call from any goroutine. No-op if the task is unknown or its agent
-// process has not yet wired its stdin via OnStdinWriter.
+// call from any goroutine. No-op if the task is unknown, or if its agent
+// process never wired a stdin writer at all — only handleOpenExec (the
+// interactive PTY path) does that via OnStdinWriter; a oneshot task started
+// through handleAssign has no wakeWrite, so a TaskWake aimed at one is a
+// permanent, silent no-op for that task's entire lifetime.
 //
 // Coalescing rationale: subsequent agentboard messages within the window
 // are not lost — they are read by the agent's next `agent inbox

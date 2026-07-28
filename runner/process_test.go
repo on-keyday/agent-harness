@@ -198,7 +198,7 @@ func TestProcessDecodesStdoutAndLeavesStderrRaw(t *testing.T) {
 	body := "#!/bin/sh\n" +
 		"printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}'\n" +
 		"printf '%s\\n' 'boom' >&2\n" +
-		"printf '%s\\n' '{\"type\":\"result\",\"duration_ms\":12,\"total_cost_usd\":0}'\n"
+		"printf '%s\\n' '{\"type\":\"result\",\"subtype\":\"success\",\"duration_ms\":12,\"total_cost_usd\":0}'\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,7 @@ func TestProcessStdoutVerbatimWhenNoDecoderApplies(t *testing.T) {
 func TestProcessDecodesFinalUnterminatedLine(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "fake-agent.sh")
 	body := "#!/bin/sh\n" +
-		"printf '%s' '{\"type\":\"result\",\"duration_ms\":12,\"total_cost_usd\":0}'\n"
+		"printf '%s' '{\"type\":\"result\",\"subtype\":\"success\",\"duration_ms\":12,\"total_cost_usd\":0}'\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -473,5 +473,49 @@ func TestProcessLeavesStdinClosed(t *testing.T) {
 	defer mu.Unlock()
 	if !strings.Contains(got, "saw eof") {
 		t.Fatalf("agent never saw stdin EOF; got %q", got)
+	}
+}
+
+// TestProcessSuccessfulExitNotReportedAsFailed is a regression test for a
+// successful agent run being reported as Failed. cmd.Stdout/cmd.Stderr are
+// writers (not pipes taken via cmd.StdoutPipe()), so cmd.Wait() also waits
+// for os/exec's own copy goroutines to see EOF on the underlying pipe. If the
+// agent leaves a descendant holding the inherited stdout fd open past its own
+// exit (e.g. it backgrounds a long-lived child before exiting), that EOF
+// never arrives on its own: cmd.WaitDelay (5s, set in Run) fires, os/exec
+// force-closes the pipes, and Wait returns exec.ErrWaitDelay. That error is
+// not an *exec.ExitError, so a classification that only checks for
+// *exec.ExitError falls through to exit=-1 even though the agent itself
+// exited 0 — the task then gets reported Failed by the server.
+//
+// This necessarily takes ~5s: it waits out the real cmd.WaitDelay so the
+// force-close path actually fires. Do not shorten WaitDelay to make this
+// faster — the WaitDelay/force-close interaction is exactly what's under
+// test, and cmd.WaitDelay's value is not something this task may change.
+func TestProcessSuccessfulExitNotReportedAsFailed(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "backgrounds-child.sh")
+	body := "#!/bin/sh\n" +
+		"sleep 30 &\n" +
+		"printf 'hello\\n'\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := &Process{
+		ClaudeBin: script,
+		CWD:       t.TempDir(),
+		// Comfortably longer than cmd.WaitDelay (5s) so the run's own ctx
+		// timeout cannot fire first and take the Cancel/SIGTERM path instead
+		// of the plain WaitDelay-expiry path this test exercises.
+		Timeout:             30 * time.Second,
+		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
+	}
+	start := time.Now()
+	exit, err := p.Run(context.Background(), "ignored", func([]byte) {})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if exit != 0 {
+		t.Fatalf("exit = %d (elapsed=%v), want 0: the agent itself exited 0, only its backgrounded child kept stdout open past that", exit, elapsed)
 	}
 }

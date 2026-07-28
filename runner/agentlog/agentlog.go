@@ -29,6 +29,13 @@ const (
 	KindToolEnd
 	KindText
 	KindFinish
+	// KindError is a run-ending failure the agent itself reported — not a
+	// runner-side classification, but the agent's own error/turn-failure
+	// event (codex's "error"/"turn.failed") or a failed "result" envelope
+	// (claude's is_error/non-"success" subtype). Text carries the message.
+	// Mutually exclusive with KindFinish for a given run: a run reports one
+	// outcome, not both.
+	KindError
 )
 
 // Stats carries whatever the agent reported when its run finished. Fields the
@@ -49,7 +56,7 @@ type Stats struct {
 // tool_result carries only a boolean for tools that never ran a process.
 type Event struct {
 	Kind Kind
-	Text string // KindRaw, KindText, KindThinking, KindSessionStart (id)
+	Text string // KindRaw, KindText, KindThinking, KindSessionStart (id), KindError (message)
 	Tool string // KindToolStart, KindToolEnd
 	Args string // KindToolStart: the tool's input, rendered for a log line —
 	//                compact JSON where the agent reports structured input
@@ -187,6 +194,8 @@ func Render(e Event) string {
 			return "✓ done"
 		}
 		return "✓ " + strings.Join(parts, " ")
+	case KindError:
+		return "✗ " + e.Text
 	default: // KindRaw, KindText
 		return e.Text
 	}
@@ -215,8 +224,10 @@ type claudeEnvelope struct {
 	} `json:"message"`
 
 	// result
-	DurationMS   int64   `json:"duration_ms"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
+	DurationMS   int64    `json:"duration_ms"`
+	TotalCostUSD float64  `json:"total_cost_usd"`
+	IsError      bool     `json:"is_error"`
+	Errors       []string `json:"errors"` // set on SDKResultError; absent (nil) on SDKResultSuccess
 }
 
 type claudeStreamJSON struct{}
@@ -256,6 +267,19 @@ func (claudeStreamJSON) Decode(line []byte) []Event {
 		}
 		return out
 	case "result":
+		// SDKResultSuccess (subtype "success") is the only shape that means
+		// the run actually succeeded. Every other shape — is_error true, or
+		// any other subtype (error_during_execution, error_max_turns,
+		// error_max_budget_usd, error_max_structured_output_retries) — is a
+		// failed run and must not also render the "✓ ..." finish line: a run
+		// reports one outcome, not two.
+		if env.IsError || env.Subtype != "success" {
+			text := env.Subtype
+			if len(env.Errors) > 0 {
+				text += ": " + strings.Join(env.Errors, "; ")
+			}
+			return []Event{{Kind: KindError, Text: text}}
+		}
 		return []Event{{Kind: KindFinish, Stats: Stats{
 			DurationMS: env.DurationMS,
 			CostUSD:    env.TotalCostUSD,
@@ -287,6 +311,7 @@ func jsonToText(rm json.RawMessage) string {
 type codexEnvelope struct {
 	Type     string `json:"type"`
 	ThreadID string `json:"thread_id"`
+	Message  string `json:"message"` // top-level "error" event's text
 	Item     struct {
 		Type             string `json:"type"`
 		Text             string `json:"text"`
@@ -298,6 +323,9 @@ type codexEnvelope struct {
 		InputTokens  int64 `json:"input_tokens"`
 		OutputTokens int64 `json:"output_tokens"`
 	} `json:"usage"`
+	Error struct {
+		Message string `json:"message"`
+	} `json:"error"` // "turn.failed" event's error
 }
 
 type codexJSONL struct{}
@@ -345,6 +373,16 @@ func (codexJSONL) Decode(line []byte) []Event {
 			InputTokens:  env.Usage.InputTokens,
 			OutputTokens: env.Usage.OutputTokens,
 		}}}
+	case "error":
+		// A top-level protocol/transport-level error, distinct from a
+		// turn-scoped failure. Verified live against an unauthenticated
+		// endpoint: codex emitted a transient reconnect notice this way
+		// while retrying a dropped stream, so this is not necessarily
+		// terminal — it is still reported, not suppressed, and per Decoder's
+		// contract it never fails the task on its own.
+		return []Event{{Kind: KindError, Text: env.Message}}
+	case "turn.failed":
+		return []Event{{Kind: KindError, Text: env.Error.Message}}
 	default:
 		return nil
 	}

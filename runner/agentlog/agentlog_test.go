@@ -84,6 +84,7 @@ func TestRender(t *testing.T) {
 		{"finish claude", Event{Kind: KindFinish, Stats: Stats{DurationMS: 5365, CostUSD: 0.0163509}}, "✓ 5365ms $0.016351"},
 		{"finish codex", Event{Kind: KindFinish, Stats: Stats{InputTokens: 33075, OutputTokens: 168}}, "✓ 33075 in / 168 out"},
 		{"finish empty", Event{Kind: KindFinish}, "✓ done"},
+		{"error", Event{Kind: KindError, Text: "error_max_turns: exceeded max turns"}, "✗ error_max_turns: exceeded max turns"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Render(tc.ev); got != tc.want {

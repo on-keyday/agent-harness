@@ -64,3 +64,27 @@ func TestCodexDecoderExitCodeAndUnknown(t *testing.T) {
 		t.Fatalf("non-JSON line: got %+v, want one KindRaw", evs)
 	}
 }
+
+// TestCodexDecoderError is a unit test rather than an addition to
+// testdata/codex-jsonl.jsonl: that fixture is a real, unedited capture of one
+// successful run, and hand-appending a failure line would misrepresent it as
+// recorded output.
+func TestCodexDecoderError(t *testing.T) {
+	d := NewDecoder("codex-jsonl")
+
+	// Verified live: running `codex exec --json` against an unauthenticated
+	// endpoint emitted exactly this line on stdout.
+	evs := d.Decode([]byte(`{"type":"error","message":"Reconnecting... 2/5 (unexpected status 401 Unauthorized)"}`))
+	if len(evs) != 1 || evs[0].Kind != KindError || evs[0].Text != "Reconnecting... 2/5 (unexpected status 401 Unauthorized)" {
+		t.Fatalf("got %+v, want one KindError carrying the message", evs)
+	}
+	if Render(evs[0]) != "✗ Reconnecting... 2/5 (unexpected status 401 Unauthorized)" {
+		t.Errorf("Render = %q", Render(evs[0]))
+	}
+
+	// turn.failed carries its message nested under "error", not top-level.
+	evs = d.Decode([]byte(`{"type":"turn.failed","error":{"message":"model response stream ended unexpectedly"}}`))
+	if len(evs) != 1 || evs[0].Kind != KindError || evs[0].Text != "model response stream ended unexpectedly" {
+		t.Fatalf("got %+v, want one KindError carrying the turn's error message", evs)
+	}
+}

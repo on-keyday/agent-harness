@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -213,7 +214,16 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 
 	exit := 0
 	if waitErr != nil {
-		if ee, ok := waitErr.(*exec.ExitError); ok {
+		if errors.Is(waitErr, exec.ErrWaitDelay) {
+			// The child exited on its own (cmd.ProcessState reflects its real
+			// exit, captured by cmd.Process.Wait() before this error could ever
+			// occur — see (*exec.Cmd).Wait); ErrWaitDelay only means some
+			// descendant kept stdout/stderr open past that and os/exec had to
+			// force-close the pipes after cmd.WaitDelay. That's not a failure
+			// of the agent itself, so classify by the child's real exit code,
+			// not by this I/O-only error.
+			exit = cmd.ProcessState.ExitCode()
+		} else if ee, ok := waitErr.(*exec.ExitError); ok {
 			exit = ee.ExitCode()
 			// exit == -1 means killed by signal (e.g., SIGKILL after timeout)
 		} else {

@@ -97,6 +97,51 @@ func TestClaudeDecoderMalformedAndUnknown(t *testing.T) {
 	}
 }
 
+// TestClaudeDecoderResultFailureEmitsErrorNotFinish is a unit test rather
+// than an addition to testdata/claude-stream-json.jsonl: that fixture is a
+// real, unedited capture of one successful run, and its value is that it is
+// exactly what claude produced — hand-editing a failure line into it would
+// misrepresent it as recorded output. The envelope shape here mirrors
+// SDKResultError from @anthropic-ai/claude-agent-sdk's sdk.d.ts: is_error is
+// true, subtype is one of error_during_execution/error_max_turns/
+// error_max_budget_usd/error_max_structured_output_retries (never "success"),
+// and the error text lives in an errors[] array — there is no "result"
+// field on this shape, unlike the success shape's "result": "<text>".
+func TestClaudeDecoderResultFailureEmitsErrorNotFinish(t *testing.T) {
+	d := NewDecoder("claude-stream-json")
+
+	evs := d.Decode([]byte(`{"type":"result","subtype":"error_max_turns","is_error":true,"errors":["exceeded max turns"],"duration_ms":5000,"total_cost_usd":0.01}`))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want exactly 1 (error only, not error+finish): %+v", len(evs), evs)
+	}
+	if evs[0].Kind != KindError {
+		t.Fatalf("got %+v, want KindError", evs[0])
+	}
+	if evs[0].Text != "error_max_turns: exceeded max turns" {
+		t.Errorf("Text = %q, want %q", evs[0].Text, "error_max_turns: exceeded max turns")
+	}
+	if Render(evs[0]) != "✗ error_max_turns: exceeded max turns" {
+		t.Errorf("Render = %q", Render(evs[0]))
+	}
+
+	// is_error true with no subtype-specific errors[] (e.g. an SDK-level
+	// failure) still reports as an error, just without the ": ..." suffix.
+	evs = d.Decode([]byte(`{"type":"result","subtype":"error_during_execution","is_error":true,"duration_ms":1,"total_cost_usd":0}`))
+	if len(evs) != 1 || evs[0].Kind != KindError || evs[0].Text != "error_during_execution" {
+		t.Fatalf("got %+v, want one KindError with Text %q", evs, "error_during_execution")
+	}
+}
+
+func TestClaudeDecoderResultSuccessStillEmitsFinish(t *testing.T) {
+	// The success shape (SDKResultSuccess) always carries subtype "success"
+	// and is_error false; it must still take the pre-existing KindFinish path.
+	d := NewDecoder("claude-stream-json")
+	evs := d.Decode([]byte(`{"type":"result","subtype":"success","is_error":false,"duration_ms":100,"total_cost_usd":0.001,"result":"done"}`))
+	if len(evs) != 1 || evs[0].Kind != KindFinish {
+		t.Fatalf("got %+v, want one KindFinish", evs)
+	}
+}
+
 func TestClaudeDecoderDropsBlankLines(t *testing.T) {
 	d := NewDecoder("claude-stream-json")
 
