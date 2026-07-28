@@ -272,6 +272,29 @@ ignore) publishes nothing. Partial trailing lines — the reader returns bytes
 with a non-nil error and no newline — are decoded as a final line so nothing is
 lost at process exit.
 
+**As built, this component differs from the design above in two ways, both
+deliberate and both reviewed.**
+
+*Raw output bypasses the decoder entirely.* The design routes all stdout
+through the decoder, relying on the passthrough decoder for the
+nothing-to-decode case. That is not byte-preserving: `passthrough.Decode`
+trims `\r\n` and the renderer appends exactly one `\n`, so a CRLF line and a
+final line with no terminator both come out changed. Since a non-JSON agent's
+output must be reproduced exactly, `Run` asks `agentlog.HasDecoder` whether a
+real decoder applies and, when none does, forwards stdout verbatim on the same
+path stderr already uses.
+
+*Output is captured with writers, not pipes.* The design's reader shape took
+`cmd.StdoutPipe()` and scanned it in goroutines. `os/exec` closes those pipes
+inside `Wait`, and `Run` called `Wait` before the scanners finished — which
+`os/exec` documents as incorrect and which cost a fast-exiting agent a variable
+slice of its own tail (measured: of 132 bytes, runs delivered 33, 66, 99, or
+132). Assigning `cmd.Stdout`/`cmd.Stderr` as writers hands the draining to
+`os/exec`, whose `Wait` waits for its own copy goroutines — the shape
+`objtrsf/exec` already uses for the interactive path. Nothing signals EOF in
+that shape, so a buffered partial line is flushed explicitly after `Wait`
+returns.
+
 ### Component 4 — removing the oneshot stdin path
 
 `Process.OnStdinWriter` and everything it required is deleted:
@@ -298,7 +321,7 @@ interactive sessions and must be corrected in the embed source, with the
 | name | bin | oneshotArgv | resumeOneshotArgv | logFormat |
 | --- | --- | --- | --- | --- |
 | claude | claude | `--output-format stream-json --verbose {args} -p {prompt}` | `--output-format stream-json --verbose {args} --continue -p {prompt}` | claude-stream-json |
-| codex | codex | `exec --json {args} {prompt}` | `exec resume --last --json {args} {prompt}` | codex-jsonl |
+| codex | codex | `exec --json {args} {prompt}` | `exec --json resume --last {args} {prompt}` | codex-jsonl |
 | bash | bash | `{args} -c {prompt}` | `{args} -c {prompt}` | (unset) |
 
 `resumeInteractiveArgv` is unchanged for all three: interactive sessions run
@@ -389,6 +412,12 @@ not the live fleet, whose server runs a different build. Cover:
 3. bash profile: output is unchanged from today, byte for byte.
 4. An operator override (`--claude-args '--output-format text'`) still produces
    a readable log via raw passthrough.
+
+As built, the E2E script covers 1-3. Case 4 was not added there and is covered
+only at the unit level (`TestClaudeDecoderMalformedAndUnknown`, plus the
+verbatim-forwarding tests around `HasDecoder`). That is a coverage gap, not a
+hole — the override path is exercised, just not end to end — and it is recorded
+here rather than left as a silent omission.
 
 **Negative control.** Before landing, revert the decoder wiring alone and
 confirm test 1 fails. A progress-visibility test that passes without the

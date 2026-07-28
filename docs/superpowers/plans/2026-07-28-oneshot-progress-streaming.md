@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Work in the harness worktree this plan lives in. Do NOT write via absolute paths under `/home/kforfk/workspace/remote-agent-harness/<rel>` — those resolve to the parent repo's main checkout and the work will silently land on the wrong branch.
+- Work in the harness worktree this plan lives in. Do NOT write via absolute paths that reach the repository root directly (`<repo-root>/<rel>`, without the `.harness-worktrees/<hash>/` segment) — those resolve to the parent repo's main checkout and the work will silently land on the wrong branch.
 - Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.
 - This repository is public. No LAN addresses, hostnames, ports, usernames, or absolute local paths in any committed file.
 - Build hygiene: compile-check with `go build ./...` or `go vet ./<pkg>`. NEVER bare `go build ./cmd/<x>/` — it drops an executable in the worktree root. The worktree must be exactly as clean after your checks as before.

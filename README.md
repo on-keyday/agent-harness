@@ -145,7 +145,7 @@ bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
 # Non-Claude agents can be wired with argv templates, for example:
 #   --agent-bin codex
 #   --agent-oneshot-argv 'exec --json {args} {prompt}'
-#   --agent-resume-oneshot-argv 'exec resume --last --json {args} {prompt}'
+#   --agent-resume-oneshot-argv 'exec --json resume --last {args} {prompt}'
 #   --agent-resume-interactive-argv 'resume --last {args}'
 #   --agent-log-format codex-jsonl
 # (--json + --agent-log-format make the runner render codex's event stream as
