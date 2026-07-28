@@ -15,6 +15,11 @@ State files live under ``<repo>/bin/.run/<slot>.{pid,log}``. The slot is the
 *instance* identity (single-instance daemons use slot == bin_name; multi-
 instance daemons use a tagged slot like "agent-runner-2"). ``bin/`` is
 gitignored, so pid/log artefacts don't pollute the working tree.
+
+On Linux the slot is also a *kill domain*: ``daemon_up`` hands the spawned
+pid to ``cgroup_adopt.adopt_into_unit_cgroup`` so it lands in its own
+systemd unit cgroup rather than inheriting the caller's. See
+``cgroup_adopt`` for why that is load-bearing.
 """
 
 from __future__ import annotations
@@ -27,6 +32,8 @@ import time
 from pathlib import Path
 
 import psutil
+
+from cgroup_adopt import adopt_into_unit_cgroup
 
 _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parent
@@ -235,6 +242,9 @@ def daemon_up(slot: str, bin_name: str, *args: str) -> int:
     spawn_args = ["--shutdown-file", str(sf), *args]
 
     pid = _spawn_detached([str(bp), *spawn_args], lf)
+    # setsid does not re-parent the cgroup: without this the daemon stays in
+    # the *caller's* unit cgroup and dies with it. See adopt_into_unit_cgroup.
+    adopt_into_unit_cgroup(pid, slot)
     pf.write_text(str(pid))
 
     # Catch immediate crashes (bad flag, port already bound, ...).
