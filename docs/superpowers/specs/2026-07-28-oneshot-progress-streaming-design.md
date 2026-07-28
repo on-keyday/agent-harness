@@ -142,7 +142,8 @@ type Event struct {
     Tool     string // KindToolStart, KindToolEnd
     Args     string // KindToolStart: compact JSON of the tool input
     Result   string // KindToolEnd
-    ExitCode *int   // KindToolEnd, when the agent reports one
+    ExitCode *int   // KindToolEnd, when the agent reports a process exit code
+    IsError  bool   // KindToolEnd, when the agent reports failure without a code
     Stats    Stats  // KindFinish
 }
 
@@ -212,6 +213,13 @@ alone.
 truncates `Args` and `KindToolEnd` truncates `Result` at 200 bytes on a rune
 boundary, with a trailing `…` when truncated. `KindSessionStart` renders the
 session/thread id. `KindRaw` renders the line verbatim.
+
+`ExitCode` and `IsError` are separate fields because the two agents report tool
+failure differently and neither maps onto the other without inventing
+information: codex's `command_execution` carries a real process `exit_code`,
+while claude's `tool_result` carries only an `is_error` boolean for tools that
+never ran a process. Each decoder sets whichever its agent actually reports and
+leaves the other zero.
 
 ### Component 2 — profile plumbing
 
