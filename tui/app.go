@@ -108,6 +108,9 @@ type App struct {
 	client     *cli.Client
 	appCtx     context.Context
 	program    *tea.Program
+	// logsGen increments on every followTask. It stamps each GetTaskLog so a
+	// response from a superseded fetch can be discarded (see LogHistoryMsg).
+	logsGen int
 
 	// x11Cancel stops the background -R forward of the current X11 interactive
 	// session. Set when InteractiveReadyMsg carries one; called and cleared on
@@ -382,9 +385,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case LogHistoryMsg:
-		// The user may have switched tasks between fetch and arrival; only
-		// apply if it still matches.
-		if msg.TaskID != a.logs.TaskID() {
+		// The user may have switched tasks or re-followed between fetch and
+		// arrival; only apply the response for the current task AND the
+		// current generation.
+		if msg.TaskID != a.logs.TaskID() || msg.Gen != a.logsGen {
 			return a, nil
 		}
 		if msg.Err != nil {
@@ -403,6 +407,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case BindClientMsg:
 		a.client = msg.Client
+		// Re-follow so the log subscription is re-established on the new
+		// client and remains owned by a.logsCancel. Without this the pane
+		// would go silent after a reconnect; with a second subscription
+		// spawned from main.go it would receive every chunk twice.
+		if id := a.logs.TaskID(); id != "" {
+			return a, a.followTask(id)
+		}
 		return a, nil
 
 	case SubscribedMsg:
@@ -431,7 +442,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.connected = msg.Connected
 		switch {
 		case msg.Connected:
-			// fresh attach; logs are re-followed by the main goroutine on reconnect.
+			// fresh attach; a followed task's log is re-followed by the
+			// BindClientMsg handler above, which fires just before this
+			// (both originate from the same PersistLoop reconnect callback).
 		case msg.Reconnecting:
 			txt := fmt.Sprintf("reconnecting (attempt %d, next try in %s)",
 				msg.Attempt, msg.NextRetry.Truncate(time.Second))
@@ -1394,8 +1407,10 @@ func (a *App) View() string {
 }
 
 // FollowingTaskID returns the task id whose log is being streamed into the
-// log pane, or "" if no task is followed. Used by the persist-loop wiring
-// to re-issue SubscribeTaskLog after a reconnect.
+// log pane, or "" if no task is followed. The reconnect path re-follows via
+// the BindClientMsg handler reading a.logs.TaskID() directly; this exported
+// accessor has no current caller in this repo (kept for external/future use
+// — see the task-8 report for the reviewer's call on this).
 func (a *App) FollowingTaskID() string { return a.logs.TaskID() }
 
 // followTask LEAVEs the previous log subscription (if any), kicks off both a
@@ -1409,13 +1424,15 @@ func (a *App) followTask(taskID string) tea.Cmd {
 		a.logsCancel = nil
 	}
 	a.logs.Reset(taskID)
+	a.logsGen++
 	if taskID == "" || a.client == nil || a.program == nil || a.appCtx == nil {
 		return nil
 	}
+	gen := a.logsGen
 	subCtx, cancel := context.WithCancel(a.appCtx)
 	a.logsCancel = cancel
 	return tea.Batch(
-		DoGetTaskLog(a.client, taskID),
+		DoGetTaskLogGen(a.client, taskID, gen),
 		func() tea.Msg {
 			go SubscribeTaskLog(subCtx, a.client, a.program, taskID)
 			return nil

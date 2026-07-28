@@ -77,9 +77,12 @@ func main() {
 				go tui.SubscribeRunnerStatus(runCtx, handle.C, program)
 				go tui.SubscribeNotifications(runCtx, handle.C, program)
 				go tui.SubscribeConnStatus(runCtx, handle.C, program)
-				if id := app.FollowingTaskID(); id != "" {
-					go tui.SubscribeTaskLog(runCtx, handle.C, program, id)
-				}
+				// Task log subscription is NOT re-issued here: the App owns
+				// it exclusively via followTask, which its own BindClientMsg
+				// handler re-triggers (see program.Send above) once a.client
+				// is updated. Two subscriptions to the same topic (this
+				// goroutine's and the App's) folded every chunk into the
+				// pane twice.
 				<-runCtx.Done()
 				return nil
 			},

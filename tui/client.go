@@ -50,6 +50,10 @@ type LogHistoryMsg struct {
 	Content []byte
 	Found   bool
 	Err     error
+	// Gen is the followTask generation this fetch was issued for. The app
+	// drops a response whose Gen is not the current one, so a superseded
+	// in-flight fetch cannot fold a second copy of the log into the pane.
+	Gen int
 }
 
 // DoSubmit issues a Submit RPC over the existing persistent client.
@@ -137,15 +141,17 @@ func DoCancel(c *cli.Client, idPrefix, resolved string) tea.Cmd {
 	}
 }
 
-// DoGetTaskLog fetches the historical log via the persistent client. The
+// DoGetTaskLogGen fetches the historical log via the persistent client. The
 // stream-pointer response is read off the same trsf transport the client
-// already runs.
-func DoGetTaskLog(c *cli.Client, taskID string) tea.Cmd {
+// already runs. gen is the followTask generation this fetch was issued for
+// and is stamped onto the reply so a superseded fetch can be discarded (see
+// LogHistoryMsg).
+func DoGetTaskLogGen(c *cli.Client, taskID string, gen int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		content, found, err := c.GetTaskLog(ctx, taskID)
-		return LogHistoryMsg{TaskID: taskID, Content: content, Found: found, Err: err}
+		return LogHistoryMsg{TaskID: taskID, Content: content, Found: found, Err: err, Gen: gen}
 	}
 }
 
