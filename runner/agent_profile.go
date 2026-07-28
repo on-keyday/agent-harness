@@ -2,7 +2,10 @@ package runner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
+	"path/filepath"
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
 )
@@ -112,6 +115,38 @@ func (ps ProfileSet) UnrecognisedLogFormats() []string {
 		out = append(out, fmt.Sprintf("%s: %q", p.Name, p.LogFormat))
 	}
 	return out
+}
+
+// ResolveBinPaths replaces each profile's Bin with its exec.LookPath +
+// filepath.Abs resolution, in place, and returns a warning line per profile
+// whose Bin could not be resolved (that Bin is kept verbatim, so the spawn
+// fails later exactly as it would today — e.g. a binary installed after
+// runner startup still works for the oneshot path).
+//
+// This must run once at startup, before any Bin reaches the exec layer: the
+// oneshot path (os/exec.CommandContext) PATH-resolves a bare name itself,
+// but the interactive path hands Bin to go-pty, whose Windows lookExtensions
+// joins a bare name onto cmd.Dir (the task worktree) and never consults
+// PATH — a bare --agent-bin spawns oneshots fine and fails every
+// interactive/PTY session. Resolving to an absolute path here removes that
+// asymmetry on every platform.
+func (ps *ProfileSet) ResolveBinPaths() []string {
+	var warns []string
+	for i := range ps.profiles {
+		p := &ps.profiles[i]
+		resolved, err := exec.LookPath(p.Bin)
+		if err != nil && !errors.Is(err, exec.ErrDot) {
+			warns = append(warns, fmt.Sprintf("%s: %q: %v", p.Name, p.Bin, err))
+			continue
+		}
+		abs, err := filepath.Abs(resolved)
+		if err != nil {
+			warns = append(warns, fmt.Sprintf("%s: %q: %v", p.Name, p.Bin, err))
+			continue
+		}
+		p.Bin = abs
+	}
+	return warns
 }
 
 // agentProfileJSON is the --agent-profiles wire shape: a JSON array of

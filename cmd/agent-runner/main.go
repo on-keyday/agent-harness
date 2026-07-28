@@ -262,6 +262,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agent-runner: unrecognised --agent-log-format/logFormat (falling back to raw output) for %v; recognised: %s\n",
 			bad, strings.Join(agentlog.KnownFormats(), ", "))
 	}
+	if bad := profiles.ResolveBinPaths(); len(bad) > 0 {
+		fmt.Fprintf(os.Stderr, "agent-runner: agent bin not resolvable now (kept verbatim; spawn will fail unless it appears on PATH) for %v\n", bad)
+	}
 	cfg.Profiles = profiles
 
 	hostname := cfg.Hostname
