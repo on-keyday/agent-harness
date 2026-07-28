@@ -72,7 +72,11 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
 ### `session snapshot [--style|--color|--raw] [--rows N --cols N] <id>`
 
 Renders the session's current screen to plain text via a headless VT emulator
-(`--rows/--cols` are a fallback if the session reports no size). Each snapshot
+(`--rows/--cols` are a fallback if the session reports no size). Note they only
+affect *rendering*: a session started without an attached terminal may have no
+size at all, and a full-screen program in it refuses to draw ("terminal too
+small"). Set the real size from inside instead — `session exec <id> 'stty rows
+40 cols 140'` — then start the program. Each snapshot
 already waits `--settle-ms` (default 1500) collecting output before rendering —
 factor that beat into poll loops.
 
@@ -81,6 +85,12 @@ factor that beat into poll loops.
   `--- styles ---` section listing faint/bold/etc. spans
   (`r<row> c<a>-<b> faint: "..."`) — an input-box line that shows up as `faint`
   is a placeholder, not something that was typed.
+- The same blindness hides **which pane has focus and which row is selected** in
+  a full-screen TUI: both are drawn with SGR (usually `reverse`), so the plain
+  text is identical whether or not anything is selected. Before sending Tab or
+  Enter into a TUI, find the `reverse` span in `--style` and see where the
+  cursor actually is. Guessing costs more keystrokes than looking, and a wrong
+  guess can move focus AWAY from the panel you wanted.
 - **`--color`** additionally reports fg/bg as hex (`fg#ff87af: "Error: ..."` —
   error-red, status colors). Verbose (most cells carry a color), separate
   opt-in. CJK/wide runs are coalesced, not split per character.
