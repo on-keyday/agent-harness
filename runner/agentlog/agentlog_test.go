@@ -22,6 +22,31 @@ func TestUnknownFormatResolvesToPassthrough(t *testing.T) {
 	}
 }
 
+func TestKnownFormatsMatchesNewDecoder(t *testing.T) {
+	// KnownFormats is the list runner.ProfileSet.UnrecognisedLogFormats
+	// validates against; it must name exactly the non-empty strings for
+	// which NewDecoder returns something other than passthrough.
+	want := []string{"claude-stream-json", "codex-jsonl"}
+	got := KnownFormats()
+	if len(got) != len(want) {
+		t.Fatalf("KnownFormats() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("KnownFormats() = %v, want %v", got, want)
+		}
+	}
+
+	for _, name := range got {
+		if _, ok := NewDecoder(name).(passthrough); ok {
+			t.Fatalf("KnownFormats() lists %q, but NewDecoder(%q) resolved to passthrough", name, name)
+		}
+	}
+	if _, ok := NewDecoder("not-a-real-format").(passthrough); !ok {
+		t.Fatal("NewDecoder of a name absent from KnownFormats() must still resolve to passthrough")
+	}
+}
+
 func TestRender(t *testing.T) {
 	exit0 := 0
 	exit2 := 2

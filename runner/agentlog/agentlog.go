@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -70,18 +71,39 @@ type Decoder interface {
 	Decode(line []byte) []Event
 }
 
+// decodersByFormat is the single source of truth for the non-empty format
+// names this package recognises: every key here is a valid
+// AgentProfile.LogFormat value besides "" (passthrough). NewDecoder and
+// KnownFormats both read this map instead of each carrying their own copy
+// of the name list, so adding a format only requires one edit and the two
+// can never drift apart.
+var decodersByFormat = map[string]Decoder{
+	"claude-stream-json": claudeStreamJSON{},
+	"codex-jsonl":        codexJSONL{},
+}
+
 // NewDecoder resolves a profile's declared log format. An empty or unrecognised
 // name yields the passthrough decoder, so a misconfigured profile degrades to
 // the pre-existing behaviour (raw lines) instead of failing the task.
 func NewDecoder(format string) Decoder {
-	switch format {
-	case "claude-stream-json":
-		return claudeStreamJSON{}
-	case "codex-jsonl":
-		return codexJSONL{}
-	default:
-		return passthrough{}
+	if d, ok := decodersByFormat[format]; ok {
+		return d
 	}
+	return passthrough{}
+}
+
+// KnownFormats returns the non-empty AgentProfile.LogFormat values NewDecoder
+// resolves to a real decoder, sorted for stable output. Configuration
+// validation (runner.ProfileSet.UnrecognisedLogFormats) reports a profile's
+// LogFormat as unrecognised when it is non-empty and absent from this list,
+// so that check can never diverge from what NewDecoder actually accepts.
+func KnownFormats() []string {
+	out := make([]string, 0, len(decodersByFormat))
+	for name := range decodersByFormat {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type passthrough struct{}

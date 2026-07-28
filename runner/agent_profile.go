@@ -3,6 +3,8 @@ package runner
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/on-keyday/agent-harness/runner/agentlog"
 )
 
 // AgentProfile is one named agent launch profile: a binary plus the argv
@@ -17,6 +19,12 @@ type AgentProfile struct {
 	OneshotArgv           []string
 	ResumeOneshotArgv     []string
 	ResumeInteractiveArgv []string
+
+	// LogFormat names the agentlog decoder for this agent's stdout:
+	// "" (passthrough), "claude-stream-json", or "codex-jsonl". An
+	// unrecognised value resolves to passthrough rather than failing, so a
+	// typo degrades to raw lines instead of stopping the runner.
+	LogFormat string
 }
 
 // ProfileSet is the immutable set of agent profiles a runner was configured
@@ -85,6 +93,27 @@ func (ps ProfileSet) Names() []string {
 	return names
 }
 
+// UnrecognisedLogFormats returns `<name>: "<value>"` for every profile whose
+// LogFormat is neither empty nor a name agentlog.NewDecoder recognises. It
+// checks against agentlog.KnownFormats() rather than its own copy of the
+// name list, so this check cannot drift from what NewDecoder actually
+// accepts. agent-runner logs these once at startup so a typo is visible
+// rather than silently degrading to raw output.
+func (ps ProfileSet) UnrecognisedLogFormats() []string {
+	known := make(map[string]bool, len(agentlog.KnownFormats()))
+	for _, f := range agentlog.KnownFormats() {
+		known[f] = true
+	}
+	var out []string
+	for _, p := range ps.profiles {
+		if p.LogFormat == "" || known[p.LogFormat] {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s: %q", p.Name, p.LogFormat))
+	}
+	return out
+}
+
 // agentProfileJSON is the --agent-profiles wire shape: a JSON array of
 // objects, one per extra profile.
 type agentProfileJSON struct {
@@ -94,6 +123,7 @@ type agentProfileJSON struct {
 	OneshotArgv           []string `json:"oneshotArgv"`
 	ResumeOneshotArgv     []string `json:"resumeOneshotArgv"`
 	ResumeInteractiveArgv []string `json:"resumeInteractiveArgv"`
+	LogFormat             string   `json:"logFormat"`
 }
 
 // ParseAgentProfilesJSON parses the JSON array accepted by --agent-profiles
@@ -118,6 +148,7 @@ func ParseAgentProfilesJSON(s string) ([]AgentProfile, error) {
 			OneshotArgv:           r.OneshotArgv,
 			ResumeOneshotArgv:     r.ResumeOneshotArgv,
 			ResumeInteractiveArgv: r.ResumeInteractiveArgv,
+			LogFormat:             r.LogFormat,
 		})
 	}
 	return out, nil

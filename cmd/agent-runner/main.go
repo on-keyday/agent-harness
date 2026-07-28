@@ -15,6 +15,7 @@ import (
 	"github.com/google/shlex"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner"
+	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -46,6 +47,7 @@ type mainConfig struct {
 	AgentResumeOneshotArgv     string
 	AgentResumeInteractiveArgv string
 	AgentProfilesJSON          string
+	AgentLogFormat             string
 	WSPath                     string
 	Hostname                   string
 	PSK                        string
@@ -109,7 +111,8 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for oneshot tasks; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
 	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; token {args}; default \"{args} --continue\"")
-	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,resumeInteractiveArgv,agentArgs}]")
+	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,resumeInteractiveArgv,agentArgs,logFormat}]")
+	fs.StringVar(&c.AgentLogFormat, "agent-log-format", c.AgentLogFormat, "stdout log decoder for the default agent profile: \"\" (raw), claude-stream-json, or codex-jsonl")
 	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
 	fs.StringVar(&c.PSK, "psk", c.PSK, "PSK passphrase (env: HARNESS_PSK)")
@@ -243,6 +246,7 @@ func main() {
 		OneshotArgv:           oneshotArgv,
 		ResumeOneshotArgv:     resumeOneshotArgv,
 		ResumeInteractiveArgv: resumeInteractiveArgv,
+		LogFormat:             cfg.AgentLogFormat,
 	}
 	extraProfiles, err := runner.ParseAgentProfilesJSON(cfg.AgentProfilesJSON)
 	if err != nil {
@@ -253,6 +257,10 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent-runner: --agent-profiles: %v\n", err)
 		os.Exit(1)
+	}
+	if bad := profiles.UnrecognisedLogFormats(); len(bad) > 0 {
+		fmt.Fprintf(os.Stderr, "agent-runner: unrecognised --agent-log-format/logFormat (falling back to raw output) for %v; recognised: %s\n",
+			bad, strings.Join(agentlog.KnownFormats(), ", "))
 	}
 	cfg.Profiles = profiles
 
