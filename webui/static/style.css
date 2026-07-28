@@ -651,6 +651,59 @@ button:hover { background: #555; }
   .preview-title { font-size: 0.8em; }
 }
 
+/* Text-file editor modal ("New text file" / cmd `file new`). Shares the
+   .preview-modal frame; these rules style only the editor-specific body. */
+.editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+}
+.editor-name-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 0.9em;
+}
+.editor-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: #111;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-family: monospace;
+  font-size: 0.9em;
+  padding: 0.4em 0.5em;
+}
+.editor-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 45vh;
+  resize: vertical;
+  background: #111;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-family: monospace;
+  font-size: 0.85em;
+  padding: 0.5em;
+}
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5em;
+}
+.editor-actions button {
+  background: #2a2a2a;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  cursor: pointer;
+  min-height: 2.4rem;
+  padding: 0 0.8em;
+}
+.editor-actions button:hover { background: #3a3a3a; }
+
 /* Runner-picker modal (ambiguous_runner retry on interactive open). Colors
    track the dark app theme (body #1e1e1e / #d4d4d4), mirroring .preview-modal. */
 .picker-modal {

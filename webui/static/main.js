@@ -390,6 +390,7 @@ const POLL_INTERVAL_MS = 5000;
   const fileUpBtn         = document.getElementById("file-up-btn");
   const fileRefreshBtn    = document.getElementById("file-refresh-btn");
   const fileMkdirBtn      = document.getElementById("file-mkdir-btn");
+  const fileNewBtn        = document.getElementById("file-new-btn");
   const fileEntriesUL     = document.getElementById("file-entries");
   const filePushBtn       = document.getElementById("file-push-btn");
   const filePullBtn       = document.getElementById("file-pull-btn");
@@ -491,6 +492,7 @@ const POLL_INTERVAL_MS = 5000;
     fileUpBtn.disabled = !hasTask || filePickerCurDir === "";
     fileRefreshBtn.disabled = !hasTask;
     fileMkdirBtn.disabled = !hasTask;
+    fileNewBtn.disabled = !hasTask;
     filePushBtn.disabled = !hasTask;
     // Two always-present pull buttons (kept independent because there is no
     // way to *deselect* a file in-place — clicking only moves the highlight —
@@ -623,35 +625,33 @@ const POLL_INTERVAL_MS = 5000;
     const remoteRel = joinFsPath(filePickerCurDir, file.name);
     const fp = beginFileProgress(file.name);
     try {
-      let force = false;
-      let parents = false;
-      for (;;) {
-        try {
-          await window.harness.filePushBytes(taskID, remoteRel, buf, force, parents, fp.onProgress);
-          fileResultPre.textContent = `${force ? "push ok (overwritten)" : "push ok"}: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
-          break;
-        } catch (e) {
-          if (!force && e && e.code === "already_exists") {
-            if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
-              fileResultPre.textContent = "push cancelled (overwrite declined)";
-              return;
-            }
-            force = true;
-            continue; // retry with overwrite
-          }
-          if (!parents && e && e.code === "not_found") {
-            if (!window.confirm(`${remoteRel} の親ディレクトリが存在しません。作成して再試行しますか?`)) {
-              fileResultPre.textContent = "push cancelled (missing parent dir)";
-              return;
-            }
-            parents = true;
-            continue; // retry creating parent dirs
-          }
-          fileResultPre.textContent = `push error: ${e.message}`;
-          return;
-        }
-      }
-      refreshFilePicker();
+      const res = await pushBytesWithPrompts(taskID, remoteRel, buf, file.name, fp.onProgress);
+      fileResultPre.textContent = res.msg;
+      if (res.ok) refreshFilePicker();
+    } catch (e) {
+      fileResultPre.textContent = `push error: ${e.message}`;
+    } finally {
+      fp.end();
+    }
+  });
+
+  fileNewBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID) return;
+    const edited = await openFileEditor("");
+    if (!edited) {
+      fileResultPre.textContent = "new file cancelled";
+      return;
+    }
+    const buf = new TextEncoder().encode(edited.text);
+    const remoteRel = joinFsPath(filePickerCurDir, edited.name);
+    const fp = beginFileProgress(edited.name);
+    try {
+      const res = await pushBytesWithPrompts(taskID, remoteRel, buf, edited.name, fp.onProgress);
+      fileResultPre.textContent = res.msg;
+      if (res.ok) refreshFilePicker();
+    } catch (e) {
+      fileResultPre.textContent = `push error: ${e.message}`;
     } finally {
       fp.end();
     }
@@ -1438,6 +1438,7 @@ const POLL_INTERVAL_MS = 5000;
             "  file delete [-r] [-f] <task> <rel>",
             "                            remove a file (no -r) or directory (-r [-f])",
             "  file push <task> <rel>    upload a local file (file picker opens)",
+            "  file new <task> <rel>     write a new text file in a browser editor and upload it",
             "  file mkdir [-p] <task> <rel>",
             "                            create a worktree directory (-p: parents, idempotent)",
             "  file pull [-r] <task> <rel>",
@@ -3240,7 +3241,7 @@ function parseFlags(tokens) {
 // non-fatal "Cancelled by user" outcomes return a short string instead.
 async function runFileCmd(rest) {
   if (rest.length === 0) {
-    throw new Error("file: sub-verb required (ls | delete | push | pull | mkdir)");
+    throw new Error("file: sub-verb required (ls | delete | push | pull | mkdir | new)");
   }
   const verb = rest[0];
   const args = rest.slice(1);
@@ -3255,6 +3256,8 @@ async function runFileCmd(rest) {
       return filePullCmd(args);
     case "mkdir":
       return fileMkdirCmd(args);
+    case "new":
+      return fileNewCmd(args);
     default:
       throw new Error(`file: unknown sub-verb ${verb}`);
   }
@@ -3324,33 +3327,103 @@ async function filePushCmd(args) {
   const buf = new Uint8Array(await file.arrayBuffer());
   const fp = beginFileProgress(file.name);
   try {
-    let force = false;
-    let parents = false;
-    for (;;) {
-      try {
-        await window.harness.filePushBytes(taskID, remoteRel, buf, force, parents, fp.onProgress);
-        return `${force ? "push ok (overwritten)" : "push ok"}: ${file.name} -> ${remoteRel} (${buf.byteLength} bytes)`;
-      } catch (e) {
-        if (!force && e && e.code === "already_exists") {
-          if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
-            return "push cancelled (overwrite declined)";
-          }
-          force = true;
-          continue; // retry with overwrite
-        }
-        if (!parents && e && e.code === "not_found") {
-          if (!window.confirm(`${remoteRel} の親ディレクトリが存在しません。作成して再試行しますか?`)) {
-            return "push cancelled (missing parent dir)";
-          }
-          parents = true;
-          continue; // retry creating parent dirs
-        }
-        throw e;
-      }
-    }
+    const res = await pushBytesWithPrompts(taskID, remoteRel, buf, file.name, fp.onProgress);
+    return res.msg;
   } finally {
     fp.end();
   }
+}
+
+async function fileNewCmd(args) {
+  if (args.length !== 2) {
+    throw new Error("usage: file new <task-id> <worktree-rel-dst>");
+  }
+  const [taskID, remoteRel] = args;
+  // The editor's name field is seeded with the requested destination and
+  // stays editable; whatever it holds on Save is the final worktree-rel dst.
+  const edited = await openFileEditor(remoteRel);
+  if (!edited) return "new file cancelled";
+  const buf = new TextEncoder().encode(edited.text);
+  const fp = beginFileProgress(basename(edited.name));
+  try {
+    const res = await pushBytesWithPrompts(taskID, edited.name, buf, basename(edited.name), fp.onProgress);
+    return res.msg;
+  } finally {
+    fp.end();
+  }
+}
+
+// pushBytesWithPrompts uploads buf to <taskID>:<remoteRel> via
+// window.harness.filePushBytes, driving the two interactive retries shared
+// by every push surface (Push button, cmd `file push`, text-file editor):
+// overwrite confirmation on already_exists and parent-dir creation on
+// not_found. Returns { ok, msg }; ok=false means the user declined a
+// confirm. Any other error is thrown for the caller to render on its own
+// surface (fileResultPre vs cmd-output).
+async function pushBytesWithPrompts(taskID, remoteRel, buf, displayName, onProgress) {
+  let force = false;
+  let parents = false;
+  for (;;) {
+    try {
+      await window.harness.filePushBytes(taskID, remoteRel, buf, force, parents, onProgress);
+      return { ok: true, msg: `${force ? "push ok (overwritten)" : "push ok"}: ${displayName} -> ${remoteRel} (${buf.byteLength} bytes)` };
+    } catch (e) {
+      if (!force && e && e.code === "already_exists") {
+        if (!window.confirm(`${remoteRel} already exists on the runner. Overwrite?`)) {
+          return { ok: false, msg: "push cancelled (overwrite declined)" };
+        }
+        force = true;
+        continue; // retry with overwrite
+      }
+      if (!parents && e && e.code === "not_found") {
+        if (!window.confirm(`${remoteRel} の親ディレクトリが存在しません。作成して再試行しますか?`)) {
+          return { ok: false, msg: "push cancelled (missing parent dir)" };
+        }
+        parents = true;
+        continue; // retry creating parent dirs
+      }
+      throw e;
+    }
+  }
+}
+
+// openFileEditor shows the text-file editor modal and resolves {name, text}
+// on Save, or null when dismissed (✕ / Cancel / Esc). namePrefill seeds the
+// file-name field: cmd `file new` passes its <worktree-rel-dst>; the Files-tab
+// button passes "" so the file lands in the picker's current directory.
+function openFileEditor(namePrefill) {
+  const modal     = document.getElementById("file-editor-modal");
+  const nameIn    = document.getElementById("file-editor-name");
+  const textIn    = document.getElementById("file-editor-text");
+  const saveBtn   = document.getElementById("file-editor-save");
+  const cancelBtn = document.getElementById("file-editor-cancel");
+  const closeBtn  = document.getElementById("file-editor-close");
+  if (modal.open) return Promise.resolve(null); // one editor at a time
+  nameIn.value = namePrefill || "";
+  textIn.value = "";
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      saveBtn.removeEventListener("click", onSave);
+      cancelBtn.removeEventListener("click", onDismiss);
+      closeBtn.removeEventListener("click", onDismiss);
+      modal.removeEventListener("cancel", onEsc);
+      if (modal.open) modal.close();
+      resolve(result);
+    };
+    const onSave = () => {
+      const name = nameIn.value.trim();
+      if (!name) { nameIn.focus(); return; } // name required; keep editing
+      finish({ name, text: textIn.value });
+    };
+    const onDismiss = () => finish(null);
+    const onEsc = () => finish(null); // dialog "cancel" event = Esc key
+    saveBtn.addEventListener("click", onSave);
+    cancelBtn.addEventListener("click", onDismiss);
+    closeBtn.addEventListener("click", onDismiss);
+    modal.addEventListener("cancel", onEsc);
+    modal.showModal();
+    nameIn.focus();
+  });
 }
 
 async function filePullCmd(args) {

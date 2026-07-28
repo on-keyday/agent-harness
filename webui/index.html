@@ -121,6 +121,7 @@
         <button id="file-up-btn" disabled>↑ Up</button>
         <button id="file-refresh-btn" disabled>↻ Refresh</button>
         <button id="file-mkdir-btn" disabled>New folder</button>
+        <button id="file-new-btn" disabled>New text file</button>
         <span>Path: <code id="file-cur-path">/</code></span>
       </div>
       <ul id="file-entries" style="list-style:none;padding-left:0;font-family:monospace;max-height:300px;overflow:auto;border:1px solid #ccc"></ul>
@@ -187,6 +188,28 @@
     <button id="file-preview-close" class="preview-close" aria-label="Close">✕</button>
   </div>
   <div id="file-preview-body" class="preview-body"></div>
+</dialog>
+<!-- Text-file editor modal (Files tab "New text file" / cmd `file new`):
+     write a small text file in the browser and upload it via file push —
+     no local editor needed (the WebUI is often used from a phone). Body-level
+     for the same top-layer reason as file-preview-modal above. -->
+<dialog id="file-editor-modal" class="preview-modal">
+  <div class="preview-header">
+    <span id="file-editor-title" class="preview-title">New text file</span>
+    <button id="file-editor-close" class="preview-close" aria-label="Close" autofocus>✕</button>
+  </div>
+  <div class="preview-body editor-body">
+    <label class="editor-name-row">File name:
+      <input type="text" id="file-editor-name" class="editor-name"
+             placeholder="notes.txt" autocapitalize="off" autocomplete="off" spellcheck="false">
+    </label>
+    <textarea id="file-editor-text" class="editor-text" spellcheck="false"
+              placeholder="File contents…"></textarea>
+    <div class="editor-actions">
+      <button id="file-editor-save">Save &amp; upload</button>
+      <button id="file-editor-cancel">Cancel</button>
+    </div>
+  </div>
 </dialog>
 <!-- Runner-picker modal: shown when an interactive open hits ambiguous_runner
      (>=2 candidate runners for the selector). Body-level for the same
