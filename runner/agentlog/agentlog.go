@@ -58,13 +58,14 @@ type Event struct {
 }
 
 // Decoder converts one line of agent stdout into zero or more events. Content it
-// cannot interpret yields exactly one KindRaw event holding the line verbatim;
-// a blank or whitespace-only line yields no events (zero-length slice). Decode
-// never returns an error: a malformed line must not fail the task.
+// cannot interpret yields exactly one KindRaw event holding the line verbatim.
+// Decode never returns an error: a malformed line must not fail the task.
 //
-// The claudeStreamJSON decoder drops blank lines as stream artifacts. The
-// passthrough decoder does not, preserving all output byte-for-byte when used
-// for non-JSON agent output.
+// Blank or whitespace-only lines are handled per-format: the claudeStreamJSON
+// and codexJSONL decoders drop them as artifacts of their respective wire
+// protocols, while the passthrough decoder preserves all output byte-for-byte
+// (returning exactly one KindRaw event per line) when used for non-JSON agent
+// output.
 type Decoder interface {
 	Decode(line []byte) []Event
 }
@@ -245,6 +246,67 @@ func jsonToText(rm json.RawMessage) string {
 	return buf.String()
 }
 
+// codexEnvelope is the subset of codex exec --json this decoder reads.
+type codexEnvelope struct {
+	Type     string `json:"type"`
+	ThreadID string `json:"thread_id"`
+	Item     struct {
+		Type             string `json:"type"`
+		Text             string `json:"text"`
+		Command          string `json:"command"`
+		AggregatedOutput string `json:"aggregated_output"`
+		ExitCode         *int   `json:"exit_code"`
+	} `json:"item"`
+	Usage struct {
+		InputTokens  int64 `json:"input_tokens"`
+		OutputTokens int64 `json:"output_tokens"`
+	} `json:"usage"`
+}
+
 type codexJSONL struct{}
 
-func (codexJSONL) Decode(line []byte) []Event { return raw(line) }
+func (codexJSONL) Decode(line []byte) []Event {
+	trimmed := strings.TrimSpace(string(line))
+	if trimmed == "" {
+		return nil
+	}
+	var env codexEnvelope
+	if err := json.Unmarshal([]byte(trimmed), &env); err != nil {
+		return raw(line)
+	}
+	switch env.Type {
+	case "thread.started":
+		return []Event{{Kind: KindSessionStart, Text: env.ThreadID}}
+	case "item.started":
+		if env.Item.Type == "command_execution" {
+			return []Event{{Kind: KindToolStart, Tool: env.Item.Type, Args: env.Item.Command}}
+		}
+		return nil
+	case "item.completed":
+		switch env.Item.Type {
+		case "command_execution":
+			return []Event{{
+				Kind:     KindToolEnd,
+				Tool:     env.Item.Type,
+				Result:   strings.TrimRight(env.Item.AggregatedOutput, "\r\n"),
+				ExitCode: env.Item.ExitCode,
+			}}
+		case "agent_message":
+			if env.Item.Text == "" {
+				return nil
+			}
+			return []Event{{Kind: KindText, Text: env.Item.Text}}
+		case "reasoning":
+			return []Event{{Kind: KindThinking}}
+		default:
+			return nil
+		}
+	case "turn.completed":
+		return []Event{{Kind: KindFinish, Stats: Stats{
+			InputTokens:  env.Usage.InputTokens,
+			OutputTokens: env.Usage.OutputTokens,
+		}}}
+	default:
+		return nil
+	}
+}

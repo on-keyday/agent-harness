@@ -148,13 +148,14 @@ type Event struct {
 }
 
 // Decoder converts one line of agent stdout into zero or more events. Content it
-// cannot interpret yields exactly one KindRaw event holding the line verbatim;
-// a blank or whitespace-only line yields no events (zero-length slice). Decode
-// never returns an error: a malformed line must not fail the task.
+// cannot interpret yields exactly one KindRaw event holding the line verbatim.
+// Decode never returns an error: a malformed line must not fail the task.
 //
-// The claudeStreamJSON decoder drops blank lines as stream artifacts. The
-// passthrough decoder does not, preserving all output byte-for-byte when used
-// for non-JSON agent output.
+// Blank or whitespace-only lines are handled per-format: the claudeStreamJSON
+// and codexJSONL decoders drop them as artifacts of their respective wire
+// protocols, while the passthrough decoder preserves all output byte-for-byte
+// (returning exactly one KindRaw event per line) when used for non-JSON agent
+// output.
 type Decoder interface {
     Decode(line []byte) []Event
 }
