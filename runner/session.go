@@ -504,6 +504,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		OneshotArgvTemplate:       agentProfile.OneshotArgv,
 		ResumeOneshotArgvTemplate: agentProfile.ResumeOneshotArgv,
 		Env:                       env,
+		LogFormat:                 agentProfile.LogFormat,
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
 			if e := s.tasks[taskIDHex]; e != nil {

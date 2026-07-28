@@ -10,6 +10,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/agentlog"
 )
 
 // LogSink receives log chunks (each with a stream prefix already applied: "[out]" or "[err]").
@@ -32,6 +34,10 @@ type Process struct {
 	// Session.WakeStdin to deliver agentboard wake markers to non-interactive
 	// (oneshot) tasks.
 	OnStdinWriter func(write func([]byte) (int, error))
+
+	// LogFormat selects the agentlog decoder applied to stdout. Empty means
+	// raw passthrough. stderr is never decoded.
+	LogFormat string
 }
 
 // Run starts ClaudeBin with `-p <prompt>`, captures stdout and stderr line-by-line,
@@ -143,7 +149,17 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	}
 
 	var wg sync.WaitGroup
-	scan := func(r io.Reader, prefix []byte) {
+	// emit publishes one already-rendered line under the given stream prefix.
+	emit := func(prefix, text string) {
+		buf := make([]byte, 0, len(prefix)+len(text)+1)
+		buf = append(buf, prefix...)
+		buf = append(buf, text...)
+		buf = append(buf, '\n')
+		sink(buf)
+	}
+	// scanRaw forwards each line verbatim, preserving its original newline.
+	// Used for stderr, where decoding would suppress crash output.
+	scanRaw := func(r io.Reader, prefix []byte) {
 		defer wg.Done()
 		br := bufio.NewReader(r)
 		for {
@@ -159,9 +175,28 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 			}
 		}
 	}
+	// scanDecoded runs each stdout line through the profile's decoder and
+	// publishes one log line per resulting event. A final partial line (no
+	// trailing newline before EOF) is decoded too, so nothing is lost at exit.
+	scanDecoded := func(r io.Reader) {
+		defer wg.Done()
+		dec := agentlog.NewDecoder(p.LogFormat)
+		br := bufio.NewReader(r)
+		for {
+			line, err := br.ReadBytes('\n')
+			if len(line) > 0 {
+				for _, ev := range dec.Decode(line) {
+					emit("[out]", agentlog.Render(ev))
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
 	wg.Add(2)
-	go scan(stdout, []byte("[out]"))
-	go scan(stderr, []byte("[err]"))
+	go scanDecoded(stdout)
+	go scanRaw(stderr, []byte("[err]"))
 
 	waitErr := cmd.Wait()
 	wg.Wait()

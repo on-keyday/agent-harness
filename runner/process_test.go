@@ -189,3 +189,77 @@ func TestProcess_RunSetsEnv(t *testing.T) {
 		t.Errorf("env not propagated; output = %q", out)
 	}
 }
+
+func TestProcessDecodesStdoutAndLeavesStderrRaw(t *testing.T) {
+	// A fake agent that prints two claude stream-json lines on stdout and one
+	// plain line on stderr, then exits.
+	script := filepath.Join(t.TempDir(), "fake-agent.sh")
+	body := "#!/bin/sh\n" +
+		"printf '%s\\n' '{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}}'\n" +
+		"printf '%s\\n' 'boom' >&2\n" +
+		"printf '%s\\n' '{\"type\":\"result\",\"duration_ms\":12,\"total_cost_usd\":0}'\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &Process{
+		ClaudeBin:           script,
+		CWD:                 t.TempDir(),
+		Timeout:             30 * time.Second,
+		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
+		LogFormat:           "claude-stream-json",
+	}
+	var mu sync.Mutex
+	var lines []string
+	exit, err := p.Run(context.Background(), "ignored", func(b []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, string(b))
+	})
+	if err != nil || exit != 0 {
+		t.Fatalf("Run: exit=%d err=%v", exit, err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	joined := strings.Join(lines, "")
+	if !strings.Contains(joined, "[out]hello\n") {
+		t.Errorf("stdout was not decoded; got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "[out]✓ 12ms\n") {
+		t.Errorf("result event was not rendered; got:\n%s", joined)
+	}
+	if strings.Contains(joined, `"type":"assistant"`) {
+		t.Errorf("raw JSON leaked into the log; got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "[err]boom\n") {
+		t.Errorf("stderr must stay verbatim; got:\n%s", joined)
+	}
+}
+
+func TestProcessPassthroughWhenNoLogFormat(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fake-agent.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'plain output\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := &Process{
+		ClaudeBin:           script,
+		CWD:                 t.TempDir(),
+		Timeout:             30 * time.Second,
+		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
+	}
+	var mu sync.Mutex
+	var got string
+	if _, err := p.Run(context.Background(), "ignored", func(b []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		got += string(b)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got != "[out]plain output\n" {
+		t.Fatalf("got %q, want the line unchanged", got)
+	}
+}
