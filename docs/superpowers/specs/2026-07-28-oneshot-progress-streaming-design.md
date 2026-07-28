@@ -188,14 +188,25 @@ stream-json`:
 | Sonnet 5 | 0 chars | 10260 chars | 664 chars |
 | Opus 5 | 0 chars | 3532 chars | 1219 chars |
 
-The Claude 5 family does not expose thinking text at all — the block carries
-only an encrypted signature. A renderer that printed `.thinking` would emit
-blank lines for every model this harness actually runs. Two consequences for
-the decoder: it must emit `KindThinking` on the block's presence rather than on
-its content being non-empty, and it must never render `signature`, which is
-kilobytes of opaque base64 per turn. Where plaintext thinking does exist
-(Haiku 4.5) it ran roughly 3x the length of the final answer, so printing it
-would have tripled log volume on that model alone.
+The empty field is the API's `thinking.display` default (`"omitted"`), not an
+absence of content: `display: "summarized"` returns a readable summary. That
+default changed silently between generations — Opus 4.6 and Sonnet 4.6 returned
+summaries by default, the Claude 5 family does not, and Haiku 4.5 predates the
+change, which is why it still returns text. The raw chain of thought is never
+returned on any model, so Haiku's 2192 characters are themselves a summary.
+
+What settles it for this harness is narrower: the `claude` CLI exposes no flag
+for `thinking.display` (checked against 2.1.220's `--help`), so the runner
+cannot request summaries even if it wanted them. A renderer that printed
+`.thinking` would emit blank lines for every Claude 5 model.
+
+Two consequences for the decoder: it must emit `KindThinking` on the block's
+presence rather than on its content being non-empty, and it must never render
+`signature`, which is kilobytes of opaque base64 per turn — the field exists so
+a block can be replayed and integrity-checked without being read, not for
+display. Where a summary does arrive (Haiku 4.5) it ran roughly 3x the length
+of the final answer, so printing it would have tripled log volume on that model
+alone.
 
 `KindToolStart`
 truncates `Args` and `KindToolEnd` truncates `Result` at 200 bytes on a rune
