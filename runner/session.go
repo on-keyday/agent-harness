@@ -505,13 +505,6 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		ResumeOneshotArgvTemplate: agentProfile.ResumeOneshotArgv,
 		Env:                       env,
 		LogFormat:                 agentProfile.LogFormat,
-		OnStdinWriter: func(write func([]byte) (int, error)) {
-			s.mu.Lock()
-			if e := s.tasks[taskIDHex]; e != nil {
-				e.wakeWrite = write
-			}
-			s.mu.Unlock()
-		},
 	}
 	logSink := func(data []byte) {
 		_ = s.Sender.Publish(topic, data)

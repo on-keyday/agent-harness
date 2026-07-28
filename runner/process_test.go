@@ -348,3 +348,39 @@ func TestProcessDecodesFinalUnterminatedLine(t *testing.T) {
 		t.Fatalf("got %q, want the finish event rendered", got)
 	}
 }
+
+func TestProcessLeavesStdinClosed(t *testing.T) {
+	// A oneshot agent must see EOF on stdin immediately. codex blocks waiting
+	// for it; a never-EOF pipe hung every codex task until the timeout.
+	script := filepath.Join(t.TempDir(), "reads-stdin.sh")
+	body := "#!/bin/sh\n" +
+		"cat > /dev/null\n" + // returns only at EOF
+		"printf 'saw eof\\n'\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := &Process{
+		ClaudeBin:           script,
+		CWD:                 t.TempDir(),
+		Timeout:             10 * time.Second,
+		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
+	}
+	var mu sync.Mutex
+	var got string
+	exit, err := p.Run(context.Background(), "ignored", func(b []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		got += string(b)
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0 (a non-zero exit here means the process was killed at the timeout)", exit)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !strings.Contains(got, "saw eof") {
+		t.Fatalf("agent never saw stdin EOF; got %q", got)
+	}
+}

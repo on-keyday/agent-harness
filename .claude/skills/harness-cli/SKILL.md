@@ -36,31 +36,42 @@ reference — resolves in any runtime, including non-claude / non-injected peers
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
 
 - `UserPromptSubmit` runs `harness-cli agent inbox --since-last --commit --json`
-  (delivers any pending messages on each user prompt and advances the cursor).
+  (delivers any pending messages at the start of a turn and advances the cursor).
 
-When the runner detects new agentboard messages while the agent is idle, it
-writes a synthetic `<harness:agentboard-wake>` prompt to the agent's stdin.
-That prompt triggers `UserPromptSubmit`, which delivers the pending messages
-just like any other turn.
+That covers every task kind, but how a new turn actually *starts* differs.
+An **interactive session** (`session new` / `interactive`) gets a live wake:
+when the runner detects new agentboard messages while such a session is idle,
+it writes a synthetic `<harness:agentboard-wake>` prompt directly into the
+PTY as real keystrokes, which the Ink-based UI submits as a new turn — that
+fires `UserPromptSubmit` and delivers the pending messages just like any
+other turn. A **one-shot task** (`submit`) has no PTY and gets no such wake:
+it runs a single turn, so `UserPromptSubmit` fires exactly once, at the
+start. If you're a one-shot task and suspect messages have landed since then,
+call `harness-cli agent inbox` yourself — nothing will push it to you.
 
-You do NOT need to call `inbox` manually. The hooks already feed the messages
-into your context. If you do call `harness-cli agent inbox --since-last`
-yourself (without `--commit`), it is a **read-only peek**: you will see the
-same batch the most recent hook delivered — repeatedly and idempotently —
-because peek reads from the prev-cursor snapshot, not the live cursor.
+You do NOT need to call `inbox` manually in the common case (interactive
+sessions, or a one-shot task that only needs what already arrived at turn
+start). The hooks already feed the messages into your context. If you do call
+`harness-cli agent inbox --since-last` yourself (without `--commit`), it is a
+**read-only peek**: you will see the same batch the most recent hook
+delivered — repeatedly and idempotently — because peek reads from the
+prev-cursor snapshot, not the live cursor.
 
 **Never pass `--commit` by hand.** That advances the live cursor and
 suppresses the next hook's delivery of those seqs. `--commit` is for the
 hooks only.
 
-**Known issue — `--since-last` can desync.** When you receive a
-`<harness:agentboard-wake>` prompt but the hook-delivered batch in your
-context appears empty (no inbox payload visible), the local cursor at
+**Known issue — `--since-last` can desync (interactive sessions).** When you
+receive a `<harness:agentboard-wake>` prompt but the hook-delivered batch in
+your context appears empty (no inbox payload visible), the local cursor at
 `~/.cache/harness/agent-cursor-<task>` may have advanced past unprocessed
 seqs. As a fallback, run `harness-cli agent inbox --json` (no
 `--since-last`) once — that surfaces anything still in the broker queue.
 If it returns content, treat it as the missed batch and act on it.
-Do not add `--commit` to the fallback call; it remains hook-only.
+Do not add `--commit` to the fallback call; it remains hook-only. (A
+one-shot task never receives a wake prompt at all, so this desync can only
+happen after a live wake — i.e. never for `submit` tasks; call `agent inbox
+--json` there any time you simply want a fresh read.)
 
 ## Purging a topic's server-side buffer (`agent purge`)
 
@@ -119,10 +130,13 @@ hook described above. The correct pattern for any request/response flow,
 1. `send` to the peer.
 2. End the turn (or do other unrelated work). Do **not** invoke `wait`
    or `dispatch` to "block until the reply".
-3. The peer's reply arrives on a later turn through the inbox hook —
-   either when the user types a prompt, or when the runner injects a
-   synthetic `<harness:agentboard-wake>` prompt because a new message
-   landed while you were idle.
+3. The peer's reply arrives on a later turn through the inbox hook — either
+   when the user types a prompt, or, for an interactive session, when the
+   runner injects a synthetic `<harness:agentboard-wake>` prompt into the PTY
+   because a new message landed while you were idle. A one-shot task has no
+   such push: its next turn (if any — e.g. a `--resume-conversation`
+   follow-up) picks up the reply via the same `UserPromptSubmit` hook, or you
+   read it directly with `harness-cli agent inbox` before the turn ends.
 
 Why this rule exists:
 
