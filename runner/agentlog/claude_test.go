@@ -96,3 +96,19 @@ func TestClaudeDecoderMalformedAndUnknown(t *testing.T) {
 		t.Fatalf("error tool_result: got %+v, want KindToolEnd with IsError and no ExitCode", evs)
 	}
 }
+
+func TestClaudeDecoderDropsBlankLines(t *testing.T) {
+	d := NewDecoder("claude-stream-json")
+
+	// Empty line yields no events (stream artifact, not malformed content).
+	evs := d.Decode([]byte(""))
+	if len(evs) != 0 {
+		t.Fatalf("empty line: got %+v, want zero events", evs)
+	}
+
+	// Whitespace-only line yields no events.
+	evs = d.Decode([]byte("   \t  "))
+	if len(evs) != 0 {
+		t.Fatalf("whitespace line: got %+v, want zero events", evs)
+	}
+}

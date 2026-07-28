@@ -62,9 +62,9 @@ type Event struct {
 // a blank or whitespace-only line yields no events (zero-length slice). Decode
 // never returns an error: a malformed line must not fail the task.
 //
-// Format-specific decoders (claudeStreamJSON, codexJSONL) drop blank lines as
-// stream artifacts. The passthrough decoder does not, preserving all output
-// byte-for-byte when used for non-JSON agent output.
+// The claudeStreamJSON decoder drops blank lines as stream artifacts. The
+// passthrough decoder does not, preserving all output byte-for-byte when used
+// for non-JSON agent output.
 type Decoder interface {
 	Decode(line []byte) []Event
 }
