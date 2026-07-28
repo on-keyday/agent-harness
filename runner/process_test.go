@@ -263,3 +263,88 @@ func TestProcessPassthroughWhenNoLogFormat(t *testing.T) {
 		t.Fatalf("got %q, want the line unchanged", got)
 	}
 }
+
+// TestProcessStdoutVerbatimWhenNoDecoderApplies covers what
+// TestProcessPassthroughWhenNoLogFormat cannot: a CRLF-terminated line and a
+// final line with no trailing newline at all. Routing stdout through
+// decode+render — even via agentlog's passthrough decoder — would corrupt
+// both: passthrough.Decode trims "\r\n" (so a CRLF line loses its "\r"), and
+// emit always synthesizes exactly one trailing "\n" on the rendered text (so
+// a truly unterminated final line would gain a newline it never had). Both
+// an empty LogFormat and an unrecognised one resolve to "no decoder", and
+// per the task requirement they must forward stdout byte-for-byte identical
+// to the pre-decoding behaviour — this test checks both resolve identically.
+func TestProcessStdoutVerbatimWhenNoDecoderApplies(t *testing.T) {
+	for _, format := range []string{"", "not-a-real-format"} {
+		t.Run("format="+format, func(t *testing.T) {
+			script := filepath.Join(t.TempDir(), "fake-agent.sh")
+			body := "#!/bin/sh\n" +
+				"printf 'crlf line\\r\\n'\n" +
+				"printf '%s' 'trailing partial'\n"
+			if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			p := &Process{
+				ClaudeBin:           script,
+				CWD:                 t.TempDir(),
+				Timeout:             30 * time.Second,
+				OneshotArgvTemplate: []string{"{args}", "{prompt}"},
+				LogFormat:           format,
+			}
+			var mu sync.Mutex
+			var got string
+			if _, err := p.Run(context.Background(), "ignored", func(b []byte) {
+				mu.Lock()
+				defer mu.Unlock()
+				got += string(b)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			want := "[out]crlf line\r\n[out]trailing partial"
+			if got != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestProcessDecodesFinalUnterminatedLine guards the ReadBytes/EOF ordering
+// in scanDecoded: bufio.Reader.ReadBytes('\n') returns the trailing bytes
+// together with a non-nil error when the stream ends without a newline, and
+// the `if len(line) > 0 { ... }` decode step must run before the `if err !=
+// nil { return }` check, or the last event of every real agent run (usually
+// its "result"/finish line) would be silently dropped. This is the decoded
+// counterpart of the unterminated-line case in
+// TestProcessStdoutVerbatimWhenNoDecoderApplies.
+func TestProcessDecodesFinalUnterminatedLine(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "fake-agent.sh")
+	body := "#!/bin/sh\n" +
+		"printf '%s' '{\"type\":\"result\",\"duration_ms\":12,\"total_cost_usd\":0}'\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := &Process{
+		ClaudeBin:           script,
+		CWD:                 t.TempDir(),
+		Timeout:             30 * time.Second,
+		OneshotArgvTemplate: []string{"{args}", "{prompt}"},
+		LogFormat:           "claude-stream-json",
+	}
+	var mu sync.Mutex
+	var got string
+	exit, err := p.Run(context.Background(), "ignored", func(b []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		got += string(b)
+	})
+	if err != nil || exit != 0 {
+		t.Fatalf("Run: exit=%d err=%v", exit, err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got != "[out]✓ 12ms\n" {
+		t.Fatalf("got %q, want the finish event rendered", got)
+	}
+}

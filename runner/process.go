@@ -41,9 +41,13 @@ type Process struct {
 }
 
 // Run starts ClaudeBin with `-p <prompt>`, captures stdout and stderr line-by-line,
-// passes each line (with [out]/[err] prefix and trailing newline preserved) to sink,
-// and returns the process exit code. The exit code is -1 if the process could not be started
-// or was killed by signal/timeout.
+// and returns the process exit code. stderr is always forwarded to sink verbatim
+// (with an "[err]" prefix, original line bytes and terminator untouched). stdout is
+// forwarded the same way — verbatim, "[out]"-prefixed — when LogFormat is empty or
+// names a format agentlog does not recognise; when it names a real decoder, each
+// stdout line is decoded and every resulting event is rendered and sent to sink as
+// its own "[out]"-prefixed, newline-terminated line instead of the raw JSON. The
+// exit code is -1 if the process could not be started or was killed by signal/timeout.
 //
 // Run blocks until the process exits or ctx is cancelled. On ctx cancellation or timeout,
 // the process is sent SIGTERM and given 5 seconds before SIGKILL.
@@ -178,6 +182,10 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	// scanDecoded runs each stdout line through the profile's decoder and
 	// publishes one log line per resulting event. A final partial line (no
 	// trailing newline before EOF) is decoded too, so nothing is lost at exit.
+	// Only used when p.LogFormat names a real decoder (see below) — the
+	// decode/render round-trip is not byte-preserving (passthrough.Decode
+	// trims "\r\n" and emit always adds back exactly one "\n"), so it must
+	// never run for the "nothing to decode" case.
 	scanDecoded := func(r io.Reader) {
 		defer wg.Done()
 		dec := agentlog.NewDecoder(p.LogFormat)
@@ -195,7 +203,15 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 		}
 	}
 	wg.Add(2)
-	go scanDecoded(stdout)
+	if agentlog.HasDecoder(p.LogFormat) {
+		go scanDecoded(stdout)
+	} else {
+		// Empty or unrecognised LogFormat: forward stdout exactly like
+		// stderr, byte-for-byte, so a CRLF line or an unterminated final
+		// line reaches sink unchanged instead of going through
+		// passthrough's lossy Decode/Render round-trip.
+		go scanRaw(stdout, []byte("[out]"))
+	}
 	go scanRaw(stderr, []byte("[err]"))
 
 	waitErr := cmd.Wait()

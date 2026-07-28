@@ -47,6 +47,23 @@ func TestKnownFormatsMatchesNewDecoder(t *testing.T) {
 	}
 }
 
+func TestHasDecoderMatchesKnownFormats(t *testing.T) {
+	// HasDecoder is the predicate runner.Process uses to choose between the
+	// decode/render round-trip and forwarding stdout byte-for-byte. It must
+	// say false for exactly the same names NewDecoder resolves to
+	// passthrough for: empty, and anything absent from KnownFormats().
+	for _, name := range KnownFormats() {
+		if !HasDecoder(name) {
+			t.Errorf("HasDecoder(%q) = false, want true (in KnownFormats)", name)
+		}
+	}
+	for _, name := range []string{"", "not-a-real-format"} {
+		if HasDecoder(name) {
+			t.Errorf("HasDecoder(%q) = true, want false", name)
+		}
+	}
+}
+
 func TestRender(t *testing.T) {
 	exit0 := 0
 	exit2 := 2

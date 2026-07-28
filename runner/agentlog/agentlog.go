@@ -92,6 +92,19 @@ func NewDecoder(format string) Decoder {
 	return passthrough{}
 }
 
+// HasDecoder reports whether format names a real structured decoder — i.e.
+// NewDecoder(format) would return something other than the passthrough
+// fallback. Callers that need stdout forwarded byte-for-byte when no
+// structured decoding applies (empty or unrecognised format) should check
+// this rather than routing through NewDecoder/Decode/Render: the passthrough
+// decoder trims line terminators for display and Render's caller re-adds
+// exactly one "\n", so a decode+render round-trip cannot reproduce the
+// original bytes for a CRLF line or a final line with no terminator at all.
+func HasDecoder(format string) bool {
+	_, ok := decodersByFormat[format]
+	return ok
+}
+
 // KnownFormats returns the non-empty AgentProfile.LogFormat values NewDecoder
 // resolves to a real decoder, sorted for stable output. Configuration
 // validation (runner.ProfileSet.UnrecognisedLogFormats) reports a profile's
