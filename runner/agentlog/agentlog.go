@@ -9,6 +9,8 @@
 package agentlog
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -146,9 +148,97 @@ func Render(e Event) string {
 	}
 }
 
+// claudeEnvelope is the subset of claude's stream-json line shape this decoder
+// reads. Fields it does not name are ignored, so new event types added by a
+// future claude release degrade to "no events" rather than to noise.
+type claudeEnvelope struct {
+	Type    string `json:"type"`
+	Subtype string `json:"subtype"`
+
+	// system/init
+	SessionID string `json:"session_id"`
+
+	// assistant and user both carry a message with content blocks.
+	Message struct {
+		Content []struct {
+			Type     string          `json:"type"`
+			Text     string          `json:"text"`
+			Thinking *string         `json:"thinking"`
+			Name     string          `json:"name"`
+			Input    json.RawMessage `json:"input"`
+			Content  json.RawMessage `json:"content"`
+			IsError  bool            `json:"is_error"`
+		} `json:"content"`
+	} `json:"message"`
+
+	// result
+	DurationMS   int64   `json:"duration_ms"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+}
+
 type claudeStreamJSON struct{}
 
-func (claudeStreamJSON) Decode(line []byte) []Event { return raw(line) }
+func (claudeStreamJSON) Decode(line []byte) []Event {
+	trimmed := strings.TrimSpace(string(line))
+	if trimmed == "" {
+		return nil
+	}
+	var env claudeEnvelope
+	if err := json.Unmarshal([]byte(trimmed), &env); err != nil {
+		return raw(line)
+	}
+	switch env.Type {
+	case "system":
+		if env.Subtype == "init" {
+			return []Event{{Kind: KindSessionStart, Text: env.SessionID}}
+		}
+		return nil
+	case "assistant", "user":
+		var out []Event
+		for _, b := range env.Message.Content {
+			switch b.Type {
+			case "thinking":
+				// Keyed on the block's presence, not its content: every Claude 5
+				// model returns an empty thinking string.
+				out = append(out, Event{Kind: KindThinking})
+			case "text":
+				if b.Text != "" {
+					out = append(out, Event{Kind: KindText, Text: b.Text})
+				}
+			case "tool_use":
+				out = append(out, Event{Kind: KindToolStart, Tool: b.Name, Args: jsonToText(b.Input)})
+			case "tool_result":
+				out = append(out, Event{Kind: KindToolEnd, Result: jsonToText(b.Content), IsError: b.IsError})
+			}
+		}
+		return out
+	case "result":
+		return []Event{{Kind: KindFinish, Stats: Stats{
+			DurationMS: env.DurationMS,
+			CostUSD:    env.TotalCostUSD,
+		}}}
+	default:
+		return nil
+	}
+}
+
+// jsonToText renders a tool input or tool result for the log. A JSON string
+// becomes its unquoted value (tool results are usually plain text); anything
+// else is kept as compact JSON.
+func jsonToText(rm json.RawMessage) string {
+	if len(rm) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(rm, &s); err == nil {
+		return s
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, rm); err != nil {
+		return string(rm)
+	}
+	return buf.String()
+}
 
 type codexJSONL struct{}
 
