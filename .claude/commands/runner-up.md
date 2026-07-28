@@ -53,17 +53,19 @@ Arguments: $ARGUMENTS
    is unambiguously pinnable via `--host`.
 
    **Codex preset details.** The exact bin + argv templates for `codex` (and
-   `claude` / `bash`) live in ONE place — `scripts/agent_presets.py`
-   (`KNOWN_AGENT_PRESETS`); this doc no longer restates the literal flag strings
-   so the two cannot drift. Prefer `runner.sh up --agents codex`. Why codex's
-   templates differ from Claude's default one-shot `<args> -p <prompt>`:
+   `claude` / `bash`) — including the structured-output flags each one
+   requests — live in ONE place: `scripts/agent_presets.py`
+   (`KNOWN_AGENT_PRESETS`). This doc does not restate the literal flag
+   strings so the two cannot drift; read that table for the exact argv
+   order. Prefer `runner.sh up --agents codex`. Why codex's one-shot argv
+   differs in *subcommand shape* from claude's:
 
-   - one-shot runs as `codex exec <args> <prompt>`.
-   - `resume_conversation` one-shot runs as `codex exec resume --last <args>
-     <prompt>` — the non-interactive subcommand shape matters: top-level
-     `codex resume` is interactive-only.
-   - `resume_conversation` interactive runs as `codex resume --last <args>`
-     (codex does not take `--continue`).
+   - one-shot invokes the `exec` subcommand.
+   - `resume_conversation` one-shot invokes `exec resume --last` — the
+     non-interactive subcommand shape matters: top-level `codex resume` is
+     interactive-only.
+   - `resume_conversation` interactive invokes `resume --last` (codex does
+     not take `--continue`).
    - `{args}` = runner-global `--claude-args` + per-task `--claude-arg`;
      `{prompt}` = the one-shot prompt as a single argv element. Templates are
      shlex-split and executed via argv, not a shell.

@@ -30,11 +30,12 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         self.assertIn("--agent-bin", out)
         self.assertEqual(out[out.index("--agent-bin") + 1], "claude")
         self.assertEqual(
-            out[out.index("--agent-oneshot-argv") + 1], "{args} -p {prompt}"
+            out[out.index("--agent-oneshot-argv") + 1],
+            "--output-format stream-json --verbose {args} -p {prompt}",
         )
         self.assertEqual(
             out[out.index("--agent-resume-oneshot-argv") + 1],
-            "{args} --continue -p {prompt}",
+            "--output-format stream-json --verbose {args} --continue -p {prompt}",
         )
         self.assertEqual(
             out[out.index("--agent-resume-interactive-argv") + 1],
@@ -49,10 +50,12 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         codex = profiles[0]
         self.assertEqual(codex["name"], "codex")
         self.assertEqual(codex["bin"], "codex")
-        self.assertEqual(codex["oneshotArgv"], ["exec", "{args}", "{prompt}"])
+        self.assertEqual(
+            codex["oneshotArgv"], ["exec", "--json", "{args}", "{prompt}"]
+        )
         self.assertEqual(
             codex["resumeOneshotArgv"],
-            ["exec", "resume", "--last", "{args}", "{prompt}"],
+            ["exec", "--json", "resume", "--last", "{args}", "{prompt}"],
         )
         self.assertEqual(
             codex["resumeInteractiveArgv"], ["resume", "--last", "{args}"]
@@ -95,6 +98,38 @@ class ExpandAgentsPresetTest(unittest.TestCase):
             "claude,codex", ["--server-cid", "ws:127.0.0.1:8539-*", "--max-tasks", "8"]
         )
         self.assertIn("--agent-bin", out)
+
+    def test_claude_default_profile_requests_stream_json(self) -> None:
+        out = expand_agents_preset("claude", [])
+        self.assertIn("--agent-log-format", out)
+        self.assertEqual(
+            out[out.index("--agent-log-format") + 1], "claude-stream-json"
+        )
+        oneshot = out[out.index("--agent-oneshot-argv") + 1]
+        # Flags precede {args} so a per-task --claude-args can still override them.
+        self.assertTrue(
+            oneshot.startswith("--output-format stream-json --verbose {args}")
+        )
+        self.assertTrue(oneshot.endswith("-p {prompt}"))
+        resume = out[out.index("--agent-resume-oneshot-argv") + 1]
+        self.assertTrue(
+            resume.startswith("--output-format stream-json --verbose {args}")
+        )
+        self.assertIn("--continue", resume)
+
+    def test_codex_extra_profile_carries_log_format(self) -> None:
+        out = expand_agents_preset("claude,codex", [])
+        profiles = json.loads(out[out.index("--agent-profiles") + 1])
+        codex = next(p for p in profiles if p["name"] == "codex")
+        self.assertEqual(codex["logFormat"], "codex-jsonl")
+        self.assertEqual(codex["oneshotArgv"][:2], ["exec", "--json"])
+        self.assertEqual(codex["resumeOneshotArgv"][:2], ["exec", "--json"])
+
+    def test_bash_preset_has_no_log_format(self) -> None:
+        # bash is a shell sandbox, not a conversational agent: nothing to decode.
+        out = expand_agents_preset("bash", [])
+        self.assertEqual(out[out.index("--agent-log-format") + 1], "")
+        self.assertNotIn("--agent-profiles", out)
 
 
 if __name__ == "__main__":

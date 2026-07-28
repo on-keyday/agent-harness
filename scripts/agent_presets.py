@@ -5,12 +5,13 @@ Pure stdlib, no third-party deps — deliberately importable without
 this module directly rather than going through ``runner.py``'s
 ``bootstrap.ensure_venv()`` / ``psutil`` import chain).
 
-The per-agent argv templates below are copied verbatim from the
-authoritative table in ``.claude/commands/runner-up.md`` ("Codex preset
-details" / shell-sandbox presets table). That file remains the source of
-truth for the argv shapes; this module only encodes them so ``runner.py
-up --agents claude,codex`` can expand to concrete agent-runner flags
-without the caller hand-typing the JSON.
+``KNOWN_AGENT_PRESETS`` below is the SINGLE SOURCE OF TRUTH for the
+built-in agent presets' bin + argv-template + logFormat shapes.
+``.claude/commands/runner-up.md`` ("Codex preset details" / shell-sandbox
+presets table) references this table by name and MUST NOT restate the
+literal argv strings, so the doc and the code cannot diverge. This module
+lets ``runner.py up --agents claude,codex`` expand to concrete
+agent-runner flags without the caller hand-typing the JSON.
 
 No preset exists here for "gemini" — there is no authoritative argv for it
 anywhere in this repo, and inventing one would silently ship an unverified
@@ -23,30 +24,39 @@ from __future__ import annotations
 
 import json
 
-# name -> {bin, oneshotArgv, resumeOneshotArgv, resumeInteractiveArgv}.
-# Values are the flag-STRING template form ({args}/{prompt} tokens,
-# shlex-split by agent-runner itself for the default profile — see
-# cmd/agent-runner/main.go parseAgentArgsFlag). For extra profiles (carried
-# via --agent-profiles JSON) expand_agents_preset() below splits these on
-# whitespace into the argv-array form runner.ParseAgentProfilesJSON expects
-# (runner/agent_profile.go); none of these templates need shell quoting, so
-# a plain .split() matches what shlex.Split would produce.
-# SINGLE SOURCE OF TRUTH for the built-in agent presets' bin + argv templates
-# (claude / codex / bash). `.claude/commands/runner-up.md` references this table
-# via `runner.sh up --agents <names>` and MUST NOT restate the literal argv
-# strings — keep the values here only, so the doc and the code cannot diverge.
+# name -> {bin, oneshotArgv, resumeOneshotArgv, resumeInteractiveArgv,
+# logFormat}. The argv values are the flag-STRING template form
+# ({args}/{prompt} tokens, shlex-split by agent-runner itself for the
+# default profile — see cmd/agent-runner/main.go parseAgentArgsFlag). For
+# extra profiles (carried via --agent-profiles JSON) expand_agents_preset()
+# below splits these on whitespace into the argv-array form
+# runner.ParseAgentProfilesJSON expects (runner/agent_profile.go); none of
+# these templates need shell quoting, so a plain .split() matches what
+# shlex.Split would produce. logFormat must be one of the names
+# runner/agentlog.NewDecoder recognises ("", "claude-stream-json",
+# "codex-jsonl") — see the module docstring above for the source-of-truth
+# policy.
 KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
     "claude": {
         "bin": "claude",
-        "oneshotArgv": "{args} -p {prompt}",
-        "resumeOneshotArgv": "{args} --continue -p {prompt}",
+        # --output-format/--verbose precede {args} so a per-task --claude-args
+        # can still override them (claude flags are last-wins). Verified
+        # against claude 2.1.220: --output-format stream-json --verbose is
+        # accepted ahead of -p.
+        "oneshotArgv": "--output-format stream-json --verbose {args} -p {prompt}",
+        "resumeOneshotArgv": "--output-format stream-json --verbose {args} --continue -p {prompt}",
         "resumeInteractiveArgv": "{args} --continue",
+        "logFormat": "claude-stream-json",
     },
     "codex": {
         "bin": "codex",
-        "oneshotArgv": "exec {args} {prompt}",
-        "resumeOneshotArgv": "exec resume --last {args} {prompt}",
+        # --json precedes {args} for the same last-wins override reason.
+        # Verified against codex-cli 0.145.0: --json is an option of the
+        # `codex exec resume` subcommand, so it is valid after `resume`.
+        "oneshotArgv": "exec --json {args} {prompt}",
+        "resumeOneshotArgv": "exec --json resume --last {args} {prompt}",
         "resumeInteractiveArgv": "resume --last {args}",
+        "logFormat": "codex-jsonl",
     },
     # Shell-sandbox preset, not a conversational agent — included because
     # it's a trivial copy of the runner-up.md "bash" preset row. --agents
@@ -59,6 +69,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "oneshotArgv": "{args} -c {prompt}",
         "resumeOneshotArgv": "{args} -c {prompt}",
         "resumeInteractiveArgv": "{args}",
+        "logFormat": "",
     },
 }
 
@@ -72,6 +83,7 @@ _CONFLICTING_FLAGS = (
     "--agent-oneshot-argv",
     "--agent-resume-oneshot-argv",
     "--agent-resume-interactive-argv",
+    "--agent-log-format",
     "--agent-profiles",
 )
 
@@ -89,26 +101,27 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
     """Expand ``--agents claude,codex`` into concrete agent-runner flags.
 
     The FIRST name in *agents_csv* becomes the default profile: emitted as
-    ``--agent-bin``, ``--agent-oneshot-argv``, ``--agent-resume-oneshot-argv``
-    and ``--agent-resume-interactive-argv``. All four are always emitted
-    together for the default profile — agent-runner's startup validation
-    requires --agent-resume-oneshot-argv whenever --agent-oneshot-argv is
-    customized (cmd/agent-runner/main.go validate()), and a Claude-shaped
-    resume default would silently misfire on a non-Claude default bin.
+    ``--agent-bin``, ``--agent-oneshot-argv``, ``--agent-resume-oneshot-argv``,
+    ``--agent-resume-interactive-argv`` and ``--agent-log-format``. All five
+    are always emitted together for the default profile — agent-runner's
+    startup validation requires --agent-resume-oneshot-argv whenever
+    --agent-oneshot-argv is customized (cmd/agent-runner/main.go validate()),
+    and a Claude-shaped resume default would silently misfire on a
+    non-Claude default bin.
 
     Any REMAINING names are serialized into a single ``--agent-profiles``
     JSON array flag, matching the wire shape
     runner.ParseAgentProfilesJSON expects: objects with
-    name/bin/oneshotArgv/resumeOneshotArgv/resumeInteractiveArgv, argv
-    fields as JSON string arrays (runner/agent_profile.go).
+    name/bin/oneshotArgv/resumeOneshotArgv/resumeInteractiveArgv/logFormat,
+    argv fields as JSON string arrays (runner/agent_profile.go).
 
     Conflict policy: if *existing_args* already contains any of
     --agent-bin/--claude-bin/--agent-oneshot-argv/
     --agent-resume-oneshot-argv/--agent-resume-interactive-argv/
-    --agent-profiles, this raises AgentsPresetError instead of silently
-    overriding or merging. --agents is an all-or-nothing shortcut for the
-    known presets; use the explicit per-flag form instead of mixing it
-    with --agents in the same invocation.
+    --agent-log-format/--agent-profiles, this raises AgentsPresetError
+    instead of silently overriding or merging. --agents is an all-or-nothing
+    shortcut for the known presets; use the explicit per-flag form instead
+    of mixing it with --agents in the same invocation.
 
     Raises AgentsPresetError for any name not in KNOWN_AGENT_PRESETS (e.g.
     "gemini" — no authoritative built-in argv exists in this repo for it;
@@ -138,6 +151,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
         "--agent-oneshot-argv", default["oneshotArgv"],
         "--agent-resume-oneshot-argv", default["resumeOneshotArgv"],
         "--agent-resume-interactive-argv", default["resumeInteractiveArgv"],
+        "--agent-log-format", default["logFormat"],
     ]
 
     extra_names = names[1:]
@@ -152,6 +166,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
                     "oneshotArgv": p["oneshotArgv"].split(),
                     "resumeOneshotArgv": p["resumeOneshotArgv"].split(),
                     "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
+                    "logFormat": p["logFormat"],
                 }
             )
         out += ["--agent-profiles", json.dumps(profiles)]
