@@ -1,13 +1,11 @@
 package runner
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
-	"sync"
 	"syscall"
 	"time"
 
@@ -16,6 +14,112 @@ import (
 
 // LogSink receives log chunks (each with a stream prefix already applied: "[out]" or "[err]").
 type LogSink func(data []byte)
+
+// emitLine publishes one already-rendered line under the given stream
+// prefix, adding exactly one trailing newline. Used for decoded events,
+// whose rendered text never carries its own terminator.
+func emitLine(sink LogSink, prefix, text string) {
+	buf := make([]byte, 0, len(prefix)+len(text)+1)
+	buf = append(buf, prefix...)
+	buf = append(buf, text...)
+	buf = append(buf, '\n')
+	sink(buf)
+}
+
+// rawLineWriter is an io.Writer assigned to cmd.Stdout/cmd.Stderr. It
+// forwards each complete line verbatim — original terminator included — to
+// sink, prefixed by prefix. Used for stderr (always) and for stdout when no
+// agentlog decoder applies to p.LogFormat.
+//
+// Because os/exec creates the underlying pipe itself when Stdout/Stderr are
+// not *os.File and copies into this Writer in its own goroutine, Write here
+// receives arbitrary byte chunks, not lines — so it buffers and splits on
+// '\n' itself. Nothing calls Write again once the child's fd closes, so a
+// buffered partial line (a final line with no trailing '\n') would sit here
+// forever unless flush is called explicitly after cmd.Wait() returns.
+//
+// Not safe for concurrent Write calls: os/exec's internal copy goroutine is
+// the sole caller for a given stream, so none is needed.
+type rawLineWriter struct {
+	prefix []byte
+	sink   LogSink
+	buf    []byte
+}
+
+func (w *rawLineWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		w.emit(w.buf[:i+1])
+		w.buf = w.buf[i+1:]
+	}
+	return len(p), nil
+}
+
+func (w *rawLineWriter) emit(line []byte) {
+	buf := make([]byte, 0, len(w.prefix)+len(line))
+	buf = append(buf, w.prefix...)
+	buf = append(buf, line...)
+	w.sink(buf)
+}
+
+// flush delivers a trailing partial line (no terminator) left buffered when
+// the child exits without a final '\n'. Must be called once, after
+// cmd.Wait() returns. No terminator is synthesized: the raw path forwards
+// stdout/stderr byte-for-byte, including the absence of a final newline.
+func (w *rawLineWriter) flush() {
+	if len(w.buf) == 0 {
+		return
+	}
+	w.emit(w.buf)
+	w.buf = nil
+}
+
+// decodedLineWriter is an io.Writer assigned to cmd.Stdout when
+// agentlog.HasDecoder(LogFormat) is true. It runs each complete stdout line
+// through dec and publishes one rendered "[out]" line per resulting event —
+// the decoded counterpart of rawLineWriter, with the same buffer-and-split
+// and explicit-flush requirements documented there.
+type decodedLineWriter struct {
+	dec  agentlog.Decoder
+	sink LogSink
+	buf  []byte
+}
+
+func (w *decodedLineWriter) Write(p []byte) (int, error) {
+	w.buf = append(w.buf, p...)
+	for {
+		i := bytes.IndexByte(w.buf, '\n')
+		if i < 0 {
+			break
+		}
+		w.decode(w.buf[:i+1])
+		w.buf = w.buf[i+1:]
+	}
+	return len(p), nil
+}
+
+func (w *decodedLineWriter) decode(line []byte) {
+	for _, ev := range w.dec.Decode(line) {
+		emitLine(w.sink, "[out]", agentlog.Render(ev))
+	}
+}
+
+// flush decodes and delivers a trailing partial line (no terminator) left
+// buffered when the child exits without a final '\n'. Must be called once,
+// after cmd.Wait() returns — this is what makes a final unterminated event
+// (typically the agent's "result"/finish line) reach sink instead of being
+// silently dropped; see TestProcessDecodesFinalUnterminatedLine.
+func (w *decodedLineWriter) flush() {
+	if len(w.buf) == 0 {
+		return
+	}
+	w.decode(w.buf)
+	w.buf = nil
+}
 
 // Process wraps a single execution of the claude binary in a worktree.
 type Process struct {
@@ -67,83 +171,45 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return -1, fmt.Errorf("stdout pipe: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return -1, fmt.Errorf("stderr pipe: %w", err)
+	// cmd.Stdout/cmd.Stderr are writers, not pipes taken via
+	// cmd.StdoutPipe()/cmd.StderrPipe(). Following
+	// github.com/on-keyday/objtrsf/exec (the package the interactive path
+	// already uses) rather than swapping the wg.Wait()/cmd.Wait() order:
+	// when Stdout/Stderr are not *os.File, os/exec creates the pipe itself,
+	// copies into the Writer in its own goroutine, and cmd.Wait() waits for
+	// that copy to finish before returning. There is no window in which
+	// cmd.Wait() can close a pipe out from under a still-draining reader,
+	// so no caller-side sync.WaitGroup is needed either.
+	stderrW := &rawLineWriter{prefix: []byte("[err]"), sink: sink}
+	cmd.Stderr = stderrW
+
+	var stdoutFlush func()
+	if agentlog.HasDecoder(p.LogFormat) {
+		stdoutW := &decodedLineWriter{dec: agentlog.NewDecoder(p.LogFormat), sink: sink}
+		cmd.Stdout = stdoutW
+		stdoutFlush = stdoutW.flush
+	} else {
+		// Empty or unrecognised LogFormat: forward stdout exactly like
+		// stderr, byte-for-byte, so a CRLF line or an unterminated final
+		// line reaches sink unchanged instead of going through
+		// passthrough's lossy Decode/Render round-trip.
+		stdoutW := &rawLineWriter{prefix: []byte("[out]"), sink: sink}
+		cmd.Stdout = stdoutW
+		stdoutFlush = stdoutW.flush
 	}
 
 	if err := cmd.Start(); err != nil {
 		return -1, fmt.Errorf("start: %w", err)
 	}
 
-	var wg sync.WaitGroup
-	// emit publishes one already-rendered line under the given stream prefix.
-	emit := func(prefix, text string) {
-		buf := make([]byte, 0, len(prefix)+len(text)+1)
-		buf = append(buf, prefix...)
-		buf = append(buf, text...)
-		buf = append(buf, '\n')
-		sink(buf)
-	}
-	// scanRaw forwards each line verbatim, preserving its original newline.
-	// Used for stderr, where decoding would suppress crash output.
-	scanRaw := func(r io.Reader, prefix []byte) {
-		defer wg.Done()
-		br := bufio.NewReader(r)
-		for {
-			line, err := br.ReadBytes('\n')
-			if len(line) > 0 {
-				buf := make([]byte, 0, len(prefix)+len(line))
-				buf = append(buf, prefix...)
-				buf = append(buf, line...)
-				sink(buf)
-			}
-			if err != nil {
-				return
-			}
-		}
-	}
-	// scanDecoded runs each stdout line through the profile's decoder and
-	// publishes one log line per resulting event. A final partial line (no
-	// trailing newline before EOF) is decoded too, so nothing is lost at exit.
-	// Only used when p.LogFormat names a real decoder (see below) — the
-	// decode/render round-trip is not byte-preserving (passthrough.Decode
-	// trims "\r\n" and emit always adds back exactly one "\n"), so it must
-	// never run for the "nothing to decode" case.
-	scanDecoded := func(r io.Reader) {
-		defer wg.Done()
-		dec := agentlog.NewDecoder(p.LogFormat)
-		br := bufio.NewReader(r)
-		for {
-			line, err := br.ReadBytes('\n')
-			if len(line) > 0 {
-				for _, ev := range dec.Decode(line) {
-					emit("[out]", agentlog.Render(ev))
-				}
-			}
-			if err != nil {
-				return
-			}
-		}
-	}
-	wg.Add(2)
-	if agentlog.HasDecoder(p.LogFormat) {
-		go scanDecoded(stdout)
-	} else {
-		// Empty or unrecognised LogFormat: forward stdout exactly like
-		// stderr, byte-for-byte, so a CRLF line or an unterminated final
-		// line reaches sink unchanged instead of going through
-		// passthrough's lossy Decode/Render round-trip.
-		go scanRaw(stdout, []byte("[out]"))
-	}
-	go scanRaw(stderr, []byte("[err]"))
-
 	waitErr := cmd.Wait()
-	wg.Wait()
+	// os/exec stops calling Write once the child's fd closes; nothing signals
+	// EOF to a Writer. Any line buffered without a trailing '\n' — the
+	// child's last write, if it never emitted one — must be flushed
+	// explicitly here or it is silently lost. See TestProcessDecodesFinalUnterminatedLine
+	// and TestProcessStdoutVerbatimWhenNoDecoderApplies.
+	stdoutFlush()
+	stderrW.flush()
 
 	exit := 0
 	if waitErr != nil {

@@ -131,22 +131,13 @@ done
 # no network. Their argv templates below mirror scripts/agent_presets.py so the
 # invocation shape under test is the one --agents actually produces.
 #
-# EVERY fake agent sleeps briefly after its last write before exiting, and that
-# sleep is load-bearing — do not delete it. Process.Run reads stdout/stderr from
-# cmd.StdoutPipe()/cmd.StderrPipe() and calls cmd.Wait() BEFORE waiting for its
-# scanner goroutines, which os/exec documents as incorrect: "Wait will close the
-# pipe after seeing the command exit ... it is thus incorrect to call Wait
-# before all reads from the pipe have completed." Whatever is still sitting in
-# the pipe when the child exits is discarded, so an agent that writes several
-# lines and exits immediately loses a variable-length tail of its own log.
-# Measured on this repo: a 4-line burst followed by an immediate exit lands
-# 33/66/99/132 bytes of 132 across runs. That defect is NOT what this script
-# guards — it reproduces identically on the pre-plan runner (540b6df), i.e. it
-# predates the progress-streaming work — and letting it into the probes would
-# only make every assertion below intermittent. The sleep removes the race
-# outright (the scanner has drained the pipe long before the child exits)
-# rather than making it less likely.
-EXIT_SETTLE_S=0.5
+# No settle sleep after a fake agent's last write before it exits: Task 10
+# fixed the truncation race this used to work around. Process.Run now assigns
+# cmd.Stdout/cmd.Stderr as writers (following github.com/on-keyday/objtrsf/exec)
+# instead of taking cmd.StdoutPipe()/cmd.StderrPipe(), so cmd.Wait() itself
+# waits for the writer copy to finish — there is no window in which a fast
+# exit can truncate the tail of an agent's output. See runner/process_test.go
+# TestProcessDoesNotTruncateFastExitBurst for the regression test.
 mkdir -p "$TMP/agents" "$TMP/repo" "$TMP/data" || setup_err "mkdir failed"
 ( cd "$TMP/repo" && git init -q && git commit -q --allow-empty -m init ) >/dev/null 2>&1
 
@@ -169,7 +160,6 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","nam
 sleep $AGENT_STEP_S
 printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}'
 printf '%s\n' '{"type":"result","subtype":"success","duration_ms":4200,"total_cost_usd":0.01}'
-sleep $EXIT_SETTLE_S
 CLAUDE
 
 # codex-shaped: `codex exec` reads stdin to EOF before doing anything. The
@@ -182,7 +172,6 @@ printf '%s\n' '{"type":"thread.started","thread_id":"e2e-fake-thread"}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"command_execution","command":"echo hi","aggregated_output":"hi","exit_code":0}}'
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"codex done"}}'
 printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":20}}'
-sleep $EXIT_SETTLE_S
 CODEX
 
 # shell-sandbox shaped: mirrors the `bash` preset's `{args} -c {prompt}` argv,
@@ -191,9 +180,7 @@ CODEX
 cat >"$TMP/agents/fake-shell.sh" <<SHELLA
 #!/bin/sh
 sh "\$@"
-rc=\$?
-sleep $EXIT_SETTLE_S
-exit \$rc
+exit \$?
 SHELLA
 chmod +x "$TMP/agents"/*.sh || setup_err "chmod failed"
 

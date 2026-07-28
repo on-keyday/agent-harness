@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -347,6 +348,97 @@ func TestProcessDecodesFinalUnterminatedLine(t *testing.T) {
 	if got != "[out]✓ 12ms\n" {
 		t.Fatalf("got %q, want the finish event rendered", got)
 	}
+}
+
+// TestProcessDoesNotTruncateFastExitBurst is a regression test for the
+// pre-existing race described in Task 10's brief: Process.Run used to call
+// cmd.Wait() before its scanner goroutines had finished draining
+// cmd.StdoutPipe()/cmd.StderrPipe(). os/exec closes those pipes inside Wait
+// once it sees the child exit, so a scanner still mid-read can have the pipe
+// fd pulled out from under it, silently discarding whatever was still
+// sitting in the kernel pipe buffer.
+//
+// A single sequential Run() rarely loses this race on a quiet machine: the
+// scanner goroutines usually get scheduled onto an idle core long before
+// wait4() reports the (very fast) child's exit. The race becomes reliably
+// observable once there is CPU contention for those goroutines — many
+// concurrent Process.Run calls compete for the same cores, so the goroutine
+// that just returned from cmd.Wait() and is about to close the pipes is much
+// more likely to win against a scanner goroutine that hasn't been scheduled
+// yet. That is what this test does: it is not testing concurrent Process.Run
+// calls as a feature, it is using concurrency as the tool that makes an
+// otherwise-rare single-process race show up dependably. See
+// task-10-report.md for the verbatim failure this produced against
+// unmodified HEAD (commit f8a3dfb).
+func TestProcessDoesNotTruncateFastExitBurst(t *testing.T) {
+	const lineCount = 60
+	script := filepath.Join(t.TempDir(), "burst.sh")
+	body := "#!/bin/sh\n" +
+		"i=1\n" +
+		fmt.Sprintf("while [ $i -le %d ]; do printf 'line %%d of the burst\\n' \"$i\"; i=$((i+1)); done\n", lineCount)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var wantBuf strings.Builder
+	for i := 1; i <= lineCount; i++ {
+		fmt.Fprintf(&wantBuf, "[out]line %d of the burst\n", i)
+	}
+	want := wantBuf.String()
+
+	const concurrency = 40
+	const roundsPerWorker = 5
+	var mu sync.Mutex
+	var failures []string
+
+	var wg sync.WaitGroup
+	for w := 0; w < concurrency; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for r := 0; r < roundsPerWorker; r++ {
+				p := &Process{
+					ClaudeBin:           script,
+					CWD:                 t.TempDir(),
+					Timeout:             5 * time.Second,
+					OneshotArgvTemplate: []string{"{args}", "{prompt}"},
+				}
+				var gmu sync.Mutex
+				var got string
+				exit, err := p.Run(context.Background(), "ignored", func(b []byte) {
+					gmu.Lock()
+					defer gmu.Unlock()
+					got += string(b)
+				})
+				gmu.Lock()
+				gotSnapshot := got
+				gmu.Unlock()
+				if err != nil || exit != 0 || gotSnapshot != want {
+					mu.Lock()
+					failures = append(failures, fmt.Sprintf(
+						"worker=%d round=%d exit=%d err=%v got=%d bytes want=%d bytes tail=%q",
+						id, r, exit, err, len(gotSnapshot), len(want), tailBytes(gotSnapshot, 80)))
+					mu.Unlock()
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(failures) > 0 {
+		t.Fatalf("%d/%d runs lost part of the agent's output:\n%s",
+			len(failures), concurrency*roundsPerWorker, strings.Join(failures, "\n"))
+	}
+}
+
+// tailBytes returns the last n bytes of s (or all of s if shorter), for
+// compact failure messages.
+func tailBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
 }
 
 func TestProcessLeavesStdinClosed(t *testing.T) {
