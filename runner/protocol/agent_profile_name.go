@@ -8,6 +8,16 @@ import "strings"
 // binary spelled two ways — on this project's mixed Windows/Linux fleet the
 // spelling depends on which host derived the name, so profile-name identity
 // must not depend on it.
+//
+// Mixed-version rollout order: SERVER FIRST, then runners. The consumers of
+// this equivalence live on both sides — the server's RunnerEntry.HasProfile
+// gate and the runner's ProfileSet.Resolve / default-Name derivation. A new
+// server with old runners only widens matching (safe). An old server with a
+// new runner regresses: the runner's advertised name drops the extension
+// ("claude.exe" → "claude") while the old server still exact-matches, so
+// pre-existing tasks recorded under the extension spelling stop resuming on
+// that runner. Rebuilding the runner on the host that had the problem is the
+// intuitive first move and exactly the wrong one.
 var windowsExecExts = []string{".exe", ".bat", ".cmd", ".com"}
 
 // NormalizeAgentProfileName strips exactly one trailing Windows executable
