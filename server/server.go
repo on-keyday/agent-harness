@@ -568,29 +568,33 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 		}
 		defer logStore.Close()
 
-		// Chain log store tap into the existing OnCreate hook (which publishes task_queued).
+		// Chain log store tap into the existing OnCreate hook (which publishes
+		// task_queued). OnCreate re-fires on every Resume, so registration
+		// lives behind taskLogTaps, which holds at most one tap per task —
+		// stacking one tap per resume made every later log chunk append
+		// N-fold to the file.
+		logTaps := newTaskLogTaps(s.pubsub, logStore, s.cfg.Logger)
 		existingOnCreate := s.tasks.OnCreate
 		s.tasks.OnCreate = func(taskID string) {
 			if existingOnCreate != nil {
 				existingOnCreate(taskID)
 			}
-			// Register log store tap for this task.
-			topic := topics.TaskLog(taskID)
-			s.pubsub.TapSubscribe(topic, func(_ string, msg []byte) {
-				if err := logStore.Append(taskID, msg); err != nil {
-					s.cfg.Logger.Error("logstore append", "task", taskID, "err", err)
-				}
-			})
+			logTaps.Register(taskID)
+		}
+		// Prune deletes the log file; drop the tap + open handle with it so a
+		// straggler publish cannot resurrect the file.
+		existingOnPrune := s.tasks.OnPrune
+		s.tasks.OnPrune = func(taskID string) {
+			if existingOnPrune != nil {
+				existingOnPrune(taskID)
+			}
+			logTaps.Drop(taskID)
 		}
 
 		// Register taps for tasks that survived replay and may still emit logs.
 		for _, t := range s.tasks.List(0) {
 			if t.Status == protocol.TaskStatus_Queued || t.Status == protocol.TaskStatus_Running {
-				taskID := t.ID
-				topic := topics.TaskLog(taskID)
-				s.pubsub.TapSubscribe(topic, func(_ string, msg []byte) {
-					logStore.Append(taskID, msg) //nolint:errcheck
-				})
+				logTaps.Register(t.ID)
 			}
 		}
 

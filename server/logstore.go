@@ -40,6 +40,18 @@ func (l *LogStore) Append(taskID string, data []byte) error {
 	return err
 }
 
+// Forget closes and drops the open handle for taskID, if any. Append after
+// Forget would reopen (and recreate) the file — callers that must not let
+// that happen (the prune path) remove the tap feeding Append first.
+func (l *LogStore) Forget(taskID string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if f, ok := l.files[taskID]; ok {
+		f.Close()
+		delete(l.files, taskID)
+	}
+}
+
 // Close closes all open log files. After Close, Append will reopen on demand.
 func (l *LogStore) Close() {
 	l.mu.Lock()
