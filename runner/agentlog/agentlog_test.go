@@ -85,6 +85,7 @@ func TestRender(t *testing.T) {
 		{"finish codex", Event{Kind: KindFinish, Stats: Stats{InputTokens: 33075, OutputTokens: 168}}, "✓ 33075 in / 168 out"},
 		{"finish empty", Event{Kind: KindFinish}, "✓ done"},
 		{"error", Event{Kind: KindError, Text: "error_max_turns: exceeded max turns"}, "✗ error_max_turns: exceeded max turns"},
+		{"error warning", Event{Kind: KindError, Text: "falling back to default model metadata", Warning: true}, "⚠ falling back to default model metadata"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Render(tc.ev); got != tc.want {

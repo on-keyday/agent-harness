@@ -83,8 +83,75 @@ func TestCodexDecoderError(t *testing.T) {
 	}
 
 	// turn.failed carries its message nested under "error", not top-level.
+	// This nesting was originally sourced from documentation rather than a
+	// capture; TestCodexDecoderErrorCaptureGolden below now verifies it
+	// against a real one (testdata/codex-jsonl-error.jsonl).
 	evs = d.Decode([]byte(`{"type":"turn.failed","error":{"message":"model response stream ended unexpectedly"}}`))
 	if len(evs) != 1 || evs[0].Kind != KindError || evs[0].Text != "model response stream ended unexpectedly" {
 		t.Fatalf("got %+v, want one KindError carrying the turn's error message", evs)
+	}
+	if evs[0].Warning {
+		t.Error("turn.failed ends the run; Warning must be false")
+	}
+}
+
+// TestCodexDecoderItemLevelErrorIsWarning is a focused decode-level check
+// (Kind/Text/Warning on the Event itself, not just the rendered string) for
+// the item-level "error" item shape, complementing the end-to-end golden
+// check in TestCodexDecoderErrorCaptureGolden below.
+func TestCodexDecoderItemLevelErrorIsWarning(t *testing.T) {
+	d := NewDecoder("codex-jsonl")
+
+	evs := d.Decode([]byte(`{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for ` + "`definitely-not-a-real-model`" + ` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."}}`))
+	if len(evs) != 1 {
+		t.Fatalf("got %d events, want 1: %+v", len(evs), evs)
+	}
+	if evs[0].Kind != KindError {
+		t.Fatalf("got %+v, want KindError", evs[0])
+	}
+	if !evs[0].Warning {
+		t.Error("an item-level error is a non-terminal diagnostic; Warning must be true")
+	}
+	want := "Model metadata for `definitely-not-a-real-model` not found. Defaulting to fallback metadata; this can degrade performance and cause issues."
+	if evs[0].Text != want {
+		t.Errorf("Text = %q, want %q", evs[0].Text, want)
+	}
+	if got := Render(evs[0]); got != "⚠ "+want {
+		t.Errorf("Render = %q, want %q", got, "⚠ "+want)
+	}
+}
+
+// TestCodexDecoderErrorCaptureGolden runs the whole decoder over a real,
+// unedited capture of a genuine codex failure (`codex exec --json -m
+// definitely-not-a-real-model`): the model doesn't exist, so codex first
+// logs a per-item fallback-metadata warning (item.completed, item.type
+// "error") while the turn keeps going, then a top-level "error" event
+// carrying the model-rejection response, then fails the turn outright
+// (turn.failed) with the same message nested under "error". This is the
+// capture that verified turn.failed's error.message nesting (previously
+// inferred from documentation, not observed) and turned up the item-level
+// shape in the first place — copied byte-for-byte into testdata, same as
+// the successful-run fixture, per this package's rule that testdata/*.jsonl
+// holds only real unedited captures.
+func TestCodexDecoderErrorCaptureGolden(t *testing.T) {
+	got := decodeFixture(t, "testdata/codex-jsonl-error.jsonl", NewDecoder("codex-jsonl"))
+	want := []string{
+		// line 0 (session start) checked separately below: its id is
+		// capture-specific, like the claude fixture's session line.
+		"⚠ Model metadata for `definitely-not-a-real-model` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.",
+		`✗ {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'definitely-not-a-real-model' model is not supported when using Codex with a ChatGPT account."}}`,
+		`✗ {"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'definitely-not-a-real-model' model is not supported when using Codex with a ChatGPT account."}}`,
+	}
+	if len(got) != len(want)+1 {
+		t.Fatalf("got %d lines, want %d:\n%s", len(got), len(want)+1, strings.Join(got, "\n"))
+	}
+	if !strings.HasPrefix(got[0], "▶ session ") {
+		t.Fatalf("line 0 = %q, want a session line", got[0])
+	}
+	rest := got[1:]
+	for i := range want {
+		if rest[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i+1, rest[i], want[i])
+		}
 	}
 }

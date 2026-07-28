@@ -29,12 +29,15 @@ const (
 	KindToolEnd
 	KindText
 	KindFinish
-	// KindError is a run-ending failure the agent itself reported — not a
+	// KindError is a failure or diagnostic the agent itself reported — not a
 	// runner-side classification, but the agent's own error/turn-failure
-	// event (codex's "error"/"turn.failed") or a failed "result" envelope
-	// (claude's is_error/non-"success" subtype). Text carries the message.
-	// Mutually exclusive with KindFinish for a given run: a run reports one
-	// outcome, not both.
+	// event (codex's "error"/"turn.failed"/item-level "error") or a failed
+	// "result" envelope (claude's is_error/non-"success" subtype). Text
+	// carries the message. Warning distinguishes severity: false (the
+	// default) means the run ended because of this — mutually exclusive
+	// with KindFinish for a given run, one outcome not both — true means a
+	// non-terminal diagnostic the agent logged while continuing (e.g.
+	// codex's "falling back to default model metadata" notice).
 	KindError
 )
 
@@ -66,6 +69,7 @@ type Event struct {
 	ExitCode *int   // KindToolEnd, when the agent reports a process exit code
 	IsError  bool   // KindToolEnd, when the agent reports failure without a code
 	Stats    Stats  // KindFinish
+	Warning  bool   // KindError: true for a non-terminal diagnostic, false for a run-ending failure
 }
 
 // Decoder converts one line of agent stdout into zero or more events. Content it
@@ -195,6 +199,12 @@ func Render(e Event) string {
 		}
 		return "✓ " + strings.Join(parts, " ")
 	case KindError:
+		if e.Warning {
+			// A degraded-operation notice the agent logged while continuing
+			// the run — "✗" would read as "the task failed", which is not
+			// what happened here.
+			return "⚠ " + e.Text
+		}
 		return "✗ " + e.Text
 	default: // KindRaw, KindText
 		return e.Text
@@ -318,6 +328,7 @@ type codexEnvelope struct {
 		Command          string `json:"command"`
 		AggregatedOutput string `json:"aggregated_output"`
 		ExitCode         *int   `json:"exit_code"`
+		Message          string `json:"message"` // item-level "error" item's text
 	} `json:"item"`
 	Usage struct {
 		InputTokens  int64 `json:"input_tokens"`
@@ -365,6 +376,16 @@ func (codexJSONL) Decode(line []byte) []Event {
 			return []Event{{Kind: KindText, Text: env.Item.Text}}
 		case "reasoning":
 			return []Event{{Kind: KindThinking}}
+		case "error":
+			// An item-level diagnostic, distinct from turn.failed: verified
+			// live against a bogus model name (captured in
+			// testdata/codex-jsonl-error.jsonl) that codex emits this
+			// mid-turn while it keeps going — e.g. "Model metadata ... not
+			// found. Defaulting to fallback metadata; this can degrade
+			// performance and cause issues." The run has not ended, so it
+			// renders as a warning, not the "✗" used for a genuine
+			// run-ending failure.
+			return []Event{{Kind: KindError, Text: env.Item.Message, Warning: true}}
 		default:
 			return nil
 		}
@@ -382,6 +403,11 @@ func (codexJSONL) Decode(line []byte) []Event {
 		// contract it never fails the task on its own.
 		return []Event{{Kind: KindError, Text: env.Message}}
 	case "turn.failed":
+		// Nesting (error.message, not a top-level message like the "error"
+		// case above) verified live against a real capture — a bogus model
+		// name reliably induces it — not just inferred from documentation;
+		// see testdata/codex-jsonl-error.jsonl. Unlike the item-level and
+		// top-level error cases, a failed turn genuinely ends the run.
 		return []Event{{Kind: KindError, Text: env.Error.Message}}
 	default:
 		return nil
