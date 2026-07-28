@@ -442,9 +442,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.connected = msg.Connected
 		switch {
 		case msg.Connected:
-			// fresh attach; a followed task's log is re-followed by the
-			// BindClientMsg handler above, which fires just before this
-			// (both originate from the same PersistLoop reconnect callback).
+			// Nothing to do: a followed task's log is re-followed by the
+			// BindClientMsg handler above. Both messages originate from the
+			// same PersistLoop reconnect, but this one is emitted first —
+			// cli/persist.go calls emit(Connected) synchronously and only
+			// then spawns the goroutine that sends BindClientMsg — so do not
+			// assume the re-follow has already happened here.
 		case msg.Reconnecting:
 			txt := fmt.Sprintf("reconnecting (attempt %d, next try in %s)",
 				msg.Attempt, msg.NextRetry.Truncate(time.Second))
@@ -1405,13 +1408,6 @@ func (a *App) View() string {
 	}
 	return view
 }
-
-// FollowingTaskID returns the task id whose log is being streamed into the
-// log pane, or "" if no task is followed. The reconnect path re-follows via
-// the BindClientMsg handler reading a.logs.TaskID() directly; this exported
-// accessor has no current caller in this repo (kept for external/future use
-// — see the task-8 report for the reviewer's call on this).
-func (a *App) FollowingTaskID() string { return a.logs.TaskID() }
 
 // followTask LEAVEs the previous log subscription (if any), kicks off both a
 // historical fetch (GetTaskLog) and a live subscribe (task.<taskID>.log).

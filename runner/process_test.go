@@ -311,14 +311,13 @@ func TestProcessStdoutVerbatimWhenNoDecoderApplies(t *testing.T) {
 	}
 }
 
-// TestProcessDecodesFinalUnterminatedLine guards the ReadBytes/EOF ordering
-// in scanDecoded: bufio.Reader.ReadBytes('\n') returns the trailing bytes
-// together with a non-nil error when the stream ends without a newline, and
-// the `if len(line) > 0 { ... }` decode step must run before the `if err !=
-// nil { return }` check, or the last event of every real agent run (usually
-// its "result"/finish line) would be silently dropped. This is the decoded
-// counterpart of the unterminated-line case in
-// TestProcessStdoutVerbatimWhenNoDecoderApplies.
+// TestProcessDecodesFinalUnterminatedLine guards the tail flush. os/exec
+// signals nothing at EOF — it simply stops calling Write — so a final line
+// with no trailing newline sits in the writer's buffer until something
+// flushes it explicitly after cmd.Wait returns. Without that flush the last
+// event of every real agent run (usually its "result"/finish line) would be
+// silently dropped. This is the decoded counterpart of the unterminated-line
+// case in TestProcessStdoutVerbatimWhenNoDecoderApplies.
 func TestProcessDecodesFinalUnterminatedLine(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "fake-agent.sh")
 	body := "#!/bin/sh\n" +

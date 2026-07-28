@@ -42,9 +42,9 @@ That covers every task kind, but how a new turn actually *starts* differs.
 An **interactive session** (`session new` / `interactive`) gets a live wake:
 when the runner detects new agentboard messages while such a session is idle,
 it writes a synthetic `<harness:agentboard-wake>` prompt directly into the
-PTY as real keystrokes, which the Ink-based UI submits as a new turn — that
-fires `UserPromptSubmit` and delivers the pending messages just like any
-other turn. A **one-shot task** (`submit`) has no PTY and gets no such wake:
+PTY as real keystrokes, which the agent's terminal UI submits as a new turn —
+that fires `UserPromptSubmit` and delivers the pending messages just like any
+other turn. This works across agent runtimes, not just Claude Code. A **one-shot task** (`submit`) has no PTY and gets no such wake:
 it runs a single turn, so `UserPromptSubmit` fires exactly once, at the
 start. If you're a one-shot task and suspect messages have landed since then,
 call `harness-cli agent inbox` yourself — nothing will push it to you.

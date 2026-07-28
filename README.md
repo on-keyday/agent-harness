@@ -144,9 +144,12 @@ bin/agent-runner --server-cid 'ws:HOSTNAME:8539-*' \
                  --max-tasks 4
 # Non-Claude agents can be wired with argv templates, for example:
 #   --agent-bin codex
-#   --agent-oneshot-argv 'exec {args} {prompt}'
-#   --agent-resume-oneshot-argv 'exec resume --last {args} {prompt}'
+#   --agent-oneshot-argv 'exec --json {args} {prompt}'
+#   --agent-resume-oneshot-argv 'exec resume --last --json {args} {prompt}'
 #   --agent-resume-interactive-argv 'resume --last {args}'
+#   --agent-log-format codex-jsonl
+# (--json + --agent-log-format make the runner render codex's event stream as
+#  progress lines in the task log; omit both to get its raw output verbatim.)
 
 # 3. Submit a task. --repo is required (or set HARNESS_REPO_PATH); it must
 # match a runner's --roots entry verbatim (no client-side normalisation).

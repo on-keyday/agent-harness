@@ -48,10 +48,13 @@ type Stats struct {
 // codex's command_execution carries a real process exit code, claude's
 // tool_result carries only a boolean for tools that never ran a process.
 type Event struct {
-	Kind     Kind
-	Text     string // KindRaw, KindText, KindThinking, KindSessionStart (id)
-	Tool     string // KindToolStart, KindToolEnd
-	Args     string // KindToolStart: compact JSON of the tool input
+	Kind Kind
+	Text string // KindRaw, KindText, KindThinking, KindSessionStart (id)
+	Tool string // KindToolStart, KindToolEnd
+	Args string // KindToolStart: the tool's input, rendered for a log line —
+	//                compact JSON where the agent reports structured input
+	//                (claude's tool_use), a plain command string where it
+	//                reports one (codex's command_execution)
 	Result   string // KindToolEnd
 	ExitCode *int   // KindToolEnd, when the agent reports a process exit code
 	IsError  bool   // KindToolEnd, when the agent reports failure without a code
@@ -202,13 +205,12 @@ type claudeEnvelope struct {
 	// assistant and user both carry a message with content blocks.
 	Message struct {
 		Content []struct {
-			Type     string          `json:"type"`
-			Text     string          `json:"text"`
-			Thinking *string         `json:"thinking"`
-			Name     string          `json:"name"`
-			Input    json.RawMessage `json:"input"`
-			Content  json.RawMessage `json:"content"`
-			IsError  bool            `json:"is_error"`
+			Type    string          `json:"type"`
+			Text    string          `json:"text"`
+			Name    string          `json:"name"`
+			Input   json.RawMessage `json:"input"`
+			Content json.RawMessage `json:"content"`
+			IsError bool            `json:"is_error"`
 		} `json:"content"`
 	} `json:"message"`
 
@@ -320,9 +322,11 @@ func (codexJSONL) Decode(line []byte) []Event {
 	case "item.completed":
 		switch env.Item.Type {
 		case "command_execution":
+			// Tool is deliberately not set: Render's KindToolEnd branch does
+			// not print it, and the preceding KindToolStart line already
+			// named the tool.
 			return []Event{{
 				Kind:     KindToolEnd,
-				Tool:     env.Item.Type,
 				Result:   strings.TrimRight(env.Item.AggregatedOutput, "\r\n"),
 				ExitCode: env.Item.ExitCode,
 			}}

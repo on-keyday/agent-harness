@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -125,7 +125,8 @@ Arguments: $ARGUMENTS
          [--claude-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
-         [--agent-resume-interactive-argv "<...>"]
+         [--agent-resume-interactive-argv "<...>"] \
+         [--agent-log-format "<claude-stream-json|codex-jsonl>"]
      ```
 
    - **`persist` in `$ARGUMENTS`** — runner is also registered with the OS login-autostart (Linux systemd user unit / Windows Task Scheduler) so it comes back after reboot / sign-out. Build instead:
@@ -142,7 +143,8 @@ Arguments: $ARGUMENTS
          [--claude-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
-         [--agent-resume-interactive-argv "<...>"]
+         [--agent-resume-interactive-argv "<...>"] \
+         [--agent-log-format "<claude-stream-json|codex-jsonl>"]
      ```
 
      `runner-autostart.py register` writes the autostart entry, then starts the slot immediately by default (same as `--now` semantics), so a single invocation registers + brings it up.
