@@ -446,14 +446,20 @@ func TestDirectionGate(t *testing.T) {
 		assertPermissionDenied(t, conn, 17, protocol.Capability_ForwardLocal)
 	})
 
-	// Case 8: kill a Local forward without ForwardLocal → denied (RequiredCap=ForwardLocal).
-	// KillPortForward's request carries only a forward_id, not a direction, so the
-	// gate cannot live in requiredCap like every other kind's: the dispatch case
-	// looks the id up in the registry FIRST to learn its direction, then gates.
-	// That ordering is the point under test here, not just the resulting status.
+	// Case 8: kill a Local forward the caller CAN see (it is the caller's own
+	// task), without ForwardLocal → denied (RequiredCap=ForwardLocal).
+	// KillPortForward's request carries only a forward_id, not a direction, so
+	// the gate cannot live in requiredCap like every other kind's: the dispatch
+	// case looks the id up in the registry FIRST to learn its direction, resolves
+	// visibility, and only THEN gates on the direction cap — visibility must be
+	// checked before the capability, or a missing-cap denial for an out-of-subtree
+	// id becomes an enumeration oracle (see case 11). This case pins the
+	// "visible but under-capped" half of that split.
 	t.Run("kill_local_no_cap_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
-		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local})
+		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownHex := hex.EncodeToString(ownTID.Id[:])
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
 			Kind:      protocol.TaskControlKind_KillPortForward,
 			RequestId: 18,
@@ -463,10 +469,13 @@ func TestDirectionGate(t *testing.T) {
 		assertPermissionDenied(t, conn, 18, protocol.Capability_ForwardLocal)
 	})
 
-	// Case 9: kill a Remote forward with only ForwardLocal → denied (RequiredCap=ForwardRemote).
+	// Case 9: kill a Remote forward the caller CAN see, with only ForwardLocal →
+	// denied (RequiredCap=ForwardRemote).
 	t.Run("kill_remote_only_local_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal) // has ForwardLocal but not ForwardRemote
-		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Remote})
+		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownHex := hex.EncodeToString(ownTID.Id[:])
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Remote, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
 			Kind:      protocol.TaskControlKind_KillPortForward,
 			RequestId: 19,
@@ -476,15 +485,16 @@ func TestDirectionGate(t *testing.T) {
 		assertPermissionDenied(t, conn, 19, protocol.Capability_ForwardRemote)
 	})
 
-	// Case 10: kill a Local forward WITH ForwardLocal → gate passes (not denied).
-	// killPortForward itself may still answer no_such_forward here (the fake
-	// forward's task is not in this caller's visible subtree) — that is a
-	// separate, already-covered concern (TestKillPortForward_UnknownIDAndDoubleKill).
-	// This case is only about the capability gate letting a properly-capped
-	// caller through instead of masking a bug as a denial.
+	// Case 10: kill a Local forward the caller can see, WITH ForwardLocal →
+	// gate passes AND the underlying kill actually succeeds (Ok), since the
+	// forward is genuinely visible and correctly capped. Checking the final
+	// status (not just "not denied") proves this reaches the real success path
+	// rather than passing because some earlier branch silently swallowed it.
 	t.Run("kill_local_with_cap_not_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal)
-		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local})
+		ownTID := h.lookupPrincipal(conn.ConnectionID().String())
+		ownHex := hex.EncodeToString(ownTID.Id[:])
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: ownHex})
 		req := &protocol.TaskControlRequest{
 			Kind:      protocol.TaskControlKind_KillPortForward,
 			RequestId: 20,
@@ -492,6 +502,38 @@ func TestDirectionGate(t *testing.T) {
 		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertNotPermissionDenied(t, conn)
+		resp := lastTaskControlResponse(t, conn)
+		kr := resp.KillPortForward()
+		if kr == nil || kr.Status != protocol.KillPortForwardStatus_Ok {
+			t.Fatalf("status = %+v, want ok", kr)
+		}
+	})
+
+	// Case 11: kill a forward OUTSIDE the caller's subtree, with NEITHER
+	// direction cap → no_such_forward, NOT PermissionDenied. This is the
+	// enumeration-oracle guard itself: forward ids come from a dense next++
+	// counter, so a PermissionDenied carrying the direction bit would let a
+	// confined caller tell "exists, not mine" apart from "doesn't exist" and
+	// learn which ids are live. Visibility must therefore be resolved before
+	// the capability check ever runs.
+	t.Run("kill_invisible_forward_no_such_forward_not_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_None) // no caps at all
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: "deadbeefdeadbeefdeadbeefdeadbeef"})
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_KillPortForward,
+			RequestId: 21,
+		}
+		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertNotPermissionDenied(t, conn)
+		resp := lastTaskControlResponse(t, conn)
+		if resp.Kind != protocol.TaskControlKind_KillPortForward {
+			t.Fatalf("expected KillPortForward response, got %v", resp.Kind)
+		}
+		kr := resp.KillPortForward()
+		if kr == nil || kr.Status != protocol.KillPortForwardStatus_NoSuchForward {
+			t.Fatalf("status = %+v, want no_such_forward", kr)
+		}
 	})
 }
 

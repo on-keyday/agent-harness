@@ -339,6 +339,110 @@ func TestKillPortForward_UnknownIDAndDoubleKill(t *testing.T) {
 	}
 }
 
+// addRunningTaskWithCreator is addRunningTask plus a CreatorTaskID, so
+// subtree-visibility tests can build a caller -> child relationship (the BFS
+// in visibleToCaller walks CreatorTaskID edges).
+func addRunningTaskWithCreator(t *testing.T, h *TaskHandler, first byte, runnerID string, creator protocol.TaskID) string {
+	t.Helper()
+	var raw [16]byte
+	raw[0] = first
+	idHex := hex.EncodeToString(raw[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[idHex] = &TaskEntry{ID: idHex, Status: protocol.TaskStatus_Running, AssignedTo: runnerID, CreatorTaskID: creator}
+	h.Tasks.order = append(h.Tasks.order, idHex)
+	h.Tasks.mu.Unlock()
+	return idHex
+}
+
+// TestVisiblePortForwards_SubtreeGatingAndTaskFilter covers the confined-caller
+// branch of visiblePortForwards, which every other test in this file skips by
+// passing connID="" (operator, all=true). That gap is exactly what let
+// Finding 1 (kill gate checking the capability before visibility) through
+// review undetected. A non-operator, non-InfoGlobal caller must see forwards
+// for its own task and its descendants, must NOT see a forward belonging to
+// an unrelated task, and the --task filter must narrow further within that
+// visible set (not replace it — filtering to a task outside the subtree must
+// not resurrect it).
+func TestVisiblePortForwards_SubtreeGatingAndTaskFilter(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	ownHex := addRunningTask(t, h, 0x51, "runner-1") // the caller's own task
+	var ownTID protocol.TaskID
+	copyHexToID(t, ownHex, &ownTID)
+	childHex := addRunningTaskWithCreator(t, h, 0x52, "runner-1", ownTID) // descendant
+	otherHex := addRunningTask(t, h, 0x53, "runner-1")                    // unrelated task
+
+	const callerCID = "confined-conn-subtree"
+	h.principals = map[string]protocol.TaskID{callerCID: ownTID}
+
+	conn := &fakeConn{nextStreamID: 400}
+	mk := func(taskHex string, bindPort uint16) *portForward {
+		return &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
+			control: newRecordingBidiStream(trsf.StreamID(bindPort)), clientCxn: conn,
+			bindAddr: "127.0.0.1", bindPort: bindPort, targetHost: "db", targetPort: 5432}
+	}
+	h.pforwards().add(mk(ownHex, 9001))
+	childID := h.pforwards().add(mk(childHex, 9002))
+	h.pforwards().add(mk(otherHex, 9003))
+
+	// No filter: own + child visible; the unrelated task's forward is filtered out.
+	got := h.visiblePortForwards(callerCID, protocol.TaskID{})
+	if len(got) != 2 {
+		t.Fatalf("confined caller: expected 2 visible forwards (own+child), got %d: %+v", len(got), got)
+	}
+	for _, fi := range got {
+		gotHex := hex.EncodeToString(fi.TaskId.Id[:])
+		if gotHex != ownHex && gotHex != childHex {
+			t.Errorf("confined caller saw forward for out-of-subtree task %s", gotHex)
+		}
+	}
+
+	// --task filter narrows to just the child, even though both own and child
+	// are independently visible without it.
+	var filter protocol.TaskID
+	copyHexToID(t, childHex, &filter)
+	filtered := h.visiblePortForwards(callerCID, filter)
+	if len(filtered) != 1 || filtered[0].ForwardId != childID {
+		t.Fatalf("--task filter: expected only forward %d, got %+v", childID, filtered)
+	}
+
+	// --task filter to the out-of-subtree task must not resurrect it: still invisible.
+	var otherFilter protocol.TaskID
+	copyHexToID(t, otherHex, &otherFilter)
+	if got := h.visiblePortForwards(callerCID, otherFilter); len(got) != 0 {
+		t.Fatalf("--task filter to an out-of-subtree task should stay empty, got %+v", got)
+	}
+}
+
+// TestKillPortForward_InvisibleForwardNoSuchForward proves the enumeration-
+// oracle fix at the killPortForward level (as opposed to
+// TestDirectionGate/kill_invisible_forward_no_such_forward_not_denied in
+// capabilities_test.go, which proves it at the Handle() dispatch level): a
+// forward that exists but belongs to a task outside the caller's subtree
+// answers no_such_forward, identical to an unknown id, and — the point of
+// asserting on the registry afterward — is NOT removed. A caller who cannot
+// see a forward must not be able to kill it via a lucky guess.
+func TestKillPortForward_InvisibleForwardNoSuchForward(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	ownHex := addRunningTask(t, h, 0x61, "runner-1")
+	otherHex := addRunningTask(t, h, 0x62, "runner-1")
+	var ownTID protocol.TaskID
+	copyHexToID(t, ownHex, &ownTID)
+
+	const callerCID = "confined-conn-kill"
+	h.principals = map[string]protocol.TaskID{callerCID: ownTID}
+
+	pf := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: otherHex,
+		control: newRecordingBidiStream(10), clientCxn: &fakeConn{nextStreamID: 700}}
+	id := h.pforwards().add(pf)
+
+	if st := h.killPortForward(callerCID, id); st != protocol.KillPortForwardStatus_NoSuchForward {
+		t.Fatalf("invisible forward: status = %v, want no_such_forward", st)
+	}
+	if _, ok := h.pforwards().get(id); !ok {
+		t.Fatal("invisible forward must NOT be removed by a caller who cannot see it")
+	}
+}
+
 // TestPortForwardControlEOFDeregisters covers the stray-terminal case: the
 // client process dies, its control stream EOFs, and the registration goes away
 // with no RPC involved.
