@@ -507,8 +507,13 @@ func main() {
 		fctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 		defer cancel()
 		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
-		// Remote (-R) forwards run in the background; local (-L) forwards — or a
-		// bare wait when only -R is given — hold the foreground until Ctrl-C.
+		// Remote (-R) forwards run in the background. RunForward now returns as
+		// soon as every -L forward it started has stopped (killed remotely, not
+		// just on Ctrl-C) — so on a mixed invocation, returning from the -L call
+		// must not end the process while a -R forward is still live: that would
+		// silently kill a forward nobody asked to stop. Hold the foreground until
+		// Ctrl-C (fctx.Done) whenever -R forwards are running, regardless of
+		// whether/when the -L side already returned.
 		if len(parsedR) > 0 {
 			go func() {
 				if err := cli.RunRemoteForward(fctx, c, taskID, parsedR, logf); err != nil {
@@ -521,7 +526,8 @@ func main() {
 			if err := cli.RunForward(fctx, c, taskID, parsed, logf); err != nil {
 				die(err)
 			}
-		} else {
+		}
+		if len(parsedR) > 0 || len(parsed) == 0 {
 			<-fctx.Done()
 		}
 

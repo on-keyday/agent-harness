@@ -699,16 +699,17 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 	defer observer.Close()
 
 	var fs []protocol.PortForwardInfo
+	var lastErr error
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		fs, _ = observer.PortForwardListWith(ctx, "")
+		fs, lastErr = observer.PortForwardListWith(ctx, "")
 		if len(fs) == 1 {
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	if len(fs) != 1 {
-		t.Fatalf("observer saw %d forwards, want 1", len(fs))
+		t.Fatalf("observer saw %d forwards, want 1 (last list error: %v)", len(fs), lastErr)
 	}
 	if fs[0].Direction != protocol.PortForwardDirection_Local {
 		t.Fatalf("direction = %v, want Local", fs[0].Direction)
@@ -731,7 +732,7 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 
 	deadline = time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if fs, _ = observer.PortForwardListWith(ctx, ""); len(fs) == 0 {
+		if fs, lastErr = observer.PortForwardListWith(ctx, ""); len(fs) == 0 {
 			cancel()
 			select {
 			case <-serverDone:
@@ -747,5 +748,534 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("registration survived the kill: %+v", fs)
+	t.Fatalf("registration survived the kill: %+v (last list error: %v)", fs, lastErr)
+}
+
+// TestLocalForwardKillDropsConnection covers the acceptLoop per-connection
+// watcher added alongside registration (cli/port_forward.go's acceptLoop,
+// stop/ctx.Done goroutine): killing a -L forward must drop connections
+// already spliced through it, not just stop accepting new ones. Establishes a
+// real byte round-trip through the forward first (so the splice is
+// confirmed live), then kills it from a second client and asserts the
+// existing connection's Read unblocks with an error/EOF promptly.
+func TestLocalForwardKillDropsConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18554"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			Profiles:     singleAgentProfile(fakeClaude),
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-drop-test")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+
+	// Echo server: the remote target the forward relays to.
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("echo listen: %v", err)
+	}
+	defer echoLn.Close()
+	echoPort := echoLn.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				io.Copy(conn, conn) //nolint:errcheck
+			}()
+		}
+	}()
+
+	fwdClient, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial forward client: %v", err)
+	}
+	defer fwdClient.Close()
+
+	fwdCtx, cancelFwd := context.WithCancel(ctx)
+	defer cancelFwd()
+	done := make(chan error, 1)
+	go func() {
+		done <- cli.RunForward(fwdCtx, fwdClient, taskID,
+			[]cli.ForwardSpec{{BindAddr: "127.0.0.1", LocalPort: 0, RemoteHost: "127.0.0.1", RemotePort: echoPort}},
+			func(s string) { t.Logf("forward: %s", s) })
+	}()
+
+	observer, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial observer: %v", err)
+	}
+	defer observer.Close()
+
+	var fs []protocol.PortForwardInfo
+	var lastErr error
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		if len(fs) == 1 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("observer saw %d forwards, want 1 (last list error: %v)", len(fs), lastErr)
+	}
+	localAddr := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(fs[0].BindPort)))
+
+	conn, err := net.DialTimeout("tcp", localAddr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial forward: %v", err)
+	}
+	defer conn.Close()
+
+	// Confirm the splice is actually live before killing it.
+	msg := []byte("ping\n")
+	if _, err := conn.Write(msg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, len(msg))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("readfull (pre-kill roundtrip): %v", err)
+	}
+	if string(buf) != string(msg) {
+		t.Fatalf("echo mismatch pre-kill: got %q want %q", buf, msg)
+	}
+
+	if err := observer.KillPortForwardWith(ctx, fs[0].ForwardId); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+
+	// The already-established connection must be dropped, not just the
+	// listener stopped from accepting new ones.
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	n, rerr := conn.Read(buf)
+	if rerr == nil {
+		t.Fatalf("expected the connection to close after kill, got %d more bytes with no error", n)
+	}
+
+	select {
+	case rfErr := <-done:
+		if rfErr != nil {
+			t.Fatalf("RunForward returned %v, want nil", rfErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunForward did not return after the forward was killed")
+	}
+
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Log("server did not exit within 2s of cancel")
+	}
+	select {
+	case <-runnerDone:
+	case <-time.After(2 * time.Second):
+		t.Log("runner did not exit within 2s of cancel")
+	}
+}
+
+// TestLocalForwardMultiSpecIndependentKill covers the multi-spec path that
+// Finding 1 (RunForward abandoning already-started specs on a mid-loop
+// failure) lives on: two -L specs in one RunForward call register two
+// independent forwards. Killing one must NOT affect the other (still relays
+// bytes) and must NOT make RunForward return early (it returns only once
+// every spec has stopped).
+func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18555"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			Profiles:     singleAgentProfile(fakeClaude),
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-multi-test")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+
+	echoLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("echo listen: %v", err)
+	}
+	defer echoLn.Close()
+	echoPort := echoLn.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, err := echoLn.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				io.Copy(conn, conn) //nolint:errcheck
+			}()
+		}
+	}()
+
+	// Two fixed, independently-reserved local ports so list entries can be
+	// matched back to the spec that produced them.
+	reserve := func() int {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("reserve port: %v", err)
+		}
+		p := ln.Addr().(*net.TCPAddr).Port
+		ln.Close()
+		return p
+	}
+	portA := reserve()
+	portB := reserve()
+
+	fwdClient, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial forward client: %v", err)
+	}
+	defer fwdClient.Close()
+
+	fwdCtx, cancelFwd := context.WithCancel(ctx)
+	defer cancelFwd()
+	done := make(chan error, 1)
+	go func() {
+		done <- cli.RunForward(fwdCtx, fwdClient, taskID, []cli.ForwardSpec{
+			{BindAddr: "127.0.0.1", LocalPort: portA, RemoteHost: "127.0.0.1", RemotePort: echoPort},
+			{BindAddr: "127.0.0.1", LocalPort: portB, RemoteHost: "127.0.0.1", RemotePort: echoPort},
+		}, func(s string) { t.Logf("forward: %s", s) })
+	}()
+
+	observer, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial observer: %v", err)
+	}
+	defer observer.Close()
+
+	var fs []protocol.PortForwardInfo
+	var lastErr error
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		if len(fs) == 2 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(fs) != 2 {
+		t.Fatalf("observer saw %d forwards, want 2 (last list error: %v)", len(fs), lastErr)
+	}
+
+	var idA, idB uint64
+	for _, fi := range fs {
+		switch int(fi.BindPort) {
+		case portA:
+			idA = fi.ForwardId
+		case portB:
+			idB = fi.ForwardId
+		default:
+			t.Fatalf("unexpected bind port %d in %+v", fi.BindPort, fs)
+		}
+	}
+	if idA == 0 || idB == 0 {
+		t.Fatalf("could not match both specs to registrations: %+v", fs)
+	}
+
+	// Kill A only.
+	if err := observer.KillPortForwardWith(ctx, idA); err != nil {
+		t.Fatalf("kill A: %v", err)
+	}
+
+	// RunForward must NOT have returned yet: B is still running.
+	select {
+	case rfErr := <-done:
+		t.Fatalf("RunForward returned early (err=%v) after killing only one of two specs", rfErr)
+	case <-time.After(1 * time.Second):
+	}
+
+	// The list must now show only B.
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		if len(fs) == 1 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(fs) != 1 || fs[0].ForwardId != idB {
+		t.Fatalf("after killing A, want only B (id %d) listed, got %+v (last list error: %v)", idB, fs, lastErr)
+	}
+
+	// B must still actually forward bytes.
+	addrB := net.JoinHostPort("127.0.0.1", strconv.Itoa(portB))
+	conn, err := net.DialTimeout("tcp", addrB, 2*time.Second)
+	if err != nil {
+		t.Fatalf("dial B after killing A: %v", err)
+	}
+	defer conn.Close()
+	msg := []byte("still-here\n")
+	if _, err := conn.Write(msg); err != nil {
+		t.Fatalf("write B: %v", err)
+	}
+	buf := make([]byte, len(msg))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("readfull B: %v", err)
+	}
+	if string(buf) != string(msg) {
+		t.Fatalf("echo mismatch on B: got %q want %q", buf, msg)
+	}
+	conn.Close()
+
+	// Now kill B too and confirm RunForward finally returns.
+	if err := observer.KillPortForwardWith(ctx, idB); err != nil {
+		t.Fatalf("kill B: %v", err)
+	}
+	select {
+	case rfErr := <-done:
+		if rfErr != nil {
+			t.Fatalf("RunForward returned %v, want nil", rfErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunForward did not return after both specs were killed")
+	}
+
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Log("server did not exit within 2s of cancel")
+	}
+	select {
+	case <-runnerDone:
+	case <-time.After(2 * time.Second):
+		t.Log("runner did not exit within 2s of cancel")
+	}
+}
+
+// TestLocalForwardPartialFailureDeregistersStartedSpecs is the regression
+// test for Finding 1: a mid-loop failure in RunForward (net.Listen or
+// RegisterPortForward, both funnel through the same abort() path in
+// cli/port_forward.go) must deregister every spec that had already succeeded,
+// promptly — not leave it listed until the client's peer connection eventually
+// times out. The second spec is forced to fail net.Listen deterministically
+// (both specs request the same fixed local port, so the second's bind
+// collides with the first's already-open listener); Local registration has no
+// server-side failure mode reachable without racing task lifecycle, but both
+// error paths in RunForward call the identical abort(), so exercising either
+// proves the fix. fwdClient is deliberately kept open (not closed) for the
+// whole assertion window, so a pass cannot be attributed to the old
+// "cleaned up only when the client disconnects" behavior.
+func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18556"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			Profiles:     singleAgentProfile(fakeClaude),
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-partial-fail-test")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+
+	dupLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve dup port: %v", err)
+	}
+	dupPort := dupLn.Addr().(*net.TCPAddr).Port
+	dupLn.Close()
+
+	fwdClient, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial forward client: %v", err)
+	}
+	defer fwdClient.Close()
+
+	specs := []cli.ForwardSpec{
+		// Spec 0 binds dupPort and registers successfully.
+		{BindAddr: "127.0.0.1", LocalPort: dupPort, RemoteHost: "127.0.0.1", RemotePort: 9},
+		// Spec 1 requests the SAME port: its net.Listen deterministically fails
+		// with "address already in use" once spec 0 already holds it, since
+		// RunForward's spec loop runs sequentially.
+		{BindAddr: "127.0.0.1", LocalPort: dupPort, RemoteHost: "127.0.0.1", RemotePort: 9},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- cli.RunForward(ctx, fwdClient, taskID, specs, func(s string) { t.Logf("forward: %s", s) })
+	}()
+
+	var rfErr error
+	select {
+	case rfErr = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunForward did not return after a mid-loop failure (leak reproduced: it hung instead of aborting)")
+	}
+	if rfErr == nil {
+		t.Fatal("RunForward returned nil, want an error from the colliding second spec")
+	}
+	t.Logf("RunForward returned expected error: %v", rfErr)
+
+	observer, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial observer: %v", err)
+	}
+	defer observer.Close()
+
+	// This is the regression assertion: spec 0's registration must disappear
+	// promptly. Bound to 3s, well under the ~15s peer-connection timeout that
+	// used to be the only thing that ever cleaned this up — and fwdClient is
+	// still open throughout, so that old fallback path cannot be what passes
+	// this assertion.
+	var fs []protocol.PortForwardInfo
+	var lastErr error
+	promptDeadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(promptDeadline) {
+		fs, lastErr = observer.PortForwardListWith(ctx, "")
+		if len(fs) == 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(fs) != 0 {
+		t.Fatalf("spec 0's registration survived the partial failure (still connected, %.0fs later): %+v (last list error: %v)",
+			3.0, fs, lastErr)
+	}
+
+	cancel()
+	select {
+	case <-serverDone:
+	case <-time.After(2 * time.Second):
+		t.Log("server did not exit within 2s of cancel")
+	}
+	select {
+	case <-runnerDone:
+	case <-time.After(2 * time.Second):
+		t.Log("runner did not exit within 2s of cancel")
+	}
 }

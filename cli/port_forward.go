@@ -172,11 +172,27 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 			_ = l.Close()
 		}
 	}
+	// One context for the whole call, cancelled on every exit path including the
+	// error returns below. Without this, a mid-loop failure would abandon the
+	// specs already started: their listeners close but their control-stream
+	// readers stay parked and their server-side registrations stay live until the
+	// peer connection eventually errors out — a forward the list shows that is
+	// not actually running. Control-stream EOF is what deregisters a forward
+	// server-side, so every exit path must actually close the streams.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
 	var wg sync.WaitGroup
+	// abort cancels every started spec, waits for its goroutines, and closes the
+	// listeners. Use it on every error return, never a bare closeAll().
+	abort := func() {
+		runCancel()
+		wg.Wait()
+		closeAll()
+	}
 	for _, sp := range specs {
 		ln, err := net.Listen("tcp", net.JoinHostPort(sp.BindAddr, strconv.Itoa(sp.LocalPort)))
 		if err != nil {
-			closeAll()
+			abort()
 			return fmt.Errorf("forward: listen %s:%d: %w", sp.BindAddr, sp.LocalPort, err)
 		}
 		lns = append(lns, ln)
@@ -187,10 +203,10 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		if rerr != nil {
 			// A forward the server does not know about cannot be listed or
 			// killed, which is the whole point of registering — fail loudly.
-			closeAll()
+			abort()
 			return fmt.Errorf("forward: register %s:%d: %w", sp.BindAddr, bound, rerr)
 		}
-		fwdCtx, cancel := context.WithCancel(ctx)
+		fwdCtx, cancel := context.WithCancel(runCtx)
 		logf(fmt.Sprintf("forwarding %s:%d -> %s:%d (task %s, fwd %d)",
 			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, taskIDHex[:min(12, len(taskIDHex))], fid))
 		go acceptLoop(fwdCtx, c, taskIDHex, sp, ln, logf)
@@ -198,7 +214,6 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		go func(ctrl trsf.BidirectionalStream) {
 			defer wg.Done()
 			defer cancel()
-			defer ctrl.CloseBoth()
 			c.serveLocalForwardControl(fwdCtx, ctrl, logf)
 		}(ctrl)
 	}
@@ -210,8 +225,12 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 // serveLocalForwardControl reads the forward's control stream. The client never
 // writes on it; it returns on a closed event (deliberate stop) or on EOF/error
 // (the server went away). Returning cancels the forward's context, which closes
-// the listener and every connection spliced through it.
+// the listener and every connection spliced through it. Closes ctrl itself
+// (matching ServeRemoteForwardControl) — a Local registration is reaped
+// server-side only on control-stream EOF, so a caller that forgot to close it
+// would leave a permanent ghost registration.
 func (c *Client) serveLocalForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string)) {
+	defer ctrl.CloseBoth()
 	var buf []byte
 	for {
 		data, eof, err := ctrl.ReadDirectContext(ctx, 64*1024)
