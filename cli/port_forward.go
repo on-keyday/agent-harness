@@ -162,7 +162,15 @@ func spliceConnStream(conn net.Conn, st trsf.BidirectionalStream) {
 // stopped (killed remotely, or ctx cancelled), then closes all listeners.
 // Per-connection errors are logged and isolated; the listener and sibling
 // connections are unaffected.
-func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []ForwardSpec, logf func(string)) error {
+//
+// onRegistered, when non-nil, is called synchronously right after each spec's
+// RegisterPortForward succeeds, with the server-assigned forward id. Callers
+// that need to name their own forward later — e.g. the TUI's tasks-pane P/B
+// stop keys, which must route through KillPortForwardWith like every other
+// stop path — have no other way to learn the id: RunForward blocks for the
+// whole lifetime of the forward(s) and only reports it via this callback, not
+// a return value.
+func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []ForwardSpec, logf func(string), onRegistered func(sp ForwardSpec, id uint64)) error {
 	if logf == nil {
 		logf = func(s string) { slog.Info(s) }
 	}
@@ -205,6 +213,9 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 			// killed, which is the whole point of registering — fail loudly.
 			abort()
 			return fmt.Errorf("forward: register %s:%d: %w", sp.BindAddr, bound, rerr)
+		}
+		if onRegistered != nil {
+			onRegistered(sp, fid)
 		}
 		fwdCtx, cancel := context.WithCancel(runCtx)
 		logf(fmt.Sprintf("forwarding %s:%d -> %s:%d (task %s, fwd %d)",

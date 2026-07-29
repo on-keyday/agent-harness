@@ -338,6 +338,28 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.connsModal.ApplySnapshot(msg.Conns)
 		return a, nil
 
+	case ForwardsSnapshotMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(WarnStyle.Render("forwards snapshot: " + msg.Err.Error()))
+			return a, nil
+		}
+		a.forwardsModal.ApplySnapshot(msg.Forwards)
+		for _, line := range cli.PortForwardInfoLines(msg.Forwards) {
+			a.cmdresult.Append(line)
+		}
+		return a, nil
+
+	case ForwardKillResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("forward kill %d: %v", msg.ID, msg.Err)))
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("forward %d killed", msg.ID)))
+		if a.forwardsModal.IsOpen() {
+			return a, DoListForwards(a.client)
+		}
+		return a, nil
+
 	case ConnStatusMsg:
 		a.connsModal.ApplyEvent(msg.Event)
 		return a, nil
@@ -675,24 +697,29 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case PortForwardStartedMsg:
-		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel}
+		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel, ForwardID: msg.ForwardID}
 		a.cmdresult.Append(OKStyle.Render("forward started: ") + pfShortID(msg.TaskID) + "  " + msg.Direction.flag() + " " + msg.Spec)
-		if a.forwardsModal.IsOpen() {
-			a.forwardsModal.SetSessions(sortedForwards(a.activeForwards))
+		return a, nil
+
+	case PortForwardRegisteredMsg:
+		// Backfills the server-assigned id onto a local (-L) forward once its
+		// RegisterPortForward call completes (see PortForwardRegisteredMsg doc
+		// in tui/portforward.go) — remote (-R) forwards already carry it from
+		// PortForwardStartedMsg above. A miss here (already stopped/removed
+		// before registration was reported) is a harmless no-op.
+		if s, ok := a.activeForwards[msg.ID]; ok {
+			s.ForwardID = msg.ForwardID
 		}
 		return a, nil
 
 	case PortForwardStoppedMsg:
 		// The forward goroutine exited (stopped, or never started on bind
 		// failure). Drop it so it no longer shows in the stop picker. If it was
-		// already removed (e.g. the user cancelled it via the picker), this is a
+		// already removed (e.g. the user killed it via the picker), this is a
 		// no-op and we skip the duplicate log.
 		if _, ok := a.activeForwards[msg.ID]; ok {
 			delete(a.activeForwards, msg.ID)
 			a.cmdresult.Append("forward stopped: " + pfShortID(msg.TaskID))
-		}
-		if a.forwardsModal.IsOpen() {
-			a.forwardsModal.SetSessions(sortedForwards(a.activeForwards))
 		}
 		return a, nil
 
@@ -731,11 +758,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connsModal, cmd = a.connsModal.Update(msg)
 			return a, cmd
 		}
-		// Forwards list modal: Esc closes; arrow keys scroll the table; all
-		// other keys are swallowed so they don't leak through to the panels.
+		// Forwards list modal: Esc closes; `k` kills the selected row via the
+		// server RPC (DoKillForward — works on any visible forward, not just
+		// this TUI's own); arrow keys scroll the table; all other keys are
+		// swallowed so they don't leak through to the panels.
 		if a.forwardsModal.IsOpen() {
 			if msg.Type == tea.KeyEsc {
 				a.forwardsModal.Close()
+				return a, nil
+			}
+			if msg.String() == "k" {
+				if id, ok := a.forwardsModal.SelectedID(); ok {
+					return a, DoKillForward(a.client, id)
+				}
 				return a, nil
 			}
 			var cmd tea.Cmd
@@ -878,10 +913,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			if sess := a.forwardPicker.Pick(msg.String()); sess != nil {
-				sess.Cancel()
-				delete(a.activeForwards, sess.ID)
 				a.forwardPicker.Close()
-				a.cmdresult.Append(OKStyle.Render("forward cancelled: ") + pfShortID(sess.TaskID) + "  " + sess.Direction.flag() + " " + sess.Spec)
+				return a, a.killLocalForward(sess)
 			}
 			return a, nil
 		}
@@ -952,14 +985,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connsModal.SetSize(a.width, a.height)
 			return a, DoConnSnapshot(a.client)
 		}
-		// `f` opens the active port-forward list: a read-only full-screen
-		// overlay of every forward this TUI currently holds (App.activeForwards).
-		// Esc closes. Stopping stays on the tasks pane's P/B keys.
+		// `f` opens the full-screen port-forward list: every forward visible to
+		// this operator on the server (DoListForwards / ForwardsSnapshotMsg),
+		// not just ones this TUI process started. Esc closes; `k` kills the
+		// selected row (see the forwardsModal.IsOpen() key block above). The
+		// tasks pane's P/B keys remain a shortcut for stopping this TUI's own
+		// forwards, now routed through the same DoKillForward RPC.
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "f" {
-			a.forwardsModal.SetSessions(sortedForwards(a.activeForwards))
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("forwards: not connected"))
+				return a, nil
+			}
 			a.forwardsModal.SetSize(a.width, a.height)
 			a.forwardsModal.Open()
-			return a, nil
+			return a, DoListForwards(a.client)
 		}
 		// `g` opens the live session viewer grid: a full-screen overlay
 		// tiling read-only PaneStreamers for the live interactive sessions,
@@ -1145,7 +1184,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		// `P` / `B` stop a local / remote forward for the selected task. With more
-		// than one active, a digit picker is shown; with exactly one, cancel now.
+		// than one active, a digit picker is shown; with exactly one, kill now.
+		// Both route through DoKillForward (killLocalForward) — the same RPC
+		// the forwards modal's `k` key and `forward kill` use, so there is
+		// exactly one way to stop a forward.
 		if a.focus == focusTasks && (msg.String() == "P" || msg.String() == "B") {
 			taskID := a.tasks.SelectedID()
 			if taskID == "" {
@@ -1161,9 +1203,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case 0:
 				a.cmdresult.Append(WarnStyle.Render("forward: no active " + dir.flag() + " forward for selected task"))
 			case 1:
-				sel[0].Cancel()
-				delete(a.activeForwards, sel[0].ID)
-				a.cmdresult.Append(OKStyle.Render("forward cancelled: ") + pfShortID(taskID) + "  " + dir.flag() + " " + sel[0].Spec)
+				return a, a.killLocalForward(sel[0])
 			default:
 				a.forwardPicker.Open(dir, sel)
 			}
@@ -1359,7 +1399,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards (k kill) · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -1499,6 +1539,25 @@ func (a *App) resolveTaskIDPrefix(prefix string) (string, string) {
 	}
 }
 
+// killLocalForward stops one of this TUI's own forwards (tasks-pane P/B, or
+// the forward-stop picker) through the same DoKillForward RPC as the forwards
+// modal's `k` key and the `forward kill` cmdline verb — the only stop path
+// after this task, whether the forward is ours or another client's. A local
+// (-L) forward's ForwardID is populated asynchronously (PortForwardRegisteredMsg,
+// see tui/portforward.go); zero means the registration hasn't landed yet, so
+// there is nothing to kill.
+func (a *App) killLocalForward(sess *PortForwardSession) tea.Cmd {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("forward: not connected"))
+		return nil
+	}
+	if sess.ForwardID == 0 {
+		a.cmdresult.Append(WarnStyle.Render("forward: not fully registered yet — try again in a moment"))
+		return nil
+	}
+	return DoKillForward(a.client, sess.ForwardID)
+}
+
 // runAction dispatches a parsed cmdline Action.
 func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	// Client-requiring actions dispatch a Do* closure that calls a method on
@@ -1551,6 +1610,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
+		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: k)")
+		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
 		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. u push / g pull / d delete / D rm -rf. Esc closes.")
 		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.")
@@ -1714,6 +1775,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
+	case ForwardLsAction:
+		return a, DoListForwards(a.client)
+	case ForwardKillAction:
+		return a, DoKillForward(a.client, v.ForwardID)
 	case ServerDialRunnerAction:
 		if a.client == nil {
 			a.cmdresult.Append(ErrorStyle.Render("server dial-runner: not connected to server"))

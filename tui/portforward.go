@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -11,6 +13,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // ForwardDirection distinguishes local (-L) and remote (-R) forwards.
@@ -93,14 +96,22 @@ func (m *PortForwardModal) View() string {
 	return box.Render("Port-forward task " + pfShortID(m.taskID) + "  " + m.mode.flag() + " " + m.input.View() + "\n\n" + footer)
 }
 
-// PortForwardSession tracks a running forward so it can be cancelled. ID is a
-// client-side unique handle so a task can hold several forwards at once.
+// PortForwardSession tracks a running forward so it can be identified for a
+// stop request. ID is a client-side unique handle so a task can hold several
+// forwards at once. ForwardID is the server-assigned id from
+// RegisterPortForward — the only thing KillPortForwardWith accepts, so it is
+// what a stop request actually needs. It is populated synchronously for a
+// remote (-R) forward (OpenRemoteForward returns it directly) and
+// asynchronously for a local (-L) forward (PortForwardRegisteredMsg backfills
+// it once cli.RunForward's registration completes); zero means "not yet
+// known — nothing to kill".
 type PortForwardSession struct {
 	ID        int
 	TaskID    string
 	Direction ForwardDirection
 	Spec      string
 	Cancel    context.CancelFunc
+	ForwardID uint64
 }
 
 // selectForwards returns the active sessions for a task in one direction, sorted
@@ -165,13 +176,28 @@ func (p *ForwardPicker) View() string {
 // PortForwardStatusMsg carries a line to append to cmdresult.
 type PortForwardStatusMsg struct{ Line string }
 
-// PortForwardStartedMsg registers a started forward in the App.
+// PortForwardStartedMsg registers a started forward in the App. ForwardID is
+// the server-assigned id when known synchronously (remote forwards); zero for
+// a local forward, whose id arrives later via PortForwardRegisteredMsg.
 type PortForwardStartedMsg struct {
 	ID        int
 	TaskID    string
 	Direction ForwardDirection
 	Spec      string
 	Cancel    context.CancelFunc
+	ForwardID uint64
+}
+
+// PortForwardRegisteredMsg backfills the server-assigned forward id onto a
+// local (-L) forward's session once its RegisterPortForward call completes.
+// cli.RunForward blocks for the whole lifetime of the forward and only
+// reports the id via the onRegistered callback, not a return value, so
+// DoStartPortForward relays it through this message instead. Needed so the
+// tasks-pane P/B stop and the forwards-modal `k` key can name the forward via
+// KillPortForwardWith — the only stop path after this task.
+type PortForwardRegisteredMsg struct {
+	ID        int
+	ForwardID uint64
 }
 
 // PortForwardStoppedMsg removes a finished/failed forward from the App so it no
@@ -239,7 +265,10 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea
 		ctx, cancel := context.WithCancel(context.Background())
 		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel})
 		go func() {
-			if err := cli.RunForward(ctx, c, taskID, []cli.ForwardSpec{sp}, forwardStatusLogf(ctx, program)); err != nil {
+			onRegistered := func(_ cli.ForwardSpec, fid uint64) {
+				program.Send(PortForwardRegisteredMsg{ID: id, ForwardID: fid})
+			}
+			if err := cli.RunForward(ctx, c, taskID, []cli.ForwardSpec{sp}, forwardStatusLogf(ctx, program), onRegistered); err != nil {
 				program.Send(PortForwardStatusMsg{Line: forwardFailLine(taskID, err)})
 			}
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
@@ -259,12 +288,12 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		ctrl, _, err := c.OpenRemoteForward(ctx, taskID, sp)
+		ctrl, fid, err := c.OpenRemoteForward(ctx, taskID, sp)
 		if err != nil {
 			cancel()
 			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
 		}
-		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel})
+		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel, ForwardID: fid})
 		go func() {
 			c.ServeRemoteForwardControl(ctx, sp, ctrl, forwardStatusLogf(ctx, program))
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})
@@ -273,49 +302,79 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 	}
 }
 
-// sortedForwards returns all active forwards across every task, ordered by
-// (TaskID, Direction, ID) for a stable list. Unlike selectForwards it does not
-// filter by task/direction — the forwards modal shows the whole set.
-func sortedForwards(m map[int]*PortForwardSession) []*PortForwardSession {
-	out := make([]*PortForwardSession, 0, len(m))
-	for _, s := range m {
-		out = append(out, s)
+// ForwardsSnapshotMsg carries the result of DoListForwards.
+type ForwardsSnapshotMsg struct {
+	Forwards []protocol.PortForwardInfo
+	Err      error
+}
+
+// DoListForwards fetches every forward visible to this operator. Uses the
+// long-lived client (a.client), like every other Do* in this file.
+func DoListForwards(c *cli.Client) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		fs, err := c.PortForwardListWith(ctx, "")
+		return ForwardsSnapshotMsg{Forwards: fs, Err: err}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].TaskID != out[j].TaskID {
-			return out[i].TaskID < out[j].TaskID
-		}
-		if out[i].Direction != out[j].Direction {
-			return out[i].Direction < out[j].Direction
-		}
-		return out[i].ID < out[j].ID
-	})
-	return out
 }
 
-// forwardRow maps one session to its table row (task short id / dir flag / spec).
-func forwardRow(s *PortForwardSession) table.Row {
-	return table.Row{pfShortID(s.TaskID), s.Direction.flag(), s.Spec}
+// ForwardKillResultMsg carries the result of a DoKillForward request.
+type ForwardKillResultMsg struct {
+	ID  uint64
+	Err error
 }
 
-// ForwardsModal is a read-only full-screen overlay listing every port forward
-// this TUI currently holds (App.activeForwards). Opened with `f`, closed with
-// Esc. It mirrors ConnsModal but has no live subscription of its own: the App
-// feeds it a pre-sorted slice via SetSessions on open and whenever the active
-// set changes while it is open. It keeps that snapshot (sessions) so its
-// contents are inspectable and the header count is exact.
+// DoKillForward asks the server to close one registered forward by id. This
+// is the only stop path after this task — it works identically whether the
+// forward was started by this TUI (forwards modal `k`, tasks-pane P/B) or by
+// a different client (forwards modal `k` on someone else's row, or the
+// `forward kill` cmdline verb): the server pushes a `closed` event onto the
+// owning client's control stream, and that client's already-running
+// serveLocalForwardControl / ServeRemoteForwardControl loop tears the forward
+// down from there (unaffected by this task).
+func DoKillForward(c *cli.Client, id uint64) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		err := c.KillPortForwardWith(ctx, id)
+		return ForwardKillResultMsg{ID: id, Err: err}
+	}
+}
+
+// portForwardInfoRow maps one server-side forward to its table row.
+func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
+	return table.Row{
+		fmt.Sprintf("%d", fi.ForwardId),
+		cli.PortForwardDirFlag(fi.Direction),
+		pfShortID(FormatTaskID(fi.TaskId)),
+		cli.PortForwardSpecString(fi),
+		strings.ToLower(fi.OriginKind.String()),
+	}
+}
+
+// ForwardsModal is a full-screen overlay listing every port forward visible
+// to this operator on the server — not just ones this TUI process started.
+// Opened with `f` (fetches via DoListForwards), closed with Esc. `k` kills
+// the selected row via DoKillForward. It mirrors ConnsModal's snapshot shape
+// (ApplySnapshot from a server round-trip) rather than the old
+// App.activeForwards-fed design: forwards have no live push subscription, so
+// unlike ConnsModal there is no incremental ApplyEvent — a fresh fetch is the
+// only way to refresh.
 type ForwardsModal struct {
 	open     bool
 	table    table.Model
-	sessions []*PortForwardSession
+	forwards []protocol.PortForwardInfo
 }
 
 // NewForwardsModal constructs a ForwardsModal with fixed column widths.
 func NewForwardsModal() ForwardsModal {
 	cols := []table.Column{
-		{Title: "task", Width: 12},
+		{Title: "id", Width: 6},
 		{Title: "dir", Width: 4},
-		{Title: "spec", Width: 40},
+		{Title: "task", Width: 12},
+		{Title: "spec", Width: 44},
+		{Title: "origin", Width: 10},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
 	return ForwardsModal{table: t}
@@ -332,14 +391,27 @@ func (m *ForwardsModal) SetSize(w, h int) {
 	m.table.SetHeight(h - 4)
 }
 
-// SetSessions replaces the snapshot and rebuilds the table rows.
-func (m *ForwardsModal) SetSessions(sessions []*PortForwardSession) {
-	m.sessions = sessions
-	rows := make([]table.Row, 0, len(sessions))
-	for _, s := range sessions {
-		rows = append(rows, forwardRow(s))
+// ApplySnapshot replaces the rows with the given server snapshot.
+func (m *ForwardsModal) ApplySnapshot(fs []protocol.PortForwardInfo) {
+	m.forwards = make([]protocol.PortForwardInfo, len(fs))
+	copy(m.forwards, fs)
+	rows := make([]table.Row, 0, len(m.forwards))
+	for i := range m.forwards {
+		rows = append(rows, portForwardInfoRow(&m.forwards[i]))
 	}
 	m.table.SetRows(rows)
+}
+
+// SelectedID returns the forward id under the cursor.
+func (m *ForwardsModal) SelectedID() (uint64, bool) {
+	if len(m.forwards) == 0 {
+		return 0, false
+	}
+	i := m.table.Cursor()
+	if i < 0 || i >= len(m.forwards) {
+		return 0, false
+	}
+	return m.forwards[i].ForwardId, true
 }
 
 func (m ForwardsModal) Update(msg tea.Msg) (ForwardsModal, tea.Cmd) {
@@ -352,10 +424,10 @@ func (m ForwardsModal) Update(msg tea.Msg) (ForwardsModal, tea.Cmd) {
 }
 
 func (m ForwardsModal) View() string {
-	header := HeaderStyle.Render(fmt.Sprintf("active port forwards (%d)", len(m.sessions)))
-	footer := FooterStyle.Render("Esc: close · P/B stop from tasks pane")
+	header := HeaderStyle.Render(fmt.Sprintf("active port forwards (%d)", len(m.forwards)))
+	footer := FooterStyle.Render("k: kill · Esc: close")
 	box := PanelStyleFocused.Padding(0, 1)
-	if len(m.sessions) == 0 {
+	if len(m.forwards) == 0 {
 		return box.Render(header + "\n" + "no active forwards" + "\n" + footer)
 	}
 	return box.Render(header + "\n" + m.table.View() + "\n" + footer)

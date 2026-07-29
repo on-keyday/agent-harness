@@ -148,7 +148,7 @@ func TestPortForwardE2E(t *testing.T) {
 	fwdCtx, fwdCancel := context.WithCancel(ctx)
 	fwdDone := make(chan error, 1)
 	go func() {
-		fwdDone <- cli.RunForward(fwdCtx, c, taskID, specs, nil)
+		fwdDone <- cli.RunForward(fwdCtx, c, taskID, specs, nil, nil)
 	}()
 
 	// Poll until the forward listener is up (retry-dial).
@@ -688,7 +688,7 @@ func TestLocalForwardRegisterListKill(t *testing.T) {
 		// that proves RunForward registers the port it actually bound.
 		done <- cli.RunForward(fwdCtx, fwdClient, taskID,
 			[]cli.ForwardSpec{{BindAddr: "127.0.0.1", LocalPort: 0, RemoteHost: "127.0.0.1", RemotePort: 9}},
-			func(s string) { t.Logf("forward: %s", s) })
+			func(s string) { t.Logf("forward: %s", s) }, nil)
 	}()
 
 	// A SECOND, independent client must be able to see and kill it.
@@ -844,7 +844,7 @@ func TestLocalForwardKillDropsConnection(t *testing.T) {
 	go func() {
 		done <- cli.RunForward(fwdCtx, fwdClient, taskID,
 			[]cli.ForwardSpec{{BindAddr: "127.0.0.1", LocalPort: 0, RemoteHost: "127.0.0.1", RemotePort: echoPort}},
-			func(s string) { t.Logf("forward: %s", s) })
+			func(s string) { t.Logf("forward: %s", s) }, nil)
 	}()
 
 	observer, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
@@ -1027,7 +1027,7 @@ func TestLocalForwardMultiSpecIndependentKill(t *testing.T) {
 		done <- cli.RunForward(fwdCtx, fwdClient, taskID, []cli.ForwardSpec{
 			{BindAddr: "127.0.0.1", LocalPort: portA, RemoteHost: "127.0.0.1", RemotePort: echoPort},
 			{BindAddr: "127.0.0.1", LocalPort: portB, RemoteHost: "127.0.0.1", RemotePort: echoPort},
-		}, func(s string) { t.Logf("forward: %s", s) })
+		}, func(s string) { t.Logf("forward: %s", s) }, nil)
 	}()
 
 	observer, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
@@ -1227,7 +1227,7 @@ func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- cli.RunForward(ctx, fwdClient, taskID, specs, func(s string) { t.Logf("forward: %s", s) })
+		done <- cli.RunForward(ctx, fwdClient, taskID, specs, func(s string) { t.Logf("forward: %s", s) }, nil)
 	}()
 
 	var rfErr error

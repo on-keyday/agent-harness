@@ -743,3 +743,29 @@ func TestParseFileMkdir(t *testing.T) {
 		t.Error("missing rel arg accepted")
 	}
 }
+
+func TestParseForward(t *testing.T) {
+	act, err := ParseCommand("forward kill 12", "")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	kill, ok := act.(ForwardKillAction)
+	if !ok || kill.ForwardID != 12 {
+		t.Fatalf("got %#v, want ForwardKillAction{12}", act)
+	}
+	if _, err := ParseCommand("forward kill", ""); err == nil {
+		t.Error("forward kill with no id should be a usage error")
+	}
+	if _, err := ParseCommand("forward ls", ""); err != nil {
+		t.Errorf("forward ls: %v", err)
+	}
+	if _, err := ParseCommand("forward kill notanumber", ""); err == nil {
+		t.Error("forward kill with a non-numeric id should be a usage error")
+	}
+	if _, err := ParseCommand("forward bogus", ""); err == nil {
+		t.Error("forward with an unknown sub-verb should error")
+	}
+	if _, err := ParseCommand("forward", ""); err == nil {
+		t.Error("forward with no sub-verb should error")
+	}
+}

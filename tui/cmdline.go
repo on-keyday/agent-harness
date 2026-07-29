@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -160,6 +161,12 @@ type FileDeleteAction struct {
 	Force     bool
 }
 
+// ForwardLsAction lists every port forward visible to this operator.
+type ForwardLsAction struct{}
+
+// ForwardKillAction closes one registered forward by id.
+type ForwardKillAction struct{ ForwardID uint64 }
+
 // InteractiveAction opens an interactive PTY claude session in Repo —
 // the slash-command equivalent of the 'i' key, useful when chaining
 // after /repo or when the user is already in cmdline focus.
@@ -222,6 +229,8 @@ func (FilePushAction) isAction()         {}
 func (FileMkdirAction) isAction()        {}
 func (FilePullAction) isAction()         {}
 func (FileDeleteAction) isAction()       {}
+func (ForwardLsAction) isAction()        {}
+func (ForwardKillAction) isAction()      {}
 func (ServerDialRunnerAction) isAction() {}
 func (NotifyAction) isAction()           {}
 func (CapsAction) isAction()             {}
@@ -260,6 +269,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseSession(tokens[1:], defaultRepo)
 	case "file":
 		return parseFile(tokens[1:])
+	case "forward":
+		return parseForward(tokens[1:])
 	case "server":
 		return parseServer(tokens[1:])
 	case "trsf":
@@ -677,5 +688,31 @@ func parseFile(args []string) (Action, error) {
 		return FileMkdirAction{TaskID: pargs[0], RelPath: pargs[1], Parents: *parents}, nil
 	default:
 		return nil, fmt.Errorf("file: unknown sub-verb %q (ls | push | pull | mkdir | delete)", verb)
+	}
+}
+
+// parseForward handles `forward ls` and `forward kill <id>`. Starting a forward
+// stays on the P/B keys — this is the list/kill surface only.
+func parseForward(args []string) (Action, error) {
+	if len(args) == 0 {
+		return nil, fmt.Errorf("forward: sub-verb required (ls | kill)")
+	}
+	switch args[0] {
+	case "ls":
+		if len(args) != 1 {
+			return nil, fmt.Errorf("forward ls: usage: forward ls")
+		}
+		return ForwardLsAction{}, nil
+	case "kill":
+		if len(args) != 2 {
+			return nil, fmt.Errorf("forward kill: usage: forward kill <forward-id>")
+		}
+		id, err := strconv.ParseUint(args[1], 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("forward kill: bad forward id %q", args[1])
+		}
+		return ForwardKillAction{ForwardID: id}, nil
+	default:
+		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill)", args[0])
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestPortForwardModal_OpenClose(t *testing.T) {
@@ -92,44 +94,6 @@ func TestForwardLifecycle_StoppedRemovesEntry(t *testing.T) {
 	}
 }
 
-func TestSortedForwards_Order(t *testing.T) {
-	// ForwardLocal=0 < ForwardRemote=1, so within a task -L sorts before -R.
-	m := map[int]*PortForwardSession{
-		3: {ID: 3, TaskID: "b", Direction: ForwardLocal, Spec: "7:h:7"},
-		1: {ID: 1, TaskID: "a", Direction: ForwardRemote, Spec: "1:h:2"},
-		2: {ID: 2, TaskID: "a", Direction: ForwardLocal, Spec: "8080:h:80"},
-		4: {ID: 4, TaskID: "a", Direction: ForwardLocal, Spec: "9090:h:90"},
-	}
-	got := sortedForwards(m)
-	want := []int{2, 4, 1, 3} // a/-L/2, a/-L/4, a/-R/1, b/-L/3
-	if len(got) != len(want) {
-		t.Fatalf("len = %d, want %d", len(got), len(want))
-	}
-	for i, id := range want {
-		if got[i].ID != id {
-			t.Fatalf("pos %d: got ID %d, want %d", i, got[i].ID, id)
-		}
-	}
-}
-
-func TestForwardRow_Cells(t *testing.T) {
-	s := &PortForwardSession{ID: 1, TaskID: "abcdef012345aa", Direction: ForwardLocal, Spec: "8080:h:80"}
-	row := forwardRow(s)
-	if row[0] != "abcdef012345" { // pfShortID truncates to 12
-		t.Fatalf("task cell = %q, want abcdef012345", row[0])
-	}
-	if row[1] != "-L" {
-		t.Fatalf("dir cell = %q, want -L", row[1])
-	}
-	if row[2] != "8080:h:80" {
-		t.Fatalf("spec cell = %q, want 8080:h:80", row[2])
-	}
-	r := forwardRow(&PortForwardSession{TaskID: "x", Direction: ForwardRemote, Spec: "1:h:2"})
-	if r[1] != "-R" {
-		t.Fatalf("remote dir cell = %q, want -R", r[1])
-	}
-}
-
 func TestForwardsModal_OpenClose(t *testing.T) {
 	m := NewForwardsModal()
 	if m.IsOpen() {
@@ -145,74 +109,156 @@ func TestForwardsModal_OpenClose(t *testing.T) {
 	}
 }
 
-func TestForwardsModal_SetSessions_CountAndEmpty(t *testing.T) {
+// TestForwardsModalApplySnapshot guards the server-backed rendering: columns
+// built from cli.PortForwardDirFlag / pfShortID / cli.PortForwardSpecString,
+// and SelectedID reading the id under the (default, top-row) cursor.
+func TestForwardsModalApplySnapshot(t *testing.T) {
 	m := NewForwardsModal()
-	m.SetSessions(nil)
-	if len(m.sessions) != 0 {
-		t.Fatalf("empty: sessions = %d, want 0", len(m.sessions))
+	m.SetSize(120, 40)
+	var a, b protocol.PortForwardInfo
+	a.ForwardId = 1
+	a.Direction = protocol.PortForwardDirection_Local
+	a.SetBindAddr([]byte("127.0.0.1"))
+	a.BindPort = 8080
+	a.SetTargetHost([]byte("svc"))
+	a.TargetPort = 80
+	b.ForwardId = 2
+	b.Direction = protocol.PortForwardDirection_Remote
+	b.SetBindAddr([]byte("127.0.0.1"))
+	b.BindPort = 6001
+	b.SetTargetHost([]byte("localhost"))
+	b.TargetPort = 6000
+	m.ApplySnapshot([]protocol.PortForwardInfo{a, b})
+	m.Open()
+
+	view := m.View()
+	for _, want := range []string{"-L", "-R", "8080", "6001", "(2)"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q:\n%s", want, view)
+		}
 	}
-	m.SetSessions([]*PortForwardSession{
-		{ID: 1, TaskID: "abcdef012345aa", Direction: ForwardLocal, Spec: "8080:h:80"},
-		{ID: 2, TaskID: "abcdef012345aa", Direction: ForwardRemote, Spec: "9000:h:9000"},
-	})
-	if len(m.sessions) != 2 {
-		t.Fatalf("sessions = %d, want 2", len(m.sessions))
+	if id, ok := m.SelectedID(); !ok || id != 1 {
+		t.Errorf("SelectedID() = (%d,%v), want (1,true)", id, ok)
 	}
 }
 
-func TestForwardsModal_KeyOpensAndEscCloses(t *testing.T) {
+func TestForwardsModalEmpty(t *testing.T) {
+	m := NewForwardsModal()
+	m.SetSize(80, 24)
+	m.ApplySnapshot(nil)
+	m.Open()
+	if !strings.Contains(m.View(), "no active forwards") {
+		t.Errorf("empty view should say 'no active forwards':\n%s", m.View())
+	}
+	if _, ok := m.SelectedID(); ok {
+		t.Error("SelectedID() should report false on an empty list")
+	}
+}
+
+// TestForwardsModalKey_NotConnected guards the `f` key's client guard: with no
+// client bound (initial connect still pending), pressing `f` must not dispatch
+// DoListForwards (that closure would nil-panic on execute — see
+// app_noclient_test.go for the same pattern on cmdline actions) and must leave
+// the modal closed with a visible notice.
+func TestForwardsModalKey_NotConnected(t *testing.T) {
+	a := New(Config{}) // client is nil (BindClient never called)
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	a = m.(*App)
+	if a.forwardsModal.IsOpen() {
+		t.Fatal("`f` with no client should not open the forwards modal")
+	}
+	if cmd != nil {
+		t.Fatal("`f` with no client should not dispatch a command")
+	}
+	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "not connected") {
+		t.Errorf("expected a 'not connected' notice, got:\n%s", strings.Join(a.cmdresult.lines, "\n"))
+	}
+}
+
+// TestForwardsModalKey_EscCloses guards that Esc still closes the modal once
+// open (bypassing the network fetch by opening it directly).
+func TestForwardsModalKey_EscCloses(t *testing.T) {
 	a := New(Config{})
-	// Seed one active forward (default focus is focusTasks, logs not editing,
-	// so the `f` guard passes).
-	m, _ := a.Update(PortForwardStartedMsg{ID: 1, TaskID: "abcdef012345", Direction: ForwardLocal, Spec: "8080:h:80"})
-	a = m.(*App)
-
-	// Press `f` → modal opens, seeded with the active forwards snapshot.
-	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
-	a = m.(*App)
-	if !a.forwardsModal.IsOpen() {
-		t.Fatal("`f` should open the forwards modal")
-	}
-	if len(a.forwardsModal.sessions) != 1 {
-		t.Fatalf("modal sessions = %d, want 1", len(a.forwardsModal.sessions))
-	}
-
-	// A forward that stops while the modal is open updates the snapshot live.
-	m, _ = a.Update(PortForwardStoppedMsg{ID: 1, TaskID: "abcdef012345"})
-	a = m.(*App)
-	if len(a.forwardsModal.sessions) != 0 {
-		t.Fatalf("after stop while open: sessions = %d, want 0", len(a.forwardsModal.sessions))
-	}
-
-	// Esc closes.
-	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a.forwardsModal.Open()
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	a = m.(*App)
 	if a.forwardsModal.IsOpen() {
 		t.Fatal("Esc should close the forwards modal")
 	}
 }
 
-func TestForwardsModal_View_CountAndEmptyState(t *testing.T) {
-	m := NewForwardsModal()
-	m.SetSessions(nil)
-	empty := m.View()
-	if !strings.Contains(empty, "active port forwards (0)") {
-		t.Fatalf("empty View missing count-0 header:\n%s", empty)
+// TestPortForwardRegisteredMsg_BackfillsForwardID guards the async id handoff
+// a local (-L) forward needs: PortForwardStartedMsg carries ForwardID=0 (not
+// yet known), and PortForwardRegisteredMsg fills it in once cli.RunForward's
+// registration completes.
+func TestPortForwardRegisteredMsg_BackfillsForwardID(t *testing.T) {
+	a := New(Config{})
+	m, _ := a.Update(PortForwardStartedMsg{ID: 1, TaskID: "abcdef", Direction: ForwardLocal, Spec: "8080:h:80"})
+	a = m.(*App)
+	if a.activeForwards[1].ForwardID != 0 {
+		t.Fatalf("before registration: ForwardID = %d, want 0", a.activeForwards[1].ForwardID)
 	}
-	if !strings.Contains(empty, "no active forwards") {
-		t.Fatalf("empty View missing empty-state text:\n%s", empty)
+	m, _ = a.Update(PortForwardRegisteredMsg{ID: 1, ForwardID: 42})
+	a = m.(*App)
+	if a.activeForwards[1].ForwardID != 42 {
+		t.Fatalf("after registration: ForwardID = %d, want 42", a.activeForwards[1].ForwardID)
+	}
+}
+
+// TestKillLocalForward_UnregisteredForwardWarns guards the ForwardID==0 race
+// window for a just-started local forward: killLocalForward must not dispatch
+// (there is no id to kill yet) and must explain why.
+func TestKillLocalForward_UnregisteredForwardWarns(t *testing.T) {
+	a := New(Config{})
+	a.client = &cli.Client{} // non-nil is enough; the returned cmd is never executed
+	sess := &PortForwardSession{ID: 1, TaskID: "abc", Direction: ForwardLocal, Spec: "8080:h:80", ForwardID: 0}
+	if cmd := a.killLocalForward(sess); cmd != nil {
+		t.Fatal("killLocalForward with ForwardID==0 should not dispatch")
+	}
+	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "not fully registered") {
+		t.Error("expected a 'not fully registered' notice")
+	}
+}
+
+// TestKillLocalForward_RoutesThroughKillRPC guards that a registered forward
+// dispatches through DoKillForward rather than calling sess.Cancel directly —
+// the "exactly one way to stop a forward" requirement.
+func TestKillLocalForward_RoutesThroughKillRPC(t *testing.T) {
+	a := New(Config{})
+	a.client = &cli.Client{}
+	cancelled := false
+	sess := &PortForwardSession{
+		ID: 1, TaskID: "abc", Direction: ForwardLocal, Spec: "8080:h:80", ForwardID: 42,
+		Cancel: func() { cancelled = true },
+	}
+	if cmd := a.killLocalForward(sess); cmd == nil {
+		t.Fatal("killLocalForward with a registered forward should dispatch a kill command")
+	}
+	if cancelled {
+		t.Error("killLocalForward must not call sess.Cancel directly — the RPC is the only stop path")
+	}
+}
+
+// TestForwardKillResultMsg_RefreshesOnlyWhenModalOpen guards the "k ... followed
+// by a refresh" requirement: a re-fetch is dispatched only while the forwards
+// modal is actually open (a cmdline `forward kill` with the modal closed
+// should not pay for an unwanted extra round trip).
+func TestForwardKillResultMsg_RefreshesOnlyWhenModalOpen(t *testing.T) {
+	a := New(Config{})
+	a.client = &cli.Client{}
+
+	m, cmd := a.Update(ForwardKillResultMsg{ID: 7})
+	a = m.(*App)
+	if cmd != nil {
+		t.Fatal("kill result with modal closed should not dispatch a refresh")
+	}
+	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "killed") {
+		t.Error("expected a 'killed' confirmation line")
 	}
 
-	m.SetSessions([]*PortForwardSession{
-		{ID: 1, TaskID: "abcdef012345aa", Direction: ForwardLocal, Spec: "8080:h:80"},
-		{ID: 2, TaskID: "abcdef012345aa", Direction: ForwardRemote, Spec: "9000:h:9000"},
-	})
-	m.Open()
-	full := m.View()
-	if !strings.Contains(full, "active port forwards (2)") {
-		t.Fatalf("populated View missing count-2 header:\n%s", full)
-	}
-	if strings.Contains(full, "no active forwards") {
-		t.Fatalf("populated View should not show empty-state text:\n%s", full)
+	a.forwardsModal.Open()
+	_, cmd = a.Update(ForwardKillResultMsg{ID: 7})
+	if cmd == nil {
+		t.Fatal("kill result with modal open should dispatch a refresh")
 	}
 }

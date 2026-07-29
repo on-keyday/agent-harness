@@ -565,7 +565,7 @@ func main() {
 			}()
 		}
 		if len(parsed) > 0 {
-			if err := cli.RunForward(fctx, c, taskID, parsed, logf); err != nil {
+			if err := cli.RunForward(fctx, c, taskID, parsed, logf, nil); err != nil {
 				die(err)
 			}
 		}
