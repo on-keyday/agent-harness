@@ -1340,11 +1340,28 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 			_ = l.Close()
 		}
 	}
+	// One context for the whole call, cancelled on every exit path including the
+	// error returns below. Without this, a mid-loop failure would abandon the
+	// specs already started: their listeners close but their control-stream
+	// readers stay parked and their server-side registrations stay live until the
+	// peer connection eventually errors out — a forward the list shows that is
+	// not actually running. The spec's failure-mode table claims stale entries
+	// cannot happen because control-stream EOF deregisters; that only holds if
+	// every exit path actually closes the streams.
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
 	var wg sync.WaitGroup
+	// abort cancels every started spec, waits for its goroutines, and closes the
+	// listeners. Use it on every error return, never a bare closeAll().
+	abort := func() {
+		runCancel()
+		wg.Wait()
+		closeAll()
+	}
 	for _, sp := range specs {
 		ln, err := net.Listen("tcp", net.JoinHostPort(sp.BindAddr, strconv.Itoa(sp.LocalPort)))
 		if err != nil {
-			closeAll()
+			abort()
 			return fmt.Errorf("forward: listen %s:%d: %w", sp.BindAddr, sp.LocalPort, err)
 		}
 		lns = append(lns, ln)
@@ -1355,10 +1372,10 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		if rerr != nil {
 			// A forward the server does not know about cannot be listed or
 			// killed, which is the whole point of registering — fail loudly.
-			closeAll()
+			abort()
 			return fmt.Errorf("forward: register %s:%d: %w", sp.BindAddr, bound, rerr)
 		}
-		fwdCtx, cancel := context.WithCancel(ctx)
+		fwdCtx, cancel := context.WithCancel(runCtx)
 		logf(fmt.Sprintf("forwarding %s:%d -> %s:%d (task %s, fwd %d)",
 			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, taskIDHex[:min(12, len(taskIDHex))], fid))
 		go acceptLoop(fwdCtx, c, taskIDHex, sp, ln, logf)
@@ -1434,17 +1451,32 @@ In `acceptLoop`, bind each spliced connection's lifetime to the forward context:
 		}()
 ```
 
-- [ ] **Step 5: Run the integration test**
+- [ ] **Step 5: Fix the caller whose contract this just changed**
+
+`RunForward` used to return only on `ctx.Done()`. It now returns when the `-L`
+forwards stop, which breaks the assumption in `cmd/harness-cli/main.go:510-526`:
+for a mixed `harness-cli forward <task> -L … -R …`, `RunForward` returning ends
+the `forward` case, `main` returns, and the background `RunRemoteForward`
+goroutine dies with the process — silently killing a `-R` forward nobody asked to
+stop. The stale comment there ("local (-L) forwards … hold the foreground until
+Ctrl-C") must go too.
+
+Fix: after `RunForward` returns, keep holding the foreground while any `-R`
+forward is still live — e.g. fall through to `<-fctx.Done()` when
+`len(parsedR) > 0` — so the process exits only once **all** of its forwards are
+gone, which is what the plan's constraint says.
+
+- [ ] **Step 6: Run the integration test**
 
 Run: `go test -tags integration ./integration/ -run TestLocalForwardRegisterListKill -count=1 -timeout 120s`
 Expected: PASS.
 
-- [ ] **Step 6: Run the unit suites**
+- [ ] **Step 7: Run the unit suites**
 
 Run: `go test ./cli/ ./server/ -count=1 && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add cli/port_forward.go integration/port_forward_test.go
