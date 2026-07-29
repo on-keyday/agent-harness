@@ -953,14 +953,22 @@ the capability check, because the required bit depends on it:
 			slog.Error("TaskHandler: KillPortForward variant is nil")
 			return
 		}
+		// Visibility FIRST, then the capability. Denying on a missing bit for a
+		// forward the caller cannot see would answer "exists, but not yours" —
+		// and with ids coming from a dense next++ counter, that is exactly the
+		// enumeration oracle the no_such_forward rule exists to close. An
+		// invisible id must fall through to killPortForward and be answered
+		// identically to an unknown one.
 		if pf, ok := h.pforwards().get(kr.ForwardId); ok {
-			need := protocol.Capability_ForwardLocal
-			if pf.direction == protocol.PortForwardDirection_Remote {
-				need = protocol.Capability_ForwardRemote
-			}
-			if !hasCap(h.callerCaps(cid), need) {
-				h.denyTaskControl(conn, req.Kind, req.RequestId, need)
-				return
+			if all, allowed := h.visibleToCaller(cid); all || allowed[pf.taskIDHex] {
+				need := protocol.Capability_ForwardLocal
+				if pf.direction == protocol.PortForwardDirection_Remote {
+					need = protocol.Capability_ForwardRemote
+				}
+				if !hasCap(h.callerCaps(cid), need) {
+					h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+					return
+				}
 			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_KillPortForward, RequestId: req.RequestId}
