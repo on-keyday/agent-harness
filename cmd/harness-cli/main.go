@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -470,7 +471,48 @@ func main() {
 	case "forward":
 		if len(args) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
+			fmt.Fprintln(os.Stderr, "       harness-cli forward ls [--task <task-id>] [--json]")
+			fmt.Fprintln(os.Stderr, "       harness-cli forward kill <forward-id> [<forward-id> ...]")
 			os.Exit(2)
+		}
+		switch args[0] {
+		case "ls":
+			fs := flag.NewFlagSet("forward ls", flag.ExitOnError)
+			taskFilter := fs.String("task", "", "only forwards for this task id")
+			asJSON := fs.Bool("json", false, "one JSON object per forward")
+			if err := fs.Parse(args[1:]); err != nil {
+				die(err)
+			}
+			forwards, err := cli.PortForwardList(ctx, parseCID(), *taskFilter)
+			if err != nil {
+				die(err)
+			}
+			if *asJSON {
+				for i := range forwards {
+					fmt.Println(cli.PortForwardInfoJSONLine(&forwards[i]))
+				}
+			} else {
+				for _, line := range cli.PortForwardInfoLines(forwards) {
+					fmt.Println(line)
+				}
+			}
+			return
+		case "kill":
+			if len(args) < 2 {
+				fmt.Fprintln(os.Stderr, "usage: harness-cli forward kill <forward-id> [<forward-id> ...]")
+				os.Exit(2)
+			}
+			for _, raw := range args[1:] {
+				id, perr := strconv.ParseUint(raw, 10, 64)
+				if perr != nil {
+					die(fmt.Errorf("forward kill: bad forward id %q", raw))
+				}
+				if err := cli.KillPortForward(ctx, parseCID(), id); err != nil {
+					die(err)
+				}
+				fmt.Printf("killed forward %d\n", id)
+			}
+			return
 		}
 		taskID := args[0]
 		fs := flag.NewFlagSet("forward", flag.ExitOnError)
@@ -634,6 +676,21 @@ func main() {
 	}
 }
 
+// isTaskIDLike reports whether s could be a task id (hex digits only). Used to
+// keep `forward ls` / `forward kill` from being mistaken for a task id — neither
+// word is hex.
+func isTaskIDLike(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", r) {
+			return false
+		}
+	}
+	return true
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] [--ws-path PATH] <subcommand> [args]")
 	fmt.Fprintln(os.Stderr, "")
@@ -715,6 +772,10 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      -L: forward a local port through the runner to remote host:port (ssh -L)")
 	fmt.Fprintln(os.Stderr, "                                      -R: runner listens, connections dial back to a client-side host:port (ssh -R)")
 	fmt.Fprintln(os.Stderr, "                                      both repeatable; Ctrl-C to stop")
+	fmt.Fprintln(os.Stderr, "  forward ls [--task TASK_ID] [--json]")
+	fmt.Fprintln(os.Stderr, "                                      list registered port forwards; --task filters, --json emits JSON lines")
+	fmt.Fprintln(os.Stderr, "  forward kill FORWARD_ID [FORWARD_ID ...]")
+	fmt.Fprintln(os.Stderr, "                                      kill one or more registered forwards by id (from `forward ls`)")
 }
 
 func serverUsage() {

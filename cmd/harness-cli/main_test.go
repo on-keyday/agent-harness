@@ -115,6 +115,40 @@ func TestCLI_InteractiveAgentFlagParses(t *testing.T) {
 	}
 }
 
+// TestCLI_ForwardLsRoutes: `forward ls` must be handled by the new ls branch,
+// not fall through to the pre-existing `forward <task-id> -L/-R ...` path
+// (which would reject it for having no -L/-R and never reach the dial step).
+func TestCLI_ForwardLsRoutes(t *testing.T) {
+	cmd := exec.Command("go", "run", ".",
+		"--server-cid=ws:127.0.0.1:19999-1", "forward", "ls")
+	out, _ := cmd.CombinedOutput()
+	s := string(out)
+	if strings.Contains(s, "harness-cli forward <task-id>") {
+		t.Errorf("forward ls fell through to the task-id path: %s", s)
+	}
+	if !strings.Contains(s, "127.0.0.1:19999") {
+		t.Errorf("did not reach dial step: %s", s)
+	}
+}
+
+// TestCLI_ForwardKillBadIDRejectsBeforeDial: a non-numeric forward id must be
+// rejected by strconv.ParseUint before any dial is attempted — proving `kill`
+// validates ids itself rather than deferring to the server (and, since "ls"/
+// "kill" are the only two subcommand names, that this arg didn't fall through
+// to the task-id path either).
+func TestCLI_ForwardKillBadIDRejectsBeforeDial(t *testing.T) {
+	cmd := exec.Command("go", "run", ".",
+		"--server-cid=ws:127.0.0.1:20000-1", "forward", "kill", "not-a-number")
+	out, _ := cmd.CombinedOutput()
+	s := string(out)
+	if !strings.Contains(s, `bad forward id "not-a-number"`) {
+		t.Errorf("missing bad-id error: %s", s)
+	}
+	if strings.Contains(s, "127.0.0.1:20000") {
+		t.Errorf("dialed before validating the id: %s", s)
+	}
+}
+
 // TestCLI_SessionNewAgentFlagParses: same as above for `session new`, which
 // has its own independent flag.FlagSet (runSessionNew in session.go) and
 // feeds all three interactive-open call sites (OpenInteractiveWithSelectorArgsAndCaps,
