@@ -150,3 +150,34 @@ func TestParsePortForwardEvents_SplitAndCoalesced(t *testing.T) {
 		t.Fatalf("split: wrong order: %+v", got)
 	}
 }
+
+// TestParsePortForwardEvents_CoalescedSameKind guards against payload
+// aliasing between records of the SAME kind coalesced in one read. Unlike
+// TestParsePortForwardEvents_SplitAndCoalesced's ConnNotify+Closed pair —
+// where the two kinds force a fresh variant allocation on the second decode
+// and so cannot detect a `var ev` hoisted out of the decode loop — two
+// ConnNotify records reuse the same underlying *tmp3915 pointer if `ev` is
+// reused across iterations (PortForwardEvent.DecodeSlice keeps the existing
+// union value when its concrete type already matches). That would silently
+// rewrite the first event's StreamId to the second's. This is the
+// production hot path: two accepted -R connections landing in one 64KiB
+// ReadDirect.
+func TestParsePortForwardEvents_CoalescedSameKind(t *testing.T) {
+	var a protocol.PortForwardEvent
+	a.Kind = protocol.PortForwardEventKind_ConnNotify
+	a.SetConnNotify(protocol.RemoteForwardConnNotify{StreamId: 22})
+	var b protocol.PortForwardEvent
+	b.Kind = protocol.PortForwardEventKind_ConnNotify
+	b.SetConnNotify(protocol.RemoteForwardConnNotify{StreamId: 33})
+
+	full := b.MustAppend(a.MustAppend(nil))
+
+	evs, rest := parsePortForwardEvents(full)
+	if len(evs) != 2 || len(rest) != 0 {
+		t.Fatalf("got %d events, %d rest bytes", len(evs), len(rest))
+	}
+	id0, id1 := evs[0].ConnNotify().StreamId, evs[1].ConnNotify().StreamId
+	if id0 != 22 || id1 != 33 {
+		t.Fatalf("same-kind coalesced: ids = [%d %d], want [22 33] (payload aliasing between records)", id0, id1)
+	}
+}

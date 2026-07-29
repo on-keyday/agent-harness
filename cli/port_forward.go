@@ -378,7 +378,14 @@ func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForward
 			}
 		}
 		if eof || err != nil {
-			logf("remote-forward: server connection lost")
+			// ReadDirectContext returns ctx.Err() on cancellation, and
+			// cancellation IS the ordinary stop path (X11 session end,
+			// Ctrl-C, TUI stop). Reporting a lost server there would make
+			// the server-died message the one thing printed on every clean
+			// exit — destroying the distinction this record type exists for.
+			if ctx.Err() == nil {
+				logf("remote-forward: server connection lost")
+			}
 			return
 		}
 	}
