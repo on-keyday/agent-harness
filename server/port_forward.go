@@ -221,8 +221,10 @@ func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protoc
 		_ = runnerStream.CloseBoth()
 		return
 	}
-	notify := protocol.RemoteForwardConnNotify{StreamId: uint64(clientStream.ID())}
-	nb, err := notify.Append(nil)
+	var ev protocol.PortForwardEvent
+	ev.Kind = protocol.PortForwardEventKind_ConnNotify
+	ev.SetConnNotify(protocol.RemoteForwardConnNotify{StreamId: uint64(clientStream.ID())})
+	nb, err := ev.Append(nil)
 	if err != nil {
 		_ = clientStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
@@ -234,6 +236,26 @@ func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protoc
 		return
 	}
 	go spliceBidi(clientStream, runnerStream, pf.taskIDHex)
+}
+
+// pushPortForwardClosed tells the client to stop this forward. Sent as an
+// explicit record — never as a bare stream close — so the client can tell
+// "killed" apart from "the server went away" (which arrives as EOF).
+func pushPortForwardClosed(pf *portForward, reason protocol.PortForwardCloseReason) {
+	if pf == nil || pf.control == nil {
+		return
+	}
+	var ev protocol.PortForwardEvent
+	ev.Kind = protocol.PortForwardEventKind_Closed
+	ev.SetClosed(protocol.PortForwardClosed{Reason: reason})
+	b, err := ev.Append(nil)
+	if err != nil {
+		slog.Error("port_forward: encode closed event", "fwd", pf.forwardID, "err", err)
+		return
+	}
+	if werr := pf.control.AppendData(false, b); werr != nil {
+		slog.Info("port_forward: closed event not delivered", "fwd", pf.forwardID, "err", werr)
+	}
 }
 
 // watchRemoteForwardControl tears the forward down when the client closes the

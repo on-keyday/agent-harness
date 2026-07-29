@@ -247,22 +247,21 @@ func ParseRemoteForwardSpec(s string) (RemoteForwardSpec, error) {
 	return RemoteForwardSpec{BindAddr: bind, RunnerPort: rport, DialHost: dhost, DialPort: dport, DialNetwork: "tcp"}, nil
 }
 
-// remoteForwardConnNotifySize is the fixed wire size of a RemoteForwardConnNotify
-// (one u64 stream id). Asserted in the protocol round-trip test.
-const remoteForwardConnNotifySize = 8
-
-// parseConnNotifies consumes as many whole RemoteForwardConnNotify records from
-// buf as possible, returning the stream ids and the unconsumed remainder.
-func parseConnNotifies(buf []byte) (ids []uint64, rest []byte) {
-	for len(buf) >= remoteForwardConnNotifySize {
-		var n protocol.RemoteForwardConnNotify
-		if _, err := n.Decode(buf[:remoteForwardConnNotifySize]); err != nil {
-			break
+// parsePortForwardEvents consumes as many whole PortForwardEvent records from buf
+// as possible, returning them and the unconsumed remainder. Records are no longer
+// a fixed size (the tag selects the payload), so the decoder itself reports where
+// each record ends.
+func parsePortForwardEvents(buf []byte) (evs []protocol.PortForwardEvent, rest []byte) {
+	for len(buf) > 0 {
+		var ev protocol.PortForwardEvent
+		r, err := ev.Decode(buf)
+		if err != nil {
+			break // partial record: keep it for the next read
 		}
-		ids = append(ids, n.StreamId)
-		buf = buf[remoteForwardConnNotifySize:]
+		evs = append(evs, ev)
+		buf = r
 	}
-	return ids, buf
+	return evs, buf
 }
 
 // RegisterPortForward registers one forward with the server and returns the
@@ -343,14 +342,14 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 	return nil
 }
 
-// readRemoteForwardControl parses RemoteForwardConnNotify records off the control
-// stream and, for each, dials the client-side target and splices. Buffers across
-// ReadDirect boundaries so a coalesced/split notify is handled.
 // ServeRemoteForwardControl runs the control-stream loop for an already-opened
-// remote forward (see OpenRemoteForward): it dials the client-side target per
-// arriving connection and returns when ctx is cancelled or the control stream
-// closes. Callers that opened the forward themselves (e.g. the TUI, so it can
-// confirm the bind before registering) use this to run the rest.
+// remote forward (see OpenRemoteForward): it dispatches PortForwardEvent records
+// off the control stream — dialing the client-side target per arriving
+// connection, or stopping on an explicit close — and returns when ctx is
+// cancelled, a `closed` event arrives, or the control stream itself EOFs.
+// Buffers across ReadDirect boundaries so a coalesced/split record is handled.
+// Callers that opened the forward themselves (e.g. the TUI, so it can confirm
+// the bind before registering) use this to run the rest.
 func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForwardSpec, ctrl trsf.BidirectionalStream, logf func(string)) {
 	if logf == nil {
 		logf = func(s string) { slog.Info(s) }
@@ -366,15 +365,33 @@ func (c *Client) ServeRemoteForwardControl(ctx context.Context, sp RemoteForward
 		data, eof, err := ctrl.ReadDirectContext(ctx, 64*1024)
 		if len(data) > 0 {
 			buf = append(buf, data...)
-			var ids []uint64
-			ids, buf = parseConnNotifies(buf)
-			for _, id := range ids {
-				go c.dialAndSplice(ctx, sp, trsf.StreamID(id), logf)
+			var evs []protocol.PortForwardEvent
+			evs, buf = parsePortForwardEvents(buf)
+			for _, ev := range evs {
+				switch ev.Kind {
+				case protocol.PortForwardEventKind_ConnNotify:
+					go c.dialAndSplice(ctx, sp, trsf.StreamID(ev.ConnNotify().StreamId), logf)
+				case protocol.PortForwardEventKind_Closed:
+					logf(closedReasonLine(ev.Closed().Reason))
+					return
+				}
 			}
 		}
 		if eof || err != nil {
+			logf("remote-forward: server connection lost")
 			return
 		}
+	}
+}
+
+// closedReasonLine renders why a forward stopped. Kept distinct from the EOF
+// path so an operator can tell a deliberate kill from a dead server.
+func closedReasonLine(r protocol.PortForwardCloseReason) string {
+	switch r {
+	case protocol.PortForwardCloseReason_TaskGone:
+		return "forward stopped: task is no longer running"
+	default:
+		return "forward stopped: killed remotely"
 	}
 }
 

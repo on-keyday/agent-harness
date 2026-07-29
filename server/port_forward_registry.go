@@ -9,10 +9,10 @@ import (
 )
 
 // portForward is one active port-forward registration (either -L or -R). The
-// server creates the control stream; for -R it also pushes
-// RemoteForwardConnNotify records onto it and allocates a per-connection
-// client data stream against clientCxn each time the runner reports a new
-// accepted connection.
+// server creates the control stream; for -R it also pushes tagged
+// PortForwardEvent records onto it (conn_notify per accepted connection,
+// closed on teardown) and allocates a per-connection client data stream
+// against clientCxn each time the runner reports a new accepted connection.
 type portForward struct {
 	forwardID  uint64
 	direction  protocol.PortForwardDirection

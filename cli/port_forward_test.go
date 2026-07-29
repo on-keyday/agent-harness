@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestDialAndSplice_UnixTarget(t *testing.T) {
@@ -110,5 +112,41 @@ func TestParseForwardSpec(t *testing.T) {
 			got.RemoteHost != c.rhost || got.RemotePort != c.rport {
 			t.Errorf("%q: got %+v", c.in, got)
 		}
+	}
+}
+
+func TestParsePortForwardEvents_SplitAndCoalesced(t *testing.T) {
+	var n protocol.PortForwardEvent
+	n.Kind = protocol.PortForwardEventKind_ConnNotify
+	n.SetConnNotify(protocol.RemoteForwardConnNotify{StreamId: 11})
+	var cl protocol.PortForwardEvent
+	cl.Kind = protocol.PortForwardEventKind_Closed
+	cl.SetClosed(protocol.PortForwardClosed{Reason: protocol.PortForwardCloseReason_Killed})
+
+	full := cl.MustAppend(n.MustAppend(nil))
+
+	// Coalesced: both events in one buffer.
+	evs, rest := parsePortForwardEvents(full)
+	if len(evs) != 2 || len(rest) != 0 {
+		t.Fatalf("coalesced: got %d events, %d rest bytes", len(evs), len(rest))
+	}
+	if evs[0].ConnNotify().StreamId != 11 || evs[1].Closed().Reason != protocol.PortForwardCloseReason_Killed {
+		t.Fatalf("coalesced: wrong payloads: %+v", evs)
+	}
+
+	// Split: one byte at a time; events must appear exactly once, in order.
+	var got []protocol.PortForwardEvent
+	var buf []byte
+	for i := 0; i < len(full); i++ {
+		buf = append(buf, full[i])
+		var evs []protocol.PortForwardEvent
+		evs, buf = parsePortForwardEvents(buf)
+		got = append(got, evs...)
+	}
+	if len(got) != 2 || len(buf) != 0 {
+		t.Fatalf("split: got %d events, %d leftover bytes", len(got), len(buf))
+	}
+	if got[0].Kind != protocol.PortForwardEventKind_ConnNotify || got[1].Kind != protocol.PortForwardEventKind_Closed {
+		t.Fatalf("split: wrong order: %+v", got)
 	}
 }

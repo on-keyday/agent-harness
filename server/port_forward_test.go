@@ -413,8 +413,8 @@ func TestRegisterRemoteForward_BindFailed(t *testing.T) {
 }
 
 // TestHandleRemoteForwardConn_NotifiesClient verifies a runner-reported
-// connection produces a RemoteForwardConnNotify on the control stream carrying
-// the new client data-stream id.
+// connection produces a tagged PortForwardEvent (kind conn_notify) on the
+// control stream carrying the new client data-stream id.
 func TestHandleRemoteForwardConn_NotifiesClient(t *testing.T) {
 	ctrl := newRecordingBidiStream(555)
 	h, clientConn, runnerConn, resp := registerRemoteForwardForTest(t, ctrl, true)
@@ -428,12 +428,16 @@ func TestHandleRemoteForwardConn_NotifiesClient(t *testing.T) {
 
 	h.handleRemoteForwardConn(runnerConn, &protocol.RemoteForwardConn{ForwardId: resp.ForwardId, StreamId: 900})
 
-	var n protocol.RemoteForwardConnNotify
-	if _, err := n.Decode(ctrl.Written()); err != nil {
-		t.Fatalf("decode notify: %v (written %d bytes)", err, len(ctrl.Written()))
+	var ev protocol.PortForwardEvent
+	if _, err := ev.Decode(ctrl.Written()); err != nil {
+		t.Fatalf("decode event: %v (written %d bytes)", err, len(ctrl.Written()))
 	}
-	if n.StreamId != 556 {
-		t.Fatalf("notify StreamId = %d, want 556", n.StreamId)
+	if ev.Kind != protocol.PortForwardEventKind_ConnNotify {
+		t.Fatalf("event kind = %v, want ConnNotify", ev.Kind)
+	}
+	n := ev.ConnNotify()
+	if n == nil || n.StreamId != 556 {
+		t.Fatalf("notify StreamId = %+v, want 556", n)
 	}
 }
 
