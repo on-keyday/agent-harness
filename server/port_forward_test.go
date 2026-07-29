@@ -68,6 +68,70 @@ func TestHandleOpenPortForward_DetachedTaskAccepted(t *testing.T) {
 	}
 }
 
+// TestHandleOpenPortForward_LocalDialsRunner verifies the per-connection local
+// forward path end to end: on a Running task with an online runner,
+// handleOpenPortForward returns Ok, and the RunnerOpenPortForwardRequest the
+// runner receives decodes with Direction == Local, the right
+// RemoteHost/RemotePort dial target, and a StreamId matching the runner-side
+// stream. Direction is hard-coded to Local inside handleOpenPortForward (it
+// can no longer be copied from the request — OpenPortForwardRequest dropped
+// the field in this task's schema slimming), so this is the test that pins
+// the "the runner protocol did not move" claim for the -L path, mirroring how
+// TestHandleOpenPortForward_RemoteRegisters pins it for -R.
+func TestHandleOpenPortForward_LocalDialsRunner(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	var rawID [16]byte
+	rawID[0] = 0x22
+	idHex := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[idHex] = &TaskEntry{ID: idHex, Status: protocol.TaskStatus_Running, AssignedTo: "runner-1"}
+	h.Tasks.order = append(h.Tasks.order, idHex)
+	h.Tasks.mu.Unlock()
+
+	runnerConn := &fakeConn{nextStreamID: 900}
+	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: runnerConn})
+
+	clientConn := &fakeConn{nextStreamID: 501}
+	req := &protocol.OpenPortForwardRequest{
+		TaskId:     protocol.TaskID{Id: rawID},
+		RemotePort: 3306,
+	}
+	req.SetRemoteHost([]byte("db.internal"))
+
+	resp := h.handleOpenPortForward(clientConn, req)
+	if resp.Status != protocol.OpenPortForwardStatus_Ok {
+		t.Fatalf("status = %v, want Ok", resp.Status)
+	}
+	if resp.StreamId != 501 {
+		t.Fatalf("StreamId = %d, want client stream id 501", resp.StreamId)
+	}
+
+	runnerSent := runnerConn.Sent()
+	if len(runnerSent) == 0 {
+		t.Fatal("no request sent to runner")
+	}
+	var rr protocol.RunnerRequest
+	if _, err := rr.Decode(runnerSent[0][1:]); err != nil { // strip ApplicationPayloadKind byte
+		t.Fatalf("decode runner req: %v", err)
+	}
+	if rr.Kind != protocol.RunnerRequestType_OpenPortForward {
+		t.Fatalf("runner req kind = %v", rr.Kind)
+	}
+	body := rr.OpenPortForward()
+	if body == nil {
+		t.Fatal("runner req body missing")
+	}
+	if body.Direction != protocol.PortForwardDirection_Local {
+		t.Fatalf("runner req Direction = %v, want Local (byte-identical-to-pre-migration claim)", body.Direction)
+	}
+	if string(body.RemoteHost) != "db.internal" || body.RemotePort != 3306 {
+		t.Fatalf("runner req dial target = %s:%d, want db.internal:3306", body.RemoteHost, body.RemotePort)
+	}
+	if body.StreamId != 900 {
+		t.Fatalf("runner req StreamId = %d, want runner-side stream id 900", body.StreamId)
+	}
+}
+
 // TestHandleOpenPortForward_RemoteRegisters verifies the ssh -R registration,
 // now via RegisterPortForwardRequest/handleRegisterPortForward: the server
 // creates a control stream (returned as StreamId), assigns a ForwardId,
@@ -126,6 +190,89 @@ func TestHandleOpenPortForward_RemoteRegisters(t *testing.T) {
 	if body == nil || body.Direction != protocol.PortForwardDirection_Remote ||
 		body.BindPort != 15432 || body.ForwardId != resp.ForwardId {
 		t.Fatalf("runner req body = %+v", body)
+	}
+}
+
+// TestHandleRegisterPortForward_LocalNoSuchTask verifies the status gate on
+// the register path for a local registration: an unknown task id must return
+// NoSuchTask without touching conn or the registry — passing nil for
+// ConnHandle and an empty cid is safe here precisely because the lookup fails
+// before any stream-allocation step runs. Mirrors
+// TestHandleOpenPortForward_NoSuchTask for the new RPC.
+func TestHandleRegisterPortForward_LocalNoSuchTask(t *testing.T) {
+	h := &TaskHandler{
+		Tasks:    NewTaskStore(),
+		Registry: NewRegistry(),
+	}
+	req := &protocol.RegisterPortForwardRequest{
+		TaskId:    protocol.TaskID{Id: [16]byte{9, 9, 9}},
+		Direction: protocol.PortForwardDirection_Local,
+	}
+	req.SetTargetHost([]byte("db.internal"))
+	resp := h.handleRegisterPortForward(nil, req, "")
+	if resp.Status != protocol.OpenPortForwardStatus_NoSuchTask {
+		t.Fatalf("got status %v, want NoSuchTask", resp.Status)
+	}
+}
+
+// TestHandleRegisterPortForward_LocalRegisters verifies the -L registration
+// path added by this task: on a Running task, handleRegisterPortForward with
+// Direction=Local returns Ok with a non-zero ForwardId and the client
+// control-stream id, stores the registration under h.pforwards() with
+// direction == Local — and, the point of the test, never contacts the
+// runner. A runner IS registered (so a bug that made this path consult the
+// runner would still get a live Conn, not an early RunnerOffline masking the
+// real assertion); runnerConn.Sent() must stay empty throughout.
+//
+// The control stream is a recordingBidiStream (not the default
+// nextStreamID-driven noopBidiStream) because noopBidiStream.ReadDirect
+// returns EOF immediately, which would race the background
+// watchRemoteForwardControl goroutine's registry-removal against this test's
+// own h.pforwards().get check.
+func TestHandleRegisterPortForward_LocalRegisters(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	var rawID [16]byte
+	rawID[0] = 0x33
+	idHex := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[idHex] = &TaskEntry{ID: idHex, Status: protocol.TaskStatus_Running, AssignedTo: "runner-1"}
+	h.Tasks.order = append(h.Tasks.order, idHex)
+	h.Tasks.mu.Unlock()
+
+	runnerConn := &fakeConn{}
+	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: runnerConn})
+
+	ctrl := newRecordingBidiStream(777)
+	defer ctrl.CloseBoth() // let the watchRemoteForwardControl goroutine exit
+	clientConn := &fakeConn{nextBidi: ctrl}
+	req := &protocol.RegisterPortForwardRequest{
+		TaskId:     protocol.TaskID{Id: rawID},
+		Direction:  protocol.PortForwardDirection_Local,
+		TargetPort: 5432,
+		BindPort:   18080,
+	}
+	req.SetTargetHost([]byte("db.internal"))
+	req.SetBindAddr([]byte("127.0.0.1"))
+
+	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+	if resp.Status != protocol.OpenPortForwardStatus_Ok {
+		t.Fatalf("status = %v, want Ok", resp.Status)
+	}
+	if resp.ForwardId == 0 {
+		t.Fatal("ForwardId should be non-zero")
+	}
+	if resp.StreamId != 777 {
+		t.Fatalf("StreamId = %d, want control stream id 777", resp.StreamId)
+	}
+	pf, ok := h.pforwards().get(resp.ForwardId)
+	if !ok {
+		t.Fatal("registration not stored")
+	}
+	if pf.direction != protocol.PortForwardDirection_Local {
+		t.Fatalf("stored direction = %v, want Local", pf.direction)
+	}
+	if sent := runnerConn.Sent(); len(sent) != 0 {
+		t.Fatalf("local registration must not contact the runner; runner.Sent() = %d messages", len(sent))
 	}
 }
 
