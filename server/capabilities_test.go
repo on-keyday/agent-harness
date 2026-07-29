@@ -344,7 +344,9 @@ func assertNotPermissionDenied(t *testing.T, conn *fakeConn) {
 	}
 }
 
-// TestDirectionGate covers the six direction-dependent gate cases (Task 5).
+// TestDirectionGate covers the direction-dependent gate cases (originally
+// Task 5) plus the fixed-cap OpenPortForward case added when the port-forward
+// registration gate moved to RegisterPortForward (see cases 5-7).
 func TestDirectionGate(t *testing.T) {
 	// Case 1: Pull without FileRead → denied (RequiredCap=FileRead).
 	t.Run("file_pull_no_read_denied", func(t *testing.T) {
@@ -398,32 +400,50 @@ func TestDirectionGate(t *testing.T) {
 		assertPermissionDenied(t, conn, 14, protocol.Capability_FileRead)
 	})
 
-	// Case 5: forward -L without ForwardLocal → denied (RequiredCap=ForwardLocal).
+	// Case 5: register -L without ForwardLocal → denied (RequiredCap=ForwardLocal).
+	// The direction-dependent gate lives on RegisterPortForward as of the
+	// -R-onto-RegisterPortForward migration (OpenPortForward is now
+	// unconditionally ForwardLocal; see forward_open_local_no_cap_denied below).
 	t.Run("forward_local_no_cap_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_OpenPortForward,
+			Kind:      protocol.TaskControlKind_RegisterPortForward,
 			RequestId: 15,
 		}
-		req.SetOpenPortForward(protocol.OpenPortForwardRequest{
+		req.SetRegisterPortForward(protocol.RegisterPortForwardRequest{
 			Direction: protocol.PortForwardDirection_Local,
 		})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertPermissionDenied(t, conn, 15, protocol.Capability_ForwardLocal)
 	})
 
-	// Case 6: forward -R with only ForwardLocal → denied (RequiredCap=ForwardRemote).
+	// Case 6: register -R with only ForwardLocal → denied (RequiredCap=ForwardRemote).
 	t.Run("forward_remote_only_local_denied", func(t *testing.T) {
 		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal) // has ForwardLocal but not ForwardRemote
 		req := &protocol.TaskControlRequest{
-			Kind:      protocol.TaskControlKind_OpenPortForward,
+			Kind:      protocol.TaskControlKind_RegisterPortForward,
 			RequestId: 16,
 		}
-		req.SetOpenPortForward(protocol.OpenPortForwardRequest{
+		req.SetRegisterPortForward(protocol.RegisterPortForwardRequest{
 			Direction: protocol.PortForwardDirection_Remote,
 		})
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertPermissionDenied(t, conn, 16, protocol.Capability_ForwardRemote)
+	})
+
+	// Case 7: per-connection OpenPortForward without ForwardLocal → denied.
+	// OpenPortForward no longer carries a direction (it always means "open the
+	// data stream for one accepted local-forward connection"), so its gate is a
+	// fixed ForwardLocal requirement rather than direction-dependent.
+	t.Run("forward_open_local_no_cap_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_OpenPortForward,
+			RequestId: 17,
+		}
+		req.SetOpenPortForward(protocol.OpenPortForwardRequest{})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 17, protocol.Capability_ForwardLocal)
 	})
 }
 

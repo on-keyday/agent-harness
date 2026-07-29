@@ -43,14 +43,14 @@ type TaskHandler struct {
 	// nil-safe: tests may leave it nil to exercise egress in isolation.
 	OnNotify func(ev protocol.NotifyEvent)
 
-	// remoteForwardsOnce guards the lazy init of remoteForwards so concurrent
+	// portForwardsOnce guards the lazy init of portForwards so concurrent
 	// callers racing on the first use cannot create two separate registries or
 	// observe a torn pointer write.
-	remoteForwardsOnce sync.Once
-	// remoteForwards tracks active ssh -R registrations (forwardId →
-	// registration). Lazily initialised via rforwards() (guarded by
-	// remoteForwardsOnce) so struct-literal construction in tests need not set it.
-	remoteForwards *remoteForwardRegistry
+	portForwardsOnce sync.Once
+	// portForwards tracks active port-forward registrations, both -L and -R
+	// (forwardId → registration). Lazily initialised via pforwards() (guarded by
+	// portForwardsOnce) so struct-literal construction in tests need not set it.
+	portForwards *portForwardRegistry
 
 	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply
 	// with all-zero counts. Server.New wires this to a closure that dispatches
@@ -367,9 +367,25 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: OpenPortForward variant is nil")
 			return
 		}
+		if !hasCap(h.callerCaps(cid), protocol.Capability_ForwardLocal) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, protocol.Capability_ForwardLocal)
+			return
+		}
+		presp := h.handleOpenPortForward(conn, pf)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
+		resp.SetOpenPortForward(presp)
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_RegisterPortForward:
+		rf := req.RegisterPortForward()
+		if rf == nil {
+			slog.Error("TaskHandler: RegisterPortForward variant is nil")
+			return
+		}
 		{
 			need := protocol.Capability_ForwardLocal
-			if pf.Direction == protocol.PortForwardDirection_Remote {
+			if rf.Direction == protocol.PortForwardDirection_Remote {
 				need = protocol.Capability_ForwardRemote
 			}
 			if !hasCap(h.callerCaps(cid), need) {
@@ -377,9 +393,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				return
 			}
 		}
-		presp := h.handleOpenPortForward(conn, pf)
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
-		resp.SetOpenPortForward(presp)
+		rresp := h.handleRegisterPortForward(conn, rf, cid)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: req.RequestId}
+		resp.SetRegisterPortForward(rresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 

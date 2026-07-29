@@ -17,7 +17,8 @@ import (
 // splices the two streams. Unlike file transfer it uses spliceBidi
 // (tear-down-on-either-close variant) because a TCP forward is not a
 // guaranteed both-EOF request/response. The actual net.Dial happens on the
-// runner.
+// runner. Local-forward only: -R registration goes through
+// handleRegisterPortForward instead.
 func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenPortForwardRequest) protocol.OpenPortForwardResponse {
 	errResp := func(s protocol.OpenPortForwardStatus) protocol.OpenPortForwardResponse {
 		return protocol.OpenPortForwardResponse{Status: s}
@@ -35,9 +36,6 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 		slog.Error("port_forward: nil client conn (programmer error)")
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
-	if req.Direction == protocol.PortForwardDirection_Remote {
-		return h.registerRemoteForward(conn, req, taskIDHex, task.AssignedTo, runner)
-	}
 	clientStream := conn.CreateBidirectionalStream()
 	if clientStream == nil {
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
@@ -52,7 +50,7 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 	body := protocol.RunnerOpenPortForwardRequest{
 		TaskId:     req.TaskId,
 		StreamId:   uint64(runnerStream.ID()),
-		Direction:  req.Direction,
+		Direction:  protocol.PortForwardDirection_Local,
 		RemotePort: req.RemotePort,
 	}
 	body.SetRemoteHost(req.RemoteHost)
@@ -71,26 +69,75 @@ func (h *TaskHandler) handleOpenPortForward(conn ConnHandle, req *protocol.OpenP
 	}
 }
 
-// registerRemoteForward (ssh -R) records the server-created control stream, asks
-// the runner to open a listener, and returns the control stream id + assigned
-// forwardId. Per-connection data streams are created later in
-// handleRemoteForwardConn when the runner reports an accepted connection.
-func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenPortForwardRequest, taskIDHex, runnerID string, runner RunnerEntry) protocol.OpenPortForwardResponse {
-	errResp := func(s protocol.OpenPortForwardStatus) protocol.OpenPortForwardResponse {
-		return protocol.OpenPortForwardResponse{Status: s}
+// handleRegisterPortForward registers one forward and returns its id plus the
+// server-created control stream. Local registrations never contact the runner:
+// the listener is already bound client-side, so only task liveness is checked.
+func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.RegisterPortForwardRequest, cid string) protocol.RegisterPortForwardResponse {
+	errResp := func(s protocol.OpenPortForwardStatus) protocol.RegisterPortForwardResponse {
+		return protocol.RegisterPortForwardResponse{Status: s}
 	}
-	// The server creates the control stream (matches the codebase pattern:
-	// server creates, client picks up by id via WaitForBidirectionalStream).
+	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
+	task, ok := h.Tasks.Get(taskIDHex)
+	if !ok || (task.Status != protocol.TaskStatus_Running && task.Status != protocol.TaskStatus_Detached) {
+		return errResp(protocol.OpenPortForwardStatus_NoSuchTask)
+	}
+	if conn == nil {
+		slog.Error("port_forward: nil client conn (programmer error)")
+		return errResp(protocol.OpenPortForwardStatus_InternalError)
+	}
+	pf := &portForward{
+		direction:  req.Direction,
+		taskIDHex:  taskIDHex,
+		runnerID:   task.AssignedTo,
+		clientCxn:  conn,
+		clientCID:  cid,
+		clientKind: h.lookupClientKind(cid),
+		bindAddr:   string(req.BindAddr),
+		bindPort:   req.BindPort,
+		targetHost: string(req.TargetHost),
+		targetPort: req.TargetPort,
+	}
+	if req.Direction == protocol.PortForwardDirection_Remote {
+		runner, ok := h.Registry.Get(task.AssignedTo)
+		if !ok || runner.Conn == nil {
+			return errResp(protocol.OpenPortForwardStatus_RunnerOffline)
+		}
+		return h.registerRemoteForward(pf, req, runner)
+	}
 	ctrl := conn.CreateBidirectionalStream()
 	if ctrl == nil {
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
-	rf := &remoteForward{taskIDHex: taskIDHex, runnerID: runnerID, control: ctrl, clientCxn: conn}
-	fid := h.rforwards().add(rf)
+	pf.control = ctrl
+	fid := h.pforwards().add(pf)
+	go h.watchRemoteForwardControl(pf)
+	return protocol.RegisterPortForwardResponse{
+		Status:    protocol.OpenPortForwardStatus_Ok,
+		ForwardId: fid,
+		StreamId:  uint64(ctrl.ID()),
+	}
+}
+
+// registerRemoteForward (ssh -R) records the server-created control stream, asks
+// the runner to open a listener, and returns the control stream id + assigned
+// forwardId. Per-connection data streams are created later in
+// handleRemoteForwardConn when the runner reports an accepted connection.
+func (h *TaskHandler) registerRemoteForward(pf *portForward, req *protocol.RegisterPortForwardRequest, runner RunnerEntry) protocol.RegisterPortForwardResponse {
+	errResp := func(s protocol.OpenPortForwardStatus) protocol.RegisterPortForwardResponse {
+		return protocol.RegisterPortForwardResponse{Status: s}
+	}
+	// The server creates the control stream (matches the codebase pattern:
+	// server creates, client picks up by id via WaitForBidirectionalStream).
+	ctrl := pf.clientCxn.CreateBidirectionalStream()
+	if ctrl == nil {
+		return errResp(protocol.OpenPortForwardStatus_InternalError)
+	}
+	pf.control = ctrl
+	fid := h.pforwards().add(pf)
 	// Register the pending bind channel BEFORE sending, so a fast runner reply
 	// isn't missed.
-	resultCh := h.rforwards().addPending(fid)
-	defer h.rforwards().removePending(fid)
+	resultCh := h.pforwards().addPending(fid)
+	defer h.pforwards().removePending(fid)
 
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_OpenPortForward}
 	body := protocol.RunnerOpenPortForwardRequest{
@@ -103,9 +150,9 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 	rreq.SetOpenPortForward(body)
 	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
-		h.rforwards().remove(fid)
+		h.pforwards().remove(fid)
 		_ = ctrl.CloseBoth()
-		slog.Error("port_forward: send listen request to runner failed", "task_id", taskIDHex, "err", err)
+		slog.Error("port_forward: send listen request to runner failed", "task_id", pf.taskIDHex, "err", err)
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
 
@@ -117,7 +164,7 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 	case <-time.After(remoteForwardBindTimeout):
 	}
 	if !bound {
-		h.rforwards().remove(fid)
+		h.pforwards().remove(fid)
 		_ = ctrl.CloseBoth()
 		// In case the runner DID bind but the result was slow/lost, tell it to
 		// stop listening so no orphan listener is left behind.
@@ -126,8 +173,8 @@ func (h *TaskHandler) registerRemoteForward(conn ConnHandle, req *protocol.OpenP
 	}
 
 	// Tear the forward down when the client closes the control stream.
-	go h.watchRemoteForwardControl(rf)
-	return protocol.OpenPortForwardResponse{
+	go h.watchRemoteForwardControl(pf)
+	return protocol.RegisterPortForwardResponse{
 		Status:    protocol.OpenPortForwardStatus_Ok,
 		StreamId:  uint64(ctrl.ID()),
 		ForwardId: fid,
@@ -141,7 +188,7 @@ const remoteForwardBindTimeout = 5 * time.Second
 // handleRemoteForwardBindResult delivers a runner's listener-bind result to the
 // registration goroutine blocked in registerRemoteForward.
 func (h *TaskHandler) handleRemoteForwardBindResult(_ ConnHandle, msg *protocol.RemoteForwardBindResult) {
-	h.rforwards().signalBind(msg.ForwardId, msg.Ok())
+	h.pforwards().signalBind(msg.ForwardId, msg.Ok())
 }
 
 // sendClosePortForward best-effort tells a runner to stop a remote-forward listener.
@@ -160,7 +207,7 @@ func sendClosePortForward(rc ConnHandle, forwardID uint64) {
 // allocates a client-side stream, splices the two, and notifies the client over
 // the control stream so it dials its local target and picks up the stream by id.
 func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protocol.RemoteForwardConn) {
-	rf, ok := h.rforwards().get(msg.ForwardId)
+	pf, ok := h.pforwards().get(msg.ForwardId)
 	if !ok {
 		return // registration gone; the runner stream will EOF and clean up
 	}
@@ -169,7 +216,7 @@ func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protoc
 		slog.Info("port_forward: runner data stream not visible", "fwd", msg.ForwardId, "runner_stream", msg.StreamId)
 		return
 	}
-	clientStream := rf.clientCxn.CreateBidirectionalStream()
+	clientStream := pf.clientCxn.CreateBidirectionalStream()
 	if clientStream == nil {
 		_ = runnerStream.CloseBoth()
 		return
@@ -181,31 +228,36 @@ func (h *TaskHandler) handleRemoteForwardConn(runnerConn ConnHandle, msg *protoc
 		_ = runnerStream.CloseBoth()
 		return
 	}
-	if err := rf.control.AppendData(false, nb); err != nil {
+	if err := pf.control.AppendData(false, nb); err != nil {
 		_ = clientStream.CloseBoth()
 		_ = runnerStream.CloseBoth()
 		return
 	}
-	go spliceBidi(clientStream, runnerStream, rf.taskIDHex)
+	go spliceBidi(clientStream, runnerStream, pf.taskIDHex)
 }
 
 // watchRemoteForwardControl tears the forward down when the client closes the
 // control stream. The client never writes on it, so any read returning EOF or
 // error means the client is gone: drop the registration and tell the runner to
-// stop listening (no orphan listener left behind).
-func (h *TaskHandler) watchRemoteForwardControl(rf *remoteForward) {
+// stop listening (no orphan listener left behind). Runs for both directions;
+// for a local forward the runner was never contacted, so sendClosePortForward
+// is only reached (and meaningful) for a remote registration.
+func (h *TaskHandler) watchRemoteForwardControl(pf *portForward) {
 	for {
-		_, eof, err := rf.control.ReadDirect(4096)
+		_, eof, err := pf.control.ReadDirect(4096)
 		if eof || err != nil {
 			break
 		}
 	}
-	if _, ok := h.rforwards().remove(rf.forwardID); !ok {
+	if _, ok := h.pforwards().remove(pf.forwardID); !ok {
 		return
 	}
-	runner, ok := h.Registry.Get(rf.runnerID)
+	if pf.direction != protocol.PortForwardDirection_Remote {
+		return
+	}
+	runner, ok := h.Registry.Get(pf.runnerID)
 	if !ok || runner.Conn == nil {
 		return
 	}
-	sendClosePortForward(runner.Conn, rf.forwardID)
+	sendClosePortForward(runner.Conn, pf.forwardID)
 }

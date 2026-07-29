@@ -8,9 +8,10 @@ import (
 )
 
 // requiredCap maps a direction-independent TaskControlKind to the cap it needs.
-// Kinds absent from the map are gated elsewhere: OpenFileTransfer / ListFiles /
-// OpenPortForward are direction-dependent (Task 5); List / GetTaskLog are
-// INFO-scoped (Task 6).
+// Kinds absent from the map are gated elsewhere: OpenFileTransfer / ListFiles are
+// direction-dependent, RegisterPortForward is direction-dependent (its gate
+// moved off OpenPortForward, which is now unconditionally ForwardLocal); List /
+// GetTaskLog are INFO-scoped.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
 	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,

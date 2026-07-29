@@ -261,6 +261,9 @@ enum TaskControlKind:
                     # server-resolved identity, not another task's record)
     await_idle      # one-shot: fire when an interactive session's PTY output
                     # goes quiescent (see AwaitIdleRequest). Requires exec_attach.
+    register_port_forward   # register a -L/-R forward; returns forward_id + control stream
+    list_port_forwards      # enumerate the caller's visible registrations
+    kill_port_forward       # close one registration by id
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -875,6 +878,9 @@ format TaskControlRequest:
         TaskControlKind.board_purge  => board_purge  :BoardPurgeRequest
         TaskControlKind.whoami       => whoami       :WhoAmIRequest
         TaskControlKind.await_idle   => await_idle   :AwaitIdleRequest
+        TaskControlKind.register_port_forward => register_port_forward :RegisterPortForwardRequest
+        TaskControlKind.list_port_forwards    => list_port_forwards    :PortForwardListQuery
+        TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -908,6 +914,9 @@ format TaskControlResponse:
         TaskControlKind.board_purge  => board_purge  :BoardPurgeResponse
         TaskControlKind.whoami       => whoami       :WhoAmIResponse
         TaskControlKind.await_idle   => await_idle   :AwaitIdleResponse
+        TaskControlKind.register_port_forward => register_port_forward :RegisterPortForwardResponse
+        TaskControlKind.list_port_forwards    => list_port_forwards    :PortForwardListResult
+        TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardResponse
 
 enum NotifyLevel:
     :u8
@@ -1218,27 +1227,108 @@ enum OpenPortForwardStatus:
     internal_error = "internal_error"
     bind_failed    = "bind_failed"
 
-# OpenPortForwardRequest: remote_host/remote_port are the dial target (runner
-# dials it for local; client dials it for remote). bind_addr/bind_port are the
-# runner-side listener for remote forwards (unused for local).
-format OpenPortForwardRequest:
-    task_id           :TaskID
-    direction         :PortForwardDirection
-    remote_host_len   :u16
-    remote_host       :[remote_host_len]u8
-    remote_port       :u16
-    bind_addr_len     :u16
-    bind_addr         :[bind_addr_len]u8
-    bind_port         :u16
+# RegisterPortForwardRequest: one registration, either direction. Direction
+# decides what the address pair means:
+#   local  : bind_* is the CLIENT's already-bound listener; target_* is what the
+#            RUNNER dials per connection.
+#   remote : bind_* is the listener the RUNNER is asked to open; target_* is what
+#            the CLIENT dials per connection.
+format RegisterPortForwardRequest:
+    task_id         :TaskID
+    direction       :PortForwardDirection
+    bind_addr_len   :u16
+    bind_addr       :[bind_addr_len]u8
+    bind_port       :u16
+    target_host_len :u16
+    target_host     :[target_host_len]u8
+    target_port     :u16
 
-# OpenPortForwardResponse: for local, stream_id is the data stream. For remote,
-# stream_id is the server-created persistent control stream (the client picks it
-# up by id and reads RemoteForwardConnNotify records off it); forward_id is the
-# registration handle.
-format OpenPortForwardResponse:
+# Reuses OpenPortForwardStatus. A local registration can only answer ok,
+# no_such_task or internal_error: its listener is bound client-side before the
+# request is sent, and the runner is not consulted.
+format RegisterPortForwardResponse:
     status     :OpenPortForwardStatus
-    stream_id  :u64
     forward_id :u64
+    stream_id  :u64   # server-created control stream; 0 on failure
+
+format PortForwardListQuery:
+    task_id :TaskID   # all-zero = every forward visible to the caller
+
+format PortForwardListResult:
+    stream_id :u64    # server-initiated send-stream carrying PortForwardListResultBody
+                      # until EOF (mirrors ConnListResult). 0 = error.
+
+format PortForwardInfo:
+    forward_id      :u64
+    direction       :PortForwardDirection
+    task_id         :TaskID
+    bind_addr_len   :u16
+    bind_addr       :[bind_addr_len]u8
+    bind_port       :u16
+    target_host_len :u16
+    target_host     :[target_host_len]u8
+    target_port     :u16
+    origin_kind     :ClientKind          # which surface holds it
+    origin_cid_len  :u8
+    origin_cid      :[origin_cid_len]u8  # ConnectionID canonical String(), as in ConnInfo.cid;
+                                         # the only way to tell two identical specs apart
+
+format PortForwardListResultBody:
+    forwards_len :u16
+    forwards     :[forwards_len]PortForwardInfo
+
+enum KillPortForwardStatus:
+    :u8
+    ok              = "ok"
+    no_such_forward = "no_such_forward"   # unknown id OR not visible to the caller
+                                          # (an invisible id must not become an
+                                          # existence oracle for a confined agent)
+    internal_error  = "internal_error"
+
+format KillPortForwardRequest:
+    forward_id :u64
+
+format KillPortForwardResponse:
+    status :KillPortForwardStatus
+
+# --- control stream records (server -> client) ---
+enum PortForwardEventKind:
+    :u8
+    conn_notify   # remote forwards only: dial your local target, pick up stream_id
+    closed        # both directions: stop this forward
+
+enum PortForwardCloseReason:
+    :u8
+    killed     # kill_port_forward was called
+    task_gone  # the owning task left Running/Detached
+
+format PortForwardClosed:
+    reason :PortForwardCloseReason
+
+format PortForwardEvent:
+    kind :PortForwardEventKind
+    match kind:
+        PortForwardEventKind.conn_notify => conn_notify :RemoteForwardConnNotify
+        PortForwardEventKind.closed      => closed      :PortForwardClosed
+        .. => error("Unexpected port forward event")
+
+# OpenPortForwardRequest: remote_host/remote_port are the runner's dial target
+# for one accepted local-forward connection.
+format OpenPortForwardRequest:
+    task_id         :TaskID
+    remote_host_len :u16
+    remote_host     :[remote_host_len]u8
+    remote_port     :u16
+    # direction / bind_addr / bind_port removed: this message now means exactly
+    # "open the data stream for one accepted local-forward connection".
+
+# OpenPortForwardResponse: stream_id is the data stream for the accepted
+# connection.
+format OpenPortForwardResponse:
+    status    :OpenPortForwardStatus
+    stream_id :u64
+    # forward_id removed: it was the -R registration handle, now returned by
+    # RegisterPortForwardResponse.
 
 format RunnerOpenPortForwardRequest:
     task_id           :TaskID

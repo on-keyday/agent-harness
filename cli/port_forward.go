@@ -66,7 +66,6 @@ func (c *Client) OpenPortForward(ctx context.Context, taskIDHex, remoteHost stri
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenPortForward}
 	body := protocol.OpenPortForwardRequest{
 		TaskId:     tid,
-		Direction:  protocol.PortForwardDirection_Local,
 		RemotePort: uint16(remotePort),
 	}
 	body.SetRemoteHost([]byte(remoteHost))
@@ -266,35 +265,29 @@ func parseConnNotifies(buf []byte) (ids []uint64, rest []byte) {
 	return ids, buf
 }
 
-// OpenRemoteForward registers a remote forward and returns the server-created
-// control stream (picked up by id) plus the assigned forwardId. The caller reads
-// RemoteForwardConnNotify records off the control stream and dials per conn.
-func (c *Client) OpenRemoteForward(ctx context.Context, taskIDHex string, sp RemoteForwardSpec) (trsf.BidirectionalStream, uint64, error) {
+// RegisterPortForward registers one forward with the server and returns the
+// server-created control stream plus the assigned forward id. The caller has
+// already bound its listener (local) or is asking the runner to bind (remote).
+func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir protocol.PortForwardDirection,
+	bindAddr string, bindPort int, targetHost string, targetPort int) (trsf.BidirectionalStream, uint64, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, 0, fmt.Errorf("forward: parse task id: %w", err)
 	}
-	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenPortForward}
-	body := protocol.OpenPortForwardRequest{
-		TaskId:     tid,
-		Direction:  protocol.PortForwardDirection_Remote,
-		RemotePort: uint16(sp.DialPort),
-		BindPort:   uint16(sp.RunnerPort),
-	}
-	body.SetRemoteHost([]byte(sp.DialHost))
-	body.SetBindAddr([]byte(sp.BindAddr))
-	req.SetOpenPortForward(body)
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward}
+	body := protocol.RegisterPortForwardRequest{TaskId: tid, Direction: dir,
+		BindPort: uint16(bindPort), TargetPort: uint16(targetPort)}
+	body.SetBindAddr([]byte(bindAddr))
+	body.SetTargetHost([]byte(targetHost))
+	req.SetRegisterPortForward(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
 		return nil, 0, err
 	}
-	if resp.Kind != protocol.TaskControlKind_OpenPortForward {
+	r := resp.RegisterPortForward()
+	if resp.Kind != protocol.TaskControlKind_RegisterPortForward || r == nil {
 		return nil, 0, fmt.Errorf("forward: unexpected response kind %v", resp.Kind)
-	}
-	r := resp.OpenPortForward()
-	if r == nil {
-		return nil, 0, errors.New("forward: response variant missing")
 	}
 	switch r.Status {
 	case protocol.OpenPortForwardStatus_Ok:
@@ -307,13 +300,18 @@ func (c *Client) OpenRemoteForward(ctx context.Context, taskIDHex string, sp Rem
 	default:
 		return nil, 0, fmt.Errorf("forward: server error (status=%d)", r.Status)
 	}
-	// The control stream is server-created; pick it up by id (same pattern as
-	// every other server-allocated stream).
 	ctrl := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
 	if ctrl == nil {
 		return nil, 0, fmt.Errorf("forward: control stream %d not visible", r.StreamId)
 	}
 	return ctrl, r.ForwardId, nil
+}
+
+// OpenRemoteForward registers a remote forward. Kept as a thin wrapper so the
+// TUI's existing call site (tui/portforward.go:262) is unchanged.
+func (c *Client) OpenRemoteForward(ctx context.Context, taskIDHex string, sp RemoteForwardSpec) (trsf.BidirectionalStream, uint64, error) {
+	return c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Remote,
+		sp.BindAddr, sp.RunnerPort, sp.DialHost, sp.DialPort)
 }
 
 // RunRemoteForward registers each spec and reads its control stream, dialing the

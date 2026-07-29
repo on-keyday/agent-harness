@@ -808,8 +808,8 @@ func (s *Server) DumpTrsfState() {
 			"inflight", st.BytesInFlight, "cwnd", st.CongestionWindow, "rtt", st.SmoothedRTT, "sentPkts", len(st.SentPackets))
 	}
 	if s.taskHandler != nil {
-		for _, rf := range s.taskHandler.rforwards().snapshot() {
-			log.Info("trsf dump: remote-forward", "fwd", rf.forwardID, "task", rf.taskIDHex, "runner", rf.runnerID, "client_cid", rf.clientCID)
+		for _, pf := range s.taskHandler.pforwards().snapshot() {
+			log.Info("trsf dump: port-forward", "fwd", pf.forwardID, "dir", pf.direction, "task", pf.taskIDHex, "runner", pf.runnerID, "client_cid", pf.clientCID)
 		}
 	}
 	log.Info("trsf dump: end")
