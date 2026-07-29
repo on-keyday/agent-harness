@@ -156,32 +156,83 @@ func spliceConnStream(conn net.Conn, st trsf.BidirectionalStream) {
 	wg.Wait()
 }
 
-// RunForward listens for each spec and bridges accepted connections to the
-// runner via OpenPortForward. Blocks until ctx is cancelled, then closes all
-// listeners. Per-connection errors are logged and isolated; the listener and
-// sibling connections are unaffected.
+// RunForward listens for each spec, registers it with the server (so a
+// different client can list and kill it), and bridges accepted connections to
+// the runner via OpenPortForward. Blocks until every spec's forward has
+// stopped (killed remotely, or ctx cancelled), then closes all listeners.
+// Per-connection errors are logged and isolated; the listener and sibling
+// connections are unaffected.
 func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []ForwardSpec, logf func(string)) error {
 	if logf == nil {
 		logf = func(s string) { slog.Info(s) }
 	}
 	var lns []net.Listener
+	closeAll := func() {
+		for _, l := range lns {
+			_ = l.Close()
+		}
+	}
+	var wg sync.WaitGroup
 	for _, sp := range specs {
 		ln, err := net.Listen("tcp", net.JoinHostPort(sp.BindAddr, strconv.Itoa(sp.LocalPort)))
 		if err != nil {
-			for _, l := range lns {
-				_ = l.Close()
-			}
+			closeAll()
 			return fmt.Errorf("forward: listen %s:%d: %w", sp.BindAddr, sp.LocalPort, err)
 		}
 		lns = append(lns, ln)
-		logf(fmt.Sprintf("forwarding %s:%d -> %s:%d (task %s)", sp.BindAddr, sp.LocalPort, sp.RemoteHost, sp.RemotePort, taskIDHex[:min(12, len(taskIDHex))]))
-		go acceptLoop(ctx, c, taskIDHex, sp, ln, logf)
+		// Register the port the kernel actually gave us (sp.LocalPort may be 0).
+		bound := ln.Addr().(*net.TCPAddr).Port
+		ctrl, fid, rerr := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
+			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort)
+		if rerr != nil {
+			// A forward the server does not know about cannot be listed or
+			// killed, which is the whole point of registering — fail loudly.
+			closeAll()
+			return fmt.Errorf("forward: register %s:%d: %w", sp.BindAddr, bound, rerr)
+		}
+		fwdCtx, cancel := context.WithCancel(ctx)
+		logf(fmt.Sprintf("forwarding %s:%d -> %s:%d (task %s, fwd %d)",
+			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, taskIDHex[:min(12, len(taskIDHex))], fid))
+		go acceptLoop(fwdCtx, c, taskIDHex, sp, ln, logf)
+		wg.Add(1)
+		go func(ctrl trsf.BidirectionalStream) {
+			defer wg.Done()
+			defer cancel()
+			defer ctrl.CloseBoth()
+			c.serveLocalForwardControl(fwdCtx, ctrl, logf)
+		}(ctrl)
 	}
-	<-ctx.Done()
-	for _, l := range lns {
-		_ = l.Close()
-	}
+	wg.Wait()
+	closeAll()
 	return nil
+}
+
+// serveLocalForwardControl reads the forward's control stream. The client never
+// writes on it; it returns on a closed event (deliberate stop) or on EOF/error
+// (the server went away). Returning cancels the forward's context, which closes
+// the listener and every connection spliced through it.
+func (c *Client) serveLocalForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string)) {
+	var buf []byte
+	for {
+		data, eof, err := ctrl.ReadDirectContext(ctx, 64*1024)
+		if len(data) > 0 {
+			buf = append(buf, data...)
+			var evs []protocol.PortForwardEvent
+			evs, buf = parsePortForwardEvents(buf)
+			for _, ev := range evs {
+				if ev.Kind == protocol.PortForwardEventKind_Closed {
+					logf(closedReasonLine(ev.Closed().Reason))
+					return
+				}
+			}
+		}
+		if eof || err != nil {
+			if ctx.Err() == nil {
+				logf("forward stopped: server connection lost")
+			}
+			return
+		}
+	}
 }
 
 func acceptLoop(ctx context.Context, c *Client, taskIDHex string, sp ForwardSpec, ln net.Listener, logf func(string)) {
@@ -201,6 +252,20 @@ func acceptLoop(ctx context.Context, c *Client, taskIDHex string, sp ForwardSpec
 				_ = conn.Close()
 				return
 			}
+			// A killed forward drops its established connections too. The CLI
+			// exits straight after RunForward returns and would drop them
+			// anyway; doing it here makes TUI/WebUI-started forwards behave
+			// the same instead of leaking a live splice.
+			stop := make(chan struct{})
+			defer close(stop)
+			go func() {
+				select {
+				case <-ctx.Done():
+					_ = conn.Close()
+					_ = st.CloseBoth()
+				case <-stop:
+				}
+			}()
 			spliceConnStream(conn, st)
 		}()
 	}

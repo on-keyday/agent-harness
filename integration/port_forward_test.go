@@ -611,3 +611,141 @@ func TestRemotePortForwardE2E(t *testing.T) {
 		t.Log("runner did not exit within 2s of cancel")
 	}
 }
+
+// TestLocalForwardRegisterListKill exercises the payoff of Task 4: a -L
+// forward, whose listener lives entirely inside the client process, now
+// registers itself with the server so a SECOND, independent client can list
+// and kill it — and killing it makes the owning RunForward call return.
+func TestLocalForwardRegisterListKill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18549"
+	peerCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    peerCID,
+			AllowedRoots: []string{repo},
+			Profiles:     singleAgentProfile(fakeClaude),
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, peerCID, repo, "lfwd-test")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	t.Logf("submitted task %s", taskID)
+
+	// Wait until the runner has the task registered (worktree appears).
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+	t.Logf("worktree ready at %s", worktree)
+
+	// The forward client: holds the listener, like a `harness-cli forward` terminal.
+	fwdClient, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial forward client: %v", err)
+	}
+	defer fwdClient.Close()
+
+	fwdCtx, cancelFwd := context.WithCancel(ctx)
+	defer cancelFwd()
+	done := make(chan error, 1)
+	go func() {
+		// LocalPort 0 asks the kernel for a free port, which is exactly the case
+		// that proves RunForward registers the port it actually bound.
+		done <- cli.RunForward(fwdCtx, fwdClient, taskID,
+			[]cli.ForwardSpec{{BindAddr: "127.0.0.1", LocalPort: 0, RemoteHost: "127.0.0.1", RemotePort: 9}},
+			func(s string) { t.Logf("forward: %s", s) })
+	}()
+
+	// A SECOND, independent client must be able to see and kill it.
+	observer, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial observer: %v", err)
+	}
+	defer observer.Close()
+
+	var fs []protocol.PortForwardInfo
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		fs, _ = observer.PortForwardListWith(ctx, "")
+		if len(fs) == 1 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if len(fs) != 1 {
+		t.Fatalf("observer saw %d forwards, want 1", len(fs))
+	}
+	if fs[0].Direction != protocol.PortForwardDirection_Local {
+		t.Fatalf("direction = %v, want Local", fs[0].Direction)
+	}
+	if fs[0].BindPort == 0 {
+		t.Fatal("BindPort is 0 — the kernel-assigned port was not registered")
+	}
+
+	if err := observer.KillPortForwardWith(ctx, fs[0].ForwardId); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("RunForward returned %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("RunForward did not return after the forward was killed")
+	}
+
+	deadline = time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if fs, _ = observer.PortForwardListWith(ctx, ""); len(fs) == 0 {
+			cancel()
+			select {
+			case <-serverDone:
+			case <-time.After(2 * time.Second):
+				t.Log("server did not exit within 2s of cancel")
+			}
+			select {
+			case <-runnerDone:
+			case <-time.After(2 * time.Second):
+				t.Log("runner did not exit within 2s of cancel")
+			}
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("registration survived the kill: %+v", fs)
+}
