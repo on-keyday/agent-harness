@@ -11,7 +11,10 @@ import (
 // Kinds absent from the map are gated elsewhere: OpenFileTransfer / ListFiles are
 // direction-dependent, RegisterPortForward is direction-dependent (its gate
 // moved off OpenPortForward, which is now unconditionally ForwardLocal); List /
-// GetTaskLog are INFO-scoped.
+// GetTaskLog / ListPortForwards are INFO-scoped (visibleToCaller, not a single
+// cap); KillPortForward is direction-dependent AND the direction is only known
+// after the registry lookup, so its gate lives inline in the dispatch case,
+// after h.pforwards().get.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
 	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,

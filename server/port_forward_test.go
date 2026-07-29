@@ -276,6 +276,94 @@ func TestHandleRegisterPortForward_LocalRegisters(t *testing.T) {
 	}
 }
 
+// addRunningTask inserts a Running task assigned to runnerID and returns its hex id.
+func addRunningTask(t *testing.T, h *TaskHandler, first byte, runnerID string) string {
+	t.Helper()
+	var raw [16]byte
+	raw[0] = first
+	idHex := hex.EncodeToString(raw[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[idHex] = &TaskEntry{ID: idHex, Status: protocol.TaskStatus_Running, AssignedTo: runnerID}
+	h.Tasks.order = append(h.Tasks.order, idHex)
+	h.Tasks.mu.Unlock()
+	return idHex
+}
+
+func TestVisiblePortForwards_ReapsDeadTaskAndListsRest(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	liveHex := addRunningTask(t, h, 0x11, "runner-1")
+	deadHex := addRunningTask(t, h, 0x22, "runner-1")
+
+	conn := &fakeConn{nextStreamID: 100}
+	live := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: liveHex,
+		control: newRecordingBidiStream(1), clientCxn: conn, bindAddr: "127.0.0.1", bindPort: 8080,
+		targetHost: "db", targetPort: 5432}
+	dead := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: deadHex,
+		control: newRecordingBidiStream(2), clientCxn: conn, bindAddr: "127.0.0.1", bindPort: 8081,
+		targetHost: "db", targetPort: 5432}
+	liveID := h.pforwards().add(live)
+	deadID := h.pforwards().add(dead)
+
+	// The dead task leaves Running only AFTER both forwards were registered.
+	h.Tasks.Cancel(deadHex)
+
+	got := h.visiblePortForwards("", protocol.TaskID{})
+	if len(got) != 1 || got[0].ForwardId != liveID {
+		t.Fatalf("expected only forward %d, got %+v", liveID, got)
+	}
+	if got[0].BindPort != 8080 || string(got[0].TargetHost) != "db" {
+		t.Fatalf("info fields not populated: %+v", got[0])
+	}
+	if _, ok := h.pforwards().get(deadID); ok {
+		t.Fatal("the dead task's forward should have been reaped by the list call")
+	}
+}
+
+func TestKillPortForward_UnknownIDAndDoubleKill(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	if st := h.killPortForward("", 9999); st != protocol.KillPortForwardStatus_NoSuchForward {
+		t.Fatalf("unknown id: status = %v, want no_such_forward", st)
+	}
+
+	taskHex := addRunningTask(t, h, 0x33, "runner-1")
+	pf := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
+		control: newRecordingBidiStream(3), clientCxn: &fakeConn{nextStreamID: 200}}
+	id := h.pforwards().add(pf)
+
+	if st := h.killPortForward("", id); st != protocol.KillPortForwardStatus_Ok {
+		t.Fatalf("first kill: status = %v, want ok", st)
+	}
+	// Exactly one caller may win: the second kill must not also report ok.
+	if st := h.killPortForward("", id); st != protocol.KillPortForwardStatus_NoSuchForward {
+		t.Fatalf("second kill: status = %v, want no_such_forward", st)
+	}
+}
+
+// TestPortForwardControlEOFDeregisters covers the stray-terminal case: the
+// client process dies, its control stream EOFs, and the registration goes away
+// with no RPC involved.
+func TestPortForwardControlEOFDeregisters(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	taskHex := addRunningTask(t, h, 0x44, "runner-1")
+	ctrl := newRecordingBidiStream(4)
+	pf := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
+		control: ctrl, clientCxn: &fakeConn{nextStreamID: 300}}
+	id := h.pforwards().add(pf)
+	go h.watchRemoteForwardControl(pf)
+
+	_ = ctrl.CloseBoth() // client went away
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if _, ok := h.pforwards().get(id); !ok {
+			return // deregistered
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("registration survived control-stream EOF")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // recordingBidiStream captures AppendData/Write payloads and blocks ReadDirect
 // until CloseBoth. Used as a remote-forward control stream so a test can inspect
 // the notify written to it while keeping the server's control watcher parked.

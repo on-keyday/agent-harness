@@ -399,6 +399,35 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_ListPortForwards:
+		lp := req.ListPortForwards()
+		if lp == nil {
+			slog.Error("TaskHandler: ListPortForwards variant is nil")
+			return
+		}
+		h.handleListPortForwards(conn, req.RequestId, cid, lp.TaskId)
+
+	case protocol.TaskControlKind_KillPortForward:
+		kr := req.KillPortForward()
+		if kr == nil {
+			slog.Error("TaskHandler: KillPortForward variant is nil")
+			return
+		}
+		if pf, ok := h.pforwards().get(kr.ForwardId); ok {
+			need := protocol.Capability_ForwardLocal
+			if pf.direction == protocol.PortForwardDirection_Remote {
+				need = protocol.Capability_ForwardRemote
+			}
+			if !hasCap(h.callerCaps(cid), need) {
+				h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+				return
+			}
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_KillPortForward, RequestId: req.RequestId}
+		resp.SetKillPortForward(protocol.KillPortForwardResponse{Status: h.killPortForward(cid, kr.ForwardId)})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_AttachSession:
 		a := req.Attach()
 		if a == nil {

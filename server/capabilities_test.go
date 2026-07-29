@@ -445,6 +445,54 @@ func TestDirectionGate(t *testing.T) {
 		h.Handle(conn, encodeTaskControlRequest(t, req))
 		assertPermissionDenied(t, conn, 17, protocol.Capability_ForwardLocal)
 	})
+
+	// Case 8: kill a Local forward without ForwardLocal → denied (RequiredCap=ForwardLocal).
+	// KillPortForward's request carries only a forward_id, not a direction, so the
+	// gate cannot live in requiredCap like every other kind's: the dispatch case
+	// looks the id up in the registry FIRST to learn its direction, then gates.
+	// That ordering is the point under test here, not just the resulting status.
+	t.Run("kill_local_no_cap_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_FileRead) // has FileRead only
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local})
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_KillPortForward,
+			RequestId: 18,
+		}
+		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 18, protocol.Capability_ForwardLocal)
+	})
+
+	// Case 9: kill a Remote forward with only ForwardLocal → denied (RequiredCap=ForwardRemote).
+	t.Run("kill_remote_only_local_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal) // has ForwardLocal but not ForwardRemote
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Remote})
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_KillPortForward,
+			RequestId: 19,
+		}
+		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertPermissionDenied(t, conn, 19, protocol.Capability_ForwardRemote)
+	})
+
+	// Case 10: kill a Local forward WITH ForwardLocal → gate passes (not denied).
+	// killPortForward itself may still answer no_such_forward here (the fake
+	// forward's task is not in this caller's visible subtree) — that is a
+	// separate, already-covered concern (TestKillPortForward_UnknownIDAndDoubleKill).
+	// This case is only about the capability gate letting a properly-capped
+	// caller through instead of masking a bug as a denial.
+	t.Run("kill_local_with_cap_not_denied", func(t *testing.T) {
+		h, conn := makeAgentConn(t, protocol.Capability_ForwardLocal)
+		id := h.pforwards().add(&portForward{direction: protocol.PortForwardDirection_Local})
+		req := &protocol.TaskControlRequest{
+			Kind:      protocol.TaskControlKind_KillPortForward,
+			RequestId: 20,
+		}
+		req.SetKillPortForward(protocol.KillPortForwardRequest{ForwardId: id})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		assertNotPermissionDenied(t, conn)
+	})
 }
 
 // ---------------------------------------------------------------------------
