@@ -107,6 +107,9 @@ func main() {
 		"boardRead":          js.FuncOf(harnessBoardRead),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
 		"forwardKill":        js.FuncOf(harnessForwardKill),
+		"rawOpen":            js.FuncOf(harnessRawOpen),
+		"rawSend":            js.FuncOf(harnessRawSend),
+		"rawClose":           js.FuncOf(harnessRawClose),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -766,6 +769,86 @@ func harnessForwardKill(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessRawOpen opens a port forward whose client-side endpoint is this page: no
+// local listener exists (a browser cannot bind one), the runner dials host:port,
+// and bytes arrive via the harness_rawData hook keyed by the returned pane key.
+//
+//	harness.rawOpen(taskIDHex, host, port) -> Promise<key>
+func harnessRawOpen(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 3 {
+				rejectErr(reject, errors.New("rawOpen: want (taskIDHex, host, port)"))
+				return
+			}
+			key, err := cli.OpenRawPane(rootCtx, c, args[0].String(), args[1].String(), args[2].Int())
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.ValueOf(key))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessRawSend writes bytes to a pane's connection.
+//
+//	harness.rawSend(key, Uint8Array) -> Promise<void>
+func harnessRawSend(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("rawSend: want (key, Uint8Array)"))
+				return
+			}
+			val := args[1]
+			data := make([]byte, val.Get("length").Int())
+			js.CopyBytesToGo(data, val)
+			if err := cli.SendRawPane(args[0].String(), data); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessRawClose closes a pane's connection, which deregisters the forward.
+//
+//	harness.rawClose(key) -> Promise<void>
+func harnessRawClose(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("rawClose: missing pane key"))
+				return
+			}
+			cli.CloseRawPane(args[0].String())
 			resolve.Invoke(js.Undefined())
 		}()
 		return nil
