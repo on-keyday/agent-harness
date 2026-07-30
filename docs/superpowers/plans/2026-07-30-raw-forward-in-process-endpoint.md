@@ -1878,7 +1878,7 @@ func StopRawLive() {
 In `tui/app.go`:
 
 - add `rawModal RawConnectModal` to the model struct (near `forwardsModal`, line ~76) and `rawModal: NewRawConnectModal(),` to the constructor (line ~190).
-- add a key handler next to the other task-focused ones (the `msg.String() == "F"` block at line ~1091 is the closest sibling — copy its guard shape):
+- add a key handler beside the forward-start keys. The closest sibling is the `p` / `b` block at `tui/app.go:1208-1219`, which opens `PortForwardModal` for the selected task — copy its guard shape (`a.focus == focusTasks`, `a.tasks.SelectedID()`, a `WarnStyle` line when nothing is selected). Do **not** hang it off `f` / `ForwardsModal`: that modal is the registry listing, whose per-row action is kill.
 
 ```go
 		if a.focus == focusTasks && !logsEditing && msg.String() == "t" {

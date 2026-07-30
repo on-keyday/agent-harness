@@ -288,10 +288,23 @@ UI (`webui/static/main.js`, `webui/static/style.css`):
 
 ### TUI
 
-`tui/portforward.go`'s `ForwardsModal` gains an entry point that opens a raw
-connection (task already selected in the app), with a single-line send input and
-a scrollable output viewport. Text view only — the hex toggle stays a WebUI
-affordance.
+The sibling pattern for *starting* a forward is `PortForwardModal`, opened for
+the selected task by `p` (`-L`) and `b` (`-R`) (`tui/app.go:1208-1219`). `f`
+opens `ForwardsModal`, which is the registry *listing* whose per-row action is
+kill. A raw connect is a third way to start a forward, so it belongs beside
+`p` / `b` — not inside the listing.
+
+It cannot be a third mode of `PortForwardModal` unchanged: that modal collects a
+spec string and hands off, whereas a raw connection needs a live output view and
+a send line for as long as it is open. So it is a new `RawConnectModal`
+(`tui/rawforward.go`), opened by `t` on the selected task (`t` / `T` are unused
+today). Single-line send input, scrollable output, text view only — the hex
+toggle stays a WebUI affordance.
+
+The modal owns its connection and closes it on `esc`. It does not join the TUI's
+`activeForwards` map, so `P` / `B` (stop the selected task's `-L` / `-R` forward)
+do not apply to it; it is still listed and killable via `f` and `forward kill`,
+which act on the server-side registration.
 
 ## Failure modes
 
