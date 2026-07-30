@@ -4114,9 +4114,12 @@ function renderConnTopology(conns, tasks, forwards) {
     const p0 = backOff(tail.x, tail.y, ctlx, ctly, 10);
     const p2 = backOff(head.x, head.y, ctlx, ctly, 11);
 
+    const d = `M ${p0.x} ${p0.y} Q ${ctlx} ${ctly} ${p2.x} ${p2.y}`;
+    // Dark casing first, coloured stroke over it — see .ct-forward-casing.
+    svg.appendChild(svgEl("path", { class: "ct-forward-casing", d }));
     svg.appendChild(svgEl("path", {
       class: `ct-forward from-${role}`,
-      d: `M ${p0.x} ${p0.y} Q ${ctlx} ${ctly} ${p2.x} ${p2.y}`,
+      d,
       "data-forward": String(fwd.forward_id),
     }));
 

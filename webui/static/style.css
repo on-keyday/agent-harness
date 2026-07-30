@@ -1387,6 +1387,22 @@ button:hover { background: #555; }
    use (3 2 = unidentified conn, 2 2 = task spoke, which this runs alongside for
    its last ~30px). Default stroke is visible-grey so an unforeseen role renders
    rather than vanishing into the spokes. */
+/* Casing: the same path drawn wider in background-dark UNDER the coloured
+   stroke, so the edge separates from whatever it crosses or lands on without
+   touching the role hues. Measured need: the task rect's amber #d9a441 is only
+   dE 17.5 from tui #f7d05a and 18.2 from runner #f0a060 (CIE76), and every -R
+   edge is runner-coloured and terminates ON a rect — so gold-on-gold was
+   unreadable on the real fleet. Shifting those two hues far enough to separate
+   (dE>30) also shifts them out of recognisably "tui"/"runner", so separate by
+   contrast instead. Same idea as .ct-forward-label's paint-order stroke.
+   Solid, not dashed: it shows through the dash gaps as a dark ribbon. */
+.ct-forward-casing {
+  fill: none;
+  stroke: #1e1e1e;
+  stroke-width: 5;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
 .ct-forward {
   fill: none;
   stroke: #d4d4d4;
@@ -1401,7 +1417,9 @@ button:hover { background: #555; }
 .ct-forward.from-agent { stroke: #c080f0; }
 .ct-forward.from-runner{ stroke: #f0a060; }
 .ct-forward-head {
-  stroke: none;
+  stroke: #1e1e1e;   /* same casing rationale as .ct-forward-casing: the head
+                        lands on the amber rect it must stay distinct from */
+  stroke-width: 1.5;
   opacity: 0.95;
   fill: #d4d4d4;   /* default FIRST: the role rules below must win, and at equal
                       specificity the later rule does */

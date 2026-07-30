@@ -205,13 +205,20 @@ SVG paint order, which is what we want.
   - Zoom is applied by rewriting the SVG viewBox (`attachTopoZoom`), so strokes
     and dashes scale with it and these relative distinctions survive any zoom
     level.
-  - **Residual risk, accepted**: an edge now shares its hue with the node it
-    leaves, which is exactly what a fixed unowned hue would have avoided. The
-    separation rests entirely on being 2.5px and dashed against a 1.5px solid
-    circle outline. If that turns out too subtle in the browser, the fallback is
-    to keep the role hue and darken or lighten it by a fixed amount rather than
-    reverting to one colour for all forwards — the direction-carrying hue is the
-    point of this choice.
+  - **The residual risk was real, and it landed somewhere this draft did not
+    predict.** The draft worried about the edge sharing a hue with the node it
+    *leaves*. On the real fleet the collision was with what it *lands on*: the
+    task rect's amber `#d9a441` is only ΔE 17.5 (CIE76) from tui `#f7d05a` and
+    18.2 from runner `#f0a060`, while cli/webui/agent sit 80-110 away. Since
+    every `-R` edge is runner-coloured and has an end on a rect, gold-on-gold was
+    unreadable. Shifting those two hues far enough apart (ΔE > 30) also shifts
+    them out of recognisably "tui"/"runner", so the fix separates by **contrast**
+    instead: a `.ct-forward-casing` — the same path drawn first in `#1e1e1e` at
+    5px, solid, under the coloured stroke — plus a `#1e1e1e` 1.5px outline on the
+    arrowhead. Solid casing shows through the dash gaps as a dark ribbon. This
+    works against any neighbour, not just amber, and leaves the role hues intact.
+    It is the same technique `.ct-forward-label` already uses via
+    `paint-order: stroke`.
   - **Unexpected or unidentified role**: `role-unspecified` is `#777`, which would
     render an edge indistinguishable from a spoke. It cannot occur for a forward
     endpoint — registration requires an authenticated client, and the far end is
@@ -265,7 +272,11 @@ one payload field, so verification is browser-driven, as it was for the panel:
   angles, which is the worst case for a straight chord.
 - Confirm on a dense cluster — the real fleet's 13-runner host is the case this
   design exists for — that the edge visibly lands on one rect and not merely
-  "somewhere in the fan".
+  "somewhere in the fan". **Confirmed on the real fleet**: two tui-owned `-L`
+  edges crossed from a `192.168.3.246` leaf over the 13-runner fan and terminated
+  visibly on two distinct `remote-agent-harness` rects.
+- Confirm a warm-hued edge (any `-R`, or a tui-owned `-L`) stays distinguishable
+  from the amber task rect it touches — this is what the casing exists for.
 - Confirm the page still renders with `forwards` present but a matching
   connection absent (kill a forward's owning client with SIGKILL and look during
   the window before the server reaps the connection).
