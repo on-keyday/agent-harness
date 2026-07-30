@@ -554,6 +554,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// what distinguishes two identical specs started by different
 					// clients; a kind-only rendering was Task 6's caught half-reimplementation).
 					"origin": cli.PortForwardOrigin(fi),
+					// origin_cid is the join key for the topology's forward edges:
+					// it matches conns[].cid exactly. `origin` above is the display
+					// form ("<kind> <cid>"), and splitting that to recover the cid
+					// would make the diagram depend on a formatting convention.
+					"origin_cid": string(fi.OriginCid),
 				})
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{

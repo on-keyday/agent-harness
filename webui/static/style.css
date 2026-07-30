@@ -1376,3 +1376,46 @@ button:hover { background: #555; }
   }
   .forward-row .btn-danger { margin-left: 0; align-self: flex-start; }
 }
+
+/* Port-forward edges on the topology (see
+   docs/superpowers/specs/2026-07-30-webui-topology-port-forward-edges-design.md).
+   The hue is the ACCEPTING side's role — the listener — so the colour itself
+   carries the direction: a -L is its owning client's hue, a -R is always runner
+   orange. Separation from the hierarchy edges is by weight and dash, not hue:
+   2.5 is thicker than every other stroke in the graph (spokes 1, conn/cluster
+   nodes 1.5, server node 2), and 6 3 differs from both dash patterns already in
+   use (3 2 = unidentified conn, 2 2 = task spoke, which this runs alongside for
+   its last ~30px). Default stroke is visible-grey so an unforeseen role renders
+   rather than vanishing into the spokes. */
+.ct-forward {
+  fill: none;
+  stroke: #d4d4d4;
+  stroke-width: 2.5;
+  stroke-dasharray: 6 3;
+  stroke-linecap: round;
+  opacity: 0.9;
+}
+.ct-forward.from-cli   { stroke: #5aabf7; }
+.ct-forward.from-tui   { stroke: #f7d05a; }
+.ct-forward.from-webui { stroke: #2d5; }
+.ct-forward.from-agent { stroke: #c080f0; }
+.ct-forward.from-runner{ stroke: #f0a060; }
+.ct-forward-head {
+  stroke: none;
+  opacity: 0.95;
+  fill: #d4d4d4;   /* default FIRST: the role rules below must win, and at equal
+                      specificity the later rule does */
+}
+.ct-forward-head.from-cli   { fill: #5aabf7; }
+.ct-forward-head.from-tui   { fill: #f7d05a; }
+.ct-forward-head.from-webui { fill: #2d5; }
+.ct-forward-head.from-agent { fill: #c080f0; }
+.ct-forward-head.from-runner{ fill: #f0a060; }
+.ct-forward-label {
+  fill: #bbb;
+  font-size: 8px;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: #1e1e1e;
+  stroke-width: 3;
+}

@@ -462,7 +462,7 @@ const POLL_INTERVAL_MS = 5000;
     // the server doesn't have the list_conns capability yet; guard with [].
     const conns = snap.conns || [];
     const allTasks = snap.tasks || [];
-    renderConnTopology(conns, allTasks);
+    renderConnTopology(conns, allTasks, snap.forwards || []);
     renderConnList(conns, allTasks);
     renderForwardList(snap.forwards || []);
   };
@@ -3802,6 +3802,16 @@ function connIpPart(remoteAddr) {
 // isActiveTask: a task currently alive on its runner. Running = actively
 // executing; Detached = interactive session alive with no client attached.
 // Terminal (Succeeded/Failed/Cancelled) and not-yet-assigned Queued are excluded.
+// fwdFanIndex returns how many EARLIER forwards share this one's endpoint pair,
+// so several forwards between the same two nodes fan out instead of stacking
+// into one thick line. Order follows the server's forward_id, which is a
+// monotonic counter, so the fan is stable across polls.
+function fwdFanIndex(fwd, forwards) {
+  const key = f => `${f.origin_cid}|${f.task}`;
+  const k = key(fwd);
+  return forwards.filter(f => key(f) === k && f.forward_id < fwd.forward_id).length;
+}
+
 function isActiveTask(tk) {
   return tk && (tk.status === "Running" || tk.status === "Detached");
 }
@@ -3837,10 +3847,11 @@ function svgEl(tag, attrs) {
 //     "visible" after a frame (CSS transition animates opacity/scale in).
 //   - Removed cids get class "leaving" and are removed after the CSS
 //     transition completes.
-function renderConnTopology(conns, tasks) {
+function renderConnTopology(conns, tasks, forwards) {
   const host = document.getElementById("conn-topology");
   if (!host) return;
   tasks = tasks || [];
+  forwards = forwards || [];
 
   // On mobile, the topology container is hidden by CSS; skip heavy DOM work.
   if (window.matchMedia("(max-width: 600px)").matches) {
@@ -3903,6 +3914,12 @@ function renderConnTopology(conns, tasks) {
   // --- Cluster nodes and their leaves ---
   const currentCids = new Set(conns.map(c => c.cid));
 
+  // Recorded while drawing, consumed by the port-forward pass after the loops:
+  // a forward joins its owning client's LEAF to its task's RECT, and neither
+  // coordinate survives the loop that computes it.
+  const leafPos = new Map(); // conn cid -> {x, y}
+  const taskPos = new Map(); // task id  -> {x, y}
+
   clusters.forEach((ip, idx) => {
     const angle = (2 * Math.PI * idx) / nClusters - Math.PI / 2;
     const clx = cx + R1 * Math.cos(angle);
@@ -3948,6 +3965,7 @@ function renderConnTopology(conns, tasks) {
       const r = R2 + tier * (LEAF_R * 2.4);
       const lx = cx + r * Math.cos(fanAngle);
       const ly = cy + r * Math.sin(fanAngle);
+      leafPos.set(conn.cid, { x: lx, y: ly });
 
       // Thin line from cluster to leaf
       svg.appendChild(svgEl("line", {
@@ -4013,6 +4031,7 @@ function renderConnTopology(conns, tasks) {
           const tr = r + 24 + (ti % 2) * 12; // just OUTWARD from this leaf, staggered
           const tx = cx + tr * Math.cos(tAngle);
           const ty = cy + tr * Math.sin(tAngle);
+          taskPos.set(tk.id, { x: tx, y: ty });
           svg.appendChild(svgEl("line", {
             class: "ct-task-spoke", x1: lx, y1: ly, x2: tx, y2: ty,
           }));
@@ -4035,6 +4054,96 @@ function renderConnTopology(conns, tasks) {
       }
     });
   });
+
+  // --- Port-forward edges ---
+  // One curve per registered forward, joining its owning client's leaf to its
+  // task's rect. Appended after every spoke/node/task so it paints on top.
+  // Design: docs/superpowers/specs/2026-07-30-webui-topology-port-forward-edges-design.md
+  const MIN_CLEAR = SERVER_R + 12; // keep the curve off the server hub
+  for (const fwd of forwards) {
+    const clientEnd = leafPos.get(fwd.origin_cid);
+    const taskEnd = taskPos.get(fwd.task);
+    // Either end can be absent for a beat: a registration outlives its
+    // connection until the server tears that connection down, and the task rect
+    // is only drawn for Running/Detached. Draw nothing rather than guess — the
+    // forward is still listed in the panel.
+    if (!clientEnd || !taskEnd) continue;
+    // -L: the CLIENT accepts, so it is the tail and the hue comes from its role.
+    // -R: the RUNNER accepts, so the task end is the tail and the hue is the
+    // constant runner orange (a task is not a role, so the rect's amber must not
+    // colour the edge).
+    const isRemote = fwd.dir === "-R";
+    const tail = isRemote ? taskEnd : clientEnd;
+    const head = isRemote ? clientEnd : taskEnd;
+    const role = isRemote ? "runner" : ((conns.find(c => c.cid === fwd.origin_cid) || {}).role || "unspecified");
+    if (tail.x === head.x && tail.y === head.y) continue; // degenerate: no spike
+
+    const mx = (tail.x + head.x) / 2, my = (tail.y + head.y) / 2;
+    const dx = head.x - tail.x, dy = head.y - tail.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len; // unit perpendicular to the chord
+
+    // Annulus rule: the curve's own midpoint is only HALF way to the control
+    // point (B(0.5) = ¼P₀ + ½C + ¼P₂), so a control-point offset of `off` moves
+    // the curve by off/2. Pick the SIDE that lands inside the ring and clear of
+    // the hub — which side that is depends on the pair, so try both rather than
+    // always bowing outward.
+    const spread = 2 * MIN_CLEAR + 40 * (fwdFanIndex(fwd, forwards) || 0);
+    let off = spread;
+    let best = null;
+    for (const sign of [1, -1]) {
+      const qx = mx + sign * nx * (spread / 2), qy = my + sign * ny * (spread / 2);
+      const rad = Math.hypot(qx - cx, qy - cy);
+      if (rad >= MIN_CLEAR && rad <= R2) { off = sign * spread; best = rad; break; }
+    }
+    if (best === null) {
+      // Neither side fits the annulus (endpoints far out and close together):
+      // bow toward the centre, which always has room.
+      const inR = Math.hypot(mx + nx - cx, my + ny - cy);
+      const outR = Math.hypot(mx - nx - cx, my - ny - cy);
+      off = (inR < outR ? 1 : -1) * spread;
+    }
+    const ctlx = mx + nx * off, ctly = my + ny * off;
+
+    // Pull both ends back off the node they touch so the stroke and the
+    // arrowhead do not sit inside the circle/rect.
+    const backOff = (px, py, fromx, fromy, by) => {
+      const vx = px - fromx, vy = py - fromy, l = Math.hypot(vx, vy) || 1;
+      return { x: px - (vx / l) * by, y: py - (vy / l) * by };
+    };
+    const p0 = backOff(tail.x, tail.y, ctlx, ctly, 10);
+    const p2 = backOff(head.x, head.y, ctlx, ctly, 11);
+
+    svg.appendChild(svgEl("path", {
+      class: `ct-forward from-${role}`,
+      d: `M ${p0.x} ${p0.y} Q ${ctlx} ${ctly} ${p2.x} ${p2.y}`,
+      "data-forward": String(fwd.forward_id),
+    }));
+
+    // Arrowhead at the head end, oriented along the curve's end tangent
+    // (the derivative of a quadratic at t=1 is 2(P₂ - C)).
+    const tgx = p2.x - ctlx, tgy = p2.y - ctly, tl = Math.hypot(tgx, tgy) || 1;
+    const ux = tgx / tl, uy = tgy / tl;
+    const A = 8, Wd = 3.6;
+    svg.appendChild(svgEl("polygon", {
+      class: `ct-forward-head from-${role}`,
+      points: [
+        `${p2.x},${p2.y}`,
+        `${p2.x - ux * A - uy * Wd},${p2.y - uy * A + ux * Wd}`,
+        `${p2.x - ux * A + uy * Wd},${p2.y - uy * A - ux * Wd}`,
+      ].join(" "),
+    }));
+
+    // Label at the curve's midpoint. The spec's format was
+    // "<dir> <bind_port> → <target>", but `spec` is a display string and
+    // splitting it to pull the bind port out would be exactly the convention
+    // dependency origin_cid exists to avoid — so the whole spec string is used.
+    const qx = 0.25 * p0.x + 0.5 * ctlx + 0.25 * p2.x;
+    const qy = 0.25 * p0.y + 0.5 * ctly + 0.25 * p2.y;
+    svg.appendChild(Object.assign(svgEl("text", {
+      class: "ct-forward-label", x: qx, y: qy - 3,
+    }), { textContent: `${fwd.dir} ${fwd.spec}` }));
+  }
 
   // --- Legend ---
   // Cover every distinct marker in the graph, not just conn-role colours:
