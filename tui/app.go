@@ -1052,6 +1052,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					return a, nil
 				}
+				// rawGen scopes a session, not a connect attempt: fix a typo
+				// and retry before the first RPC resolves, and both attempts
+				// share one Gen — the Gen guard alone cannot tell them apart,
+				// so the loser's eventual close would tear down whichever one
+				// wins. Refusing a second dispatch while one is outstanding
+				// keeps at most one attempt in flight, full stop — Enter is
+				// inert (not even a re-parse) until this one resolves.
+				if a.rawModal.IsConnecting() {
+					return a, nil
+				}
 				taskID := a.rawModal.TaskID()
 				host, port, err := a.rawModal.Target()
 				if err != nil {
@@ -1059,6 +1069,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				a.rawModal.SetSpec("")
+				a.rawModal.MarkConnecting()
 				return a, DoStartRawForward(a.client, taskID, host, port, a.rawGen, a.program)
 			}
 			var rmcmd tea.Cmd

@@ -3,6 +3,10 @@ package tui
 import (
 	"bytes"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"github.com/on-keyday/agent-harness/cli"
 )
 
 func TestRawConnectModal_OpenCloseAndSpec(t *testing.T) {
@@ -90,5 +94,59 @@ func TestRawForwardMsgs_StaleGenerationIgnored(t *testing.T) {
 	a.Update(RawForwardClosedMsg{Gen: 2, Reason: "done"})
 	if a.rawModal.IsLive() {
 		t.Fatal("current-generation close must mark the session closed")
+	}
+}
+
+// TestRawForwardConnect_OneAttemptAtATime pins the fix for the same-generation
+// double-connect: a second attempt dispatched under one generation would let the
+// loser's close message tear down the winner's live session, since Gen scopes a
+// session rather than an attempt.
+func TestRawForwardConnect_OneAttemptAtATime(t *testing.T) {
+	m := NewRawConnectModal()
+	m.Open("aaaa0000000000000000000000000000")
+	m.SetSpec("127.0.0.1:6379")
+	m.MarkConnecting()
+	if !m.IsConnecting() {
+		t.Fatal("MarkConnecting must set the connecting state")
+	}
+	m.MarkClosed("connect failed")
+	if m.IsConnecting() {
+		t.Fatal("a finished attempt must clear the connecting state")
+	}
+}
+
+// TestRawForwardConnect_SecondEnterWhileConnectingDispatchesNothing is the
+// App-level regression for the realistic trigger: type a spec, press Enter,
+// notice a typo, retype, press Enter again before the first RPC resolves.
+// Both attempts would share one rawGen, so only the connecting guard (not the
+// Gen guard) can stop the second dispatch. Driven through App.Update the same
+// way TestRawForwardMsgs_StaleGenerationIgnored drives it, per
+// tui/portforward_test.go's app-construction convention.
+func TestRawForwardConnect_SecondEnterWhileConnectingDispatchesNothing(t *testing.T) {
+	a := New(Config{})
+	a.client = &cli.Client{} // non-nil is enough; DoStartRawForward's returned cmd is never executed
+	a.rawGen = 1
+	a.rawModal.Open("cccc0000000000000000000000000000")
+	a.rawModal.SetSpec("127.0.0.1:6379")
+
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if cmd == nil {
+		t.Fatal("first enter with a valid spec should dispatch a connect")
+	}
+	if !a.rawModal.IsConnecting() {
+		t.Fatal("first enter should mark the modal connecting")
+	}
+
+	// Retype a different target — the "fix a typo and retry" trigger — while
+	// the first attempt is still outstanding. If the guard only worked by
+	// accident (an empty spec failing to parse), this would expose it: the
+	// spec here is valid and non-empty.
+	a.rawModal.SetSpec("127.0.0.1:6380")
+
+	m, cmd = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if cmd != nil {
+		t.Fatal("a second enter while connecting must not dispatch another connect")
 	}
 }

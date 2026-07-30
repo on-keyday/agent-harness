@@ -31,7 +31,17 @@ type RawConnectModal struct {
 	input  textinput.Model
 	out    []byte
 	live   bool
-	note   string
+	// connecting is true from the moment Enter dispatches a connect attempt
+	// until that attempt resolves (SetConn on success, MarkClosed on
+	// failure). rawGen scopes a SESSION, not an ATTEMPT: two connect attempts
+	// dispatched back-to-back under one open session share one Gen, so the
+	// Gen guard alone cannot tell them apart — the loser's eventual
+	// RawForwardClosedMsg would still pass the guard and tear down whatever
+	// the winner just set up. connecting makes the Enter handler refuse a
+	// second dispatch while one is outstanding, so at most one attempt (and
+	// therefore at most one Gen-indistinguishable reply) is ever in flight.
+	connecting bool
+	note       string
 	// conn is the live connection this modal owns, and cancel stops its pump.
 	// Kept on the modal rather than in a package-level global so closing the
 	// modal cannot leave a connection nobody references.
@@ -46,16 +56,18 @@ func NewRawConnectModal() RawConnectModal {
 	return RawConnectModal{input: in}
 }
 
-func (m *RawConnectModal) IsOpen() bool   { return m.open }
-func (m *RawConnectModal) TaskID() string { return m.taskID }
-func (m *RawConnectModal) IsLive() bool   { return m.live }
-func (m *RawConnectModal) Output() []byte { return m.out }
+func (m *RawConnectModal) IsOpen() bool       { return m.open }
+func (m *RawConnectModal) TaskID() string     { return m.taskID }
+func (m *RawConnectModal) IsLive() bool       { return m.live }
+func (m *RawConnectModal) IsConnecting() bool { return m.connecting }
+func (m *RawConnectModal) Output() []byte     { return m.out }
 
 func (m *RawConnectModal) Open(taskID string) {
 	m.CloseConn() // a re-open must not orphan a previous connection
 	m.open = true
 	m.taskID = taskID
 	m.live = false
+	m.connecting = false
 	m.note = ""
 	m.out = nil
 	m.input.SetValue("")
@@ -68,6 +80,7 @@ func (m *RawConnectModal) Close() {
 	m.CloseConn()
 	m.open = false
 	m.live = false
+	m.connecting = false
 	m.input.Blur()
 }
 
@@ -77,7 +90,14 @@ func (m *RawConnectModal) SetConn(rc *cli.RawConn, cancel context.CancelFunc) {
 	m.CloseConn()
 	m.conn = rc
 	m.cancel = cancel
+	m.connecting = false
 }
+
+// MarkConnecting records that a connect attempt was just dispatched. Cleared
+// by SetConn (attempt succeeded) or MarkClosed (attempt failed) — see the
+// connecting field's doc comment for why this must gate the Enter handler
+// rather than rely on rawGen alone.
+func (m *RawConnectModal) MarkConnecting() { m.connecting = true }
 
 // CloseConn closes the live connection and stops its pump. Idempotent.
 func (m *RawConnectModal) CloseConn() {
@@ -108,6 +128,7 @@ func (m *RawConnectModal) MarkLive(note string) { m.live = true; m.note = note }
 // and is what drops the reference and stops the sink goroutine.
 func (m *RawConnectModal) MarkClosed(note string) {
 	m.live = false
+	m.connecting = false
 	m.note = note
 	m.CloseConn()
 }
@@ -139,6 +160,9 @@ func (m *RawConnectModal) Update(msg tea.Msg) (RawConnectModal, tea.Cmd) {
 func (m *RawConnectModal) View() string {
 	head := fmt.Sprintf("raw connect — task %s", pfShortID(m.taskID))
 	state := "enter host:port, Enter to connect"
+	if m.connecting {
+		state = "connecting…"
+	}
 	if m.live {
 		state = "connected — type bytes, Enter sends (esc closes)"
 	}
