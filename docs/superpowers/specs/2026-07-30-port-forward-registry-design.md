@@ -315,8 +315,13 @@ impossibility, not a scoping choice.
 - **TUI** — `ForwardsModal` (key `f`) switches its data source from
   `sortedForwards(a.activeForwards)` to a `ListPortForwards` RPC issued as a
   `tea.Cmd` on open, so it shows **every** visible forward, not just this
-  process's. Columns become `id · dir · task · spec · origin`. A `k` key kills
-  the selected row via the RPC and refreshes. The tasks pane's `P`/`B`
+  process's. Columns become `id · dir · task · spec · origin`. An `x` key arms a
+  y/n confirmation and `y` kills the selected row via the RPC, then refreshes.
+  Not `k`: the pinned bubbles table binds `k` to LineUp and `tui/` never rebinds
+  it, so `k` would kill the row a vim-reflex user was scrolling past — and `x`/`X`
+  is already this repo's key for destructive full-screen-overlay actions. The
+  confirm is there because the row may belong to another operator's session and
+  only that owner can re-establish it. The tasks pane's `P`/`B`
   stop-picker keeps working, but its stop action also goes through
   `KillPortForward` — the process-local `PortForwardSession.Cancel` is no longer
   a second way to stop a forward, it is just the plumbing the `closed` event
@@ -383,8 +388,8 @@ Composed from existing gates; no new capability bit and no new gating concept.
 - `integration/port_forward_test.go` — end-to-end `-L`: register, list from a
   *second* client, kill, and assert the first client's `RunForward` returned and
   its listener port is free.
-- `tui/portforward_test.go` — `ForwardsModal` renders server rows and the `k`
-  key issues a kill.
+- `tui/portforward_test.go` — `ForwardsModal` renders server rows, `x` arms the
+  confirm, `y` issues a kill, `n` does not, and `j`/`k` still navigate.
 - **Live check before claiming done** (`.claude/skills/dummy-harness`): stand up
   a dummy server + runner, open `harness-cli forward -L` in one terminal, run
   `forward ls` and `forward kill` from another, and confirm the first terminal

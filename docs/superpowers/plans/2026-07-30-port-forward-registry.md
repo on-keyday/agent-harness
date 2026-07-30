@@ -1461,10 +1461,14 @@ goroutine dies with the process — silently killing a `-R` forward nobody asked
 stop. The stale comment there ("local (-L) forwards … hold the foreground until
 Ctrl-C") must go too.
 
-Fix: after `RunForward` returns, keep holding the foreground while any `-R`
-forward is still live — e.g. fall through to `<-fctx.Done()` when
-`len(parsedR) > 0` — so the process exits only once **all** of its forwards are
-gone, which is what the plan's constraint says.
+Fix: the process must exit once **all** of its forwards are gone — which is not
+the same thing as blocking on `fctx.Done()`. `<-fctx.Done()` only unblocks on
+Ctrl-C or a transport error, so a `-R` forward that is *killed* would leave the
+terminal held forever: the same orphan-terminal symptom this whole feature
+exists to remove. `RunRemoteForward` must therefore return when all of its
+per-spec control goroutines have exited (select on a channel closed after
+`wg.Wait()` versus `ctx.Done()`), and the caller must wait on that completion
+signal rather than on `fctx.Done()` alone.
 
 - [ ] **Step 6: Run the integration test**
 
