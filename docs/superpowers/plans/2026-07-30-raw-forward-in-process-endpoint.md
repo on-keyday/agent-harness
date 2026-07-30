@@ -47,7 +47,8 @@ Spec: `docs/superpowers/specs/2026-07-30-raw-forward-in-process-endpoint-design.
 | `webui/index.html` | Raw-connect pane markup inside the existing `#connections` section. |
 | `webui/static/main.js` | Pane state, hooks, text/hex rendering, send box. |
 | `webui/static/style.css` | Pane styling, dark palette, ≤600px. |
-| `tui/rawforward.go` | **NEW.** `RawConnectModal` + `DoStartRawForward` + messages. |
+| `tui/rawforward.go` | **NEW.** `RawConnectModal` (owns its connection) + `DoStartRawForward` + generation-tagged messages + the non-blocking sink. |
+| `tui/cmdline.go` | `parseForward`'s comment names the start keys correctly and mentions `t`. |
 | `tui/app.go` | `t` key opens the modal; message handling. |
 | `integration/port_forward_test.go` | E2E: raw connect round-trip, listed with `(in-process)`, killable. |
 
@@ -1914,26 +1915,35 @@ git commit -m "feat(webui): raw-connect pane — open forwards with the page as 
 
 **Files:**
 - Create: `tui/rawforward.go`
-- Modify: `tui/app.go` (model field, `t` key, message handling, view)
+- Modify: `tui/app.go` (model fields, `t` key, message handling, view, footer hint), `tui/cmdline.go` (`parseForward`'s comment)
 - Test: `tui/rawforward_test.go`
 
 **Interfaces:**
-- Consumes: `OpenRawForward` / `RawConn` (Task 3); the app's long-lived `*cli.Client` in `a.client`.
-- Produces: `type RawConnectModal`, `func DoStartRawForward(c *cli.Client, taskID, host string, port int, program *tea.Program) tea.Cmd`, messages `RawForwardOpenedMsg`, `RawForwardDataMsg`, `RawForwardClosedMsg`.
+- Consumes: `cli.OpenRawForward` / `cli.RawConn` / `cli.ParseStdioForwardSpec`; the app's long-lived `*cli.Client` in `a.client`.
+- Produces: `type RawConnectModal`, `func DoStartRawForward(c *cli.Client, taskID, host string, port int, gen uint64, program *tea.Program) tea.Cmd`, messages `RawForwardOpenedMsg`, `RawForwardDataMsg`, `RawForwardClosedMsg` — **all three carrying `Gen uint64`**.
 
-- [ ] **Step 1: Write the failing modal test**
+Three properties here exist because their absence is a concrete defect, twice already proven in this plan:
+
+1. **Every message carries a generation and every handler checks it.** The app bumps `a.rawGen` on each open and each close. Without this, `esc` on task A followed by `t` on task B lands A's trailing bytes and A's close notice on B's modal — reachable through the most ordinary workflow, not an edge case — and a same-task double-connect silently overwrites `m.conn`, orphaning a live registration and leaking its pump.
+2. **The pump closes the connection on the way out.** Closing is what deregisters a forward server-side; a data-side EOF does not. Without it every ordinary remote hangup leaves a stale row in `forward ls` until the operator presses `esc`. `spliceStdio` and the wasm pump both already follow this rule.
+3. **The pump never calls `program.Send` directly.** `forwardStatusLogf` (`tui/portforward.go:238`) exists because a background goroutine blocking in `program.Send` while `tea.Exec` holds the event loop (any interactive session) hangs. Data must not be *dropped* the way cosmetic status lines are, so the raw sink blocks on a full buffer and is released by ctx cancellation instead.
+
+- [ ] **Step 1: Write the failing modal tests**
 
 Create `tui/rawforward_test.go`:
 
 ```go
 package tui
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestRawConnectModal_OpenCloseAndSpec(t *testing.T) {
 	m := NewRawConnectModal()
 	if m.IsOpen() {
-		t.Fatal("zero modal must be closed")
+		t.Fatal("fresh modal must be closed")
 	}
 	m.Open("4a1f0000000000000000000000000000")
 	if !m.IsOpen() || m.TaskID() == "" {
@@ -1954,24 +1964,33 @@ func TestRawConnectModal_OpenCloseAndSpec(t *testing.T) {
 	}
 }
 
-func TestRawConnectModal_RingCap(t *testing.T) {
+// TestRawConnectModal_RingCapKeepsNewest checks the bound AND which end
+// survives: a trim that kept the oldest bytes would satisfy a length-only
+// assertion while showing the operator stale output.
+func TestRawConnectModal_RingCapKeepsNewest(t *testing.T) {
 	m := NewRawConnectModal()
 	m.Open("4a1f0000000000000000000000000000")
-	big := make([]byte, rawTUIRingBytes+1024)
-	for i := range big {
-		big[i] = 'x'
+	head := bytes.Repeat([]byte("H"), rawTUIRingBytes)
+	m.AppendOutput(head)
+	tail := []byte("TAIL-MARKER")
+	m.AppendOutput(tail)
+	out := m.Output()
+	if len(out) > rawTUIRingBytes {
+		t.Fatalf("output ring = %d bytes, want <= %d", len(out), rawTUIRingBytes)
 	}
-	m.AppendOutput(big)
-	if got := len(m.Output()); got > rawTUIRingBytes {
-		t.Fatalf("output ring = %d bytes, want <= %d", got, rawTUIRingBytes)
+	if !bytes.HasSuffix(out, tail) {
+		t.Fatalf("newest bytes must survive the trim; output ends with %q", out[max(0, len(out)-16):])
+	}
+	if bytes.HasPrefix(out, head[:16]) {
+		t.Fatal("oldest bytes must be trimmed from the front")
 	}
 }
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [ ] **Step 2: Run them to verify they fail**
 
 Run: `go test ./tui/ -run TestRawConnectModal`
-Expected: compile failure — `undefined: RawConnectModal`.
+Expected: compile failure — `undefined: NewRawConnectModal`.
 
 - [ ] **Step 3: Implement `tui/rawforward.go`**
 
@@ -1981,6 +2000,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1991,6 +2012,11 @@ import (
 // rawTUIRingBytes caps the modal's output buffer. Same reasoning as the WebUI
 // pane's ring: this is a debugging window, not a transcript.
 const rawTUIRingBytes = 64 * 1024
+
+// rawConnectTimeout bounds the connect RPC. Every other Do* in this package
+// bounds its RPC; without it a wedged open leaves the operator with a modal
+// that says "connecting" forever and no way to cancel the attempt.
+const rawConnectTimeout = 30 * time.Second
 
 // RawConnectModal prompts for a host:port and then shows the bytes coming back
 // from a forward whose client endpoint is this TUI process. Mirrors
@@ -2003,11 +2029,11 @@ type RawConnectModal struct {
 	out    []byte
 	live   bool
 	note   string
-	// conn is the live connection this modal owns. Kept on the modal rather
-	// than in a package-level global so closing the modal cannot leave a
-	// connection nobody references, and so two app instances in one test
-	// binary do not share it.
-	conn *cli.RawConn
+	// conn is the live connection this modal owns, and cancel stops its pump.
+	// Kept on the modal rather than in a package-level global so closing the
+	// modal cannot leave a connection nobody references.
+	conn   *cli.RawConn
+	cancel context.CancelFunc
 }
 
 func NewRawConnectModal() RawConnectModal {
@@ -2042,14 +2068,23 @@ func (m *RawConnectModal) Close() {
 	m.input.Blur()
 }
 
-// SetConn adopts the connection opened by DoStartRawForward.
-func (m *RawConnectModal) SetConn(rc *cli.RawConn) { m.conn = rc }
+// SetConn adopts the connection opened by DoStartRawForward, closing any
+// previous one so a double-connect cannot orphan a live registration.
+func (m *RawConnectModal) SetConn(rc *cli.RawConn, cancel context.CancelFunc) {
+	m.CloseConn()
+	m.conn = rc
+	m.cancel = cancel
+}
 
-// CloseConn closes the live connection, if any. Idempotent.
+// CloseConn closes the live connection and stops its pump. Idempotent.
 func (m *RawConnectModal) CloseConn() {
 	if m.conn != nil {
 		_ = m.conn.Close()
 		m.conn = nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
 	}
 }
 
@@ -2063,25 +2098,33 @@ func (m *RawConnectModal) SendLine(s string) error {
 	return m.conn.Send([]byte(s + "\r\n"))
 }
 
-func (m *RawConnectModal) SetSpec(s string) { m.input.SetValue(s) }
-func (m *RawConnectModal) Spec() string     { return m.input.Value() }
+func (m *RawConnectModal) MarkLive(note string) { m.live = true; m.note = note }
 
-// Target parses the entered spec. Reuses the CLI parser so -W and the TUI cannot
-// disagree about what a target looks like.
-func (m *RawConnectModal) Target() (string, int, error) {
-	return cli.ParseStdioForwardSpec(m.input.Value())
+// MarkClosed records why the connection ended and releases it. The pump has
+// already closed the connection by the time this runs; CloseConn is idempotent
+// and is what drops the reference and stops the sink goroutine.
+func (m *RawConnectModal) MarkClosed(note string) {
+	m.live = false
+	m.note = note
+	m.CloseConn()
 }
 
-func (m *RawConnectModal) MarkLive(note string) { m.live = true; m.note = note }
-func (m *RawConnectModal) MarkClosed(note string) { m.live = false; m.note = note }
-
 // AppendOutput adds received bytes, trimming the front so the buffer stays
-// bounded.
+// bounded and the NEWEST bytes are the ones kept.
 func (m *RawConnectModal) AppendOutput(b []byte) {
 	m.out = append(m.out, b...)
 	if len(m.out) > rawTUIRingBytes {
 		m.out = append([]byte(nil), m.out[len(m.out)-rawTUIRingBytes:]...)
 	}
+}
+
+func (m *RawConnectModal) SetSpec(s string) { m.input.SetValue(s) }
+func (m *RawConnectModal) Spec() string     { return m.input.Value() }
+
+// Target parses the entered spec. Reuses the CLI parser so -W and the TUI
+// cannot disagree about what a target looks like.
+func (m *RawConnectModal) Target() (string, int, error) {
+	return cli.ParseStdioForwardSpec(m.input.Value())
 }
 
 func (m *RawConnectModal) Update(msg tea.Msg) (RawConnectModal, tea.Cmd) {
@@ -2099,53 +2142,117 @@ func (m *RawConnectModal) View() string {
 	if m.note != "" {
 		state = m.note
 	}
-	body := string(m.out)
-	return head + "\n" + state + "\n" + m.input.View() + "\n\n" + body
+	return head + "\n" + state + "\n" + m.input.View() + "\n\n" + string(m.out)
 }
 
 // RawForwardOpenedMsg reports a successful connect. It carries the connection
-// itself so the modal can own it; the controller stores it via SetConn.
+// and its cancel func so the modal can own both.
 type RawForwardOpenedMsg struct {
+	Gen       uint64
 	TaskID    string
 	ForwardID uint64
 	Conn      *cli.RawConn
+	Cancel    context.CancelFunc
 }
 
 // RawForwardDataMsg carries bytes received from the far end.
-type RawForwardDataMsg struct{ Data []byte }
+type RawForwardDataMsg struct {
+	Gen  uint64
+	Data []byte
+}
 
-// RawForwardClosedMsg reports the connection ending, for any reason.
-type RawForwardClosedMsg struct{ Reason string }
+// RawForwardClosedMsg reports the connection ending, for any reason. Exactly one
+// is sent per connection.
+type RawForwardClosedMsg struct {
+	Gen    uint64
+	Reason string
+}
+
+// rawNote lets the control-stream callback record WHY a forward ended while the
+// pump remains the single sender of RawForwardClosedMsg. Two senders would show
+// the operator two closes with different reasons for one remote kill — the same
+// defect the wasm pane had to fix.
+type rawNote struct {
+	mu sync.Mutex
+	s  string
+}
+
+func (n *rawNote) set(s string) { n.mu.Lock(); n.s = s; n.mu.Unlock() }
+func (n *rawNote) get() string  { n.mu.Lock(); defer n.mu.Unlock(); return n.s }
+
+// rawSink funnels a raw connection's messages to the UI through a background
+// goroutine that owns program.Send. Modelled on forwardStatusLogf
+// (tui/portforward.go:238), which exists because a goroutine blocking in
+// program.Send while tea.Exec holds the event loop hangs. One deliberate
+// difference: this sink must NOT drop on a full buffer the way cosmetic status
+// lines may — dropping received bytes would silently corrupt what the operator
+// reads — so a full buffer blocks the pump and ctx cancellation is what
+// releases it.
+func rawSink(ctx context.Context, program *tea.Program) func(tea.Msg) bool {
+	ch := make(chan tea.Msg, 256)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case m := <-ch:
+				program.Send(m)
+			}
+		}
+	}()
+	return func(m tea.Msg) bool {
+		select {
+		case ch <- m:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
 
 // DoStartRawForward opens the connection on the app's existing long-lived client
 // — never a fresh Dial, matching every other Do* in this package — and pumps
-// received bytes back as messages.
-func DoStartRawForward(c *cli.Client, taskID, host string, port int, program *tea.Program) tea.Cmd {
+// received bytes back as messages tagged with gen, so a reply that arrives after
+// the operator moved on is ignored rather than applied to a different session.
+func DoStartRawForward(c *cli.Client, taskID, host string, port int, gen uint64, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		rc, err := cli.OpenRawForward(ctx, c, taskID, host, port, func(line string) {
-			if program != nil {
-				program.Send(RawForwardClosedMsg{Reason: line})
-			}
-		})
+		ctx, cancel := context.WithCancel(context.Background())
+		send := rawSink(ctx, program)
+		note := &rawNote{}
+
+		openCtx, openCancel := context.WithTimeout(ctx, rawConnectTimeout)
+		rc, err := cli.OpenRawForward(openCtx, c, taskID, host, port, note.set)
+		openCancel()
 		if err != nil {
-			return RawForwardClosedMsg{Reason: "raw connect: " + err.Error()}
+			cancel()
+			return RawForwardClosedMsg{Gen: gen, Reason: "raw connect: " + err.Error()}
 		}
+
 		go func() {
+			// Closing is what deregisters the forward server-side, so the pump
+			// closes it on the way out — the same rule spliceStdio and the wasm
+			// pump follow. Without it an ordinary remote hangup leaves a row in
+			// `forward ls` until the operator presses esc.
+			defer rc.Close()
+			defer cancel()
 			for {
 				data, eof, rerr := rc.Recv(ctx)
-				if len(data) > 0 && program != nil {
-					program.Send(RawForwardDataMsg{Data: append([]byte(nil), data...)})
+				if len(data) > 0 {
+					if !send(RawForwardDataMsg{Gen: gen, Data: append([]byte(nil), data...)}) {
+						return
+					}
 				}
 				if eof || rerr != nil {
-					if program != nil {
-						program.Send(RawForwardClosedMsg{Reason: "connection closed"})
+					reason := note.get()
+					if reason == "" {
+						reason = "connection closed"
 					}
+					send(RawForwardClosedMsg{Gen: gen, Reason: reason})
 					return
 				}
 			}
 		}()
-		return RawForwardOpenedMsg{TaskID: taskID, ForwardID: rc.ForwardID(), Conn: rc}
+		return RawForwardOpenedMsg{Gen: gen, TaskID: taskID, ForwardID: rc.ForwardID(), Conn: rc, Cancel: cancel}
 	}
 }
 ```
@@ -2154,37 +2261,68 @@ func DoStartRawForward(c *cli.Client, taskID, host string, port int, program *te
 
 In `tui/app.go`:
 
-- add `rawModal RawConnectModal` to the model struct (near `forwardsModal`, line ~76) and `rawModal: NewRawConnectModal(),` to the constructor (line ~190).
-- add a key handler beside the forward-start keys. The closest sibling is the `p` / `b` block at `tui/app.go:1208-1219`, which opens `PortForwardModal` for the selected task — copy its guard shape (`a.focus == focusTasks`, `a.tasks.SelectedID()`, a `WarnStyle` line when nothing is selected). Do **not** hang it off `f` / `ForwardsModal`: that modal is the registry listing, whose per-row action is kill.
-
-```go
-		if a.focus == focusTasks && !logsEditing && msg.String() == "t" {
-			if t := a.selectedTask(); t != nil {
-				a.rawModal.Open(t.ID)
-			}
-			return a, nil
-		}
-```
-
-- handle the modal's keys before the generic key dispatch, mirroring how `forwardsModal` is handled at line ~784: `esc` calls `a.rawModal.Close()` (which drops the connection), `enter` either connects (`DoStartRawForward(a.client, ...)` when not live) or sends (`a.rawModal.SendLine(a.rawModal.Spec())`), anything else goes to `a.rawModal.Update(msg)`.
-- handle the three messages: `RawForwardOpenedMsg` → `a.rawModal.SetConn(msg.Conn)` then `a.rawModal.MarkLive(fmt.Sprintf("connected (fwd %d)", msg.ForwardID))`; `RawForwardDataMsg` → `a.rawModal.AppendOutput(msg.Data)`; `RawForwardClosedMsg` → `a.rawModal.MarkClosed(msg.Reason)` (the pump already ended; `CloseConn` on the next `esc` is what releases it).
-- render `a.rawModal.View()` in the same place the other modals are rendered.
+- Add `rawModal RawConnectModal` and `rawGen uint64` to the model struct (near `forwardsModal`, line ~76), and `rawModal: NewRawConnectModal(),` to the constructor (line ~190).
+- Add the `t` handler beside the forward-start keys. The closest sibling is the `p` / `b` block at `tui/app.go:1208-1219`, which opens `PortForwardModal` for the selected task — copy its guard shape (`a.focus == focusTasks`, `a.tasks.SelectedID()`, a `WarnStyle` line when nothing is selected). Do **not** hang it off `f` / `ForwardsModal`: that modal is the registry listing, whose per-row action is kill. Opening bumps `a.rawGen++` before `a.rawModal.Open(taskID)`.
+- Handle the modal's keys before the generic key dispatch, mirroring how `forwardsModal` is handled at line ~784: `esc` bumps `a.rawGen++` then calls `a.rawModal.Close()`; `enter` either connects (`DoStartRawForward(a.client, taskID, host, port, a.rawGen, a.program)` when not live) or sends (`a.rawModal.SendLine(a.rawModal.Spec())`, clearing the input on success); anything else goes to `a.rawModal.Update(msg)`.
+- Handle the three messages, **each gated on `msg.Gen == a.rawGen`** — a stale message is dropped, and a stale `RawForwardOpenedMsg` additionally closes the connection it carries (`msg.Conn.Close()`, `msg.Cancel()`) so an abandoned open does not leave a registration behind:
+  - `RawForwardOpenedMsg` → `a.rawModal.SetConn(msg.Conn, msg.Cancel)` then `a.rawModal.MarkLive(fmt.Sprintf("connected (fwd %d)", msg.ForwardID))`
+  - `RawForwardDataMsg` → `a.rawModal.AppendOutput(msg.Data)`
+  - `RawForwardClosedMsg` → `a.rawModal.MarkClosed(msg.Reason)`
+- Render `a.rawModal.View()` where the other modals are rendered.
+- Footer key hints (`tui/app.go:1430-1439`): add `t` if the footer enumerates keys.
 
 Use `a.client` — never `cli.Dial` — matching every other `Do*` in this package.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Write the App-level message tests**
 
-Run: `go test ./tui/ -run TestRawConnectModal -v && go test ./tui/`
+`tui/portforward_test.go` establishes the convention for this: `TestForwardKillResultMsg_RefreshesOnlyWhenModalOpen` and friends drive `App.Update()` directly. Follow that shape in `tui/rawforward_test.go` — these are the tests that catch a missing generation guard, which unit-testing the modal alone cannot:
+
+```go
+// TestRawForwardMsgs_StaleGenerationIgnored is the regression for the
+// esc-then-reopen workflow: a connection abandoned for task A must not splice
+// its trailing bytes, or its close notice, into the session the operator opened
+// for task B.
+func TestRawForwardMsgs_StaleGenerationIgnored(t *testing.T) {
+	a := newTestApp(t) // follow tui/portforward_test.go's app construction
+	a.rawGen = 2
+	a.rawModal.Open("bbbb0000000000000000000000000000")
+	a.rawModal.MarkLive("connected (fwd 9)")
+
+	a.Update(RawForwardDataMsg{Gen: 1, Data: []byte("stale")})
+	if len(a.rawModal.Output()) != 0 {
+		t.Fatalf("stale data applied: %q", a.rawModal.Output())
+	}
+	a.Update(RawForwardClosedMsg{Gen: 1, Reason: "stale close"})
+	if !a.rawModal.IsLive() {
+		t.Fatal("a stale close must not mark the live session closed")
+	}
+
+	a.Update(RawForwardDataMsg{Gen: 2, Data: []byte("fresh")})
+	if got := string(a.rawModal.Output()); got != "fresh" {
+		t.Fatalf("current-generation data not applied: %q", got)
+	}
+	a.Update(RawForwardClosedMsg{Gen: 2, Reason: "done"})
+	if a.rawModal.IsLive() {
+		t.Fatal("current-generation close must mark the session closed")
+	}
+}
+```
+
+Read `tui/portforward_test.go` for how an `App` is constructed in this package's tests and match it; if there is no shared helper, build the model the same way those tests do rather than inventing a new fixture.
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `go test ./tui/ -run 'TestRawConnectModal|TestRawForwardMsgs' -v && go test ./tui/`
 Expected: PASS.
 
-- [ ] **Step 6: Verify in a real TUI**
+- [ ] **Step 7: Fix `tui/cmdline.go`'s comment**
 
-Against the dummy harness from Task 8 with the echo listener running: `bin/harness-tui`, select the running task, press `t`, type `127.0.0.1:18410`, Enter, then type `ping`, Enter, and confirm `ping` comes back in the modal. Confirm `bin/harness-cli forward ls` shows it as `(in-process)`, and that `esc` makes the row disappear.
+`parseForward`'s comment (`tui/cmdline.go:694-696`) reads *"Starting a forward stays on the P/B keys — this is the list/kill surface only."* Two things are wrong: `p` / `b` start a forward and `P` / `B` stop one, and a third start surface now exists. Make it true — name the start keys correctly and mention `t`. Judge whether the cmdline should also gain a raw verb; a raw session is stateful and multi-step, unlike `forward ls|kill`'s one-shot shape, so the defensible answer is no — but record the verdict in your report either way rather than leaving it implicit.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
-git add tui/rawforward.go tui/rawforward_test.go tui/app.go
+git add tui/rawforward.go tui/rawforward_test.go tui/app.go tui/cmdline.go
 git commit -m "feat(tui): raw connect modal (t) over an in-process forward endpoint"
 ```
 
