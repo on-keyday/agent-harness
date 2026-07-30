@@ -2061,8 +2061,8 @@ does not refresh `bin/`). Then, with a real interactive task running:
 3. In terminal B: `bin/harness-cli forward kill <id>`
 4. Terminal A prints `forward stopped: killed remotely` and **returns to its prompt**.
 5. `bin/harness-cli forward ls` now lists nothing.
-6. Repeat 1-5 driving the kill from the TUI modal (`f`, then `k`) and from the
-   WebUI panel.
+6. Repeat 1-5 driving the kill from the TUI modal (`f`, then `x`, then `y` at the
+   confirm) and from the WebUI panel and its command input.
 7. Start two forwards from one terminal (`-L 18080:… -L 18081:…`), kill one, and
    confirm the terminal stays alive with the other still forwarding.
 
