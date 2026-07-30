@@ -1695,7 +1695,12 @@ Replace `SetSessions([]*PortForwardSession)` with
 change the columns to `id · dir · task · spec · origin`, building cells with
 `cli.PortForwardDirFlag`, `pfShortID`, and `cli.PortForwardSpecString`. Header
 becomes `active port forwards (N)`; footer becomes
-`k: kill · Esc: close`. Add:
+`x: kill · Esc: close`. **Not `k`** — the pinned bubbles table binds `k` to
+LineUp (`bubbles@v1.0.0/table/table.go:72`) and nothing in `tui/` rebinds it, so
+`k` would kill the row a vim-reflex user was only trying to scroll past. `x`/`X`
+is also this repo's established key for destructive full-screen-overlay actions
+(`tui/app.go:812` board topic purge, `:822` message purge, `tui/grid.go:263`
+dismiss, whose comment explicitly preserves k/j for navigation). Add:
 
 ```go
 // SelectedID returns the forward id under the cursor.
@@ -1719,8 +1724,12 @@ forward-id order already); grep before deleting.
 In `tui/app.go`: on `f`, dispatch `DoListForwards(a.client)` instead of reading
 `a.activeForwards`; handle `ForwardsSnapshotMsg` by calling `ApplySnapshot` (and
 appending the error to `cmdresult` when `Err != nil`, mirroring the conns handler
-at `tui/app.go:335`); while the modal is open, map `k` to
-`DoKillForward(a.client, id)` for `SelectedID()` followed by a refresh. Route the
+at `tui/app.go:335`); while the modal is open, map `x` to a y/n confirmation for
+`SelectedID()`, and on `y` dispatch `DoKillForward(a.client, id)` followed by a
+refresh. The confirmation is required because the row may belong to another
+operator's `harness-cli forward` session and only that owner can re-establish it;
+the picker's overwrite prompt is the existing precedent for a confirm in this
+layer. Route the
 tasks-pane `P`/`B` stop action through `DoKillForward` too, so there is exactly
 one way to stop a forward; the existing `PortForwardSession.Cancel` stays as the
 plumbing that the `closed` event triggers.
@@ -1739,7 +1748,7 @@ func DoListForwards(c *cli.Client) tea.Cmd {
 ```
 
 Update the footer hint string (`tui/app.go:1362`) so `f forwards` reads
-`f forwards (k kill)`.
+`f forwards (x kill)`.
 
 - [ ] **Step 6: Add the cmdline verbs**
 
