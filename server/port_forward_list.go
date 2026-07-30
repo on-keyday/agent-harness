@@ -100,6 +100,7 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 	info.TargetPort = pf.targetPort
 	info.OriginKind = pf.clientKind
 	info.SetOriginCid([]byte(pf.clientCID))
+	info.ClientEndpoint = pf.clientEndpoint
 	return info
 }
 

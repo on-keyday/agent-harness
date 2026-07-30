@@ -26,6 +26,11 @@ type portForward struct {
 	bindPort   uint16
 	targetHost string
 	targetPort uint16
+	// clientEndpoint records whether the client side of this forward is a real
+	// socket or lives inside the client process. It changes nothing about the
+	// byte path — it exists so the listing does not report a bind address that
+	// was never bound.
+	clientEndpoint protocol.ClientEndpointKind
 }
 
 // portForwardRegistry maps server-assigned forwardId → registration. Safe for

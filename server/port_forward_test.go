@@ -785,3 +785,90 @@ func TestDropPortForwardsForConn(t *testing.T) {
 		t.Errorf("no closed event should be pushed to a dead client, got %d bytes", len(w))
 	}
 }
+
+// TestHandleRegisterPortForward_LocalInProcess registers a forward whose client
+// end is the client process itself: no bind address exists, the runner is not
+// contacted, and the stored entry remembers the endpoint kind so the listing can
+// avoid reporting a bind address that never existed.
+func TestHandleRegisterPortForward_LocalInProcess(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	idHex := addRunningTask(t, h, 0x44, "runner-1")
+	raw, err := hex.DecodeString(idHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rawID [16]byte
+	copy(rawID[:], raw)
+
+	runnerConn := &fakeConn{}
+	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: runnerConn})
+
+	ctrl := newRecordingBidiStream(881)
+	defer ctrl.CloseBoth()
+	clientConn := &fakeConn{nextBidi: ctrl}
+	req := &protocol.RegisterPortForwardRequest{
+		TaskId:         protocol.TaskID{Id: rawID},
+		Direction:      protocol.PortForwardDirection_Local,
+		TargetPort:     3000,
+		ClientEndpoint: protocol.ClientEndpointKind_InProcess,
+	}
+	req.SetTargetHost([]byte("127.0.0.1"))
+
+	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+	if resp.Status != protocol.OpenPortForwardStatus_Ok {
+		t.Fatalf("status = %v, want Ok", resp.Status)
+	}
+	pf, ok := h.pforwards().get(resp.ForwardId)
+	if !ok {
+		t.Fatal("registration not stored")
+	}
+	if pf.clientEndpoint != protocol.ClientEndpointKind_InProcess {
+		t.Fatalf("stored endpoint = %v, want InProcess", pf.clientEndpoint)
+	}
+	if sent := runnerConn.Sent(); len(sent) != 0 {
+		t.Fatalf("an in-process local registration must not contact the runner; got %d messages", len(sent))
+	}
+	info := portForwardInfo(pf)
+	if info.ClientEndpoint != protocol.ClientEndpointKind_InProcess {
+		t.Fatalf("listing lost the endpoint kind: %v", info.ClientEndpoint)
+	}
+}
+
+// TestHandleRegisterPortForward_RemoteInProcessRejected pins the unimplemented
+// combination shut. A runner-side listener whose accepted connections are
+// answered by an in-browser handler is a separate design; letting it register
+// would half-work (the listener binds, nothing answers).
+func TestHandleRegisterPortForward_RemoteInProcessRejected(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	idHex := addRunningTask(t, h, 0x45, "runner-1")
+	raw, err := hex.DecodeString(idHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rawID [16]byte
+	copy(rawID[:], raw)
+
+	runnerConn := &fakeConn{}
+	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: runnerConn})
+	clientConn := &fakeConn{nextBidi: newRecordingBidiStream(882)}
+	req := &protocol.RegisterPortForwardRequest{
+		TaskId:         protocol.TaskID{Id: rawID},
+		Direction:      protocol.PortForwardDirection_Remote,
+		BindPort:       18099,
+		TargetPort:     3000,
+		ClientEndpoint: protocol.ClientEndpointKind_InProcess,
+	}
+	req.SetBindAddr([]byte("127.0.0.1"))
+	req.SetTargetHost([]byte("127.0.0.1"))
+
+	resp := h.handleRegisterPortForward(clientConn, req, clientConn.ConnectionID().String())
+	if resp.Status != protocol.OpenPortForwardStatus_InternalError {
+		t.Fatalf("status = %v, want InternalError", resp.Status)
+	}
+	if resp.ForwardId != 0 {
+		t.Fatalf("rejected registration must not get an id, got %d", resp.ForwardId)
+	}
+	if sent := runnerConn.Sent(); len(sent) != 0 {
+		t.Fatalf("rejected registration must not ask the runner to bind; got %d messages", len(sent))
+	}
+}

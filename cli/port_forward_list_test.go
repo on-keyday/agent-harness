@@ -29,6 +29,22 @@ func TestPortForwardSpecString(t *testing.T) {
 	}
 }
 
+func TestPortForwardSpecString_InProcess(t *testing.T) {
+	fi := &protocol.PortForwardInfo{
+		Direction:      protocol.PortForwardDirection_Local,
+		TargetPort:     6379,
+		ClientEndpoint: protocol.ClientEndpointKind_InProcess,
+	}
+	fi.SetTargetHost([]byte("127.0.0.1"))
+	if got, want := PortForwardSpecString(fi), "(in-process) -> 127.0.0.1:6379"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	// The DIR column still reports the direction, not the endpoint kind.
+	if got := PortForwardDirFlag(fi.Direction); got != "-L" {
+		t.Fatalf("dir flag = %q, want -L", got)
+	}
+}
+
 func TestPortForwardInfoJSONLine(t *testing.T) {
 	var fi protocol.PortForwardInfo
 	fi.ForwardId = 3

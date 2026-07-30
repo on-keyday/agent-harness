@@ -86,16 +86,27 @@ func (h *TaskHandler) handleRegisterPortForward(conn ConnHandle, req *protocol.R
 		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
 	pf := &portForward{
-		direction:  req.Direction,
-		taskIDHex:  taskIDHex,
-		runnerID:   task.AssignedTo,
-		clientCxn:  conn,
-		clientCID:  cid,
-		clientKind: h.lookupClientKind(cid),
-		bindAddr:   string(req.BindAddr),
-		bindPort:   req.BindPort,
-		targetHost: string(req.TargetHost),
-		targetPort: req.TargetPort,
+		direction:      req.Direction,
+		taskIDHex:      taskIDHex,
+		runnerID:       task.AssignedTo,
+		clientCxn:      conn,
+		clientCID:      cid,
+		clientKind:     h.lookupClientKind(cid),
+		bindAddr:       string(req.BindAddr),
+		bindPort:       req.BindPort,
+		targetHost:     string(req.TargetHost),
+		targetPort:     req.TargetPort,
+		clientEndpoint: req.ClientEndpoint,
+	}
+	// A runner-side listener whose accepted connections are answered by an
+	// in-process handler on the client is a separate design (the browser as a
+	// service endpoint). Refuse it rather than letting it half-work: the
+	// runner's listener would bind and nothing would ever answer.
+	if req.Direction == protocol.PortForwardDirection_Remote &&
+		req.ClientEndpoint == protocol.ClientEndpointKind_InProcess {
+		slog.Warn("port_forward: remote x in_process registration refused (unimplemented combination)",
+			"task_id", taskIDHex)
+		return errResp(protocol.OpenPortForwardStatus_InternalError)
 	}
 	if req.Direction == protocol.PortForwardDirection_Remote {
 		runner, ok := h.Registry.Get(task.AssignedTo)

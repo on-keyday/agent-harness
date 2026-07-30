@@ -113,6 +113,10 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 		bindPort:   8080,
 		targetHost: "db.internal",
 		targetPort: 5432,
+		// InProcess (1), not the zero value OsSocket (0), so a forgotten
+		// mapping shows up as ZERO rather than being indistinguishable from a
+		// correctly-mapped OsSocket.
+		clientEndpoint: protocol.ClientEndpointKind_InProcess,
 	}
 	info := portForwardInfo(pf)
 	assertNoZeroFields(t, info, map[string]string{})

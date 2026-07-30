@@ -107,12 +107,16 @@ func KillPortForward(ctx context.Context, peerCID objproto.ConnectionID, id uint
 	return c.KillPortForwardWith(ctx, id)
 }
 
-// PortForwardSpecString renders a forward's address pair. The "runner:" prefix
-// marks where the listener lives for a remote forward.
+// PortForwardSpecString renders the forward's endpoints as one column. An
+// in-process client endpoint has no address to show on the client side, so it
+// says so instead of printing the empty bind pair as ":0".
 func PortForwardSpecString(fi *protocol.PortForwardInfo) string {
 	listen := fmt.Sprintf("%s:%d", fi.BindAddr, fi.BindPort)
-	if fi.Direction == protocol.PortForwardDirection_Remote {
+	switch {
+	case fi.Direction == protocol.PortForwardDirection_Remote:
 		listen = "runner:" + listen
+	case fi.ClientEndpoint == protocol.ClientEndpointKind_InProcess:
+		listen = "(in-process)"
 	}
 	return fmt.Sprintf("%s -> %s:%d", listen, fi.TargetHost, fi.TargetPort)
 }
