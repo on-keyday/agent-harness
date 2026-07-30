@@ -444,9 +444,13 @@ import (
 // whatever feed() pushed, writes are recorded, and CloseBoth is observable.
 // Enough to exercise the control-stream state machine without a server.
 type fakeBidiStream struct {
-	id      trsf.StreamID
-	mu      sync.Mutex
-	written []byte
+	id trsf.StreamID
+	mu sync.Mutex
+	// written holds chunks, and AppendData stores its argument BY REFERENCE —
+	// exactly as the real trsf send stream does ("data must be copied before
+	// calling AppendData", trsf/send_stream.go). A fake that copied on receipt
+	// would make the copy-safety test unable to fail.
+	written [][]byte
 	closed  bool
 	recv    chan []byte
 	done    chan struct{}
@@ -474,18 +478,25 @@ func (s *fakeBidiStream) isClosed() bool {
 	return s.closed
 }
 
+// Written flattens the recorded chunks at read time, so a caller that mutated a
+// buffer it had already handed to AppendData shows up here as corrupted bytes.
 func (s *fakeBidiStream) Written() []byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]byte(nil), s.written...)
+	var out []byte
+	for _, c := range s.written {
+		out = append(out, c...)
+	}
+	return out
 }
 
 func (s *fakeBidiStream) ID() trsf.StreamID { return s.id }
 
+// Write copies, because io.Writer forbids retaining p. Only AppendData retains.
 func (s *fakeBidiStream) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.written = append(s.written, p...)
+	s.written = append(s.written, append([]byte(nil), p...))
 	return len(p), nil
 }
 
@@ -505,11 +516,9 @@ func (s *fakeBidiStream) HasSendData() bool { return false }
 func (s *fakeBidiStream) Completed() bool   { return false }
 
 func (s *fakeBidiStream) AppendData(_ bool, payloads ...[]byte) error {
-	for _, p := range payloads {
-		if _, err := s.Write(p); err != nil {
-			return err
-		}
-	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.written = append(s.written, payloads...) // by reference, on purpose
 	return nil
 }
 
@@ -643,6 +652,12 @@ func TestRawConn_SendCopiesCallerBuffer(t *testing.T) {
 		t.Fatalf("Send must copy its argument; stream saw %q", got)
 	}
 }
+```
+
+**Negative control, required:** temporarily delete the copy from `RawConn.Send` (pass `b` straight to `AppendData`), run this one test, and confirm it FAILS with `stream saw "XXXX"`. Then restore the copy and confirm it passes again. Report both outputs. A guard that cannot fail is worse than none — this project has an incident on exactly that.
+
+```go
+// (end of the test file)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
