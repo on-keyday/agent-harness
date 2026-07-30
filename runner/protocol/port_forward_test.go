@@ -184,3 +184,73 @@ func TestPortForwardListBodyRoundTrip(t *testing.T) {
 		t.Fatalf("round-trip mismatch: %+v", got.Forwards)
 	}
 }
+
+// TestRegisterPortForwardRequest_InProcessRoundTrip covers the endpoint-kind
+// field. A local in-process registration has no client-side bind address, so
+// the bind pair round-trips as empty/0 rather than carrying a placeholder.
+func TestRegisterPortForwardRequest_InProcessRoundTrip(t *testing.T) {
+	req := RegisterPortForwardRequest{
+		TaskId:         TaskID{Id: [16]byte{0x11}},
+		Direction:      PortForwardDirection_Local,
+		TargetPort:     3000,
+		ClientEndpoint: ClientEndpointKind_InProcess,
+	}
+	req.SetTargetHost([]byte("127.0.0.1"))
+	enc, err := req.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := &RegisterPortForwardRequest{}
+	if _, err := got.Decode(enc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ClientEndpoint != ClientEndpointKind_InProcess {
+		t.Fatalf("ClientEndpoint = %v, want InProcess", got.ClientEndpoint)
+	}
+	if got.BindPort != 0 || len(got.BindAddr) != 0 {
+		t.Fatalf("bind pair must stay empty for an in-process endpoint: addr=%q port=%d", got.BindAddr, got.BindPort)
+	}
+	if string(got.TargetHost) != "127.0.0.1" || got.TargetPort != 3000 {
+		t.Fatalf("target round-trip mismatch: %q:%d", got.TargetHost, got.TargetPort)
+	}
+}
+
+// TestRegisterPortForwardRequest_OsSocketIsZeroValue pins the enum order: a
+// struct built without naming the field must mean "the client end is a real
+// socket", which is what every existing -L / -R call site means.
+func TestRegisterPortForwardRequest_OsSocketIsZeroValue(t *testing.T) {
+	req := RegisterPortForwardRequest{Direction: PortForwardDirection_Local, BindPort: 18080}
+	req.SetBindAddr([]byte("127.0.0.1"))
+	if req.ClientEndpoint != ClientEndpointKind_OsSocket {
+		t.Fatalf("zero value = %v, want OsSocket", req.ClientEndpoint)
+	}
+}
+
+// TestPortForwardInfo_InProcessRoundTrip covers the list-result side, which is
+// what makes an in-process forward distinguishable in `forward ls`.
+func TestPortForwardInfo_InProcessRoundTrip(t *testing.T) {
+	info := PortForwardInfo{
+		ForwardId:      7,
+		Direction:      PortForwardDirection_Local,
+		TaskId:         TaskID{Id: [16]byte{0x22}},
+		TargetPort:     6379,
+		OriginKind:     ClientKind_Webui,
+		ClientEndpoint: ClientEndpointKind_InProcess,
+	}
+	info.SetTargetHost([]byte("127.0.0.1"))
+	info.SetOriginCid([]byte("ws:127.0.0.1:1-2"))
+	enc, err := info.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	got := &PortForwardInfo{}
+	if _, err := got.Decode(enc); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.ClientEndpoint != ClientEndpointKind_InProcess {
+		t.Fatalf("ClientEndpoint = %v, want InProcess", got.ClientEndpoint)
+	}
+	if got.ForwardId != 7 || got.TargetPort != 6379 {
+		t.Fatalf("round-trip mismatch: %+v", got)
+	}
+}

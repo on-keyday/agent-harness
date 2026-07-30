@@ -1194,6 +1194,15 @@ enum PortForwardDirection:
     local    # client listens, runner dials remote_host:remote_port (SSH -L).
     remote   # runner listens on bind_addr:bind_port, client dials remote_host:remote_port (SSH -R).
 
+enum ClientEndpointKind:
+    :u8
+    os_socket   # client-side endpoint is an OS socket: the listener for -L, the dial for -R.
+    in_process  # client-side endpoint lives inside the client process (stdio for -W, a UI
+                # pane in TUI/WebUI). The address pair describing the client side is therefore
+                # empty: bind_addr / bind_port for a local forward, target_host / target_port
+                # for a remote one. Only local x in_process is defined today; the server
+                # rejects remote x in_process.
+
 # Capability is a bitmask of server-mediated capabilities bound to a task at
 # spawn time. It is a u32 power-of-two flag set; do NOT add is_defined assertions
 # to fields typed :Capability — they carry OR-combinations, not single members.
@@ -1242,6 +1251,7 @@ format RegisterPortForwardRequest:
     target_host_len :u16
     target_host     :[target_host_len]u8
     target_port     :u16
+    client_endpoint :ClientEndpointKind
 
 # Reuses OpenPortForwardStatus. A local registration can only answer ok,
 # no_such_task or internal_error: its listener is bound client-side before the
@@ -1272,6 +1282,7 @@ format PortForwardInfo:
     origin_cid_len  :u8
     origin_cid      :[origin_cid_len]u8  # ConnectionID canonical String(), as in ConnInfo.cid;
                                          # the only way to tell two identical specs apart
+    client_endpoint :ClientEndpointKind
 
 format PortForwardListResultBody:
     forwards_len :u16
