@@ -328,6 +328,7 @@ const POLL_INTERVAL_MS = 5000;
   };
   let taskStatusFilter = "active"; // "active" | "finished" | "all"
   let lastTasks = [];              // latest snapshot; re-render source for filter events
+  let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
   for (const [key, btn] of Object.entries(taskChips)) {
     btn.addEventListener("click", () => {
       taskStatusFilter = key;
@@ -463,7 +464,61 @@ const POLL_INTERVAL_MS = 5000;
     const allTasks = snap.tasks || [];
     renderConnTopology(conns, allTasks);
     renderConnList(conns, allTasks);
+    renderForwardList(snap.forwards || []);
   };
+
+  // renderForwardList draws one row per registered port forward (every
+  // forward visible to this operator on the server, not just ones this
+  // WebUI started), each with a kill button. Mirrors renderConnList's DOM
+  // building (no innerHTML with server strings), but — like renderTaskList's
+  // Cancel button — needs appendCmdOutput/refreshSnapshot, so unlike
+  // renderConnList it is declared inside this closure rather than as a
+  // top-level function. Starting a -L forward from the browser is out of
+  // scope (a browser cannot bind a local listener) — list + kill is the
+  // whole surface here.
+  function renderForwardList(forwards) {
+    lastForwards = forwards || []; // mirrors renderTaskList's lastTasks cache
+    const host = document.getElementById("forward-list");
+    if (!host) return;
+    host.textContent = "";
+    if (!forwards.length) {
+      const empty = document.createElement("div");
+      empty.className = "forward-list-empty";
+      empty.textContent = "アクティブなポートフォワードはありません";
+      host.appendChild(empty);
+      return;
+    }
+    for (const f of forwards) {
+      const row = document.createElement("div");
+      row.className = "forward-row";
+      const taskShort = f.task ? f.task.slice(0, 8) + "…" : "-";
+      for (const text of [`#${f.forward_id}`, f.dir, taskShort, f.spec, f.origin]) {
+        const cell = document.createElement("span");
+        cell.className = "forward-cell";
+        cell.textContent = text;
+        row.appendChild(cell);
+      }
+      const kill = document.createElement("button");
+      kill.type = "button";
+      kill.className = "btn-danger";
+      kill.textContent = "kill";
+      kill.addEventListener("click", async () => {
+        if (!window.confirm(`Kill forward #${f.forward_id} (${f.spec})?`)) return;
+        kill.disabled = true;
+        try {
+          await window.harness.forwardKill(f.forward_id);
+          appendCmdOutput(`killed forward #${f.forward_id}`);
+          refreshSnapshot();
+        } catch (err) {
+          appendCmdOutput(`forward kill error: ${err.message}`);
+          kill.disabled = false;
+        }
+      });
+      row.appendChild(kill);
+      host.appendChild(row);
+    }
+  }
+
   await refreshSnapshot();
   setInterval(refreshSnapshot, POLL_INTERVAL_MS);
 
@@ -1419,6 +1474,27 @@ const POLL_INTERVAL_MS = 5000;
           out = `server dial-runner ${target}${via ? ` --via=${via}` : ""}: ${status}`;
           break;
         }
+        case "forward": {
+          // forward ls renders from the snapshot the page already polls — no
+          // extra RPC and no second wasm export (Task 7). forward kill goes
+          // through the wasm bridge; starting a -L forward from the browser
+          // is out of scope (a browser cannot bind a local listener).
+          const sub = tokens[1];
+          if (sub === "ls") {
+            const fs = lastForwards || [];
+            out = fs.length
+              ? fs.map((f) => `#${f.forward_id}  ${f.dir}  ${f.task.slice(0, 8)}…  ${f.spec}  ${f.origin}`).join("\n")
+              : "(no active port forwards)";
+          } else if (sub === "kill") {
+            const id = parseInt(tokens[2], 10);
+            if (!Number.isFinite(id)) throw new Error("forward kill: usage: forward kill <forward-id>");
+            await window.harness.forwardKill(id);
+            out = `killed forward ${id}`;
+          } else {
+            throw new Error("forward: usage: forward ls | forward kill <forward-id>");
+          }
+          break;
+        }
         case "help":
           out = [
             "commands:",
@@ -1445,6 +1521,8 @@ const POLL_INTERVAL_MS = 5000;
             "                            download a remote file, or -r for a directory as a .tar",
             "  server dial-runner <cid> [--via <cid>]",
             "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
+            "  forward ls                list registered port forwards (from the last snapshot poll)",
+            "  forward kill <forward-id> close a registered port forward (starting one is CLI/TUI-only — a browser can't bind a listener)",
             "  help                      this list",
           ].join("\n");
           break;

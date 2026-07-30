@@ -1338,3 +1338,41 @@ button:hover { background: #555; }
   .board-msg-time { margin-left: 0; }
   .board-msg-purge { margin-left: 0; margin-top: 0.2rem; }
 }
+
+/* ── Port forwards (Connections tab) ─────────────────────────────────────── */
+.forward-list-empty {
+  color: #555;
+  font-family: monospace;
+  font-size: 0.85rem;
+  padding: 0.5rem;
+}
+.forward-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  margin-bottom: 0.4rem;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: #d4d4d4;
+}
+.forward-cell { white-space: nowrap; }
+.forward-row .btn-danger { margin-left: auto; }
+
+/* Under 600px, stack each cell on its own line rather than letting the row
+   force the page body to scroll sideways. */
+@media (max-width: 600px) {
+  .forward-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .forward-cell {
+    white-space: normal;
+    word-break: break-all;
+  }
+  .forward-row .btn-danger { margin-left: 0; align-self: flex-start; }
+}

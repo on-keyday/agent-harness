@@ -106,6 +106,7 @@ func main() {
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
 		"boardRead":          js.FuncOf(harnessBoardRead),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
+		"forwardKill":        js.FuncOf(harnessForwardKill),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -431,10 +432,11 @@ func connRemoteAddr(cid string) string {
 // not need a label table.
 //
 //	harness.snapshot() -> Promise<{
-//	  runners: [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
-//	  tasks:   [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
-//	             createdAt, startedAt, endedAt, agentProfile, errorMsg}],
-//	  conns:   [{cid, role, remoteAddr, principalTask, connectedAt, identified}]
+//	  runners:  [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
+//	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
+//	              createdAt, startedAt, endedAt, agentProfile, errorMsg}],
+//	  conns:    [{cid, role, remoteAddr, principalTask, connectedAt, identified}],
+//	  forwards: [{forward_id, dir, task, spec, origin}]
 //	}>
 func harnessSnapshot(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
@@ -530,10 +532,35 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"identified":    ci.Identified(),
 				})
 			}
+			// Fetch the live port-forward registry using the same long-lived
+			// client (Pitfall 3: never dial+close here). A failure here must
+			// not fail the whole snapshot — log and emit an empty array,
+			// exactly as the conns section above degrades.
+			fwInfos, fwErr := c.PortForwardListWith(rootCtx, "")
+			if fwErr != nil {
+				slog.Warn("snapshot: PortForwardListWith failed (forwards will be empty)", "err", fwErr)
+			}
+			forwards := make([]any, 0, len(fwInfos))
+			for i := range fwInfos {
+				fi := &fwInfos[i]
+				forwards = append(forwards, map[string]any{
+					"forward_id": float64(fi.ForwardId),
+					"dir":        cli.PortForwardDirFlag(fi.Direction),
+					"task":       hex.EncodeToString(fi.TaskId.Id[:]),
+					"spec":       cli.PortForwardSpecString(fi),
+					// origin is the single "kind cid" string (cli.PortForwardOrigin) —
+					// the CLI, TUI, and WebUI all render this exact helper's output so
+					// the three surfaces agree on what "origin" means (the cid half is
+					// what distinguishes two identical specs started by different
+					// clients; a kind-only rendering was Task 6's caught half-reimplementation).
+					"origin": cli.PortForwardOrigin(fi),
+				})
+			}
 			resolve.Invoke(js.ValueOf(map[string]any{
-				"runners": runners,
-				"tasks":   tasks,
-				"conns":   conns,
+				"runners":  runners,
+				"tasks":    tasks,
+				"conns":    conns,
+				"forwards": forwards,
 			}))
 		}()
 		return nil
@@ -702,6 +729,39 @@ func harnessBoardPurge(this js.Value, args []js.Value) any {
 				"purged": float64(purged),
 				"found":  found,
 			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessForwardKill closes one registered port forward. Unlike board seq
+// (which must travel as a decimal string because it is UnixNano-seeded and
+// exceeds JS's 2^53 safe range), forward ids come from a small `next++`
+// counter, so a JS number round-trips exactly.
+//
+//	harness.forwardKill(forwardId) -> Promise<void>
+func harnessForwardKill(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("forwardKill: missing forward id"))
+				return
+			}
+			id := uint64(args[0].Float())
+			if err := c.KillPortForwardWith(rootCtx, id); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
 		}()
 		return nil
 	})
