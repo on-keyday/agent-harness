@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,6 +15,11 @@ import (
 // rawTUIRingBytes caps the modal's output buffer. Same reasoning as the WebUI
 // pane's ring: this is a debugging window, not a transcript.
 const rawTUIRingBytes = 64 * 1024
+
+// rawConnectTimeout bounds the connect RPC. Every other Do* in this package
+// bounds its RPC; without it a wedged open leaves the operator with a modal
+// that says "connecting" forever and no way to cancel the attempt.
+const rawConnectTimeout = 30 * time.Second
 
 // RawConnectModal prompts for a host:port and then shows the bytes coming back
 // from a forward whose client endpoint is this TUI process. Mirrors
@@ -25,11 +32,11 @@ type RawConnectModal struct {
 	out    []byte
 	live   bool
 	note   string
-	// conn is the live connection this modal owns. Kept on the modal rather
-	// than in a package-level global so closing the modal cannot leave a
-	// connection nobody references, and so two app instances in one test
-	// binary do not share it.
-	conn *cli.RawConn
+	// conn is the live connection this modal owns, and cancel stops its pump.
+	// Kept on the modal rather than in a package-level global so closing the
+	// modal cannot leave a connection nobody references.
+	conn   *cli.RawConn
+	cancel context.CancelFunc
 }
 
 func NewRawConnectModal() RawConnectModal {
@@ -64,14 +71,23 @@ func (m *RawConnectModal) Close() {
 	m.input.Blur()
 }
 
-// SetConn adopts the connection opened by DoStartRawForward.
-func (m *RawConnectModal) SetConn(rc *cli.RawConn) { m.conn = rc }
+// SetConn adopts the connection opened by DoStartRawForward, closing any
+// previous one so a double-connect cannot orphan a live registration.
+func (m *RawConnectModal) SetConn(rc *cli.RawConn, cancel context.CancelFunc) {
+	m.CloseConn()
+	m.conn = rc
+	m.cancel = cancel
+}
 
-// CloseConn closes the live connection, if any. Idempotent.
+// CloseConn closes the live connection and stops its pump. Idempotent.
 func (m *RawConnectModal) CloseConn() {
 	if m.conn != nil {
 		_ = m.conn.Close()
 		m.conn = nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
 	}
 }
 
@@ -85,25 +101,33 @@ func (m *RawConnectModal) SendLine(s string) error {
 	return m.conn.Send([]byte(s + "\r\n"))
 }
 
-func (m *RawConnectModal) SetSpec(s string) { m.input.SetValue(s) }
-func (m *RawConnectModal) Spec() string     { return m.input.Value() }
+func (m *RawConnectModal) MarkLive(note string) { m.live = true; m.note = note }
 
-// Target parses the entered spec. Reuses the CLI parser so -W and the TUI cannot
-// disagree about what a target looks like.
-func (m *RawConnectModal) Target() (string, int, error) {
-	return cli.ParseStdioForwardSpec(m.input.Value())
+// MarkClosed records why the connection ended and releases it. The pump has
+// already closed the connection by the time this runs; CloseConn is idempotent
+// and is what drops the reference and stops the sink goroutine.
+func (m *RawConnectModal) MarkClosed(note string) {
+	m.live = false
+	m.note = note
+	m.CloseConn()
 }
 
-func (m *RawConnectModal) MarkLive(note string)   { m.live = true; m.note = note }
-func (m *RawConnectModal) MarkClosed(note string) { m.live = false; m.note = note }
-
 // AppendOutput adds received bytes, trimming the front so the buffer stays
-// bounded.
+// bounded and the NEWEST bytes are the ones kept.
 func (m *RawConnectModal) AppendOutput(b []byte) {
 	m.out = append(m.out, b...)
 	if len(m.out) > rawTUIRingBytes {
 		m.out = append([]byte(nil), m.out[len(m.out)-rawTUIRingBytes:]...)
 	}
+}
+
+func (m *RawConnectModal) SetSpec(s string) { m.input.SetValue(s) }
+func (m *RawConnectModal) Spec() string     { return m.input.Value() }
+
+// Target parses the entered spec. Reuses the CLI parser so -W and the TUI
+// cannot disagree about what a target looks like.
+func (m *RawConnectModal) Target() (string, int, error) {
+	return cli.ParseStdioForwardSpec(m.input.Value())
 }
 
 func (m *RawConnectModal) Update(msg tea.Msg) (RawConnectModal, tea.Cmd) {
@@ -121,52 +145,116 @@ func (m *RawConnectModal) View() string {
 	if m.note != "" {
 		state = m.note
 	}
-	body := string(m.out)
-	return head + "\n" + state + "\n" + m.input.View() + "\n\n" + body
+	return head + "\n" + state + "\n" + m.input.View() + "\n\n" + string(m.out)
 }
 
 // RawForwardOpenedMsg reports a successful connect. It carries the connection
-// itself so the modal can own it; the controller stores it via SetConn.
+// and its cancel func so the modal can own both.
 type RawForwardOpenedMsg struct {
+	Gen       uint64
 	TaskID    string
 	ForwardID uint64
 	Conn      *cli.RawConn
+	Cancel    context.CancelFunc
 }
 
 // RawForwardDataMsg carries bytes received from the far end.
-type RawForwardDataMsg struct{ Data []byte }
+type RawForwardDataMsg struct {
+	Gen  uint64
+	Data []byte
+}
 
-// RawForwardClosedMsg reports the connection ending, for any reason.
-type RawForwardClosedMsg struct{ Reason string }
+// RawForwardClosedMsg reports the connection ending, for any reason. Exactly one
+// is sent per connection.
+type RawForwardClosedMsg struct {
+	Gen    uint64
+	Reason string
+}
+
+// rawNote lets the control-stream callback record WHY a forward ended while the
+// pump remains the single sender of RawForwardClosedMsg. Two senders would show
+// the operator two closes with different reasons for one remote kill — the same
+// defect the wasm pane had to fix.
+type rawNote struct {
+	mu sync.Mutex
+	s  string
+}
+
+func (n *rawNote) set(s string) { n.mu.Lock(); n.s = s; n.mu.Unlock() }
+func (n *rawNote) get() string  { n.mu.Lock(); defer n.mu.Unlock(); return n.s }
+
+// rawSink funnels a raw connection's messages to the UI through a background
+// goroutine that owns program.Send. Modelled on forwardStatusLogf
+// (tui/portforward.go:238), which exists because a goroutine blocking in
+// program.Send while tea.Exec holds the event loop hangs. One deliberate
+// difference: this sink must NOT drop on a full buffer the way cosmetic status
+// lines may — dropping received bytes would silently corrupt what the operator
+// reads — so a full buffer blocks the pump and ctx cancellation is what
+// releases it.
+func rawSink(ctx context.Context, program *tea.Program) func(tea.Msg) bool {
+	ch := make(chan tea.Msg, 256)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case m := <-ch:
+				program.Send(m)
+			}
+		}
+	}()
+	return func(m tea.Msg) bool {
+		select {
+		case ch <- m:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+}
 
 // DoStartRawForward opens the connection on the app's existing long-lived client
 // — never a fresh Dial, matching every other Do* in this package — and pumps
-// received bytes back as messages.
-func DoStartRawForward(c *cli.Client, taskID, host string, port int, program *tea.Program) tea.Cmd {
+// received bytes back as messages tagged with gen, so a reply that arrives after
+// the operator moved on is ignored rather than applied to a different session.
+func DoStartRawForward(c *cli.Client, taskID, host string, port int, gen uint64, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		rc, err := cli.OpenRawForward(ctx, c, taskID, host, port, func(line string) {
-			if program != nil {
-				program.Send(RawForwardClosedMsg{Reason: line})
-			}
-		})
+		ctx, cancel := context.WithCancel(context.Background())
+		send := rawSink(ctx, program)
+		note := &rawNote{}
+
+		openCtx, openCancel := context.WithTimeout(ctx, rawConnectTimeout)
+		rc, err := cli.OpenRawForward(openCtx, c, taskID, host, port, note.set)
+		openCancel()
 		if err != nil {
-			return RawForwardClosedMsg{Reason: "raw connect: " + err.Error()}
+			cancel()
+			return RawForwardClosedMsg{Gen: gen, Reason: "raw connect: " + err.Error()}
 		}
+
 		go func() {
+			// Closing is what deregisters the forward server-side, so the pump
+			// closes it on the way out — the same rule spliceStdio and the wasm
+			// pump follow. Without it an ordinary remote hangup leaves a row in
+			// `forward ls` until the operator presses esc.
+			defer rc.Close()
+			defer cancel()
 			for {
 				data, eof, rerr := rc.Recv(ctx)
-				if len(data) > 0 && program != nil {
-					program.Send(RawForwardDataMsg{Data: append([]byte(nil), data...)})
+				if len(data) > 0 {
+					if !send(RawForwardDataMsg{Gen: gen, Data: append([]byte(nil), data...)}) {
+						return
+					}
 				}
 				if eof || rerr != nil {
-					if program != nil {
-						program.Send(RawForwardClosedMsg{Reason: "connection closed"})
+					reason := note.get()
+					if reason == "" {
+						reason = "connection closed"
 					}
+					send(RawForwardClosedMsg{Gen: gen, Reason: reason})
 					return
 				}
 			}
 		}()
-		return RawForwardOpenedMsg{TaskID: taskID, ForwardID: rc.ForwardID(), Conn: rc}
+		return RawForwardOpenedMsg{Gen: gen, TaskID: taskID, ForwardID: rc.ForwardID(), Conn: rc, Cancel: cancel}
 	}
 }

@@ -95,6 +95,14 @@ type App struct {
 	// and killable via `f` / `forward kill`, which act on the server-side
 	// registration that OpenRawForward creates.
 	rawModal RawConnectModal
+	// rawGen tags every raw-connect message (RawForward{Opened,Data,Closed}Msg)
+	// with the generation active when it was sent, bumped on every Open and
+	// every Close. Without it, esc on task A followed by t on task B — the
+	// ordinary close-one-then-connect-to-another workflow, not an edge case —
+	// lets A's pump, still parked in rc.Recv when esc ran, splice A's trailing
+	// bytes or close notice onto B's modal once it finally unblocks. Every
+	// handler drops a message whose Gen != rawGen.
+	rawGen uint64
 
 	// runnerPicker shows candidate runners when an interactive open returns
 	// AmbiguousRunner; a pick re-issues the request pinned to the chosen cid.
@@ -750,26 +758,36 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case RawForwardOpenedMsg:
-		// A stale open (modal already re-opened for a different task, or
-		// closed altogether) must not adopt a connection nobody can see or
-		// close: the registration would outlive the only UI that can reach
-		// it. TaskID identifies which Open() this reply belongs to.
-		if !a.rawModal.IsOpen() || a.rawModal.TaskID() != msg.TaskID {
+		// A stale open (the operator moved on — esc'd, or reopened for another
+		// task — before this async reply landed) must not adopt a connection
+		// nobody can see or close: closing it here is what keeps an abandoned
+		// open from leaving a registration behind with no UI reference to it.
+		if msg.Gen != a.rawGen {
 			_ = msg.Conn.Close()
+			if msg.Cancel != nil {
+				msg.Cancel()
+			}
 			return a, nil
 		}
-		a.rawModal.SetConn(msg.Conn)
+		a.rawModal.SetConn(msg.Conn, msg.Cancel)
 		a.rawModal.MarkLive(fmt.Sprintf("connected (fwd %d)", msg.ForwardID))
 		return a, nil
 
 	case RawForwardDataMsg:
+		if msg.Gen != a.rawGen {
+			return a, nil
+		}
 		a.rawModal.AppendOutput(msg.Data)
 		return a, nil
 
 	case RawForwardClosedMsg:
-		// The recv pump (or the control watcher) already ended; CloseConn on
-		// the next esc is what releases the connection, so this only updates
-		// what the modal shows.
+		if msg.Gen != a.rawGen {
+			return a, nil
+		}
+		// The pump already closed the connection (that's what deregisters the
+		// forward server-side — a data-side EOF alone does not); MarkClosed's
+		// CloseConn is therefore idempotent here, but still the one place that
+		// clears the modal's own reference and stops the sink goroutine.
 		a.rawModal.MarkClosed(msg.Reason)
 		return a, nil
 
@@ -1012,22 +1030,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Raw-connect modal intercepts ALL keys when open: the input line needs
 		// every printable rune while composing a target or a send line. Esc
-		// closes the modal AND the connection (RawConnectModal.Close ->
-		// CloseConn) — the registration must not outlive the only UI that can
-		// read it. Enter is overloaded by IsLive: not yet connected, it parses
-		// the entered spec and starts the connection; once live, the same line
-		// is sent to the far end and the box clears for the next line.
+		// bumps rawGen before closing so any reply from this session that is
+		// still in flight (a pump parked in rc.Recv) arrives stale and gets
+		// dropped by the Gen check on the message cases above, rather than
+		// landing on whatever the modal shows next. Enter is overloaded by
+		// IsLive: not yet connected, it parses the entered spec and starts the
+		// connection tagged with the CURRENT rawGen (Open already bumped it);
+		// once live, the same line is sent to the far end.
 		if a.rawModal.IsOpen() {
 			switch msg.Type {
 			case tea.KeyEsc:
+				a.rawGen++
 				a.rawModal.Close()
 				return a, nil
 			case tea.KeyEnter:
 				if a.rawModal.IsLive() {
 					if err := a.rawModal.SendLine(a.rawModal.Spec()); err != nil {
 						a.rawModal.MarkClosed("raw connect: " + err.Error())
+					} else {
+						a.rawModal.SetSpec("")
 					}
-					a.rawModal.SetSpec("")
 					return a, nil
 				}
 				taskID := a.rawModal.TaskID()
@@ -1037,7 +1059,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				a.rawModal.SetSpec("")
-				return a, DoStartRawForward(a.client, taskID, host, port, a.program)
+				return a, DoStartRawForward(a.client, taskID, host, port, a.rawGen, a.program)
 			}
 			var rmcmd tea.Cmd
 			a.rawModal, rmcmd = a.rawModal.Update(msg)
@@ -1323,6 +1345,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.cmdresult.Append(WarnStyle.Render("raw connect: no task selected"))
 				return a, nil
 			}
+			a.rawGen++ // new session: any reply still in flight for the old one is now stale
 			a.rawModal.Open(taskID)
 			return a, nil
 		}
