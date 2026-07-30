@@ -1,0 +1,79 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/trsf"
+)
+
+// RawConn is one port forward whose client-side endpoint is this process rather
+// than a socket. The runner still dials host:port exactly as it does for -L; the
+// difference is that nothing local is bound, so a browser (which cannot listen)
+// and a stdio filter (which has nothing to listen for) can both hold this end.
+//
+// It owns two streams: data carries the bytes, ctrl is the registration handle
+// whose EOF deregisters the forward server-side and whose Closed record is how a
+// `forward kill` from another surface reaches us.
+type RawConn struct {
+	data      trsf.BidirectionalStream
+	ctrl      trsf.BidirectionalStream
+	forwardID uint64
+}
+
+// OpenRawForward opens the data stream, registers the forward so it is listable
+// and killable, and starts watching the control stream. Registration failure
+// closes the data stream: a forward that is running but absent from `forward ls`
+// is exactly the state the registry exists to prevent.
+func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port int, logf func(string)) (*RawConn, error) {
+	if logf == nil {
+		logf = func(string) {}
+	}
+	data, err := c.OpenPortForward(ctx, taskIDHex, host, port)
+	if err != nil {
+		return nil, err
+	}
+	ctrl, fid, err := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
+		"", 0, host, port, protocol.ClientEndpointKind_InProcess)
+	if err != nil {
+		_ = data.CloseBoth()
+		return nil, fmt.Errorf("raw forward: register: %w", err)
+	}
+	rc := &RawConn{data: data, ctrl: ctrl, forwardID: fid}
+	go rc.watchControl(ctx, logf)
+	return rc, nil
+}
+
+// ForwardID is the server-assigned registration id, as shown by `forward ls`.
+func (r *RawConn) ForwardID() uint64 { return r.forwardID }
+
+// Send writes bytes to the far end. The buffer is copied: AppendData keeps the
+// slice by reference and copies asynchronously, so a caller reusing its read
+// buffer (every pump does) would otherwise corrupt bytes already handed over.
+func (r *RawConn) Send(b []byte) error {
+	if len(b) == 0 {
+		return nil
+	}
+	chunk := make([]byte, len(b))
+	copy(chunk, b)
+	return r.data.AppendData(false, chunk)
+}
+
+// Recv returns the next chunk from the far end. The bool reports EOF, matching
+// trsf's ReadDirectContext shape so consumers need no second idiom.
+func (r *RawConn) Recv(ctx context.Context) ([]byte, bool, error) {
+	return r.data.ReadDirectContext(ctx, 64*1024)
+}
+
+// Close tears down both streams. Closing ctrl is what deregisters the forward,
+// so a closed pane leaves no entry behind in `forward ls`.
+func (r *RawConn) Close() error {
+	_ = r.data.CloseBoth()
+	return r.ctrl.CloseBoth()
+}
+
+// watchControl ends the connection when the registration ends.
+func (r *RawConn) watchControl(ctx context.Context, logf func(string)) {
+	serveForwardControl(ctx, r.ctrl, logf, func() { _ = r.data.CloseBoth() })
+}

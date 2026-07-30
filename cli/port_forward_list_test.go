@@ -45,6 +45,37 @@ func TestPortForwardSpecString_InProcess(t *testing.T) {
 	}
 }
 
+func TestPortForwardInfoJSONLine_DeclaresEndpointKind(t *testing.T) {
+	inproc := &protocol.PortForwardInfo{
+		ForwardId:      3,
+		Direction:      protocol.PortForwardDirection_Local,
+		TargetPort:     6379,
+		ClientEndpoint: protocol.ClientEndpointKind_InProcess,
+	}
+	inproc.SetTargetHost([]byte("127.0.0.1"))
+	line := PortForwardInfoJSONLine(inproc)
+	if !strings.Contains(line, `"client_endpoint":"in_process"`) {
+		t.Fatalf("in-process forward must declare its endpoint kind, got %s", line)
+	}
+	// The bind pair stays empty; the declaration is what stops a consumer
+	// reading that as a broken registration.
+	if !strings.Contains(line, `"bind_port":0`) || !strings.Contains(line, `"bind_addr":""`) {
+		t.Fatalf("bind pair must stay empty, got %s", line)
+	}
+
+	sock := &protocol.PortForwardInfo{
+		ForwardId:  4,
+		Direction:  protocol.PortForwardDirection_Local,
+		BindPort:   18080,
+		TargetPort: 5432,
+	}
+	sock.SetBindAddr([]byte("127.0.0.1"))
+	sock.SetTargetHost([]byte("db.internal"))
+	if l := PortForwardInfoJSONLine(sock); !strings.Contains(l, `"client_endpoint":"os_socket"`) {
+		t.Fatalf("socket-endpoint forward must say so explicitly, got %s", l)
+	}
+}
+
 func TestPortForwardInfoJSONLine(t *testing.T) {
 	var fi protocol.PortForwardInfo
 	fi.ForwardId = 3

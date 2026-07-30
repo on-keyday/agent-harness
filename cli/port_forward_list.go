@@ -150,30 +150,47 @@ func PortForwardInfoLines(fs []protocol.PortForwardInfo) []string {
 // PortForwardInfo. A struct (not map[string]any) keeps field order stable
 // across JSON Lines output.
 type portForwardJSON struct {
-	ForwardID  uint64 `json:"forward_id"`
-	Dir        string `json:"dir"`
-	Task       string `json:"task"`
-	BindAddr   string `json:"bind_addr"`
-	BindPort   uint16 `json:"bind_port"`
-	TargetHost string `json:"target_host"`
-	TargetPort uint16 `json:"target_port"`
-	OriginKind string `json:"origin_kind"`
-	OriginCid  string `json:"origin_cid"`
+	ForwardID      uint64 `json:"forward_id"`
+	Dir            string `json:"dir"`
+	Task           string `json:"task"`
+	BindAddr       string `json:"bind_addr"`
+	BindPort       uint16 `json:"bind_port"`
+	TargetHost     string `json:"target_host"`
+	TargetPort     uint16 `json:"target_port"`
+	ClientEndpoint string `json:"client_endpoint"`
+	OriginKind     string `json:"origin_kind"`
+	OriginCid      string `json:"origin_cid"`
+}
+
+// clientEndpointJSON renders the JSON contract's own spelling for the enum:
+// "os_socket" / "in_process". Deliberately not
+// strings.ToLower(fi.ClientEndpoint.String()) — the generated String() produces
+// "OsSocket" / "InProcess", which lowercases to "ossocket" / "inprocess". The
+// JSON key names and values are the wire contract a consumer scripts against,
+// not the generator's label spelling.
+func clientEndpointJSON(k protocol.ClientEndpointKind) string {
+	switch k {
+	case protocol.ClientEndpointKind_InProcess:
+		return "in_process"
+	default:
+		return "os_socket"
+	}
 }
 
 // PortForwardInfoJSONLine returns one JSON object (single line, no trailing
 // newline) for a PortForwardInfo.
 func PortForwardInfoJSONLine(fi *protocol.PortForwardInfo) string {
 	b, _ := json.Marshal(portForwardJSON{
-		ForwardID:  fi.ForwardId,
-		Dir:        PortForwardDirFlag(fi.Direction),
-		Task:       taskIDStr(fi.TaskId.Id[:]),
-		BindAddr:   string(fi.BindAddr),
-		BindPort:   fi.BindPort,
-		TargetHost: string(fi.TargetHost),
-		TargetPort: fi.TargetPort,
-		OriginKind: strings.ToLower(fi.OriginKind.String()),
-		OriginCid:  string(fi.OriginCid),
+		ForwardID:      fi.ForwardId,
+		Dir:            PortForwardDirFlag(fi.Direction),
+		Task:           taskIDStr(fi.TaskId.Id[:]),
+		BindAddr:       string(fi.BindAddr),
+		BindPort:       fi.BindPort,
+		TargetHost:     string(fi.TargetHost),
+		TargetPort:     fi.TargetPort,
+		ClientEndpoint: clientEndpointJSON(fi.ClientEndpoint),
+		OriginKind:     strings.ToLower(fi.OriginKind.String()),
+		OriginCid:      string(fi.OriginCid),
 	})
 	return string(b)
 }

@@ -208,7 +208,7 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		// Register the port the kernel actually gave us (sp.LocalPort may be 0).
 		bound := ln.Addr().(*net.TCPAddr).Port
 		ctrl, fid, rerr := c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Local,
-			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort)
+			sp.BindAddr, bound, sp.RemoteHost, sp.RemotePort, protocol.ClientEndpointKind_OsSocket)
 		if rerr != nil {
 			// A forward the server does not know about cannot be listed or
 			// killed, which is the whole point of registering — fail loudly.
@@ -226,7 +226,7 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 		go func(ctrl trsf.BidirectionalStream) {
 			defer wg.Done()
 			defer cancel()
-			c.serveLocalForwardControl(fwdCtx, ctrl, logf)
+			serveForwardControl(fwdCtx, ctrl, logf, nil)
 		}(ctrl)
 	}
 	wg.Wait()
@@ -234,15 +234,23 @@ func RunForward(ctx context.Context, c *Client, taskIDHex string, specs []Forwar
 	return nil
 }
 
-// serveLocalForwardControl reads the forward's control stream. The client never
-// writes on it; it returns on a closed event (deliberate stop) or on EOF/error
-// (the server went away). Returning cancels the forward's context, which closes
-// the listener and every connection spliced through it. Closes ctrl itself
-// (matching ServeRemoteForwardControl) — a Local registration is reaped
-// server-side only on control-stream EOF, so a caller that forgot to close it
-// would leave a permanent ghost registration.
-func (c *Client) serveLocalForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string)) {
+// serveForwardControl reads a registration's control stream until the forward
+// ends: a Closed record (someone ran `forward kill`) or EOF (server gone).
+// onEnd, when non-nil, runs exactly once on the way out — the raw endpoint uses
+// it to close the data stream it owns. Callers whose teardown is driven by
+// something else (RunForward's listener) pass nil. Returning cancels the
+// forward's context, which closes the listener and every connection spliced
+// through it. Closes ctrl itself (matching ServeRemoteForwardControl) — a Local
+// registration is reaped server-side only on control-stream EOF, so a caller
+// that forgot to close it would leave a permanent ghost registration.
+//
+// Deliberately not a method: it needs no Client state, and RawConn has none to
+// give it.
+func serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string), onEnd func()) {
 	defer ctrl.CloseBoth()
+	if onEnd != nil {
+		defer onEnd()
+	}
 	var buf []byte
 	for {
 		data, eof, err := ctrl.ReadDirectContext(ctx, 64*1024)
@@ -364,14 +372,15 @@ func parsePortForwardEvents(buf []byte) (evs []protocol.PortForwardEvent, rest [
 // server-created control stream plus the assigned forward id. The caller has
 // already bound its listener (local) or is asking the runner to bind (remote).
 func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir protocol.PortForwardDirection,
-	bindAddr string, bindPort int, targetHost string, targetPort int) (trsf.BidirectionalStream, uint64, error) {
+	bindAddr string, bindPort int, targetHost string, targetPort int,
+	endpoint protocol.ClientEndpointKind) (trsf.BidirectionalStream, uint64, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
 		return nil, 0, fmt.Errorf("forward: parse task id: %w", err)
 	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_RegisterPortForward}
 	body := protocol.RegisterPortForwardRequest{TaskId: tid, Direction: dir,
-		BindPort: uint16(bindPort), TargetPort: uint16(targetPort)}
+		BindPort: uint16(bindPort), TargetPort: uint16(targetPort), ClientEndpoint: endpoint}
 	body.SetBindAddr([]byte(bindAddr))
 	body.SetTargetHost([]byte(targetHost))
 	req.SetRegisterPortForward(body)
@@ -423,7 +432,7 @@ func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir 
 // TUI's existing call site (tui/portforward.go:262) is unchanged.
 func (c *Client) OpenRemoteForward(ctx context.Context, taskIDHex string, sp RemoteForwardSpec) (trsf.BidirectionalStream, uint64, error) {
 	return c.RegisterPortForward(ctx, taskIDHex, protocol.PortForwardDirection_Remote,
-		sp.BindAddr, sp.RunnerPort, sp.DialHost, sp.DialPort)
+		sp.BindAddr, sp.RunnerPort, sp.DialHost, sp.DialPort, protocol.ClientEndpointKind_OsSocket)
 }
 
 // RunRemoteForward registers each spec and reads its control stream, dialing the
