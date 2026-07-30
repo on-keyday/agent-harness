@@ -137,7 +137,7 @@ func PortForwardInfoLines(fs []protocol.PortForwardInfo) []string {
 		fi := &fs[i]
 		lines = append(lines, fmt.Sprintf("  %-6d  %-3s  %-12s  %-40s  %s",
 			fi.ForwardId, PortForwardDirFlag(fi.Direction), principalShort(fi.TaskId.Id[:]),
-			PortForwardSpecString(fi), portForwardOrigin(fi)))
+			PortForwardSpecString(fi), PortForwardOrigin(fi)))
 	}
 	return lines
 }
@@ -174,7 +174,11 @@ func PortForwardInfoJSONLine(fi *protocol.PortForwardInfo) string {
 	return string(b)
 }
 
-// portForwardOrigin renders "kind cid" for the ORIGIN column, e.g. "cli ws:…-ab".
-func portForwardOrigin(fi *protocol.PortForwardInfo) string {
+// PortForwardOrigin renders "kind cid" for the ORIGIN column, e.g.
+// "cli ws:…-ab". Exported so every operator surface (harness-cli's `forward
+// ls`, the TUI's forwards modal) renders "origin" identically — the CID half
+// is what actually distinguishes two forwards with an identical spec started
+// by different clients, which is the whole point of a shared registry.
+func PortForwardOrigin(fi *protocol.PortForwardInfo) string {
 	return strings.ToLower(fi.OriginKind.String()) + " " + string(fi.OriginCid)
 }

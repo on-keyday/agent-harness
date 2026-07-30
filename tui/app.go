@@ -344,8 +344,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.forwardsModal.ApplySnapshot(msg.Forwards)
-		for _, line := range cli.PortForwardInfoLines(msg.Forwards) {
-			a.cmdresult.Append(line)
+		// The text dump belongs only to the `forward ls` cmdline path
+		// (ToCmdresult). cmdresult is a 200-line ring that evicts
+		// oldest-first (CmdResultModel.Append) — unconditionally dumping a
+		// banner + header + one line per forward on every `f` keypress (and
+		// every kill-triggered refresh below) could evict an earlier error
+		// notice the operator still needs.
+		if msg.ToCmdresult {
+			for _, line := range cli.PortForwardInfoLines(msg.Forwards) {
+				a.cmdresult.Append(line)
+			}
 		}
 		return a, nil
 
@@ -354,9 +362,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("forward kill %d: %v", msg.ID, msg.Err)))
 			return a, nil
 		}
-		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("forward %d killed", msg.ID)))
+		line := fmt.Sprintf("forward %d killed", msg.ID)
+		if msg.TaskID != "" {
+			line = fmt.Sprintf("forward %d killed: %s  %s", msg.ID, pfShortID(msg.TaskID), msg.Spec)
+		}
+		a.cmdresult.Append(OKStyle.Render(line))
 		if a.forwardsModal.IsOpen() {
-			return a, DoListForwards(a.client)
+			return a, DoListForwards(a.client, false)
 		}
 		return a, nil
 
@@ -758,19 +770,40 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.connsModal, cmd = a.connsModal.Update(msg)
 			return a, cmd
 		}
-		// Forwards list modal: Esc closes; `k` kills the selected row via the
-		// server RPC (DoKillForward — works on any visible forward, not just
-		// this TUI's own); arrow keys scroll the table; all other keys are
-		// swallowed so they don't leak through to the panels.
+		// Forwards list modal: Esc closes; `x` arms a y/n kill confirmation
+		// for the selected row (server RPC via DoKillForward — works on any
+		// visible forward, not just this TUI's own; the target may belong to
+		// another operator's `harness-cli forward` session, so it is
+		// deliberately not a direct kill — see BeginKillConfirm's doc
+		// comment for the confirm-gate precedent). `j`/`k` are intentionally
+		// left alone here so they reach the embedded table's own
+		// LineDown/LineUp navigation instead of colliding with a destructive
+		// action (this repo's convention: destructive full-screen-overlay
+		// actions use x/X, e.g. the grid's dismiss and the file picker's
+		// delete — never k, which is universally "up" in this layer).
 		if a.forwardsModal.IsOpen() {
+			if a.forwardsModal.IsConfirming() {
+				switch msg.String() {
+				case "y", "Y":
+					if id, taskID, spec, ok := a.forwardsModal.ConfirmKill(); ok {
+						return a, DoKillForward(a.client, id, taskID, spec)
+					}
+					return a, nil
+				case "n", "N", "esc":
+					a.forwardsModal.CancelKillConfirm()
+					return a, nil
+				}
+				// Swallow every other key while a kill is pending so the
+				// table (and its j/k navigation) can't move — and nothing
+				// else can be triggered — mid-confirm.
+				return a, nil
+			}
 			if msg.Type == tea.KeyEsc {
 				a.forwardsModal.Close()
 				return a, nil
 			}
-			if msg.String() == "k" {
-				if id, ok := a.forwardsModal.SelectedID(); ok {
-					return a, DoKillForward(a.client, id)
-				}
+			if msg.String() == "x" {
+				a.forwardsModal.BeginKillConfirm()
 				return a, nil
 			}
 			var cmd tea.Cmd
@@ -987,10 +1020,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// `f` opens the full-screen port-forward list: every forward visible to
 		// this operator on the server (DoListForwards / ForwardsSnapshotMsg),
-		// not just ones this TUI process started. Esc closes; `k` kills the
-		// selected row (see the forwardsModal.IsOpen() key block above). The
-		// tasks pane's P/B keys remain a shortcut for stopping this TUI's own
-		// forwards, now routed through the same DoKillForward RPC.
+		// not just ones this TUI process started. Esc closes; `x` (then y/n)
+		// kills the selected row (see the forwardsModal.IsOpen() key block
+		// above). The tasks pane's P/B keys remain a shortcut for stopping
+		// this TUI's own forwards, now routed through the same DoKillForward
+		// RPC. false: this is the modal-refresh path, not `forward ls` — no
+		// text dump into cmdresult (see ForwardsSnapshotMsg).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == "f" {
 			if a.client == nil {
 				a.cmdresult.Append(WarnStyle.Render("forwards: not connected"))
@@ -998,7 +1033,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.forwardsModal.SetSize(a.width, a.height)
 			a.forwardsModal.Open()
-			return a, DoListForwards(a.client)
+			return a, DoListForwards(a.client, false)
 		}
 		// `g` opens the live session viewer grid: a full-screen overlay
 		// tiling read-only PaneStreamers for the live interactive sessions,
@@ -1399,7 +1434,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards (k kill) · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards (x kill) · p/P L-forward · b/B R-forward · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -1541,11 +1576,13 @@ func (a *App) resolveTaskIDPrefix(prefix string) (string, string) {
 
 // killLocalForward stops one of this TUI's own forwards (tasks-pane P/B, or
 // the forward-stop picker) through the same DoKillForward RPC as the forwards
-// modal's `k` key and the `forward kill` cmdline verb — the only stop path
-// after this task, whether the forward is ours or another client's. A local
-// (-L) forward's ForwardID is populated asynchronously (PortForwardRegisteredMsg,
-// see tui/portforward.go); zero means the registration hasn't landed yet, so
-// there is nothing to kill.
+// modal's `x` (then y/n) and the `forward kill` cmdline verb — the only stop
+// path after this task, whether the forward is ours or another client's. A
+// local (-L) forward's ForwardID is populated asynchronously
+// (PortForwardRegisteredMsg, see tui/portforward.go); zero means the
+// registration hasn't landed yet, so there is nothing to kill. TaskID/Spec
+// ride along on the result so the confirmation line names what was killed,
+// not just its server-assigned id.
 func (a *App) killLocalForward(sess *PortForwardSession) tea.Cmd {
 	if a.client == nil {
 		a.cmdresult.Append(WarnStyle.Render("forward: not connected"))
@@ -1555,7 +1592,7 @@ func (a *App) killLocalForward(sess *PortForwardSession) tea.Cmd {
 		a.cmdresult.Append(WarnStyle.Render("forward: not fully registered yet — try again in a moment"))
 		return nil
 	}
-	return DoKillForward(a.client, sess.ForwardID)
+	return DoKillForward(a.client, sess.ForwardID, sess.TaskID, sess.Direction.flag()+" "+sess.Spec)
 }
 
 // runAction dispatches a parsed cmdline Action.
@@ -1610,7 +1647,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
-		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: k)")
+		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
 		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
 		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. u push / g pull / d delete / D rm -rf. Esc closes.")
@@ -1776,9 +1813,11 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		return a, DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
 	case ForwardLsAction:
-		return a, DoListForwards(a.client)
+		// true: this IS `forward ls` — the text dump is the whole point.
+		return a, DoListForwards(a.client, true)
 	case ForwardKillAction:
-		return a, DoKillForward(a.client, v.ForwardID)
+		// No task/spec context: the operator supplied only a bare id.
+		return a, DoKillForward(a.client, v.ForwardID, "", "")
 	case ServerDialRunnerAction:
 		if a.client == nil {
 			a.cmdresult.Append(ErrorStyle.Render("server dial-runner: not connected to server"))
