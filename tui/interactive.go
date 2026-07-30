@@ -171,11 +171,14 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 		}
 		fctx, cancel := context.WithCancel(context.Background())
 		go func() {
-			_ = cli.RunRemoteForward(fctx, c, taskID, []cli.RemoteForwardSpec{sp}, forwardStatusLogf(fctx, program))
-			// RunRemoteForward returns when fctx is cancelled (session end), by
-			// which point tea.Exec has returned and the Update loop drains again,
-			// so this program.Send won't block. Confirms teardown in cmdresult.
-			program.Send(PortForwardStatusMsg{Line: "x11 forward stopped: " + pfShortID(taskID)})
+			logf := forwardStatusLogf(fctx, program)
+			_ = cli.RunRemoteForward(fctx, c, taskID, []cli.RemoteForwardSpec{sp}, logf)
+			// The teardown line goes through the SAME buffered sink as the status
+			// lines, for the same reason: RunRemoteForward can return mid-session
+			// (`forward kill` on this registration), while tea.Exec still owns the
+			// Update loop and nothing drains msgs. A raw program.Send here would
+			// park this goroutine until the session ends.
+			logf("x11 forward stopped: " + pfShortID(taskID))
 		}()
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Cancel: cancel, X11Warn: warn}
 	}

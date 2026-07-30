@@ -427,7 +427,12 @@ func (c *Client) OpenRemoteForward(ctx context.Context, taskIDHex string, sp Rem
 }
 
 // RunRemoteForward registers each spec and reads its control stream, dialing the
-// client-side target per arriving connection. Blocks until ctx is cancelled.
+// client-side target per arriving connection. Returns when every spec's forward
+// has stopped — each one ends on a Closed event (someone ran `forward kill`) or
+// on ctx cancellation. It is therefore NOT safe to assume this only returns at
+// caller-cancel time: callers that print to a terminal the foreground has since
+// flipped into raw mode, or that push onto a channel nothing is draining, must
+// hold for a mid-flight return. See cli/x11.go and tui/interactive.go.
 func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []RemoteForwardSpec, logf func(string)) error {
 	if logf == nil {
 		logf = func(s string) { slog.Info(s) }

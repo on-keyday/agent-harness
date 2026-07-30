@@ -128,6 +128,16 @@ func (c *Client) OpenInteractiveX11(ctx context.Context, repo string, opts Sessi
 	return stream, taskIDHex, sp, warn, nil
 }
 
+// rawSafeStderr returns a line writer that terminates with CR+LF instead of a
+// bare LF. Anything printed from the X11 forward goroutine can land while the
+// foreground RemoteShell holds the tty in raw mode, where ONLCR is off and a
+// lone LF moves down a row without returning to column 0 — successive lines
+// then staircase across the screen. CR+LF is correct in cooked mode too (the
+// extra CR is idempotent), so the same writer serves both.
+func rawSafeStderr(prefix string) func(string) {
+	return func(s string) { fmt.Fprint(os.Stderr, prefix+s+"\r\n") }
+}
+
 // RunInteractiveX11 opens an interactive session with X11 forwarding enabled,
 // runs an -R remote forward (runner 127.0.0.1:6000+N -> client's local X
 // server) in the background for its lifetime, and drives the PTY in the
@@ -147,12 +157,13 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, opts Sessio
 	fctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go func() {
-		logf := func(s string) { fmt.Fprintln(os.Stderr, "x11: "+s) }
-		if err := RunRemoteForward(fctx, c, taskIDHex, []RemoteForwardSpec{sp}, logf); err != nil {
-			fmt.Fprintln(os.Stderr, "x11 forward: "+err.Error())
+		if err := RunRemoteForward(fctx, c, taskIDHex, []RemoteForwardSpec{sp}, rawSafeStderr("x11: ")); err != nil {
+			rawSafeStderr("x11 forward: ")(err.Error())
 		}
-		// Confirm teardown on the console (forward dies with the session).
-		fmt.Fprintln(os.Stderr, "x11: forward stopped")
+		// The forward can stop BEFORE the session: `forward kill` on this
+		// registration makes RunRemoteForward return mid-session. So this runs
+		// while RemoteShell still holds the tty in raw mode — hence CR+LF.
+		rawSafeStderr("x11: ")("forward stopped")
 	}()
 	fmt.Fprintf(os.Stderr, "harness-cli: X11 session %s (remote DISPLAY=127.0.0.1:%d -> local %s; Ctrl+] detach, Ctrl+D/exit ends)\n", taskIDHex, displayN, os.Getenv("DISPLAY"))
 	if err := stream.RemoteShell(); err != nil {
