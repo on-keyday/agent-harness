@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -396,6 +397,23 @@ func (c *Client) RegisterPortForward(ctx context.Context, taskIDHex string, dir 
 	}
 	ctrl := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.StreamId))
 	if ctrl == nil {
+		// The server already committed the registration — and, for -R, the
+		// runner's listener is already bound — before this pickup failed.
+		// harness-cli's process exit would reap it via connection death, but
+		// the TUI/WebUI hold a long-lived Client and would otherwise carry a
+		// permanent ghost row (and, for -R, an orphan runner listener)
+		// forever: the spec's failure-mode table assumes control-stream EOF
+		// always deregisters, which only holds if a registration whose
+		// control stream was never even picked up doesn't just sit there.
+		// Best-effort clean it up. ctx may already be why the wait failed
+		// (cancelled), so the kill gets its own short-lived context rather
+		// than reusing it.
+		killCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if kerr := c.KillPortForwardWith(killCtx, r.ForwardId); kerr != nil {
+			slog.Warn("forward: register pickup failed and best-effort cleanup kill also failed",
+				"forward_id", r.ForwardId, "err", kerr)
+		}
+		cancel()
 		return nil, 0, fmt.Errorf("forward: control stream %d not visible", r.StreamId)
 	}
 	return ctrl, r.ForwardId, nil
@@ -432,8 +450,21 @@ func RunRemoteForward(ctx context.Context, c *Client, taskIDHex string, specs []
 			c.ServeRemoteForwardControl(ctx, sp, ctrl, logf)
 		}(sp, ctrl)
 	}
-	<-ctx.Done()
-	wg.Wait()
+	// Return once every spec's forward has stopped — killed remotely, or ctx
+	// cancelled — not solely on ctx.Done(). Blocking on ctx.Done() alone
+	// means a -R forward killed while ctx is still live (no Ctrl-C) would
+	// never let this function return: the exact orphan-terminal symptom this
+	// feature exists to remove.
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		wg.Wait()
+	}
 	return nil
 }
 

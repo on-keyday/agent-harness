@@ -97,3 +97,23 @@ func TestToRunnerInfoMapsEveryField(t *testing.T) {
 		"Status": "RunnerStatus_Idle is the zero value; Status() is covered by its own tests",
 	})
 }
+
+// TestPortForwardInfoMapsEveryField is the same completeness guard for
+// portForwardInfo (server/port_forward_list.go), the third hand-written
+// entry→wire mapper in this package alongside toTaskInfo/toRunnerInfo above.
+func TestPortForwardInfoMapsEveryField(t *testing.T) {
+	pf := &portForward{
+		forwardID:  42,
+		direction:  protocol.PortForwardDirection_Remote,
+		taskIDHex:  "00112233445566778899aabbccddeeff",
+		runnerID:   "ws:127.0.0.1:8539-1",
+		clientCID:  "ws:127.0.0.1:9-1",
+		clientKind: protocol.ClientKind_Cli,
+		bindAddr:   "127.0.0.1",
+		bindPort:   8080,
+		targetHost: "db.internal",
+		targetPort: 5432,
+	}
+	info := portForwardInfo(pf)
+	assertNoZeroFields(t, info, map[string]string{})
+}

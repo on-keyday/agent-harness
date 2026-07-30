@@ -255,6 +255,12 @@ func pushPortForwardClosed(pf *portForward, reason protocol.PortForwardCloseReas
 	}
 	if werr := pf.control.AppendData(false, b); werr != nil {
 		slog.Info("port_forward: closed event not delivered", "fwd", pf.forwardID, "err", werr)
+		// The registration is already removed by the caller by this point,
+		// so a client that never saw the closed record would otherwise keep
+		// forwarding through a forward the server no longer knows about.
+		// CloseBoth at least gives it EOF so it tears down instead of
+		// hanging forever.
+		_ = pf.control.CloseBoth()
 	}
 }
 
@@ -271,15 +277,9 @@ func (h *TaskHandler) watchRemoteForwardControl(pf *portForward) {
 			break
 		}
 	}
-	if _, ok := h.pforwards().remove(pf.forwardID); !ok {
-		return
-	}
-	if pf.direction != protocol.PortForwardDirection_Remote {
-		return
-	}
-	runner, ok := h.Registry.Get(pf.runnerID)
-	if !ok || runner.Conn == nil {
-		return
-	}
-	sendClosePortForward(runner.Conn, pf.forwardID)
+	// notify=false: the client's own control stream just EOF'd (that's why
+	// we're here), so it already knows it hung up — pushing a `closed`
+	// record onto a stream the client has already walked away from would be
+	// a no-op at best. The reason argument is unused on this path.
+	h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, false)
 }

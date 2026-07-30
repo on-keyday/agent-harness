@@ -40,11 +40,13 @@ func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, 
 	}
 	if werr := stream.AppendData(false, bodyBytes); werr != nil {
 		slog.Warn("ListPortForwards: stream write failed", "err", werr)
+		_ = stream.Close()
 		respond(0)
 		return
 	}
 	if werr := stream.AppendData(true); werr != nil {
 		slog.Warn("ListPortForwards: stream EOF failed", "err", werr)
+		_ = stream.Close()
 		respond(0)
 		return
 	}
@@ -106,10 +108,27 @@ func portForwardInfo(pf *portForward) protocol.PortForwardInfo {
 // registry.remove is the single point of arbitration, so two concurrent killers
 // cannot both be told they succeeded.
 func (h *TaskHandler) closePortForward(pf *portForward, reason protocol.PortForwardCloseReason) bool {
+	return h.teardownPortForward(pf, reason, true)
+}
+
+// teardownPortForward is the single tail shared by every path that ends a
+// registration: drop it from the registry, and for a Remote forward tell the
+// runner to stop listening so no orphan listener survives. When notify is
+// true, a `closed` event is pushed on the control stream first — for callers
+// whose client did not already learn about the teardown some other way (a
+// kill, or the lazy task-gone reap). watchRemoteForwardControl passes
+// notify=false: it only runs after the client's own control stream already
+// EOF'd, so the client already knows it hung up and reason is unused.
+// Reports whether THIS call removed it: registry.remove is the single point
+// of arbitration, so two concurrent teardowns cannot both be told they
+// succeeded.
+func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortForwardCloseReason, notify bool) bool {
 	if _, ok := h.pforwards().remove(pf.forwardID); !ok {
 		return false
 	}
-	pushPortForwardClosed(pf, reason)
+	if notify {
+		pushPortForwardClosed(pf, reason)
+	}
 	if pf.direction != protocol.PortForwardDirection_Remote {
 		return true
 	}

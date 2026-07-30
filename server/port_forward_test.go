@@ -139,6 +139,15 @@ func TestHandleOpenPortForward_LocalDialsRunner(t *testing.T) {
 // runner-facing assertions (rr.Kind, body.Direction, body.BindPort,
 // body.ForwardId) are unchanged from before this task's migration — that is
 // the evidence the runner protocol did not move.
+//
+// The control stream is a recordingBidiStream (not the default
+// nextStreamID-driven noopBidiStream) because noopBidiStream.ReadDirect
+// returns EOF immediately, which races the background
+// watchRemoteForwardControl goroutine's registry-removal against this test's
+// own h.pforwards().get check — flaky under -race (~7/20), invisible under
+// plain `make test` which never passes -race. See
+// TestHandleRegisterPortForward_LocalRegisters for the same fix applied
+// earlier to the -L sibling.
 func TestHandleOpenPortForward_RemoteRegisters(t *testing.T) {
 	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
 	var rawID [16]byte
@@ -152,7 +161,9 @@ func TestHandleOpenPortForward_RemoteRegisters(t *testing.T) {
 	runnerConn := &fakeConn{}
 	h.Registry.Add(&RunnerEntry{ID: "runner-1", Conn: runnerConn})
 
-	clientConn := &fakeConn{nextStreamID: 555}
+	ctrl := newRecordingBidiStream(555)
+	defer ctrl.CloseBoth() // let the watchRemoteForwardControl goroutine exit
+	clientConn := &fakeConn{nextBidi: ctrl}
 	req := &protocol.RegisterPortForwardRequest{
 		TaskId:     protocol.TaskID{Id: rawID},
 		Direction:  protocol.PortForwardDirection_Remote,
@@ -295,11 +306,12 @@ func TestVisiblePortForwards_ReapsDeadTaskAndListsRest(t *testing.T) {
 	deadHex := addRunningTask(t, h, 0x22, "runner-1")
 
 	conn := &fakeConn{nextStreamID: 100}
+	deadCtrl := newRecordingBidiStream(2)
 	live := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: liveHex,
 		control: newRecordingBidiStream(1), clientCxn: conn, bindAddr: "127.0.0.1", bindPort: 8080,
 		targetHost: "db", targetPort: 5432}
 	dead := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: deadHex,
-		control: newRecordingBidiStream(2), clientCxn: conn, bindAddr: "127.0.0.1", bindPort: 8081,
+		control: deadCtrl, clientCxn: conn, bindAddr: "127.0.0.1", bindPort: 8081,
 		targetHost: "db", targetPort: 5432}
 	liveID := h.pforwards().add(live)
 	deadID := h.pforwards().add(dead)
@@ -317,6 +329,21 @@ func TestVisiblePortForwards_ReapsDeadTaskAndListsRest(t *testing.T) {
 	if _, ok := h.pforwards().get(deadID); ok {
 		t.Fatal("the dead task's forward should have been reaped by the list call")
 	}
+
+	// The reaped forward's client must have actually been told: the whole
+	// mechanism this feature rests on is an explicit `closed` record, not
+	// just a registry entry disappearing (a client watching only its own
+	// side would otherwise keep forwarding into nothing).
+	var ev protocol.PortForwardEvent
+	if _, err := ev.Decode(deadCtrl.Written()); err != nil {
+		t.Fatalf("decode closed event: %v (written %d bytes)", err, len(deadCtrl.Written()))
+	}
+	if ev.Kind != protocol.PortForwardEventKind_Closed {
+		t.Fatalf("event kind = %v, want Closed", ev.Kind)
+	}
+	if c := ev.Closed(); c == nil || c.Reason != protocol.PortForwardCloseReason_TaskGone {
+		t.Fatalf("closed reason = %+v, want TaskGone", c)
+	}
 }
 
 func TestKillPortForward_UnknownIDAndDoubleKill(t *testing.T) {
@@ -326,13 +353,29 @@ func TestKillPortForward_UnknownIDAndDoubleKill(t *testing.T) {
 	}
 
 	taskHex := addRunningTask(t, h, 0x33, "runner-1")
+	ctrl := newRecordingBidiStream(3)
 	pf := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
-		control: newRecordingBidiStream(3), clientCxn: &fakeConn{nextStreamID: 200}}
+		control: ctrl, clientCxn: &fakeConn{nextStreamID: 200}}
 	id := h.pforwards().add(pf)
 
 	if st := h.killPortForward("", id); st != protocol.KillPortForwardStatus_Ok {
 		t.Fatalf("first kill: status = %v, want ok", st)
 	}
+
+	// The killed forward's client must have actually been told: the whole
+	// mechanism this feature rests on is an explicit `closed` record, not
+	// just a registry entry disappearing.
+	var ev protocol.PortForwardEvent
+	if _, err := ev.Decode(ctrl.Written()); err != nil {
+		t.Fatalf("decode closed event: %v (written %d bytes)", err, len(ctrl.Written()))
+	}
+	if ev.Kind != protocol.PortForwardEventKind_Closed {
+		t.Fatalf("event kind = %v, want Closed", ev.Kind)
+	}
+	if c := ev.Closed(); c == nil || c.Reason != protocol.PortForwardCloseReason_Killed {
+		t.Fatalf("closed reason = %+v, want Killed", c)
+	}
+
 	// Exactly one caller may win: the second kill must not also report ok.
 	if st := h.killPortForward("", id); st != protocol.KillPortForwardStatus_NoSuchForward {
 		t.Fatalf("second kill: status = %v, want no_such_forward", st)
@@ -651,5 +694,61 @@ func TestRemoteForwardControlClose_TearsDownRegistration(t *testing.T) {
 			t.Fatal("registration not torn down after control-stream close")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestKillPortForward_Remote verifies killing a -R registration through the
+// same killPortForward path exercised for -L by
+// TestKillPortForward_UnknownIDAndDoubleKill. Before this test, killing a
+// Direction_Remote registration had zero coverage anywhere: the live
+// verification for this feature drove -L only, so a wrong kill tail (leaving
+// the runner's listener bound on a port with no registration left to reclaim
+// it — recoverable only by restarting the runner) could ship silently.
+// Asserts both halves of closePortForward's Remote tail: (a) the client's
+// control stream gets the closed{killed} record, and (b) the runner gets a
+// ClosePortForward for this forward id so its listener is released.
+func TestKillPortForward_Remote(t *testing.T) {
+	ctrl := newRecordingBidiStream(555)
+	h, _, runnerConn, resp := registerRemoteForwardForTest(t, ctrl, true)
+	if resp.Status != protocol.OpenPortForwardStatus_Ok {
+		t.Fatalf("register status = %v, want Ok", resp.Status)
+	}
+
+	if st := h.killPortForward("", resp.ForwardId); st != protocol.KillPortForwardStatus_Ok {
+		t.Fatalf("kill: status = %v, want ok", st)
+	}
+	if _, ok := h.pforwards().get(resp.ForwardId); ok {
+		t.Fatal("registration should be removed after kill")
+	}
+
+	// (a) the client's control stream got the closed{killed} record.
+	var ev protocol.PortForwardEvent
+	if _, err := ev.Decode(ctrl.Written()); err != nil {
+		t.Fatalf("decode closed event: %v (written %d bytes)", err, len(ctrl.Written()))
+	}
+	if ev.Kind != protocol.PortForwardEventKind_Closed {
+		t.Fatalf("event kind = %v, want Closed", ev.Kind)
+	}
+	if c := ev.Closed(); c == nil || c.Reason != protocol.PortForwardCloseReason_Killed {
+		t.Fatalf("closed reason = %+v, want Killed", c)
+	}
+
+	// (b) the runner was told to stop listening, so it can reclaim the port.
+	found := false
+	for _, raw := range runnerConn.Sent() {
+		var rr protocol.RunnerRequest
+		if _, err := rr.Decode(raw[1:]); err != nil { // strip ApplicationPayloadKind byte
+			continue
+		}
+		if rr.Kind != protocol.RunnerRequestType_ClosePortForward {
+			continue
+		}
+		cp := rr.ClosePortForward()
+		if cp != nil && cp.ForwardId == resp.ForwardId {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("runner never received a ClosePortForward for the killed forward")
 	}
 }

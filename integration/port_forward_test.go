@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -892,9 +893,16 @@ func TestLocalForwardKillDropsConnection(t *testing.T) {
 	}
 
 	// The already-established connection must be dropped, not just the
-	// listener stopped from accepting new ones.
+	// listener stopped from accepting new ones. A read timeout is NOT
+	// evidence of that — it means the per-connection ctx.Done watcher
+	// regressed and Read simply blocked until the deadline, which is exactly
+	// the bug this test exists to catch. Fail explicitly on it instead of
+	// letting os.ErrDeadlineExceeded satisfy the "rerr != nil" check below.
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, rerr := conn.Read(buf)
+	if errors.Is(rerr, os.ErrDeadlineExceeded) {
+		t.Fatal("connection was not dropped — read timed out instead")
+	}
 	if rerr == nil {
 		t.Fatalf("expected the connection to close after kill, got %d more bytes with no error", n)
 	}

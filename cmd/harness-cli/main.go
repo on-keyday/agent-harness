@@ -549,28 +549,42 @@ func main() {
 		fctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 		defer cancel()
 		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
-		// Remote (-R) forwards run in the background. RunForward now returns as
-		// soon as every -L forward it started has stopped (killed remotely, not
-		// just on Ctrl-C) — so on a mixed invocation, returning from the -L call
-		// must not end the process while a -R forward is still live: that would
-		// silently kill a forward nobody asked to stop. Hold the foreground until
-		// Ctrl-C (fctx.Done) whenever -R forwards are running, regardless of
-		// whether/when the -L side already returned.
+		// Both RunForward and RunRemoteForward now return as soon as every
+		// forward they started has stopped — killed remotely, not just on
+		// Ctrl-C — so the process must wait on that completion signal, not
+		// fctx.Done() alone: a -R forward that outlives the -L side (or is
+		// the only side) must still let the terminal return to its prompt
+		// once IT is killed, without requiring Ctrl-C. rDone is closed once
+		// the -R goroutine (if any) has returned.
+		var rDone chan struct{}
 		if len(parsedR) > 0 {
+			rDone = make(chan struct{})
 			go func() {
+				defer close(rDone)
 				if err := cli.RunRemoteForward(fctx, c, taskID, parsedR, logf); err != nil {
 					logf("remote-forward: " + err.Error())
 					cancel()
 				}
 			}()
 		}
+		var forwardErr error
 		if len(parsed) > 0 {
 			if err := cli.RunForward(fctx, c, taskID, parsed, logf, nil); err != nil {
-				die(err)
+				// Don't die(err) here: os.Exit would skip waiting for a live
+				// -R forward below, tearing it down mid-flight with no
+				// graceful signal. Same shape as the -R error path above —
+				// log, cancel, and let the wait for rDone run its course
+				// before the process actually exits.
+				logf(err.Error())
+				cancel()
+				forwardErr = err
 			}
 		}
-		if len(parsedR) > 0 || len(parsed) == 0 {
-			<-fctx.Done()
+		if rDone != nil {
+			<-rDone
+		}
+		if forwardErr != nil {
+			os.Exit(1)
 		}
 
 	case "session":
