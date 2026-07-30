@@ -648,13 +648,17 @@ const POLL_INTERVAL_MS = 5000;
       refreshSnapshot(); // the new registration should appear in the forward list
     } catch (err) {
       const p = rawPane(key);
+      // p is null when the operator already cancelled with × while the open
+      // was in flight — that pane was deliberately discarded, so logging a
+      // "raw connect error" for it here would be a spurious line about a
+      // connection the operator already dismissed.
       if (p) {
         p.open = false;
         p.note = `connect failed: ${err.message}`;
+        appendCmdOutput(`raw connect error: ${err.message}`);
       }
       renderRawTabs();
       renderRawOutput();
-      appendCmdOutput(`raw connect error: ${err.message}`);
     }
   });
 
@@ -1727,8 +1731,10 @@ const POLL_INTERVAL_MS = 5000;
         case "forward": {
           // forward ls renders from the snapshot the page already polls — no
           // extra RPC and no second wasm export (Task 7). forward kill goes
-          // through the wasm bridge; starting a -L forward from the browser
-          // is out of scope (a browser cannot bind a local listener).
+          // through the wasm bridge; starting a socket-bound forward is
+          // CLI/TUI-only (a browser cannot bind a local listener) — a
+          // browser-endpoint forward is opened from the raw-connect pane
+          // instead, not through this command.
           const sub = tokens[1];
           if (sub === "ls") {
             const fs = lastForwards || [];
@@ -1772,7 +1778,7 @@ const POLL_INTERVAL_MS = 5000;
             "  server dial-runner <cid> [--via <cid>]",
             "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
             "  forward ls                list registered port forwards (from the last snapshot poll)",
-            "  forward kill <forward-id> close a registered port forward (starting one is CLI/TUI-only — a browser can't bind a listener)",
+            "  forward kill <forward-id> close a registered port forward (starting a socket-bound forward is CLI/TUI-only; open a browser-endpoint forward from the raw-connect pane instead)",
             "  help                      this list",
           ].join("\n");
           break;
