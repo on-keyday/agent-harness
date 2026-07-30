@@ -2032,6 +2032,43 @@ Expected: `ping` on stdout. Then confirm:
 - `bin/harness-cli forward <task> -W 127.0.0.1:18410 -L 18500:127.0.0.1:18410` exits 2 with the mutual-exclusion message.
 - Teardown: `scripts/dummy-harness.sh down --name rawfwd`.
 
+- [ ] **Step 3b: Dummy-harness failure paths (all of them, not just the happy path)**
+
+Same dummy instance. Every row must be observed, and the "no ghost row" column is
+the one that catches the class of bug this feature can introduce — a registration
+that outlives its connection is exactly what the registry exists to prevent.
+After each row, run `bin/harness-cli forward ls` and confirm no leftover entry
+for the case just exercised.
+
+| # | How to provoke it | Expected |
+| --- | --- | --- |
+| 1 | `bin/harness-cli forward <task> -W 127.0.0.1:1` (nothing listening) | The runner's dial fails, the process exits promptly with a stderr line; no ghost row. |
+| 2 | `-W nonexistent.invalid:80` | Same shape as #1 — a resolve failure is a dial failure. |
+| 3 | `-W 127.0.0.1:18410` with a random 32-hex task id | `forward: no such task (id unknown or task not running)`, non-zero exit, no registration created (`forward ls` unchanged). |
+| 4 | Same, with a **finished** task's real id | Same as #3 — only `Running` / `Detached` tasks accept a forward. |
+| 5 | While connected, from a second shell: `bin/harness-cli forward kill <id>` | The `-W` process exits; row gone. This is the `Closed` record reaching `watchControl`. |
+| 6 | While connected: `kill -9` the `-W` process | Row disappears within a few seconds via the server's connection teardown (`DropPortForwardsForConn`), not left as a ghost. This is the abrupt-death path the watcher alone cannot cover. |
+| 7 | While connected: `bin/harness-cli cancel <task>` | The `-W` process exits and the row is reaped. |
+| 8 | While connected: stop the dummy runner | The connection ends, the process exits, no ghost row. |
+| 9 | While connected: restart the dummy server (`scripts/dummy-harness.sh` down/up, same `--name`) | The process prints the server-connection-lost line from the control-stream EOF path and exits — it must not hang holding a dead stream. |
+| 10 | `forward <task> -W 127.0.0.1:18410 -L 18500:127.0.0.1:18410` | Exit 2, `forward: -W cannot be combined with -L / -R`. |
+| 11 | `-W 127.0.0.1:0` and `-W 127.0.0.1:70000` | Rejected by `ParseStdioForwardSpec` before any RPC; nothing registered. |
+
+Record the observed behaviour for each row in the task report. A row that
+"probably works" has not been tested.
+
+- [ ] **Step 3c: WebUI failure paths**
+
+With the same dummy instance and a browser (Playwright):
+
+| # | How to provoke it | Expected |
+| --- | --- | --- |
+| 1 | Connect to `127.0.0.1:1` | The tab appears and flips to `○ closed` with a note. No hang, no silent success. |
+| 2 | Connect, then `forward kill <id>` from the CLI | Tab flips to `○ closed`; the row leaves `#forward-list` on the next poll; the Send button is disabled. |
+| 3 | Start a connect to a black-holed address (`10.255.255.1:9`) and close the tab with `×` before it resolves | No orphan entry in `forward ls`. This is the stop-wins path the generation guard exists for. |
+| 4 | Open a pane, then reload the page | The registration disappears (the wasm client's connection went away), leaving no ghost row. |
+| 5 | Open two panes to the same host:port | Two distinct rows with distinct ids; killing one leaves the other open. |
+
 - [ ] **Step 4: Run the full gate**
 
 Run:
