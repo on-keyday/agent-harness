@@ -673,7 +673,7 @@ Update the two existing call sites — both hold real sockets:
 
 - [ ] **Step 4: Generalise the control-stream loop**
 
-In `cli/port_forward.go`, rename `serveLocalForwardControl` to `serveForwardControl` and give it an end callback so the raw path can reuse it instead of copying the event loop:
+In `cli/port_forward.go`, turn `serveLocalForwardControl` into a **package-level** function with an end callback, so the raw path reuses it instead of copying the event loop. It is currently a method on `*Client` but its body never touches `c` (only `ctx`, `ctrl`, `logf`, `parsePortForwardEvents`, `closedReasonLine`), so dropping the receiver is what lets a `RawConn` — which holds no `Client` — call it without inventing one:
 
 ```go
 // serveForwardControl reads a registration's control stream until the forward
@@ -681,7 +681,10 @@ In `cli/port_forward.go`, rename `serveLocalForwardControl` to `serveForwardCont
 // onEnd, when non-nil, runs exactly once on the way out — the raw endpoint uses
 // it to close the data stream it owns. Callers whose teardown is driven by
 // something else (RunForward's listener) pass nil.
-func (c *Client) serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string), onEnd func()) {
+//
+// Deliberately not a method: it needs no Client state, and RawConn has none to
+// give it.
+func serveForwardControl(ctx context.Context, ctrl trsf.BidirectionalStream, logf func(string), onEnd func()) {
 	defer ctrl.CloseBoth()
 	if onEnd != nil {
 		defer onEnd()
@@ -690,7 +693,7 @@ func (c *Client) serveForwardControl(ctx context.Context, ctrl trsf.Bidirectiona
 }
 ```
 
-Update its single existing caller in `RunForward` to pass `nil`.
+Update its single existing caller in `RunForward` to drop the receiver and pass `nil`.
 
 - [ ] **Step 5: Write `cli/forward_endpoint.go`**
 
@@ -772,12 +775,9 @@ func (r *RawConn) Close() error {
 
 // watchControl ends the connection when the registration ends.
 func (r *RawConn) watchControl(ctx context.Context, logf func(string)) {
-	var c Client // zero value: serveForwardControl uses no Client state
-	c.serveForwardControl(ctx, r.ctrl, logf, func() { _ = r.data.CloseBoth() })
+	serveForwardControl(ctx, r.ctrl, logf, func() { _ = r.data.CloseBoth() })
 }
 ```
-
-If `serveForwardControl` turns out to touch `*Client` state, make it a package-level function `serveForwardControl(ctx, ctrl, logf, onEnd)` and update both callers rather than constructing a zero `Client`.
 
 - [ ] **Step 6: Run the tests to verify they pass**
 
@@ -1365,7 +1365,9 @@ function rawBytesOf(p) {
 // remote service drive the page's rendering.
 function rawRenderText(bytes) {
   const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
-  return decoded.replace(/[ --]/g, ".");
+  // Keep \n, \r and \t; replace every other C0/C1 control and DEL with ".".
+  // Letting them through would let a remote service drive the page's rendering.
+  return decoded.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, ".");
 }
 
 function rawRenderHex(bytes) {
@@ -1662,7 +1664,7 @@ package tui
 import "testing"
 
 func TestRawConnectModal_OpenCloseAndSpec(t *testing.T) {
-	var m RawConnectModal
+	m := NewRawConnectModal()
 	if m.IsOpen() {
 		t.Fatal("zero modal must be closed")
 	}
@@ -1686,7 +1688,7 @@ func TestRawConnectModal_OpenCloseAndSpec(t *testing.T) {
 }
 
 func TestRawConnectModal_RingCap(t *testing.T) {
-	var m RawConnectModal
+	m := NewRawConnectModal()
 	m.Open("4a1f0000000000000000000000000000")
 	big := make([]byte, rawTUIRingBytes+1024)
 	for i := range big {
@@ -1734,6 +1736,11 @@ type RawConnectModal struct {
 	out    []byte
 	live   bool
 	note   string
+	// conn is the live connection this modal owns. Kept on the modal rather
+	// than in a package-level global so closing the modal cannot leave a
+	// connection nobody references, and so two app instances in one test
+	// binary do not share it.
+	conn *cli.RawConn
 }
 
 func NewRawConnectModal() RawConnectModal {
@@ -1749,9 +1756,7 @@ func (m *RawConnectModal) IsLive() bool   { return m.live }
 func (m *RawConnectModal) Output() []byte { return m.out }
 
 func (m *RawConnectModal) Open(taskID string) {
-	if m.input.Placeholder == "" {
-		*m = NewRawConnectModal()
-	}
+	m.CloseConn() // a re-open must not orphan a previous connection
 	m.open = true
 	m.taskID = taskID
 	m.live = false
@@ -1761,10 +1766,34 @@ func (m *RawConnectModal) Open(taskID string) {
 	m.input.Focus()
 }
 
+// Close hides the modal AND drops its connection: the registration must not
+// outlive the only UI that can read it.
 func (m *RawConnectModal) Close() {
+	m.CloseConn()
 	m.open = false
 	m.live = false
 	m.input.Blur()
+}
+
+// SetConn adopts the connection opened by DoStartRawForward.
+func (m *RawConnectModal) SetConn(rc *cli.RawConn) { m.conn = rc }
+
+// CloseConn closes the live connection, if any. Idempotent.
+func (m *RawConnectModal) CloseConn() {
+	if m.conn != nil {
+		_ = m.conn.Close()
+		m.conn = nil
+	}
+}
+
+// SendLine writes the given text plus CRLF. The TUI has no newline selector —
+// CRLF is what the line-oriented protocols this is for (HTTP, Redis, SMTP)
+// expect; the WebUI pane is where the selector lives.
+func (m *RawConnectModal) SendLine(s string) error {
+	if m.conn == nil {
+		return fmt.Errorf("raw connect: not connected")
+	}
+	return m.conn.Send([]byte(s + "\r\n"))
 }
 
 func (m *RawConnectModal) SetSpec(s string) { m.input.SetValue(s) }
@@ -1807,10 +1836,12 @@ func (m *RawConnectModal) View() string {
 	return head + "\n" + state + "\n" + m.input.View() + "\n\n" + body
 }
 
-// RawForwardOpenedMsg reports a successful connect plus its registration id.
+// RawForwardOpenedMsg reports a successful connect. It carries the connection
+// itself so the modal can own it; the controller stores it via SetConn.
 type RawForwardOpenedMsg struct {
 	TaskID    string
 	ForwardID uint64
+	Conn      *cli.RawConn
 }
 
 // RawForwardDataMsg carries bytes received from the far end.
@@ -1818,10 +1849,6 @@ type RawForwardDataMsg struct{ Data []byte }
 
 // RawForwardClosedMsg reports the connection ending, for any reason.
 type RawForwardClosedMsg struct{ Reason string }
-
-// rawSend holds the live connection for the single raw modal. The TUI shows one
-// raw connection at a time (unlike the WebUI's tabs), so one slot is enough.
-var rawLive *cli.RawConn
 
 // DoStartRawForward opens the connection on the app's existing long-lived client
 // — never a fresh Dial, matching every other Do* in this package — and pumps
@@ -1837,7 +1864,6 @@ func DoStartRawForward(c *cli.Client, taskID, host string, port int, program *te
 		if err != nil {
 			return RawForwardClosedMsg{Reason: "raw connect: " + err.Error()}
 		}
-		rawLive = rc
 		go func() {
 			for {
 				data, eof, rerr := rc.Recv(ctx)
@@ -1852,23 +1878,7 @@ func DoStartRawForward(c *cli.Client, taskID, host string, port int, program *te
 				}
 			}
 		}()
-		return RawForwardOpenedMsg{TaskID: taskID, ForwardID: rc.ForwardID()}
-	}
-}
-
-// SendRawLine writes the modal's current input to the live connection.
-func SendRawLine(s string) error {
-	if rawLive == nil {
-		return fmt.Errorf("raw connect: not connected")
-	}
-	return rawLive.Send([]byte(s + "\r\n"))
-}
-
-// StopRawLive closes the live connection, if any.
-func StopRawLive() {
-	if rawLive != nil {
-		_ = rawLive.Close()
-		rawLive = nil
+		return RawForwardOpenedMsg{TaskID: taskID, ForwardID: rc.ForwardID(), Conn: rc}
 	}
 }
 ```
@@ -1889,8 +1899,8 @@ In `tui/app.go`:
 		}
 ```
 
-- handle the modal's keys before the generic key dispatch, mirroring how `forwardsModal` is handled at line ~784: `esc` closes (and calls `StopRawLive()`), `enter` either connects (`DoStartRawForward(a.client, ...)` when not live) or sends (`SendRawLine`), anything else goes to `a.rawModal.Update(msg)`.
-- handle the three messages: `RawForwardOpenedMsg` → `a.rawModal.MarkLive(fmt.Sprintf("connected (fwd %d)", msg.ForwardID))`; `RawForwardDataMsg` → `a.rawModal.AppendOutput(msg.Data)`; `RawForwardClosedMsg` → `a.rawModal.MarkClosed(msg.Reason)`.
+- handle the modal's keys before the generic key dispatch, mirroring how `forwardsModal` is handled at line ~784: `esc` calls `a.rawModal.Close()` (which drops the connection), `enter` either connects (`DoStartRawForward(a.client, ...)` when not live) or sends (`a.rawModal.SendLine(a.rawModal.Spec())`), anything else goes to `a.rawModal.Update(msg)`.
+- handle the three messages: `RawForwardOpenedMsg` → `a.rawModal.SetConn(msg.Conn)` then `a.rawModal.MarkLive(fmt.Sprintf("connected (fwd %d)", msg.ForwardID))`; `RawForwardDataMsg` → `a.rawModal.AppendOutput(msg.Data)`; `RawForwardClosedMsg` → `a.rawModal.MarkClosed(msg.Reason)` (the pump already ended; `CloseConn` on the next `esc` is what releases it).
 - render `a.rawModal.View()` in the same place the other modals are rendered.
 
 Use `a.client` — never `cli.Dial` — matching every other `Do*` in this package.
