@@ -691,8 +691,11 @@ func parseFile(args []string) (Action, error) {
 	}
 }
 
-// parseForward handles `forward ls` and `forward kill <id>`. Starting a forward
-// stays on the P/B keys — this is the list/kill surface only.
+// parseForward handles `forward ls` and `forward kill <id>`. Starting a
+// forward has no cmdline verb at all — not for -L/-R (`p`/`b`, stopped by
+// `P`/`B`) and not for the newer raw connect (`t`, tui/rawforward.go): all
+// three are modal-only, matching the fact that `p`/`b` never had a `forward
+// open`-shaped verb here either. This stays the list/kill surface only.
 func parseForward(args []string) (Action, error) {
 	if len(args) == 0 {
 		return nil, fmt.Errorf("forward: sub-verb required (ls | kill)")

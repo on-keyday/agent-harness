@@ -87,6 +87,15 @@ type App struct {
 	activeForwards   map[int]*PortForwardSession // keyed by client-side unique id
 	nextForwardID    int
 
+	// rawModal is the third way to start a forward (`t`), alongside p/-L and
+	// b/-R: a live host:port connection whose client-side endpoint is this
+	// TUI process, not a socket. It does not join activeForwards — there is
+	// no local listener/dialer session object to track — so P/B (stop the
+	// selected task's -L/-R forward) do not apply to it. It is still listed
+	// and killable via `f` / `forward kill`, which act on the server-side
+	// registration that OpenRawForward creates.
+	rawModal RawConnectModal
+
 	// runnerPicker shows candidate runners when an interactive open returns
 	// AmbiguousRunner; a pick re-issues the request pinned to the chosen cid.
 	runnerPicker RunnerPickerModel
@@ -188,6 +197,7 @@ func New(cfg Config) *App {
 		filepicker:      NewFilePicker(),
 		connsModal:      NewConnsModal(),
 		forwardsModal:   NewForwardsModal(),
+		rawModal:        NewRawConnectModal(),
 		boardModal:      NewBoardModal(),
 		grid:            NewGridModel(),
 		focus:           focusTasks,
@@ -739,6 +749,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(msg.Line)
 		return a, nil
 
+	case RawForwardOpenedMsg:
+		// A stale open (modal already re-opened for a different task, or
+		// closed altogether) must not adopt a connection nobody can see or
+		// close: the registration would outlive the only UI that can reach
+		// it. TaskID identifies which Open() this reply belongs to.
+		if !a.rawModal.IsOpen() || a.rawModal.TaskID() != msg.TaskID {
+			_ = msg.Conn.Close()
+			return a, nil
+		}
+		a.rawModal.SetConn(msg.Conn)
+		a.rawModal.MarkLive(fmt.Sprintf("connected (fwd %d)", msg.ForwardID))
+		return a, nil
+
+	case RawForwardDataMsg:
+		a.rawModal.AppendOutput(msg.Data)
+		return a, nil
+
+	case RawForwardClosedMsg:
+		// The recv pump (or the control watcher) already ended; CloseConn on
+		// the next esc is what releases the connection, so this only updates
+		// what the modal shows.
+		a.rawModal.MarkClosed(msg.Reason)
+		return a, nil
+
 	case tea.WindowSizeMsg:
 		a.width = msg.Width
 		a.height = msg.Height
@@ -975,6 +1009,39 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var pfcmd tea.Cmd
 			a.portForwardModal, pfcmd = a.portForwardModal.Update(msg)
 			return a, pfcmd
+		}
+		// Raw-connect modal intercepts ALL keys when open: the input line needs
+		// every printable rune while composing a target or a send line. Esc
+		// closes the modal AND the connection (RawConnectModal.Close ->
+		// CloseConn) — the registration must not outlive the only UI that can
+		// read it. Enter is overloaded by IsLive: not yet connected, it parses
+		// the entered spec and starts the connection; once live, the same line
+		// is sent to the far end and the box clears for the next line.
+		if a.rawModal.IsOpen() {
+			switch msg.Type {
+			case tea.KeyEsc:
+				a.rawModal.Close()
+				return a, nil
+			case tea.KeyEnter:
+				if a.rawModal.IsLive() {
+					if err := a.rawModal.SendLine(a.rawModal.Spec()); err != nil {
+						a.rawModal.MarkClosed("raw connect: " + err.Error())
+					}
+					a.rawModal.SetSpec("")
+					return a, nil
+				}
+				taskID := a.rawModal.TaskID()
+				host, port, err := a.rawModal.Target()
+				if err != nil {
+					a.rawModal.MarkClosed("raw connect: " + err.Error())
+					return a, nil
+				}
+				a.rawModal.SetSpec("")
+				return a, DoStartRawForward(a.client, taskID, host, port, a.program)
+			}
+			var rmcmd tea.Cmd
+			a.rawModal, rmcmd = a.rawModal.Update(msg)
+			return a, rmcmd
 		}
 		// Ctrl+C always quits.
 		if msg.Type == tea.KeyCtrlC {
@@ -1244,6 +1311,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, nil
 		}
+		// `t` opens the raw-connect modal for the selected task: a third way to
+		// start a forward, alongside `p` (-L) and `b` (-R) above, for a client
+		// endpoint that lives inside this TUI process rather than a socket. It
+		// belongs beside the start keys, not behind `f` (the registry listing,
+		// whose per-row action is kill) — see RawConnectModal's doc comment and
+		// the rawModal field comment for why P/B don't apply to it.
+		if a.focus == focusTasks && msg.String() == "t" {
+			taskID := a.tasks.SelectedID()
+			if taskID == "" {
+				a.cmdresult.Append(WarnStyle.Render("raw connect: no task selected"))
+				return a, nil
+			}
+			a.rawModal.Open(taskID)
+			return a, nil
+		}
 		// Cmdline submit.
 		if a.focus == focusCmdline && (msg.Type == tea.KeyUp || msg.Type == tea.KeyDown) {
 			if a.navigateCmdHistory(msg.Type == tea.KeyUp) {
@@ -1434,7 +1516,7 @@ func (a *App) View() string {
 	case a.logs.Filter() != "":
 		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards (x kill) · p/P L-forward · b/B R-forward · q quit"
+		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards (x kill) · p/P L-forward · b/B R-forward · t raw connect · q quit"
 	}
 	footer := FooterStyle.Render(hint)
 
@@ -1458,6 +1540,9 @@ func (a *App) View() string {
 	}
 	if a.portForwardModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.portForwardModal.View())
+	}
+	if a.rawModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.rawModal.View())
 	}
 	if a.forwardPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardPicker.View())
