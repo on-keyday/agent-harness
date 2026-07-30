@@ -140,6 +140,33 @@ func (h *TaskHandler) teardownPortForward(pf *portForward, reason protocol.PortF
 	return true
 }
 
+// DropPortForwardsForConn deregisters every forward registered over connID, and
+// releases the runner listener behind each Remote one. Called from the server's
+// connection teardown.
+//
+// This is not redundant with watchRemoteForwardControl. That watcher fires when
+// the PEER CLOSES the control stream, which only a client that ran its own
+// cleanup does — `RunForward` returning normally, or Ctrl-C. A client that dies
+// abruptly never closes anything: SIGKILL, or the SIGHUP a terminal sends its
+// foreground group when its window is closed. The watcher's ReadDirect stays
+// parked on a stream whose transport is gone, so without this hook the
+// registration outlives the connection indefinitely — verified live before the
+// fix: a SIGKILLed `harness-cli forward -L` was still listed 60s later, its
+// listener already released, its connection already gone from activeConns.
+//
+// That is the headline case for this whole feature: "I lost track of which
+// terminal held it, so I closed the window" leaves exactly this ghost.
+//
+// notify=false: there is no one left to tell, and the control stream is dead.
+func (h *TaskHandler) DropPortForwardsForConn(connID string) {
+	for _, pf := range h.pforwards().list() {
+		if pf.clientCID != connID {
+			continue
+		}
+		h.teardownPortForward(pf, protocol.PortForwardCloseReason_Killed, false)
+	}
+}
+
 // killPortForward closes one registration on request. An id the caller cannot see
 // answers no_such_forward, identical to an unknown id: a distinct "denied" would
 // let a confined agent probe ids to learn which forwards exist.

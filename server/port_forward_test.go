@@ -752,3 +752,36 @@ func TestKillPortForward_Remote(t *testing.T) {
 		t.Fatal("runner never received a ClosePortForward for the killed forward")
 	}
 }
+
+// TestDropPortForwardsForConn covers the abrupt-client-death path. A client that
+// is SIGKILLed — or SIGHUPed because its terminal window closed — never closes
+// its control stream, so watchRemoteForwardControl stays parked and only the
+// server's connection teardown can drop the registration. Verified live before
+// this hook existed: a SIGKILLed `harness-cli forward -L` outlived its own
+// connection's removal from activeConns and would never have been reclaimed.
+func TestDropPortForwardsForConn(t *testing.T) {
+	h := &TaskHandler{Tasks: NewTaskStore(), Registry: NewRegistry()}
+	taskHex := addRunningTask(t, h, 0x71, "runner-1")
+
+	deadCtrl := newRecordingBidiStream(9)
+	dying := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
+		control: deadCtrl, clientCxn: &fakeConn{nextStreamID: 900}, clientCID: "ws:127.0.0.1:1-dead"}
+	survivor := &portForward{direction: protocol.PortForwardDirection_Local, taskIDHex: taskHex,
+		control: newRecordingBidiStream(10), clientCxn: &fakeConn{nextStreamID: 901}, clientCID: "ws:127.0.0.1:2-live"}
+	dyingID := h.pforwards().add(dying)
+	survivorID := h.pforwards().add(survivor)
+
+	h.DropPortForwardsForConn("ws:127.0.0.1:1-dead")
+
+	if _, ok := h.pforwards().get(dyingID); ok {
+		t.Error("the dead connection's registration should have been dropped")
+	}
+	if _, ok := h.pforwards().get(survivorID); !ok {
+		t.Error("a different connection's registration must survive")
+	}
+	// notify=false is load-bearing: pushing a closed event onto a stream whose
+	// transport is already gone can only fail, and there is no one to tell.
+	if w := deadCtrl.Written(); len(w) != 0 {
+		t.Errorf("no closed event should be pushed to a dead client, got %d bytes", len(w))
+	}
+}

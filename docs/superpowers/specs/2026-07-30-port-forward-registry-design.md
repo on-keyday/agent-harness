@@ -91,8 +91,9 @@ trsf debug dump (`server/server.go:811`) — and gains the direction field.
      event, drops the registration, and (for `-R`) sends `ClosePortForward` to
      the runner.
 
-   No heartbeat and no polling: the stray-terminal case self-heals because the
-   terminal's death closes its control stream.
+   No heartbeat and no polling. Note what actually closes a control stream: the
+   client's own cleanup — `RunForward` returning, or Ctrl-C. A client that dies
+   abruptly closes nothing (see Failure modes), so a third trigger is needed.
 4. **`-L` registration never contacts the runner.** It validates only that the
    task is `Running` or `Detached`. Per-connection dialing keeps its existing
    path, including its existing `RunnerOffline` failure.
@@ -371,6 +372,17 @@ Composed from existing gates; no new capability bit and no new gating concept.
   registration — and the CLI exits with the existing listen error.
 - **Registration fails.** The forward aborts (decision 4). The just-bound
   listener is closed on the way out.
+- **The client dies abruptly** — SIGKILL, or the SIGHUP a terminal sends its
+  foreground group when its window is closed. It never closes its control stream,
+  so `watchRemoteForwardControl`'s read stays parked on a stream whose transport
+  is gone and the EOF trigger never fires. The server's connection teardown
+  therefore calls `DropPortForwardsForConn`, dropping every registration keyed to
+  that connection (and releasing the runner listener behind a `-R` one). Bounded
+  by transport liveness detection rather than immediate — measured live at
+  ~1-1.5 min — but nothing else would ever reclaim these. This is the headline
+  case for the whole feature: "I closed the window because I lost track of which
+  terminal it was." Verified live: before this hook, such a registration outlived
+  its own connection's removal from `activeConns` and was never reclaimed.
 - **Two clients kill the same id concurrently.** `registry.remove` returns
   `(entry, ok)`; the loser sees `ok == false` and answers `no_such_forward`.
 

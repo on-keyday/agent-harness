@@ -881,6 +881,13 @@ func (s *Server) handleConnection(ctx context.Context, session objproto.Connecti
 		s.activeConnsMu.Lock()
 		delete(s.activeConns, session.ConnectionID())
 		s.activeConnsMu.Unlock()
+		// Port-forward registrations are keyed to this connection. Their control
+		// stream only signals teardown when the CLIENT closes it, which an
+		// abruptly-dead client never does, so drop them here or they outlive the
+		// connection forever. See DropPortForwardsForConn.
+		if s.taskHandler != nil {
+			s.taskHandler.DropPortForwardsForConn(session.ConnectionID().String())
+		}
 	}()
 
 	gate := newPSKGate(s.cfg.PSK)
