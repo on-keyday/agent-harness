@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -20,6 +21,12 @@ type RawConn struct {
 	data      trsf.BidirectionalStream
 	ctrl      trsf.BidirectionalStream
 	forwardID uint64
+	// closedLocally records that WE closed ctrl. Without it the control
+	// watcher reads the EOF of the stream it just closed and reports "server
+	// connection lost" — blaming the server for our own teardown. Observed
+	// against a dummy harness: a forward whose target refused the connection
+	// printed exactly that, sending the operator to check a healthy server.
+	closedLocally atomic.Bool
 }
 
 // OpenRawForward opens the data stream, registers the forward so it is listable
@@ -69,11 +76,22 @@ func (r *RawConn) Recv(ctx context.Context) ([]byte, bool, error) {
 // Close tears down both streams. Closing ctrl is what deregisters the forward,
 // so a closed pane leaves no entry behind in `forward ls`.
 func (r *RawConn) Close() error {
+	r.closedLocally.Store(true)
 	_ = r.data.CloseBoth()
 	return r.ctrl.CloseBoth()
 }
 
-// watchControl ends the connection when the registration ends.
+// watchControl ends the connection when the registration ends. Lines produced
+// after a local Close are dropped: the only one that can arrive then is the EOF
+// of the control stream we closed ourselves, and reporting it as a lost server
+// would be a false diagnosis. A real remote kill or a real server death still
+// reports, because both arrive before anything local closes.
 func (r *RawConn) watchControl(ctx context.Context, logf func(string)) {
-	serveForwardControl(ctx, r.ctrl, logf, func() { _ = r.data.CloseBoth() })
+	quiet := func(line string) {
+		if r.closedLocally.Load() {
+			return
+		}
+		logf(line)
+	}
+	serveForwardControl(ctx, r.ctrl, quiet, func() { _ = r.data.CloseBoth() })
 }

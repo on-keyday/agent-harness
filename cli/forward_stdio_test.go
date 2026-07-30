@@ -5,6 +5,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -38,6 +39,23 @@ type fakeRawStream struct {
 	// path winning the race and returning before Send ever ran.
 	sendOnce sync.Once
 	sendCh   chan struct{}
+
+	// closeCh is closed by Close, and Recv reports EOF once it is. Without this
+	// the fake kept handing out queued bytes after a teardown — which is exactly
+	// what let the "reply discarded on stdin EOF" bug pass this file's tests.
+	closeOnce sync.Once
+	closeCh   chan struct{}
+}
+
+// closedSignal lazily creates the close channel so tests can keep using struct
+// literals.
+func (f *fakeRawStream) closedSignal() chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closeCh == nil {
+		f.closeCh = make(chan struct{})
+	}
+	return f.closeCh
 }
 
 func (f *fakeRawStream) Send(b []byte) error {
@@ -60,16 +78,59 @@ func (f *fakeRawStream) Recv(ctx context.Context) ([]byte, bool, error) {
 			return nil, true, nil
 		}
 		return b, false, nil
+	case <-f.closedSignal():
+		return nil, true, nil
 	case <-ctx.Done():
 		return nil, false, ctx.Err()
 	}
 }
 
 func (f *fakeRawStream) Close() error {
+	ch := f.closedSignal()
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.closed = true
+	f.mu.Unlock()
+	f.closeOnce.Do(func() { close(ch) })
 	return nil
+}
+
+// TestSpliceStdio_StdinEOFKeepsReadingForTheReply is the regression for a
+// request/response use: `printf 'GET …' | forward -W host:80` closes stdin the
+// moment the request is written, and an implementation that tore the forward
+// down there printed nothing at all. stdin EOF must half-close the send
+// direction and leave the read side running until the far end is done.
+func TestSpliceStdio_StdinEOFKeepsReadingForTheReply(t *testing.T) {
+	f := &fakeRawStream{recv: make(chan []byte, 1), sendCh: make(chan struct{})}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// The reply is produced only AFTER the request was sent and stdin hit EOF,
+	// which is the ordering a real server imposes.
+	// The reply is produced only after the request was observed, and after a
+	// delay long enough that a teardown-on-stdin-EOF implementation will have
+	// closed the stream first (the fake's Close makes Recv report EOF, as the
+	// real one does).
+	go func() {
+		select {
+		case <-f.sendCh:
+		case <-ctx.Done():
+			return
+		}
+		time.Sleep(150 * time.Millisecond)
+		select {
+		case f.recv <- []byte("pong"):
+			close(f.recv)
+		default:
+		}
+	}()
+
+	var out bytes.Buffer
+	if err := spliceStdio(ctx, f, strings.NewReader("ping"), &out); err != nil {
+		t.Fatalf("spliceStdio: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "pong") {
+		t.Fatalf("reply arriving after stdin EOF was lost: out=%q", got)
+	}
 }
 
 // TestSpliceStdio_ReturnsWhenFarEndEndsWithIdleStdin is the regression this
@@ -91,8 +152,11 @@ func TestSpliceStdio_ReturnsWhenFarEndEndsWithIdleStdin(t *testing.T) {
 
 	select {
 	case err := <-done:
-		if err != nil {
-			t.Fatalf("spliceStdio: %v", err)
+		// Nothing moved in either direction, so this doubles as the
+		// ErrNoDataTransferred case: `-W` must not exit 0 when the target was
+		// never reached, or a pipeline reads that as a successful transfer.
+		if !errors.Is(err, ErrNoDataTransferred) {
+			t.Fatalf("spliceStdio err = %v, want ErrNoDataTransferred", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("spliceStdio did not return after the far end reported EOF with an idle stdin")
@@ -121,7 +185,12 @@ func TestSpliceStdio_ReturnsOnContextCancel(t *testing.T) {
 	cancel()
 
 	select {
-	case <-done:
+	case err := <-done:
+		// Ctrl-C is the operator stopping us, not a failed transfer, so it must
+		// exit cleanly however few bytes moved.
+		if err != nil {
+			t.Fatalf("cancellation must not report a transfer failure: %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("spliceStdio did not return on context cancellation")
 	}
