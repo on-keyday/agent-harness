@@ -2319,7 +2319,44 @@ Expected: PASS.
 
 `parseForward`'s comment (`tui/cmdline.go:694-696`) reads *"Starting a forward stays on the P/B keys — this is the list/kill surface only."* Two things are wrong: `p` / `b` start a forward and `P` / `B` stop one, and a third start surface now exists. Make it true — name the start keys correctly and mention `t`. Judge whether the cmdline should also gain a raw verb; a raw session is stateful and multi-step, unlike `forward ls|kill`'s one-shot shape, so the defensible answer is no — but record the verdict in your report either way rather than leaving it implicit.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: One connect attempt at a time**
+
+The generation tag scopes a *session*, not a *connect attempt*, so two attempts under one generation still collide: type a spec, press Enter, then — before the RPC resolves — correct a typo and press Enter again. Both dispatch with the same `Gen`. Whichever `RawForwardOpenedMsg` lands second wins, and the loser's pump then sends a `RawForwardClosedMsg` carrying that same `Gen`, which the guard cannot filter. The operator watches a session that just came up flip to closed, with the *other* attempt's error as the reason, and it is genuinely torn down server-side.
+
+(Plain double-Enter does not reach this: the first Enter clears the input, so the second hits the parse-error branch. The realistic trigger is fix-a-typo-and-retry.)
+
+Close it at the source — one attempt in flight at a time. This also gives the modal the "connecting" state it currently lacks, which the WebUI pane has had from the start:
+
+- `RawConnectModal` gains `connecting bool`, with `MarkConnecting()` setting it.
+- `SetConn`, `MarkClosed`, `Open` and `Close` all clear it.
+- The Enter handler calls `MarkConnecting()` when it dispatches, and short-circuits (no dispatch) while `connecting` is true.
+- `View`'s state line reports `connecting…` while it is set, so the operator can see why Enter is inert.
+
+Test it in `tui/rawforward_test.go`, App-level like the generation test:
+
+```go
+// TestRawForwardConnect_OneAttemptAtATime pins the fix for the same-generation
+// double-connect: a second attempt dispatched under one generation would let the
+// loser's close message tear down the winner's live session, since Gen scopes a
+// session rather than an attempt.
+func TestRawForwardConnect_OneAttemptAtATime(t *testing.T) {
+	m := NewRawConnectModal()
+	m.Open("aaaa0000000000000000000000000000")
+	m.SetSpec("127.0.0.1:6379")
+	m.MarkConnecting()
+	if !m.IsConnecting() {
+		t.Fatal("MarkConnecting must set the connecting state")
+	}
+	m.MarkClosed("connect failed")
+	if m.IsConnecting() {
+		t.Fatal("a finished attempt must clear the connecting state")
+	}
+}
+```
+
+Then assert the Enter handler honours it in the App-level test the same way `TestRawForwardMsgs_StaleGenerationIgnored` drives `Update` — send two Enter key messages with a spec set and confirm only one connect is dispatched (the second must return no command).
+
+- [ ] **Step 9: Commit**
 
 ```bash
 git add tui/rawforward.go tui/rawforward_test.go tui/app.go tui/cmdline.go
