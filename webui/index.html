@@ -113,6 +113,33 @@
       <div id="conn-list" class="conn-list-mobile" aria-label="Connection list"></div>
       <h3>ポートフォワード</h3>
       <div id="forward-list"></div>
+      <h2>Raw connect</h2>
+      <div id="raw-connect" class="raw-connect">
+        <div class="raw-form">
+          <label>Task: <select id="raw-task-select"><option value="">(select task)</option></select></label>
+          <input id="raw-host-input" type="text" value="127.0.0.1" size="16" placeholder="host">
+          <input id="raw-port-input" type="number" min="1" max="65535" placeholder="port">
+          <button id="raw-connect-btn" type="button">Connect</button>
+        </div>
+        <div id="raw-tabs" class="raw-tabs" role="tablist"></div>
+        <div class="raw-view-row">
+          <button type="button" id="raw-view-text" class="task-chip is-active">text</button>
+          <button type="button" id="raw-view-hex" class="task-chip">hex</button>
+          <span id="raw-counters" class="raw-counters"></span>
+        </div>
+        <pre id="raw-output" class="raw-output" aria-label="Raw connection output"></pre>
+        <div class="raw-send-row">
+          <input id="raw-send-input" type="text" size="48" placeholder="bytes to send">
+          <select id="raw-newline">
+            <option value="crlf">CRLF</option>
+            <option value="lf">LF</option>
+            <option value="none">none</option>
+          </select>
+          <label class="raw-hex-toggle"><input type="checkbox" id="raw-hex-input"> hex入力</label>
+          <button id="raw-send-btn" type="button" disabled>Send</button>
+          <button id="raw-close-btn" type="button" disabled>Close</button>
+        </div>
+      </div>
     </section>
     <section id="files" data-tabgroup="files">
       <h2>Files</h2>

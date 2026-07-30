@@ -457,6 +457,7 @@ const POLL_INTERVAL_MS = 5000;
     runnerList.textContent = renderRunners(sortedRunners);
     renderTaskList(snap.tasks);
     renderFileTaskSelect(snap.tasks);
+    renderRawTaskSelect(snap.tasks);
     // Connection topology — rides the same ~5s poll (spec decision #3:
     // no separate event subscription in wasm). snap.conns may be absent if
     // the server doesn't have the list_conns capability yet; guard with [].
@@ -467,15 +468,264 @@ const POLL_INTERVAL_MS = 5000;
     renderForwardList(snap.forwards || []);
   };
 
+  // --- Raw connect pane -------------------------------------------------------
+  // One entry per open connection, keyed by the pane key wasm returned. A
+  // connection's bytes are kept as a chunk list capped at RAW_RING_BYTES: the
+  // output view is a debugging window, not a transcript, and an unbounded buffer
+  // on a chatty port would grow until the tab died.
+  const RAW_RING_BYTES = 256 * 1024;
+  const rawPanes = new Map(); // key -> {key, task, host, port, chunks, bytes, sent, open, note}
+  let rawActiveKey = null;
+  let rawViewMode = "text"; // "text" | "hex"
+
+  function rawPane(key) { return rawPanes.get(key) || null; }
+
+  function rawAppend(key, bytes) {
+    const p = rawPane(key);
+    if (!p) return;
+    p.chunks.push(bytes);
+    p.bytes += bytes.length;
+    let total = p.chunks.reduce((n, c) => n + c.length, 0);
+    while (total > RAW_RING_BYTES && p.chunks.length > 1) {
+      total -= p.chunks.shift().length;
+    }
+    if (key === rawActiveKey) renderRawOutput();
+  }
+
+  function rawBytesOf(p) {
+    const total = p.chunks.reduce((n, c) => n + c.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    for (const c of p.chunks) { out.set(c, off); off += c.length; }
+    return out;
+  }
+
+  // Text view keeps newlines and tabs and replaces every other control byte with
+  // "." — the output is arbitrary bytes, and letting them through would let a
+  // remote service drive the page's rendering.
+  function rawRenderText(bytes) {
+    const decoded = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    // Keep \n, \r and \t; replace every other C0/C1 control and DEL with ".".
+    // Letting them through would let a remote service drive the page's rendering.
+    return decoded.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, ".");
+  }
+
+  function rawRenderHex(bytes) {
+    const lines = [];
+    for (let i = 0; i < bytes.length; i += 16) {
+      const slice = bytes.subarray(i, i + 16);
+      const hex = Array.from(slice, (b) => b.toString(16).padStart(2, "0")).join(" ").padEnd(47, " ");
+      const ascii = Array.from(slice, (b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : ".")).join("");
+      lines.push(`${i.toString(16).padStart(8, "0")}  ${hex}  ${ascii}`);
+    }
+    return lines.join("\n");
+  }
+
+  function renderRawOutput() {
+    const out = document.getElementById("raw-output");
+    const counters = document.getElementById("raw-counters");
+    if (!out) return;
+    const p = rawActiveKey ? rawPane(rawActiveKey) : null;
+    if (!p) {
+      out.textContent = "";
+      if (counters) counters.textContent = "";
+      return;
+    }
+    const bytes = rawBytesOf(p);
+    out.textContent = rawViewMode === "hex" ? rawRenderHex(bytes) : rawRenderText(bytes);
+    out.scrollTop = out.scrollHeight;
+    if (counters) {
+      counters.textContent = `${p.open ? "● open" : "○ closed"}  in ${p.bytes}B / out ${p.sent}B` +
+        (p.note ? `  ${p.note}` : "");
+      // A pane that has not resolved yet reads "○ closed  connecting…", which is
+      // accurate: nothing can be sent on it and × cancels it.
+    }
+    const sendBtn = document.getElementById("raw-send-btn");
+    const closeBtn = document.getElementById("raw-close-btn");
+    if (sendBtn) sendBtn.disabled = !p.open;
+    if (closeBtn) closeBtn.disabled = !p.open;
+  }
+
+  function renderRawTabs() {
+    const host = document.getElementById("raw-tabs");
+    if (!host) return;
+    host.textContent = "";
+    for (const p of rawPanes.values()) {
+      const tab = document.createElement("button");
+      tab.type = "button";
+      tab.className = "raw-tab" + (p.key === rawActiveKey ? " is-active" : "") + (p.open ? "" : " is-closed");
+      // note carries "connecting…", a close reason, or a connect failure.
+      tab.textContent = `${p.host}:${p.port}`;
+      tab.addEventListener("click", () => { rawActiveKey = p.key; renderRawTabs(); renderRawOutput(); });
+      const drop = document.createElement("span");
+      drop.className = "raw-tab-x";
+      drop.textContent = "×";
+      drop.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        // Unconditional: a pane still connecting has no `open` flag yet, and it is
+        // exactly the case that must be cancellable.
+        try { await window.harness.rawClose(p.key); } catch (err) { appendCmdOutput(`rawClose: ${err.message}`); }
+        rawPanes.delete(p.key);
+        if (rawActiveKey === p.key) rawActiveKey = rawPanes.size ? [...rawPanes.keys()][0] : null;
+        renderRawTabs();
+        renderRawOutput();
+        refreshSnapshot();
+      });
+      tab.appendChild(drop);
+      host.appendChild(tab);
+    }
+  }
+
+  // Hooks invoked from wasm (see cli/raw_forward_wasm.go). Both are keyed by pane.
+  window.harness_rawData = (key, arr) => rawAppend(key, new Uint8Array(arr));
+  window.harness_rawClosed = (key, reason) => {
+    const p = rawPane(key);
+    if (!p) return;
+    p.open = false;
+    p.note = reason || "closed";
+    renderRawTabs();
+    renderRawOutput();
+    refreshSnapshot(); // the registration is gone; the forward list should agree
+  };
+
+  const rawTaskSelect = document.getElementById("raw-task-select");
+  const rawConnectBtn = document.getElementById("raw-connect-btn");
+  const rawSendInput  = document.getElementById("raw-send-input");
+  const rawSendBtn    = document.getElementById("raw-send-btn");
+  const rawCloseBtn   = document.getElementById("raw-close-btn");
+  const rawHexInput   = document.getElementById("raw-hex-input");
+
+  // renderRawTaskSelect mirrors renderFileTaskSelect: only Running/Detached
+  // tasks can hold a forward, so only those are offered.
+  function renderRawTaskSelect(tasks) {
+    if (!rawTaskSelect) return;
+    const prev = rawTaskSelect.value;
+    rawTaskSelect.textContent = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "(select task)";
+    rawTaskSelect.appendChild(none);
+    for (const t of tasks || []) {
+      // snapshot's task.status is TaskStatus.String() — "Running" / "Detached",
+      // not lowercase (matches renderFileTaskSelect's raw t.status display and
+      // TERMINAL_STATES above).
+      if (t.status !== "Running" && t.status !== "Detached") continue;
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      opt.textContent = `${t.id.slice(0, 8)}… ${t.repoPath || ""}`.trim();
+      rawTaskSelect.appendChild(opt);
+    }
+    rawTaskSelect.value = prev;
+  }
+
+  let rawKeySeq = 0;
+
+  rawConnectBtn?.addEventListener("click", async () => {
+    const task = rawTaskSelect.value;
+    const host = document.getElementById("raw-host-input").value.trim();
+    const port = parseInt(document.getElementById("raw-port-input").value, 10);
+    if (!task || !host || !(port > 0 && port < 65536)) {
+      appendCmdOutput("raw connect: task, host and port are required");
+      return;
+    }
+    // The page mints the key and shows the tab before the open resolves, so a
+    // connect to an unreachable host can be abandoned with × while it is still
+    // in flight — rawClose(key) supersedes the open rather than leaving a
+    // registered forward behind.
+    const key = `raw${++rawKeySeq}`;
+    rawPanes.set(key, { key, task, host, port, chunks: [], bytes: 0, sent: 0, open: false, note: "connecting…" });
+    rawActiveKey = key;
+    renderRawTabs();
+    renderRawOutput();
+    try {
+      await window.harness.rawOpen(key, task, host, port);
+      const p = rawPane(key);
+      if (!p) return; // closed with × while connecting; wasm discarded the open
+      p.open = true;
+      p.note = "";
+      renderRawTabs();
+      renderRawOutput();
+      refreshSnapshot(); // the new registration should appear in the forward list
+    } catch (err) {
+      const p = rawPane(key);
+      if (p) {
+        p.open = false;
+        p.note = `connect failed: ${err.message}`;
+      }
+      renderRawTabs();
+      renderRawOutput();
+      appendCmdOutput(`raw connect error: ${err.message}`);
+    }
+  });
+
+  // hexToBytes accepts "48 65 6c" / "48656c" and rejects anything else, so a
+  // typo sends nothing rather than sending garbage.
+  function hexToBytes(s) {
+    const clean = s.replace(/\s+/g, "");
+    if (clean.length === 0 || clean.length % 2 !== 0 || /[^0-9a-fA-F]/.test(clean)) return null;
+    const out = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+    return out;
+  }
+
+  async function rawSendCurrent() {
+    const p = rawActiveKey ? rawPane(rawActiveKey) : null;
+    if (!p || !p.open) return;
+    const text = rawSendInput.value;
+    let bytes;
+    if (rawHexInput.checked) {
+      bytes = hexToBytes(text);
+      if (!bytes) { appendCmdOutput("raw send: not valid hex"); return; }
+    } else {
+      const nl = document.getElementById("raw-newline").value;
+      const suffix = nl === "crlf" ? "\r\n" : nl === "lf" ? "\n" : "";
+      bytes = new TextEncoder().encode(text + suffix);
+    }
+    try {
+      await window.harness.rawSend(p.key, bytes);
+      p.sent += bytes.length;
+      rawSendInput.value = "";
+      renderRawOutput();
+    } catch (err) {
+      appendCmdOutput(`raw send error: ${err.message}`);
+    }
+  }
+
+  rawSendBtn?.addEventListener("click", rawSendCurrent);
+  rawSendInput?.addEventListener("keydown", (ev) => { if (ev.key === "Enter") rawSendCurrent(); });
+  rawCloseBtn?.addEventListener("click", async () => {
+    const p = rawActiveKey ? rawPane(rawActiveKey) : null;
+    if (!p || !p.open) return;
+    try { await window.harness.rawClose(p.key); } catch (err) { appendCmdOutput(`rawClose: ${err.message}`); }
+    p.open = false;
+    p.note = "closed locally";
+    renderRawTabs();
+    renderRawOutput();
+    refreshSnapshot();
+  });
+  document.getElementById("raw-view-text")?.addEventListener("click", () => {
+    rawViewMode = "text";
+    document.getElementById("raw-view-text").classList.add("is-active");
+    document.getElementById("raw-view-hex").classList.remove("is-active");
+    renderRawOutput();
+  });
+  document.getElementById("raw-view-hex")?.addEventListener("click", () => {
+    rawViewMode = "hex";
+    document.getElementById("raw-view-hex").classList.add("is-active");
+    document.getElementById("raw-view-text").classList.remove("is-active");
+    renderRawOutput();
+  });
+
   // renderForwardList draws one row per registered port forward (every
   // forward visible to this operator on the server, not just ones this
   // WebUI started), each with a kill button. Mirrors renderConnList's DOM
   // building (no innerHTML with server strings), but — like renderTaskList's
   // Cancel button — needs appendCmdOutput/refreshSnapshot, so unlike
   // renderConnList it is declared inside this closure rather than as a
-  // top-level function. Starting a -L forward from the browser is out of
-  // scope (a browser cannot bind a local listener) — list + kill is the
-  // whole surface here.
+  // top-level function. A browser still cannot bind a local listener, so there
+  // is no -L here; the raw-connect pane below opens forwards whose client
+  // endpoint is this page instead, and they appear in this list as
+  // `(in-process)`.
   function renderForwardList(forwards) {
     lastForwards = forwards || []; // mirrors renderTaskList's lastTasks cache
     const host = document.getElementById("forward-list");

@@ -1437,3 +1437,23 @@ button:hover { background: #555; }
   stroke: #1e1e1e;
   stroke-width: 3;
 }
+
+/* ── Raw connect pane (Connections tab) ──────────────────────────────────── */
+.raw-connect { margin-top: 12px; }
+.raw-form, .raw-send-row, .raw-view-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 6px 0; }
+.raw-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.raw-tab { background: #2a2a2a; color: #d4d4d4; border: 1px solid #3a3a3a; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+.raw-tab.is-active { border-color: #6a9955; }
+.raw-tab.is-closed { color: #808080; }
+.raw-tab-x { margin-left: 6px; color: #808080; }
+.raw-output {
+  background: #1e1e1e; color: #d4d4d4; border: 1px solid #3a3a3a; border-radius: 4px;
+  margin: 0; padding: 6px; max-height: 320px; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  white-space: pre; tab-size: 8;
+}
+.raw-counters { color: #808080; font-size: 12px; }
+@media (max-width: 600px) {
+  .raw-form input, .raw-send-row input { flex: 1 1 100%; min-width: 0; }
+  .raw-output { max-height: 220px; font-size: 11px; }
+}
