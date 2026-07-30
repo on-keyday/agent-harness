@@ -1287,3 +1287,157 @@ func TestLocalForwardPartialFailureDeregistersStartedSpecs(t *testing.T) {
 		t.Log("runner did not exit within 2s of cancel")
 	}
 }
+
+// TestRawForwardRoundTripListKill covers the whole in-process endpoint path with
+// no socket on the client side: bytes reach an echo listener the runner dials,
+// the registration is listable as (in-process), and a kill from a second client
+// tears the connection down.
+func TestRawForwardRoundTripListKill(t *testing.T) {
+	if testing.Short() {
+		t.Skip("E2E test skipped in -short mode")
+	}
+	clearAgentEnv(t)
+
+	// --- echo listener the runner will dial ---
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, aerr := ln.Accept()
+			if aerr != nil {
+				return
+			}
+			go func() { defer conn.Close(); io.Copy(conn, conn) }()
+		}
+	}()
+	_, portStr, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ := strconv.Atoi(portStr)
+
+	// --- harness + running task: copied from TestLocalForwardRegisterListKill,
+	// ending with taskID and a connected *cli.Client named c. ---
+	repo := initRepo(t)
+	fakeClaude, err := filepath.Abs("../testdata/fake-claude-slow.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	addr := "127.0.0.1:18557"
+	serverCID, err := objproto.ParseConnectionID("ws:"+addr+"-*",
+		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
+	if err != nil {
+		t.Fatalf("parse server cid: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	s := server.New(server.Config{Addr: addr, DataDir: t.TempDir()})
+	serverDone := make(chan error, 1)
+	go func() { serverDone <- s.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+
+	runnerDone := make(chan error, 1)
+	go func() {
+		runnerDone <- runner.Run(ctx, runner.Config{
+			ServerCID:    serverCID,
+			AllowedRoots: []string{repo},
+			Profiles:     singleAgentProfile(fakeClaude),
+		})
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	taskID, err := cli.Submit(ctx, serverCID, repo, "rawfwd-test")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	t.Logf("submitted task %s", taskID)
+
+	// Wait until the runner has the task registered (worktree appears).
+	worktree := filepath.Join(repo, ".harness-worktrees", taskID)
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(worktree); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if _, err := os.Stat(worktree); err != nil {
+		t.Fatalf("worktree did not appear: %v", err)
+	}
+	t.Logf("worktree ready at %s", worktree)
+
+	c, err := cli.Dial(ctx, serverCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatalf("dial forward client: %v", err)
+	}
+	defer c.Close()
+	// --- end of copied setup block ---
+
+	rc, err := cli.OpenRawForward(context.Background(), c, taskID, "127.0.0.1", port, func(string) {})
+	if err != nil {
+		t.Fatalf("OpenRawForward: %v", err)
+	}
+	if err := rc.Send([]byte("ping")); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	got := make([]byte, 0, 4)
+	deadlineRT := time.Now().Add(10 * time.Second)
+	for len(got) < 4 && time.Now().Before(deadlineRT) {
+		data, eof, rerr := rc.Recv(context.Background())
+		got = append(got, data...)
+		if eof || rerr != nil {
+			break
+		}
+	}
+	if string(got) != "ping" {
+		t.Fatalf("echo round-trip = %q, want \"ping\"", got)
+	}
+
+	forwards, err := cli.PortForwardList(context.Background(), serverCID, "")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found *protocol.PortForwardInfo
+	for i := range forwards {
+		if forwards[i].ForwardId == rc.ForwardID() {
+			found = &forwards[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("raw forward %d absent from the listing (%d entries)", rc.ForwardID(), len(forwards))
+	}
+	if found.ClientEndpoint != protocol.ClientEndpointKind_InProcess {
+		t.Fatalf("listed endpoint = %v, want InProcess", found.ClientEndpoint)
+	}
+	if spec := cli.PortForwardSpecString(found); !strings.HasPrefix(spec, "(in-process) -> ") {
+		t.Fatalf("spec = %q, want an (in-process) prefix", spec)
+	}
+
+	if err := cli.KillPortForward(context.Background(), serverCID, rc.ForwardID()); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	// The kill must reach the data stream, not just the registry — a
+	// registration whose lifetime drifts from its connection's lifetime is
+	// exactly the bug class this feature can introduce.
+	killDeadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(killDeadline) {
+		if _, eof, rerr := rc.Recv(context.Background()); eof || rerr != nil {
+			cancel()
+			select {
+			case <-serverDone:
+			case <-time.After(2 * time.Second):
+				t.Log("server did not exit within 2s of cancel")
+			}
+			select {
+			case <-runnerDone:
+			case <-time.After(2 * time.Second):
+				t.Log("runner did not exit within 2s of cancel")
+			}
+			return
+		}
+	}
+	t.Fatal("data stream still live 10s after the forward was killed")
+}
