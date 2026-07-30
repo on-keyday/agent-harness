@@ -412,7 +412,8 @@ git commit -m "feat(server): record the client endpoint kind and refuse remote x
 **Files:**
 - Modify: `cli/port_forward.go:366` (`RegisterPortForward` signature), `:210` and `:425` (call sites), `:244` (`serveLocalForwardControl` → `serveForwardControl`)
 - Create: `cli/forward_endpoint.go`
-- Test: `cli/forward_endpoint_test.go`
+- Modify: `cli/port_forward_list.go:149-179` (`portForwardJSON` gains `client_endpoint`)
+- Test: `cli/forward_endpoint_test.go`, `cli/port_forward_list_test.go`
 
 **Interfaces:**
 - Consumes: `protocol.ClientEndpointKind` (Task 1); the server behaviour from Task 2.
@@ -779,6 +780,57 @@ func (r *RawConn) watchControl(ctx context.Context, logf func(string)) {
 }
 ```
 
+- [ ] **Step 5b: Declare the endpoint kind in the JSON listing**
+
+This task is the first to create in-process registrations, so it owns the machine-readable surface too. `forward ls --json` currently emits `"bind_addr":"", "bind_port":0` for an in-process forward — structurally identical to a broken registration, with no field a script can key on. Inferring the kind from an empty bind pair is the convention-instead-of-declaration pattern the `client_endpoint` field exists to avoid, and `portForwardJSON` is a hand-written mapper of exactly the kind `server/mapper_completeness_test.go` exists to police.
+
+First the test, appended to `cli/port_forward_list_test.go`:
+
+```go
+func TestPortForwardInfoJSONLine_DeclaresEndpointKind(t *testing.T) {
+	inproc := &protocol.PortForwardInfo{
+		ForwardId:      3,
+		Direction:      protocol.PortForwardDirection_Local,
+		TargetPort:     6379,
+		ClientEndpoint: protocol.ClientEndpointKind_InProcess,
+	}
+	inproc.SetTargetHost([]byte("127.0.0.1"))
+	line := PortForwardInfoJSONLine(inproc)
+	if !strings.Contains(line, `"client_endpoint":"in_process"`) {
+		t.Fatalf("in-process forward must declare its endpoint kind, got %s", line)
+	}
+	// The bind pair stays empty; the declaration is what stops a consumer
+	// reading that as a broken registration.
+	if !strings.Contains(line, `"bind_port":0`) || !strings.Contains(line, `"bind_addr":""`) {
+		t.Fatalf("bind pair must stay empty, got %s", line)
+	}
+
+	sock := &protocol.PortForwardInfo{
+		ForwardId:  4,
+		Direction:  protocol.PortForwardDirection_Local,
+		BindPort:   18080,
+		TargetPort: 5432,
+	}
+	sock.SetBindAddr([]byte("127.0.0.1"))
+	sock.SetTargetHost([]byte("db.internal"))
+	if l := PortForwardInfoJSONLine(sock); !strings.Contains(l, `"client_endpoint":"os_socket"`) {
+		t.Fatalf("socket-endpoint forward must say so explicitly, got %s", l)
+	}
+}
+```
+
+Then the field, in `cli/port_forward_list.go` — one entry appended to `portForwardJSON` and one to the literal in `PortForwardInfoJSONLine`, following the `OriginKind` line's existing convention:
+
+```go
+	ClientEndpoint string `json:"client_endpoint"`
+```
+
+```go
+		ClientEndpoint: strings.ToLower(fi.ClientEndpoint.String()),
+```
+
+If the generated `ClientEndpointKind.String()` does not produce exactly `os_socket` / `in_process`, map the two values explicitly rather than emitting a generator-shaped label — the JSON key names are the contract, not the generator's spelling. Say which of the two you did in your report.
+
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `go test ./cli/ -run TestRawConn -v`
@@ -792,7 +844,7 @@ Expected: PASS. The signature change is caught at compile time everywhere.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add cli/port_forward.go cli/forward_endpoint.go cli/forward_endpoint_test.go
+git add cli/port_forward.go cli/forward_endpoint.go cli/forward_endpoint_test.go cli/port_forward_list.go cli/port_forward_list_test.go
 git commit -m "feat(cli): RawConn — a port forward whose client endpoint is this process"
 ```
 
