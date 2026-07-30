@@ -1221,7 +1221,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `P` / `B` stop a local / remote forward for the selected task. With more
 		// than one active, a digit picker is shown; with exactly one, kill now.
 		// Both route through DoKillForward (killLocalForward) — the same RPC
-		// the forwards modal's `k` key and `forward kill` use, so there is
+		// the forwards modal's `x` (then y/n) and `forward kill` use, so there is
 		// exactly one way to stop a forward.
 		if a.focus == focusTasks && (msg.String() == "P" || msg.String() == "B") {
 			taskID := a.tasks.SelectedID()

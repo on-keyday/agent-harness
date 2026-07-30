@@ -192,7 +192,7 @@ type PortForwardStartedMsg struct {
 // cli.RunForward blocks for the whole lifetime of the forward and only
 // reports the id via the onRegistered callback, not a return value, so
 // DoStartPortForward relays it through this message instead. Needed so the
-// tasks-pane P/B stop and the forwards-modal `k` key can name the forward via
+// tasks-pane P/B stop and the forwards-modal `x` kill can name the forward via
 // KillPortForwardWith — the only stop path after this task.
 type PortForwardRegisteredMsg struct {
 	ID        int
