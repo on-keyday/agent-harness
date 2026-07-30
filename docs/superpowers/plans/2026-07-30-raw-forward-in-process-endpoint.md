@@ -1236,6 +1236,12 @@ git commit -m "feat(cli): forward -W — ssh -W style stdio port forward"
 
 - [ ] **Step 1: Write `cli/raw_forward_wasm.go`**
 
+Three properties here are the substance of the task, and each exists because its absence is a concrete defect:
+
+1. **JS mints the pane key**, exactly as `StartPreview(ctx, paneKey, …)` takes it (`cli/preview_wasm.go:52`). If Go minted it and returned it only on success, the page could not hold a key for a pane whose open is still in flight, so nothing could supersede that open and the generation guard would be unreachable dead code.
+2. **The pump closes the connection on the way out.** Closing `ctrl` is what deregisters the forward server-side (a local registration is reaped on control-stream EOF), so a connection that simply ends leaves a permanent ghost row in `forward ls` otherwise. `spliceStdio` (`cli/forward_stdio.go`) already follows this rule for the same `RawConn`.
+3. **Exactly one `harness_rawClosed` per pane.** The control stream's `logf` and the pump's EOF are two paths for one event — a remote `forward kill` travels down `ctrl`, whose watcher then closes the data stream, which ends the pump. If both fired the hook, the page would see two closes with different reasons for one kill. The control line is recorded as the *reason*; the pump owns the *notification*.
+
 ```go
 //go:build js
 
@@ -1244,7 +1250,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"syscall/js"
@@ -1253,54 +1258,65 @@ import (
 // rawSlot is one pane's raw connection plus a generation guard. Same shape and
 // same reason as previewSlots in preview_wasm.go: the open is asynchronous, so a
 // pane closed while OpenRawForward is still in flight must discard the
-// connection instead of installing an orphan (stop-wins).
+// connection rather than install an orphan (stop-wins).
 type rawSlot struct {
 	conn *RawConn
 	gen  uint64
+	// note holds the last line the control stream produced — why a remote kill
+	// happened, or that the server connection was lost — so the single terminal
+	// harness_rawClosed can carry it. The control watcher must not fire its own
+	// close hook: it and the pump are two paths for one event.
+	note string
 }
 
 var (
 	rawMu    sync.Mutex
 	rawSlots = map[string]*rawSlot{}
 	rawGen   atomic.Uint64 // monotonic across ALL panes; every open/close reserves one
-	rawKeySeq atomic.Uint64
 )
 
-// OpenRawPane opens a raw forward for a new pane and starts pumping its bytes to
-// the JS hooks. The returned key identifies the pane in every later call.
-func OpenRawPane(ctx context.Context, c *Client, taskIDHex, host string, port int) (string, error) {
-	key := fmt.Sprintf("raw%d", rawKeySeq.Add(1))
-
+// OpenRawPane opens a raw forward for the pane JS has already created under
+// paneKey. Any previous connection for paneKey is superseded and closed first.
+// Returns nil (not an error) when a close or a newer open superseded this one
+// while it was connecting — the superseding caller owns the pane's UI state.
+func OpenRawPane(ctx context.Context, c *Client, paneKey, taskIDHex, host string, port int) error {
 	rawMu.Lock()
+	old := rawSlots[paneKey]
 	gen := rawGen.Add(1)
-	rawSlots[key] = &rawSlot{gen: gen}
+	rawSlots[paneKey] = &rawSlot{gen: gen}
 	rawMu.Unlock()
+	if old != nil && old.conn != nil {
+		_ = old.conn.Close()
+	}
 
 	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, func(line string) {
-		rawCall(key, gen, "harness_rawClosed", line)
+		rawMu.Lock()
+		if slot := rawSlots[paneKey]; slot != nil && slot.gen == gen {
+			slot.note = line
+		}
+		rawMu.Unlock()
 	})
 	if err != nil {
 		rawMu.Lock()
-		if slot := rawSlots[key]; slot != nil && slot.gen == gen {
-			delete(rawSlots, key)
+		if slot := rawSlots[paneKey]; slot != nil && slot.gen == gen {
+			delete(rawSlots, paneKey)
 		}
 		rawMu.Unlock()
-		return "", err
+		return err
 	}
 
 	rawMu.Lock()
-	slot := rawSlots[key]
+	slot := rawSlots[paneKey]
 	if slot == nil || slot.gen != gen {
-		// Superseded (pane closed) while opening: discard rather than install.
 		rawMu.Unlock()
-		_ = rc.Close()
-		return "", errors.New("rawOpen: pane closed while connecting")
+		_ = rc.Close() // superseded while connecting: discard, do not install
+		return nil
 	}
 	slot.conn = rc
 	rawMu.Unlock()
 
-	go rawPump(key, rc, gen)
-	return key, nil
+	go rawPump(paneKey, rc, gen)
+	return nil
 }
 
 // SendRawPane writes bytes to the pane's connection.
@@ -1320,7 +1336,8 @@ func SendRawPane(key string, data []byte) error {
 
 // CloseRawPane closes the pane's connection, deregistering the forward. The
 // generation bump silences the pump's remaining callbacks, so JS sees no
-// harness_rawClosed for a close it initiated itself. Idempotent.
+// harness_rawClosed for a close it initiated itself. Idempotent, and safe to
+// call while OpenRawPane is still connecting — that is what supersedes it.
 func CloseRawPane(key string) {
 	rawMu.Lock()
 	slot := rawSlots[key]
@@ -1332,32 +1349,53 @@ func CloseRawPane(key string) {
 	}
 }
 
-// rawPump forwards received bytes to the page until the connection ends.
-func rawPump(key string, rc *RawConn, gen uint64) {
+// rawPump forwards received bytes to the page until the connection ends, then
+// closes it and fires the one terminal notification.
+func rawPump(paneKey string, rc *RawConn, gen uint64) {
+	defer func() {
+		// Closing deregisters the forward server-side; without it an ended
+		// connection leaves a permanent row in `forward ls`.
+		_ = rc.Close()
+
+		rawMu.Lock()
+		slot := rawSlots[paneKey]
+		mine := slot != nil && slot.gen == gen
+		reason := "connection closed"
+		if mine && slot.note != "" {
+			reason = slot.note
+		}
+		rawMu.Unlock()
+		if !mine {
+			return // superseded: the superseding caller owns the pane's UI state
+		}
+		// Fire before deleting: rawCall's staleness check needs the slot.
+		rawCall(paneKey, gen, "harness_rawClosed", reason)
+		rawMu.Lock()
+		if slot := rawSlots[paneKey]; slot != nil && slot.gen == gen {
+			delete(rawSlots, paneKey)
+		}
+		rawMu.Unlock()
+	}()
+
 	for {
 		data, eof, err := rc.Recv(context.Background())
 		if len(data) > 0 {
 			arr := js.Global().Get("Uint8Array").New(len(data))
 			js.CopyBytesToJS(arr, data)
-			if !rawCall(key, gen, "harness_rawData", arr) {
+			if !rawCall(paneKey, gen, "harness_rawData", arr) {
 				return
 			}
 		}
 		if eof || err != nil {
-			rawCall(key, gen, "harness_rawClosed", "connection closed")
-			rawMu.Lock()
-			if slot := rawSlots[key]; slot != nil && slot.gen == gen {
-				delete(rawSlots, key)
-			}
-			rawMu.Unlock()
 			return
 		}
 	}
 }
 
-// rawCall invokes the named JS hook with key as its first argument, iff gen is
-// still the pane's current generation; returns false when superseded so the pump
-// exits silently. A missing hook (non-WebUI wasm host) is a no-op.
+// rawCall invokes the named JS hook with paneKey as its first argument, iff gen
+// is still the pane's current generation; returns false when superseded so the
+// pump exits silently. A missing hook (non-WebUI wasm host) is a no-op that
+// keeps the pump alive.
 func rawCall(key string, gen uint64, hook string, args ...any) bool {
 	rawMu.Lock()
 	slot := rawSlots[key]
@@ -1391,29 +1429,30 @@ And add the functions, following `harnessForwardKill`'s Promise-executor shape v
 ```go
 // harnessRawOpen opens a port forward whose client-side endpoint is this page: no
 // local listener exists (a browser cannot bind one), the runner dials host:port,
-// and bytes arrive via the harness_rawData hook keyed by the returned pane key.
+// and bytes arrive via the harness_rawData hook keyed by paneKey. The page mints
+// paneKey and may rawClose it while this is still in flight — that supersedes
+// the open instead of leaving a registered forward behind.
 //
-//	harness.rawOpen(taskIDHex, host, port) -> Promise<key>
+//	harness.rawOpen(paneKey, taskIDHex, host, port) -> Promise<void>
 func harnessRawOpen(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
+			if len(args) < 4 {
+				rejectErr(reject, errors.New("rawOpen: want (paneKey, taskIDHex, host, port)"))
+				return
+			}
 			c, err := currentClient()
 			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			if len(args) < 3 {
-				rejectErr(reject, errors.New("rawOpen: want (taskIDHex, host, port)"))
-				return
-			}
-			key, err := cli.OpenRawPane(rootCtx, c, args[0].String(), args[1].String(), args[2].Int())
-			if err != nil {
+			if err := cli.OpenRawPane(rootCtx, c, args[0].String(), args[1].String(), args[2].String(), args[3].Int()); err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			resolve.Invoke(js.ValueOf(key))
+			resolve.Invoke(js.Undefined())
 		}()
 		return nil
 	})
@@ -1603,6 +1642,8 @@ function renderRawOutput() {
   if (counters) {
     counters.textContent = `${p.open ? "● open" : "○ closed"}  in ${p.bytes}B / out ${p.sent}B` +
       (p.note ? `  ${p.note}` : "");
+    // A pane that has not resolved yet reads "○ closed  connecting…", which is
+    // accurate: nothing can be sent on it and × cancels it.
   }
   const sendBtn = document.getElementById("raw-send-btn");
   const closeBtn = document.getElementById("raw-close-btn");
@@ -1618,6 +1659,7 @@ function renderRawTabs() {
     const tab = document.createElement("button");
     tab.type = "button";
     tab.className = "raw-tab" + (p.key === rawActiveKey ? " is-active" : "") + (p.open ? "" : " is-closed");
+    // note carries "connecting…", a close reason, or a connect failure.
     tab.textContent = `${p.host}:${p.port}`;
     tab.addEventListener("click", () => { rawActiveKey = p.key; renderRawTabs(); renderRawOutput(); });
     const drop = document.createElement("span");
@@ -1625,7 +1667,9 @@ function renderRawTabs() {
     drop.textContent = "×";
     drop.addEventListener("click", async (ev) => {
       ev.stopPropagation();
-      if (p.open) { try { await window.harness.rawClose(p.key); } catch (err) { appendCmdOutput(`rawClose: ${err.message}`); } }
+      // Unconditional: a pane still connecting has no `open` flag yet, and it is
+      // exactly the case that must be cancellable.
+      try { await window.harness.rawClose(p.key); } catch (err) { appendCmdOutput(`rawClose: ${err.message}`); }
       rawPanes.delete(p.key);
       if (rawActiveKey === p.key) rawActiveKey = rawPanes.size ? [...rawPanes.keys()][0] : null;
       renderRawTabs();
@@ -1682,6 +1726,8 @@ Still in `webui/static/main.js`, inside the same closure that owns `refreshSnaps
     rawTaskSelect.value = prev;
   }
 
+  let rawKeySeq = 0;
+
   rawConnectBtn?.addEventListener("click", async () => {
     const task = rawTaskSelect.value;
     const host = document.getElementById("raw-host-input").value.trim();
@@ -1690,18 +1736,33 @@ Still in `webui/static/main.js`, inside the same closure that owns `refreshSnaps
       appendCmdOutput("raw connect: task, host and port are required");
       return;
     }
-    rawConnectBtn.disabled = true;
+    // The page mints the key and shows the tab before the open resolves, so a
+    // connect to an unreachable host can be abandoned with × while it is still
+    // in flight — rawClose(key) supersedes the open rather than leaving a
+    // registered forward behind.
+    const key = `raw${++rawKeySeq}`;
+    rawPanes.set(key, { key, task, host, port, chunks: [], bytes: 0, sent: 0, open: false, note: "connecting…" });
+    rawActiveKey = key;
+    renderRawTabs();
+    renderRawOutput();
     try {
-      const key = await window.harness.rawOpen(task, host, port);
-      rawPanes.set(key, { key, task, host, port, chunks: [], bytes: 0, sent: 0, open: true, note: "" });
-      rawActiveKey = key;
+      await window.harness.rawOpen(key, task, host, port);
+      const p = rawPane(key);
+      if (!p) return; // closed with × while connecting; wasm discarded the open
+      p.open = true;
+      p.note = "";
       renderRawTabs();
       renderRawOutput();
       refreshSnapshot(); // the new registration should appear in the forward list
     } catch (err) {
+      const p = rawPane(key);
+      if (p) {
+        p.open = false;
+        p.note = `connect failed: ${err.message}`;
+      }
+      renderRawTabs();
+      renderRawOutput();
       appendCmdOutput(`raw connect error: ${err.message}`);
-    } finally {
-      rawConnectBtn.disabled = false;
     }
   });
 
