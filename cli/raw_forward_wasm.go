@@ -5,7 +5,6 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"syscall/js"
@@ -14,54 +13,65 @@ import (
 // rawSlot is one pane's raw connection plus a generation guard. Same shape and
 // same reason as previewSlots in preview_wasm.go: the open is asynchronous, so a
 // pane closed while OpenRawForward is still in flight must discard the
-// connection instead of installing an orphan (stop-wins).
+// connection rather than install an orphan (stop-wins).
 type rawSlot struct {
 	conn *RawConn
 	gen  uint64
+	// note holds the last line the control stream produced — why a remote kill
+	// happened, or that the server connection was lost — so the single terminal
+	// harness_rawClosed can carry it. The control watcher must not fire its own
+	// close hook: it and the pump are two paths for one event.
+	note string
 }
 
 var (
-	rawMu     sync.Mutex
-	rawSlots  = map[string]*rawSlot{}
-	rawGen    atomic.Uint64 // monotonic across ALL panes; every open/close reserves one
-	rawKeySeq atomic.Uint64
+	rawMu    sync.Mutex
+	rawSlots = map[string]*rawSlot{}
+	rawGen   atomic.Uint64 // monotonic across ALL panes; every open/close reserves one
 )
 
-// OpenRawPane opens a raw forward for a new pane and starts pumping its bytes to
-// the JS hooks. The returned key identifies the pane in every later call.
-func OpenRawPane(ctx context.Context, c *Client, taskIDHex, host string, port int) (string, error) {
-	key := fmt.Sprintf("raw%d", rawKeySeq.Add(1))
-
+// OpenRawPane opens a raw forward for the pane JS has already created under
+// paneKey. Any previous connection for paneKey is superseded and closed first.
+// Returns nil (not an error) when a close or a newer open superseded this one
+// while it was connecting — the superseding caller owns the pane's UI state.
+func OpenRawPane(ctx context.Context, c *Client, paneKey, taskIDHex, host string, port int) error {
 	rawMu.Lock()
+	old := rawSlots[paneKey]
 	gen := rawGen.Add(1)
-	rawSlots[key] = &rawSlot{gen: gen}
+	rawSlots[paneKey] = &rawSlot{gen: gen}
 	rawMu.Unlock()
+	if old != nil && old.conn != nil {
+		_ = old.conn.Close()
+	}
 
 	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, func(line string) {
-		rawCall(key, gen, "harness_rawClosed", line)
+		rawMu.Lock()
+		if slot := rawSlots[paneKey]; slot != nil && slot.gen == gen {
+			slot.note = line
+		}
+		rawMu.Unlock()
 	})
 	if err != nil {
 		rawMu.Lock()
-		if slot := rawSlots[key]; slot != nil && slot.gen == gen {
-			delete(rawSlots, key)
+		if slot := rawSlots[paneKey]; slot != nil && slot.gen == gen {
+			delete(rawSlots, paneKey)
 		}
 		rawMu.Unlock()
-		return "", err
+		return err
 	}
 
 	rawMu.Lock()
-	slot := rawSlots[key]
+	slot := rawSlots[paneKey]
 	if slot == nil || slot.gen != gen {
-		// Superseded (pane closed) while opening: discard rather than install.
 		rawMu.Unlock()
-		_ = rc.Close()
-		return "", errors.New("rawOpen: pane closed while connecting")
+		_ = rc.Close() // superseded while connecting: discard, do not install
+		return nil
 	}
 	slot.conn = rc
 	rawMu.Unlock()
 
-	go rawPump(key, rc, gen)
-	return key, nil
+	go rawPump(paneKey, rc, gen)
+	return nil
 }
 
 // SendRawPane writes bytes to the pane's connection.
@@ -81,7 +91,8 @@ func SendRawPane(key string, data []byte) error {
 
 // CloseRawPane closes the pane's connection, deregistering the forward. The
 // generation bump silences the pump's remaining callbacks, so JS sees no
-// harness_rawClosed for a close it initiated itself. Idempotent.
+// harness_rawClosed for a close it initiated itself. Idempotent, and safe to
+// call while OpenRawPane is still connecting — that is what supersedes it.
 func CloseRawPane(key string) {
 	rawMu.Lock()
 	slot := rawSlots[key]
@@ -93,32 +104,53 @@ func CloseRawPane(key string) {
 	}
 }
 
-// rawPump forwards received bytes to the page until the connection ends.
-func rawPump(key string, rc *RawConn, gen uint64) {
+// rawPump forwards received bytes to the page until the connection ends, then
+// closes it and fires the one terminal notification.
+func rawPump(paneKey string, rc *RawConn, gen uint64) {
+	defer func() {
+		// Closing deregisters the forward server-side; without it an ended
+		// connection leaves a permanent row in `forward ls`.
+		_ = rc.Close()
+
+		rawMu.Lock()
+		slot := rawSlots[paneKey]
+		mine := slot != nil && slot.gen == gen
+		reason := "connection closed"
+		if mine && slot.note != "" {
+			reason = slot.note
+		}
+		rawMu.Unlock()
+		if !mine {
+			return // superseded: the superseding caller owns the pane's UI state
+		}
+		// Fire before deleting: rawCall's staleness check needs the slot.
+		rawCall(paneKey, gen, "harness_rawClosed", reason)
+		rawMu.Lock()
+		if slot := rawSlots[paneKey]; slot != nil && slot.gen == gen {
+			delete(rawSlots, paneKey)
+		}
+		rawMu.Unlock()
+	}()
+
 	for {
 		data, eof, err := rc.Recv(context.Background())
 		if len(data) > 0 {
 			arr := js.Global().Get("Uint8Array").New(len(data))
 			js.CopyBytesToJS(arr, data)
-			if !rawCall(key, gen, "harness_rawData", arr) {
+			if !rawCall(paneKey, gen, "harness_rawData", arr) {
 				return
 			}
 		}
 		if eof || err != nil {
-			rawCall(key, gen, "harness_rawClosed", "connection closed")
-			rawMu.Lock()
-			if slot := rawSlots[key]; slot != nil && slot.gen == gen {
-				delete(rawSlots, key)
-			}
-			rawMu.Unlock()
 			return
 		}
 	}
 }
 
-// rawCall invokes the named JS hook with key as its first argument, iff gen is
-// still the pane's current generation; returns false when superseded so the pump
-// exits silently. A missing hook (non-WebUI wasm host) is a no-op.
+// rawCall invokes the named JS hook with paneKey as its first argument, iff gen
+// is still the pane's current generation; returns false when superseded so the
+// pump exits silently. A missing hook (non-WebUI wasm host) is a no-op that
+// keeps the pump alive.
 func rawCall(key string, gen uint64, hook string, args ...any) bool {
 	rawMu.Lock()
 	slot := rawSlots[key]

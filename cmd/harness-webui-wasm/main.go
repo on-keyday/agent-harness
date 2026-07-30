@@ -779,29 +779,30 @@ func harnessForwardKill(this js.Value, args []js.Value) any {
 
 // harnessRawOpen opens a port forward whose client-side endpoint is this page: no
 // local listener exists (a browser cannot bind one), the runner dials host:port,
-// and bytes arrive via the harness_rawData hook keyed by the returned pane key.
+// and bytes arrive via the harness_rawData hook keyed by paneKey. The page mints
+// paneKey and may rawClose it while this is still in flight — that supersedes
+// the open instead of leaving a registered forward behind.
 //
-//	harness.rawOpen(taskIDHex, host, port) -> Promise<key>
+//	harness.rawOpen(paneKey, taskIDHex, host, port) -> Promise<void>
 func harnessRawOpen(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
 		go func() {
+			if len(args) < 4 {
+				rejectErr(reject, errors.New("rawOpen: want (paneKey, taskIDHex, host, port)"))
+				return
+			}
 			c, err := currentClient()
 			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			if len(args) < 3 {
-				rejectErr(reject, errors.New("rawOpen: want (taskIDHex, host, port)"))
-				return
-			}
-			key, err := cli.OpenRawPane(rootCtx, c, args[0].String(), args[1].String(), args[2].Int())
-			if err != nil {
+			if err := cli.OpenRawPane(rootCtx, c, args[0].String(), args[1].String(), args[2].String(), args[3].Int()); err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			resolve.Invoke(js.ValueOf(key))
+			resolve.Invoke(js.Undefined())
 		}()
 		return nil
 	})
