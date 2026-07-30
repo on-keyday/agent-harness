@@ -39,7 +39,8 @@ Spec: `docs/superpowers/specs/2026-07-30-raw-forward-in-process-endpoint-design.
 | `cli/port_forward_list.go` | `PortForwardSpecString` renders `(in-process)`. |
 | `cli/port_forward.go` | `RegisterPortForward` gains the endpoint argument; `serveLocalForwardControl` generalised with an end callback. |
 | `cli/forward_endpoint.go` | **NEW.** `RawConn` + `OpenRawForward` + control watcher. Platform-independent; the one place the three surfaces share. |
-| `cli/forward_stdio.go` | **NEW** (`//go:build !js`). `RunStdioForward`: splice a `RawConn` to stdin/stdout. |
+| `cli/forward_stdio.go` | **NEW** (`//go:build !js`). `RunStdioForward` + `spliceStdio`: splice a `RawConn` to stdin/stdout, returning when the FAR end ends even though a blocked stdin read cannot be interrupted. |
+| `cli/forward_stdio_test.go` | **NEW** (`//go:build !js`). Pins that teardown asymmetry. |
 | `cli/raw_forward_wasm.go` | **NEW** (`//go:build js`). Keyed pane slots + generation guard + JS-hook pump. |
 | `cmd/harness-cli/main.go` | `forward -W host:port`. |
 | `cmd/harness-webui-wasm/main.go` | `harness.rawOpen` / `rawSend` / `rawClose` bindings. |
@@ -949,36 +950,61 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"sync"
 )
 
+// rawStream is the part of *RawConn the stdio splice needs. It exists so the
+// splice can be tested without a server: the interesting property (this
+// function returns when the FAR end ends, even though the near end is parked in
+// a read that cannot be interrupted) is otherwise only reachable end-to-end.
+type rawStream interface {
+	Send(b []byte) error
+	Recv(ctx context.Context) ([]byte, bool, error)
+	Close() error
+}
+
 // RunStdioForward opens a raw forward to host:port and splices it to this
-// process's stdin/stdout — the harness equivalent of `ssh -W`. It returns when
-// either side ends: EOF on stdin, the far end closing, or the forward being
-// killed from another surface (which closes the data stream via RawConn's
-// control watcher).
-//
-// Teardown is either-side-wins, matching spliceConnStream: a half-closed peer
-// must not leave the reverse direction blocked forever.
+// process's stdin/stdout — the harness equivalent of `ssh -W`.
 func RunStdioForward(ctx context.Context, c *Client, taskIDHex, host string, port int, logf func(string)) error {
 	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, logf)
 	if err != nil {
 		return err
 	}
+	return spliceStdio(ctx, rc, os.Stdin, os.Stdout)
+}
+
+// spliceStdio pumps bytes both ways and returns when either side ends: EOF on
+// in, the far end closing, the forward being killed from another surface (which
+// closes the data stream, so Recv reports EOF), or ctx cancellation (Ctrl-C).
+//
+// The asymmetry is load-bearing. `spliceConnStream` can tear down both
+// directions because closing the net.Conn unblocks the read that is parked on
+// it. Here the near side is os.Stdin, and closing the forward has no OS-level
+// relationship to a blocked os.Stdin.Read — nothing can interrupt it. So the
+// far-side pump runs in the FOREGROUND and decides when this function returns,
+// and the stdin pump is deliberately NOT waited on: it may stay parked in its
+// read until the process exits, which is fine for a foreground CLI and is the
+// only alternative to hanging forever with Ctrl-C neutralised (main installs a
+// signal.NotifyContext, so a hung splice would swallow SIGINT too).
+func spliceStdio(ctx context.Context, rc rawStream, in io.Reader, out io.Writer) error {
 	var once sync.Once
-	teardown := func() { once.Do(func() { _ = rc.Close() }) }
+	stop := make(chan struct{})
+	teardown := func() { once.Do(func() { _ = rc.Close(); close(stop) }) }
 	defer teardown()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { // stdin -> forward
-		defer wg.Done()
+	go func() { // in -> forward; may outlive this function, by design
 		defer teardown()
 		buf := make([]byte, 32*1024)
 		for {
-			n, rerr := os.Stdin.Read(buf)
+			n, rerr := in.Read(buf)
 			if n > 0 {
+				select {
+				case <-stop: // torn down while we were parked in Read
+					return
+				default:
+				}
 				// Send copies, so reusing buf is safe.
 				if serr := rc.Send(buf[:n]); serr != nil {
 					return
@@ -989,25 +1015,138 @@ func RunStdioForward(ctx context.Context, c *Client, taskIDHex, host string, por
 			}
 		}
 	}()
-	go func() { // forward -> stdout
-		defer wg.Done()
-		defer teardown()
-		for {
-			data, eof, rerr := rc.Recv(ctx)
-			if len(data) > 0 {
-				if _, werr := os.Stdout.Write(data); werr != nil {
-					return
-				}
-			}
-			if eof || rerr != nil {
-				return
+
+	for { // forward -> out, in the foreground
+		data, eof, rerr := rc.Recv(ctx)
+		if len(data) > 0 {
+			if _, werr := out.Write(data); werr != nil {
+				return nil
 			}
 		}
-	}()
-	wg.Wait()
-	return nil
+		if eof || rerr != nil {
+			return nil
+		}
+	}
 }
 ```
+
+The test that pins the teardown asymmetry, in `cli/forward_stdio_test.go` (`//go:build !js`):
+
+```go
+// fakeRawStream reports EOF from the far end on the first Recv and never
+// produces data. Its Send records bytes so the reverse direction can be checked.
+type fakeRawStream struct {
+	mu     sync.Mutex
+	sent   []byte
+	closed bool
+	recv   chan []byte
+	eof    bool
+}
+
+func (f *fakeRawStream) Send(b []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, b...)
+	return nil
+}
+
+func (f *fakeRawStream) Recv(ctx context.Context) ([]byte, bool, error) {
+	if f.eof {
+		return nil, true, nil
+	}
+	select {
+	case b := <-f.recv:
+		return b, false, nil
+	case <-ctx.Done():
+		return nil, false, ctx.Err()
+	}
+}
+
+func (f *fakeRawStream) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+
+// TestSpliceStdio_ReturnsWhenFarEndEndsWithIdleStdin is the regression this
+// shape exists for: a `-W` session with an idle operator must exit when the far
+// end closes or the forward is killed. A stdin pump that the function waits on
+// would hang here forever — and because main() installs signal.NotifyContext,
+// a hung splice also swallows Ctrl-C.
+func TestSpliceStdio_ReturnsWhenFarEndEndsWithIdleStdin(t *testing.T) {
+	idleStdin, w, err := os.Pipe() // never written to: a parked, uninterruptible read
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	defer idleStdin.Close()
+
+	f := &fakeRawStream{eof: true}
+	done := make(chan error, 1)
+	go func() { done <- spliceStdio(context.Background(), f, idleStdin, io.Discard) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("spliceStdio: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("spliceStdio did not return after the far end reported EOF with an idle stdin")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if !f.closed {
+		t.Fatal("the forward must be closed on the way out")
+	}
+}
+
+// TestSpliceStdio_ReturnsOnContextCancel covers the Ctrl-C path with the same
+// idle stdin.
+func TestSpliceStdio_ReturnsOnContextCancel(t *testing.T) {
+	idleStdin, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+	defer idleStdin.Close()
+
+	f := &fakeRawStream{recv: make(chan []byte)}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- spliceStdio(ctx, f, idleStdin, io.Discard) }()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("spliceStdio did not return on context cancellation")
+	}
+}
+
+// TestSpliceStdio_ForwardsStdinAndFarEndBytes checks both directions still move.
+func TestSpliceStdio_ForwardsStdinAndFarEndBytes(t *testing.T) {
+	in := strings.NewReader("ping")
+	f := &fakeRawStream{recv: make(chan []byte, 1)}
+	f.recv <- []byte("pong")
+	var out bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := spliceStdio(ctx, f, in, &out); err != nil {
+		t.Fatalf("spliceStdio: %v", err)
+	}
+	if got := out.String(); !strings.Contains(got, "pong") {
+		t.Fatalf("far-end bytes not written to out: %q", got)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if got := string(f.sent); got != "ping" {
+		t.Fatalf("stdin bytes not sent: %q", got)
+	}
+}
+```
+
+Note on the third test: `spliceStdio` returns as soon as the far end's `Recv` reports EOF or error, so `fakeRawStream.Recv` must hand over the queued `pong` before reporting EOF. Implement that ordering in the fake (drain `recv` first, then report EOF once it is empty and closed) rather than relying on goroutine timing — a test whose pass depends on a race is not a test.
 
 - [ ] **Step 6: Wire the flag**
 
@@ -1078,7 +1217,7 @@ Expected: PASS.
 - [ ] **Step 9: Commit**
 
 ```bash
-git add cli/forward_stdio.go cli/port_forward.go cli/port_forward_test.go cmd/harness-cli/main.go cmd/harness-cli/forward_test.go
+git add cli/forward_stdio.go cli/forward_stdio_test.go cli/port_forward.go cli/port_forward_test.go cmd/harness-cli/main.go cmd/harness-cli/forward_test.go
 git commit -m "feat(cli): forward -W — ssh -W style stdio port forward"
 ```
 
