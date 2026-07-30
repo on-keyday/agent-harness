@@ -471,6 +471,7 @@ func main() {
 	case "forward":
 		if len(args) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
+			fmt.Fprintln(os.Stderr, "       harness-cli forward <task-id> -W host:port")
 			fmt.Fprintln(os.Stderr, "       harness-cli forward ls [--task <task-id>] [--json]")
 			fmt.Fprintln(os.Stderr, "       harness-cli forward kill <forward-id> [<forward-id> ...]")
 			os.Exit(2)
@@ -520,10 +521,29 @@ func main() {
 		var rspecs repeatableStrings
 		fs.Var(&specs, "L", "local forward [bind:]localport:remotehost:remoteport (repeatable)")
 		fs.Var(&rspecs, "R", "remote forward [bind:]runnerport:dialhost:dialport (repeatable)")
+		// -W mirrors ssh -W: no local listener, this process's stdin/stdout is
+		// the forward's client endpoint. ssh makes -W exclusive with -L/-R
+		// (it implies ClearAllForwardings) for the same reason we do: -W owns
+		// the foreground and exits with its peer, while -L/-R are long-lived
+		// listeners. One invocation, one lifetime.
+		wspec := fs.String("W", "", "raw stdio forward host:port (mutually exclusive with -L / -R)")
 		fs.Parse(args[1:])
-		if len(specs) == 0 && len(rspecs) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] ...")
+		if forwardWConflictsWithLR(*wspec, len(specs), len(rspecs)) {
+			fmt.Fprintln(os.Stderr, "forward: -W cannot be combined with -L / -R")
 			os.Exit(2)
+		}
+		if len(specs) == 0 && len(rspecs) == 0 && *wspec == "" {
+			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] [-W host:port] ...")
+			os.Exit(2)
+		}
+		var wHost string
+		var wPort int
+		if *wspec != "" {
+			h, p, werr := cli.ParseStdioForwardSpec(*wspec)
+			if werr != nil {
+				die(werr)
+			}
+			wHost, wPort = h, p
 		}
 		parsed := make([]cli.ForwardSpec, 0, len(specs))
 		for _, s := range specs {
@@ -549,6 +569,14 @@ func main() {
 		fctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
 		defer cancel()
 		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
+		if *wspec != "" {
+			// stdout is the forward's payload channel, so status lines must go
+			// to stderr (logf already does) and nothing may print to stdout.
+			if err := cli.RunStdioForward(fctx, c, taskID, wHost, wPort, logf); err != nil {
+				die(err)
+			}
+			return
+		}
 		// Both RunForward and RunRemoteForward now return as soon as every
 		// forward they started has stopped — killed remotely, not just on
 		// Ctrl-C — so the process must wait on that completion signal, not
@@ -705,6 +733,14 @@ func isTaskIDLike(s string) bool {
 	return true
 }
 
+// forwardWConflictsWithLR reports whether -W was combined with -L or -R.
+// They are mutually exclusive: -W owns the foreground and exits with its
+// peer (like ssh -W, which implies ClearAllForwardings), while -L/-R are
+// long-lived listeners started alongside each other.
+func forwardWConflictsWithLR(wspec string, nLSpecs, nRSpecs int) bool {
+	return wspec != "" && (nLSpecs > 0 || nRSpecs > 0)
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] [--ws-path PATH] <subcommand> [args]")
 	fmt.Fprintln(os.Stderr, "")
@@ -786,6 +822,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      -L: forward a local port through the runner to remote host:port (ssh -L)")
 	fmt.Fprintln(os.Stderr, "                                      -R: runner listens, connections dial back to a client-side host:port (ssh -R)")
 	fmt.Fprintln(os.Stderr, "                                      both repeatable; Ctrl-C to stop")
+	fmt.Fprintln(os.Stderr, "  forward <task-id> -W host:port")
+	fmt.Fprintln(os.Stderr, "                                      raw stdio forward (ssh -W): no local listener, this process's stdin/stdout is the client endpoint")
+	fmt.Fprintln(os.Stderr, "                                      mutually exclusive with -L / -R; not repeatable; exits with its peer")
 	fmt.Fprintln(os.Stderr, "  forward ls [--task TASK_ID] [--json]")
 	fmt.Fprintln(os.Stderr, "                                      list registered port forwards; --task filters, --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  forward kill FORWARD_ID [FORWARD_ID ...]")

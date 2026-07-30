@@ -162,6 +162,24 @@ func TestParsePortForwardEvents_SplitAndCoalesced(t *testing.T) {
 // rewrite the first event's StreamId to the second's. This is the
 // production hot path: two accepted -R connections landing in one 64KiB
 // ReadDirect.
+func TestParseStdioForwardSpec(t *testing.T) {
+	host, port, err := ParseStdioForwardSpec("127.0.0.1:6379")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if host != "127.0.0.1" || port != 6379 {
+		t.Fatalf("got %s:%d", host, port)
+	}
+	if h, p, err := ParseStdioForwardSpec("localhost:3000"); err != nil || h != "localhost" || p != 3000 {
+		t.Fatalf("hostname form: %s:%d err=%v", h, p, err)
+	}
+	for _, bad := range []string{"", "nope", "127.0.0.1", ":3000", "127.0.0.1:", "127.0.0.1:0", "127.0.0.1:70000", "a:b:c"} {
+		if _, _, err := ParseStdioForwardSpec(bad); err == nil {
+			t.Fatalf("expected error on %q", bad)
+		}
+	}
+}
+
 func TestParsePortForwardEvents_CoalescedSameKind(t *testing.T) {
 	var a protocol.PortForwardEvent
 	a.Kind = protocol.PortForwardEventKind_ConnNotify

@@ -54,6 +54,25 @@ func ParseForwardSpec(s string) (ForwardSpec, error) {
 	return ForwardSpec{BindAddr: bind, LocalPort: lport, RemoteHost: rhost, RemotePort: rport}, nil
 }
 
+// ParseStdioForwardSpec parses "host:port" for -W: the runner dials host:port
+// and this process's stdin/stdout is the other end. IPv6 literal hosts are
+// unsupported, matching ParseForwardSpec / ParseRemoteForwardSpec.
+func ParseStdioForwardSpec(s string) (string, int, error) {
+	parts := strings.Split(s, ":")
+	if len(parts) != 2 {
+		return "", 0, fmt.Errorf("forward: bad -W spec %q (want host:port)", s)
+	}
+	host := parts[0]
+	if host == "" {
+		return "", 0, fmt.Errorf("forward: empty host in %q", s)
+	}
+	port, err := strconv.Atoi(parts[1])
+	if err != nil || port <= 0 || port > 65535 {
+		return "", 0, fmt.Errorf("forward: bad port in %q", s)
+	}
+	return host, port, nil
+}
+
 // OpenPortForward asks the server to wire a relayed stream to the runner
 // for taskIDHex, which will dial remoteHost:remotePort. Returns the bidi
 // stream the caller splices its accepted TCP connection against. Mirrors
