@@ -1426,10 +1426,10 @@ const POLL_INTERVAL_MS = 5000;
     }
 
     t.addEventListener("click", () => {
-      document.querySelector('.tab-btn[data-tab="notify"]')?.click(); // mobile: switch tab
-      if (!window.matchMedia("(max-width: 600px)").matches) {
-        document.getElementById("notifications")?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      // Switching the tab is the whole move at every width now. It used to be
+      // mobile-only, with desktop scrolling to a section that was always on
+      // screen somewhere; the tab is that section today.
+      document.querySelector('.tab-btn[data-tab="notify"]')?.click();
       dismissToast(t);
     });
 
@@ -1637,8 +1637,8 @@ const POLL_INTERVAL_MS = 5000;
     // Always keep the pane's own tail visible (harmless, in-element scroll).
     cmdOutput.scrollTop = cmdOutput.scrollHeight;
     // Only scroll the *page* to the pane when the user ran a command — doing it
-    // for background appends (task events, takeover notices) yanks the page
-    // (e.g. jumps to the top on desktop, where #cmdline sits above the terminal).
+    // for background appends (task events, takeover notices) yanks the page out
+    // from under whatever the operator was reading in the tasks tab.
     if (scroll) cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
   };
 
@@ -1892,8 +1892,8 @@ const POLL_INTERVAL_MS = 5000;
   fit.fit();
   window.harness_xtermWrite = (uint8Array) => term.write(uint8Array);
 
-  // --- Mobile tab switching (active only at <=600px via CSS). On desktop
-  //     this only sets a body data-attr; the media query makes it a no-op. ---
+  // --- Tab switching (every width). The CSS hides every section outside the
+  //     active group, so this is what makes any section reachable. ---
   const tabbar = document.getElementById("tabbar");
   const interactiveSection = document.getElementById("interactive");
   const vv = window.visualViewport;
@@ -1946,29 +1946,15 @@ const POLL_INTERVAL_MS = 5000;
   }
 
   const setActiveTab = (name) => {
-    const mobile = window.matchMedia("(max-width: 600px)").matches;
     document.body.dataset.activeTab = name;
     for (const b of tabbar.querySelectorAll(".tab-btn")) {
       b.classList.toggle("is-active", b.dataset.tab === name);
     }
-    // Reset scroll so the newly-shown tab starts from the top. Only when the
-    // tab UI is actually live (<=600px); on desktop all sections show at once
-    // and a tap on a task action shouldn't jump the page.
-    if (mobile) window.scrollTo(0, 0);
+    // Reset scroll so the newly-shown tab starts from the top.
+    window.scrollTo(0, 0);
     // Size (or release) the terminal tab to the visible viewport; this also
     // re-fits the grid that went stale while the tab was display:none.
     fitTerminalToViewport();
-    // On desktop there are no tabs — the section lives below the controls, so
-    // activating it should scroll the page down to it; otherwise the user has
-    // to scroll manually to see what they just opened. Applies to the terminal
-    // (Open / Reattach / Resume) and to the file picker (📁 ファイル), both of
-    // which sit below the fold.
-    if (!mobile && (name === "terminal" || name === "files")) {
-      const target = name === "terminal"
-        ? interactiveSection
-        : document.querySelector(`[data-tabgroup="files"]`);
-      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
     // Intentionally NOT focusing the terminal here: focusing pops the soft
     // keyboard on mobile every time you merely switch to the terminal tab to
     // read output, and adds keyboard-toggle churn. The open / reattach / resume
@@ -2156,6 +2142,14 @@ const POLL_INTERVAL_MS = 5000;
     // new cols/rows from the current font metrics + container size, then
     // forward that to the PTY side.
     try { fit.fit(); } catch (_) { /* element not yet laid out */ }
+    // Only tell the PTY when the grid actually changed — same guard, and the
+    // same lastCols/lastRows, as fitTerminalToViewport above. Switching away
+    // from the terminal tab hides the section, which fires this observer at
+    // 0x0; fit() bails on that (proposeDimensions reads a display:none
+    // height as "auto" -> NaN), leaving cols/rows at their last good values,
+    // so without the check we'd resend the geometry the PTY already has.
+    if (term.cols === lastCols && term.rows === lastRows) return;
+    lastCols = term.cols; lastRows = term.rows;
     window.harness.resizeInteractive({ cols: term.cols, rows: term.rows });
   });
   ro.observe(document.getElementById("terminal"));
@@ -4044,6 +4038,7 @@ let topoBase = null;   // {x,y,w,h} set on first render from W×H
 let topoView = null;   // {x,y,w,h} current view; null = follow topoBase
 let topoZoomWired = false;
 let topoResetBtn = null; // re-appended after each rebuild (host.innerHTML clears children)
+let topoZoomHint = null; // ditto — names the modifier the wheel handler requires
 
 function topoApplyView(svg) {
   const v = topoView || topoBase;
@@ -4061,6 +4056,12 @@ function attachTopoZoom(host) {
   host.addEventListener("wheel", (e) => {
     const svg = svgOf();
     if (!svg || !topoBase) return;
+    // Plain wheel belongs to the page. This panel is tall and sits mid-tab, so
+    // an unconditional preventDefault() made it a wall: every wheel event that
+    // crossed it became a zoom and the scroll underneath it never happened.
+    // Requiring a modifier also gets pinch-to-zoom for free — a trackpad pinch
+    // arrives as a wheel event with ctrlKey set.
+    if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
     const v = topoView || { ...topoBase };
     const rect = svg.getBoundingClientRect();
@@ -4104,6 +4105,11 @@ function attachTopoZoom(host) {
   reset.title = "reset zoom";
   reset.addEventListener("click", () => { topoView = null; topoApplyView(svgOf()); });
   topoResetBtn = reset; // renderConnTopology re-appends it after each rebuild
+
+  const hint = document.createElement("div");
+  hint.className = "ct-zoom-hint";
+  hint.textContent = "Ctrl+ホイールで拡大縮小 · ドラッグで移動";
+  topoZoomHint = hint;
 }
 
 // connAgeSec returns the age of a connection in seconds from its connectedAt
@@ -4520,6 +4526,7 @@ function renderConnTopology(conns, tasks, forwards) {
   host.appendChild(svg);
   host.appendChild(legendDiv);
   if (topoResetBtn) host.appendChild(topoResetBtn); // survives the innerHTML clear
+  if (topoZoomHint) host.appendChild(topoZoomHint); // ditto
 
   // Handle leaving nodes: nodes that were in prevConnCids but are not in
   // currentCids. We do this before updating prevConnCids.

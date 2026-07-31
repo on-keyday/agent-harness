@@ -144,3 +144,33 @@ and drive it with Playwright:
 - At 390px, no mobile regression: tab bar, section switching, terminal fit, and
   the touch-key row all behave as before.
 - `make check`.
+
+## Measured after
+
+Against a dummy instance with a connected runner and 20 tasks, at 1440x900
+(`document.documentElement.scrollHeight`, one screen = 900px):
+
+| tab | height | screens |
+|---|---|---|
+| terminal / files / notify / board | 900px | 1.00 |
+| conns | 1009px | 1.12 |
+| tasks | 1446px | 1.61 |
+
+Against 2817px for the single column *before*, with every list empty.
+
+Two things the numbers settle:
+
+- **The Connections tab does not need splitting.** It measures 1.12 screens
+  with a runner connected, so pulling Raw connect into its own tab would buy
+  ~100px. The deferred decision resolves to "don't".
+- **The tasks tab is the one that still scrolls**, and its four sections
+  (`runners`, `tasks`, `compose`, `cmdline` — 78 + 538 + 282 + 302px) are why.
+  The task list is not the problem; Compose and Command sitting under it are.
+  Left alone for now: 1.61 screens *within one topic* is a different complaint
+  from 3.13 screens *across six*, and the fix (two columns inside a tab, or
+  Command as its own tab) is the restructuring this spec deliberately deferred.
+
+Wheel behaviour, verified with real input (`page.mouse.wheel`) rather than
+synthetic events: with the pointer over the topology panel, a plain wheel
+scrolled the page 0 -> 109px and left the `viewBox` untouched; Ctrl+wheel
+changed the `viewBox` and left `scrollY` where it was.
