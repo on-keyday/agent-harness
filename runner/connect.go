@@ -424,6 +424,10 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 // Run is the legacy single-shot entry point used by tests and by the shim in
 // agent-runner main when persist=false. Sequential Connect → OnConnect.
 func Run(ctx context.Context, cfg Config) error {
+	// Before any PTY child exists: undo the inherited "ignore CTRL+C" the
+	// launcher's CREATE_NEW_PROCESS_GROUP left on this process, or nothing we
+	// spawn can be interrupted. No-op off Windows. See ctrlc_windows.go.
+	clearInheritedCtrlCIgnore()
 	h, err := Connect(ctx, cfg)
 	if err != nil {
 		return err

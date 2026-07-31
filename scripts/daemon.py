@@ -152,6 +152,16 @@ def _spawn_detached(args: list[str], log_path: Path) -> int:
             env=_clean_child_env(),
         )
         if os.name == "nt":
+            # CREATE_NEW_PROCESS_GROUP is what _graceful_terminate's
+            # CTRL_BREAK_EVENT needs. It also disables CTRL+C for the child AND
+            # every descendant it ever spawns — which silently made every PTY
+            # session on this runner uninterruptible (injecting 0x03 did
+            # nothing; cmd.exe still reacted because its line editor reads the
+            # byte, and ssh still worked because it forwards it). The runner
+            # undoes the Ctrl-C half at startup: see
+            # runner/ctrlc_windows.go:clearInheritedCtrlCIgnore. Do not assume
+            # this flag is free here — anything else spawned through this
+            # function inherits the same ignore.
             popen_kwargs["creationflags"] = (
                 subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
             )
