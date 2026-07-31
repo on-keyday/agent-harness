@@ -128,7 +128,23 @@
           <span id="raw-counters" class="raw-counters"></span>
         </div>
         <pre id="raw-output" class="raw-output" aria-label="Raw connection output"></pre>
-        <div class="raw-send-row">
+        <div class="raw-mode-row">
+          <button type="button" id="raw-mode-bytes" class="task-chip is-active">bytes</button>
+          <button type="button" id="raw-mode-http" class="task-chip">HTTP</button>
+        </div>
+        <div id="raw-http-form" class="raw-http-form" hidden>
+          <div class="raw-http-line">
+            <select id="raw-http-method">
+              <option>GET</option><option>POST</option><option>PUT</option>
+              <option>PATCH</option><option>DELETE</option><option>HEAD</option><option>OPTIONS</option>
+            </select>
+            <input id="raw-http-path" type="text" size="40" placeholder="/healthz">
+          </div>
+          <textarea id="raw-http-headers" rows="3" placeholder="Accept: application/json&#10;X-Trace: 1"></textarea>
+          <textarea id="raw-http-body" rows="3" placeholder="request body"></textarea>
+          <button id="raw-http-send-btn" type="button" disabled>Send request</button>
+        </div>
+        <div class="raw-send-row" id="raw-bytes-row">
           <input id="raw-send-input" type="text" size="48" placeholder="bytes to send">
           <select id="raw-newline">
             <option value="crlf">CRLF</option>

@@ -1,10 +1,15 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -1422,6 +1427,42 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	}
 	if spec := cli.PortForwardSpecString(found); !strings.HasPrefix(spec, "(in-process) -> ") {
 		t.Fatalf("spec = %q, want an (in-process) prefix", spec)
+	}
+
+	// --- a built HTTP request over a second raw forward, to a real server ---
+	// cli/httpreq_test.go fixes the bytes; this fixes that those bytes are what
+	// an HTTP server accepts, over the same transport the operator uses. It
+	// rides this test's harness rather than standing up its own: the setup is
+	// ~60 lines and the claim needs none of it repeated.
+	var gotMethod, gotPath, gotTrace string
+	var gotBody []byte
+	hsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotTrace = r.Method, r.URL.Path, r.Header.Get("X-Trace")
+		gotBody, _ = io.ReadAll(r.Body)
+		fmt.Fprint(w, "pong")
+	}))
+	defer hsrv.Close()
+	hu, uerr := url.Parse(hsrv.URL)
+	if uerr != nil {
+		t.Fatalf("parse httptest url: %v", uerr)
+	}
+	hport, _ := strconv.Atoi(hu.Port())
+
+	var httpOut bytes.Buffer
+	if herr := cli.RunHTTPRequestForward(context.Background(), c, taskID, "127.0.0.1", hport,
+		cli.HTTPRequestSpec{
+			Method:  "POST",
+			Path:    "/echo",
+			Headers: []string{"X-Trace: 1"},
+			Body:    []byte("hi"),
+		}, &httpOut, func(string) {}); herr != nil {
+		t.Fatalf("RunHTTPRequestForward: %v", herr)
+	}
+	if gotMethod != "POST" || gotPath != "/echo" || gotTrace != "1" || string(gotBody) != "hi" {
+		t.Fatalf("server saw %s %s X-Trace=%q body=%q", gotMethod, gotPath, gotTrace, gotBody)
+	}
+	if !strings.Contains(httpOut.String(), "pong") {
+		t.Fatalf("response not streamed to out:\n%s", httpOut.String())
 	}
 
 	if err := cli.KillPortForward(context.Background(), serverCID, rc.ForwardID()); err != nil {

@@ -109,6 +109,7 @@ func main() {
 		"forwardKill":        js.FuncOf(harnessForwardKill),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
 		"rawSend":            js.FuncOf(harnessRawSend),
+		"rawSendHTTP":        js.FuncOf(harnessRawSendHTTP),
 		"rawClose":           js.FuncOf(harnessRawClose),
 	}))
 
@@ -839,7 +840,52 @@ func harnessRawSend(this js.Value, args []js.Value) any {
 
 // harnessRawClose closes a pane's connection, which deregisters the forward.
 //
-//	harness.rawClose(key) -> Promise<void>
+//	harness.rawSendHTTP(key, {method, path, headers, body}) -> Promise<void>
+//
+// headers is a newline-separated string, matching the TUI's textarea: one
+// header per line, so neither surface has to invent a separator.
+func harnessRawSendHTTP(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if len(args) < 2 || args[1].Type() != js.TypeObject {
+				rejectErr(reject, errors.New("rawSendHTTP: want (key, {method, path, headers, body})"))
+				return
+			}
+			o := args[1]
+			str := func(k string) string {
+				v := o.Get(k)
+				if v.Type() != js.TypeString {
+					return ""
+				}
+				return v.String()
+			}
+			var headers []string
+			for _, line := range strings.Split(str("headers"), "\n") {
+				if strings.TrimSpace(line) != "" {
+					headers = append(headers, strings.TrimSpace(line))
+				}
+			}
+			spec := cli.HTTPRequestSpec{
+				Method:  str("method"),
+				Path:    str("path"),
+				Headers: headers,
+				Body:    []byte(str("body")),
+			}
+			if err := cli.SendRawPaneHTTP(args[0].String(), spec); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harness.rawClose(key) -> Promise<void>
 func harnessRawClose(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]

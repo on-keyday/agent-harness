@@ -1459,7 +1459,16 @@ button:hover { background: #555; }
   white-space: pre; tab-size: 8;
 }
 .raw-counters { color: #808080; font-size: 12px; }
+.raw-mode-row { display: flex; gap: 6px; margin: 4px 0; }
+.raw-http-form { display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+.raw-http-line { display: flex; gap: 6px; flex-wrap: wrap; }
+.raw-http-form textarea {
+  background: #1e1e1e; color: #d4d4d4; border: 1px solid #3a3a3a; border-radius: 4px;
+  padding: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  resize: vertical; min-width: 0;
+}
 @media (max-width: 600px) {
   .raw-form input, .raw-send-row input { flex: 1 1 100%; min-width: 0; }
+  .raw-http-line input, .raw-http-line select { flex: 1 1 100%; min-width: 0; }
   .raw-output { max-height: 220px; font-size: 11px; }
 }

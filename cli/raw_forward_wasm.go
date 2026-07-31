@@ -17,6 +17,11 @@ import (
 type rawSlot struct {
 	conn *RawConn
 	gen  uint64
+	// host/port are the forward's target, kept because BuildHTTPRequest needs
+	// them for the Host header — the page must never assemble request bytes
+	// itself, so it cannot supply them either.
+	host string
+	port int
 	// note holds the last line the control stream produced — why a remote kill
 	// happened, or that the server connection was lost — so the single terminal
 	// harness_rawClosed can carry it. The control watcher must not fire its own
@@ -38,7 +43,7 @@ func OpenRawPane(ctx context.Context, c *Client, paneKey, taskIDHex, host string
 	rawMu.Lock()
 	old := rawSlots[paneKey]
 	gen := rawGen.Add(1)
-	rawSlots[paneKey] = &rawSlot{gen: gen}
+	rawSlots[paneKey] = &rawSlot{gen: gen, host: host, port: port}
 	rawMu.Unlock()
 	if old != nil && old.conn != nil {
 		_ = old.conn.Close()
@@ -72,6 +77,23 @@ func OpenRawPane(ctx context.Context, c *Client, paneKey, taskIDHex, host string
 
 	go rawPump(paneKey, rc, gen)
 	return nil
+}
+
+// SendRawPaneHTTP builds a request for the pane's own target and writes it in
+// one call. Same builder as the CLI and the TUI, so a request that works from
+// one surface works from all three.
+func SendRawPaneHTTP(key string, spec HTTPRequestSpec) error {
+	rawMu.Lock()
+	slot := rawSlots[key]
+	rawMu.Unlock()
+	if slot == nil || slot.conn == nil {
+		return errors.New("rawSendHTTP: no such pane")
+	}
+	req, err := BuildHTTPRequest(spec, slot.host, slot.port)
+	if err != nil {
+		return err
+	}
+	return slot.conn.Send(req)
 }
 
 // SendRawPane writes bytes to the pane's connection.

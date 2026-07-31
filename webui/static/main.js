@@ -542,8 +542,10 @@ const POLL_INTERVAL_MS = 5000;
     }
     const sendBtn = document.getElementById("raw-send-btn");
     const closeBtn = document.getElementById("raw-close-btn");
+    const httpBtn = document.getElementById("raw-http-send-btn");
     if (sendBtn) sendBtn.disabled = !p.open;
     if (closeBtn) closeBtn.disabled = !p.open;
+    if (httpBtn) httpBtn.disabled = !p.open;
   }
 
   function renderRawTabs() {
@@ -598,6 +600,44 @@ const POLL_INTERVAL_MS = 5000;
   const rawSendBtn    = document.getElementById("raw-send-btn");
   const rawCloseBtn   = document.getElementById("raw-close-btn");
   const rawHexInput   = document.getElementById("raw-hex-input");
+
+  // HTTP request form. The page never assembles request bytes: it hands the
+  // four fields to wasm, which builds them with the same cli.BuildHTTPRequest
+  // the CLI and the TUI use, so a request that works from one surface works
+  // from all three. Headers go over as a newline-separated string, one per
+  // line, matching the TUI's textarea — no separator syntax to invent.
+  const rawModeBytes = document.getElementById("raw-mode-bytes");
+  const rawModeHTTP  = document.getElementById("raw-mode-http");
+  const rawHTTPForm  = document.getElementById("raw-http-form");
+  const rawBytesRow  = document.getElementById("raw-bytes-row");
+  function setRawMode(mode) {
+    const http = mode === "http";
+    if (rawHTTPForm) rawHTTPForm.hidden = !http;
+    if (rawBytesRow) rawBytesRow.hidden = http;
+    if (rawModeBytes) rawModeBytes.classList.toggle("is-active", !http);
+    if (rawModeHTTP) rawModeHTTP.classList.toggle("is-active", http);
+  }
+  if (rawModeBytes) rawModeBytes.addEventListener("click", () => setRawMode("bytes"));
+  if (rawModeHTTP) rawModeHTTP.addEventListener("click", () => setRawMode("http"));
+  const rawHTTPSendBtn = document.getElementById("raw-http-send-btn");
+  if (rawHTTPSendBtn) rawHTTPSendBtn.addEventListener("click", async () => {
+    if (!rawActiveKey) return;
+    const spec = {
+      method:  document.getElementById("raw-http-method").value,
+      path:    document.getElementById("raw-http-path").value,
+      headers: document.getElementById("raw-http-headers").value,
+      body:    document.getElementById("raw-http-body").value,
+    };
+    try {
+      await window.harness.rawSendHTTP(rawActiveKey, spec);
+    } catch (err) {
+      // A build error (bad path, CR in a header) is reported on the pane the
+      // way a close reason is; nothing was sent.
+      const p = rawPane(rawActiveKey);
+      if (p) { p.note = `http: ${err.message}`; renderRawTabs(); }
+      appendCmdOutput(`rawSendHTTP: ${err.message}`);
+    }
+  });
 
   // renderRawTaskSelect mirrors renderFileTaskSelect: only Running/Detached
   // tasks can hold a forward, so only those are offered.
