@@ -476,11 +476,11 @@ func TestSanitizeOutputCannotMoveTheCursor(t *testing.T) {
 // File operations need a worktree the runner still holds; the server answers
 // NoSuchTask outside Running/Detached. Opening the picker for a terminal task
 // produced a modal whose first listing failed.
-func TestTaskHasReachableWorktree(t *testing.T) {
+func TestTaskSessionAlive(t *testing.T) {
 	live := []protocol.TaskStatus{protocol.TaskStatus_Running, protocol.TaskStatus_Detached}
 	for _, s := range live {
-		if !taskHasReachableWorktree(s) {
-			t.Errorf("%s should have a reachable worktree", taskStatusStr(s))
+		if !taskSessionAlive(s) {
+			t.Errorf("%s should count as a live session", taskStatusStr(s))
 		}
 	}
 	dead := []protocol.TaskStatus{
@@ -488,7 +488,7 @@ func TestTaskHasReachableWorktree(t *testing.T) {
 		protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled,
 	}
 	for _, s := range dead {
-		if taskHasReachableWorktree(s) {
+		if taskSessionAlive(s) {
 			t.Errorf("%s must not offer file operations", taskStatusStr(s))
 		}
 	}

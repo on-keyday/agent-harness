@@ -37,8 +37,7 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	// refresh lands — and be spuriously refused here. The server is the
 	// authority anyway: attaching something truly non-attachable returns a
 	// clean AttachSession error (not_detachable / not_interactive).
-	if t.Kind == protocol.TaskKind_Interactive &&
-		(t.Status == protocol.TaskStatus_Detached || t.Status == protocol.TaskStatus_Running) {
+	if t.Kind == protocol.TaskKind_Interactive && taskSessionAlive(t.Status) {
 		return taskAction{Kind: actionReattach}
 	}
 	switch t.Status {

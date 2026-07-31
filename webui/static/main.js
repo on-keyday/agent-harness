@@ -428,6 +428,11 @@ const POLL_INTERVAL_MS = 5000;
 
   // Terminal (finished) task states; gates Resume vs Cancel in the action sheet.
   const TERMINAL_STATES = new Set(["Succeeded", "Failed", "Cancelled"]);
+  // taskSessionAlive is the one predicate behind several questions that look
+  // different but are not: can it hold a forward, does it have a worktree the
+  // file panel can list, can it be reattached. The server draws the same line.
+  // Status strings are TaskStatus.String(), not lowercase.
+  const taskSessionAlive = (t) => t && (t.status === "Running" || t.status === "Detached");
 
   // knownAgentProfiles is the deduplicated union of every connected runner's
   // advertised agent_profiles, refreshed each snapshot poll. Shared by the
@@ -684,10 +689,7 @@ const POLL_INTERVAL_MS = 5000;
     none.textContent = "(select task)";
     rawTaskSelect.appendChild(none);
     for (const t of tasks || []) {
-      // snapshot's task.status is TaskStatus.String() — "Running" / "Detached",
-      // not lowercase (matches renderFileTaskSelect's raw t.status display and
-      // TERMINAL_STATES above).
-      if (t.status !== "Running" && t.status !== "Detached") continue;
+      if (!taskSessionAlive(t)) continue;
       const opt = document.createElement("option");
       opt.value = t.id;
       opt.textContent = `${t.id.slice(0, 8)}… ${t.repoPath || ""}`.trim();
@@ -863,11 +865,9 @@ const POLL_INTERVAL_MS = 5000;
     fileTaskSelect.appendChild(placeholder);
     if (!tasks) return;
     for (const t of tasks) {
-      // Only a Running or Detached task has a worktree the runner can reach:
-      // the server answers NoSuchTask for anything else (server/file_transfer.go).
-      // Offering a terminal task here was offering a choice that always failed.
-      // Same filter as renderRawTaskSelect.
-      if (t.status !== "Running" && t.status !== "Detached") continue;
+      // Only a live session has a worktree the runner can reach: the server
+      // answers NoSuchTask for anything else (server/file_transfer.go).
+      if (!taskSessionAlive(t)) continue;
       const opt = document.createElement("option");
       opt.value = t.id;
       const short = (t.id || "").slice(0, 12);

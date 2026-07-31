@@ -152,12 +152,16 @@ func originCell(k protocol.ClientKind) string {
 	return strings.ToLower(k.String())
 }
 
-// taskHasReachableWorktree reports whether the runner still holds a worktree
-// for the task, which is what every file operation needs. Detached counts: the
-// client disconnected but the runner-side worktree is still there, so pull /
-// push / ls must keep working without re-attaching. The server draws the same
-// line and answers NoSuchTask outside it (server/file_transfer.go).
-func taskHasReachableWorktree(s protocol.TaskStatus) bool {
+// taskSessionAlive reports whether the runner's session for the task is still
+// alive — Running, or Detached because the client disconnected while the
+// runner-side session and its worktree stayed up.
+//
+// This one predicate is behind several questions that look different but are
+// not: can the grid tile it, can `r` reattach it, does it have a worktree the
+// file picker can list. The server draws the same line (it answers NoSuchTask
+// for file ops outside it, server/file_transfer.go), so it is named once here
+// rather than open-coded at each call site.
+func taskSessionAlive(s protocol.TaskStatus) bool {
 	return s == protocol.TaskStatus_Running || s == protocol.TaskStatus_Detached
 }
 

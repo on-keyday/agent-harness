@@ -105,8 +105,7 @@ func (m GridModel) pageCols() int { return gridCols(m.pageEnd() - m.pageStart())
 func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.TaskInfo) {
 	live := make([]protocol.TaskInfo, 0, len(tasks))
 	for _, t := range tasks {
-		if t.Kind == protocol.TaskKind_Interactive &&
-			(t.Status == protocol.TaskStatus_Running || t.Status == protocol.TaskStatus_Detached) {
+		if t.Kind == protocol.TaskKind_Interactive && taskSessionAlive(t.Status) {
 			live = append(live, t)
 		}
 	}
