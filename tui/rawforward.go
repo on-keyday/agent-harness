@@ -75,6 +75,11 @@ type RawConnectModal struct {
 	input  textinput.Model
 	panes  []rawPane
 	active int
+	// form is a MODE of the active pane, not a separate modal: the request it
+	// builds is sent on that pane's connection. ctrl+t toggles it, because the
+	// input below consumes every printable key.
+	form     httpForm
+	formMode bool
 }
 
 func NewRawConnectModal() RawConnectModal {
@@ -221,6 +226,51 @@ func (m *RawConnectModal) SetActiveNote(note string) {
 	}
 }
 
+// ToggleForm switches the active pane between raw byte entry and the HTTP
+// form. There is nothing to send from the [+ new] slot, so it stays inert
+// there.
+func (m *RawConnectModal) ToggleForm() {
+	if m.ActivePane() == nil {
+		return
+	}
+	if !m.formMode {
+		m.form = newHTTPForm()
+	}
+	m.formMode = !m.formMode
+}
+
+func (m *RawConnectModal) InForm() bool { return m.formMode && m.ActivePane() != nil }
+
+// FormNextField / FormCycleMethod / UpdateForm keep app.go out of the form's
+// fields: the key handler names intents, the form owns its own state.
+func (m *RawConnectModal) FormNextField()        { m.form.NextField() }
+func (m *RawConnectModal) FormCycleMethod(d int) { m.form.CycleMethod(d) }
+func (m *RawConnectModal) UpdateForm(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.form, cmd = m.form.Update(msg)
+	return cmd
+}
+
+// SetFormForTest fills the form without going through key events.
+func (m *RawConnectModal) SetFormForTest(method, path, headers, body string) {
+	m.form.setForTest(method, path, headers, body)
+}
+
+// SendForm builds the request for the active pane's own target and writes it in
+// ONE Send. Nothing may append to those bytes — SendLine's CRLF would stop
+// Content-Length matching what the far end reads.
+func (m *RawConnectModal) SendForm() error {
+	p := m.ActivePane()
+	if p == nil {
+		return fmt.Errorf("raw connect: not connected")
+	}
+	req, err := cli.BuildHTTPRequest(m.form.Spec(), p.host, p.port)
+	if err != nil {
+		return err
+	}
+	return m.SendActive(req)
+}
+
 func (m *RawConnectModal) SetSpec(s string) { m.input.SetValue(s) }
 func (m *RawConnectModal) Spec() string     { return m.input.Value() }
 
@@ -265,9 +315,14 @@ func (m *RawConnectModal) View() string {
 		}
 		body = string(p.out)
 	}
-	foot := "←/→ tab · Enter send · x close pane · esc hide"
+	entry := m.input.View()
+	foot := "←/→ tab · Enter send · ctrl+t HTTP · x close pane · esc hide"
+	if m.InForm() {
+		entry = m.form.View()
+		foot = "x close pane · esc hide"
+	}
 	return head + "\n" + strings.Join(tabs, " ") + "\n" + state + "\n" +
-		m.input.View() + "\n\n" + body + "\n" + FooterStyle.Render(foot)
+		entry + "\n\n" + body + "\n" + FooterStyle.Render(foot)
 }
 
 // RawForwardOpenedMsg reports a successful connect. It carries the connection

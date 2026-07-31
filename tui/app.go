@@ -1033,13 +1033,30 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case tea.KeyEsc:
 				a.rawModal.Hide()
 				return a, nil
-			case tea.KeyLeft:
-				a.rawModal.MovePane(-1)
-				return a, nil
-			case tea.KeyRight:
-				a.rawModal.MovePane(+1)
+			case tea.KeyLeft, tea.KeyRight:
+				d := 1
+				if msg.Type == tea.KeyLeft {
+					d = -1
+				}
+				// In the form the arrows cycle the method; the tab strip only
+				// owns them in byte-entry mode.
+				if a.rawModal.InForm() {
+					a.rawModal.FormCycleMethod(d)
+				} else {
+					a.rawModal.MovePane(d)
+				}
 				return a, nil
 			case tea.KeyEnter:
+				// The form owns Enter when it is showing — this case is the
+				// byte-entry send, and it runs first in the switch, so without
+				// this the form's Enter would send the target input instead of
+				// the request it just built.
+				if a.rawModal.InForm() {
+					if err := a.rawModal.SendForm(); err != nil {
+						a.rawModal.SetActiveNote("http: " + err.Error())
+					}
+					return a, nil
+				}
 				if p := a.rawModal.ActivePane(); p != nil {
 					if p.live {
 						if err := a.rawModal.SendLine(a.rawModal.Spec()); err != nil {
@@ -1067,9 +1084,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// `x` closes the selected pane (and only when one is selected — on
 			// [+ new] an `x` belongs in the target being typed).
-			if msg.String() == modalKeys.ForwardKill && !a.rawModal.OnNewSlot() {
+			if msg.String() == modalKeys.ForwardKill && !a.rawModal.OnNewSlot() && !a.rawModal.InForm() {
 				a.rawModal.CloseActivePane()
 				return a, nil
+			}
+			// ctrl+t toggles the HTTP form for the active pane. A printable key
+			// could not do this: the pane's input takes every one of them.
+			if msg.Type == tea.KeyCtrlT {
+				a.rawModal.ToggleForm()
+				return a, nil
+			}
+			if a.rawModal.InForm() {
+				if msg.Type == tea.KeyTab {
+					a.rawModal.FormNextField()
+					return a, nil
+				}
+				return a, a.rawModal.UpdateForm(msg)
 			}
 			var rmcmd tea.Cmd
 			a.rawModal, rmcmd = a.rawModal.Update(msg)
