@@ -556,6 +556,10 @@ const POLL_INTERVAL_MS = 5000;
       tab.className = "raw-tab" + (p.key === rawActiveKey ? " is-active" : "") + (p.open ? "" : " is-closed");
       // note carries "connecting…", a close reason, or a connect failure.
       tab.textContent = `${p.host}:${p.port}`;
+      // Why it ended, on hover. The tab styling says a pane is dead; only the
+      // note says whether that was a local close, a remote kill, or the client
+      // connection dropping.
+      if (p.note) tab.title = p.note;
       tab.addEventListener("click", () => { rawActiveKey = p.key; renderRawTabs(); renderRawOutput(); });
       const drop = document.createElement("span");
       drop.className = "raw-tab-x";

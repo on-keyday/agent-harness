@@ -1444,7 +1444,13 @@ button:hover { background: #555; }
 .raw-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
 .raw-tab { background: #2a2a2a; color: #d4d4d4; border: 1px solid #3a3a3a; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
 .raw-tab.is-active { border-color: #6a9955; }
-.raw-tab.is-closed { color: #808080; }
+/* A dead pane must not keep the green border. is-active means "this is the tab
+   you are looking at", is-closed means "this forward is gone" — and the green
+   read as alive, so a pane whose connection had dropped still looked live. The
+   two-class selector beats .is-active on specificity rather than on source
+   order, which a later edit could reshuffle. */
+.raw-tab.is-closed,
+.raw-tab.is-active.is-closed { color: #808080; border-color: #3a3a3a; border-style: dashed; }
 .raw-tab-x { margin-left: 6px; color: #808080; }
 .raw-output {
   background: #1e1e1e; color: #d4d4d4; border: 1px solid #3a3a3a; border-radius: 4px;
