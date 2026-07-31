@@ -59,9 +59,19 @@ Three consequences the operator meets:
 6. **Closed panes stay until dismissed.** A pane whose connection ended keeps
    its received bytes and shows the close reason, styled muted/dashed to match
    the WebUI tab. `x` removes it.
-7. **No hex input.** The WebUI has a hex toggle; the TUI does not, and this spec
-   does not add one. Called out so the asymmetry is a recorded decision rather
-   than an oversight.
+7. **Hex input on `ctrl+r`** (added after the first pass, on request). Same
+   accept/reject rules as the WebUI's `hexToBytes` — whitespace ignored, even
+   digit count, hex characters only — so an operator who learned one pane does
+   not relearn the other. Hex sends the decoded bytes with **no terminator**;
+   appending to an exact byte sequence defeats the only reason to reach for it.
+   The remaining asymmetry is the WebUI's newline selector (CRLF / LF / none):
+   the TUI still always sends CRLF in text mode.
+
+8. **Every pane action is a chord.** The entry line takes every printable rune,
+   so a letter cannot also be a command — `x` for "close pane" made the letter
+   x untypable in the send line. `ctrl+f/b/w/k/u/h/d/a/e/v/n/p` belong to the
+   textinput's own line editing, which leaves `ctrl+t` (HTTP form), `ctrl+x`
+   (close pane) and `ctrl+r` (hex).
 
 ## Architecture
 
@@ -142,5 +152,5 @@ active pane's `note`, or the target prompt on `[+ new]`.
 
 ## Out of scope
 
-Hex input, per-pane scrollback beyond the existing ring, reordering tabs,
+A newline selector for text mode, per-pane scrollback beyond the existing ring, reordering tabs,
 opening panes for a task other than the one the modal was opened from.

@@ -1059,10 +1059,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if p := a.rawModal.ActivePane(); p != nil {
 					if p.live {
-						if err := a.rawModal.SendLine(a.rawModal.Spec()); err != nil {
-							a.rawModal.MarkClosed(p.gen, "raw connect: "+err.Error())
-						} else {
-							a.rawModal.SetSpec("")
+						// SendEntry, not SendLine: in hex mode the entry is an
+						// exact byte sequence and must not gain a terminator.
+						// A hex typo is reported on the pane and sends nothing.
+						if err := a.rawModal.SendEntry(); err != nil {
+							if strings.HasPrefix(err.Error(), "hex:") {
+								a.rawModal.SetActiveNote(err.Error())
+							} else {
+								a.rawModal.MarkClosed(p.gen, "raw connect: "+err.Error())
+							}
 						}
 					}
 					return a, nil
@@ -1082,16 +1087,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.rawModal.AddPane(taskID, host, port, gen)
 				return a, DoStartRawForward(a.client, taskID, host, port, gen, a.program)
 			}
-			// `x` closes the selected pane (and only when one is selected — on
-			// [+ new] an `x` belongs in the target being typed).
-			if msg.String() == modalKeys.ForwardKill && !a.rawModal.OnNewSlot() && !a.rawModal.InForm() {
+			// Every pane key is a chord, because the entry line takes every
+			// printable rune — `x` for close made the letter x untypable, and
+			// the same argument rules out a letter for hex. ctrl+f/b/w/k/u/h/d/
+			// a/e/v/n/p belong to the textinput's own line editing, which
+			// leaves ctrl+t, ctrl+x and ctrl+r.
+			if msg.Type == tea.KeyCtrlX && !a.rawModal.OnNewSlot() {
 				a.rawModal.CloseActivePane()
 				return a, nil
 			}
-			// ctrl+t toggles the HTTP form for the active pane. A printable key
-			// could not do this: the pane's input takes every one of them.
 			if msg.Type == tea.KeyCtrlT {
 				a.rawModal.ToggleForm()
+				return a, nil
+			}
+			if msg.Type == tea.KeyCtrlR && !a.rawModal.InForm() {
+				a.rawModal.ToggleHex()
 				return a, nil
 			}
 			if a.rawModal.InForm() {

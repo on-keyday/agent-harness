@@ -55,8 +55,8 @@ func TestRawModalRoutesByGeneration(t *testing.T) {
 	}
 }
 
-// esc hides the modal and leaves every connection running; x closes exactly
-// the active pane. The old modal closed the connection on esc, which also
+// esc hides the modal and leaves every connection running; ctrl+x closes
+// exactly the active pane. The old modal closed the connection on esc, which also
 // deregistered the forward server-side.
 func TestRawModalHideKeepsPanesCloseDropsOne(t *testing.T) {
 	m := NewRawConnectModal()
@@ -247,9 +247,81 @@ func TestRawModalViewShowsTabsAndActiveTarget(t *testing.T) {
 	m.MovePane(-1) // back onto the 8080 pane
 
 	v := m.View()
-	for _, want := range []string{"+ new", "127.0.0.1:8080", "10.0.0.2:22", "connected (fwd 7)", "x close pane", "esc hide"} {
+	for _, want := range []string{"+ new", "127.0.0.1:8080", "10.0.0.2:22", "connected (fwd 7)", "ctrl+x close", "ctrl+r hex", "esc hide"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("View() missing %q:\n%s", want, v)
 		}
+	}
+}
+
+func TestHexToBytes(t *testing.T) {
+	ok := map[string]string{
+		"48656c":      "Hel",
+		"48 65 6c":    "Hel",
+		" 48\t65\n6c": "Hel",
+		"00ff":        "\x00\xff",
+	}
+	for in, want := range ok {
+		got, err := hexToBytes(in)
+		if err != nil || string(got) != want {
+			t.Errorf("hexToBytes(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "   ", "4", "48656", "zz", "48 6g"} {
+		if got, err := hexToBytes(in); err == nil {
+			t.Errorf("hexToBytes(%q) = %q, want an error", in, got)
+		}
+	}
+}
+
+// The CRLF rule, pinned without a connection: text gets the terminator the
+// line-oriented protocols expect, hex gets nothing added — appending to an
+// exact byte sequence defeats the only reason to reach for hex.
+func TestEntryBytesTerminatorRule(t *testing.T) {
+	got, err := entryBytes("PING", false)
+	if err != nil || string(got) != "PING\r\n" {
+		t.Errorf("text entry = %q, %v; want \"PING\\r\\n\"", got, err)
+	}
+	got, err = entryBytes("50494e47", true)
+	if err != nil || string(got) != "PING" {
+		t.Errorf("hex entry = %q, %v; want \"PING\" with no terminator", got, err)
+	}
+}
+
+// `x` used to close the pane, which made the letter untypable in the entry
+// line. Every pane action is a chord now.
+func TestRawModalPrintableKeysReachTheEntryLine(t *testing.T) {
+	a := New(Config{})
+	a.rawModal.Show("task-1")
+	a.rawModal.AddPane("task-1", "127.0.0.1", 8080, 1)
+	a.rawModal.SetConn(1, nil, nil, "connected")
+
+	for _, r := range "xq" {
+		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		a = m.(*App)
+	}
+	if a.rawModal.PaneCount() != 1 {
+		t.Fatalf("a printable key closed the pane (PaneCount=%d)", a.rawModal.PaneCount())
+	}
+	if got := a.rawModal.Spec(); got != "xq" {
+		t.Errorf("entry line = %q, want \"xq\"", got)
+	}
+}
+
+func TestRawModalHexToggleAndClose(t *testing.T) {
+	a := New(Config{})
+	a.rawModal.Show("task-1")
+	a.rawModal.AddPane("task-1", "127.0.0.1", 8080, 1)
+	a.rawModal.SetConn(1, nil, nil, "connected")
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	a = m.(*App)
+	if !a.rawModal.InHex() {
+		t.Fatal("ctrl+r did not turn hex entry on")
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
+	a = m.(*App)
+	if a.rawModal.PaneCount() != 0 {
+		t.Errorf("ctrl+x did not close the pane")
 	}
 }

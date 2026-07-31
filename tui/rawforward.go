@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -80,6 +81,10 @@ type RawConnectModal struct {
 	// input below consumes every printable key.
 	form     httpForm
 	formMode bool
+	// hexMode reads the entry line as hex instead of text. The WebUI pane has
+	// had this toggle since it shipped; without it the TUI could not send a
+	// byte it has no key for.
+	hexMode bool
 }
 
 func NewRawConnectModal() RawConnectModal {
@@ -184,6 +189,61 @@ func (m *RawConnectModal) SendActive(b []byte) error {
 		return fmt.Errorf("raw connect: not connected")
 	}
 	return p.conn.Send(b)
+}
+
+// hexToBytes accepts "48 65 6c" / "48656c" and rejects anything else, so a
+// typo sends nothing rather than sending garbage. Same rules as the WebUI's
+// hexToBytes, deliberately: an operator who learned one pane should not have
+// to relearn the other.
+func hexToBytes(s string) ([]byte, error) {
+	clean := strings.Map(func(r rune) rune {
+		if r == ' ' || r == '\t' || r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, s)
+	if clean == "" {
+		return nil, fmt.Errorf("hex: nothing to send")
+	}
+	if len(clean)%2 != 0 {
+		return nil, fmt.Errorf("hex: %d digits, want an even count", len(clean))
+	}
+	b, err := hex.DecodeString(clean)
+	if err != nil {
+		return nil, fmt.Errorf("hex: %w", err)
+	}
+	return b, nil
+}
+
+// entryBytes is exactly what an Enter in byte-entry mode puts on the wire. It
+// is a pure function so the CRLF rule is testable without a connection: text
+// gets the terminator line-oriented protocols expect, hex gets nothing added —
+// hex exists to send an exact byte sequence, and appending to it would defeat
+// the only reason to reach for it.
+func entryBytes(entry string, hexMode bool) ([]byte, error) {
+	if hexMode {
+		return hexToBytes(entry)
+	}
+	return []byte(entry + "\r\n"), nil
+}
+
+// ToggleHex switches the entry line between text and hex.
+func (m *RawConnectModal) ToggleHex() { m.hexMode = !m.hexMode }
+
+func (m *RawConnectModal) InHex() bool { return m.hexMode }
+
+// SendEntry sends the entry line under the current mode and clears it. A hex
+// parse error is reported on the pane and nothing is written.
+func (m *RawConnectModal) SendEntry() error {
+	b, err := entryBytes(m.input.Value(), m.hexMode)
+	if err != nil {
+		return err
+	}
+	if err := m.SendActive(b); err != nil {
+		return err
+	}
+	m.input.SetValue("")
+	return nil
 }
 
 // SendLine writes the given text plus CRLF. The TUI has no newline selector —
@@ -316,10 +376,13 @@ func (m *RawConnectModal) View() string {
 		body = string(p.out)
 	}
 	entry := m.input.View()
-	foot := "←/→ tab · Enter send · ctrl+t HTTP · x close pane · esc hide"
+	if m.hexMode {
+		entry = "hex " + entry
+	}
+	foot := "←/→ tab · Enter send · ctrl+r hex · ctrl+t HTTP · ctrl+x close · esc hide"
 	if m.InForm() {
 		entry = m.form.View()
-		foot = "x close pane · esc hide"
+		foot = "ctrl+x close · esc hide"
 	}
 	return head + "\n" + strings.Join(tabs, " ") + "\n" + state + "\n" +
 		entry + "\n\n" + body + "\n" + FooterStyle.Render(foot)
