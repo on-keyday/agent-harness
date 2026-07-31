@@ -46,6 +46,26 @@ type rawPane struct {
 
 func (p *rawPane) target() string { return fmt.Sprintf("%s:%d", p.host, p.port) }
 
+// sanitizeOutput makes remote bytes safe to draw inside a bordered panel. The
+// far end sends arbitrary bytes; an ESC sequence among them repositions the
+// cursor, and the frame is then drawn over — the panel visibly disintegrates.
+// The WebUI pane already replaces control bytes for the same reason, and this
+// keeps one extra: CR moves the cursor to column 0 in a terminal (harmless in
+// the WebUI's <pre>), so CRLF collapses to LF and a lone CR becomes a dot
+// rather than overwriting the line and the left border with it.
+func sanitizeOutput(b []byte) string {
+	s := strings.ReplaceAll(string(b), "\r\n", "\n")
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case r < 0x20 || r == 0x7f, r >= 0x80 && r <= 0x9f:
+			return '.'
+		}
+		return r
+	}, s)
+}
+
 // AppendOutput adds received bytes, trimming the front so the buffer stays
 // bounded and the NEWEST bytes are the ones kept.
 func (p *rawPane) AppendOutput(b []byte) {
@@ -445,7 +465,7 @@ func (m *RawConnectModal) View() string {
 		if state == "" {
 			state = "connected"
 		}
-		body = string(p.out)
+		body = sanitizeOutput(p.out)
 	}
 
 	entry := m.input.View()

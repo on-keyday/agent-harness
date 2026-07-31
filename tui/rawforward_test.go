@@ -443,3 +443,22 @@ func TestRawModalFormErrorIsNotDoublePrefixed(t *testing.T) {
 		t.Errorf("note lost its prefix: %q", note)
 	}
 }
+
+// The far end sends arbitrary bytes into a bordered panel. An ESC sequence
+// among them repositions the cursor and the frame gets drawn over, so the
+// panel visibly falls apart; a lone CR does the same to one line.
+func TestSanitizeOutputCannotMoveTheCursor(t *testing.T) {
+	got := sanitizeOutput([]byte("HTTP/1.1 200 OK\r\nX: \x1b[2J\x1b[H\r ok\x00\x7f\n"))
+	if strings.ContainsAny(got, "\x1b\x00\x7f\r") {
+		t.Errorf("control bytes survived: %q", got)
+	}
+	if !strings.HasPrefix(got, "HTTP/1.1 200 OK\n") {
+		t.Errorf("CRLF should collapse to LF, got %q", got)
+	}
+	if !strings.Contains(got, "ok") || !strings.Contains(got, "X: ") {
+		t.Errorf("printable text was lost: %q", got)
+	}
+	if strings.Contains(got, "\n\n") {
+		t.Errorf("CRLF collapse should not double the newline: %q", got)
+	}
+}

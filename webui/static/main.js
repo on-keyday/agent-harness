@@ -532,8 +532,15 @@ const POLL_INTERVAL_MS = 5000;
       return;
     }
     const bytes = rawBytesOf(p);
+    // Stick to the bottom only while the reader is already there. This used to
+    // scroll to the bottom unconditionally on every render, so a response
+    // taller than the pane could not be scrolled back to — the top looked
+    // truncated when it was merely out of view. Same rule as the TUI log
+    // pane's stickToBottom. Measured BEFORE the content is replaced, because
+    // replacing it changes scrollHeight.
+    const atBottom = out.scrollHeight - out.scrollTop - out.clientHeight < 8;
     out.textContent = rawViewMode === "hex" ? rawRenderHex(bytes) : rawRenderText(bytes);
-    out.scrollTop = out.scrollHeight;
+    if (atBottom) out.scrollTop = out.scrollHeight;
     if (counters) {
       counters.textContent = `${p.open ? "● open" : "○ closed"}  in ${p.bytes}B / out ${p.sent}B` +
         (p.note ? `  ${p.note}` : "");
