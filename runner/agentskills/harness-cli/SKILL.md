@@ -384,6 +384,7 @@ harness-cli session ls            # JSON Lines: detachable interactive sessions 
 harness-cli session kill <id>     # terminate one (alias of `cancel`)
 harness-cli session snapshot <id> # PRINT the current screen as text (non-TTY; safe for you)
 harness-cli session send -enter <id> "…" # inject input + Enter (non-TTY co-write); flags BEFORE the id
+harness-cli session send -e <id> '\x03'   # Ctrl-C the foreground program (0x03). -e interprets escapes
 harness-cli session exec <id> <cmd>...  # RUN one shell cmd, wait, return combined output + exit code (POSIX-shell foreground)
 harness-cli session await-idle --topic chat.<your-short-id> <id>  # one-shot "tell me when its turn ends"
 harness-cli session attach <id>   # HUMAN ONLY (needs a real TTY) — see below
@@ -434,6 +435,12 @@ POSIX-shell foreground), the send → snapshot drive loop, screen-reading flags
 (`--style`/`--color`/`--raw`), and the footguns (flags go BEFORE `<id>` for
 `send`/`exec`; a bare `exit` typed via `exec` kills the session; `exec` on a
 TUI/REPL/claude foreground times out by design).
+
+**Stopping a runaway foreground program** is `session send -e '\x03'` — the byte a
+terminal sends for Ctrl-C. There is no separate interrupt verb; this is it. A
+program in raw mode (an editor, an agent TUI) may read the byte and ignore it,
+exactly as it would at a keyboard, and `session kill` remains the blunt option
+that ends the whole session rather than the command inside it.
 
 These suit **terminal-level** work (shells, TUIs, REPLs, or watching a screen).
 To coordinate a *claude worker* (hand it tasks / corrections), still prefer
