@@ -40,8 +40,9 @@ func DoConnSnapshot(c *cli.Client) tea.Cmd {
 type ConnsModal struct {
 	open     bool
 	table    table.Model
-	rowConns []protocol.ConnInfo     // parallel slice: rowConns[i] = full info for row i
-	byCID    map[string]int           // cid string → index in rowConns; rebuilt on ApplySnapshot / on event
+	baseCols []table.Column      // natural column sizing; see fitColumns
+	rowConns []protocol.ConnInfo // parallel slice: rowConns[i] = full info for row i
+	byCID    map[string]int      // cid string → index in rowConns; rebuilt on ApplySnapshot / on event
 }
 
 // NewConnsModal constructs a ConnsModal with fixed column widths.
@@ -55,8 +56,9 @@ func NewConnsModal() ConnsModal {
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
 	return ConnsModal{
-		table: t,
-		byCID: make(map[string]int),
+		table:    t,
+		baseCols: cols,
+		byCID:    make(map[string]int),
 	}
 }
 
@@ -70,6 +72,7 @@ func (m *ConnsModal) Close() { m.open = false }
 func (m *ConnsModal) SetSize(w, h int) {
 	// Reserve 4 rows for border + header + footer lines.
 	m.table.SetWidth(w - 4)
+	m.table.SetColumns(fitColumns(m.baseCols, w-4, flexColumn(m.baseCols, "CID")))
 	m.table.SetHeight(h - 4)
 }
 

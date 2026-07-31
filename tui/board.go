@@ -100,6 +100,7 @@ type BoardModal struct {
 	open        bool
 	mode        boardMode
 	topicsTable table.Model
+	baseCols    []table.Column      // natural column sizing; see fitColumns
 	rowTopics   []cli.BoardTopicRow // parallel slice: rowTopics[i] corresponds to table row i
 	curTopic    string
 	msgs        []cli.BoardMessage
@@ -118,10 +119,12 @@ func NewBoardModal() BoardModal {
 		{Title: "LastAt", Width: 22},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
+	baseCols := cols
 	vp := viewport.New(80, 10)
 	vp.SetContent("(select a topic and press Enter to read)")
 	return BoardModal{
 		topicsTable: t,
+		baseCols:    baseCols,
 		content:     vp,
 	}
 }
@@ -157,6 +160,7 @@ func (m *BoardModal) PopToTopics() {
 func (m *BoardModal) SetSize(w, h int) {
 	// Reserve 4 rows for border/header/footer in both halves.
 	m.topicsTable.SetWidth(w - 4)
+	m.topicsTable.SetColumns(fitColumns(m.baseCols, w-4, flexColumn(m.baseCols, "Topic")))
 	m.topicsTable.SetHeight(h/2 - 4)
 	m.content.Width = w - 4
 	m.content.Height = h/2 - 4

@@ -11,8 +11,10 @@ import (
 )
 
 type TasksModel struct {
-	table   table.Model
-	focused bool
+	table table.Model
+	// baseCols is the natural sizing; see RunnersModel.baseCols.
+	baseCols []table.Column
+	focused  bool
 	// rowIDs[i] is the full hex task ID for row i; bubbles/table doesn't carry
 	// arbitrary metadata so we mirror.
 	rowIDs []string
@@ -33,7 +35,7 @@ func NewTasks() TasksModel {
 		{Title: "Prompt", Width: 0}, // resized later via SetSize
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(false))
-	return TasksModel{table: t}
+	return TasksModel{table: t, baseCols: cols}
 }
 
 func (m *TasksModel) Focus() {
@@ -48,19 +50,13 @@ func (m *TasksModel) Blur() {
 
 func (m *TasksModel) IsFocused() bool { return m.focused }
 
+// SetSize fits the columns to w, with Prompt as the flex column. It used to
+// only ever GROW the prompt column, which meant the fixed columns alone (89
+// cells) overflowed any panel narrower than that and shredded the frame.
 func (m *TasksModel) SetSize(w, h int) {
 	m.table.SetWidth(w)
 	m.table.SetHeight(h)
-	// Stretch the prompt column to fill remaining width.
-	cols := m.table.Columns()
-	used := 0
-	for i := 0; i < len(cols)-1; i++ {
-		used += cols[i].Width + 2 // table padding
-	}
-	if rest := w - used - 4; rest > 0 {
-		cols[len(cols)-1].Width = rest
-		m.table.SetColumns(cols)
-	}
+	m.table.SetColumns(fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Prompt")))
 }
 
 func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerInfo) {

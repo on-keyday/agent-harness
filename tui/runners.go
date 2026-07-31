@@ -10,8 +10,11 @@ import (
 )
 
 type RunnersModel struct {
-	table   table.Model
-	focused bool
+	table table.Model
+	// baseCols is the natural sizing; SetSize re-derives the rendered widths
+	// from it so a resize never compounds the previous one (see fitColumns).
+	baseCols []table.Column
+	focused  bool
 	// rowRunners[i] is the full RunnerInfo for table row i; mirrored alongside
 	// the bubbles/table rows so the detail popup can show fields the row
 	// truncates (full repo path, full current task id, timestamps).
@@ -27,7 +30,7 @@ func NewRunners() RunnersModel {
 		{Title: "Roots", Width: 30},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(false))
-	return RunnersModel{table: t}
+	return RunnersModel{table: t, baseCols: cols}
 }
 
 func (m *RunnersModel) Focus() {
@@ -42,9 +45,13 @@ func (m *RunnersModel) Blur() {
 
 func (m *RunnersModel) IsFocused() bool { return m.focused }
 
+// SetSize fits the columns to w. Roots is the flex column: it is the only
+// unbounded field here, so it both absorbs slack on a wide terminal and is the
+// one worth truncating on a narrow one.
 func (m *RunnersModel) SetSize(w, h int) {
 	m.table.SetWidth(w)
 	m.table.SetHeight(h)
+	m.table.SetColumns(fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Roots")))
 }
 
 // SetRows updates the runner rows from a snapshot.

@@ -129,11 +129,7 @@ func TestKeyHelpBodyListsEveryBinding(t *testing.T) {
 // counts newlines, so a single over-long line (exactly the footer bug) is
 // invisible to it — the terminal wraps it at display time, not in the string.
 //
-// Scoped to the footer row on purpose. The runners/tasks tables render at the
-// fixed sum of their column widths (bubbles' SetWidth does not resize
-// columns), so the top of the view is wider than the terminal below ~182
-// columns — a separate, pre-existing overflow that this change does not
-// touch.
+// Scoped to the footer row; TestViewFitsTerminalWidth covers the whole frame.
 func TestViewFooterFitsTerminal(t *testing.T) {
 	for _, w := range []int{80, 100, 160} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {

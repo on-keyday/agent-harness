@@ -390,6 +390,7 @@ func portForwardInfoRow(fi *protocol.PortForwardInfo) table.Row {
 type ForwardsModal struct {
 	open     bool
 	table    table.Model
+	baseCols []table.Column // natural column sizing; see fitColumns
 	forwards []protocol.PortForwardInfo
 
 	// Pending kill confirmation (armed by BeginKillConfirm, resolved by
@@ -415,7 +416,7 @@ func NewForwardsModal() ForwardsModal {
 		{Title: "origin", Width: 30},
 	}
 	t := table.New(table.WithColumns(cols), table.WithFocused(true))
-	return ForwardsModal{table: t}
+	return ForwardsModal{table: t, baseCols: cols}
 }
 
 func (m *ForwardsModal) IsOpen() bool { return m.open }
@@ -426,6 +427,7 @@ func (m *ForwardsModal) Close()       { m.open = false }
 // Reserve 4 rows for border + header + footer (as ConnsModal.SetSize).
 func (m *ForwardsModal) SetSize(w, h int) {
 	m.table.SetWidth(w - 4)
+	m.table.SetColumns(fitColumns(m.baseCols, w-4, flexColumn(m.baseCols, "origin")))
 	m.table.SetHeight(h - 4)
 }
 
