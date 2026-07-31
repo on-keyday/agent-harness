@@ -48,7 +48,7 @@ func TestRawModalRoutesByGeneration(t *testing.T) {
 		t.Fatalf("PaneForGen(7) = %+v, want the 8080 pane", p)
 	}
 	p.AppendOutput([]byte("hello"))
-	if other := m.PaneForGen(8); other == nil || len(other.out) != 0 {
+	if other := m.PaneForGen(8); other == nil || len(other.output()) != 0 {
 		t.Errorf("output leaked into the 9090 pane: %+v", other)
 	}
 	if m.PaneForGen(99) != nil {
@@ -122,31 +122,40 @@ func TestRawModalCloseAllOnQuit(t *testing.T) {
 	}
 }
 
-// TestRawPane_RingCapKeepsNewest checks the bound AND which end survives: a
-// trim that kept the oldest bytes would satisfy a length-only assertion while
-// showing the operator stale output.
-//
-// The filler deliberately carries an 11-byte marker distinct from the rest of
-// the front and from the tail. An earlier version of this test built the front
-// from a single repeated byte and asserted !HasPrefix(out, head[:16]), which is
-// unfalsifiable: every 16-byte window of such filler is identical, so the front
-// of a CORRECTLY trimmed buffer still matches. Assert the marker's literal
-// absence instead.
-func TestRawPane_RingCapKeepsNewest(t *testing.T) {
+// The ring keeps BOTH ends. A pure keep-the-newest rule dropped the status
+// line and headers of any response bigger than the ring, leaving a body with
+// no indication of what it answered — the operator hit exactly that: "<html>
+// タグがスクロールバックしても見えない". The middle that goes is reported, so a
+// truncated view cannot read as a complete one.
+func TestRawPane_RingKeepsHeadAndTail(t *testing.T) {
 	var p rawPane
-	headMarker := []byte("HEAD-MARKER") // same length as tail below, by design
-	head := append(append([]byte(nil), headMarker...), bytes.Repeat([]byte("H"), rawTUIRingBytes-len(headMarker))...)
+	head := []byte("HTTP/1.1 200 OK\r\nHEAD-MARKER\r\n")
 	p.AppendOutput(head)
+	p.AppendOutput(bytes.Repeat([]byte("M"), 2*rawTUIRingBytes))
 	tail := []byte("TAIL-MARKER")
 	p.AppendOutput(tail)
-	if len(p.out) > rawTUIRingBytes {
-		t.Fatalf("output ring = %d bytes, want <= %d", len(p.out), rawTUIRingBytes)
+
+	out := p.output()
+	if !bytes.HasPrefix(out, head) {
+		t.Errorf("the front of the response was dropped; output starts %q", out[:min(40, len(out))])
 	}
-	if !bytes.HasSuffix(p.out, tail) {
-		t.Fatalf("newest bytes must survive the trim; output ends with %q", p.out[max(0, len(p.out)-16):])
+	if !bytes.HasSuffix(out, tail) {
+		t.Errorf("newest bytes must survive; output ends %q", out[max(0, len(out)-16):])
 	}
-	if bytes.Contains(p.out, headMarker) {
-		t.Fatal("oldest bytes must be trimmed from the front")
+	if !bytes.Contains(out, []byte("bytes elided")) {
+		t.Error("a dropped middle must be reported, not silent")
+	}
+	if len(p.head)+len(p.tail) > rawTUIRingBytes {
+		t.Errorf("retained %d bytes, past the %d cap", len(p.head)+len(p.tail), rawTUIRingBytes)
+	}
+}
+
+// Nothing dropped means nothing to say about it.
+func TestRawPane_NoMarkerWhenNothingElided(t *testing.T) {
+	var p rawPane
+	p.AppendOutput([]byte("HTTP/1.1 200 OK\r\n\r\npong"))
+	if got := string(p.output()); got != "HTTP/1.1 200 OK\r\n\r\npong" {
+		t.Errorf("output = %q, want it verbatim", got)
 	}
 }
 
@@ -161,7 +170,7 @@ func TestRawForwardMsgs_UnknownGenerationIgnored(t *testing.T) {
 	a.rawModal.SetConn(2, nil, nil, "connected (fwd 9)")
 
 	a.Update(RawForwardDataMsg{Gen: 1, Data: []byte("stale")})
-	if got := a.rawModal.ActivePane().out; len(got) != 0 {
+	if got := a.rawModal.ActivePane().output(); len(got) != 0 {
 		t.Fatalf("stale data applied: %q", got)
 	}
 	a.Update(RawForwardClosedMsg{Gen: 1, Reason: "stale close"})
@@ -170,7 +179,7 @@ func TestRawForwardMsgs_UnknownGenerationIgnored(t *testing.T) {
 	}
 
 	a.Update(RawForwardDataMsg{Gen: 2, Data: []byte("fresh")})
-	if got := string(a.rawModal.ActivePane().out); got != "fresh" {
+	if got := string(a.rawModal.ActivePane().output()); got != "fresh" {
 		t.Fatalf("own-generation data not applied: %q", got)
 	}
 	a.Update(RawForwardClosedMsg{Gen: 2, Reason: "done"})

@@ -474,7 +474,13 @@ const POLL_INTERVAL_MS = 5000;
   // output view is a debugging window, not a transcript, and an unbounded buffer
   // on a chatty port would grow until the tab died.
   const RAW_RING_BYTES = 256 * 1024;
-  const rawPanes = new Map(); // key -> {key, task, host, port, chunks, bytes, sent, open, note}
+  // The front of a connection's output is never dropped. A pure keep-the-newest
+  // ring is right for a log and wrong here: what arrives FIRST is the status
+  // line and the headers, and a response larger than the ring pushed exactly
+  // that out — a body with no indication of what it answered, with the opening
+  // tag unreachable however far back you scrolled.
+  const RAW_HEAD_KEEP_BYTES = 32 * 1024;
+  const rawPanes = new Map(); // key -> {key, task, host, port, head, chunks, elided, bytes, sent, open, note}
   let rawActiveKey = null;
   let rawViewMode = "text"; // "text" | "hex"
 
@@ -483,20 +489,37 @@ const POLL_INTERVAL_MS = 5000;
   function rawAppend(key, bytes) {
     const p = rawPane(key);
     if (!p) return;
-    p.chunks.push(bytes);
     p.bytes += bytes.length;
+
+    // Fill the head reserve first; only the remainder joins the ring.
+    let headLen = p.head.reduce((n, c) => n + c.length, 0);
+    if (headLen < RAW_HEAD_KEEP_BYTES) {
+      const take = Math.min(RAW_HEAD_KEEP_BYTES - headLen, bytes.length);
+      p.head.push(bytes.subarray(0, take));
+      bytes = bytes.subarray(take);
+      if (bytes.length === 0) { if (key === rawActiveKey) renderRawOutput(); return; }
+    }
+
+    p.chunks.push(bytes);
     let total = p.chunks.reduce((n, c) => n + c.length, 0);
-    while (total > RAW_RING_BYTES && p.chunks.length > 1) {
-      total -= p.chunks.shift().length;
+    const cap = RAW_RING_BYTES - RAW_HEAD_KEEP_BYTES;
+    while (total > cap && p.chunks.length > 1) {
+      const gone = p.chunks.shift();
+      total -= gone.length;
+      p.elided += gone.length;
     }
     if (key === rawActiveKey) renderRawOutput();
   }
 
+  // rawBytesOf splices head + (marker) + tail. The marker is explicit because a
+  // silent gap reads as a complete response.
   function rawBytesOf(p) {
-    const total = p.chunks.reduce((n, c) => n + c.length, 0);
+    const marker = p.elided ? new TextEncoder().encode(`\n… ${p.elided} bytes elided …\n`) : null;
+    const parts = marker ? [...p.head, marker, ...p.chunks] : [...p.head, ...p.chunks];
+    const total = parts.reduce((n, c) => n + c.length, 0);
     const out = new Uint8Array(total);
     let off = 0;
-    for (const c of p.chunks) { out.set(c, off); off += c.length; }
+    for (const c of parts) { out.set(c, off); off += c.length; }
     return out;
   }
 
@@ -636,7 +659,11 @@ const POLL_INTERVAL_MS = 5000;
       body:    document.getElementById("raw-http-body").value,
     };
     try {
-      await window.harness.rawSendHTTP(rawActiveKey, spec);
+      const p = rawPane(rawActiveKey);
+      const sent = await window.harness.rawSendHTTP(rawActiveKey, spec);
+      // wasm reports the count because the page never builds the bytes; without
+      // this the "out" counter read 0B after every HTTP send.
+      if (p) { p.sent += sent; renderRawOutput(); }
     } catch (err) {
       // A build error (bad path, CR in a header) is reported on the pane the
       // way a close reason is; nothing was sent.
@@ -684,7 +711,7 @@ const POLL_INTERVAL_MS = 5000;
     // in flight — rawClose(key) supersedes the open rather than leaving a
     // registered forward behind.
     const key = `raw${++rawKeySeq}`;
-    rawPanes.set(key, { key, task, host, port, chunks: [], bytes: 0, sent: 0, open: false, note: "connecting…" });
+    rawPanes.set(key, { key, task, host, port, head: [], chunks: [], elided: 0, bytes: 0, sent: 0, open: false, note: "connecting…" });
     rawActiveKey = key;
     renderRawTabs();
     renderRawOutput();

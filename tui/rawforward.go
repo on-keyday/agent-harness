@@ -19,6 +19,14 @@ import (
 // pane's ring: this is a debugging window, not a transcript.
 const rawTUIRingBytes = 64 * 1024
 
+// rawHeadKeepBytes is the front of a connection's output that is never
+// dropped. A pure keep-the-newest ring is right for a log and wrong here: what
+// arrives FIRST on a raw connection is the status line and the headers — the
+// part worth reading — and a response larger than the ring used to push
+// exactly that out, leaving a body with no idea what it answered. Keeping both
+// ends and saying how much was dropped in between costs one line of output.
+const rawHeadKeepBytes = 16 * 1024
+
 // rawConnectTimeout bounds the connect RPC. Every other Do* in this package
 // bounds its RPC; without it a wedged open leaves the operator with a modal
 // that says "connecting" forever and no way to cancel the attempt.
@@ -35,10 +43,14 @@ type rawPane struct {
 	// gen tags every message this pane's pump sends. It scopes a PANE: a
 	// message whose gen matches no pane belongs to a pane the operator has
 	// already closed, and is dropped.
-	gen        uint64
-	conn       *cli.RawConn
-	cancel     context.CancelFunc
-	out        []byte
+	gen    uint64
+	conn   *cli.RawConn
+	cancel context.CancelFunc
+	// head/tail bracket the output: the front is never dropped, the newest
+	// bytes are, and elided counts what fell out between them.
+	head       []byte
+	tail       []byte
+	elided     int
 	live       bool
 	connecting bool
 	note       string
@@ -66,13 +78,37 @@ func sanitizeOutput(b []byte) string {
 	}, s)
 }
 
-// AppendOutput adds received bytes, trimming the front so the buffer stays
-// bounded and the NEWEST bytes are the ones kept.
+// AppendOutput adds received bytes, keeping the head and the newest tail and
+// counting what fell out between them. See rawHeadKeepBytes.
 func (p *rawPane) AppendOutput(b []byte) {
-	p.out = append(p.out, b...)
-	if len(p.out) > rawTUIRingBytes {
-		p.out = append([]byte(nil), p.out[len(p.out)-rawTUIRingBytes:]...)
+	if n := rawHeadKeepBytes - len(p.head); n > 0 {
+		if n > len(b) {
+			n = len(b)
+		}
+		p.head = append(p.head, b[:n]...)
+		b = b[n:]
 	}
+	if len(b) == 0 {
+		return
+	}
+	p.tail = append(p.tail, b...)
+	if cap := rawTUIRingBytes - rawHeadKeepBytes; len(p.tail) > cap {
+		drop := len(p.tail) - cap
+		p.elided += drop
+		p.tail = append([]byte(nil), p.tail[drop:]...)
+	}
+}
+
+// output renders what the pane has, with an explicit marker for the middle it
+// dropped — silence there would read as "this is the whole response".
+func (p *rawPane) output() []byte {
+	if p.elided == 0 {
+		return append(append([]byte(nil), p.head...), p.tail...)
+	}
+	marker := fmt.Sprintf("\n… %d bytes elided …\n", p.elided)
+	out := append([]byte(nil), p.head...)
+	out = append(out, marker...)
+	return append(out, p.tail...)
 }
 
 // closeConn closes the connection and stops its pump. Idempotent. Closing is
@@ -465,7 +501,7 @@ func (m *RawConnectModal) View() string {
 		if state == "" {
 			state = "connected"
 		}
-		body = sanitizeOutput(p.out)
+		body = sanitizeOutput(p.output())
 	}
 
 	entry := m.input.View()

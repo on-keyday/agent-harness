@@ -840,7 +840,10 @@ func harnessRawSend(this js.Value, args []js.Value) any {
 
 // harnessRawClose closes a pane's connection, which deregisters the forward.
 //
-//	harness.rawSendHTTP(key, {method, path, headers, body}) -> Promise<void>
+//	harness.rawSendHTTP(key, {method, path, headers, body}) -> Promise<number>
+//
+// Resolves with the number of bytes written, so the caller can account for a
+// request it did not assemble.
 //
 // headers is a newline-separated string, matching the TUI's textarea: one
 // header per line, so neither surface has to invent a separator.
@@ -873,11 +876,12 @@ func harnessRawSendHTTP(this js.Value, args []js.Value) any {
 				Headers: headers,
 				Body:    []byte(str("body")),
 			}
-			if err := cli.SendRawPaneHTTP(args[0].String(), spec); err != nil {
+			n, err := cli.SendRawPaneHTTP(args[0].String(), spec)
+			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
-			resolve.Invoke(js.Undefined())
+			resolve.Invoke(js.ValueOf(n))
 		}()
 		return nil
 	})

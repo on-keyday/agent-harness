@@ -82,18 +82,25 @@ func OpenRawPane(ctx context.Context, c *Client, paneKey, taskIDHex, host string
 // SendRawPaneHTTP builds a request for the pane's own target and writes it in
 // one call. Same builder as the CLI and the TUI, so a request that works from
 // one surface works from all three.
-func SendRawPaneHTTP(key string, spec HTTPRequestSpec) error {
+//
+// Returns how many bytes went out: the page cannot count them itself — it
+// deliberately never assembles the request — and without the count its "out"
+// counter sat at 0B after every HTTP send.
+func SendRawPaneHTTP(key string, spec HTTPRequestSpec) (int, error) {
 	rawMu.Lock()
 	slot := rawSlots[key]
 	rawMu.Unlock()
 	if slot == nil || slot.conn == nil {
-		return errors.New("rawSendHTTP: no such pane")
+		return 0, errors.New("rawSendHTTP: no such pane")
 	}
 	req, err := BuildHTTPRequest(spec, slot.host, slot.port)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return slot.conn.Send(req)
+	if err := slot.conn.Send(req); err != nil {
+		return 0, err
+	}
+	return len(req), nil
 }
 
 // SendRawPane writes bytes to the pane's connection.
