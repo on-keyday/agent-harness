@@ -27,12 +27,26 @@ type RawConn struct {
 	// against a dummy harness: a forward whose target refused the connection
 	// printed exactly that, sending the operator to check a healthy server.
 	closedLocally atomic.Bool
+	// stopWatch ends the control watcher. It is derived from a context the
+	// CALLER cannot cancel — see OpenRawForward — so Close is the only thing
+	// that stops it from this side.
+	stopWatch context.CancelFunc
 }
 
 // OpenRawForward opens the data stream, registers the forward so it is listable
 // and killable, and starts watching the control stream. Registration failure
 // closes the data stream: a forward that is running but absent from `forward ls`
 // is exactly the state the registry exists to prevent.
+//
+// ctx bounds the OPEN — the two RPCs below — and nothing else. The connection
+// itself lives until Close, or until the far end ends the registration. The
+// control watcher used to run on ctx, which quietly made every caller that
+// bounds its dial with a timeout self-destruct: the TUI cancels its connect
+// timeout the instant the open returns, the watcher woke on that cancellation,
+// and its deferred onEnd closed the data stream — so a raw connect from the
+// TUI reported "connection closed" the moment it was established. Callers tear
+// down with Close (spliceStdio, CloseRawPane and the TUI pump all do); ctx is
+// not, and must not be, the teardown signal.
 func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port int, logf func(string)) (*RawConn, error) {
 	if logf == nil {
 		logf = func(string) {}
@@ -47,8 +61,9 @@ func OpenRawForward(ctx context.Context, c *Client, taskIDHex, host string, port
 		_ = data.CloseBoth()
 		return nil, fmt.Errorf("raw forward: register: %w", err)
 	}
-	rc := &RawConn{data: data, ctrl: ctrl, forwardID: fid}
-	go rc.watchControl(ctx, logf)
+	watchCtx, stopWatch := context.WithCancel(context.WithoutCancel(ctx))
+	rc := &RawConn{data: data, ctrl: ctrl, forwardID: fid, stopWatch: stopWatch}
+	go rc.watchControl(watchCtx, logf)
 	return rc, nil
 }
 
@@ -77,6 +92,9 @@ func (r *RawConn) Recv(ctx context.Context) ([]byte, bool, error) {
 // so a closed pane leaves no entry behind in `forward ls`.
 func (r *RawConn) Close() error {
 	r.closedLocally.Store(true)
+	if r.stopWatch != nil {
+		r.stopWatch()
+	}
 	_ = r.data.CloseBoth()
 	return r.ctrl.CloseBoth()
 }

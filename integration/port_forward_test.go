@@ -1376,7 +1376,15 @@ func TestRawForwardRoundTripListKill(t *testing.T) {
 	defer c.Close()
 	// --- end of copied setup block ---
 
-	rc, err := cli.OpenRawForward(context.Background(), c, taskID, "127.0.0.1", port, func(string) {})
+	// The open context is cancelled the instant the open returns — exactly what
+	// the TUI's DoStartRawForward does with its connect timeout. The forward
+	// must survive it: ctx bounds the OPEN, not the connection. It did not:
+	// the control watcher was started on this ctx and its deferred onEnd
+	// closed the data stream, so every TUI raw connect died the moment it was
+	// established ("connection closed", no reason given).
+	openCtx, openCancel := context.WithCancel(context.Background())
+	rc, err := cli.OpenRawForward(openCtx, c, taskID, "127.0.0.1", port, func(string) {})
+	openCancel()
 	if err != nil {
 		t.Fatalf("OpenRawForward: %v", err)
 	}
