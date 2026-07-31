@@ -836,12 +836,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.forwardsModal.IsOpen() {
 			if a.forwardsModal.IsConfirming() {
 				switch msg.String() {
-				case "y", "Y":
+				case modalKeys.ConfirmYes, modalKeys.ConfirmYesUpper:
 					if id, taskID, spec, ok := a.forwardsModal.ConfirmKill(); ok {
 						return a, DoKillForward(a.client, id, taskID, spec)
 					}
 					return a, nil
-				case "n", "N", "esc":
+				case modalKeys.ConfirmNo, modalKeys.ConfirmNoUpper, modalKeys.Escape:
 					a.forwardsModal.CancelKillConfirm()
 					return a, nil
 				}
@@ -854,7 +854,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.forwardsModal.Close()
 				return a, nil
 			}
-			if msg.String() == "x" {
+			if msg.String() == modalKeys.ForwardKill {
 				a.forwardsModal.BeginKillConfirm()
 				return a, nil
 			}
@@ -892,9 +892,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				switch msg.String() {
-				case "r":
+				case modalKeys.BoardRefresh:
 					return a, DoBoardTopics(a.client)
-				case "x":
+				case modalKeys.BoardPurgeTopic:
 					topic := a.boardModal.SelectedTopicName()
 					if topic != "" {
 						return a, DoBoardPurge(a.client, topic, 0)
@@ -904,13 +904,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				// boardMessages mode
 				switch msg.String() {
-				case "X":
+				case modalKeys.BoardPurgeMsg:
 					seq := a.boardModal.SelectedMsgSeq()
 					if seq != 0 {
 						return a, DoBoardPurge(a.client, a.boardModal.CurTopic(), seq)
 					}
 					return a, nil
-				case "r":
+				case modalKeys.BoardRefresh:
 					return a, DoBoardRead(a.client, a.boardModal.CurTopic())
 				}
 			}
@@ -1086,8 +1086,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		logsEditing := a.focus == focusLogs && a.logs.IsEditingFilter()
 		// `q` quits when not in the cmdline / not composing a filter (those
 		// must accept literal 'q').
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "q" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Quit {
 			return a, tea.Quit
+		}
+		// `?` shows every binding. The footer is one row and drops what does
+		// not fit (see footerHints), so this is where the full list lives.
+		// Reuses the read-only DetailPopup — same Esc-closes / swallow-all
+		// handling as the `d` detail view.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Help {
+			a.detail.Open("keys", keyHelpBody())
+			return a, nil
 		}
 		// Tab cycles focus.
 		switch msg.Type {
@@ -1099,7 +1107,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		// `s` opens the submit popup when not in cmdline focus / filter edit.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "s" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Submit {
 			a.popup.SetRepoChoices(uniqueRepoPaths(a.runnersSnapshot), a.defaultRepo)
 			a.popup.SetHostChoices(uniqueHostnames(a.runnersSnapshot))
 			a.popup.SetAgentChoices(uniqueAgentProfiles(a.runnersSnapshot))
@@ -1109,7 +1117,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `C` (capital) opens the live connections view. It fetches the
 		// initial snapshot via ConnListWith (long-lived client, no new dial)
 		// and subscribes to conns.status for live updates. Esc closes.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "C" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Conns {
 			if a.client == nil {
 				a.cmdresult.Append(WarnStyle.Render("conns: not connected"))
 				return a, nil
@@ -1126,7 +1134,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// this TUI's own forwards, now routed through the same DoKillForward
 		// RPC. false: this is the modal-refresh path, not `forward ls` — no
 		// text dump into cmdresult (see ForwardsSnapshotMsg).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "f" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Forwards {
 			if a.client == nil {
 				a.cmdresult.Append(WarnStyle.Render("forwards: not connected"))
 				return a, nil
@@ -1141,7 +1149,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and restored on Esc/q — this is a full-screen takeover, not a
 		// split). Reuses the long-lived client (no fresh dial) and never
 		// sends a PTY size (the grid has no size authority).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "g" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Grid {
 			if a.client == nil {
 				a.cmdresult.Append(WarnStyle.Render("grid: not connected"))
 				return a, nil
@@ -1157,7 +1165,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `O` (capital) opens the agentboard topics view. Fetches the topic
 		// list on open via DoBoardTopics (long-lived client, no new dial).
 		// Enter drills into a topic; Esc closes or returns to the topic list.
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "O" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Board {
 			if a.client == nil {
 				a.cmdresult.Append(WarnStyle.Render("board: not connected"))
 				return a, nil
@@ -1172,12 +1180,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// tea.Exec then to actually suspend the TUI. The session is
 		// detachable (like `S`); `i` differs only in skipping the ambiguous-
 		// runner picker. Reattach lives on `r` (see below).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "i" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Interactive {
 			return a, DoOpenInteractive(a.client, a.defaultRepo, a.sessionCaps)
 		}
 		// `S` (capital) opens a new detachable interactive PTY session in the
 		// default repo (equivalent to `harness-cli session new`).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "S" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Session {
 			a.pendingInteractive = pendingInteractive{
 				repo: a.defaultRepo, resumeTaskID: "", extraArgs: nil,
 				caps: a.sessionCaps, capsOverride: false,
@@ -1188,7 +1196,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `F` opens the file picker for the task currently focused in the
 		// tasks pane. No-op when the tasks pane is not focused or no task
 		// is selected (the cmdresult line explains).
-		if a.focus != focusCmdline && !logsEditing && msg.String() == "F" {
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.FilePicker {
 			if a.focus != focusTasks {
 				a.cmdresult.Append(WarnStyle.Render("file picker: focus the tasks pane first"))
 				return a, nil
@@ -1207,7 +1215,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `W` routes the fire through the operator-notification egress
 		// instead (notify feed + --notify-hook, e.g. the phone) — for when
 		// you're about to walk away.
-		if a.focus == focusTasks && !logsEditing && (msg.String() == "w" || msg.String() == "W") {
+		if a.focus == focusTasks && !logsEditing && (msg.String() == mainKeys.AwaitIdle || msg.String() == mainKeys.AwaitIdleNotify) {
 			taskID := a.tasks.SelectedID()
 			if taskID == "" {
 				a.cmdresult.Append(WarnStyle.Render("await-idle: no task selected"))
@@ -1218,7 +1226,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			sink := protocol.AwaitIdleSink_Reply
-			if msg.String() == "W" {
+			if msg.String() == mainKeys.AwaitIdleNotify {
 				sink = protocol.AwaitIdleSink_Notify
 			} else {
 				a.cmdresult.Append(fmt.Sprintf("await-idle %s: watching (result lands here when the session goes idle)…", shortTaskID(taskID)))
@@ -1226,7 +1234,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, DoAwaitIdle(a.appCtx, a.client, taskID, 0, sink, "")
 		}
 		// `d` opens the detail popup for the focused row (runners or tasks).
-		if !logsEditing && msg.String() == "d" {
+		if !logsEditing && msg.String() == mainKeys.Detail {
 			switch a.focus {
 			case focusRunners:
 				if r := a.runners.SelectedRunner(); r != nil {
@@ -1245,7 +1253,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// `c` cancels the selected task when tasks panel is focused.
-		if a.focus == focusTasks && msg.String() == "c" {
+		if a.focus == focusTasks && msg.String() == mainKeys.Cancel {
 			id := a.tasks.SelectedID()
 			if id == "" {
 				a.cmdresult.Append(WarnStyle.Render("no task selected"))
@@ -1259,10 +1267,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `u` / `U` are the same resume variants but intentionally skip the
 		// assigned-runner preference so ambiguous runner selection can be
 		// reopened even when the previous runner is still available.
-		if a.focus == focusTasks && (msg.String() == "r" || msg.String() == "R" || msg.String() == "u" || msg.String() == "U") {
+		if a.focus == focusTasks && (msg.String() == mainKeys.ResumeAssignedContinue || msg.String() == mainKeys.ResumeAssignedFresh || msg.String() == mainKeys.ResumeAnyContinue || msg.String() == mainKeys.ResumeAnyFresh) {
 			t := a.tasks.SelectedTask()
-			unpinnedResume := msg.String() == "u" || msg.String() == "U"
-			act := resumeReattachAction(t, msg.String() == "r" || msg.String() == "u")
+			unpinnedResume := msg.String() == mainKeys.ResumeAnyContinue || msg.String() == mainKeys.ResumeAnyFresh
+			act := resumeReattachAction(t, msg.String() == mainKeys.ResumeAssignedContinue || msg.String() == mainKeys.ResumeAnyContinue)
 			switch act.Kind {
 			case actionReattach:
 				if unpinnedResume {
@@ -1298,21 +1306,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		// `v` view-attaches the selected live session in read-only mode (no input sent).
-		if a.focus == focusTasks && msg.String() == "v" {
+		if a.focus == focusTasks && msg.String() == mainKeys.ViewOnly {
 			act := resumeReattachAction(a.tasks.SelectedTask(), true)
 			if act.Kind == actionReattach {
 				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_View)
 			}
 		}
 		// `p` / `b` open the local / remote port-forward modal for the selected task.
-		if a.focus == focusTasks && (msg.String() == "p" || msg.String() == "b") {
+		if a.focus == focusTasks && (msg.String() == mainKeys.ForwardLocal || msg.String() == mainKeys.ForwardRemote) {
 			taskID := a.tasks.SelectedID()
 			if taskID == "" {
 				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
 				return a, nil
 			}
 			dir := ForwardLocal
-			if msg.String() == "b" {
+			if msg.String() == mainKeys.ForwardRemote {
 				dir = ForwardRemote
 			}
 			a.portForwardModal.OpenMode(taskID, dir)
@@ -1323,14 +1331,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Both route through DoKillForward (killLocalForward) — the same RPC
 		// the forwards modal's `x` (then y/n) and `forward kill` use, so there is
 		// exactly one way to stop a forward.
-		if a.focus == focusTasks && (msg.String() == "P" || msg.String() == "B") {
+		if a.focus == focusTasks && (msg.String() == mainKeys.ForwardLocalStop || msg.String() == mainKeys.ForwardRemoteStop) {
 			taskID := a.tasks.SelectedID()
 			if taskID == "" {
 				a.cmdresult.Append(WarnStyle.Render("forward: no task selected"))
 				return a, nil
 			}
 			dir := ForwardLocal
-			if msg.String() == "B" {
+			if msg.String() == mainKeys.ForwardRemoteStop {
 				dir = ForwardRemote
 			}
 			sel := selectForwards(a.activeForwards, taskID, dir)
@@ -1350,7 +1358,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// belongs beside the start keys, not behind `f` (the registry listing,
 		// whose per-row action is kill) — see RawConnectModal's doc comment and
 		// the rawModal field comment for why P/B don't apply to it.
-		if a.focus == focusTasks && msg.String() == "t" {
+		if a.focus == focusTasks && msg.String() == mainKeys.RawConnect {
 			taskID := a.tasks.SelectedID()
 			if taskID == "" {
 				a.cmdresult.Append(WarnStyle.Render("raw connect: no task selected"))
@@ -1543,16 +1551,19 @@ func (a *App) View() string {
 	}
 	cmdresultView := cmdresultBorder.Width(a.width - 2).Render(a.cmdresult.View())
 	cmdlineView := a.cmdline.View()
+	// The footer is budgeted as exactly one row (see layout), so every branch
+	// here is clipped to the terminal width — an over-long hint wraps and
+	// pushes the bottom of the view off-screen.
 	var hint string
 	switch {
 	case a.logs.IsEditingFilter():
 		hint = "/" + a.logs.FilterDraft() + "_   (enter apply · esc cancel)"
 	case a.logs.Filter() != "":
-		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · q quit"
+		hint = "[filter: " + a.logs.Filter() + "]   tab focus · / edit · esc clear · " + mainKeys.Quit + " quit"
 	default:
-		hint = "tab focus · ←/→ scroll · / filter · s submit · S session · i interactive · r/R assigned resume · u/U any resume · v view-only · w/W await-idle · F file picker · d detail · c cancel · C conns · O board · g:grid · f forwards (x kill) · p/P L-forward · b/B R-forward · t raw connect · q quit"
+		hint = footerHints(a.focus, a.width)
 	}
-	footer := FooterStyle.Render(hint)
+	footer := FooterStyle.Render(clipLine(hint, 0, a.width))
 
 	view := strings.Join([]string{
 		header,
