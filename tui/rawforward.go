@@ -153,8 +153,12 @@ type RawConnectModal struct {
 	// baseCols is the natural sizing; see RunnersModel.baseCols.
 	baseCols []table.Column
 	vp       viewport.Model
-	panes    []rawPane
-	active   int
+	// newErr is the target prompt's own error line. It used to go to the
+	// cmdresult panel, which the modal is covering — so the operator got no
+	// feedback at all until they closed the modal and found it behind.
+	newErr string
+	panes  []rawPane
+	active int
 	// width/height are the terminal's, set by App like every other modal's
 	// SetSize. Without them the view sized itself to its longest line and
 	// lipgloss.Place centred that narrow blob, which is why this modal looked
@@ -239,8 +243,28 @@ func (m *RawConnectModal) OpenSelected() {
 // BeginNew shows the target prompt.
 func (m *RawConnectModal) BeginNew() {
 	m.mode = rawModeNew
+	m.newErr = ""
 	m.input.SetValue("")
 	m.input.Focus()
+}
+
+// TargetOrError parses the entered target, reporting inside the modal. The
+// shared parser's message names the `-W` flag it was written for, which means
+// nothing here, so the wording is replaced at this boundary — the parsing
+// itself stays shared so the CLI and the TUI cannot disagree about what a
+// target looks like.
+func (m *RawConnectModal) TargetOrError() (string, int, bool) {
+	if strings.TrimSpace(m.input.Value()) == "" {
+		m.newErr = "enter a target as host:port"
+		return "", 0, false
+	}
+	host, port, err := m.Target()
+	if err != nil {
+		m.newErr = fmt.Sprintf("%q is not host:port", m.input.Value())
+		return "", 0, false
+	}
+	m.newErr = ""
+	return host, port, true
 }
 
 // BackToList leaves the viewer or the target prompt. The pane stays connected.
@@ -648,6 +672,9 @@ func (m *RawConnectModal) View() string {
 			HeaderStyle.Render(fmt.Sprintf("raw connect — task %s", pfShortID(m.taskID))),
 			MutedStyle.Render("connect to a host:port the runner can reach"),
 			m.input.View(),
+		}
+		if m.newErr != "" {
+			lines = append(lines, WarnStyle.Render(m.newErr))
 		}
 		for i := len(lines); i < m.height-3; i++ {
 			lines = append(lines, "")

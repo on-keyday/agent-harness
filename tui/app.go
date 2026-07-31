@@ -1060,9 +1060,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.rawModal.BackToList()
 					return a, nil
 				case tea.KeyEnter:
-					host, port, err := a.rawModal.Target()
-					if err != nil {
-						a.cmdresult.Append(WarnStyle.Render("raw connect: " + err.Error()))
+					// Reported inside the modal: cmdresult is behind it.
+					host, port, ok := a.rawModal.TargetOrError()
+					if !ok {
 						return a, nil
 					}
 					// Each attempt gets its own generation and its own pane, so

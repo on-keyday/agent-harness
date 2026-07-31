@@ -444,3 +444,37 @@ func TestRawModalScreensAreTheSameHeight(t *testing.T) {
 		}
 	}
 }
+
+// A bad target must be reported INSIDE the modal. It used to go to the
+// cmdresult panel, which the modal covers, so the operator saw nothing until
+// they closed the modal and found the message sitting behind it.
+func TestRawModalBadTargetReportsInsideTheModal(t *testing.T) {
+	a := New(Config{})
+	a.client = &cli.Client{}
+	a.rawModal.SetSize(100, 24)
+	a.rawModal.Show("task-1")
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a = m.(*App)
+
+	// Empty target.
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if v := a.rawModal.View(); !strings.Contains(v, "enter a target as host:port") {
+		t.Errorf("empty target not reported in the modal:\n%s", v)
+	}
+
+	// Malformed target: the message must not name the CLI's -W flag.
+	a.rawModal.SetSpec("garbage")
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	v := a.rawModal.View()
+	if !strings.Contains(v, `"garbage" is not host:port`) {
+		t.Errorf("bad target not reported in the modal:\n%s", v)
+	}
+	if strings.Contains(v, "-W") {
+		t.Errorf("the TUI surfaced the CLI flag's wording:\n%s", v)
+	}
+	if a.rawModal.Mode() != rawModeNew {
+		t.Error("a bad target must leave the prompt open to fix it")
+	}
+}
