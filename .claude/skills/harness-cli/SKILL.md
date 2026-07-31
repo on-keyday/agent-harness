@@ -677,7 +677,12 @@ the other end, and graceful degradation when a handshake never completes.
 
 Each agent owns exactly the topics it **receives** on. Never subscribe to a
 topic you only **send** to — doing so causes your own outbound messages to
-loop back into your inbox.
+loop back into your inbox, and (for an interactive session) to wake you: the
+board fires the wake hook for every matching subscriber including the
+publisher, so a message you send to a topic you subscribe to comes back as a
+`<harness:agentboard-wake>` turn. Sending to your **own** `chat.<short-id>` is
+therefore a working self-ping — deliberate when you want one, an echo loop
+when you don't.
 
 Typical per-agent setup:
 

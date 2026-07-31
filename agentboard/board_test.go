@@ -312,12 +312,11 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	}
 }
 
-// TestBoard_SendSkipsOnDeliverForPublisher verifies the self-wake fix:
-// when a (rid, tid) publishes on a topic it is itself subscribed to, the
-// onDeliver callback fires for *other* matching subscribers but not for
-// the publisher itself — so the server's task_wake hook does not inject
-// <harness:agentboard-wake> into the publisher's own stdin.
-func TestBoard_SendSkipsOnDeliverForPublisher(t *testing.T) {
+// TestBoard_SendFiresOnDeliverForPublisherToo verifies that a (rid, tid)
+// publishing on a topic it is itself subscribed to gets onDeliver like any
+// other subscriber — so the server's task_wake hook reaches the publisher
+// and a self-send on one's own chat.<short-id> works as a self-ping.
+func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
@@ -363,15 +362,15 @@ func TestBoard_SendSkipsOnDeliverForPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if pubDeliveries != 0 {
-		t.Errorf("publisher onDeliver fired %d times; want 0 (self-wake should be skipped)", pubDeliveries)
+	if pubDeliveries != 1 {
+		t.Errorf("publisher onDeliver fired %d times; want 1 (self-wake is delivered)", pubDeliveries)
 	}
 	if subDeliveries != 1 {
 		t.Errorf("subscriber onDeliver fired %d times; want 1", subDeliveries)
 	}
 
-	// Publisher's own inbox still sees the message via the topic ring —
-	// only the wake hook is suppressed.
+	// The publisher's own inbox sees the message via the topic ring, as it
+	// always has — the wake is what changed, not the retention.
 	msgs, _ := b.Inbox(pubConn, 0)
 	if len(msgs) != 1 || string(msgs[0].Payload) != "hello" {
 		t.Errorf("publisher inbox = %+v, want one message 'hello'", msgs)

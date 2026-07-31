@@ -217,15 +217,10 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		t = newTopic(topicName, b.cfg.RingN)
 		b.topics[topicName] = t
 	}
-	fromKey := ticketKey{runner: runnerIDStringProto(fromRid), task: hexTaskIDProto(fromTid)}
 	targets := make([]*taskState, 0)
-	var selfTs *taskState
-	for k, ts := range b.tasks {
+	for _, ts := range b.tasks {
 		if ts.matches(topicName) {
 			targets = append(targets, ts)
-			if k == fromKey {
-				selfTs = ts
-			}
 		}
 	}
 	b.mu.Unlock()
@@ -236,18 +231,20 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	b.mu.Lock()
 	fn := b.onDeliver
 	b.mu.Unlock()
+	// Subscription is the opt-in: every matching subscriber is pinged AND
+	// gets onDeliver (hence a task_wake) — the publisher's own taskState
+	// included, so a send to one's own chat.<short-id> is a working
+	// self-ping. This also makes the (rid, tid)-keyed publisher case
+	// consistent with publishes that self-wake by construction anyway:
+	// server-originated ones (await-idle) carry a placeholder RunnerID and
+	// never matched a publisher skip. Loop pressure is bounded elsewhere —
+	// the runner debounces wake injections per task (wakeDebounceWindow),
+	// and agents are told to subscribe only to topics they receive on.
 	for _, ts := range targets {
-		// ping self too — supports loopback waits where the same (rid, tid)
-		// has one connection waiting and another publishing (e.g. concurrent
-		// `harness-cli agent wait` + `agent send`). Cheap and harmless.
 		for _, c := range ts.snapshotConns() {
 			c.ping()
 		}
-		// Skip onDeliver for the publisher's own taskState — otherwise the
-		// server's wake hook would emit task_wake to the publisher's runner
-		// for a message the publisher just sent itself, injecting a spurious
-		// <harness:agentboard-wake> into the publisher's own stdin.
-		if fn != nil && ts != selfTs {
+		if fn != nil {
 			rid, tid, _ := ts.identity()
 			fn(rid, tid)
 		}
