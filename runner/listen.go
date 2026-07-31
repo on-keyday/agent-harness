@@ -15,8 +15,8 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
-	"github.com/on-keyday/objtrsf/transport"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/transport"
 )
 
 // ListenConfig extends Config with listen-side fields. WSListen / UDPListen
@@ -44,6 +44,7 @@ type ListenConfig struct {
 // runner.Connect uses for outbound dials. Returns when ctx is cancelled or
 // a fatal listen error occurs.
 func ListenAndServe(ctx context.Context, cfg ListenConfig) error {
+	clearInheritedCtrlCIgnore()
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}

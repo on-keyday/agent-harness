@@ -34,8 +34,14 @@ import "syscall"
 //     which is why it is settable and inheritable without one.
 //
 // It only has to run before the first PTY child is spawned — the attribute is
-// read at CreateProcess time — so runner startup is early enough, and it does
-// not need to precede pseudoconsole creation.
+// read at CreateProcess time — so it need not precede pseudoconsole creation.
+//
+// Called from Connect and ListenAndServe, the two entry points agent-runner
+// actually uses (dial mode hands Connect to cli.PersistLoop; listen mode calls
+// ListenAndServe). Connect runs again on every reconnect, so this is not
+// once-per-process — that is fine, it sets idempotent process state. It was
+// first attached to runner.Run, which only the integration suite calls, and so
+// never executed in production at all.
 //
 // This cannot regress daemon.py's shutdown path: that uses CTRL_BREAK_EVENT, and
 // the inherited ignore is Ctrl-C-specific. Nor can it expose the runner itself

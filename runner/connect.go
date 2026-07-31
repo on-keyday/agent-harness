@@ -154,6 +154,7 @@ func (h *RunHandle) Close() {
 // Returns *cli.PSKAuthError when the server rejects the PSK so PersistLoop
 // can treat it as fatal.
 func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
+	clearInheritedCtrlCIgnore()
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
@@ -421,13 +422,12 @@ func OnConnect(runCtx context.Context, h *RunHandle) error {
 	}
 }
 
-// Run is the legacy single-shot entry point used by tests and by the shim in
-// agent-runner main when persist=false. Sequential Connect → OnConnect.
+// Run is the single-shot entry point: sequential Connect → OnConnect. The
+// integration suite is what uses it — agent-runner does NOT. Its listen mode
+// calls ListenAndServe and its dial mode hands Connect/OnConnect to
+// cli.PersistLoop, so anything that must happen once per runner process has to
+// be attached to those two, not to this.
 func Run(ctx context.Context, cfg Config) error {
-	// Before any PTY child exists: undo the inherited "ignore CTRL+C" the
-	// launcher's CREATE_NEW_PROCESS_GROUP left on this process, or nothing we
-	// spawn can be interrupted. No-op off Windows. See ctrlc_windows.go.
-	clearInheritedCtrlCIgnore()
 	h, err := Connect(ctx, cfg)
 	if err != nil {
 		return err
