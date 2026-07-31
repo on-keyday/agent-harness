@@ -392,7 +392,31 @@ func (m *RawConnectModal) Update(msg tea.Msg) (RawConnectModal, tea.Cmd) {
 	return *m, cmd
 }
 
+// syncEntry makes the entry line describe what Enter will do. One textinput
+// serves two jobs — a target on [+ new], bytes to send on a pane — and it used
+// to keep the "host:port" placeholder either way, so a connected pane invited
+// the operator to type a target into what is actually the send line. Derived
+// state, recomputed in View so it cannot drift from the mode it describes.
+func (m *RawConnectModal) syncEntry() {
+	p := m.ActivePane()
+	switch {
+	case p == nil:
+		m.input.Prompt = "target > "
+		m.input.Placeholder = "host:port"
+	case !p.live:
+		m.input.Prompt = "closed  > "
+		m.input.Placeholder = "ctrl+x removes this pane"
+	case m.hexMode:
+		m.input.Prompt = "send hex > "
+		m.input.Placeholder = "48 65 6c 6c 6f"
+	default:
+		m.input.Prompt = "send " + m.newline.label() + " > "
+		m.input.Placeholder = "bytes to send"
+	}
+}
+
 func (m *RawConnectModal) View() string {
+	m.syncEntry()
 	box := PanelStyleFocused.Padding(0, 1)
 	header := HeaderStyle.Render(fmt.Sprintf("raw connect — task %s  (%d pane%s)",
 		pfShortID(m.taskID), len(m.panes), plural(len(m.panes))))
@@ -425,11 +449,6 @@ func (m *RawConnectModal) View() string {
 	}
 
 	entry := m.input.View()
-	if m.hexMode {
-		entry = "hex " + entry
-	} else if m.newline != rawNewlineCRLF {
-		entry = m.newline.label() + " " + entry
-	}
 	foot := "←/→ tab · Enter send · ctrl+r hex · ctrl+o " + m.newline.label() +
 		" · ctrl+t HTTP · ctrl+x close · esc hide"
 	if m.InForm() {

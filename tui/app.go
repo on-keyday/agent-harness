@@ -1054,7 +1054,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// the request it just built.
 				if a.rawModal.InForm() {
 					if err := a.rawModal.SendForm(); err != nil {
-						a.rawModal.SetActiveNote("http: " + err.Error())
+						// BuildHTTPRequest's errors already start with "http:";
+						// wrapping them produced "http: http: path ...".
+						a.rawModal.SetActiveNote(err.Error())
 					}
 					return a, nil
 				}

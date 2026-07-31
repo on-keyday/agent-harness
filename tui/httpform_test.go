@@ -111,7 +111,11 @@ func TestRawModalFormEnterSendsTheRequest(t *testing.T) {
 	if !p.live {
 		t.Fatalf("Enter took the byte-entry path (pane closed with %q)", p.note)
 	}
-	if !strings.HasPrefix(p.note, "http:") {
-		t.Errorf("note = %q, want the form's report", p.note)
+	// The discriminator is live-vs-closed above: the form path reports on the
+	// pane, the byte-entry path marks it closed. Asserting a "http:" prefix
+	// here would only be testing the wrapper that used to double the builder's
+	// own prefix, not the routing this test exists for.
+	if !strings.Contains(p.note, "not connected") {
+		t.Errorf("note = %q, want the send failure recorded on the pane", p.note)
 	}
 }

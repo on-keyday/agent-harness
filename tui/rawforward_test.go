@@ -384,3 +384,62 @@ func TestRawModalHexToggleAndClose(t *testing.T) {
 		t.Errorf("ctrl+x did not close the pane")
 	}
 }
+
+// The entry line has two jobs — a target on [+ new], bytes on a pane — and one
+// textinput. It must say which, or a connected pane invites the operator to
+// type a target into the send line (which is what it did).
+func TestRawModalEntryLineDescribesItsMode(t *testing.T) {
+	m := NewRawConnectModal()
+	m.SetSize(100, 24)
+	m.Show("task-1")
+
+	if v := m.View(); !strings.Contains(v, "target > ") || !strings.Contains(v, "host:port") {
+		t.Errorf("[+ new] must ask for a target:\n%s", v)
+	}
+
+	m.AddPane("task-1", "localhost", 8765, 1)
+	m.SetConn(1, nil, nil, "connected (fwd 1)")
+	v := m.View()
+	if !strings.Contains(v, "send CRLF > ") || !strings.Contains(v, "bytes to send") {
+		t.Errorf("a live pane must offer to send, with the terminator shown:\n%s", v)
+	}
+	if strings.Contains(v, "host:port") {
+		t.Errorf("a live pane still advertises a target placeholder:\n%s", v)
+	}
+
+	m.ToggleHex()
+	if v := m.View(); !strings.Contains(v, "send hex > ") {
+		t.Errorf("hex mode not reflected in the entry line:\n%s", v)
+	}
+	m.ToggleHex()
+	m.CycleNewline()
+	if v := m.View(); !strings.Contains(v, "send LF > ") {
+		t.Errorf("terminator change not reflected in the entry line:\n%s", v)
+	}
+
+	m.MarkClosed(1, "connection closed")
+	if v := m.View(); !strings.Contains(v, "closed  > ") {
+		t.Errorf("a closed pane must not look like it can send:\n%s", v)
+	}
+}
+
+// The builder's errors already start with "http:" — wrapping them produced
+// "http: http: path ...".
+func TestRawModalFormErrorIsNotDoublePrefixed(t *testing.T) {
+	a := New(Config{})
+	a.rawModal.Show("task-1")
+	a.rawModal.AddPane("task-1", "localhost", 8765, 1)
+	a.rawModal.SetConn(1, nil, nil, "connected")
+	a.rawModal.ToggleForm()
+	a.rawModal.SetFormForTest("GET", "", "", "")
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	note := a.rawModal.ActivePane().note
+	if strings.Contains(note, "http: http:") {
+		t.Errorf("note is double-prefixed: %q", note)
+	}
+	if !strings.HasPrefix(note, "http:") {
+		t.Errorf("note lost its prefix: %q", note)
+	}
+}
