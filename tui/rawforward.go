@@ -8,9 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	"github.com/on-keyday/agent-harness/cli"
 )
@@ -48,9 +49,13 @@ type rawPane struct {
 	cancel context.CancelFunc
 	// head/tail bracket the output: the front is never dropped, the newest
 	// bytes are, and elided counts what fell out between them.
-	head       []byte
-	tail       []byte
-	elided     int
+	head   []byte
+	tail   []byte
+	elided int
+	// inBytes/outBytes are totals, not what the ring retained: the list needs
+	// to say how much actually crossed the connection.
+	inBytes    int
+	outBytes   int
 	live       bool
 	connecting bool
 	note       string
@@ -81,6 +86,7 @@ func sanitizeOutput(b []byte) string {
 // AppendOutput adds received bytes, keeping the head and the newest tail and
 // counting what fell out between them. See rawHeadKeepBytes.
 func (p *rawPane) AppendOutput(b []byte) {
+	p.inBytes += len(b)
 	if n := rawHeadKeepBytes - len(p.head); n > 0 {
 		if n > len(b) {
 			n = len(b)
@@ -124,15 +130,31 @@ func (p *rawPane) closeConn() {
 	}
 }
 
-// RawConnectModal shows a [+ new] target prompt plus one tab per pane, mirroring
-// the WebUI's raw panel so the two surfaces behave the same way. active == 0 is
-// the [+ new] slot; pane i is active-1.
+// rawModalMode is which of the modal's three screens is showing. The list is
+// home: a tab strip put the panes and one pane's output on the same screen, so
+// the output had nowhere to grow and the panes had nowhere to report. Modelled
+// on ForwardsModal (a table you select in) plus a viewer, rather than inventing
+// a third idiom.
+type rawModalMode int
+
+const (
+	rawModeList rawModalMode = iota // table of panes
+	rawModeNew                      // target prompt
+	rawModeView                     // one pane: output + entry line
+)
+
+// RawConnectModal lists a task's raw connections and opens one at a time.
 type RawConnectModal struct {
 	open   bool
+	mode   rawModalMode
 	taskID string
 	input  textinput.Model
-	panes  []rawPane
-	active int
+	table  table.Model
+	// baseCols is the natural sizing; see RunnersModel.baseCols.
+	baseCols []table.Column
+	vp       viewport.Model
+	panes    []rawPane
+	active   int
 	// width/height are the terminal's, set by App like every other modal's
 	// SetSize. Without them the view sized itself to its longest line and
 	// lipgloss.Place centred that narrow blob, which is why this modal looked
@@ -189,25 +211,140 @@ func NewRawConnectModal() RawConnectModal {
 	in := textinput.New()
 	in.Placeholder = "host:port"
 	in.CharLimit = 128
-	return RawConnectModal{input: in}
+	cols := []table.Column{
+		{Title: "target", Width: 24},
+		{Title: "state", Width: 8},
+		{Title: "in", Width: 9},
+		{Title: "out", Width: 9},
+		{Title: "note", Width: 30},
+	}
+	t := table.New(table.WithColumns(cols), table.WithFocused(true))
+	return RawConnectModal{input: in, table: t, baseCols: cols, vp: viewport.New(80, 10)}
+}
+
+// Mode reports which screen is showing.
+func (m *RawConnectModal) Mode() rawModalMode { return m.mode }
+
+// OpenSelected enters the viewer for the highlighted row.
+func (m *RawConnectModal) OpenSelected() {
+	if len(m.panes) == 0 {
+		return
+	}
+	m.active = m.table.Cursor() + 1
+	m.mode = rawModeView
+	m.syncViewport()
+	m.input.Focus()
+}
+
+// BeginNew shows the target prompt.
+func (m *RawConnectModal) BeginNew() {
+	m.mode = rawModeNew
+	m.input.SetValue("")
+	m.input.Focus()
+}
+
+// BackToList leaves the viewer or the target prompt. The pane stays connected.
+func (m *RawConnectModal) BackToList() {
+	m.mode = rawModeList
+	m.formMode = false
+	m.input.SetValue("")
+	m.input.Blur()
+	m.syncRows()
+}
+
+// syncRows rebuilds the table from the panes, keeping the cursor in range.
+func (m *RawConnectModal) syncRows() {
+	rows := make([]table.Row, 0, len(m.panes))
+	for i := range m.panes {
+		p := &m.panes[i]
+		state := "closed"
+		switch {
+		case p.live:
+			state = "live"
+		case p.connecting:
+			state = "opening"
+		}
+		rows = append(rows, table.Row{
+			p.target(), state,
+			formatByteCount(p.inBytes), formatByteCount(p.outBytes), p.note,
+		})
+	}
+	m.table.SetRows(rows)
+	if c := m.table.Cursor(); c >= len(rows) && len(rows) > 0 {
+		m.table.SetCursor(len(rows) - 1)
+	}
+}
+
+// syncViewport refreshes the viewer's content, sticking to the bottom only
+// while the reader is already there — the same rule the log pane and the WebUI
+// output use, so following live output does not fight scrolling back.
+func (m *RawConnectModal) syncViewport() {
+	p := m.ActivePane()
+	if p == nil {
+		m.vp.SetContent("")
+		return
+	}
+	atBottom := m.vp.AtBottom()
+	m.vp.SetContent(sanitizeOutput(p.output()))
+	if atBottom {
+		m.vp.GotoBottom()
+	}
+}
+
+// ScrollViewport forwards a key to the output viewport (↑/↓, PgUp/PgDn).
+func (m *RawConnectModal) ScrollViewport(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	return cmd
+}
+
+// UpdateList forwards a key to the pane table (row movement).
+func (m *RawConnectModal) UpdateList(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.table, cmd = m.table.Update(msg)
+	return cmd
+}
+
+// formatByteCount keeps the list's columns narrow.
+func formatByteCount(n int) string {
+	switch {
+	case n >= 1<<20:
+		return fmt.Sprintf("%.1fMB", float64(n)/(1<<20))
+	case n >= 1<<10:
+		return fmt.Sprintf("%.1fkB", float64(n)/(1<<10))
+	}
+	return fmt.Sprintf("%dB", n)
 }
 
 // SetSize records the terminal size. Mirrors ForwardsModal.SetSize — App calls
 // it on WindowSizeMsg and when the modal opens.
-func (m *RawConnectModal) SetSize(w, h int) { m.width, m.height = w, h }
+func (m *RawConnectModal) SetSize(w, h int) {
+	m.width, m.height = w, h
+	if w > 8 {
+		m.table.SetWidth(w - 4)
+		m.table.SetColumns(fitColumns(m.baseCols, w-4, flexColumn(m.baseCols, "note")))
+		m.vp.Width = w - 4
+	}
+	if h > 8 {
+		m.table.SetHeight(h - 4)
+		// header, target line, entry line, footer, and the box's two rows.
+		m.vp.Height = h - 6
+	}
+}
 
-func (m *RawConnectModal) IsOpen() bool    { return m.open }
-func (m *RawConnectModal) TaskID() string  { return m.taskID }
-func (m *RawConnectModal) PaneCount() int  { return len(m.panes) }
-func (m *RawConnectModal) OnNewSlot() bool { return m.active == 0 }
+func (m *RawConnectModal) IsOpen() bool   { return m.open }
+func (m *RawConnectModal) TaskID() string { return m.taskID }
+func (m *RawConnectModal) PaneCount() int { return len(m.panes) }
 
 // Show reveals the modal for taskID. Unlike the Open it replaces, it keeps
 // existing panes: those are connections, not view state.
 func (m *RawConnectModal) Show(taskID string) {
 	m.open = true
 	m.taskID = taskID
+	m.mode = rawModeList
 	m.input.SetValue("")
-	m.input.Focus()
+	m.input.Blur()
+	m.syncRows()
 }
 
 // Hide closes the view only. Every pane stays connected and stays registered —
@@ -217,6 +354,8 @@ func (m *RawConnectModal) Hide() {
 	m.input.Blur()
 }
 
+// SendActive's byte accounting lives here so every path through it — the entry
+// line, the HTTP form — reports what it wrote.
 func (m *RawConnectModal) ActivePane() *rawPane {
 	if m.active <= 0 || m.active > len(m.panes) {
 		return nil
@@ -235,19 +374,6 @@ func (m *RawConnectModal) PaneForGen(gen uint64) *rawPane {
 	return nil
 }
 
-// MovePane walks the tab strip. It clamps rather than wraps: wrapping past
-// [+ new] would make "go left until you reach new" a guessing game.
-func (m *RawConnectModal) MovePane(delta int) {
-	m.active += delta
-	if m.active < 0 {
-		m.active = 0
-	}
-	if m.active > len(m.panes) {
-		m.active = len(m.panes)
-	}
-	m.input.SetValue("")
-}
-
 // AddPane appends a connecting pane and selects it.
 func (m *RawConnectModal) AddPane(taskID, host string, port int, gen uint64) {
 	m.panes = append(m.panes, rawPane{
@@ -255,10 +381,29 @@ func (m *RawConnectModal) AddPane(taskID, host string, port int, gen uint64) {
 		connecting: true, note: "connecting…",
 	})
 	m.active = len(m.panes)
+	m.mode = rawModeView
 	m.input.SetValue("")
+	m.input.Focus()
+	m.syncRows()
+	m.table.SetCursor(m.active - 1)
+	m.syncViewport()
 }
 
 // CloseActivePane drops the selected pane and closes its connection.
+// CloseSelectedPane closes whichever pane the list has under its cursor.
+func (m *RawConnectModal) CloseSelectedPane() {
+	if m.mode == rawModeList {
+		if len(m.panes) == 0 {
+			return
+		}
+		m.active = m.table.Cursor() + 1
+	}
+	m.CloseActivePane()
+	if m.mode == rawModeView {
+		m.BackToList()
+	}
+}
+
 func (m *RawConnectModal) CloseActivePane() {
 	p := m.ActivePane()
 	if p == nil {
@@ -270,6 +415,7 @@ func (m *RawConnectModal) CloseActivePane() {
 	if m.active > len(m.panes) {
 		m.active = len(m.panes)
 	}
+	m.syncRows()
 }
 
 // CloseAllPanes is what quitting must call: a RawConn whose process is gone
@@ -290,7 +436,11 @@ func (m *RawConnectModal) SendActive(b []byte) error {
 	if p == nil || p.conn == nil {
 		return fmt.Errorf("raw connect: not connected")
 	}
-	return p.conn.Send(b)
+	if err := p.conn.Send(b); err != nil {
+		return err
+	}
+	p.outBytes += len(b)
+	return nil
 }
 
 // hexToBytes accepts "48 65 6c" / "48656c" and rejects anything else, so a
@@ -471,67 +621,83 @@ func (m *RawConnectModal) syncEntry() {
 	}
 }
 
+// Refresh re-derives the list and the viewer from the panes. Called whenever a
+// message mutates one, so the counters and the output stay current without the
+// App reaching into either widget.
+func (m *RawConnectModal) Refresh() {
+	m.syncRows()
+	if m.mode == rawModeView {
+		m.syncViewport()
+	}
+}
+
 func (m *RawConnectModal) View() string {
-	m.syncEntry()
 	box := PanelStyleFocused.Padding(0, 1)
-	header := HeaderStyle.Render(fmt.Sprintf("raw connect — task %s  (%d pane%s)",
-		pfShortID(m.taskID), len(m.panes), plural(len(m.panes))))
-
-	tabs := make([]string, 0, len(m.panes)+1)
-	label := "[+ new]"
-	if m.active == 0 {
-		label = FocusedStyle.Render(label)
-	}
-	tabs = append(tabs, label)
-	for i := range m.panes {
-		t := "[" + m.panes[i].target() + "]"
-		switch {
-		case m.active == i+1:
-			t = FocusedStyle.Render(t)
-		case !m.panes[i].live:
-			t = MutedStyle.Render(t)
-		}
-		tabs = append(tabs, t)
-	}
-
-	state := "enter host:port, Enter to connect"
-	body := ""
-	if p := m.ActivePane(); p != nil {
-		state = p.note
-		if state == "" {
-			state = "connected"
-		}
-		body = sanitizeOutput(p.output())
-	}
-
-	entry := m.input.View()
-	foot := "←/→ tab · Enter send · ctrl+r hex · ctrl+o " + m.newline.label() +
-		" · ctrl+t HTTP · ctrl+x close · esc hide"
-	if m.InForm() {
-		entry = m.form.View()
-		foot = "ctrl+x close · esc hide"
-	}
-
-	head := []string{header, strings.Join(tabs, " "), MutedStyle.Render(state), entry}
-	tail := FooterStyle.Render(foot)
-
-	// Fill the box the way the forwards list and the grid do, so the output
-	// area is where the eye lands instead of a floating three-line note.
-	out := strings.Split(body, "\n")
-	if avail := m.height - 4 - lipgloss.Height(strings.Join(head, "\n")) - 1; avail > 0 {
-		if len(out) > avail {
-			out = out[len(out)-avail:] // newest, matching the ring's own rule
-		}
-		for len(out) < avail {
-			out = append(out, "")
-		}
-	}
-
-	view := strings.Join(head, "\n") + "\n" + strings.Join(out, "\n") + "\n" + tail
 	if m.width > 4 {
 		box = box.Width(m.width - 4)
 	}
-	return box.Render(view)
+
+	var lines []string
+	switch m.mode {
+	case rawModeNew:
+		m.input.Prompt = "target > "
+		m.input.Placeholder = "host:port"
+		// Padded to the same height as the other two screens: a modal that
+		// shrinks when you press `n` reads as a different window opening.
+		lines = []string{
+			HeaderStyle.Render(fmt.Sprintf("raw connect — task %s", pfShortID(m.taskID))),
+			MutedStyle.Render("connect to a host:port the runner can reach"),
+			m.input.View(),
+		}
+		for i := len(lines); i < m.height-3; i++ {
+			lines = append(lines, "")
+		}
+		lines = append(lines, FooterStyle.Render("Enter: connect · esc: back"))
+
+	case rawModeView:
+		p := m.ActivePane()
+		if p == nil {
+			m.mode = rawModeList
+			return m.View()
+		}
+		state := p.note
+		if state == "" {
+			if p.live {
+				state = "connected"
+			} else {
+				state = "closed"
+			}
+		}
+		m.syncEntry()
+		entry := m.input.View()
+		foot := "↑↓ scroll · Enter send · ctrl+r hex · ctrl+o " + m.newline.label() +
+			" · ctrl+t HTTP · ctrl+x close · esc: list"
+		if m.InForm() {
+			entry = m.form.View()
+			foot = "ctrl+t back · ctrl+x close · esc: list"
+		}
+		lines = []string{
+			HeaderStyle.Render("raw connect — " + p.target()),
+			MutedStyle.Render(fmt.Sprintf("%s · in %s / out %s",
+				state, formatByteCount(p.inBytes), formatByteCount(p.outBytes))),
+			m.vp.View(),
+			entry,
+			FooterStyle.Render(foot),
+		}
+
+	default: // rawModeList
+		body := m.table.View()
+		if len(m.panes) == 0 {
+			body = MutedStyle.Render("no connections yet")
+		}
+		lines = []string{
+			HeaderStyle.Render(fmt.Sprintf("raw connect — task %s  (%d pane%s)",
+				pfShortID(m.taskID), len(m.panes), plural(len(m.panes)))),
+			body,
+			FooterStyle.Render("Enter: open · n: new · ctrl+x: close · esc: hide"),
+		}
+	}
+	return box.Render(strings.Join(lines, "\n"))
 }
 
 // plural is the "s" in "1 pane" / "2 panes".

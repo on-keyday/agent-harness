@@ -768,11 +768,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.rawModal.SetConn(msg.Gen, msg.Conn, msg.Cancel,
 			fmt.Sprintf("connected (fwd %d)", msg.ForwardID))
+		a.rawModal.Refresh()
 		return a, nil
 
 	case RawForwardDataMsg:
 		if p := a.rawModal.PaneForGen(msg.Gen); p != nil {
 			p.AppendOutput(msg.Data)
+			a.rawModal.Refresh()
 		}
 		return a, nil
 
@@ -782,6 +784,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// therefore idempotent here, but still the one place that drops the
 		// pane's own reference and stops its sink goroutine.
 		a.rawModal.MarkClosed(msg.Gen, msg.Reason)
+		a.rawModal.Refresh()
 		return a, nil
 
 	case tea.WindowSizeMsg:
@@ -1030,97 +1033,111 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// parses the entered spec and opens a pane tagged with a fresh
 		// generation; on a live pane it sends the line.
 		if a.rawModal.IsOpen() {
+			// Three screens, three key sets. The list has no focused text
+			// input, so a letter is free there (`n`); the other two take every
+			// printable rune, which is why their actions are chords.
+			switch a.rawModal.Mode() {
+			case rawModeList:
+				switch {
+				case msg.Type == tea.KeyEsc:
+					a.rawModal.Hide()
+					return a, nil
+				case msg.Type == tea.KeyEnter:
+					a.rawModal.OpenSelected()
+					return a, nil
+				case msg.Type == tea.KeyCtrlX:
+					a.rawModal.CloseSelectedPane()
+					return a, nil
+				case msg.String() == "n":
+					a.rawModal.BeginNew()
+					return a, nil
+				}
+				return a, a.rawModal.UpdateList(msg)
+
+			case rawModeNew:
+				switch msg.Type {
+				case tea.KeyEsc:
+					a.rawModal.BackToList()
+					return a, nil
+				case tea.KeyEnter:
+					host, port, err := a.rawModal.Target()
+					if err != nil {
+						a.cmdresult.Append(WarnStyle.Render("raw connect: " + err.Error()))
+						return a, nil
+					}
+					// Each attempt gets its own generation and its own pane, so
+					// two attempts can never share one — which is what used to
+					// let the loser's close tear down the winner.
+					a.rawGenSeq++
+					gen := a.rawGenSeq
+					taskID := a.rawModal.TaskID()
+					a.rawModal.AddPane(taskID, host, port, gen)
+					return a, DoStartRawForward(a.client, taskID, host, port, gen, a.program)
+				}
+				var rmcmd tea.Cmd
+				a.rawModal, rmcmd = a.rawModal.Update(msg)
+				return a, rmcmd
+			}
+
+			// rawModeView.
 			switch msg.Type {
 			case tea.KeyEsc:
-				a.rawModal.Hide()
+				a.rawModal.BackToList()
 				return a, nil
-			case tea.KeyLeft, tea.KeyRight:
-				d := 1
-				if msg.Type == tea.KeyLeft {
-					d = -1
-				}
-				// In the form the arrows cycle the method; the tab strip only
-				// owns them in byte-entry mode.
-				if a.rawModal.InForm() {
-					a.rawModal.FormCycleMethod(d)
-				} else {
-					a.rawModal.MovePane(d)
-				}
+			case tea.KeyCtrlX:
+				a.rawModal.CloseSelectedPane()
 				return a, nil
-			case tea.KeyEnter:
-				// The form owns Enter when it is showing — this case is the
-				// byte-entry send, and it runs first in the switch, so without
-				// this the form's Enter would send the target input instead of
-				// the request it just built.
-				if a.rawModal.InForm() {
-					if err := a.rawModal.SendForm(); err != nil {
-						// BuildHTTPRequest's errors already start with "http:";
-						// wrapping them produced "http: http: path ...".
-						a.rawModal.SetActiveNote(err.Error())
-					}
-					return a, nil
-				}
-				if p := a.rawModal.ActivePane(); p != nil {
-					if p.live {
-						// SendEntry applies the mode: hex sends exact bytes,
-						// text appends the selected terminator.
-						// A hex typo is reported on the pane and sends nothing.
-						if err := a.rawModal.SendEntry(); err != nil {
-							if strings.HasPrefix(err.Error(), "hex:") {
-								a.rawModal.SetActiveNote(err.Error())
-							} else {
-								a.rawModal.MarkClosed(p.gen, "raw connect: "+err.Error())
-							}
-						}
-					}
-					return a, nil
-				}
-				// [+ new]. Each Enter allocates its own generation and its own
-				// pane, so the old "one attempt in flight" rule is unnecessary:
-				// two attempts can no longer share a generation, which is what
-				// used to let the loser's close tear down the winner.
-				host, port, err := a.rawModal.Target()
-				if err != nil {
-					a.cmdresult.Append(WarnStyle.Render("raw connect: " + err.Error()))
-					return a, nil
-				}
-				a.rawGenSeq++
-				gen := a.rawGenSeq
-				taskID := a.rawModal.TaskID()
-				a.rawModal.AddPane(taskID, host, port, gen)
-				return a, DoStartRawForward(a.client, taskID, host, port, gen, a.program)
-			}
-			// Every pane key is a chord, because the entry line takes every
-			// printable rune — `x` for close made the letter x untypable, and
-			// the same argument rules out a letter for hex. ctrl+f/b/w/k/u/h/d/
-			// a/e/v/n/p belong to the textinput's own line editing, which
-			// leaves ctrl+t, ctrl+x and ctrl+r.
-			if msg.Type == tea.KeyCtrlX && !a.rawModal.OnNewSlot() {
-				a.rawModal.CloseActivePane()
-				return a, nil
-			}
-			if msg.Type == tea.KeyCtrlT {
+			case tea.KeyCtrlT:
 				a.rawModal.ToggleForm()
 				return a, nil
-			}
-			if msg.Type == tea.KeyCtrlR && !a.rawModal.InForm() {
-				a.rawModal.ToggleHex()
-				return a, nil
-			}
-			// ctrl+o cycles the text-mode terminator. ctrl+n would read better
-			// but the textinput owns it (NextSuggestion); ctrl+q / ctrl+s are
-			// XON/XOFF on a real terminal and ctrl+z suspends, which leaves
-			// ctrl+g / ctrl+o / ctrl+y.
-			if msg.Type == tea.KeyCtrlO && !a.rawModal.InForm() {
-				a.rawModal.CycleNewline()
-				return a, nil
+			case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
+				if !a.rawModal.InForm() {
+					return a, a.rawModal.ScrollViewport(msg)
+				}
 			}
 			if a.rawModal.InForm() {
-				if msg.Type == tea.KeyTab {
+				switch msg.Type {
+				case tea.KeyTab:
 					a.rawModal.FormNextField()
+					return a, nil
+				case tea.KeyLeft, tea.KeyRight:
+					d := 1
+					if msg.Type == tea.KeyLeft {
+						d = -1
+					}
+					a.rawModal.FormCycleMethod(d)
+					return a, nil
+				case tea.KeyEnter:
+					if err := a.rawModal.SendForm(); err != nil {
+						a.rawModal.SetActiveNote(err.Error())
+					}
+					a.rawModal.Refresh()
 					return a, nil
 				}
 				return a, a.rawModal.UpdateForm(msg)
+			}
+			switch msg.Type {
+			case tea.KeyCtrlR:
+				a.rawModal.ToggleHex()
+				return a, nil
+			case tea.KeyCtrlO:
+				a.rawModal.CycleNewline()
+				return a, nil
+			case tea.KeyEnter:
+				if p := a.rawModal.ActivePane(); p != nil && p.live {
+					// SendEntry applies the mode: hex sends exact bytes, text
+					// appends the selected terminator. A hex typo is reported
+					// on the pane and sends nothing.
+					if err := a.rawModal.SendEntry(); err != nil {
+						if strings.HasPrefix(err.Error(), "hex:") {
+							a.rawModal.SetActiveNote(err.Error())
+						} else {
+							a.rawModal.MarkClosed(p.gen, "raw connect: "+err.Error())
+						}
+					}
+					a.rawModal.Refresh()
+				}
+				return a, nil
 			}
 			var rmcmd tea.Cmd
 			a.rawModal, rmcmd = a.rawModal.Update(msg)

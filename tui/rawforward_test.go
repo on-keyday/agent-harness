@@ -57,56 +57,6 @@ func TestRawModalRoutesByGeneration(t *testing.T) {
 	}
 }
 
-// esc hides the modal and leaves every connection running; ctrl+x closes
-// exactly the active pane. The old modal closed the connection on esc, which also
-// deregistered the forward server-side.
-func TestRawModalHideKeepsPanesCloseDropsOne(t *testing.T) {
-	m := NewRawConnectModal()
-	m.Show("task-1")
-	m.AddPane("task-1", "a", 1, 1)
-	m.AddPane("task-1", "b", 2, 2)
-
-	m.Hide()
-	if m.IsOpen() {
-		t.Errorf("Hide left the modal open")
-	}
-	if got := m.PaneCount(); got != 2 {
-		t.Errorf("Hide dropped panes: %d left, want 2", got)
-	}
-
-	m.Show("task-1")
-	m.MovePane(-99) // clamp back to [+ new]
-	m.MovePane(+1)  // onto pane 1
-	m.CloseActivePane()
-	if got := m.PaneCount(); got != 1 {
-		t.Fatalf("CloseActivePane left %d panes, want 1", got)
-	}
-	if p := m.PaneForGen(1); p != nil {
-		t.Errorf("closed the wrong pane: gen 1 still present")
-	}
-}
-
-// [+ new] is index 0 and stays; connecting appends and selects.
-func TestRawModalNewSlotIsSticky(t *testing.T) {
-	m := NewRawConnectModal()
-	m.Show("task-1")
-	if !m.OnNewSlot() {
-		t.Fatalf("a fresh modal must start on the [+ new] slot")
-	}
-	m.AddPane("task-1", "a", 1, 1)
-	if m.OnNewSlot() {
-		t.Errorf("AddPane must select the new pane")
-	}
-	m.MovePane(-1)
-	if !m.OnNewSlot() {
-		t.Errorf("moving left from the first pane must reach [+ new]")
-	}
-	m.MovePane(-1)
-	if !m.OnNewSlot() {
-		t.Errorf("movement must clamp at [+ new], not wrap")
-	}
-}
-
 // Quitting must close every pane: a RawConn whose process exits leaves a
 // registration in `forward ls` that nothing can reach.
 func TestRawModalCloseAllOnQuit(t *testing.T) {
@@ -189,113 +139,6 @@ func TestRawForwardMsgs_UnknownGenerationIgnored(t *testing.T) {
 	}
 }
 
-// TestRawForwardConnect_AttemptsAreIndependent replaces the old
-// one-attempt-at-a-time guard. That guard existed because two attempts shared a
-// single App-wide generation, so the loser's close tore down the winner's
-// session. Generations are now per pane, so the realistic trigger — type a
-// target, press Enter, notice the typo, retype, press Enter again — opens two
-// independent panes, and a close for one must leave the other untouched.
-func TestRawForwardConnect_AttemptsAreIndependent(t *testing.T) {
-	a := New(Config{})
-	a.client = &cli.Client{} // non-nil is enough; the returned cmd is never executed
-	a.rawModal.Show("cccc0000000000000000000000000000")
-	a.rawModal.SetSpec("127.0.0.1:6379")
-
-	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	a = m.(*App)
-	if cmd == nil {
-		t.Fatal("first enter with a valid spec should dispatch a connect")
-	}
-	first := a.rawModal.ActivePane().gen
-
-	a.rawModal.MovePane(-99) // back to [+ new] to start another
-	a.rawModal.SetSpec("127.0.0.1:6380")
-	m, cmd = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	a = m.(*App)
-	if cmd == nil {
-		t.Fatal("a second target should dispatch its own connect")
-	}
-	second := a.rawModal.ActivePane().gen
-
-	if first == second {
-		t.Fatalf("both attempts share generation %d — a close for one would tear down the other", first)
-	}
-	if a.rawModal.PaneCount() != 2 {
-		t.Fatalf("PaneCount = %d, want 2", a.rawModal.PaneCount())
-	}
-
-	a.Update(RawForwardClosedMsg{Gen: first, Reason: "first died"})
-	if p := a.rawModal.PaneForGen(second); p == nil || p.note == "first died" {
-		t.Fatalf("a close for the first attempt leaked into the second: %+v", p)
-	}
-}
-
-// An invalid target must not create a pane: a pane the operator cannot close
-// because it never had a connection is worse than an error line.
-func TestRawForwardConnect_BadTargetCreatesNoPane(t *testing.T) {
-	a := New(Config{})
-	a.client = &cli.Client{}
-	a.rawModal.Show("dddd0000000000000000000000000000")
-	a.rawModal.SetSpec("garbage")
-
-	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	a = m.(*App)
-	if cmd != nil {
-		t.Fatal("a bad target must not dispatch a connect")
-	}
-	if a.rawModal.PaneCount() != 0 {
-		t.Fatalf("PaneCount = %d, want 0", a.rawModal.PaneCount())
-	}
-}
-
-func TestRawModalViewShowsTabsAndActiveTarget(t *testing.T) {
-	m := NewRawConnectModal()
-	m.Show("3777c91ae235bdcc1f18db0b1d33d183")
-	m.AddPane("3777c91ae235bdcc1f18db0b1d33d183", "127.0.0.1", 8080, 1)
-	m.SetConn(1, nil, nil, "connected (fwd 7)")
-	m.AddPane("3777c91ae235bdcc1f18db0b1d33d183", "10.0.0.2", 22, 2)
-	m.MarkClosed(2, "connection closed")
-	m.MovePane(-1) // back onto the 8080 pane
-
-	v := m.View()
-	for _, want := range []string{"+ new", "127.0.0.1:8080", "10.0.0.2:22", "connected (fwd 7)", "ctrl+x close", "ctrl+r hex", "esc hide"} {
-		if !strings.Contains(v, want) {
-			t.Errorf("View() missing %q:\n%s", want, v)
-		}
-	}
-}
-
-// The modal is framed and fills the terminal, like the forwards list and the
-// grid. Before SetSize existed it sized itself to its longest line and
-// lipgloss.Place centred that, so it read as a floating note rather than a
-// panel — the operator's words were 淡泊すぎ.
-func TestRawModalViewFillsTheTerminal(t *testing.T) {
-	m := NewRawConnectModal()
-	m.SetSize(100, 24)
-	m.Show("a69a7c86528a0000000000000000000a")
-	m.AddPane("a69a7c86528a0000000000000000000a", "localhost", 8765, 23)
-	m.SetConn(23, nil, nil, "connected (fwd 23)")
-
-	lines := strings.Split(m.View(), "\n")
-	if !strings.HasPrefix(lines[0], "╭") || !strings.HasPrefix(lines[len(lines)-1], "╰") {
-		t.Fatalf("view is not framed:\n%s", m.View())
-	}
-	if n := lipgloss.Width(lines[0]); n < 90 || n > 100 {
-		t.Errorf("frame is %d cells wide in a 100-cell terminal", n)
-	}
-	for i, l := range lines {
-		if n := lipgloss.Width(l); n > 100 {
-			t.Errorf("line %d is %d cells wide, past the terminal", i, n)
-		}
-	}
-	if len(lines) < 20 {
-		t.Errorf("view is %d rows tall in a 24-row terminal; it should fill", len(lines))
-	}
-	if !strings.Contains(m.View(), "(1 pane)") {
-		t.Errorf("header does not report the pane count:\n%s", m.View())
-	}
-}
-
 func TestHexToBytes(t *testing.T) {
 	ok := map[string]string{
 		"48656c":      "Hel",
@@ -334,102 +177,6 @@ func TestEntryBytesTerminatorRule(t *testing.T) {
 		if err != nil || string(got) != "PING" {
 			t.Errorf("hex entry under %s = %q, %v; want \"PING\" with no terminator", nl.label(), got, err)
 		}
-	}
-}
-
-// ctrl+o walks CRLF → LF → none → CRLF, matching the WebUI's selector, and the
-// label is what the footer shows.
-func TestRawModalNewlineCycle(t *testing.T) {
-	a := New(Config{})
-	a.rawModal.Show("task-1")
-	a.rawModal.AddPane("task-1", "127.0.0.1", 8080, 1)
-	a.rawModal.SetConn(1, nil, nil, "connected")
-
-	for _, want := range []string{"LF", "none", "CRLF"} {
-		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
-		a = m.(*App)
-		if got := a.rawModal.NewlineLabel(); got != want {
-			t.Fatalf("after ctrl+o: %s, want %s", got, want)
-		}
-	}
-	if !strings.Contains(a.rawModal.View(), "ctrl+o CRLF") {
-		t.Errorf("footer does not show the current terminator:\n%s", a.rawModal.View())
-	}
-}
-
-// `x` used to close the pane, which made the letter untypable in the entry
-// line. Every pane action is a chord now.
-func TestRawModalPrintableKeysReachTheEntryLine(t *testing.T) {
-	a := New(Config{})
-	a.rawModal.Show("task-1")
-	a.rawModal.AddPane("task-1", "127.0.0.1", 8080, 1)
-	a.rawModal.SetConn(1, nil, nil, "connected")
-
-	for _, r := range "xq" {
-		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
-		a = m.(*App)
-	}
-	if a.rawModal.PaneCount() != 1 {
-		t.Fatalf("a printable key closed the pane (PaneCount=%d)", a.rawModal.PaneCount())
-	}
-	if got := a.rawModal.Spec(); got != "xq" {
-		t.Errorf("entry line = %q, want \"xq\"", got)
-	}
-}
-
-func TestRawModalHexToggleAndClose(t *testing.T) {
-	a := New(Config{})
-	a.rawModal.Show("task-1")
-	a.rawModal.AddPane("task-1", "127.0.0.1", 8080, 1)
-	a.rawModal.SetConn(1, nil, nil, "connected")
-
-	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
-	a = m.(*App)
-	if !a.rawModal.InHex() {
-		t.Fatal("ctrl+r did not turn hex entry on")
-	}
-	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
-	a = m.(*App)
-	if a.rawModal.PaneCount() != 0 {
-		t.Errorf("ctrl+x did not close the pane")
-	}
-}
-
-// The entry line has two jobs — a target on [+ new], bytes on a pane — and one
-// textinput. It must say which, or a connected pane invites the operator to
-// type a target into the send line (which is what it did).
-func TestRawModalEntryLineDescribesItsMode(t *testing.T) {
-	m := NewRawConnectModal()
-	m.SetSize(100, 24)
-	m.Show("task-1")
-
-	if v := m.View(); !strings.Contains(v, "target > ") || !strings.Contains(v, "host:port") {
-		t.Errorf("[+ new] must ask for a target:\n%s", v)
-	}
-
-	m.AddPane("task-1", "localhost", 8765, 1)
-	m.SetConn(1, nil, nil, "connected (fwd 1)")
-	v := m.View()
-	if !strings.Contains(v, "send CRLF > ") || !strings.Contains(v, "bytes to send") {
-		t.Errorf("a live pane must offer to send, with the terminator shown:\n%s", v)
-	}
-	if strings.Contains(v, "host:port") {
-		t.Errorf("a live pane still advertises a target placeholder:\n%s", v)
-	}
-
-	m.ToggleHex()
-	if v := m.View(); !strings.Contains(v, "send hex > ") {
-		t.Errorf("hex mode not reflected in the entry line:\n%s", v)
-	}
-	m.ToggleHex()
-	m.CycleNewline()
-	if v := m.View(); !strings.Contains(v, "send LF > ") {
-		t.Errorf("terminator change not reflected in the entry line:\n%s", v)
-	}
-
-	m.MarkClosed(1, "connection closed")
-	if v := m.View(); !strings.Contains(v, "closed  > ") {
-		t.Errorf("a closed pane must not look like it can send:\n%s", v)
 	}
 }
 
@@ -490,6 +237,210 @@ func TestTaskSessionAlive(t *testing.T) {
 	for _, s := range dead {
 		if taskSessionAlive(s) {
 			t.Errorf("%s must not offer file operations", taskStatusStr(s))
+		}
+	}
+}
+
+// openViewer is the operator's path to a pane: list → n → target → Enter, then
+// the viewer for the pane that just opened.
+func openViewer(t *testing.T, target string) *App {
+	t.Helper()
+	a := New(Config{})
+	a.client = &cli.Client{} // non-nil is enough; the returned cmd is never run
+	a.rawModal.SetSize(100, 24)
+	a.rawModal.Show("task-1")
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a = m.(*App)
+	if a.rawModal.Mode() != rawModeNew {
+		t.Fatalf("n did not open the target prompt (mode=%d)", a.rawModal.Mode())
+	}
+	a.rawModal.SetSpec(target)
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if cmd == nil {
+		t.Fatalf("a valid target should dispatch a connect")
+	}
+	if a.rawModal.Mode() != rawModeView {
+		t.Fatalf("connecting should open the viewer (mode=%d)", a.rawModal.Mode())
+	}
+	return a
+}
+
+// The list is home: esc from the viewer returns to it with the pane still
+// connected, and esc from the list hides the modal without closing anything.
+func TestRawModalListIsHome(t *testing.T) {
+	a := openViewer(t, "127.0.0.1:6379")
+	gen := a.rawModal.ActivePane().gen
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = m.(*App)
+	if a.rawModal.Mode() != rawModeList {
+		t.Fatalf("esc from the viewer should return to the list")
+	}
+	if a.rawModal.PaneForGen(gen) == nil {
+		t.Error("returning to the list must not close the pane")
+	}
+
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = m.(*App)
+	if a.rawModal.IsOpen() {
+		t.Error("esc from the list should hide the modal")
+	}
+	if a.rawModal.PaneCount() != 1 {
+		t.Error("hiding must not close panes")
+	}
+}
+
+// Enter on a row opens that row's pane, and the list reports each pane's state
+// and byte counts.
+func TestRawModalListOpensTheSelectedRow(t *testing.T) {
+	a := openViewer(t, "127.0.0.1:6379")
+	a.Update(RawForwardDataMsg{Gen: a.rawModal.ActivePane().gen, Data: []byte("hello")})
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = m.(*App)
+	v := a.rawModal.View()
+	for _, want := range []string{"127.0.0.1:6379", "5B", "Enter: open", "n: new"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("list is missing %q:\n%s", want, v)
+		}
+	}
+
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if a.rawModal.Mode() != rawModeView {
+		t.Fatal("Enter on a row should open the viewer")
+	}
+	if !strings.Contains(a.rawModal.View(), "hello") {
+		t.Errorf("the viewer does not show the pane's output:\n%s", a.rawModal.View())
+	}
+}
+
+// Two attempts get their own generations and their own panes, so a close for
+// one cannot tear down the other.
+func TestRawForwardConnect_AttemptsAreIndependent(t *testing.T) {
+	a := openViewer(t, "127.0.0.1:6379")
+	first := a.rawModal.ActivePane().gen
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyEsc}) // back to the list
+	a = m.(*App)
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a = m.(*App)
+	a.rawModal.SetSpec("127.0.0.1:6380")
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if cmd == nil {
+		t.Fatal("the second target should dispatch its own connect")
+	}
+	second := a.rawModal.ActivePane().gen
+
+	if first == second {
+		t.Fatalf("both attempts share generation %d", first)
+	}
+	if a.rawModal.PaneCount() != 2 {
+		t.Fatalf("PaneCount = %d, want 2", a.rawModal.PaneCount())
+	}
+	a.Update(RawForwardClosedMsg{Gen: first, Reason: "first died"})
+	if p := a.rawModal.PaneForGen(second); p == nil || p.note == "first died" {
+		t.Fatalf("a close for the first attempt leaked into the second: %+v", p)
+	}
+}
+
+// A bad target must not create a pane: one that never had a connection is a
+// row the operator cannot do anything with.
+func TestRawForwardConnect_BadTargetCreatesNoPane(t *testing.T) {
+	a := New(Config{})
+	a.client = &cli.Client{}
+	a.rawModal.Show("task-1")
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	a = m.(*App)
+	a.rawModal.SetSpec("garbage")
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if cmd != nil || a.rawModal.PaneCount() != 0 {
+		t.Fatalf("a bad target dispatched or created a pane (cmd=%v panes=%d)", cmd != nil, a.rawModal.PaneCount())
+	}
+}
+
+// In the viewer the entry line says what Enter will do, and printable keys
+// reach it — no letter is a command there.
+func TestRawModalViewerEntryLine(t *testing.T) {
+	a := openViewer(t, "127.0.0.1:6379")
+	a.rawModal.SetConn(a.rawModal.ActivePane().gen, nil, nil, "connected")
+
+	if v := a.rawModal.View(); !strings.Contains(v, "send CRLF > ") {
+		t.Errorf("viewer entry line does not describe the send:\n%s", v)
+	}
+	for _, r := range "xnq" {
+		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		a = m.(*App)
+	}
+	if a.rawModal.PaneCount() != 1 {
+		t.Fatalf("a printable key acted as a command (panes=%d)", a.rawModal.PaneCount())
+	}
+	if got := a.rawModal.Spec(); got != "xnq" {
+		t.Errorf("entry line = %q, want \"xnq\"", got)
+	}
+
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	a = m.(*App)
+	if v := a.rawModal.View(); !strings.Contains(v, "send hex > ") {
+		t.Errorf("ctrl+r did not switch the entry line to hex:\n%s", v)
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+	a = m.(*App)
+	if v := a.rawModal.View(); !strings.Contains(v, "ctrl+o LF") {
+		t.Errorf("ctrl+o did not cycle the terminator:\n%s", v)
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
+	a = m.(*App)
+	if a.rawModal.PaneCount() != 0 || a.rawModal.Mode() != rawModeList {
+		t.Errorf("ctrl+x should close the pane and return to the list")
+	}
+}
+
+// The modal is framed and fills the terminal, like the forwards list.
+func TestRawModalViewFillsTheTerminal(t *testing.T) {
+	m := NewRawConnectModal()
+	m.SetSize(100, 24)
+	m.Show("a69a7c86528a0000000000000000000a")
+	m.AddPane("a69a7c86528a0000000000000000000a", "localhost", 8765, 23)
+	m.BackToList()
+
+	lines := strings.Split(m.View(), "\n")
+	if !strings.HasPrefix(lines[0], "╭") || !strings.HasPrefix(lines[len(lines)-1], "╰") {
+		t.Fatalf("view is not framed:\n%s", m.View())
+	}
+	for i, l := range lines {
+		if n := lipgloss.Width(l); n > 100 {
+			t.Errorf("line %d is %d cells wide, past the terminal", i, n)
+		}
+	}
+	if len(lines) < 20 {
+		t.Errorf("view is %d rows tall in a 24-row terminal; it should fill", len(lines))
+	}
+}
+
+// Every screen fills the frame. A modal that shrinks when you press `n` reads
+// as a different window opening rather than the same one changing mode.
+func TestRawModalScreensAreTheSameHeight(t *testing.T) {
+	m := NewRawConnectModal()
+	m.SetSize(100, 24)
+	m.Show("task-1")
+	m.AddPane("task-1", "localhost", 8765, 1)
+	m.SetConn(1, nil, nil, "connected")
+
+	heights := map[string]int{}
+	m.BackToList()
+	heights["list"] = len(strings.Split(m.View(), "\n"))
+	m.OpenSelected()
+	heights["view"] = len(strings.Split(m.View(), "\n"))
+	m.BeginNew()
+	heights["new"] = len(strings.Split(m.View(), "\n"))
+
+	for name, h := range heights {
+		if h != heights["list"] {
+			t.Errorf("%s screen is %d rows, list is %d — the frame must not jump", name, h, heights["list"])
 		}
 	}
 }
