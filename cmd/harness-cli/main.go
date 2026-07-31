@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -579,7 +580,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		fctx, cancel := signal.NotifyContext(ctx, os.Interrupt)
+		fctx, cancel := interruptContext(ctx)
 		defer cancel()
 		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
 		if *wspec != "" {
@@ -768,6 +769,61 @@ func isTaskIDLike(s string) bool {
 // long-lived listeners started alongside each other.
 func forwardWConflictsWithLR(wspec string, nLSpecs, nRSpecs int) bool {
 	return wspec != "" && (nLSpecs > 0 || nRSpecs > 0)
+}
+
+// interruptStopGrace is how long a first interrupt gets to unwind cleanly
+// before the process stops waiting for it.
+const interruptStopGrace = 5 * time.Second
+
+// interruptContext cancels ctx on the first interrupt and makes the second one
+// authoritative, because a graceful stop that does not finish is
+// indistinguishable from a hang at the keyboard.
+//
+// A forward's clean shutdown depends on the far side: listeners close, control
+// streams unwind, registrations deregister. When any of that fails to return —
+// which is what "Ctrl-C does not stop it" means — the operator is left with a
+// process they cannot end from the terminal. So: the first interrupt cancels,
+// and if the process is still alive interruptStopGrace later, or a second
+// interrupt arrives, it prints where every goroutine is parked and exits 130.
+//
+// The dump is the point on Windows, where there is no SIGQUIT to ask for one:
+// the stack of a hung shutdown is exactly the evidence needed to fix it, and
+// it has to be captured on the machine that reproduces it.
+func interruptContext(parent context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	sig := make(chan os.Signal, 2)
+	signal.Notify(sig, os.Interrupt)
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-sig:
+		case <-ctx.Done():
+			return
+		}
+		fmt.Fprintln(os.Stderr, "forward: stopping…")
+		cancel()
+		select {
+		case <-stopped:
+		case <-sig: // second interrupt: stop waiting
+			forceExitWithStacks("interrupted twice")
+		case <-time.After(interruptStopGrace):
+			forceExitWithStacks(fmt.Sprintf("did not stop within %s", interruptStopGrace))
+		}
+	}()
+	return ctx, func() {
+		signal.Stop(sig)
+		close(stopped)
+		cancel()
+	}
+}
+
+// forceExitWithStacks reports why the process is leaving and dumps every
+// goroutine, so a shutdown that hung leaves evidence rather than a mystery.
+func forceExitWithStacks(reason string) {
+	buf := make([]byte, 1<<20)
+	n := runtime.Stack(buf, true)
+	fmt.Fprintf(os.Stderr, "forward: %s — forcing exit. Goroutine dump follows.\n%s\n", reason, buf[:n])
+	os.Exit(130)
 }
 
 // stringList collects a repeatable string flag, in the order given — header
