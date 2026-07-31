@@ -64,3 +64,32 @@ func TestGridModel_InputModeToggle(t *testing.T) {
 		t.Fatalf("after exiting input mode, l should navigate (focus -> %d)", m5.focus)
 	}
 }
+
+// A bare Ctrl press reaches keyToBytes in more than one shape. The Type==0
+// guard catches KeyCtrlAt; terminals that report modifier presses can deliver
+// it as KeyRunes carrying a NUL rune instead, which used to put a ^@ in the
+// pane. Nothing worth forwarding encodes to NUL, so neither shape may produce
+// bytes.
+func TestKeyToBytesNeverForwardsNUL(t *testing.T) {
+	cases := map[string]tea.KeyMsg{
+		"KeyCtrlAt (Type 0)": {Type: tea.KeyCtrlAt},
+		"NUL rune":           {Type: tea.KeyRunes, Runes: []rune{0}},
+		"NUL rune with alt":  {Type: tea.KeyRunes, Runes: []rune{0}, Alt: true},
+	}
+	for name, msg := range cases {
+		if got := keyToBytes(msg); len(got) != 0 {
+			t.Errorf("%s: keyToBytes = %q, want nothing forwarded", name, got)
+		}
+	}
+	// A NUL mixed into real input loses only the NUL.
+	if got := keyToBytes(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a', 0, 'b'}}); string(got) != "ab" {
+		t.Errorf("mixed runes = %q, want \"ab\"", got)
+	}
+	// Ordinary keys are untouched.
+	if got := keyToBytes(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("hi")}); string(got) != "hi" {
+		t.Errorf("plain runes = %q, want \"hi\"", got)
+	}
+	if got := keyToBytes(tea.KeyMsg{Type: tea.KeyCtrlC}); string(got) != "\x03" {
+		t.Errorf("ctrl+c = %q, want \\x03", got)
+	}
+}

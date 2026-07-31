@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -217,6 +218,21 @@ func keyToBytes(m tea.KeyMsg) []byte {
 		} else {
 			return nil
 		}
+	}
+	// Drop NUL wherever it came from, BEFORE the Alt prefix. The Type==0 guard
+	// above only catches a bare Ctrl reported as KeyCtrlAt; terminals that
+	// report modifier presses (kitty keyboard protocol, modifyOtherKeys) can
+	// instead deliver it as KeyRunes carrying a NUL rune, which walked straight
+	// past that guard and put a ^@ in the pane. No keypress worth forwarding
+	// encodes to NUL, so filter it here rather than guessing which shape it
+	// arrives in. A literal NUL can still be sent deliberately with
+	// `harness-cli session send -e <id> '\x00'`.
+	//
+	// Order matters: prefixing first would turn Alt+NUL into a lone ESC, which
+	// is worse than the ^@ — an agent TUI reads a stray Esc as "cancel".
+	b = bytes.ReplaceAll(b, []byte{0}, nil)
+	if len(b) == 0 {
+		return nil
 	}
 	if m.Alt {
 		b = append([]byte{0x1b}, b...)
