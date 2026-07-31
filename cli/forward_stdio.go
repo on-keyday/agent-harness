@@ -36,6 +36,46 @@ type rawStream interface {
 // thing.
 var ErrNoDataTransferred = errors.New("connection ended without transferring any data")
 
+// RunHTTPRequestForward sends one built request over a raw forward and copies
+// the response to out until the far end closes.
+//
+// stdin is deliberately NOT spliced: a request fully specified by flags has
+// nothing to read from it, and splicing would leave the command waiting on a
+// terminal after the response had already arrived. That makes this the
+// one-shot counterpart to RunStdioForward rather than a mode of it.
+//
+// The spec is built before anything is dialled, so a mistyped header costs an
+// error message rather than a forward that is established, registered and then
+// torn down.
+func RunHTTPRequestForward(ctx context.Context, c *Client, taskIDHex, host string, port int, spec HTTPRequestSpec, out io.Writer, logf func(string)) error {
+	req, err := BuildHTTPRequest(spec, host, port)
+	if err != nil {
+		return err
+	}
+	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, logf)
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+	if err := rc.Send(req); err != nil {
+		return err
+	}
+	for {
+		data, eof, rerr := rc.Recv(ctx)
+		if len(data) > 0 {
+			if _, werr := out.Write(data); werr != nil {
+				return werr
+			}
+		}
+		if eof {
+			return nil
+		}
+		if rerr != nil {
+			return rerr
+		}
+	}
+}
+
 // RunStdioForward opens a raw forward to host:port and splices it to this
 // process's stdin/stdout — the harness equivalent of `ssh -W`.
 func RunStdioForward(ctx context.Context, c *Client, taskIDHex, host string, port int, logf func(string)) error {

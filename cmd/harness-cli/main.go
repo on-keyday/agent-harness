@@ -527,7 +527,20 @@ func main() {
 		// the foreground and exits with its peer, while -L/-R are long-lived
 		// listeners. One invocation, one lifetime.
 		wspec := fs.String("W", "", "raw stdio forward host:port (mutually exclusive with -L / -R)")
+		// With --http-path, -W stops splicing stdin and sends one built request
+		// instead, streaming the response to stdout. Ordinary flags rather than
+		// a "GET /x" mini-syntax: that reads well until the first header or
+		// body and then needs a parser and an escaping rule of its own.
+		httpMethod := fs.String("http-method", "GET", "with -W --http-path: HTTP method")
+		httpPath := fs.String("http-path", "", "with -W: send this HTTP request path instead of splicing stdin")
+		httpBody := fs.String("http-body", "", "with --http-path: request body (literal, @file, or - for stdin)")
+		var httpHeaders stringList
+		fs.Var(&httpHeaders, "http-header", "with --http-path: \"Name: value\" (repeatable)")
 		fs.Parse(args[1:])
+		if *httpPath != "" && *wspec == "" {
+			fmt.Fprintln(os.Stderr, "forward: --http-path needs -W host:port")
+			os.Exit(2)
+		}
 		if forwardWConflictsWithLR(*wspec, len(specs), len(rspecs)) {
 			fmt.Fprintln(os.Stderr, "forward: -W cannot be combined with -L / -R")
 			os.Exit(2)
@@ -572,6 +585,22 @@ func main() {
 		if *wspec != "" {
 			// stdout is the forward's payload channel, so status lines must go
 			// to stderr (logf already does) and nothing may print to stdout.
+			if *httpPath != "" {
+				body, berr := readFlagBody(*httpBody)
+				if berr != nil {
+					die(berr)
+				}
+				spec := cli.HTTPRequestSpec{
+					Method:  *httpMethod,
+					Path:    *httpPath,
+					Headers: httpHeaders,
+					Body:    body,
+				}
+				if err := cli.RunHTTPRequestForward(fctx, c, taskID, wHost, wPort, spec, os.Stdout, logf); err != nil {
+					die(err)
+				}
+				return
+			}
 			if err := cli.RunStdioForward(fctx, c, taskID, wHost, wPort, logf); err != nil {
 				die(err)
 			}
@@ -741,6 +770,27 @@ func forwardWConflictsWithLR(wspec string, nLSpecs, nRSpecs int) bool {
 	return wspec != "" && (nLSpecs > 0 || nRSpecs > 0)
 }
 
+// stringList collects a repeatable string flag, in the order given — header
+// order is preserved all the way to the wire.
+type stringList []string
+
+func (l *stringList) String() string     { return strings.Join(*l, ", ") }
+func (l *stringList) Set(v string) error { *l = append(*l, v); return nil }
+
+// readFlagBody resolves a --http-body value: a literal, @file, or - for stdin.
+func readFlagBody(v string) ([]byte, error) {
+	switch {
+	case v == "":
+		return nil, nil
+	case v == "-":
+		return io.ReadAll(os.Stdin)
+	case strings.HasPrefix(v, "@"):
+		return os.ReadFile(v[1:])
+	default:
+		return []byte(v), nil
+	}
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] [--ws-path PATH] <subcommand> [args]")
 	fmt.Fprintln(os.Stderr, "")
@@ -824,6 +874,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      both repeatable; Ctrl-C to stop")
 	fmt.Fprintln(os.Stderr, "  forward <task-id> -W host:port")
 	fmt.Fprintln(os.Stderr, "                                      raw stdio forward (ssh -W): no local listener, this process's stdin/stdout is the client endpoint")
+	fmt.Fprintln(os.Stderr, "                                    [--http-path /p [--http-method M] [--http-header 'N: v'] [--http-body B|@file|-]]")
+	fmt.Fprintln(os.Stderr, "                                      with -W: send one built HTTP request and stream the response (stdin is not spliced)")
 	fmt.Fprintln(os.Stderr, "                                      mutually exclusive with -L / -R; not repeatable; exits with its peer")
 	fmt.Fprintln(os.Stderr, "  forward ls [--task TASK_ID] [--json]")
 	fmt.Fprintln(os.Stderr, "                                      list registered port forwards; --task filters, --json emits JSON lines")
