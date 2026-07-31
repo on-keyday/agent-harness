@@ -152,6 +152,15 @@ func originCell(k protocol.ClientKind) string {
 	return strings.ToLower(k.String())
 }
 
+// taskHasReachableWorktree reports whether the runner still holds a worktree
+// for the task, which is what every file operation needs. Detached counts: the
+// client disconnected but the runner-side worktree is still there, so pull /
+// push / ls must keep working without re-attaching. The server draws the same
+// line and answers NoSuchTask outside it (server/file_transfer.go).
+func taskHasReachableWorktree(s protocol.TaskStatus) bool {
+	return s == protocol.TaskStatus_Running || s == protocol.TaskStatus_Detached
+}
+
 func taskStatusStr(s protocol.TaskStatus) string {
 	switch s {
 	case protocol.TaskStatus_Queued:

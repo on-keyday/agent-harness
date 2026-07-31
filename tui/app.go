@@ -1256,6 +1256,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.cmdresult.Append(WarnStyle.Render("file picker: no task selected"))
 				return a, nil
 			}
+			// Only a Running or Detached task has a worktree the runner can
+			// reach; the server answers NoSuchTask for anything else
+			// (server/file_transfer.go). Say so here rather than opening a
+			// picker whose first listing fails.
+			if t := a.tasks.SelectedTask(); t != nil && !taskHasReachableWorktree(t.Status) {
+				a.cmdresult.Append(WarnStyle.Render(
+					"file picker: task is " + taskStatusStr(t.Status) + " — only Running or Detached tasks have a worktree"))
+				return a, nil
+			}
 			cmd := a.filepicker.OpenFor(a.client, taskID)
 			a.filepicker.SetSize(a.width, a.height)
 			return a, cmd

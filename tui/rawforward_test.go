@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 func TestRawConnectModal_ShowHideAndSpec(t *testing.T) {
@@ -469,5 +470,26 @@ func TestSanitizeOutputCannotMoveTheCursor(t *testing.T) {
 	}
 	if strings.Contains(got, "\n\n") {
 		t.Errorf("CRLF collapse should not double the newline: %q", got)
+	}
+}
+
+// File operations need a worktree the runner still holds; the server answers
+// NoSuchTask outside Running/Detached. Opening the picker for a terminal task
+// produced a modal whose first listing failed.
+func TestTaskHasReachableWorktree(t *testing.T) {
+	live := []protocol.TaskStatus{protocol.TaskStatus_Running, protocol.TaskStatus_Detached}
+	for _, s := range live {
+		if !taskHasReachableWorktree(s) {
+			t.Errorf("%s should have a reachable worktree", taskStatusStr(s))
+		}
+	}
+	dead := []protocol.TaskStatus{
+		protocol.TaskStatus_Queued, protocol.TaskStatus_Succeeded,
+		protocol.TaskStatus_Failed, protocol.TaskStatus_Cancelled,
+	}
+	for _, s := range dead {
+		if taskHasReachableWorktree(s) {
+			t.Errorf("%s must not offer file operations", taskStatusStr(s))
+		}
 	}
 }

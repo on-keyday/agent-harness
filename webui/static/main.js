@@ -863,6 +863,11 @@ const POLL_INTERVAL_MS = 5000;
     fileTaskSelect.appendChild(placeholder);
     if (!tasks) return;
     for (const t of tasks) {
+      // Only a Running or Detached task has a worktree the runner can reach:
+      // the server answers NoSuchTask for anything else (server/file_transfer.go).
+      // Offering a terminal task here was offering a choice that always failed.
+      // Same filter as renderRawTaskSelect.
+      if (t.status !== "Running" && t.status !== "Detached") continue;
       const opt = document.createElement("option");
       opt.value = t.id;
       const short = (t.id || "").slice(0, 12);
