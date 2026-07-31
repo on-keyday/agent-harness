@@ -95,14 +95,12 @@ type App struct {
 	// and killable via `f` / `forward kill`, which act on the server-side
 	// registration that OpenRawForward creates.
 	rawModal RawConnectModal
-	// rawGen tags every raw-connect message (RawForward{Opened,Data,Closed}Msg)
-	// with the generation active when it was sent, bumped on every Open and
-	// every Close. Without it, esc on task A followed by t on task B — the
-	// ordinary close-one-then-connect-to-another workflow, not an edge case —
-	// lets A's pump, still parked in rc.Recv when esc ran, splice A's trailing
-	// bytes or close notice onto B's modal once it finally unblocks. Every
-	// handler drops a message whose Gen != rawGen.
-	rawGen uint64
+	// rawGenSeq allocates the generation each pane is tagged with. It is the
+	// ALLOCATOR, not the guard: the guard is "which pane owns this gen", so a
+	// reply from a pump still parked in rc.Recv when its pane was closed finds
+	// no owner and is dropped instead of splicing its trailing bytes onto
+	// whichever pane is selected now.
+	rawGenSeq uint64
 
 	// runnerPicker shows candidate runners when an interactive open returns
 	// AmbiguousRunner; a pick re-issues the request pinned to the chosen cid.
@@ -758,37 +756,32 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case RawForwardOpenedMsg:
-		// A stale open (the operator moved on — esc'd, or reopened for another
-		// task — before this async reply landed) must not adopt a connection
-		// nobody can see or close: closing it here is what keeps an abandoned
-		// open from leaving a registration behind with no UI reference to it.
-		if msg.Gen != a.rawGen {
+		// A pane closed while its open was in flight owns nothing now, so the
+		// connection must be closed here — otherwise it stays registered with
+		// no UI reference able to reach it.
+		if a.rawModal.PaneForGen(msg.Gen) == nil {
 			_ = msg.Conn.Close()
 			if msg.Cancel != nil {
 				msg.Cancel()
 			}
 			return a, nil
 		}
-		a.rawModal.SetConn(msg.Conn, msg.Cancel)
-		a.rawModal.MarkLive(fmt.Sprintf("connected (fwd %d)", msg.ForwardID))
+		a.rawModal.SetConn(msg.Gen, msg.Conn, msg.Cancel,
+			fmt.Sprintf("connected (fwd %d)", msg.ForwardID))
 		return a, nil
 
 	case RawForwardDataMsg:
-		if msg.Gen != a.rawGen {
-			return a, nil
+		if p := a.rawModal.PaneForGen(msg.Gen); p != nil {
+			p.AppendOutput(msg.Data)
 		}
-		a.rawModal.AppendOutput(msg.Data)
 		return a, nil
 
 	case RawForwardClosedMsg:
-		if msg.Gen != a.rawGen {
-			return a, nil
-		}
 		// The pump already closed the connection (that's what deregisters the
-		// forward server-side — a data-side EOF alone does not); MarkClosed's
-		// CloseConn is therefore idempotent here, but still the one place that
-		// clears the modal's own reference and stops the sink goroutine.
-		a.rawModal.MarkClosed(msg.Reason)
+		// forward server-side — a data-side EOF alone does not); MarkClosed is
+		// therefore idempotent here, but still the one place that drops the
+		// pane's own reference and stops its sink goroutine.
+		a.rawModal.MarkClosed(msg.Gen, msg.Reason)
 		return a, nil
 
 	case tea.WindowSizeMsg:
@@ -1029,48 +1022,54 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, pfcmd
 		}
 		// Raw-connect modal intercepts ALL keys when open: the input line needs
-		// every printable rune while composing a target or a send line. Esc
-		// bumps rawGen before closing so any reply from this session that is
-		// still in flight (a pump parked in rc.Recv) arrives stale and gets
-		// dropped by the Gen check on the message cases above, rather than
-		// landing on whatever the modal shows next. Enter is overloaded by
-		// IsLive: not yet connected, it parses the entered spec and starts the
-		// connection tagged with the CURRENT rawGen (Open already bumped it);
-		// once live, the same line is sent to the far end.
+		// every printable rune while composing a target or a send line, which
+		// is also why the pane keys below are arrows and esc rather than
+		// letters. Esc only HIDES — panes are connections, and closing one is
+		// `x`. Enter is overloaded by which tab is selected: on [+ new] it
+		// parses the entered spec and opens a pane tagged with a fresh
+		// generation; on a live pane it sends the line.
 		if a.rawModal.IsOpen() {
 			switch msg.Type {
 			case tea.KeyEsc:
-				a.rawGen++
-				a.rawModal.Close()
+				a.rawModal.Hide()
+				return a, nil
+			case tea.KeyLeft:
+				a.rawModal.MovePane(-1)
+				return a, nil
+			case tea.KeyRight:
+				a.rawModal.MovePane(+1)
 				return a, nil
 			case tea.KeyEnter:
-				if a.rawModal.IsLive() {
-					if err := a.rawModal.SendLine(a.rawModal.Spec()); err != nil {
-						a.rawModal.MarkClosed("raw connect: " + err.Error())
-					} else {
-						a.rawModal.SetSpec("")
+				if p := a.rawModal.ActivePane(); p != nil {
+					if p.live {
+						if err := a.rawModal.SendLine(a.rawModal.Spec()); err != nil {
+							a.rawModal.MarkClosed(p.gen, "raw connect: "+err.Error())
+						} else {
+							a.rawModal.SetSpec("")
+						}
 					}
 					return a, nil
 				}
-				// rawGen scopes a session, not a connect attempt: fix a typo
-				// and retry before the first RPC resolves, and both attempts
-				// share one Gen — the Gen guard alone cannot tell them apart,
-				// so the loser's eventual close would tear down whichever one
-				// wins. Refusing a second dispatch while one is outstanding
-				// keeps at most one attempt in flight, full stop — Enter is
-				// inert (not even a re-parse) until this one resolves.
-				if a.rawModal.IsConnecting() {
-					return a, nil
-				}
-				taskID := a.rawModal.TaskID()
+				// [+ new]. Each Enter allocates its own generation and its own
+				// pane, so the old "one attempt in flight" rule is unnecessary:
+				// two attempts can no longer share a generation, which is what
+				// used to let the loser's close tear down the winner.
 				host, port, err := a.rawModal.Target()
 				if err != nil {
-					a.rawModal.MarkClosed("raw connect: " + err.Error())
+					a.cmdresult.Append(WarnStyle.Render("raw connect: " + err.Error()))
 					return a, nil
 				}
-				a.rawModal.SetSpec("")
-				a.rawModal.MarkConnecting()
-				return a, DoStartRawForward(a.client, taskID, host, port, a.rawGen, a.program)
+				a.rawGenSeq++
+				gen := a.rawGenSeq
+				taskID := a.rawModal.TaskID()
+				a.rawModal.AddPane(taskID, host, port, gen)
+				return a, DoStartRawForward(a.client, taskID, host, port, gen, a.program)
+			}
+			// `x` closes the selected pane (and only when one is selected — on
+			// [+ new] an `x` belongs in the target being typed).
+			if msg.String() == modalKeys.ForwardKill && !a.rawModal.OnNewSlot() {
+				a.rawModal.CloseActivePane()
+				return a, nil
 			}
 			var rmcmd tea.Cmd
 			a.rawModal, rmcmd = a.rawModal.Update(msg)
@@ -1078,7 +1077,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Ctrl+C always quits.
 		if msg.Type == tea.KeyCtrlC {
-			return a, tea.Quit
+			return a, a.quit()
 		}
 		// While the logs panel is in filter-edit mode, every printable rune
 		// (including 'q', 's', 'c') belongs to the filter draft, just like
@@ -1087,7 +1086,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `q` quits when not in the cmdline / not composing a filter (those
 		// must accept literal 'q').
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Quit {
-			return a, tea.Quit
+			return a, a.quit()
 		}
 		// `?` shows every binding. The footer is one row and drops what does
 		// not fit (see footerHints), so this is where the full list lives.
@@ -1364,8 +1363,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.cmdresult.Append(WarnStyle.Render("raw connect: no task selected"))
 				return a, nil
 			}
-			a.rawGen++ // new session: any reply still in flight for the old one is now stale
-			a.rawModal.Open(taskID)
+			a.rawModal.Show(taskID)
 			return a, nil
 		}
 		// Cmdline submit.
@@ -1484,6 +1482,15 @@ func (a *App) cycleFocus(delta int) {
 	case focusCmdline:
 		a.cmdline.Focus()
 	}
+}
+
+// quit tears down what the process owns before ending the program. Raw panes
+// hold RawConns whose Close is what deregisters the forward server-side: a TUI
+// that exits without closing them leaves rows in `forward ls` that nothing can
+// reach.
+func (a *App) quit() tea.Cmd {
+	a.rawModal.CloseAllPanes()
+	return tea.Quit
 }
 
 // layout computes per-panel sizes from a.width / a.height. Header 1, runners
@@ -1747,7 +1754,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	}
 	switch v := act.(type) {
 	case QuitAction:
-		return a, tea.Quit
+		return a, a.quit()
 	case ClearAction:
 		a.cmdresult.Clear()
 		return a, nil

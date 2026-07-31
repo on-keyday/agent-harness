@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,32 +22,59 @@ const rawTUIRingBytes = 64 * 1024
 // that says "connecting" forever and no way to cancel the attempt.
 const rawConnectTimeout = 30 * time.Second
 
-// RawConnectModal prompts for a host:port and then shows the bytes coming back
-// from a forward whose client endpoint is this TUI process. Mirrors
-// PortForwardModal's shape (open/close/input/View) so the app's modal handling
-// needs no new idiom.
+// rawPane is one live (or ended) raw connection. The WebUI has held several of
+// these since it shipped (rawSlots in cli/raw_forward_wasm.go); the TUI held
+// exactly one, which is what made esc destructive and a second target
+// impossible.
+type rawPane struct {
+	taskID string
+	host   string
+	port   int
+	// gen tags every message this pane's pump sends. It scopes a PANE: a
+	// message whose gen matches no pane belongs to a pane the operator has
+	// already closed, and is dropped.
+	gen        uint64
+	conn       *cli.RawConn
+	cancel     context.CancelFunc
+	out        []byte
+	live       bool
+	connecting bool
+	note       string
+}
+
+func (p *rawPane) target() string { return fmt.Sprintf("%s:%d", p.host, p.port) }
+
+// AppendOutput adds received bytes, trimming the front so the buffer stays
+// bounded and the NEWEST bytes are the ones kept.
+func (p *rawPane) AppendOutput(b []byte) {
+	p.out = append(p.out, b...)
+	if len(p.out) > rawTUIRingBytes {
+		p.out = append([]byte(nil), p.out[len(p.out)-rawTUIRingBytes:]...)
+	}
+}
+
+// closeConn closes the connection and stops its pump. Idempotent. Closing is
+// what deregisters the forward server-side.
+func (p *rawPane) closeConn() {
+	if p.conn != nil {
+		_ = p.conn.Close()
+		p.conn = nil
+	}
+	if p.cancel != nil {
+		p.cancel()
+		p.cancel = nil
+	}
+}
+
+// RawConnectModal shows a [+ new] target prompt plus one tab per pane, mirroring
+// the WebUI's raw panel so the two surfaces behave the same way. active == 0 is
+// the [+ new] slot; pane i is active-1.
 type RawConnectModal struct {
 	open   bool
 	taskID string
 	input  textinput.Model
-	out    []byte
-	live   bool
-	// connecting is true from the moment Enter dispatches a connect attempt
-	// until that attempt resolves (SetConn on success, MarkClosed on
-	// failure). rawGen scopes a SESSION, not an ATTEMPT: two connect attempts
-	// dispatched back-to-back under one open session share one Gen, so the
-	// Gen guard alone cannot tell them apart — the loser's eventual
-	// RawForwardClosedMsg would still pass the guard and tear down whatever
-	// the winner just set up. connecting makes the Enter handler refuse a
-	// second dispatch while one is outstanding, so at most one attempt (and
-	// therefore at most one Gen-indistinguishable reply) is ever in flight.
-	connecting bool
-	note       string
-	// conn is the live connection this modal owns, and cancel stops its pump.
-	// Kept on the modal rather than in a package-level global so closing the
-	// modal cannot leave a connection nobody references.
-	conn   *cli.RawConn
-	cancel context.CancelFunc
+	panes  []rawPane
+	active int
 }
 
 func NewRawConnectModal() RawConnectModal {
@@ -56,89 +84,140 @@ func NewRawConnectModal() RawConnectModal {
 	return RawConnectModal{input: in}
 }
 
-func (m *RawConnectModal) IsOpen() bool       { return m.open }
-func (m *RawConnectModal) TaskID() string     { return m.taskID }
-func (m *RawConnectModal) IsLive() bool       { return m.live }
-func (m *RawConnectModal) IsConnecting() bool { return m.connecting }
-func (m *RawConnectModal) Output() []byte     { return m.out }
+func (m *RawConnectModal) IsOpen() bool    { return m.open }
+func (m *RawConnectModal) TaskID() string  { return m.taskID }
+func (m *RawConnectModal) PaneCount() int  { return len(m.panes) }
+func (m *RawConnectModal) OnNewSlot() bool { return m.active == 0 }
 
-func (m *RawConnectModal) Open(taskID string) {
-	m.CloseConn() // a re-open must not orphan a previous connection
+// Show reveals the modal for taskID. Unlike the Open it replaces, it keeps
+// existing panes: those are connections, not view state.
+func (m *RawConnectModal) Show(taskID string) {
 	m.open = true
 	m.taskID = taskID
-	m.live = false
-	m.connecting = false
-	m.note = ""
-	m.out = nil
 	m.input.SetValue("")
 	m.input.Focus()
 }
 
-// Close hides the modal AND drops its connection: the registration must not
-// outlive the only UI that can read it.
-func (m *RawConnectModal) Close() {
-	m.CloseConn()
+// Hide closes the view only. Every pane stays connected and stays registered —
+// `x` is what closes one.
+func (m *RawConnectModal) Hide() {
 	m.open = false
-	m.live = false
-	m.connecting = false
 	m.input.Blur()
 }
 
-// SetConn adopts the connection opened by DoStartRawForward, closing any
-// previous one so a double-connect cannot orphan a live registration.
-func (m *RawConnectModal) SetConn(rc *cli.RawConn, cancel context.CancelFunc) {
-	m.CloseConn()
-	m.conn = rc
-	m.cancel = cancel
-	m.connecting = false
+func (m *RawConnectModal) ActivePane() *rawPane {
+	if m.active <= 0 || m.active > len(m.panes) {
+		return nil
+	}
+	return &m.panes[m.active-1]
 }
 
-// MarkConnecting records that a connect attempt was just dispatched. Cleared
-// by SetConn (attempt succeeded) or MarkClosed (attempt failed) — see the
-// connecting field's doc comment for why this must gate the Enter handler
-// rather than rely on rawGen alone.
-func (m *RawConnectModal) MarkConnecting() { m.connecting = true }
+// PaneForGen resolves the pane a generation-tagged message belongs to, or nil
+// when its pane is gone.
+func (m *RawConnectModal) PaneForGen(gen uint64) *rawPane {
+	for i := range m.panes {
+		if m.panes[i].gen == gen {
+			return &m.panes[i]
+		}
+	}
+	return nil
+}
 
-// CloseConn closes the live connection and stops its pump. Idempotent.
-func (m *RawConnectModal) CloseConn() {
-	if m.conn != nil {
-		_ = m.conn.Close()
-		m.conn = nil
+// MovePane walks the tab strip. It clamps rather than wraps: wrapping past
+// [+ new] would make "go left until you reach new" a guessing game.
+func (m *RawConnectModal) MovePane(delta int) {
+	m.active += delta
+	if m.active < 0 {
+		m.active = 0
 	}
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
+	if m.active > len(m.panes) {
+		m.active = len(m.panes)
 	}
+	m.input.SetValue("")
+}
+
+// AddPane appends a connecting pane and selects it.
+func (m *RawConnectModal) AddPane(taskID, host string, port int, gen uint64) {
+	m.panes = append(m.panes, rawPane{
+		taskID: taskID, host: host, port: port, gen: gen,
+		connecting: true, note: "connecting…",
+	})
+	m.active = len(m.panes)
+	m.input.SetValue("")
+}
+
+// CloseActivePane drops the selected pane and closes its connection.
+func (m *RawConnectModal) CloseActivePane() {
+	p := m.ActivePane()
+	if p == nil {
+		return
+	}
+	p.closeConn()
+	i := m.active - 1
+	m.panes = append(m.panes[:i], m.panes[i+1:]...)
+	if m.active > len(m.panes) {
+		m.active = len(m.panes)
+	}
+}
+
+// CloseAllPanes is what quitting must call: a RawConn whose process is gone
+// leaves a registration nobody can reach.
+func (m *RawConnectModal) CloseAllPanes() {
+	for i := range m.panes {
+		m.panes[i].closeConn()
+	}
+	m.panes = nil
+	m.active = 0
+}
+
+// SendActive writes bytes verbatim — nothing is appended. SendLine is the
+// line-oriented convenience; a built HTTP request must reach the wire exactly
+// as built or its Content-Length stops matching what arrives.
+func (m *RawConnectModal) SendActive(b []byte) error {
+	p := m.ActivePane()
+	if p == nil || p.conn == nil {
+		return fmt.Errorf("raw connect: not connected")
+	}
+	return p.conn.Send(b)
 }
 
 // SendLine writes the given text plus CRLF. The TUI has no newline selector —
 // CRLF is what the line-oriented protocols this is for (HTTP, Redis, SMTP)
 // expect; the WebUI pane is where the selector lives.
 func (m *RawConnectModal) SendLine(s string) error {
-	if m.conn == nil {
-		return fmt.Errorf("raw connect: not connected")
+	return m.SendActive([]byte(s + "\r\n"))
+}
+
+// SetConn adopts the connection opened for gen. A pane that vanished while its
+// open was in flight resolves to nil here, and App closes the connection rather
+// than leaving it registered with no UI reference.
+func (m *RawConnectModal) SetConn(gen uint64, rc *cli.RawConn, cancel context.CancelFunc, note string) {
+	p := m.PaneForGen(gen)
+	if p == nil {
+		return
 	}
-	return m.conn.Send([]byte(s + "\r\n"))
+	p.closeConn()
+	p.conn, p.cancel = rc, cancel
+	p.connecting, p.live, p.note = false, true, note
 }
 
-func (m *RawConnectModal) MarkLive(note string) { m.live = true; m.note = note }
-
-// MarkClosed records why the connection ended and releases it. The pump has
-// already closed the connection by the time this runs; CloseConn is idempotent
+// MarkClosed records why a pane's connection ended and releases it. The pump has
+// already closed the connection by the time this runs; closeConn is idempotent
 // and is what drops the reference and stops the sink goroutine.
-func (m *RawConnectModal) MarkClosed(note string) {
-	m.live = false
-	m.connecting = false
-	m.note = note
-	m.CloseConn()
+func (m *RawConnectModal) MarkClosed(gen uint64, note string) {
+	p := m.PaneForGen(gen)
+	if p == nil {
+		return
+	}
+	p.live, p.connecting, p.note = false, false, note
+	p.closeConn()
 }
 
-// AppendOutput adds received bytes, trimming the front so the buffer stays
-// bounded and the NEWEST bytes are the ones kept.
-func (m *RawConnectModal) AppendOutput(b []byte) {
-	m.out = append(m.out, b...)
-	if len(m.out) > rawTUIRingBytes {
-		m.out = append([]byte(nil), m.out[len(m.out)-rawTUIRingBytes:]...)
+// SetActiveNote reports something about the selected pane (a build error, a
+// send failure) without touching its connection.
+func (m *RawConnectModal) SetActiveNote(note string) {
+	if p := m.ActivePane(); p != nil {
+		p.note = note
 	}
 }
 
@@ -159,17 +238,36 @@ func (m *RawConnectModal) Update(msg tea.Msg) (RawConnectModal, tea.Cmd) {
 
 func (m *RawConnectModal) View() string {
 	head := fmt.Sprintf("raw connect — task %s", pfShortID(m.taskID))
+
+	tabs := make([]string, 0, len(m.panes)+1)
+	label := "[+ new]"
+	if m.active == 0 {
+		label = FocusedStyle.Render(label)
+	}
+	tabs = append(tabs, label)
+	for i := range m.panes {
+		t := "[" + m.panes[i].target() + "]"
+		switch {
+		case m.active == i+1:
+			t = FocusedStyle.Render(t)
+		case !m.panes[i].live:
+			t = MutedStyle.Render(t)
+		}
+		tabs = append(tabs, t)
+	}
+
 	state := "enter host:port, Enter to connect"
-	if m.connecting {
-		state = "connecting…"
+	body := ""
+	if p := m.ActivePane(); p != nil {
+		state = p.note
+		if state == "" {
+			state = "connected"
+		}
+		body = string(p.out)
 	}
-	if m.live {
-		state = "connected — type bytes, Enter sends (esc closes)"
-	}
-	if m.note != "" {
-		state = m.note
-	}
-	return head + "\n" + state + "\n" + m.input.View() + "\n\n" + string(m.out)
+	foot := "←/→ tab · Enter send · x close pane · esc hide"
+	return head + "\n" + strings.Join(tabs, " ") + "\n" + state + "\n" +
+		m.input.View() + "\n\n" + body + "\n" + FooterStyle.Render(foot)
 }
 
 // RawForwardOpenedMsg reports a successful connect. It carries the connection

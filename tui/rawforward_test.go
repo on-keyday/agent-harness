@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -9,14 +10,14 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 )
 
-func TestRawConnectModal_OpenCloseAndSpec(t *testing.T) {
+func TestRawConnectModal_ShowHideAndSpec(t *testing.T) {
 	m := NewRawConnectModal()
 	if m.IsOpen() {
 		t.Fatal("fresh modal must be closed")
 	}
-	m.Open("4a1f0000000000000000000000000000")
+	m.Show("4a1f0000000000000000000000000000")
 	if !m.IsOpen() || m.TaskID() == "" {
-		t.Fatal("Open must record the task and open")
+		t.Fatal("Show must record the task and open")
 	}
 	m.SetSpec("127.0.0.1:6379")
 	host, port, err := m.Target()
@@ -27,106 +28,166 @@ func TestRawConnectModal_OpenCloseAndSpec(t *testing.T) {
 	if _, _, err := m.Target(); err == nil {
 		t.Fatal("Target() must reject a spec that is not host:port")
 	}
-	m.Close()
+	m.Hide()
 	if m.IsOpen() {
-		t.Fatal("Close must close")
+		t.Fatal("Hide must close the view")
 	}
 }
 
-// TestRawConnectModal_RingCapKeepsNewest checks the bound AND which end
-// survives: a trim that kept the oldest bytes would satisfy a length-only
-// assertion while showing the operator stale output.
-//
-// The brief's literal version of this test filled `head` with a single
-// repeated byte ('H') and asserted !HasPrefix(out, head[:16]). That assertion
-// is unfalsifiable: filler built from one repeated byte makes every 16-byte
-// window of `head` identical, so the front of a CORRECTLY trimmed buffer
-// (which is still deep inside the same all-'H' run, just starting 11 bytes
-// later) still matches head[:16] — the check fires against a correct
-// implementation, not just a buggy one (verified against this exact
-// implementation: it does). Fixed here by giving the discarded front an
-// 11-byte marker distinct from its filler and from the tail, and asserting
-// its literal absence (bytes.Contains) instead of a prefix match against
-// indistinguishable filler.
-func TestRawConnectModal_RingCapKeepsNewest(t *testing.T) {
+// Panes are addressed by the generation their messages carry; a reply for one
+// pane must never be applied to another.
+func TestRawModalRoutesByGeneration(t *testing.T) {
 	m := NewRawConnectModal()
-	m.Open("4a1f0000000000000000000000000000")
+	m.Show("task-1")
+	m.AddPane("task-1", "127.0.0.1", 8080, 7)
+	m.AddPane("task-1", "127.0.0.1", 9090, 8)
+
+	p := m.PaneForGen(7)
+	if p == nil || p.port != 8080 {
+		t.Fatalf("PaneForGen(7) = %+v, want the 8080 pane", p)
+	}
+	p.AppendOutput([]byte("hello"))
+	if other := m.PaneForGen(8); other == nil || len(other.out) != 0 {
+		t.Errorf("output leaked into the 9090 pane: %+v", other)
+	}
+	if m.PaneForGen(99) != nil {
+		t.Errorf("unknown generation resolved to a pane")
+	}
+}
+
+// esc hides the modal and leaves every connection running; x closes exactly
+// the active pane. The old modal closed the connection on esc, which also
+// deregistered the forward server-side.
+func TestRawModalHideKeepsPanesCloseDropsOne(t *testing.T) {
+	m := NewRawConnectModal()
+	m.Show("task-1")
+	m.AddPane("task-1", "a", 1, 1)
+	m.AddPane("task-1", "b", 2, 2)
+
+	m.Hide()
+	if m.IsOpen() {
+		t.Errorf("Hide left the modal open")
+	}
+	if got := m.PaneCount(); got != 2 {
+		t.Errorf("Hide dropped panes: %d left, want 2", got)
+	}
+
+	m.Show("task-1")
+	m.MovePane(-99) // clamp back to [+ new]
+	m.MovePane(+1)  // onto pane 1
+	m.CloseActivePane()
+	if got := m.PaneCount(); got != 1 {
+		t.Fatalf("CloseActivePane left %d panes, want 1", got)
+	}
+	if p := m.PaneForGen(1); p != nil {
+		t.Errorf("closed the wrong pane: gen 1 still present")
+	}
+}
+
+// [+ new] is index 0 and stays; connecting appends and selects.
+func TestRawModalNewSlotIsSticky(t *testing.T) {
+	m := NewRawConnectModal()
+	m.Show("task-1")
+	if !m.OnNewSlot() {
+		t.Fatalf("a fresh modal must start on the [+ new] slot")
+	}
+	m.AddPane("task-1", "a", 1, 1)
+	if m.OnNewSlot() {
+		t.Errorf("AddPane must select the new pane")
+	}
+	m.MovePane(-1)
+	if !m.OnNewSlot() {
+		t.Errorf("moving left from the first pane must reach [+ new]")
+	}
+	m.MovePane(-1)
+	if !m.OnNewSlot() {
+		t.Errorf("movement must clamp at [+ new], not wrap")
+	}
+}
+
+// Quitting must close every pane: a RawConn whose process exits leaves a
+// registration in `forward ls` that nothing can reach.
+func TestRawModalCloseAllOnQuit(t *testing.T) {
+	m := NewRawConnectModal()
+	m.Show("task-1")
+	m.AddPane("task-1", "a", 1, 1)
+	m.AddPane("task-1", "b", 2, 2)
+	m.CloseAllPanes()
+	if m.PaneCount() != 0 {
+		t.Errorf("CloseAllPanes left %d panes", m.PaneCount())
+	}
+	if m.ActivePane() != nil {
+		t.Errorf("active pane survived CloseAllPanes")
+	}
+}
+
+// TestRawPane_RingCapKeepsNewest checks the bound AND which end survives: a
+// trim that kept the oldest bytes would satisfy a length-only assertion while
+// showing the operator stale output.
+//
+// The filler deliberately carries an 11-byte marker distinct from the rest of
+// the front and from the tail. An earlier version of this test built the front
+// from a single repeated byte and asserted !HasPrefix(out, head[:16]), which is
+// unfalsifiable: every 16-byte window of such filler is identical, so the front
+// of a CORRECTLY trimmed buffer still matches. Assert the marker's literal
+// absence instead.
+func TestRawPane_RingCapKeepsNewest(t *testing.T) {
+	var p rawPane
 	headMarker := []byte("HEAD-MARKER") // same length as tail below, by design
 	head := append(append([]byte(nil), headMarker...), bytes.Repeat([]byte("H"), rawTUIRingBytes-len(headMarker))...)
-	m.AppendOutput(head)
+	p.AppendOutput(head)
 	tail := []byte("TAIL-MARKER")
-	m.AppendOutput(tail)
-	out := m.Output()
-	if len(out) > rawTUIRingBytes {
-		t.Fatalf("output ring = %d bytes, want <= %d", len(out), rawTUIRingBytes)
+	p.AppendOutput(tail)
+	if len(p.out) > rawTUIRingBytes {
+		t.Fatalf("output ring = %d bytes, want <= %d", len(p.out), rawTUIRingBytes)
 	}
-	if !bytes.HasSuffix(out, tail) {
-		t.Fatalf("newest bytes must survive the trim; output ends with %q", out[max(0, len(out)-16):])
+	if !bytes.HasSuffix(p.out, tail) {
+		t.Fatalf("newest bytes must survive the trim; output ends with %q", p.out[max(0, len(p.out)-16):])
 	}
-	if bytes.Contains(out, headMarker) {
+	if bytes.Contains(p.out, headMarker) {
 		t.Fatal("oldest bytes must be trimmed from the front")
 	}
 }
 
-// TestRawForwardMsgs_StaleGenerationIgnored is the regression for the
-// esc-then-reopen workflow: a connection abandoned for task A must not splice
-// its trailing bytes, or its close notice, into the session the operator opened
-// for task B.
-func TestRawForwardMsgs_StaleGenerationIgnored(t *testing.T) {
+// TestRawForwardMsgs_UnknownGenerationIgnored is the regression for the
+// esc-then-reopen workflow, now expressed per pane: a message whose generation
+// belongs to no pane (its pane was closed) must not splice bytes, or a close
+// notice, into whichever pane happens to be selected.
+func TestRawForwardMsgs_UnknownGenerationIgnored(t *testing.T) {
 	a := New(Config{}) // tui/portforward_test.go's app-construction convention
-	a.rawGen = 2
-	a.rawModal.Open("bbbb0000000000000000000000000000")
-	a.rawModal.MarkLive("connected (fwd 9)")
+	a.rawModal.Show("bbbb0000000000000000000000000000")
+	a.rawModal.AddPane("bbbb0000000000000000000000000000", "127.0.0.1", 6379, 2)
+	a.rawModal.SetConn(2, nil, nil, "connected (fwd 9)")
 
 	a.Update(RawForwardDataMsg{Gen: 1, Data: []byte("stale")})
-	if len(a.rawModal.Output()) != 0 {
-		t.Fatalf("stale data applied: %q", a.rawModal.Output())
+	if got := a.rawModal.ActivePane().out; len(got) != 0 {
+		t.Fatalf("stale data applied: %q", got)
 	}
 	a.Update(RawForwardClosedMsg{Gen: 1, Reason: "stale close"})
-	if !a.rawModal.IsLive() {
-		t.Fatal("a stale close must not mark the live session closed")
+	if !a.rawModal.ActivePane().live {
+		t.Fatal("a close for an unknown generation must not mark a live pane closed")
 	}
 
 	a.Update(RawForwardDataMsg{Gen: 2, Data: []byte("fresh")})
-	if got := string(a.rawModal.Output()); got != "fresh" {
-		t.Fatalf("current-generation data not applied: %q", got)
+	if got := string(a.rawModal.ActivePane().out); got != "fresh" {
+		t.Fatalf("own-generation data not applied: %q", got)
 	}
 	a.Update(RawForwardClosedMsg{Gen: 2, Reason: "done"})
-	if a.rawModal.IsLive() {
-		t.Fatal("current-generation close must mark the session closed")
+	if a.rawModal.ActivePane().live {
+		t.Fatal("own-generation close must mark the pane closed")
 	}
 }
 
-// TestRawForwardConnect_OneAttemptAtATime pins the fix for the same-generation
-// double-connect: a second attempt dispatched under one generation would let the
-// loser's close message tear down the winner's live session, since Gen scopes a
-// session rather than an attempt.
-func TestRawForwardConnect_OneAttemptAtATime(t *testing.T) {
-	m := NewRawConnectModal()
-	m.Open("aaaa0000000000000000000000000000")
-	m.SetSpec("127.0.0.1:6379")
-	m.MarkConnecting()
-	if !m.IsConnecting() {
-		t.Fatal("MarkConnecting must set the connecting state")
-	}
-	m.MarkClosed("connect failed")
-	if m.IsConnecting() {
-		t.Fatal("a finished attempt must clear the connecting state")
-	}
-}
-
-// TestRawForwardConnect_SecondEnterWhileConnectingDispatchesNothing is the
-// App-level regression for the realistic trigger: type a spec, press Enter,
-// notice a typo, retype, press Enter again before the first RPC resolves.
-// Both attempts would share one rawGen, so only the connecting guard (not the
-// Gen guard) can stop the second dispatch. Driven through App.Update the same
-// way TestRawForwardMsgs_StaleGenerationIgnored drives it, per
-// tui/portforward_test.go's app-construction convention.
-func TestRawForwardConnect_SecondEnterWhileConnectingDispatchesNothing(t *testing.T) {
+// TestRawForwardConnect_AttemptsAreIndependent replaces the old
+// one-attempt-at-a-time guard. That guard existed because two attempts shared a
+// single App-wide generation, so the loser's close tore down the winner's
+// session. Generations are now per pane, so the realistic trigger — type a
+// target, press Enter, notice the typo, retype, press Enter again — opens two
+// independent panes, and a close for one must leave the other untouched.
+func TestRawForwardConnect_AttemptsAreIndependent(t *testing.T) {
 	a := New(Config{})
-	a.client = &cli.Client{} // non-nil is enough; DoStartRawForward's returned cmd is never executed
-	a.rawGen = 1
-	a.rawModal.Open("cccc0000000000000000000000000000")
+	a.client = &cli.Client{} // non-nil is enough; the returned cmd is never executed
+	a.rawModal.Show("cccc0000000000000000000000000000")
 	a.rawModal.SetSpec("127.0.0.1:6379")
 
 	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -134,19 +195,61 @@ func TestRawForwardConnect_SecondEnterWhileConnectingDispatchesNothing(t *testin
 	if cmd == nil {
 		t.Fatal("first enter with a valid spec should dispatch a connect")
 	}
-	if !a.rawModal.IsConnecting() {
-		t.Fatal("first enter should mark the modal connecting")
-	}
+	first := a.rawModal.ActivePane().gen
 
-	// Retype a different target — the "fix a typo and retry" trigger — while
-	// the first attempt is still outstanding. If the guard only worked by
-	// accident (an empty spec failing to parse), this would expose it: the
-	// spec here is valid and non-empty.
+	a.rawModal.MovePane(-99) // back to [+ new] to start another
 	a.rawModal.SetSpec("127.0.0.1:6380")
-
 	m, cmd = a.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	a = m.(*App)
+	if cmd == nil {
+		t.Fatal("a second target should dispatch its own connect")
+	}
+	second := a.rawModal.ActivePane().gen
+
+	if first == second {
+		t.Fatalf("both attempts share generation %d — a close for one would tear down the other", first)
+	}
+	if a.rawModal.PaneCount() != 2 {
+		t.Fatalf("PaneCount = %d, want 2", a.rawModal.PaneCount())
+	}
+
+	a.Update(RawForwardClosedMsg{Gen: first, Reason: "first died"})
+	if p := a.rawModal.PaneForGen(second); p == nil || p.note == "first died" {
+		t.Fatalf("a close for the first attempt leaked into the second: %+v", p)
+	}
+}
+
+// An invalid target must not create a pane: a pane the operator cannot close
+// because it never had a connection is worse than an error line.
+func TestRawForwardConnect_BadTargetCreatesNoPane(t *testing.T) {
+	a := New(Config{})
+	a.client = &cli.Client{}
+	a.rawModal.Show("dddd0000000000000000000000000000")
+	a.rawModal.SetSpec("garbage")
+
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
 	if cmd != nil {
-		t.Fatal("a second enter while connecting must not dispatch another connect")
+		t.Fatal("a bad target must not dispatch a connect")
+	}
+	if a.rawModal.PaneCount() != 0 {
+		t.Fatalf("PaneCount = %d, want 0", a.rawModal.PaneCount())
+	}
+}
+
+func TestRawModalViewShowsTabsAndActiveTarget(t *testing.T) {
+	m := NewRawConnectModal()
+	m.Show("3777c91ae235bdcc1f18db0b1d33d183")
+	m.AddPane("3777c91ae235bdcc1f18db0b1d33d183", "127.0.0.1", 8080, 1)
+	m.SetConn(1, nil, nil, "connected (fwd 7)")
+	m.AddPane("3777c91ae235bdcc1f18db0b1d33d183", "10.0.0.2", 22, 2)
+	m.MarkClosed(2, "connection closed")
+	m.MovePane(-1) // back onto the 8080 pane
+
+	v := m.View()
+	for _, want := range []string{"+ new", "127.0.0.1:8080", "10.0.0.2:22", "connected (fwd 7)", "x close pane", "esc hide"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("View() missing %q:\n%s", want, v)
+		}
 	}
 }

@@ -28,6 +28,15 @@ var HeaderStyle = lipgloss.NewStyle().Bold(true)
 // FooterStyle styles the bottom hotkey hint line.
 var FooterStyle = lipgloss.NewStyle().Foreground(colorMuted)
 
+// FocusedStyle marks the selected item inside a modal (a tab, a form field),
+// where a whole-panel border is not the thing being selected.
+var FocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorFocused)
+
+// MutedStyle dims an item that is present but no longer live — a closed raw
+// pane, say. Paired with FocusedStyle so "selected" and "dead" never look the
+// same, which is exactly the confusion the WebUI's raw tabs had.
+var MutedStyle = lipgloss.NewStyle().Foreground(colorMuted)
+
 // ErrorStyle marks error text in cmdresult.
 var ErrorStyle = lipgloss.NewStyle().Foreground(colorErr)
 
