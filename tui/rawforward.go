@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/on-keyday/agent-harness/cli"
 )
@@ -76,6 +77,12 @@ type RawConnectModal struct {
 	input  textinput.Model
 	panes  []rawPane
 	active int
+	// width/height are the terminal's, set by App like every other modal's
+	// SetSize. Without them the view sized itself to its longest line and
+	// lipgloss.Place centred that narrow blob, which is why this modal looked
+	// nothing like the forwards list or the grid.
+	width  int
+	height int
 	// form is a MODE of the active pane, not a separate modal: the request it
 	// builds is sent on that pane's connection. ctrl+t toggles it, because the
 	// input below consumes every printable key.
@@ -128,6 +135,10 @@ func NewRawConnectModal() RawConnectModal {
 	in.CharLimit = 128
 	return RawConnectModal{input: in}
 }
+
+// SetSize records the terminal size. Mirrors ForwardsModal.SetSize — App calls
+// it on WindowSizeMsg and when the modal opens.
+func (m *RawConnectModal) SetSize(w, h int) { m.width, m.height = w, h }
 
 func (m *RawConnectModal) IsOpen() bool    { return m.open }
 func (m *RawConnectModal) TaskID() string  { return m.taskID }
@@ -382,7 +393,9 @@ func (m *RawConnectModal) Update(msg tea.Msg) (RawConnectModal, tea.Cmd) {
 }
 
 func (m *RawConnectModal) View() string {
-	head := fmt.Sprintf("raw connect — task %s", pfShortID(m.taskID))
+	box := PanelStyleFocused.Padding(0, 1)
+	header := HeaderStyle.Render(fmt.Sprintf("raw connect — task %s  (%d pane%s)",
+		pfShortID(m.taskID), len(m.panes), plural(len(m.panes))))
 
 	tabs := make([]string, 0, len(m.panes)+1)
 	label := "[+ new]"
@@ -410,6 +423,7 @@ func (m *RawConnectModal) View() string {
 		}
 		body = string(p.out)
 	}
+
 	entry := m.input.View()
 	if m.hexMode {
 		entry = "hex " + entry
@@ -422,8 +436,35 @@ func (m *RawConnectModal) View() string {
 		entry = m.form.View()
 		foot = "ctrl+x close · esc hide"
 	}
-	return head + "\n" + strings.Join(tabs, " ") + "\n" + state + "\n" +
-		entry + "\n\n" + body + "\n" + FooterStyle.Render(foot)
+
+	head := []string{header, strings.Join(tabs, " "), MutedStyle.Render(state), entry}
+	tail := FooterStyle.Render(foot)
+
+	// Fill the box the way the forwards list and the grid do, so the output
+	// area is where the eye lands instead of a floating three-line note.
+	out := strings.Split(body, "\n")
+	if avail := m.height - 4 - lipgloss.Height(strings.Join(head, "\n")) - 1; avail > 0 {
+		if len(out) > avail {
+			out = out[len(out)-avail:] // newest, matching the ring's own rule
+		}
+		for len(out) < avail {
+			out = append(out, "")
+		}
+	}
+
+	view := strings.Join(head, "\n") + "\n" + strings.Join(out, "\n") + "\n" + tail
+	if m.width > 4 {
+		box = box.Width(m.width - 4)
+	}
+	return box.Render(view)
+}
+
+// plural is the "s" in "1 pane" / "2 panes".
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
 }
 
 // RawForwardOpenedMsg reports a successful connect. It carries the connection

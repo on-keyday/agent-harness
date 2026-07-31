@@ -793,6 +793,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.forwardsModal.SetSize(a.width, a.height)
 		a.boardModal.SetSize(a.width, a.height)
 		a.grid.SetSize(a.width, a.height)
+		a.rawModal.SetSize(a.width, a.height)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -1412,6 +1413,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return a, nil
 			}
 			a.rawModal.Show(taskID)
+			a.rawModal.SetSize(a.width, a.height)
 			return a, nil
 		}
 		// Cmdline submit.

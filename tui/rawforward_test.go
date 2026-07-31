@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/on-keyday/agent-harness/cli"
 )
@@ -251,6 +252,37 @@ func TestRawModalViewShowsTabsAndActiveTarget(t *testing.T) {
 		if !strings.Contains(v, want) {
 			t.Errorf("View() missing %q:\n%s", want, v)
 		}
+	}
+}
+
+// The modal is framed and fills the terminal, like the forwards list and the
+// grid. Before SetSize existed it sized itself to its longest line and
+// lipgloss.Place centred that, so it read as a floating note rather than a
+// panel — the operator's words were 淡泊すぎ.
+func TestRawModalViewFillsTheTerminal(t *testing.T) {
+	m := NewRawConnectModal()
+	m.SetSize(100, 24)
+	m.Show("a69a7c86528a0000000000000000000a")
+	m.AddPane("a69a7c86528a0000000000000000000a", "localhost", 8765, 23)
+	m.SetConn(23, nil, nil, "connected (fwd 23)")
+
+	lines := strings.Split(m.View(), "\n")
+	if !strings.HasPrefix(lines[0], "╭") || !strings.HasPrefix(lines[len(lines)-1], "╰") {
+		t.Fatalf("view is not framed:\n%s", m.View())
+	}
+	if n := lipgloss.Width(lines[0]); n < 90 || n > 100 {
+		t.Errorf("frame is %d cells wide in a 100-cell terminal", n)
+	}
+	for i, l := range lines {
+		if n := lipgloss.Width(l); n > 100 {
+			t.Errorf("line %d is %d cells wide, past the terminal", i, n)
+		}
+	}
+	if len(lines) < 20 {
+		t.Errorf("view is %d rows tall in a 24-row terminal; it should fill", len(lines))
+	}
+	if !strings.Contains(m.View(), "(1 pane)") {
+		t.Errorf("header does not report the pane count:\n%s", m.View())
 	}
 }
 
