@@ -274,17 +274,44 @@ func TestHexToBytes(t *testing.T) {
 	}
 }
 
-// The CRLF rule, pinned without a connection: text gets the terminator the
-// line-oriented protocols expect, hex gets nothing added — appending to an
+// The terminator rule, pinned without a connection: text gets the selected
+// terminator, hex gets nothing added under ANY selection — appending to an
 // exact byte sequence defeats the only reason to reach for hex.
 func TestEntryBytesTerminatorRule(t *testing.T) {
-	got, err := entryBytes("PING", false)
-	if err != nil || string(got) != "PING\r\n" {
-		t.Errorf("text entry = %q, %v; want \"PING\\r\\n\"", got, err)
+	text := map[rawNewline]string{
+		rawNewlineCRLF: "PING\r\n",
+		rawNewlineLF:   "PING\n",
+		rawNewlineNone: "PING",
 	}
-	got, err = entryBytes("50494e47", true)
-	if err != nil || string(got) != "PING" {
-		t.Errorf("hex entry = %q, %v; want \"PING\" with no terminator", got, err)
+	for nl, want := range text {
+		got, err := entryBytes("PING", false, nl)
+		if err != nil || string(got) != want {
+			t.Errorf("text entry under %s = %q, %v; want %q", nl.label(), got, err, want)
+		}
+		got, err = entryBytes("50494e47", true, nl)
+		if err != nil || string(got) != "PING" {
+			t.Errorf("hex entry under %s = %q, %v; want \"PING\" with no terminator", nl.label(), got, err)
+		}
+	}
+}
+
+// ctrl+o walks CRLF → LF → none → CRLF, matching the WebUI's selector, and the
+// label is what the footer shows.
+func TestRawModalNewlineCycle(t *testing.T) {
+	a := New(Config{})
+	a.rawModal.Show("task-1")
+	a.rawModal.AddPane("task-1", "127.0.0.1", 8080, 1)
+	a.rawModal.SetConn(1, nil, nil, "connected")
+
+	for _, want := range []string{"LF", "none", "CRLF"} {
+		m, _ := a.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
+		a = m.(*App)
+		if got := a.rawModal.NewlineLabel(); got != want {
+			t.Fatalf("after ctrl+o: %s, want %s", got, want)
+		}
+	}
+	if !strings.Contains(a.rawModal.View(), "ctrl+o CRLF") {
+		t.Errorf("footer does not show the current terminator:\n%s", a.rawModal.View())
 	}
 }
 

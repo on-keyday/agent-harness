@@ -64,14 +64,18 @@ Three consequences the operator meets:
    digit count, hex characters only — so an operator who learned one pane does
    not relearn the other. Hex sends the decoded bytes with **no terminator**;
    appending to an exact byte sequence defeats the only reason to reach for it.
-   The remaining asymmetry is the WebUI's newline selector (CRLF / LF / none):
-   the TUI still always sends CRLF in text mode.
+   The newline selector (CRLF / LF / none) landed alongside it on `ctrl+o`,
+   so the two panes now offer the same choices. `SendLine` is gone with it: a
+   second send path with a hardcoded CRLF would silently disagree with the
+   selector.
 
 8. **Every pane action is a chord.** The entry line takes every printable rune,
    so a letter cannot also be a command — `x` for "close pane" made the letter
    x untypable in the send line. `ctrl+f/b/w/k/u/h/d/a/e/v/n/p` belong to the
    textinput's own line editing, which leaves `ctrl+t` (HTTP form), `ctrl+x`
-   (close pane) and `ctrl+r` (hex).
+   (close pane), `ctrl+r` (hex) and `ctrl+o` (newline). `ctrl+n` would read
+   better for the last one but the textinput owns it; `ctrl+q`/`ctrl+s` are
+   XON/XOFF on a real terminal and `ctrl+z` suspends.
 
 ## Architecture
 
@@ -152,5 +156,5 @@ active pane's `note`, or the target prompt on `[+ new]`.
 
 ## Out of scope
 
-A newline selector for text mode, per-pane scrollback beyond the existing ring, reordering tabs,
+Per-pane scrollback beyond the existing ring, reordering tabs,
 opening panes for a task other than the one the modal was opened from.

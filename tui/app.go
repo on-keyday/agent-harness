@@ -1059,8 +1059,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				if p := a.rawModal.ActivePane(); p != nil {
 					if p.live {
-						// SendEntry, not SendLine: in hex mode the entry is an
-						// exact byte sequence and must not gain a terminator.
+						// SendEntry applies the mode: hex sends exact bytes,
+						// text appends the selected terminator.
 						// A hex typo is reported on the pane and sends nothing.
 						if err := a.rawModal.SendEntry(); err != nil {
 							if strings.HasPrefix(err.Error(), "hex:") {
@@ -1102,6 +1102,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if msg.Type == tea.KeyCtrlR && !a.rawModal.InForm() {
 				a.rawModal.ToggleHex()
+				return a, nil
+			}
+			// ctrl+o cycles the text-mode terminator. ctrl+n would read better
+			// but the textinput owns it (NextSuggestion); ctrl+q / ctrl+s are
+			// XON/XOFF on a real terminal and ctrl+z suspends, which leaves
+			// ctrl+g / ctrl+o / ctrl+y.
+			if msg.Type == tea.KeyCtrlO && !a.rawModal.InForm() {
+				a.rawModal.CycleNewline()
 				return a, nil
 			}
 			if a.rawModal.InForm() {

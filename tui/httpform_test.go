@@ -91,7 +91,7 @@ func TestRawModalSendFormReportsBuildError(t *testing.T) {
 // The byte-entry Enter case runs first in app.go's key switch, so a missing
 // guard there silently sends the wrong bytes — and with a nil conn the two
 // paths are distinguishable: the form reports on the pane and leaves it live,
-// while SendLine's failure marks it closed.
+// while the byte-entry send's failure marks it closed.
 func TestRawModalFormEnterSendsTheRequest(t *testing.T) {
 	a := New(Config{})
 	a.rawModal.Show("task-1")

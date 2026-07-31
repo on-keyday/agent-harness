@@ -85,6 +85,41 @@ type RawConnectModal struct {
 	// had this toggle since it shipped; without it the TUI could not send a
 	// byte it has no key for.
 	hexMode bool
+	// newline is the terminator appended in text mode. CRLF is what the
+	// line-oriented protocols this pane is for expect, but not every server
+	// does: an LF-only listener treats the CR as part of the payload, and a
+	// length-prefixed one wants neither.
+	newline rawNewline
+}
+
+// rawNewline is the terminator appended to a text-mode entry. The zero value
+// is CRLF, so a modal built without touching this behaves as it always has.
+type rawNewline int
+
+const (
+	rawNewlineCRLF rawNewline = iota
+	rawNewlineLF
+	rawNewlineNone
+)
+
+func (n rawNewline) label() string {
+	switch n {
+	case rawNewlineLF:
+		return "LF"
+	case rawNewlineNone:
+		return "none"
+	}
+	return "CRLF"
+}
+
+func (n rawNewline) suffix() string {
+	switch n {
+	case rawNewlineLF:
+		return "\n"
+	case rawNewlineNone:
+		return ""
+	}
+	return "\r\n"
 }
 
 func NewRawConnectModal() RawConnectModal {
@@ -216,26 +251,33 @@ func hexToBytes(s string) ([]byte, error) {
 }
 
 // entryBytes is exactly what an Enter in byte-entry mode puts on the wire. It
-// is a pure function so the CRLF rule is testable without a connection: text
-// gets the terminator line-oriented protocols expect, hex gets nothing added —
-// hex exists to send an exact byte sequence, and appending to it would defeat
-// the only reason to reach for it.
-func entryBytes(entry string, hexMode bool) ([]byte, error) {
+// is a pure function so the terminator rule is testable without a connection:
+// text gets the selected terminator, hex gets nothing added regardless — hex
+// exists to send an exact byte sequence, and appending to it would defeat the
+// only reason to reach for it.
+func entryBytes(entry string, hexMode bool, nl rawNewline) ([]byte, error) {
 	if hexMode {
 		return hexToBytes(entry)
 	}
-	return []byte(entry + "\r\n"), nil
+	return []byte(entry + nl.suffix()), nil
 }
 
 // ToggleHex switches the entry line between text and hex.
 func (m *RawConnectModal) ToggleHex() { m.hexMode = !m.hexMode }
+
+// CycleNewline walks CRLF → LF → none, matching the WebUI's selector.
+func (m *RawConnectModal) CycleNewline() {
+	m.newline = (m.newline + 1) % 3
+}
+
+func (m *RawConnectModal) NewlineLabel() string { return m.newline.label() }
 
 func (m *RawConnectModal) InHex() bool { return m.hexMode }
 
 // SendEntry sends the entry line under the current mode and clears it. A hex
 // parse error is reported on the pane and nothing is written.
 func (m *RawConnectModal) SendEntry() error {
-	b, err := entryBytes(m.input.Value(), m.hexMode)
+	b, err := entryBytes(m.input.Value(), m.hexMode, m.newline)
 	if err != nil {
 		return err
 	}
@@ -244,13 +286,6 @@ func (m *RawConnectModal) SendEntry() error {
 	}
 	m.input.SetValue("")
 	return nil
-}
-
-// SendLine writes the given text plus CRLF. The TUI has no newline selector —
-// CRLF is what the line-oriented protocols this is for (HTTP, Redis, SMTP)
-// expect; the WebUI pane is where the selector lives.
-func (m *RawConnectModal) SendLine(s string) error {
-	return m.SendActive([]byte(s + "\r\n"))
 }
 
 // SetConn adopts the connection opened for gen. A pane that vanished while its
@@ -378,8 +413,11 @@ func (m *RawConnectModal) View() string {
 	entry := m.input.View()
 	if m.hexMode {
 		entry = "hex " + entry
+	} else if m.newline != rawNewlineCRLF {
+		entry = m.newline.label() + " " + entry
 	}
-	foot := "←/→ tab · Enter send · ctrl+r hex · ctrl+t HTTP · ctrl+x close · esc hide"
+	foot := "←/→ tab · Enter send · ctrl+r hex · ctrl+o " + m.newline.label() +
+		" · ctrl+t HTTP · ctrl+x close · esc hide"
 	if m.InForm() {
 		entry = m.form.View()
 		foot = "ctrl+x close · esc hide"
