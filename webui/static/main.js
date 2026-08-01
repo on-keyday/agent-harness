@@ -406,6 +406,7 @@ const POLL_INTERVAL_MS = 5000;
   const filePreviewClose  = document.getElementById("file-preview-close");
   const filePreviewToggle = document.getElementById("file-preview-toggle");
   const filePreviewCopy   = document.getElementById("file-preview-copy");
+  const filePreviewEdit   = document.getElementById("file-preview-edit");
   // Set when the current preview is HTML, so the toggle can rebuild the body
   // from already-fetched bytes without re-pulling. Reset on modal close.
   let filePreviewHtml = null; // { rel, size, bytes, mode: "render" | "source" }
@@ -414,6 +415,9 @@ const POLL_INTERVAL_MS = 5000;
   //   { blob, type }      => clipboard.write (image, best-effort by MIME)
   // null while showing an error/oversize note (nothing copyable) => button hidden.
   let filePreviewCopyPayload = null;
+  // Worktree-relative path of the open preview when it rendered as editable
+  // text — the only case that offers Edit. null hides the button.
+  let filePreviewEditRel = null;
 
   // Preview never pulls more than this into browser memory; oversize files
   // are rejected up front using the size from fileLs (no fetch attempted).
@@ -959,6 +963,22 @@ const POLL_INTERVAL_MS = 5000;
         filePickerSelected = e;
         updateFilePickerButtons();
       });
+      // Double-click is a file-only shortcut into the editor. Directory rows
+      // descend on the first click and are re-rendered, so they never see a
+      // second one.
+      if (!e.isDir) {
+        li.addEventListener("dblclick", async () => {
+          const taskID = fileTaskSelect.value;
+          if (!taskID) return;
+          const rel = joinFsPath(filePickerCurDir, e.name);
+          try {
+            fileResultPre.textContent = await editRemoteFile(taskID, rel);
+            refreshFilePicker();
+          } catch (err) {
+            fileResultPre.textContent = `edit error: ${err.message}`;
+          }
+        });
+      }
       fileEntriesUL.appendChild(li);
     }
   }
@@ -1133,6 +1153,8 @@ const POLL_INTERVAL_MS = 5000;
     filePreviewToggle.hidden = true;
     filePreviewCopyPayload = null;
     filePreviewCopy.hidden = true;
+    filePreviewEditRel = null;
+    filePreviewEdit.hidden = true;
   });
 
   // showPreviewCopy enables the Copy button for the current preview with the
@@ -1154,6 +1176,10 @@ const POLL_INTERVAL_MS = 5000;
     // Default to no copy target; render paths re-enable it via showPreviewCopy.
     filePreviewCopyPayload = null;
     filePreviewCopy.hidden = true;
+    // Same for Edit: only the text render paths turn it back on, so images,
+    // hex dumps and the oversize note never offer it.
+    filePreviewEditRel = null;
+    filePreviewEdit.hidden = true;
     filePreviewTitle.textContent = `${rel}  (${size} bytes)`;
     filePreviewBody.innerHTML = "";
     if (bodyNode) {
@@ -1194,7 +1220,25 @@ const POLL_INTERVAL_MS = 5000;
     filePreviewToggle.textContent = mode === "render" ? "View source" : "View rendered";
     // Copy always yields the raw HTML source, regardless of render/source view.
     showPreviewCopy({ text });
+    // HTML is text: offer Edit in both the rendered and the source view.
+    showPreviewEdit(rel);
   }
+
+  filePreviewEdit.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    const rel = filePreviewEditRel;
+    if (!taskID || !rel) return;
+    // Close the preview first — the editor is a modal too. editRemoteFile
+    // re-loads rather than reusing the bytes on screen: a preview opened
+    // minutes ago is a stale baseline and would conflict on the first save.
+    filePreviewModal.close();
+    try {
+      fileResultPre.textContent = await editRemoteFile(taskID, rel);
+      refreshFilePicker();
+    } catch (e) {
+      fileResultPre.textContent = `edit error: ${e.message}`;
+    }
+  });
 
   filePreviewToggle.addEventListener("click", () => {
     if (!filePreviewHtml) return;
@@ -1314,6 +1358,15 @@ const POLL_INTERVAL_MS = 5000;
     pre.textContent = text;
     openFilePreview(rel, size, pre, null);
     showPreviewCopy({ text });
+    showPreviewEdit(rel);
+  }
+
+  // showPreviewEdit enables the Edit button for the open preview. Called only
+  // from the text render paths — openFilePreview clears it up front, so the
+  // image / hex / error paths stay hidden.
+  function showPreviewEdit(rel) {
+    filePreviewEditRel = rel;
+    filePreviewEdit.hidden = false;
   }
 
   fileDeleteBtn.addEventListener("click", async () => {
@@ -1868,6 +1921,7 @@ const POLL_INTERVAL_MS = 5000;
             "                            remove a file (no -r) or directory (-r [-f])",
             "  file push <task> <rel>    upload a local file (file picker opens)",
             "  file new <task> <rel>     write a new text file in a browser editor and upload it",
+            "  file edit <task> <rel>    pull a text file into the browser editor and push it back",
             "  file mkdir [-p] <task> <rel>",
             "                            create a worktree directory (-p: parents, idempotent)",
             "  file pull [-r] <task> <rel>",
@@ -3683,6 +3737,8 @@ async function runFileCmd(rest) {
       return fileMkdirCmd(args);
     case "new":
       return fileNewCmd(args);
+    case "edit":
+      return fileEditCmd(args);
     default:
       throw new Error(`file: unknown sub-verb ${verb}`);
   }
@@ -3776,6 +3832,13 @@ async function fileNewCmd(args) {
   } finally {
     fp.end();
   }
+}
+
+async function fileEditCmd(args) {
+  if (args.length !== 2) {
+    throw new Error("usage: file edit <task-id> <worktree-rel-path>");
+  }
+  return editRemoteFile(args[0], args[1]);
 }
 
 // editRemoteFile loads rel from the task's worktree, opens it in the editor
