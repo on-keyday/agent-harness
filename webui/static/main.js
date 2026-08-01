@@ -3863,33 +3863,40 @@ async function editRemoteFile(taskID, rel) {
     }
     throw e;
   }
-  const edited = await openFileEditor({
-    name: rel,
-    text: doc.text,
-    title: `Edit ${rel}`,
-    saveLabel: "Save & push",
-  });
-  if (!edited) return "edit cancelled";
 
-  if (edited.name !== rel) {
-    const buf = window.harness.fileEditEncode(edited.text, doc.crlf, doc.bom);
-    const fp = beginFileProgress(basename(edited.name));
-    try {
-      const res = await pushBytesWithPrompts(taskID, edited.name, buf, basename(edited.name), fp.onProgress);
-      return res.msg;
-    } finally {
-      fp.end();
+  // Buffer carried across re-opens: declining a conflict overwrite must not
+  // throw away what was typed. The editor comes back with it so the operator
+  // can retarget the path (a save-as) or copy the text out.
+  let text = doc.text;
+  let title = `Edit ${rel}`;
+  for (;;) {
+    const edited = await openFileEditor({ name: rel, text, title, saveLabel: "Save & push" });
+    if (!edited) return "edit cancelled";
+    text = edited.text;
+
+    if (edited.name !== rel) {
+      const buf = window.harness.fileEditEncode(text, doc.crlf, doc.bom);
+      const fp = beginFileProgress(basename(edited.name));
+      try {
+        const res = await pushBytesWithPrompts(taskID, edited.name, buf, basename(edited.name), fp.onProgress);
+        return res.msg;
+      } finally {
+        fp.end();
+      }
     }
-  }
 
-  for (let force = false; ; force = true) {
-    const res = await window.harness.fileEditCommit(
-      taskID, rel, doc.orig, edited.text, doc.crlf, doc.bom, force);
+    let res = await window.harness.fileEditCommit(
+      taskID, rel, doc.orig, text, doc.crlf, doc.bom, false);
     if (res.status === "unchanged") return `no change: ${rel}`;
-    if (res.status === "pushed") return `edit ok: ${rel} (${edited.text.length} chars)`;
-    if (!window.confirm(`${rel} は runner 側で変更されています。上書きしますか?`)) {
-      return "edit cancelled (runner-side change kept)";
+    if (res.status === "pushed") return `edit ok: ${rel} (${text.length} chars)`;
+    if (window.confirm(`${rel} は runner 側で変更されています。上書きしますか?`)) {
+      res = await window.harness.fileEditCommit(
+        taskID, rel, doc.orig, text, doc.crlf, doc.bom, true);
+      return res.status === "unchanged"
+        ? `no change: ${rel}`
+        : `edit ok (overwritten): ${rel} (${text.length} chars)`;
     }
+    title = `Edit ${rel} — runner-side change kept; save under another name or close`;
   }
 }
 

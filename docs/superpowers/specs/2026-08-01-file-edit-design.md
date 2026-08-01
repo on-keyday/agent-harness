@@ -133,7 +133,7 @@ directly.
 
 ### WASM bridge: `cmd/harness-webui-wasm/main.go`
 
-Two exports, following the `harnessFilePullBytes` promise/`rejectFileErr` shape
+Three exports, following the `harnessFilePullBytes` promise/`rejectFileErr` shape
 already in that file:
 
 ```
@@ -143,6 +143,10 @@ harness.fileEditLoad(taskID, rel[, onProgress])
 
 harness.fileEditCommit(taskID, rel, orig: Uint8Array, text, crlf, bom, force)
     -> Promise<{ status: "pushed" | "unchanged" | "conflict" }>
+
+harness.fileEditEncode(text, crlf, bom) -> Uint8Array
+    pure; no network. Applies the BOM/CRLF rules so the save-as path can hand
+    bytes to the existing filePushBytes flow without reimplementing them in JS.
 ```
 
 `orig` crosses the boundary back rather than being held in a Go-side handle map:
@@ -162,7 +166,7 @@ Four entry points:
 |---|---|
 | `#file-edit-btn` in the Files action row | Enabled on the same condition as Preview (`main.js:898`): a task is selected, an entry is selected, and it is not a directory. |
 | Double-click on a file row (`renderFileEntries`, `main.js:945`) | File rows only. Directory rows already descend on the first click, so they never see a second one. |
-| `Edit` in the preview modal header | Shown only when the preview rendered as text — not for images, not for the hex dump, not for the oversize note. It passes the bytes the preview already pulled, so no second transfer. |
+| `Edit` in the preview modal header | Shown only when the preview rendered as text — not for images, not for the hex dump, not for the oversize note. It re-loads through `fileEditLoad` rather than reusing the bytes the preview holds: a preview opened minutes ago is a stale baseline, and editing from it would report a conflict on the first save. |
 | `file edit <task-id> <worktree-rel>` in the command input | Mirrors `file new` (`main.js:3671`, `:3748`). |
 
 Save:
