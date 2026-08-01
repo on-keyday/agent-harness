@@ -98,6 +98,9 @@ func main() {
 		"filePushBytes":      js.FuncOf(harnessFilePushBytes),
 		"filePullBytes":      js.FuncOf(harnessFilePullBytes),
 		"filePullDirBytes":   js.FuncOf(harnessFilePullDirBytes),
+		"fileEditLoad":       js.FuncOf(harnessFileEditLoad),
+		"fileEditCommit":     js.FuncOf(harnessFileEditCommit),
+		"fileEditEncode":     js.FuncOf(harnessFileEditEncode),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
@@ -1626,6 +1629,29 @@ func rejectFileErr(reject js.Value, err error) {
 	reject.Invoke(errObj)
 }
 
+// rejectFileEditErr adds the two edit-specific codes on top of
+// rejectFileErr's set, so the JS side can tell "too big to open" and "not
+// text" apart from a runner-side file failure without string-matching.
+//
+//	too_large – over cli.FileEditMaxBytes; offer Pull instead
+//	not_text  – invalid UTF-8 or NUL-containing; offer Preview instead
+func rejectFileEditErr(reject js.Value, err error) {
+	code := ""
+	switch {
+	case errors.Is(err, cli.ErrFileEditTooLarge):
+		code = "too_large"
+	case errors.Is(err, cli.ErrFileEditNotText):
+		code = "not_text"
+	}
+	if code == "" {
+		rejectFileErr(reject, err)
+		return
+	}
+	errObj := js.Global().Get("Error").New(err.Error())
+	errObj.Set("code", code)
+	reject.Invoke(errObj)
+}
+
 // harnessFileLs lists entries directly under taskID's worktree at
 // relPath. Returns the same shape harness.snapshot() runners use for
 // roots: a plain JS array of {name, size, mode, isDir}.
@@ -1882,4 +1908,111 @@ func harnessFilePullDirBytes(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFileEditLoad pulls remoteRel from taskID's worktree and resolves
+// with its editable form: the text an editor widget shows, the exact bytes
+// pulled (the caller hands them back on commit as the conflict baseline),
+// and the BOM / CRLF flags needed to reassemble the file.
+//
+//	harness.fileEditLoad(taskID, remoteRel[, onProgress])
+//	    -> Promise<{text, orig: Uint8Array, crlf, bom}>
+//
+// Rejects with code "too_large" / "not_text" for files an editor should not
+// open; runner-side failures keep the codes rejectFileErr already assigns.
+func harnessFileEditLoad(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		if len(args) < 2 {
+			rejectErr(reject, errors.New("fileEditLoad: missing taskID / remoteRel args"))
+			return nil
+		}
+		taskID := args[0].String()
+		remoteRel := args[1].String()
+		onProgress := jsProgress(args, 2)
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			doc, err := c.FileEditLoad(rootCtx, taskID, remoteRel, onProgress)
+			if err != nil {
+				rejectFileEditErr(reject, err)
+				return
+			}
+			orig := js.Global().Get("Uint8Array").New(len(doc.Orig))
+			js.CopyBytesToJS(orig, doc.Orig)
+			resolve.Invoke(map[string]any{
+				"text": doc.Text,
+				"orig": orig,
+				"crlf": doc.CRLF,
+				"bom":  doc.BOM,
+			})
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFileEditCommit writes text back to remoteRel. orig is what
+// fileEditLoad returned; the commit re-reads the runner-side file and
+// refuses to overwrite one that moved since, unless force is set.
+//
+//	harness.fileEditCommit(taskID, remoteRel, orig, text, crlf, bom, force)
+//	    -> Promise<{status: "pushed" | "unchanged" | "conflict"}>
+func harnessFileEditCommit(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		// Read every JS value here, on the main thread: args is invalid once
+		// this callback returns, and the goroutine below outlives it.
+		if len(args) < 7 {
+			rejectErr(reject, errors.New("fileEditCommit: missing taskID / remoteRel / orig / text / crlf / bom / force args"))
+			return nil
+		}
+		taskID := args[0].String()
+		remoteRel := args[1].String()
+		origJS := args[2]
+		orig := make([]byte, origJS.Length())
+		js.CopyBytesToGo(orig, origJS)
+		text := args[3].String()
+		doc := cli.FileEditDoc{Rel: remoteRel, Orig: orig, CRLF: args[4].Truthy(), BOM: args[5].Truthy()}
+		force := args[6].Truthy()
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			st, err := c.FileEditCommit(rootCtx, taskID, doc, text, force)
+			if err != nil {
+				rejectFileEditErr(reject, err)
+				return
+			}
+			resolve.Invoke(map[string]any{"status": st.String()})
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFileEditEncode applies the BOM / CRLF rules to text without
+// touching the network, so the save-as path can hand bytes to filePushBytes
+// (and its already_exists / not_found prompts) without reimplementing those
+// rules in JavaScript. Synchronous: there is nothing to await.
+//
+//	harness.fileEditEncode(text, crlf, bom) -> Uint8Array
+func harnessFileEditEncode(this js.Value, args []js.Value) any {
+	if len(args) < 3 {
+		return js.Global().Get("Uint8Array").New(0)
+	}
+	doc := cli.FileEditDoc{CRLF: args[1].Truthy(), BOM: args[2].Truthy()}
+	data := doc.Encode(args[0].String())
+	out := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(out, data)
+	return out
 }
