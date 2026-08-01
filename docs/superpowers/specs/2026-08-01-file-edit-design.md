@@ -216,6 +216,19 @@ launcher returns immediately while its window is still open, the read-back
 produces the unchanged buffer and the operator sees it. The same event wired
 straight to a push would silently push nothing and report success.
 
+The freeze is announced on the terminal rather than left to look like a hang.
+It cannot be announced by rendering it in the TUI: `Program.exec` calls
+`ReleaseTerminal` **before** running the command (`bubbletea/exec.go:101-113`),
+and that saves and leaves the alt screen (`bubbletea/tea.go:864-880`), so any
+frame the popup painted is gone by the time the editor starts. What survives is
+what the child writes to the primary screen — so the TUI supplies its own
+`tea.ExecCommand` implementation (the interface at `bubbletea/exec.go:60`;
+bubbletea hands it the terminal writer via `SetStdout(p.output)` just before
+`Run()`) whose `Run` prints which editor is open, on which path, and that the
+TUI returns when it exits, then runs the editor. A terminal editor paints over
+that line immediately; a GUI editor leaves it on screen for as long as its
+window is open, which is exactly where it is needed.
+
 `$EDITOR` unset renders `ErrNoExternalEditor`'s message in the popup footer and
 changes nothing else; the popup stays open and the built-in editor keeps
 working. The external editor is an escape hatch, never a dependency.
@@ -278,6 +291,10 @@ rationale behind it.
 - **No `vi` / `notepad` fallback anywhere.** An error that names `$EDITOR` and
   `$VISUAL` is better than dropping an operator into an editor they cannot exit,
   or into a launcher that reports success without saving.
+- **The external-editor suspension is announced from inside the exec, not from
+  the TUI frame.** The alt screen is already gone by then, so a status line in
+  the popup would never be seen. A custom `tea.ExecCommand` writing to the
+  terminal is the only place the message survives for the duration.
 - **`FileEditCommit` takes `force bool`, not a confirm callback.** Three
   surfaces, three confirmation mechanisms, one of which is asynchronous
   JavaScript.
