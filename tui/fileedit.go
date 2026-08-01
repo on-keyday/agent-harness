@@ -112,7 +112,12 @@ func (m *FileEditModel) OpenNew(taskID, dir string) {
 	m.name.SetValue(prefix)
 	m.name.CursorEnd()
 	m.body.SetValue("")
-	m.body.Focus()
+	// Focus the name, not the body: a new file has nothing to edit yet and
+	// must be named, so typing straight after `n` should be the name. Edit is
+	// the other way round — its path is already right.
+	m.focus = fileEditFocusName
+	m.body.Blur()
+	m.name.Focus()
 }
 
 func (m *FileEditModel) reset(taskID string) {
@@ -163,10 +168,22 @@ func (m *FileEditModel) SetSize(w, h int) {
 	m.applySize()
 }
 
+// Chrome the popup box adds around the widgets: a rounded border (1 column
+// each side) plus Padding(1, 2) (2 columns each side).
+const fileEditBoxChrome = 6
+
+// What bubbles textarea renders beyond the width passed to SetWidth: the
+// "┃ " prompt and the cursor/end-of-buffer column. Measured, not assumed —
+// TestFileEditViewFitsViewport fails if it ever changes.
+const fileEditTextareaChrome = 7
+
 func (m *FileEditModel) applySize() {
-	w := m.width - 8
-	if w < 20 {
-		w = 20
+	// No lower clamp beyond 1: a floor wide enough to be usable would still
+	// be wider than the screen it has to fit on, and an overflowing box loses
+	// its right border entirely. Cramped beats broken.
+	w := m.width - fileEditBoxChrome - fileEditTextareaChrome
+	if w < 1 {
+		w = 1
 	}
 	h := m.height - 10
 	if h < 4 {
@@ -175,6 +192,24 @@ func (m *FileEditModel) applySize() {
 	m.name.Width = w
 	m.body.SetWidth(w)
 	m.body.SetHeight(h)
+}
+
+// footerHint returns the key hints, clipped so a narrow terminal does not
+// make the popup wider than the screen it has to fit in.
+func (m FileEditModel) footerHint() string {
+	const full = "ctrl+j save · tab field · ctrl+o $EDITOR · esc cancel"
+	const short = "ctrl+j save · esc cancel"
+	inner := m.width - fileEditBoxChrome
+	if inner < 1 {
+		inner = 1
+	}
+	if lipgloss.Width(full) <= inner {
+		return full
+	}
+	if lipgloss.Width(short) <= inner {
+		return short
+	}
+	return clipLine(short, 0, inner)
 }
 
 // Update handles the popup's own keys and delegates the rest to the focused
@@ -242,19 +277,29 @@ func (m FileEditModel) View() string {
 	if m.create {
 		title = "New file"
 	}
+	inner := m.width - fileEditBoxChrome
 	parts := []string{
-		FocusedStyle.Render(title),
+		// Plain ASCII, clipped before styling — clipLine counts raw runes and
+		// would mis-measure an already-styled string.
+		FocusedStyle.Render(clipLine(title, 0, inner)),
+		// NOT clipped: textinput.View() carries ANSI for the cursor, which
+		// clipLine would count as display width and cut short. Its own Width
+		// is set from the same budget in applySize, so it already fits.
 		"path: " + m.name.View(),
 		m.body.View(),
 	}
 	if m.status != "" {
+		// Status text is free-form (a runner error, a conflict explanation)
+		// and the conflict one is double-width Japanese — clip it rather than
+		// let it decide the popup's width.
+		st := clipLine(m.status, 0, m.width-fileEditBoxChrome)
 		if m.statusErr {
-			parts = append(parts, ErrorStyle.Render(m.status))
+			parts = append(parts, ErrorStyle.Render(st))
 		} else {
-			parts = append(parts, OKStyle.Render(m.status))
+			parts = append(parts, OKStyle.Render(st))
 		}
 	}
-	parts = append(parts, FooterStyle.Render("ctrl+j save · tab field · ctrl+o $EDITOR · esc cancel"))
+	parts = append(parts, FooterStyle.Render(m.footerHint()))
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorFocused).

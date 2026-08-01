@@ -140,6 +140,18 @@ type FileMkdirAction struct {
 	Parents bool
 }
 
+// FileEditAction opens a worktree file in the editor popup.
+type FileEditAction struct {
+	TaskID  string
+	RelPath string
+}
+
+// FileNewAction opens the editor popup on a path that does not exist yet.
+type FileNewAction struct {
+	TaskID  string
+	RelPath string
+}
+
 // FilePullAction copies from a task's worktree to a local destination.
 // Recursive uses dir_pull. Force permits overwriting the local path.
 type FilePullAction struct {
@@ -229,6 +241,8 @@ func (FilePushAction) isAction()         {}
 func (FileMkdirAction) isAction()        {}
 func (FilePullAction) isAction()         {}
 func (FileDeleteAction) isAction()       {}
+func (FileEditAction) isAction()         {}
+func (FileNewAction) isAction()          {}
 func (ForwardLsAction) isAction()        {}
 func (ForwardKillAction) isAction()      {}
 func (ServerDialRunnerAction) isAction() {}
@@ -603,7 +617,7 @@ func parseNotify(args []string) (Action, error) {
 // escape).
 func parseFile(args []string) (Action, error) {
 	if len(args) == 0 {
-		return nil, fmt.Errorf("file: sub-verb required (ls | push | pull | mkdir | delete)")
+		return nil, fmt.Errorf("file: sub-verb required (ls | push | pull | mkdir | delete | edit | new)")
 	}
 	verb := args[0]
 	rest := args[1:]
@@ -686,8 +700,18 @@ func parseFile(args []string) (Action, error) {
 			return nil, fmt.Errorf("file mkdir: usage: file mkdir [-p] <task-id> <worktree-rel-dir>")
 		}
 		return FileMkdirAction{TaskID: pargs[0], RelPath: pargs[1], Parents: *parents}, nil
+	case "edit":
+		if len(rest) != 2 {
+			return nil, fmt.Errorf("file edit: usage: file edit <task-id> <worktree-rel-path>")
+		}
+		return FileEditAction{TaskID: rest[0], RelPath: rest[1]}, nil
+	case "new":
+		if len(rest) != 2 {
+			return nil, fmt.Errorf("file new: usage: file new <task-id> <worktree-rel-path>")
+		}
+		return FileNewAction{TaskID: rest[0], RelPath: rest[1]}, nil
 	default:
-		return nil, fmt.Errorf("file: unknown sub-verb %q (ls | push | pull | mkdir | delete)", verb)
+		return nil, fmt.Errorf("file: unknown sub-verb %q (ls | push | pull | mkdir | delete | edit | new)", verb)
 	}
 }
 

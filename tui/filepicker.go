@@ -137,6 +137,15 @@ func (m *FilePickerModel) IsOpen() bool { return m.open }
 // SetSize records the host viewport size used to clamp the popup box width.
 func (m *FilePickerModel) SetSize(w, h int) { m.width, m.height = w, h }
 
+// SetOpResult writes the picker's sticky result line. App uses it for
+// outcomes that would otherwise land in cmdresult, which the picker overlay
+// covers — an operator who presses a key while the picker is up has to be
+// told here or they see nothing happen at all.
+func (m *FilePickerModel) SetOpResult(msg string, isErr bool) {
+	m.opResult = msg
+	m.opResultErr = isErr
+}
+
 // OpenFor begins a picker session for taskID. Returns a Cmd that
 // loads the worktree root listing — App should run it.
 func (m *FilePickerModel) OpenFor(c *cli.Client, taskID string) tea.Cmd {

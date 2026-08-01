@@ -769,3 +769,37 @@ func TestParseForward(t *testing.T) {
 		t.Error("forward with no sub-verb should error")
 	}
 }
+
+func TestParseFileEdit(t *testing.T) {
+	act, err := parseFile([]string{"edit", "abc123", "notes.txt"})
+	if err != nil {
+		t.Fatalf("parseFile: %v", err)
+	}
+	e, ok := act.(FileEditAction)
+	if !ok {
+		t.Fatalf("got %T, want FileEditAction", act)
+	}
+	if e.TaskID != "abc123" || e.RelPath != "notes.txt" {
+		t.Errorf("act=%+v, want abc123 / notes.txt", e)
+	}
+}
+
+func TestParseFileEditWrongArity(t *testing.T) {
+	if _, err := parseFile([]string{"edit", "abc123"}); err == nil {
+		t.Error("parseFile accepted `file edit` with one argument")
+	}
+}
+
+func TestParseFileNew(t *testing.T) {
+	act, err := parseFile([]string{"new", "abc123", "sub/notes.txt"})
+	if err != nil {
+		t.Fatalf("parseFile: %v", err)
+	}
+	n, ok := act.(FileNewAction)
+	if !ok {
+		t.Fatalf("got %T, want FileNewAction", act)
+	}
+	if n.RelPath != "sub/notes.txt" {
+		t.Errorf("act=%+v, want sub/notes.txt", n)
+	}
+}

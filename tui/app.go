@@ -660,13 +660,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case FileEditLoadedMsg:
 		if msg.Err != nil {
+			var why string
 			switch {
 			case errors.Is(msg.Err, cli.ErrFileEditTooLarge):
-				a.cmdresult.Append(ErrorStyle.Render(msg.Rel + ": too large to edit — use file pull"))
+				why = msg.Rel + ": too large to edit — use file pull"
 			case errors.Is(msg.Err, cli.ErrFileEditNotText):
-				a.cmdresult.Append(ErrorStyle.Render(msg.Rel + ": not editable text"))
+				why = msg.Rel + ": not editable text"
 			default:
-				a.cmdresult.Append(ErrorStyle.Render("edit load: " + msg.Err.Error()))
+				why = "edit load: " + msg.Err.Error()
+			}
+			a.cmdresult.Append(ErrorStyle.Render(why))
+			// cmdresult is behind the picker overlay, so an `e` on a binary
+			// would otherwise look like the key did nothing.
+			if a.filepicker.IsOpen() {
+				a.filepicker.SetOpResult(why, true)
 			}
 			return a, nil
 		}
@@ -696,10 +703,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.Status == cli.FileEditUnchanged:
 			a.fileEditor.Close()
 			a.cmdresult.Append(WarnStyle.Render("no change: " + msg.Rel))
+			if a.filepicker.IsOpen() {
+				a.filepicker.SetOpResult("no change: "+msg.Rel, false)
+			}
 		default:
 			a.fileEditor.Close()
 			a.cmdresult.Append(OKStyle.Render("saved: " + msg.Rel))
+			// The picker is what the operator drops back into, and it covers
+			// cmdresult — tell them there, too.
 			if a.filepicker.IsOpen() {
+				a.filepicker.SetOpResult("saved: "+msg.Rel, false)
 				return a, DoListFilesFor(a.client, a.filepicker.TaskID(), a.filepicker.CurDir())
 			}
 		}
@@ -1982,10 +1995,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
 		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
+		a.cmdresult.Append("file edit <task-id> <rel>                          - open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)")
+		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
 		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
 		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
-		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. u push / g pull / d delete / D rm -rf. Esc closes.")
+		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.")
 		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.")
 		a.cmdresult.Append("  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.")
 		a.cmdresult.Append("trsf                        - dump the client↔server transport's internal state (debug)")
@@ -2133,6 +2148,25 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoFileMkdir(a.client, full, v.RelPath, v.Parents)
+	case FileEditAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		rel := v.RelPath
+		return a, func() tea.Msg { return FileEditRequestMsg{TaskID: full, Rel: rel} }
+	case FileNewAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		// OpenNew seeds a directory; this caller knows the whole path.
+		a.fileEditor.SetSize(a.width, a.height)
+		a.fileEditor.OpenNew(full, "")
+		a.fileEditor.SetName(v.RelPath)
+		return a, nil
 	case FilePullAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {

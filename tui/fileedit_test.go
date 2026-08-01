@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 )
 
@@ -100,6 +101,28 @@ func TestFileEditOpenNewSeedsDirectory(t *testing.T) {
 	if got := m.Text(); got != "" {
 		t.Errorf("Text()=%q, want empty", got)
 	}
+	// A new file must be named and has nothing to edit yet, so typing right
+	// after `n` belongs in the name — not in the contents.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("memo.txt")})
+	if got := m.Name(); got != "sub/dir/memo.txt" {
+		t.Errorf("Name()=%q, want the typed name appended", got)
+	}
+	if got := m.Text(); got != "" {
+		t.Errorf("Text()=%q, want the body still empty", got)
+	}
+}
+
+// Edit is the mirror image: the path is already right, so typing goes to the
+// contents.
+func TestFileEditOpenEditFocusesBody(t *testing.T) {
+	m := openedEditor(t)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Z")})
+	if got := m.Name(); got != "notes.txt" {
+		t.Errorf("Name()=%q, want it untouched", got)
+	}
+	if !strings.Contains(m.Text(), "Z") {
+		t.Errorf("Text()=%q, want the rune in the body", m.Text())
+	}
 }
 
 func TestFileEditSaveWithoutNameStaysOpen(t *testing.T) {
@@ -163,6 +186,39 @@ func TestEditorExecAnnouncesBeforeRunning(t *testing.T) {
 	}
 	if strings.Contains(strings.ReplaceAll(out, "\r\n", ""), "\n") {
 		t.Errorf("banner %q has a bare LF; raw mode needs CRLF", out)
+	}
+}
+
+// The popup is centred with lipgloss.Place at the viewport size, so a box
+// wider than the viewport loses its right border and looks broken. The
+// widget chrome constants are measured values; this is what catches them
+// drifting.
+func TestFileEditViewFitsViewport(t *testing.T) {
+	long := "notes.txt は runner 側で変更されています — もう一度 ctrl+j で上書き, esc で破棄"
+	for _, w := range []int{24, 40, 60, 80, 100, 120, 200} {
+		m := NewFileEdit()
+		m.SetSize(w, 40)
+		m.OpenEdit("t", cli.FileEditDoc{Rel: "some/nested/notes.txt", Text: "alpha\nbeta\n"})
+		if got := lipgloss.Width(m.View()); got > w {
+			t.Errorf("viewport %d: View() width %d overflows", w, got)
+		}
+		m.SetStatus(long, true)
+		if got := lipgloss.Width(m.View()); got > w {
+			t.Errorf("viewport %d with a long status: View() width %d overflows", w, got)
+		}
+	}
+}
+
+// Fitting the box must not be achieved by silently truncating what the
+// operator needs to read. clipLine is ANSI-unaware, so running it over a
+// styled widget render would clip early and invisibly — this pins that the
+// path survives at an ordinary width.
+func TestFileEditViewKeepsFullPath(t *testing.T) {
+	m := NewFileEdit()
+	m.SetSize(80, 40)
+	m.OpenEdit("t", cli.FileEditDoc{Rel: "some/nested/notes.txt", Text: "alpha\n"})
+	if !strings.Contains(m.View(), "some/nested/notes.txt") {
+		t.Errorf("View() lost the path:\n%s", m.View())
 	}
 }
 
