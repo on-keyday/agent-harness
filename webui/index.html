@@ -177,6 +177,7 @@
         <button id="file-pull-btn" disabled>Pull (download selected file)</button>
         <button id="file-pull-dir-btn" disabled>Pull dir (current dir as .tar)</button>
         <button id="file-preview-btn" disabled>Preview (view selected file)</button>
+        <button id="file-edit-btn" disabled>Edit (edit selected file)</button>
         <button id="file-delete-btn" disabled>Delete</button>
       </div>
       <div id="file-progress-list"></div>
@@ -236,10 +237,12 @@
   </div>
   <div id="file-preview-body" class="preview-body"></div>
 </dialog>
-<!-- Text-file editor modal (Files tab "New text file" / cmd `file new`):
-     write a small text file in the browser and upload it via file push —
-     no local editor needed (the WebUI is often used from a phone). Body-level
-     for the same top-layer reason as file-preview-modal above. -->
+<!-- Text-file editor modal, shared by create and edit (Files tab "New text
+     file" / "Edit", cmd `file new` / `file edit`): write or change a small
+     text file in the browser and push it — no local editor needed (the WebUI
+     is often used from a phone). Title and Save label are set by
+     openFileEditor per mode. Body-level for the same top-layer reason as
+     file-preview-modal above. -->
 <dialog id="file-editor-modal" class="preview-modal">
   <div class="preview-header">
     <span id="file-editor-title" class="preview-title">New text file</span>

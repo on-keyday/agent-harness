@@ -397,6 +397,7 @@ const POLL_INTERVAL_MS = 5000;
   const filePullBtn       = document.getElementById("file-pull-btn");
   const filePullDirBtn    = document.getElementById("file-pull-dir-btn");
   const filePreviewBtn    = document.getElementById("file-preview-btn");
+  const fileEditBtn       = document.getElementById("file-edit-btn");
   const fileDeleteBtn     = document.getElementById("file-delete-btn");
   const fileResultPre     = document.getElementById("file-result");
   const filePreviewModal  = document.getElementById("file-preview-modal");
@@ -896,6 +897,7 @@ const POLL_INTERVAL_MS = 5000;
     filePullBtn.disabled = !hasTask || !hasSel;
     filePullDirBtn.disabled = !hasTask;
     filePreviewBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
+    fileEditBtn.disabled = !hasTask || !hasSel || filePickerSelected.isDir;
     fileDeleteBtn.disabled = !hasTask || !hasSel;
   }
 
@@ -1030,7 +1032,7 @@ const POLL_INTERVAL_MS = 5000;
   fileNewBtn.addEventListener("click", async () => {
     const taskID = fileTaskSelect.value;
     if (!taskID) return;
-    const edited = await openFileEditor("");
+    const edited = await openFileEditor({ name: "" });
     if (!edited) {
       fileResultPre.textContent = "new file cancelled";
       return;
@@ -1101,6 +1103,18 @@ const POLL_INTERVAL_MS = 5000;
       renderFilePreview(rel, sel.size, sel.name, bytes);
     } catch (e) {
       openFilePreview(rel, sel.size, null, `preview error: ${e.message}`);
+    }
+  });
+
+  fileEditBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID || !filePickerSelected || filePickerSelected.isDir) return;
+    const rel = joinFsPath(filePickerCurDir, filePickerSelected.name);
+    try {
+      fileResultPre.textContent = await editRemoteFile(taskID, rel);
+      refreshFilePicker();
+    } catch (e) {
+      fileResultPre.textContent = `edit error: ${e.message}`;
     }
   });
 
@@ -3752,7 +3766,7 @@ async function fileNewCmd(args) {
   const [taskID, remoteRel] = args;
   // The editor's name field is seeded with the requested destination and
   // stays editable; whatever it holds on Save is the final worktree-rel dst.
-  const edited = await openFileEditor(remoteRel);
+  const edited = await openFileEditor({ name: remoteRel });
   if (!edited) return "new file cancelled";
   const buf = new TextEncoder().encode(edited.text);
   const fp = beginFileProgress(basename(edited.name));
@@ -3761,6 +3775,58 @@ async function fileNewCmd(args) {
     return res.msg;
   } finally {
     fp.end();
+  }
+}
+
+// editRemoteFile loads rel from the task's worktree, opens it in the editor
+// modal, and writes it back. Returns a result line for whichever surface
+// called it (the Files-tab #file-result pane or the cmd output).
+//
+// Two save paths. Unchanged name => in-place: fileEditCommit re-reads the
+// runner-side file and reports "conflict" if it moved while the modal was
+// open, which becomes a confirm and a forced retry here. Changed name =>
+// save-as: there is no baseline at the new path, so the bytes go through
+// pushBytesWithPrompts and its already_exists / not_found prompts.
+async function editRemoteFile(taskID, rel) {
+  let doc;
+  try {
+    doc = await window.harness.fileEditLoad(taskID, rel);
+  } catch (e) {
+    if (e && e.code === "too_large") {
+      return `edit error: ${rel} is too large to edit — use Pull to download it`;
+    }
+    if (e && e.code === "not_text") {
+      return `edit error: ${rel} is not editable text — use Preview to inspect it`;
+    }
+    throw e;
+  }
+  const edited = await openFileEditor({
+    name: rel,
+    text: doc.text,
+    title: `Edit ${rel}`,
+    saveLabel: "Save & push",
+  });
+  if (!edited) return "edit cancelled";
+
+  if (edited.name !== rel) {
+    const buf = window.harness.fileEditEncode(edited.text, doc.crlf, doc.bom);
+    const fp = beginFileProgress(basename(edited.name));
+    try {
+      const res = await pushBytesWithPrompts(taskID, edited.name, buf, basename(edited.name), fp.onProgress);
+      return res.msg;
+    } finally {
+      fp.end();
+    }
+  }
+
+  for (let force = false; ; force = true) {
+    const res = await window.harness.fileEditCommit(
+      taskID, rel, doc.orig, edited.text, doc.crlf, doc.bom, force);
+    if (res.status === "unchanged") return `no change: ${rel}`;
+    if (res.status === "pushed") return `edit ok: ${rel} (${edited.text.length} chars)`;
+    if (!window.confirm(`${rel} は runner 側で変更されています。上書きしますか?`)) {
+      return "edit cancelled (runner-side change kept)";
+    }
   }
 }
 
@@ -3799,19 +3865,29 @@ async function pushBytesWithPrompts(taskID, remoteRel, buf, displayName, onProgr
 }
 
 // openFileEditor shows the text-file editor modal and resolves {name, text}
-// on Save, or null when dismissed (✕ / Cancel / Esc). namePrefill seeds the
-// file-name field: cmd `file new` passes its <worktree-rel-dst>; the Files-tab
-// button passes "" so the file lands in the picker's current directory.
-function openFileEditor(namePrefill) {
+// on Save, or null when dismissed (✕ / Cancel / Esc). opts:
+//   name      seeds the file-name field — cmd `file new` passes its
+//             <worktree-rel-dst>, the Files-tab New button passes "" so the
+//             file lands in the picker's current directory, and edit passes
+//             the path it loaded. It stays editable in every mode: retargeting
+//             it on an edit is a save-as.
+//   text      seeds the body; "" for a new file.
+//   title     modal header.
+//   saveLabel the Save button's label.
+function openFileEditor(opts) {
+  const { name = "", text = "", title = "New text file", saveLabel = "Save & upload" } = opts || {};
   const modal     = document.getElementById("file-editor-modal");
+  const titleEl   = document.getElementById("file-editor-title");
   const nameIn    = document.getElementById("file-editor-name");
   const textIn    = document.getElementById("file-editor-text");
   const saveBtn   = document.getElementById("file-editor-save");
   const cancelBtn = document.getElementById("file-editor-cancel");
   const closeBtn  = document.getElementById("file-editor-close");
   if (modal.open) return Promise.resolve(null); // one editor at a time
-  nameIn.value = namePrefill || "";
-  textIn.value = "";
+  titleEl.textContent = title;
+  saveBtn.textContent = saveLabel;
+  nameIn.value = name;
+  textIn.value = text;
   return new Promise((resolve) => {
     const finish = (result) => {
       saveBtn.removeEventListener("click", onSave);
