@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -47,6 +48,13 @@ type App struct {
 	popup           PopupModel
 	detail          DetailPopup
 	filepicker      FilePickerModel
+	fileEditor      FileEditModel
+	// One-shot: set when a commit came back FileEditConflict, consumed by the
+	// next save so a second ctrl+j overwrites deliberately rather than by
+	// default.
+	fileEditForce bool
+	// Temp file held across an external-editor tea.Exec.
+	fileEditTmpPath string
 
 	focus  focus
 	width  int
@@ -201,6 +209,7 @@ func New(cfg Config) *App {
 		cmdHistoryIndex: -1,
 		popup:           NewPopup(cfg.DefaultRepo),
 		filepicker:      NewFilePicker(),
+		fileEditor:      NewFileEdit(),
 		connsModal:      NewConnsModal(),
 		forwardsModal:   NewForwardsModal(),
 		rawModal:        NewRawConnectModal(),
@@ -640,6 +649,103 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.filepicker, pcmd = a.filepicker.Update(msg)
 		return a, pcmd
 
+	case FileEditRequestMsg:
+		a.cmdresult.Append("loading " + msg.Rel + " for edit…")
+		return a, DoFileEditLoad(a.client, msg.TaskID, msg.Rel)
+
+	case FileEditNewRequestMsg:
+		a.fileEditor.SetSize(a.width, a.height)
+		a.fileEditor.OpenNew(msg.TaskID, msg.Dir)
+		return a, nil
+
+	case FileEditLoadedMsg:
+		if msg.Err != nil {
+			switch {
+			case errors.Is(msg.Err, cli.ErrFileEditTooLarge):
+				a.cmdresult.Append(ErrorStyle.Render(msg.Rel + ": too large to edit — use file pull"))
+			case errors.Is(msg.Err, cli.ErrFileEditNotText):
+				a.cmdresult.Append(ErrorStyle.Render(msg.Rel + ": not editable text"))
+			default:
+				a.cmdresult.Append(ErrorStyle.Render("edit load: " + msg.Err.Error()))
+			}
+			return a, nil
+		}
+		a.fileEditor.SetSize(a.width, a.height)
+		a.fileEditor.OpenEdit(msg.TaskID, msg.Doc)
+		return a, nil
+
+	case FileEditSaveMsg:
+		force := a.fileEditForce
+		a.fileEditForce = false
+		// A retargeted path is a new file wherever it points, so there is no
+		// baseline to compare it against — push it as a create.
+		if msg.Create || msg.Name != msg.Doc.Rel {
+			return a, DoFileEditCreate(a.client, msg.TaskID, msg.Name, msg.Text, msg.Doc)
+		}
+		return a, DoFileEditCommit(a.client, msg.TaskID, msg.Doc, msg.Text, force)
+
+	case FileEditCommittedMsg:
+		switch {
+		case msg.Err != nil:
+			a.fileEditor.SetStatus("save failed: "+msg.Err.Error(), true)
+		case msg.Status == cli.FileEditConflict:
+			// Stay open with the buffer intact — losing what was typed is
+			// worse than either outcome the operator is choosing between.
+			a.fileEditForce = true
+			a.fileEditor.SetStatus(msg.Rel+" は runner 側で変更されています — もう一度 ctrl+j で上書き, esc で破棄", true)
+		case msg.Status == cli.FileEditUnchanged:
+			a.fileEditor.Close()
+			a.cmdresult.Append(WarnStyle.Render("no change: " + msg.Rel))
+		default:
+			a.fileEditor.Close()
+			a.cmdresult.Append(OKStyle.Render("saved: " + msg.Rel))
+			if a.filepicker.IsOpen() {
+				return a, DoListFilesFor(a.client, a.filepicker.TaskID(), a.filepicker.CurDir())
+			}
+		}
+		return a, nil
+
+	case FileEditExternalMsg:
+		path, werr := writeFileEditTemp(msg.Name, msg.Text)
+		if werr != nil {
+			a.fileEditor.SetStatus("temp file: "+werr.Error(), true)
+			return a, nil
+		}
+		ecmd, err := cli.ExternalEditorCommand(path)
+		if err != nil {
+			os.Remove(path)
+			a.fileEditor.SetStatus(err.Error(), true)
+			return a, nil
+		}
+		a.fileEditTmpPath = path
+		return a, tea.Exec(&editorExec{cmd: ecmd, name: ecmd.Path, path: path},
+			func(execErr error) tea.Msg {
+				return fileEditExecDoneMsg{path: path, err: execErr}
+			})
+
+	case fileEditExecDoneMsg:
+		defer os.Remove(msg.path)
+		a.fileEditTmpPath = ""
+		if msg.err != nil {
+			a.fileEditor.SetStatus("editor exited with an error: "+msg.err.Error()+" (buffer unchanged)", true)
+			return a, nil
+		}
+		b, rerr := os.ReadFile(msg.path)
+		if rerr != nil {
+			a.fileEditor.SetStatus("read back: "+rerr.Error()+" (buffer unchanged)", true)
+			return a, nil
+		}
+		// Read back into the buffer, never straight to a push: if a GUI
+		// editor's launcher returned before its window closed, the operator
+		// sees an unchanged buffer instead of a silent no-op "save".
+		if string(b) == a.fileEditor.Text() {
+			a.fileEditor.SetStatus("external editor made no change", false)
+			return a, nil
+		}
+		a.fileEditor.SetText(string(b))
+		a.fileEditor.SetStatus("外部エディタの内容を読み込みました — ctrl+j で保存", false)
+		return a, nil
+
 	case InteractiveReadyMsg:
 		// armed is true only when this open was dispatched from the `S` key
 		// or the resume cases of `r`/`R`/`u`/`U` (the only sites that set
@@ -792,6 +898,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.height = msg.Height
 		a.layout()
 		a.filepicker.SetSize(a.width, a.height)
+		a.fileEditor.SetSize(a.width, a.height)
 		a.connsModal.SetSize(a.width, a.height)
 		a.forwardsModal.SetSize(a.width, a.height)
 		a.boardModal.SetSize(a.width, a.height)
@@ -914,6 +1021,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var cmd tea.Cmd
 			a.boardModal, cmd = a.boardModal.Update(msg)
 			return a, cmd
+		}
+		// The editor popup sits on top of the file picker (which is what
+		// opens it), so it must claim keys first — the picker's block below
+		// swallows everything it sees.
+		if a.fileEditor.IsOpen() {
+			var ecmd tea.Cmd
+			a.fileEditor, ecmd = a.fileEditor.Update(msg)
+			return a, ecmd
 		}
 		// File picker intercepts ALL keys when open.
 		if a.filepicker.IsOpen() {
@@ -1659,6 +1774,11 @@ func (a *App) View() string {
 		cmdlineView,
 		footer,
 	}, "\n")
+	// Editor before picker: it opens from the picker and draws on top of it,
+	// matching the key precedence in Update.
+	if a.fileEditor.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.fileEditor.View())
+	}
 	if a.filepicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.filepicker.View())
 	}

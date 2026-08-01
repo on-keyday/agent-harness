@@ -34,6 +34,12 @@ type FileEditExternalMsg struct {
 	Text string
 }
 
+// fileEditExecDoneMsg lands after tea.Exec returns from the external editor.
+type fileEditExecDoneMsg struct {
+	path string
+	err  error
+}
+
 type fileEditFocus int
 
 const (

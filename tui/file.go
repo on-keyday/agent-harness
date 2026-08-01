@@ -143,3 +143,58 @@ func DoFileDelete(c *cli.Client, taskID, relPath string, recursive, force bool) 
 		}
 	}
 }
+
+// FileEditLoadedMsg carries a pulled file back to App, which opens the
+// editor popup on it.
+type FileEditLoadedMsg struct {
+	TaskID string
+	Rel    string
+	Doc    cli.FileEditDoc
+	Err    error
+}
+
+// FileEditCommittedMsg carries a commit outcome back to App.
+type FileEditCommittedMsg struct {
+	Rel    string
+	Status cli.FileEditStatus
+	Err    error
+}
+
+// DoFileEditLoad pulls a file for editing. Threads a.client like every other
+// Do* here — it never dials.
+func DoFileEditLoad(c *cli.Client, taskID, rel string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		doc, err := c.FileEditLoad(ctx, taskID, rel, nil)
+		return FileEditLoadedMsg{TaskID: taskID, Rel: rel, Doc: doc, Err: err}
+	}
+}
+
+// DoFileEditCommit writes an edited buffer back to the file it came from,
+// re-reading the runner-side file first unless force is set.
+func DoFileEditCommit(c *cli.Client, taskID string, doc cli.FileEditDoc, text string, force bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		st, err := c.FileEditCommit(ctx, taskID, doc, text, force)
+		return FileEditCommittedMsg{Rel: doc.Rel, Status: st, Err: err}
+	}
+}
+
+// DoFileEditCreate writes a buffer to a path that has no baseline: a new
+// file, or an edit retargeted to a different path (save-as). Force stays off
+// so an accidental collision is reported rather than silently overwritten;
+// parents are created, matching the WebUI's prompt-and-retry outcome.
+func DoFileEditCreate(c *cli.Client, taskID, rel, text string, doc cli.FileEditDoc) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		err := c.FilePushBytes(ctx, taskID, doc.Encode(text), rel, cli.FilePushOpts{MkdirParents: true}, nil)
+		st := cli.FileEditPushed
+		if err != nil {
+			st = cli.FileEditStatusInvalid
+		}
+		return FileEditCommittedMsg{Rel: rel, Status: st, Err: err}
+	}
+}

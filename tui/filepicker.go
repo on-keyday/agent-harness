@@ -36,6 +36,22 @@ const (
 	pickerConfirmPushOverwrite
 )
 
+// FileEditRequestMsg asks App to load a worktree file into the editor popup.
+// The picker raises it rather than loading the file itself: the popup lives
+// on App, and the tea.Exec its external-editor path needs must be returned
+// from App.Update.
+type FileEditRequestMsg struct {
+	TaskID string
+	Rel    string
+}
+
+// FileEditNewRequestMsg asks App to open the editor popup on a file that does
+// not exist yet, seeded with the picker's current directory.
+type FileEditNewRequestMsg struct {
+	TaskID string
+	Dir    string
+}
+
 // FilePickerModel is the file-picker popup state. The picker takes
 // over keyboard handling while open. It browses a task's worktree
 // (via cli.Client.ListFiles), supports descending / ascending
@@ -108,6 +124,12 @@ func NewFilePicker() FilePickerModel {
 	ti.CharLimit = 4096
 	return FilePickerModel{input: ti}
 }
+
+// TaskID reports the task whose worktree the picker is browsing.
+func (m FilePickerModel) TaskID() string { return m.taskID }
+
+// CurDir reports the worktree-relative directory the picker is showing.
+func (m FilePickerModel) CurDir() string { return m.curDir }
 
 // IsOpen reports whether the picker is currently active.
 func (m *FilePickerModel) IsOpen() bool { return m.open }
@@ -328,6 +350,25 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 		m.input.Placeholder = "local destination path"
 		m.input.Focus()
 		return m, nil
+	case "e":
+		// Edit: App owns the editor popup (and the tea.Exec its ctrl+o path
+		// needs, which must be returned from App.Update), so the picker only
+		// raises the request.
+		if m.cursor < 0 || m.cursor >= len(m.entries) {
+			m.msg = "select a file to edit"
+			return m, nil
+		}
+		e := m.entries[m.cursor]
+		if e.IsDir {
+			m.msg = "use enter to descend"
+			return m, nil
+		}
+		rel := joinRel(m.curDir, e.Name)
+		taskID := m.taskID
+		return m, func() tea.Msg { return FileEditRequestMsg{TaskID: taskID, Rel: rel} }
+	case "n":
+		taskID, dir := m.taskID, m.curDir
+		return m, func() tea.Msg { return FileEditNewRequestMsg{TaskID: taskID, Dir: dir} }
 	case "d":
 		if m.cursor < 0 || m.cursor >= len(m.entries) {
 			return m, nil
@@ -784,7 +825,7 @@ func (m FilePickerModel) View() string {
 	var header strings.Builder
 	fmt.Fprintf(&header, "File picker · task %s · /%s\n", m.taskShort, m.curDir)
 	if !m.localBrowseActive {
-		header.WriteString("↑↓ nav · → / Enter descend · ← / Backspace back · u push · g pull · d delete · D rm -rf · + new dir · r reload · Esc close\n")
+		header.WriteString("↑↓ nav · → / Enter descend · ← / Backspace back · e edit · n new file · u push · g pull · d delete · D rm -rf · + new dir · r reload · Esc close\n")
 	} else {
 		header.WriteString("Tab → typing (pre-fills selected file) · ↑↓ → / Enter descend · ← / Backspace back · . use this dir · d/D delete · r reload · Esc cancel\n")
 	}
