@@ -232,3 +232,23 @@ func TestFileEditClosedUpdateIsNoop(t *testing.T) {
 		t.Error("a closed popup opened itself")
 	}
 }
+
+// The popup's key wiring must sanitize too, not just the buffer's own API:
+// a bracketed paste arrives here as one KeyRunes event and can carry control
+// bytes straight from the terminal.
+func TestFileEditPasteWithControlCharsStaysText(t *testing.T) {
+	m := openedEditor(t)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x', 0x00, 'y', 0x1b, 'z'}, Paste: true})
+	got := m.Text()
+	if strings.ContainsRune(got, 0x00) || strings.ContainsRune(got, 0x1b) {
+		t.Fatalf("Text()=%q still holds control characters", got)
+	}
+	if !strings.Contains(got, "xyz") {
+		t.Errorf("Text()=%q, want the printable runes kept as xyz", got)
+	}
+	// And what we would push must load again.
+	doc := m.Doc()
+	if _, err := cli.NewFileEditDocForTest("memo.txt", doc.Encode(got)); err != nil {
+		t.Errorf("saved bytes would not reopen: %v", err)
+	}
+}

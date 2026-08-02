@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func newBuf(text string, w, h int) *editBuffer {
@@ -298,5 +299,49 @@ func TestEditBufSetValueResetsState(t *testing.T) {
 	}
 	if got := b.Value(); got != "x" {
 		t.Errorf("Value()=%q, want x", got)
+	}
+}
+
+// A terminal can deliver control characters — a Windows console with an IME
+// especially — and the buffer must never let one reach the file. This was a
+// real incident: bubbles/textarea sanitized user input (textarea.go:366 via
+// runeutil), the replacement did not, so an edit saved a NUL and the file
+// came back "not editable text" on the next open.
+func TestEditBufInsertDropsControlCharacters(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []rune
+		want string
+	}{
+		{"nul", []rune{'a', 0x00, 'b'}, "ab"},
+		{"escape", []rune{'a', 0x1b, 'b'}, "ab"},
+		{"bell and del", []rune{'a', 0x07, 0x7f, 'b'}, "ab"},
+		{"rune error", []rune{'a', utf8.RuneError, 'b'}, "ab"},
+		{"tab becomes spaces", []rune("a\tb"), "a    b"},
+		{"wide runes survive", []rune("日本語"), "日本語"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBuf("", 40, 5)
+			b.InsertRunes(tc.in)
+			if got := b.Value(); got != tc.want {
+				t.Errorf("Value()=%q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A pasted CRLF is ONE line break, not two. Splitting on both halves would
+// double every line of anything copied out of a Windows file.
+func TestEditBufInsertCRLFIsOneLineBreak(t *testing.T) {
+	b := newBuf("", 40, 5)
+	b.InsertRunes([]rune("a\r\nb"))
+	if got, want := b.Value(), "a\nb"; got != want {
+		t.Errorf("Value()=%q, want %q", got, want)
+	}
+	b2 := newBuf("", 40, 5)
+	b2.InsertRunes([]rune("a\rb")) // a lone CR is still a line break
+	if got, want := b2.Value(), "a\nb"; got != want {
+		t.Errorf("lone CR: Value()=%q, want %q", got, want)
 	}
 }

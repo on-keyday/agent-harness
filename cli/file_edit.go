@@ -80,8 +80,15 @@ func newFileEditDoc(rel string, orig []byte) (FileEditDoc, error) {
 	if hasBOM {
 		body = body[len(utf8BOM):]
 	}
-	if !utf8.Valid(body) || bytes.IndexByte(body, 0) >= 0 {
-		return FileEditDoc{}, ErrFileEditNotText
+	// Say WHICH rule failed. "not editable text" alone is fine for a binary
+	// picked out of the listing by accident, but it is useless when a file
+	// that IS text has picked up a stray byte — naming the offset is what
+	// tells the operator it is repairable rather than a wrong selection.
+	if i := bytes.IndexByte(body, 0); i >= 0 {
+		return FileEditDoc{}, fmt.Errorf("%w: NUL byte at offset %d", ErrFileEditNotText, i)
+	}
+	if !utf8.Valid(body) {
+		return FileEditDoc{}, fmt.Errorf("%w: invalid UTF-8", ErrFileEditNotText)
 	}
 	// CRLF only when every newline is one: a mixed file normalizes to LF,
 	// which is lossy for its CRLF lines and is the documented trade.
@@ -191,4 +198,11 @@ func ExternalEditorCommand(path string) (*exec.Cmd, error) {
 		return nil, ErrNoExternalEditor
 	}
 	return exec.Command(fields[0], append(fields[1:], path)...), nil
+}
+
+// NewFileEditDocForTest exposes the load rules to tests in other packages —
+// the TUI's edit/save/reopen cycle test needs to assert that bytes this
+// editor produced are accepted again, without standing up a transfer.
+func NewFileEditDocForTest(rel string, orig []byte) (FileEditDoc, error) {
+	return newFileEditDoc(rel, orig)
 }

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/mattn/go-runewidth"
 )
@@ -92,9 +94,13 @@ func (b *editBuffer) Value() string {
 // InsertRunes inserts rs at the cursor. A bracketed paste arrives as one
 // multi-rune event, so this takes a slice rather than a single rune; any
 // newlines inside it split lines the same way typing Enter would.
+//
+// Input is sanitized first — see sanitizeInput. Skipping that shipped a bug
+// where a control character from the terminal was written into the file and
+// the next open refused it as "not editable text".
 func (b *editBuffer) InsertRunes(rs []rune) {
-	for _, r := range rs {
-		if r == '\n' || r == '\r' {
+	for _, r := range sanitizeInput(rs) {
+		if r == '\n' {
 			b.InsertNewline()
 			continue
 		}
@@ -258,6 +264,50 @@ func (b *editBuffer) colForDisplay(row, want int) int {
 }
 
 // ---- wrapping and window -------------------------------------------------
+
+// tabWidth is what a typed or pasted tab expands to. Storing a literal tab
+// would make every width calculation here a lie, since a tab's display width
+// depends on the column it lands in.
+const tabWidth = 4
+
+// sanitizeInput filters runes arriving from the terminal before they can
+// reach the document. It mirrors what bubbles/textarea did through
+// runeutil.Sanitizer (textarea.go:366) and which was lost when this buffer
+// replaced that widget:
+//
+//   - control characters are dropped — a NUL reaching the file is what made
+//     a saved memo fail to reopen ("not editable text"), and a Windows
+//     console with an IME is exactly where stray control bytes come from
+//   - utf8.RuneError is dropped rather than written as U+FFFD
+//   - CRLF and a lone CR both collapse to a single newline, so pasting from
+//     a Windows file does not double every line
+//   - a tab becomes spaces
+func sanitizeInput(rs []rune) []rune {
+	out := make([]rune, 0, len(rs))
+	for i := 0; i < len(rs); i++ {
+		r := rs[i]
+		switch {
+		case r == utf8.RuneError:
+			// drop
+		case r == '\r':
+			if i+1 < len(rs) && rs[i+1] == '\n' {
+				i++ // CRLF is one break
+			}
+			out = append(out, '\n')
+		case r == '\n':
+			out = append(out, '\n')
+		case r == '\t':
+			for j := 0; j < tabWidth; j++ {
+				out = append(out, ' ')
+			}
+		case unicode.IsControl(r):
+			// drop
+		default:
+			out = append(out, r)
+		}
+	}
+	return out
+}
 
 // wrapSegments returns the rune index at which each display segment of line
 // starts, wrapping at width display cells. The first element is always 0. A
