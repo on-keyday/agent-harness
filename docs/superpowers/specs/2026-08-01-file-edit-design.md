@@ -185,9 +185,17 @@ Both paths end by refreshing the picker and writing the outcome to
 
 ### TUI: `tui/fileedit.go` (new)
 
-A `textarea` popup modelled on `tui/popup.go`, with key handling in `App.Update`
-next to the submit-popup block that already owns this pattern
-(`tui/app.go:924`).
+A popup modelled on `tui/popup.go`, with key handling in `App.Update` next to
+the submit-popup block that already owns this pattern (`tui/app.go:924`).
+
+> **Amended after implementation.** The body started as a bubbles `textarea`
+> and is now `tui/editbuf.go`, a windowed buffer. `textarea.View` re-renders
+> the entire document every frame, which cost 38ms per keystroke on a 93KB
+> Japanese memo (3ms at 1KB) and was visibly laggy on Windows. The replacement
+> renders only the visible window: 30µs at 93KB. Two consequences worth
+> carrying: it wraps by display cell rather than by word, and it has to do its
+> own input sanitizing — dropping that is what let a control character reach a
+> saved file and made it fail to reopen. The key contract below is unchanged.
 
 | Key | Action |
 |---|---|
@@ -195,16 +203,15 @@ next to the submit-popup block that already owns this pattern
 | `Esc` | Cancel; the buffer is discarded |
 | `Tab` | Move between the name field and the body (`httpform.go:126` convention) |
 | `Ctrl+O` | Open the buffer in `$EDITOR` |
-| everything else | Delegated to the focused `textarea` / `textinput` |
+| everything else | Delegated to the focused buffer / `textinput` |
 
-`Ctrl+O` is chosen because bubbles `textarea` does not bind it and neither does
-any other TUI modal's key set. `Ctrl+E`, the mnemonic first choice, is taken
-twice over (see What already exists).
+`Ctrl+O` is chosen because no other TUI modal's key set binds it. `Ctrl+E`,
+the mnemonic first choice, is taken twice over (see What already exists).
 
 The `Ctrl+O` round trip: write the current buffer to a temp file preserving the
 original extension (so an external editor picks its own highlighting), return
 `tea.Exec` with `ExternalEditorCommand`, and on return read the temp file back
-**into the textarea**. It does not push. A non-zero exit leaves the buffer
+**into the buffer**. It does not push. A non-zero exit leaves the buffer
 untouched and prints the exit status in the popup footer. Committing stays on
 `Ctrl+J` alone.
 
@@ -250,7 +257,7 @@ harness-cli file new  <task-id> <worktree-rel-path>
 ```
 
 Both use `ExternalEditorCommand` with stdio inherited — a CLI has no terminal UI
-of its own to host a textarea. `file edit` loads, spools to a temp file, runs the
+of its own to host an editor widget. `file edit` loads, spools to a temp file, runs the
 editor, commits, and prints the status. A conflict prompts on stdin; declining
 leaves the temp file in place and prints its path so the work is recoverable.
 `$EDITOR` unset is an error naming both variables.
@@ -264,7 +271,7 @@ Per Pitfall 9, every operator entry point stated explicitly:
 | CLI binary | `file edit` | `file new` |
 | TUI keybindings | filepicker `e` | filepicker `n` |
 | TUI cmdline | `file edit` | `file new` (new; `parseFile` gains both verbs) |
-| TUI popups | `tui/fileedit.go` textarea popup | same popup, empty buffer |
+| TUI popups | `tui/fileedit.go` editor popup | same popup, empty buffer |
 | WebUI buttons/forms | Files-tab button, row double-click, preview-modal button | existing `New text file` button |
 | WebUI command input | `file edit` | `file new` (exists) |
 | WASM bridge | `fileEditLoad` / `fileEditCommit` | `filePushBytes` (exists) |
@@ -285,7 +292,7 @@ rationale behind it.
   and no mtime; a size comparison would miss same-length edits. Adding an mtime
   field to the listing to support this would be a wire change for a check that
   full bytes answer exactly.
-- **The TUI edits in a built-in textarea, not an external editor.** External is
+- **The TUI edits in a built-in widget, not an external editor.** External is
   opt-in via `Ctrl+O`. Rationale in the TUI section above; the deciding factor is
   that the Windows client has no safe editor to fall back to.
 - **No `vi` / `notepad` fallback anywhere.** An error that names `$EDITOR` and
@@ -324,7 +331,7 @@ rationale behind it.
   `ErrNoExternalEditor`.
 
 `tui/fileedit_test.go` and `tui/cmdline_test.go`: popup key routing (`Ctrl+J`
-commits, `Esc` discards, `Tab` moves focus, an unbound key reaches the textarea),
+commits, `Esc` discards, `Tab` moves focus, an unbound key reaches the body),
 and `parseFile` accepting `edit` / `new` with their usages.
 
 Build and vet gates, per `feedback_verify_with_make_targets_not_adhoc`:
