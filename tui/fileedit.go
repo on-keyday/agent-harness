@@ -54,8 +54,9 @@ const (
 //
 // Key contract, matching that popup's (tui/app.go:924): the popup swallows
 // every key while open. Ctrl+J saves (bubbletea reports Ctrl+Enter as Ctrl+J
-// on most terminals), Esc cancels, Tab moves between fields, Ctrl+O hands the
-// buffer to $EDITOR, and everything else goes to the focused widget.
+// on most terminals), Esc cancels, Shift+Tab moves between fields, Ctrl+O
+// hands the buffer to $EDITOR, and everything else goes to the focused
+// widget — including Tab, which types a tab rather than moving focus.
 //
 // Ctrl+O rather than the mnemonic Ctrl+E, which is line-end here (as it is in
 // every readline-ish editor) and which the submit popup has already taken for
@@ -203,7 +204,7 @@ func (m *FileEditModel) applySize() {
 // footerHint returns the key hints, clipped so a narrow terminal does not
 // make the popup wider than the screen it has to fit in.
 func (m FileEditModel) footerHint() string {
-	const full = "ctrl+j save · tab field · ctrl+o $EDITOR · esc cancel"
+	const full = "ctrl+j save · shift+tab field · ctrl+o $EDITOR · esc cancel"
 	const short = "ctrl+j save · esc cancel"
 	inner := m.width - fileEditBoxChrome
 	if inner < 1 {
@@ -251,16 +252,19 @@ func (m FileEditModel) Update(msg tea.Msg) (FileEditModel, tea.Cmd) {
 	case tea.KeyCtrlO:
 		ext := FileEditExternalMsg{Name: m.Name(), Text: m.body.Value()}
 		return m, func() tea.Msg { return ext }
+	case tea.KeyShiftTab:
+		m.toggleFocus()
+		return m, nil
 	case tea.KeyTab:
-		if m.focus == fileEditFocusBody {
-			m.focus = fileEditFocusName
-			m.body.Blur()
-			m.name.Focus()
-		} else {
-			m.focus = fileEditFocusBody
-			m.name.Blur()
-			m.body.Focus()
+		// Tab is a text-entry key in the body — files require real tabs, and
+		// a text box that cannot produce one is surprising. The path field is
+		// single-line and has no use for a tab, so there it keeps the
+		// familiar "next field" behaviour.
+		if m.focus == fileEditFocusName {
+			m.toggleFocus()
+			return m, nil
 		}
+		m.body.InsertRunes([]rune{'\t'})
 		return m, nil
 	}
 	if m.focus == fileEditFocusName {
@@ -270,6 +274,19 @@ func (m FileEditModel) Update(msg tea.Msg) (FileEditModel, tea.Cmd) {
 	}
 	m.applyBodyKey(k)
 	return m, nil
+}
+
+// toggleFocus swaps between the path field and the body.
+func (m *FileEditModel) toggleFocus() {
+	if m.focus == fileEditFocusBody {
+		m.focus = fileEditFocusName
+		m.body.Blur()
+		m.name.Focus()
+		return
+	}
+	m.focus = fileEditFocusBody
+	m.name.Blur()
+	m.body.Focus()
 }
 
 // applyBodyKey maps a keypress onto the edit buffer. editBuffer deliberately

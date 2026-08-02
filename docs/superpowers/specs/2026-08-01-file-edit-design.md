@@ -195,13 +195,15 @@ the submit-popup block that already owns this pattern (`tui/app.go:924`).
 > renders only the visible window: 30µs at 93KB. Two consequences worth
 > carrying: it wraps by display cell rather than by word, and it has to do its
 > own input sanitizing — dropping that is what let a control character reach a
-> saved file and made it fail to reopen. The key contract below is unchanged.
+> saved file and made it fail to reopen. One key changed with it: `Tab` types a
+> tab (files require real ones) and field switching moved to `Shift+Tab`.
 
 | Key | Action |
 |---|---|
 | `Ctrl+J` | Save & push (same binding, same reason, as the submit popup) |
 | `Esc` | Cancel; the buffer is discarded |
-| `Tab` | Move between the name field and the body (`httpform.go:126` convention) |
+| `Tab` | Insert a tab in the body (a text-entry key); in the single-line path field, move to the body |
+| `Shift+Tab` | Move between the path field and the body |
 | `Ctrl+O` | Open the buffer in `$EDITOR` |
 | everything else | Delegated to the focused buffer / `textinput` |
 

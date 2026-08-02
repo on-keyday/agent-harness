@@ -245,7 +245,7 @@ func (b *editBuffer) CursorBottom() {
 func (b *editBuffer) displayCol() int {
 	w := 0
 	for _, r := range b.lines[b.row][:b.col] {
-		w += runewidth.RuneWidth(r)
+		w = advance(w, r)
 	}
 	return w
 }
@@ -258,17 +258,48 @@ func (b *editBuffer) colForDisplay(row, want int) int {
 		if w >= want {
 			return i
 		}
-		w += runewidth.RuneWidth(r)
+		w = advance(w, r)
 	}
 	return len(b.lines[row])
 }
 
 // ---- wrapping and window -------------------------------------------------
 
-// tabWidth is what a typed or pasted tab expands to. Storing a literal tab
-// would make every width calculation here a lie, since a tab's display width
-// depends on the column it lands in.
-const tabWidth = 4
+// tabStop is the column interval a tab advances to. Eight, because that is
+// what terminals, cat, and git diff assume — a file edited here should look
+// the same everywhere else it is opened.
+const tabStop = 8
+
+// advance returns the display column after drawing r at column col. Every
+// width calculation in this file goes through it, because a tab's width is
+// not a property of the rune: it depends on where the rune lands. Summing
+// runewidth alone (which reports 0 for a tab) puts the cursor in the wrong
+// cell on any line that contains one — a Makefile, for instance.
+func advance(col int, r rune) int {
+	if r == '\t' {
+		return col + tabStop - col%tabStop
+	}
+	return col + runewidth.RuneWidth(r)
+}
+
+// expandTabs renders a run of text starting at display column start, turning
+// tabs into the spaces they occupy. The terminal never receives a raw tab, so
+// its own tab stops can never disagree with the model's.
+func expandTabs(rs []rune, start int) string {
+	var sb strings.Builder
+	col := start
+	for _, r := range rs {
+		if r == '\t' {
+			next := advance(col, r)
+			sb.WriteString(strings.Repeat(" ", next-col))
+			col = next
+			continue
+		}
+		sb.WriteRune(r)
+		col = advance(col, r)
+	}
+	return sb.String()
+}
 
 // sanitizeInput filters runes arriving from the terminal before they can
 // reach the document. It mirrors what bubbles/textarea did through
@@ -281,7 +312,7 @@ const tabWidth = 4
 //   - utf8.RuneError is dropped rather than written as U+FFFD
 //   - CRLF and a lone CR both collapse to a single newline, so pasting from
 //     a Windows file does not double every line
-//   - a tab becomes spaces
+//   - a tab is KEPT (rendering expands it; the file gets the real byte)
 func sanitizeInput(rs []rune) []rune {
 	out := make([]rune, 0, len(rs))
 	for i := 0; i < len(rs); i++ {
@@ -297,9 +328,10 @@ func sanitizeInput(rs []rune) []rune {
 		case r == '\n':
 			out = append(out, '\n')
 		case r == '\t':
-			for j := 0; j < tabWidth; j++ {
-				out = append(out, ' ')
-			}
+			// Kept, not expanded: a Makefile is only valid with real tabs, and
+			// silently swapping in spaces is the same class of damage as
+			// letting a control byte through.
+			out = append(out, '\t')
 		case unicode.IsControl(r):
 			// drop
 		default:
@@ -320,12 +352,16 @@ func wrapSegments(line []rune, width int) []int {
 	starts := []int{0}
 	w := 0
 	for i, r := range line {
-		rw := runewidth.RuneWidth(r)
-		if w+rw > width {
+		next := advance(w, r)
+		// A rune that does not fit moves whole to the next row — but only if
+		// this row already holds something. Without that guard a tab wider
+		// than the whole row would break before itself forever.
+		if next > width && w > 0 {
 			starts = append(starts, i)
-			w = 0
+			w = advance(0, r)
+			continue
 		}
-		w += rw
+		w = next
 	}
 	return starts
 }
@@ -454,10 +490,12 @@ func (b *editBuffer) Render() []string {
 			curRow = len(rows)
 			curCol = 0
 			for _, r := range b.lines[line][from:b.col] {
-				curCol += runewidth.RuneWidth(r)
+				curCol = advance(curCol, r)
 			}
 		}
-		rows = append(rows, string(b.lines[line][from:to]))
+		// Each wrapped segment starts at display column 0, so tab expansion
+		// is relative to the row, matching how wrapSegments measured it.
+		rows = append(rows, expandTabs(b.lines[line][from:to], 0))
 		seg++
 	}
 	if b.focused && curRow >= 0 {
@@ -467,7 +505,8 @@ func (b *editBuffer) Render() []string {
 }
 
 // renderCursorAt marks the cell at display column col, padding the row when
-// the cursor sits past its end (end of line).
+// the cursor sits past its end (end of line). row has already had its tabs
+// expanded, so plain rune widths are the right measure here.
 func renderCursorAt(row string, col int) string {
 	runes := []rune(row)
 	w := 0

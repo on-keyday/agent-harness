@@ -51,11 +51,11 @@ func TestFileEditEscCloses(t *testing.T) {
 	}
 }
 
-func TestFileEditTabMovesFocusToName(t *testing.T) {
+func TestFileEditShiftTabMovesFocusToName(t *testing.T) {
 	m := openedEditor(t)
-	// Body is focused on open; Tab moves to the name field, so a typed rune
-	// lands in the name, not in the body.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	// Body is focused on open; shift+tab moves to the name field, so a typed
+	// rune lands in the name, not in the body.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
 	if got := m.Name(); got != "notes.txtX" {
 		t.Errorf("Name()=%q, want notes.txtX", got)
@@ -250,5 +250,50 @@ func TestFileEditPasteWithControlCharsStaysText(t *testing.T) {
 	doc := m.Doc()
 	if _, err := cli.NewFileEditDocForTest("memo.txt", doc.Encode(got)); err != nil {
 		t.Errorf("saved bytes would not reopen: %v", err)
+	}
+}
+
+// Tab types a tab in the body — it is a text-entry key, and a Makefile is
+// only valid with real ones. Field switching moves to shift+tab, which the
+// TUI already uses elsewhere (tui/app.go handles tea.KeyShiftTab).
+func TestFileEditTabInsertsTabInBody(t *testing.T) {
+	m := openedEditor(t)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if !strings.Contains(m.Text(), "\t") {
+		t.Errorf("Text()=%q, want a tab inserted", m.Text())
+	}
+	if got := m.Name(); got != "notes.txt" {
+		t.Errorf("Name()=%q — tab must not have moved focus", got)
+	}
+}
+
+func TestFileEditShiftTabSwitchesFields(t *testing.T) {
+	m := openedEditor(t)
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	if got := m.Name(); got != "notes.txtX" {
+		t.Errorf("Name()=%q, want the rune to land in the path field", got)
+	}
+	if strings.Contains(m.Text(), "X") {
+		t.Errorf("Text()=%q, want the body untouched", m.Text())
+	}
+	// And back again.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	if !strings.Contains(m.Text(), "Y") {
+		t.Errorf("Text()=%q, want focus back on the body", m.Text())
+	}
+}
+
+// The path field is single-line, so a tab there has no meaning — it keeps
+// the familiar "tab moves to the next field" behaviour.
+func TestFileEditTabInNameFieldSwitchesFields(t *testing.T) {
+	m := NewFileEdit()
+	m.SetSize(80, 24)
+	m.OpenNew("abc123", "") // opens focused on the name
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyTab})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Z'}})
+	if !strings.Contains(m.Text(), "Z") {
+		t.Errorf("Text()=%q, want focus to have moved to the body", m.Text())
 	}
 }

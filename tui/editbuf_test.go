@@ -317,7 +317,9 @@ func TestEditBufInsertDropsControlCharacters(t *testing.T) {
 		{"escape", []rune{'a', 0x1b, 'b'}, "ab"},
 		{"bell and del", []rune{'a', 0x07, 0x7f, 'b'}, "ab"},
 		{"rune error", []rune{'a', utf8.RuneError, 'b'}, "ab"},
-		{"tab becomes spaces", []rune("a\tb"), "a    b"},
+		// A tab is NOT a character to be protected against: it is one people
+		// type and files require. Only rendering expands it.
+		{"tab survives", []rune("a\tb"), "a\tb"},
 		{"wide runes survive", []rune("日本語"), "日本語"},
 	}
 	for _, tc := range cases {
@@ -343,5 +345,92 @@ func TestEditBufInsertCRLFIsOneLineBreak(t *testing.T) {
 	b2.InsertRunes([]rune("a\rb")) // a lone CR is still a line break
 	if got, want := b2.Value(), "a\nb"; got != want {
 		t.Errorf("lone CR: Value()=%q, want %q", got, want)
+	}
+}
+
+// A tab is a character people type and files depend on — a Makefile is only
+// valid with literal tabs. It must survive the round trip, not be helpfully
+// turned into spaces.
+func TestEditBufTabIsPreserved(t *testing.T) {
+	b := newBuf("", 40, 5)
+	b.InsertRunes([]rune("a\tb"))
+	if got, want := b.Value(), "a\tb"; got != want {
+		t.Errorf("Value()=%q, want %q — a tab must stay a tab", got, want)
+	}
+}
+
+func TestEditBufMakefileRoundTrip(t *testing.T) {
+	src := "all:\n\techo hi\n\tgo build ./...\n"
+	b := newBuf(src, 60, 8)
+	if got := b.Value(); got != src {
+		t.Fatalf("Value()=%q, want it byte-identical", got)
+	}
+	b.CursorBottom()
+	b.InsertRunes([]rune("\tgo test ./...\n"))
+	want := src + "\tgo test ./...\n"
+	if got := b.Value(); got != want {
+		t.Errorf("Value()=%q, want %q", got, want)
+	}
+}
+
+// The display column of a tab depends on where it lands, so the cursor sits
+// in the wrong cell if the model counts it as zero-width (runewidth does).
+func TestEditBufTabAdvancesToTabStop(t *testing.T) {
+	b := newBuf("\techo hi", 60, 5)
+	b.CursorTop()
+	b.CursorEnd()
+	// one tab (0 -> 8) plus "echo hi" (7) = 15
+	if got, want := b.displayCol(), 15; got != want {
+		t.Errorf("displayCol()=%d, want %d", got, want)
+	}
+	b.CursorHome()
+	b.CursorRight() // just past the tab
+	if got, want := b.displayCol(), 8; got != want {
+		t.Errorf("after the tab displayCol()=%d, want %d", got, want)
+	}
+}
+
+func TestEditBufTabMidLineAdvancesToNextStop(t *testing.T) {
+	b := newBuf("abc\tx", 60, 5)
+	b.CursorTop()
+	b.CursorEnd()
+	// "abc" (3) -> tab to 8 -> "x" = 9
+	if got, want := b.displayCol(), 9; got != want {
+		t.Errorf("displayCol()=%d, want %d", got, want)
+	}
+}
+
+// The terminal must never receive a raw tab: it would apply its own tab stops
+// and drift from the model. Rendering expands them so display and model agree.
+func TestEditBufRenderExpandsTabs(t *testing.T) {
+	b := newBuf("\techo", 60, 5)
+	b.CursorTop()
+	rows := b.Render()
+	if strings.ContainsRune(rows[0], '\t') {
+		t.Errorf("row %q still holds a raw tab", rows[0])
+	}
+	if !strings.HasPrefix(stripANSI(rows[0]), "        echo") {
+		t.Errorf("row %q, want the tab expanded to the next stop", stripANSI(rows[0]))
+	}
+}
+
+func TestEditBufWrapSegmentsCountsTabWidth(t *testing.T) {
+	// width 10: a leading tab eats 8 cells, so only 2 more fit on that row.
+	got := wrapSegments([]rune("\tabcd"), 10)
+	if len(got) != 2 || got[1] != 3 {
+		t.Errorf("segment starts=%v, want a break after the tab plus 2 runes", got)
+	}
+}
+
+// A tab wider than the whole row must not stall the wrap loop.
+func TestEditBufWrapSegmentsNarrowerThanATab(t *testing.T) {
+	got := wrapSegments([]rune("\t\tx"), 4)
+	if len(got) < 2 {
+		t.Errorf("segment starts=%v, want the tabs split across rows", got)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i] <= got[i-1] {
+			t.Fatalf("segment starts=%v are not strictly increasing — the wrap loop stalled", got)
+		}
 	}
 }
