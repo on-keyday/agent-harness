@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -47,18 +46,20 @@ const (
 	fileEditFocusName
 )
 
-// FileEditModel is the text-file editor popup: a name field and a body,
-// modelled on the submit popup (tui/popup.go), which is the other bubbles
-// textarea in this TUI.
+// FileEditModel is the text-file editor popup: a name field and a body.
+// The keys follow the submit popup (tui/popup.go), the TUI's other multi-line
+// input; the body itself is an editBuffer rather than bubbles/textarea,
+// because that widget re-renders the whole document every frame — see the
+// comment on editBuffer for the measurements.
 //
 // Key contract, matching that popup's (tui/app.go:924): the popup swallows
 // every key while open. Ctrl+J saves (bubbletea reports Ctrl+Enter as Ctrl+J
 // on most terminals), Esc cancels, Tab moves between fields, Ctrl+O hands the
 // buffer to $EDITOR, and everything else goes to the focused widget.
 //
-// Ctrl+O rather than the mnemonic Ctrl+E because bubbles textarea binds
-// Ctrl+E to LineEnd (textarea.go:88) and the submit popup has already taken
-// it for focus cycling (tui/app.go:960).
+// Ctrl+O rather than the mnemonic Ctrl+E, which is line-end here (as it is in
+// every readline-ish editor) and which the submit popup has already taken for
+// focus cycling (tui/app.go:960).
 type FileEditModel struct {
 	open   bool
 	create bool
@@ -66,7 +67,7 @@ type FileEditModel struct {
 	doc    cli.FileEditDoc
 
 	name  textinput.Model
-	body  textarea.Model
+	body  *editBuffer
 	focus fileEditFocus
 
 	status    string
@@ -81,10 +82,7 @@ func NewFileEdit() FileEditModel {
 	n := textinput.New()
 	n.Placeholder = "worktree-relative path"
 	n.Prompt = ""
-	b := textarea.New()
-	b.Placeholder = "file contents…"
-	b.ShowLineNumbers = false
-	return FileEditModel{name: n, body: b}
+	return FileEditModel{name: n, body: newEditBuffer()}
 }
 
 // OpenEdit opens the popup over a loaded file.
@@ -172,26 +170,34 @@ func (m *FileEditModel) SetSize(w, h int) {
 // each side) plus Padding(1, 2) (2 columns each side).
 const fileEditBoxChrome = 6
 
-// What bubbles textarea renders beyond the width passed to SetWidth: the
-// "┃ " prompt and the cursor/end-of-buffer column. Measured, not assumed —
-// TestFileEditViewFitsViewport fails if it ever changes.
-const fileEditTextareaChrome = 7
+// One column of slack so a cursor sitting past the end of a full-width row
+// has somewhere to be drawn without pushing the box wider.
+// TestFileEditViewFitsViewport fails if this stops being enough.
+const fileEditBodyChrome = 1
+
+// The path row costs more than the body row: the "path: " label plus the
+// column textinput reserves for its own cursor.
+const fileEditNameChrome = len("path: ") + 1
 
 func (m *FileEditModel) applySize() {
 	// No lower clamp beyond 1: a floor wide enough to be usable would still
 	// be wider than the screen it has to fit on, and an overflowing box loses
 	// its right border entirely. Cramped beats broken.
-	w := m.width - fileEditBoxChrome - fileEditTextareaChrome
-	if w < 1 {
-		w = 1
+	inner := m.width - fileEditBoxChrome
+	bodyW := inner - fileEditBodyChrome
+	if bodyW < 1 {
+		bodyW = 1
+	}
+	nameW := inner - fileEditNameChrome
+	if nameW < 1 {
+		nameW = 1
 	}
 	h := m.height - 10
 	if h < 4 {
 		h = 4
 	}
-	m.name.Width = w
-	m.body.SetWidth(w)
-	m.body.SetHeight(h)
+	m.name.Width = nameW
+	m.body.SetSize(bodyW, h)
 }
 
 // footerHint returns the key hints, clipped so a narrow terminal does not
@@ -220,9 +226,7 @@ func (m FileEditModel) Update(msg tea.Msg) (FileEditModel, tea.Cmd) {
 	}
 	k, ok := msg.(tea.KeyMsg)
 	if !ok {
-		var cmd tea.Cmd
-		m.body, cmd = m.body.Update(msg)
-		return m, cmd
+		return m, nil
 	}
 	switch k.Type {
 	case tea.KeyEsc:
@@ -259,13 +263,50 @@ func (m FileEditModel) Update(msg tea.Msg) (FileEditModel, tea.Cmd) {
 		}
 		return m, nil
 	}
-	var cmd tea.Cmd
 	if m.focus == fileEditFocusName {
+		var cmd tea.Cmd
 		m.name, cmd = m.name.Update(msg)
-	} else {
-		m.body, cmd = m.body.Update(msg)
+		return m, cmd
 	}
-	return m, cmd
+	m.applyBodyKey(k)
+	return m, nil
+}
+
+// applyBodyKey maps a keypress onto the edit buffer. editBuffer deliberately
+// has no Update of its own — it is a text model, not a bubbletea component,
+// so the key contract lives here where the rest of the popup's keys are.
+func (m FileEditModel) applyBodyKey(k tea.KeyMsg) {
+	switch k.Type {
+	case tea.KeyRunes, tea.KeySpace:
+		// A bracketed paste arrives as one multi-rune event; insert it whole.
+		if k.Type == tea.KeySpace {
+			m.body.InsertRunes([]rune{' '})
+			return
+		}
+		m.body.InsertRunes(k.Runes)
+	case tea.KeyEnter:
+		m.body.InsertNewline()
+	case tea.KeyBackspace:
+		m.body.Backspace()
+	case tea.KeyDelete:
+		m.body.DeleteForward()
+	case tea.KeyLeft:
+		m.body.CursorLeft()
+	case tea.KeyRight:
+		m.body.CursorRight()
+	case tea.KeyUp:
+		m.body.CursorUp()
+	case tea.KeyDown:
+		m.body.CursorDown()
+	case tea.KeyHome, tea.KeyCtrlA:
+		m.body.CursorHome()
+	case tea.KeyEnd, tea.KeyCtrlE:
+		m.body.CursorEnd()
+	case tea.KeyCtrlHome, tea.KeyPgUp:
+		m.body.CursorTop()
+	case tea.KeyCtrlEnd, tea.KeyPgDown:
+		m.body.CursorBottom()
+	}
 }
 
 // View renders the popup box.
@@ -286,7 +327,7 @@ func (m FileEditModel) View() string {
 		// clipLine would count as display width and cut short. Its own Width
 		// is set from the same budget in applySize, so it already fits.
 		"path: " + m.name.View(),
-		m.body.View(),
+		strings.Join(m.body.Render(), "\n"),
 	}
 	if m.status != "" {
 		// Status text is free-form (a runner error, a conflict explanation)

@@ -28,6 +28,10 @@ var HeaderStyle = lipgloss.NewStyle().Bold(true)
 // FooterStyle styles the bottom hotkey hint line.
 var FooterStyle = lipgloss.NewStyle().Foreground(colorMuted)
 
+// CursorStyle marks the cell the text cursor is on. Reverse video rather than
+// a colour so it reads the same on any terminal theme.
+var CursorStyle = lipgloss.NewStyle().Reverse(true)
+
 // FocusedStyle marks the selected item inside a modal (a tab, a form field),
 // where a whole-panel border is not the thing being selected.
 var FocusedStyle = lipgloss.NewStyle().Bold(true).Foreground(colorFocused)
