@@ -25,6 +25,7 @@ enum RunnerRequestType:
     chained_relay_response
     open_port_forward
     close_port_forward
+    git_query          # read-only git query against a task's worktree
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -233,6 +234,7 @@ format RunnerRequest:
         RunnerRequestType.chained_relay_response => chained_relay_response :ChainedRelayResponse
         RunnerRequestType.open_port_forward => open_port_forward :RunnerOpenPortForwardRequest
         RunnerRequestType.close_port_forward => close_port_forward :ClosePortForwardRequest
+        RunnerRequestType.git_query => git_query :RunnerGitQueryRequest
 
 enum TaskControlKind:
     :u8
@@ -264,6 +266,11 @@ enum TaskControlKind:
     register_port_forward   # register a -L/-R forward; returns forward_id + control stream
     list_port_forwards      # enumerate the caller's visible registrations
     kill_port_forward       # close one registration by id
+    git_query               # read-only git log/diff/show/status for a task.
+                            # Requires file_read. Unlike open_file_transfer /
+                            # list_files this is NOT restricted to Running /
+                            # Detached tasks: a terminal task's work stays
+                            # reachable through refs/heads/harness/<taskID>.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -881,6 +888,7 @@ format TaskControlRequest:
         TaskControlKind.register_port_forward => register_port_forward :RegisterPortForwardRequest
         TaskControlKind.list_port_forwards    => list_port_forwards    :PortForwardListQuery
         TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardRequest
+        TaskControlKind.git_query             => git_query             :GitQueryRequest
         .. => error("Unexpected task")
 
 format CancelStatus:
@@ -917,6 +925,7 @@ format TaskControlResponse:
         TaskControlKind.register_port_forward => register_port_forward :RegisterPortForwardResponse
         TaskControlKind.list_port_forwards    => list_port_forwards    :PortForwardListResult
         TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardResponse
+        TaskControlKind.git_query             => git_query             :GitQueryResponse
 
 enum NotifyLevel:
     :u8
@@ -1376,3 +1385,122 @@ format RemoteForwardBindResult:
     forward_id :u64
     ok         :u1
     reserved   :u7
+
+# === Read-only git view (see specs/2026-08-03-git-view-design.md) ===
+
+enum GitQueryKind:
+    :u8
+    log      # commit list for the picker pane
+    diff     # unified diff between base_rev and the chosen target
+    show     # one commit: header + its diff
+    status   # porcelain state: uncommitted + untracked
+
+# What the right-hand side of the diff is. base_rev is always the left.
+enum GitDiffTarget:
+    :u8
+    worktree   # the working tree    -> git diff [base]
+    index      # the staged tree     -> git diff --cached [base]
+    rev        # target_rev names it -> git diff base target_rev
+
+format GitQueryRequest:
+    task_id        :TaskID
+    kind           :GitQueryKind
+    target         :GitDiffTarget   # diff only; ignored by log/show/status
+    base_rev_len   :u16
+    base_rev       :[base_rev_len]u8   # commit-ish. empty: diff -> the index,
+                                       # show -> HEAD, log -> the task tip.
+    target_rev_len :u16
+    target_rev     :[target_rev_len]u8 # only when target == rev
+    path_len       :u16
+    path           :[path_len]u8       # worktree-relative pathspec; empty = all
+    max_commits    :u32                # log only. 0 -> 100, clamped to 1000
+    max_bytes      :u32                # diff/show only. 0 -> 2MiB, clamped to 8MiB
+
+enum GitQueryStatus:
+    :u8
+    ok             = "ok"
+    no_such_task   = "no_such_task"
+    runner_offline = "runner_offline"
+    internal_error = "internal_error"
+
+format GitQueryResponse:
+    status    :GitQueryStatus
+    stream_id :u64              # 0 unless status == ok
+
+format RunnerGitQueryRequest:
+    task_id        :TaskID
+    stream_id      :u64
+    repo_path_len  :u16
+    repo_path      :[repo_path_len]u8  # from the server's task record; the
+                                       # runner re-validates it against its own
+                                       # AllowedRoots before running anything.
+    kind           :GitQueryKind
+    target         :GitDiffTarget
+    base_rev_len   :u16
+    base_rev       :[base_rev_len]u8
+    target_rev_len :u16
+    target_rev     :[target_rev_len]u8
+    path_len       :u16
+    path           :[path_len]u8
+    max_commits    :u32
+    max_bytes      :u32
+
+enum GitRunStatus:
+    :u8
+    ok               = "ok"
+    repo_not_allowed = "repo_not_allowed"  # repo_path is not under --roots
+    no_source        = "no_source"         # no worktree and no harness/<task> ref
+    not_a_git_repo   = "not_a_git_repo"
+    bad_rev          = "bad_rev"           # unresolvable, or '-'-leading
+    git_failed       = "git_failed"        # non-zero exit for another reason
+    io_error         = "io_error"
+
+format GitCommit:
+    sha_len     :u8             # 40 for sha1 repos, 64 for sha256 ones — a
+    sha         :[sha_len]u8    # fixed [40]u8 would be a hard assertion the
+                                # encoder panics on the day a sha256 repo appears
+    author_len  :u16
+    author      :[author_len]u8
+    when        :u64            # author date, unix seconds
+    subject_len :u16
+    subject     :[subject_len]u8
+
+format GitLogBody:
+    count     :u32
+    commits   :[count]GitCommit
+    truncated :u1               # max_commits cut the list short
+    reserved  :u7
+
+format GitStatusEntry:
+    xy       :[2]u8             # the two porcelain status bytes, e.g. " M", "??"
+    path_len :u16
+    path     :[path_len]u8
+
+format GitStatusBody:
+    count   :u32
+    entries :[count]GitStatusEntry
+
+format GitTextBody:
+    len       :u64
+    text      :[len]u8          # git's stdout verbatim (--no-color)
+    truncated :u1               # max_bytes cut the text short
+    reserved  :u7
+
+# GitQueryResult is what the runner writes to the stream named by
+# GitQueryResponse.stream_id. When status != ok the body arm is still
+# present and empty (count = 0 / len = 0): a few wasted bytes on the
+# error path beats conditional encoding that is harder to round-trip test.
+#
+# The status arm is named status_body, not status, because this format
+# already has a `status` field and the two would collide in the generated
+# accessors.
+format GitQueryResult:
+    status     :GitRunStatus
+    stderr_len :u16
+    stderr     :[stderr_len]u8  # git's stderr, trimmed; empty when ok
+    kind       :GitQueryKind
+    match kind:
+        GitQueryKind.log    => log         :GitLogBody
+        GitQueryKind.status => status_body :GitStatusBody
+        GitQueryKind.diff   => diff        :GitTextBody
+        GitQueryKind.show   => show        :GitTextBody
