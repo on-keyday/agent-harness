@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -394,5 +395,96 @@ func TestGitModalSetBaseOnSubrepoRowIsIgnored(t *testing.T) {
 	m, _ = m.Update(keyRune('b'))
 	if m.BaseRev() != "HEAD" {
 		t.Fatalf("BaseRev = %q", m.BaseRev())
+	}
+}
+
+func manyCommits(n int) []cli.GitCommit {
+	out := make([]cli.GitCommit, n)
+	for i := range out {
+		out[i] = cli.GitCommit{
+			SHA:     fmt.Sprintf("%040x", i),
+			Author:  "claude",
+			When:    time.Unix(1700000000+int64(i), 0),
+			Subject: fmt.Sprintf("commit %d", i),
+		}
+	}
+	return out
+}
+
+func viewLines(m GitModal) int { return strings.Count(m.View(), "\n") + 1 }
+
+// A long history must not push the modal past the terminal. SetSize reserved a
+// capped number of picker lines while View rendered every row, so a hundred
+// commits made the box ~90 lines too tall and the top scrolled away.
+func TestGitModalViewFitsTheTerminal(t *testing.T) {
+	for _, h := range []int{10, 24, 40, 60} {
+		m := NewGitModal()
+		m.Open("cafe1234")
+		m.SetSize(120, h)
+		m.SetLog(&cli.GitResult{Kind: protocol.GitQueryKind_Log, Commits: manyCommits(200)})
+		m.SetSubrepos(&cli.GitResult{Kind: protocol.GitQueryKind_Subrepos, Subrepos: []string{"pkg/inner", "sub"}})
+		m.SetContent(&cli.GitResult{Kind: protocol.GitQueryKind_Diff, Text: strings.Repeat("+line\n", 500)})
+		if got := viewLines(m); got > h {
+			t.Errorf("h=%d rendered %d lines", h, got)
+		}
+	}
+}
+
+// Truncation notes and an error message are the other things that can push the
+// box over; they are inside the same budget.
+func TestGitModalViewFitsWithEveryNoteShowing(t *testing.T) {
+	const h = 24
+	m := NewGitModal()
+	m.Open("cafe1234")
+	m.SetSize(120, h)
+	m.SetLog(&cli.GitResult{Kind: protocol.GitQueryKind_Log, Commits: manyCommits(300), Truncated: true})
+	m.SetSubrepos(&cli.GitResult{Kind: protocol.GitQueryKind_Subrepos, Subrepos: []string{"a", "b", "c"}})
+	m.SetContent(&cli.GitResult{Kind: protocol.GitQueryKind_Diff, Text: strings.Repeat("+x\n", 400), Truncated: true})
+	if got := viewLines(m); got > h {
+		t.Fatalf("rendered %d lines, terminal is %d", got, h)
+	}
+}
+
+// Scrolling past the window has to bring the cursor's row with it, or the
+// selection becomes invisible.
+func TestGitModalWindowFollowsTheCursor(t *testing.T) {
+	m := NewGitModal()
+	m.Open("cafe1234")
+	m.SetSize(120, 24)
+	m.SetLog(&cli.GitResult{Kind: protocol.GitQueryKind_Log, Commits: manyCommits(100)})
+
+	for i := 0; i < 60; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	start, end := m.listWindow()
+	if m.SelectedIndex() < start || m.SelectedIndex() >= end {
+		t.Fatalf("cursor %d outside the rendered window [%d,%d)", m.SelectedIndex(), start, end)
+	}
+	if !strings.Contains(m.View(), "> ") {
+		t.Fatal("the cursor marker is not on screen")
+	}
+}
+
+// Hidden rows are counted, not silently dropped.
+func TestGitModalWindowReportsHiddenRows(t *testing.T) {
+	m := NewGitModal()
+	m.Open("cafe1234")
+	m.SetSize(120, 24)
+	m.SetLog(&cli.GitResult{Kind: protocol.GitQueryKind_Log, Commits: manyCommits(100)})
+	for i := 0; i < 50; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	out := m.View()
+	if !strings.Contains(out, "more") {
+		t.Fatalf("102 rows in a 12-line picker and no count of what is hidden:\n%s", out)
+	}
+}
+
+// A short list is rendered whole, with no marker to explain away.
+func TestGitModalShortListHasNoMarkers(t *testing.T) {
+	m := newTestGitModal()
+	m.SetSize(120, 40)
+	if strings.Contains(m.View(), "more") {
+		t.Fatalf("four rows fit; nothing should be reported hidden:\n%s", m.View())
 	}
 }

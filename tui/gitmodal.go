@@ -65,6 +65,10 @@ type GitModal struct {
 	subrepoStack []string
 	subrepos     []string // offered as [REPO] rows at the bottom of the picker
 	submodule    bool     // --submodule for the diff and show queries
+
+	// height / listCap are the size budget View() renders within; see SetSize.
+	height  int
+	listCap int
 }
 
 func NewGitModal() GitModal {
@@ -124,18 +128,57 @@ func (m *GitModal) Close() {
 	m.taskID = ""
 }
 
-func (m *GitModal) SetSize(w, h int) {
-	// Reserve rows for the border, the header, the row list and the footer.
-	listRows := len(m.rows)
-	if listRows > 8 {
-		listRows = 8
+// gitListCap decides how many picker lines the modal renders, from the
+// terminal height alone — NOT from how many rows exist. The row count must not
+// enter this: a hundred commits would otherwise reserve a hundred lines, and
+// the modal grew taller than the terminal and spilled off the top.
+func gitListCap(h int) int {
+	cap := h / 3
+	if cap < 3 {
+		cap = 3
 	}
-	ch := h - listRows - 6
+	if cap > 12 {
+		cap = 12
+	}
+	return cap
+}
+
+// SetSize splits the height between the picker and the content so that
+// View() can never exceed h. The budget is:
+//
+//	2 border + 1 header + listCap + 1 logNote + content + 1 truncation + 1 footer
+//
+// so content gets h - listCap - 6. View() renders exactly that many picker
+// lines, windowing around the cursor when there are more rows than fit.
+func (m *GitModal) SetSize(w, h int) {
+	m.height = h
+	m.listCap = gitListCap(h)
+	ch := h - m.listCap - 6
 	if ch < 3 {
 		ch = 3
 	}
 	m.content.Width = w - 4
 	m.content.Height = ch
+}
+
+// listWindow returns the half-open range of rows View() renders, chosen so the
+// cursor is always inside it.
+func (m GitModal) listWindow() (start, end int) {
+	capRows := m.listCap
+	if capRows <= 0 {
+		capRows = gitListCap(m.height)
+	}
+	if len(m.rows) <= capRows {
+		return 0, len(m.rows)
+	}
+	start = m.cursor - capRows/2
+	if start < 0 {
+		start = 0
+	}
+	if start+capRows > len(m.rows) {
+		start = len(m.rows) - capRows
+	}
+	return start, start + capRows
 }
 
 // defaultGitRows is the two pseudo rows, which exist whether or not a log has
@@ -433,8 +476,10 @@ func (m GitModal) View() string {
 	header := HeaderStyle.Render(fmt.Sprintf("git — task %s   base: %s   repo: %s%s",
 		taskShort, baseShort, repoLabel, submoduleNote))
 
-	var list strings.Builder
-	for i, row := range m.rows {
+	start, end := m.listWindow()
+	lines := make([]string, 0, end-start+1)
+	for i := start; i < end; i++ {
+		row := m.rows[i]
 		cursor := "  "
 		if i == m.cursor {
 			cursor = "> "
@@ -445,21 +490,30 @@ func (m GitModal) View() string {
 			if summary == "" {
 				summary = "uncommitted"
 			}
-			list.WriteString(fmt.Sprintf("%s[WORKTREE]  %s\n", cursor, summary))
+			lines = append(lines, fmt.Sprintf("%s[WORKTREE]  %s", cursor, summary))
 		case gitRowIndex:
-			list.WriteString(fmt.Sprintf("%s[INDEX]     staged\n", cursor))
+			lines = append(lines, fmt.Sprintf("%s[INDEX]     staged", cursor))
 		case gitRowSubrepo:
-			list.WriteString(fmt.Sprintf("%s%s  %s\n", cursor,
+			lines = append(lines, fmt.Sprintf("%s%s  %s", cursor,
 				MutedStyle.Render("[REPO]"), row.Subrepo))
 		default:
 			c := row.Commit
-			list.WriteString(fmt.Sprintf("%s%-8s  %s  %-10s  %s\n",
+			lines = append(lines, fmt.Sprintf("%s%-8s  %s  %-10s  %s",
 				cursor, c.Short(), c.When.Format("01-02 15:04"), truncateRunes(c.Author, 10), c.Subject))
 		}
 	}
-	if m.logNote != "" {
-		list.WriteString(MutedStyle.Render("  " + m.logNote + "\n"))
+	// The markers replace the edge line rather than adding one, so the picker
+	// occupies exactly listCap lines however many rows there are.
+	if start > 0 && len(lines) > 0 {
+		lines[0] = MutedStyle.Render(fmt.Sprintf("  ↑ %d more", start))
 	}
+	if end < len(m.rows) && len(lines) > 0 {
+		lines[len(lines)-1] = MutedStyle.Render(fmt.Sprintf("  ↓ %d more", len(m.rows)-end))
+	}
+	if m.logNote != "" {
+		lines = append(lines, MutedStyle.Render("  "+m.logNote))
+	}
+	list := strings.Join(lines, "\n")
 
 	notes := ""
 	if m.truncated {
@@ -472,7 +526,7 @@ func (m GitModal) View() string {
 		modalKeys.GitUp + ": up · " +
 		modalKeys.GitNextFile + "/" + modalKeys.GitPrevFile + ": file · r: refresh · Esc: close")
 
-	return box.Render(header + "\n" + list.String() + "\n" + m.content.View() + notes + "\n" + footer)
+	return box.Render(header + "\n" + list + "\n" + m.content.View() + notes + "\n" + footer)
 }
 
 // truncateRunes clips s to at most n runes. Used only for the author column,
