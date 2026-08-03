@@ -342,10 +342,15 @@ button:hover { background: #555; }
 }
 .tab-btn.is-active { background: #2d5; color: #000; font-weight: bold; border-color: #2d5; }
 
-/* Show only the sections belonging to the active tab. */
+/* Show only the sections belonging to the active tab.
+   CSS cannot compare two attributes, so every tab name must be listed here by
+   hand. A new tab-btn without its row leaves NOTHING hidden while that tab is
+   active — every section on the page renders at once. Add the row with the
+   button, not after noticing. */
 body[data-active-tab="terminal"] [data-tabgroup]:not([data-tabgroup="terminal"]),
 body[data-active-tab="tasks"]    [data-tabgroup]:not([data-tabgroup="tasks"]),
 body[data-active-tab="files"]    [data-tabgroup]:not([data-tabgroup="files"]),
+body[data-active-tab="git"]      [data-tabgroup]:not([data-tabgroup="git"]),
 body[data-active-tab="notify"]   [data-tabgroup]:not([data-tabgroup="notify"]),
 body[data-active-tab="conns"]    [data-tabgroup]:not([data-tabgroup="conns"]),
 body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
@@ -353,7 +358,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 
 @media (max-width: 600px) {
-  /* Six buttons split the width evenly — there is no room to left-align. */
+  /* The buttons split the width evenly — there is no room to left-align. */
   .tab-btn { flex: 1; padding: 0.5rem 0.4rem; }
 }
 
@@ -1505,4 +1510,66 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   .raw-form input, .raw-send-row input { flex: 1 1 100%; min-width: 0; }
   .raw-http-line input, .raw-http-line select { flex: 1 1 100%; min-width: 0; }
   .raw-output { max-height: 220px; font-size: 11px; }
+}
+
+/* ---- Git tab ---------------------------------------------------------- */
+/* The row list mirrors the TUI's picker: the two pseudo rows (working tree,
+   index) sit above the commits, because the uncommitted state is what an
+   operator watching a running agent opens this for. */
+.git-rows {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid #383838;
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+.git-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.7rem;
+  padding: 0.35rem 0.6rem;
+  background: #252526;
+  border-bottom: 1px solid #303030;
+  cursor: pointer;
+  font-family: monospace;
+  font-size: 0.88rem;
+  flex-wrap: wrap;
+}
+.git-row:last-child { border-bottom: none; }
+.git-row:hover { background: #2d2d30; }
+.git-row.is-active { background: #094771; }
+.git-row-label { font-weight: 600; color: #d4d4d4; }
+.git-row-meta { color: #888; font-size: 0.82rem; }
+.git-row-subject { color: #d4d4d4; word-break: break-word; }
+.git-base-btn {
+  margin-left: auto;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+}
+.git-note { color: #d7ba7d; font-family: monospace; font-size: 0.82rem; min-height: 1.2em; }
+
+/* The diff scrolls inside its own box; the page body must never scroll
+   sideways because a long line arrived. */
+.git-diff {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #383838;
+  border-radius: 4px;
+  padding: 0.5rem;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre;
+  font-size: 0.85rem;
+}
+.gd-add  { color: #6a9955; }
+.gd-del  { color: #f14c4c; }
+.gd-hunk { color: #569cd6; }
+.gd-file { color: #d4d4d4; font-weight: 700; }
+.gd-meta { color: #808080; }
+.gd-err  { color: #f14c4c; }
+
+@media (max-width: 600px) {
+  .git-rows { max-height: 180px; }
+  .git-diff { max-height: 50vh; font-size: 0.78rem; }
+  .git-base-btn { margin-left: 0; }
 }

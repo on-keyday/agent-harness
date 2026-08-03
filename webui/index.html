@@ -30,6 +30,7 @@
       <button type="button" class="tab-btn" data-tab="terminal">端末</button>
       <button type="button" class="tab-btn is-active" data-tab="tasks">タスク</button>
       <button type="button" class="tab-btn" data-tab="files">ファイル</button>
+      <button type="button" class="tab-btn" data-tab="git">Git</button>
       <button type="button" class="tab-btn" data-tab="notify">通知</button>
       <button type="button" class="tab-btn" data-tab="conns">接続</button>
       <button type="button" class="tab-btn" data-tab="board">Board</button>
@@ -182,6 +183,18 @@
       </div>
       <div id="file-progress-list"></div>
       <pre id="file-result"></pre>
+    </section>
+    <section id="git" data-tabgroup="git">
+      <h2>Git</h2>
+      <div class="actions">
+        <label>Task: <select id="git-task-select"><option value="">(select task)</option></select></label>
+        <button id="git-refresh-btn" disabled>↻ Refresh</button>
+        <span>Base: <code id="git-base">HEAD</code></span>
+        <button id="git-base-reset-btn" disabled>Reset base to HEAD</button>
+      </div>
+      <div id="git-rows" class="git-rows"></div>
+      <div id="git-note" class="git-note"></div>
+      <pre id="git-content" class="git-diff"></pre>
     </section>
     <section id="board" data-tabgroup="board">
       <h2>Agentboard Topics</h2>

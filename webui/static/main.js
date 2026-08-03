@@ -467,6 +467,7 @@ const POLL_INTERVAL_MS = 5000;
     runnerList.textContent = renderRunners(sortedRunners);
     renderTaskList(snap.tasks);
     renderFileTaskSelect(snap.tasks);
+    if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
     renderRawTaskSelect(snap.tasks);
     // Connection topology — rides the same ~5s poll (spec decision #3:
     // no separate event subscription in wasm). snap.conns may be absent if
@@ -1854,6 +1855,10 @@ const POLL_INTERVAL_MS = 5000;
           out = await runFileCmd(tokens.slice(1));
           break;
         }
+        case "git": {
+          out = await runGitCmd(tokens.slice(1));
+          break;
+        }
         case "server": {
           if (tokens[1] !== "dial-runner") {
             throw new Error(`server: unknown subcommand ${tokens[1] || "(empty)"} (try: dial-runner)`);
@@ -1916,6 +1921,14 @@ const POLL_INTERVAL_MS = 5000;
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  prune [--force] <task-id>...",
             "                            forget specific tasks by id (--force: also active tasks)",
+            "  git <task> log [--max N] [-- <path>]",
+            "                            the task's commits (also: the Git tab)",
+            "  git <task> diff [--staged] [<base>] [<target>] [-- <path>]",
+            "                            revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit",
+            "  git <task> show [<rev>] [-- <path>]",
+            "                            one commit and its diff",
+            "  git <task> status [-- <path>]",
+            "                            uncommitted and untracked paths (untracked appear in no diff)",
             "  file ls <task> [rel]      list a worktree directory",
             "  file delete [-r] [-f] <task> <rel>",
             "                            remove a file (no -r) or directory (-r [-f])",
@@ -3503,6 +3516,287 @@ const POLL_INTERVAL_MS = 5000;
     });
   }
 
+
+  // ── Git panel ─────────────────────────────────────────────────────────────
+  // The two pane structure the TUI's git modal uses: a row picker (working
+  // tree, index, then the commits) over a diff view. Selecting a commit as the
+  // BASE is the whole point — an agent that has committed shows nothing under
+  // a plain diff, and which baseline is wanted changes with the situation.
+
+  const gitTaskSelect   = document.getElementById("git-task-select");
+  const gitRefreshBtn   = document.getElementById("git-refresh-btn");
+  const gitBaseEl       = document.getElementById("git-base");
+  const gitBaseResetBtn = document.getElementById("git-base-reset-btn");
+  const gitRowsEl       = document.getElementById("git-rows");
+  const gitNoteEl       = document.getElementById("git-note");
+  const gitContentEl    = document.getElementById("git-content");
+
+  let gitBaseRev = "HEAD";
+  let gitRows = [];        // {kind: "worktree"|"index"|"commit", commit?}
+  let gitActiveIndex = 0;
+  let gitStatusSummary = "";
+
+  // classifyGitLine mirrors cli.ClassifyGitLine (cli/git_query.go) exactly,
+  // header checks first: "--- a/x" and "+++ b/x" start with the same bytes as
+  // a deletion and an addition, and reading them as such miscolours every
+  // file header in the diff.
+  function classifyGitLine(line) {
+    if (line.startsWith("diff --git ") || line.startsWith("diff --cc ")) return "gd-file";
+    if (line.startsWith("--- ") || line.startsWith("+++ ")) return "gd-meta";
+    if (line.startsWith("index ") || line.startsWith("new file mode ") ||
+        line.startsWith("deleted file mode ") || line.startsWith("old mode ") ||
+        line.startsWith("new mode ") || line.startsWith("similarity index ") ||
+        line.startsWith("rename from ") || line.startsWith("rename to ") ||
+        line.startsWith("Binary files ")) return "gd-meta";
+    if (line.startsWith("@@")) return "gd-hunk";
+    if (line.startsWith("+")) return "gd-add";
+    if (line.startsWith("-")) return "gd-del";
+    return "";
+  }
+
+  // renderGitText builds the diff from DOM nodes rather than an HTML string,
+  // so a diff that happens to contain markup renders as the text it is.
+  function renderGitText(text) {
+    gitContentEl.textContent = "";
+    const lines = text.replace(/\n$/, "").split("\n");
+    for (const line of lines) {
+      const cls = classifyGitLine(line);
+      if (!cls) {
+        gitContentEl.appendChild(document.createTextNode(line + "\n"));
+        continue;
+      }
+      const span = document.createElement("span");
+      span.className = cls;
+      span.textContent = line + "\n";
+      gitContentEl.appendChild(span);
+    }
+  }
+
+  function gitSetError(msg) {
+    gitContentEl.textContent = "";
+    const span = document.createElement("span");
+    span.className = "gd-err";
+    span.textContent = msg;
+    gitContentEl.appendChild(span);
+  }
+
+  function renderGitTaskSelect(tasks) {
+    if (!gitTaskSelect) return;
+    const prev = gitTaskSelect.value;
+    gitTaskSelect.innerHTML = "";
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "(select task)";
+    gitTaskSelect.appendChild(placeholder);
+    // Every task, not only the live ones: a finished task still answers
+    // through its retained harness/<id> branch (server/git_query.go), which
+    // is exactly what the file picker cannot do.
+    for (const t of tasks || []) {
+      const opt = document.createElement("option");
+      opt.value = t.id;
+      opt.textContent = `${(t.id || "").slice(0, 12)}  ${t.status}  ${t.repoPath}`;
+      gitTaskSelect.appendChild(opt);
+    }
+    if (prev) gitTaskSelect.value = prev;
+    updateGitButtons();
+  }
+
+  function updateGitButtons() {
+    const hasTask = !!(gitTaskSelect && gitTaskSelect.value);
+    if (gitRefreshBtn) gitRefreshBtn.disabled = !hasTask;
+    if (gitBaseResetBtn) gitBaseResetBtn.disabled = !hasTask || gitBaseRev === "HEAD";
+  }
+
+  function gitSetBase(rev) {
+    gitBaseRev = rev || "HEAD";
+    if (gitBaseEl) gitBaseEl.textContent = gitBaseRev.slice(0, 12);
+    updateGitButtons();
+  }
+
+  async function gitQuery(kind, opts) {
+    const taskID = gitTaskSelect ? gitTaskSelect.value : "";
+    if (!taskID) throw new Error("no task selected");
+    if (!window.harness) throw new Error("not connected");
+    const res = await window.harness.gitQuery(taskID, kind, opts || {});
+    if (!res.ok) throw new Error(res.stderr || res.status);
+    return res;
+  }
+
+  function renderGitRows() {
+    if (!gitRowsEl) return;
+    gitRowsEl.innerHTML = "";
+    gitRows.forEach((row, i) => {
+      const el = document.createElement("div");
+      el.className = "git-row" + (i === gitActiveIndex ? " is-active" : "");
+      const label = document.createElement("span");
+      label.className = "git-row-label";
+      const meta = document.createElement("span");
+      meta.className = "git-row-meta";
+      if (row.kind === "worktree") {
+        label.textContent = "[WORKTREE]";
+        meta.textContent = gitStatusSummary || "uncommitted";
+      } else if (row.kind === "index") {
+        label.textContent = "[INDEX]";
+        meta.textContent = "staged";
+      } else {
+        label.textContent = row.commit.short;
+        meta.textContent = `${new Date(row.commit.when * 1000).toLocaleString()}  ${row.commit.author}`;
+      }
+      el.appendChild(label);
+      el.appendChild(meta);
+      if (row.kind === "commit") {
+        const subj = document.createElement("span");
+        subj.className = "git-row-subject";
+        subj.textContent = row.commit.subject;
+        el.appendChild(subj);
+        const baseBtn = document.createElement("button");
+        baseBtn.type = "button";
+        baseBtn.className = "git-base-btn";
+        baseBtn.textContent = "set base";
+        baseBtn.title = "diff the working tree against this commit";
+        baseBtn.addEventListener("click", (e) => {
+          e.stopPropagation();   // setting the base is not selecting the row
+          gitSetBase(row.commit.sha);
+          renderGitRows();
+        });
+        el.appendChild(baseBtn);
+      }
+      el.addEventListener("click", () => openGitRow(i));
+      gitRowsEl.appendChild(el);
+    });
+  }
+
+  async function openGitRow(i) {
+    gitActiveIndex = i;
+    renderGitRows();
+    const row = gitRows[i];
+    if (!row) return;
+    if (gitNoteEl) gitNoteEl.textContent = "";
+    try {
+      let res;
+      if (row.kind === "commit") {
+        res = await gitQuery("show", { baseRev: row.commit.sha });
+      } else {
+        res = await gitQuery("diff", { baseRev: gitBaseRev, target: row.kind });
+      }
+      if (!res.text) {
+        gitContentEl.textContent = "(no difference)";
+      } else {
+        renderGitText(res.text);
+      }
+      if (res.truncated && gitNoteEl) gitNoteEl.textContent = "truncated — raise maxBytes to see more";
+    } catch (err) {
+      gitSetError(err.message);
+    }
+  }
+
+  async function refreshGit(preserveSelection) {
+    if (!gitTaskSelect || !gitTaskSelect.value) {
+      gitRows = [];
+      renderGitRows();
+      gitContentEl.textContent = "(select a task)";
+      return;
+    }
+    const wanted = preserveSelection ? gitActiveIndex : 0;
+    try {
+      const [log, status] = await Promise.all([gitQuery("log", {}), gitQuery("status", {})]);
+      let changed = 0, untracked = 0;
+      for (const e of status.entries || []) {
+        if (e.xy === "??") untracked++; else changed++;
+      }
+      gitStatusSummary = (changed === 0 && untracked === 0)
+        ? "clean"
+        : (untracked === 0 ? `${changed} changed` : `${changed} changed, ${untracked} untracked`);
+      gitRows = [{ kind: "worktree" }, { kind: "index" }];
+      for (const c of log.commits || []) gitRows.push({ kind: "commit", commit: c });
+      if (gitNoteEl) {
+        gitNoteEl.textContent = log.truncated ? `commit list truncated at ${(log.commits || []).length}` : "";
+      }
+      gitActiveIndex = wanted < gitRows.length ? wanted : 0;
+      renderGitRows();
+      await openGitRow(gitActiveIndex);
+    } catch (err) {
+      gitRows = [];
+      renderGitRows();
+      gitSetError(err.message);
+    }
+  }
+
+  // gitShowStatusListing renders the porcelain listing into the content pane.
+  // It is the only place untracked files are visible: they appear in no diff.
+  async function gitShowStatusListing() {
+    try {
+      const res = await gitQuery("status", {});
+      if (!(res.entries || []).length) {
+        gitContentEl.textContent = "(nothing uncommitted)";
+        return;
+      }
+      renderGitText(res.entries.map(e => `${e.xy} ${e.path}`).join("\n"));
+    } catch (err) {
+      gitSetError(err.message);
+    }
+  }
+
+  if (gitTaskSelect) {
+    gitTaskSelect.addEventListener("change", () => {
+      // A different task keeps none of the previous one's baseline.
+      gitSetBase("HEAD");
+      refreshGit(false);
+    });
+  }
+  if (gitRefreshBtn) gitRefreshBtn.addEventListener("click", () => refreshGit(true));
+  if (gitBaseResetBtn) {
+    gitBaseResetBtn.addEventListener("click", () => {
+      gitSetBase("HEAD");
+      renderGitRows();
+      openGitRow(gitActiveIndex);
+    });
+  }
+  tabbar.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tab-btn");
+    if (btn && btn.dataset.tab === "git" && gitTaskSelect && gitTaskSelect.value && !gitRows.length) {
+      refreshGit(false);
+    }
+  });
+
+  // openGitTabFor is the cmdline's entry point: switch to the tab, point it at
+  // a task, and run one query there rather than dumping a diff into the
+  // command output where it cannot be scrolled.
+  window.__openGitTabFor = async (taskID, sub, opts) => {
+    const btn = tabbar.querySelector('.tab-btn[data-tab="git"]');
+    if (btn) btn.click();
+    if (gitTaskSelect) gitTaskSelect.value = taskID;
+    gitSetBase(opts.baseRev || "HEAD");
+    await refreshGit(false);
+    if (sub === "status") {
+      await gitShowStatusListing();
+      return;
+    }
+    if (sub === "show") {
+      try {
+        const res = await gitQuery("show", { baseRev: opts.baseRev, path: opts.path });
+        renderGitText(res.text || "(no difference)");
+      } catch (err) {
+        gitSetError(err.message);
+      }
+      return;
+    }
+    if (sub === "diff") {
+      const target = opts.staged ? "index" : (opts.targetRev ? "rev" : "worktree");
+      try {
+        const res = await gitQuery("diff", {
+          baseRev: opts.baseRev, targetRev: opts.targetRev, target, path: opts.path,
+        });
+        renderGitText(res.text || "(no difference)");
+      } catch (err) {
+        gitSetError(err.message);
+      }
+    }
+  };
+
+  // Keep the git task dropdown in step with the snapshot poll.
+  window.__renderGitTaskSelect = renderGitTaskSelect;
+
   // Activate renderBoardTopics when the board tab is selected.
   tabbar.addEventListener("click", (e) => {
     const btn = e.target.closest(".tab-btn");
@@ -3718,6 +4012,63 @@ function parseFlags(tokens) {
 // runFileCmd handles the `file <verb> ...` family from the cmd-input.
 // Returns a string to be appended to cmd-output. Throws on usage error;
 // non-fatal "Cancelled by user" outcomes return a short string instead.
+// runGitCmd parses `git <task> {log|diff|show|status} ...` with the same
+// grammar harness-cli and the TUI cmdline use, and hands the result to the Git
+// tab. The pathspec is split off at "--" BEFORE flags are read, matching the
+// other two surfaces, and the revisions are counted the way git counts them.
+async function runGitCmd(rest) {
+  if (rest.length < 2) {
+    throw new Error("git: usage: git <task-id> {log | diff | show | status} [...]");
+  }
+  const taskID = rest[0];
+  const sub = rest[1];
+  let args = rest.slice(2);
+  let path = "";
+  const sepIdx = args.indexOf("--");
+  if (sepIdx >= 0) {
+    path = args.slice(sepIdx + 1).join(" ");
+    args = args.slice(0, sepIdx);
+  }
+
+  let staged = false;
+  const pos = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--staged" || a === "--cached") { staged = true; continue; }
+    if (a === "--max" || a === "--max-bytes") { i++; continue; }   // caps are the runner's job
+    if (a.startsWith("--")) throw new Error(`git ${sub}: unknown flag ${a}`);
+    pos.push(a);
+  }
+
+  let baseRev = "", targetRev = "";
+  switch (sub) {
+    case "log":
+    case "show":
+      if (pos.length > 1) throw new Error(`git ${sub}: at most one revision (got ${pos.length})`);
+      baseRev = pos[0] || "";
+      break;
+    case "diff":
+      if (pos.length > 2) throw new Error(`git diff: at most two revisions (got ${pos.length})`);
+      if (pos.length === 2) {
+        if (staged) throw new Error("git diff: --staged names the index as the right-hand side, so a second revision has nowhere to go");
+        baseRev = pos[0];
+        targetRev = pos[1];
+      } else {
+        baseRev = pos[0] || "";
+      }
+      break;
+    case "status":
+      if (pos.length) throw new Error(`git status: takes no revision (got ${pos[0]})`);
+      break;
+    default:
+      throw new Error(`git: unknown sub-verb ${sub} (log | diff | show | status)`);
+  }
+
+  if (!window.__openGitTabFor) throw new Error("git: panel not ready");
+  await window.__openGitTabFor(taskID, sub, { baseRev, targetRev, path, staged });
+  return `git ${sub}: shown in the Git tab`;
+}
+
 async function runFileCmd(rest) {
   if (rest.length === 0) {
     throw new Error("file: sub-verb required (ls | delete | push | pull | mkdir | new)");
