@@ -516,6 +516,12 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleListFiles(ctx, lf)
+	case protocol.RunnerRequestType_GitQuery:
+		gq := req.GitQuery()
+		if gq == nil {
+			return
+		}
+		go session.handleGitQuery(ctx, gq)
 	case protocol.RunnerRequestType_OpenPortForward:
 		pf := req.OpenPortForward()
 		if pf == nil {

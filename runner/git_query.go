@@ -1,7 +1,10 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // gitQueryTimeout bounds a single git invocation. A diff of a large tree is
@@ -260,4 +265,174 @@ func refExists(repoPath, ref string) bool {
 	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", ref)
 	cmd.Dir = repoPath
 	return cmd.Run() == nil
+}
+
+// runGitQuery executes argv in cwd and captures at most maxBytes of stdout.
+// Over the cap the process is killed rather than drained: a diff of a huge
+// tree should not stream gigabytes into memory just to be discarded.
+//
+// A non-zero exit is classified from git's own stderr. "unknown revision",
+// "bad revision" and "ambiguous argument" all mean the caller named something
+// that does not resolve, which is a user-correctable bad_rev; anything else is
+// git_failed and carries stderr verbatim so the operator sees git's words
+// rather than ours.
+func runGitQuery(ctx context.Context, cwd string, argv []string, maxBytes uint32) ([]byte, string, bool, protocol.GitRunStatus) {
+	ctx, cancel := context.WithTimeout(ctx, gitQueryTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "git", argv...)
+	cmd.Dir = cwd
+	var errBuf bytes.Buffer
+	cmd.Stderr = &errBuf
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err.Error(), false, protocol.GitRunStatus_IoError
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err.Error(), false, protocol.GitRunStatus_IoError
+	}
+
+	// One byte past the cap is enough to know the output was longer.
+	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(maxBytes)+1))
+	truncated := false
+	if uint32(len(out)) > maxBytes {
+		out = out[:maxBytes]
+		truncated = true
+		cancel() // stop git rather than drain the rest
+	}
+	waitErr := cmd.Wait()
+	stderr := strings.TrimSpace(errBuf.String())
+
+	if truncated {
+		// The kill above makes Wait report failure; what we captured is still
+		// exactly what the caller asked for.
+		return out, "", true, protocol.GitRunStatus_Ok
+	}
+	if readErr != nil {
+		return nil, readErr.Error(), false, protocol.GitRunStatus_IoError
+	}
+	if waitErr != nil {
+		low := strings.ToLower(stderr)
+		switch {
+		case strings.Contains(low, "unknown revision"),
+			strings.Contains(low, "bad revision"),
+			strings.Contains(low, "ambiguous argument"),
+			strings.Contains(low, "bad object"):
+			return nil, stderr, false, protocol.GitRunStatus_BadRev
+		default:
+			return nil, stderr, false, protocol.GitRunStatus_GitFailed
+		}
+	}
+	return out, stderr, false, protocol.GitRunStatus_Ok
+}
+
+// setGitBody puts body on the union arm matching kind. The diff and show arms
+// carry the same type, so the only difference is which setter the encoder
+// needs.
+func setGitTextBody(res *protocol.GitQueryResult, kind protocol.GitQueryKind, body protocol.GitTextBody) {
+	if kind == protocol.GitQueryKind_Show {
+		res.SetShow(body)
+		return
+	}
+	res.SetDiff(body)
+}
+
+// emptyGitBody fills the union arm for kind with a zero body. Every result
+// encodes an arm, including the failures — see the GitQueryResult comment in
+// message.bgn.
+func emptyGitBody(res *protocol.GitQueryResult, kind protocol.GitQueryKind) {
+	switch kind {
+	case protocol.GitQueryKind_Log:
+		res.SetLog(protocol.GitLogBody{})
+	case protocol.GitQueryKind_Status:
+		res.SetStatusBody(protocol.GitStatusBody{})
+	default:
+		setGitTextBody(res, kind, protocol.GitTextBody{})
+	}
+}
+
+// buildGitResult is the whole runner-side answer for one request, with no
+// stream involvement, so it is directly testable.
+func (s *Session) buildGitResult(ctx context.Context, req *protocol.RunnerGitQueryRequest) protocol.GitQueryResult {
+	fail := func(st protocol.GitRunStatus, stderr string) protocol.GitQueryResult {
+		var res protocol.GitQueryResult
+		res.Status = st
+		res.SetStderr([]byte(stderr))
+		res.Kind = req.Kind
+		emptyGitBody(&res, req.Kind)
+		return res
+	}
+
+	repoPath := string(req.RepoPath)
+	// AllowedRoots empty means an unconfigured Session (tests); the assign /
+	// open-exec paths guard the same way.
+	if len(s.AllowedRoots) > 0 && !s.repoAllowed(repoPath) {
+		return fail(protocol.GitRunStatus_RepoNotAllowed, "repo is not under this runner's --roots")
+	}
+
+	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
+	cwd, tip, st := gitSourceFor(repoPath, taskIDHex, s.NoWorktree)
+	if st != protocol.GitRunStatus_Ok {
+		return fail(st, "")
+	}
+
+	argv, st := gitArgv(req, tip)
+	if st != protocol.GitRunStatus_Ok {
+		return fail(st, "a revision or pathspec began with '-'")
+	}
+
+	out, stderr, truncated, st := runGitQuery(ctx, cwd, argv, clampMaxBytes(req.MaxBytes))
+	if st != protocol.GitRunStatus_Ok {
+		return fail(st, stderr)
+	}
+
+	var res protocol.GitQueryResult
+	res.Status = protocol.GitRunStatus_Ok
+	res.SetStderr(nil)
+	res.Kind = req.Kind
+	switch req.Kind {
+	case protocol.GitQueryKind_Log:
+		commits, logTruncated := parseGitLog(out, clampMaxCommits(req.MaxCommits))
+		var body protocol.GitLogBody
+		body.SetCommits(commits)
+		body.SetTruncated(logTruncated)
+		res.SetLog(body)
+	case protocol.GitQueryKind_Status:
+		var body protocol.GitStatusBody
+		body.SetEntries(parseGitStatusZ(out))
+		res.SetStatusBody(body)
+	default:
+		var body protocol.GitTextBody
+		body.SetText(out)
+		body.SetTruncated(truncated)
+		setGitTextBody(&res, req.Kind, body)
+	}
+	return res
+}
+
+// handleGitQuery answers one git_query on the stream the server allocated.
+// Shaped exactly like handleListFiles: wait for the stream, always write
+// something, always close.
+func (s *Session) handleGitQuery(ctx context.Context, req *protocol.RunnerGitQueryRequest) {
+	log := s.logger()
+	stream := peer.WaitForBidirectionalStream(ctx, s.Streams, trsf.StreamID(req.StreamId))
+	if stream == nil {
+		log.Error("git_query: stream not visible", "stream_id", req.StreamId)
+		return
+	}
+	defer stream.CloseBoth()
+
+	res := s.buildGitResult(ctx, req)
+	body, err := res.Append(nil)
+	if err != nil {
+		log.Error("git_query: encode result", "err", err)
+		return
+	}
+	if _, err := stream.Write(body); err != nil {
+		log.Error("git_query: write result", "err", err)
+		return
+	}
+	if err := stream.AppendData(true); err != nil {
+		log.Error("git_query: half-close", "err", err)
+	}
 }
