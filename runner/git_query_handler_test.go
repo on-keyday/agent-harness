@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -452,5 +454,108 @@ func TestBuildGitResultSubmoduleDiffInlinesTheInnerChange(t *testing.T) {
 	}
 	if got := mk(true); !strings.Contains(got, "+s2") {
 		t.Fatalf("--submodule should inline the inner change:\n%s", got)
+	}
+}
+
+// countGitSpawns runs fn with a counting `git` shim ahead of the real one on
+// PATH and reports how many times git was executed.
+//
+// Spawn count is the thing that actually hurts: on the Windows runner in use
+// here a process start costs ~300ms (measured — every query took ~900ms and
+// each ran three of them), so a probe that is "just one exec" is most of the
+// latency. Counting it is the only way to keep that from creeping back in.
+func countGitSpawns(t *testing.T, fn func()) int {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the counting shim is a shell script")
+	}
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skipf("no git on PATH: %v", err)
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "count.log")
+	shim := "#!/bin/sh\necho x >> " + log + "\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fn()
+	b, err := os.ReadFile(log)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(b), "\n")
+}
+
+// One query, one git. Locating the working directory used to cost two more
+// spawns before the real command even started.
+func TestGitQuerySpawnsGitExactlyOnce(t *testing.T) {
+	repo := newTestRepo(t) // built before the shim goes on PATH
+	s := &Session{AllowedRoots: []string{repo}, NoWorktree: true}
+
+	for _, kind := range []protocol.GitQueryKind{
+		protocol.GitQueryKind_Log,
+		protocol.GitQueryKind_Status,
+		protocol.GitQueryKind_Diff,
+		protocol.GitQueryKind_Show,
+	} {
+		t.Run(kind.String(), func(t *testing.T) {
+			n := countGitSpawns(t, func() {
+				req := &protocol.RunnerGitQueryRequest{Kind: kind, Target: protocol.GitDiffTarget_Worktree}
+				req.SetBaseRev([]byte("HEAD"))
+				req.SetRepoPath([]byte(repo))
+				res := s.buildGitResult(context.Background(), req)
+				if res.Status != protocol.GitRunStatus_Ok {
+					t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+				}
+			})
+			if n != 1 {
+				t.Fatalf("%v spawned git %d times, want exactly 1", kind, n)
+			}
+		})
+	}
+}
+
+// The discovery walk answers from the filesystem: it must not start git at all,
+// not even once per candidate directory.
+func TestSubreposSpawnsNoGit(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+
+	var count int
+	n := countGitSpawns(t, func() {
+		req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Subrepos}
+		req.SetRepoPath([]byte(outer))
+		res := s.buildGitResult(context.Background(), req)
+		if res.Status != protocol.GitRunStatus_Ok {
+			t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+		}
+		count = int(res.Subrepos().Count)
+	})
+	if count != 2 {
+		t.Fatalf("found %d nested repos, want 2 — the walk must still work without git", count)
+	}
+	if n != 0 {
+		t.Fatalf("the subrepos walk spawned git %d times; it answers from the filesystem", n)
+	}
+}
+
+// Re-rooting is filesystem work too.
+func TestSubrepoResolutionSpawnsNoExtraGit(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+
+	n := countGitSpawns(t, func() {
+		req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Log, MaxCommits: 5}
+		req.SetRepoPath([]byte(outer))
+		req.SetSubrepo([]byte("pkg/inner"))
+		res := s.buildGitResult(context.Background(), req)
+		if res.Status != protocol.GitRunStatus_Ok {
+			t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+		}
+	})
+	if n != 1 {
+		t.Fatalf("a re-rooted log spawned git %d times, want exactly 1", n)
 	}
 }
