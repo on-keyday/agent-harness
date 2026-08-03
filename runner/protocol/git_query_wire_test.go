@@ -257,3 +257,96 @@ func TestGitQueryThroughTaskControlEnvelope(t *testing.T) {
 		t.Fatalf("response arm: %+v", r)
 	}
 }
+
+func TestGitQueryRequestSubrepoRoundTrip(t *testing.T) {
+	var req GitQueryRequest
+	req.Kind = GitQueryKind_Diff
+	req.Target = GitDiffTarget_Worktree
+	req.SetBaseRev([]byte("HEAD"))
+	req.SetTargetRev(nil)
+	req.SetPath([]byte("src/x.go"))
+	req.SetSubrepo([]byte("pkg/inner"))
+	req.SetSubmoduleDiff(true)
+
+	buf, err := req.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got GitQueryRequest
+	if _, err := got.Decode(buf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// subrepo and path are different fields on purpose: one chooses the
+	// repository, the other filters within it.
+	if string(got.Subrepo) != "pkg/inner" {
+		t.Fatalf("subrepo = %q", got.Subrepo)
+	}
+	if string(got.Path) != "src/x.go" {
+		t.Fatalf("path = %q", got.Path)
+	}
+	if !got.SubmoduleDiff() {
+		t.Fatal("submodule_diff lost")
+	}
+}
+
+func TestGitQueryResultSubreposRoundTrip(t *testing.T) {
+	var e1, e2 GitSubrepoEntry
+	e1.SetPath([]byte("pkg/inner"))
+	e2.SetPath([]byte("vendor/lib"))
+	var body GitSubrepoBody
+	body.SetEntries([]GitSubrepoEntry{e1, e2})
+	body.SetTruncated(true)
+
+	var res GitQueryResult
+	res.Status = GitRunStatus_Ok
+	res.SetStderr(nil)
+	res.Kind = GitQueryKind_Subrepos
+	if !res.SetSubrepos(body) {
+		t.Fatal("SetSubrepos rejected")
+	}
+	buf, err := res.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got GitQueryResult
+	if _, err := got.Decode(buf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	sr := got.Subrepos()
+	if sr == nil || sr.Count != 2 || !sr.Truncated() {
+		t.Fatalf("subrepos arm: %+v", sr)
+	}
+	if string(sr.Entries[1].Path) != "vendor/lib" {
+		t.Fatalf("entry 1: %q", sr.Entries[1].Path)
+	}
+}
+
+func TestGitRunStatusSubrepoInvalidExists(t *testing.T) {
+	if GitRunStatus_SubrepoInvalid.String() != "subrepo_invalid" {
+		t.Fatalf("name = %q", GitRunStatus_SubrepoInvalid.String())
+	}
+}
+
+func TestRunnerGitQueryRequestCarriesSubrepo(t *testing.T) {
+	var req RunnerGitQueryRequest
+	req.StreamId = 7
+	req.SetRepoPath([]byte("/srv/repo"))
+	req.Kind = GitQueryKind_Subrepos
+	req.SetBaseRev(nil)
+	req.SetTargetRev(nil)
+	req.SetPath(nil)
+	req.SetSubrepo([]byte("pkg/inner"))
+	req.SetSubmoduleDiff(true)
+
+	buf, err := req.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got RunnerGitQueryRequest
+	if _, err := got.Decode(buf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if string(got.Subrepo) != "pkg/inner" || !got.SubmoduleDiff() || got.StreamId != 7 {
+		t.Fatalf("got %+v", got)
+	}
+}

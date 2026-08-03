@@ -1394,6 +1394,7 @@ enum GitQueryKind:
     diff     # unified diff between base_rev and the chosen target
     show     # one commit: header + its diff
     status   # porcelain state: uncommitted + untracked
+    subrepos # list the git repo roots nested under the current root
 
 # What the right-hand side of the diff is. base_rev is always the left.
 enum GitDiffTarget:
@@ -1415,6 +1416,19 @@ format GitQueryRequest:
     path           :[path_len]u8       # worktree-relative pathspec; empty = all
     max_commits    :u32                # log only. 0 -> 100, clamped to 1000
     max_bytes      :u32                # diff/show only. 0 -> 2MiB, clamped to 8MiB
+    subrepo_len    :u16
+    subrepo        :[subrepo_len]u8    # worktree-relative directory that is
+                                       # itself a git repo root; the WHOLE query
+                                       # runs there. Empty = the task's own
+                                       # worktree. This is not a pathspec: `path`
+                                       # filters within a repository, `subrepo`
+                                       # chooses which repository.
+    submodule_diff :u1                 # diff / show: pass --submodule=diff so a
+                                       # submodule's own file-level changes are
+                                       # inlined. Off by default — git's own
+                                       # default, and the combined output is no
+                                       # longer an applyable patch.
+    reserved       :u7
 
 enum GitQueryStatus:
     :u8
@@ -1444,6 +1458,10 @@ format RunnerGitQueryRequest:
     path           :[path_len]u8
     max_commits    :u32
     max_bytes      :u32
+    subrepo_len    :u16
+    subrepo        :[subrepo_len]u8
+    submodule_diff :u1
+    reserved       :u7
 
 enum GitRunStatus:
     :u8
@@ -1454,6 +1472,9 @@ enum GitRunStatus:
     bad_rev          = "bad_rev"           # unresolvable, or '-'-leading
     git_failed       = "git_failed"        # non-zero exit for another reason
     io_error         = "io_error"
+    subrepo_invalid  = "subrepo_invalid"   # subrepo escaped the worktree, passed
+                                           # through a symlink, does not exist, or
+                                           # exists but is not a repo root
 
 format GitCommit:
     sha_len     :u8             # 40 for sha1 repos, 64 for sha256 ones — a
@@ -1480,6 +1501,16 @@ format GitStatusBody:
     count   :u32
     entries :[count]GitStatusEntry
 
+format GitSubrepoEntry:
+    path_len :u16
+    path     :[path_len]u8      # relative to the query's current root
+
+format GitSubrepoBody:
+    count     :u32
+    entries   :[count]GitSubrepoEntry
+    truncated :u1               # the candidate cap cut the walk short; a cap
+    reserved  :u7               # that is not reported reads as "there were none"
+
 format GitTextBody:
     len       :u64
     text      :[len]u8          # git's stdout verbatim (--no-color)
@@ -1502,5 +1533,6 @@ format GitQueryResult:
     match kind:
         GitQueryKind.log    => log         :GitLogBody
         GitQueryKind.status => status_body :GitStatusBody
-        GitQueryKind.diff   => diff        :GitTextBody
-        GitQueryKind.show   => show        :GitTextBody
+        GitQueryKind.diff     => diff        :GitTextBody
+        GitQueryKind.show     => show        :GitTextBody
+        GitQueryKind.subrepos => subrepos    :GitSubrepoBody
