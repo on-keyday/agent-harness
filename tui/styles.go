@@ -49,3 +49,14 @@ var OKStyle = lipgloss.NewStyle().Foreground(colorOK)
 
 // WarnStyle marks warnings.
 var WarnStyle = lipgloss.NewStyle().Foreground(colorWarn)
+
+// Diff line styling. The classification itself lives in cli.ClassifyGitLine so
+// the TUI, the CLI and the WebUI cannot disagree about what a line is; these
+// only decide how each class looks here.
+var (
+	GitAddStyle  = lipgloss.NewStyle().Foreground(colorOK)
+	GitDelStyle  = lipgloss.NewStyle().Foreground(colorErr)
+	GitHunkStyle = lipgloss.NewStyle().Foreground(colorFocused)
+	GitFileStyle = lipgloss.NewStyle().Bold(true)
+	GitMetaStyle = lipgloss.NewStyle().Foreground(colorMuted)
+)

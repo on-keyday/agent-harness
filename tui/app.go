@@ -89,6 +89,13 @@ type App struct {
 	// agentboard view
 	boardModal BoardModal
 
+	// read-only git view of a task's worktree
+	gitModal GitModal
+	// gitStatusToContent routes the NEXT status answer into the content
+	// pane instead of only the worktree-row summary. Set when the operator
+	// asks for the listing; a background refresh leaves it false.
+	gitStatusToContent bool
+
 	// port-forward state
 	portForwardModal PortForwardModal
 	forwardPicker    ForwardPicker
@@ -214,6 +221,7 @@ func New(cfg Config) *App {
 		forwardsModal:   NewForwardsModal(),
 		rawModal:        NewRawConnectModal(),
 		boardModal:      NewBoardModal(),
+		gitModal:        NewGitModal(),
 		grid:            NewGridModel(),
 		focus:           focusTasks,
 		connected:       false,
@@ -399,6 +407,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ConnStatusMsg:
 		a.connsModal.ApplyEvent(msg.Event)
+		return a, nil
+
+	case GitResultMsg:
+		// An answer for a task the operator has already navigated away from is
+		// stale, not an error — drop it rather than repaint the current view
+		// with another task's diff.
+		if !a.gitModal.IsOpen() || msg.TaskID != a.gitModal.TaskID() {
+			return a, nil
+		}
+		if msg.Err != nil {
+			a.gitModal.SetError(msg.Err.Error())
+			return a, nil
+		}
+		if err := msg.Result.Err(); err != nil {
+			a.gitModal.SetError(err.Error())
+			return a, nil
+		}
+		switch msg.Kind {
+		case protocol.GitQueryKind_Log:
+			a.gitModal.SetLog(msg.Result)
+		case protocol.GitQueryKind_Status:
+			if a.gitStatusToContent {
+				a.gitStatusToContent = false
+				a.gitModal.SetStatusContent(msg.Result)
+			} else {
+				a.gitModal.SetStatus(msg.Result)
+			}
+		default:
+			a.gitModal.SetContent(msg.Result)
+		}
+		// Row count changes with the log, and the split depends on it.
+		a.gitModal.SetSize(a.width, a.height)
 		return a, nil
 
 	case BoardTopicsMsg:
@@ -915,6 +955,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.connsModal.SetSize(a.width, a.height)
 		a.forwardsModal.SetSize(a.width, a.height)
 		a.boardModal.SetSize(a.width, a.height)
+		a.gitModal.SetSize(a.width, a.height)
 		a.grid.SetSize(a.width, a.height)
 		a.rawModal.SetSize(a.width, a.height)
 		return a, nil
@@ -1033,6 +1074,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			var cmd tea.Cmd
 			a.boardModal, cmd = a.boardModal.Update(msg)
+			return a, cmd
+		}
+		// Git modal: row picker over a diff viewport. The App dispatches the
+		// keys that need a client (Enter / r / s); the modal owns selection,
+		// the baseline and scrolling.
+		if a.gitModal.IsOpen() {
+			if msg.Type == tea.KeyEsc {
+				a.gitModal.Close()
+				return a, nil
+			}
+			taskID := a.gitModal.TaskID()
+			if msg.Type == tea.KeyEnter {
+				kind, target, rev := a.gitModal.GitQueryForRow(a.gitModal.SelectedRow())
+				if kind == protocol.GitQueryKind_Show {
+					return a, DoGitShow(a.client, taskID, rev, "")
+				}
+				return a, DoGitDiff(a.client, taskID, rev, target, "", "")
+			}
+			switch msg.String() {
+			case modalKeys.BoardRefresh:
+				// One keypress refreshes both halves: the commit list and the
+				// worktree summary go stale together.
+				return a, tea.Batch(
+					DoGitLog(a.client, taskID, "", 0),
+					DoGitStatus(a.client, taskID),
+				)
+			case modalKeys.GitStatus:
+				a.gitStatusToContent = true
+				return a, DoGitStatus(a.client, taskID)
+			}
+			var cmd tea.Cmd
+			a.gitModal, cmd = a.gitModal.Update(msg)
 			return a, cmd
 		}
 		// The editor popup sits on top of the file picker (which is what
@@ -1391,6 +1464,34 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// `F` opens the file picker for the task currently focused in the
 		// tasks pane. No-op when the tasks pane is not focused or no task
 		// is selected (the cmdresult line explains).
+		// `G` opens the read-only git view for the selected task: its commit
+		// list, its uncommitted diff, and a baseline the operator can move.
+		// Unlike the file picker this does NOT require a live worktree — a
+		// finished task still answers through its retained harness/<id>
+		// branch (server/git_query.go).
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Git {
+			if a.focus != focusTasks {
+				a.cmdresult.Append(WarnStyle.Render("git: focus the tasks pane first"))
+				return a, nil
+			}
+			taskID := a.tasks.SelectedID()
+			if taskID == "" {
+				a.cmdresult.Append(WarnStyle.Render("git: no task selected"))
+				return a, nil
+			}
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("git: not connected"))
+				return a, nil
+			}
+			a.gitModal.Open(taskID)
+			a.gitModal.SetSize(a.width, a.height)
+			a.gitStatusToContent = false
+			return a, tea.Batch(
+				DoGitLog(a.client, taskID, "", 0),
+				DoGitStatus(a.client, taskID),
+				DoGitDiff(a.client, taskID, a.gitModal.BaseRev(), protocol.GitDiffTarget_Worktree, "", ""),
+			)
+		}
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.FilePicker {
 			if a.focus != focusTasks {
 				a.cmdresult.Append(WarnStyle.Render("file picker: focus the tasks pane first"))
@@ -1821,6 +1922,9 @@ func (a *App) View() string {
 	}
 	if a.boardModal.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.boardModal.View())
+	}
+	if a.gitModal.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.gitModal.View())
 	}
 	if a.grid.IsOpen() {
 		// Top-align vertically (not Center): if the grid is ever fractionally

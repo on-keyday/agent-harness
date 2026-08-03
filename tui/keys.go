@@ -31,6 +31,7 @@ type mainKeyMap struct {
 	Board       string
 	Forwards    string
 	FilePicker  string
+	Git         string
 	LogFilter   string
 
 	Cancel                 string
@@ -60,6 +61,7 @@ var mainKeys = mainKeyMap{
 	Board:       "O",
 	Forwards:    "f",
 	FilePicker:  "F",
+	Git:         "G",
 	LogFilter:   "/",
 
 	Cancel:                 "c",
@@ -91,6 +93,10 @@ type modalKeyMap struct {
 	BoardRefresh    string
 	BoardPurgeTopic string
 	BoardPurgeMsg   string
+	GitSetBase      string
+	GitStatus       string
+	GitNextFile     string
+	GitPrevFile     string
 }
 
 var modalKeys = modalKeyMap{
@@ -103,6 +109,10 @@ var modalKeys = modalKeyMap{
 	BoardRefresh:    "r",
 	BoardPurgeTopic: "x",
 	BoardPurgeMsg:   "X",
+	GitSetBase:      "b",
+	GitStatus:       "s",
+	GitNextFile:     "n",
+	GitPrevFile:     "N",
 }
 
 // keyScope is a bitmask of the panes a main-view binding applies to. The
@@ -157,6 +167,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.AwaitIdle, mainKeys.AwaitIdleNotify}, Scope: scopeTasks,
 		Short: "w/W await-idle", Long: "arm a one-shot idle watcher (W also notifies the operator)"},
 	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Short: "F files", Long: "open the file picker on the selected task's worktree"},
+	{Keys: []string{mainKeys.Git}, Scope: scopeTasks, Short: "G git", Long: "read the selected task's log and diff without touching its shell"},
 	{Keys: []string{mainKeys.ForwardLocal, mainKeys.ForwardLocalStop}, Scope: scopeTasks,
 		Short: "p/P L-forward", Long: "start / stop a local port forward for the selected task"},
 	{Keys: []string{mainKeys.ForwardRemote, mainKeys.ForwardRemoteStop}, Scope: scopeTasks,
