@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -99,6 +100,110 @@ func gitSourceFor(repoPath, taskIDHex string, noWorktree bool) (cwd, tip string,
 	return "", "", false, protocol.GitRunStatus_NoSource
 }
 
+// gitSubrepoMaxDepth bounds the discovery walk. Deep enough for the
+// packages/<name>/<repo> shapes people actually have, shallow enough that the
+// walk stays cheap on a large tree.
+const gitSubrepoMaxDepth = 6
+
+// gitSubrepoMaxCandidates bounds how many repo roots one walk reports. The
+// body carries a truncated flag alongside it: a cap that is not reported reads
+// as "there were none".
+const gitSubrepoMaxCandidates = 64
+
+// resolveSubrepo re-roots a query into a nested repository. root is the cwd
+// the task would otherwise use; rel is the client's worktree-relative
+// directory.
+//
+// Every failure is subrepo_invalid rather than a fallback to root: running one
+// directory up and answering about the enclosing repository is precisely the
+// wrong-answer-wearing-a-right-answer's-face this file keeps guarding against.
+//
+// The repo-root test is the same --show-toplevel equality used for worktrees,
+// which is what makes this work for a plain nested repo (a directory with its
+// own .git that the outer repo only ever sees as one untracked entry) as well
+// as for a submodule.
+func resolveSubrepo(root, rel string) (string, protocol.GitRunStatus) {
+	if rel == "" {
+		return root, protocol.GitRunStatus_Ok
+	}
+	full, err := ValidateRelPath(root, rel)
+	if err != nil {
+		return "", protocol.GitRunStatus_SubrepoInvalid
+	}
+	if err := rejectIfSymlinkInPath(root, full); err != nil {
+		return "", protocol.GitRunStatus_SubrepoInvalid
+	}
+	if !isWorktreeRoot(full) {
+		return "", protocol.GitRunStatus_SubrepoInvalid
+	}
+	return full, protocol.GitRunStatus_Ok
+}
+
+// findSubrepos walks root and returns the nested git repo roots under it, as
+// paths relative to root. It does not descend into a repo it has found — a
+// repository inside a nested repository is that repository's business, and the
+// operator reaches it by re-rooting there first.
+//
+// A directory is a candidate when it holds a `.git` entry of EITHER kind: a
+// submodule's .git is a file, not a directory. Each candidate is then
+// confirmed with the --show-toplevel check, so a stray .git file does not
+// produce a phantom entry.
+func findSubrepos(root string) ([]protocol.GitSubrepoEntry, bool) {
+	var out []protocol.GitSubrepoEntry
+	truncated := false
+
+	var walk func(dir string, depth int)
+	walk = func(dir string, depth int) {
+		if truncated || depth > gitSubrepoMaxDepth {
+			return
+		}
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return
+		}
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		for _, e := range entries {
+			if truncated {
+				return
+			}
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			// .git is the repository's own storage; .harness-worktrees holds
+			// OTHER tasks' checkouts, which are not this task's content.
+			if name == ".git" || name == ".harness-worktrees" {
+				continue
+			}
+			child := filepath.Join(dir, name)
+			if hasGitEntry(child) && isWorktreeRoot(child) {
+				rel, err := filepath.Rel(root, child)
+				if err != nil {
+					continue
+				}
+				if len(out) >= gitSubrepoMaxCandidates {
+					truncated = true
+					return
+				}
+				var ent protocol.GitSubrepoEntry
+				ent.SetPath([]byte(filepath.ToSlash(rel)))
+				out = append(out, ent)
+				continue // do not descend into a repo we have found
+			}
+			walk(child, depth+1)
+		}
+	}
+	walk(root, 1)
+	return out, truncated
+}
+
+// hasGitEntry reports whether dir holds a `.git` of either kind. Cheap
+// pre-filter so the walk does not exec git for every directory.
+func hasGitEntry(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, ".git"))
+	return err == nil
+}
+
 // rebaseHeadOnTip rewrites a leading HEAD to tip. Without it, a rev like
 // "HEAD~1" against a task whose worktree is gone silently resolves against the
 // SHARED repository's checkout: "HEAD" then means whatever branch the user
@@ -152,6 +257,9 @@ func gitArgv(req *protocol.RunnerGitQueryRequest, tip string, hasWorktree bool) 
 
 	case protocol.GitQueryKind_Diff:
 		argv = []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv"}
+		if req.SubmoduleDiff() {
+			argv = append(argv, "--submodule=diff")
+		}
 		switch {
 		case !hasWorktree && req.Target != protocol.GitDiffTarget_Rev:
 			// With the task's working tree gone, "the working tree" and "the
@@ -192,10 +300,19 @@ func gitArgv(req *protocol.RunnerGitQueryRequest, tip string, hasWorktree bool) 
 		if rev == "" {
 			rev = tip
 		}
-		argv = []string{"show", "--no-color", "--no-ext-diff", "--no-textconv", rev}
+		argv = []string{"show", "--no-color", "--no-ext-diff", "--no-textconv"}
+		if req.SubmoduleDiff() {
+			argv = append(argv, "--submodule=diff")
+		}
+		argv = append(argv, rev)
 
 	case protocol.GitQueryKind_Status:
 		argv = []string{"status", "--porcelain", "--untracked-files=all", "-z"}
+
+	case protocol.GitQueryKind_Subrepos:
+		// Answered by a filesystem walk, not by git. buildGitResult
+		// short-circuits before reaching here.
+		return nil, protocol.GitRunStatus_Ok
 
 	default:
 		return nil, protocol.GitRunStatus_BadRev
@@ -389,6 +506,8 @@ func emptyGitBody(res *protocol.GitQueryResult, kind protocol.GitQueryKind) {
 		res.SetLog(protocol.GitLogBody{})
 	case protocol.GitQueryKind_Status:
 		res.SetStatusBody(protocol.GitStatusBody{})
+	case protocol.GitQueryKind_Subrepos:
+		res.SetSubrepos(protocol.GitSubrepoBody{})
 	default:
 		setGitTextBody(res, kind, protocol.GitTextBody{})
 	}
@@ -417,6 +536,40 @@ func (s *Session) buildGitResult(ctx context.Context, req *protocol.RunnerGitQue
 	cwd, tip, hasWorktree, st := gitSourceFor(repoPath, taskIDHex, s.NoWorktree)
 	if st != protocol.GitRunStatus_Ok {
 		return fail(st, "")
+	}
+
+	// Re-root into a nested repository, if one was named. This has to happen
+	// before every other decision below: the tip, the working tree and the
+	// status all become that repository's.
+	if sub := string(req.Subrepo); sub != "" {
+		if !hasWorktree {
+			// A nested repo is an untracked directory inside the task's
+			// worktree, so it went with the worktree. The harness/<taskID>
+			// branch is in the OUTER repository and says nothing about it.
+			return fail(protocol.GitRunStatus_NoSource,
+				"the task's worktree is gone, and a nested repository lived inside it")
+		}
+		sr, st := resolveSubrepo(cwd, sub)
+		if st != protocol.GitRunStatus_Ok {
+			return fail(st, "not a git repository root inside this worktree: "+sub)
+		}
+		cwd = sr
+		// The nested repository has its own HEAD, and harness/<taskID> does
+		// not exist in it.
+		tip = "HEAD"
+	}
+
+	if req.Kind == protocol.GitQueryKind_Subrepos {
+		entries, truncated := findSubrepos(cwd)
+		var body protocol.GitSubrepoBody
+		body.SetEntries(entries)
+		body.SetTruncated(truncated)
+		var res protocol.GitQueryResult
+		res.Status = protocol.GitRunStatus_Ok
+		res.SetStderr(nil)
+		res.Kind = req.Kind
+		res.SetSubrepos(body)
+		return res
 	}
 
 	// With no working tree there is nothing for this task to be dirty in.

@@ -328,3 +328,129 @@ func TestBuildGitResultHeadMeansTheTaskTipWithoutWorktree(t *testing.T) {
 		t.Fatalf("diff does not show the task's own commit:\n%s", text)
 	}
 }
+
+// The whole point of re-rooting: a plain nested repo's own change is
+// unreachable from outside it, and reachable once the query runs inside it.
+func TestBuildGitResultSubrepoSeesWhatTheOuterRepoCannot(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+
+	// From the outer repo the nested repo is one untracked entry and nothing more.
+	outerReq := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
+	outerReq.SetBaseRev([]byte("HEAD"))
+	outerReq.SetRepoPath([]byte(outer))
+	outerRes := s.buildGitResult(context.Background(), outerReq)
+	if outerRes.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("outer status = %v stderr %q", outerRes.Status, outerRes.Stderr)
+	}
+	if strings.Contains(string(outerRes.Diff().Text), "i2") {
+		t.Fatalf("outer diff should not see inside a nested repo:\n%s", outerRes.Diff().Text)
+	}
+
+	// Re-rooted, the same change is right there.
+	inReq := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
+	inReq.SetBaseRev([]byte("HEAD"))
+	inReq.SetRepoPath([]byte(outer))
+	inReq.SetSubrepo([]byte("pkg/inner"))
+	inRes := s.buildGitResult(context.Background(), inReq)
+	if inRes.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("inner status = %v stderr %q", inRes.Status, inRes.Stderr)
+	}
+	if !strings.Contains(string(inRes.Diff().Text), "+i2") {
+		t.Fatalf("re-rooted diff missing the nested change:\n%s", inRes.Diff().Text)
+	}
+}
+
+// A re-rooted log is the nested repo's history, not the outer one's.
+func TestBuildGitResultSubrepoLogIsTheInnerHistory(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Log, MaxCommits: 10}
+	req.SetRepoPath([]byte(outer))
+	req.SetSubrepo([]byte("pkg/inner"))
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+	}
+	lg := res.Log()
+	if lg == nil || lg.Count != 1 {
+		t.Fatalf("log body: %+v", lg)
+	}
+	if string(lg.Commits[0].Subject) != "inner base" {
+		t.Fatalf("subject %q — that is the outer repo's history", lg.Commits[0].Subject)
+	}
+}
+
+func TestBuildGitResultSubreposKind(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Subrepos}
+	req.SetRepoPath([]byte(outer))
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+	}
+	body := res.Subrepos()
+	if body == nil || body.Count != 2 {
+		t.Fatalf("subrepos body: %+v", body)
+	}
+}
+
+func TestBuildGitResultSubrepoInvalidIsReported(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Status}
+	req.SetRepoPath([]byte(outer))
+	req.SetSubrepo([]byte("pkg")) // a real directory, but not a repo root
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_SubrepoInvalid {
+		t.Fatalf("status = %v, want subrepo_invalid (it must not answer about the outer repo)", res.Status)
+	}
+	if len(res.Stderr) == 0 {
+		t.Fatal("a refusal must say why")
+	}
+}
+
+// A nested repo lives inside the worktree, so once the worktree is gone it is
+// gone too — the harness/<taskID> branch says nothing about it.
+func TestBuildGitResultSubrepoNeedsAWorktree(t *testing.T) {
+	repo := newTestRepo(t)
+	taskID, taskIDHex := newTaskID(0xaa)
+	gitRun(t, repo, "branch", "harness/"+taskIDHex)
+
+	s := &Session{AllowedRoots: []string{repo}}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Log}
+	req.TaskId = taskID
+	req.SetRepoPath([]byte(repo))
+	req.SetSubrepo([]byte("pkg/inner"))
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_NoSource {
+		t.Fatalf("status = %v, want no_source", res.Status)
+	}
+}
+
+// --submodule is what makes the submodule's own file-level change visible from
+// the superproject; without it only the gitlink moves.
+func TestBuildGitResultSubmoduleDiffInlinesTheInnerChange(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+
+	mk := func(submodule bool) string {
+		req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
+		req.SetBaseRev([]byte("HEAD"))
+		req.SetRepoPath([]byte(outer))
+		req.SetSubmoduleDiff(submodule)
+		res := s.buildGitResult(context.Background(), req)
+		if res.Status != protocol.GitRunStatus_Ok {
+			t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+		}
+		return string(res.Diff().Text)
+	}
+
+	if got := mk(false); strings.Contains(got, "+s2") {
+		t.Fatalf("default should show the gitlink only:\n%s", got)
+	}
+	if got := mk(true); !strings.Contains(got, "+s2") {
+		t.Fatalf("--submodule should inline the inner change:\n%s", got)
+	}
+}

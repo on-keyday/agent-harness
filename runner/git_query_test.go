@@ -394,3 +394,185 @@ func TestGitArgvWithoutWorktreeRevTargetIsUntouched(t *testing.T) {
 		t.Fatalf("argv %q", joined)
 	}
 }
+
+// newNestedFixture builds an outer repo containing BOTH shapes: a plain nested
+// repo (its own .git, untracked by the outer repo — invisible to it) and a
+// submodule (a gitlink the outer repo tracks). Returns the outer repo path.
+func newNestedFixture(t *testing.T) string {
+	t.Helper()
+	base := t.TempDir()
+
+	// The submodule's upstream has to exist before it can be added.
+	subUp := filepath.Join(base, "subupstream")
+	if err := os.MkdirAll(subUp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, subUp, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(subUp, "s.txt"), []byte("s1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, subUp, "add", "s.txt")
+	gitRun(t, subUp, "commit", "-q", "-m", "sub base")
+
+	outer := filepath.Join(base, "outer")
+	if err := os.MkdirAll(outer, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, outer, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(outer, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, outer, "add", "a.txt")
+	gitRun(t, outer, "commit", "-q", "-m", "outer base")
+
+	// Plain nested repo, two levels down so the walk has to descend.
+	inner := filepath.Join(outer, "pkg", "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, inner, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(inner, "i.txt"), []byte("i1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, inner, "add", "i.txt")
+	gitRun(t, inner, "commit", "-q", "-m", "inner base")
+	// An uncommitted change that ONLY the inner repo can see.
+	if err := os.WriteFile(filepath.Join(inner, "i.txt"), []byte("i1\ni2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gitRun(t, outer, "-c", "protocol.file.allow=always", "submodule", "add", "-q", subUp, "sub")
+	gitRun(t, outer, "commit", "-q", "-m", "add submodule")
+	if err := os.WriteFile(filepath.Join(outer, "sub", "s.txt"), []byte("s1\ns2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	return outer
+}
+
+func TestFindSubreposFindsBothShapes(t *testing.T) {
+	outer := newNestedFixture(t)
+	entries, truncated := findSubrepos(outer)
+	if truncated {
+		t.Fatal("two repos should not trip the cap")
+	}
+	got := map[string]bool{}
+	for _, e := range entries {
+		got[string(e.Path)] = true
+	}
+	// The plain nested repo is the one the outer repo cannot see any other way.
+	if !got["pkg/inner"] {
+		t.Fatalf("plain nested repo missing from %v", got)
+	}
+	// A submodule is a repo root too, so one picker covers both cases.
+	if !got["sub"] {
+		t.Fatalf("submodule missing from %v", got)
+	}
+}
+
+// A repo we have found is not walked into: what is inside it is that repo's
+// business, reached by re-rooting there first.
+func TestFindSubreposDoesNotDescendIntoAFoundRepo(t *testing.T) {
+	outer := newNestedFixture(t)
+	deeper := filepath.Join(outer, "pkg", "inner", "deeper")
+	if err := os.MkdirAll(deeper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, deeper, "init", "-q", "-b", "main")
+
+	entries, _ := findSubrepos(outer)
+	for _, e := range entries {
+		if strings.Contains(string(e.Path), "deeper") {
+			t.Fatalf("walk descended into a found repo: %q", e.Path)
+		}
+	}
+}
+
+func TestFindSubreposSkipsHarnessWorktrees(t *testing.T) {
+	outer := newNestedFixture(t)
+	wt := filepath.Join(outer, ".harness-worktrees", "deadbeef")
+	gitRun(t, outer, "worktree", "add", "-q", "-b", "harness/deadbeef", wt)
+	entries, _ := findSubrepos(outer)
+	for _, e := range entries {
+		if strings.HasPrefix(string(e.Path), ".harness-worktrees") {
+			t.Fatalf("another task's worktree reported as this task's content: %q", e.Path)
+		}
+	}
+}
+
+func TestResolveSubrepoAcceptsAPlainNestedRepo(t *testing.T) {
+	outer := newNestedFixture(t)
+	got, st := resolveSubrepo(outer, "pkg/inner")
+	if st != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v", st)
+	}
+	if got != filepath.Join(outer, "pkg", "inner") {
+		t.Fatalf("cwd = %q", got)
+	}
+}
+
+func TestResolveSubrepoEmptyIsTheRoot(t *testing.T) {
+	outer := newNestedFixture(t)
+	got, st := resolveSubrepo(outer, "")
+	if st != protocol.GitRunStatus_Ok || got != outer {
+		t.Fatalf("got %q %v", got, st)
+	}
+}
+
+// Every rejection is subrepo_invalid, never a silent fallback to the enclosing
+// repository.
+func TestResolveSubrepoRejections(t *testing.T) {
+	outer := newNestedFixture(t)
+	if err := os.MkdirAll(filepath.Join(outer, "plaindir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outer, "pkg", "inner"), filepath.Join(outer, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	for _, rel := range []string{
+		"../outside", // escapes the worktree
+		"/etc",       // absolute
+		"nosuchdir",  // missing
+		"plaindir",   // exists but is not a repo root
+		"a.txt",      // a file, not a directory
+		"link",       // reaches a repo, but through a symlink
+	} {
+		if _, st := resolveSubrepo(outer, rel); st != protocol.GitRunStatus_SubrepoInvalid {
+			t.Errorf("resolveSubrepo(%q) = %v, want subrepo_invalid", rel, st)
+		}
+	}
+}
+
+func TestGitArgvSubmoduleDiffOptIn(t *testing.T) {
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
+	req.SetBaseRev([]byte("HEAD"))
+
+	argv, _ := gitArgv(req, "HEAD", true)
+	if strings.Contains(strings.Join(argv, " "), "--submodule") {
+		t.Fatalf("off by default, but argv has it: %v", argv)
+	}
+
+	req.SetSubmoduleDiff(true)
+	argv, _ = gitArgv(req, "HEAD", true)
+	if !strings.Contains(strings.Join(argv, " "), "--submodule=diff") {
+		t.Fatalf("opted in, but argv lacks it: %v", argv)
+	}
+}
+
+func TestGitArgvShowHonoursSubmoduleDiff(t *testing.T) {
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Show}
+	req.SetBaseRev([]byte("abc"))
+	req.SetSubmoduleDiff(true)
+	argv, st := gitArgv(req, "HEAD", true)
+	if st != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v", st)
+	}
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "--submodule=diff") {
+		t.Fatalf("argv %q", joined)
+	}
+	// The revision must still land after the flags, not before them.
+	if !strings.Contains(joined, "--submodule=diff abc") {
+		t.Fatalf("revision misplaced in %q", joined)
+	}
+}
