@@ -25,6 +25,15 @@ operator has no way to read what the agent changed:
   plain `git diff` shows nothing while `git diff <branch-point>` shows
   everything. Which baseline is wanted changes with the situation, so
   the baseline has to be a runtime choice, not a design-time constant.
+- **A repository inside the repository is invisible.** Verified against
+  git, not assumed: a plain nested repo (a directory with its own `.git`,
+  not a submodule) collapses to a single `?? nested/` entry — even under
+  `--untracked-files=all`, which does not descend into one — and appears
+  in no diff at all, because it is untracked. A submodule fares slightly
+  better: `status` reports ` M sub` and `diff` reports the gitlink moving,
+  with a `-dirty` marker, but the file-level change inside stays hidden.
+  Either way "what did the agent change" is silently incomplete, and
+  plain-nested is the shape a real project in use here has.
 - **A finished task's work is unreachable.** `server/file_transfer.go`
   rejects anything that is not `Running` / `Detached`, and the worktree
   dir is removed on a clean task end. The branch `harness/<taskID>` is
@@ -45,8 +54,9 @@ operator has no way to read what the agent changed:
 
 One new read-only `TaskControl` RPC, `git_query`, fanned out to the
 task's runner exactly like `list_files` is. The runner shells out to
-`git` in the task's worktree and streams the result back. Four query
-kinds — `log`, `diff`, `show`, `status` — cover the whole surface.
+`git` in the task's worktree and streams the result back. Five query
+kinds — `log`, `diff`, `show`, `status`, `subrepos` — cover the whole
+surface, and a query may re-root itself into a nested repository.
 
 Every operator surface gets it: a `harness-cli git` subcommand, a TUI
 modal plus a TUI cmdline verb, a WebUI tab plus a WebUI cmdline verb,
@@ -140,6 +150,69 @@ repo. That is accepted: an agent already has a shell in a worktree that
 shares `.git` with the whole repository, so plain `git log` there
 reaches the same objects.
 
+## Repositories inside the repository
+
+Two independent mechanisms, because the two cases are not the same shape.
+
+### Re-rooting: `subrepo`
+
+A query may name a worktree-relative directory that is itself a git repo
+root, and the whole query runs there instead. `log`, `diff`, `show` and
+`status` all honour it, so a nested repo gets the same view — including
+the same movable baseline — as the task's own worktree.
+
+This covers the plain-nested case, which nothing else can: from outside,
+git has no view into an untracked nested repo. It covers submodules too,
+and more completely than `--submodule` below, since the submodule's own
+history becomes browsable.
+
+`subrepo` is its own field, not a reuse of `path`. `path` is a pathspec —
+a filter applied to a repository — while `subrepo` chooses *which
+repository*. Overloading one on the other would be exactly the kind of
+by-convention encoding this project has ruled out.
+
+Resolution, in order: `ValidateRelPath` against the task's worktree (so
+`..` cannot escape), then `rejectIfSymlinkInPath` (so a symlink cannot),
+then the same `git rev-parse --show-toplevel` equality that recognises a
+worktree root. A path that resolves but is not a repo root answers
+`subrepo_invalid` rather than silently running in the enclosing
+repository — the failure mode this design keeps spending effort to avoid.
+
+Inside a subrepo the tip is its own `HEAD`. The `harness/<taskID>`
+fallback does **not** apply: that branch lives in the outer repository. A
+task whose worktree is gone therefore answers `no_source` for any
+`subrepo` query, because the nested repo lived inside that worktree and
+went with it.
+
+### Discovery: the `subrepos` query kind
+
+Nested repos are listed by the runner, not guessed at by the UI. Deriving
+the list from `status` `??` entries was rejected: it misses a nested repo
+that is gitignored and reports plain untracked directories that are not
+repos at all.
+
+The walk starts at the current root (so it composes: with `subrepo` set,
+it lists what is nested one level further in), descends at most 6
+directory levels, skips `.git` and `.harness-worktrees`, and does not
+descend into a repo it has already found — a repo inside a nested repo is
+that repo's business. A directory is a candidate when it holds a `.git`
+entry of either kind (a submodule's is a file, not a directory); each
+candidate is then confirmed with the `--show-toplevel` check. Candidates
+are capped at 64 and the body carries a `truncated` flag, because a cap
+that is not reported reads as "there were none".
+
+### Combined view: `--submodule`
+
+Off by default, matching git. When set, `diff` and `show` pass
+`--submodule=diff`, which inlines the submodule's own file-level changes —
+uncommitted ones included — under the gitlink entry.
+
+It stays opt-in because that output is no longer an applyable patch
+(`git apply --check` rejects it: `Submodule sub <a>..<b>:` is not patch
+syntax), and `harness-cli git <id> diff > x.patch` currently produces one.
+It costs nothing in a repository with no submodules: verified byte-identical
+output.
+
 ## Wire schema
 
 All of it lands in `runner/protocol/message.bgn` in one place.
@@ -155,6 +228,7 @@ enum GitQueryKind:
     diff     # unified diff between base_rev and the chosen target
     show     # one commit: header + its diff
     status   # porcelain state: uncommitted + untracked
+    subrepos # list the git repo roots nested under the current root
 
 # What the right-hand side of the diff is. base_rev is always the left.
 enum GitDiffTarget:
@@ -176,6 +250,17 @@ format GitQueryRequest:
     path           :[path_len]u8       # worktree-relative pathspec; empty = all
     max_commits    :u32                # log only. 0 -> 100, clamped to 1000
     max_bytes      :u32                # diff/show only. 0 -> 2 MiB, clamped to 8 MiB
+    subrepo_len    :u16
+    subrepo        :[subrepo_len]u8    # worktree-relative directory that is
+                                       # itself a repo root; the whole query
+                                       # runs there. Empty = the task's own
+                                       # worktree. NOT a pathspec — see `path`.
+    submodule_diff :u1                 # diff / show: pass --submodule=diff so a
+                                       # submodule's own file-level changes are
+                                       # inlined. Off by default (git's own
+                                       # default, and the output stops being an
+                                       # applyable patch).
+    reserved       :u7
 
 enum GitQueryStatus:            # what the server can decide; inline in the response
     :u8
@@ -203,6 +288,10 @@ format RunnerGitQueryRequest:   # server -> runner
     path           :[path_len]u8
     max_commits    :u32
     max_bytes      :u32
+    subrepo_len    :u16
+    subrepo        :[subrepo_len]u8
+    submodule_diff :u1
+    reserved       :u7
 
 enum GitRunStatus:              # what the runner decides; carried on the stream
     :u8
@@ -238,6 +327,16 @@ format GitStatusEntry:
 format GitStatusBody:
     count   :u32
     entries :[count]GitStatusEntry
+
+format GitSubrepoEntry:
+    path_len :u16
+    path     :[path_len]u8      # relative to the query's current root
+
+format GitSubrepoBody:
+    count     :u32
+    entries   :[count]GitSubrepoEntry
+    truncated :u1               # the 64-candidate cap cut the walk short
+    reserved  :u7
 
 format GitTextBody:
     len       :u64
@@ -387,10 +486,11 @@ Every cell is filled; none is silently skipped.
 ### CLI grammar
 
 ```
-harness-cli git <task-id> log    [--max N] [-- <path>]
-harness-cli git <task-id> diff   [--staged] [<base>] [<target>] [--max-bytes N] [-- <path>]
-harness-cli git <task-id> show   <rev> [-- <path>]
-harness-cli git <task-id> status
+harness-cli git <task-id> log      [--max N] [--subrepo DIR] [-- <path>]
+harness-cli git <task-id> diff     [--staged] [--submodule] [--subrepo DIR] [<base>] [<target>] [--max-bytes N] [-- <path>]
+harness-cli git <task-id> show     [<rev>] [--submodule] [--subrepo DIR] [-- <path>]
+harness-cli git <task-id> status   [--subrepo DIR] [-- <path>]
+harness-cli git <task-id> subrepos [--subrepo DIR]
 ```
 
 `diff` counts positionals the way git does: none means unstaged, one
@@ -403,17 +503,19 @@ the positionals, matching the fix in `4213cca`.
 ### TUI modal
 
 ```
-┌ git — task 7f3a…  base: HEAD ────────────────────────────┐
-│ > [WORKTREE]  uncommitted (3 files, 1 untracked)         │
-│   [INDEX]     staged (0 files)                           │
+┌ git — task 7f3a…  base: HEAD  repo: (root) ──────────────┐
+│ > [WORKTREE]  3 changed, 1 untracked                     │
+│   [INDEX]     staged                                     │
 │   a1b2c3d  2h ago   claude   feat(tui): grid paging      │
 │   9e8f7a6  3h ago   claude   wip                         │
+│   [REPO]  pkg/inner                                      │
+│   [REPO]  vendor/lib                                     │
 ├──────────────────────────────────────────────────────────┤
 │ diff --git a/tui/grid.go b/tui/grid.go                   │
 │ @@ -261,6 +261,9 @@                                      │
 │ +      switch msg.String() {                             │
 │ -      switch msg.Type {                                 │
-└ enter:show  b:set base  s:status  r:refresh  n/N:file  esc┘
+└ enter:show b:base s:status m:submodule u:up r:refresh esc┘
 ```
 
 - `[WORKTREE]` and `[INDEX]` are client-side pseudo rows, not protocol.
@@ -422,6 +524,12 @@ the positionals, matching the fix in `4213cca`.
 - `b` sets the selected commit as `base_rev`. The header reflects it and
   re-selecting `[WORKTREE]` then shows everything since that point. This
   is the whole of the flexible-baseline feature.
+- `[REPO]` rows sit at the bottom of the same picker, from the `subrepos`
+  query. Enter on one re-roots the whole modal into that repository — its
+  own commits, its own movable baseline — and the header names it. `u`
+  goes back up one level. Discovery and selection live in one place, and
+  no second pane is needed.
+- `m` toggles `--submodule` for the diff and show queries.
 - `n` / `N` jump between `diff --git ` header lines inside the viewport.
   Purely client-side; no protocol support.
 - Colouring is by line prefix (`+` / `-` / `@@` / `diff --git`), done in
@@ -445,6 +553,14 @@ The WebUI Git tab carries the same rows, the same base-selection action
 - The error body arm is encoded empty rather than conditionally omitted.
 - `GitCommit.sha` is length-prefixed, not a fixed 40 bytes, so a sha256
   repository does not trip an encoder assertion.
+- `subrepo` is a separate field from `path`, and a path that is not a repo
+  root is refused rather than silently running one directory up.
+- Nested repos are discovered by the runner (`subrepos`), not inferred by
+  the UI from `status` output.
+- The subrepo walk is depth 6, capped at 64 candidates, and reports its
+  own truncation.
+- `--submodule` is off by default; the combined output is not an applyable
+  patch, and git's own default is off.
 
 ## Testing
 
@@ -463,7 +579,13 @@ The WebUI Git tab carries the same rows, the same base-selection action
 - CLI parse tests for the grammar above, including flags placed before
   and after the positionals.
 - `tui/cmdline_test.go` gains the `git` verb; `GitModal` gets key tests
-  covering `enter`, `b`, `s`, `n`/`N`.
+  covering `enter`, `b`, `s`, `n`/`N`, `m` and the `[REPO]` re-root plus
+  `u`.
+- Runner tests against a fixture with BOTH a plain nested repo and a
+  submodule: `subrepos` lists both; a `subrepo` query answers about the
+  inner repository and not the outer one; `..`, a symlink, a missing path
+  and a non-repo directory each give `subrepo_invalid`; `--submodule`
+  inlines the submodule's file-level change and its absence does not.
 - `scripts/wire-skew-check.sh` — mandatory because `.bgn` changes. On
   deployment the **server restarts first**; a runner-first rollout is
   what wiped the fleet in the incident behind that script.
