@@ -276,3 +276,16 @@ deleted file mode 100644
 		t.Errorf("a line in a deleted file's section resolved to %q, want none", got)
 	}
 }
+
+func TestFirstDiffFilePath(t *testing.T) {
+	lines := strings.Split("commit abc\n\n    subject\n\ndiff --git a/one.go b/one.go\n--- a/one.go\n+++ b/one.go\n@@ -1 +1 @@\n+x", "\n")
+	if got := FirstDiffFilePath(lines); got != "one.go" {
+		t.Fatalf("got %q", got)
+	}
+	if got := FirstDiffFilePath([]string{"no diff here"}); got != "" {
+		t.Fatalf("got %q", got)
+	}
+	if got := FirstDiffFilePath(nil); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}

@@ -356,3 +356,19 @@ func DiffFilePathAt(lines []string, i int) string {
 	}
 	return ""
 }
+
+// FirstDiffFilePath returns the first file the content touches, or "" when it
+// touches none.
+//
+// It backs the "I have not scrolled into a section yet" case: a `git show`
+// opens with the commit header on screen, above every `diff --git`, so
+// resolving strictly by cursor position answers "no file here" for the most
+// ordinary keypress there is — open a one-file commit, ask for the file.
+func FirstDiffFilePath(lines []string) string {
+	for _, line := range lines {
+		if p := DiffFilePath(line); p != "" {
+			return p
+		}
+	}
+	return ""
+}

@@ -651,6 +651,26 @@ and `status` is then empty because there is no working tree left to be dirty.
 checkout. The runner that ran the task must still be online.
 
 
+
+### One file, whole — `git <TASK_ID> file`
+
+A diff shows the lines that changed; this shows the file they changed.
+
+```bash
+harness-cli git <TASK_ID> file <PATH>                # the file on disk
+harness-cli git <TASK_ID> file --staged <PATH>       # the staged blob
+harness-cli git <TASK_ID> file --rev <REV> <PATH>    # the blob at a revision
+```
+
+The path is relative to whichever repository the query is rooted in, so
+`--subrepo` composes and a path lifted straight out of a diff header works
+unchanged — after `--` as well as as a positional.
+
+In the TUI's git modal, `o` toggles between the diff and the whole file; in the
+WebUI, a file header inside a diff is clickable. Either way the side matches the
+diff you were reading: the working tree for a worktree diff, the staged blob for
+a staged one, that commit for a commit-to-commit diff or a shown commit.
+
 ### Repositories inside the repository
 
 A plain nested repo — a directory with its own `.git` that the outer repo

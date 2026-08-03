@@ -950,6 +950,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  git TASK_ID show   [REV] [-- PATH]")
 	fmt.Fprintln(os.Stderr, "  git TASK_ID status [-- PATH]")
 	fmt.Fprintln(os.Stderr, "  git TASK_ID subrepos")
+	fmt.Fprintln(os.Stderr, "  git TASK_ID file   [--staged | --rev REV] PATH")
 	fmt.Fprintln(os.Stderr, "                                      read-only git view of a task's worktree (requires file_read)")
 	fmt.Fprintln(os.Stderr, "                                      runs in the worktree while the task lives, and against the retained")
 	fmt.Fprintln(os.Stderr, "                                      harness/<task-id> branch after it ends (committed work only)")

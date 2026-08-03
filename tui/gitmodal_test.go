@@ -628,3 +628,32 @@ func TestGitModalFileViewFitsTheTerminal(t *testing.T) {
 		t.Fatalf("rendered %d lines, terminal is %d", got, h)
 	}
 }
+
+// A `git show` opens with the commit header on screen, above every file
+// section. Pressing the key there must reach the commit's file, not report
+// that there is none.
+func TestGitModalOpenFileQueryFromACommitHeader(t *testing.T) {
+	m := newTestGitModal()
+	m.RecordContentQuery(cli.GitQuery{Kind: protocol.GitQueryKind_Show, BaseRev: "ccc"})
+	m.SetContent(&cli.GitResult{Kind: protocol.GitQueryKind_Show, Text: "commit ccc\nAuthor: claude\n\n    subject\n\n" + twoFileDiff})
+	q, ok := m.OpenFileQuery()
+	if !ok {
+		t.Fatal("no file resolved from the commit header")
+	}
+	if q.Path != "one.go" {
+		t.Fatalf("path = %q, want the commit's first file", q.Path)
+	}
+	if q.Target != protocol.GitDiffTarget_Rev || q.TargetRev != "ccc" {
+		t.Fatalf("target=%v rev=%q — the side must still be the shown commit", q.Target, q.TargetRev)
+	}
+}
+
+// Content with no diff at all still has nothing to open.
+func TestGitModalOpenFileQueryOnFilelessContent(t *testing.T) {
+	m := newTestGitModal()
+	m.RecordContentQuery(cli.GitQuery{Kind: protocol.GitQueryKind_Diff})
+	m.SetContent(&cli.GitResult{Kind: protocol.GitQueryKind_Diff, Text: "commit ccc\n\n    an empty commit\n"})
+	if _, ok := m.OpenFileQuery(); ok {
+		t.Fatal("there is no file in this content")
+	}
+}

@@ -612,6 +612,12 @@ func (m GitModal) OpenFileQuery() (cli.GitQuery, bool) {
 	}
 	path := cli.DiffFilePathAt(m.rawLines, m.content.YOffset)
 	if path == "" {
+		// Above the first section — a `git show` opens on the commit header —
+		// so take the file the content starts with rather than refusing the
+		// most ordinary keypress there is.
+		path = cli.FirstDiffFilePath(m.rawLines)
+	}
+	if path == "" {
 		return cli.GitQuery{}, false
 	}
 	q := m.Query()
