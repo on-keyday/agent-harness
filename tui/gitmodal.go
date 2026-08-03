@@ -33,7 +33,7 @@ type gitRow struct {
 
 // gitDefaultBase is where the baseline starts. HEAD means "everything not yet
 // committed", which is what an operator looking at a running agent wants
-// first; pressing b on a commit moves it back from there.
+// first; the set-base key on a commit moves it back from there.
 const gitDefaultBase = "HEAD"
 
 // GitModal is the two-pane git view: a row picker on top (the working tree,
@@ -541,15 +541,17 @@ func (m GitModal) View() string {
 	if m.truncated {
 		notes = "  " + WarnStyle.Render("truncated")
 	}
-	footerText := "↑/↓ select · Enter: show/enter · " +
+	// The scroll keys are spelled out because PgUp/PgDn need a Fn combination
+	// on most laptops, and f/b/d/u/space need no reaching.
+	const scrollHint = "space/f,b: page · d/u: half · j/k: line"
+	footerText := "↑/↓ select · Enter: show/enter · " + scrollHint + " · " +
 		modalKeys.GitSetBase + ": base · " +
 		modalKeys.GitStatus + ": status · " +
-		modalKeys.GitSubmodule + ": submodule · " +
-		modalKeys.GitUp + ": up · " +
+		modalKeys.GitSubmodule + ": submodule · ⌫: up · " +
 		modalKeys.GitNextFile + "/" + modalKeys.GitPrevFile + ": jump · " +
 		modalKeys.GitOpenFile + ": whole file · r: refresh · Esc: close"
 	if m.fileView != "" {
-		footerText = "PgUp/PgDn scroll · " + modalKeys.GitOpenFile + ": back to the diff · Esc: close"
+		footerText = scrollHint + " · " + modalKeys.GitOpenFile + ": back to the diff · Esc: close"
 	}
 	footer := FooterStyle.Render(footerText)
 

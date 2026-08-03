@@ -226,9 +226,10 @@ bin/harness-cli git <task-id> file [--staged | --rev REV] <path>
 # the diff and the file; in the WebUI a file header inside a diff is clickable.
 # Either way the side matches the diff being read.
 #
-# The same view is on `G` in the TUI (Enter on a [REPO] row descends, `u` goes
-# back up, `m` toggles submodule content, `o` opens the whole file) and the Git
-# tab in the WebUI.
+# The same view is on `G` in the TUI (Enter on a [REPO] row descends, Backspace
+# goes back up, `B` sets the baseline, `m` toggles submodule content, `o` opens
+# the whole file; the content pane scrolls with space/f/b/d/u since the arrows
+# drive the row picker) and the Git tab in the WebUI.
 
 # 7. Port-forward a runner-side port to your machine (SSH -L style). The runner
 # dials remote-host:remote-port; bytes relay over the harness transport. Handy

@@ -666,7 +666,9 @@ The path is relative to whichever repository the query is rooted in, so
 `--subrepo` composes and a path lifted straight out of a diff header works
 unchanged — after `--` as well as as a positional.
 
-In the TUI's git modal, `o` toggles between the diff and the whole file; in the
+In the TUI's git modal, `o` toggles between the diff and the whole file
+(scroll with space/f and b, or d/u for half a page — the arrow keys drive the
+row picker); in the
 WebUI, a file header inside a diff is clickable. Either way the side matches the
 diff you were reading: the working tree for a worktree diff, the staged blob for
 a staged one, that commit for a commit-to-commit diff or a shown commit.

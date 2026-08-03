@@ -83,6 +83,13 @@ var mainKeys = mainKeyMap{
 // open. They are deliberately separate from mainKeys: the same character can
 // mean different things in a modal (`r` refreshes the board, but resumes a
 // task in the main view), and modals render their own footers.
+// A modal key must not collide with the viewport's own scroll bindings
+// (pgup/pgdown, space, f, b, u, d, j, k, h, l and the ctrl forms). The App
+// intercepts these before the viewport ever sees them, so a collision does not
+// merely shadow scrolling — it silently runs the modal's action instead.
+// `b` used to be set-base and `u` up-one-repo; paging up in a long diff
+// therefore moved the baseline, and half-paging up left the nested repository.
+// git_keys_test.go asserts the two sets stay disjoint.
 type modalKeyMap struct {
 	ConfirmYes      string
 	ConfirmYesUpper string
@@ -112,12 +119,12 @@ var modalKeys = modalKeyMap{
 	BoardRefresh:    "r",
 	BoardPurgeTopic: "x",
 	BoardPurgeMsg:   "X",
-	GitSetBase:      "b",
+	GitSetBase:      "B",
 	GitStatus:       "s",
 	GitNextFile:     "n",
 	GitPrevFile:     "N",
 	GitSubmodule:    "m",
-	GitUp:           "u",
+	GitUp:           "backspace",
 	GitOpenFile:     "o",
 }
 

@@ -70,7 +70,7 @@ func TestGitModalSetBaseFromCommit(t *testing.T) {
 		t.Fatalf("expected a commit row, got %v", m.SelectedRow().Kind)
 	}
 	before := m.SelectedIndex()
-	m, _ = m.Update(keyRune('b'))
+	m, _ = m.Update(keyRune('B'))
 	if m.BaseRev() != "aaaaaaaaaaaa" {
 		t.Fatalf("BaseRev = %q, want the selected commit", m.BaseRev())
 	}
@@ -81,7 +81,7 @@ func TestGitModalSetBaseFromCommit(t *testing.T) {
 
 func TestGitModalSetBaseOnPseudoRowIsIgnored(t *testing.T) {
 	m := newTestGitModal()
-	m, _ = m.Update(keyRune('b'))
+	m, _ = m.Update(keyRune('B'))
 	if m.BaseRev() != "HEAD" {
 		t.Fatalf("BaseRev = %q; a pseudo row is not a commit-ish", m.BaseRev())
 	}
@@ -92,7 +92,7 @@ func TestGitModalOpenResetsBase(t *testing.T) {
 	m := newTestGitModal()
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = m.Update(keyRune('b'))
+	m, _ = m.Update(keyRune('B'))
 	if m.BaseRev() == "HEAD" {
 		t.Fatal("fixture did not move the baseline; the test proves nothing")
 	}
@@ -242,7 +242,7 @@ func TestGitModalQueryForRowUsesTheChosenBase(t *testing.T) {
 	m := newTestGitModal()
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
-	m, _ = m.Update(keyRune('b'))
+	m, _ = m.Update(keyRune('B'))
 	_, _, rev := m.GitQueryForRow(gitRow{Kind: gitRowWorktree})
 	if rev != "aaaaaaaaaaaa" {
 		t.Fatalf("worktree row still queries against %q", rev)
@@ -284,7 +284,7 @@ func TestGitModalEnterSubrepoResetsEverythingTheOldRepoOwned(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
 	}
-	m, _ = m.Update(keyRune('b'))
+	m, _ = m.Update(keyRune('B'))
 	if m.BaseRev() == "HEAD" {
 		t.Fatal("fixture did not move the baseline; the test proves nothing")
 	}
@@ -392,7 +392,7 @@ func TestGitModalSetBaseOnSubrepoRowIsIgnored(t *testing.T) {
 	if m.SelectedRow().Kind != gitRowSubrepo {
 		t.Fatalf("expected a subrepo row, got %v", m.SelectedRow().Kind)
 	}
-	m, _ = m.Update(keyRune('b'))
+	m, _ = m.Update(keyRune('B'))
 	if m.BaseRev() != "HEAD" {
 		t.Fatalf("BaseRev = %q", m.BaseRev())
 	}
