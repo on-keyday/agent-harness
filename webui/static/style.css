@@ -1567,6 +1567,10 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .gd-file { color: #d4d4d4; font-weight: 700; }
 .gd-meta { color: #808080; }
 .gd-err  { color: #f14c4c; }
+/* A file header in a diff opens that file's whole content. Underlined on
+   hover only, so a diff still reads as text rather than as a page of links. */
+.gd-file-link { cursor: pointer; }
+.gd-file-link:hover { text-decoration: underline; }
 
 /* A <select> sizes itself to its longest option, and the task options carry a
    full repo path. Left alone it pushed the PAGE wider than the viewport at

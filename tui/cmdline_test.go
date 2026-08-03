@@ -976,3 +976,48 @@ func TestParseGitLogSubrepo(t *testing.T) {
 		t.Fatalf("action = %+v", a)
 	}
 }
+
+func TestParseGitFile(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 file tui/app.go")
+	if a.Sub != "file" || a.Path != "tui/app.go" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+// A path lifted straight out of a diff header arrives after --; both spellings
+// have to work or the copy-paste route breaks.
+func TestParseGitFileAfterSeparator(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 file -- tui/app.go")
+	if a.Path != "tui/app.go" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitFileSides(t *testing.T) {
+	if a := parseGitCmd(t, "git cafe1234 file --staged x.go"); !a.Staged {
+		t.Fatalf("action = %+v", a)
+	}
+	a := parseGitCmd(t, "git cafe1234 file --rev abc123 x.go")
+	if a.TargetRev != "abc123" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitFileNeedsAPath(t *testing.T) {
+	if _, err := ParseCommand("git cafe1234 file", "/cwd"); err == nil {
+		t.Fatal("a path is required")
+	}
+}
+
+func TestParseGitFileRejectsTwoPaths(t *testing.T) {
+	if _, err := ParseCommand("git cafe1234 file a.go -- b.go", "/cwd"); err == nil {
+		t.Fatal("a path given twice must be refused, not silently one of them")
+	}
+}
+
+func TestParseGitFileWithSubrepo(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 file --subrepo pkg/inner i.txt")
+	if a.Subrepo != "pkg/inner" || a.Path != "i.txt" {
+		t.Fatalf("action = %+v", a)
+	}
+}

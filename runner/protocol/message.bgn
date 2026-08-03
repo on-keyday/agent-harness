@@ -1395,6 +1395,10 @@ enum GitQueryKind:
     show     # one commit: header + its diff
     status   # porcelain state: uncommitted + untracked
     subrepos # list the git repo roots nested under the current root
+    file     # one file's whole content, from the side `target` names:
+             # worktree -> the file on disk, index -> `git show :<path>`,
+             # rev -> `git show <target_rev>:<path>`. `path` must name exactly
+             # one file for this kind.
 
 # What the right-hand side of the diff is. base_rev is always the left.
 enum GitDiffTarget:
@@ -1472,6 +1476,8 @@ enum GitRunStatus:
     bad_rev          = "bad_rev"           # unresolvable, or '-'-leading
     git_failed       = "git_failed"        # non-zero exit for another reason
     io_error         = "io_error"
+    file_not_found   = "file_not_found"   # file kind: no path given, or the path
+                                          # is absent from the named side
     subrepo_invalid  = "subrepo_invalid"   # subrepo escaped the worktree, passed
                                            # through a symlink, does not exist, or
                                            # exists but is not a repo root
@@ -1536,3 +1542,4 @@ format GitQueryResult:
         GitQueryKind.diff     => diff        :GitTextBody
         GitQueryKind.show     => show        :GitTextBody
         GitQueryKind.subrepos => subrepos    :GitSubrepoBody
+        GitQueryKind.file     => file        :GitTextBody

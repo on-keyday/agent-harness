@@ -436,6 +436,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case protocol.GitQueryKind_Subrepos:
 			a.gitModal.SetSubrepos(msg.Result)
+		case protocol.GitQueryKind_File:
+			a.gitModal.SetFileContent(msg.Path, msg.Result)
 		default:
 			a.gitModal.SetContent(msg.Result)
 		}
@@ -1101,12 +1103,31 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				q := a.gitModal.Query()
 				q.BaseRev = rev
 				if kind == protocol.GitQueryKind_Show {
+					q.Kind = protocol.GitQueryKind_Show
+					a.gitModal.RecordContentQuery(q)
 					return a, DoGitShow(a.client, taskID, q)
 				}
 				q.Target = target
+				q.Kind = protocol.GitQueryKind_Diff
+				a.gitModal.RecordContentQuery(q)
 				return a, DoGitDiff(a.client, taskID, q)
 			}
 			switch msg.String() {
+			case modalKeys.GitOpenFile:
+				// Toggle: into the whole file, or back to the diff it came from.
+				if a.gitModal.LeaveFileView() {
+					q := a.gitModal.LastContentQuery()
+					if q.Kind == protocol.GitQueryKind_Show {
+						return a, DoGitShow(a.client, taskID, q)
+					}
+					return a, DoGitDiff(a.client, taskID, q)
+				}
+				fq, ok := a.gitModal.OpenFileQuery()
+				if !ok {
+					a.gitModal.SetError("no file here — scroll to a diff hunk, or the file was deleted")
+					return a, nil
+				}
+				return a, DoGitFile(a.client, taskID, fq)
 			case modalKeys.BoardRefresh:
 				return a, a.gitReload(taskID)
 			case modalKeys.GitStatus:
@@ -1130,9 +1151,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				q := a.gitModal.Query()
 				q.BaseRev = rev
 				if kind == protocol.GitQueryKind_Show {
+					q.Kind = protocol.GitQueryKind_Show
+					a.gitModal.RecordContentQuery(q)
 					return a, DoGitShow(a.client, taskID, q)
 				}
 				q.Target = target
+				q.Kind = protocol.GitQueryKind_Diff
+				a.gitModal.RecordContentQuery(q)
 				return a, DoGitDiff(a.client, taskID, q)
 			}
 			var cmd tea.Cmd
@@ -2125,6 +2150,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("git <task-id> diff [--staged] [<base>] [<target>] [-- <path>] - revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit")
 		a.cmdresult.Append("git <task-id> show [<rev>] [-- <path>]             - one commit and its diff")
 		a.cmdresult.Append("git <task-id> status [-- <path>]                   - uncommitted and untracked paths (untracked appear in no diff)")
+		a.cmdresult.Append("git <task-id> subrepos                             - git repos nested inside the worktree ([REPO] rows; Enter descends, u goes up)")
+		a.cmdresult.Append("git <task-id> file [--staged|--rev R] <path>       - one file's whole content (also: o in the modal, from the diff you are reading)")
 		a.cmdresult.Append("file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)")
 		a.cmdresult.Append("file push [-r] [-f] [-p] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)")
 		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
@@ -2289,6 +2316,19 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		switch v.Sub {
 		case "log", "status", "subrepos":
 			// gitReload already asked for all three.
+		case "file":
+			q := a.gitModal.Query()
+			q.Path = v.Path
+			switch {
+			case v.TargetRev != "":
+				q.Target = protocol.GitDiffTarget_Rev
+				q.TargetRev = v.TargetRev
+			case v.Staged:
+				q.Target = protocol.GitDiffTarget_Index
+			default:
+				q.Target = protocol.GitDiffTarget_Worktree
+			}
+			cmds = append(cmds, DoGitFile(a.client, full, q))
 		case "show":
 			q := a.gitModal.Query()
 			q.BaseRev = v.BaseRev
@@ -2474,6 +2514,8 @@ func (a *App) gitReload(taskID string) tea.Cmd {
 	diffQ := q
 	diffQ.BaseRev = a.gitModal.BaseRev()
 	diffQ.Target = protocol.GitDiffTarget_Worktree
+	diffQ.Kind = protocol.GitQueryKind_Diff
+	a.gitModal.RecordContentQuery(diffQ)
 	return tea.Batch(
 		DoGitLog(a.client, taskID, q),
 		DoGitStatus(a.client, taskID, q),

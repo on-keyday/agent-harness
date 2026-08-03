@@ -488,3 +488,143 @@ func TestGitModalShortListHasNoMarkers(t *testing.T) {
 		t.Fatalf("four rows fit; nothing should be reported hidden:\n%s", m.View())
 	}
 }
+
+const twoFileDiff = "diff --git a/one.go b/one.go\n" +
+	"--- a/one.go\n+++ b/one.go\n@@ -1 +1,2 @@\n keep\n+added one\n" +
+	"diff --git a/two.go b/two.go\n" +
+	"--- a/two.go\n+++ b/two.go\n@@ -1 +1,2 @@\n keep\n+added two\n"
+
+func gitModalWithDiff(t *testing.T, q cli.GitQuery) GitModal {
+	t.Helper()
+	m := newTestGitModal()
+	m.RecordContentQuery(q)
+	m.SetContent(&cli.GitResult{Kind: protocol.GitQueryKind_Diff, Text: twoFileDiff})
+	return m
+}
+
+// Opening a file has to ask for the SAME side the diff was showing; answering
+// with the working tree for a diff of two commits would be a different
+// question than the one on screen.
+func TestGitModalOpenFileQueryMatchesTheDiffSide(t *testing.T) {
+	cases := []struct {
+		name       string
+		content    cli.GitQuery
+		wantTarget protocol.GitDiffTarget
+		wantRev    string
+	}{
+		{"worktree diff", cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree, BaseRev: "HEAD"},
+			protocol.GitDiffTarget_Worktree, ""},
+		{"staged diff", cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Index, BaseRev: "HEAD"},
+			protocol.GitDiffTarget_Index, ""},
+		{"commit-to-commit diff", cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Rev, BaseRev: "aaa", TargetRev: "bbb"},
+			protocol.GitDiffTarget_Rev, "bbb"},
+		{"a shown commit", cli.GitQuery{Kind: protocol.GitQueryKind_Show, BaseRev: "ccc"},
+			protocol.GitDiffTarget_Rev, "ccc"},
+	}
+	for _, c := range cases {
+		m := gitModalWithDiff(t, c.content)
+		q, ok := m.OpenFileQuery()
+		if !ok {
+			t.Errorf("%s: no file resolved", c.name)
+			continue
+		}
+		if q.Target != c.wantTarget || q.TargetRev != c.wantRev {
+			t.Errorf("%s: target=%v rev=%q, want %v %q", c.name, q.Target, q.TargetRev, c.wantTarget, c.wantRev)
+		}
+		if q.Path != "one.go" {
+			t.Errorf("%s: path = %q", c.name, q.Path)
+		}
+	}
+}
+
+// The file resolved is the one whose section the viewport is scrolled to.
+func TestGitModalOpenFileQueryFollowsTheScroll(t *testing.T) {
+	m := gitModalWithDiff(t, cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree})
+	m, _ = m.Update(keyRune('n')) // jump to the second file's header
+	q, ok := m.OpenFileQuery()
+	if !ok {
+		t.Fatal("no file resolved after the jump")
+	}
+	if q.Path != "two.go" {
+		t.Fatalf("path = %q, want the file we scrolled to", q.Path)
+	}
+}
+
+// The current root travels with it, so a file inside a nested repo is asked
+// for relative to that repo and not the outer one.
+func TestGitModalOpenFileQueryCarriesTheSubrepo(t *testing.T) {
+	m := gitModalWithDiff(t, cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree})
+	m.EnterSubrepo("pkg/inner")
+	m.RecordContentQuery(cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree, Subrepo: "pkg/inner"})
+	m.SetContent(&cli.GitResult{Kind: protocol.GitQueryKind_Diff, Text: twoFileDiff})
+	q, ok := m.OpenFileQuery()
+	if !ok {
+		t.Fatal("no file resolved")
+	}
+	if q.Subrepo != "pkg/inner" {
+		t.Fatalf("subrepo = %q", q.Subrepo)
+	}
+}
+
+func TestGitModalOpenFileQueryRefusesNonDiffContent(t *testing.T) {
+	m := newTestGitModal()
+	m.SetStatusContent(&cli.GitResult{
+		Kind:    protocol.GitQueryKind_Status,
+		Entries: []cli.GitStatusEntry{{XY: "??", Path: "x.txt"}},
+	})
+	if _, ok := m.OpenFileQuery(); ok {
+		t.Fatal("a status listing is not a diff; there is no file section to resolve")
+	}
+}
+
+func TestGitModalFileViewAndBack(t *testing.T) {
+	m := gitModalWithDiff(t, cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree})
+	if m.FileView() != "" {
+		t.Fatal("a diff is not a file view")
+	}
+	m.SetFileContent("one.go", &cli.GitResult{Kind: protocol.GitQueryKind_File, Text: "package one\n\nfunc A() {}\n"})
+	if m.FileView() != "one.go" {
+		t.Fatalf("FileView = %q", m.FileView())
+	}
+	out := m.View()
+	if !strings.Contains(out, "file: one.go") {
+		t.Fatalf("the header should name the file:\n%s", out)
+	}
+	if !strings.Contains(out, "func A()") {
+		t.Fatalf("the content is not showing:\n%s", out)
+	}
+	// While a file is showing there is nothing to re-resolve.
+	if _, ok := m.OpenFileQuery(); ok {
+		t.Fatal("OpenFileQuery must not fire while a file is already showing")
+	}
+	if !m.LeaveFileView() {
+		t.Fatal("LeaveFileView should report that it left one")
+	}
+	if m.FileView() != "" || m.LeaveFileView() {
+		t.Fatal("leaving twice should be a no-op")
+	}
+}
+
+// A new diff replaces the file view; the header must stop claiming a file.
+func TestGitModalSetContentClearsTheFileView(t *testing.T) {
+	m := gitModalWithDiff(t, cli.GitQuery{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree})
+	m.SetFileContent("one.go", &cli.GitResult{Kind: protocol.GitQueryKind_File, Text: "x\n"})
+	m.SetContent(&cli.GitResult{Kind: protocol.GitQueryKind_Diff, Text: twoFileDiff})
+	if m.FileView() != "" {
+		t.Fatalf("FileView = %q after a new diff arrived", m.FileView())
+	}
+}
+
+func TestGitModalFileViewFitsTheTerminal(t *testing.T) {
+	const h = 24
+	m := NewGitModal()
+	m.Open("cafe1234")
+	m.SetSize(120, h)
+	m.SetLog(&cli.GitResult{Kind: protocol.GitQueryKind_Log, Commits: manyCommits(100)})
+	m.SetFileContent("big.go", &cli.GitResult{
+		Kind: protocol.GitQueryKind_File, Text: strings.Repeat("line\n", 800), Truncated: true,
+	})
+	if got := viewLines(m); got > h {
+		t.Fatalf("rendered %d lines, terminal is %d", got, h)
+	}
+}

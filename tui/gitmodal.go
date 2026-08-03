@@ -69,6 +69,13 @@ type GitModal struct {
 	// height / listCap are the size budget View() renders within; see SetSize.
 	height  int
 	listCap int
+
+	// fileView names the file whose whole content is in the viewport, empty
+	// when the viewport holds a diff. lastContent is the query that produced
+	// the diff, kept so opening a file can ask for THE SAME SIDE and so
+	// leaving the file view can put the diff back.
+	fileView    string
+	lastContent cli.GitQuery
 }
 
 func NewGitModal() GitModal {
@@ -119,6 +126,8 @@ func (m *GitModal) Open(taskID string) {
 	m.subrepoStack = nil
 	m.subrepos = nil
 	m.submodule = false
+	m.fileView = ""
+	m.lastContent = cli.GitQuery{}
 	m.content.SetContent("(loading)")
 	m.content.GotoTop()
 }
@@ -271,6 +280,8 @@ func (m *GitModal) ToggleSubmodule() bool {
 }
 
 func (m *GitModal) resetForNewRoot() {
+	m.fileView = ""
+	m.lastContent = cli.GitQuery{}
 	m.commits = nil
 	m.subrepos = nil
 	m.baseRev = gitDefaultBase
@@ -324,9 +335,15 @@ func (m *GitModal) SetStatusContent(res *cli.GitResult) {
 	m.setLines(lines, false)
 }
 
+// RecordContentQuery remembers which query the next diff/show content came
+// from, so OpenFileQuery can ask for the same side and LeaveFileView can put
+// the diff back.
+func (m *GitModal) RecordContentQuery(q cli.GitQuery) { m.lastContent = q }
+
 // SetContent puts diff or show text into the viewport, coloured by line class.
 func (m *GitModal) SetContent(res *cli.GitResult) {
 	m.errMsg = ""
+	m.fileView = ""
 	text := strings.TrimSuffix(res.Text, "\n")
 	if text == "" {
 		m.setLines([]string{"(no difference)"}, res.Truncated)
@@ -473,8 +490,13 @@ func (m GitModal) View() string {
 	if m.submodule {
 		submoduleNote = "  +submodule"
 	}
-	header := HeaderStyle.Render(fmt.Sprintf("git — task %s   base: %s   repo: %s%s",
-		taskShort, baseShort, repoLabel, submoduleNote))
+	headerText := fmt.Sprintf("git — task %s   base: %s   repo: %s%s",
+		taskShort, baseShort, repoLabel, submoduleNote)
+	if m.fileView != "" {
+		headerText = fmt.Sprintf("git — task %s   repo: %s   file: %s",
+			taskShort, repoLabel, m.fileView)
+	}
+	header := HeaderStyle.Render(headerText)
 
 	start, end := m.listWindow()
 	lines := make([]string, 0, end-start+1)
@@ -519,12 +541,17 @@ func (m GitModal) View() string {
 	if m.truncated {
 		notes = "  " + WarnStyle.Render("truncated")
 	}
-	footer := FooterStyle.Render("↑/↓ select · Enter: show/enter · " +
+	footerText := "↑/↓ select · Enter: show/enter · " +
 		modalKeys.GitSetBase + ": base · " +
 		modalKeys.GitStatus + ": status · " +
 		modalKeys.GitSubmodule + ": submodule · " +
 		modalKeys.GitUp + ": up · " +
-		modalKeys.GitNextFile + "/" + modalKeys.GitPrevFile + ": file · r: refresh · Esc: close")
+		modalKeys.GitNextFile + "/" + modalKeys.GitPrevFile + ": jump · " +
+		modalKeys.GitOpenFile + ": whole file · r: refresh · Esc: close"
+	if m.fileView != "" {
+		footerText = "PgUp/PgDn scroll · " + modalKeys.GitOpenFile + ": back to the diff · Esc: close"
+	}
+	footer := FooterStyle.Render(footerText)
 
 	return box.Render(header + "\n" + list + "\n" + m.content.View() + notes + "\n" + footer)
 }
@@ -554,3 +581,66 @@ func (m GitModal) GitQueryForRow(row gitRow) (kind protocol.GitQueryKind, target
 		return protocol.GitQueryKind_Show, protocol.GitDiffTarget_Worktree, row.Commit.SHA
 	}
 }
+
+// FileView names the file whose whole content is showing, or "" for a diff.
+func (m GitModal) FileView() string { return m.fileView }
+
+// SetFileContent puts a whole file into the viewport. The path is remembered so
+// the header can say which file is showing and the footer can offer the way
+// back.
+func (m *GitModal) SetFileContent(path string, res *cli.GitResult) {
+	m.errMsg = ""
+	text := strings.TrimSuffix(res.Text, "\n")
+	if text == "" {
+		m.setLines([]string{"(empty file)"}, res.Truncated)
+	} else {
+		m.setLines(strings.Split(text, "\n"), res.Truncated)
+	}
+	m.fileView = path
+}
+
+// OpenFileQuery builds the query for the file the viewport is currently
+// scrolled to, or reports ok=false when the content is not a diff or the line
+// belongs to no file (a deleted one, or a commit header).
+//
+// The side is taken from the query that produced the diff, NOT defaulted:
+// showing the working tree for a diff of two commits would answer a different
+// question than the one on screen.
+func (m GitModal) OpenFileQuery() (cli.GitQuery, bool) {
+	if m.fileView != "" || len(m.rawLines) == 0 {
+		return cli.GitQuery{}, false
+	}
+	path := cli.DiffFilePathAt(m.rawLines, m.content.YOffset)
+	if path == "" {
+		return cli.GitQuery{}, false
+	}
+	q := m.Query()
+	q.Path = path
+	switch {
+	case m.lastContent.Kind == protocol.GitQueryKind_Show:
+		// The commit being shown IS the side on screen.
+		q.Target = protocol.GitDiffTarget_Rev
+		q.TargetRev = m.lastContent.BaseRev
+	case m.lastContent.Target == protocol.GitDiffTarget_Rev:
+		q.Target = protocol.GitDiffTarget_Rev
+		q.TargetRev = m.lastContent.TargetRev
+	case m.lastContent.Target == protocol.GitDiffTarget_Index:
+		q.Target = protocol.GitDiffTarget_Index
+	default:
+		q.Target = protocol.GitDiffTarget_Worktree
+	}
+	return q, true
+}
+
+// LeaveFileView reports whether a file was showing; the App re-issues the
+// diff query it recorded.
+func (m *GitModal) LeaveFileView() bool {
+	if m.fileView == "" {
+		return false
+	}
+	m.fileView = ""
+	return true
+}
+
+// LastContentQuery is the diff query to re-issue when leaving the file view.
+func (m GitModal) LastContentQuery() cli.GitQuery { return m.lastContent }

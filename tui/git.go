@@ -16,7 +16,10 @@ type GitResultMsg struct {
 	TaskID string
 	Kind   protocol.GitQueryKind
 	Result *cli.GitResult
-	Err    error
+	// Path is set for the file kind: which file the content belongs to, so
+	// the modal can label it without re-deriving it.
+	Path string
+	Err  error
 }
 
 // gitCmdTimeout is generous because a diff against a distant baseline in a
@@ -65,6 +68,15 @@ func DoGitStatus(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
 		defer cancel()
 		res, err := c.GitStatus(ctx, taskID, q)
 		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Status, Result: res, Err: err}
+	}
+}
+
+func DoGitFile(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
+		defer cancel()
+		res, err := c.GitFile(ctx, taskID, q)
+		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_File, Result: res, Path: q.Path, Err: err}
 	}
 }
 

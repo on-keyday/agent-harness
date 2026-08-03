@@ -181,6 +181,11 @@ func decodeGitResult(res *protocol.GitQueryResult) *GitResult {
 				out.Subrepos = append(out.Subrepos, string(e.Path))
 			}
 		}
+	case protocol.GitQueryKind_File:
+		if tb := res.File(); tb != nil {
+			out.Text = string(tb.Text)
+			out.Truncated = tb.Truncated()
+		}
 	case protocol.GitQueryKind_Show:
 		if tb := res.Show(); tb != nil {
 			out.Text = string(tb.Text)
@@ -217,6 +222,16 @@ func (c *Client) GitShow(ctx context.Context, taskIDHex string, q GitQuery) (*Gi
 
 func (c *Client) GitStatus(ctx context.Context, taskIDHex string, q GitQuery) (*GitResult, error) {
 	q.Kind = protocol.GitQueryKind_Status
+	return c.GitQuery(ctx, taskIDHex, q)
+}
+
+// GitFile returns one file's whole content from the side q.Target names:
+// worktree the file on disk, index the staged blob, rev the blob at
+// q.TargetRev. q.Path is relative to the query's current root, so a caller
+// reading a diff can pass the path exactly as the diff header spells it —
+// including inside a subrepo, where the runner has already re-rooted.
+func (c *Client) GitFile(ctx context.Context, taskIDHex string, q GitQuery) (*GitResult, error) {
+	q.Kind = protocol.GitQueryKind_File
 	return c.GitQuery(ctx, taskIDHex, q)
 }
 
@@ -269,4 +284,75 @@ func ClassifyGitLine(line string) GitLineClass {
 	default:
 		return GitLinePlain
 	}
+}
+
+// DiffFilePath returns the post-image path named by a unified-diff `+++` line,
+// or "" for any other line.
+//
+// The `+++` line is used rather than the `diff --git a/x b/x` header because
+// the header is genuinely ambiguous: it is `a/<p1> b/<p2>` with no delimiter
+// that cannot also occur inside a path, so `diff --git a/odd b/name.txt b/odd
+// b/name.txt` has no parse. Git itself does not parse it either — every tool
+// reads the `---` / `+++` lines, which carry exactly one path each.
+//
+// The b-side is the right-hand side of the diff, which is what a reader asking
+// "show me this whole file" means. A deletion writes `+++ /dev/null`, where
+// there is no file to open, so that answers "" too.
+func DiffFilePath(line string) string {
+	const prefix = "+++ "
+	if !strings.HasPrefix(line, prefix) {
+		return ""
+	}
+	path := line[len(prefix):]
+	// git prefixes the b-side with "b/" unless --no-prefix was used.
+	path = strings.TrimPrefix(path, "b/")
+	if path == "" || path == "/dev/null" || path == "dev/null" {
+		return ""
+	}
+	return path
+}
+
+// DiffFilePathAt returns the file whose section of the diff contains line i.
+//
+// It resolves the SECTION first — the `diff --git` header at or above i, up to
+// the next one — and then reads that section's `+++` line, which may be above
+// OR below i: standing on the header itself is the common case, and the `+++`
+// is three lines further down. Scanning only upward answered "" there.
+//
+// Returns "" when i sits above the first file, or when the section's `+++` is
+// /dev/null (a deletion has no right-hand file to open).
+//
+// Both the TUI and the CLI resolve "the file I am looking at" through here so
+// they cannot disagree about which section a line belongs to.
+func DiffFilePathAt(lines []string, i int) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	if i >= len(lines) {
+		i = len(lines) - 1
+	}
+	if i < 0 {
+		i = 0
+	}
+	// Walk up to this section's header.
+	start := -1
+	for j := i; j >= 0; j-- {
+		if ClassifyGitLine(lines[j]) == GitLineFile {
+			start = j
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	// Read forward to the next header, taking the first +++ inside.
+	for j := start + 1; j < len(lines); j++ {
+		if ClassifyGitLine(lines[j]) == GitLineFile {
+			return "" // section ended without one
+		}
+		if strings.HasPrefix(lines[j], "+++ ") {
+			return DiffFilePath(lines[j])
+		}
+	}
+	return ""
 }

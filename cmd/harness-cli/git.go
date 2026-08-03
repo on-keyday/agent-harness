@@ -47,7 +47,7 @@ func gitCommonFlags(fs *flag.FlagSet, submodule bool) func(cli.GitQuery) cli.Git
 
 func runGit(cid objproto.ConnectionID, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: harness-cli git <task-id> {log|diff|show|status|subrepos} ...")
+		return fmt.Errorf("usage: harness-cli git <task-id> {log|diff|show|status|subrepos|file} ...")
 	}
 	taskID := args[0]
 	sub := args[1]
@@ -158,6 +158,41 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		}
 		return emit(c.GitStatus(ctx, taskID, common(cli.GitQuery{Path: path})))
 
+	case "file":
+		fs := flag.NewFlagSet("git file", flag.ExitOnError)
+		staged := fs.Bool("staged", false, "the staged blob instead of the file on disk")
+		rev := fs.String("rev", "", "the blob at this revision instead of the file on disk")
+		maxBytes := fs.Uint("max-bytes", 0, "maximum bytes (0 = 2MiB, capped at 8MiB)")
+		common := gitCommonFlags(fs, false)
+		pos, err := parsePermuted(fs, rest)
+		if err != nil {
+			return err
+		}
+		// The path may come as a positional or after --, so a path lifted
+		// straight out of a diff header works either way.
+		target := protocol.GitDiffTarget_Worktree
+		switch {
+		case *rev != "":
+			target = protocol.GitDiffTarget_Rev
+		case *staged:
+			target = protocol.GitDiffTarget_Index
+		}
+		if len(pos) > 1 {
+			return fmt.Errorf("git file: one path (got %d)", len(pos))
+		}
+		if len(pos) == 1 {
+			if path != "" {
+				return fmt.Errorf("git file: path given twice (%q and %q)", pos[0], path)
+			}
+			path = pos[0]
+		}
+		if path == "" {
+			return fmt.Errorf("usage: harness-cli git <task-id> file [--staged | --rev REV] <path>")
+		}
+		return emit(c.GitFile(ctx, taskID, common(cli.GitQuery{
+			Target: target, TargetRev: *rev, Path: path, MaxBytes: uint32(*maxBytes),
+		})))
+
 	case "subrepos":
 		fs := flag.NewFlagSet("git subrepos", flag.ExitOnError)
 		common := gitCommonFlags(fs, false)
@@ -171,7 +206,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		return emit(c.GitSubrepos(ctx, taskID, common(cli.GitQuery{})))
 
 	default:
-		return fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos)", sub)
+		return fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", sub)
 	}
 }
 
@@ -214,6 +249,13 @@ func renderGitResult(w io.Writer, res *cli.GitResult, color bool) {
 	case protocol.GitQueryKind_Status:
 		for _, e := range res.Entries {
 			fmt.Fprintf(w, "%s %s\n", e.XY, e.Path)
+		}
+	case protocol.GitQueryKind_File:
+		// Whole-file content: no diff colouring, and no trailing-newline
+		// fiddling — it goes out as the bytes it is.
+		fmt.Fprint(w, res.Text)
+		if res.Truncated {
+			fmt.Fprintln(w, "\n(truncated: raise --max-bytes to see more)")
 		}
 	case protocol.GitQueryKind_Subrepos:
 		for _, p := range res.Subrepos {

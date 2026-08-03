@@ -806,7 +806,7 @@ func parsePermutedFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 // grammar harness-cli uses, so a hand that learned one surface knows the other.
 func parseGit(args []string) (Action, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("git: usage: git <task-id> {log | diff | show | status | subrepos} ...")
+		return nil, fmt.Errorf("git: usage: git <task-id> {log | diff | show | status | subrepos | file} ...")
 	}
 	act := GitAction{TaskID: args[0], Sub: args[1]}
 	rest, path := splitPathspecTokens(args[2:])
@@ -878,6 +878,34 @@ func parseGit(args []string) (Action, error) {
 		act.Submodule = *submodule
 		act.Subrepo = *subrepo
 
+	case "file":
+		fs := flag.NewFlagSet("git file", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		staged := fs.Bool("staged", false, "")
+		rev := fs.String("rev", "", "")
+		subrepo := fs.String("subrepo", "", "")
+		pos, err := parsePermutedFlags(fs, rest)
+		if err != nil {
+			return nil, fmt.Errorf("git file: %w", err)
+		}
+		// The path may arrive as a positional or after --, so one lifted
+		// straight out of a diff header works either way.
+		if len(pos) > 1 {
+			return nil, fmt.Errorf("git file: one path (got %d)", len(pos))
+		}
+		if len(pos) == 1 {
+			if act.Path != "" {
+				return nil, fmt.Errorf("git file: path given twice (%q and %q)", pos[0], act.Path)
+			}
+			act.Path = pos[0]
+		}
+		if act.Path == "" {
+			return nil, fmt.Errorf("git file: usage: git <task-id> file [--staged | --rev REV] <path>")
+		}
+		act.Staged = *staged
+		act.TargetRev = *rev
+		act.Subrepo = *subrepo
+
 	case "status", "subrepos":
 		fs := flag.NewFlagSet("git "+act.Sub, flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
@@ -892,7 +920,7 @@ func parseGit(args []string) (Action, error) {
 		act.Subrepo = *subrepo
 
 	default:
-		return nil, fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos)", act.Sub)
+		return nil, fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", act.Sub)
 	}
 	return act, nil
 }

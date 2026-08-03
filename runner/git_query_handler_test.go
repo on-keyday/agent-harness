@@ -559,3 +559,150 @@ func TestSubrepoResolutionSpawnsNoExtraGit(t *testing.T) {
 		t.Fatalf("a re-rooted log spawned git %d times, want exactly 1", n)
 	}
 }
+
+// newThreeSidedFixture leaves f.txt with a different content on each of the
+// three sides a diff can show, so a test can prove which one it got.
+func newThreeSidedFixture(t *testing.T) (repo, headSHA string) {
+	t.Helper()
+	repo = t.TempDir()
+	gitRun(t, repo, "init", "-q", "-b", "main")
+	write := func(s string) {
+		if err := os.WriteFile(filepath.Join(repo, "f.txt"), []byte(s), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("committed\n")
+	gitRun(t, repo, "add", "f.txt")
+	gitRun(t, repo, "commit", "-q", "-m", "c1")
+	headSHA = gitHead(t, repo)
+	write("staged\n")
+	gitRun(t, repo, "add", "f.txt")
+	write("worktree\n")
+	return repo, headSHA
+}
+
+// Opening a file from a diff has to show the side the diff was showing.
+// Answering with a different one would be the same wrong-answer-with-a-right-
+// face this whole surface keeps guarding against.
+func TestGitFileReturnsTheSideTheTargetNames(t *testing.T) {
+	repo, head := newThreeSidedFixture(t)
+	s := &Session{AllowedRoots: []string{repo}, NoWorktree: true}
+
+	ask := func(target protocol.GitDiffTarget, targetRev string) string {
+		req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_File, Target: target}
+		req.SetRepoPath([]byte(repo))
+		req.SetPath([]byte("f.txt"))
+		req.SetTargetRev([]byte(targetRev))
+		res := s.buildGitResult(context.Background(), req)
+		if res.Status != protocol.GitRunStatus_Ok {
+			t.Fatalf("target %v: status = %v stderr %q", target, res.Status, res.Stderr)
+		}
+		return string(res.File().Text)
+	}
+
+	if got := ask(protocol.GitDiffTarget_Worktree, ""); got != "worktree\n" {
+		t.Errorf("worktree side = %q", got)
+	}
+	if got := ask(protocol.GitDiffTarget_Index, ""); got != "staged\n" {
+		t.Errorf("index side = %q", got)
+	}
+	if got := ask(protocol.GitDiffTarget_Rev, head); got != "committed\n" {
+		t.Errorf("rev side = %q", got)
+	}
+}
+
+func TestGitFileMissingPath(t *testing.T) {
+	repo, _ := newThreeSidedFixture(t)
+	s := &Session{AllowedRoots: []string{repo}, NoWorktree: true}
+	for _, tc := range []struct {
+		name   string
+		target protocol.GitDiffTarget
+		path   string
+	}{
+		{"worktree empty", protocol.GitDiffTarget_Worktree, ""},
+		{"worktree missing", protocol.GitDiffTarget_Worktree, "nosuch.txt"},
+		{"worktree escape", protocol.GitDiffTarget_Worktree, "../outside"},
+		{"index empty", protocol.GitDiffTarget_Index, ""},
+	} {
+		req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_File, Target: tc.target}
+		req.SetRepoPath([]byte(repo))
+		req.SetPath([]byte(tc.path))
+		res := s.buildGitResult(context.Background(), req)
+		if res.Status != protocol.GitRunStatus_FileNotFound {
+			t.Errorf("%s: status = %v, want file_not_found", tc.name, res.Status)
+		}
+		if len(res.Stderr) == 0 {
+			t.Errorf("%s: a refusal must say why", tc.name)
+		}
+	}
+}
+
+// A directory is not a file; answering with a tree listing would be a
+// different question.
+func TestGitFileRejectsADirectory(t *testing.T) {
+	repo, _ := newThreeSidedFixture(t)
+	if err := os.MkdirAll(filepath.Join(repo, "adir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{AllowedRoots: []string{repo}, NoWorktree: true}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_File, Target: protocol.GitDiffTarget_Worktree}
+	req.SetRepoPath([]byte(repo))
+	req.SetPath([]byte("adir"))
+	if res := s.buildGitResult(context.Background(), req); res.Status != protocol.GitRunStatus_FileNotFound {
+		t.Fatalf("status = %v, want file_not_found", res.Status)
+	}
+}
+
+func TestGitFileTruncatesAtMaxBytes(t *testing.T) {
+	repo, _ := newThreeSidedFixture(t)
+	if err := os.WriteFile(filepath.Join(repo, "big.txt"), []byte(strings.Repeat("x", 5000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{AllowedRoots: []string{repo}, NoWorktree: true}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_File, Target: protocol.GitDiffTarget_Worktree}
+	req.SetRepoPath([]byte(repo))
+	req.SetPath([]byte("big.txt"))
+	req.MaxBytes = 100
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v", res.Status)
+	}
+	if !res.File().Truncated() || len(res.File().Text) != 100 {
+		t.Fatalf("len=%d truncated=%v", len(res.File().Text), res.File().Truncated())
+	}
+}
+
+// The path is relative to whichever repository the query is rooted in, so the
+// client never has to prefix it itself.
+func TestGitFileInsideASubrepo(t *testing.T) {
+	outer := newNestedFixture(t)
+	s := &Session{AllowedRoots: []string{outer}, NoWorktree: true}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_File, Target: protocol.GitDiffTarget_Worktree}
+	req.SetRepoPath([]byte(outer))
+	req.SetSubrepo([]byte("pkg/inner"))
+	req.SetPath([]byte("i.txt")) // relative to the nested repo, not the outer one
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+	}
+	if !strings.Contains(string(res.File().Text), "i2") {
+		t.Fatalf("content = %q", res.File().Text)
+	}
+}
+
+// The worktree side reads the disk directly; it must not start git.
+func TestGitFileWorktreeSideSpawnsNoGit(t *testing.T) {
+	repo, _ := newThreeSidedFixture(t)
+	s := &Session{AllowedRoots: []string{repo}, NoWorktree: true}
+	n := countGitSpawns(t, func() {
+		req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_File, Target: protocol.GitDiffTarget_Worktree}
+		req.SetRepoPath([]byte(repo))
+		req.SetPath([]byte("f.txt"))
+		if res := s.buildGitResult(context.Background(), req); res.Status != protocol.GitRunStatus_Ok {
+			t.Fatalf("status = %v", res.Status)
+		}
+	})
+	if n != 0 {
+		t.Fatalf("reading the working-tree file spawned git %d times", n)
+	}
+}

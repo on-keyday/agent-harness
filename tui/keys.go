@@ -99,6 +99,7 @@ type modalKeyMap struct {
 	GitPrevFile     string
 	GitSubmodule    string
 	GitUp           string
+	GitOpenFile     string
 }
 
 var modalKeys = modalKeyMap{
@@ -117,6 +118,7 @@ var modalKeys = modalKeyMap{
 	GitPrevFile:     "N",
 	GitSubmodule:    "m",
 	GitUp:           "u",
+	GitOpenFile:     "o",
 }
 
 // keyScope is a bitmask of the panes a main-view binding applies to. The

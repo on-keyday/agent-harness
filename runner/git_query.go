@@ -314,6 +314,34 @@ func gitArgv(req *protocol.RunnerGitQueryRequest, tip string, hasWorktree bool) 
 		// short-circuits before reaching here.
 		return nil, protocol.GitRunStatus_Ok
 
+	case protocol.GitQueryKind_File:
+		if path == "" {
+			// `rev:` with no path is the ROOT TREE, which would answer a
+			// question nobody asked.
+			return nil, protocol.GitRunStatus_FileNotFound
+		}
+		// The whole file from the side `target` names. The worktree side is
+		// not a git command at all — it is the file on disk — and
+		// buildGitResult reads it directly before reaching here.
+		rev := ""
+		switch req.Target {
+		case protocol.GitDiffTarget_Index:
+			// `git show :<path>` is the staged blob.
+			rev = ""
+		case protocol.GitDiffTarget_Rev:
+			rev = target
+			if rev == "" {
+				rev = base
+			}
+			if rev == "" {
+				return nil, protocol.GitRunStatus_BadRev
+			}
+		}
+		// The pathspec separator is deliberately absent: `rev:path` is one
+		// token, and a `--` after it would make git look for a second thing
+		// to show.
+		return []string{"show", "--no-color", "--no-ext-diff", "--no-textconv", rev + ":" + path}, protocol.GitRunStatus_Ok
+
 	default:
 		return nil, protocol.GitRunStatus_BadRev
 	}
@@ -494,11 +522,14 @@ func runGitQuery(ctx context.Context, cwd string, argv []string, maxBytes uint32
 // carry the same type, so the only difference is which setter the encoder
 // needs.
 func setGitTextBody(res *protocol.GitQueryResult, kind protocol.GitQueryKind, body protocol.GitTextBody) {
-	if kind == protocol.GitQueryKind_Show {
+	switch kind {
+	case protocol.GitQueryKind_Show:
 		res.SetShow(body)
-		return
+	case protocol.GitQueryKind_File:
+		res.SetFile(body)
+	default:
+		res.SetDiff(body)
 	}
-	res.SetDiff(body)
 }
 
 // emptyGitBody fills the union arm for kind with a zero body. Every result
@@ -512,6 +543,8 @@ func emptyGitBody(res *protocol.GitQueryResult, kind protocol.GitQueryKind) {
 		res.SetStatusBody(protocol.GitStatusBody{})
 	case protocol.GitQueryKind_Subrepos:
 		res.SetSubrepos(protocol.GitSubrepoBody{})
+	case protocol.GitQueryKind_File:
+		res.SetFile(protocol.GitTextBody{})
 	default:
 		setGitTextBody(res, kind, protocol.GitTextBody{})
 	}
@@ -561,6 +594,13 @@ func (s *Session) buildGitResult(ctx context.Context, req *protocol.RunnerGitQue
 		// The nested repository has its own HEAD, and harness/<taskID> does
 		// not exist in it.
 		tip = "HEAD"
+	}
+
+	// The worktree side of a file is not a git command — it is the file on
+	// disk. Same containment guards as the file-transfer ops: the path must
+	// resolve inside cwd and must not pass through a symlink.
+	if req.Kind == protocol.GitQueryKind_File && req.Target == protocol.GitDiffTarget_Worktree {
+		return readWorktreeFile(cwd, string(req.Path), clampMaxBytes(req.MaxBytes))
 	}
 
 	if req.Kind == protocol.GitQueryKind_Subrepos {
@@ -648,4 +688,59 @@ func (s *Session) handleGitQuery(ctx context.Context, req *protocol.RunnerGitQue
 	if err := stream.AppendData(true); err != nil {
 		log.Error("git_query: half-close", "err", err)
 	}
+}
+
+// readWorktreeFile answers the file kind for the worktree side. It is bounded
+// by the same max_bytes as a diff and reports its own truncation, so a huge
+// file cannot be pulled whole into memory just to be cut client-side.
+func readWorktreeFile(cwd, rel string, maxBytes uint32) protocol.GitQueryResult {
+	fail := func(st protocol.GitRunStatus, msg string) protocol.GitQueryResult {
+		var res protocol.GitQueryResult
+		res.Status = st
+		res.SetStderr([]byte(msg))
+		res.Kind = protocol.GitQueryKind_File
+		res.SetFile(protocol.GitTextBody{})
+		return res
+	}
+	if rel == "" {
+		return fail(protocol.GitRunStatus_FileNotFound, "no path given")
+	}
+	full, err := ValidateRelPath(cwd, rel)
+	if err != nil {
+		return fail(protocol.GitRunStatus_FileNotFound, "path is outside the repository: "+rel)
+	}
+	if err := rejectIfSymlinkInPath(cwd, full); err != nil {
+		return fail(protocol.GitRunStatus_FileNotFound, "path passes through a symlink: "+rel)
+	}
+	st, err := os.Stat(full)
+	if err != nil {
+		return fail(protocol.GitRunStatus_FileNotFound, "no such file in the working tree: "+rel)
+	}
+	if st.IsDir() {
+		return fail(protocol.GitRunStatus_FileNotFound, "that is a directory: "+rel)
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		return fail(protocol.GitRunStatus_IoError, err.Error())
+	}
+	defer f.Close()
+	buf, err := io.ReadAll(io.LimitReader(f, int64(maxBytes)+1))
+	if err != nil {
+		return fail(protocol.GitRunStatus_IoError, err.Error())
+	}
+	truncated := false
+	if uint32(len(buf)) > maxBytes {
+		buf = buf[:maxBytes]
+		truncated = true
+	}
+	var body protocol.GitTextBody
+	body.SetText(buf)
+	body.SetTruncated(truncated)
+
+	var res protocol.GitQueryResult
+	res.Status = protocol.GitRunStatus_Ok
+	res.SetStderr(nil)
+	res.Kind = protocol.GitQueryKind_File
+	res.SetFile(body)
+	return res
 }

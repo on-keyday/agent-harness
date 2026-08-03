@@ -2033,6 +2033,8 @@ func gitKindFromJS(s string) (protocol.GitQueryKind, error) {
 		return protocol.GitQueryKind_Status, nil
 	case "subrepos":
 		return protocol.GitQueryKind_Subrepos, nil
+	case "file":
+		return protocol.GitQueryKind_File, nil
 	}
 	return 0, fmt.Errorf("gitQuery: unknown kind %q", s)
 }
@@ -2089,7 +2091,7 @@ func optUint32(opts js.Value, key string) uint32 {
 //	harness.gitQuery(taskID, kind, {target, baseRev, targetRev, path, subrepo,
 //	                                submodule, maxCommits, maxBytes})
 //
-// kind is "log" | "diff" | "show" | "status" | "subrepos"; target is
+// kind is "log" | "diff" | "show" | "status" | "subrepos" | "file"; target is
 // "worktree" | "index" | "rev". subrepo re-roots the whole query into a nested
 // repository; path only filters within whichever repository that is. A non-ok runner status RESOLVES rather than rejecting — it is git's
 // answer, not a transport failure — with status and stderr set, so the page can

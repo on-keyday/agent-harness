@@ -168,3 +168,111 @@ func TestDecodeGitResultFailureCarriesStderr(t *testing.T) {
 		t.Fatal("Err() must be non-nil for bad_rev")
 	}
 }
+
+func TestDiffFilePath(t *testing.T) {
+	cases := []struct{ line, want string }{
+		{"+++ b/tui/app.go", "tui/app.go"},
+		// A space in the name is valid and unambiguous on this line.
+		{"+++ b/my file.txt", "my file.txt"},
+		// So is a name that would have broken a `diff --git` parse.
+		{"+++ b/odd b/name.txt", "odd b/name.txt"},
+		// A deletion has no right-hand file to open.
+		{"+++ /dev/null", ""},
+		// The header itself is deliberately NOT parsed: `a/<p1> b/<p2>` has no
+		// unambiguous split.
+		{"diff --git a/x b/y", ""},
+		{"--- a/x", ""},
+		{"@@ -1,2 +1,3 @@", ""},
+		{"+added", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := DiffFilePath(c.line); got != c.want {
+			t.Errorf("DiffFilePath(%q) = %q, want %q", c.line, got, c.want)
+		}
+	}
+}
+
+func TestDiffFilePathAt(t *testing.T) {
+	lines := strings.Split(`diff --git a/one.go b/one.go
+index 111..222 100644
+--- a/one.go
++++ b/one.go
+@@ -1 +1,2 @@
+ keep
++added to one
+diff --git a/two.go b/two.go
+index 333..444 100644
+--- a/two.go
++++ b/two.go
+@@ -1 +1,2 @@
+ keep
++added to two`, "\n")
+
+	if got := DiffFilePathAt(lines, 6); got != "one.go" {
+		t.Errorf("a line in the first section resolved to %q", got)
+	}
+	if got := DiffFilePathAt(lines, 13); got != "two.go" {
+		t.Errorf("a line in the second section resolved to %q", got)
+	}
+	// Standing ON the header is the ordinary case — the +++ is three lines
+	// below it, and answering "none" there was the bug this replaced.
+	if got := DiffFilePathAt(lines, 0); got != "one.go" {
+		t.Errorf("the first header resolved to %q, want one.go", got)
+	}
+	// Past the end clamps rather than panicking.
+	if got := DiffFilePathAt(lines, 999); got != "two.go" {
+		t.Errorf("past the end resolved to %q", got)
+	}
+	if got := DiffFilePathAt(nil, 0); got != "" {
+		t.Errorf("empty input resolved to %q", got)
+	}
+	if got := DiffFilePathAt(lines, -5); got != "one.go" {
+		t.Errorf("a negative index resolved to %q", got)
+	}
+}
+
+// A `git show` puts a commit header above the first file. A line up there
+// belongs to no file.
+func TestDiffFilePathAtAboveTheFirstFile(t *testing.T) {
+	lines := strings.Split(`commit abc123
+Author: claude <c@example.com>
+Date:   Mon Aug 3 15:00:00 2026 +0900
+
+    the subject
+
+diff --git a/one.go b/one.go
+--- a/one.go
++++ b/one.go
+@@ -1 +1,2 @@
++added`, "\n")
+
+	for _, i := range []int{0, 2, 4} {
+		if got := DiffFilePathAt(lines, i); got != "" {
+			t.Errorf("line %d of the commit header resolved to %q, want none", i, got)
+		}
+	}
+	if got := DiffFilePathAt(lines, 9); got != "one.go" {
+		t.Errorf("a line in the file section resolved to %q", got)
+	}
+}
+
+// A deleted file has no right-hand content, so a line inside its section must
+// not resolve to the file above it.
+func TestDiffFilePathAtDeletedFile(t *testing.T) {
+	lines := strings.Split(`diff --git a/kept.go b/kept.go
+--- a/kept.go
++++ b/kept.go
+@@ -1 +1,2 @@
++still here
+diff --git a/gone.go b/gone.go
+deleted file mode 100644
+--- a/gone.go
++++ /dev/null
+@@ -1 +0,0 @@
+-was here`, "\n")
+
+	if got := DiffFilePathAt(lines, 10); got != "" {
+		t.Errorf("a line in a deleted file's section resolved to %q, want none", got)
+	}
+}

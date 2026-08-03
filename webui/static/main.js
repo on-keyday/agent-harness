@@ -1930,6 +1930,8 @@ const POLL_INTERVAL_MS = 5000;
             "  git <task> status [-- <path>]",
             "                            uncommitted and untracked paths (untracked appear in no diff)",
             "  git <task> subrepos       list git repos nested inside the worktree",
+            "  git <task> file [--staged | --rev REV] <path>",
+            "                            one file's whole content (also: click a file header in a diff)",
             "                            --subrepo DIR runs any of the above inside one; --submodule inlines submodule content",
             "  file ls <task> [rel]      list a worktree directory",
             "  file delete [-r] [-f] <task> <rel>",
@@ -3535,6 +3537,7 @@ const POLL_INTERVAL_MS = 5000;
   const gitRepoEl       = document.getElementById("git-repo");
   const gitUpBtn        = document.getElementById("git-up-btn");
   const gitSubmoduleBox = document.getElementById("git-submodule");
+  const gitBackBtn      = document.getElementById("git-back-btn");
 
   let gitBaseRev = "HEAD";
   let gitRows = [];        // {kind: "worktree"|"index"|"commit"|"subrepo", ...}
@@ -3553,6 +3556,11 @@ const POLL_INTERVAL_MS = 5000;
   let gitGeneration = 0;
   let gitCommits = [];
   let gitSubrepoList = [];
+  // gitFileView names the file whose whole content is showing, "" for a diff.
+  // gitLastContent is the query that produced the diff, so opening a file asks
+  // for THE SAME SIDE and closing it puts the diff back.
+  let gitFileView = "";
+  let gitLastContent = null;
 
   // rebuildGitRows lays the picker out from whichever answers have arrived: the
   // two pseudo rows, then the commits, then the nested repositories. It is
@@ -3583,22 +3591,103 @@ const POLL_INTERVAL_MS = 5000;
     return "";
   }
 
+  // diffFilePath / diffFilePathAt mirror cli.DiffFilePath / DiffFilePathAt.
+  // The `+++` line is read rather than the `diff --git a/x b/x` header: the
+  // header is `a/<p1> b/<p2>` with no delimiter that cannot also occur inside a
+  // path, so it has no unambiguous parse.
+  function diffFilePath(line) {
+    if (!line.startsWith("+++ ")) return "";
+    let p = line.slice(4);
+    if (p.startsWith("b/")) p = p.slice(2);
+    if (p === "" || p === "/dev/null" || p === "dev/null") return "";
+    return p;
+  }
+
+  // The section is resolved first — the header at or above i, up to the next
+  // one — because the `+++` sits BELOW the header a reader usually clicks.
+  function diffFilePathAt(lines, i) {
+    if (!lines.length) return "";
+    if (i >= lines.length) i = lines.length - 1;
+    if (i < 0) i = 0;
+    let start = -1;
+    for (let j = i; j >= 0; j--) {
+      if (classifyGitLine(lines[j]) === "gd-file") { start = j; break; }
+    }
+    if (start < 0) return "";
+    for (let j = start + 1; j < lines.length; j++) {
+      if (classifyGitLine(lines[j]) === "gd-file") return "";
+      if (lines[j].startsWith("+++ ")) return diffFilePath(lines[j]);
+    }
+    return "";
+  }
+
   // renderGitText builds the diff from DOM nodes rather than an HTML string,
   // so a diff that happens to contain markup renders as the text it is.
-  function renderGitText(text) {
+  function renderGitText(text, clickableFiles) {
     gitContentEl.textContent = "";
     const lines = text.replace(/\n$/, "").split("\n");
-    for (const line of lines) {
+    lines.forEach((line, i) => {
       const cls = classifyGitLine(line);
       if (!cls) {
         gitContentEl.appendChild(document.createTextNode(line + "\n"));
-        continue;
+        return;
       }
       const span = document.createElement("span");
       span.className = cls;
       span.textContent = line + "\n";
+      if (clickableFiles && cls === "gd-file") {
+        const path = diffFilePathAt(lines, i);
+        if (path) {
+          span.classList.add("gd-file-link");
+          span.title = "open " + path;
+          span.addEventListener("click", () => openGitFile(path));
+        }
+      }
       gitContentEl.appendChild(span);
+    });
+  }
+
+  // openGitFile shows one file's whole content, asking for THE SAME SIDE the
+  // diff on screen was showing — the working tree for a worktree diff, the
+  // staged blob for a staged one, that commit for a commit-to-commit diff or a
+  // shown commit. Answering with a different side would be a different
+  // question than the one being read.
+  async function openGitFile(path) {
+    const last = gitLastContent || {};
+    const q = { path };
+    if (last.kind === "show") {
+      q.target = "rev";
+      q.targetRev = last.baseRev || "";
+    } else if (last.target === "rev") {
+      q.target = "rev";
+      q.targetRev = last.targetRev || "";
+    } else if (last.target === "index") {
+      q.target = "index";
+    } else {
+      q.target = "worktree";
     }
+    try {
+      const res = await gitQuery("file", q);
+      gitFileView = path;
+      renderGitText(res.text || "(empty file)", false);
+      if (gitNoteEl) {
+        gitNoteEl.textContent = res.truncated
+          ? `${path} — truncated`
+          : `${path} — whole file`;
+      }
+      if (gitBackBtn) gitBackBtn.hidden = false;
+    } catch (err) {
+      gitSetError(err.message);
+    }
+  }
+
+  // gitLeaveFileView puts the diff back by re-issuing the query it came from.
+  async function gitLeaveFileView() {
+    if (!gitFileView) return;
+    gitFileView = "";
+    if (gitBackBtn) gitBackBtn.hidden = true;
+    if (gitNoteEl) gitNoteEl.textContent = "";
+    await openGitRow(gitActiveIndex);
   }
 
   function gitSetError(msg) {
@@ -3729,14 +3818,18 @@ const POLL_INTERVAL_MS = 5000;
     try {
       let res;
       if (row.kind === "commit") {
+        gitLastContent = { kind: "show", baseRev: row.commit.sha };
         res = await gitQuery("show", { baseRev: row.commit.sha });
       } else {
+        gitLastContent = { kind: "diff", baseRev: gitBaseRev, target: row.kind };
         res = await gitQuery("diff", { baseRev: gitBaseRev, target: row.kind });
       }
+      gitFileView = "";
+      if (gitBackBtn) gitBackBtn.hidden = true;
       if (!res.text) {
         gitContentEl.textContent = "(no difference)";
       } else {
-        renderGitText(res.text);
+        renderGitText(res.text, true);
       }
       if (res.truncated && gitNoteEl) gitNoteEl.textContent = "truncated — raise maxBytes to see more";
     } catch (err) {
@@ -3807,7 +3900,7 @@ const POLL_INTERVAL_MS = 5000;
         gitContentEl.textContent = "(nothing uncommitted)";
         return;
       }
-      renderGitText(res.entries.map(e => `${e.xy} ${e.path}`).join("\n"));
+      renderGitText(res.entries.map(e => `${e.xy} ${e.path}`).join("\n"), false);
     } catch (err) {
       gitSetError(err.message);
     }
@@ -3824,6 +3917,7 @@ const POLL_INTERVAL_MS = 5000;
   }
   if (gitRefreshBtn) gitRefreshBtn.addEventListener("click", () => refreshGit(true));
   if (gitUpBtn) gitUpBtn.addEventListener("click", () => gitLeaveSubrepo());
+  if (gitBackBtn) gitBackBtn.addEventListener("click", () => gitLeaveFileView());
   if (gitSubmoduleBox) {
     gitSubmoduleBox.addEventListener("change", () => {
       gitSubmodule = gitSubmoduleBox.checked;
@@ -3861,6 +3955,10 @@ const POLL_INTERVAL_MS = 5000;
       await gitShowStatusListing();
       return;
     }
+    if (sub === "file") {
+      await openGitFileFromCmd(opts);
+      return;
+    }
     if (sub === "subrepos") {
       const res = await gitQuery("subrepos", {});
       gitContentEl.textContent = (res.subrepos || []).length
@@ -3870,8 +3968,9 @@ const POLL_INTERVAL_MS = 5000;
     }
     if (sub === "show") {
       try {
+        gitLastContent = { kind: "show", baseRev: opts.baseRev };
         const res = await gitQuery("show", { baseRev: opts.baseRev, path: opts.path });
-        renderGitText(res.text || "(no difference)");
+        renderGitText(res.text || "(no difference)", true);
       } catch (err) {
         gitSetError(err.message);
       }
@@ -3880,15 +3979,34 @@ const POLL_INTERVAL_MS = 5000;
     if (sub === "diff") {
       const target = opts.staged ? "index" : (opts.targetRev ? "rev" : "worktree");
       try {
+        gitLastContent = { kind: "diff", baseRev: opts.baseRev, targetRev: opts.targetRev, target };
         const res = await gitQuery("diff", {
           baseRev: opts.baseRev, targetRev: opts.targetRev, target, path: opts.path,
         });
-        renderGitText(res.text || "(no difference)");
+        renderGitText(res.text || "(no difference)", true);
       } catch (err) {
         gitSetError(err.message);
       }
     }
   };
+
+  // openGitFileFromCmd is the cmdline route into the file view; the side comes
+  // from the flags rather than from whatever diff happens to be on screen.
+  async function openGitFileFromCmd(opts) {
+    const q = { path: opts.path };
+    if (opts.rev) { q.target = "rev"; q.targetRev = opts.rev; }
+    else if (opts.staged) { q.target = "index"; }
+    else { q.target = "worktree"; }
+    try {
+      const res = await gitQuery("file", q);
+      gitFileView = opts.path;
+      renderGitText(res.text || "(empty file)", false);
+      if (gitNoteEl) gitNoteEl.textContent = `${opts.path} — whole file`;
+      if (gitBackBtn) gitBackBtn.hidden = false;
+    } catch (err) {
+      gitSetError(err.message);
+    }
+  }
 
   // Keep the git task dropdown in step with the snapshot poll.
   window.__renderGitTaskSelect = renderGitTaskSelect;
@@ -4126,12 +4244,14 @@ async function runGitCmd(rest) {
     args = args.slice(0, sepIdx);
   }
 
-  let staged = false, submodule = false, subrepo = "";
+  let staged = false, submodule = false, subrepo = "", rev = "";
   const pos = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--staged" || a === "--cached") { staged = true; continue; }
     if (a === "--submodule") { submodule = true; continue; }
+    if (a === "--rev") { i++; rev = args[i] || ""; continue; }
+    if (a.startsWith("--rev=")) { rev = a.slice("--rev=".length); continue; }
     if (a === "--subrepo") { i++; subrepo = args[i] || ""; continue; }
     if (a.startsWith("--subrepo=")) { subrepo = a.slice("--subrepo=".length); continue; }
     if (a === "--max" || a === "--max-bytes") { i++; continue; }   // caps are the runner's job
@@ -4160,12 +4280,22 @@ async function runGitCmd(rest) {
     case "subrepos":
       if (pos.length) throw new Error(`git ${sub}: takes no revision (got ${pos[0]})`);
       break;
+    case "file":
+      // The path may arrive as a positional or after --, so one lifted out of
+      // a diff header works either way.
+      if (pos.length > 1) throw new Error(`git file: one path (got ${pos.length})`);
+      if (pos.length === 1) {
+        if (path) throw new Error(`git file: path given twice (${pos[0]} and ${path})`);
+        path = pos[0];
+      }
+      if (!path) throw new Error("git file: usage: git <task> file [--staged | --rev REV] <path>");
+      break;
     default:
-      throw new Error(`git: unknown sub-verb ${sub} (log | diff | show | status | subrepos)`);
+      throw new Error(`git: unknown sub-verb ${sub} (log | diff | show | status | subrepos | file)`);
   }
 
   if (!window.__openGitTabFor) throw new Error("git: panel not ready");
-  await window.__openGitTabFor(taskID, sub, { baseRev, targetRev, path, staged, submodule, subrepo });
+  await window.__openGitTabFor(taskID, sub, { baseRev, targetRev, path, staged, submodule, subrepo, rev });
   return `git ${sub}: shown in the Git tab`;
 }
 
