@@ -9,6 +9,7 @@ description: Use when working with other agents or the harness from inside a run
 the whole harness: the agentboard (the only sanctioned way to talk to other
 agents), worker-session lifecycle (`session new -d` / `session kill`), one-shot
 `submit` + `logs` / `watch`, worktree file transfer (`file push` / `file pull`),
+read-only git inspection of a worktree (`git log` / `git diff`),
 and operator notifications (`notify`). All required credentials are passed
 via `HARNESS_*` environment variables (already set by the runner) — never pass
 them as flags.
@@ -604,6 +605,50 @@ harness-cli file pull "$TASK_ID" out/report.md ./report.md  # collect outputs
 Prefer this over having the worker paste large files through agentboard
 messages: `file` streams the bytes directly and keeps the agentboard for
 coordination, not bulk transfer.
+
+## Reading a worker's diff — `harness-cli git`
+
+`harness-cli git` reads a task's git state without attaching to its shell, so
+you can review what a worker changed while it is still running. It is
+read-only: there is no commit, add, checkout or stash. It needs `file_read`.
+
+```bash
+# The task's commits.
+harness-cli git <TASK_ID> log    [--max N] [-- <PATH>]
+
+# The diff. Revisions are counted the way git counts them:
+#   no revision  -> the unstaged change
+#   one          -> that revision against the working tree
+#   two          -> commit against commit
+# --staged puts the index on the right-hand side instead.
+harness-cli git <TASK_ID> diff   [--staged] [<BASE>] [<TARGET>] [-- <PATH>]
+
+# One commit and its diff.
+harness-cli git <TASK_ID> show   [<REV>] [-- <PATH>]
+
+# Uncommitted and untracked paths, as `git status --porcelain`.
+harness-cli git <TASK_ID> status [-- <PATH>]
+```
+
+Two things worth knowing before you read the output:
+
+**A worker that has committed shows nothing under a plain `diff`.** That is
+git, not a gap. Read `log` first, then name a baseline:
+
+```bash
+harness-cli git "$TASK_ID" log                    # find where it started
+harness-cli git "$TASK_ID" diff <that-sha>        # everything since, committed or not
+```
+
+**Untracked files appear in no diff.** `status` is where a brand-new file
+shows up, as a `??` entry; read its contents with `file pull`.
+
+While the task is live the query runs in its worktree, so uncommitted and
+untracked state is visible. After it ends the worktree is gone and the query
+runs against the retained `harness/<task-id>` branch — committed work only,
+and `status` is then empty because there is no working tree left to be dirty.
+`HEAD` still means the task's own tip in that case, not the repository's
+checkout. The runner that ran the task must still be online.
 
 ## Prefer JSON for `--data`
 

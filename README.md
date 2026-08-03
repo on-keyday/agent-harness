@@ -189,6 +189,26 @@ bin/harness-cli file delete <task-id> rel/path.txt
 bin/harness-cli file push -r -f <task-id> ./local-dir/ rel/dir
 bin/harness-cli file pull -r -f <task-id> rel/dir ./local-dir/
 
+# 6b. Read a task's git state without touching its shell — the way to review
+# what an agent changed while it is still running. Read-only (no commit / add /
+# checkout); requires the file_read capability. Revisions are counted the way
+# git counts them: none = the unstaged change, one = that revision against the
+# working tree, two = commit against commit.
+bin/harness-cli git <task-id> log    [--max N] [-- <path>]
+bin/harness-cli git <task-id> diff   [--staged] [<base>] [<target>] [-- <path>]
+bin/harness-cli git <task-id> show   [<rev>] [-- <path>]
+bin/harness-cli git <task-id> status [-- <path>]
+# An agent that has committed shows nothing under a plain `diff` — that is git,
+# not a gap. Read `log`, then name a baseline: `git <task-id> diff <sha>` shows
+# everything since it, committed or not. Untracked files appear in no diff;
+# `status` is where a brand-new file shows up, as a `??` entry.
+#
+# While the task lives the query runs in its worktree. After it ends the
+# worktree is gone and the query runs against the retained harness/<task-id>
+# branch: committed work only, and `status` is empty because no working tree is
+# left to be dirty. The runner that ran the task must still be online.
+# The same view is on `G` in the TUI and the Git tab in the WebUI.
+
 # 7. Port-forward a runner-side port to your machine (SSH -L style). The runner
 # dials remote-host:remote-port; bytes relay over the harness transport. Handy
 # for reaching a dev server the agent started inside its worktree. Foreground;

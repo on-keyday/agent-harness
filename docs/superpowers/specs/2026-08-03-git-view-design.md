@@ -81,6 +81,30 @@ pointing at the task's work, so the runner passes
 `refs/heads/harness/<taskID>` explicitly. If neither the worktree nor
 that ref exists the answer is `no_source`.
 
+Row 1's worktree is recognised with `git rev-parse --show-toplevel`, not
+a directory stat. A directory left behind by a crashed cleanup still
+exists, and git run inside it walks up to the parent repository's `.git`
+and answers about the *parent* filtered to that subdirectory — a wrong
+answer wearing a right answer's face.
+
+**Row 3 does not let the shared repository stand in for the task.** With
+no worktree the cwd is a checkout that belongs to whoever has it out, so
+three things have to be redirected or the answers are quietly about the
+wrong thing:
+
+- A leading `HEAD` in a revision resolves to the tip ref instead
+  (`HEAD~1` → `refs/heads/harness/<taskID>~1`). Left alone, `diff HEAD~1`
+  dies with "bad revision" and `diff HEAD` silently diffs against main.
+- `status` returns an empty listing. Running it in the shared repo
+  reports *its* state — other tasks' worktree directories show up as
+  untracked entries.
+- The `worktree` and `index` diff targets fall back to the tip, so
+  `diff <base>` means `<base>..<tip>`. An empty base then yields
+  `<tip>..<tip>`, i.e. nothing uncommitted, which is the truth; inventing
+  a parent revision instead would break on a root commit.
+
+All three were found by driving a dummy harness, not by the unit tests.
+
 ## Authorization
 
 `git_query` requires `Capability_FileRead`, added to `requiredCap` in
@@ -91,6 +115,17 @@ The `Running || Detached` guard that `handleOpenFileTransfer` /
 applied to `git_query`: a task record that still exists is enough. The
 runner named by `task.AssignedTo` must still be online, otherwise
 `runner_offline`.
+
+**Known limitation, stated rather than discovered.** `task.AssignedTo` is
+a connection id, not a stable runner identity, so once the runner that
+ran a task restarts, `git_query` on that task answers `runner_offline`
+even though its branch is still on disk and the replacement runner serves
+the same root. Falling back to any online runner covering the task's
+repo path would paper over it, but a same-named path on a different host
+is a different repository, and answering from it would be the same class
+of wrong-answer-wearing-a-right-answer's-face this design spends effort
+avoiding. The dominant case — reading a running agent's work from the
+side — is unaffected, because that task's runner is by definition online.
 
 Scope note, so the widening is on the record: `OpenFileTransfer` and
 `ListFiles` are gated on the capability bit alone — there is no
