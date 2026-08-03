@@ -68,12 +68,18 @@ func clampMaxBytes(v uint32) uint32 {
 //
 // noWorktree mirrors Session.NoWorktree: the agent ran directly in the repo,
 // so the repo IS the task's working directory.
-func gitSourceFor(repoPath, taskIDHex string, noWorktree bool) (cwd, tip string, status protocol.GitRunStatus) {
+// hasWorktree distinguishes the two shapes: true when cwd IS the task's
+// working tree (rows 1 and 2 of the table above), false when the task's
+// working tree is gone and only its branch remains. In the false case cwd is
+// the shared repository, whose HEAD and working tree belong to whoever checked
+// it out — not to this task — so the caller must not let either stand in for
+// the task's state. See gitArgv and buildGitResult.
+func gitSourceFor(repoPath, taskIDHex string, noWorktree bool) (cwd, tip string, hasWorktree bool, status protocol.GitRunStatus) {
 	if !isGitRepo(repoPath) {
-		return "", "", protocol.GitRunStatus_NotAGitRepo
+		return "", "", false, protocol.GitRunStatus_NotAGitRepo
 	}
 	if noWorktree {
-		return repoPath, "HEAD", protocol.GitRunStatus_Ok
+		return repoPath, "HEAD", true, protocol.GitRunStatus_Ok
 	}
 	wt := filepath.Join(repoPath, ".harness-worktrees", taskIDHex)
 	// isWorktreeRoot, not a bare os.Stat: an orphan directory left behind by a
@@ -81,16 +87,35 @@ func gitSourceFor(repoPath, taskIDHex string, noWorktree bool) (cwd, tip string,
 	// parent repo's .git and answers about the PARENT filtered to that
 	// subdirectory — a wrong answer wearing a right answer's face.
 	if isWorktreeRoot(wt) {
-		return wt, "HEAD", protocol.GitRunStatus_Ok
+		return wt, "HEAD", true, protocol.GitRunStatus_Ok
 	}
 	// WorktreeManager.Remove deliberately keeps branch harness/<taskID> after
 	// dropping the worktree, so the work stays reachable. This is the only
 	// reader of that promise.
 	ref := "refs/heads/harness/" + taskIDHex
 	if refExists(repoPath, ref) {
-		return repoPath, ref, protocol.GitRunStatus_Ok
+		return repoPath, ref, false, protocol.GitRunStatus_Ok
 	}
-	return "", "", protocol.GitRunStatus_NoSource
+	return "", "", false, protocol.GitRunStatus_NoSource
+}
+
+// rebaseHeadOnTip rewrites a leading HEAD to tip. Without it, a rev like
+// "HEAD~1" against a task whose worktree is gone silently resolves against the
+// SHARED repository's checkout: "HEAD" then means whatever branch the user
+// happens to have out, so `diff HEAD` answers about main and reads as a
+// correct empty diff. Everything after the leading HEAD (~1, ^, @{2}) is kept,
+// because it is the same suffix grammar either way.
+func rebaseHeadOnTip(rev, tip string, hasWorktree bool) string {
+	if hasWorktree || rev == "" || tip == "" {
+		return rev
+	}
+	if rev == "HEAD" {
+		return tip
+	}
+	if strings.HasPrefix(rev, "HEAD~") || strings.HasPrefix(rev, "HEAD^") || strings.HasPrefix(rev, "HEAD@") {
+		return tip + rev[len("HEAD"):]
+	}
+	return rev
 }
 
 // gitArgv builds the argv after "git". The returned slice always ends with the
@@ -101,7 +126,7 @@ func gitSourceFor(repoPath, taskIDHex string, noWorktree bool) (cwd, tip string,
 // them a .gitattributes in the worktree — which the agent can write — names an
 // external diff driver, and reading a diff becomes command execution on the
 // runner host.
-func gitArgv(req *protocol.RunnerGitQueryRequest, tip string) ([]string, protocol.GitRunStatus) {
+func gitArgv(req *protocol.RunnerGitQueryRequest, tip string, hasWorktree bool) ([]string, protocol.GitRunStatus) {
 	base := string(req.BaseRev)
 	target := string(req.TargetRev)
 	path := string(req.Path)
@@ -111,6 +136,8 @@ func gitArgv(req *protocol.RunnerGitQueryRequest, tip string) ([]string, protoco
 			return nil, protocol.GitRunStatus_BadRev
 		}
 	}
+	base = rebaseHeadOnTip(base, tip, hasWorktree)
+	target = rebaseHeadOnTip(target, tip, hasWorktree)
 
 	var argv []string
 	switch req.Kind {
@@ -125,19 +152,35 @@ func gitArgv(req *protocol.RunnerGitQueryRequest, tip string) ([]string, protoco
 
 	case protocol.GitQueryKind_Diff:
 		argv = []string{"diff", "--no-color", "--no-ext-diff", "--no-textconv"}
-		switch req.Target {
-		case protocol.GitDiffTarget_Index:
+		switch {
+		case !hasWorktree && req.Target != protocol.GitDiffTarget_Rev:
+			// With the task's working tree gone, "the working tree" and "the
+			// index" name states that no longer exist — git would answer about
+			// the SHARED repository's checkout instead, which belongs to
+			// whoever has it out. The task's tip stands in for both. An empty
+			// base then yields `diff <tip> <tip>`, i.e. nothing uncommitted,
+			// which is the truth for a task with no working tree; inventing a
+			// parent rev instead would break on a root commit and would answer
+			// a question nobody asked.
+			if base == "" {
+				base = tip
+			}
+			argv = append(argv, base, tip)
+
+		case req.Target == protocol.GitDiffTarget_Index:
 			argv = append(argv, "--cached")
 			if base != "" {
 				argv = append(argv, base)
 			}
-		case protocol.GitDiffTarget_Rev:
+
+		case req.Target == protocol.GitDiffTarget_Rev:
 			if base == "" {
 				// `git diff <nothing> <target>` is not a thing. Refuse rather
 				// than build an argv with a hole in it.
 				return nil, protocol.GitRunStatus_BadRev
 			}
 			argv = append(argv, base, target)
+
 		default: // worktree
 			if base != "" {
 				argv = append(argv, base)
@@ -371,12 +414,25 @@ func (s *Session) buildGitResult(ctx context.Context, req *protocol.RunnerGitQue
 	}
 
 	taskIDHex := hex.EncodeToString(req.TaskId.Id[:])
-	cwd, tip, st := gitSourceFor(repoPath, taskIDHex, s.NoWorktree)
+	cwd, tip, hasWorktree, st := gitSourceFor(repoPath, taskIDHex, s.NoWorktree)
 	if st != protocol.GitRunStatus_Ok {
 		return fail(st, "")
 	}
 
-	argv, st := gitArgv(req, tip)
+	// With no working tree there is nothing for this task to be dirty in.
+	// Running `git status` in the shared repo would report ITS state — other
+	// tasks' worktree directories show up as untracked entries — which is a
+	// different task's answer wearing this one's label.
+	if req.Kind == protocol.GitQueryKind_Status && !hasWorktree {
+		var res protocol.GitQueryResult
+		res.Status = protocol.GitRunStatus_Ok
+		res.SetStderr(nil)
+		res.Kind = req.Kind
+		res.SetStatusBody(protocol.GitStatusBody{})
+		return res
+	}
+
+	argv, st := gitArgv(req, tip, hasWorktree)
 	if st != protocol.GitRunStatus_Ok {
 		return fail(st, "a revision or pathspec began with '-'")
 	}

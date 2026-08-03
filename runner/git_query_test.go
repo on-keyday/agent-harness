@@ -63,7 +63,7 @@ func TestClampMaxBytes(t *testing.T) {
 func TestGitArgvRejectsDashLeadingRev(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
 	req.SetBaseRev([]byte("--ext-diff"))
-	if _, st := gitArgv(req, "HEAD"); st != protocol.GitRunStatus_BadRev {
+	if _, st := gitArgv(req, "HEAD", true); st != protocol.GitRunStatus_BadRev {
 		t.Fatalf("status = %v, want bad_rev", st)
 	}
 }
@@ -71,7 +71,7 @@ func TestGitArgvRejectsDashLeadingRev(t *testing.T) {
 func TestGitArgvRejectsDashLeadingPath(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
 	req.SetPath([]byte("--output=/tmp/x"))
-	if _, st := gitArgv(req, "HEAD"); st != protocol.GitRunStatus_BadRev {
+	if _, st := gitArgv(req, "HEAD", true); st != protocol.GitRunStatus_BadRev {
 		t.Fatalf("status = %v, want bad_rev", st)
 	}
 }
@@ -79,7 +79,7 @@ func TestGitArgvRejectsDashLeadingPath(t *testing.T) {
 func TestGitArgvRevTargetNeedsBase(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Rev}
 	req.SetTargetRev([]byte("abc123"))
-	if _, st := gitArgv(req, "HEAD"); st != protocol.GitRunStatus_BadRev {
+	if _, st := gitArgv(req, "HEAD", true); st != protocol.GitRunStatus_BadRev {
 		t.Fatalf("status = %v, want bad_rev for empty base with target=rev", st)
 	}
 }
@@ -87,7 +87,7 @@ func TestGitArgvRevTargetNeedsBase(t *testing.T) {
 func TestGitArgvDiffAlwaysDisablesExternalDrivers(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
 	req.SetBaseRev([]byte("HEAD"))
-	argv, st := gitArgv(req, "HEAD")
+	argv, st := gitArgv(req, "HEAD", true)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -107,7 +107,7 @@ func TestGitArgvDiffAlwaysDisablesExternalDrivers(t *testing.T) {
 func TestGitArgvShowDisablesExternalDrivers(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Show}
 	req.SetBaseRev([]byte("abc"))
-	argv, st := gitArgv(req, "HEAD")
+	argv, st := gitArgv(req, "HEAD", true)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -122,7 +122,7 @@ func TestGitArgvShowDisablesExternalDrivers(t *testing.T) {
 func TestGitArgvIndexTargetUsesCached(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Index}
 	req.SetBaseRev([]byte("HEAD"))
-	argv, st := gitArgv(req, "HEAD")
+	argv, st := gitArgv(req, "HEAD", true)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -134,7 +134,7 @@ func TestGitArgvIndexTargetUsesCached(t *testing.T) {
 func TestGitArgvPathspecGoesAfterSeparator(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
 	req.SetPath([]byte("tui/app.go"))
-	argv, st := gitArgv(req, "HEAD")
+	argv, st := gitArgv(req, "HEAD", true)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -145,7 +145,7 @@ func TestGitArgvPathspecGoesAfterSeparator(t *testing.T) {
 
 func TestGitArgvLogFallsBackToTip(t *testing.T) {
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Log, MaxCommits: 5}
-	argv, st := gitArgv(req, "refs/heads/harness/deadbeef")
+	argv, st := gitArgv(req, "refs/heads/harness/deadbeef", true)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -220,7 +220,7 @@ func TestGitSourceForPrefersWorktree(t *testing.T) {
 	repo := newTestRepo(t)
 	wt := filepath.Join(repo, ".harness-worktrees", "cafe1234")
 	gitRun(t, repo, "worktree", "add", "-q", "-b", "harness/cafe1234", wt)
-	cwd, tip, st := gitSourceFor(repo, "cafe1234", false)
+	cwd, tip, _, st := gitSourceFor(repo, "cafe1234", false)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -242,7 +242,7 @@ func TestGitSourceForRejectsOrphanDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No branch either, so the only honest answer is no_source.
-	if _, _, st := gitSourceFor(repo, "cafe1234", false); st != protocol.GitRunStatus_NoSource {
+	if _, _, _, st := gitSourceFor(repo, "cafe1234", false); st != protocol.GitRunStatus_NoSource {
 		t.Fatalf("status = %v, want no_source", st)
 	}
 }
@@ -256,7 +256,7 @@ func TestGitSourceForOrphanDirectoryFallsBackToBranch(t *testing.T) {
 		t.Fatal(err)
 	}
 	gitRun(t, repo, "branch", "harness/cafe1234")
-	cwd, tip, st := gitSourceFor(repo, "cafe1234", false)
+	cwd, tip, _, st := gitSourceFor(repo, "cafe1234", false)
 	if st != protocol.GitRunStatus_Ok || cwd != repo || tip != "refs/heads/harness/cafe1234" {
 		t.Fatalf("cwd=%q tip=%q st=%v", cwd, tip, st)
 	}
@@ -265,7 +265,7 @@ func TestGitSourceForOrphanDirectoryFallsBackToBranch(t *testing.T) {
 func TestGitSourceForFallsBackToBranchRef(t *testing.T) {
 	repo := newTestRepo(t)
 	gitRun(t, repo, "branch", "harness/cafe1234")
-	cwd, tip, st := gitSourceFor(repo, "cafe1234", false)
+	cwd, tip, _, st := gitSourceFor(repo, "cafe1234", false)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", st)
 	}
@@ -279,14 +279,14 @@ func TestGitSourceForFallsBackToBranchRef(t *testing.T) {
 
 func TestGitSourceForNoWorktreeAndNoBranch(t *testing.T) {
 	repo := newTestRepo(t)
-	if _, _, st := gitSourceFor(repo, "cafe1234", false); st != protocol.GitRunStatus_NoSource {
+	if _, _, _, st := gitSourceFor(repo, "cafe1234", false); st != protocol.GitRunStatus_NoSource {
 		t.Fatalf("status = %v, want no_source", st)
 	}
 }
 
 func TestGitSourceForNoWorktreeMode(t *testing.T) {
 	repo := newTestRepo(t)
-	cwd, tip, st := gitSourceFor(repo, "cafe1234", true)
+	cwd, tip, _, st := gitSourceFor(repo, "cafe1234", true)
 	if st != protocol.GitRunStatus_Ok || cwd != repo || tip != "HEAD" {
 		t.Fatalf("cwd=%q tip=%q st=%v", cwd, tip, st)
 	}
@@ -294,7 +294,103 @@ func TestGitSourceForNoWorktreeMode(t *testing.T) {
 
 func TestGitSourceForNotAGitRepo(t *testing.T) {
 	dir := t.TempDir()
-	if _, _, st := gitSourceFor(dir, "cafe1234", true); st != protocol.GitRunStatus_NotAGitRepo {
+	if _, _, _, st := gitSourceFor(dir, "cafe1234", true); st != protocol.GitRunStatus_NotAGitRepo {
 		t.Fatalf("status = %v, want not_a_git_repo", st)
+	}
+}
+
+func TestRebaseHeadOnTip(t *testing.T) {
+	const tip = "refs/heads/harness/cafe"
+	// With a working tree, HEAD already means the task's tip — leave it alone.
+	if got := rebaseHeadOnTip("HEAD", tip, true); got != "HEAD" {
+		t.Fatalf("live worktree: %q", got)
+	}
+	// Without one, HEAD would resolve against the SHARED repo's checkout.
+	if got := rebaseHeadOnTip("HEAD", tip, false); got != tip {
+		t.Fatalf("HEAD -> %q, want the tip", got)
+	}
+	if got := rebaseHeadOnTip("HEAD~2", tip, false); got != tip+"~2" {
+		t.Fatalf("HEAD~2 -> %q", got)
+	}
+	if got := rebaseHeadOnTip("HEAD^", tip, false); got != tip+"^" {
+		t.Fatalf("HEAD^ -> %q", got)
+	}
+	// A sha is already absolute, and a branch named HEADLESS is not HEAD.
+	if got := rebaseHeadOnTip("abc123", tip, false); got != "abc123" {
+		t.Fatalf("sha -> %q", got)
+	}
+	if got := rebaseHeadOnTip("HEADLESS", tip, false); got != "HEADLESS" {
+		t.Fatalf("HEADLESS -> %q; only HEAD and HEAD<suffix> are the ref", got)
+	}
+	if got := rebaseHeadOnTip("", tip, false); got != "" {
+		t.Fatalf("empty -> %q", got)
+	}
+}
+
+// With the task's working tree gone there is no working tree to diff against,
+// so the tip stands in for it. Without this the argv would ask git about the
+// SHARED repo's checkout, which belongs to whoever has it out.
+func TestGitArgvWithoutWorktreeDiffsAgainstTheTip(t *testing.T) {
+	const tip = "refs/heads/harness/cafe"
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
+	req.SetBaseRev([]byte("abc123"))
+	argv, st := gitArgv(req, tip, false)
+	if st != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v", st)
+	}
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, "abc123 "+tip) {
+		t.Fatalf("argv %q should diff base against the tip", joined)
+	}
+	if argv[len(argv)-1] != "--" {
+		t.Fatalf("argv %q lost the pathspec separator", joined)
+	}
+}
+
+// An empty base with no working tree yields tip..tip — nothing uncommitted,
+// which is the truth. Inventing tip^ instead would break on a root commit.
+func TestGitArgvWithoutWorktreeEmptyBaseIsEmptyDiff(t *testing.T) {
+	const tip = "refs/heads/harness/cafe"
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
+	argv, st := gitArgv(req, tip, false)
+	if st != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v", st)
+	}
+	joined := strings.Join(argv, " ")
+	if !strings.Contains(joined, tip+" "+tip) {
+		t.Fatalf("argv %q should be tip..tip", joined)
+	}
+	if strings.Contains(joined, "^") {
+		t.Fatalf("argv %q invented a parent revision", joined)
+	}
+}
+
+// The index does not survive its working tree either.
+func TestGitArgvWithoutWorktreeIndexTargetAlsoUsesTheTip(t *testing.T) {
+	const tip = "refs/heads/harness/cafe"
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Index}
+	req.SetBaseRev([]byte("abc123"))
+	argv, st := gitArgv(req, tip, false)
+	if st != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v", st)
+	}
+	if joined := strings.Join(argv, " "); strings.Contains(joined, "--cached") {
+		t.Fatalf("argv %q asks about an index that no longer exists", joined)
+	}
+}
+
+// Two explicit revisions are commits on both sides, so the fallback must not
+// rewrite them.
+func TestGitArgvWithoutWorktreeRevTargetIsUntouched(t *testing.T) {
+	const tip = "refs/heads/harness/cafe"
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Rev}
+	req.SetBaseRev([]byte("aaa"))
+	req.SetTargetRev([]byte("bbb"))
+	argv, st := gitArgv(req, tip, false)
+	if st != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v", st)
+	}
+	if joined := strings.Join(argv, " "); !strings.Contains(joined, "aaa bbb") {
+		t.Fatalf("argv %q", joined)
 	}
 }

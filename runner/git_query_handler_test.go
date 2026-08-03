@@ -14,7 +14,7 @@ import (
 func TestRunGitQueryCapturesStdout(t *testing.T) {
 	repo := newTestRepo(t)
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Log, MaxCommits: 10}
-	argv, st := gitArgv(req, "HEAD")
+	argv, st := gitArgv(req, "HEAD", true)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("argv status = %v", st)
 	}
@@ -39,7 +39,7 @@ func TestRunGitQueryTruncatesAtMaxBytes(t *testing.T) {
 	gitRun(t, repo, "add", "big.txt")
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
 	req.SetBaseRev([]byte("HEAD"))
-	argv, _ := gitArgv(req, "HEAD")
+	argv, _ := gitArgv(req, "HEAD", true)
 	out, _, truncated, status := runGitQuery(context.Background(), repo, argv, 512)
 	if status != protocol.GitRunStatus_Ok {
 		t.Fatalf("status = %v", status)
@@ -56,7 +56,7 @@ func TestRunGitQueryReportsBadRev(t *testing.T) {
 	repo := newTestRepo(t)
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Show}
 	req.SetBaseRev([]byte("nosuchrev"))
-	argv, _ := gitArgv(req, "HEAD")
+	argv, _ := gitArgv(req, "HEAD", true)
 	_, stderr, _, status := runGitQuery(context.Background(), repo, argv, 1<<20)
 	if status != protocol.GitRunStatus_BadRev {
 		t.Fatalf("status = %v, want bad_rev (stderr %q)", status, stderr)
@@ -243,7 +243,7 @@ func TestBuildGitResultBadRevIsReported(t *testing.T) {
 func gitHead(t *testing.T, dir string) string {
 	t.Helper()
 	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Log, MaxCommits: 1}
-	argv, _ := gitArgv(req, "HEAD")
+	argv, _ := gitArgv(req, "HEAD", true)
 	out, stderr, _, st := runGitQuery(context.Background(), dir, argv, 1<<20)
 	if st != protocol.GitRunStatus_Ok {
 		t.Fatalf("gitHead: %v %s", st, stderr)
@@ -265,4 +265,66 @@ func newTaskID(seed byte) (protocol.TaskID, string) {
 		id.Id[i] = seed + byte(i)
 	}
 	return id, hex.EncodeToString(id.Id[:])
+}
+
+// Running `git status` in the shared repo for a task that has no working tree
+// reports the REPO's state — other tasks' worktree directories show up as
+// untracked entries. That is a different task's answer wearing this one's
+// label, so the honest answer is an empty listing.
+func TestBuildGitResultStatusIsEmptyWithoutWorktree(t *testing.T) {
+	repo := newTestRepo(t)
+	taskID, taskIDHex := newTaskID(0xbe)
+	gitRun(t, repo, "branch", "harness/"+taskIDHex)
+	// Noise in the shared repo that must NOT be reported as this task's.
+	if err := os.MkdirAll(filepath.Join(repo, ".harness-worktrees", "someothertask"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "unrelated.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Session{AllowedRoots: []string{repo}}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Status}
+	req.TaskId = taskID
+	req.SetRepoPath([]byte(repo))
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v stderr %q", res.Status, res.Stderr)
+	}
+	body := res.StatusBody()
+	if body == nil {
+		t.Fatal("status body missing")
+	}
+	if body.Count != 0 {
+		t.Fatalf("a task with no working tree reported %d dirty paths: %+v", body.Count, body.Entries)
+	}
+}
+
+// HEAD must mean the TASK's tip once the worktree is gone, not the shared
+// repo's checkout — otherwise `diff HEAD~1` errors and `diff HEAD` silently
+// answers about whatever branch the user has out.
+func TestBuildGitResultHeadMeansTheTaskTipWithoutWorktree(t *testing.T) {
+	repo := newTestRepo(t)
+	taskID, taskIDHex := newTaskID(0xde)
+	wt := filepath.Join(repo, ".harness-worktrees", taskIDHex)
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "harness/"+taskIDHex, wt)
+	if err := os.WriteFile(filepath.Join(wt, "only-in-task.txt"), []byte("agent work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, wt, "add", "only-in-task.txt")
+	gitRun(t, wt, "commit", "-q", "-m", "agent commit")
+	gitRun(t, repo, "worktree", "remove", "--force", wt)
+
+	s := &Session{AllowedRoots: []string{repo}}
+	req := &protocol.RunnerGitQueryRequest{Kind: protocol.GitQueryKind_Diff, Target: protocol.GitDiffTarget_Worktree}
+	req.TaskId = taskID
+	req.SetBaseRev([]byte("HEAD~1"))
+	req.SetRepoPath([]byte(repo))
+	res := s.buildGitResult(context.Background(), req)
+	if res.Status != protocol.GitRunStatus_Ok {
+		t.Fatalf("status = %v stderr %q — HEAD~1 resolved against the shared repo", res.Status, res.Stderr)
+	}
+	if text := string(res.Diff().Text); !strings.Contains(text, "only-in-task.txt") {
+		t.Fatalf("diff does not show the task's own commit:\n%s", text)
+	}
 }
