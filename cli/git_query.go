@@ -18,13 +18,20 @@ import (
 // HEAD for a show, and the task's tip for a log — the same defaults git
 // itself uses.
 type GitQuery struct {
-	Kind       protocol.GitQueryKind
-	Target     protocol.GitDiffTarget
-	BaseRev    string
-	TargetRev  string
-	Path       string
-	MaxCommits uint32
-	MaxBytes   uint32
+	Kind      protocol.GitQueryKind
+	Target    protocol.GitDiffTarget
+	BaseRev   string
+	TargetRev string
+	// Path filters WITHIN a repository; Subrepo chooses WHICH repository.
+	// They are not interchangeable and may be combined.
+	Path    string
+	Subrepo string
+	// SubmoduleDiff inlines a submodule's own file-level changes under its
+	// gitlink entry. Off by default: the combined output is no longer an
+	// applyable patch.
+	SubmoduleDiff bool
+	MaxCommits    uint32
+	MaxBytes      uint32
 }
 
 type GitCommit struct {
@@ -57,6 +64,7 @@ type GitResult struct {
 	Kind      protocol.GitQueryKind
 	Commits   []GitCommit
 	Entries   []GitStatusEntry
+	Subrepos  []string // repo roots nested under the query's current root
 	Text      string
 	Truncated bool
 }
@@ -94,6 +102,8 @@ func (c *Client) GitQuery(ctx context.Context, taskIDHex string, q GitQuery) (*G
 	body.SetBaseRev([]byte(q.BaseRev))
 	body.SetTargetRev([]byte(q.TargetRev))
 	body.SetPath([]byte(q.Path))
+	body.SetSubrepo([]byte(q.Subrepo))
+	body.SetSubmoduleDiff(q.SubmoduleDiff)
 	req.SetGitQuery(body)
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
@@ -164,6 +174,13 @@ func decodeGitResult(res *protocol.GitQueryResult) *GitResult {
 				})
 			}
 		}
+	case protocol.GitQueryKind_Subrepos:
+		if sr := res.Subrepos(); sr != nil {
+			out.Truncated = sr.Truncated()
+			for _, e := range sr.Entries {
+				out.Subrepos = append(out.Subrepos, string(e.Path))
+			}
+		}
 	case protocol.GitQueryKind_Show:
 		if tb := res.Show(); tb != nil {
 			out.Text = string(tb.Text)
@@ -178,27 +195,36 @@ func decodeGitResult(res *protocol.GitQueryResult) *GitResult {
 	return out
 }
 
-func (c *Client) GitLog(ctx context.Context, taskIDHex, baseRev, path string, max uint32) (*GitResult, error) {
-	return c.GitQuery(ctx, taskIDHex, GitQuery{
-		Kind: protocol.GitQueryKind_Log, BaseRev: baseRev, Path: path, MaxCommits: max,
-	})
+// The wrappers take a GitQuery for the optional knobs rather than growing a
+// parameter each time one is added — subrepo and submodule are already two, and
+// a positional list that long is where callers start passing them in the wrong
+// order.
+
+func (c *Client) GitLog(ctx context.Context, taskIDHex string, q GitQuery) (*GitResult, error) {
+	q.Kind = protocol.GitQueryKind_Log
+	return c.GitQuery(ctx, taskIDHex, q)
 }
 
-func (c *Client) GitDiff(ctx context.Context, taskIDHex, baseRev string, target protocol.GitDiffTarget, targetRev, path string, maxBytes uint32) (*GitResult, error) {
-	return c.GitQuery(ctx, taskIDHex, GitQuery{
-		Kind: protocol.GitQueryKind_Diff, Target: target,
-		BaseRev: baseRev, TargetRev: targetRev, Path: path, MaxBytes: maxBytes,
-	})
+func (c *Client) GitDiff(ctx context.Context, taskIDHex string, q GitQuery) (*GitResult, error) {
+	q.Kind = protocol.GitQueryKind_Diff
+	return c.GitQuery(ctx, taskIDHex, q)
 }
 
-func (c *Client) GitShow(ctx context.Context, taskIDHex, rev, path string, maxBytes uint32) (*GitResult, error) {
-	return c.GitQuery(ctx, taskIDHex, GitQuery{
-		Kind: protocol.GitQueryKind_Show, BaseRev: rev, Path: path, MaxBytes: maxBytes,
-	})
+func (c *Client) GitShow(ctx context.Context, taskIDHex string, q GitQuery) (*GitResult, error) {
+	q.Kind = protocol.GitQueryKind_Show
+	return c.GitQuery(ctx, taskIDHex, q)
 }
 
-func (c *Client) GitStatus(ctx context.Context, taskIDHex, path string) (*GitResult, error) {
-	return c.GitQuery(ctx, taskIDHex, GitQuery{Kind: protocol.GitQueryKind_Status, Path: path})
+func (c *Client) GitStatus(ctx context.Context, taskIDHex string, q GitQuery) (*GitResult, error) {
+	q.Kind = protocol.GitQueryKind_Status
+	return c.GitQuery(ctx, taskIDHex, q)
+}
+
+// GitSubrepos lists the git repo roots nested under the query's current root.
+// With q.Subrepo set it lists what is nested one level further in.
+func (c *Client) GitSubrepos(ctx context.Context, taskIDHex string, q GitQuery) (*GitResult, error) {
+	q.Kind = protocol.GitQueryKind_Subrepos
+	return c.GitQuery(ctx, taskIDHex, q)
 }
 
 // GitLineClass tags a diff line for colouring. Each surface maps a class to

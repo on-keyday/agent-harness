@@ -118,8 +118,11 @@ type GitAction struct {
 	Sub       string
 	BaseRev   string
 	TargetRev string
+	// Path filters within a repository; Subrepo chooses which repository.
 	Path      string
+	Subrepo   string
 	Staged    bool
+	Submodule bool
 	Max       uint32
 }
 
@@ -803,7 +806,7 @@ func parsePermutedFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 // grammar harness-cli uses, so a hand that learned one surface knows the other.
 func parseGit(args []string) (Action, error) {
 	if len(args) < 2 {
-		return nil, fmt.Errorf("git: usage: git <task-id> {log | diff | show | status} ...")
+		return nil, fmt.Errorf("git: usage: git <task-id> {log | diff | show | status | subrepos} ...")
 	}
 	act := GitAction{TaskID: args[0], Sub: args[1]}
 	rest, path := splitPathspecTokens(args[2:])
@@ -814,6 +817,7 @@ func parseGit(args []string) (Action, error) {
 		fs := flag.NewFlagSet("git log", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		max := fs.Uint("max", 0, "")
+		subrepo := fs.String("subrepo", "", "")
 		pos, err := parsePermutedFlags(fs, rest)
 		if err != nil {
 			return nil, fmt.Errorf("git log: %w", err)
@@ -825,17 +829,22 @@ func parseGit(args []string) (Action, error) {
 			act.BaseRev = pos[0]
 		}
 		act.Max = uint32(*max)
+		act.Subrepo = *subrepo
 
 	case "diff":
 		fs := flag.NewFlagSet("git diff", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
 		staged := fs.Bool("staged", false, "")
 		fs.BoolVar(staged, "cached", false, "")
+		submodule := fs.Bool("submodule", false, "")
+		subrepo := fs.String("subrepo", "", "")
 		pos, err := parsePermutedFlags(fs, rest)
 		if err != nil {
 			return nil, fmt.Errorf("git diff: %w", err)
 		}
 		act.Staged = *staged
+		act.Submodule = *submodule
+		act.Subrepo = *subrepo
 		// Positionals are counted the way git counts them: none = unstaged,
 		// one = <base> against the working tree, two = commit against commit.
 		switch len(pos) {
@@ -854,6 +863,8 @@ func parseGit(args []string) (Action, error) {
 	case "show":
 		fs := flag.NewFlagSet("git show", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
+		submodule := fs.Bool("submodule", false, "")
+		subrepo := fs.String("subrepo", "", "")
 		pos, err := parsePermutedFlags(fs, rest)
 		if err != nil {
 			return nil, fmt.Errorf("git show: %w", err)
@@ -864,14 +875,24 @@ func parseGit(args []string) (Action, error) {
 		if len(pos) == 1 {
 			act.BaseRev = pos[0]
 		}
+		act.Submodule = *submodule
+		act.Subrepo = *subrepo
 
-	case "status":
-		if len(rest) > 0 {
-			return nil, fmt.Errorf("git status: takes no revision (got %q)", rest[0])
+	case "status", "subrepos":
+		fs := flag.NewFlagSet("git "+act.Sub, flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		subrepo := fs.String("subrepo", "", "")
+		pos, err := parsePermutedFlags(fs, rest)
+		if err != nil {
+			return nil, fmt.Errorf("git %s: %w", act.Sub, err)
 		}
+		if len(pos) > 0 {
+			return nil, fmt.Errorf("git %s: takes no revision (got %q)", act.Sub, pos[0])
+		}
+		act.Subrepo = *subrepo
 
 	default:
-		return nil, fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status)", act.Sub)
+		return nil, fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos)", act.Sub)
 	}
 	return act, nil
 }

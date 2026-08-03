@@ -1929,6 +1929,8 @@ const POLL_INTERVAL_MS = 5000;
             "                            one commit and its diff",
             "  git <task> status [-- <path>]",
             "                            uncommitted and untracked paths (untracked appear in no diff)",
+            "  git <task> subrepos       list git repos nested inside the worktree",
+            "                            --subrepo DIR runs any of the above inside one; --submodule inlines submodule content",
             "  file ls <task> [rel]      list a worktree directory",
             "  file delete [-r] [-f] <task> <rel>",
             "                            remove a file (no -r) or directory (-r [-f])",
@@ -3530,11 +3532,19 @@ const POLL_INTERVAL_MS = 5000;
   const gitRowsEl       = document.getElementById("git-rows");
   const gitNoteEl       = document.getElementById("git-note");
   const gitContentEl    = document.getElementById("git-content");
+  const gitRepoEl       = document.getElementById("git-repo");
+  const gitUpBtn        = document.getElementById("git-up-btn");
+  const gitSubmoduleBox = document.getElementById("git-submodule");
 
   let gitBaseRev = "HEAD";
-  let gitRows = [];        // {kind: "worktree"|"index"|"commit", commit?}
+  let gitRows = [];        // {kind: "worktree"|"index"|"commit"|"subrepo", ...}
   let gitActiveIndex = 0;
   let gitStatusSummary = "";
+  // gitSubrepo is the nested repository the panel is rooted in, relative to the
+  // task's worktree; "" is the worktree itself. gitSubmodule inlines a
+  // submodule's own changes into the diff.
+  let gitSubrepo = "";
+  let gitSubmodule = false;
 
   // classifyGitLine mirrors cli.ClassifyGitLine (cli/git_query.go) exactly,
   // header checks first: "--- a/x" and "+++ b/x" start with the same bytes as
@@ -3610,14 +3620,30 @@ const POLL_INTERVAL_MS = 5000;
   function gitSetBase(rev) {
     gitBaseRev = rev || "HEAD";
     if (gitBaseEl) gitBaseEl.textContent = gitBaseRev.slice(0, 12);
+    if (gitRepoEl) gitRepoEl.textContent = gitSubrepo || "(root)";
+    if (gitUpBtn) gitUpBtn.disabled = gitSubrepo === "";
+    if (gitSubmoduleBox) gitSubmoduleBox.checked = gitSubmodule;
     updateGitButtons();
   }
 
+  // gitLeaveSubrepo goes back up one level, to the parent repository.
+  async function gitLeaveSubrepo() {
+    if (!gitSubrepo) return;
+    const i = gitSubrepo.lastIndexOf("/");
+    gitSubrepo = i >= 0 ? gitSubrepo.slice(0, i) : "";
+    gitSetBase("HEAD");
+    await refreshGit(false);
+  }
+
+  // Every query goes through here so the panel's current root and submodule
+  // setting are attached in ONE place — a caller that forgot would silently
+  // answer about the outer repository.
   async function gitQuery(kind, opts) {
     const taskID = gitTaskSelect ? gitTaskSelect.value : "";
     if (!taskID) throw new Error("no task selected");
     if (!window.harness) throw new Error("not connected");
-    const res = await window.harness.gitQuery(taskID, kind, opts || {});
+    const merged = Object.assign({ subrepo: gitSubrepo, submodule: gitSubmodule }, opts || {});
+    const res = await window.harness.gitQuery(taskID, kind, merged);
     if (!res.ok) throw new Error(res.stderr || res.status);
     return res;
   }
@@ -3671,6 +3697,13 @@ const POLL_INTERVAL_MS = 5000;
     renderGitRows();
     const row = gitRows[i];
     if (!row) return;
+    if (row.kind === "subrepo") {
+      // A [REPO] row is a destination, not content.
+      gitSubrepo = gitSubrepo ? gitSubrepo + "/" + row.subrepo : row.subrepo;
+      gitSetBase("HEAD");
+      await refreshGit(false);
+      return;
+    }
     if (gitNoteEl) gitNoteEl.textContent = "";
     try {
       let res;
@@ -3699,7 +3732,9 @@ const POLL_INTERVAL_MS = 5000;
     }
     const wanted = preserveSelection ? gitActiveIndex : 0;
     try {
-      const [log, status] = await Promise.all([gitQuery("log", {}), gitQuery("status", {})]);
+      const [log, status, subs] = await Promise.all([
+        gitQuery("log", {}), gitQuery("status", {}), gitQuery("subrepos", {}),
+      ]);
       let changed = 0, untracked = 0;
       for (const e of status.entries || []) {
         if (e.xy === "??") untracked++; else changed++;
@@ -3709,6 +3744,7 @@ const POLL_INTERVAL_MS = 5000;
         : (untracked === 0 ? `${changed} changed` : `${changed} changed, ${untracked} untracked`);
       gitRows = [{ kind: "worktree" }, { kind: "index" }];
       for (const c of log.commits || []) gitRows.push({ kind: "commit", commit: c });
+      for (const sr of subs.subrepos || []) gitRows.push({ kind: "subrepo", subrepo: sr });
       if (gitNoteEl) {
         gitNoteEl.textContent = log.truncated ? `commit list truncated at ${(log.commits || []).length}` : "";
       }
@@ -3739,12 +3775,21 @@ const POLL_INTERVAL_MS = 5000;
 
   if (gitTaskSelect) {
     gitTaskSelect.addEventListener("change", () => {
-      // A different task keeps none of the previous one's baseline.
+      // A different task keeps none of the previous one's root or baseline.
+      gitSubrepo = "";
+      gitSubmodule = false;
       gitSetBase("HEAD");
       refreshGit(false);
     });
   }
   if (gitRefreshBtn) gitRefreshBtn.addEventListener("click", () => refreshGit(true));
+  if (gitUpBtn) gitUpBtn.addEventListener("click", () => gitLeaveSubrepo());
+  if (gitSubmoduleBox) {
+    gitSubmoduleBox.addEventListener("change", () => {
+      gitSubmodule = gitSubmoduleBox.checked;
+      openGitRow(gitActiveIndex);
+    });
+  }
   if (gitBaseResetBtn) {
     gitBaseResetBtn.addEventListener("click", () => {
       gitSetBase("HEAD");
@@ -3766,10 +3811,19 @@ const POLL_INTERVAL_MS = 5000;
     const btn = tabbar.querySelector('.tab-btn[data-tab="git"]');
     if (btn) btn.click();
     if (gitTaskSelect) gitTaskSelect.value = taskID;
+    gitSubrepo = opts.subrepo || "";
+    gitSubmodule = !!opts.submodule;
     gitSetBase(opts.baseRev || "HEAD");
     await refreshGit(false);
     if (sub === "status") {
       await gitShowStatusListing();
+      return;
+    }
+    if (sub === "subrepos") {
+      const res = await gitQuery("subrepos", {});
+      gitContentEl.textContent = (res.subrepos || []).length
+        ? (res.subrepos || []).join("\n")
+        : "(no nested repositories)";
       return;
     }
     if (sub === "show") {
@@ -4030,11 +4084,14 @@ async function runGitCmd(rest) {
     args = args.slice(0, sepIdx);
   }
 
-  let staged = false;
+  let staged = false, submodule = false, subrepo = "";
   const pos = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--staged" || a === "--cached") { staged = true; continue; }
+    if (a === "--submodule") { submodule = true; continue; }
+    if (a === "--subrepo") { i++; subrepo = args[i] || ""; continue; }
+    if (a.startsWith("--subrepo=")) { subrepo = a.slice("--subrepo=".length); continue; }
     if (a === "--max" || a === "--max-bytes") { i++; continue; }   // caps are the runner's job
     if (a.startsWith("--")) throw new Error(`git ${sub}: unknown flag ${a}`);
     pos.push(a);
@@ -4058,14 +4115,15 @@ async function runGitCmd(rest) {
       }
       break;
     case "status":
-      if (pos.length) throw new Error(`git status: takes no revision (got ${pos[0]})`);
+    case "subrepos":
+      if (pos.length) throw new Error(`git ${sub}: takes no revision (got ${pos[0]})`);
       break;
     default:
-      throw new Error(`git: unknown sub-verb ${sub} (log | diff | show | status)`);
+      throw new Error(`git: unknown sub-verb ${sub} (log | diff | show | status | subrepos)`);
   }
 
   if (!window.__openGitTabFor) throw new Error("git: panel not ready");
-  await window.__openGitTabFor(taskID, sub, { baseRev, targetRev, path, staged });
+  await window.__openGitTabFor(taskID, sub, { baseRev, targetRev, path, staged, submodule, subrepo });
   return `git ${sub}: shown in the Git tab`;
 }
 

@@ -922,3 +922,57 @@ func TestParseGitMissingSubVerb(t *testing.T) {
 		t.Fatal("missing sub-verb must be rejected")
 	}
 }
+
+func TestParseGitSubrepoFlag(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff --subrepo pkg/inner HEAD")
+	if a.Subrepo != "pkg/inner" || a.BaseRev != "HEAD" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+// --subrepo chooses the repository and -- chooses the paths within it; both at
+// once must survive.
+func TestParseGitSubrepoAndPathspecTogether(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff --subrepo pkg/inner -- src/x.go")
+	if a.Subrepo != "pkg/inner" || a.Path != "src/x.go" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitSubmoduleFlag(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff --submodule")
+	if !a.Submodule {
+		t.Fatalf("action = %+v", a)
+	}
+	b := parseGitCmd(t, "git cafe1234 diff")
+	if b.Submodule {
+		t.Fatal("--submodule must be off by default")
+	}
+}
+
+func TestParseGitSubreposVerb(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 subrepos")
+	if a.Sub != "subrepos" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitSubreposWithSubrepo(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 subrepos --subrepo pkg/inner")
+	if a.Sub != "subrepos" || a.Subrepo != "pkg/inner" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitSubreposRejectsRev(t *testing.T) {
+	if _, err := ParseCommand("git cafe1234 subrepos HEAD", "/cwd"); err == nil {
+		t.Fatal("git subrepos takes no revision")
+	}
+}
+
+func TestParseGitLogSubrepo(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 log --subrepo pkg/inner --max 5")
+	if a.Subrepo != "pkg/inner" || a.Max != 5 {
+		t.Fatalf("action = %+v", a)
+	}
+}

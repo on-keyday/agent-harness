@@ -94,3 +94,57 @@ func TestGitQueryRequiresFileRead(t *testing.T) {
 		t.Fatalf("git_query requires %v, want file_read", got)
 	}
 }
+
+// Every field a client can set has to reach the runner. This relay is one site
+// for a struct that keeps growing, which is the shape that has silently
+// dropped a new field on this project before — so assert them all, not a
+// representative one.
+func TestRunnerGitRequestRelaysEveryField(t *testing.T) {
+	var req protocol.GitQueryRequest
+	req.TaskId = protocol.TaskID{Id: [16]byte{1, 2, 3}}
+	req.Kind = protocol.GitQueryKind_Show
+	req.Target = protocol.GitDiffTarget_Index
+	req.MaxCommits = 11
+	req.MaxBytes = 4242
+	req.SetBaseRev([]byte("HEAD~2"))
+	req.SetTargetRev([]byte("abc123"))
+	req.SetPath([]byte("src/x.go"))
+	req.SetSubrepo([]byte("pkg/inner"))
+	req.SetSubmoduleDiff(true)
+
+	got := runnerGitRequest(&req, "/srv/repo", 77)
+
+	if got.TaskId != req.TaskId {
+		t.Errorf("task id: %v", got.TaskId)
+	}
+	if got.StreamId != 77 {
+		t.Errorf("stream id: %d", got.StreamId)
+	}
+	if string(got.RepoPath) != "/srv/repo" {
+		t.Errorf("repo path: %q", got.RepoPath)
+	}
+	if got.Kind != protocol.GitQueryKind_Show {
+		t.Errorf("kind: %v", got.Kind)
+	}
+	if got.Target != protocol.GitDiffTarget_Index {
+		t.Errorf("target: %v", got.Target)
+	}
+	if got.MaxCommits != 11 || got.MaxBytes != 4242 {
+		t.Errorf("caps: %d %d", got.MaxCommits, got.MaxBytes)
+	}
+	if string(got.BaseRev) != "HEAD~2" {
+		t.Errorf("base rev: %q", got.BaseRev)
+	}
+	if string(got.TargetRev) != "abc123" {
+		t.Errorf("target rev: %q", got.TargetRev)
+	}
+	if string(got.Path) != "src/x.go" {
+		t.Errorf("path: %q", got.Path)
+	}
+	if string(got.Subrepo) != "pkg/inner" {
+		t.Errorf("subrepo: %q", got.Subrepo)
+	}
+	if !got.SubmoduleDiff() {
+		t.Error("submodule_diff dropped")
+	}
+}

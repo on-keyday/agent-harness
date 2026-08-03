@@ -255,3 +255,144 @@ func TestGitModalClosedIgnoresKeys(t *testing.T) {
 		t.Fatal("a closed modal must not consume navigation")
 	}
 }
+
+func withSubrepos(m GitModal, paths ...string) GitModal {
+	m.SetSubrepos(&cli.GitResult{Kind: protocol.GitQueryKind_Subrepos, Subrepos: paths})
+	return m
+}
+
+// [REPO] rows sit BELOW the commits: they are navigation, and the uncommitted
+// state must stay the default selection.
+func TestGitModalSubrepoRowsComeLast(t *testing.T) {
+	m := withSubrepos(newTestGitModal(), "pkg/inner", "vendor/lib")
+	if got := m.RowCount(); got != 6 {
+		t.Fatalf("RowCount = %d, want 2 pseudo + 2 commits + 2 repos", got)
+	}
+	if m.SelectedRow().Kind != gitRowWorktree {
+		t.Fatalf("selection moved to %v", m.SelectedRow().Kind)
+	}
+	last := m.rows[len(m.rows)-1]
+	if last.Kind != gitRowSubrepo || last.Subrepo != "vendor/lib" {
+		t.Fatalf("last row = %+v", last)
+	}
+}
+
+func TestGitModalEnterSubrepoResetsEverythingTheOldRepoOwned(t *testing.T) {
+	m := withSubrepos(newTestGitModal(), "pkg/inner")
+	// Move the baseline off its default so the reset is observable.
+	for i := 0; i < 2; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	m, _ = m.Update(keyRune('b'))
+	if m.BaseRev() == "HEAD" {
+		t.Fatal("fixture did not move the baseline; the test proves nothing")
+	}
+
+	m.EnterSubrepo("pkg/inner")
+	if m.Subrepo() != "pkg/inner" {
+		t.Fatalf("Subrepo = %q", m.Subrepo())
+	}
+	if m.BaseRev() != "HEAD" {
+		t.Fatalf("BaseRev = %q — that commit belongs to the repository we left", m.BaseRev())
+	}
+	if m.RowCount() != 2 {
+		t.Fatalf("RowCount = %d — the old repository's commits survived the move", m.RowCount())
+	}
+	if m.SelectedIndex() != 0 {
+		t.Fatalf("cursor = %d", m.SelectedIndex())
+	}
+}
+
+func TestGitModalEnterSubrepoNests(t *testing.T) {
+	m := newTestGitModal()
+	m.EnterSubrepo("pkg/inner")
+	// The runner reports paths relative to the CURRENT root, so a second entry
+	// has to append rather than replace.
+	m.EnterSubrepo("deeper")
+	if m.Subrepo() != "pkg/inner/deeper" {
+		t.Fatalf("Subrepo = %q", m.Subrepo())
+	}
+}
+
+func TestGitModalLeaveSubrepo(t *testing.T) {
+	m := newTestGitModal()
+	m.EnterSubrepo("pkg/inner")
+	m.EnterSubrepo("deeper")
+
+	if !m.LeaveSubrepo() || m.Subrepo() != "pkg/inner" {
+		t.Fatalf("one level up = %q", m.Subrepo())
+	}
+	if !m.LeaveSubrepo() || m.Subrepo() != "" {
+		t.Fatalf("two levels up = %q", m.Subrepo())
+	}
+	if m.LeaveSubrepo() {
+		t.Fatal("at the worktree there is nowhere further up; must report false")
+	}
+}
+
+// Every query the modal issues has to carry the current root, or it silently
+// answers about the outer repository.
+func TestGitModalQueryCarriesRootAndSubmodule(t *testing.T) {
+	m := newTestGitModal()
+	if q := m.Query(); q.Subrepo != "" || q.SubmoduleDiff {
+		t.Fatalf("fresh query = %+v", q)
+	}
+	m.EnterSubrepo("pkg/inner")
+	m.ToggleSubmodule()
+	q := m.Query()
+	if q.Subrepo != "pkg/inner" || !q.SubmoduleDiff {
+		t.Fatalf("query = %+v", q)
+	}
+}
+
+func TestGitModalToggleSubmodule(t *testing.T) {
+	m := newTestGitModal()
+	if m.SubmoduleDiff() {
+		t.Fatal("off by default")
+	}
+	if !m.ToggleSubmodule() || !m.SubmoduleDiff() {
+		t.Fatal("toggle on failed")
+	}
+	if m.ToggleSubmodule() || m.SubmoduleDiff() {
+		t.Fatal("toggle off failed")
+	}
+}
+
+func TestGitModalHeaderNamesTheRoot(t *testing.T) {
+	m := withSubrepos(newTestGitModal(), "pkg/inner")
+	if !strings.Contains(m.View(), "(root)") {
+		t.Fatalf("header should name the worktree as the root:\n%s", m.View())
+	}
+	if !strings.Contains(m.View(), "[REPO]") {
+		t.Fatalf("nested repos must be visible in the picker:\n%s", m.View())
+	}
+	m.EnterSubrepo("pkg/inner")
+	if !strings.Contains(m.View(), "pkg/inner") {
+		t.Fatalf("header should name the current subrepo:\n%s", m.View())
+	}
+}
+
+func TestGitModalOpenResetsTheRoot(t *testing.T) {
+	m := newTestGitModal()
+	m.EnterSubrepo("pkg/inner")
+	m.ToggleSubmodule()
+	m.Open("0000111122223333")
+	if m.Subrepo() != "" || m.SubmoduleDiff() {
+		t.Fatalf("a new task inherited subrepo=%q submodule=%v", m.Subrepo(), m.SubmoduleDiff())
+	}
+}
+
+// b on a [REPO] row must not set the baseline: a directory is not a commit-ish.
+func TestGitModalSetBaseOnSubrepoRowIsIgnored(t *testing.T) {
+	m := withSubrepos(newTestGitModal(), "pkg/inner")
+	for i := 0; i < 4; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if m.SelectedRow().Kind != gitRowSubrepo {
+		t.Fatalf("expected a subrepo row, got %v", m.SelectedRow().Kind)
+	}
+	m, _ = m.Update(keyRune('b'))
+	if m.BaseRev() != "HEAD" {
+		t.Fatalf("BaseRev = %q", m.BaseRev())
+	}
+}

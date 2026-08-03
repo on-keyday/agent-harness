@@ -28,38 +28,51 @@ const gitCmdTimeout = 60 * time.Second
 // DoFileLs uses. There is deliberately no cli.Dial here: the TUI already holds
 // a client and a fresh dial would throw away its handshake.
 
-func DoGitLog(c *cli.Client, taskID, baseRev string, max uint32) tea.Cmd {
+// Each Do* takes a cli.GitQuery so the caller sets whichever knobs apply —
+// subrepo and submodule are optional on nearly all of them, and threading each
+// one as its own parameter is how the wrong argument ends up in the wrong slot.
+
+func DoGitLog(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
 		defer cancel()
-		res, err := c.GitLog(ctx, taskID, baseRev, "", max)
+		res, err := c.GitLog(ctx, taskID, q)
 		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Log, Result: res, Err: err}
 	}
 }
 
-func DoGitDiff(c *cli.Client, taskID, baseRev string, target protocol.GitDiffTarget, targetRev, path string) tea.Cmd {
+func DoGitDiff(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
 		defer cancel()
-		res, err := c.GitDiff(ctx, taskID, baseRev, target, targetRev, path, 0)
+		res, err := c.GitDiff(ctx, taskID, q)
 		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Diff, Result: res, Err: err}
 	}
 }
 
-func DoGitShow(c *cli.Client, taskID, rev, path string) tea.Cmd {
+func DoGitShow(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
 		defer cancel()
-		res, err := c.GitShow(ctx, taskID, rev, path, 0)
+		res, err := c.GitShow(ctx, taskID, q)
 		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Show, Result: res, Err: err}
 	}
 }
 
-func DoGitStatus(c *cli.Client, taskID string) tea.Cmd {
+func DoGitStatus(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
 		defer cancel()
-		res, err := c.GitStatus(ctx, taskID, "")
+		res, err := c.GitStatus(ctx, taskID, q)
 		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Status, Result: res, Err: err}
+	}
+}
+
+func DoGitSubrepos(c *cli.Client, taskID string, q cli.GitQuery) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), gitCmdTimeout)
+		defer cancel()
+		res, err := c.GitSubrepos(ctx, taskID, q)
+		return GitResultMsg{TaskID: taskID, Kind: protocol.GitQueryKind_Subrepos, Result: res, Err: err}
 	}
 }

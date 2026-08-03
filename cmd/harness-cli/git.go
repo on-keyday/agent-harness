@@ -27,9 +27,27 @@ func splitPathspec(args []string) ([]string, string) {
 	return args, ""
 }
 
+// gitCommonFlags registers the knobs every sub-verb accepts and returns a
+// closure that folds them into a GitQuery. Registering them per sub-verb (not
+// once globally) keeps each FlagSet's own -h honest about what it takes.
+func gitCommonFlags(fs *flag.FlagSet, submodule bool) func(cli.GitQuery) cli.GitQuery {
+	subrepo := fs.String("subrepo", "", "run the query inside this worktree-relative directory, which must itself be a git repo root")
+	var sub *bool
+	if submodule {
+		sub = fs.Bool("submodule", false, "inline a submodule's own file-level changes (the output is then not an applyable patch)")
+	}
+	return func(q cli.GitQuery) cli.GitQuery {
+		q.Subrepo = *subrepo
+		if sub != nil {
+			q.SubmoduleDiff = *sub
+		}
+		return q
+	}
+}
+
 func runGit(cid objproto.ConnectionID, args []string) error {
 	if len(args) < 2 {
-		return fmt.Errorf("usage: harness-cli git <task-id> {log|diff|show|status} ...")
+		return fmt.Errorf("usage: harness-cli git <task-id> {log|diff|show|status|subrepos} ...")
 	}
 	taskID := args[0]
 	sub := args[1]
@@ -58,6 +76,7 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 	case "log":
 		fs := flag.NewFlagSet("git log", flag.ExitOnError)
 		max := fs.Uint("max", 0, "maximum commits (0 = 100, capped at 1000)")
+		common := gitCommonFlags(fs, false)
 		pos, err := parsePermuted(fs, rest)
 		if err != nil {
 			return err
@@ -69,13 +88,16 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		if len(pos) == 1 {
 			base = pos[0]
 		}
-		return emit(c.GitLog(ctx, taskID, base, path, uint32(*max)))
+		return emit(c.GitLog(ctx, taskID, common(cli.GitQuery{
+			BaseRev: base, Path: path, MaxCommits: uint32(*max),
+		})))
 
 	case "diff":
 		fs := flag.NewFlagSet("git diff", flag.ExitOnError)
 		staged := fs.Bool("staged", false, "diff the index instead of the working tree")
 		fs.BoolVar(staged, "cached", false, "alias for --staged")
 		maxBytes := fs.Uint("max-bytes", 0, "maximum diff bytes (0 = 2MiB, capped at 8MiB)")
+		common := gitCommonFlags(fs, true)
 		pos, err := parsePermuted(fs, rest)
 		if err != nil {
 			return err
@@ -100,11 +122,15 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		default:
 			return fmt.Errorf("git diff: at most two revisions (got %d)", len(pos))
 		}
-		return emit(c.GitDiff(ctx, taskID, base, target, targetRev, path, uint32(*maxBytes)))
+		return emit(c.GitDiff(ctx, taskID, common(cli.GitQuery{
+			Target: target, BaseRev: base, TargetRev: targetRev,
+			Path: path, MaxBytes: uint32(*maxBytes),
+		})))
 
 	case "show":
 		fs := flag.NewFlagSet("git show", flag.ExitOnError)
 		maxBytes := fs.Uint("max-bytes", 0, "maximum bytes (0 = 2MiB, capped at 8MiB)")
+		common := gitCommonFlags(fs, true)
 		pos, err := parsePermuted(fs, rest)
 		if err != nil {
 			return err
@@ -116,10 +142,13 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		if len(pos) == 1 {
 			rev = pos[0]
 		}
-		return emit(c.GitShow(ctx, taskID, rev, path, uint32(*maxBytes)))
+		return emit(c.GitShow(ctx, taskID, common(cli.GitQuery{
+			BaseRev: rev, Path: path, MaxBytes: uint32(*maxBytes),
+		})))
 
 	case "status":
 		fs := flag.NewFlagSet("git status", flag.ExitOnError)
+		common := gitCommonFlags(fs, false)
 		pos, err := parsePermuted(fs, rest)
 		if err != nil {
 			return err
@@ -127,10 +156,22 @@ func runGit(cid objproto.ConnectionID, args []string) error {
 		if len(pos) > 0 {
 			return fmt.Errorf("git status: takes no revision (got %q)", pos[0])
 		}
-		return emit(c.GitStatus(ctx, taskID, path))
+		return emit(c.GitStatus(ctx, taskID, common(cli.GitQuery{Path: path})))
+
+	case "subrepos":
+		fs := flag.NewFlagSet("git subrepos", flag.ExitOnError)
+		common := gitCommonFlags(fs, false)
+		pos, err := parsePermuted(fs, rest)
+		if err != nil {
+			return err
+		}
+		if len(pos) > 0 {
+			return fmt.Errorf("git subrepos: takes no revision (got %q)", pos[0])
+		}
+		return emit(c.GitSubrepos(ctx, taskID, common(cli.GitQuery{})))
 
 	default:
-		return fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status)", sub)
+		return fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos)", sub)
 	}
 }
 
@@ -173,6 +214,16 @@ func renderGitResult(w io.Writer, res *cli.GitResult, color bool) {
 	case protocol.GitQueryKind_Status:
 		for _, e := range res.Entries {
 			fmt.Fprintf(w, "%s %s\n", e.XY, e.Path)
+		}
+	case protocol.GitQueryKind_Subrepos:
+		for _, p := range res.Subrepos {
+			fmt.Fprintln(w, p)
+		}
+		if len(res.Subrepos) == 0 {
+			fmt.Fprintln(w, "(no nested repositories)")
+		}
+		if res.Truncated {
+			fmt.Fprintln(w, "(truncated: more nested repositories exist than the walk reports)")
 		}
 	default:
 		// A trailing newline in the text would otherwise print as a blank

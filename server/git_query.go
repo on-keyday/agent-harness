@@ -55,19 +55,7 @@ func (h *TaskHandler) handleGitQuery(conn ConnHandle, req *protocol.GitQueryRequ
 	}
 
 	rreq := protocol.RunnerRequest{Kind: protocol.RunnerRequestType_GitQuery}
-	body := protocol.RunnerGitQueryRequest{
-		TaskId:     req.TaskId,
-		StreamId:   uint64(runnerStream.ID()),
-		Kind:       req.Kind,
-		Target:     req.Target,
-		MaxCommits: req.MaxCommits,
-		MaxBytes:   req.MaxBytes,
-	}
-	body.SetRepoPath([]byte(task.RepoPath))
-	body.SetBaseRev(req.BaseRev)
-	body.SetTargetRev(req.TargetRev)
-	body.SetPath(req.Path)
-	rreq.SetGitQuery(body)
+	rreq.SetGitQuery(runnerGitRequest(req, task.RepoPath, uint64(runnerStream.ID())))
 	data := rreq.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)})
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		_ = clientStream.CloseBoth()
@@ -80,4 +68,28 @@ func (h *TaskHandler) handleGitQuery(conn ConnHandle, req *protocol.GitQueryRequ
 		Status:   protocol.GitQueryStatus_Ok,
 		StreamId: uint64(clientStream.ID()),
 	}
+}
+
+// runnerGitRequest relays a client's GitQueryRequest to the runner, adding the
+// stream id and the repo path the server holds.
+//
+// It is a separate function so a test can assert that EVERY field survives:
+// this is one relay site for a growing struct, which is exactly the shape that
+// has silently dropped a new field on this project before.
+func runnerGitRequest(req *protocol.GitQueryRequest, repoPath string, streamID uint64) protocol.RunnerGitQueryRequest {
+	body := protocol.RunnerGitQueryRequest{
+		TaskId:     req.TaskId,
+		StreamId:   streamID,
+		Kind:       req.Kind,
+		Target:     req.Target,
+		MaxCommits: req.MaxCommits,
+		MaxBytes:   req.MaxBytes,
+	}
+	body.SetRepoPath([]byte(repoPath))
+	body.SetBaseRev(req.BaseRev)
+	body.SetTargetRev(req.TargetRev)
+	body.SetPath(req.Path)
+	body.SetSubrepo(req.Subrepo)
+	body.SetSubmoduleDiff(req.SubmoduleDiff())
+	return body
 }

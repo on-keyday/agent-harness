@@ -2031,6 +2031,8 @@ func gitKindFromJS(s string) (protocol.GitQueryKind, error) {
 		return protocol.GitQueryKind_Show, nil
 	case "status":
 		return protocol.GitQueryKind_Status, nil
+	case "subrepos":
+		return protocol.GitQueryKind_Subrepos, nil
 	}
 	return 0, fmt.Errorf("gitQuery: unknown kind %q", s)
 }
@@ -2060,6 +2062,13 @@ func optString(opts js.Value, key string) string {
 	return v.String()
 }
 
+func optBool(opts js.Value, key string) bool {
+	if opts.Type() != js.TypeObject {
+		return false
+	}
+	return opts.Get(key).Truthy()
+}
+
 func optUint32(opts js.Value, key string) uint32 {
 	if opts.Type() != js.TypeObject {
 		return 0
@@ -2077,10 +2086,12 @@ func optUint32(opts js.Value, key string) uint32 {
 
 // harnessGitQuery runs one read-only git query against a task's worktree.
 //
-//	harness.gitQuery(taskID, kind, {target, baseRev, targetRev, path, maxCommits, maxBytes})
+//	harness.gitQuery(taskID, kind, {target, baseRev, targetRev, path, subrepo,
+//	                                submodule, maxCommits, maxBytes})
 //
-// kind is "log" | "diff" | "show" | "status"; target is "worktree" | "index" |
-// "rev". A non-ok runner status RESOLVES rather than rejecting — it is git's
+// kind is "log" | "diff" | "show" | "status" | "subrepos"; target is
+// "worktree" | "index" | "rev". subrepo re-roots the whole query into a nested
+// repository; path only filters within whichever repository that is. A non-ok runner status RESOLVES rather than rejecting — it is git's
 // answer, not a transport failure — with status and stderr set, so the page can
 // render git's own words where the diff would have gone.
 func harnessGitQuery(this js.Value, args []js.Value) any {
@@ -2115,13 +2126,15 @@ func harnessGitQuery(this js.Value, args []js.Value) any {
 				return
 			}
 			res, err := c.GitQuery(rootCtx, taskID, cli.GitQuery{
-				Kind:       kind,
-				Target:     target,
-				BaseRev:    optString(opts, "baseRev"),
-				TargetRev:  optString(opts, "targetRev"),
-				Path:       optString(opts, "path"),
-				MaxCommits: optUint32(opts, "maxCommits"),
-				MaxBytes:   optUint32(opts, "maxBytes"),
+				Kind:          kind,
+				Target:        target,
+				BaseRev:       optString(opts, "baseRev"),
+				TargetRev:     optString(opts, "targetRev"),
+				Path:          optString(opts, "path"),
+				Subrepo:       optString(opts, "subrepo"),
+				SubmoduleDiff: optBool(opts, "submodule"),
+				MaxCommits:    optUint32(opts, "maxCommits"),
+				MaxBytes:      optUint32(opts, "maxBytes"),
 			})
 			if err != nil {
 				rejectErr(reject, err)
@@ -2141,6 +2154,10 @@ func harnessGitQuery(this js.Value, args []js.Value) any {
 			for _, e := range res.Entries {
 				entries = append(entries, map[string]any{"xy": e.XY, "path": e.Path})
 			}
+			subrepos := make([]any, 0, len(res.Subrepos))
+			for _, sr := range res.Subrepos {
+				subrepos = append(subrepos, sr)
+			}
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"status":    res.Status.String(),
 				"ok":        res.Status == protocol.GitRunStatus_Ok,
@@ -2150,6 +2167,7 @@ func harnessGitQuery(this js.Value, args []js.Value) any {
 				"truncated": res.Truncated,
 				"commits":   commits,
 				"entries":   entries,
+				"subrepos":  subrepos,
 			}))
 		}()
 		return nil

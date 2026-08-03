@@ -434,6 +434,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				a.gitModal.SetStatus(msg.Result)
 			}
+		case protocol.GitQueryKind_Subrepos:
+			a.gitModal.SetSubrepos(msg.Result)
 		default:
 			a.gitModal.SetContent(msg.Result)
 		}
@@ -1086,23 +1088,52 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			taskID := a.gitModal.TaskID()
 			if msg.Type == tea.KeyEnter {
-				kind, target, rev := a.gitModal.GitQueryForRow(a.gitModal.SelectedRow())
-				if kind == protocol.GitQueryKind_Show {
-					return a, DoGitShow(a.client, taskID, rev, "")
+				row := a.gitModal.SelectedRow()
+				if row.Kind == gitRowSubrepo {
+					// A [REPO] row is a destination, not content: re-root and
+					// reload everything, because none of it belonged to the
+					// repository we are leaving.
+					a.gitModal.EnterSubrepo(row.Subrepo)
+					a.gitModal.SetSize(a.width, a.height)
+					return a, a.gitReload(taskID)
 				}
-				return a, DoGitDiff(a.client, taskID, rev, target, "", "")
+				kind, target, rev := a.gitModal.GitQueryForRow(row)
+				q := a.gitModal.Query()
+				q.BaseRev = rev
+				if kind == protocol.GitQueryKind_Show {
+					return a, DoGitShow(a.client, taskID, q)
+				}
+				q.Target = target
+				return a, DoGitDiff(a.client, taskID, q)
 			}
 			switch msg.String() {
 			case modalKeys.BoardRefresh:
-				// One keypress refreshes both halves: the commit list and the
-				// worktree summary go stale together.
-				return a, tea.Batch(
-					DoGitLog(a.client, taskID, "", 0),
-					DoGitStatus(a.client, taskID),
-				)
+				return a, a.gitReload(taskID)
 			case modalKeys.GitStatus:
 				a.gitStatusToContent = true
-				return a, DoGitStatus(a.client, taskID)
+				return a, DoGitStatus(a.client, taskID, a.gitModal.Query())
+			case modalKeys.GitUp:
+				if !a.gitModal.LeaveSubrepo() {
+					return a, nil
+				}
+				a.gitModal.SetSize(a.width, a.height)
+				return a, a.gitReload(taskID)
+			case modalKeys.GitSubmodule:
+				a.gitModal.ToggleSubmodule()
+				// Re-issue the current row so the toggle is visible at once
+				// rather than on the next unrelated keypress.
+				row := a.gitModal.SelectedRow()
+				if row.Kind == gitRowSubrepo {
+					return a, nil
+				}
+				kind, target, rev := a.gitModal.GitQueryForRow(row)
+				q := a.gitModal.Query()
+				q.BaseRev = rev
+				if kind == protocol.GitQueryKind_Show {
+					return a, DoGitShow(a.client, taskID, q)
+				}
+				q.Target = target
+				return a, DoGitDiff(a.client, taskID, q)
 			}
 			var cmd tea.Cmd
 			a.gitModal, cmd = a.gitModal.Update(msg)
@@ -1486,11 +1517,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.gitModal.Open(taskID)
 			a.gitModal.SetSize(a.width, a.height)
 			a.gitStatusToContent = false
-			return a, tea.Batch(
-				DoGitLog(a.client, taskID, "", 0),
-				DoGitStatus(a.client, taskID),
-				DoGitDiff(a.client, taskID, a.gitModal.BaseRev(), protocol.GitDiffTarget_Worktree, "", ""),
-			)
+			return a, a.gitReload(taskID)
 		}
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.FilePicker {
 			if a.focus != focusTasks {
@@ -2251,27 +2278,35 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.gitModal.Open(full)
 		a.gitModal.SetSize(a.width, a.height)
 		a.gitStatusToContent = v.Sub == "status"
-		cmds := []tea.Cmd{
-			DoGitLog(a.client, full, "", 0),
-			DoGitStatus(a.client, full),
+		// The modal's root and submodule setting come from the command line
+		// here, and everything issued below reads them back off the modal — so
+		// the keyboard route and the cmdline route cannot drift apart.
+		a.gitModal.SetRoot(v.Subrepo, v.Submodule)
+		if v.BaseRev != "" && v.Sub == "diff" {
+			a.gitModal.SetBaseRev(v.BaseRev)
 		}
+		cmds := []tea.Cmd{a.gitReload(full)}
 		switch v.Sub {
-		case "log", "status":
-			// Both are already in flight above; nothing further to ask for.
+		case "log", "status", "subrepos":
+			// gitReload already asked for all three.
 		case "show":
-			cmds = append(cmds, DoGitShow(a.client, full, v.BaseRev, v.Path))
+			q := a.gitModal.Query()
+			q.BaseRev = v.BaseRev
+			q.Path = v.Path
+			cmds = append(cmds, DoGitShow(a.client, full, q))
 		default: // diff
-			target := protocol.GitDiffTarget_Worktree
+			q := a.gitModal.Query()
+			q.BaseRev = v.BaseRev
+			q.TargetRev = v.TargetRev
+			q.Path = v.Path
+			q.Target = protocol.GitDiffTarget_Worktree
 			switch {
 			case v.Staged:
-				target = protocol.GitDiffTarget_Index
+				q.Target = protocol.GitDiffTarget_Index
 			case v.TargetRev != "":
-				target = protocol.GitDiffTarget_Rev
+				q.Target = protocol.GitDiffTarget_Rev
 			}
-			if v.BaseRev != "" {
-				a.gitModal.SetBaseRev(v.BaseRev)
-			}
-			cmds = append(cmds, DoGitDiff(a.client, full, v.BaseRev, target, v.TargetRev, v.Path))
+			cmds = append(cmds, DoGitDiff(a.client, full, q))
 		}
 		return a, tea.Batch(cmds...)
 	case FileLsAction:
@@ -2427,4 +2462,22 @@ func uniqueAgentProfiles(rs []protocol.RunnerInfo) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// gitReload asks for everything the git modal shows at its CURRENT root: the
+// commit list, the worktree summary, the nested repositories, and the diff for
+// the default selection. One helper because a re-root, a refresh and the
+// initial open all need the same four answers, and a route that forgot one
+// would silently show the previous repository's data.
+func (a *App) gitReload(taskID string) tea.Cmd {
+	q := a.gitModal.Query()
+	diffQ := q
+	diffQ.BaseRev = a.gitModal.BaseRev()
+	diffQ.Target = protocol.GitDiffTarget_Worktree
+	return tea.Batch(
+		DoGitLog(a.client, taskID, q),
+		DoGitStatus(a.client, taskID, q),
+		DoGitSubrepos(a.client, taskID, q),
+		DoGitDiff(a.client, taskID, diffQ),
+	)
 }

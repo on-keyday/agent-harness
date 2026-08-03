@@ -19,11 +19,16 @@ const (
 	gitRowWorktree gitRowKind = iota
 	gitRowIndex
 	gitRowCommit
+	// gitRowSubrepo is a nested repository. Selecting one re-roots the whole
+	// modal into it, so the picker doubles as the place nested repos are
+	// discovered — no second pane, and no path to type from memory.
+	gitRowSubrepo
 )
 
 type gitRow struct {
-	Kind   gitRowKind
-	Commit cli.GitCommit // zero for the two pseudo rows
+	Kind    gitRowKind
+	Commit  cli.GitCommit // zero unless Kind is gitRowCommit
+	Subrepo string        // relative path; set only for gitRowSubrepo
 }
 
 // gitDefaultBase is where the baseline starts. HEAD means "everything not yet
@@ -48,8 +53,18 @@ type GitModal struct {
 	rawLines  []string // uncoloured content lines, for the n/N file jump
 	truncated bool
 	errMsg    string
+	commits   []cli.GitCommit
 	statusSum string // "3 changed, 1 untracked", rendered on the worktree row
 	logNote   string // set when the commit list itself was truncated
+
+	// subrepoStack is the chain of nested repositories entered so far, each
+	// element relative to the one before it. A LEVEL is one entry, not one
+	// path segment: the runner reports "pkg/inner" as a single nested repo
+	// two directories deep, and going up from it lands at the worktree, not
+	// at "pkg" — where there is no repository at all.
+	subrepoStack []string
+	subrepos     []string // offered as [REPO] rows at the bottom of the picker
+	submodule    bool     // --submodule for the diff and show queries
 }
 
 func NewGitModal() GitModal {
@@ -71,6 +86,19 @@ func (m *GitModal) SetBaseRev(rev string) {
 	}
 }
 
+// SetRoot seeds the root and the submodule setting from outside the modal —
+// the cmdline route, which names them before the modal exists. Inside the
+// modal they move via Enter on a [REPO] row and the submodule key.
+func (m *GitModal) SetRoot(subrepo string, submodule bool) {
+	m.subrepoStack = nil
+	if subrepo != "" {
+		// One entry, not one per path segment: a path typed on the command
+		// line names one repository, so up from it is the worktree.
+		m.subrepoStack = []string{subrepo}
+	}
+	m.submodule = submodule
+}
+
 // Open resets everything except the size: a modal opened on a different task
 // must not inherit the previous task's baseline or content.
 func (m *GitModal) Open(taskID string) {
@@ -84,6 +112,9 @@ func (m *GitModal) Open(taskID string) {
 	m.errMsg = ""
 	m.statusSum = ""
 	m.logNote = ""
+	m.subrepoStack = nil
+	m.subrepos = nil
+	m.submodule = false
 	m.content.SetContent("(loading)")
 	m.content.GotoTop()
 }
@@ -117,17 +148,98 @@ func defaultGitRows() []gitRow {
 // on top so the uncommitted state stays the default selection.
 func (m *GitModal) SetLog(res *cli.GitResult) {
 	m.errMsg = ""
-	m.rows = defaultGitRows()
-	for _, c := range res.Commits {
-		m.rows = append(m.rows, gitRow{Kind: gitRowCommit, Commit: c})
-	}
-	if m.cursor >= len(m.rows) {
-		m.cursor = 0
-	}
+	m.commits = make([]cli.GitCommit, len(res.Commits))
+	copy(m.commits, res.Commits)
+	m.rebuildRows()
 	m.logNote = ""
 	if res.Truncated {
 		m.logNote = fmt.Sprintf("commit list truncated at %d", len(res.Commits))
 	}
+}
+
+// SetSubrepos records the nested repositories offered at the bottom of the
+// picker. Kept separate from SetLog because the two answers arrive
+// independently and either may be refreshed alone.
+func (m *GitModal) SetSubrepos(res *cli.GitResult) {
+	m.errMsg = ""
+	m.subrepos = make([]string, len(res.Subrepos))
+	copy(m.subrepos, res.Subrepos)
+	m.rebuildRows()
+}
+
+// rebuildRows lays the picker out: the two pseudo rows, the commits, then the
+// nested repositories. The order is deliberate — the uncommitted state stays
+// the default selection, and navigation sits below the content rather than
+// above it.
+func (m *GitModal) rebuildRows() {
+	m.rows = defaultGitRows()
+	for _, c := range m.commits {
+		m.rows = append(m.rows, gitRow{Kind: gitRowCommit, Commit: c})
+	}
+	for _, sr := range m.subrepos {
+		m.rows = append(m.rows, gitRow{Kind: gitRowSubrepo, Subrepo: sr})
+	}
+	if m.cursor >= len(m.rows) {
+		m.cursor = 0
+	}
+}
+
+// Subrepo is the nested repository the modal is rooted in, relative to the
+// task's worktree. Empty means the worktree itself.
+func (m GitModal) Subrepo() string { return strings.Join(m.subrepoStack, "/") }
+
+// SubmoduleDiff reports whether diff and show should inline a submodule's own
+// changes.
+func (m GitModal) SubmoduleDiff() bool { return m.submodule }
+
+// Query is the GitQuery every caller should start from: it carries the modal's
+// current root and submodule setting, so no caller has to remember to thread
+// them and none can disagree about them.
+func (m GitModal) Query() cli.GitQuery {
+	return cli.GitQuery{Subrepo: m.Subrepo(), SubmoduleDiff: m.submodule}
+}
+
+// EnterSubrepo re-roots the modal into rel (relative to the CURRENT root, which
+// is how the runner reports it) and clears everything that belonged to the old
+// repository — its commits, its baseline, its content.
+func (m *GitModal) EnterSubrepo(rel string) {
+	if rel == "" {
+		return
+	}
+	m.subrepoStack = append(m.subrepoStack, rel)
+	m.resetForNewRoot()
+}
+
+// LeaveSubrepo goes back up one level, to the parent repository. Reports false
+// when already at the task's worktree.
+func (m *GitModal) LeaveSubrepo() bool {
+	if len(m.subrepoStack) == 0 {
+		return false
+	}
+	m.subrepoStack = m.subrepoStack[:len(m.subrepoStack)-1]
+	m.resetForNewRoot()
+	return true
+}
+
+// ToggleSubmodule flips --submodule and returns the new setting.
+func (m *GitModal) ToggleSubmodule() bool {
+	m.submodule = !m.submodule
+	return m.submodule
+}
+
+func (m *GitModal) resetForNewRoot() {
+	m.commits = nil
+	m.subrepos = nil
+	m.baseRev = gitDefaultBase
+	m.statusSum = ""
+	m.logNote = ""
+	m.errMsg = ""
+	m.rawLines = nil
+	m.truncated = false
+	m.cursor = 0
+	m.rebuildRows()
+	m.content.SetContent("(loading)")
+	m.content.GotoTop()
 }
 
 // SetStatus records the summary shown on the worktree row. It does not touch
@@ -268,6 +380,8 @@ func (m GitModal) Update(msg tea.Msg) (GitModal, tea.Cmd) {
 			m.jumpFile(-1)
 			return m, nil
 		}
+		// GitSubmodule and GitUp change what the NEXT query asks for, so the
+		// App handles them: it holds the client that has to re-issue it.
 	}
 	var cmd tea.Cmd
 	m.content, cmd = m.content.Update(msg)
@@ -308,7 +422,16 @@ func (m GitModal) View() string {
 	if len(baseShort) > 12 {
 		baseShort = baseShort[:12]
 	}
-	header := HeaderStyle.Render(fmt.Sprintf("git — task %s   base: %s", taskShort, baseShort))
+	repoLabel := m.Subrepo()
+	if repoLabel == "" {
+		repoLabel = "(root)"
+	}
+	submoduleNote := ""
+	if m.submodule {
+		submoduleNote = "  +submodule"
+	}
+	header := HeaderStyle.Render(fmt.Sprintf("git — task %s   base: %s   repo: %s%s",
+		taskShort, baseShort, repoLabel, submoduleNote))
 
 	var list strings.Builder
 	for i, row := range m.rows {
@@ -325,6 +448,9 @@ func (m GitModal) View() string {
 			list.WriteString(fmt.Sprintf("%s[WORKTREE]  %s\n", cursor, summary))
 		case gitRowIndex:
 			list.WriteString(fmt.Sprintf("%s[INDEX]     staged\n", cursor))
+		case gitRowSubrepo:
+			list.WriteString(fmt.Sprintf("%s%s  %s\n", cursor,
+				MutedStyle.Render("[REPO]"), row.Subrepo))
 		default:
 			c := row.Commit
 			list.WriteString(fmt.Sprintf("%s%-8s  %s  %-10s  %s\n",
@@ -339,9 +465,11 @@ func (m GitModal) View() string {
 	if m.truncated {
 		notes = "  " + WarnStyle.Render("truncated")
 	}
-	footer := FooterStyle.Render("↑/↓ select · Enter: show · " +
-		modalKeys.GitSetBase + ": set base · " +
+	footer := FooterStyle.Render("↑/↓ select · Enter: show/enter · " +
+		modalKeys.GitSetBase + ": base · " +
 		modalKeys.GitStatus + ": status · " +
+		modalKeys.GitSubmodule + ": submodule · " +
+		modalKeys.GitUp + ": up · " +
 		modalKeys.GitNextFile + "/" + modalKeys.GitPrevFile + ": file · r: refresh · Esc: close")
 
 	return box.Render(header + "\n" + list.String() + "\n" + m.content.View() + notes + "\n" + footer)
@@ -360,6 +488,8 @@ func truncateRunes(s string, n int) string {
 // GitQueryForRow says what a row means as a query: the pseudo rows are diffs
 // against the current baseline, a commit is a show of that commit. Exported
 // shape kept small so the App does not re-derive the mapping.
+// A [REPO] row is not content — Enter on one re-roots instead of querying — so
+// the App checks the row kind before calling this.
 func (m GitModal) GitQueryForRow(row gitRow) (kind protocol.GitQueryKind, target protocol.GitDiffTarget, rev string) {
 	switch row.Kind {
 	case gitRowWorktree:
