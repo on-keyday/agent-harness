@@ -15,6 +15,11 @@ import (
 // cap); KillPortForward is direction-dependent AND the direction is only known
 // after the registry lookup, so its gate lives inline in the dispatch case,
 // after h.pforwards().get.
+//
+// GitQuery sits in this map rather than beside the direction-dependent file
+// ops because it is read-only by construction — there is no write direction to
+// discriminate. It is also the one task-scoped kind that does NOT require
+// Running/Detached; see handleGitQuery for why.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
 	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,
@@ -27,6 +32,7 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_BoardTopics:     protocol.Capability_InfoGlobal,
 	protocol.TaskControlKind_BoardRead:       protocol.Capability_InfoGlobal,
 	protocol.TaskControlKind_BoardPurge:      protocol.Capability_Purge,
+	protocol.TaskControlKind_GitQuery:        protocol.Capability_FileRead,
 }
 
 // hasCap reports whether have includes every bit in want.

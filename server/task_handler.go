@@ -361,6 +361,19 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
+	case protocol.TaskControlKind_GitQuery:
+		// FileRead is enforced centrally via requiredCap before dispatch.
+		gq := req.GitQuery()
+		if gq == nil {
+			slog.Error("TaskHandler: GitQuery variant is nil")
+			return
+		}
+		gresp := h.handleGitQuery(conn, gq)
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GitQuery, RequestId: req.RequestId}
+		resp.SetGitQuery(gresp)
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
 	case protocol.TaskControlKind_OpenPortForward:
 		pf := req.OpenPortForward()
 		if pf == nil {
