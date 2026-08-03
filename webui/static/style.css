@@ -1568,8 +1568,18 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .gd-meta { color: #808080; }
 .gd-err  { color: #f14c4c; }
 
+/* A <select> sizes itself to its longest option, and the task options carry a
+   full repo path. Left alone it pushed the PAGE wider than the viewport at
+   390px — the diff box scrolls inside itself, but the body must never scroll
+   sideways. The label needs the clamp too: max-width on the select alone
+   resolves against a content-sized parent and does nothing. */
+#git .actions label { max-width: 100%; min-width: 0; }
+#git-task-select { max-width: 100%; }
+
 @media (max-width: 600px) {
   .git-rows { max-height: 180px; }
   .git-diff { max-height: 50vh; font-size: 0.78rem; }
   .git-base-btn { margin-left: 0; }
+  #git .actions label { display: flex; width: 100%; }
+  #git-task-select { flex: 1; min-width: 0; }
 }
