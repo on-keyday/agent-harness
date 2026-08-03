@@ -576,3 +576,62 @@ func TestGitArgvShowHonoursSubmoduleDiff(t *testing.T) {
 		t.Fatalf("revision misplaced in %q", joined)
 	}
 }
+
+// A `git worktree add` checkout stores its .git as a FILE, not a directory.
+// The root test has to accept both — an os.Stat().IsDir() check would reject
+// every task worktree the harness creates.
+func TestIsWorktreeRootAcceptsAGitFile(t *testing.T) {
+	repo := newTestRepo(t)
+	wt := filepath.Join(repo, "wt")
+	gitRun(t, repo, "worktree", "add", "-q", "-b", "wtbranch", wt)
+
+	st, err := os.Lstat(filepath.Join(wt, ".git"))
+	if err != nil {
+		t.Fatalf("worktree has no .git entry: %v", err)
+	}
+	if st.IsDir() {
+		t.Skip("this git stores a worktree's .git as a directory; the file case is what needs pinning")
+	}
+	if !isWorktreeRoot(wt) {
+		t.Fatal("a worktree whose .git is a file was not recognised as a root")
+	}
+}
+
+func TestIsWorktreeRootRejectsAPlainDirectory(t *testing.T) {
+	repo := newTestRepo(t)
+	plain := filepath.Join(repo, "plain")
+	if err := os.MkdirAll(plain, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// It sits INSIDE a repository, so git run there would happily answer about
+	// the enclosing one. That is the answer this must not produce.
+	if isWorktreeRoot(plain) {
+		t.Fatal("a plain directory inside a repo was taken for a repo root")
+	}
+}
+
+func TestIsWorktreeRootRejectsAFile(t *testing.T) {
+	repo := newTestRepo(t)
+	if isWorktreeRoot(filepath.Join(repo, "a.txt")) {
+		t.Fatal("a regular file was taken for a repo root")
+	}
+}
+
+// isGitRepo settles the common case without spawning a process; the fallback
+// still has to answer for a directory whose .git lives further up.
+func TestIsGitRepoAcceptsASubdirectory(t *testing.T) {
+	repo := newTestRepo(t)
+	sub := filepath.Join(repo, "deep", "er")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !isGitRepo(sub) {
+		t.Fatal("a subdirectory of a repository is inside a working tree")
+	}
+}
+
+func TestIsGitRepoRejectsANonRepo(t *testing.T) {
+	if isGitRepo(t.TempDir()) {
+		t.Fatal("a bare temp dir is not a repository")
+	}
+}

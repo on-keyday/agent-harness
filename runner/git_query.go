@@ -84,8 +84,8 @@ func gitSourceFor(repoPath, taskIDHex string, noWorktree bool) (cwd, tip string,
 	}
 	wt := filepath.Join(repoPath, ".harness-worktrees", taskIDHex)
 	// isWorktreeRoot, not a bare os.Stat: an orphan directory left behind by a
-	// crashed cleanup still exists, and git run inside it walks up to the
-	// parent repo's .git and answers about the PARENT filtered to that
+	// crashed cleanup still exists but holds no .git, and git run inside it
+	// walks up to the parent repo and answers about the PARENT filtered to that
 	// subdirectory — a wrong answer wearing a right answer's face.
 	if isWorktreeRoot(wt) {
 		return wt, "HEAD", true, protocol.GitRunStatus_Ok
@@ -118,10 +118,9 @@ const gitSubrepoMaxCandidates = 64
 // directory up and answering about the enclosing repository is precisely the
 // wrong-answer-wearing-a-right-answer's-face this file keeps guarding against.
 //
-// The repo-root test is the same --show-toplevel equality used for worktrees,
-// which is what makes this work for a plain nested repo (a directory with its
-// own .git that the outer repo only ever sees as one untracked entry) as well
-// as for a submodule.
+// The repo-root test is the same one used for worktrees, which is what makes
+// this work for a plain nested repo (a directory with its own .git that the
+// outer repo only ever sees as one untracked entry) as well as for a submodule.
 func resolveSubrepo(root, rel string) (string, protocol.GitRunStatus) {
 	if rel == "" {
 		return root, protocol.GitRunStatus_Ok
@@ -144,10 +143,10 @@ func resolveSubrepo(root, rel string) (string, protocol.GitRunStatus) {
 // repository inside a nested repository is that repository's business, and the
 // operator reaches it by re-rooting there first.
 //
-// A directory is a candidate when it holds a `.git` entry of EITHER kind: a
-// submodule's .git is a file, not a directory. Each candidate is then
-// confirmed with the --show-toplevel check, so a stray .git file does not
-// produce a phantom entry.
+// A directory is a repo root when it holds a `.git` entry of EITHER kind: a
+// submodule's .git is a file, not a directory. The check is one lstat per
+// directory — it used to also spawn `git rev-parse` per candidate, which on a
+// Windows runner cost more than the rest of the walk put together.
 func findSubrepos(root string) ([]protocol.GitSubrepoEntry, bool) {
 	var out []protocol.GitSubrepoEntry
 	truncated := false
@@ -176,7 +175,7 @@ func findSubrepos(root string) ([]protocol.GitSubrepoEntry, bool) {
 				continue
 			}
 			child := filepath.Join(dir, name)
-			if hasGitEntry(child) && isWorktreeRoot(child) {
+			if isWorktreeRoot(child) {
 				rel, err := filepath.Rel(root, child)
 				if err != nil {
 					continue
@@ -197,8 +196,9 @@ func findSubrepos(root string) ([]protocol.GitSubrepoEntry, bool) {
 	return out, truncated
 }
 
-// hasGitEntry reports whether dir holds a `.git` of either kind. Cheap
-// pre-filter so the walk does not exec git for every directory.
+// hasGitEntry reports whether dir holds a `.git` of either kind — a directory
+// for a normal repository, a file for a `git worktree add` checkout or a
+// submodule.
 func hasGitEntry(dir string) bool {
 	_, err := os.Lstat(filepath.Join(dir, ".git"))
 	return err == nil
@@ -380,10 +380,19 @@ func parseGitStatusZ(out []byte) []protocol.GitStatusEntry {
 	return entries
 }
 
-// isGitRepo reports whether dir is inside a git working tree. It shells out
-// rather than looking for a ".git" entry because a worktree's .git is a file,
-// not a directory, and reimplementing that discovery is not worth it.
+// isGitRepo reports whether dir is inside a git working tree.
+//
+// The lstat is a fast path, not a shortcut: spawning a process costs ~300ms on
+// the Windows runner in use here (measured), and this ran before EVERY query.
+// A repository root always holds a .git entry — a directory for a normal repo,
+// a file for a `git worktree add` checkout — so its presence settles the common
+// case without a spawn. Only when it is absent do we ask git, which still
+// covers a runner rooted at a SUBDIRECTORY of a repository (where .git lives
+// further up) and any layout we do not create ourselves.
 func isGitRepo(dir string) bool {
+	if hasGitEntry(dir) {
+		return true
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitQueryTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
@@ -392,31 +401,26 @@ func isGitRepo(dir string) bool {
 }
 
 // isWorktreeRoot reports whether dir is itself the top level of a git working
-// tree, as opposed to merely sitting inside one. Symlinks are resolved on both
-// sides because git reports the real path and the caller may hold a symlinked
-// one (a temp dir under /tmp on macOS, for instance).
+// tree, as opposed to merely sitting inside one.
+//
+// The test is the presence of a .git entry directly in dir, which is exactly
+// what separates a real checkout from the case this guards against: a directory
+// left behind by a crashed cleanup has no .git at all, and git run inside it
+// walks UP to the enclosing repository and answers about that instead. It
+// costs one lstat.
+//
+// This used to compare `git rev-parse --show-toplevel` against dir. That is one
+// process spawn per call, and the walk in findSubrepos calls it once per
+// candidate — ~300ms each on the Windows runner in use here (measured). The
+// lstat decides the same question for every layout the harness creates: a
+// `git worktree add` checkout has a .git file, a normal repo has a .git
+// directory, and an orphan has neither.
 func isWorktreeRoot(dir string) bool {
 	st, err := os.Stat(dir)
 	if err != nil || !st.IsDir() {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), gitQueryTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return false
-	}
-	top, err := filepath.EvalSymlinks(strings.TrimSpace(string(out)))
-	if err != nil {
-		return false
-	}
-	want, err := filepath.EvalSymlinks(dir)
-	if err != nil {
-		return false
-	}
-	return top == want
+	return hasGitEntry(dir)
 }
 
 func refExists(repoPath, ref string) bool {

@@ -3548,6 +3548,22 @@ const POLL_INTERVAL_MS = 5000;
   let gitSubrepoStack = [];
   let gitSubmodule = false;
   const gitSubrepo = () => gitSubrepoStack.join("/");
+  // gitGeneration rises on every root change / refresh so a slow answer for a
+  // root the operator has left cannot repaint the current one.
+  let gitGeneration = 0;
+  let gitCommits = [];
+  let gitSubrepoList = [];
+
+  // rebuildGitRows lays the picker out from whichever answers have arrived: the
+  // two pseudo rows, then the commits, then the nested repositories. It is
+  // called once per answer, so a slow one only adds its own rows late.
+  function rebuildGitRows(wanted) {
+    gitRows = [{ kind: "worktree" }, { kind: "index" }];
+    for (const c of gitCommits) gitRows.push({ kind: "commit", commit: c });
+    for (const sr of gitSubrepoList) gitRows.push({ kind: "subrepo", subrepo: sr });
+    if (gitActiveIndex >= gitRows.length) gitActiveIndex = wanted < gitRows.length ? wanted : 0;
+    renderGitRows();
+  }
 
   // classifyGitLine mirrors cli.ClassifyGitLine (cli/git_query.go) exactly,
   // header checks first: "--- a/x" and "+++ b/x" start with the same bytes as
@@ -3736,10 +3752,31 @@ const POLL_INTERVAL_MS = 5000;
       return;
     }
     const wanted = preserveSelection ? gitActiveIndex : 0;
-    try {
-      const [log, status, subs] = await Promise.all([
-        gitQuery("log", {}), gitQuery("status", {}), gitQuery("subrepos", {}),
-      ]);
+    // The four answers are rendered AS THEY ARRIVE rather than joined: the
+    // subrepos walk enumerates the whole tree and on a Windows runner takes
+    // seconds, and awaiting all of them together made every open cost the
+    // slowest one. The generation counter drops answers for a root the
+    // operator has already navigated away from.
+    const gen = ++gitGeneration;
+    gitCommits = [];
+    gitSubrepoList = [];
+    gitRows = [{ kind: "worktree" }, { kind: "index" }];
+    gitActiveIndex = wanted < gitRows.length ? wanted : 0;
+    renderGitRows();
+
+    const fail = (err) => { if (gen === gitGeneration) gitSetError(err.message); };
+
+    gitQuery("log", {}).then(log => {
+      if (gen !== gitGeneration) return;
+      gitCommits = log.commits || [];
+      if (gitNoteEl) {
+        gitNoteEl.textContent = log.truncated ? `commit list truncated at ${gitCommits.length}` : "";
+      }
+      rebuildGitRows(wanted);
+    }).catch(fail);
+
+    gitQuery("status", {}).then(status => {
+      if (gen !== gitGeneration) return;
       let changed = 0, untracked = 0;
       for (const e of status.entries || []) {
         if (e.xy === "??") untracked++; else changed++;
@@ -3747,20 +3784,18 @@ const POLL_INTERVAL_MS = 5000;
       gitStatusSummary = (changed === 0 && untracked === 0)
         ? "clean"
         : (untracked === 0 ? `${changed} changed` : `${changed} changed, ${untracked} untracked`);
-      gitRows = [{ kind: "worktree" }, { kind: "index" }];
-      for (const c of log.commits || []) gitRows.push({ kind: "commit", commit: c });
-      for (const sr of subs.subrepos || []) gitRows.push({ kind: "subrepo", subrepo: sr });
-      if (gitNoteEl) {
-        gitNoteEl.textContent = log.truncated ? `commit list truncated at ${(log.commits || []).length}` : "";
-      }
-      gitActiveIndex = wanted < gitRows.length ? wanted : 0;
       renderGitRows();
-      await openGitRow(gitActiveIndex);
-    } catch (err) {
-      gitRows = [];
-      renderGitRows();
-      gitSetError(err.message);
-    }
+    }).catch(fail);
+
+    gitQuery("subrepos", {}).then(subs => {
+      if (gen !== gitGeneration) return;
+      gitSubrepoList = subs.subrepos || [];
+      rebuildGitRows(wanted);
+    }).catch(fail);
+
+    // The content the operator came for goes out immediately, not behind the
+    // row list.
+    await openGitRow(gitActiveIndex);
   }
 
   // gitShowStatusListing renders the porcelain listing into the content pane.
