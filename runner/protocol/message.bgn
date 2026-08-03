@@ -1476,11 +1476,14 @@ enum GitRunStatus:
     bad_rev          = "bad_rev"           # unresolvable, or '-'-leading
     git_failed       = "git_failed"        # non-zero exit for another reason
     io_error         = "io_error"
-    file_not_found   = "file_not_found"   # file kind: no path given, or the path
-                                          # is absent from the named side
     subrepo_invalid  = "subrepo_invalid"   # subrepo escaped the worktree, passed
                                            # through a symlink, does not exist, or
                                            # exists but is not a repo root
+    # Appended, not inserted: these are positional ordinals, so slotting a new
+    # member next to a related one renumbers everything after it and a peer on
+    # the other build reads one status as another.
+    file_not_found   = "file_not_found"    # file kind: no path given, or the path
+                                           # is absent from the named side
 
 format GitCommit:
     sha_len     :u8             # 40 for sha1 repos, 64 for sha256 ones — a

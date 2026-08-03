@@ -35511,8 +35511,8 @@ const (
 	GitRunStatus_BadRev         GitRunStatus = 4
 	GitRunStatus_GitFailed      GitRunStatus = 5
 	GitRunStatus_IoError        GitRunStatus = 6
-	GitRunStatus_FileNotFound   GitRunStatus = 7
-	GitRunStatus_SubrepoInvalid GitRunStatus = 8
+	GitRunStatus_SubrepoInvalid GitRunStatus = 7
+	GitRunStatus_FileNotFound   GitRunStatus = 8
 )
 
 func (e GitRunStatus) String() string {
@@ -35531,10 +35531,10 @@ func (e GitRunStatus) String() string {
 		return "git_failed"
 	case GitRunStatus_IoError:
 		return "io_error"
-	case GitRunStatus_FileNotFound:
-		return "file_not_found"
 	case GitRunStatus_SubrepoInvalid:
 		return "subrepo_invalid"
+	case GitRunStatus_FileNotFound:
+		return "file_not_found"
 	default:
 		return fmt.Sprintf("GitRunStatus(%d)", e)
 	}

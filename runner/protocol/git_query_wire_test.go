@@ -350,3 +350,57 @@ func TestRunnerGitQueryRequestCarriesSubrepo(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+// The git enums are positional: a member slotted next to a related one instead
+// of appended renumbers everything after it, and a peer on the other build
+// reads one value as another. That already happened once — file_not_found went
+// in beside io_error and pushed subrepo_invalid from 7 to 8 — so the ordinals
+// are pinned here rather than left to review.
+//
+// Adding a member: append it, and add its number below. Changing a number in
+// this table is a wire break, not a test fix.
+func TestGitEnumOrdinalsAreStable(t *testing.T) {
+	for name, got := range map[string]int{
+		"GitRunStatus_Ok":             int(GitRunStatus_Ok),
+		"GitRunStatus_RepoNotAllowed": int(GitRunStatus_RepoNotAllowed),
+		"GitRunStatus_NoSource":       int(GitRunStatus_NoSource),
+		"GitRunStatus_NotAGitRepo":    int(GitRunStatus_NotAGitRepo),
+		"GitRunStatus_BadRev":         int(GitRunStatus_BadRev),
+		"GitRunStatus_GitFailed":      int(GitRunStatus_GitFailed),
+		"GitRunStatus_IoError":        int(GitRunStatus_IoError),
+		"GitRunStatus_SubrepoInvalid": int(GitRunStatus_SubrepoInvalid),
+		"GitRunStatus_FileNotFound":   int(GitRunStatus_FileNotFound),
+	} {
+		want := map[string]int{
+			"GitRunStatus_Ok": 0, "GitRunStatus_RepoNotAllowed": 1, "GitRunStatus_NoSource": 2,
+			"GitRunStatus_NotAGitRepo": 3, "GitRunStatus_BadRev": 4, "GitRunStatus_GitFailed": 5,
+			"GitRunStatus_IoError": 6, "GitRunStatus_SubrepoInvalid": 7, "GitRunStatus_FileNotFound": 8,
+		}[name]
+		if got != want {
+			t.Errorf("%s = %d, want %d", name, got, want)
+		}
+	}
+
+	for name, pair := range map[string][2]int{
+		"GitQueryKind_Log":      {int(GitQueryKind_Log), 0},
+		"GitQueryKind_Diff":     {int(GitQueryKind_Diff), 1},
+		"GitQueryKind_Show":     {int(GitQueryKind_Show), 2},
+		"GitQueryKind_Status":   {int(GitQueryKind_Status), 3},
+		"GitQueryKind_Subrepos": {int(GitQueryKind_Subrepos), 4},
+		"GitQueryKind_File":     {int(GitQueryKind_File), 5},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s = %d, want %d", name, pair[0], pair[1])
+		}
+	}
+
+	for name, pair := range map[string][2]int{
+		"GitDiffTarget_Worktree": {int(GitDiffTarget_Worktree), 0},
+		"GitDiffTarget_Index":    {int(GitDiffTarget_Index), 1},
+		"GitDiffTarget_Rev":      {int(GitDiffTarget_Rev), 2},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("%s = %d, want %d", name, pair[0], pair[1])
+		}
+	}
+}
