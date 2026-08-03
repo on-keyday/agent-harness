@@ -180,7 +180,9 @@ enum GitRunStatus:              # what the runner decides; carried on the stream
     io_error
 
 format GitCommit:
-    sha         :[40]u8         # lowercase hex
+    sha_len     :u8             # 40 for sha1 repos, 64 for sha256 ones — a
+    sha         :[sha_len]u8    # fixed [40]u8 would be a hard assertion the
+                                # encoder panics on the day a sha256 repo shows up
     author_len  :u16
     author      :[author_len]u8
     when        :u64            # author date, unix seconds
@@ -406,6 +408,8 @@ The WebUI Git tab carries the same rows, the same base-selection action
 - No git binary, or not a repository: answer `not_a_git_repo` and stop.
   There is no fallback path.
 - The error body arm is encoded empty rather than conditionally omitted.
+- `GitCommit.sha` is length-prefixed, not a fixed 40 bytes, so a sha256
+  repository does not trip an encoder assertion.
 
 ## Testing
 
