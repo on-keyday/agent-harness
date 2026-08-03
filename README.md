@@ -198,6 +198,7 @@ bin/harness-cli git <task-id> log    [--max N] [-- <path>]
 bin/harness-cli git <task-id> diff   [--staged] [<base>] [<target>] [-- <path>]
 bin/harness-cli git <task-id> show   [<rev>] [-- <path>]
 bin/harness-cli git <task-id> status [-- <path>]
+bin/harness-cli git <task-id> subrepos
 # An agent that has committed shows nothing under a plain `diff` — that is git,
 # not a gap. Read `log`, then name a baseline: `git <task-id> diff <sha>` shows
 # everything since it, committed or not. Untracked files appear in no diff;
@@ -207,7 +208,19 @@ bin/harness-cli git <task-id> status [-- <path>]
 # worktree is gone and the query runs against the retained harness/<task-id>
 # branch: committed work only, and `status` is empty because no working tree is
 # left to be dirty. The runner that ran the task must still be online.
-# The same view is on `G` in the TUI and the Git tab in the WebUI.
+#
+# A repository INSIDE the repository is invisible to all of the above: a plain
+# nested repo (its own .git, not a submodule) collapses to one `?? nested/`
+# status entry and appears in no diff, because it is untracked. `subrepos`
+# lists them and `--subrepo <dir>` runs any of the four inside one — its own
+# history, its own baseline. `--subrepo` chooses WHICH repository; `-- <path>`
+# still only filters within it. Submodules are listed too, so the same route
+# browses a submodule's history; `--submodule` on diff/show instead inlines a
+# submodule's changes into one combined diff (off by default: that output is
+# not an applyable patch).
+#
+# The same view is on `G` in the TUI (Enter on a [REPO] row descends, `u` goes
+# back up, `m` toggles submodule content) and the Git tab in the WebUI.
 
 # 7. Port-forward a runner-side port to your machine (SSH -L style). The runner
 # dials remote-host:remote-port; bytes relay over the harness transport. Handy

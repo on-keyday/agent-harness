@@ -650,6 +650,35 @@ and `status` is then empty because there is no working tree left to be dirty.
 `HEAD` still means the task's own tip in that case, not the repository's
 checkout. The runner that ran the task must still be online.
 
+
+### Repositories inside the repository
+
+A plain nested repo — a directory with its own `.git` that the outer repo
+only ever sees as one `?? nested/` entry — is invisible to every query above.
+`--untracked-files=all` does not descend into one, and it appears in no diff
+because it is untracked. Run the query inside it instead:
+
+```bash
+harness-cli git <TASK_ID> subrepos                    # what is nested in there
+harness-cli git <TASK_ID> log  --subrepo pkg/inner    # its own history
+harness-cli git <TASK_ID> diff --subrepo pkg/inner    # its own changes
+```
+
+`--subrepo` works on `log`, `diff`, `show` and `status`, and composes with
+`-- <PATH>`: `--subrepo` chooses WHICH repository, `-- <PATH>` filters within
+it. A path that is not a repository root is refused rather than silently
+answering about the enclosing one.
+
+Submodules show up in `subrepos` too, so the same route gives you a
+submodule's full history. For a single combined diff instead, `--submodule`
+on `diff` / `show` inlines the submodule's own file-level changes under its
+gitlink entry. It is off by default because that output is no longer an
+applyable patch.
+
+A nested repo lives inside the task's worktree, so once the worktree is gone
+`--subrepo` answers `no_source` — the retained `harness/<task-id>` branch is
+in the outer repository and says nothing about it.
+
 ## Prefer JSON for `--data`
 
 The broker delivers `--data` verbatim, but the `inbox` JSON-Lines output
