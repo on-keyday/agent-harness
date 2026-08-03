@@ -3540,11 +3540,14 @@ const POLL_INTERVAL_MS = 5000;
   let gitRows = [];        // {kind: "worktree"|"index"|"commit"|"subrepo", ...}
   let gitActiveIndex = 0;
   let gitStatusSummary = "";
-  // gitSubrepo is the nested repository the panel is rooted in, relative to the
-  // task's worktree; "" is the worktree itself. gitSubmodule inlines a
-  // submodule's own changes into the diff.
-  let gitSubrepo = "";
+  // gitSubrepoStack is the chain of nested repositories entered so far, each
+  // element relative to the one before it. A LEVEL is one entry, not one path
+  // segment: the runner reports "pkg/inner" as a single nested repo two
+  // directories deep, and up from it is the worktree, not "pkg", where there is
+  // no repository at all. gitSubmodule inlines a submodule's own changes.
+  let gitSubrepoStack = [];
   let gitSubmodule = false;
+  const gitSubrepo = () => gitSubrepoStack.join("/");
 
   // classifyGitLine mirrors cli.ClassifyGitLine (cli/git_query.go) exactly,
   // header checks first: "--- a/x" and "+++ b/x" start with the same bytes as
@@ -3620,17 +3623,16 @@ const POLL_INTERVAL_MS = 5000;
   function gitSetBase(rev) {
     gitBaseRev = rev || "HEAD";
     if (gitBaseEl) gitBaseEl.textContent = gitBaseRev.slice(0, 12);
-    if (gitRepoEl) gitRepoEl.textContent = gitSubrepo || "(root)";
-    if (gitUpBtn) gitUpBtn.disabled = gitSubrepo === "";
+    if (gitRepoEl) gitRepoEl.textContent = gitSubrepo() || "(root)";
+    if (gitUpBtn) gitUpBtn.disabled = gitSubrepoStack.length === 0;
     if (gitSubmoduleBox) gitSubmoduleBox.checked = gitSubmodule;
     updateGitButtons();
   }
 
   // gitLeaveSubrepo goes back up one level, to the parent repository.
   async function gitLeaveSubrepo() {
-    if (!gitSubrepo) return;
-    const i = gitSubrepo.lastIndexOf("/");
-    gitSubrepo = i >= 0 ? gitSubrepo.slice(0, i) : "";
+    if (!gitSubrepoStack.length) return;
+    gitSubrepoStack.pop();
     gitSetBase("HEAD");
     await refreshGit(false);
   }
@@ -3642,7 +3644,7 @@ const POLL_INTERVAL_MS = 5000;
     const taskID = gitTaskSelect ? gitTaskSelect.value : "";
     if (!taskID) throw new Error("no task selected");
     if (!window.harness) throw new Error("not connected");
-    const merged = Object.assign({ subrepo: gitSubrepo, submodule: gitSubmodule }, opts || {});
+    const merged = Object.assign({ subrepo: gitSubrepo(), submodule: gitSubmodule }, opts || {});
     const res = await window.harness.gitQuery(taskID, kind, merged);
     if (!res.ok) throw new Error(res.stderr || res.status);
     return res;
@@ -3664,6 +3666,9 @@ const POLL_INTERVAL_MS = 5000;
       } else if (row.kind === "index") {
         label.textContent = "[INDEX]";
         meta.textContent = "staged";
+      } else if (row.kind === "subrepo") {
+        label.textContent = "[REPO]";
+        meta.textContent = row.subrepo;
       } else {
         label.textContent = row.commit.short;
         meta.textContent = `${new Date(row.commit.when * 1000).toLocaleString()}  ${row.commit.author}`;
@@ -3699,7 +3704,7 @@ const POLL_INTERVAL_MS = 5000;
     if (!row) return;
     if (row.kind === "subrepo") {
       // A [REPO] row is a destination, not content.
-      gitSubrepo = gitSubrepo ? gitSubrepo + "/" + row.subrepo : row.subrepo;
+      gitSubrepoStack.push(row.subrepo);
       gitSetBase("HEAD");
       await refreshGit(false);
       return;
@@ -3776,7 +3781,7 @@ const POLL_INTERVAL_MS = 5000;
   if (gitTaskSelect) {
     gitTaskSelect.addEventListener("change", () => {
       // A different task keeps none of the previous one's root or baseline.
-      gitSubrepo = "";
+      gitSubrepoStack = [];
       gitSubmodule = false;
       gitSetBase("HEAD");
       refreshGit(false);
@@ -3811,7 +3816,9 @@ const POLL_INTERVAL_MS = 5000;
     const btn = tabbar.querySelector('.tab-btn[data-tab="git"]');
     if (btn) btn.click();
     if (gitTaskSelect) gitTaskSelect.value = taskID;
-    gitSubrepo = opts.subrepo || "";
+    // One entry, not one per path segment: a path typed on the command line
+    // names one repository, so up from it is the worktree.
+    gitSubrepoStack = opts.subrepo ? [opts.subrepo] : [];
     gitSubmodule = !!opts.submodule;
     gitSetBase(opts.baseRev || "HEAD");
     await refreshGit(false);
