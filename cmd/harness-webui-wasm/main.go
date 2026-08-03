@@ -101,6 +101,7 @@ func main() {
 		"fileEditLoad":       js.FuncOf(harnessFileEditLoad),
 		"fileEditCommit":     js.FuncOf(harnessFileEditCommit),
 		"fileEditEncode":     js.FuncOf(harnessFileEditEncode),
+		"gitQuery":           js.FuncOf(harnessGitQuery),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
@@ -2015,4 +2016,144 @@ func harnessFileEditEncode(this js.Value, args []js.Value) any {
 	out := js.Global().Get("Uint8Array").New(len(data))
 	js.CopyBytesToJS(out, data)
 	return out
+}
+
+// gitKindFromJS maps the page's kind string onto the protocol enum. An
+// unknown string is an explicit error rather than a silent zero value, which
+// would quietly turn a typo into a log query.
+func gitKindFromJS(s string) (protocol.GitQueryKind, error) {
+	switch s {
+	case "log":
+		return protocol.GitQueryKind_Log, nil
+	case "diff":
+		return protocol.GitQueryKind_Diff, nil
+	case "show":
+		return protocol.GitQueryKind_Show, nil
+	case "status":
+		return protocol.GitQueryKind_Status, nil
+	}
+	return 0, fmt.Errorf("gitQuery: unknown kind %q", s)
+}
+
+func gitTargetFromJS(s string) (protocol.GitDiffTarget, error) {
+	switch s {
+	case "", "worktree":
+		return protocol.GitDiffTarget_Worktree, nil
+	case "index":
+		return protocol.GitDiffTarget_Index, nil
+	case "rev":
+		return protocol.GitDiffTarget_Rev, nil
+	}
+	return 0, fmt.Errorf("gitQuery: unknown target %q", s)
+}
+
+// optString reads a string property from an options object, tolerating an
+// absent or non-object options argument.
+func optString(opts js.Value, key string) string {
+	if opts.Type() != js.TypeObject {
+		return ""
+	}
+	v := opts.Get(key)
+	if v.Type() != js.TypeString {
+		return ""
+	}
+	return v.String()
+}
+
+func optUint32(opts js.Value, key string) uint32 {
+	if opts.Type() != js.TypeObject {
+		return 0
+	}
+	v := opts.Get(key)
+	if v.Type() != js.TypeNumber {
+		return 0
+	}
+	n := v.Float()
+	if n < 0 {
+		return 0
+	}
+	return uint32(n)
+}
+
+// harnessGitQuery runs one read-only git query against a task's worktree.
+//
+//	harness.gitQuery(taskID, kind, {target, baseRev, targetRev, path, maxCommits, maxBytes})
+//
+// kind is "log" | "diff" | "show" | "status"; target is "worktree" | "index" |
+// "rev". A non-ok runner status RESOLVES rather than rejecting — it is git's
+// answer, not a transport failure — with status and stderr set, so the page can
+// render git's own words where the diff would have gone.
+func harnessGitQuery(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("gitQuery: missing taskID / kind args"))
+				return
+			}
+			taskID := args[0].String()
+			kind, err := gitKindFromJS(args[1].String())
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			var opts js.Value
+			if len(args) > 2 {
+				opts = args[2]
+			} else {
+				opts = js.Undefined()
+			}
+			target, err := gitTargetFromJS(optString(opts, "target"))
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			res, err := c.GitQuery(rootCtx, taskID, cli.GitQuery{
+				Kind:       kind,
+				Target:     target,
+				BaseRev:    optString(opts, "baseRev"),
+				TargetRev:  optString(opts, "targetRev"),
+				Path:       optString(opts, "path"),
+				MaxCommits: optUint32(opts, "maxCommits"),
+				MaxBytes:   optUint32(opts, "maxBytes"),
+			})
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			commits := make([]any, 0, len(res.Commits))
+			for _, cm := range res.Commits {
+				commits = append(commits, map[string]any{
+					"sha":     cm.SHA,
+					"short":   cm.Short(),
+					"author":  cm.Author,
+					"when":    float64(cm.When.Unix()),
+					"subject": cm.Subject,
+				})
+			}
+			entries := make([]any, 0, len(res.Entries))
+			for _, e := range res.Entries {
+				entries = append(entries, map[string]any{"xy": e.XY, "path": e.Path})
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"status":    res.Status.String(),
+				"ok":        res.Status == protocol.GitRunStatus_Ok,
+				"stderr":    res.Stderr,
+				"kind":      args[1].String(),
+				"text":      res.Text,
+				"truncated": res.Truncated,
+				"commits":   commits,
+				"entries":   entries,
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
 }
