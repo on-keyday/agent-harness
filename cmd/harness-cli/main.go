@@ -485,6 +485,11 @@ func main() {
 			os.Exit(2)
 		}
 
+	case "git":
+		if err := runGit(parseCID(), args); err != nil {
+			die(err)
+		}
+
 	case "forward":
 		if len(args) < 1 {
 			fmt.Fprintln(os.Stderr, "usage: harness-cli forward <task-id> -L [bind:]localport:remotehost:remoteport [-L ...]")
@@ -940,6 +945,15 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      list a single directory under the worktree (default: worktree root)")
 	fmt.Fprintln(os.Stderr, "  file delete [-r|--recursive] [-f|--force] TASK_ID WORKTREE_REL_PATH")
 	fmt.Fprintln(os.Stderr, "                                      remove a file; -r a directory (dir_delete), -r -f a non-empty directory (RemoveAll); without -r a directory is refused")
+	fmt.Fprintln(os.Stderr, "  git TASK_ID log    [--max N] [-- PATH]")
+	fmt.Fprintln(os.Stderr, "  git TASK_ID diff   [--staged] [BASE] [TARGET] [--max-bytes N] [-- PATH]")
+	fmt.Fprintln(os.Stderr, "  git TASK_ID show   [REV] [-- PATH]")
+	fmt.Fprintln(os.Stderr, "  git TASK_ID status [-- PATH]")
+	fmt.Fprintln(os.Stderr, "                                      read-only git view of a task's worktree (requires file_read)")
+	fmt.Fprintln(os.Stderr, "                                      runs in the worktree while the task lives, and against the retained")
+	fmt.Fprintln(os.Stderr, "                                      harness/<task-id> branch after it ends (committed work only)")
+	fmt.Fprintln(os.Stderr, "                                      diff counts revisions the way git does: none = unstaged, one = that")
+	fmt.Fprintln(os.Stderr, "                                      revision against the working tree, two = commit against commit")
 	fmt.Fprintln(os.Stderr, "  forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] ...")
 	fmt.Fprintln(os.Stderr, "                                      -L: forward a local port through the runner to remote host:port (ssh -L)")
 	fmt.Fprintln(os.Stderr, "                                      -R: runner listens, connections dial back to a client-side host:port (ssh -R)")
