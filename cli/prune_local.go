@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+
 	"path/filepath"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 )
 
 // PruneLocal removes worktrees under <repo>/.harness-worktrees/ via
@@ -38,7 +40,7 @@ func PruneLocal(ctx context.Context, repo string, before time.Duration, taskIDs 
 				missing++
 				continue
 			}
-			cmd := exec.Command("git", "worktree", "remove", "--force", path)
+			cmd := hostcmd.Command("git", "worktree", "remove", "--force", path)
 			cmd.Dir = repo
 			if out2, cerr := cmd.CombinedOutput(); cerr != nil {
 				fmt.Fprintf(out, "skip %s: %s\n", id, out2)
@@ -75,7 +77,7 @@ func PruneLocal(ctx context.Context, repo string, before time.Duration, taskIDs 
 		}
 
 		path := filepath.Join(dir, e.Name())
-		cmd := exec.Command("git", "worktree", "remove", "--force", path)
+		cmd := hostcmd.Command("git", "worktree", "remove", "--force", path)
 		cmd.Dir = repo
 		if out2, cerr := cmd.CombinedOutput(); cerr != nil {
 			fmt.Fprintf(out, "skip %s: %s\n", e.Name(), out2)

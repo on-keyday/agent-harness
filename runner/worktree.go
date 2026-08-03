@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 )
 
 // WorktreeManager creates and removes git worktrees for tasks under <Repo>/.harness-worktrees/<taskID>.
@@ -70,7 +71,7 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	// recently-removed dir's registration would survive plain `prune`. The
 	// per-repo mutex (wm.mu) ensures no concurrent task is racing us, so a
 	// repo-wide prune is safe.
-	pruneCmd := exec.Command("git", "worktree", "prune", "--expire=now")
+	pruneCmd := hostcmd.Command("git", "worktree", "prune", "--expire=now")
 	pruneCmd.Dir = wm.Repo
 	_ = pruneCmd.Run()
 
@@ -89,7 +90,7 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 	// and would make the add below fail with "missing but already
 	// registered".
 	if _, err := os.Stat(dir); err == nil {
-		repairCmd := exec.Command("git", "worktree", "repair", dir)
+		repairCmd := hostcmd.Command("git", "worktree", "repair", dir)
 		repairCmd.Dir = wm.Repo
 		_ = repairCmd.Run()
 		if wm.worktreeAttachedLocked(dir) {
@@ -99,7 +100,7 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 		if rmErr := os.RemoveAll(dir); rmErr != nil {
 			return "", fmt.Errorf("worktree orphan dir removal: %w", rmErr)
 		}
-		pruneCmd := exec.Command("git", "worktree", "prune", "--expire=now")
+		pruneCmd := hostcmd.Command("git", "worktree", "prune", "--expire=now")
 		pruneCmd.Dir = wm.Repo
 		_ = pruneCmd.Run()
 	}
@@ -110,7 +111,7 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 		// trying to create a new one (which would fail with "already exists").
 		args = []string{"worktree", "add", dir, branch}
 	}
-	cmd := exec.Command("git", args...)
+	cmd := hostcmd.Command("git", args...)
 	cmd.Dir = wm.Repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("worktree add: %w (%s)", err, out)
@@ -122,7 +123,7 @@ func (wm *WorktreeManager) Create(taskID string) (string, error) {
 // worktree of wm.Repo, regardless of which branch (or detached commit) it
 // has checked out. Caller must hold wm.mu.
 func (wm *WorktreeManager) worktreeAttachedLocked(dir string) bool {
-	cmd := exec.Command("git", "worktree", "list", "--porcelain")
+	cmd := hostcmd.Command("git", "worktree", "list", "--porcelain")
 	cmd.Dir = wm.Repo
 	out, err := cmd.Output()
 	if err != nil {
@@ -186,7 +187,7 @@ func slashPath(p string) string { return strings.ReplaceAll(p, `\`, "/") }
 // Caller must hold wm.mu — this is only invoked from Create which already
 // owns the mutex.
 func (wm *WorktreeManager) branchExistsLocked(branch string) bool {
-	cmd := exec.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
+	cmd := hostcmd.Command("git", "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
 	cmd.Dir = wm.Repo
 	return cmd.Run() == nil
 }
@@ -203,7 +204,7 @@ func (wm *WorktreeManager) Remove(taskID string) error {
 
 func (wm *WorktreeManager) removeLocked(taskID string) error {
 	dir := filepath.Join(wm.Repo, ".harness-worktrees", taskID)
-	cmd := exec.Command("git", "worktree", "remove", "--force", dir)
+	cmd := hostcmd.Command("git", "worktree", "remove", "--force", dir)
 	cmd.Dir = wm.Repo
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("worktree remove: %w (%s)", err, out)
@@ -213,9 +214,9 @@ func (wm *WorktreeManager) removeLocked(taskID string) error {
 
 // RemoveCleanResult describes what RemoveIfClean decided.
 type RemoveCleanResult struct {
-	Removed       bool     // true if the worktree was actually deleted
-	DirtyPaths    []string // worktree-relative paths that prevented removal (empty when Removed)
-	StatusErr     error    // error from `git status --porcelain` (treated as "skip removal")
+	Removed    bool     // true if the worktree was actually deleted
+	DirtyPaths []string // worktree-relative paths that prevented removal (empty when Removed)
+	StatusErr  error    // error from `git status --porcelain` (treated as "skip removal")
 }
 
 // RemoveIfClean removes the worktree only when `git status --porcelain`
@@ -243,7 +244,7 @@ func (wm *WorktreeManager) RemoveIfClean(taskID string, ignoredPaths []string) R
 	// ".claude/" into its individual files, so prefix matching against
 	// ignoredPaths (e.g. ".claude/skills/") catches them. Default ("normal")
 	// would collapse the dir and our exclusion list would see only ".claude/".
-	cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=all", "-z")
+	cmd := hostcmd.Command("git", "status", "--porcelain", "--untracked-files=all", "-z")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

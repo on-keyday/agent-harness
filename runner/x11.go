@@ -4,8 +4,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
+
 	"strings"
+
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 )
 
 // writeXauthFile creates a per-task XAUTHORITY file and registers the client's
@@ -28,7 +30,7 @@ func writeXauthFile(taskIDHex string, display int, cookie []byte) (string, error
 	displayName := fmt.Sprintf("127.0.0.1:%d", display)
 	// Feed the cookie via stdin (xauth batch mode) so the secret never appears
 	// in argv / /proc/<pid>/cmdline.
-	cmd := exec.Command("xauth", "-f", path)
+	cmd := hostcmd.Command("xauth", "-f", path)
 	cmd.Stdin = strings.NewReader(fmt.Sprintf("add %s MIT-MAGIC-COOKIE-1 %s\n", displayName, hex.EncodeToString(cookie)))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		_ = os.Remove(path)

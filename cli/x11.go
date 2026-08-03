@@ -7,10 +7,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
@@ -82,7 +82,7 @@ func localX11Cookie(display string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	out, err := exec.Command("xauth", "list", display).Output()
+	out, err := hostcmd.Command("xauth", "list", display).Output()
 	if err != nil {
 		return nil, fmt.Errorf("x11: `xauth list %s` failed (is xauth installed and the X server authorized?): %w", display, err)
 	}

@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"os"
-	"os/exec"
+
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/peer"
+	"github.com/on-keyday/agent-harness/runner/hostcmd"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -423,7 +424,7 @@ func isGitRepo(dir string) bool {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), gitQueryTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
+	cmd := hostcmd.CommandContext(ctx, "git", "rev-parse", "--git-dir")
 	cmd.Dir = dir
 	return cmd.Run() == nil
 }
@@ -454,7 +455,7 @@ func isWorktreeRoot(dir string) bool {
 func refExists(repoPath, ref string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), gitQueryTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", ref)
+	cmd := hostcmd.CommandContext(ctx, "git", "show-ref", "--verify", "--quiet", ref)
 	cmd.Dir = repoPath
 	return cmd.Run() == nil
 }
@@ -472,7 +473,7 @@ func runGitQuery(ctx context.Context, cwd string, argv []string, maxBytes uint32
 	ctx, cancel := context.WithTimeout(ctx, gitQueryTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "git", argv...)
+	cmd := hostcmd.CommandContext(ctx, "git", argv...)
 	cmd.Dir = cwd
 	var errBuf bytes.Buffer
 	cmd.Stderr = &errBuf
