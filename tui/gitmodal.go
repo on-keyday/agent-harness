@@ -62,6 +62,15 @@ func (m GitModal) IsOpen() bool    { return m.open }
 func (m GitModal) TaskID() string  { return m.taskID }
 func (m GitModal) BaseRev() string { return m.baseRev }
 
+// SetBaseRev seeds the baseline from outside the modal — the cmdline route,
+// where the operator named a revision before the modal existed. Inside the
+// modal the baseline moves via the set-base key instead.
+func (m *GitModal) SetBaseRev(rev string) {
+	if rev != "" {
+		m.baseRev = rev
+	}
+}
+
 // Open resets everything except the size: a modal opened on a different task
 // must not inherit the previous task's baseline or content.
 func (m *GitModal) Open(taskID string) {

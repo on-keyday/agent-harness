@@ -803,3 +803,122 @@ func TestParseFileNew(t *testing.T) {
 		t.Errorf("act=%+v, want sub/notes.txt", n)
 	}
 }
+
+func parseGitCmd(t *testing.T, line string) GitAction {
+	t.Helper()
+	got, err := ParseCommand(line, "/cwd")
+	if err != nil {
+		t.Fatalf("ParseCommand(%q): %v", line, err)
+	}
+	a, ok := got.(GitAction)
+	if !ok {
+		t.Fatalf("ParseCommand(%q) returned %T", line, got)
+	}
+	return a
+}
+
+func TestParseGitDiffNoRevs(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff")
+	if a.TaskID != "cafe1234" || a.Sub != "diff" {
+		t.Fatalf("action = %+v", a)
+	}
+	if a.BaseRev != "" || a.TargetRev != "" {
+		t.Fatalf("no positionals means no revisions, got %+v", a)
+	}
+}
+
+func TestParseGitDiffOneRev(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff HEAD~3")
+	if a.BaseRev != "HEAD~3" || a.TargetRev != "" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitDiffTwoRevs(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff aaa bbb")
+	if a.BaseRev != "aaa" || a.TargetRev != "bbb" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitDiffStaged(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff --staged HEAD")
+	if !a.Staged || a.BaseRev != "HEAD" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+// The flag must work on either side of the positionals, matching the CLI —
+// Go's flag package stops at the first non-flag token without the permuted
+// parse, and would drop it silently.
+func TestParseGitDiffStagedAfterPositional(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff HEAD --staged")
+	if !a.Staged || a.BaseRev != "HEAD" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitDiffStagedWithTwoRevsRejected(t *testing.T) {
+	if _, err := ParseCommand("git cafe1234 diff --staged aaa bbb", "/cwd"); err == nil {
+		t.Fatal("--staged already names the right-hand side; a second revision must be refused")
+	}
+}
+
+func TestParseGitPathspec(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff HEAD -- tui/app.go")
+	if a.Path != "tui/app.go" || a.BaseRev != "HEAD" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitPathspecWithFlagAfterIt(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 diff --staged -- tui/app.go")
+	if a.Path != "tui/app.go" || !a.Staged {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitLogMax(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 log --max 20")
+	if a.Sub != "log" || a.Max != 20 {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitShowRev(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 show abc123")
+	if a.Sub != "show" || a.BaseRev != "abc123" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitStatus(t *testing.T) {
+	a := parseGitCmd(t, "git cafe1234 status")
+	if a.Sub != "status" {
+		t.Fatalf("action = %+v", a)
+	}
+}
+
+func TestParseGitStatusRejectsRev(t *testing.T) {
+	if _, err := ParseCommand("git cafe1234 status HEAD", "/cwd"); err == nil {
+		t.Fatal("git status takes no revision")
+	}
+}
+
+func TestParseGitUnknownSub(t *testing.T) {
+	if _, err := ParseCommand("git cafe1234 rebase", "/cwd"); err == nil {
+		t.Fatal("unknown sub-verb must be rejected")
+	}
+}
+
+func TestParseGitMissingTaskID(t *testing.T) {
+	if _, err := ParseCommand("git", "/cwd"); err == nil {
+		t.Fatal("missing task id must be rejected")
+	}
+}
+
+func TestParseGitMissingSubVerb(t *testing.T) {
+	if _, err := ParseCommand("git cafe1234", "/cwd"); err == nil {
+		t.Fatal("missing sub-verb must be rejected")
+	}
+}

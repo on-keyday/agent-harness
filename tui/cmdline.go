@@ -110,6 +110,19 @@ type RepoAction struct {
 	Path string
 }
 
+// GitAction opens the git modal on a task and runs one query in it. Sub is
+// one of log / diff / show / status; the revision fields follow git's own
+// positional counting (see parseGit).
+type GitAction struct {
+	TaskID    string
+	Sub       string
+	BaseRev   string
+	TargetRev string
+	Path      string
+	Staged    bool
+	Max       uint32
+}
+
 // FileLsAction lists a directory under a task's worktree. RelPath empty
 // means the worktree root.
 type FileLsAction struct {
@@ -236,6 +249,7 @@ func (SessionAttachAction) isAction()    {}
 func (SessionLsAction) isAction()        {}
 func (SessionKillAction) isAction()      {}
 func (SessionAwaitIdleAction) isAction() {}
+func (GitAction) isAction()              {}
 func (FileLsAction) isAction()           {}
 func (FilePushAction) isAction()         {}
 func (FileMkdirAction) isAction()        {}
@@ -283,6 +297,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseSession(tokens[1:], defaultRepo)
 	case "file":
 		return parseFile(tokens[1:])
+	case "git":
+		return parseGit(tokens[1:])
 	case "forward":
 		return parseForward(tokens[1:])
 	case "server":
@@ -742,4 +758,120 @@ func parseForward(args []string) (Action, error) {
 	default:
 		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill)", args[0])
 	}
+}
+
+// splitPathspecTokens peels "-- <path...>" off the tail. It runs BEFORE the
+// flag parse for the same reason the CLI's splitPathspec does: Go's flag
+// package consumes a bare "--" as its end-of-flags marker, so a pathspec left
+// in the argv would silently vanish. Tokens after the separator are rejoined
+// with a space so a path containing one survives.
+func splitPathspecTokens(args []string) ([]string, string) {
+	for i, a := range args {
+		if a == "--" {
+			return args[:i], strings.Join(args[i+1:], " ")
+		}
+	}
+	return args, ""
+}
+
+// parsePermutedFlags parses fs while tolerating flags that appear after
+// positional arguments, by peeling positionals one at a time and re-parsing
+// the remainder. Go's flag package stops at the first non-flag token, so
+// without this `git <id> diff HEAD --staged` would silently drop --staged.
+//
+// This is the same loop as parsePermuted in cmd/harness-cli/session.go; it is
+// duplicated rather than imported because tui must not depend on cmd/. Safe
+// only because every positional here is a revision, and a revision beginning
+// with '-' is refused by the runner anyway.
+func parsePermutedFlags(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positionals []string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			break
+		}
+		positionals = append(positionals, rest[0])
+		args = rest[1:]
+	}
+	return positionals, nil
+}
+
+// parseGit parses `git <task-id> {log|diff|show|status} ...` with the same
+// grammar harness-cli uses, so a hand that learned one surface knows the other.
+func parseGit(args []string) (Action, error) {
+	if len(args) < 2 {
+		return nil, fmt.Errorf("git: usage: git <task-id> {log | diff | show | status} ...")
+	}
+	act := GitAction{TaskID: args[0], Sub: args[1]}
+	rest, path := splitPathspecTokens(args[2:])
+	act.Path = path
+
+	switch act.Sub {
+	case "log":
+		fs := flag.NewFlagSet("git log", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		max := fs.Uint("max", 0, "")
+		pos, err := parsePermutedFlags(fs, rest)
+		if err != nil {
+			return nil, fmt.Errorf("git log: %w", err)
+		}
+		if len(pos) > 1 {
+			return nil, fmt.Errorf("git log: at most one revision (got %d)", len(pos))
+		}
+		if len(pos) == 1 {
+			act.BaseRev = pos[0]
+		}
+		act.Max = uint32(*max)
+
+	case "diff":
+		fs := flag.NewFlagSet("git diff", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		staged := fs.Bool("staged", false, "")
+		fs.BoolVar(staged, "cached", false, "")
+		pos, err := parsePermutedFlags(fs, rest)
+		if err != nil {
+			return nil, fmt.Errorf("git diff: %w", err)
+		}
+		act.Staged = *staged
+		// Positionals are counted the way git counts them: none = unstaged,
+		// one = <base> against the working tree, two = commit against commit.
+		switch len(pos) {
+		case 0:
+		case 1:
+			act.BaseRev = pos[0]
+		case 2:
+			if *staged {
+				return nil, fmt.Errorf("git diff: --staged names the index as the right-hand side, so a second revision has nowhere to go")
+			}
+			act.BaseRev, act.TargetRev = pos[0], pos[1]
+		default:
+			return nil, fmt.Errorf("git diff: at most two revisions (got %d)", len(pos))
+		}
+
+	case "show":
+		fs := flag.NewFlagSet("git show", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		pos, err := parsePermutedFlags(fs, rest)
+		if err != nil {
+			return nil, fmt.Errorf("git show: %w", err)
+		}
+		if len(pos) > 1 {
+			return nil, fmt.Errorf("git show: at most one revision (got %d)", len(pos))
+		}
+		if len(pos) == 1 {
+			act.BaseRev = pos[0]
+		}
+
+	case "status":
+		if len(rest) > 0 {
+			return nil, fmt.Errorf("git status: takes no revision (got %q)", rest[0])
+		}
+
+	default:
+		return nil, fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status)", act.Sub)
+	}
+	return act, nil
 }

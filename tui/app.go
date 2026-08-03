@@ -2094,6 +2094,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("session ls                  - list detachable sessions")
 		a.cmdresult.Append("session kill <id>           - terminate a session")
 		a.cmdresult.Append("session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)")
+		a.cmdresult.Append("git <task-id> log [--max N] [-- <path>]            - the task's commits (also: tasks-pane G)")
+		a.cmdresult.Append("git <task-id> diff [--staged] [<base>] [<target>] [-- <path>] - revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit")
+		a.cmdresult.Append("git <task-id> show [<rev>] [-- <path>]             - one commit and its diff")
+		a.cmdresult.Append("git <task-id> status [-- <path>]                   - uncommitted and untracked paths (untracked appear in no diff)")
 		a.cmdresult.Append("file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)")
 		a.cmdresult.Append("file push [-r] [-f] [-p] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)")
 		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
@@ -2231,6 +2235,45 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		// the session actually goes idle. The cmd goroutine carries it; the
 		// UI stays fully interactive meanwhile.
 		return a, DoAwaitIdle(a.appCtx, a.client, full, v.ThresholdMs, sink, v.Topic)
+	case GitAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		if a.client == nil {
+			a.cmdresult.Append(WarnStyle.Render("git: not connected"))
+			return a, nil
+		}
+		// The cmdline route lands in the same modal the G key opens, rather
+		// than dumping a diff into the result pane where it cannot be scrolled
+		// or navigated.
+		a.gitModal.Open(full)
+		a.gitModal.SetSize(a.width, a.height)
+		a.gitStatusToContent = v.Sub == "status"
+		cmds := []tea.Cmd{
+			DoGitLog(a.client, full, "", 0),
+			DoGitStatus(a.client, full),
+		}
+		switch v.Sub {
+		case "log", "status":
+			// Both are already in flight above; nothing further to ask for.
+		case "show":
+			cmds = append(cmds, DoGitShow(a.client, full, v.BaseRev, v.Path))
+		default: // diff
+			target := protocol.GitDiffTarget_Worktree
+			switch {
+			case v.Staged:
+				target = protocol.GitDiffTarget_Index
+			case v.TargetRev != "":
+				target = protocol.GitDiffTarget_Rev
+			}
+			if v.BaseRev != "" {
+				a.gitModal.SetBaseRev(v.BaseRev)
+			}
+			cmds = append(cmds, DoGitDiff(a.client, full, v.BaseRev, target, v.TargetRev, v.Path))
+		}
+		return a, tea.Batch(cmds...)
 	case FileLsAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {
