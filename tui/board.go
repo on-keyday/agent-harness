@@ -280,7 +280,11 @@ func (m *BoardModal) updateContentFromCursor() {
 		fromShort = fromShort[:8]
 	}
 	at := time.UnixMilli(int64(msg.ReceivedAtMs)).UTC().Format(time.RFC3339)
-	header := fmt.Sprintf("seq=%d  from=%s  host=%s  at=%s", msg.Seq, fromShort, msg.FromHostname, at)
+	agentName := msg.FromAgentProfile
+	if agentName == "" {
+		agentName = "-"
+	}
+	header := fmt.Sprintf("seq=%d  from=%s  host=%s  agent=%s  at=%s", msg.Seq, fromShort, msg.FromHostname, agentName, at)
 	m.content.SetContent(header + "\n\n" + payloadStr)
 }
 
@@ -354,9 +358,13 @@ func (m BoardModal) View() string {
 			if len(fromShort) > 8 {
 				fromShort = fromShort[:8]
 			}
+			agentName := msg.FromAgentProfile
+			if agentName == "" {
+				agentName = "-"
+			}
 			at := time.UnixMilli(int64(msg.ReceivedAtMs)).UTC().Format("15:04:05Z")
-			msgList.WriteString(fmt.Sprintf("%s[%d] seq=%-5d  from=%s  %s\n",
-				cursor, i+1, msg.Seq, fromShort, at))
+			msgList.WriteString(fmt.Sprintf("%s[%d] seq=%-5d  from=%s  agent=%s  %s\n",
+				cursor, i+1, msg.Seq, fromShort, agentName, at))
 		}
 		if len(m.msgs) == 0 {
 			msgList.WriteString("  (no messages)\n")

@@ -653,7 +653,7 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 
 // harnessBoardRead returns all retained messages for a topic.
 //
-//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,receivedAtMs,payload}]}>
+//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,agentProfile,receivedAtMs,payload}]}>
 func harnessBoardRead(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -683,6 +683,7 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 					"seq":          strconv.FormatUint(m.Seq, 10),
 					"fromTask":     m.FromTaskHex,
 					"fromHostname": m.FromHostname,
+					"agentProfile": m.FromAgentProfile,
 					"receivedAtMs": float64(m.ReceivedAtMs),
 					"payload":      string(m.Payload),
 				})

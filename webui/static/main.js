@@ -3454,6 +3454,10 @@ const POLL_INTERVAL_MS = 5000;
         hostSpan.className = "board-msg-host";
         hostSpan.textContent = `host=${m.fromHostname || "-"}`;
 
+        const agentSpan = document.createElement("span");
+        agentSpan.className = "board-msg-agent";
+        agentSpan.textContent = `agent=${m.agentProfile || "-"}`;
+
         const timeSpan = document.createElement("span");
         timeSpan.className = "board-msg-time";
         timeSpan.textContent = m.receivedAtMs
@@ -3478,6 +3482,7 @@ const POLL_INTERVAL_MS = 5000;
         hdr.appendChild(seqSpan);
         hdr.appendChild(fromSpan);
         hdr.appendChild(hostSpan);
+        hdr.appendChild(agentSpan);
         hdr.appendChild(timeSpan);
         hdr.appendChild(purgeBtn);
 

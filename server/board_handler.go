@@ -72,6 +72,7 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 			FromTask:         m.FromTask,
 		}
 		row.SetFromHostname([]byte(m.FromHostname))
+		row.SetFromAgentProfile([]byte(m.FromAgentProfile))
 		rows = append(rows, row)
 		payloads = append(payloads, m.Payload)
 	}

@@ -96,8 +96,8 @@ func startOperatorServerE2E(t *testing.T) (*operatorE2E, objproto.ConnectionID) 
 // send-stream.
 func TestClientBoard_TopicsReadPurge(t *testing.T) {
 	srv, peerCID := startOperatorServerE2E(t)
-	srv.Board().Send("chat.x", []byte("hello"), protocol.RunnerID{}, protocol.TaskID{}, "h", "") //nolint:errcheck
-	srv.Board().Send("chat.x", []byte("world"), protocol.RunnerID{}, protocol.TaskID{}, "h", "") //nolint:errcheck
+	srv.Board().Send("chat.x", []byte("hello"), protocol.RunnerID{}, protocol.TaskID{}, "h", "codex")  //nolint:errcheck
+	srv.Board().Send("chat.x", []byte("world"), protocol.RunnerID{}, protocol.TaskID{}, "h", "claude") //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -121,6 +121,14 @@ func TestClientBoard_TopicsReadPurge(t *testing.T) {
 	}
 	if string(msgs[0].Payload) != "hello" || string(msgs[1].Payload) != "world" {
 		t.Fatalf("payloads = %q,%q", msgs[0].Payload, msgs[1].Payload)
+	}
+	// The operator board view attributes each message to the runtime that
+	// published it — the two seeds above were published under different ones.
+	if msgs[0].FromAgentProfile != "codex" {
+		t.Errorf("msgs[0].FromAgentProfile = %q, want %q", msgs[0].FromAgentProfile, "codex")
+	}
+	if msgs[1].FromAgentProfile != "claude" {
+		t.Errorf("msgs[1].FromAgentProfile = %q, want %q", msgs[1].FromAgentProfile, "claude")
 	}
 
 	purged, found, err := c.BoardPurge(ctx, "chat.x", msgs[0].Seq)

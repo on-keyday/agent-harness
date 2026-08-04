@@ -24,8 +24,13 @@ type BoardMessage struct {
 	Seq          uint64
 	FromTaskHex  string
 	FromHostname string
-	ReceivedAtMs uint64
-	Payload      []byte
+	// FromAgentProfile is the agent profile the sender was running under when
+	// the message was published. Empty = the server could not attribute a
+	// runtime (e.g. a server-originated publish, which carries FromHostname
+	// "server").
+	FromAgentProfile string
+	ReceivedAtMs     uint64
+	Payload          []byte
 }
 
 // BoardTopics lists every topic currently held in the board with aggregate
@@ -83,10 +88,11 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 	total := 0
 	for i, m := range br.Msgs {
 		rows[i] = BoardMessage{
-			Seq:          m.Seq,
-			FromTaskHex:  hex.EncodeToString(m.FromTask.Id[:]),
-			FromHostname: string(m.FromHostname),
-			ReceivedAtMs: m.ReceivedAtUnixMs,
+			Seq:              m.Seq,
+			FromTaskHex:      hex.EncodeToString(m.FromTask.Id[:]),
+			FromHostname:     string(m.FromHostname),
+			FromAgentProfile: string(m.FromAgentProfile),
+			ReceivedAtMs:     m.ReceivedAtUnixMs,
 		}
 		total += int(m.Size)
 	}

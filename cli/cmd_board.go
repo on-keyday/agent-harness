@@ -17,6 +17,15 @@ func boardMsToRFC3339(ms uint64) string {
 	return time.UnixMilli(int64(ms)).UTC().Format(time.RFC3339)
 }
 
+// boardAgentOrDash renders an unattributed sender profile as "-" so the column
+// never collapses to an empty run of spaces.
+func boardAgentOrDash(profile string) string {
+	if profile == "" {
+		return "-"
+	}
+	return profile
+}
+
 // RunBoardSubcmd handles the board sub-subcommands (topics, read, purge).
 // verb is the first arg after "board"; rest is the remaining args.
 // All output (including purge JSON) is written to out.
@@ -47,9 +56,9 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			return nil
 		}
 		for _, m := range msgs {
-			fmt.Fprintf(out, "#%d from=%s host=%s size=%d at=%s\n",
-				m.Seq, m.FromTaskHex, m.FromHostname, len(m.Payload),
-				boardMsToRFC3339(m.ReceivedAtMs))
+			fmt.Fprintf(out, "#%d from=%s host=%s agent=%s size=%d at=%s\n",
+				m.Seq, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
+				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs))
 			if json.Valid(m.Payload) {
 				var buf bytes.Buffer
 				_ = json.Indent(&buf, m.Payload, "", "  ")

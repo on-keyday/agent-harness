@@ -675,6 +675,12 @@ format BoardMessageRow:
     from_task :TaskID
     from_hostname_len :u8
     from_hostname :[from_hostname_len]u8
+    # from_agent_profile is the agent profile the sending task was running under
+    # at publish time. See agentboard/agentboard.bgn
+    # DeliveredMessage.from_agent_profile — same value, same freeze-at-publish
+    # semantics. Empty = the server could not attribute a runtime.
+    from_agent_profile_len :u8
+    from_agent_profile :[from_agent_profile_len]u8
     received_at_unix_ms :u64
     size :u32
 
