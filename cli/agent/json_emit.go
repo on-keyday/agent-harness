@@ -16,9 +16,12 @@ import (
 // is additionally embedded raw under "payload" for ergonomic chains.
 //
 // The from block carries server-attested sender info (RunnerID, TaskID,
-// hostname). It is always present, even for legacy messages where the bytes
-// may be zero — that lets jq/grep consumers reliably address `.from.*`.
-func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost string) {
+// hostname, agent profile). It is always present, even for legacy messages
+// where the bytes may be zero — that lets jq/grep consumers reliably address
+// `.from.*`. An empty `agent` means the server could not attribute a runtime to
+// the sender (e.g. a server-originated publish, which carries hostname
+// "server"); it never means "runner default".
+func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string) {
 	rec := map[string]any{
 		"seq":         seq,
 		"topic":       topic,
@@ -27,6 +30,7 @@ func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, from
 			"runner_id": boardRunnerIDString(fromRid),
 			"task_id":   hex.EncodeToString(fromTid.Id[:]),
 			"hostname":  fromHost,
+			"agent":     fromAgent,
 		},
 	}
 	if len(payload) > 0 && json.Valid(payload) {

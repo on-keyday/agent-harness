@@ -90,8 +90,9 @@ func Retained(ctx context.Context, args []string, stdout io.Writer) error {
 		case agentboard.PurgeStatus_Ok:
 			for _, m := range r.Metas {
 				fmt.Fprintf(stdout,
-					"{\"seq\":%d,\"from_task\":%q,\"from_hostname\":%q,\"size\":%d,\"received_at_ms\":%d}\n",
-					m.Seq, hex.EncodeToString(m.FromTask.Id[:]), string(m.FromHostname), m.Size, m.ReceivedAtUnixMs)
+					"{\"seq\":%d,\"from_task\":%q,\"from_hostname\":%q,\"from_agent\":%q,\"size\":%d,\"received_at_ms\":%d}\n",
+					m.Seq, hex.EncodeToString(m.FromTask.Id[:]), string(m.FromHostname),
+					string(m.FromAgentProfile), m.Size, m.ReceivedAtUnixMs)
 			}
 			return nil
 		default:

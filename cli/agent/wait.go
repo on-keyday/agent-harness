@@ -91,7 +91,7 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 			if perr != nil {
 				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
 			}
-			emitMessageLine(stdout, m.Seq, string(m.Topic), payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname))
+			emitMessageLine(stdout, m.Seq, string(m.Topic), payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile))
 		}
 		if *sinceLast {
 			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor, oldLive)

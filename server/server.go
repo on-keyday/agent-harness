@@ -1145,7 +1145,7 @@ func (s *Server) sendAssign(runnerID, taskID string) error {
 		return fmt.Errorf("ticket gen: %w", err)
 	}
 	if s.Board != nil {
-		s.Board.RegisterTask(runnerIDFromConnID(runnerID), taskIDFromHex(taskID), ticket, "")
+		s.Board.RegisterTask(runnerIDFromConnID(runnerID), taskIDFromHex(taskID), ticket, task.AgentProfile)
 	}
 	stream := entry.Conn.CreateSendStream()
 	if stream == nil {

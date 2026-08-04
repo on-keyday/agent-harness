@@ -112,9 +112,19 @@ func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInf
 	tid := boardTaskIDFromProto(info.TaskId)
 	status := s.Board.Registry().Validate(rid, tid, info.AuthTicket)
 	if status == agentboard.HelloStatusOk {
+		// The agent profile is authority-side data: read it from the task
+		// record, never from the agent's own hello. Empty when the store has
+		// no entry for this id — a defined "not attributed", not "runner
+		// default" (submit/open both resolve a concrete name before Create).
+		var profile string
+		if s.tasks != nil {
+			if e, ok := s.tasks.Get(hex.EncodeToString(info.TaskId.Id[:])); ok {
+				profile = e.AgentProfile
+			}
+		}
 		ac := s.getOrCreateAgentConn(conn)
 		ac.helloed = true
-		ac.state = s.Board.Attach(rid, tid, string(info.Hostname), "")
+		ac.state = s.Board.Attach(rid, tid, string(info.Hostname), profile)
 	}
 	return status
 }
@@ -147,8 +157,8 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 			s.sendAgent(conn, resp)
 			return
 		}
-		fromRid, fromTid, fromHost, _ := ac.state.Identity()
-		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost, "")
+		fromRid, fromTid, fromHost, fromProfile := ac.state.Identity()
+		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost, fromProfile)
 		var status agentboard.SendStatus
 		switch sendErr {
 		case nil:
@@ -295,6 +305,7 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 		}
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetFromHostname([]byte(m.FromHostname))
+		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
 		delivered = append(delivered, dm)
 	}
 	var to uint8
@@ -338,6 +349,7 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 		}
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetFromHostname([]byte(m.FromHostname))
+		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
 		delivered = append(delivered, dm)
 	}
 	ir := agentboard.InboxResponse{
@@ -498,6 +510,7 @@ func (s *Server) agentHandleListRetained(conn ConnHandle, ac *agentConn, req *ag
 			ReceivedAtUnixMs: uint64(m.ReceivedAt.UnixMilli()),
 		}
 		meta.SetFromHostname([]byte(m.FromHostname))
+		meta.SetFromAgentProfile([]byte(m.FromAgentProfile))
 		out.Metas = append(out.Metas, meta)
 	}
 	out.MetasLen = uint16(len(out.Metas))

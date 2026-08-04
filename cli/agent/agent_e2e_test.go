@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"net"
 	"os"
 	"strings"
@@ -176,6 +177,85 @@ func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 	got := waitOut.String()
 	if !strings.Contains(got, "hello-from-A") {
 		t.Errorf("Wait output missing payload: %s", got)
+	}
+}
+
+// TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile asserts that the server
+// attests the SENDER's agent profile on delivery: agent B learns that agent A
+// runs under "codex" without holding InfoGlobal (board delivery is uncapped,
+// `ls` is not), and without A having supplied the value.
+//
+// Unlike the other E2Es here, this one creates a real TaskStore entry — the
+// profile is resolved from the task record, so a bare ticket registration has
+// nothing to resolve.
+func TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile(t *testing.T) {
+	addr := freePortE2E(t)
+	board, srv := startServerE2E(t, addr)
+
+	const ridStrA = "ws:1.2.3.4:9010-1"
+	const ridStrB = "ws:5.6.7.8:9011-2"
+	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9010, 1)
+	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9011, 2)
+
+	taskHexA := srv.Tasks().Create("/repo", "p", protocol.TaskKind_Interactive,
+		protocol.ClientKind_Cli, protocol.TaskID{}, ridStrA, protocol.RunnerSelector{},
+		nil, protocol.Capability_All, "codex")
+	var tidA protocol.TaskID
+	raw, err := hex.DecodeString(taskHexA)
+	if err != nil || len(raw) != 16 {
+		t.Fatalf("task id %q: decode err=%v len=%d", taskHexA, err, len(raw))
+	}
+	copy(tidA.Id[:], raw)
+	tidB := mkTidE2E(0x7B)
+
+	var ticketA, ticketB [16]byte
+	ticketA[0] = 0xA1
+	ticketB[0] = 0xB1
+	board.Registry().Register(ridA, tidA, ticketA)
+	board.Registry().Register(ridB, tidB, ticketB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	var sendOut bytes.Buffer
+	// The payload deliberately lies about the sender: the attested field must
+	// not come from anything the agent wrote.
+	if err := agent.Send(ctx,
+		[]string{"--topic", "topic/profile-e2e", "--data", `{"agent":"not-really-me"}`},
+		nil, &sendOut,
+	); err != nil {
+		restoreA()
+		t.Fatalf("agent.Send: %v", err)
+	}
+	restoreA()
+
+	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	var waitOut bytes.Buffer
+	if err := agent.Wait(ctx,
+		[]string{"--topic", "topic/profile-e2e", "--timeout", "2s"},
+		&waitOut,
+	); err != nil {
+		restoreB()
+		t.Fatalf("agent.Wait: %v", err)
+	}
+	restoreB()
+
+	var rec struct {
+		From struct {
+			Agent    string `json:"agent"`
+			Hostname string `json:"hostname"`
+		} `json:"from"`
+	}
+	line := strings.TrimSpace(waitOut.String())
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = line[:i]
+	}
+	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+		t.Fatalf("wait output is not JSON Lines: %v\n%s", err, waitOut.String())
+	}
+	if rec.From.Agent != "codex" {
+		t.Errorf("from.agent = %q, want %q", rec.From.Agent, "codex")
 	}
 }
 

@@ -220,6 +220,17 @@ so you reach it on its inbound topic `chat.<first-8-hex-of-task-id>`
 directly. No shared topic, no broadcast — only the target is woken. Announce
 your own `chat.<short-id>` as `reply_topic` so it can reply.
 
+Every delivered message carries `from.agent`: the agent profile the sending
+task was running under at publish time (`"claude"`, `"codex"`, …), attested by
+the server — the sender cannot set it, and it is frozen per message, so a task
+resumed under a different runtime does not relabel what it already sent. Check
+it before assuming your reply will be read: the auto-inbox hook lives in
+Claude's `.claude/settings.json`, so a peer whose `from.agent` is not `claude`
+may only see your message when it polls `harness-cli agent inbox` itself. An
+empty `from.agent` means the server could not attribute a runtime — a
+server-originated message such as an `await-idle` notification, identifiable
+by `from.hostname == "server"`.
+
 ### Opt-in discovery on `harness.hello`
 
 For the rarer case where you need to find a peer you have **no prior id
