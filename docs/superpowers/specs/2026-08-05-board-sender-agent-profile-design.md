@@ -118,10 +118,34 @@ from_agent_profile :[from_agent_profile_len]u8
 Regenerate with `make protoregen ARGS='agentboard/agentboard.bgn'` and
 `make protoregen ARGS='runner/protocol/message.bgn'`.
 
-This is a breaking wire change: an old decoder reading a new
-`DeliveredMessage` misparses. Roll out **server first** — an old server
-paired with a new runner is the failure mode recorded for wire changes on
-this project.
+### Version skew
+
+This is a breaking wire change — an old decoder reading a new
+`DeliveredMessage` misparses — but it does **not** reach the runner fleet.
+The runner does not import `agentboard` at all (every "agentboard" string
+under `runner/` is a comment or the wake marker at `runner/session.go:56`),
+and `BoardMessageRow` is reachable only from `BoardReadResponse`, never from
+`RunnerHello` / `RunnerMessage`. Each brgen format encodes independently, so
+no byte the runner sends or decodes changes. The fleet-kill failure mode
+recorded for `RunnerHello` changes — runner exits fatally on
+`PskAuthStatus.no_identity` — is out of scope here, and neither restart
+order can trigger it.
+
+The two legs that can actually skew:
+
+| Leg | Formats | Effect of skew |
+|---|---|---|
+| server ↔ `harness-cli agent` | `DeliveredMessage`, `RetainedMeta` | the agentboard read fails to decode, so inbox delivery on that leg stops until the lagging end is upgraded |
+| server ↔ operator client (`board read`, TUI, WebUI-wasm) | `BoardMessageRow` | `board read` fails to decode |
+
+Both are per-RPC decode failures, recoverable by upgrading the lagging end;
+no process dies and no persisted state is damaged. The practical
+consequence is a deployment one, unchanged from any other server-side
+change on this project: the server runs on a different host from the
+runners, so `make build` on the runner host upgrades `harness-cli` /
+`harness-tui` but leaves the server old until it is separately rebuilt and
+restarted. The WebUI wasm is served from `--webui-dir` and hot-reloads, so
+it needs a rebuild but no server restart.
 
 ### In-memory changes
 
