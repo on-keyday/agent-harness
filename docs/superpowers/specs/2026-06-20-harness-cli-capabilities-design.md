@@ -145,6 +145,25 @@ Read/discovery is a *scope*, not all-or-nothing. Lineage data already exists
 This gives the "filter `ls` to what's mine" behavior as the *secure default*
 rather than a separate feature.
 
+**The list surfaces add one upward hop.** `ls` / `session ls` also carry the
+caller's **direct creator**, as a redacted row: id, status, kind, timestamps,
+attach state and busy/idle survive; `repo_path`, `worktree_dir`, `prompt`,
+`error_message`, `agent_profile` and `assigned_to` are stripped. A child
+legitimately needs to know whether the parent driving it is still alive, and it
+can already read that parent's id from the ungated `whoami`
+(`WhoAmIResponse.CreatorTaskId`) — what it must not gain is where the parent
+runs or what it was told to do. `capabilities` and `creator_task_id` are NOT
+stripped: attenuation already guarantees `caps_parent ⊇ caps_self`, and zeroing
+them would render as "caps: none" / "operator-created", which are false claims
+rather than absent fields.
+
+The hop is **list-only and exactly one level**. Grandparents and siblings stay
+invisible, and every access-scoped operation — `logs`, `conns`, port-forward
+list/kill — keeps the strict self+descendants set (`visibleToCaller`); only
+`handleList` consults the widened `listVisibleToCaller`. Opening the access
+scope upward would hand a confined task the full log stream of a task that, by
+construction, holds a superset of its own capabilities.
+
 **`agent subscribe` eavesdrop gating is DEFERRED** (not in scope). Restricting a
 confined task to only its "own" topic would require the server to know topic
 ownership, which today is purely a client convention
@@ -353,6 +372,10 @@ now.
   SPAWN/FILE/FORWARD/EXEC/RUNNER_ADMIN but can still self-topic `send`/`inbox`.
 - **`INFO_GLOBAL` scope**: without it, `ls` returns only self+subtree and
   `logs`/`watch` against an out-of-subtree task is denied; with it, full view.
+- **Parent hop is list-only and one level**: without `INFO_GLOBAL`, `ls`
+  carries the direct creator with its location/content fields stripped and its
+  caps intact; the grandparent and unrelated roots stay absent; `logs` against
+  that same parent still answers not-found.
 - **Top-level full caps**: an operator-created (creator=zero) task holds all
   caps; existing flows unchanged (regression).
 - **Resume**: a resumed task's caps equal the persisted value, independent of

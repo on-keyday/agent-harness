@@ -654,6 +654,140 @@ func TestListFilteredToSubtree(t *testing.T) {
 	}
 }
 
+// TestListIncludesRedactedParent: `ls` / `session ls` grant a confined caller
+// exactly ONE upward hop — its direct creator — and nothing above it. The
+// parent row is redacted to lifecycle + liveness; the fields that describe
+// where it runs and what it was asked to do are stripped. The ACCESS scope is
+// unchanged: the parent's logs stay denied.
+//
+// Lineage: A (grandparent) → B (parent) → C (caller). S is unrelated.
+func TestListIncludesRedactedParent(t *testing.T) {
+	h := newTestHandler(t)
+	h.LogsDir = t.TempDir() // so the log gate runs before the file open
+
+	aHex := h.Tasks.Create("/repo/a", "grandparent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "claude")
+	bHex := h.Tasks.Create("/repo/b", "parent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
+		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "claude")
+	bTID := hexToTaskID(t, bHex)
+	cHex := h.Tasks.Create("/repo/c", "child prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "claude")
+	sHex := h.Tasks.Create("/repo/s", "stranger prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+
+	// Give B a worktree + assigned runner so redaction has something to strip.
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[bHex].WorktreeDir = "/home/op/worktrees/b"
+	h.Tasks.tasks[bHex].AssignedTo = "ws:127.0.0.1:8539-7"
+	h.Tasks.tasks[bHex].ErrorMsg = []byte("boom in /home/op/worktrees/b")
+	h.Tasks.tasks[bHex].Status = protocol.TaskStatus_Running
+	h.Tasks.mu.Unlock()
+
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	callerConn := &fakeConn{
+		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9830-1"),
+		nextSendStreamID: 10,
+	}
+	h.principals[callerConn.ConnectionID().String()] = hexToTaskID(t, cHex)
+
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
+	req.SetList(protocol.ListQuery{})
+	h.Handle(callerConn, encodeTaskControlRequest(t, req))
+
+	if len(callerConn.sendStreams) != 1 {
+		t.Fatalf("expected 1 send stream, got %d", len(callerConn.sendStreams))
+	}
+	body := decodeListBody(t, callerConn.sendStreams[0].bytes)
+	seen := taskIDsFromBody(t, body)
+	if !seen[cHex] {
+		t.Errorf("caller must see itself; hex=%s", cHex)
+	}
+	if !seen[bHex] {
+		t.Errorf("caller must see its direct parent B; hex=%s", bHex)
+	}
+	if seen[aHex] {
+		t.Errorf("the hop is ONE level: grandparent A must stay hidden; hex=%s", aHex)
+	}
+	if seen[sHex] {
+		t.Errorf("unrelated task S must stay hidden; hex=%s", sHex)
+	}
+	if body.TasksLen != 2 {
+		t.Errorf("expected exactly 2 tasks (self + parent), got %d", body.TasksLen)
+	}
+
+	var parent, self *protocol.TaskInfo
+	for i := range body.Tasks {
+		switch hex.EncodeToString(body.Tasks[i].Id.Id[:]) {
+		case bHex:
+			parent = &body.Tasks[i]
+		case cHex:
+			self = &body.Tasks[i]
+		}
+	}
+	if parent == nil || self == nil {
+		t.Fatal("both the parent row and the caller's own row must be present")
+	}
+
+	// Redacted on the parent row: location + content.
+	for _, f := range []struct {
+		name string
+		got  string
+	}{
+		{"prompt", string(parent.Prompt)},
+		{"repo_path", string(parent.RepoPath)},
+		{"worktree_dir", string(parent.WorktreeDir)},
+		{"error_message", string(parent.ErrorMessage)},
+		{"agent_profile", string(parent.AgentProfile)},
+	} {
+		if f.got != "" {
+			t.Errorf("parent row must redact %s; got %q", f.name, f.got)
+		}
+	}
+	if parent.AssignedTo.IpAddrLen != 0 || len(parent.AssignedTo.IpAddr) != 0 {
+		t.Errorf("parent row must redact assigned_to; got %+v", parent.AssignedTo)
+	}
+
+	// Kept on the parent row: identity + lifecycle + liveness.
+	if parent.Status != protocol.TaskStatus_Running {
+		t.Errorf("parent row must keep status; got %v", parent.Status)
+	}
+	if parent.Kind != protocol.TaskKind_Interactive {
+		t.Errorf("parent row must keep kind; got %v", parent.Kind)
+	}
+	if parent.CreatedAt == 0 {
+		t.Error("parent row must keep created_at")
+	}
+	// Capabilities are NOT redacted: attenuation already tells the caller
+	// caps_parent ⊇ caps_self, and a zeroed field would render as "none",
+	// which is an outright false statement about the parent.
+	if parent.Capabilities != protocol.Capability_All {
+		t.Errorf("parent row must keep capabilities; got %v", parent.Capabilities)
+	}
+
+	// The caller's own row is untouched.
+	if string(self.Prompt) != "child prompt" {
+		t.Errorf("caller's own row must not be redacted; prompt=%q", string(self.Prompt))
+	}
+	if string(self.RepoPath) != "/repo/c" {
+		t.Errorf("caller's own row must not be redacted; repo=%q", string(self.RepoPath))
+	}
+
+	// ACCESS scope unchanged: the parent's logs are still out of reach.
+	logReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 77}
+	logReq.SetGetLog(protocol.GetTaskLogRequest{TaskId: bTID})
+	h.Handle(callerConn, encodeTaskControlRequest(t, logReq))
+	resp := lastTaskControlResponse(t, callerConn)
+	gl := resp.GetLog()
+	if gl == nil {
+		t.Fatal("GetLog() returned nil")
+	}
+	if gl.Found != 0 || gl.StreamId != 0 {
+		t.Errorf("parent logs must stay denied; found=%d stream=%d", gl.Found, gl.StreamId)
+	}
+}
+
 // TestListRunnersGatedByInfoGlobal: the RUNNERS section of List is gated by
 // InfoGlobal exactly like agentHandleListTopics — a confined caller (no
 // InfoGlobal, not operator) sees zero runners; operator and InfoGlobal-holders

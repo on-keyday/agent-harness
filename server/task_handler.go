@@ -1335,7 +1335,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 		conn.SendMessage(out) //nolint:errcheck
 	}
 
-	all, allowed := h.visibleToCaller(connID)
+	all, allowed, parentHex := h.listVisibleToCaller(connID)
 	tasks := h.Tasks.List(100)
 	// RUNNERS visibility is gated on InfoGlobal exactly like agentHandleListTopics:
 	// a confined caller (no InfoGlobal, not operator) sees zero runners, so it
@@ -1350,9 +1350,20 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 		}
 	}
 	var filteredTasks []TaskEntry
+	redactedHex := ""
 	if all {
 		filteredTasks = tasks
 	} else {
+		// The one upward hop (see listVisibleToCaller). Fetched by id rather
+		// than scanned out of `tasks`: a parent is by construction older than
+		// its child, so it is exactly the row the 100-entry window above drops
+		// first. Prepended so the list stays in creation order.
+		if parentHex != "" {
+			if p, ok := h.Tasks.Get(parentHex); ok {
+				filteredTasks = append(filteredTasks, p)
+				redactedHex = parentHex
+			}
+		}
 		for _, t := range tasks {
 			if allowed[t.ID] {
 				filteredTasks = append(filteredTasks, t)
@@ -1362,6 +1373,12 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	taskInfos := make([]protocol.TaskInfo, len(filteredTasks))
 	for i, t := range filteredTasks {
 		taskInfos[i] = toTaskInfo(t)
+		// Before the live-session enrichment below, never after: the parent row
+		// keeps its busy/idle signal — that is what the hop is for — and loses
+		// only the stored fields.
+		if t.ID == redactedHex {
+			redactParentTaskInfo(&taskInfos[i])
+		}
 		// Live-session enrichment: these are point-in-time reads of the
 		// SessionMux, not stored task state (the mux is gone once the session
 		// ends, and idleness of a dead session is meaningless).
@@ -1637,6 +1654,33 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	info.SetIsAttached(t.IsAttached)
 	info.RingBufferBytes = t.RingBufferBytes
 	return info
+}
+
+// redactParentTaskInfo strips a parent row down to identity, lifecycle and
+// liveness. It applies only to the single upward hop listVisibleToCaller
+// grants a confined caller in `ls` / `session ls`, and drops exactly the
+// fields that say WHERE the task runs and WHAT it was told to do:
+//
+//   - RepoPath / WorktreeDir — filesystem paths outside the caller's sandbox
+//   - AssignedTo — runner identity, which the RUNNERS gate in handleList
+//     already withholds from this same caller
+//   - Prompt / ErrorMessage / AgentProfile — task content (ErrorMsg routinely
+//     embeds paths)
+//
+// Capabilities, CreatorTaskId, the origin kinds and the timestamps stay.
+// Spawn-time attenuation already guarantees caps_parent ⊇ caps_self, so the
+// bitmask discloses nothing the caller cannot derive; zeroing it would instead
+// make the row read as "caps: none" (cli.CapsLabel), which is not redaction but
+// a false claim. Same reason for CreatorTaskId: a zeroed one reads as
+// "operator-created". An absent string field is honestly absent; a zeroed enum
+// is a different statement.
+func redactParentTaskInfo(info *protocol.TaskInfo) {
+	info.SetRepoPath(nil)
+	info.SetWorktreeDir(nil)
+	info.SetPrompt(nil)
+	info.SetErrorMessage(nil)
+	info.SetAgentProfile(nil)
+	info.AssignedTo = protocol.RunnerID{}
 }
 
 // handleNotify runs both legs of a notify request: the live leg (OnNotify →

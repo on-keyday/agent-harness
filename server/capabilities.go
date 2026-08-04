@@ -111,6 +111,40 @@ func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[stri
 	return false, allowed
 }
 
+// listVisibleToCaller is the LIST scope: visibleToCaller (the ACCESS scope)
+// plus the caller's direct creator, returned separately as parentHex.
+//
+// The two scopes differ on purpose. visibleToCaller answers "may I operate on
+// this task" and stays strictly self+descendants — every op gated by it (task
+// logs, conn snapshots, port-forward list/kill) would otherwise open upward
+// onto a task that, by attenuation, holds a superset of the caller's caps.
+// listVisibleToCaller answers the narrower "does this task exist and is it
+// alive", which a child legitimately needs about the parent that is driving it
+// — and whose id it can already read from the ungated whoami CreatorTaskId.
+//
+// Exactly ONE hop: grandparents and siblings stay invisible. parentHex is ""
+// for operators, InfoGlobal holders (all=true covers everything anyway),
+// operator-created tasks (zero creator), and a creator no longer in the store.
+// The row itself is redacted by the caller — see redactParentTaskInfo.
+func (h *TaskHandler) listVisibleToCaller(connID string) (all bool, allowed map[string]bool, parentHex string) {
+	all, allowed = h.visibleToCaller(connID)
+	if all {
+		return true, nil, ""
+	}
+	pid := h.lookupPrincipal(connID)
+	self, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
+	if !ok || self.CreatorTaskID.Id == ([16]byte{}) {
+		return false, allowed, ""
+	}
+	creatorHex := hex.EncodeToString(self.CreatorTaskID.Id[:])
+	if allowed[creatorHex] {
+		// Already inside the subtree (only reachable through a creator cycle,
+		// which task creation cannot produce); nothing to add.
+		return false, allowed, ""
+	}
+	return false, allowed, creatorHex
+}
+
 // agentCallerCaps resolves the capability set of the agentboard caller
 // identified by ac.state.Identity(). Returns Capability_None if the task
 // is not found or the connection state is nil (not yet helloed).

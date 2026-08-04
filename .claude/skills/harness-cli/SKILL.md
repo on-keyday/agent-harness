@@ -491,6 +491,13 @@ authorizes with `harness-cli caps` (`--json` for the machine-readable form).
 - **Visibility is a cap too.** Without `info_global`, a confined task's `ls` and
   `agent topics` show only its own task subtree (itself + descendants), not the
   whole board; `info_global` (part of `all`) lifts that.
+- **You also see your parent, redacted.** `ls` / `session ls` include one row
+  for your direct creator so you can tell whether the task driving you is still
+  running / idle. That row is deliberately sparse — `repo`, `prompt`,
+  `worktree`, `agent` and the assigned runner come back empty. They were
+  stripped, not absent; do not report "my parent has no prompt". Its `caps` and
+  `created_by` ARE real. One hop only: your grandparent is not listed, and
+  `logs` against your parent still returns not-found.
 - **Check your own caps with `harness-cli whoami`.** It prints THIS connection's
   own principal task id and the exact capability set the server enforces for you
   (`--json` for the machine-readable form). No cap is required — it is

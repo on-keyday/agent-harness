@@ -112,8 +112,12 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
     `exec_attach`, `notify`, and all other control-plane operations with
     `PermissionDenied`. The escape path (spawn an unsandboxed child) is
     closed server-side regardless of what's in the container.
-  - `submit --caps info_global` — adds the ability to read the agent's own
-    task subtree (logs, task list) without granting spawn or file-write.
+    Its own task subtree (`ls`, `logs`) stays readable — that needs no cap —
+    as does a redacted row for its direct parent: status and busy/idle only,
+    with the repo, worktree, prompt and assigned runner stripped.
+  - `submit --caps info_global` — widens that to the full-board view (every
+    task, every runner, the whole agentboard topic list) without granting
+    spawn or file-write.
 
   For full control-plane removal (no harness-cli at all inside the container),
   use `--claude-arg --omit-harness-cli` / `--claude-args "--omit-harness-cli"`.
