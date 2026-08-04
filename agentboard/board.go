@@ -78,7 +78,7 @@ func (b *Board) Registry() *registry { return b.reg }
 // topic. This is the server-side equivalent of the historical
 // `harness-cli agent subscribe --self` SessionStart hook, but it runs when the
 // task is assigned to a runner, before any runtime-specific agent hook exists.
-func (b *Board) RegisterTask(rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte) {
+func (b *Board) RegisterTask(rid protocol.RunnerID, tid protocol.TaskID, ticket [16]byte, agentProfile string) {
 	b.reg.Register(rid, tid, ticket)
 	key := ticketKey{runner: runnerIDStringProto(rid), task: hexTaskIDProto(tid)}
 	b.mu.Lock()
@@ -88,7 +88,7 @@ func (b *Board) RegisterTask(rid protocol.RunnerID, tid protocol.TaskID, ticket 
 		b.tasks[key] = ts
 	}
 	b.mu.Unlock()
-	ts.setIdentity(rid, tid, "")
+	ts.setIdentity(rid, tid, "", agentProfile)
 	ts.addPattern(SelfTopic(tid))
 }
 
@@ -104,10 +104,11 @@ func (b *Board) SetOnDeliver(fn func(protocol.RunnerID, protocol.TaskID)) {
 
 // Attach is called from the agent_message Hello handler after Validate(rid, tid, ticket)
 // returns Ok. It returns a ConnState bound to the (rid, tid) taskState, lazy-creating
-// the taskState if this is the first agent connecting under that ticket. hostname is
-// captured into the taskState so Board.Send can attach sender attestation to every
-// message published by this (rid, tid).
-func (b *Board) Attach(rid RunnerID, tid TaskID, hostname string) *ConnState {
+// the taskState if this is the first agent connecting under that ticket. hostname
+// and agentProfile are captured into the taskState so Board.Send can attach sender
+// attestation to every message published by this (rid, tid). agentProfile is the
+// server-resolved agent profile for the task; empty means "not attributed".
+func (b *Board) Attach(rid RunnerID, tid TaskID, hostname, agentProfile string) *ConnState {
 	key := ticketKey{runner: runnerIDStringBoard(rid), task: hexTaskIDBoard(tid)}
 	b.mu.Lock()
 	ts, ok := b.tasks[key]
@@ -124,7 +125,7 @@ func (b *Board) Attach(rid RunnerID, tid TaskID, hostname string) *ConnState {
 	protoRid.UniqueNumber = rid.UniqueNumber
 	var protoTid protocol.TaskID
 	copy(protoTid.Id[:], tid.Id[:])
-	ts.setIdentity(protoRid, protoTid, hostname)
+	ts.setIdentity(protoRid, protoTid, hostname, agentProfile)
 	c := newConnState(ts)
 	ts.attachConn(c)
 	return c
@@ -196,11 +197,13 @@ var (
 	ErrTooManyTopics   = errors.New("agentboard: too many topics")
 )
 
-// Send appends a message to topicName attributed to the given (rid, tid, hostname).
-// The caller (server agent_handler) is responsible for passing the *authenticated*
-// sender — taken from the calling ConnState's taskState — so agents cannot spoof
-// the from_* fields.
-func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost string) (uint64, error) {
+// Send appends a message to topicName attributed to the given
+// (rid, tid, hostname, agentProfile). The caller (server agent_handler) is
+// responsible for passing the *authenticated* sender — taken from the calling
+// ConnState's taskState — so agents cannot spoof the from_* fields. fromProfile is
+// frozen into the ring entry rather than resolved on read, because a task id can be
+// resumed under a different agent profile while its topic keeps the older messages.
+func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string) (uint64, error) {
 	if len(payload) > b.cfg.MaxPayload {
 		return 0, ErrPayloadTooLarge
 	}
@@ -226,7 +229,7 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	b.mu.Unlock()
 
 	seq := b.seq.Add(1)
-	t.append(seq, payload, fromRid, fromTid, fromHost)
+	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile)
 
 	b.mu.Lock()
 	fn := b.onDeliver
@@ -245,7 +248,7 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 			c.ping()
 		}
 		if fn != nil {
-			rid, tid, _ := ts.identity()
+			rid, tid, _, _ := ts.identity()
 			fn(rid, tid)
 		}
 	}

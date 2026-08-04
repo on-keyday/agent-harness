@@ -152,7 +152,7 @@ func (s *Server) agentCallerCaps(ac *agentConn) protocol.Capability {
 	if ac == nil || ac.state == nil {
 		return protocol.Capability_None
 	}
-	_, tid, _ := ac.state.Identity()
+	_, tid, _, _ := ac.state.Identity()
 	if tid.Id == ([16]byte{}) {
 		// Zero TaskID means no authenticated identity → no caps.
 		return protocol.Capability_None

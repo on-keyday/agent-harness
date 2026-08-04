@@ -338,6 +338,14 @@ func TestHandleAwaitIdle_BoardSinkPublishesOnFire(t *testing.T) {
 			t.Fatalf("board payload = %q, missing %s", payload, want)
 		}
 	}
+	// A server-originated publish has no agent behind it: the profile is
+	// empty and the sender is identifiable by hostname alone.
+	if msgs[0].FromHostname != "server" {
+		t.Errorf("FromHostname = %q, want %q", msgs[0].FromHostname, "server")
+	}
+	if msgs[0].FromAgentProfile != "" {
+		t.Errorf("FromAgentProfile = %q, want empty (not attributed)", msgs[0].FromAgentProfile)
+	}
 }
 
 func TestHandleAwaitIdle_ReplyLongPollFires(t *testing.T) {

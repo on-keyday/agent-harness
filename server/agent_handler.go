@@ -114,7 +114,7 @@ func (s *Server) establishAgentIdentity(conn ConnHandle, info *protocol.AgentInf
 	if status == agentboard.HelloStatusOk {
 		ac := s.getOrCreateAgentConn(conn)
 		ac.helloed = true
-		ac.state = s.Board.Attach(rid, tid, string(info.Hostname))
+		ac.state = s.Board.Attach(rid, tid, string(info.Hostname), "")
 	}
 	return status
 }
@@ -147,8 +147,8 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 			s.sendAgent(conn, resp)
 			return
 		}
-		fromRid, fromTid, fromHost := ac.state.Identity()
-		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost)
+		fromRid, fromTid, fromHost, _ := ac.state.Identity()
+		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost, "")
 		var status agentboard.SendStatus
 		switch sendErr {
 		case nil:
@@ -360,7 +360,7 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_InfoGlobal) {
 		slog.Warn("agentHandleListTopics: caller lacks InfoGlobal; returning empty list",
 			"task_id", func() string {
-				_, tid, _ := ac.state.Identity()
+				_, tid, _, _ := ac.state.Identity()
 				return hex.EncodeToString(tid.Id[:])
 			}())
 		out := agentboard.ListTopicsResponse{RequestId: req.RequestId}
@@ -424,7 +424,7 @@ func (s *Server) agentHandlePurge(conn ConnHandle, ac *agentConn, r *agentboard.
 	}
 
 	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_Purge) {
-		_, tid, _ := ac.state.Identity()
+		_, tid, _, _ := ac.state.Identity()
 		slog.Warn("agentHandlePurge: caller lacks Purge cap; denying",
 			"task_id", hex.EncodeToString(tid.Id[:]), "topic", string(r.Topic))
 		reply(agentboard.PurgeStatus_Denied, 0)

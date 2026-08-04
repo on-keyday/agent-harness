@@ -15,7 +15,14 @@ type RetainedMessage struct {
 	FromRunner   protocol.RunnerID
 	FromTask     protocol.TaskID
 	FromHostname string
-	ReceivedAt   time.Time
+	// FromAgentProfile is the agent profile the sender was running under when
+	// this message was published, frozen here because the ring outlives the
+	// taskState that produced the entry: a task id resumed under a different
+	// runtime must not retroactively re-label its old messages. Empty = the
+	// server could not attribute a runtime (see agentboard.bgn
+	// DeliveredMessage.from_agent_profile).
+	FromAgentProfile string
+	ReceivedAt       time.Time
 }
 
 // topic holds a bounded ring of recent messages plus metadata used for TTL eviction.
@@ -31,7 +38,7 @@ func newTopic(name string, cap int) *topic {
 	return &topic{name: name, cap: cap, ring: make([]RetainedMessage, 0, cap)}
 }
 
-func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost string) {
+func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now()
@@ -41,13 +48,14 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 		t.ring = t.ring[:t.cap-1]
 	}
 	t.ring = append(t.ring, RetainedMessage{
-		Seq:          seq,
-		Topic:        t.name,
-		Payload:      append([]byte(nil), payload...),
-		FromRunner:   fromRid,
-		FromTask:     fromTid,
-		FromHostname: fromHost,
-		ReceivedAt:   now,
+		Seq:              seq,
+		Topic:            t.name,
+		Payload:          append([]byte(nil), payload...),
+		FromRunner:       fromRid,
+		FromTask:         fromTid,
+		FromHostname:     fromHost,
+		FromAgentProfile: fromProfile,
+		ReceivedAt:       now,
 	})
 }
 

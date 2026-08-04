@@ -20,6 +20,7 @@ type taskState struct {
 	rid      protocol.RunnerID
 	tid      protocol.TaskID
 	host     string
+	profile  string
 }
 
 func newTaskState() *taskState {
@@ -80,16 +81,17 @@ func (t *taskState) snapshotConns() []*ConnState {
 	return out
 }
 
-func (t *taskState) setIdentity(rid protocol.RunnerID, tid protocol.TaskID, hostname string) {
+func (t *taskState) setIdentity(rid protocol.RunnerID, tid protocol.TaskID, hostname, agentProfile string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.rid = rid
 	t.tid = tid
 	t.host = hostname
+	t.profile = agentProfile
 }
 
-func (t *taskState) identity() (protocol.RunnerID, protocol.TaskID, string) {
+func (t *taskState) identity() (protocol.RunnerID, protocol.TaskID, string, string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return t.rid, t.tid, t.host
+	return t.rid, t.tid, t.host, t.profile
 }

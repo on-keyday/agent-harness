@@ -32,12 +32,12 @@ func (c *ConnState) matches(topic string) bool {
 	return c.task.matches(topic)
 }
 
-// Identity returns the authenticated (RunnerID, TaskID, hostname) captured at
-// Attach time. The server uses this to attribute published messages to the
-// correct sender without trusting agent-supplied fields.
-func (c *ConnState) Identity() (protocol.RunnerID, protocol.TaskID, string) {
+// Identity returns the authenticated (RunnerID, TaskID, hostname, agentProfile)
+// captured at Attach time. The server uses this to attribute published messages
+// to the correct sender without trusting agent-supplied fields.
+func (c *ConnState) Identity() (protocol.RunnerID, protocol.TaskID, string, string) {
 	if c == nil || c.task == nil {
-		return protocol.RunnerID{}, protocol.TaskID{}, ""
+		return protocol.RunnerID{}, protocol.TaskID{}, "", ""
 	}
 	return c.task.identity()
 }

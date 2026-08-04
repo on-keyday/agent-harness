@@ -961,7 +961,7 @@ func makeTestAgentConn(t *testing.T, caps protocol.Capability) (*Server, *agentC
 	var boardTID agentboard.TaskID
 	copy(boardTID.Id[:], protoTID.Id[:])
 
-	state := board.Attach(boardRID, boardTID, "testhost")
+	state := board.Attach(boardRID, boardTID, "testhost", "")
 
 	ac := &agentConn{
 		state:   state,
@@ -1027,7 +1027,7 @@ func TestTopicsGated(t *testing.T) {
 		fromRID.UniqueNumber = 2
 		var fromTID protocol.TaskID
 		fromTID.Id[0] = 0xFF
-		_, _ = board.Send("test.topic", []byte("hello"), fromRID, fromTID, "testhost")
+		_, _ = board.Send("test.topic", []byte("hello"), fromRID, fromTID, "testhost", "")
 	}
 
 	// Case 1: no InfoGlobal → zero topics.

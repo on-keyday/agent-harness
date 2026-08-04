@@ -14,12 +14,12 @@ var testTid protocol.TaskID
 func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "topic/foo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("topic/foo", []byte("hello"), testRid, testTid, "test-host"); err != nil {
+	if _, err := b.Send("topic/foo", []byte("hello"), testRid, testTid, "test-host", ""); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := b.Inbox(conn, 0)
@@ -31,13 +31,13 @@ func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/bar")
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		_, _ = b.Send("topic/bar", []byte("ping"), testRid, testTid, "test-host")
+		_, _ = b.Send("topic/bar", []byte("ping"), testRid, testTid, "test-host", "")
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -53,7 +53,7 @@ func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 func TestBoard_WaitTimesOut(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "topic/quiet")
 
@@ -68,7 +68,7 @@ func TestBoard_WaitTimesOut(t *testing.T) {
 func TestBoard_PayloadTooLargeRejected(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 4})
 	defer b.Close()
-	if _, err := b.Send("topic/big", []byte("toolong"), testRid, testTid, "test-host"); err == nil {
+	if _, err := b.Send("topic/big", []byte("toolong"), testRid, testTid, "test-host", ""); err == nil {
 		t.Fatal("expected payload_too_large error")
 	}
 }
@@ -84,7 +84,7 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 	rid, tid := RunnerID{}, TaskID{}
 
 	// Connection 1: subscribe.
-	c1 := b.Attach(rid, tid, "test-host")
+	c1 := b.Attach(rid, tid, "test-host", "")
 	if err := b.Subscribe(c1, "topic/persistent"); err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +92,12 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 
 	// Send while no connection is attached. Message should land in the topic
 	// ring and become visible to a future Inbox call.
-	if _, err := b.Send("topic/persistent", []byte("delivered"), testRid, testTid, "test-host"); err != nil {
+	if _, err := b.Send("topic/persistent", []byte("delivered"), testRid, testTid, "test-host", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Connection 2: same (rid, tid). Should inherit the subscription.
-	c2 := b.Attach(rid, tid, "test-host")
+	c2 := b.Attach(rid, tid, "test-host", "")
 	defer b.Detach(c2)
 	msgs, _ := b.Inbox(c2, 0)
 	if len(msgs) != 1 || string(msgs[0].Payload) != "delivered" {
@@ -122,13 +122,13 @@ func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
 	var ticket [16]byte
 	ticket[0] = 1
 
-	b.RegisterTask(rid, tid, ticket)
+	b.RegisterTask(rid, tid, ticket, "")
 
-	if _, err := b.Send(SelfTopic(tid), []byte("hello"), testRid, testTid, "sender"); err != nil {
+	if _, err := b.Send(SelfTopic(tid), []byte("hello"), testRid, testTid, "sender", ""); err != nil {
 		t.Fatal(err)
 	}
 
-	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "agent-host")
+	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "agent-host", "")
 	defer b.Detach(c)
 	msgs, _ := b.Inbox(c, 0)
 	if len(msgs) != 1 || string(msgs[0].Payload) != "hello" {
@@ -159,12 +159,12 @@ func TestBoard_RegisterTaskReseedsSelfTopicOnRunnerChange(t *testing.T) {
 	ticket1[0] = 1
 	ticket2[0] = 2
 
-	b.RegisterTask(rid1, tid, ticket1)
-	b.RegisterTask(rid2, tid, ticket2)
+	b.RegisterTask(rid1, tid, ticket1, "")
+	b.RegisterTask(rid2, tid, ticket2, "")
 
-	c2 := b.Attach(toAgentboardRunnerID(rid2), toAgentboardTaskID(tid), "host2")
+	c2 := b.Attach(toAgentboardRunnerID(rid2), toAgentboardTaskID(tid), "host2", "")
 	defer b.Detach(c2)
-	if _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender"); err != nil {
+	if _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,18 +198,23 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	var ticket [16]byte
 	ticket[0] = 9
 
-	// Assignment: seeds identity with hostname "" (and the self topic).
-	b.RegisterTask(rid, tid, ticket)
+	// Assignment: seeds identity with hostname "" (and the self topic). The
+	// profile seeded here is whatever the task record said at dispatch time.
+	b.RegisterTask(rid, tid, ticket, "stale-profile")
 
-	// Agent hello: Attach carries the real hostname, overwriting the "" seed.
-	sender := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "real-host")
+	// Agent hello: Attach carries the real hostname and the profile resolved
+	// at hello time, overwriting both seeds.
+	sender := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(tid), "real-host", "claude")
 	defer b.Detach(sender)
 
 	// This is exactly what server agent_handler.go does on a Send RPC: it
 	// derives the from_* attribution from the sending conn's Identity().
-	gotRid, gotTid, gotHost := sender.Identity()
+	gotRid, gotTid, gotHost, gotProfile := sender.Identity()
 	if gotHost != "real-host" {
 		t.Fatalf("Identity host = %q, want %q (Attach must overwrite RegisterTask's empty seed)", gotHost, "real-host")
+	}
+	if gotProfile != "claude" {
+		t.Fatalf("Identity profile = %q, want %q (Attach must overwrite RegisterTask's seed)", gotProfile, "claude")
 	}
 
 	// End-to-end: a receiver on the sender's self topic must see the real
@@ -221,12 +226,12 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	rrid.UniqueNumber = 8
 	var rtid protocol.TaskID
 	rtid.Id[0] = 0xcc
-	recv := b.Attach(toAgentboardRunnerID(rrid), toAgentboardTaskID(rtid), "recv-host")
+	recv := b.Attach(toAgentboardRunnerID(rrid), toAgentboardTaskID(rtid), "recv-host", "")
 	defer b.Detach(recv)
 	if err := b.Subscribe(recv, "chat.attr-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("chat.attr-test", []byte("x"), gotRid, gotTid, gotHost); err != nil {
+	if _, err := b.Send("chat.attr-test", []byte("x"), gotRid, gotTid, gotHost, gotProfile); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := b.Inbox(recv, 0)
@@ -235,6 +240,9 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	}
 	if msgs[0].FromHostname != "real-host" {
 		t.Fatalf("delivered from_hostname = %q, want %q (RegisterTask's empty seed leaked into attribution)", msgs[0].FromHostname, "real-host")
+	}
+	if msgs[0].FromAgentProfile != "claude" {
+		t.Fatalf("delivered from_agent_profile = %q, want %q (RegisterTask's stale seed leaked into attribution)", msgs[0].FromAgentProfile, "claude")
 	}
 }
 
@@ -247,19 +255,19 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 
 	rid, tid := RunnerID{}, TaskID{}
 
-	c1 := b.Attach(rid, tid, "test-host")
+	c1 := b.Attach(rid, tid, "test-host", "")
 	_ = b.Subscribe(c1, "topic/scoped")
 	b.Detach(c1)
 
 	// Revoke the (rid, tid) — destroys the taskState.
 	b.Revoke(protoRunnerIDFromBoard(rid), protoTaskIDFromBoard(tid))
 
-	if _, err := b.Send("topic/scoped", []byte("after-revoke"), testRid, testTid, "test-host"); err != nil {
+	if _, err := b.Send("topic/scoped", []byte("after-revoke"), testRid, testTid, "test-host", ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// New attach — fresh taskState, no inherited subscription.
-	c2 := b.Attach(rid, tid, "test-host")
+	c2 := b.Attach(rid, tid, "test-host", "")
 	defer b.Detach(c2)
 	msgs, _ := b.Inbox(c2, 0)
 	if len(msgs) != 0 {
@@ -280,18 +288,18 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	rid2.Port = 2
 	tid1, tid2 := TaskID{Id: [16]byte{1}}, TaskID{Id: [16]byte{2}}
 
-	c1 := b.Attach(rid1, tid1, "host1")
-	c2 := b.Attach(rid2, tid2, "host2")
+	c1 := b.Attach(rid1, tid1, "host1", "")
+	c2 := b.Attach(rid2, tid2, "host2", "")
 
 	_ = b.Subscribe(c1, "chat.task1")    // exclusive to task1
 	_ = b.Subscribe(c1, "harness.hello") // shared
 	_ = b.Subscribe(c2, "harness.hello") // shared
 
 	// Publish to both topics so they exist in b.topics.
-	if _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1"); err != nil {
+	if _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("harness.hello", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1"); err != nil {
+	if _, err := b.Send("harness.hello", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -331,9 +339,9 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 	pubTid.Id[0] = 0xaa
 	subTid.Id[0] = 0xbb
 
-	pubConn := b.Attach(pubRid, pubTid, "pub-host")
+	pubConn := b.Attach(pubRid, pubTid, "pub-host", "")
 	defer b.Detach(pubConn)
-	subConn := b.Attach(subRid, subTid, "sub-host")
+	subConn := b.Attach(subRid, subTid, "sub-host", "")
 	defer b.Detach(subConn)
 
 	if err := b.Subscribe(pubConn, "topic/x"); err != nil {
@@ -358,7 +366,7 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 
 	fromRid := protoRunnerIDFromBoard(pubRid)
 	fromTid := protoTaskIDFromBoard(pubTid)
-	if _, err := b.Send("topic/x", []byte("hello"), fromRid, fromTid, "pub-host"); err != nil {
+	if _, err := b.Send("topic/x", []byte("hello"), fromRid, fromTid, "pub-host", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -380,7 +388,7 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "chat.poison"); err != nil {
 		t.Fatal(err)
@@ -388,7 +396,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 
 	// Retain three messages, advance the consumer cursor past them.
 	for _, p := range []string{"m1", "m2", "m3"} {
-		if _, err := b.Send("chat.poison", []byte(p), testRid, testTid, "test-host"); err != nil {
+		if _, err := b.Send("chat.poison", []byte(p), testRid, testTid, "test-host", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -417,7 +425,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 	// seq is board-global, so a post-purge message gets a strictly higher seq
 	// than the old cursor: the consumer's persisted cursor stays valid and the
 	// fresh message is delivered exactly once.
-	if _, err := b.Send("chat.poison", []byte("after"), testRid, testTid, "test-host"); err != nil {
+	if _, err := b.Send("chat.poison", []byte("after"), testRid, testTid, "test-host", ""); err != nil {
 		t.Fatal(err)
 	}
 	msgs, newCursor := b.Inbox(conn, cursor)
@@ -432,7 +440,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	conn := b.Attach(RunnerID{}, TaskID{}, "test-host")
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	if err := b.Subscribe(conn, "chat.mix"); err != nil {
 		t.Fatal(err)
@@ -440,7 +448,7 @@ func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
 
 	var seqs []uint64
 	for _, p := range []string{"a", "b", "c"} {
-		s, err := b.Send("chat.mix", []byte(p), testRid, testTid, "test-host")
+		s, err := b.Send("chat.mix", []byte(p), testRid, testTid, "test-host", "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -515,7 +523,7 @@ func protoTaskIDFromBoard(t TaskID) protocol.TaskID {
 func TestBoard_SeqSeedDefaultsToLegacy(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	seq, err := b.Send("topic/first", []byte("x"), testRid, testTid, "test-host")
+	seq, err := b.Send("topic/first", []byte("x"), testRid, testTid, "test-host", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -534,11 +542,11 @@ func TestBoard_SeqSeedDefaultsToLegacy(t *testing.T) {
 func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	// Boot 1: publish enough to advance a consumer cursor to a high value.
 	b1 := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
-	c1 := b1.Attach(RunnerID{}, TaskID{}, "test-host")
+	c1 := b1.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	_ = b1.Subscribe(c1, "chat.task")
 	var cursor uint64
 	for i := 0; i < 56; i++ {
-		if _, err := b1.Send("chat.task", []byte("old"), testRid, testTid, "test-host"); err != nil {
+		if _, err := b1.Send("chat.task", []byte("old"), testRid, testTid, "test-host", ""); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -554,9 +562,9 @@ func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	// as empty — the bug.
 	b2 := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024, SeqSeed: cursor + 1000})
 	defer b2.Close()
-	c2 := b2.Attach(RunnerID{}, TaskID{}, "test-host")
+	c2 := b2.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	_ = b2.Subscribe(c2, "chat.task")
-	newSeq, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host")
+	newSeq, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -566,5 +574,53 @@ func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	msgs, _ := b2.Inbox(c2, cursor) // the hook's `--since-last` read
 	if len(msgs) != 1 || string(msgs[0].Payload) != "new" {
 		t.Fatalf("since-last inbox = %+v, want the post-restart 'new' message (stale cursor %d)", msgs, cursor)
+	}
+}
+
+// TestBoard_RetainedProfileFrozenAcrossReattach is the regression the
+// FromAgentProfile field exists for. `session new --resume <task-id>` reuses a
+// task id — and so its chat.<short-id> topic — while TaskStore.Resume
+// overwrites the task's agent profile. The topic ring outlives the publishing
+// taskState, so a message published under the old profile must keep reporting
+// the old profile after the same (rid, tid) re-attaches under a new one.
+func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	first := b.Attach(RunnerID{}, TaskID{}, "test-host", "codex")
+	if err := b.Subscribe(first, "topic/resumed"); err != nil {
+		t.Fatal(err)
+	}
+	rid, tid, host, profile := first.Identity()
+	if profile != "codex" {
+		t.Fatalf("Identity() profile = %q, want %q", profile, "codex")
+	}
+	if _, err := b.Send("topic/resumed", []byte("from codex"), rid, tid, host, profile); err != nil {
+		t.Fatal(err)
+	}
+	b.Detach(first)
+
+	// Same (rid, tid) returns under a different profile, as --resume does.
+	// Detach preserves the taskState, so this re-attach overwrites identity
+	// in place — precisely the case a read-time lookup would get wrong.
+	second := b.Attach(RunnerID{}, TaskID{}, "test-host", "claude")
+	defer b.Detach(second)
+	rid, tid, host, profile = second.Identity()
+	if profile != "claude" {
+		t.Fatalf("Identity() after re-attach = %q, want %q", profile, "claude")
+	}
+	if _, err := b.Send("topic/resumed", []byte("from claude"), rid, tid, host, profile); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, found := b.ListRetained("topic/resumed")
+	if !found || len(msgs) != 2 {
+		t.Fatalf("ListRetained = %d msgs (found=%v), want 2", len(msgs), found)
+	}
+	if msgs[0].FromAgentProfile != "codex" {
+		t.Errorf("retained[0].FromAgentProfile = %q, want %q (frozen at publish)", msgs[0].FromAgentProfile, "codex")
+	}
+	if msgs[1].FromAgentProfile != "claude" {
+		t.Errorf("retained[1].FromAgentProfile = %q, want %q", msgs[1].FromAgentProfile, "claude")
 	}
 }

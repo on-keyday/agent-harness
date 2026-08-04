@@ -1019,7 +1019,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		return errResp(protocol.OpenInteractiveStatus_InternalError)
 	}
 	if h.Board != nil {
-		h.Board.RegisterTask(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex), ticket)
+		h.Board.RegisterTask(runnerIDFromConnID(runner.ID), taskIDFromHex(taskIDHex), ticket, "")
 	}
 
 	tuiStream := tuiConn.CreateBidirectionalStream()

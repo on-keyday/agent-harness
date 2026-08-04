@@ -42,13 +42,13 @@ func TestBoard_ListTopics_AfterSends(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 1
 
-	if _, err := b.Send("a/x", []byte("1"), rid, tid, "h"); err != nil {
+	if _, err := b.Send("a/x", []byte("1"), rid, tid, "h", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("a/x", []byte("2"), rid, tid, "h"); err != nil {
+	if _, err := b.Send("a/x", []byte("2"), rid, tid, "h", ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("b/y", []byte("3"), rid, tid, "h"); err != nil {
+	if _, err := b.Send("b/y", []byte("3"), rid, tid, "h", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +81,7 @@ func TestBoard_ListSubscriptions(t *testing.T) {
 	rid.SetIpAddr([]byte{1, 2, 3, 4})
 	var tid TaskID
 	tid.Id[0] = 1
-	c := b.Attach(rid, tid, "host")
+	c := b.Attach(rid, tid, "host", "")
 	if err := b.Subscribe(c, "alpha/x"); err != nil {
 		t.Fatal(err)
 	}
@@ -135,9 +135,9 @@ func TestBoard_OnDeliver_FiresPerSubscriber(t *testing.T) {
 		return t
 	}
 
-	cA := b.Attach(toAgentboardRunnerID(mkRid(1)), toAgentboardTaskID(mkTid(0xAA)), "host-A")
-	cB := b.Attach(toAgentboardRunnerID(mkRid(2)), toAgentboardTaskID(mkTid(0xBB)), "host-B")
-	cC := b.Attach(toAgentboardRunnerID(mkRid(3)), toAgentboardTaskID(mkTid(0xCC)), "host-C") // does not subscribe
+	cA := b.Attach(toAgentboardRunnerID(mkRid(1)), toAgentboardTaskID(mkTid(0xAA)), "host-A", "")
+	cB := b.Attach(toAgentboardRunnerID(mkRid(2)), toAgentboardTaskID(mkTid(0xBB)), "host-B", "")
+	cC := b.Attach(toAgentboardRunnerID(mkRid(3)), toAgentboardTaskID(mkTid(0xCC)), "host-C", "") // does not subscribe
 
 	if err := b.Subscribe(cA, "topic/x"); err != nil {
 		t.Fatal(err)
@@ -146,7 +146,7 @@ func TestBoard_OnDeliver_FiresPerSubscriber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := b.Send("topic/x", []byte("hello"), mkRid(99), mkTid(0x99), "host-S"); err != nil {
+	if _, err := b.Send("topic/x", []byte("hello"), mkRid(99), mkTid(0x99), "host-S", ""); err != nil {
 		t.Fatal(err)
 	}
 

@@ -15,11 +15,14 @@ func TestTaskState_Identity(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 0xCC
 	ts := newTaskState()
-	ts.setIdentity(rid, tid, "host-x")
+	ts.setIdentity(rid, tid, "host-x", "codex")
 
-	gotRid, gotTid, gotHost := ts.identity()
+	gotRid, gotTid, gotHost, gotProfile := ts.identity()
 	if gotHost != "host-x" {
 		t.Errorf("hostname = %q", gotHost)
+	}
+	if gotProfile != "codex" {
+		t.Errorf("agent profile = %q", gotProfile)
 	}
 	if gotTid.Id != tid.Id {
 		t.Errorf("task = %v", gotTid.Id)

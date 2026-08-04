@@ -96,6 +96,17 @@ format DeliveredMessage:
     from_task_id :TaskID
     from_hostname_len :u8
     from_hostname :[from_hostname_len]u8
+    # from_agent_profile is the agent profile name the sending task was running
+    # under AT PUBLISH TIME (e.g. "claude" / "codex"), resolved server-side from
+    # the task record — the agent does not supply it. Frozen per message because
+    # a task's profile is per-open: `session new --resume` reuses a task id (and
+    # so its chat.<short-id> topic) under a different runtime, so resolving it at
+    # read time would misattribute everything already in the ring. Empty means
+    # the server could not attribute a runtime (e.g. a server-originated
+    # publish, which carries from_hostname "server"); it never means "runner
+    # default".
+    from_agent_profile_len :u8
+    from_agent_profile :[from_agent_profile_len]u8
 
 format WaitRequest:
     request_id :u32
@@ -195,6 +206,9 @@ format RetainedMeta:
     from_task :TaskID
     from_hostname_len :u8
     from_hostname :[from_hostname_len]u8
+    # See DeliveredMessage.from_agent_profile.
+    from_agent_profile_len :u8
+    from_agent_profile :[from_agent_profile_len]u8
     size :u32
     received_at_unix_ms :u64
 

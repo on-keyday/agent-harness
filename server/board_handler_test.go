@@ -26,8 +26,8 @@ func newBoardTestHandler(t *testing.T) (*TaskHandler, *fakeConn) {
 func TestHandleBoardTopics_ListsTopics(t *testing.T) {
 	h, conn := newBoardTestHandler(t) // helper: TaskHandler w/ Board + recording ConnHandle, operator caller
 	// seed two topics via the board
-	h.Board.Send("chat.aaa", []byte("x"), protocol.RunnerID{}, protocol.TaskID{}, "h")
-	h.Board.Send("chat.bbb", []byte("y"), protocol.RunnerID{}, protocol.TaskID{}, "h")
+	h.Board.Send("chat.aaa", []byte("x"), protocol.RunnerID{}, protocol.TaskID{}, "h", "")
+	h.Board.Send("chat.bbb", []byte("y"), protocol.RunnerID{}, protocol.TaskID{}, "h", "")
 
 	h.handleBoardTopics(conn, 1)
 
@@ -43,8 +43,8 @@ func TestHandleBoardTopics_ListsTopics(t *testing.T) {
 
 func TestHandleBoardPurge_WholeAndSeq(t *testing.T) {
 	h, conn := newBoardTestHandler(t)
-	s1, _ := h.Board.Send("chat.p", []byte("a"), protocol.RunnerID{}, protocol.TaskID{}, "h")
-	h.Board.Send("chat.p", []byte("b"), protocol.RunnerID{}, protocol.TaskID{}, "h")
+	s1, _ := h.Board.Send("chat.p", []byte("a"), protocol.RunnerID{}, protocol.TaskID{}, "h", "")
+	h.Board.Send("chat.p", []byte("b"), protocol.RunnerID{}, protocol.TaskID{}, "h", "")
 
 	// seq purge drops exactly one
 	h.handleBoardPurge(conn, 2, "chat.p", s1)
@@ -72,8 +72,8 @@ func TestHandleBoardPurge_WholeAndSeq(t *testing.T) {
 
 func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
 	h, conn := newBoardTestHandler(t)
-	h.Board.Send("chat.r", []byte("alpha"), protocol.RunnerID{}, protocol.TaskID{}, "h")
-	h.Board.Send("chat.r", []byte("bravo"), protocol.RunnerID{}, protocol.TaskID{}, "h")
+	h.Board.Send("chat.r", []byte("alpha"), protocol.RunnerID{}, protocol.TaskID{}, "h", "")
+	h.Board.Send("chat.r", []byte("bravo"), protocol.RunnerID{}, protocol.TaskID{}, "h", "")
 
 	// Configure the send stream ID so handleBoardRead gets a non-nil stream.
 	// (fakeConn.CreateSendStream returns nil when nextSendStreamID==0.)

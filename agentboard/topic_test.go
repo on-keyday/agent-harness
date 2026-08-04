@@ -12,7 +12,7 @@ func TestTopic_AppendInRing(t *testing.T) {
 	var zeroRid protocol.RunnerID
 	var zeroTid protocol.TaskID
 	for i := 0; i < 6; i++ {
-		topic.append(uint64(i+1), []byte{byte(i)}, zeroRid, zeroTid, "")
+		topic.append(uint64(i+1), []byte{byte(i)}, zeroRid, zeroTid, "", "")
 	}
 	got := topic.since(0)
 	if len(got) != 4 {
@@ -28,7 +28,7 @@ func TestTopic_SinceFiltersByCursor(t *testing.T) {
 	var zeroRid protocol.RunnerID
 	var zeroTid protocol.TaskID
 	for i := uint64(1); i <= 5; i++ {
-		topic.append(i, []byte{byte(i)}, zeroRid, zeroTid, "")
+		topic.append(i, []byte{byte(i)}, zeroRid, zeroTid, "", "")
 	}
 	got := topic.since(2)
 	if len(got) != 3 {
@@ -44,7 +44,7 @@ func TestTopic_LastPublishedAtUpdates(t *testing.T) {
 	var zeroRid protocol.RunnerID
 	var zeroTid protocol.TaskID
 	t0 := time.Now()
-	topic.append(1, []byte("a"), zeroRid, zeroTid, "")
+	topic.append(1, []byte("a"), zeroRid, zeroTid, "", "")
 	if topic.lastPublishedAt.Before(t0) {
 		t.Error("lastPublishedAt did not update after append")
 	}
@@ -60,7 +60,7 @@ func TestTopic_AppendCarriesSender(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 0x42
 
-	tp.append(1, []byte("hi"), rid, tid, "host-A")
+	tp.append(1, []byte("hi"), rid, tid, "host-A", "")
 
 	got := tp.since(0)
 	if len(got) != 1 {
