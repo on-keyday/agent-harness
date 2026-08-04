@@ -192,6 +192,7 @@ func TestAgentCLI_E2E_Retained_NoCap(t *testing.T) {
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tid.Id[:]),
 			Capabilities: uint32(protocol.Capability_None),
+			AgentProfile: "codex",
 		},
 	})
 
@@ -218,6 +219,11 @@ func TestAgentCLI_E2E_Retained_NoCap(t *testing.T) {
 	// Metadata only: sender task id present, no payload bytes.
 	if !strings.Contains(got, `"from_task":"`+hex.EncodeToString(tid.Id[:])+`"`) {
 		t.Errorf("retained output missing sender task id: %s", got)
+	}
+	// The sender's runtime is attested on the metadata path too, resolved from
+	// the replayed task record — not just on inbox/wait delivery.
+	if !strings.Contains(got, `"from_agent":"codex"`) {
+		t.Errorf("retained output missing attested sender profile: %s", got)
 	}
 	if strings.Contains(got, `"i":1`) || strings.Contains(got, "payload") {
 		t.Errorf("retained output must not contain payload content: %s", got)
