@@ -26,9 +26,9 @@ harness-cli skill ls         # list the embedded skills + descriptions (alias: -
 harness-cli skill <name>     # print another one, e.g. `harness-cli skill landing-to-main`
 ```
 
-`skill ls` enumerates whatever is embedded (currently `harness-cli`,
-`independent-review`, `landing-to-main`, `session-debugging`); an unknown name
-errors and echoes the available names. The agentboard wake prompt tells you to
+`skill ls` enumerates whatever is embedded — run it rather than trusting a
+list written here, which goes stale the moment a skill is added; an unknown
+name errors and echoes the available names. The agentboard wake prompt tells you to
 run `harness-cli skill` precisely because the command — unlike a Claude skill
 reference — resolves in any runtime, including non-claude / non-injected peers.
 
