@@ -144,7 +144,7 @@ can wipe another agent's unconsumed inbound channel), it is gated by its own
 records). An operator task holds it via `all`; a confined worker must be
 granted `--caps ...,purge` explicitly or it gets `denied`.
 
-### Targeting a single message — `agent retained` (metadata only)
+### Choosing which message to purge — `agent retained` (metadata only)
 
 To choose a `--seq` without reading payloads (handy when a payload itself is
 what you want gone — e.g. it trips a moderation gate the moment it enters your
