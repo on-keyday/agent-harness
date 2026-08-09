@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-//go:embed all:harness-cli all:independent-review all:landing-to-main all:session-debugging
+//go:embed all:harness-cli all:independent-review all:landing-to-main all:session-debugging all:worker-orchestration
 var FS embed.FS
 
 // Skill returns the SKILL.md bytes for a named skill (e.g. "harness-cli").
