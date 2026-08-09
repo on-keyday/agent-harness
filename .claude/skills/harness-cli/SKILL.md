@@ -526,7 +526,9 @@ authorizes with `harness-cli caps` (`--json` for the machine-readable form).
   principal task) is the trusted root and holds `all`.
 - **Visibility is a cap too.** Without `info_global`, a confined task's `ls` and
   `agent topics` show only its own task subtree (itself + descendants), not the
-  whole board; `info_global` (part of `all`) lifts that.
+  whole board; `info_global` (part of `all`) lifts that. `info_global` also
+  gates the operator board reads — `board topics`, `board read` and
+  `board subscribers`.
 - **You also see your parent, redacted.** `ls` / `session ls` include one row
   for your direct creator so you can tell whether the task driving you is still
   running / idle. That row is deliberately sparse — `repo`, `prompt`,
@@ -890,6 +892,21 @@ Limits worth knowing before you rely on it:
   or not anything read it. The subscription itself survives.
 - Past **1024** topics the board evicts the least recently published one —
   which is exactly a quiet per-subject topic.
+
+### "My message never arrived"
+
+Three different causes look identical from the sender's side: the peer has
+not replied yet, the peer replied somewhere else, or the message was
+published to a topic **nobody subscribes to** — in which case it sits
+retained on the board and reaches no inbox.
+
+`harness-cli board subscribers <topic>` (needs `info_global`) separates the
+third from the first two: it lists the tasks that would receive a publish to
+that topic. An empty result means nothing is listening. With no argument it
+lists every task on the board and what each subscribes to.
+
+An empty `host=` column means the task is registered and subscribed but has
+not run a `harness-cli` command yet — a real state, not missing data.
 
 ### Checking for stray subscriptions
 
