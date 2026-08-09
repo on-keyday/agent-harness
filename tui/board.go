@@ -284,7 +284,13 @@ func (m *BoardModal) updateContentFromCursor() {
 	if agentName == "" {
 		agentName = "-"
 	}
-	header := fmt.Sprintf("seq=%d  from=%s  host=%s  agent=%s  at=%s", msg.Seq, fromShort, msg.FromHostname, agentName, at)
+	// in-reply-to shows only on replies: a re=0 on every header would be noise
+	// on a board where nothing replies.
+	inReplyTo := ""
+	if msg.InReplyTo != 0 {
+		inReplyTo = fmt.Sprintf("  re=%d", msg.InReplyTo)
+	}
+	header := fmt.Sprintf("seq=%d%s  from=%s  host=%s  agent=%s  at=%s", msg.Seq, inReplyTo, fromShort, msg.FromHostname, agentName, at)
 	m.content.SetContent(header + "\n\n" + payloadStr)
 }
 

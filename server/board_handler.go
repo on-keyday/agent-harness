@@ -67,6 +67,7 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		}
 		row := protocol.BoardMessageRow{
 			Seq:              m.Seq,
+			InReplyTo:        m.InReplyTo,
 			ReceivedAtUnixMs: uint64(m.ReceivedAt.UnixMilli()),
 			Size:             uint32(size),
 			FromTask:         m.FromTask,

@@ -3446,6 +3446,15 @@ const POLL_INTERVAL_MS = 5000;
         seqSpan.className = "board-msg-seq";
         seqSpan.textContent = `#${m.seq}`;
 
+        // inReplyTo is a decimal STRING (board seq exceeds 2^53); compare as
+        // one and never Number() it. Shown only on replies, so a board where
+        // nothing replies is not littered with re=0.
+        const replySpan = document.createElement("span");
+        replySpan.className = "board-msg-reply";
+        if (m.inReplyTo && m.inReplyTo !== "0") {
+          replySpan.textContent = `re=${m.inReplyTo}`;
+        }
+
         const fromSpan = document.createElement("span");
         fromSpan.className = "board-msg-from";
         fromSpan.textContent = `from=${m.fromTask ? m.fromTask.slice(0, 8) : "-"}`;
@@ -3480,6 +3489,7 @@ const POLL_INTERVAL_MS = 5000;
         });
 
         hdr.appendChild(seqSpan);
+        if (replySpan.textContent) hdr.appendChild(replySpan);
         hdr.appendChild(fromSpan);
         hdr.appendChild(hostSpan);
         hdr.appendChild(agentSpan);

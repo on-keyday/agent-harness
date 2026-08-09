@@ -43,10 +43,15 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		}
 
 	case "read":
-		if len(rest) == 0 {
+		fs := flag.NewFlagSet("board read", flag.ContinueOnError)
+		inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq")
+		if err := fs.Parse(rest); err != nil {
+			return err
+		}
+		if fs.NArg() == 0 {
 			return fmt.Errorf("board read: missing <topic>")
 		}
-		topic := rest[0]
+		topic := fs.Arg(0)
 		msgs, found, err := BoardRead(ctx, cid, topic)
 		if err != nil {
 			return err
@@ -56,8 +61,17 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			return nil
 		}
 		for _, m := range msgs {
-			fmt.Fprintf(out, "#%d from=%s host=%s agent=%s size=%d at=%s\n",
-				m.Seq, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
+			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
+				continue
+			}
+			// re= is printed only on replies: on a board where nothing replies
+			// yet, a re=0 on every line is noise.
+			re := ""
+			if m.InReplyTo != 0 {
+				re = fmt.Sprintf(" re=%d", m.InReplyTo)
+			}
+			fmt.Fprintf(out, "#%d%s from=%s host=%s agent=%s size=%d at=%s\n",
+				m.Seq, re, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
 				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs))
 			if json.Valid(m.Payload) {
 				var buf bytes.Buffer

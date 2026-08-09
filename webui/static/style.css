@@ -1322,6 +1322,7 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   color: #999;
 }
 .board-msg-seq { font-weight: 700; color: #d4d4d4; }
+.board-msg-reply { color: #c586c0; }
 .board-msg-from { color: #7ec8e3; }
 .board-msg-host { color: #b5cea8; }
 .board-msg-agent { color: #ce9178; }

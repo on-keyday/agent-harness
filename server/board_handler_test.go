@@ -102,3 +102,31 @@ func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
 		t.Fatalf("unknown read = %+v, want not_found/0", br)
 	}
 }
+
+func TestHandleBoardRead_CarriesInReplyTo(t *testing.T) {
+	h, conn := newBoardTestHandler(t)
+	parent, err := h.Board.Send("chat.r", []byte("q"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Board.Send("chat.r", []byte("a"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", parent); err != nil {
+		t.Fatal(err)
+	}
+
+	h.handleBoardRead(conn, 1, "chat.r")
+
+	resp := lastTaskControlResponse(t, conn)
+	br := resp.BoardRead()
+	if br == nil || br.Status != protocol.BoardStatus_Ok {
+		t.Fatalf("board read = %+v, want ok", br)
+	}
+	if len(br.Msgs) != 2 {
+		t.Fatalf("msgs = %d, want 2", len(br.Msgs))
+	}
+	if br.Msgs[0].InReplyTo != 0 {
+		t.Errorf("parent row InReplyTo = %d, want 0", br.Msgs[0].InReplyTo)
+	}
+	if br.Msgs[1].InReplyTo != parent {
+		t.Errorf("reply row InReplyTo = %d, want %d", br.Msgs[1].InReplyTo, parent)
+	}
+}

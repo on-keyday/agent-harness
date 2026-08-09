@@ -680,7 +680,10 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 					// Decimal string, not float64: board seq exceeds JS's
 					// 2^53 safe-integer range and would round, so a purge
 					// keyed on the rounded seq never matches server-side.
-					"seq":          strconv.FormatUint(m.Seq, 10),
+					"seq": strconv.FormatUint(m.Seq, 10),
+					// Also a seq, so also a decimal string — "0" when the
+					// message is not a reply.
+					"inReplyTo":    strconv.FormatUint(m.InReplyTo, 10),
 					"fromTask":     m.FromTaskHex,
 					"fromHostname": m.FromHostname,
 					"agentProfile": m.FromAgentProfile,

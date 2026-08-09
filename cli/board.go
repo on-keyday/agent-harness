@@ -21,7 +21,10 @@ type BoardTopicRow struct {
 // BoardMessage holds one retained message returned by BoardRead.
 // Payload is the raw bytes of the message as stored in the board ring.
 type BoardMessage struct {
-	Seq          uint64
+	Seq uint64
+	// InReplyTo is the seq of the message this one answers, 0 when it is not a
+	// reply. See agentboard/agentboard.bgn SendRequest.in_reply_to.
+	InReplyTo    uint64
 	FromTaskHex  string
 	FromHostname string
 	// FromAgentProfile is the agent profile the sender was running under when
@@ -89,6 +92,7 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 	for i, m := range br.Msgs {
 		rows[i] = BoardMessage{
 			Seq:              m.Seq,
+			InReplyTo:        m.InReplyTo,
 			FromTaskHex:      hex.EncodeToString(m.FromTask.Id[:]),
 			FromHostname:     string(m.FromHostname),
 			FromAgentProfile: string(m.FromAgentProfile),
