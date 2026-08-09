@@ -67,16 +67,10 @@ harness-cli session new -d --repo /path/to/repo \
   --agent-arg --permission-mode --agent-arg auto
 ```
 
-`--permission-mode auto` is **Claude's** flag. `--agent-arg` forwards whatever
-you give it verbatim to whichever binary the profile runs, so a worker on
-another agent CLI takes that runtime's own equivalent through the same flag —
-check the target profile's `agent=` in `ls` before assuming `--permission-mode`
-means anything to it. `--agent-arg` is the only route you have: a runner's own defaults
-(the profile's `agentArgs`, the global `--agent-args`) are set when the
-operator starts the runner on its host, and nothing in `harness-cli` changes
-them — `server dial-runner` is the only runner-facing command an agent has, and
-it only asks for a reverse dial. If a profile needs a standing default, that is
-a request to the operator, not something to arrange from here.
+`--permission-mode auto` is **Claude's** flag, and `--agent-arg` forwards it
+verbatim to whatever binary the profile runs. Check the profile's `agent=` in
+`ls`: a worker on another agent CLI needs that runtime's own equivalent, passed
+the same way.
 
 Without this the worker spawns in the default permission mode and will
 stall on every permission prompt — and since the worker is detached, no
