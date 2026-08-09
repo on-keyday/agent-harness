@@ -144,6 +144,14 @@ func CapsLabel(c protocol.Capability) string {
 //
 // Names are case-sensitive and match the snake_case string representation
 // produced by Capability.String() (e.g. "spawn", "file_read", "exec_attach").
+//
+// A term may be prefixed with "-" to subtract it: "all,-spawn" is every
+// capability except spawn. Parsing is two-pass — every positive term is OR'd
+// into the base, then every negative term is cleared — so the result does not
+// depend on term order and "-spawn,all" means the same thing. A list of only
+// negatives is rejected rather than assumed to start from "all": the implied
+// base is not something the reader can see. Requiring a positive term also
+// keeps the flag value from ever starting with "-".
 func ParseCaps(s string) (protocol.Capability, error) {
 	if strings.TrimSpace(s) == "" {
 		return protocol.Capability_All, nil // omitted → inherit-all (server intersects with parent's caps)
@@ -153,15 +161,27 @@ func ParseCaps(s string) (protocol.Capability, error) {
 	for _, c := range grantable {
 		byName[c.String()] = c
 	}
-	var out protocol.Capability
-	for _, name := range strings.Split(s, ",") {
+	var out, negated protocol.Capability
+	sawPositive := false
+	for _, term := range strings.Split(s, ",") {
+		term = strings.TrimSpace(term)
+		name, negative := strings.CutPrefix(term, "-")
 		name = strings.TrimSpace(name)
 		c, ok := byName[name]
 		if !ok {
 			return 0, fmt.Errorf("unknown capability %q (valid: %s)",
 				name, strings.Join(CapNames(grantable), ", "))
 		}
+		if negative {
+			negated |= c
+			continue
+		}
+		sawPositive = true
 		out |= c
 	}
-	return out, nil
+	if negated != 0 && !sawPositive {
+		return 0, fmt.Errorf("caps %q: a subtractive list needs a base to subtract from (e.g. %q)",
+			s, "all,"+s)
+	}
+	return out &^ negated, nil
 }

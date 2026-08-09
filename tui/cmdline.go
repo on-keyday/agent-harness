@@ -19,6 +19,7 @@ type Action interface{ isAction() }
 
 type SubmitAction struct {
 	Repo               string
+	Caps               *protocol.Capability
 	Prompt             string
 	ExtraArgs          []string
 	ResumeTaskID       string
@@ -65,6 +66,7 @@ type TrsfDebugAction struct{}
 // validated at parse time via cli.SelectorOpts.ValidateSelector.
 type SessionNewAction struct {
 	Repo               string
+	Caps               *protocol.Capability
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
@@ -200,6 +202,7 @@ type ForwardKillAction struct{ ForwardID uint64 }
 // after /repo or when the user is already in cmdline focus.
 type InteractiveAction struct {
 	Repo               string
+	Caps               *protocol.Capability
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
@@ -227,14 +230,18 @@ type NotifyAction struct {
 }
 
 // CapsAction sets or shows the session-default capability mask applied to
-// every spawn (submit / interactive / session new) from this TUI session.
+// spawns that do not carry their own --caps.
 // Show=true (no args): display current caps in the status line.
-// Show=false and OnResume nil: update sessionCaps to Caps.
-// OnResume non-nil: set the applyCapsOnResume toggle (true=on, false=off).
+// Show=false: update sessionCaps to Caps.
+//
+// The default deliberately does not apply on resume — a resumed task keeps its
+// persisted caps unless the resuming command names --caps explicitly. The old
+// `caps --on-resume on` toggle re-granted from whatever the mode happened to
+// hold at the time, silently, on every resume; it rewrote at least one live
+// task's caps by accident and is gone.
 type CapsAction struct {
-	Caps     protocol.Capability
-	Show     bool  // true = display current set (no args), false = set to Caps
-	OnResume *bool // non-nil = --on-resume on|off command; nil = normal caps set/show
+	Caps protocol.Capability
+	Show bool // true = display current set (no args), false = set to Caps
 }
 
 func (SubmitAction) isAction()           {}
@@ -314,21 +321,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		if len(tokens) == 1 {
 			return CapsAction{Show: true}, nil
 		}
-		// --on-resume on|off sets the applyCapsOnResume toggle.
 		if tokens[1] == "--on-resume" {
-			if len(tokens) < 3 {
-				return nil, fmt.Errorf("caps --on-resume: missing value (on|off)")
-			}
-			switch tokens[2] {
-			case "on":
-				v := true
-				return CapsAction{OnResume: &v}, nil
-			case "off":
-				v := false
-				return CapsAction{OnResume: &v}, nil
-			default:
-				return nil, fmt.Errorf("caps --on-resume: invalid value %q (want on|off)", tokens[2])
-			}
+			return nil, fmt.Errorf("caps --on-resume was removed: pass --caps on the resuming command instead (e.g. `session new --resume <id> --caps all,-spawn`), which re-grants that mask for that one resume")
 		}
 		c, err := cli.ParseCaps(strings.Join(tokens[1:], ""))
 		if err != nil {
@@ -401,13 +395,15 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 	var extra repeatableStrings
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
+	var caps capsFlag
+	fs.Var(&caps, "caps", capsFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("interactive: %w", err)
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("interactive: unexpected positional argument %q", fs.Arg(0))
 	}
-	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent}, nil
+	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value()}, nil
 }
 
 func parseRepo(args []string) (Action, error) {
@@ -429,6 +425,8 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 	var extra repeatableStrings
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
+	var caps capsFlag
+	fs.Var(&caps, "caps", capsFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("submit: %w", err)
 	}
@@ -436,7 +434,7 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	if len(rest) == 0 {
 		return nil, fmt.Errorf("submit: prompt is required")
 	}
-	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent}, nil
+	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value()}, nil
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence,
@@ -456,6 +454,43 @@ func (r *repeatableStrings) Set(v string) error {
 	*r = append(*r, v)
 	return nil
 }
+
+// capsFlag is the optional --caps flag on submit / interactive / session new.
+// It has to tell "not given" apart from "none": Capability_None is a real
+// grantable value — a shell session with no capabilities is a normal thing to
+// want — so a zero mask cannot stand in for absence. Value() returns nil when
+// the flag never appeared and app.go falls back to the session default.
+type capsFlag struct {
+	set bool
+	val protocol.Capability
+}
+
+func (c *capsFlag) String() string {
+	if c == nil || !c.set {
+		return ""
+	}
+	return cli.CapsLabel(c.val)
+}
+
+func (c *capsFlag) Set(v string) error {
+	parsed, err := cli.ParseCaps(v)
+	if err != nil {
+		return err
+	}
+	c.set, c.val = true, parsed
+	return nil
+}
+
+func (c *capsFlag) Value() *protocol.Capability {
+	if c == nil || !c.set {
+		return nil
+	}
+	v := c.val
+	return &v
+}
+
+const capsFlagUsage = "capability mask for this spawn (overrides the `caps` default); " +
+	"names are comma-separated and may be subtracted, e.g. all,-spawn"
 
 func parseCancel(args []string) (Action, error) {
 	fs := flag.NewFlagSet("cancel", flag.ContinueOnError)
@@ -503,6 +538,8 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		agent := fs.String("agent", "", "agent profile name (empty = runner default; on --resume, the resumed task's own profile)")
 		var extra repeatableStrings
 		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
+		var caps capsFlag
+		fs.Var(&caps, "caps", capsFlagUsage)
 		if err := fs.Parse(rest); err != nil {
 			return nil, fmt.Errorf("session new: %w", err)
 		}
@@ -527,6 +564,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			X11:                *x11,
 			X11Display:         *x11Display,
 			AgentProfile:       *agent,
+			Caps:               caps.Value(),
 		}, nil
 	case "attach":
 		if len(rest) == 0 {

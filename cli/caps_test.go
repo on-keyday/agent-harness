@@ -80,3 +80,51 @@ func TestParseCaps(t *testing.T) {
 		t.Fatal("ParseCaps(\"spawn,bogus\"): expected error, got nil")
 	}
 }
+
+// TestParseCaps_Subtractive covers the "-name" terms: order independence, the
+// requirement for a positive base, and the interaction with an explicit list.
+func TestParseCaps_Subtractive(t *testing.T) {
+	all, err := ParseCaps("all")
+	if err != nil {
+		t.Fatalf("ParseCaps(all): %v", err)
+	}
+
+	got, err := ParseCaps("all,-spawn")
+	if err != nil {
+		t.Fatalf("ParseCaps(all,-spawn): %v", err)
+	}
+	if got&protocol.Capability_Spawn != 0 {
+		t.Errorf("all,-spawn still grants spawn: %#x", got)
+	}
+	if want := all &^ protocol.Capability_Spawn; got != want {
+		t.Errorf("all,-spawn = %#x, want %#x", got, want)
+	}
+
+	// Order must not matter — the two-pass rule.
+	rev, err := ParseCaps("-spawn,all")
+	if err != nil {
+		t.Fatalf("ParseCaps(-spawn,all): %v", err)
+	}
+	if rev != got {
+		t.Errorf("-spawn,all = %#x, want %#x (same as all,-spawn)", rev, got)
+	}
+
+	// Subtracting from an explicit list, not just from all.
+	got, err = ParseCaps("spawn,file_read,-spawn")
+	if err != nil {
+		t.Fatalf("ParseCaps(spawn,file_read,-spawn): %v", err)
+	}
+	if got != protocol.Capability_FileRead {
+		t.Errorf("spawn,file_read,-spawn = %#x, want %#x", got, protocol.Capability_FileRead)
+	}
+
+	// A negative with no base is rejected rather than assumed to mean "all".
+	if _, err := ParseCaps("-spawn"); err == nil {
+		t.Error("expected an error for a negatives-only list")
+	}
+
+	// Unknown names still error, prefixed or not.
+	if _, err := ParseCaps("all,-nosuchcap"); err == nil {
+		t.Error("expected an error for an unknown negated capability")
+	}
+}

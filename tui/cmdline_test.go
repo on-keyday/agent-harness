@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -611,57 +612,79 @@ func TestParseCapsCommand(t *testing.T) {
 	}
 }
 
-func TestParseCapsOnResume(t *testing.T) {
-	// caps --on-resume on → OnResume non-nil true
-	act, err := ParseCommand("caps --on-resume on", "r")
+func TestParseCapsOnResumeRemoved(t *testing.T) {
+	// The toggle is gone; the parser must say so rather than fall through to
+	// ParseCaps and report "--on-resume" as an unknown capability name.
+	_, err := ParseCommand("caps --on-resume on", "r")
+	if err == nil {
+		t.Fatal("caps --on-resume should be rejected")
+	}
+	if !strings.Contains(err.Error(), "--caps") {
+		t.Errorf("error should point at the replacement flag, got: %v", err)
+	}
+
+	// Plain `caps` still shows the current default.
+	act, err := ParseCommand("caps", "r")
 	if err != nil {
-		t.Fatalf("caps --on-resume on: unexpected error: %v", err)
+		t.Fatalf("caps plain: unexpected error: %v", err)
 	}
 	ca, ok := act.(CapsAction)
 	if !ok {
 		t.Fatalf("got %T, want CapsAction", act)
 	}
-	if ca.OnResume == nil || !*ca.OnResume {
-		t.Fatal("on-resume on: OnResume should be non-nil true")
-	}
-
-	// caps --on-resume off → OnResume non-nil false
-	act, err = ParseCommand("caps --on-resume off", "r")
-	if err != nil {
-		t.Fatalf("caps --on-resume off: unexpected error: %v", err)
-	}
-	ca, ok = act.(CapsAction)
-	if !ok {
-		t.Fatalf("got %T, want CapsAction", act)
-	}
-	if ca.OnResume == nil || *ca.OnResume {
-		t.Fatal("on-resume off: OnResume should be non-nil false")
-	}
-
-	// caps (plain) → OnResume nil, Show true
-	act, err = ParseCommand("caps", "r")
-	if err != nil {
-		t.Fatalf("caps plain: unexpected error: %v", err)
-	}
-	ca, ok = act.(CapsAction)
-	if !ok {
-		t.Fatalf("got %T, want CapsAction", act)
-	}
-	if ca.OnResume != nil {
-		t.Fatal("caps plain: OnResume should be nil")
-	}
 	if !ca.Show {
 		t.Fatal("caps plain: Show should be true")
 	}
+}
 
-	// caps --on-resume bogus → error
-	if _, err := ParseCommand("caps --on-resume bogus", "r"); err == nil {
-		t.Fatal("expected error for invalid on-resume value")
+// TestParseSpawnCapsFlag covers the per-invocation --caps on the three spawn
+// commands: absent leaves Caps nil (fall back to the session default), and an
+// explicit "none" must survive as a real value rather than read as absence.
+func TestParseSpawnCapsFlag(t *testing.T) {
+	act, err := ParseCommand("submit hello", "r")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if c := act.(SubmitAction).Caps; c != nil {
+		t.Errorf("submit without --caps: Caps = %v, want nil", *c)
 	}
 
-	// caps --on-resume (missing value) → error
-	if _, err := ParseCommand("caps --on-resume", "r"); err == nil {
-		t.Fatal("expected error for missing on-resume value")
+	act, err = ParseCommand("submit --caps all,-spawn hello", "r")
+	if err != nil {
+		t.Fatalf("submit --caps: %v", err)
+	}
+	c := act.(SubmitAction).Caps
+	if c == nil {
+		t.Fatal("submit --caps: Caps is nil")
+	}
+	if *c&protocol.Capability_Spawn != 0 {
+		t.Errorf("submit --caps all,-spawn still grants spawn: %#x", *c)
+	}
+
+	act, err = ParseCommand("session new --caps none", "r")
+	if err != nil {
+		t.Fatalf("session new --caps none: %v", err)
+	}
+	sc := act.(SessionNewAction).Caps
+	if sc == nil {
+		t.Fatal("session new --caps none: Caps is nil — none must be distinguishable from unset")
+	}
+	if *sc != protocol.Capability_None {
+		t.Errorf("session new --caps none = %#x, want %#x", *sc, protocol.Capability_None)
+	}
+
+	act, err = ParseCommand("interactive --caps exec_attach", "r")
+	if err != nil {
+		t.Fatalf("interactive --caps: %v", err)
+	}
+	ic := act.(InteractiveAction).Caps
+	if ic == nil || *ic != protocol.Capability_ExecAttach {
+		t.Errorf("interactive --caps exec_attach = %v", ic)
+	}
+
+	// A bad mask must fail the whole command, not spawn with a default.
+	if _, err := ParseCommand("submit --caps bogus hello", "r"); err == nil {
+		t.Error("expected an error for an unknown capability name")
 	}
 }
 

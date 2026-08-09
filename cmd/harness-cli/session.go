@@ -198,7 +198,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	ip := fs.String("ip", "", "pin to runner by IP address")
 	resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a new detachable session; --repo is ignored")
 	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
-	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
+	capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); a name may be subtracted with a leading dash, as in all,-spawn; default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
 	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 	var extraArgs repeatableStrings
 	fs.Var(&extraArgs, "agent-arg", "extra CLI arg to forward to the agent (repeatable; appended after runner-global --agent-args)")
