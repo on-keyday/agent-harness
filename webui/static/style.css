@@ -1333,7 +1333,15 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   color: #d4d4d4;
   overflow-x: auto;
 }
-.board-sub-row { white-space: pre; color: #b5cea8; }
+.board-sub-head {
+  color: #9cdcfe;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+  white-space: nowrap;
+}
+.board-sub-row { white-space: pre; color: #b5cea8; font-family: monospace; }
+.board-sub-empty { color: #999; font-style: italic; }
+#board-subscribers-btn.board-sub-open { background: #094771; color: #d4d4d4; }
 .board-msg-from { color: #7ec8e3; }
 .board-msg-host { color: #b5cea8; }
 .board-msg-agent { color: #ce9178; }

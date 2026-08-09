@@ -3427,6 +3427,7 @@ const POLL_INTERVAL_MS = 5000;
       // Never leave the previous topic's subscribers on screen.
       boardSubscribersEl.hidden = true;
       boardSubscribersEl.innerHTML = "";
+      if (boardSubscribersBtn) boardSubscribersBtn.classList.remove("board-sub-open");
     }
     if (!window.harness) {
       boardMessagesEl.textContent = "(not connected)";
@@ -3522,19 +3523,37 @@ const POLL_INTERVAL_MS = 5000;
   // renderBoardSubscribers lists the tasks a publish to the open topic would
   // reach. An empty result is the finding, not an error: the topic is retained
   // and nothing would receive a publish to it.
+  // headed() builds the pane's title line. The pane sits directly above the
+  // message cards and is styled like them, so without a heading a subscriber
+  // row is indistinguishable from a message row. Wording matches the TUI's
+  // "subscribers of <topic> (N)" so the two surfaces read the same.
+  function boardSubHeading(text) {
+    const h = document.createElement("div");
+    h.className = "board-sub-head";
+    h.textContent = text;
+    return h;
+  }
+
   async function renderBoardSubscribers() {
     if (!boardSubscribersEl || !currentBoardTopic) return;
     boardSubscribersEl.hidden = false;
     boardSubscribersEl.innerHTML = "";
     if (!window.harness) {
-      boardSubscribersEl.textContent = "(not connected)";
+      boardSubscribersEl.appendChild(boardSubHeading("subscribers"));
+      boardSubscribersEl.appendChild(
+        Object.assign(document.createElement("div"), { textContent: "(not connected)" }));
       return;
     }
     try {
       const rows = await window.harness.boardSubscribers(currentBoardTopic);
-      if (!rows || rows.length === 0) {
-        boardSubscribersEl.textContent =
-          "(nobody subscribes \u2014 a publish here reaches no inbox)";
+      const n = rows ? rows.length : 0;
+      boardSubscribersEl.appendChild(
+        boardSubHeading(`subscribers of ${currentBoardTopic} (${n})`));
+      if (n === 0) {
+        const empty = document.createElement("div");
+        empty.className = "board-sub-empty";
+        empty.textContent = "nobody subscribes \u2014 a publish here reaches no inbox";
+        boardSubscribersEl.appendChild(empty);
         return;
       }
       for (const r of rows) {
@@ -3546,16 +3565,29 @@ const POLL_INTERVAL_MS = 5000;
         const host = r.hostname || "-";
         const agent = r.agentProfile || "-";
         const pats = (r.patterns && r.patterns.length) ? r.patterns.join(",") : "-";
-        line.textContent = `${id}  host=${host}  agent=${agent}  topics=${pats}`;
+        line.textContent = `\u2022 ${id}  host=${host}  agent=${agent}  topics=${pats}`;
         boardSubscribersEl.appendChild(line);
       }
     } catch (err) {
-      boardSubscribersEl.textContent = `boardSubscribers error: ${err.message}`;
+      boardSubscribersEl.appendChild(boardSubHeading("subscribers"));
+      boardSubscribersEl.appendChild(
+        Object.assign(document.createElement("div"), { textContent: `error: ${err.message}` }));
     }
   }
 
   if (boardSubscribersBtn) {
-    boardSubscribersBtn.addEventListener("click", renderBoardSubscribers);
+    // Toggle: a second click hides the pane again, so the button's state is
+    // legible instead of the pane appearing permanently after one click.
+    boardSubscribersBtn.addEventListener("click", () => {
+      if (boardSubscribersEl && !boardSubscribersEl.hidden) {
+        boardSubscribersEl.hidden = true;
+        boardSubscribersEl.innerHTML = "";
+        boardSubscribersBtn.classList.remove("board-sub-open");
+        return;
+      }
+      boardSubscribersBtn.classList.add("board-sub-open");
+      renderBoardSubscribers();
+    });
   }
 
   if (boardPurgeTopicBtn) {
