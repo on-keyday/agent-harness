@@ -68,6 +68,10 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 		payload = b
 	}
 
+	if err := refuseIfOwnTicket(payload); err != nil {
+		return err
+	}
+
 	conn, cerr := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
 	})

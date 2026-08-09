@@ -41,6 +41,10 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		payload = []byte(*data)
 	}
 
+	if err := refuseIfOwnTicket(payload); err != nil {
+		return err
+	}
+
 	conn, err := ConnectAgent(ctx, Flags{
 		ServerCID: *serverCID,
 	})
