@@ -142,6 +142,26 @@ func clientHelloStatusFromBoard(s agentboard.HelloStatus) protocol.ClientHelloSt
 	}
 }
 
+// resolveReplyTarget maps a send request's (topic, in_reply_to) to the topic
+// actually published to. inReplyTo == 0 passes the requested topic through. A
+// non-zero inReplyTo must resolve to a message still on the board; when it does
+// and the request named no topic, the destination is the parent sender's own
+// inbound topic — taken from the retained entry, so it is the server's attested
+// sender and not something the requester supplied.
+func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (string, bool) {
+	if inReplyTo == 0 {
+		return topic, true
+	}
+	_, parentTid, ok := b.LookupSeq(inReplyTo)
+	if !ok {
+		return "", false
+	}
+	if topic == "" {
+		return agentboard.SelfTopic(parentTid), true
+	}
+	return topic, true
+}
+
 func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.SendRequest) {
 	if !ac.helloed || r == nil {
 		return
@@ -158,7 +178,18 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 			return
 		}
 		fromRid, fromTid, fromHost, fromProfile := ac.state.Identity()
-		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost, fromProfile, 0)
+		destTopic, ok := resolveReplyTarget(s.Board, string(r.Topic), r.InReplyTo)
+		if !ok {
+			resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
+			resp.SetSendResponse(agentboard.SendResponse{
+				RequestId: r.RequestId,
+				Status:    agentboard.SendStatus_UnknownInReplyTo,
+				Seq:       0,
+			})
+			s.sendAgent(conn, resp)
+			return
+		}
+		seq, sendErr := s.Board.Send(destTopic, payload, fromRid, fromTid, fromHost, fromProfile, r.InReplyTo)
 		var status agentboard.SendStatus
 		switch sendErr {
 		case nil:
@@ -299,6 +330,7 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 		}
 		dm := agentboard.DeliveredMessage{
 			Seq:             m.Seq,
+			InReplyTo:       m.InReplyTo,
 			PayloadStreamId: streamID,
 			FromRunnerId:    protoToAgentboardRunnerID(m),
 			FromTaskId:      protoToAgentboardTaskID(m),
@@ -343,6 +375,7 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 		}
 		dm := agentboard.DeliveredMessage{
 			Seq:             m.Seq,
+			InReplyTo:       m.InReplyTo,
 			PayloadStreamId: streamID,
 			FromRunnerId:    protoToAgentboardRunnerID(m),
 			FromTaskId:      protoToAgentboardTaskID(m),
@@ -504,6 +537,7 @@ func (s *Server) agentHandleListRetained(conn ConnHandle, ac *agentConn, req *ag
 		}
 		meta := agentboard.RetainedMeta{
 			Seq:              m.Seq,
+			InReplyTo:        m.InReplyTo,
 			FromRunner:       protoToAgentboardRunnerID(m),
 			FromTask:         protoToAgentboardTaskID(m),
 			Size:             uint32(size),
