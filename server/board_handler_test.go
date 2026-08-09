@@ -130,3 +130,49 @@ func TestHandleBoardRead_CarriesInReplyTo(t *testing.T) {
 		t.Errorf("reply row InReplyTo = %d, want %d", br.Msgs[1].InReplyTo, parent)
 	}
 }
+
+func TestHandleBoardSubscribers_NoFilterAndFilter(t *testing.T) {
+	h, conn := newBoardTestHandler(t)
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var listener protocol.TaskID
+	listener.Id[0] = 1
+	var bystander protocol.TaskID
+	bystander.Id[0] = 2
+
+	c := h.Board.Attach(boardRunnerIDFromProto(rid), boardTaskIDFromProto(listener), "host-A", "claude")
+	if err := h.Board.Subscribe(c, "rr.dec-019"); err != nil {
+		t.Fatal(err)
+	}
+	h.Board.Attach(boardRunnerIDFromProto(rid), boardTaskIDFromProto(bystander), "host-B", "codex")
+
+	h.handleBoardSubscribers(conn, 1, "")
+	allResp := lastTaskControlResponse(t, conn)
+	all := allResp.BoardSubscribers()
+	if all == nil || len(all.Rows) != 2 {
+		t.Fatalf("no-filter rows = %+v, want 2", all)
+	}
+
+	h.handleBoardSubscribers(conn, 2, "rr.dec-019")
+	filteredResp := lastTaskControlResponse(t, conn)
+	filtered := filteredResp.BoardSubscribers()
+	if filtered == nil || len(filtered.Rows) != 1 {
+		t.Fatalf("filtered rows = %+v, want 1", filtered)
+	}
+	if filtered.Rows[0].Task.Id != listener.Id {
+		t.Errorf("task = %x, want %x", filtered.Rows[0].Task.Id, listener.Id)
+	}
+	if string(filtered.Rows[0].Hostname) != "host-A" {
+		t.Errorf("hostname = %q, want host-A", string(filtered.Rows[0].Hostname))
+	}
+	if string(filtered.Rows[0].AgentProfile) != "claude" {
+		t.Errorf("agent = %q, want claude", string(filtered.Rows[0].AgentProfile))
+	}
+	// The row reports the task's full pattern set: its server-seeded
+	// chat.<short-id> plus the explicit subscription.
+	if len(filtered.Rows[0].Patterns) != 1 {
+		t.Errorf("patterns = %d, want 1 (only the explicit subscribe; Attach does not seed)", len(filtered.Rows[0].Patterns))
+	}
+}

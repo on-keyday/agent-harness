@@ -1187,3 +1187,13 @@ func TestResumeCapsOverride(t *testing.T) {
 		}
 	})
 }
+
+func TestRequiredCap_BoardSubscribers(t *testing.T) {
+	got, ok := requiredCap[protocol.TaskControlKind_BoardSubscribers]
+	if !ok {
+		t.Fatal("board_subscribers missing from requiredCap; an ungated kind is reachable by any helloed agent")
+	}
+	if got != protocol.Capability_InfoGlobal {
+		t.Errorf("cap = %v, want InfoGlobal (matching board_topics / board_read)", got)
+	}
+}

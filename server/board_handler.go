@@ -31,6 +31,36 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
 }
 
+// handleBoardSubscribers reports each task's agentboard subscription set,
+// optionally narrowed to the tasks a publish to one topic would reach. Cap
+// (InfoGlobal) is enforced centrally via requiredCap before dispatch, matching
+// its board_topics / board_read siblings: this is a sweep across every task on
+// the board.
+//
+// Unlike list_conns there is no own-subtree narrowing for confined callers.
+// board_topics does not narrow either, and a partial subscriber list would
+// answer "is anyone listening" wrongly rather than incompletely.
+func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, topic string) {
+	out := protocol.BoardSubscribersResponse{RequestId: requestID}
+	for _, r := range h.Board.ListSubscribers(topic) {
+		row := protocol.BoardSubscriberRow{Task: r.Task}
+		row.SetHostname([]byte(r.Hostname))
+		row.SetAgentProfile([]byte(r.AgentProfile))
+		patterns := make([]protocol.SubscriptionPattern, 0, len(r.Patterns))
+		for _, name := range r.Patterns {
+			var sp protocol.SubscriptionPattern
+			sp.SetName([]byte(name))
+			patterns = append(patterns, sp)
+		}
+		row.SetPatterns(patterns)
+		out.Rows = append(out.Rows, row)
+	}
+	out.RowsLen = uint16(len(out.Rows))
+	resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_BoardSubscribers, RequestId: requestID}
+	resp.SetBoardSubscribers(out)
+	conn.SendMessage(resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})) //nolint:errcheck
+}
+
 // handleBoardRead returns metadata for all retained messages in a topic plus a
 // server-initiated send-stream carrying the raw payloads in ring order.
 // Cap (InfoGlobal) is enforced centrally via requiredCap before dispatch.

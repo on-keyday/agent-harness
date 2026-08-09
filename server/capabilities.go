@@ -21,18 +21,19 @@ import (
 // discriminate. It is also the one task-scoped kind that does NOT require
 // Running/Detached; see handleGitQuery for why.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
-	protocol.TaskControlKind_Submit:          protocol.Capability_Spawn,
-	protocol.TaskControlKind_OpenInteractive: protocol.Capability_Spawn,
-	protocol.TaskControlKind_Cancel:          protocol.Capability_Cancel,
-	protocol.TaskControlKind_PruneTasks:      protocol.Capability_Prune,
-	protocol.TaskControlKind_Notify:          protocol.Capability_Notify,
-	protocol.TaskControlKind_AttachSession:   protocol.Capability_ExecAttach,
-	protocol.TaskControlKind_AwaitIdle:       protocol.Capability_ExecAttach,
-	protocol.TaskControlKind_DialRunner:      protocol.Capability_RunnerAdmin,
-	protocol.TaskControlKind_BoardTopics:     protocol.Capability_InfoGlobal,
-	protocol.TaskControlKind_BoardRead:       protocol.Capability_InfoGlobal,
-	protocol.TaskControlKind_BoardPurge:      protocol.Capability_Purge,
-	protocol.TaskControlKind_GitQuery:        protocol.Capability_FileRead,
+	protocol.TaskControlKind_Submit:           protocol.Capability_Spawn,
+	protocol.TaskControlKind_OpenInteractive:  protocol.Capability_Spawn,
+	protocol.TaskControlKind_Cancel:           protocol.Capability_Cancel,
+	protocol.TaskControlKind_PruneTasks:       protocol.Capability_Prune,
+	protocol.TaskControlKind_Notify:           protocol.Capability_Notify,
+	protocol.TaskControlKind_AttachSession:    protocol.Capability_ExecAttach,
+	protocol.TaskControlKind_AwaitIdle:        protocol.Capability_ExecAttach,
+	protocol.TaskControlKind_DialRunner:       protocol.Capability_RunnerAdmin,
+	protocol.TaskControlKind_BoardTopics:      protocol.Capability_InfoGlobal,
+	protocol.TaskControlKind_BoardRead:        protocol.Capability_InfoGlobal,
+	protocol.TaskControlKind_BoardPurge:       protocol.Capability_Purge,
+	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_InfoGlobal,
+	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
 }
 
 // hasCap reports whether have includes every bit in want.

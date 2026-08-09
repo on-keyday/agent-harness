@@ -488,6 +488,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("board_purge variant is nil", "request_id", req.RequestId)
 		}
 
+	case protocol.TaskControlKind_BoardSubscribers:
+		var topic string
+		if bs := req.BoardSubscribers(); bs != nil {
+			topic = string(bs.Topic)
+		}
+		h.handleBoardSubscribers(conn, req.RequestId, topic)
+
 	case protocol.TaskControlKind_BoardRead:
 		if r := req.BoardRead(); r != nil {
 			h.handleBoardRead(conn, req.RequestId, string(r.Topic))

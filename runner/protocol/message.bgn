@@ -271,6 +271,9 @@ enum TaskControlKind:
                             # list_files this is NOT restricted to Running /
                             # Detached tasks: a terminal task's work stays
                             # reachable through refs/heads/harness/<taskID>.
+    board_subscribers       # list each task's agentboard subscription set,
+                            # optionally narrowed to the tasks a publish to one
+                            # topic would reach. Requires info_global.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -694,6 +697,33 @@ format BoardReadResponse:
     msgs_len :u16
     msgs :[msgs_len]BoardMessageRow
 
+format BoardSubscribersRequest:
+    request_id :u32
+    # Empty topic = no filter: every task known to the board.
+    topic_len :u16
+    topic :[topic_len]u8
+
+format SubscriptionPattern:
+    name_len :u16
+    name :[name_len]u8
+
+format BoardSubscriberRow:
+    task :TaskID
+    # hostname is empty for a task that is registered (so its chat.<short-id>
+    # is seeded) but has not yet run a harness-cli command — see
+    # agentboard.SubscriberRow. That is a real state, not missing data.
+    hostname_len :u8
+    hostname :[hostname_len]u8
+    agent_profile_len :u8
+    agent_profile :[agent_profile_len]u8
+    patterns_len :u16
+    patterns :[patterns_len]SubscriptionPattern
+
+format BoardSubscribersResponse:
+    request_id :u32
+    rows_len :u16
+    rows :[rows_len]BoardSubscriberRow
+
 format BoardPurgeRequest:
     request_id :u32
     topic_len :u16
@@ -892,6 +922,7 @@ format TaskControlRequest:
         TaskControlKind.board_topics => board_topics :BoardTopicsRequest
         TaskControlKind.board_read   => board_read   :BoardReadRequest
         TaskControlKind.board_purge  => board_purge  :BoardPurgeRequest
+        TaskControlKind.board_subscribers => board_subscribers :BoardSubscribersRequest
         TaskControlKind.whoami       => whoami       :WhoAmIRequest
         TaskControlKind.await_idle   => await_idle   :AwaitIdleRequest
         TaskControlKind.register_port_forward => register_port_forward :RegisterPortForwardRequest
@@ -929,6 +960,7 @@ format TaskControlResponse:
         TaskControlKind.board_topics => board_topics :BoardTopicsResponse
         TaskControlKind.board_read   => board_read   :BoardReadResponse
         TaskControlKind.board_purge  => board_purge  :BoardPurgeResponse
+        TaskControlKind.board_subscribers => board_subscribers :BoardSubscribersResponse
         TaskControlKind.whoami       => whoami       :WhoAmIResponse
         TaskControlKind.await_idle   => await_idle   :AwaitIdleResponse
         TaskControlKind.register_port_forward => register_port_forward :RegisterPortForwardResponse
