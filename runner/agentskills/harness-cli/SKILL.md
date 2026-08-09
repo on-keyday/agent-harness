@@ -75,6 +75,14 @@ about what was *said*, not about what is currently *true*.
 
 ## Inbox is automatic — do not poll
 
+**Unless you are Claude Code.** The hook that turns a delivered message into a
+turn lives in `.claude/settings.json`, so it exists only for a Claude agent in
+a worktree the runner injected. Any other runtime — codex, gemini, a bare
+shell — receives nothing automatically and must run `harness-cli agent inbox`
+itself, on whatever cadence its own loop allows. The rest of this section
+describes the hook; if you do not have it, read the `agent inbox` command and
+poll.
+
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
 
 - `UserPromptSubmit` runs `harness-cli agent inbox --since-last --commit --json`
@@ -191,7 +199,8 @@ Why this rule exists:
   message arrives through the inbox hook anyway. The synchronous form
   has no payoff and a real cost.
 - State that needs to survive across turns ("I'm waiting on a reply
-  from peer X about Y") belongs in `TodoWrite` or memory, not in a
+  from peer X about Y") belongs in whatever your runtime uses to carry
+  notes across turns (a todo list, memory, a scratch file) — not in a
   blocking wait.
 
 `harness-cli agent wait` and `harness-cli agent dispatch` exist as

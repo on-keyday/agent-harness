@@ -67,6 +67,12 @@ harness-cli session new -d --repo /path/to/repo \
   --agent-arg --permission-mode --agent-arg auto
 ```
 
+`--permission-mode auto` is **Claude's** flag, forwarded verbatim. A worker
+running another agent CLI needs that runtime's own equivalent, which belongs
+in the runner's profile (`--agent-args` / `--agent-*-argv`) rather than in
+this command — check what the target profile advertises before assuming the
+flag lands.
+
 Without this the worker spawns in the default permission mode and will
 stall on every permission prompt — and since the worker is detached, no
 TTY is attached to answer them. Auto mode lets the worker proceed
@@ -310,7 +316,7 @@ your sessions" above; `logs` / `watch` don't apply to interactive tasks.)
 
 `cancel <id>` and `session kill <id>` (its alias), by contrast, **do** work on
 interactive sessions: they route a `CancelTask` to the assigned runner, which
-cancels the session's per-task context and kills the claude process. Cancel is
+cancels the session's per-task context and kills the agent process. Cancel is
 idempotent and skips already-terminal tasks. (`prune` / `prune-local` are
 post-hoc cleanup of terminal tasks — server-side forget and local worktree
 removal respectively — and are kind-agnostic.)
