@@ -450,7 +450,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.boardModal.SetStatus("topics: " + msg.Err.Error())
 			return a, nil
 		}
-		a.boardModal.ApplyTopics(msg.Rows)
+		a.boardModal.ApplyTopics(msg.Rows, msg.Subs)
 		return a, nil
 
 	case BoardReadMsg:

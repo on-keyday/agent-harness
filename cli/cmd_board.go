@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,9 +50,59 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		if err != nil {
 			return err
 		}
+		// The listing is the UNION of topics that exist and patterns that are
+		// subscribed. A topic only comes into existence when something is
+		// published to it, so listing board topics alone hides the state most
+		// worth seeing: subscribed, nothing published yet. One
+		// BoardSubscribers("") call yields both the per-topic count and every
+		// subscribed name, so this costs one extra round trip, not one per row.
+		subs := map[string]int{}
+		subsOK := true
+		if srows, serr := BoardSubscribers(ctx, cid, ""); serr == nil {
+			for _, sr := range srows {
+				for _, pat := range sr.Patterns {
+					subs[pat]++
+				}
+			}
+		} else {
+			// Requires info_global; a caller without it still gets the topics.
+			subsOK = false
+			fmt.Fprintf(os.Stderr, "board topics: subscriber counts unavailable: %v\n", serr)
+		}
+
+		type topicRow struct {
+			name      string
+			msgs      int
+			lastSeq   uint64
+			lastMs    uint64
+			published bool
+		}
+		byName := map[string]topicRow{}
 		for _, r := range rows {
-			fmt.Fprintf(out, "%s  msgs=%d  last_seq=%d  last=%s\n",
-				r.Name, r.MsgCount, r.LastSeq, boardMsToRFC3339(r.LastPublishedAtMs))
+			byName[r.Name] = topicRow{r.Name, r.MsgCount, r.LastSeq, r.LastPublishedAtMs, true}
+		}
+		for pat := range subs {
+			if _, ok := byName[pat]; !ok {
+				byName[pat] = topicRow{name: pat}
+			}
+		}
+		names := make([]string, 0, len(byName))
+		for n := range byName {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			r := byName[n]
+			subCol := ""
+			if subsOK {
+				subCol = fmt.Sprintf("  subs=%d", subs[n])
+			}
+			if !r.published {
+				fmt.Fprintf(out, "%s  msgs=0%s  (nothing published yet)\n", r.name, subCol)
+				continue
+			}
+			fmt.Fprintf(out, "%s  msgs=%d%s  last_seq=%d  last=%s\n",
+				r.name, r.msgs, subCol, r.lastSeq, boardMsToRFC3339(r.lastMs))
 		}
 
 	case "read":
@@ -68,13 +120,24 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			return err
 		}
 		if !found {
-			// Topic does not exist — print nothing, exit 0 per spec.
+			// Exit 0 per spec, but say which nothing this is: "no such topic"
+			// and "topic with an empty ring" both print nothing on stdout, and
+			// the exit code does not separate them either. Diagnostics go to
+			// stderr so `board read T | ...` stays clean — the same split
+			// cli/notify.go and cli/attach_native.go use.
+			fmt.Fprintf(os.Stderr, "board read: topic %q is not on the board (never published, or evicted / purged)\n", topic)
 			return nil
 		}
+		if len(msgs) == 0 {
+			fmt.Fprintf(os.Stderr, "board read: topic %q is on the board but holds no messages\n", topic)
+			return nil
+		}
+		shown := 0
 		for _, m := range msgs {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 				continue
 			}
+			shown++
 			// re= is printed only on replies: on a board where nothing replies
 			// yet, a re=0 on every line is noise.
 			re := ""
@@ -92,6 +155,12 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 				out.Write(m.Payload) //nolint:errcheck
 				fmt.Fprintln(out)
 			}
+		}
+		if shown == 0 {
+			// Third way to print nothing: the topic has messages, none of them
+			// a reply to the requested seq.
+			fmt.Fprintf(os.Stderr, "board read: topic %q holds %d message(s), none replying to %d\n",
+				topic, len(msgs), *inReplyTo)
 		}
 
 	case "subscribers":

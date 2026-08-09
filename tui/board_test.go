@@ -16,21 +16,63 @@ func TestBoardModalApplyTopics(t *testing.T) {
 		{Name: "foo", MsgCount: 3, LastSeq: 3, LastPublishedAtMs: 1_000},
 		{Name: "bar", MsgCount: 1, LastSeq: 1, LastPublishedAtMs: 2_000},
 	}
-	m.ApplyTopics(rows)
+	m.ApplyTopics(rows, nil)
 
 	if got := len(m.rowTopics); got != 2 {
 		t.Fatalf("rowTopics: want 2, got %d", got)
 	}
-	if m.rowTopics[0].Name != "foo" {
-		t.Errorf("rowTopics[0].Name: want foo, got %s", m.rowTopics[0].Name)
+	// Sorted by name, not left in server order: BoardTopics iterates a map and
+	// declares its order unspecified, so the list would otherwise reshuffle on
+	// every refresh.
+	if m.rowTopics[0].Name != "bar" {
+		t.Errorf("rowTopics[0].Name: want bar, got %s", m.rowTopics[0].Name)
 	}
-	if m.rowTopics[1].Name != "bar" {
-		t.Errorf("rowTopics[1].Name: want bar, got %s", m.rowTopics[1].Name)
+	if m.rowTopics[1].Name != "foo" {
+		t.Errorf("rowTopics[1].Name: want foo, got %s", m.rowTopics[1].Name)
 	}
-	// Verify the table has the expected row count (via the parallel slice length
-	// as the source of truth — same approach as TestConnsModalApplySnapshot).
-	if got := len(m.rowTopics); got != len(rows) {
-		t.Errorf("table row count mismatch: rowTopics len=%d, input len=%d", got, len(rows))
+}
+
+// TestBoardModalApplyTopicsUnion covers the case the listing exists for: a
+// topic nobody has published to has no board topic at all, so it can only
+// appear via the subscription set.
+func TestBoardModalApplyTopicsUnion(t *testing.T) {
+	m := NewBoardModal()
+	rows := []cli.BoardTopicRow{
+		{Name: "chat.aaaa", MsgCount: 2, LastSeq: 2, LastPublishedAtMs: 1_000},
+		{Name: "orphan.x", MsgCount: 1, LastSeq: 3, LastPublishedAtMs: 2_000},
+	}
+	subs := map[string]int{"chat.aaaa": 1, "rr.dec-019": 2}
+
+	m.ApplyTopics(rows, subs)
+
+	var names []string
+	for _, r := range m.rowTopics {
+		names = append(names, r.Name)
+	}
+	want := []string{"chat.aaaa", "orphan.x", "rr.dec-019"}
+	if len(names) != len(want) {
+		t.Fatalf("names = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("names = %v, want %v", names, want)
+		}
+	}
+	// The subscribed-only row exists but has nothing retained.
+	for _, r := range m.rowTopics {
+		if r.Name == "rr.dec-019" && (r.MsgCount != 0 || r.LastPublishedAtMs != 0) {
+			t.Errorf("subscribed-only row should carry no message stats: %+v", r)
+		}
+	}
+	// The Subs column shows 0 for a topic nobody subscribes to, and blank (not
+	// 0) when counts are unavailable — an absent count must not read as "nobody".
+	withCounts := boardTopicToRow(&m.rowTopics[1], subs) // orphan.x
+	if withCounts[2] != "0" {
+		t.Errorf("orphan.x Subs = %q, want 0", withCounts[2])
+	}
+	noCounts := boardTopicToRow(&m.rowTopics[1], nil)
+	if noCounts[2] != "" {
+		t.Errorf("Subs with nil counts = %q, want blank", noCounts[2])
 	}
 }
 

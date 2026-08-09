@@ -3360,7 +3360,6 @@ const POLL_INTERVAL_MS = 5000;
   const boardBackBtn    = document.getElementById("board-back-btn");
   const boardPurgeTopicBtn = document.getElementById("board-purge-topic-btn");
   const boardSubscribersEl  = document.getElementById("board-subscribers");
-  const boardSubscribersBtn = document.getElementById("board-subscribers-btn");
   const boardRefreshBtn = document.getElementById("board-refresh-btn");
 
   // currentBoardTopic tracks the topic open in the detail view.
@@ -3386,7 +3385,34 @@ const POLL_INTERVAL_MS = 5000;
     }
     try {
       const topics = await window.harness.boardTopics();
-      if (!topics || topics.length === 0) {
+      // One boardSubscribers("") call returns every task with its full pattern
+      // set, which gives both the per-topic count AND every subscribed name.
+      let subCounts = null;
+      try {
+        const all = await window.harness.boardSubscribers("");
+        subCounts = new Map();
+        for (const r of (all || [])) {
+          for (const pat of (r.patterns || [])) {
+            subCounts.set(pat, (subCounts.get(pat) || 0) + 1);
+          }
+        }
+      } catch (_) {
+        // Counting is a nicety; a failure here must not blank the topic list.
+        subCounts = null;
+      }
+
+      // The list is the UNION of topics that exist and patterns that are
+      // subscribed. A topic only comes into existence when something is
+      // published to it, so listing only board topics hides the state an
+      // operator most wants to see: subscribed, nothing published yet. Those
+      // rows carry msgs=0 and no last-publish time.
+      const byName = new Map();
+      for (const t of (topics || [])) byName.set(t.name, t);
+      const names = new Set(byName.keys());
+      if (subCounts) for (const pat of subCounts.keys()) names.add(pat);
+      const listed = [...names].sort();
+
+      if (listed.length === 0) {
         const empty = document.createElement("div");
         empty.style.color = "#666";
         empty.style.fontFamily = "monospace";
@@ -3394,21 +3420,27 @@ const POLL_INTERVAL_MS = 5000;
         boardTopicsEl.appendChild(empty);
         return;
       }
-      for (const t of topics) {
+      for (const name of listed) {
+        const t = byName.get(name);
         const row = document.createElement("div");
-        row.className = "board-topic-row";
+        row.className = t ? "board-topic-row" : "board-topic-row board-topic-unpublished";
         const nameSpan = document.createElement("span");
         nameSpan.className = "board-topic-name";
-        nameSpan.textContent = t.name;
+        nameSpan.textContent = name;
         const metaSpan = document.createElement("span");
         metaSpan.className = "board-topic-meta";
-        const lastTime = t.lastPublishedAtMs
-          ? new Date(t.lastPublishedAtMs).toISOString()
-          : "-";
-        metaSpan.textContent = `msgs=${t.msgCount}  last=${lastTime}`;
+        const subs = subCounts ? `  subs=${subCounts.get(name) || 0}` : "";
+        if (t) {
+          const lastTime = t.lastPublishedAtMs
+            ? new Date(t.lastPublishedAtMs).toISOString()
+            : "-";
+          metaSpan.textContent = `msgs=${t.msgCount}${subs}  last=${lastTime}`;
+        } else {
+          metaSpan.textContent = `msgs=0${subs}  (nothing published yet)`;
+        }
         row.appendChild(nameSpan);
         row.appendChild(metaSpan);
-        row.addEventListener("click", () => openBoardTopic(t.name));
+        row.addEventListener("click", () => openBoardTopic(name));
         boardTopicsEl.appendChild(row);
       }
     } catch (err) {
@@ -3418,25 +3450,14 @@ const POLL_INTERVAL_MS = 5000;
 
   // openBoardTopic shows the detail view for one topic.
   async function openBoardTopic(topic) {
-    // Refresh re-enters this function with the topic already open. Only a
-    // CHANGE of topic may drop the subscribers pane (its rows would be stale);
-    // on a same-topic refresh the pane is re-fetched instead, because closing
-    // what the user just opened is not what "refresh" means.
-    const sameTopic = currentBoardTopic === topic;
     currentBoardTopic = topic;
     boardTopicsEl.hidden = true;
     boardDetailEl.hidden = false;
     boardDetailTitle.textContent = topic;
     boardMessagesEl.innerHTML = "";
-    if (boardSubscribersEl) {
-      if (!sameTopic) {
-        boardSubscribersEl.hidden = true;
-        boardSubscribersEl.innerHTML = "";
-        if (boardSubscribersBtn) boardSubscribersBtn.classList.remove("board-sub-open");
-      } else if (!boardSubscribersEl.hidden) {
-        renderBoardSubscribers();
-      }
-    }
+    // Always shown, so there is no toggle state to keep in step with the topic
+    // or with Refresh — which is where this pane's only two bugs came from.
+    renderBoardSubscribers();
     if (!window.harness) {
       boardMessagesEl.textContent = "(not connected)";
       return;
@@ -3444,7 +3465,11 @@ const POLL_INTERVAL_MS = 5000;
     try {
       const r = await window.harness.boardRead(topic);
       if (!r.found) {
-        boardMessagesEl.textContent = "(topic not found)";
+        // Reached from a subscribed-but-unpublished row, or from a topic that
+        // was evicted/purged since the list was drawn. Either way what is true
+        // is "nothing is retained"; the subscribers pane above still says who
+        // would receive a publish here.
+        boardMessagesEl.textContent = "(nothing published to this topic)";
         return;
       }
       if (!r.msgs || r.msgs.length === 0) {
@@ -3544,7 +3569,6 @@ const POLL_INTERVAL_MS = 5000;
 
   async function renderBoardSubscribers() {
     if (!boardSubscribersEl || !currentBoardTopic) return;
-    boardSubscribersEl.hidden = false;
     boardSubscribersEl.innerHTML = "";
     if (!window.harness) {
       boardSubscribersEl.appendChild(boardSubHeading("subscribers"));
@@ -3581,21 +3605,6 @@ const POLL_INTERVAL_MS = 5000;
       boardSubscribersEl.appendChild(
         Object.assign(document.createElement("div"), { textContent: `error: ${err.message}` }));
     }
-  }
-
-  if (boardSubscribersBtn) {
-    // Toggle: a second click hides the pane again, so the button's state is
-    // legible instead of the pane appearing permanently after one click.
-    boardSubscribersBtn.addEventListener("click", () => {
-      if (boardSubscribersEl && !boardSubscribersEl.hidden) {
-        boardSubscribersEl.hidden = true;
-        boardSubscribersEl.innerHTML = "";
-        boardSubscribersBtn.classList.remove("board-sub-open");
-        return;
-      }
-      boardSubscribersBtn.classList.add("board-sub-open");
-      renderBoardSubscribers();
-    });
   }
 
   if (boardPurgeTopicBtn) {

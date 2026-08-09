@@ -1341,7 +1341,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-sub-row { white-space: pre; color: #b5cea8; font-family: monospace; }
 .board-sub-empty { color: #999; font-style: italic; }
-#board-subscribers-btn.board-sub-open { background: #094771; color: #d4d4d4; }
+.board-topic-unpublished .board-topic-name { color: #9cdcfe; }
+.board-topic-unpublished .board-topic-meta { font-style: italic; }
 .board-msg-from { color: #7ec8e3; }
 .board-msg-host { color: #b5cea8; }
 .board-msg-agent { color: #ce9178; }

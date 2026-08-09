@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,6 +20,10 @@ import (
 // or an error.
 type BoardTopicsMsg struct {
 	Rows []cli.BoardTopicRow
+	// Subs counts subscribers per topic NAME, including names that have no
+	// topic yet. Nil when the caller lacks info_global for BoardSubscribers;
+	// the list still renders, with the Subs column blank.
+	Subs map[string]int
 	Err  error
 }
 
@@ -51,7 +56,22 @@ func DoBoardTopics(c *cli.Client) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		rows, err := c.BoardTopics(ctx)
-		return BoardTopicsMsg{Rows: rows, Err: err}
+		if err != nil {
+			return BoardTopicsMsg{Rows: rows, Err: err}
+		}
+		// One extra round trip yields both the per-topic subscriber count and
+		// every subscribed NAME, which is what lets the list include topics
+		// that do not exist yet. A failure here is not fatal to the listing.
+		var subs map[string]int
+		if srows, serr := c.BoardSubscribers(ctx, ""); serr == nil {
+			subs = map[string]int{}
+			for _, sr := range srows {
+				for _, pat := range sr.Patterns {
+					subs[pat]++
+				}
+			}
+		}
+		return BoardTopicsMsg{Rows: rows, Subs: subs}
 	}
 }
 
@@ -125,7 +145,8 @@ type BoardModal struct {
 	rowTopics   []cli.BoardTopicRow // parallel slice: rowTopics[i] corresponds to table row i
 	curTopic    string
 	msgs        []cli.BoardMessage
-	subs        []cli.BoardSubscriberRow
+	subs        map[string]int           // per-topic subscriber count for the list
+	subRows     []cli.BoardSubscriberRow // rows shown in boardSubscribers mode
 	msgCursor   int
 	content     viewport.Model // payload of msgs[msgCursor], pretty-printed if valid JSON
 	status      string         // one-line error / confirmation rendered below the table
@@ -137,6 +158,7 @@ func NewBoardModal() BoardModal {
 	cols := []table.Column{
 		{Title: "Topic", Width: 30},
 		{Title: "Msgs", Width: 5},
+		{Title: "Subs", Width: 5},
 		{Title: "LastSeq", Width: 9},
 		{Title: "LastAt", Width: 22},
 	}
@@ -190,9 +212,32 @@ func (m *BoardModal) SetSize(w, h int) {
 
 // ApplyTopics replaces all rows with the given slice and rebuilds the topics
 // table. Mirrors ConnsModal.ApplySnapshot.
-func (m *BoardModal) ApplyTopics(rows []cli.BoardTopicRow) {
-	m.rowTopics = make([]cli.BoardTopicRow, len(rows))
-	copy(m.rowTopics, rows)
+// ApplyTopics stores the listing as the UNION of topics that exist and names
+// that are subscribed. A topic only comes into existence when something is
+// published to it, so showing board topics alone hides the state an operator
+// most wants to see: subscribed, nothing published yet. Those rows carry
+// MsgCount 0 and no last-publish time, and are sorted in by name with the rest.
+func (m *BoardModal) ApplyTopics(rows []cli.BoardTopicRow, subs map[string]int) {
+	byName := make(map[string]cli.BoardTopicRow, len(rows)+len(subs))
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	for pat := range subs {
+		if _, ok := byName[pat]; !ok {
+			byName[pat] = cli.BoardTopicRow{Name: pat}
+		}
+	}
+	names := make([]string, 0, len(byName))
+	for n := range byName {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	m.rowTopics = make([]cli.BoardTopicRow, 0, len(names))
+	for _, n := range names {
+		m.rowTopics = append(m.rowTopics, byName[n])
+	}
+	m.subs = subs
 	m.rebuildTopicsRows()
 	m.status = ""
 }
@@ -222,8 +267,8 @@ func (m *BoardModal) ApplyMessages(topic string, msgs []cli.BoardMessage, found 
 // board and nothing would receive a publish to it.
 func (m *BoardModal) ApplySubscribers(topic string, rows []cli.BoardSubscriberRow) {
 	m.curTopic = topic
-	m.subs = make([]cli.BoardSubscriberRow, len(rows))
-	copy(m.subs, rows)
+	m.subRows = make([]cli.BoardSubscriberRow, len(rows))
+	copy(m.subRows, rows)
 	m.mode = boardSubscribers
 	m.status = ""
 }
@@ -259,21 +304,33 @@ func (m *BoardModal) SetStatus(s string) { m.status = s }
 func (m *BoardModal) rebuildTopicsRows() {
 	rows := make([]table.Row, 0, len(m.rowTopics))
 	for i := range m.rowTopics {
-		rows = append(rows, boardTopicToRow(&m.rowTopics[i]))
+		rows = append(rows, boardTopicToRow(&m.rowTopics[i], m.subs))
 	}
 	m.topicsTable.SetRows(rows)
 }
 
 // boardTopicToRow maps a BoardTopicRow to a table.Row (4 columns).
-func boardTopicToRow(r *cli.BoardTopicRow) table.Row {
-	at := "-"
+func boardTopicToRow(r *cli.BoardTopicRow, subs map[string]int) table.Row {
+	// A real topic always has a last-publish time (topic.append sets it), so a
+	// zero one marks a row that exists only because something subscribes to the
+	// name. Dash out its seq too: "0 / 0" would read as a topic that was
+	// published to and emptied, which is a different state.
+	at, lastSeq := "-", "-"
 	if r.LastPublishedAtMs > 0 {
 		at = time.UnixMilli(int64(r.LastPublishedAtMs)).UTC().Format(time.RFC3339)
+		lastSeq = fmt.Sprintf("%d", r.LastSeq)
+	}
+	// Blank rather than 0 when counts are unavailable (no info_global), so an
+	// absent count is never read as "nobody is listening".
+	sub := ""
+	if subs != nil {
+		sub = fmt.Sprintf("%d", subs[r.Name])
 	}
 	return table.Row{
 		r.Name,
 		fmt.Sprintf("%d", r.MsgCount),
-		fmt.Sprintf("%d", r.LastSeq),
+		sub,
+		lastSeq,
 		at,
 	}
 }
@@ -414,7 +471,7 @@ func (m BoardModal) View() string {
 
 	case boardSubscribers:
 		var list strings.Builder
-		for _, r := range m.subs {
+		for _, r := range m.subRows {
 			short := r.TaskHex
 			if len(short) > 8 {
 				short = short[:8]
@@ -435,10 +492,10 @@ func (m BoardModal) View() string {
 			}
 			list.WriteString(fmt.Sprintf("  %s  host=%s  agent=%s  topics=%s\n", short, host, agentName, pats))
 		}
-		if len(m.subs) == 0 {
+		if len(m.subRows) == 0 {
 			list.WriteString("  (nobody subscribes — a publish here reaches no inbox)\n")
 		}
-		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subs)))
+		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subRows)))
 		footer := FooterStyle.Render("s: refresh  Esc: back")
 		return box.Render(header + "\n" + list.String() + statusLine + "\n" + footer)
 	}
