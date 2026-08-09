@@ -1,6 +1,6 @@
 ---
 name: harness-cli
-description: Use when talking to other agents or the harness from inside a runner-spawned task — messaging peers on the agentboard, replying with --in-reply-to, subscriptions, discovering live agents and topics, and notifying the human operator. Also defines the agentboard conventions (handshake, reply topics, trust model) and why you may not be the first process on your task. Reply delivery is asynchronous via the inbox hook — never block on wait/dispatch from an agent turn. Spawning and driving WORKER sessions is the separate worker-orchestration skill.
+description: Use when talking to other agents or the harness from inside a runner-spawned task — messaging peers on the agentboard, replying with --in-reply-to, subscriptions, discovering live agents and topics, and notifying the human operator. Also defines the agentboard conventions (handshake, reply topics, trust model) and why you may not be the first process on your task. Reply delivery is asynchronous via the inbox hook — never block on wait/dispatch from an agent turn. Spawning and driving WORKER sessions is the separate delegating-to-workers skill.
 ---
 
 # harness-cli (agent runtime)
@@ -10,7 +10,7 @@ the whole harness. This skill covers the half you need to talk to other agents:
 the agentboard (the only sanctioned way to do so), plus operator notifications
 (`notify`). The half about driving OTHER agents — spawning worker sessions,
 `--caps`, one-shot `submit` + `logs` / `watch`, `file push` / `file pull`, and
-reading a worker's diff — is the `worker-orchestration` skill. All required
+reading a worker's diff — is the `delegating-to-workers` skill. All required
 credentials are passed via `HARNESS_*` environment variables (already set by
 the runner) — never pass them as flags.
 
@@ -340,7 +340,7 @@ there (see the spawn examples). This id-directed send is the normal way to
 introduce yourself; `harness.hello` is only for the case where you have no id
 to derive a channel from.
 
-## Delegating to worker agents — see the `worker-orchestration` skill
+## Delegating to worker agents — see the `delegating-to-workers` skill
 
 Spawning a worker session, `--caps` attenuation, one-shot `submit` + `logs` /
 `watch`, `file push` / `file pull` into a worker's worktree, and reading a
@@ -348,7 +348,7 @@ worker's diff with `harness-cli git` all live in a separate skill so a task
 that only talks to peers does not have to read them:
 
 ```bash
-harness-cli skill worker-orchestration
+harness-cli skill delegating-to-workers
 ```
 
 ## Notifying the operator (`notify`)

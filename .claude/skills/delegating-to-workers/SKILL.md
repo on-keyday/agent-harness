@@ -1,9 +1,9 @@
 ---
-name: worker-orchestration
+name: delegating-to-workers
 description: Use when delegating work to OTHER agents from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, or reading a worker's diff. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
 ---
 
-# worker-orchestration (driving other agents)
+# delegating-to-workers (driving other agents)
 
 Everything here is about a task acting on ANOTHER task: creating it, steering
 it, bounding what it may do, and inspecting what it produced. If you only need
