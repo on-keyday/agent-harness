@@ -34,44 +34,44 @@ reference — resolves in any runtime, including non-claude / non-injected peers
 
 ## You may not be the first process on this task
 
-A task id, a conversation, and an operating-system process are three different
-lifetimes, and only the last one is yours. `session new --resume <id>` (and the
-TUI/WebUI resume actions) reuse the task id and the worktree, and start a **new
-agent process** with a **new auth ticket**. Nothing in your environment says so:
-`HARNESS_TASK_ID`, `HARNESS_RUNNER_ID` and `HARNESS_AUTH_TICKET` look identical
-on a first run and on a resume, and a replayed conversation reads as continuous
-from the inside. So the default assumption — "I am the process that started
-this task" — is wrong more often than not, and it is wrong silently.
+Three lifetimes are in play and only the last one is yours:
 
-Ask the server instead. This works from any agent runtime; it needs no
-`/proc` (Windows runners exist) and no runtime-specific state files:
+- **the task id** — with its worktree and `harness/<id>` branch. Outlives
+  everything else.
+- **the conversation** — replayed into a fresh process when a session is
+  resumed.
+- **this OS process** — new every time.
 
-```bash
-harness-cli ls --json    # find the row whose id == $HARNESS_TASK_ID
-```
+`session new --resume <id>`, and the TUI/WebUI resume actions, reuse the first
+two and replace the third, with a **new auth ticket** and possibly a different
+runner. Nothing in your environment marks the difference: `HARNESS_TASK_ID`,
+`HARNESS_RUNNER_ID` and `HARNESS_AUTH_TICKET` look the same on a first run as on
+a resume, and a replayed conversation reads as continuous from the inside. So
+"I am the process that started this task" is the default assumption, and it is
+silently wrong more often than not.
 
-- **`resumed_by`** — non-empty means this task has been resumed, so the process
-  reading this is not the first one on it. The value is the surface that did it
-  (`cli` / `tui` / `webui`).
-- **`created_at` vs `started_at`** — `created_at` is when the task id was
-  minted; `started_at` is refreshed on every (re)assignment, so it tracks the
-  CURRENT run. A large gap says the same thing independently.
+Each of the three has a knowable start, and you already have the means for all
+three:
 
-(Checked 2026-08-09 against 28 live tasks: the 26 with `resumed_by` set all had
-week-to-month gaps, and the 2 with it empty had a gap of 0.00 days.)
+- **The task** — the harness will tell you. `harness-cli ls --json`, your own
+  row: a non-empty **`resumed_by`** means this task has been resumed (the value
+  is the surface that did it). **`created_at`** is when the id was minted while
+  **`started_at`** is refreshed on every (re)assignment, so a large gap between
+  them says the same thing independently. Checked 2026-08-09 against 28 live
+  tasks: the 26 with `resumed_by` set all showed week-to-month gaps, the 2
+  without it showed 0.00 days.
+- **The conversation** — a coding agent keeps session history in some form.
+  Locate yours the way your own runtime stores it; its first entry dates the
+  conversation, which is a different date from either of the others.
+- **The process** — every OS exposes a process start time. Use the mechanism
+  for the one you are running on.
 
-**What follows from being a later incarnation.** Your ticket, and possibly your
-runner, are not the ones the earlier incarnation used, so do not reason from
-"what I set up last time": re-read state from disk or from the server rather
-than assuming a subscription, a file, or a process you remember arranging is
-still there. The conversation you can see is evidence about what was *said*,
-not about what is currently *true*.
-
-If your runtime keeps a transcript with timestamps, its first entry dates the
-conversation — a third date, distinct from both of the above. For Claude Code
-that is `~/.claude/projects/<project>/$CLAUDE_CODE_SESSION_ID.jsonl`; other
-runtimes differ, and the `harness-cli ls --json` route above is the one that
-works everywhere.
+**What follows from being a later incarnation** is the part that matters. Your
+ticket, and possibly your runner, are not the ones the earlier incarnation
+used. Do not reason from "what I set up last time": re-read state from disk or
+from the server instead of assuming that a subscription, a file, or a process
+you remember arranging is still there. The conversation you can see is evidence
+about what was *said*, not about what is currently *true*.
 
 ## Inbox is automatic — do not poll
 
