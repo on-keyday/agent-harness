@@ -96,3 +96,38 @@ func TestBoardModalContentFormatsJSON(t *testing.T) {
 		t.Errorf("content.View() missing indented JSON n:42; got:\n%s", got)
 	}
 }
+
+// TestBoardModalSubscribersMode verifies that ApplySubscribers switches into
+// subscribers mode and renders the rows, that an empty result says so rather
+// than rendering blank, and that Esc's PopToTopics reaches back from it.
+func TestBoardModalSubscribersMode(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(100, 30)
+
+	m.ApplySubscribers("rr.dec-019", []cli.BoardSubscriberRow{
+		{TaskHex: "aabbccddeeff0011", Hostname: "host-A", AgentProfile: "claude", Patterns: []string{"chat.aabbccdd", "rr.dec-019"}},
+		// Registered but never attached: empty hostname must render as "-".
+		{TaskHex: "1122334455667788", Hostname: "", AgentProfile: "codex", Patterns: []string{"rr.dec-019"}},
+	})
+	if m.mode != boardSubscribers {
+		t.Fatalf("mode = %v, want boardSubscribers", m.mode)
+	}
+	view := m.View()
+	for _, want := range []string{"subscribers of rr.dec-019 (2)", "aabbccdd", "host=host-A", "agent=codex", "host=-", "rr.dec-019"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q\n%s", want, view)
+		}
+	}
+
+	// An empty subscriber set is a finding, not a blank pane.
+	m.ApplySubscribers("quiet.topic", nil)
+	if v := m.View(); !strings.Contains(v, "nobody subscribes") {
+		t.Errorf("empty view does not state the finding:\n%s", v)
+	}
+
+	m.PopToTopics()
+	if m.mode != boardTopics {
+		t.Fatalf("after PopToTopics: mode = %v, want boardTopics", m.mode)
+	}
+}

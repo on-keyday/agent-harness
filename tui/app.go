@@ -461,6 +461,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardModal.ApplyMessages(msg.Topic, msg.Msgs, msg.Found)
 		return a, nil
 
+	case BoardSubscribersMsg:
+		if msg.Err != nil {
+			a.boardModal.SetStatus("subscribers: " + msg.Err.Error())
+			return a, nil
+		}
+		a.boardModal.ApplySubscribers(msg.Topic, msg.Rows)
+		return a, nil
+
 	case BoardPurgeMsg:
 		if msg.Err != nil {
 			a.boardModal.SetStatus("purge: " + msg.Err.Error())
@@ -1037,7 +1045,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// table/viewport navigation itself.
 		if a.boardModal.IsOpen() {
 			if msg.Type == tea.KeyEsc {
-				if a.boardModal.Mode() == boardMessages {
+				if m := a.boardModal.Mode(); m == boardMessages || m == boardSubscribers {
 					a.boardModal.PopToTopics()
 					return a, nil
 				}
@@ -1062,6 +1070,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return a, DoBoardPurge(a.client, topic, 0)
 					}
 					return a, nil
+				case modalKeys.BoardSubscribers:
+					topic := a.boardModal.SelectedTopicName()
+					if topic != "" {
+						return a, DoBoardSubscribers(a.client, topic)
+					}
+					return a, nil
+				}
+			} else if a.boardModal.Mode() == boardSubscribers {
+				if msg.String() == modalKeys.BoardSubscribers {
+					return a, DoBoardSubscribers(a.client, a.boardModal.CurTopic())
 				}
 			} else {
 				// boardMessages mode

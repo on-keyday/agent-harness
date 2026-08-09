@@ -1323,6 +1323,17 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-msg-seq { font-weight: 700; color: #d4d4d4; }
 .board-msg-reply { color: #c586c0; }
+#board-subscribers {
+  margin: 0 0 0.6rem 0;
+  padding: 0.4rem 0.6rem;
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  color: #d4d4d4;
+  overflow-x: auto;
+}
+.board-sub-row { white-space: pre; color: #b5cea8; }
 .board-msg-from { color: #7ec8e3; }
 .board-msg-host { color: #b5cea8; }
 .board-msg-agent { color: #ce9178; }

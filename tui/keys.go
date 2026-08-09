@@ -91,41 +91,43 @@ var mainKeys = mainKeyMap{
 // therefore moved the baseline, and half-paging up left the nested repository.
 // git_keys_test.go asserts the two sets stay disjoint.
 type modalKeyMap struct {
-	ConfirmYes      string
-	ConfirmYesUpper string
-	ConfirmNo       string
-	ConfirmNoUpper  string
-	Escape          string
-	ForwardKill     string
-	BoardRefresh    string
-	BoardPurgeTopic string
-	BoardPurgeMsg   string
-	GitSetBase      string
-	GitStatus       string
-	GitNextFile     string
-	GitPrevFile     string
-	GitSubmodule    string
-	GitUp           string
-	GitOpenFile     string
+	ConfirmYes       string
+	ConfirmYesUpper  string
+	ConfirmNo        string
+	ConfirmNoUpper   string
+	Escape           string
+	ForwardKill      string
+	BoardRefresh     string
+	BoardPurgeTopic  string
+	BoardPurgeMsg    string
+	BoardSubscribers string
+	GitSetBase       string
+	GitStatus        string
+	GitNextFile      string
+	GitPrevFile      string
+	GitSubmodule     string
+	GitUp            string
+	GitOpenFile      string
 }
 
 var modalKeys = modalKeyMap{
-	ConfirmYes:      "y",
-	ConfirmYesUpper: "Y",
-	ConfirmNo:       "n",
-	ConfirmNoUpper:  "N",
-	Escape:          "esc",
-	ForwardKill:     "x",
-	BoardRefresh:    "r",
-	BoardPurgeTopic: "x",
-	BoardPurgeMsg:   "X",
-	GitSetBase:      "B",
-	GitStatus:       "s",
-	GitNextFile:     "n",
-	GitPrevFile:     "N",
-	GitSubmodule:    "m",
-	GitUp:           "backspace",
-	GitOpenFile:     "o",
+	ConfirmYes:       "y",
+	ConfirmYesUpper:  "Y",
+	ConfirmNo:        "n",
+	ConfirmNoUpper:   "N",
+	Escape:           "esc",
+	ForwardKill:      "x",
+	BoardRefresh:     "r",
+	BoardPurgeTopic:  "x",
+	BoardPurgeMsg:    "X",
+	BoardSubscribers: "s",
+	GitSetBase:       "B",
+	GitStatus:        "s",
+	GitNextFile:      "n",
+	GitPrevFile:      "N",
+	GitSubmodule:     "m",
+	GitUp:            "backspace",
+	GitOpenFile:      "o",
 }
 
 // keyScope is a bitmask of the panes a main-view binding applies to. The
@@ -329,6 +331,6 @@ func keyHelpBody() string {
 			sb.WriteString("\n")
 		}
 	}
-	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, x purge topic, X purge message")
+	sb.WriteString("modals   esc closes · forwards: x kill (y/n confirms) · board: r reload, s subscribers, x purge topic, X purge message")
 	return sb.String()
 }

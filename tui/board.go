@@ -65,6 +65,24 @@ func DoBoardRead(c *cli.Client, topic string) tea.Cmd {
 	}
 }
 
+// BoardSubscribersMsg carries the result of DoBoardSubscribers for one topic.
+type BoardSubscribersMsg struct {
+	Topic string
+	Rows  []cli.BoardSubscriberRow
+	Err   error
+}
+
+// DoBoardSubscribers fetches the tasks that would receive a publish to topic,
+// via the long-lived client. Mirrors DoBoardRead.
+func DoBoardSubscribers(c *cli.Client, topic string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		rows, err := c.BoardSubscribers(ctx, topic)
+		return BoardSubscribersMsg{Topic: topic, Rows: rows, Err: err}
+	}
+}
+
 // DoBoardPurge purges one message (seq!=0) or the whole topic ring (seq==0)
 // via the long-lived client.
 func DoBoardPurge(c *cli.Client, topic string, seq uint64) tea.Cmd {
@@ -86,6 +104,9 @@ const (
 	boardTopics boardMode = iota
 	// boardMessages shows the message list + content viewport for a selected topic.
 	boardMessages
+	// boardSubscribers shows which tasks would receive a publish to the
+	// selected topic.
+	boardSubscribers
 )
 
 // BoardModal is a two-mode overlay that mirrors ConnsModal's structure for the
@@ -104,6 +125,7 @@ type BoardModal struct {
 	rowTopics   []cli.BoardTopicRow // parallel slice: rowTopics[i] corresponds to table row i
 	curTopic    string
 	msgs        []cli.BoardMessage
+	subs        []cli.BoardSubscriberRow
 	msgCursor   int
 	content     viewport.Model // payload of msgs[msgCursor], pretty-printed if valid JSON
 	status      string         // one-line error / confirmation rendered below the table
@@ -193,6 +215,17 @@ func (m *BoardModal) ApplyMessages(topic string, msgs []cli.BoardMessage, found 
 	m.mode = boardMessages
 	m.status = ""
 	m.updateContentFromCursor()
+}
+
+// ApplySubscribers stores the subscriber rows and switches to subscribers mode.
+// An empty result is meaningful, not an error: the topic is retained on the
+// board and nothing would receive a publish to it.
+func (m *BoardModal) ApplySubscribers(topic string, rows []cli.BoardSubscriberRow) {
+	m.curTopic = topic
+	m.subs = make([]cli.BoardSubscriberRow, len(rows))
+	copy(m.subs, rows)
+	m.mode = boardSubscribers
+	m.status = ""
 }
 
 // SelectedTopicName returns the topic name under the table cursor, or "" when
@@ -347,7 +380,7 @@ func (m BoardModal) View() string {
 	switch m.mode {
 	case boardTopics:
 		header := HeaderStyle.Render(fmt.Sprintf("agentboard topics (%d)", len(m.rowTopics)))
-		footer := FooterStyle.Render("Enter: read  r: refresh  x: purge topic  Esc: close")
+		footer := FooterStyle.Render("Enter: read  s: subscribers  r: refresh  x: purge topic  Esc: close")
 		return box.Render(header + "\n" + m.topicsTable.View() + statusLine + "\n" + footer)
 
 	case boardMessages:
@@ -378,6 +411,36 @@ func (m BoardModal) View() string {
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
 		footer := FooterStyle.Render("↑/↓ select · PgUp/PgDn scroll · X: purge msg  r: re-read  Esc: back")
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
+
+	case boardSubscribers:
+		var list strings.Builder
+		for _, r := range m.subs {
+			short := r.TaskHex
+			if len(short) > 8 {
+				short = short[:8]
+			}
+			host := r.Hostname
+			if host == "" {
+				// Registered but never attached: it has a subscription and no
+				// harness-cli invocation yet. Not missing data.
+				host = "-"
+			}
+			agentName := r.AgentProfile
+			if agentName == "" {
+				agentName = "-"
+			}
+			pats := "-"
+			if len(r.Patterns) > 0 {
+				pats = strings.Join(r.Patterns, ",")
+			}
+			list.WriteString(fmt.Sprintf("  %s  host=%s  agent=%s  topics=%s\n", short, host, agentName, pats))
+		}
+		if len(m.subs) == 0 {
+			list.WriteString("  (nobody subscribes — a publish here reaches no inbox)\n")
+		}
+		header := HeaderStyle.Render(fmt.Sprintf("subscribers of %s (%d)", m.curTopic, len(m.subs)))
+		footer := FooterStyle.Render("s: refresh  Esc: back")
+		return box.Render(header + "\n" + list.String() + statusLine + "\n" + footer)
 	}
 	return box.Render("(unknown board mode)")
 }

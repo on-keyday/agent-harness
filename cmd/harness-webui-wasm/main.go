@@ -110,6 +110,7 @@ func main() {
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
 		"boardRead":          js.FuncOf(harnessBoardRead),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
+		"boardSubscribers":   js.FuncOf(harnessBoardSubscribers),
 		"forwardKill":        js.FuncOf(harnessForwardKill),
 		"rawOpen":            js.FuncOf(harnessRawOpen),
 		"rawSend":            js.FuncOf(harnessRawSend),
@@ -641,6 +642,55 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 					"lastSeq":           strconv.FormatUint(t.LastSeq, 10),
 					"lastPublishedAtMs": float64(t.LastPublishedAtMs),
 					"msgCount":          float64(t.MsgCount),
+				})
+			}
+			resolve.Invoke(js.ValueOf(out))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessBoardSubscribers lists each task's agentboard subscription set,
+// optionally narrowed to the tasks a publish to one topic would reach.
+//
+//	harness.boardSubscribers(topic?) -> Promise<[{taskId, hostname, agentProfile, patterns}]>
+//
+// No u64 crosses this boundary, so unlike boardRead/boardTopics nothing here
+// needs the decimal-string treatment.
+func harnessBoardSubscribers(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		topic := ""
+		if len(args) > 0 && args[0].Type() == js.TypeString {
+			topic = args[0].String()
+		}
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			rows, err := c.BoardSubscribers(rootCtx, topic)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("boardSubscribers: %w", err))
+				return
+			}
+			out := make([]any, 0, len(rows))
+			for _, r := range rows {
+				pats := make([]any, 0, len(r.Patterns))
+				for _, pt := range r.Patterns {
+					pats = append(pats, pt)
+				}
+				out = append(out, map[string]any{
+					"taskId": r.TaskHex,
+					// Empty hostname means registered but not yet attached;
+					// the JS side renders it as "-" rather than hiding the row.
+					"hostname":     r.Hostname,
+					"agentProfile": r.AgentProfile,
+					"patterns":     pats,
 				})
 			}
 			resolve.Invoke(js.ValueOf(out))

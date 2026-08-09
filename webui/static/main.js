@@ -3359,6 +3359,8 @@ const POLL_INTERVAL_MS = 5000;
   const boardDetailTitle = document.getElementById("board-detail-title");
   const boardBackBtn    = document.getElementById("board-back-btn");
   const boardPurgeTopicBtn = document.getElementById("board-purge-topic-btn");
+  const boardSubscribersEl  = document.getElementById("board-subscribers");
+  const boardSubscribersBtn = document.getElementById("board-subscribers-btn");
   const boardRefreshBtn = document.getElementById("board-refresh-btn");
 
   // currentBoardTopic tracks the topic open in the detail view.
@@ -3421,6 +3423,11 @@ const POLL_INTERVAL_MS = 5000;
     boardDetailEl.hidden = false;
     boardDetailTitle.textContent = topic;
     boardMessagesEl.innerHTML = "";
+    if (boardSubscribersEl) {
+      // Never leave the previous topic's subscribers on screen.
+      boardSubscribersEl.hidden = true;
+      boardSubscribersEl.innerHTML = "";
+    }
     if (!window.harness) {
       boardMessagesEl.textContent = "(not connected)";
       return;
@@ -3510,6 +3517,45 @@ const POLL_INTERVAL_MS = 5000;
 
   if (boardBackBtn) {
     boardBackBtn.addEventListener("click", () => renderBoardTopics());
+  }
+
+  // renderBoardSubscribers lists the tasks a publish to the open topic would
+  // reach. An empty result is the finding, not an error: the topic is retained
+  // and nothing would receive a publish to it.
+  async function renderBoardSubscribers() {
+    if (!boardSubscribersEl || !currentBoardTopic) return;
+    boardSubscribersEl.hidden = false;
+    boardSubscribersEl.innerHTML = "";
+    if (!window.harness) {
+      boardSubscribersEl.textContent = "(not connected)";
+      return;
+    }
+    try {
+      const rows = await window.harness.boardSubscribers(currentBoardTopic);
+      if (!rows || rows.length === 0) {
+        boardSubscribersEl.textContent =
+          "(nobody subscribes \u2014 a publish here reaches no inbox)";
+        return;
+      }
+      for (const r of rows) {
+        const line = document.createElement("div");
+        line.className = "board-sub-row";
+        const id = (r.taskId || "").slice(0, 8);
+        // An empty hostname means registered but not yet attached; show it as
+        // "-" rather than dropping the row.
+        const host = r.hostname || "-";
+        const agent = r.agentProfile || "-";
+        const pats = (r.patterns && r.patterns.length) ? r.patterns.join(",") : "-";
+        line.textContent = `${id}  host=${host}  agent=${agent}  topics=${pats}`;
+        boardSubscribersEl.appendChild(line);
+      }
+    } catch (err) {
+      boardSubscribersEl.textContent = `boardSubscribers error: ${err.message}`;
+    }
+  }
+
+  if (boardSubscribersBtn) {
+    boardSubscribersBtn.addEventListener("click", renderBoardSubscribers);
   }
 
   if (boardPurgeTopicBtn) {
