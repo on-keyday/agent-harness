@@ -472,6 +472,55 @@ func (b *Board) ListSubscriptions(c *ConnState) []string {
 	return c.task.snapshotPatterns()
 }
 
+// SubscriberRow is one task's subscription set together with the identity
+// captured on its taskState. Hostname is empty for a task that has been
+// registered (and so has its chat.<short-id> seeded) but has not yet run a
+// harness-cli command — Attach is what fills it in. That is a real state, not
+// missing data.
+type SubscriberRow struct {
+	Task         protocol.TaskID
+	Hostname     string
+	AgentProfile string
+	Patterns     []string
+}
+
+// ListSubscribers returns one row per task known to the board. A non-empty
+// topic narrows the result to the tasks a publish to that topic would reach;
+// Patterns still holds each returned row's full set. Order is unspecified.
+//
+// The filter calls taskState.matches — the same predicate Board.Send uses to
+// pick delivery targets — rather than reimplementing the comparison, so this
+// view cannot claim a different set of recipients than delivery actually uses
+// if matching ever gains wildcards.
+//
+// Deliberately absent: the attached-connection count. harness-cli is a
+// short-lived process per subcommand, so a healthy agent has zero attached
+// connections almost all of the time; reporting that number would read as
+// "nobody is connected" and mislead exactly the diagnosis this exists for.
+func (b *Board) ListSubscribers(topic string) []SubscriberRow {
+	b.mu.Lock()
+	states := make([]*taskState, 0, len(b.tasks))
+	for _, ts := range b.tasks {
+		states = append(states, ts)
+	}
+	b.mu.Unlock()
+
+	out := make([]SubscriberRow, 0, len(states))
+	for _, ts := range states {
+		if topic != "" && !ts.matches(topic) {
+			continue
+		}
+		_, tid, host, profile := ts.identity()
+		out = append(out, SubscriberRow{
+			Task:         tid,
+			Hostname:     host,
+			AgentProfile: profile,
+			Patterns:     ts.snapshotPatterns(),
+		})
+	}
+	return out
+}
+
 // ListTopics returns a snapshot of every topic currently retained on the board.
 // Order is unspecified.
 func (b *Board) ListTopics() []BoardTopicSummary {

@@ -168,3 +168,97 @@ func TestBoard_OnDeliver_FiresPerSubscriber(t *testing.T) {
 	}
 	_ = cC
 }
+
+func TestBoard_ListSubscribers_NoFilter(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var registered protocol.TaskID
+	registered.Id[0] = 1
+
+	// RegisterTask only: subscribed to its own chat topic, never attached, so
+	// hostname is still empty. That is a real state, not missing data.
+	b.RegisterTask(rid, registered, [16]byte{9}, "codex")
+
+	var attached protocol.TaskID
+	attached.Id[0] = 2
+	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(attached), "host-A", "claude")
+	if err := b.Subscribe(c, "rr.dec-019"); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := b.ListSubscribers("")
+	if len(rows) != 2 {
+		t.Fatalf("len = %d, want 2", len(rows))
+	}
+	byTask := map[protocol.TaskID]SubscriberRow{}
+	for _, r := range rows {
+		byTask[r.Task] = r
+	}
+	if got := byTask[registered].Hostname; got != "" {
+		t.Errorf("registered-only hostname = %q, want empty", got)
+	}
+	if got := byTask[registered].AgentProfile; got != "codex" {
+		t.Errorf("registered-only profile = %q, want codex", got)
+	}
+	if got := byTask[attached].Hostname; got != "host-A" {
+		t.Errorf("attached hostname = %q, want host-A", got)
+	}
+}
+
+func TestBoard_ListSubscribers_FilterMatchesDelivery(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var listener protocol.TaskID
+	listener.Id[0] = 1
+	var bystander protocol.TaskID
+	bystander.Id[0] = 2
+
+	c := b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(listener), "host-A", "claude")
+	if err := b.Subscribe(c, "rr.dec-019"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Subscribe(c, "other"); err != nil {
+		t.Fatal(err)
+	}
+	b.Attach(toAgentboardRunnerID(rid), toAgentboardTaskID(bystander), "host-B", "claude")
+
+	rows := b.ListSubscribers("rr.dec-019")
+	if len(rows) != 1 {
+		t.Fatalf("len = %d, want 1", len(rows))
+	}
+	if rows[0].Task != listener {
+		t.Errorf("task = %x, want %x", rows[0].Task, listener)
+	}
+	// A filtered row still reports the task's FULL pattern set.
+	if len(rows[0].Patterns) != 2 {
+		t.Errorf("patterns = %v, want both of the task's subscriptions", rows[0].Patterns)
+	}
+}
+
+func TestBoard_ListSubscribers_GoneAfterRevoke(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var tid protocol.TaskID
+	tid.Id[0] = 1
+
+	b.RegisterTask(rid, tid, [16]byte{9}, "claude")
+	if len(b.ListSubscribers("")) != 1 {
+		t.Fatal("registered task missing from ListSubscribers")
+	}
+	b.Revoke(rid, tid)
+	if got := len(b.ListSubscribers("")); got != 0 {
+		t.Errorf("len after Revoke = %d, want 0", got)
+	}
+}
