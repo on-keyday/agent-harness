@@ -1341,7 +1341,10 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-sub-row { white-space: pre; color: #b5cea8; font-family: monospace; }
 .board-sub-empty { color: #999; font-style: italic; }
-.board-topic-unpublished .board-topic-name { color: #9cdcfe; }
+/* A topic with nothing published is LESS than a normal one, so it reads
+   dimmer, not brighter. The meaning is carried by its meta text
+   ("nothing published yet"), so no colour has to be learned. */
+.board-topic-unpublished .board-topic-name { color: #9a9a9a; font-weight: 400; }
 .board-topic-unpublished .board-topic-meta { font-style: italic; }
 .board-msg-from { color: #7ec8e3; }
 .board-msg-host { color: #b5cea8; }
