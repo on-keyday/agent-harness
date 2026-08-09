@@ -388,12 +388,7 @@ func New(cfg Config) *Server {
 		publishRunnerEvent(entry.ID, protocol.StatusEventKind_RunnerRegistered, protocol.RunnerStatus_Idle)
 	}
 	s.registry.OnRemove = func(id string, snap RunnerEntry) {
-		// Mark all tasks that were active on the disconnected runner as Failed
-		// before publishing the RunnerOffline event. MarkFailed is idempotent
-		// so it is safe if TaskFinished already processed some of them.
-		for taskID := range snap.ActiveTasks {
-			s.tasks.MarkFailed(taskID, "runner_disconnected")
-		}
+		s.failAndRevokeTasksOf(id, snap)
 		publishRunnerEvent(id, protocol.StatusEventKind_RunnerOffline, protocol.RunnerStatus_Offline)
 	}
 
@@ -1119,6 +1114,32 @@ func (s *Server) Tasks() *TaskStore {
 // New and before Run. Task 9 (cmd/harness-server/main.go) is responsible for
 // constructing the Board and calling this method; tests that exercise the ticket
 // flow construct a Board and set it directly on the individual handler structs.
+// failAndRevokeTasksOf cleans up after a runner disconnect: every task that was
+// active on it is marked Failed AND has its agentboard registration revoked.
+// MarkFailed is idempotent, so this is safe when TaskFinished already handled
+// some of them.
+//
+// The Revoke is the half that used to be missing. A runner going away kills the
+// processes it spawned, but the board kept their taskStates: each one holds the
+// task's subscriptions, so Board.Send went on matching it forever — pinging it
+// and firing task_wake for a process that no longer exists — and the topic GC
+// inside Revoke never ran because anyTaskMatchesLocked still saw a subscriber.
+// A later resume registers the same task under the new runner's id, so the
+// operator board then shows one task twice. This mirrors what TaskFinished
+// already does (Finish + UnbindTask + Revoke); only the disconnect path was
+// short.
+//
+// UnbindTask is deliberately absent: the runner entry itself is being removed,
+// so its ActiveTasks set goes with it.
+func (s *Server) failAndRevokeTasksOf(runnerID string, snap RunnerEntry) {
+	for taskID := range snap.ActiveTasks {
+		s.tasks.MarkFailed(taskID, "runner_disconnected")
+		if s.Board != nil {
+			s.Board.Revoke(runnerIDFromConnID(runnerID), taskIDFromHex(taskID))
+		}
+	}
+}
+
 func (s *Server) SetBoard(b *agentboard.Board) {
 	s.Board = b
 	s.dispatcher.Board = b

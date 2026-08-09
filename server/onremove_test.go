@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TestOnRemoveMarks verifies that removing a runner from the registry marks all
@@ -239,5 +240,46 @@ func TestAfterMuxStopped_RunningIsCancelledAndUnbound(t *testing.T) {
 	}
 	if e, _ := reg.Get(runnerID); len(e.ActiveTasks) != 0 {
 		t.Errorf("slot must be released for a terminal task; ActiveTasks=%v", e.ActiveTasks)
+	}
+}
+
+// TestFailAndRevokeTasksOf_RevokesBoardEntries exercises the REAL disconnect
+// cleanup (Server.failAndRevokeTasksOf), not a copy of it written in the test.
+// The neighbouring test above re-implements the OnRemove body, which is exactly
+// why the missing Board.Revoke went unnoticed: it asserted what the test itself
+// had written.
+//
+// A runner going away kills the processes it spawned. If its tasks keep their
+// agentboard taskStates, those keep matching the tasks' topics forever — Send
+// goes on firing task_wake at dead processes, and a later resume registers the
+// same task again under the new runner id, so one task shows up twice.
+func TestFailAndRevokeTasksOf_RevokesBoardEntries(t *testing.T) {
+	board := newTestBoard(t)
+	s := &Server{tasks: NewTaskStore(), registry: NewRegistry(), Board: board}
+
+	runnerID := "ws:127.0.0.1:8539-77"
+	taskHex := "aabbccddeeff00112233445566778899"
+	rid := runnerIDFromConnID(runnerID)
+	tid := taskIDFromHex(taskHex)
+
+	// The task is on the board exactly as a dispatched task would be: a ticket
+	// registered and its chat.<short-id> seeded.
+	board.RegisterTask(rid, tid, [16]byte{1}, "bash")
+	if got := len(board.ListSubscribers("")); got != 1 {
+		t.Fatalf("precondition: subscribers = %d, want 1", got)
+	}
+
+	s.failAndRevokeTasksOf(runnerID, RunnerEntry{
+		ID:          runnerID,
+		ActiveTasks: map[string]struct{}{taskHex: {}},
+	})
+
+	if got := len(board.ListSubscribers("")); got != 0 {
+		t.Errorf("subscribers after disconnect = %d, want 0 — the taskState leaked", got)
+	}
+	if st := board.Registry().Validate(
+		boardRunnerIDFromProto(rid), boardTaskIDFromProto(tid), [16]byte{1},
+	); st == agentboard.HelloStatusOk {
+		t.Error("the auth ticket still validates after the runner disconnected")
 	}
 }
