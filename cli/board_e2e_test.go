@@ -173,3 +173,70 @@ func TestClientBoard_ZeroLengthPayload(t *testing.T) {
 		t.Fatalf("BoardRead: expected empty payload, got %q", msgs[0].Payload)
 	}
 }
+
+// TestClientBoard_Subscribers exercises BoardSubscribers over a live in-process
+// server: unfiltered it returns every task known to the board, sorted by task
+// id; filtered it returns only the tasks a publish to that topic would reach,
+// with each returned row still carrying its full pattern set.
+func TestClientBoard_Subscribers(t *testing.T) {
+	srv, peerCID := startOperatorServerE2E(t)
+
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{127, 0, 0, 1})
+	// Task ids chosen so the map iteration order cannot accidentally match the
+	// expected sort order: "bb…" is attached first, "aa…" second.
+	var second protocol.TaskID
+	second.Id[0] = 0xbb
+	var first protocol.TaskID
+	first.Id[0] = 0xaa
+
+	var boardRid agentboard.RunnerID
+	boardRid.SetTransport(rid.Transport)
+	boardRid.SetIpAddr(rid.IpAddr)
+	var secondBoard, firstBoard agentboard.TaskID
+	secondBoard.Id = second.Id
+	firstBoard.Id = first.Id
+
+	cs := srv.Board().Attach(boardRid, secondBoard, "host-B", "codex")
+	if err := srv.Board().Subscribe(cs, "rr.dec-019"); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Board().Subscribe(cs, "other"); err != nil {
+		t.Fatal(err)
+	}
+	srv.Board().Attach(boardRid, firstBoard, "host-A", "claude")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	c, err := cli.Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+
+	all, err := c.BoardSubscribers(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("unfiltered rows = %d, want 2", len(all))
+	}
+	if all[0].TaskHex >= all[1].TaskHex {
+		t.Errorf("rows not sorted by task id: %q then %q", all[0].TaskHex, all[1].TaskHex)
+	}
+
+	only, err := c.BoardSubscribers(ctx, "rr.dec-019")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(only) != 1 {
+		t.Fatalf("filtered rows = %d, want 1", len(only))
+	}
+	if only[0].Hostname != "host-B" || only[0].AgentProfile != "codex" {
+		t.Errorf("row = %+v, want host-B/codex", only[0])
+	}
+	if len(only[0].Patterns) != 2 {
+		t.Errorf("patterns = %v, want the task's full set", only[0].Patterns)
+	}
+}

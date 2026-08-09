@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"sort"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -34,6 +35,57 @@ type BoardMessage struct {
 	FromAgentProfile string
 	ReceivedAtMs     uint64
 	Payload          []byte
+}
+
+// BoardSubscriberRow is one task's agentboard subscription set as returned by
+// BoardSubscribers. Hostname is empty for a task that has been registered (so
+// its chat.<short-id> is seeded) but has not yet run a harness-cli command —
+// a real state, not missing data.
+type BoardSubscriberRow struct {
+	TaskHex      string
+	Hostname     string
+	AgentProfile string
+	Patterns     []string
+}
+
+// BoardSubscribers lists each task's agentboard subscription set. A non-empty
+// topic narrows the result to the tasks a publish to that topic would reach;
+// each returned row still carries its full pattern set. Requires
+// Capability_InfoGlobal, like BoardTopics / BoardRead.
+//
+// Rows are sorted by task id here rather than on the board: Board.ListSubscribers
+// iterates a map and declares its order unspecified, and stable output is a
+// property the CLI and its tests want, not one the board should have to promise.
+func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSubscriberRow, error) {
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardSubscribers}
+	sr := protocol.BoardSubscribersRequest{}
+	sr.SetTopic([]byte(topic))
+	req.SetBoardSubscribers(sr)
+
+	resp, err := c.RoundTripTaskControl(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	bs := resp.BoardSubscribers()
+	if bs == nil || resp.Kind != protocol.TaskControlKind_BoardSubscribers {
+		return nil, fmt.Errorf("BoardSubscribers: unexpected response kind=%v", resp.Kind)
+	}
+	out := make([]BoardSubscriberRow, 0, len(bs.Rows))
+	for _, r := range bs.Rows {
+		patterns := make([]string, 0, len(r.Patterns))
+		for _, p := range r.Patterns {
+			patterns = append(patterns, string(p.Name))
+		}
+		sort.Strings(patterns)
+		out = append(out, BoardSubscriberRow{
+			TaskHex:      hex.EncodeToString(r.Task.Id[:]),
+			Hostname:     string(r.Hostname),
+			AgentProfile: string(r.AgentProfile),
+			Patterns:     patterns,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TaskHex < out[j].TaskHex })
+	return out, nil
 }
 
 // BoardTopics lists every topic currently held in the board with aggregate
@@ -179,6 +231,17 @@ func BoardRead(ctx context.Context, peerCID objproto.ConnectionID, topic string)
 	}
 	defer c.Close()
 	return c.BoardRead(ctx, topic)
+}
+
+// BoardSubscribers is a package-level fresh-dial wrapper for
+// (*Client).BoardSubscribers.
+func BoardSubscribers(ctx context.Context, peerCID objproto.ConnectionID, topic string) ([]BoardSubscriberRow, error) {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return nil, err
+	}
+	defer c.Close()
+	return c.BoardSubscribers(ctx, topic)
 }
 
 // BoardPurge is a package-level fresh-dial wrapper for (*Client).BoardPurge.

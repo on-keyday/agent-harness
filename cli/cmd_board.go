@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/on-keyday/objtrsf/objproto"
@@ -30,6 +31,16 @@ func boardAgentOrDash(profile string) string {
 // verb is the first arg after "board"; rest is the remaining args.
 // All output (including purge JSON) is written to out.
 // The caller is responsible for routing unknown verbs and printing board usage.
+// boardHostOrDash renders an empty hostname as "-". Empty is a real state: the
+// task is registered on the board (its chat.<short-id> is seeded) but has not
+// run a harness-cli command yet, which is what fills the hostname in.
+func boardHostOrDash(h string) string {
+	if h == "" {
+		return "-"
+	}
+	return h
+}
+
 func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string, rest []string, out io.Writer) error {
 	switch verb {
 	case "topics":
@@ -81,6 +92,26 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 				out.Write(m.Payload) //nolint:errcheck
 				fmt.Fprintln(out)
 			}
+		}
+
+	case "subscribers":
+		// Optional <topic>: with it, only the tasks a publish to that topic
+		// would reach; without it, every task known to the board.
+		topic := ""
+		if len(rest) > 0 {
+			topic = rest[0]
+		}
+		rows, err := BoardSubscribers(ctx, cid, topic)
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
+			pats := "-"
+			if len(r.Patterns) > 0 {
+				pats = strings.Join(r.Patterns, ",")
+			}
+			fmt.Fprintf(out, "%s host=%s agent=%s topics=%s\n",
+				r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats)
 		}
 
 	case "purge":
