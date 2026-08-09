@@ -3418,16 +3418,24 @@ const POLL_INTERVAL_MS = 5000;
 
   // openBoardTopic shows the detail view for one topic.
   async function openBoardTopic(topic) {
+    // Refresh re-enters this function with the topic already open. Only a
+    // CHANGE of topic may drop the subscribers pane (its rows would be stale);
+    // on a same-topic refresh the pane is re-fetched instead, because closing
+    // what the user just opened is not what "refresh" means.
+    const sameTopic = currentBoardTopic === topic;
     currentBoardTopic = topic;
     boardTopicsEl.hidden = true;
     boardDetailEl.hidden = false;
     boardDetailTitle.textContent = topic;
     boardMessagesEl.innerHTML = "";
     if (boardSubscribersEl) {
-      // Never leave the previous topic's subscribers on screen.
-      boardSubscribersEl.hidden = true;
-      boardSubscribersEl.innerHTML = "";
-      if (boardSubscribersBtn) boardSubscribersBtn.classList.remove("board-sub-open");
+      if (!sameTopic) {
+        boardSubscribersEl.hidden = true;
+        boardSubscribersEl.innerHTML = "";
+        if (boardSubscribersBtn) boardSubscribersBtn.classList.remove("board-sub-open");
+      } else if (!boardSubscribersEl.hidden) {
+        renderBoardSubscribers();
+      }
     }
     if (!window.harness) {
       boardMessagesEl.textContent = "(not connected)";

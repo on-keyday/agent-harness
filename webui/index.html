@@ -211,8 +211,11 @@
       <div id="board-detail" hidden>
         <div class="board-detail-header">
           <button id="board-back-btn" class="board-back-btn">← Back</button>
-          <span id="board-detail-title" class="board-detail-title"></span>
+          <!-- Subscribers is a toggle you press repeatedly; keep it on the far
+               side of the flex:1 title from the destructive Purge topic, so the
+               two are never neighbours at either breakpoint. -->
           <button id="board-subscribers-btn">Subscribers</button>
+          <span id="board-detail-title" class="board-detail-title"></span>
           <button id="board-purge-topic-btn" class="btn-danger">Purge topic</button>
         </div>
         <div id="board-subscribers" hidden></div>
