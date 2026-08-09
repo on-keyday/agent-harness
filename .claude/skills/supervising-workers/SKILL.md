@@ -1,12 +1,13 @@
 ---
-name: delegating-to-workers
-description: Use when delegating work to OTHER agents from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, or reading a worker's diff. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
+name: supervising-workers
+description: Use when acting on ANOTHER agent's task from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, or reading a worker's diff. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
 ---
 
-# delegating-to-workers (driving other agents)
+# supervising-workers (another agent's task, end to end)
 
-Everything here is about a task acting on ANOTHER task: creating it, steering
-it, bounding what it may do, and inspecting what it produced. If you only need
+Everything here is about a task acting on ANOTHER task, across its whole
+lifetime: creating it, bounding what it may do, steering and watching it,
+inspecting what it produced, and tearing it down. If you only need
 to talk to a peer that already exists, you want the `harness-cli` skill —
 sending, replying with `--in-reply-to`, subscriptions and the handshake
 conventions are all there.
