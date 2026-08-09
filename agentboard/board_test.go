@@ -649,3 +649,99 @@ func TestBoard_Send_RetainsInReplyTo(t *testing.T) {
 		t.Errorf("InReplyTo = %d, want %d", msgs[1].InReplyTo, parent)
 	}
 }
+
+func TestBoard_LookupSeq_AcrossTopics(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var tid protocol.TaskID
+	tid.Id[0] = 7
+
+	if _, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	seqB, err := b.Send("b", []byte("2"), rid, tid, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	topic, gotTid, ok := b.LookupSeq(seqB)
+	if !ok {
+		t.Fatal("LookupSeq ok = false, want true")
+	}
+	if topic != "b" {
+		t.Errorf("topic = %q, want %q", topic, "b")
+	}
+	if gotTid.Id != tid.Id {
+		t.Errorf("task = %x, want %x", gotTid.Id, tid.Id)
+	}
+}
+
+func TestBoard_LookupSeq_Unknown(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+	if _, _, ok := b.LookupSeq(0); ok {
+		t.Error("LookupSeq(0) ok = true, want false")
+	}
+	if _, _, ok := b.LookupSeq(999999); ok {
+		t.Error("LookupSeq(999999) ok = true, want false")
+	}
+}
+
+func TestBoard_LookupSeq_GoneAfterEviction(t *testing.T) {
+	// RingN 2: the third send pushes the first out of the ring.
+	b := New(Config{RingN: 2, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var tid protocol.TaskID
+	tid.Id[0] = 7
+
+	first, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := b.Send("a", []byte("x"), rid, tid, "h", "", 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, ok := b.LookupSeq(first); ok {
+		t.Error("ring-evicted seq still resolves")
+	}
+}
+
+func TestBoard_LookupSeq_GoneAfterPurge(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var tid protocol.TaskID
+	tid.Id[0] = 7
+
+	seq, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed, found := b.PurgeSeq("a", seq); !removed || !found {
+		t.Fatalf("PurgeSeq = %v %v, want true true", removed, found)
+	}
+	if _, _, ok := b.LookupSeq(seq); ok {
+		t.Error("purged seq still resolves")
+	}
+
+	seq2, err := b.Send("a", []byte("2"), rid, tid, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if purged, found := b.PurgeTopic("a"); !found || purged != 1 {
+		t.Fatalf("PurgeTopic = %d %v, want 1 true", purged, found)
+	}
+	if _, _, ok := b.LookupSeq(seq2); ok {
+		t.Error("seq in a purged topic still resolves")
+	}
+}

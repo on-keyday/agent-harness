@@ -413,6 +413,47 @@ func (b *Board) ListRetained(name string) (msgs []RetainedMessage, found bool) {
 	return t.snapshot(), true
 }
 
+// LookupSeq resolves a published seq to the topic whose ring still retains it
+// and the task that published it. ok is false for seq 0, for a seq that was
+// never published, and for one whose entry has since left its ring (count
+// overflow, TTL eviction, purge, or Revoke) — the three are indistinguishable
+// and are treated alike: the message is not on the board.
+//
+// This is a full scan of every ring, deliberately: the alternative is a
+// seq -> topic index that must be invalidated in six places (ring overflow in
+// topic.append, removeSeq, PurgeTopic, PurgeSeq, both evict paths, and the
+// topic deletion in Revoke), and a missed one desynchronizes it from the rings
+// intermittently. The scan holds no derived state so it cannot desynchronize.
+// Cost is bounded by MaxTopics * RingN — 1024 * 64 with the shipped defaults —
+// against a publish rate driven by agent turns. Raising either bound by an
+// order of magnitude is the trigger to reconsider the index.
+//
+// A message evicted between the snapshot and its ring's scan is missed,
+// yielding a spurious "not found". That is the same approximate-read tradeoff
+// already accepted in evictExpiredTopics.
+func (b *Board) LookupSeq(seq uint64) (string, protocol.TaskID, bool) {
+	if seq == 0 {
+		return "", protocol.TaskID{}, false
+	}
+	b.mu.Lock()
+	names := make([]string, 0, len(b.topics))
+	tps := make([]*topic, 0, len(b.topics))
+	for n, t := range b.topics {
+		names = append(names, n)
+		tps = append(tps, t)
+	}
+	b.mu.Unlock()
+
+	for i, t := range tps {
+		for _, m := range t.snapshot() {
+			if m.Seq == seq {
+				return names[i], m.FromTask, true
+			}
+		}
+	}
+	return "", protocol.TaskID{}, false
+}
+
 // BoardTopicSummary is one row of ListTopics output. It uses Go-native types
 // (string, time.Time, int) and is distinct from the generated wire type TopicSummary.
 type BoardTopicSummary struct {
