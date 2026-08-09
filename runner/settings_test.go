@@ -232,7 +232,7 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 	if groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --json") {
 		t.Errorf("legacy UserPromptSubmit hook (no --commit) should be pruned")
 	}
-	if !groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --commit --json") {
+	if !groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook") {
 		t.Errorf("current UserPromptSubmit hook missing after merge")
 	}
 

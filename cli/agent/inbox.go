@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -34,6 +35,12 @@ import (
 // {"decision":"block","reason":<JSON-Lines>} that Claude Code's Stop hook
 // uses to keep the agent looping when new agentboard messages arrive
 // mid-turn. Empty inbox in --stop-hook mode produces no output.
+//
+// With --user-prompt-submit-hook, the output becomes the UserPromptSubmit
+// envelope carrying the JSON Lines as additionalContext. This is what the
+// injected hook uses; bare JSON Lines are silently discarded on that event
+// (see emitUserPromptSubmitHookOutput). Empty inbox produces no output.
+// The two hook modes are mutually exclusive.
 func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent inbox", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
@@ -42,9 +49,13 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	since := fs.Uint64("since", 0, "cursor (ignored if --since-last)")
 	asJSON := fs.Bool("json", false, "output JSON Lines (current default; flag accepted for forward compat)")
 	stopHook := fs.Bool("stop-hook", false, "wrap output as Claude Code Stop-hook block decision")
+	promptHook := fs.Bool("user-prompt-submit-hook", false, "wrap output as Claude Code UserPromptSubmit additionalContext")
 	inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq (client-side filter)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *stopHook && *promptHook {
+		return errors.New("--stop-hook and --user-prompt-submit-hook are mutually exclusive")
 	}
 	_ = asJSON // currently always JSON Lines
 
@@ -109,21 +120,21 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 			}
 			payloads[i] = p
 		}
-		if *stopHook {
-			var reason bytes.Buffer
-			for i, m := range r.Msgs {
-				if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
-					continue
-				}
-				emitMessageLine(&reason, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
+		var body bytes.Buffer
+		for i, m := range r.Msgs {
+			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
+				continue
 			}
-			emitStopHookOutput(stdout, reason.String())
-		} else {
-			for i, m := range r.Msgs {
-				if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
-					continue
-				}
-				emitMessageLine(stdout, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
+			emitMessageLine(&body, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
+		}
+		switch {
+		case *stopHook:
+			emitStopHookOutput(stdout, body.String())
+		case *promptHook:
+			emitUserPromptSubmitHookOutput(stdout, body.String())
+		default:
+			if _, err := stdout.Write(body.Bytes()); err != nil {
+				return err
 			}
 		}
 		if *sinceLast && *commit {

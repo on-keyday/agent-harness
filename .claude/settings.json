@@ -1,20 +1,10 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "harness-cli agent subscribe --self",
-            "type": "command"
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
           {
-            "command": "harness-cli agent inbox --since-last --commit --json",
+            "command": "harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook",
             "type": "command"
           }
         ]

@@ -35,7 +35,7 @@ var harnessHookEntries = []struct {
 	Event   string
 	Command string
 }{
-	{"UserPromptSubmit", "harness-cli agent inbox --since-last --commit --json"},
+	{"UserPromptSubmit", "harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook"},
 }
 
 // harnessAllowEntry is the single permissions.allow entry the runner

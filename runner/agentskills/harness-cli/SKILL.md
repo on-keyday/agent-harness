@@ -85,7 +85,8 @@ poll.
 
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
 
-- `UserPromptSubmit` runs `harness-cli agent inbox --since-last --commit --json`
+- `UserPromptSubmit` runs
+  `harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook`
   (delivers any pending messages at the start of a turn and advances the cursor).
 
 That covers every task kind, but how a new turn actually *starts* differs.
