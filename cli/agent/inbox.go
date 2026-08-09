@@ -26,6 +26,10 @@ import (
 // the old live position into prev-cursor. Calling --commit by hand will
 // suppress the next hook's delivery of those seqs.
 //
+// --in-reply-to filters the emitted records to replies to that seq. It is
+// presentational only: the cursor still advances past every message the server
+// returned, so a filtered --commit run does not re-deliver what it hid.
+//
 // With --stop-hook, the output instead becomes a single JSON object
 // {"decision":"block","reason":<JSON-Lines>} that Claude Code's Stop hook
 // uses to keep the agent looping when new agentboard messages arrive
@@ -38,6 +42,7 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	since := fs.Uint64("since", 0, "cursor (ignored if --since-last)")
 	asJSON := fs.Bool("json", false, "output JSON Lines (current default; flag accepted for forward compat)")
 	stopHook := fs.Bool("stop-hook", false, "wrap output as Claude Code Stop-hook block decision")
+	inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq (client-side filter)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -107,12 +112,18 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 		if *stopHook {
 			var reason bytes.Buffer
 			for i, m := range r.Msgs {
-				emitMessageLine(&reason, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile))
+				if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
+					continue
+				}
+				emitMessageLine(&reason, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
 			}
 			emitStopHookOutput(stdout, reason.String())
 		} else {
 			for i, m := range r.Msgs {
-				emitMessageLine(stdout, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile))
+				if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
+					continue
+				}
+				emitMessageLine(stdout, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
 			}
 		}
 		if *sinceLast && *commit {

@@ -21,9 +21,14 @@ import (
 // `.from.*`. An empty `agent` means the server could not attribute a runtime to
 // the sender (e.g. a server-originated publish, which carries hostname
 // "server"); it never means "runner default".
-func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string) {
+//
+// in_reply_to is emitted on every record, 0 when the message is not a reply,
+// for the same reason the from block is unconditional: a consumer can address
+// the field without probing for it.
+func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string, inReplyTo uint64) {
 	rec := map[string]any{
 		"seq":         seq,
+		"in_reply_to": inReplyTo,
 		"topic":       topic,
 		"payload_b64": base64.StdEncoding.EncodeToString(payload),
 		"from": map[string]any{
