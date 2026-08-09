@@ -32,6 +32,47 @@ errors and echoes the available names. The agentboard wake prompt tells you to
 run `harness-cli skill` precisely because the command — unlike a Claude skill
 reference — resolves in any runtime, including non-claude / non-injected peers.
 
+## You may not be the first process on this task
+
+A task id, a conversation, and an operating-system process are three different
+lifetimes, and only the last one is yours. `session new --resume <id>` (and the
+TUI/WebUI resume actions) reuse the task id and the worktree, and start a **new
+agent process** with a **new auth ticket**. Nothing in your environment says so:
+`HARNESS_TASK_ID`, `HARNESS_RUNNER_ID` and `HARNESS_AUTH_TICKET` look identical
+on a first run and on a resume, and a replayed conversation reads as continuous
+from the inside. So the default assumption — "I am the process that started
+this task" — is wrong more often than not, and it is wrong silently.
+
+Ask the server instead. This works from any agent runtime; it needs no
+`/proc` (Windows runners exist) and no runtime-specific state files:
+
+```bash
+harness-cli ls --json    # find the row whose id == $HARNESS_TASK_ID
+```
+
+- **`resumed_by`** — non-empty means this task has been resumed, so the process
+  reading this is not the first one on it. The value is the surface that did it
+  (`cli` / `tui` / `webui`).
+- **`created_at` vs `started_at`** — `created_at` is when the task id was
+  minted; `started_at` is refreshed on every (re)assignment, so it tracks the
+  CURRENT run. A large gap says the same thing independently.
+
+(Checked 2026-08-09 against 28 live tasks: the 26 with `resumed_by` set all had
+week-to-month gaps, and the 2 with it empty had a gap of 0.00 days.)
+
+**What follows from being a later incarnation.** Your ticket, and possibly your
+runner, are not the ones the earlier incarnation used, so do not reason from
+"what I set up last time": re-read state from disk or from the server rather
+than assuming a subscription, a file, or a process you remember arranging is
+still there. The conversation you can see is evidence about what was *said*,
+not about what is currently *true*.
+
+If your runtime keeps a transcript with timestamps, its first entry dates the
+conversation — a third date, distinct from both of the above. For Claude Code
+that is `~/.claude/projects/<project>/$CLAUDE_CODE_SESSION_ID.jsonl`; other
+runtimes differ, and the `harness-cli ls --json` route above is the one that
+works everywhere.
+
 ## Inbox is automatic — do not poll
 
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
