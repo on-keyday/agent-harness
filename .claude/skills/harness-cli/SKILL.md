@@ -112,11 +112,12 @@ context), list the ring as **metadata only**:
 ```bash
 harness-cli agent retained --self                 # your inbound channel
 harness-cli agent retained --topic chat.<short-id>
-# {"seq":42,"from_task":"<hex>","from_hostname":"...","size":1234,"received_at_ms":...}
+# {"seq":42,"in_reply_to":0,"from_task":"<hex>","from_hostname":"...","size":1234,"received_at_ms":...}
 ```
 
-`retained` returns one JSON line per retained message — seq, sender task id,
-size, receive time — and **never the payload bytes**. It takes **no
+`retained` returns one JSON line per retained message — seq, the seq it
+replies to (0 when it is not a reply), sender task id, size, receive time —
+and **never the payload bytes**. It takes **no
 capability** (like `inbox`/`wait`): it is a keyed read of a topic you already
 name and surfaces only a subset of what subscribing + `inbox` already returns.
 Pick the offending `seq` from this list, then `purge --seq <N>` it — the
@@ -756,6 +757,11 @@ checks the payload with `json.Valid` and behaves differently:
   structured JSON (not a string), so the receiving agent sees a real
   object/array without manual base64-decode-then-parse.
 
+Alongside those, every record carries `seq`, `topic`, `in_reply_to` (0 when
+the message is not a reply) and the `from` block. Those come from the server,
+not from the sender, so they are the fields to branch on — see
+"Replying — `--in-reply-to`".
+
 So sending JSON is not just convention — it materially changes how your
 message lands on the other side. Recommended:
 
@@ -904,6 +910,13 @@ retained on the board and reaches no inbox.
 third from the first two: it lists the tasks that would receive a publish to
 that topic. An empty result means nothing is listening. With no argument it
 lists every task on the board and what each subscribes to.
+
+`harness-cli board topics` (same capability) answers it for everything at
+once: each row carries `subs=N`, so `subs=0` is a topic holding messages
+nobody will read. The listing also includes names that are **subscribed but
+never published to** — those show `msgs=0 (nothing published yet)`, and are
+how you confirm a per-subject reply topic is actually being listened on
+before anything has been sent there.
 
 An empty `host=` column means the task is registered and subscribed but has
 not run a `harness-cli` command yet — a real state, not missing data.
