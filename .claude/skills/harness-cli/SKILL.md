@@ -177,6 +177,31 @@ The `wait` and `dispatch` subcommands shown by `harness-cli agent --help`
 are for shell scripting outside an agent turn (see "Async by default"
 above); do not invoke them from within an agent turn.
 
+### Replying — `--in-reply-to`
+
+Reply with the parent message's `seq`, which every inbox record carries:
+
+```bash
+harness-cli agent send --in-reply-to <seq> 'the answer ...'
+```
+
+`--topic` is **not needed**: the server routes the reply to the sender of
+the parent message, resolved from that message's retained entry — not from
+anything in the payload. The delivered reply carries `in_reply_to`, so the
+receiver correlates it without parsing your text. Pass `--topic` as well
+only when the reply belongs somewhere other than the parent's sender.
+
+The server validates the link when you publish. If the parent has fallen
+out of its topic ring (64 messages) or its TTL (30 minutes), or was purged,
+the send is **rejected** with `unknown_in_reply_to`; drop the flag to send
+the same body as an ordinary message.
+
+Collect the replies to one message with:
+
+```bash
+harness-cli agent inbox --json --in-reply-to <seq>
+```
+
 ## Subscriptions
 
 Subscriptions persist across turns. The hook-driven inbox delivers messages
@@ -219,6 +244,17 @@ know the other agent's task id (you spawned it, or you found it with `ls`),
 so you reach it on its inbound topic `chat.<first-8-hex-of-task-id>`
 directly. No shared topic, no broadcast — only the target is woken. Announce
 your own `chat.<short-id>` as `reply_topic` so it can reply.
+
+Every delivered message carries `from.agent`: the agent profile the sending
+task was running under at publish time (`"claude"`, `"codex"`, …), attested by
+the server — the sender cannot set it, and it is frozen per message, so a task
+resumed under a different runtime does not relabel what it already sent. Check
+it before assuming your reply will be read: the auto-inbox hook lives in
+Claude's `.claude/settings.json`, so a peer whose `from.agent` is not `claude`
+may only see your message when it polls `harness-cli agent inbox` itself. An
+empty `from.agent` means the server could not attribute a runtime — a
+server-originated message such as an `await-idle` notification, identifiable
+by `from.hostname == "server"`.
 
 ### Opt-in discovery on `harness.hello`
 
@@ -801,6 +837,13 @@ Use `chat.<first-8-chars-of-task-id>` as your personal inbound topic.
 Announce it as `reply_topic` in every message so peers always know where to
 reach you.
 
+`reply_topic` is the fallback, not the mechanism. It is payload text the
+sender writes, so it tells you nothing a peer did not choose to say.
+Prefer `--in-reply-to`: it is set by the transport, validated by the
+server, and survives the reply landing on the wrong topic — which
+`reply_topic` does not. Keep announcing `reply_topic` for peers that never
+set `in_reply_to` (`agent=bash`, or any peer without skill injection).
+
 ### Handshake flow (id-directed — the default)
 
 1. Your inbound topic `chat.<short-id>` is **already subscribed** by the
@@ -828,6 +871,25 @@ reach you.
 `subscribe --topic harness.hello`, post the same `hello` payload there
 instead of to a peer topic, then end the turn. When a peer answers, switch
 to the pair topics and stop posting on `harness.hello`.
+
+### Per-subject reply topics (fallback)
+
+When a peer cannot be relied on to set `in_reply_to`, give each subject its
+own reply topic (`rr.dec-019`), tell the peer to reply there, and bucket
+incoming messages by the row's `topic` instead of by anything in the
+payload. A wrong topic is at least visible — the message lands on your
+`chat.<short-id>` with no subject — whereas a wrong payload shape reads as
+"no reply arrived".
+
+Limits worth knowing before you rely on it:
+
+- `subscribe` is **exact match only** — no wildcards, so `rr.*` is not a
+  thing. Each subject costs an explicit `subscribe` and `unsubscribe`.
+- Each topic retains **64** messages; older ones are dropped.
+- A topic's ring is dropped **30 minutes** after its last publish, whether
+  or not anything read it. The subscription itself survives.
+- Past **1024** topics the board evicts the least recently published one —
+  which is exactly a quiet per-subject topic.
 
 ### Checking for stray subscriptions
 
