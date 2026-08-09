@@ -67,11 +67,14 @@ harness-cli session new -d --repo /path/to/repo \
   --agent-arg --permission-mode --agent-arg auto
 ```
 
-`--permission-mode auto` is **Claude's** flag, forwarded verbatim. A worker
-running another agent CLI needs that runtime's own equivalent, which belongs
-in the runner's profile (`--agent-args` / `--agent-*-argv`) rather than in
-this command — check what the target profile advertises before assuming the
-flag lands.
+`--permission-mode auto` is **Claude's** flag. `--agent-arg` forwards whatever
+you give it verbatim to whichever binary the profile runs, so a worker on
+another agent CLI takes that runtime's own equivalent through the same flag —
+check the target profile's `agent=` in `ls` before assuming `--permission-mode`
+means anything to it. A standing default belongs on the runner instead, as the
+profile's `agentArgs` or the runner-global `--agent-args`; the
+`--agent-*-argv` templates are for the shape of the oneshot/resume argv, not
+for extra flags.
 
 Without this the worker spawns in the default permission mode and will
 stall on every permission prompt — and since the worker is detached, no
