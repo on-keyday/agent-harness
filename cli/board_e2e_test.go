@@ -96,8 +96,8 @@ func startOperatorServerE2E(t *testing.T) (*operatorE2E, objproto.ConnectionID) 
 // send-stream.
 func TestClientBoard_TopicsReadPurge(t *testing.T) {
 	srv, peerCID := startOperatorServerE2E(t)
-	srv.Board().Send("chat.x", []byte("hello"), protocol.RunnerID{}, protocol.TaskID{}, "h", "codex")  //nolint:errcheck
-	srv.Board().Send("chat.x", []byte("world"), protocol.RunnerID{}, protocol.TaskID{}, "h", "claude") //nolint:errcheck
+	srv.Board().Send("chat.x", []byte("hello"), protocol.RunnerID{}, protocol.TaskID{}, "h", "codex", 0)  //nolint:errcheck
+	srv.Board().Send("chat.x", []byte("world"), protocol.RunnerID{}, protocol.TaskID{}, "h", "claude", 0) //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -148,7 +148,7 @@ func TestClientBoard_TopicsReadPurge(t *testing.T) {
 // leaving the server stream undrained and feeding the trsf accept-queue wedge.
 func TestClientBoard_ZeroLengthPayload(t *testing.T) {
 	srv, peerCID := startOperatorServerE2E(t)
-	srv.Board().Send("empty.topic", []byte(""), protocol.RunnerID{}, protocol.TaskID{}, "h", "") //nolint:errcheck
+	srv.Board().Send("empty.topic", []byte(""), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0) //nolint:errcheck
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

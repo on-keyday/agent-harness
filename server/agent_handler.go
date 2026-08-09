@@ -158,7 +158,7 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 			return
 		}
 		fromRid, fromTid, fromHost, fromProfile := ac.state.Identity()
-		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost, fromProfile)
+		seq, sendErr := s.Board.Send(string(r.Topic), payload, fromRid, fromTid, fromHost, fromProfile, 0)
 		var status agentboard.SendStatus
 		switch sendErr {
 		case nil:

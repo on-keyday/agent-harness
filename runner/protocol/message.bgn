@@ -672,6 +672,9 @@ format BoardReadRequest:
 
 format BoardMessageRow:
     seq :u64
+    # See agentboard/agentboard.bgn SendRequest.in_reply_to — same value,
+    # 0 when the message is not a reply.
+    in_reply_to :u64
     from_task :TaskID
     from_hostname_len :u8
     from_hostname :[from_hostname_len]u8

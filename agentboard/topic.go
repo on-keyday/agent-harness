@@ -9,7 +9,12 @@ import (
 
 // RetainedMessage is one entry in a topic ring buffer.
 type RetainedMessage struct {
-	Seq          uint64
+	Seq uint64
+	// InReplyTo is the seq of the message this one answers, 0 when it is not a
+	// reply. Validated by the server at publish time, so a non-zero value here
+	// referred to a real message when it was accepted — the parent may since
+	// have been evicted from its ring.
+	InReplyTo    uint64
 	Topic        string
 	Payload      []byte
 	FromRunner   protocol.RunnerID
@@ -38,7 +43,7 @@ func newTopic(name string, cap int) *topic {
 	return &topic{name: name, cap: cap, ring: make([]RetainedMessage, 0, cap)}
 }
 
-func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string) {
+func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now()
@@ -49,6 +54,7 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 	}
 	t.ring = append(t.ring, RetainedMessage{
 		Seq:              seq,
+		InReplyTo:        inReplyTo,
 		Topic:            t.name,
 		Payload:          append([]byte(nil), payload...),
 		FromRunner:       fromRid,

@@ -12,7 +12,7 @@ func TestTopic_AppendInRing(t *testing.T) {
 	var zeroRid protocol.RunnerID
 	var zeroTid protocol.TaskID
 	for i := 0; i < 6; i++ {
-		topic.append(uint64(i+1), []byte{byte(i)}, zeroRid, zeroTid, "", "")
+		topic.append(uint64(i+1), []byte{byte(i)}, zeroRid, zeroTid, "", "", 0)
 	}
 	got := topic.since(0)
 	if len(got) != 4 {
@@ -28,7 +28,7 @@ func TestTopic_SinceFiltersByCursor(t *testing.T) {
 	var zeroRid protocol.RunnerID
 	var zeroTid protocol.TaskID
 	for i := uint64(1); i <= 5; i++ {
-		topic.append(i, []byte{byte(i)}, zeroRid, zeroTid, "", "")
+		topic.append(i, []byte{byte(i)}, zeroRid, zeroTid, "", "", 0)
 	}
 	got := topic.since(2)
 	if len(got) != 3 {
@@ -44,7 +44,7 @@ func TestTopic_LastPublishedAtUpdates(t *testing.T) {
 	var zeroRid protocol.RunnerID
 	var zeroTid protocol.TaskID
 	t0 := time.Now()
-	topic.append(1, []byte("a"), zeroRid, zeroTid, "", "")
+	topic.append(1, []byte("a"), zeroRid, zeroTid, "", "", 0)
 	if topic.lastPublishedAt.Before(t0) {
 		t.Error("lastPublishedAt did not update after append")
 	}
@@ -60,7 +60,7 @@ func TestTopic_AppendCarriesSender(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 0x42
 
-	tp.append(1, []byte("hi"), rid, tid, "host-A", "")
+	tp.append(1, []byte("hi"), rid, tid, "host-A", "", 0)
 
 	got := tp.since(0)
 	if len(got) != 1 {
@@ -74,5 +74,23 @@ func TestTopic_AppendCarriesSender(t *testing.T) {
 	}
 	if string(got[0].FromRunner.Transport) != "ws" {
 		t.Errorf("FromRunner.Transport = %q, want %q", string(got[0].FromRunner.Transport), "ws")
+	}
+}
+
+func TestTopic_Append_CarriesInReplyTo(t *testing.T) {
+	var zeroRid protocol.RunnerID
+	var zeroTid protocol.TaskID
+	tp := newTopic("t", 4)
+	tp.append(1, []byte("parent"), zeroRid, zeroTid, "h", "", 0)
+	tp.append(2, []byte("child"), zeroRid, zeroTid, "h", "", 1)
+	got := tp.snapshot()
+	if len(got) != 2 {
+		t.Fatalf("len = %d, want 2", len(got))
+	}
+	if got[0].InReplyTo != 0 {
+		t.Errorf("parent InReplyTo = %d, want 0", got[0].InReplyTo)
+	}
+	if got[1].InReplyTo != 1 {
+		t.Errorf("child InReplyTo = %d, want 1", got[1].InReplyTo)
 	}
 }

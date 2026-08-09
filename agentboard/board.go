@@ -203,7 +203,12 @@ var (
 // ConnState's taskState — so agents cannot spoof the from_* fields. fromProfile is
 // frozen into the ring entry rather than resolved on read, because a task id can be
 // resumed under a different agent profile while its topic keeps the older messages.
-func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string) (uint64, error) {
+//
+// inReplyTo is the parent message's seq, or 0. Send does NOT validate it —
+// resolution is the caller's job (server/agent_handler.go, via LookupSeq),
+// because rejecting a send is a protocol-level decision and the board is the
+// storage layer.
+func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64) (uint64, error) {
 	if len(payload) > b.cfg.MaxPayload {
 		return 0, ErrPayloadTooLarge
 	}
@@ -229,7 +234,7 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	b.mu.Unlock()
 
 	seq := b.seq.Add(1)
-	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile)
+	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo)
 
 	b.mu.Lock()
 	fn := b.onDeliver

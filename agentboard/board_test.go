@@ -19,7 +19,7 @@ func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 	if err := b.Subscribe(conn, "topic/foo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("topic/foo", []byte("hello"), testRid, testTid, "test-host", ""); err != nil {
+	if _, err := b.Send("topic/foo", []byte("hello"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := b.Inbox(conn, 0)
@@ -37,7 +37,7 @@ func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		_, _ = b.Send("topic/bar", []byte("ping"), testRid, testTid, "test-host", "")
+		_, _ = b.Send("topic/bar", []byte("ping"), testRid, testTid, "test-host", "", 0)
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -68,7 +68,7 @@ func TestBoard_WaitTimesOut(t *testing.T) {
 func TestBoard_PayloadTooLargeRejected(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 4})
 	defer b.Close()
-	if _, err := b.Send("topic/big", []byte("toolong"), testRid, testTid, "test-host", ""); err == nil {
+	if _, err := b.Send("topic/big", []byte("toolong"), testRid, testTid, "test-host", "", 0); err == nil {
 		t.Fatal("expected payload_too_large error")
 	}
 }
@@ -92,7 +92,7 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 
 	// Send while no connection is attached. Message should land in the topic
 	// ring and become visible to a future Inbox call.
-	if _, err := b.Send("topic/persistent", []byte("delivered"), testRid, testTid, "test-host", ""); err != nil {
+	if _, err := b.Send("topic/persistent", []byte("delivered"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,7 +124,7 @@ func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
 
 	b.RegisterTask(rid, tid, ticket, "")
 
-	if _, err := b.Send(SelfTopic(tid), []byte("hello"), testRid, testTid, "sender", ""); err != nil {
+	if _, err := b.Send(SelfTopic(tid), []byte("hello"), testRid, testTid, "sender", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +164,7 @@ func TestBoard_RegisterTaskReseedsSelfTopicOnRunnerChange(t *testing.T) {
 
 	c2 := b.Attach(toAgentboardRunnerID(rid2), toAgentboardTaskID(tid), "host2", "")
 	defer b.Detach(c2)
-	if _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender", ""); err != nil {
+	if _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -231,7 +231,7 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	if err := b.Subscribe(recv, "chat.attr-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("chat.attr-test", []byte("x"), gotRid, gotTid, gotHost, gotProfile); err != nil {
+	if _, err := b.Send("chat.attr-test", []byte("x"), gotRid, gotTid, gotHost, gotProfile, 0); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := b.Inbox(recv, 0)
@@ -262,7 +262,7 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 	// Revoke the (rid, tid) — destroys the taskState.
 	b.Revoke(protoRunnerIDFromBoard(rid), protoTaskIDFromBoard(tid))
 
-	if _, err := b.Send("topic/scoped", []byte("after-revoke"), testRid, testTid, "test-host", ""); err != nil {
+	if _, err := b.Send("topic/scoped", []byte("after-revoke"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,10 +296,10 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	_ = b.Subscribe(c2, "harness.hello") // shared
 
 	// Publish to both topics so they exist in b.topics.
-	if _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", ""); err != nil {
+	if _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("harness.hello", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", ""); err != nil {
+	if _, err := b.Send("harness.hello", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -366,7 +366,7 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 
 	fromRid := protoRunnerIDFromBoard(pubRid)
 	fromTid := protoTaskIDFromBoard(pubTid)
-	if _, err := b.Send("topic/x", []byte("hello"), fromRid, fromTid, "pub-host", ""); err != nil {
+	if _, err := b.Send("topic/x", []byte("hello"), fromRid, fromTid, "pub-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -396,7 +396,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 
 	// Retain three messages, advance the consumer cursor past them.
 	for _, p := range []string{"m1", "m2", "m3"} {
-		if _, err := b.Send("chat.poison", []byte(p), testRid, testTid, "test-host", ""); err != nil {
+		if _, err := b.Send("chat.poison", []byte(p), testRid, testTid, "test-host", "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -425,7 +425,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 	// seq is board-global, so a post-purge message gets a strictly higher seq
 	// than the old cursor: the consumer's persisted cursor stays valid and the
 	// fresh message is delivered exactly once.
-	if _, err := b.Send("chat.poison", []byte("after"), testRid, testTid, "test-host", ""); err != nil {
+	if _, err := b.Send("chat.poison", []byte("after"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 	msgs, newCursor := b.Inbox(conn, cursor)
@@ -448,7 +448,7 @@ func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
 
 	var seqs []uint64
 	for _, p := range []string{"a", "b", "c"} {
-		s, err := b.Send("chat.mix", []byte(p), testRid, testTid, "test-host", "")
+		s, err := b.Send("chat.mix", []byte(p), testRid, testTid, "test-host", "", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -523,7 +523,7 @@ func protoTaskIDFromBoard(t TaskID) protocol.TaskID {
 func TestBoard_SeqSeedDefaultsToLegacy(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	seq, err := b.Send("topic/first", []byte("x"), testRid, testTid, "test-host", "")
+	seq, err := b.Send("topic/first", []byte("x"), testRid, testTid, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +546,7 @@ func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	_ = b1.Subscribe(c1, "chat.task")
 	var cursor uint64
 	for i := 0; i < 56; i++ {
-		if _, err := b1.Send("chat.task", []byte("old"), testRid, testTid, "test-host", ""); err != nil {
+		if _, err := b1.Send("chat.task", []byte("old"), testRid, testTid, "test-host", "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -564,7 +564,7 @@ func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	defer b2.Close()
 	c2 := b2.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	_ = b2.Subscribe(c2, "chat.task")
-	newSeq, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host", "")
+	newSeq, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +595,7 @@ func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
 	if profile != "codex" {
 		t.Fatalf("Identity() profile = %q, want %q", profile, "codex")
 	}
-	if _, err := b.Send("topic/resumed", []byte("from codex"), rid, tid, host, profile); err != nil {
+	if _, err := b.Send("topic/resumed", []byte("from codex"), rid, tid, host, profile, 0); err != nil {
 		t.Fatal(err)
 	}
 	b.Detach(first)
@@ -609,7 +609,7 @@ func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
 	if profile != "claude" {
 		t.Fatalf("Identity() after re-attach = %q, want %q", profile, "claude")
 	}
-	if _, err := b.Send("topic/resumed", []byte("from claude"), rid, tid, host, profile); err != nil {
+	if _, err := b.Send("topic/resumed", []byte("from claude"), rid, tid, host, profile, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -622,5 +622,30 @@ func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
 	}
 	if msgs[1].FromAgentProfile != "claude" {
 		t.Errorf("retained[1].FromAgentProfile = %q, want %q", msgs[1].FromAgentProfile, "claude")
+	}
+}
+
+func TestBoard_Send_RetainsInReplyTo(t *testing.T) {
+	b := New(Config{RingN: 8, TopicTTL: time.Hour, MaxTopics: 8, MaxPayload: 1024})
+	defer b.Close()
+	var rid protocol.RunnerID
+	rid.SetTransport([]byte("ws"))
+	rid.SetIpAddr([]byte{1, 2, 3, 4})
+	var tid protocol.TaskID
+	tid.Id[0] = 1
+
+	parent, err := b.Send("t", []byte("q"), rid, tid, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Send("t", []byte("a"), rid, tid, "h", "", parent); err != nil {
+		t.Fatal(err)
+	}
+	msgs, found := b.ListRetained("t")
+	if !found || len(msgs) != 2 {
+		t.Fatalf("ListRetained = %v %d, want true 2", found, len(msgs))
+	}
+	if msgs[1].InReplyTo != parent {
+		t.Errorf("InReplyTo = %d, want %d", msgs[1].InReplyTo, parent)
 	}
 }

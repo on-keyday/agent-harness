@@ -42,8 +42,16 @@ enum HelloStatus:
 
 format SendRequest:
     request_id :u32
+    # in_reply_to is the seq of the message this one answers; 0 = not a reply.
+    # The server resolves it against the retained rings at publish time and
+    # rejects the send when it cannot (SendStatus.unknown_in_reply_to), so a
+    # non-zero value on a delivered message always denotes a real message.
+    in_reply_to :u64
     topic_len :u16
     topic :[topic_len]u8
+    # An empty topic is meaningful only on a reply: the server then derives the
+    # destination from the parent's authenticated sender (its chat.<short-id>).
+    topic_len != 0 || in_reply_to != 0
     # payload_stream_id references a client-initiated trsf send-stream
     # carrying the message payload; the server reads from the matching
     # receive stream until EOF and decodes the bytes as the publish body.
@@ -58,6 +66,7 @@ enum SendStatus:
     payload_too_large
     too_many_topics
     bad_frame
+    unknown_in_reply_to
 
 format SendResponse:
     request_id :u32
@@ -85,6 +94,9 @@ format SubscribeResponse:
 
 format DeliveredMessage:
     seq :u64
+    # in_reply_to is the seq of the message this one answers, 0 when it is not
+    # a reply. Server-validated at publish time — see SendRequest.in_reply_to.
+    in_reply_to :u64
     topic_len :u16
     topic :[topic_len]u8
     # payload_stream_id references a server-initiated trsf send-stream
@@ -202,6 +214,9 @@ format ListRetainedRequest:
 # decide what to purge. size is the payload length in bytes.
 format RetainedMeta:
     seq :u64
+    # in_reply_to is the seq of the message this one answers, 0 when it is not
+    # a reply. Server-validated at publish time — see SendRequest.in_reply_to.
+    in_reply_to :u64
     from_runner :RunnerID
     from_task :TaskID
     from_hostname_len :u8
