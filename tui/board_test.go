@@ -173,3 +173,36 @@ func TestBoardModalSubscribersMode(t *testing.T) {
 		t.Fatalf("after PopToTopics: mode = %v, want boardTopics", m.mode)
 	}
 }
+
+// TestBoardModalEmptyStates covers the two ways a topic shows no messages.
+// Both used to be reachable only as a race; the union listing makes the
+// never-published one an ordinary destination, and the not-found path used to
+// leave the modal on the topic list writing into a viewport that view never
+// renders.
+func TestBoardModalEmptyStates(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(100, 30)
+
+	// Never published: BoardRead reports found=false.
+	m.ApplyMessages("rr.dec-019", nil, false)
+	if m.mode != boardMessages {
+		t.Fatalf("mode = %v, want boardMessages even when nothing is retained", m.mode)
+	}
+	if v := m.View(); !strings.Contains(v, "nothing published to this topic") {
+		t.Errorf("view does not name the never-published state:\n%s", v)
+	}
+
+	// Published then emptied: the topic exists, its ring is empty.
+	m.ApplyMessages("chat.aaaa", nil, true)
+	if m.mode != boardMessages {
+		t.Fatalf("mode = %v, want boardMessages", m.mode)
+	}
+	v := m.View()
+	if !strings.Contains(v, "on the board, but holds no messages") {
+		t.Errorf("view does not name the emptied-ring state:\n%s", v)
+	}
+	if strings.Contains(v, "nothing published to this topic") {
+		t.Errorf("emptied ring must not be reported as never published:\n%s", v)
+	}
+}

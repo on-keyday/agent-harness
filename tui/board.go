@@ -144,12 +144,18 @@ type BoardModal struct {
 	baseCols    []table.Column      // natural column sizing; see fitColumns
 	rowTopics   []cli.BoardTopicRow // parallel slice: rowTopics[i] corresponds to table row i
 	curTopic    string
-	msgs        []cli.BoardMessage
-	subs        map[string]int           // per-topic subscriber count for the list
-	subRows     []cli.BoardSubscriberRow // rows shown in boardSubscribers mode
-	msgCursor   int
-	content     viewport.Model // payload of msgs[msgCursor], pretty-printed if valid JSON
-	status      string         // one-line error / confirmation rendered below the table
+	// curFound is BoardRead's found flag for curTopic: false means nothing is
+	// retained under that name at all. Kept because the two empty states read
+	// differently — "published to and emptied" vs "never published" — and the
+	// message list and the content viewport must not disagree about which one
+	// this is.
+	curFound  bool
+	msgs      []cli.BoardMessage
+	subs      map[string]int           // per-topic subscriber count for the list
+	subRows   []cli.BoardSubscriberRow // rows shown in boardSubscribers mode
+	msgCursor int
+	content   viewport.Model // payload of msgs[msgCursor], pretty-printed if valid JSON
+	status    string         // one-line error / confirmation rendered below the table
 }
 
 // NewBoardModal constructs a BoardModal with fixed column widths for the topics
@@ -247,16 +253,17 @@ func (m *BoardModal) ApplyTopics(rows []cli.BoardTopicRow, subs map[string]int) 
 // completes.
 func (m *BoardModal) ApplyMessages(topic string, msgs []cli.BoardMessage, found bool) {
 	m.curTopic = topic
-	if !found {
-		m.msgs = nil
-		m.msgCursor = 0
-		m.content.SetContent("(topic not found)")
-		m.status = "topic not found"
-		return
-	}
+	m.curFound = found
 	m.msgs = make([]cli.BoardMessage, len(msgs))
 	copy(m.msgs, msgs)
 	m.msgCursor = 0
+	// Enter the message view even when nothing is retained. The listing now
+	// includes names that are subscribed but never published to, so !found is
+	// an ordinary destination rather than a race, and staying on the topic list
+	// with only a status line left the reader with nowhere to look. It also
+	// makes the content write below observable: the topic-list view does not
+	// render the content viewport, so setting it and returning early wrote to
+	// something nobody could see.
 	m.mode = boardMessages
 	m.status = ""
 	m.updateContentFromCursor()
@@ -335,12 +342,26 @@ func boardTopicToRow(r *cli.BoardTopicRow, subs map[string]int) table.Row {
 	}
 }
 
+// boardEmptyReason names which empty a topic is. Both print nothing, but they
+// are different states: a topic that was published to and then emptied (purge,
+// ring overflow) still exists on the board, while a subscribed name that was
+// never published to has no topic at all. Same split as `harness-cli board
+// read` reports on stderr.
+func boardEmptyReason(found bool) string {
+	if found {
+		return "(on the board, but holds no messages)"
+	}
+	return "(nothing published to this topic)"
+}
+
 // updateContentFromCursor refreshes the content viewport from msgs[msgCursor].
 // Pretty-prints the payload if json.Valid reports it is valid JSON; otherwise
 // uses the raw string representation.
 func (m *BoardModal) updateContentFromCursor() {
 	if len(m.msgs) == 0 {
-		m.content.SetContent("(no messages)")
+		// The reason is stated once, in the message list above; the content
+		// viewport is the payload pane and there is no payload to show.
+		m.content.SetContent("")
 		return
 	}
 	if m.msgCursor < 0 {
@@ -463,7 +484,7 @@ func (m BoardModal) View() string {
 				cursor, i+1, msg.Seq, fromShort, agentName, at))
 		}
 		if len(m.msgs) == 0 {
-			msgList.WriteString("  (no messages)\n")
+			msgList.WriteString("  " + boardEmptyReason(m.curFound) + "\n")
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
 		footer := FooterStyle.Render("↑/↓ select · PgUp/PgDn scroll · X: purge msg  r: re-read  Esc: back")
