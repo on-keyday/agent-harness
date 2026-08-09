@@ -420,29 +420,39 @@ Same task id means the same `chat.<short-id>` inbound topic, so:
 
 But **`--resume` alone only restores the harness-level identity** — same
 task id, same topic, same worktree. The new session still boots a fresh
-claude process with no memory of the previous conversation. To also
-resume at the claude conversation level (so the worker remembers what it
-was doing), pass `--agent-arg --continue` as well:
+agent process with no memory of the previous conversation. To also resume
+the agent's own conversation (so the worker remembers what it was doing),
+add `--resume-conversation`:
 
 ```bash
 harness-cli session new -d --repo /path/to/repo \
   --resume "$TASK_ID" \
   --agent-arg --permission-mode --agent-arg auto \
-  --agent-arg --continue
+  --resume-conversation
 ```
 
-Think of it as two independent layers:
+Use the flag, not `--agent-arg --continue`. `--continue` is Claude's
+syntax; the flag makes the RUNNER pick the resume form of whichever agent
+profile the task runs under (`exec resume --last` for Codex, `--continue`
+for Claude, whatever `--agent-resume-*-argv` was configured). Injecting
+`--continue` by hand works on Claude and breaks everywhere else.
+
+Three layers move independently, and only two of them are yours to choose:
 
 | Layer | Flag | What it restores |
 |-------|------|------------------|
 | harness task | `--resume <id>` | task id, chat topic, worktree branch |
-| claude conversation | `--agent-arg --continue` | claude's in-directory session memory |
+| agent conversation | `--resume-conversation` | the agent's own session memory, in its own syntax |
+| OS process | — | **nothing. Always new**, with a new auth ticket and possibly a different runner |
 
-You almost always want both for a "pick up where it left off" restart.
-Use `--resume` alone only when you specifically want a clean claude
-mind on the same identity (e.g. the previous run got stuck in a
-confused state and you want a fresh start without losing the chat
-topic).
+You almost always want both flags for a "pick up where it left off"
+restart. Use `--resume` alone when you specifically want a clean agent
+mind on the same identity (e.g. the previous run got stuck in a confused
+state and you want a fresh start without losing the chat topic).
+
+The third row is why a resumed worker cannot be assumed to still hold what
+the previous run set up — see "You may not be the first process on this
+task" above, which is the same fact seen from inside the resumed session.
 
 Without `--resume` you get a fresh task id and the peers' link to the
 previous identity is dead — they will need a new hello round.
