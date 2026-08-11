@@ -800,7 +800,12 @@ func (s *Server) DumpTrsfState() {
 			"sendStreams", st.ActiveSendStreams, "recvStreams", st.ActiveReceiveStreams,
 			"sendQ", st.SendQueueLength, "recvQ", st.ReceiveQueueLength,
 			"sendTrig", st.SendActionCount, "updWin", st.UpdateWindowCount, "cancel", st.CancelStreamCount,
-			"inflight", st.BytesInFlight, "cwnd", st.CongestionWindow, "rtt", st.SmoothedRTT, "sentPkts", len(st.SentPackets))
+			"inflight", st.BytesInFlight, "cwnd", st.CongestionWindow, "rtt", st.SmoothedRTT, "sentPkts", len(st.SentPackets),
+			// loopIters separates a run loop that is blocked (frozen counter
+			// across two dumps) from one that is busy-spinning (counter
+			// exploding) from one that is merely congestion-blocked (counter
+			// advancing slowly). Only meaningful as a delta, so dump twice.
+			"loopIters", st.LoopIterations)
 	}
 	if s.taskHandler != nil {
 		for _, pf := range s.taskHandler.pforwards().snapshot() {

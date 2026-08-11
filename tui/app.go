@@ -2210,6 +2210,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			st.SendQueueLength, st.ReceiveQueueLength, st.SendActionCount, st.UpdateWindowCount, st.CancelStreamCount))
 		a.cmdresult.Append(fmt.Sprintf("  cc: inflight=%dB cwnd=%dB rtt=%v (var %v) sentPkts=%d",
 			st.BytesInFlight, st.CongestionWindow, st.SmoothedRTT, st.RTTVariance, len(st.SentPackets)))
+		// Only meaningful as a delta between two dumps: frozen = the run loop
+		// is blocked (nothing is demuxed, so no stream ever becomes visible),
+		// exploding = busy-spin, advancing slowly = congestion-blocked.
+		a.cmdresult.Append(fmt.Sprintf("  loop: iterations=%d (run `trsf` twice — the delta is the signal)", st.LoopIterations))
 		return a, nil
 	case RepoAction:
 		// The repo string is treated as an opaque identifier — server
