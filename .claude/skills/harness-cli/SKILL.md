@@ -124,6 +124,31 @@ one-shot task never receives a wake prompt at all, so this desync can only
 happen after a live wake — i.e. never for `submit` tasks; call `agent inbox
 --json` there any time you simply want a fresh read.)
 
+### Reading one message whole — `agent read`
+
+```
+harness-cli agent read <seq>
+```
+
+One retained message, addressed by seq, emitted as a single JSON-Lines
+record with the full body. Two things send you here:
+
+- A hook-delivered record with `payload_omitted: true`. Bodies over 64 KiB
+  are not spliced into your prompt; the record carries `payload_bytes` and a
+  `read_with` command naming this. Run it when you decide the body is worth
+  the context — or redirect it to a file and read it in pieces, which is why
+  it was withheld rather than truncated.
+- A `seq` you already have from somewhere else — an `in_reply_to` on a
+  message whose parent you never saw, or a row from `agent retained`.
+
+Unlike `agent inbox`, it fetches nothing but the message you asked for, and
+it never truncates. It does not touch any cursor, so it is always safe to
+run by hand.
+
+Reading is limited to topics you subscribe to. A seq outside them reports
+the same "not readable" as one that has rotated out of its ring, so it is
+not a way to browse topics you have not joined.
+
 ## Purging a topic's server-side buffer (`agent purge`)
 
 The cursor only governs what *you* re-read; the message itself stays in the
@@ -540,19 +565,9 @@ Limits worth knowing before you rely on it:
 - A single message is capped at **1 MiB** by default
   (`--agentboard-max-payload`); an over-size `send` is refused with
   `PayloadTooLarge` rather than truncated, so nothing is silently lost.
-- Bodies over **64 KiB** are NOT inlined into the auto-injected wake context.
-  The record you receive carries `payload_bytes`, `payload_omitted: true` and
-  a `read_with` command instead:
-
-  ```
-  harness-cli agent read <seq>      # that one message, whole, never truncated
-  ```
-
-  Run it to pull the body into context deliberately, or redirect it to a file
-  and read it in pieces — which is the point of not spending your context on
-  it by default. `agent read` is limited to topics you subscribe to; a seq
-  outside them reports the same "not readable" as one that has rotated out, so
-  it is not a way to browse other topics.
+- Bodies over **64 KiB** are not inlined into the auto-injected wake context;
+  the record carries `payload_bytes` and a `read_with` command instead. See
+  "Reading one message whole".
 
 ### "My message never arrived"
 
