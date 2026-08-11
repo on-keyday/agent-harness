@@ -4824,6 +4824,204 @@ function imageMimeForName(name) {
   return IMAGE_MIME_BY_EXT[fileExt(name)] || "application/octet-stream";
 }
 
+// --- Rendered HTML preview: pinned API target ------------------------------
+// See docs/superpowers/specs/2026-08-12-webui-preview-pinned-api-target-design.md.
+// These live at top level (like isHtmlExt above) so they are reachable from a
+// Playwright evaluate: this repo has no JS test runner, and the injection
+// position in particular is worth being able to assert directly.
+
+// parsePinnedTarget accepts "host:port" or a bare "port" (host defaults to
+// 127.0.0.1, which is what a task's own dev server almost always binds).
+// Returns null for anything it cannot read, which is how the caller decides
+// not to inject a shim at all.
+function parsePinnedTarget(text) {
+  const s = String(text || "").trim();
+  if (!s) return null;
+  let host = "127.0.0.1";
+  let portStr = s;
+  const idx = s.lastIndexOf(":");
+  if (idx >= 0) {
+    host = s.slice(0, idx).trim() || "127.0.0.1";
+    portStr = s.slice(idx + 1).trim();
+  }
+  if (!/^\d+$/.test(portStr)) return null;
+  const port = Number(portStr);
+  if (port < 1 || port > 65535) return null;
+  if (/[\s/\\?#@]/.test(host)) return null;
+  return { host, port, origin: `http://${host}:${port}` };
+}
+
+// previewFetchTargetAllowed decides whether a URL the page asked for may be
+// tunneled. Relative URLs resolve against the pinned origin so they are always
+// in scope; an absolute URL has to match the pin exactly.
+//
+// This runs in BOTH realms on purpose: inside the iframe so the page gets a
+// familiar cross-origin-shaped failure, and again in the parent, where it is
+// the actual control. Only the parent's copy is trusted — the page can delete
+// the shim and post a message itself.
+function previewFetchTargetAllowed(rawURL, pin) {
+  if (!pin) return false;
+  let u;
+  try {
+    u = new URL(String(rawURL), pin.origin + "/");
+  } catch {
+    return false;
+  }
+  return u.origin === pin.origin;
+}
+
+// injectPreviewShim places scriptText so it runs before any of the page's own
+// scripts.
+//
+// Position, in order: after the first <head ...>, else after <html ...>, else
+// after <!doctype ...>, else at the very start. NEVER before a doctype —
+// displacing it drops the page into quirks mode, so the preview would render
+// differently from the real file, which is the worst thing this feature could
+// do.
+function injectPreviewShim(html, scriptText) {
+  const tag = `<script>${scriptText}<\/script>`;
+  const at = (re) => {
+    const m = re.exec(html);
+    return m ? m.index + m[0].length : -1;
+  };
+  let pos = at(/<head\b[^>]*>/i);
+  if (pos < 0) pos = at(/<html\b[^>]*>/i);
+  if (pos < 0) pos = at(/<!doctype\b[^>]*>/i);
+  if (pos < 0) pos = 0;
+  return html.slice(0, pos) + tag + html.slice(pos);
+}
+
+// previewShimSource is the text of the shim. It runs inside the iframe's own
+// realm, so nothing it holds is a secret and nothing it claims is trusted by
+// the parent.
+//
+// The config is escaped for "<" because it carries a file path: a file named
+// with a literal </script> would otherwise close the tag it is embedded in.
+function previewShimSource(pin, rel) {
+  const cfg = JSON.stringify({ origin: pin.origin, host: pin.host, port: pin.port, rel: rel || "" })
+    .replace(/</g, "\\u003c");
+  return `(() => {
+  "use strict";
+  const CFG = ${cfg};
+  // The marker is an authoring convenience, not a control: the page shares this
+  // realm and could define an identical object itself. Frozen and
+  // non-configurable only so the page's own later code cannot clobber it by
+  // accident.
+  Object.defineProperty(window, "__harness", {
+    value: Object.freeze({
+      v: 1,
+      preview: "html-file",
+      rel: CFG.rel,
+      api: Object.freeze({ host: CFG.host, port: CFG.port }),
+    }),
+    writable: false, configurable: false, enumerable: true,
+  });
+
+  let seq = 0;
+  const pending = new Map();
+  window.addEventListener("message", (ev) => {
+    if (ev.source !== parent) return;
+    const m = ev.data;
+    if (!m || m.__harnessFetch !== "reply") return;
+    const p = pending.get(m.id);
+    if (!p) return;
+    pending.delete(m.id);
+    if (m.error) p.reject(new TypeError(m.error));
+    else p.resolve(m);
+  });
+
+  function headerLines(h) {
+    const out = [];
+    if (!h) return out;
+    if (typeof Headers !== "undefined" && h instanceof Headers) {
+      h.forEach((v, k) => out.push(k + ": " + v));
+      return out;
+    }
+    // Array BEFORE the plain-object branch: an array of [name, value] pairs
+    // also has forEach, and taking that path would emit "0: name,value".
+    if (Array.isArray(h)) {
+      for (const p of h) if (p && p.length >= 2) out.push(p[0] + ": " + p[1]);
+      return out;
+    }
+    for (const k of Object.keys(h)) out.push(k + ": " + h[k]);
+    return out;
+  }
+
+  function send(url, init) {
+    const id = ++seq;
+    return new Promise((resolve, reject) => {
+      let u;
+      try { u = new URL(String(url), CFG.origin + "/"); }
+      catch { reject(new TypeError("Failed to fetch")); return; }
+      if (u.origin !== CFG.origin) { reject(new TypeError("Failed to fetch")); return; }
+      const raw = init && init.body;
+      // A non-string body is refused rather than coerced: String(Uint8Array)
+      // yields "1,2,3", which would be sent as a plausible-looking wrong body.
+      if (raw != null && typeof raw !== "string") {
+        reject(new TypeError("harness preview: only string request bodies are supported"));
+        return;
+      }
+      pending.set(id, { resolve, reject });
+      parent.postMessage({
+        __harnessFetch: "request",
+        id,
+        url: u.href,
+        method: (init && init.method) || "GET",
+        path: u.pathname + u.search,
+        headers: headerLines(init && init.headers),
+        body: raw == null ? null : raw,
+      }, "*");
+    });
+  }
+
+  window.fetch = (input, init) => {
+    const url = (input && typeof input === "object" && "url" in input) ? input.url : input;
+    return send(url, init).then((m) => {
+      // 204/205/304 are null-body statuses; the Response constructor throws if
+      // one is given a body, even an empty one.
+      const nullBody = m.status === 204 || m.status === 205 || m.status === 304;
+      return new Response(nullBody ? null : m.body, {
+        status: m.status,
+        statusText: m.statusText,
+        headers: m.headers,
+      });
+    });
+  };
+
+  window.XMLHttpRequest = class {
+    constructor() {
+      this.readyState = 0; this.status = 0; this.statusText = "";
+      this.responseText = ""; this.response = "";
+      this._h = []; this._resp = [];
+    }
+    open(method, url) { this._m = method; this._u = url; this.readyState = 1; }
+    setRequestHeader(k, v) { this._h.push(k + ": " + v); }
+    getResponseHeader(k) {
+      const hit = this._resp.find((p) => p[0].toLowerCase() === String(k).toLowerCase());
+      return hit ? hit[1] : null;
+    }
+    getAllResponseHeaders() { return this._resp.map((p) => p[0] + ": " + p[1]).join("\r\n"); }
+    send(body) {
+      send(this._u, { method: this._m, headers: this._h, body }).then((m) => {
+        this.status = m.status;
+        this.statusText = m.statusText;
+        this._resp = m.headers || [];
+        this.responseText = new TextDecoder().decode(m.body || new Uint8Array());
+        this.response = this.responseText;
+        this.readyState = 4;
+        if (this.onreadystatechange) this.onreadystatechange();
+        if (this.onload) this.onload();
+      }).catch(() => {
+        this.readyState = 4;
+        this.status = 0;
+        if (this.onreadystatechange) this.onreadystatechange();
+        if (this.onerror) this.onerror();
+      });
+    }
+  };
+})();`;
+}
+
 // isLikelyBinary sniffs the first 8 KiB: a NUL byte or a high ratio of
 // non-text control bytes (outside tab/newline/CR and the printable range)
 // marks the content as binary. UTF-8 multibyte sequences (>=0x80) are
