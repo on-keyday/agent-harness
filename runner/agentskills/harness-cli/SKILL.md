@@ -537,6 +537,14 @@ Limits worth knowing before you rely on it:
   or not anything read it. The subscription itself survives.
 - Past **1024** topics the board evicts the least recently published one —
   which is exactly a quiet per-subject topic.
+- A single message is capped at **1 MiB** by default
+  (`--agentboard-max-payload`); an over-size `send` is refused with
+  `PayloadTooLarge` rather than truncated, so nothing is silently lost.
+- Bodies over **64 KiB** are NOT inlined into the auto-injected wake context.
+  The record you receive carries `payload_bytes`, `payload_omitted: true` and
+  a `read_with` command instead — run it to pull the body in deliberately, or
+  redirect it to a file and read it in pieces. Plain `agent inbox` never
+  truncates; that is what `read_with` points at.
 
 ### "My message never arrived"
 

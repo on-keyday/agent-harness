@@ -120,12 +120,21 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 			}
 			payloads[i] = p
 		}
+		// Only the hook modes get the inline guard: their output is spliced
+		// into the agent's next prompt, so an oversize body is context the
+		// agent never agreed to spend. Every other mode hands the record to a
+		// caller that can redirect it, and one of them is where the guarded
+		// record points for the full body.
+		emit := emitMessageLine
+		if *stopHook || *promptHook {
+			emit = emitMessageLineForHook
+		}
 		var body bytes.Buffer
 		for i, m := range r.Msgs {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 				continue
 			}
-			emitMessageLine(&body, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
+			emit(&body, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
 		}
 		switch {
 		case *stopHook:

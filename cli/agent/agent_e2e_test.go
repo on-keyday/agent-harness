@@ -24,12 +24,20 @@ import (
 //	board, _ := startServerE2E(t, addr)
 func startServerE2E(t *testing.T, addr string) (*agentboard.Board, *server.Server) {
 	t.Helper()
+	return startServerE2EWithMaxPayload(t, addr, 4096)
+}
+
+// startServerE2EWithMaxPayload is startServerE2E with the per-message limit
+// under the caller's control, for tests that need a limit large enough to
+// exercise the transport's own thresholds.
+func startServerE2EWithMaxPayload(t *testing.T, addr string, maxPayload int) (*agentboard.Board, *server.Server) {
+	t.Helper()
 
 	board := agentboard.New(agentboard.Config{
 		RingN:      64,
 		TopicTTL:   time.Hour,
 		MaxTopics:  32,
-		MaxPayload: 4096,
+		MaxPayload: maxPayload,
 	})
 
 	s := server.New(server.Config{Addr: addr})

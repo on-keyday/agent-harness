@@ -30,7 +30,7 @@ var (
 	agentboardRing       = flag.Int("agentboard-ring", 64, "agentboard ring buffer entries per topic")
 	agentboardTTL        = flag.Duration("agentboard-ttl", 30*time.Minute, "agentboard topic TTL after last publish")
 	agentboardMaxTopics  = flag.Int("agentboard-max-topics", 1024, "agentboard max active topics")
-	agentboardMaxPayload = flag.Int("agentboard-max-payload", 64*1024, "agentboard max payload bytes per message")
+	agentboardMaxPayload = flag.Int("agentboard-max-payload", 1024*1024, "agentboard max payload bytes per message. Costs scale with it in two places: retention (max-topics x ring x this) and the transient read of an in-flight send (this + 64KiB each). It does NOT set what an agent is handed inline — the inbox hooks stop inlining a body past 64KiB and point at a command that fetches it, so raising this admits larger messages without spending the recipient's context on them.")
 	psk                  = flag.String("psk", "", "PSK passphrase (env: HARNESS_PSK; empty = disabled)")
 	pskFile              = flag.String("psk-file", "", "path to PSK file; auto-generated on first run if absent")
 	operatorPSK          = flag.String("operator-psk", "", "operator-only secret (env: HARNESS_OPERATOR_PSK). Operator surfaces (cli/tui/webui) must prove this via the binder; NEVER inject it into agents. Empty = legacy behaviour (operator surfaces validated against --psk) with a startup warning, because then an in-task agent can escalate to operator by dropping its ticket.")

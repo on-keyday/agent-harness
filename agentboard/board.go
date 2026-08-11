@@ -208,6 +208,11 @@ var (
 // resolution is the caller's job (server/agent_handler.go, via LookupSeq),
 // because rejecting a send is a protocol-level decision and the board is the
 // storage layer.
+// MaxPayload is the per-message byte limit Send enforces. Exposed so the
+// transport layer can stop reading an over-long body instead of buffering it
+// whole and having Send reject it afterwards.
+func (b *Board) MaxPayload() int { return b.cfg.MaxPayload }
+
 func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64) (uint64, error) {
 	if len(payload) > b.cfg.MaxPayload {
 		return 0, ErrPayloadTooLarge

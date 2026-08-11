@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/appwire"
@@ -110,12 +111,6 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 	if stream == nil {
 		return errors.New("agent: failed to allocate payload stream")
 	}
-	if werr := stream.AppendData(false, payload); werr != nil {
-		return fmt.Errorf("agent: payload stream write: %w", werr)
-	}
-	if werr := stream.AppendData(true); werr != nil {
-		return fmt.Errorf("agent: payload stream EOF: %w", werr)
-	}
 
 	req := agentboard.SendRequest{RequestId: reqID, PayloadStreamId: uint64(stream.ID()), InReplyTo: *inReplyTo}
 	// An empty topic is the wire's "derive the destination from the parent"; the
@@ -126,24 +121,65 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 	if !msg.SetSend(req) {
 		return errors.New("agent: SetSend failed")
 	}
+	// The request goes out BEFORE the body. It names the stream id, so until
+	// the server has it, nobody drains the payload stream: AppendData blocks
+	// once the send buffer fills (1MB) and stays blocked once the peer's
+	// receive window (16MB) is exhausted, so a body past the window used to
+	// deadlock here with the request still unsent. Announcing first gives the
+	// server a reader — which is also what lets it stop an over-long body
+	// mid-flight instead of discovering the length after the fact. The server
+	// polls briefly for the stream to become visible, so arriving first is
+	// expected (server/agent_handler.go, readAgentPayloadStream).
 	if err := conn.SendRaw(msg); err != nil {
 		return err
 	}
 
+	// AppendDataContext, not AppendData: the latter passes context.Background()
+	// internally, so a stalled write would ignore this command's deadline and
+	// hang instead of failing.
+	writeErr := stream.AppendDataContext(ctx, false, payload)
+	if writeErr == nil {
+		writeErr = stream.AppendDataContext(ctx, true)
+	}
+	if writeErr != nil {
+		// The server tears the payload stream down when it refuses the body,
+		// which surfaces here as a bare io.EOF. The actionable reason is in
+		// its SendResponse, so wait briefly and prefer that; "EOF" tells the
+		// sender nothing about what to do differently.
+		select {
+		case resp := <-respCh:
+			return sendResult(resp, *inReplyTo, stdout)
+		case <-time.After(payloadErrGrace):
+			return fmt.Errorf("agent: payload stream write: %w", writeErr)
+		case <-ctx.Done():
+			return fmt.Errorf("agent: payload stream write: %w", writeErr)
+		}
+	}
+
 	select {
 	case resp := <-respCh:
-		if resp.Status == agentboard.SendStatus_UnknownInReplyTo {
-			return fmt.Errorf("send rejected: --in-reply-to %d is not on the board "+
-				"(evicted past the topic's ring or TTL, or purged). "+
-				"Drop --in-reply-to to send this as an ordinary message", *inReplyTo)
-		}
-		if resp.Status != agentboard.SendStatus_Ok {
-			return fmt.Errorf("send rejected: %v", resp.Status)
-		}
-		out, _ := json.Marshal(map[string]any{"seq": resp.Seq, "status": "ok"})
-		fmt.Fprintln(stdout, string(out))
-		return nil
+		return sendResult(resp, *inReplyTo, stdout)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// payloadErrGrace bounds how long a failed payload write waits for the
+// server's explanation before reporting the local error instead.
+const payloadErrGrace = 2 * time.Second
+
+// sendResult renders a SendResponse: the ok line on stdout, or the error the
+// status stands for.
+func sendResult(resp agentboard.SendResponse, inReplyTo uint64, stdout io.Writer) error {
+	if resp.Status == agentboard.SendStatus_UnknownInReplyTo {
+		return fmt.Errorf("send rejected: --in-reply-to %d is not on the board "+
+			"(evicted past the topic's ring or TTL, or purged). "+
+			"Drop --in-reply-to to send this as an ordinary message", inReplyTo)
+	}
+	if resp.Status != agentboard.SendStatus_Ok {
+		return fmt.Errorf("send rejected: %v", resp.Status)
+	}
+	out, _ := json.Marshal(map[string]any{"seq": resp.Seq, "status": "ok"})
+	fmt.Fprintln(stdout, string(out))
+	return nil
 }

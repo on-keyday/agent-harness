@@ -26,11 +26,34 @@ import (
 // for the same reason the from block is unconditional: a consumer can address
 // the field without probing for it.
 func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string, inReplyTo uint64) {
+	emitMessageRecord(w, seq, topic, payload, fromRid, fromTid, fromHost, fromAgent, inReplyTo, 0)
+}
+
+// hookInlineLimit is the largest payload the hook modes splice into the
+// agent's prompt. Its value is the board's historical per-message limit, so
+// every message that arrives inline today still does: the guard bounds only
+// what a raised --agentboard-max-payload newly admits.
+const hookInlineLimit = 64 * 1024
+
+// emitMessageLineForHook is emitMessageLine for --stop-hook and
+// --user-prompt-submit-hook. Those modes are the only consumer that cannot
+// decline a payload — their output is spliced into the agent's next prompt, so
+// an inlined body is spent context whether the agent wanted it or not, and the
+// cost is worse than the byte count: payload_b64 inflates 4/3, and a
+// JSON-parseable body is ALSO embedded raw, for 7/3 in total. Past the limit
+// the record describes the message and says how to fetch it instead.
+func emitMessageLineForHook(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string, inReplyTo uint64) {
+	emitMessageRecord(w, seq, topic, payload, fromRid, fromTid, fromHost, fromAgent, inReplyTo, hookInlineLimit)
+}
+
+// emitMessageRecord writes the JSON-Lines record. inlineLimit == 0 means the
+// body is always carried; a positive value replaces an over-limit body with
+// its size and a command that re-reads it.
+func emitMessageRecord(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string, inReplyTo uint64, inlineLimit int) {
 	rec := map[string]any{
 		"seq":         seq,
 		"in_reply_to": inReplyTo,
 		"topic":       topic,
-		"payload_b64": base64.StdEncoding.EncodeToString(payload),
 		"from": map[string]any{
 			"runner_id": boardRunnerIDString(fromRid),
 			"task_id":   hex.EncodeToString(fromTid.Id[:]),
@@ -38,6 +61,22 @@ func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, from
 			"agent":     fromAgent,
 		},
 	}
+	if inlineLimit > 0 && len(payload) > inlineLimit {
+		// --since takes an exclusive cursor, so the seq BEFORE this one is
+		// what re-reads this message. Plain `agent inbox` never truncates,
+		// which is what makes it a usable destination.
+		before := uint64(0)
+		if seq > 0 {
+			before = seq - 1
+		}
+		rec["payload_bytes"] = len(payload)
+		rec["payload_omitted"] = true
+		rec["read_with"] = fmt.Sprintf("harness-cli agent inbox --since %d --json", before)
+		line, _ := json.Marshal(rec)
+		fmt.Fprintln(w, string(line))
+		return
+	}
+	rec["payload_b64"] = base64.StdEncoding.EncodeToString(payload)
 	if len(payload) > 0 && json.Valid(payload) {
 		rec["payload"] = json.RawMessage(payload)
 	}

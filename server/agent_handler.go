@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -169,11 +170,15 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 	// Payload arrives on a client-initiated send-stream; read it before
 	// publishing. Spawn a goroutine so the receive loop stays responsive.
 	go func() {
-		payload, err := readAgentPayloadStream(conn, r.PayloadStreamId)
+		payload, err := readAgentPayloadStream(conn, r.PayloadStreamId, s.Board.MaxPayload())
 		if err != nil {
 			slog.Warn("agent_handler: read payload stream failed", "request_id", r.RequestId, "err", err)
+			status := agentboard.SendStatus_BadFrame
+			if errors.Is(err, errPayloadTooLarge) {
+				status = agentboard.SendStatus_PayloadTooLarge
+			}
 			resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
-			resp.SetSendResponse(agentboard.SendResponse{RequestId: r.RequestId, Status: agentboard.SendStatus_BadFrame})
+			resp.SetSendResponse(agentboard.SendResponse{RequestId: r.RequestId, Status: status})
 			s.sendAgent(conn, resp)
 			return
 		}
@@ -207,9 +212,20 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 	}()
 }
 
-// readAgentPayloadStream resolves the receive stream by id and reads the
-// full body to EOF. Mirrors cli/agent/conn.go::FetchDeliveredPayload.
-func readAgentPayloadStream(conn ConnHandle, id uint64) ([]byte, error) {
+// payloadReadChunk is the per-ReadDirect ceiling, and so the slack above max
+// that a body can occupy before the limit is noticed.
+const payloadReadChunk = 64 * 1024
+
+// errPayloadTooLarge reports a body that exceeded the board's per-message
+// limit. It is distinct from a decode/transport failure because the caller
+// maps it to SendStatus_PayloadTooLarge rather than the read path's usual
+// SendStatus_BadFrame — the sender can act on "too big" and cannot act on
+// "bad frame".
+var errPayloadTooLarge = errors.New("agent payload exceeds max")
+
+// readAgentPayloadStream resolves the receive stream by id and reads the body,
+// giving up once it exceeds max. Mirrors cli/agent/conn.go::FetchDeliveredPayload.
+func readAgentPayloadStream(conn ConnHandle, id uint64, max int) ([]byte, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("payload stream id is 0")
 	}
@@ -235,12 +251,21 @@ func readAgentPayloadStream(conn ConnHandle, id uint64) ([]byte, error) {
 	}
 	var raw []byte
 	for {
-		data, eof, err := st.ReadDirect(64 * 1024)
+		data, eof, err := st.ReadDirect(payloadReadChunk)
 		if err != nil {
 			return nil, fmt.Errorf("payload stream %d read: %w", sid, err)
 		}
 		if len(data) > 0 {
 			raw = append(raw, data...)
+			if len(raw) > max {
+				// Cancel rather than drain: every ReadDirect returns receive
+				// window to the peer, so draining an over-long body is an
+				// invitation to send more. agent send is reachable with no
+				// capability, which makes this the cheapest allocation
+				// primitive on the server if it is left unbounded.
+				st.Cancel()
+				return nil, errPayloadTooLarge
+			}
 		}
 		if eof {
 			return raw, nil
@@ -248,21 +273,43 @@ func readAgentPayloadStream(conn ConnHandle, id uint64) ([]byte, error) {
 	}
 }
 
-// writeDeliveredPayloadStream allocates a server-initiated send-stream,
-// writes payload + EOF, returns the stream id (or 0 + error). Used by
-// Wait/Inbox responders.
-func writeDeliveredPayloadStream(conn ConnHandle, payload []byte) (uint64, error) {
+// pendingPayload is a delivery whose stream id has been announced but whose
+// body has not been written yet.
+type pendingPayload struct {
+	stream  trsf.SendStream
+	payload []byte
+}
+
+// openDeliveredPayloadStream allocates a server-initiated send-stream and
+// reports its id, writing nothing. Splitting allocation from the write is what
+// lets the Wait/Inbox responders announce every stream id first: the agent
+// cannot read a stream it has not been told about, so a body written ahead of
+// the response is a body nobody is draining, and it only lands at all because
+// the peer's receive window absorbs it. Past that window the write never
+// completes and the message is undeliverable — a ceiling on the board's
+// per-message limit that has no reason to exist.
+func openDeliveredPayloadStream(conn ConnHandle) (trsf.SendStream, uint64, error) {
 	stream := conn.CreateSendStream()
 	if stream == nil {
-		return 0, fmt.Errorf("CreateSendStream returned nil")
+		return nil, 0, fmt.Errorf("CreateSendStream returned nil")
 	}
-	if werr := stream.AppendData(false, payload); werr != nil {
-		return 0, fmt.Errorf("payload stream write: %w", werr)
+	return stream, uint64(stream.ID()), nil
+}
+
+// flushDeliveredPayloads writes each announced body + EOF. Call it only after
+// the response carrying the stream ids has been sent. Runs on its own
+// goroutine at the call sites: agentHandleInbox is driven straight from the
+// connection's receive loop, and a peer that stops reading must not stall it.
+func flushDeliveredPayloads(pending []pendingPayload) {
+	for _, p := range pending {
+		if werr := p.stream.AppendData(false, p.payload); werr != nil {
+			slog.Warn("agent_handler: delivered payload write", "stream", p.stream.ID(), "err", werr)
+			continue
+		}
+		if werr := p.stream.AppendData(true); werr != nil {
+			slog.Warn("agent_handler: delivered payload EOF", "stream", p.stream.ID(), "err", werr)
+		}
 	}
-	if werr := stream.AppendData(true); werr != nil {
-		return 0, fmt.Errorf("payload stream EOF: %w", werr)
-	}
-	return uint64(stream.ID()), nil
 }
 
 func (s *Server) agentHandleSubscribe(conn ConnHandle, ac *agentConn, r *agentboard.SubscribeRequest) {
@@ -322,12 +369,14 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 	defer cancel()
 	msgs, timedOut, _ := s.Board.Wait(ctx, ac.state, string(r.Pattern), r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
+	pending := make([]pendingPayload, 0, len(msgs))
 	for _, m := range msgs {
-		streamID, werr := writeDeliveredPayloadStream(conn, m.Payload)
+		stream, streamID, werr := openDeliveredPayloadStream(conn)
 		if werr != nil {
 			slog.Warn("agent_handler: wait deliver stream", "seq", m.Seq, "err", werr)
 			continue
 		}
+		pending = append(pending, pendingPayload{stream: stream, payload: m.Payload})
 		dm := agentboard.DeliveredMessage{
 			Seq:             m.Seq,
 			InReplyTo:       m.InReplyTo,
@@ -359,6 +408,7 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_WaitResponse}
 	resp.SetWaitResponse(wr)
 	s.sendAgent(conn, resp)
+	go flushDeliveredPayloads(pending)
 }
 
 func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.InboxRequest) {
@@ -367,12 +417,14 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	}
 	msgs, next := s.Board.Inbox(ac.state, r.Since)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
+	pending := make([]pendingPayload, 0, len(msgs))
 	for _, m := range msgs {
-		streamID, werr := writeDeliveredPayloadStream(conn, m.Payload)
+		stream, streamID, werr := openDeliveredPayloadStream(conn)
 		if werr != nil {
 			slog.Warn("agent_handler: inbox deliver stream", "seq", m.Seq, "err", werr)
 			continue
 		}
+		pending = append(pending, pendingPayload{stream: stream, payload: m.Payload})
 		dm := agentboard.DeliveredMessage{
 			Seq:             m.Seq,
 			InReplyTo:       m.InReplyTo,
@@ -393,6 +445,7 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxResponse}
 	resp.SetInboxResponse(ir)
 	s.sendAgent(conn, resp)
+	go flushDeliveredPayloads(pending)
 }
 
 func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agentboard.ListTopicsRequest) {
