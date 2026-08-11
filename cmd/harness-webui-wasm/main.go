@@ -116,6 +116,7 @@ func main() {
 		"rawSend":            js.FuncOf(harnessRawSend),
 		"rawSendHTTP":        js.FuncOf(harnessRawSendHTTP),
 		"rawClose":           js.FuncOf(harnessRawClose),
+		"httpFetch":          js.FuncOf(harnessHTTPFetch),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -914,32 +915,115 @@ func harnessRawSendHTTP(this js.Value, args []js.Value) any {
 				rejectErr(reject, errors.New("rawSendHTTP: want (key, {method, path, headers, body})"))
 				return
 			}
-			o := args[1]
-			str := func(k string) string {
-				v := o.Get(k)
-				if v.Type() != js.TypeString {
-					return ""
-				}
-				return v.String()
-			}
-			var headers []string
-			for _, line := range strings.Split(str("headers"), "\n") {
-				if strings.TrimSpace(line) != "" {
-					headers = append(headers, strings.TrimSpace(line))
-				}
-			}
-			spec := cli.HTTPRequestSpec{
-				Method:  str("method"),
-				Path:    str("path"),
-				Headers: headers,
-				Body:    []byte(str("body")),
-			}
+			spec := httpSpecFromJS(args[1])
 			n, err := cli.SendRawPaneHTTP(args[0].String(), spec)
 			if err != nil {
 				rejectErr(reject, err)
 				return
 			}
 			resolve.Invoke(js.ValueOf(n))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// httpSpecFromJS reads the {method, path, headers, body} object both HTTP
+// bindings take.
+//
+// headers arrives in two shapes because its two producers genuinely differ:
+// the raw pane collects it in a textarea (one header per line, matching the
+// TUI, so neither surface has to invent a separator), while the preview shim
+// already holds them structured and would have to join them only to have this
+// split them again. Accepting both here keeps one parser instead of two that
+// could drift apart.
+func httpSpecFromJS(o js.Value) cli.HTTPRequestSpec {
+	if o.Type() != js.TypeObject {
+		return cli.HTTPRequestSpec{}
+	}
+	str := func(k string) string {
+		v := o.Get(k)
+		if v.Type() != js.TypeString {
+			return ""
+		}
+		return v.String()
+	}
+	var headers []string
+	add := func(line string) {
+		if strings.TrimSpace(line) != "" {
+			headers = append(headers, strings.TrimSpace(line))
+		}
+	}
+	switch h := o.Get("headers"); {
+	case h.Type() == js.TypeString:
+		for _, line := range strings.Split(h.String(), "\n") {
+			add(line)
+		}
+	case h.Type() == js.TypeObject && h.Get("length").Type() == js.TypeNumber:
+		for i := 0; i < h.Length(); i++ {
+			if v := h.Index(i); v.Type() == js.TypeString {
+				add(v.String())
+			}
+		}
+	}
+	return cli.HTTPRequestSpec{
+		Method:  str("method"),
+		Path:    str("path"),
+		Headers: headers,
+		Body:    []byte(str("body")),
+	}
+}
+
+// harnessHTTPFetch sends one HTTP request over a fresh in-process forward and
+// resolves with the PARSED response. Unlike rawOpen/rawSend it holds nothing:
+// the forward is opened, used and closed inside this one call, so a page
+// issuing N fetches leaves nothing behind to clean up.
+//
+// This exists for the rendered HTML preview, whose page cannot assemble
+// request bytes or decode a chunked response itself — see
+// docs/superpowers/specs/2026-08-12-webui-preview-pinned-api-target-design.md.
+// Whether the caller is ALLOWED to reach host:port is decided by the page-side
+// bridge against the target the operator pinned; this binding is the transport
+// and deliberately does not re-litigate it.
+//
+//	harness.httpFetch(taskIDHex, host, port, {method, path, headers, body})
+//	  -> Promise<{status, statusText, headers, body, truncated}>
+func harnessHTTPFetch(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if len(args) < 4 || args[3].Type() != js.TypeObject {
+				rejectErr(reject, errors.New("httpFetch: want (taskIDHex, host, port, {method, path, headers, body})"))
+				return
+			}
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			res, err := cli.HTTPFetch(rootCtx, c, args[0].String(), args[1].String(), args[2].Int(), httpSpecFromJS(args[3]))
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			body := js.Global().Get("Uint8Array").New(len(res.Body))
+			js.CopyBytesToJS(body, res.Body)
+			headers := js.Global().Get("Array").New(len(res.Headers))
+			for i, h := range res.Headers {
+				pair := js.Global().Get("Array").New(2)
+				pair.SetIndex(0, h[0])
+				pair.SetIndex(1, h[1])
+				headers.SetIndex(i, pair)
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"status":     res.Status,
+				"statusText": res.StatusText,
+				"headers":    headers,
+				"body":       body,
+				"truncated":  res.Truncated,
+			}))
 		}()
 		return nil
 	})
