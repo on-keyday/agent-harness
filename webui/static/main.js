@@ -5083,7 +5083,7 @@ function previewShimSource(pin, rel) {
       const hit = this._resp.find((p) => p[0].toLowerCase() === String(k).toLowerCase());
       return hit ? hit[1] : null;
     }
-    getAllResponseHeaders() { return this._resp.map((p) => p[0] + ": " + p[1]).join("\r\n"); }
+    getAllResponseHeaders() { return this._resp.map((p) => p[0] + ": " + p[1]).join("\\r\\n"); }
     send(body) {
       send(this._u, { method: this._m, headers: this._h, body }).then((m) => {
         this.status = m.status;
