@@ -62,16 +62,14 @@ func emitMessageRecord(w io.Writer, seq uint64, topic string, payload []byte, fr
 		},
 	}
 	if inlineLimit > 0 && len(payload) > inlineLimit {
-		// --since takes an exclusive cursor, so the seq BEFORE this one is
-		// what re-reads this message. Plain `agent inbox` never truncates,
-		// which is what makes it a usable destination.
-		before := uint64(0)
-		if seq > 0 {
-			before = seq - 1
-		}
+		// `agent read` addresses this seq alone and never truncates, which is
+		// what makes it a usable destination. Pointing at `inbox --since
+		// <seq-1>` instead would re-deliver every later message too, and inbox
+		// fetches a whole batch's payloads before emitting any — so the
+		// pointer would pull exactly the bytes this record avoided.
 		rec["payload_bytes"] = len(payload)
 		rec["payload_omitted"] = true
-		rec["read_with"] = fmt.Sprintf("harness-cli agent inbox --since %d --json", before)
+		rec["read_with"] = fmt.Sprintf("harness-cli agent read %d", seq)
 		line, _ := json.Marshal(rec)
 		fmt.Fprintln(w, string(line))
 		return

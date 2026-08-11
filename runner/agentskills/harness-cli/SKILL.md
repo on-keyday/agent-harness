@@ -542,9 +542,17 @@ Limits worth knowing before you rely on it:
   `PayloadTooLarge` rather than truncated, so nothing is silently lost.
 - Bodies over **64 KiB** are NOT inlined into the auto-injected wake context.
   The record you receive carries `payload_bytes`, `payload_omitted: true` and
-  a `read_with` command instead — run it to pull the body in deliberately, or
-  redirect it to a file and read it in pieces. Plain `agent inbox` never
-  truncates; that is what `read_with` points at.
+  a `read_with` command instead:
+
+  ```
+  harness-cli agent read <seq>      # that one message, whole, never truncated
+  ```
+
+  Run it to pull the body into context deliberately, or redirect it to a file
+  and read it in pieces — which is the point of not spending your context on
+  it by default. `agent read` is limited to topics you subscribe to; a seq
+  outside them reports the same "not readable" as one that has rotated out, so
+  it is not a way to browse other topics.
 
 ### "My message never arrived"
 

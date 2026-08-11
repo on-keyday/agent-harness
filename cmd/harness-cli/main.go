@@ -755,6 +755,8 @@ func main() {
 			err = agent.Purge(ctx, rest, os.Stdout)
 		case "retained":
 			err = agent.Retained(ctx, rest, os.Stdout)
+		case "read":
+			err = agent.Read(ctx, rest, os.Stdout)
 		default:
 			agentUsage()
 			os.Exit(2)
@@ -1007,6 +1009,8 @@ func agentUsage() {
 	fmt.Fprintln(os.Stderr, "  wait --topic T [--since-last] [--timeout DUR]")
 	fmt.Fprintln(os.Stderr, "                                       block until next message")
 	fmt.Fprintln(os.Stderr, "  inbox [--since-last] [--in-reply-to SEQ]  non-blocking dump (used by hook); the filter selects replies to SEQ")
+	fmt.Fprintln(os.Stderr, "  read SEQ                            fetch one retained message, whole; the hooks name it when they")
+	fmt.Fprintln(os.Stderr, "                                       decline to inline a large body. Limited to subscribed topics")
 	fmt.Fprintln(os.Stderr, "  subscribe --topic T                  register a subscription")
 	fmt.Fprintln(os.Stderr, "  unsubscribe --topic T                remove a subscription")
 	fmt.Fprintln(os.Stderr, "  dispatch --topic T --reply-topic R --data D|- [--timeout DUR]")

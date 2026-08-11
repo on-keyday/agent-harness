@@ -32,6 +32,8 @@ enum AgentMessageKind:
     purge_response
     list_retained
     list_retained_response
+    read_seq
+    read_seq_response
 
 enum HelloStatus:
     :u8
@@ -233,6 +235,35 @@ format ListRetainedResponse:
     metas_len :u16
     metas :[metas_len]RetainedMeta
 
+# ReadSeqRequest fetches ONE retained message by seq. It exists because the
+# inbox hooks stop inlining a large body and hand back a pointer instead;
+# without it that pointer has to say `inbox --since <seq-1>`, which re-reads
+# every later message too — and inbox fetches every payload in the batch
+# before emitting any, so the bytes are transferred and then discarded.
+format ReadSeqRequest:
+    request_id :u32
+    seq :u64
+
+enum ReadSeqStatus:
+    :u8
+    ok
+    # not_found deliberately merges "no longer on the board" with "on a topic
+    # this task does not subscribe to". Separating them would answer "does seq
+    # N exist?" for every seq, which is an enumeration oracle over every ring:
+    # subscribing needs a topic NAME, and that requirement is what keeps the
+    # rings from being browsable. A status that leaks existence walks around it.
+    not_found
+
+format ReadSeqResponse:
+    request_id :u32
+    status :ReadSeqStatus
+    # 1 on ok, 0 otherwise. A count rather than a bare DeliveredMessage
+    # because the layout is fixed: an absent message would still have to
+    # encode one, with a payload_stream_id pointing at nothing. Mirrors
+    # WaitResponse / InboxResponse so the body rides the same stream path.
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
 format AgentMessage:
     kind :AgentMessageKind
     match kind:
@@ -254,4 +285,6 @@ format AgentMessage:
         AgentMessageKind.purge_response => purge_response :PurgeResponse
         AgentMessageKind.list_retained => list_retained :ListRetainedRequest
         AgentMessageKind.list_retained_response => list_retained_response :ListRetainedResponse
+        AgentMessageKind.read_seq => read_seq :ReadSeqRequest
+        AgentMessageKind.read_seq_response => read_seq_response :ReadSeqResponse
         .. => error("Unexpected agent message kind")

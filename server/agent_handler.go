@@ -88,6 +88,8 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		s.agentHandlePurge(conn, ac, msg.Purge())
 	case agentboard.AgentMessageKind_ListRetained:
 		s.agentHandleListRetained(conn, ac, msg.ListRetained())
+	case agentboard.AgentMessageKind_ReadSeq:
+		s.agentHandleReadSeq(conn, ac, msg.ReadSeq())
 	}
 }
 
@@ -310,6 +312,57 @@ func flushDeliveredPayloads(pending []pendingPayload) {
 			slog.Warn("agent_handler: delivered payload EOF", "stream", p.stream.ID(), "err", werr)
 		}
 	}
+}
+
+// agentHandleReadSeq answers a request for one retained message by seq.
+//
+// Board.Retained searches every ring, so the subscription check below is the
+// whole of this op's scoping — without it, one request per integer reads the
+// entire board, and seqs are global and consecutive. It also merges "gone"
+// with "not yours" into one NotFound: a distinguishable refusal would still
+// answer "does seq N exist?" for every seq.
+func (s *Server) agentHandleReadSeq(conn ConnHandle, ac *agentConn, r *agentboard.ReadSeqRequest) {
+	if !ac.helloed || r == nil {
+		return
+	}
+	notFound := func() {
+		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ReadSeqResponse}
+		resp.SetReadSeqResponse(agentboard.ReadSeqResponse{
+			RequestId: r.RequestId,
+			Status:    agentboard.ReadSeqStatus_NotFound,
+		})
+		s.sendAgent(conn, resp)
+	}
+
+	m, ok := s.Board.Retained(r.Seq)
+	if !ok || !s.Board.Subscribes(ac.state, m.Topic) {
+		notFound()
+		return
+	}
+
+	stream, streamID, werr := openDeliveredPayloadStream(conn)
+	if werr != nil {
+		slog.Warn("agent_handler: read deliver stream", "seq", m.Seq, "err", werr)
+		notFound()
+		return
+	}
+	dm := agentboard.DeliveredMessage{
+		Seq:             m.Seq,
+		InReplyTo:       m.InReplyTo,
+		PayloadStreamId: streamID,
+		FromRunnerId:    protoToAgentboardRunnerID(m),
+		FromTaskId:      protoToAgentboardTaskID(m),
+	}
+	dm.SetTopic([]byte(m.Topic))
+	dm.SetFromHostname([]byte(m.FromHostname))
+	dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
+
+	rr := agentboard.ReadSeqResponse{RequestId: r.RequestId, Status: agentboard.ReadSeqStatus_Ok}
+	rr.SetMsgs([]agentboard.DeliveredMessage{dm})
+	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ReadSeqResponse}
+	resp.SetReadSeqResponse(rr)
+	s.sendAgent(conn, resp)
+	go flushDeliveredPayloads([]pendingPayload{{stream: stream, payload: m.Payload}})
 }
 
 func (s *Server) agentHandleSubscribe(conn ConnHandle, ac *agentConn, r *agentboard.SubscribeRequest) {

@@ -68,10 +68,12 @@ func TestEmitMessageLineForHook_OmitsBodyPastInlineLimit(t *testing.T) {
 	if got := rec["payload_bytes"]; got != float64(len(payload)) {
 		t.Errorf("payload_bytes = %v, want %d", got, len(payload))
 	}
-	// The pointer has to name a command that re-reads THIS message, so the
-	// cursor is the seq before it.
-	if got, _ := rec["read_with"].(string); !strings.Contains(got, "--since 499") {
-		t.Errorf("read_with = %q, want it to re-read from the seq before this one", got)
+	// The pointer must address THIS message and nothing else. `inbox --since
+	// <seq-1>` would also re-deliver every later message, and inbox fetches a
+	// whole batch's payloads before emitting any — so a pointer shaped that
+	// way pulls bytes it was written to avoid.
+	if got, _ := rec["read_with"].(string); !strings.Contains(got, "agent read 500") {
+		t.Errorf("read_with = %q, want it to address seq 500 alone", got)
 	}
 }
 

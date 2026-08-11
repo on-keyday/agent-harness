@@ -436,6 +436,46 @@ func (b *Board) ListRetained(name string) (msgs []RetainedMessage, found bool) {
 // A message evicted between the snapshot and its ring's scan is missed,
 // yielding a spurious "not found". That is the same approximate-read tradeoff
 // already accepted in evictExpiredTopics.
+// Subscribes reports whether the (rid, tid) behind c has topicName in its
+// subscription set. It is the scope check Retained's callers owe: subscribing
+// requires knowing a topic NAME, and that requirement — not a capability — is
+// what keeps the rings from being browsable, so a lookup keyed on a global
+// consecutive seq has to be re-narrowed to the same set.
+func (b *Board) Subscribes(c *ConnState, topicName string) bool {
+	if c == nil || c.task == nil {
+		return false
+	}
+	return c.task.matches(topicName)
+}
+
+// Retained returns the retained message with this seq, from whichever topic
+// holds it. It is deliberately unscoped — the board is the storage layer, and
+// deciding who may see a message is a protocol-level call, the same split
+// Send uses for in_reply_to. Callers exposing this to an agent MUST check the
+// returned Topic against that agent's subscriptions: an unscoped read by seq
+// would let anyone enumerate every ring without ever learning a topic name,
+// and knowing the name is the whole price of entry today.
+func (b *Board) Retained(seq uint64) (RetainedMessage, bool) {
+	if seq == 0 {
+		return RetainedMessage{}, false
+	}
+	b.mu.Lock()
+	tps := make([]*topic, 0, len(b.topics))
+	for _, t := range b.topics {
+		tps = append(tps, t)
+	}
+	b.mu.Unlock()
+
+	for _, t := range tps {
+		for _, m := range t.snapshot() {
+			if m.Seq == seq {
+				return m, true
+			}
+		}
+	}
+	return RetainedMessage{}, false
+}
+
 func (b *Board) LookupSeq(seq uint64) (string, protocol.TaskID, bool) {
 	if seq == 0 {
 		return "", protocol.TaskID{}, false
