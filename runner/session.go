@@ -45,25 +45,43 @@ const wakeDebounceWindow = 1500 * time.Millisecond
 //
 // IMPORTANT: wakeMarker has NO trailing newline / carriage return. The
 // submit keystroke is sent as a separate write after wakeSubmitDelay (see
-// WakeStdin). claude code's UI is built with Ink (a React-based terminal
-// renderer); empirically, when the runner writes the marker text and a
-// trailing "\r" or "\n" in a single syscall, Ink treats the whole chunk
-// as paste content and the trailing byte becomes a literal newline inside
-// the input box rather than firing the Enter / submit handler. The
-// human still has to press Enter manually. Splitting the write — text,
-// short pause, lone "\r" — makes the second write parse as a real
-// keystroke and the prompt is submitted automatically.
+// WakeStdin). Observed against claude code, whose UI is built with Ink (a
+// React-based terminal renderer): when the runner writes the marker text
+// and a trailing "\r" or "\n" in a single syscall, the trailing byte
+// becomes a literal newline inside the input box rather than firing the
+// Enter / submit handler, and the human still has to press Enter manually.
+// Splitting the write — text, short pause, lone "\r" — makes the second
+// write parse as a real keystroke and the prompt submits itself.
+//
+// Scope of that finding: WakeStdin applies the split to EVERY profile and
+// works against codex's Rust TUI too, which is not Ink — so "Ink does X"
+// is the case it was found in, not the general cause.
+//
+// The general mechanism has a name: bracketed paste (DECSET 2004,
+// ESC[200~ … ESC[201~), by which a terminal marks pasted text so a TUI can
+// distinguish it from keystrokes. Nothing brackets these bytes — the
+// runner writes straight to the PTY master with no terminal emulator in
+// the path — so each agent falls back to its own heuristic and the correct
+// submit strategy is per-agent rather than universal. Warp, which drives
+// the same CLI agents, keeps an explicit per-agent table and maps codex to
+// bracketed paste while claude gets this same text/delay/CR split.
+//
+// One strategy is nonetheless adequate HERE because wakeMarker is a fixed
+// single-line constant: it has no interior newline for a TUI to submit
+// early on. That does NOT generalise to arbitrary or multi-line text —
+// `session send` deliberately stays a raw byte pipe and lets the caller
+// emit ESC[200~/ESC[201~ itself with -e.
 const wakeMarker = "<harness:agentboard-wake> new message(s) — read via `harness-cli agent inbox --json` if not already in context; consult `harness-cli skill` if unsure how to act. Reply only if warranted."
 
 // wakeSubmitDelay is the gap between the marker text write and the lone
-// submit byte write. Long enough for Ink's input parser to flush the
+// submit byte write. Long enough for the agent's input parser to flush the
 // first chunk into its text-input state before the trailing keystroke
 // arrives, short enough not to be perceptible. Tuned by feel; see
 // the wakeMarker comment for why a single combined write fails.
 const wakeSubmitDelay = 100 * time.Millisecond
 
-// wakeSubmitByte is the byte sequence treated as Enter by Ink-based TUIs
-// when delivered as a standalone PTY write.
+// wakeSubmitByte is the byte sequence treated as Enter when delivered as a
+// standalone PTY write.
 var wakeSubmitByte = []byte{'\r'}
 
 // Sender is the runner's outbound interface to the server. Decoupled from concrete
@@ -788,7 +806,7 @@ func (s *Session) WakeStdin(taskIDHex string) {
 
 	// Split write — text first, brief pause, lone Enter byte. See the
 	// wakeMarker / wakeSubmitDelay comments for why a single combined
-	// write fails against Ink-based TUIs.
+	// write fails, and for the limits of that finding.
 	if _, err := write([]byte(wakeMarker)); err != nil {
 		s.logger().Warn("wake stdin write (text) failed", "task_id", taskIDHex, "err", err)
 		return
