@@ -6,8 +6,8 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/pubsub/protocol"
-	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 func JoinTopic(reqID uint32, nickName string, topic string) []byte {
@@ -224,39 +224,46 @@ func (ps *PubSub) Unsubscribe(requestID uint32, topic string, sub *Subscriber) *
 
 }
 
+// Publish delivers msg to every subscriber of topic, plus the topic's taps.
+//
+// It is PublishFiltered with no filter, and shares its snapshot-then-unlock
+// discipline for the same reason it matters here: AppendData BLOCKS. It waits
+// for send-buffer space (trsf/send_stream.go: bufferLimit, 1MB) once the
+// peer's flow window is exhausted, so a subscriber that has stopped reading
+// its stream parks the publishing goroutine after ~17MB of undelivered bytes.
+// Holding ps.m across that parked the whole broker: every topic's Publish, and
+// every Subscribe/Unsubscribe, queued behind one stalled subscriber. A TUI
+// suspended in tea.Exec with a busy task log followed is exactly such a
+// subscriber. Releasing the lock first confines the stall to that subscriber's
+// publisher.
+//
+// The replay-on-subscribe ordering guarantee documented on OnSubscribe still
+// holds: it rests on Subscribe holding ps.m across AddSubscriber+OnSubscribe,
+// not on Publish holding it across AppendData. A Publish that snapshots before
+// the join does not see the new subscriber; one that snapshots after must wait
+// for Subscribe to release, by which point the replay is already written.
 func (ps *PubSub) Publish(nickName string, topic string, msg []byte) {
-	ps.m.Lock()
-	if sl, ok := ps.topics[topic]; ok {
-		for _, sub := range sl.subscribers {
-			stream, ok := sub.topics[topic]
-			if !ok {
-				continue
-			}
-			stream.conn.AppendData(false, msg)
-		}
-	}
-	var tapsCopy []*Tap
-	if ts, ok := ps.taps[topic]; ok {
-		tapsCopy = append(tapsCopy, ts...) // snapshot
-	}
-	ps.m.Unlock()
-	for _, t := range tapsCopy {
-		t.cb(nickName, msg)
-	}
+	ps.PublishFiltered(nickName, topic, msg, nil)
 }
 
 // PublishFiltered delivers msg to subscribers of topic whose ConnectionID
 // passes allow. Subscribers for which allow returns false are skipped.
 // Taps always receive the message regardless of the filter.
 //
-// Unlike Publish (which holds ps.m across every AppendData), PublishFiltered
-// SNAPSHOTS the matching subscriber streams + their CIDs under the lock, then
-// RELEASES the lock before calling allow() and AppendData(). This matters
-// because allow() reaches back into server state (e.g. taskHandler subtree /
-// capability lookups); calling it while ps.m is held could contend or deadlock
-// with code that touches the broker. The trade-off is that a subscriber leaving
-// concurrently may still receive one in-flight message — acceptable for an
-// at-most-once status feed.
+// PublishFiltered SNAPSHOTS the matching subscriber streams + their CIDs under
+// the lock, then RELEASES the lock before calling allow() and AppendData().
+// This matters for two reasons: allow() reaches back into server state (e.g.
+// taskHandler subtree / capability lookups), so calling it under ps.m could
+// contend or deadlock with code that touches the broker; and AppendData blocks
+// on a subscriber that has stopped reading, which under the lock would stall
+// every topic (see Publish).
+//
+// Two trade-offs follow. A subscriber leaving concurrently may still receive
+// one in-flight message — acceptable for an at-most-once status feed. And two
+// concurrent publishes to the same topic are no longer serialized, so their
+// relative order can differ per subscriber; the one topic where byte order is
+// load-bearing, TaskLog, has a single publisher goroutine (the per-stream
+// reader in Subscribe), so it is ordered by construction.
 func (ps *PubSub) PublishFiltered(nickName string, topic string, msg []byte, allow func(objproto.ConnectionID) bool) {
 	ps.m.Lock()
 	type pending struct {
