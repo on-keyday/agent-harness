@@ -102,6 +102,18 @@ General TUI technique is in `session-debugging` — in particular, read the
 `reverse` span out of `snapshot --style` instead of guessing where focus is.
 Harness-specific facts:
 
+- **A detached session's PTY is `0 0` until a client attaches.** The size only
+  ever arrives as a `TerminalWindowSize` frame from an attached client, which
+  reads its own terminal (`objtrsf/exec/exec.go`, `winsize_unix.go`); nobody
+  sends one to a session you are only driving with `send`/`snapshot`. So
+  `harness-tui` started that way dies instantly with `terminal too small (need
+  at least 80x24)`. Set it from inside first — `session send -enter "$ID"
+  'stty rows 40 cols 150'` — and note that `snapshot --rows/--cols` will NOT
+  do it, since that only sizes the offscreen VT the snapshot renders into.
+- Once the TUI attaches to a session of its own, that nested PTY inherits the
+  TUI's size, so `stty size` inside the attached shell is a free check that the
+  handover really propagated the winsize.
+
 - Focus order is `runners, tasks, logs, notify, cmdresult, cmdline` (6 panes).
   Tab is `+1`, Shift-Tab (`\x1b[Z`) is `-1`.
 - **Initial focus is `tasks`.** A reflexive Tab on startup moves focus *off* the
