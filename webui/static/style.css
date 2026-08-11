@@ -623,6 +623,22 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
  * when the toggle is hidden (non-HTML previews); when both show, the first
  * auto-margin absorbs the free space and the second is a harmless no-op. */
 .preview-copy { margin-left: auto; }
+/* Pinned API target for the rendered HTML preview. Rides in the right-hand
+ * group like the buttons; hidden for source view and for non-HTML previews. */
+.preview-api {
+  flex: 0 1 9em;
+  min-width: 5em;
+  background: #1e1e1e;
+  border: 1px solid #555;
+  border-radius: 4px;
+  color: #d4d4d4;
+  font-family: monospace;
+  font-size: 0.8em;
+  min-height: 2.4rem;
+  padding: 0 0.5em;
+}
+.preview-api::placeholder { color: #777; }
+.preview-api[hidden] { display: none; }
 .preview-body iframe.preview-iframe {
   width: 100%;
   height: 75vh;
@@ -666,8 +682,11 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
     padding-top: env(safe-area-inset-top, 0);
     padding-bottom: env(safe-area-inset-bottom, 0);
   }
-  .preview-header { padding: 0.6em 0.75em; }
+  /* On a 390px phone the header carries the title, up to three buttons and
+   * the API target. Without wrapping the close button is pushed off-screen. */
+  .preview-header { padding: 0.6em 0.75em; flex-wrap: wrap; }
   .preview-title { font-size: 0.8em; }
+  .preview-api { flex: 1 1 6em; }
 }
 
 /* Text-file editor modal ("New text file" / cmd `file new`). Shares the

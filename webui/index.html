@@ -255,6 +255,12 @@
             title="Copy file contents to clipboard">Copy</button>
     <button id="file-preview-edit" class="preview-toggle" hidden
             title="Open this file in the editor">Edit</button>
+    <!-- Rendered-HTML-only. Empty means the page reaches nothing at all, which
+         is the behaviour that shipped before this input existed. -->
+    <input id="file-preview-api" class="preview-api" type="text" hidden
+           inputmode="numeric" autocomplete="off" spellcheck="false"
+           placeholder="API host:port"
+           title="Let the rendered page fetch this port inside the task (empty = no network)">
     <button id="file-preview-close" class="preview-close" aria-label="Close">✕</button>
   </div>
   <div id="file-preview-body" class="preview-body"></div>

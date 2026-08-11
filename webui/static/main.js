@@ -407,6 +407,17 @@ const POLL_INTERVAL_MS = 5000;
   const filePreviewToggle = document.getElementById("file-preview-toggle");
   const filePreviewCopy   = document.getElementById("file-preview-copy");
   const filePreviewEdit   = document.getElementById("file-preview-edit");
+  const filePreviewApi    = document.getElementById("file-preview-api");
+  // The host:port the OPERATOR pinned for the rendered preview, or null. This
+  // is the only thing the bridge below trusts: the shim runs in the page's own
+  // realm and can be deleted or lied to by the page it is meant to constrain.
+  let previewPin = null;
+  // Bumped on every close and every re-render. A reply that arrives for an
+  // older generation belongs to a preview that is gone, so it is dropped
+  // rather than posted into whatever iframe is there now.
+  let previewApiGen = 0;
+  let previewApiInFlight = 0;
+  const PREVIEW_FETCH_MAX_INFLIGHT = 4;
   // Set when the current preview is HTML, so the toggle can rebuild the body
   // from already-fetched bytes without re-pulling. Reset on modal close.
   let filePreviewHtml = null; // { rel, size, bytes, mode: "render" | "source" }
@@ -1152,6 +1163,11 @@ const POLL_INTERVAL_MS = 5000;
     }
     filePreviewHtml = null;
     filePreviewToggle.hidden = true;
+    previewPin = null;
+    previewApiGen++; // in-flight replies now belong to a preview that is gone
+    previewApiInFlight = 0;
+    filePreviewApi.hidden = true;
+    filePreviewApi.value = "";
     filePreviewCopyPayload = null;
     filePreviewCopy.hidden = true;
     filePreviewEditRel = null;
@@ -1209,7 +1225,15 @@ const POLL_INTERVAL_MS = 5000;
       // cannot reach the WebUI origin / trsf / DOM / storage. Do not add
       // allow-same-origin.
       iframe.setAttribute("sandbox", "allow-scripts");
-      iframe.srcdoc = text;
+      // An empty pin injects nothing: no shim, no marker, no reach. That is
+      // byte-for-byte the behaviour that shipped before the pin existed, and it
+      // is the default every time the modal opens.
+      previewPin = parsePinnedTarget(filePreviewApi.value);
+      previewApiGen++;
+      previewApiInFlight = 0;
+      iframe.srcdoc = previewPin
+        ? injectPreviewShim(text, previewShimSource(previewPin, rel))
+        : text;
       node = iframe;
     } else {
       const pre = document.createElement("pre");
@@ -1219,6 +1243,9 @@ const POLL_INTERVAL_MS = 5000;
     openFilePreview(rel, size, node, null);
     filePreviewToggle.hidden = false;
     filePreviewToggle.textContent = mode === "render" ? "View source" : "View rendered";
+    // Source view has no realm to constrain, so the input only makes sense
+    // while something is actually rendering.
+    filePreviewApi.hidden = mode !== "render";
     // Copy always yields the raw HTML source, regardless of render/source view.
     showPreviewCopy({ text });
     // HTML is text: offer Edit in both the rendered and the source view.
@@ -1245,6 +1272,62 @@ const POLL_INTERVAL_MS = 5000;
     if (!filePreviewHtml) return;
     filePreviewHtml.mode = filePreviewHtml.mode === "render" ? "source" : "render";
     showHtmlPreview();
+  });
+
+  // Changing the target rebuilds the iframe from the bytes already in hand —
+  // the file is not re-pulled. A fresh realm is required anyway: the shim has
+  // to exist before the page's scripts run, so it cannot be added to a page
+  // that is already running.
+  filePreviewApi.addEventListener("change", () => {
+    if (filePreviewHtml && filePreviewHtml.mode === "render") showHtmlPreview();
+  });
+
+  // The preview shim relays the page's fetch()/XHR here. Nothing in this
+  // message is trusted: the iframe is an opaque origin the page fully controls,
+  // so it can delete the shim and post whatever it likes. Two checks stand
+  // between it and the task:
+  //
+  //   1. window identity. Every sandboxed frame reports origin "null", so
+  //      ev.origin distinguishes nothing; ev.source does.
+  //   2. the pin the OPERATOR typed, re-checked here. The shim's own check
+  //      exists to give the page a familiar failure, not to constrain it.
+  window.addEventListener("message", async (ev) => {
+    const m = ev.data;
+    if (!m || m.__harnessFetch !== "request") return;
+    const iframe = filePreviewBody.querySelector("iframe.preview-iframe");
+    if (!iframe || ev.source !== iframe.contentWindow) return;
+
+    const gen = previewApiGen;
+    const pin = previewPin;
+    const reply = (payload) => {
+      if (gen !== previewApiGen) return; // preview closed or re-rendered
+      iframe.contentWindow.postMessage({ __harnessFetch: "reply", id: m.id, ...payload }, "*");
+    };
+    if (!pin || !previewFetchTargetAllowed(m.url, pin)) {
+      reply({ error: "Failed to fetch" });
+      return;
+    }
+    // A runaway page (setInterval + fetch) would otherwise open forwards
+    // without bound. Refusing is visible to the page as a failed request;
+    // queueing would just hide the loop.
+    if (previewApiInFlight >= PREVIEW_FETCH_MAX_INFLIGHT) {
+      reply({ error: "harness preview: too many concurrent requests" });
+      return;
+    }
+    previewApiInFlight++;
+    try {
+      const res = await window.harness.httpFetch(fileTaskSelect.value, pin.host, pin.port, {
+        method: m.method, path: m.path, headers: m.headers, body: m.body,
+      });
+      reply({
+        status: res.status, statusText: res.statusText,
+        headers: res.headers, body: res.body,
+      });
+    } catch (e) {
+      reply({ error: e.message || "Failed to fetch" });
+    } finally {
+      previewApiInFlight--;
+    }
   });
 
   let filePreviewCopyTimer = null;
