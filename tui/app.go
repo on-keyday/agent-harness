@@ -53,7 +53,7 @@ type App struct {
 	// next save so a second ctrl+j overwrites deliberately rather than by
 	// default.
 	fileEditForce bool
-	// Temp file held across an external-editor tea.Exec.
+	// Temp file held across an external-editor handover.
 	fileEditTmpPath string
 
 	focus  focus
@@ -138,6 +138,12 @@ type App struct {
 	client     *cli.Client
 	appCtx     context.Context
 	program    *tea.Program
+	// termReleased is true while a child (an attached session, the external
+	// editor) owns the terminal via execWithoutSuspend. Written only on the
+	// Update goroutine: set before returning the Cmd, cleared by that Cmd's
+	// done message. Gates every further handover, since ReleaseTerminal /
+	// RestoreTerminal do not nest.
+	termReleased bool
 	// logsGen increments on every followTask. It stamps each GetTaskLog so a
 	// response from a superseded fetch can be discarded (see LogHistoryMsg).
 	logsGen int
@@ -780,6 +786,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case FileEditExternalMsg:
+		if a.termReleased {
+			a.fileEditor.SetStatus("terminal is busy with an attached session; detach it first", true)
+			return a, nil
+		}
 		path, werr := writeFileEditTemp(msg.Name, msg.Text)
 		if werr != nil {
 			a.fileEditor.SetStatus("temp file: "+werr.Error(), true)
@@ -792,13 +802,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.fileEditTmpPath = path
-		return a, tea.Exec(&editorExec{cmd: ecmd, name: ecmd.Path, path: path},
+		a.termReleased = true
+		return a, execWithoutSuspend(a.program, &editorExec{cmd: ecmd, name: ecmd.Path, path: path},
 			func(execErr error) tea.Msg {
 				return fileEditExecDoneMsg{path: path, err: execErr}
 			})
 
 	case fileEditExecDoneMsg:
 		defer os.Remove(msg.path)
+		a.termReleased = false
 		a.fileEditTmpPath = ""
 		if msg.err != nil {
 			a.fileEditor.SetStatus("editor exited with an error: "+msg.err.Error()+" (buffer unchanged)", true)
@@ -837,6 +849,21 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render("open interactive failed: " + msg.Err.Error()))
 			return a, nil
 		}
+		if a.termReleased {
+			// Release/Restore do not nest, and this is now reachable: under
+			// the old tea.Exec path the Update loop was frozen for the whole
+			// suspension, so a second open could not be processed until the
+			// first ended. Update keeps running now, so refuse explicitly
+			// rather than let two children fight over stdin.
+			a.cmdresult.Append(WarnStyle.Render("terminal is busy with another session; detach it first"))
+			if msg.X11Cancel != nil {
+				msg.X11Cancel()
+			}
+			if msg.Stream != nil {
+				_ = msg.Stream.Close()
+			}
+			return a, nil
+		}
 		if msg.X11Warn != "" {
 			a.cmdresult.Append(WarnStyle.Render("x11: " + msg.X11Warn))
 		}
@@ -849,7 +876,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			short = short[:12]
 		}
 		a.cmdresult.Append(OKStyle.Render("attaching ") + short + " — Ctrl+] to detach client; Ctrl+D / `exit` ends the session")
-		return a, tea.Exec(&interactiveExec{stream: msg.Stream}, func(err error) tea.Msg {
+		a.termReleased = true
+		return a, execWithoutSuspend(a.program, &interactiveExec{stream: msg.Stream}, func(err error) tea.Msg {
 			return InteractiveDoneMsg{TaskID: msg.TaskID, Err: err}
 		})
 
@@ -866,6 +894,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, RefreshSnapshot(a.client)
 
 	case InteractiveDoneMsg:
+		a.termReleased = false
 		if a.x11Cancel != nil {
 			a.x11Cancel()
 			a.x11Cancel = nil
@@ -1526,9 +1555,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, DoBoardTopics(a.client)
 		}
 		// `i` opens a new interactive PTY session in the default repo. The
-		// RPC + tea.Exec dance is two-stage: the Cmd dispatches the RPC, the
-		// response arrives as InteractiveReadyMsg, and Update returns
-		// tea.Exec then to actually suspend the TUI. The session is
+		// dance is two-stage: the Cmd dispatches the RPC, the response arrives
+		// as InteractiveReadyMsg, and Update then hands the terminal to the
+		// PTY (suspend.go) after gating on termReleased. The session is
 		// detachable (like `S`); `i` differs only in skipping the ambiguous-
 		// runner picker. Reattach lives on `r` (see below).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Interactive {

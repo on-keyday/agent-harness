@@ -38,8 +38,8 @@ const (
 
 // FileEditRequestMsg asks App to load a worktree file into the editor popup.
 // The picker raises it rather than loading the file itself: the popup lives
-// on App, and the tea.Exec its external-editor path needs must be returned
-// from App.Update.
+// on App, and the terminal handover its external-editor path needs must be
+// started from App.Update.
 type FileEditRequestMsg struct {
 	TaskID string
 	Rel    string
@@ -360,8 +360,8 @@ func (m FilePickerModel) handleBrowseKey(k tea.KeyMsg) (FilePickerModel, tea.Cmd
 		m.input.Focus()
 		return m, nil
 	case "e":
-		// Edit: App owns the editor popup (and the tea.Exec its ctrl+o path
-		// needs, which must be returned from App.Update), so the picker only
+		// Edit: App owns the editor popup (and the terminal handover its ctrl+o
+		// path needs, which must be started from App.Update), so the picker only
 		// raises the request.
 		if m.cursor < 0 || m.cursor >= len(m.entries) {
 			m.msg = "select a file to edit"

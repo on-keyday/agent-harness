@@ -26,14 +26,14 @@ type FileEditSaveMsg struct {
 }
 
 // FileEditExternalMsg asks App to run $EDITOR over the popup's buffer. It is
-// a message rather than a tea.Exec because tea.Exec must be returned from
-// App.Update — the same two-stage shape tui/interactive.go uses.
+// a message rather than a Cmd because the handover must be gated and started
+// from App.Update — the same two-stage shape tui/interactive.go uses.
 type FileEditExternalMsg struct {
 	Name string
 	Text string
 }
 
-// fileEditExecDoneMsg lands after tea.Exec returns from the external editor.
+// fileEditExecDoneMsg lands after the external editor returns.
 type fileEditExecDoneMsg struct {
 	path string
 	err  error
@@ -381,14 +381,14 @@ func writeFileEditTemp(name, text string) (string, error) {
 	return f.Name(), nil
 }
 
-// editorExec runs an external editor under tea.Exec and announces the
-// suspension on the terminal first.
+// editorExec runs an external editor with the terminal handed over to it, and
+// announces that on the terminal first.
 //
-// The announcement cannot live in the popup's View: Program.exec calls
-// ReleaseTerminal before Run (bubbletea/exec.go:101), which leaves the alt
-// screen, so the last TUI frame is gone by the time the editor starts. What
-// stays visible is what the child writes to the primary screen — and
-// bubbletea hands us that writer via SetStdout just before calling Run.
+// The announcement cannot live in the popup's View: the handover calls
+// ReleaseTerminal before Run (suspend.go), which leaves the alt screen, so the
+// last TUI frame is gone by the time the editor starts. What stays visible is
+// what the child writes to the primary screen — and SetStdout hands us that
+// writer just before Run.
 //
 // For a terminal editor the banner is overpainted immediately and costs
 // nothing. For a GUI editor (the Windows case) it stays on screen for as long

@@ -26,20 +26,22 @@ const tailChanCap = 256
 // dispatch through a single goroutine.
 //
 // Handle NEVER blocks its caller. bubbletea's program.Send writes to an
-// UNBUFFERED msgs channel (tea.go) and the event loop runs tea.Exec — an
-// attached session, or an external editor — SYNCHRONOUSLY, so for the whole
-// suspension nothing drains msgs and a direct Send parks its caller until the
-// user comes back. The callers here are arbitrary background goroutines:
-// cli.Client dials with slog.Default() (this handler), peer.Dial hands that
-// logger to trsf.NewStreams, so the trsf run loop logs through here. A single
-// Error-level record from trsf's packet demux during an attach therefore froze
-// the entire stream plane — attach stopped rendering and every newly opened
-// stream stayed invisible ("stream N not visible"), because a stream only
-// materializes when the run loop demuxes its first frame — while the objproto
-// control plane (TaskControl RPC, ping/pong) kept answering on its own
-// goroutine, so nothing detected the stall and the connection was never
-// dropped. Detaching released the parked Send, which is why re-attaching
-// worked.
+// UNBUFFERED msgs channel (tea.go), so it parks whenever the event loop is not
+// draining. The callers here are arbitrary background goroutines: cli.Client
+// dials with slog.Default() (this handler), peer.Dial hands that logger to
+// trsf.NewStreams, so the trsf run loop logs through here — and a parked trsf
+// run loop is not a cosmetic delay. It demuxes nothing: attach stops
+// rendering, and newly opened streams stay invisible ("stream N not visible"),
+// since a stream only materializes when the run loop demuxes its first frame.
+// The objproto control plane (TaskControl RPC, ping/pong) keeps answering on
+// its own goroutine, so nothing detects the stall and the connection is never
+// dropped.
+//
+// That is exactly what happened when this handler sent directly and an attach
+// held the loop inside tea.Exec for the whole session. The attach path no
+// longer suspends the loop (see suspend.go), so the specific trigger is gone —
+// but the invariant stands on its own: the transport must never be able to
+// park on the UI, whatever the UI is doing.
 //
 // Same shape as forwardStatusLogf (portforward.go): non-blocking send onto a
 // buffered channel, drop on overflow, one drain goroutine owning program.Send.

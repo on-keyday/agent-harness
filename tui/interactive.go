@@ -15,8 +15,8 @@ import (
 // InteractiveReadyMsg lands in the App's Update once OpenInteractive has
 // allocated a task on the server, the splice is up, and the bidi stream is
 // wrapped in a CommandExecutionStream. The Update handler reacts by
-// returning tea.Exec(&interactiveExec{...}) to suspend bubbletea and run
-// the PTY shell.
+// returning execWithoutSuspend(&interactiveExec{...}) (suspend.go), which
+// hands the terminal to the PTY shell WITHOUT stopping the Update loop.
 type InteractiveReadyMsg struct {
 	Stream *agentexec.CommandExecutionStream
 	TaskID string
@@ -32,7 +32,7 @@ type InteractiveReadyMsg struct {
 	X11Warn string
 }
 
-// InteractiveDoneMsg lands after tea.Exec returns — claude has exited or
+// InteractiveDoneMsg lands after the handover returns — claude has exited or
 // the user detached. App's Update logs the result and refreshes the tasks
 // snapshot so the new Succeeded/Failed status shows up.
 type InteractiveDoneMsg struct {
@@ -41,9 +41,9 @@ type InteractiveDoneMsg struct {
 }
 
 // DoOpenInteractive issues the OpenInteractive RPC against the server and
-// posts InteractiveReadyMsg back to the program. The actual tea.Exec call
-// happens in the App's Update when InteractiveReadyMsg arrives — Cmds run
-// outside the Update loop, but tea.Exec must be returned from Update.
+// posts InteractiveReadyMsg back to the program. The actual terminal handover
+// happens in the App's Update when InteractiveReadyMsg arrives — Update is the
+// only place that can gate it against a handover already in flight.
 // caps sets RequestedCaps on the wire request; pass protocol.Capability_All
 // for the inherit-all behaviour.
 func DoOpenInteractive(c *cli.Client, repo string, caps protocol.Capability) tea.Cmd {
@@ -146,9 +146,8 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 // DoOpenDetachableSession but, on success, spawns a background goroutine that
 // runs the -R remote forward (runner 127.0.0.1:6000+displayN -> the client's
 // local X server) for the session's lifetime, then posts InteractiveReadyMsg so
-// App.Update's existing tea.Exec path drives the PTY. The forward goroutine uses
-// the BUFFERED forwardStatusLogf — a raw program.Send would block for the whole
-// session because tea.Exec/RemoteShell never drains the msgs channel.
+// App.Update's existing handover path drives the PTY. The forward goroutine uses
+// the BUFFERED forwardStatusLogf so it never waits on the UI to make progress.
 // program MUST be App's *tea.Program. The returned InteractiveReadyMsg carries
 // X11Cancel (stops the forward; App stores it and calls it on InteractiveDoneMsg)
 // and X11Warn (non-empty => forwarding without authentication).
@@ -175,9 +174,8 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 			_ = cli.RunRemoteForward(fctx, c, taskID, []cli.RemoteForwardSpec{sp}, logf)
 			// The teardown line goes through the SAME buffered sink as the status
 			// lines, for the same reason: RunRemoteForward can return mid-session
-			// (`forward kill` on this registration), while tea.Exec still owns the
-			// Update loop and nothing drains msgs. A raw program.Send here would
-			// park this goroutine until the session ends.
+			// (`forward kill` on this registration), and a raw program.Send here
+			// would park this goroutine on whatever the UI is doing.
 			logf("x11 forward stopped: " + pfShortID(taskID))
 		}()
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, X11Cancel: cancel, X11Warn: warn}
@@ -217,8 +215,8 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 
 // DoAttachSession re-attaches to an existing detachable interactive task. It
 // calls client.AttachSession with the given mode, then posts InteractiveReadyMsg
-// so the existing tea.Exec path in App.Update can suspend the TUI and run the
-// PTY splice (identical flow to DoOpenInteractiveWithOpts).
+// so the existing handover path in App.Update can run the PTY splice
+// (identical flow to DoOpenInteractiveWithOpts).
 // Use protocol.AttachMode_Control for normal reattach (read/write) and
 // protocol.AttachMode_View for a read-only observer attach.
 func DoAttachSession(c *cli.Client, taskIDHex string, mode protocol.AttachMode) tea.Cmd {
@@ -268,8 +266,8 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 
 // interactiveExec adapts CommandExecutionStream.RemoteShell to bubbletea's
 // ExecCommand interface. SetStdin/Stdout/Stderr are no-ops because
-// RemoteShell uses os.Stdin / os.Stdout directly (bubbletea's tea.Exec has
-// already released the terminal by the time Run is called).
+// RemoteShell uses os.Stdin / os.Stdout directly (the terminal has already
+// been released by the time Run is called; see suspend.go).
 type interactiveExec struct {
 	stream *agentexec.CommandExecutionStream
 }

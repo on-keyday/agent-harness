@@ -773,7 +773,7 @@ func (n *rawNote) get() string  { n.mu.Lock(); defer n.mu.Unlock(); return n.s }
 // rawSink funnels a raw connection's messages to the UI through a background
 // goroutine that owns program.Send. Modelled on forwardStatusLogf
 // (tui/portforward.go:238), which exists because a goroutine blocking in
-// program.Send while tea.Exec holds the event loop hangs. One deliberate
+// program.Send hangs for as long as the event loop is not draining. One deliberate
 // difference: this sink must NOT drop on a full buffer the way cosmetic status
 // lines may — dropping received bytes would silently corrupt what the operator
 // reads — so a full buffer blocks the pump and ctx cancellation is what

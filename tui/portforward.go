@@ -223,14 +223,16 @@ func forwardFailLine(taskID string, err error) string {
 // forwardStatusLogf returns a logf-style callback that delivers per-connection
 // forward status lines to the TUI WITHOUT ever blocking the caller.
 //
-// bubbletea's program.Send writes to an UNBUFFERED msgs channel (tea.go), and
-// the event loop runs tea.Exec (an interactive claude session) SYNCHRONOUSLY —
-// for the whole session it sits inside RemoteShell and never drains msgs. A
-// direct program.Send from a forward relay goroutine therefore blocks until the
-// user leaves the session. Because cli.dialAndSplice logs the dial-failure line
-// BEFORE it CloseBoth's the stream, that block stalls connection teardown: the
+// bubbletea's program.Send writes to an UNBUFFERED msgs channel (tea.go), so a
+// direct Send from a forward relay goroutine parks whenever the event loop is
+// not draining. Because cli.dialAndSplice logs the dial-failure line BEFORE it
+// CloseBoth's the stream, that block stalls connection teardown: the
 // runner-side accepted connection is never closed and the forwarded peer (e.g.
-// curl) hangs until the interactive session ends. Routing status through a
+// curl) hangs for as long as the park lasts. It used to last a whole attached
+// session, when the event loop sat inside tea.Exec/RemoteShell and drained
+// nothing; the attach path no longer suspends the loop (suspend.go), but a
+// relay goroutine still must not wait on the UI to make progress. Routing
+// status through a
 // buffered channel drained by a single goroutine decouples cosmetic logging from
 // the relay's progress: the relay does a non-blocking send and on overflow the
 // pending status line is dropped (status is cosmetic). The drain goroutine exits
