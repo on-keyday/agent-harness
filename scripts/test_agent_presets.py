@@ -61,6 +61,25 @@ class ExpandAgentsPresetTest(unittest.TestCase):
             codex["resumeInteractiveArgv"], ["resume", "--last", "{args}"]
         )
 
+    def test_agy_preset_argv(self) -> None:
+        out = expand_agents_preset("claude,agy", [])
+        profiles = json.loads(out[out.index("--agent-profiles") + 1])
+        self.assertEqual(len(profiles), 1)
+        agy = profiles[0]
+        self.assertEqual(agy["name"], "agy")
+        self.assertEqual(agy["bin"], "agy")
+        self.assertEqual(
+            agy["oneshotArgv"], ["{args}", "--print", "{prompt}"]
+        )
+        self.assertEqual(
+            agy["resumeOneshotArgv"],
+            ["{args}", "--continue", "--print", "{prompt}"],
+        )
+        self.assertEqual(agy["resumeInteractiveArgv"], ["{args}", "--continue"])
+        # agentlog has no decoder for agy's stream-json schema, so the preset
+        # must NOT request structured output nor claim a decoder.
+        self.assertEqual(agy["logFormat"], "")
+
     def test_single_agent_emits_no_profiles_flag(self) -> None:
         out = expand_agents_preset("claude", [])
         self.assertNotIn("--agent-profiles", out)

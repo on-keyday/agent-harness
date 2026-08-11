@@ -29,6 +29,7 @@ Arguments: $ARGUMENTS
    | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--claude-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --claude-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
+   | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
 
    **The `sandbox` preset is NOT a shell preset.** It runs the *full* claude
    inside a rootless-podman container (`scripts/sandbox/`), confining the agent's

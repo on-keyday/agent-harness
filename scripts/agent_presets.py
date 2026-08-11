@@ -13,11 +13,15 @@ literal argv strings, so the doc and the code cannot diverge. This module
 lets ``runner.py up --agents claude,codex`` expand to concrete
 agent-runner flags without the caller hand-typing the JSON.
 
-No preset exists here for "gemini" — there is no authoritative argv for it
-anywhere in this repo, and inventing one would silently ship an unverified
-CLI invocation. ``expand_agents_preset`` raises ``AgentsPresetError`` for
-any name not in ``KNOWN_AGENT_PRESETS``, telling the caller to pass
-``--agent-profiles`` JSON directly instead.
+Every preset here MUST be verified against the real binary before being
+added — inventing an argv would silently ship an unverified CLI invocation.
+No preset exists for "gemini": the individual Code Assist tier it used is
+discontinued and the installed CLI now fails at auth with
+IneligibleTierError, so no invocation of it can be verified at all. Its
+successor "agy" (Antigravity) is present instead, verified against 1.1.12.
+``expand_agents_preset`` raises ``AgentsPresetError`` for any name not in
+``KNOWN_AGENT_PRESETS``, telling the caller to pass ``--agent-profiles``
+JSON directly instead.
 """
 
 from __future__ import annotations
@@ -57,6 +61,32 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "exec --json resume --last {args} {prompt}",
         "resumeInteractiveArgv": "resume --last {args}",
         "logFormat": "codex-jsonl",
+    },
+    "agy": {
+        "bin": "agy",
+        # Antigravity CLI, the successor to gemini-cli (see module docstring
+        # for why no "gemini" preset exists). Flag shape happens to mirror
+        # claude's: --print for the one-shot, --continue for "resume the most
+        # recent conversation in this cwd" — the same resume model claude's
+        # --continue and codex's `resume --last` use, so no session id is
+        # threaded here either.
+        #
+        # No --output-format is requested, unlike claude/codex: agy's
+        # stream-json is its own schema ({"event":"init"|"step_update"|
+        # "result"}), NOT claude's, and agentlog has no decoder for it.
+        # Asking for structured output nothing can decode would only make the
+        # task log unreadable, so plain text passes through instead and
+        # logFormat stays "".
+        #
+        # Verified against agy 1.1.12: `--print` one-shot exits 0 with the
+        # response on stdout; `--continue --print` carries context across
+        # separate invocations; `--continue` starts the TUI under a PTY
+        # (without one it exits with a "could not open TTY" error, which is
+        # the interactive path working as intended).
+        "oneshotArgv": "{args} --print {prompt}",
+        "resumeOneshotArgv": "{args} --continue --print {prompt}",
+        "resumeInteractiveArgv": "{args} --continue",
+        "logFormat": "",
     },
     # Shell-sandbox preset, not a conversational agent — included because
     # it's a trivial copy of the runner-up.md "bash" preset row. --agents
