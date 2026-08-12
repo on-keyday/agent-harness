@@ -108,36 +108,29 @@ func parseHTTPFetchResponse(method string, raw []byte) (*HTTPFetchResult, error)
 	}, nil
 }
 
-// HTTPFetch sends one request over a raw forward and returns the parsed
-// response. It is the portable counterpart to RunHTTPRequestForward, which
-// copies raw bytes to an io.Writer for the CLI: the two share a build step and
-// differ in every part that matters, so they stay separate rather than sharing
-// a helper across the js / !js build-tag boundary.
-//
-// The spec is validated and built before anything is dialled, so a bad request
-// costs an error message rather than a forward that is established, registered
-// and then torn down.
-func HTTPFetch(ctx context.Context, c *Client, taskIDHex, host string, port int, spec HTTPRequestSpec) (*HTTPFetchResult, error) {
+// buildFetchRequest renders the request bytes and returns the method the
+// response has to be framed against. Shared so a pin-scoped fetch and a one-off
+// HTTPFetch cannot drift into sending different bytes for the same spec.
+func buildFetchRequest(spec HTTPRequestSpec, host string, port int) ([]byte, string, error) {
 	spec.Headers = append(sanitizeFetchHeaders(spec.Headers), "X-Harness-Preview: 1")
 	req, err := BuildHTTPRequest(spec, host, port)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	method := spec.Method
 	if method == "" {
 		method = "GET"
 	}
-	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer rc.Close()
-	if err := rc.Send(req); err != nil {
-		return nil, err
-	}
+	return req, method, nil
+}
+
+// readFetchResponse accumulates the reply until the far end closes and parses
+// it. recv has the shape of both RawConn.Recv and trsf's ReadDirectContext, so
+// the two callers differ only in which stream they hand over.
+func readFetchResponse(method string, recv func() ([]byte, bool, error)) (*HTTPFetchResult, error) {
 	var buf bytes.Buffer
 	for {
-		data, eof, rerr := rc.Recv(ctx)
+		data, eof, rerr := recv()
 		if len(data) > 0 {
 			if buf.Len() >= httpFetchMaxRaw {
 				break
@@ -158,4 +151,29 @@ func HTTPFetch(ctx context.Context, c *Client, taskIDHex, host string, port int,
 		}
 	}
 	return parseHTTPFetchResponse(method, buf.Bytes())
+}
+
+// HTTPFetch sends one request over a raw forward and returns the parsed
+// response. It is the portable counterpart to RunHTTPRequestForward, which
+// copies raw bytes to an io.Writer for the CLI: the two share a build step and
+// differ in every part that matters, so they stay separate rather than sharing
+// a helper across the js / !js build-tag boundary.
+//
+// The spec is validated and built before anything is dialled, so a bad request
+// costs an error message rather than a forward that is established, registered
+// and then torn down.
+func HTTPFetch(ctx context.Context, c *Client, taskIDHex, host string, port int, spec HTTPRequestSpec) (*HTTPFetchResult, error) {
+	req, method, err := buildFetchRequest(spec, host, port)
+	if err != nil {
+		return nil, err
+	}
+	rc, err := OpenRawForward(ctx, c, taskIDHex, host, port, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer rc.Close()
+	if err := rc.Send(req); err != nil {
+		return nil, err
+	}
+	return readFetchResponse(method, func() ([]byte, bool, error) { return rc.Recv(ctx) })
 }

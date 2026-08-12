@@ -118,6 +118,9 @@ func main() {
 		"rawSendHTTP":        js.FuncOf(harnessRawSendHTTP),
 		"rawClose":           js.FuncOf(harnessRawClose),
 		"httpFetch":          js.FuncOf(harnessHTTPFetch),
+		"previewPinOpen":     js.FuncOf(harnessPreviewPinOpen),
+		"previewPinFetch":    js.FuncOf(harnessPreviewPinFetch),
+		"previewPinClose":    js.FuncOf(harnessPreviewPinClose),
 	}))
 
 	slog.Info("harness-webui-wasm started")
@@ -2004,6 +2007,109 @@ func harnessFilePullBytes(this js.Value, args []js.Value) any {
 			out := js.Global().Get("Uint8Array").New(len(data))
 			js.CopyBytesToJS(out, data)
 			resolve.Invoke(out)
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessPreviewPinOpen registers the reach a pinned preview was granted and
+// holds it for the preview's life, resolving with the forward id.
+//
+// The registration is the point: a fetch-scoped one lived tens of milliseconds
+// against a registry with no history, so an operator could never see what a
+// previewed page was reaching. This row stays up while the preview does, and
+// killing it from any surface revokes the reach.
+//
+//	harness.previewPinOpen(key, taskIDHex, host, port) -> Promise<number>
+func harnessPreviewPinOpen(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if len(args) < 4 {
+				rejectErr(reject, errors.New("previewPinOpen: want (key, taskIDHex, host, port)"))
+				return
+			}
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			fid, err := cli.OpenPreviewPin(rootCtx, c, args[0].String(), args[1].String(), args[2].String(), args[3].Int())
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.ValueOf(fid))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessPreviewPinFetch sends one request over a connection opened under the
+// pin. The connection is not separately registered — the pin already stands for
+// it, for longer and more visibly than a per-request row.
+//
+//	harness.previewPinFetch(key, {method, path, headers, body})
+//	  -> Promise<{status, statusText, headers, body, truncated}>
+func harnessPreviewPinFetch(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if len(args) < 2 || args[1].Type() != js.TypeObject {
+				rejectErr(reject, errors.New("previewPinFetch: want (key, {method, path, headers, body})"))
+				return
+			}
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			res, err := cli.PreviewPinFetch(rootCtx, c, args[0].String(), httpSpecFromJS(args[1]))
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			body := js.Global().Get("Uint8Array").New(len(res.Body))
+			js.CopyBytesToJS(body, res.Body)
+			headers := js.Global().Get("Array").New(len(res.Headers))
+			for i, h := range res.Headers {
+				pair := js.Global().Get("Array").New(2)
+				pair.SetIndex(0, h[0])
+				pair.SetIndex(1, h[1])
+				headers.SetIndex(i, pair)
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"status":     res.Status,
+				"statusText": res.StatusText,
+				"headers":    headers,
+				"body":       body,
+				"truncated":  res.Truncated,
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harness.previewPinClose(key) -> Promise<void>
+func harnessPreviewPinClose(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("previewPinClose: missing key"))
+				return
+			}
+			cli.ClosePreviewPin(args[0].String())
+			resolve.Invoke(js.Undefined())
 		}()
 		return nil
 	})

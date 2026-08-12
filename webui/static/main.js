@@ -419,6 +419,11 @@ const POLL_INTERVAL_MS = 5000;
   // rather than posted into whatever iframe is there now.
   let previewApiGen = 0;
   let previewApiInFlight = 0;
+  // Key for the pin's registration, and the forward id an operator would kill.
+  // One preview modal at a time, so the key is constant; it exists because the
+  // wasm side is keyed like every other pane holder.
+  const PREVIEW_PIN_KEY = "file-preview";
+  let previewPinForwardID = null;
   const PREVIEW_FETCH_MAX_INFLIGHT = 4;
   // Set when the current preview is HTML, so the toggle can rebuild the body
   // from already-fetched bytes without re-pulling. Reset on modal close.
@@ -1214,6 +1219,9 @@ const POLL_INTERVAL_MS = 5000;
     previewPin = null;
     previewApiGen++; // in-flight replies now belong to a preview that is gone
     previewApiInFlight = 0;
+    // Drop the registration with the preview: the row must not outlive the
+    // reach it stands for.
+    releasePreviewPin();
     filePreviewApi.hidden = true;
     filePreviewApi.value = "";
     filePreviewModalsLabel.hidden = true;
@@ -1294,6 +1302,20 @@ const POLL_INTERVAL_MS = 5000;
       previewPin = parsePinnedTarget(filePreviewApi.value);
       previewApiGen++;
       previewApiInFlight = 0;
+      // Register the REACH, not each fetch. Fetch-scoped registrations lived
+      // milliseconds against a 5s poll, so nothing a previewed page did was
+      // ever visible in `forward ls`; this row stays up while the preview does.
+      // Fire-and-forget: the iframe is built either way, and a fetch without a
+      // live pin is refused wasm-side.
+      releasePreviewPin();
+      if (previewPin) {
+        window.harness.previewPinOpen(PREVIEW_PIN_KEY, fileTaskSelect.value, previewPin.host, previewPin.port)
+          .then((id) => { previewPinForwardID = id; })
+          .catch((e) => {
+            previewPin = null;
+            appendPreviewNote(`preview: could not register the forward (${e.message}) — the page has no network`);
+          });
+      }
       iframe.srcdoc = previewPin
         ? injectPreviewShim(text, previewShimSource(previewPin, rel))
         : text;
@@ -1346,6 +1368,33 @@ const POLL_INTERVAL_MS = 5000;
     if (filePreviewHtml && filePreviewHtml.mode === "render") showHtmlPreview();
   });
 
+  // releasePreviewPin drops the registration if there is one. Safe to call when
+  // there is none, which is why every path calls it unconditionally.
+  function releasePreviewPin() {
+    previewPinForwardID = null;
+    if (window.harness && window.harness.previewPinClose) {
+      window.harness.previewPinClose(PREVIEW_PIN_KEY).catch(() => {});
+    }
+  }
+
+  function appendPreviewNote(text) {
+    const p = document.createElement("p");
+    p.className = "preview-note";
+    p.textContent = text;
+    filePreviewBody.appendChild(p);
+  }
+
+  // Fired by wasm when the registration ends without us asking — an operator ran
+  // `forward kill` from the CLI, the TUI or the Connections tab, or the server
+  // connection went. The reach is gone, so the pin goes with it; saying so beats
+  // the page's requests silently starting to fail.
+  window.harness_previewPinClosed = (key, reason) => {
+    if (key !== PREVIEW_PIN_KEY) return;
+    previewPin = null;
+    previewPinForwardID = null;
+    appendPreviewNote(`preview forward revoked (${reason}) — the page can no longer reach its API target`);
+  };
+
   // sandbox is read when the iframe is created, so granting dialogs means
   // building a new frame — the page restarts, exactly as it does for the pin.
   filePreviewModals.addEventListener("change", () => {
@@ -1386,7 +1435,7 @@ const POLL_INTERVAL_MS = 5000;
     }
     previewApiInFlight++;
     try {
-      const res = await window.harness.httpFetch(fileTaskSelect.value, pin.host, pin.port, {
+      const res = await window.harness.previewPinFetch(PREVIEW_PIN_KEY, {
         method: m.method, path: m.path, headers: m.headers, body: m.body,
       });
       reply({
