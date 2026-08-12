@@ -19,7 +19,7 @@ import (
 // FilePull copies remoteRel from the task's worktree to localPath. If the
 // runner reports a non-ok ack, no local file is created.
 func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string, force bool) error {
-	return c.filePullDo(ctx, taskIDHex, remoteRel, func(stream trsf.BidirectionalStream, expectedSize uint64) error {
+	return c.filePullDo(ctx, taskIDHex, remoteRel, FileTransferRange{}, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
 		flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
 		if force {
 			flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
@@ -50,7 +50,7 @@ func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath s
 // download / save flow it needs to drive next.
 func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string, onProgress ProgressFunc) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := c.filePullDo(ctx, taskIDHex, remoteRel, func(stream trsf.BidirectionalStream, expectedSize uint64) error {
+	if err := c.filePullDo(ctx, taskIDHex, remoteRel, FileTransferRange{}, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
 		buf.Grow(int(expectedSize))
 		n, err := copyWithProgress(&buf, stream, expectedSize, onProgress)
 		if err != nil {
@@ -75,8 +75,8 @@ func (c *Client) FilePullBytes(ctx context.Context, taskIDHex, remoteRel string,
 // Runner ignores the protocol-level force flag for pull (it's a
 // read-only op on the runner side); body decides what client-side
 // "force" means (overwrite vs. always-new-buffer).
-func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, body func(stream trsf.BidirectionalStream, expectedSize uint64) error) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, false, false)
+func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, rng FileTransferRange, body func(stream trsf.BidirectionalStream, n, total uint64) error) error {
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Pull, remoteRel, 0, rng, false, false)
 	if err != nil {
 		return err
 	}
@@ -91,7 +91,37 @@ func (c *Client) filePullDo(ctx context.Context, taskIDHex, remoteRel string, bo
 	if err := ackError("pull", ack); err != nil {
 		return err
 	}
-	return body(stream, ack.ActualSize)
+	// ActualSize is what this body carries (the slice, for a ranged pull);
+	// TotalSize is the whole file. Handing both on means a caller rendering a
+	// head never needs a second round trip that could race this one.
+	return body(stream, ack.ActualSize, ack.TotalSize)
+}
+
+// FilePullBytesRange is FilePullBytes over a byte range. It returns the slice
+// and the size of the whole file, so a caller rendering a head knows whether it
+// truncated without asking a second time.
+//
+// A short read is still an error, measured against the size the runner acked
+// for THIS transfer rather than the file size — those differ here, which is
+// the whole reason total_size exists.
+func (c *Client) FilePullBytesRange(ctx context.Context, taskIDHex, remoteRel string, rng FileTransferRange, onProgress ProgressFunc) ([]byte, uint64, error) {
+	var buf bytes.Buffer
+	var total uint64
+	if err := c.filePullDo(ctx, taskIDHex, remoteRel, rng, func(stream trsf.BidirectionalStream, n, tot uint64) error {
+		total = tot
+		buf.Grow(int(n))
+		got, err := copyWithProgress(&buf, stream, n, onProgress)
+		if err != nil {
+			return fmt.Errorf("file pull: stream read: %w", err)
+		}
+		if got != n {
+			return fmt.Errorf("file pull: short read (got %d, expected %d)", got, n)
+		}
+		return nil
+	}); err != nil {
+		return nil, 0, err
+	}
+	return buf.Bytes(), total, nil
 }
 
 // FilePullDir pulls the worktree directory at remoteRel into localDir. Stages
@@ -109,7 +139,7 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 		return fmt.Errorf("file pull --recursive: stat local: %w", err)
 	}
 
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false, false)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, FileTransferRange{}, false, false)
 	if err != nil {
 		return err
 	}
@@ -197,7 +227,7 @@ func (c *Client) FilePullDir(ctx context.Context, taskIDHex, remoteRel, localDir
 // browser saves the bytes as a .tar for the user to extract. The returned
 // bytes are a complete tar archive (the same stream FilePullDir untars).
 func (c *Client) FilePullDirBytes(ctx context.Context, taskIDHex, remoteRel string, onProgress ProgressFunc) ([]byte, error) {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, false, false)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPull, remoteRel, 0, FileTransferRange{}, false, false)
 	if err != nil {
 		return nil, err
 	}

@@ -21,6 +21,16 @@ type FileEntryView struct {
 	IsDir bool
 }
 
+// FileTransferRange selects a byte range of a pull. The zero value is the whole
+// file, so a caller that does not care passes FileTransferRange{} and keeps
+// exactly the behaviour it had before ranges existed. Only pull honours it: the
+// runner answers range_invalid for any other direction rather than discarding
+// the part of the request the caller cared about.
+type FileTransferRange struct {
+	Offset uint64
+	Length uint64 // 0 = to EOF
+}
+
 // OpenFileTransfer initiates a push or pull and returns the bidi stream.
 // Caller drives the stream (write file bytes for push, read for pull) and
 // is responsible for reading the trailing FileTransferAck.
@@ -30,6 +40,7 @@ func (c *Client) OpenFileTransfer(
 	direction protocol.FileTransferDirection,
 	relPath string,
 	expectedSize uint64,
+	rng FileTransferRange,
 	force bool,
 	mkdirParents bool,
 ) (trsf.BidirectionalStream, error) {
@@ -42,6 +53,8 @@ func (c *Client) OpenFileTransfer(
 		TaskId:       tid,
 		Direction:    direction,
 		ExpectedSize: expectedSize,
+		Offset:       rng.Offset,
+		Length:       rng.Length,
 	}
 	body.SetRelPath([]byte(relPath))
 	body.SetForce(force)

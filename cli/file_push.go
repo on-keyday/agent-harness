@@ -52,7 +52,7 @@ func (c *Client) FilePushBytes(ctx context.Context, taskIDHex string, data []byt
 // file-backed FilePush and the bytes-backed FilePushBytes go through
 // here so the wire side has one well-tested code path.
 func (c *Client) filePushFromReader(ctx context.Context, taskIDHex string, src io.Reader, size uint64, remoteRel string, opts FilePushOpts, onProgress ProgressFunc) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, opts.Force, opts.MkdirParents)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Push, remoteRel, size, FileTransferRange{}, opts.Force, opts.MkdirParents)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func (c *Client) FilePushDir(ctx context.Context, taskIDHex, localDir, remoteRel
 	if !info.IsDir() {
 		return fmt.Errorf("file push --recursive: %s is not a directory", localDir)
 	}
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPush, remoteRel, 0, opts.Force, opts.MkdirParents)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_DirPush, remoteRel, 0, FileTransferRange{}, opts.Force, opts.MkdirParents)
 	if err != nil {
 		return err
 	}
@@ -201,6 +201,8 @@ func ackError(op string, ack *protocol.FileTransferAck) error {
 		}
 	case protocol.FileTransferStatus_IoError:
 		msg = fmt.Sprintf("file %s: runner I/O error", op)
+	case protocol.FileTransferStatus_RangeInvalid:
+		msg = fmt.Sprintf("file %s: a byte range is only supported for a single-file pull", op)
 	case protocol.FileTransferStatus_Canceled:
 		msg = fmt.Sprintf("file %s: canceled", op)
 	case protocol.FileTransferStatus_IsDirectory:

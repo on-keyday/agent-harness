@@ -53,6 +53,11 @@ func (h *TaskHandler) handleOpenFileTransfer(conn ConnHandle, req *protocol.Open
 		StreamId:     uint64(runnerStream.ID()),
 		Direction:    req.Direction,
 		ExpectedSize: req.ExpectedSize,
+		// The relay rebuilds the request field by field, so a field left out
+		// here reaches the runner as zero and the range is silently ignored —
+		// no error anywhere, just the whole file.
+		Offset: req.Offset,
+		Length: req.Length,
 	}
 	body.SetRelPath(req.RelPath)
 	body.SetForce(req.Force())

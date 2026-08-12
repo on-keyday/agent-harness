@@ -15,7 +15,7 @@ import (
 // does: no payload bytes flow either direction, the runner acks and
 // closes.
 func (c *Client) FileMkdir(ctx context.Context, taskIDHex, remoteRel string, parents bool) error {
-	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Mkdir, remoteRel, 0, false, parents)
+	stream, err := c.OpenFileTransfer(ctx, taskIDHex, protocol.FileTransferDirection_Mkdir, remoteRel, 0, FileTransferRange{}, false, parents)
 	if err != nil {
 		return err
 	}
