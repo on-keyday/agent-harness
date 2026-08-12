@@ -1142,21 +1142,43 @@ const POLL_INTERVAL_MS = 5000;
     if (!taskID || !filePickerSelected || filePickerSelected.isDir) return;
     const sel = filePickerSelected;
     const rel = joinFsPath(filePickerCurDir, sel.name);
-    // Reject oversize before fetching — sel.size comes from fileLs, so we
-    // never pull a huge file into browser memory just to refuse it.
+    // Oversize is no longer refused: the cap now bounds how much is PULLED,
+    // and anything beyond it renders as a head with a note.
     const cap = previewMaxBytesFor(sel.name);
-    if (sel.size > cap) {
-      openFilePreview(rel, sel.size, null,
-        `File is too large to preview (${formatBytes(sel.size)}, limit ${formatBytes(cap)} for this type). Use Pull to download it.`);
-      return;
-    }
-    // Same progress row the Pull button uses. At the caps above a pull is
-    // seconds long over wasm, and without this the modal opens on a page that
-    // has simply stopped.
+    // Same progress row the Pull button uses. At these caps a pull is seconds
+    // long over wasm, and without it the modal opens on a page that has simply
+    // stopped.
     const fp = beginFileProgress(sel.name);
     try {
-      const bytes = await window.harness.filePullBytes(taskID, rel, fp.onProgress);
+      let bytes, total;
+      if (isHtmlExt(sel.name) || isImageExt(sel.name)) {
+        // The extension settles which renderer runs, so one request is enough.
+        ({ bytes, total } = await pullPreviewSlice(taskID, rel, 0, Math.min(sel.size, cap), fp));
+      } else {
+        // Unknown type: fetch only what a hex dump would show, decide from
+        // those bytes, and continue only if it turns out to be text. This is
+        // what stops a multi-megabyte binary being pulled in full to render
+        // 4 KiB of hex — isLikelyBinary needs the bytes, so the decision
+        // cannot be made before the first read.
+        const head = await pullPreviewSlice(taskID, rel, 0, Math.min(sel.size, HEX_PREVIEW_MAX_BYTES), fp);
+        total = head.total;
+        if (isLikelyBinary(head.bytes) || head.total <= HEX_PREVIEW_MAX_BYTES) {
+          bytes = head.bytes;
+        } else {
+          const rest = await pullPreviewSlice(taskID, rel, HEX_PREVIEW_MAX_BYTES,
+            Math.min(head.total, cap) - HEX_PREVIEW_MAX_BYTES, fp);
+          bytes = new Uint8Array(head.bytes.length + rest.bytes.length);
+          bytes.set(head.bytes, 0);
+          bytes.set(rest.bytes, head.bytes.length);
+        }
+      }
       renderFilePreview(rel, sel.size, sel.name, bytes);
+      if (bytes.byteLength < total) {
+        const p = document.createElement("p");
+        p.className = "preview-note";
+        p.textContent = `showing the first ${formatBytes(bytes.byteLength)} of ${formatBytes(total)}. Use Pull to download the whole file.`;
+        filePreviewBody.appendChild(p);
+      }
     } catch (e) {
       openFilePreview(rel, sel.size, null, `preview error: ${e.message}`);
     } finally {
@@ -4960,6 +4982,14 @@ function imageMimeForName(name) {
 // These live at top level (like isHtmlExt above) so they are reachable from a
 // Playwright evaluate: this repo has no JS test runner, and the injection
 // position in particular is worth being able to assert directly.
+
+// pullPreviewSlice returns {bytes, total} for one byte range of a file. total is
+// the size of the whole file, so a caller can tell a head from a complete read
+// without asking fileLs again and racing itself.
+async function pullPreviewSlice(taskID, rel, offset, length, fp) {
+  const res = await window.harness.filePullBytesRange(taskID, rel, offset, length, fp && fp.onProgress);
+  return { bytes: new Uint8Array(res.bytes), total: Number(res.total) };
+}
 
 // parsePinnedTarget accepts "host:port" or a bare "port" (host defaults to
 // 127.0.0.1, which is what a task's own dev server almost always binds).

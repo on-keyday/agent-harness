@@ -97,6 +97,7 @@ func main() {
 		"fileMkdir":          js.FuncOf(harnessFileMkdir),
 		"filePushBytes":      js.FuncOf(harnessFilePushBytes),
 		"filePullBytes":      js.FuncOf(harnessFilePullBytes),
+		"filePullBytesRange": js.FuncOf(harnessFilePullBytesRange),
 		"filePullDirBytes":   js.FuncOf(harnessFilePullDirBytes),
 		"fileEditLoad":       js.FuncOf(harnessFileEditLoad),
 		"fileEditCommit":     js.FuncOf(harnessFileEditCommit),
@@ -2003,6 +2004,49 @@ func harnessFilePullBytes(this js.Value, args []js.Value) any {
 			out := js.Global().Get("Uint8Array").New(len(data))
 			js.CopyBytesToJS(out, data)
 			resolve.Invoke(out)
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessFilePullBytesRange fetches one byte range of a file and resolves with
+// the slice plus the size of the whole file.
+//
+// total is the reason this is not just filePullBytes with two more arguments:
+// a caller rendering a head has to know whether it truncated, and asking
+// separately with fileLs races the pull.
+//
+//	harness.filePullBytesRange(taskID, remoteRel, offset, length[, onProgress])
+//	  -> Promise<{bytes: Uint8Array, total: number}>
+//	length 0 = to end of file.
+func harnessFilePullBytesRange(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 4 {
+				rejectErr(reject, errors.New("filePullBytesRange: want (taskID, remoteRel, offset, length[, onProgress])"))
+				return
+			}
+			rng := cli.FileTransferRange{
+				Offset: uint64(args[2].Int()),
+				Length: uint64(args[3].Int()),
+			}
+			data, total, err := c.FilePullBytesRange(rootCtx, args[0].String(), args[1].String(), rng, jsProgress(args, 4))
+			if err != nil {
+				rejectFileErr(reject, err)
+				return
+			}
+			out := js.Global().Get("Uint8Array").New(len(data))
+			js.CopyBytesToJS(out, data)
+			resolve.Invoke(js.ValueOf(map[string]any{"bytes": out, "total": total}))
 		}()
 		return nil
 	})
