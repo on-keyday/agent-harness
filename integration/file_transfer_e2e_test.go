@@ -133,7 +133,7 @@ func TestFileTransferE2E(t *testing.T) {
 
 	// 3. PULL: copy the file back; verify content matches.
 	dstPath := filepath.Join(t.TempDir(), "dst.bin")
-	if err := c.FilePull(ctx, taskID, "uploaded.bin", dstPath, false); err != nil {
+	if err := c.FilePull(ctx, taskID, "uploaded.bin", dstPath, cli.FileTransferRange{}, false); err != nil {
 		t.Fatalf("pull: %v", err)
 	}
 	pulled, err := os.ReadFile(dstPath)
@@ -144,6 +144,31 @@ func TestFileTransferE2E(t *testing.T) {
 		t.Errorf("pulled content = %q want %q", pulled, "hello world")
 	}
 
+	// 3b. RANGED PULL: a slice out of the middle, end to end through the
+	//     server relay — which rebuilds the runner request field by field, so
+	//     this is the test that catches an offset that never left the server.
+	slice, total, err := c.FilePullBytesRange(ctx, taskID, "uploaded.bin",
+		cli.FileTransferRange{Offset: 6, Length: 3}, nil)
+	if err != nil {
+		t.Fatalf("ranged pull: %v", err)
+	}
+	if string(slice) != "wor" {
+		t.Errorf("ranged pull = %q want %q", slice, "wor")
+	}
+	if total != uint64(len("hello world")) {
+		t.Errorf("ranged pull total = %d want %d", total, len("hello world"))
+	}
+
+	// 3c. RANGE PAST EOF: ok with nothing, and the total still reported.
+	empty, total, err := c.FilePullBytesRange(ctx, taskID, "uploaded.bin",
+		cli.FileTransferRange{Offset: 9999}, nil)
+	if err != nil {
+		t.Fatalf("past-EOF pull: %v", err)
+	}
+	if len(empty) != 0 || total != uint64(len("hello world")) {
+		t.Errorf("past-EOF pull = %q total=%d", empty, total)
+	}
+
 	// 4. PUSH AGAIN: same path → already_exists.
 	if err := c.FilePush(ctx, taskID, srcPath, "uploaded.bin", cli.FilePushOpts{}); err == nil {
 		t.Errorf("second push should fail with already_exists")
@@ -152,7 +177,7 @@ func TestFileTransferE2E(t *testing.T) {
 	}
 
 	// 5. PULL MISSING: not_found.
-	if err := c.FilePull(ctx, taskID, "nope.bin", dstPath, false); err == nil {
+	if err := c.FilePull(ctx, taskID, "nope.bin", dstPath, cli.FileTransferRange{}, false); err == nil {
 		t.Errorf("pull of missing file should fail")
 	}
 
