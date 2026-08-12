@@ -1181,7 +1181,12 @@ const POLL_INTERVAL_MS = 5000;
       if (bytes.byteLength < total) {
         const p = document.createElement("p");
         p.className = "preview-note";
-        p.textContent = `showing the first ${formatBytes(bytes.byteLength)} of ${formatBytes(total)}. Use Pull to download the whole file.`;
+        // Say what is MISSING, not two totals. formatBytes rounds to one
+        // decimal, so a file 200 bytes past the cap rendered as "showing the
+        // first 4.0 MB of 4.0 MB" — the same number twice, next to a demand to
+        // download the rest. The remainder cannot collide: the note only exists
+        // when it is at least one byte.
+        p.textContent = `showing the first ${formatBytes(bytes.byteLength)} — ${formatBytes(total - bytes.byteLength)} not shown. Use Pull to download the whole file.`;
         filePreviewBody.appendChild(p);
       }
     } catch (e) {
@@ -1549,9 +1554,12 @@ const POLL_INTERVAL_MS = 5000;
       const pre = document.createElement("pre");
       const hex = hexDump(bytes, HEX_PREVIEW_MAX_BYTES);
       pre.textContent = hex;
-      const truncated = bytes.byteLength > HEX_PREVIEW_MAX_BYTES;
-      openFilePreview(rel, size, pre,
-        truncated ? `binary — showing first ${HEX_PREVIEW_MAX_BYTES} of ${bytes.byteLength} bytes` : "binary");
+      // No truncation note here any more. bytes is what the preview PULLED, and
+      // for an unknown-extension file the sniff step pulls at most
+      // HEX_PREVIEW_MAX_BYTES, so this could only ever have compared 4096
+      // against 4096. How much of the FILE is missing is the caller's note,
+      // which is the only place that knows the total.
+      openFilePreview(rel, size, pre, "binary");
       // Copy the displayed hex dump (which may be truncated), matching the view.
       showPreviewCopy({ text: hex });
       return;
