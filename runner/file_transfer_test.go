@@ -1209,3 +1209,32 @@ func TestHandleOpenFileTransfer_MkdirRejectSymlinkParent(t *testing.T) {
 		t.Fatalf("dir leaked outside the worktree at %s/new", outsideDir)
 	}
 }
+
+// The ack carries two numbers now, so its fixed width changed. Readers
+// pre-allocate exactly FileTransferAckSize bytes (readAck above, and
+// cli.ReadFileTransferAck), so a constant that disagrees with the encoder
+// misparses every transfer rather than failing loudly.
+func TestFileTransferAckWidthAndRoundTrip(t *testing.T) {
+	if protocol.FileTransferAckSize != 17 {
+		t.Fatalf("FileTransferAckSize = %d, want 17", protocol.FileTransferAckSize)
+	}
+	in := protocol.FileTransferAck{
+		Status:     protocol.FileTransferStatus_Ok,
+		ActualSize: 4096,
+		TotalSize:  1 << 30,
+	}
+	body, err := in.Append(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body) != protocol.FileTransferAckSize {
+		t.Fatalf("encoded %d bytes, want %d", len(body), protocol.FileTransferAckSize)
+	}
+	out := &protocol.FileTransferAck{}
+	if _, err := out.Decode(body); err != nil {
+		t.Fatal(err)
+	}
+	if out.ActualSize != 4096 || out.TotalSize != 1<<30 {
+		t.Fatalf("round trip gave actual=%d total=%d", out.ActualSize, out.TotalSize)
+	}
+}

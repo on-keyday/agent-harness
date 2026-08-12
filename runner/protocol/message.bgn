@@ -1151,10 +1151,21 @@ enum FileTransferStatus:
     is_directory   = "is_directory"   # delete only: rel_path resolved to a directory.
     not_a_directory = "not_a_directory"  # dir_push: dest exists but is a regular file. dir_pull / dir_delete: source is a regular file (not a directory).
     not_empty       = "not_empty"     # dir_delete: target directory is non-empty and force=0 (recursive not requested).
+    range_invalid   = "range_invalid"  # offset/length were set on a direction that has no
+                                       # byte range (anything but pull). Refused rather than
+                                       # ignored: ignoring it would hand a caller who asked
+                                       # for a slice the whole object.
 
 format FileTransferAck:
     status      :FileTransferStatus
-    actual_size :u64
+    actual_size :u64   # bytes carried by THIS transfer's body. A ranged pull
+                       # sends only the requested slice, so this is the slice —
+                       # which is already what push (bytes written) and dir_pull
+                       # (bytes in) meant by it.
+    total_size  :u64   # size of the complete object: the file size for a pull,
+                       # ranged or not. Every other direction transfers the
+                       # whole object, so writeAck sets it equal to actual_size;
+                       # delete / mkdir leave both 0.
 
 # FileTransferAck is fixed-size; expose its on-the-wire byte length so
 # readers can pre-allocate and consume exactly that many bytes from the
@@ -1179,6 +1190,12 @@ format OpenFileTransferRequest:
     rel_path_len  :u16
     rel_path      :[rel_path_len]u8
     expected_size :u64
+    offset        :u64    # pull only: first byte to send. 0 = from the start.
+                          # A non-zero value on any other direction is answered
+                          # range_invalid.
+    length        :u64    # pull only: max bytes to send. 0 = to EOF, so the
+                          # zero value of both fields is "the whole file" and
+                          # every pre-range caller keeps its meaning.
     force         :u1
     mkdir_parents :u1     # push / dir_push: create missing parent
                           # directories of the destination before writing.
@@ -1224,6 +1241,12 @@ format RunnerOpenFileTransferRequest:
     rel_path_len  :u16
     rel_path      :[rel_path_len]u8
     expected_size :u64
+    offset        :u64    # pull only: first byte to send. 0 = from the start.
+                          # A non-zero value on any other direction is answered
+                          # range_invalid.
+    length        :u64    # pull only: max bytes to send. 0 = to EOF, so the
+                          # zero value of both fields is "the whole file" and
+                          # every pre-range caller keeps its meaning.
     force         :u1
     mkdir_parents :u1     # push / dir_push: create missing parent
                           # directories of the destination before writing.

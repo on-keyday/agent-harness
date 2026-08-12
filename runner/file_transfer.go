@@ -125,7 +125,15 @@ func (s *Session) worktreeDirFor(taskIDHex string) string {
 // exactly that many bytes off the stream and decodes — no in-band length
 // prefix needed.
 func writeAck(st trsf.BidirectionalStream, status protocol.FileTransferStatus, size uint64) error {
-	ack := protocol.FileTransferAck{Status: status, ActualSize: size}
+	// A whole-object transfer moved all of it, so actual and total are the same
+	// number by construction. Only a ranged pull can separate them, and that is
+	// the one caller of writeAckRange — keeping the invariant here means the
+	// nine other ack sites cannot get it wrong.
+	return writeAckRange(st, status, size, size)
+}
+
+func writeAckRange(st trsf.BidirectionalStream, status protocol.FileTransferStatus, actual, total uint64) error {
+	ack := protocol.FileTransferAck{Status: status, ActualSize: actual, TotalSize: total}
 	body, err := ack.Append(nil)
 	if err != nil {
 		return err
