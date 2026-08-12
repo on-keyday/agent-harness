@@ -589,6 +589,11 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   color: #d4d4d4;
   overflow-wrap: anywhere;
   min-width: 0;
+  /* The title absorbs the free space, which is what pushes the buttons to the
+   * right edge as one group. Doing it here rather than with margin-left:auto on
+   * the buttons is what keeps the group together however many of them are
+   * visible — see .preview-toggle. */
+  flex: 1 1 auto;
 }
 .preview-close {
   flex: 0 0 auto;
@@ -606,7 +611,6 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .preview-close:hover { background: #3a3a3a; }
 .preview-toggle {
   flex: 0 0 auto;
-  margin-left: auto;          /* group toggle + close at the right edge */
   background: #2a2a2a;
   border: 1px solid #555;
   border-radius: 4px;
@@ -619,10 +623,13 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .preview-toggle:hover { background: #3a3a3a; }
 .preview-toggle[hidden] { display: none; }
-/* Copy also carries margin-left:auto so it anchors the right-hand button group
- * when the toggle is hidden (non-HTML previews); when both show, the first
- * auto-margin absorbs the free space and the second is a harmless no-op. */
-.preview-copy { margin-left: auto; }
+/* The right-hand group used to be anchored by margin-left:auto on .preview-toggle
+ * and again on .preview-copy, with a comment claiming the second was "a harmless
+ * no-op". It is not: flexbox splits free space EQUALLY between every auto margin,
+ * so with View source / Copy / Edit all carrying one, the header grew three even
+ * gaps and the buttons drifted apart as items were added beside them. The title
+ * takes the free space instead, which groups the buttons no matter how many of
+ * them are hidden. */
 /* Pinned API target for the rendered HTML preview. Rides in the right-hand
  * group like the buttons; hidden for source view and for non-HTML previews. */
 .preview-api {
@@ -695,7 +702,9 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   /* On a 390px phone the header carries the title, up to three buttons and
    * the API target. Without wrapping the close button is pushed off-screen. */
   .preview-header { padding: 0.6em 0.75em; flex-wrap: wrap; }
-  .preview-title { font-size: 0.8em; }
+  /* No grow on a phone: the header wraps there, and a title that took the free
+   * space would claim the whole first row and push every button down. */
+  .preview-title { font-size: 0.8em; flex: 0 1 auto; }
   .preview-api { flex: 1 1 6em; }
 }
 
