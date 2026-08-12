@@ -184,9 +184,18 @@ func (s *Session) handleOpenFileTransfer(ctx context.Context, req *protocol.Runn
 		return
 	}
 
+	// A range on a direction that has no range is refused, not ignored: ignoring
+	// it would hand a caller who asked for a slice the whole object, and for
+	// delete it would carry out a destructive operation the caller did not
+	// describe. Loud refusal beats a silent wrong answer.
+	if (req.Offset != 0 || req.Length != 0) && req.Direction != protocol.FileTransferDirection_Pull {
+		_ = writeAck(stream, protocol.FileTransferStatus_RangeInvalid, 0)
+		return
+	}
+
 	switch req.Direction {
 	case protocol.FileTransferDirection_Pull:
-		s.runPull(stream, full)
+		s.runPull(stream, full, req.Offset, req.Length)
 	case protocol.FileTransferDirection_Push:
 		s.runPush(stream, full, req.Force(), req.MkdirParents())
 	case protocol.FileTransferDirection_Delete:
@@ -319,7 +328,11 @@ func (s *Session) runMkdir(stream trsf.BidirectionalStream, full string, parents
 	_ = writeAck(stream, protocol.FileTransferStatus_Ok, 0)
 }
 
-func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
+// runPull sends [offset, offset+length) of the file, where length 0 means "to
+// EOF" — so offset 0 / length 0 is the whole file and every pre-range caller
+// keeps its behaviour. The ack separates what this body carries (actual) from
+// how big the file is (total); only this path can tell them apart.
+func (s *Session) runPull(stream trsf.BidirectionalStream, full string, offset, length uint64) {
 	f, err := os.Open(full)
 	if err != nil {
 		switch {
@@ -336,12 +349,31 @@ func (s *Session) runPull(stream trsf.BidirectionalStream, full string) {
 		_ = writeAck(stream, protocol.FileTransferStatus_IoError, 0)
 		return
 	}
-	if err := writeAck(stream, protocol.FileTransferStatus_Ok, uint64(st.Size())); err != nil {
+	total := uint64(st.Size())
+	// Past the end is an empty ok rather than an error: a caller paging through
+	// a file that shrank must be able to tell "there is nothing there" from
+	// "the read failed", and a status collapses the two.
+	if offset >= total {
+		_ = writeAckRange(stream, protocol.FileTransferStatus_Ok, 0, total)
+		_ = stream.AppendData(true)
 		return
 	}
-	// Stream the file body to the client. Errors are silent; the client
-	// will see a short read.
-	_, _ = io.Copy(stream, f)
+	n := total - offset
+	if length > 0 && length < n {
+		n = length
+	}
+	if offset > 0 {
+		if _, err := f.Seek(int64(offset), io.SeekStart); err != nil {
+			_ = writeAckRange(stream, protocol.FileTransferStatus_IoError, 0, total)
+			return
+		}
+	}
+	if err := writeAckRange(stream, protocol.FileTransferStatus_Ok, n, total); err != nil {
+		return
+	}
+	// Stream the slice to the client. Errors are silent; the client sees a
+	// short read against the size it was just acked.
+	_, _ = io.CopyN(stream, f, int64(n))
 	_ = stream.AppendData(true)
 }
 

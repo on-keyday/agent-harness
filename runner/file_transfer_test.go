@@ -1238,3 +1238,137 @@ func TestFileTransferAckWidthAndRoundTrip(t *testing.T) {
 		t.Fatalf("round trip gave actual=%d total=%d", out.ActualSize, out.TotalSize)
 	}
 }
+
+// pullRangeCase drives one ranged pull against a 100-byte file and returns the
+// ack plus the body, so each case below states only its inputs and its three
+// assertions.
+func pullRangeCase(t *testing.T, dir protocol.FileTransferDirection, offset, length uint64) (*protocol.FileTransferAck, []byte) {
+	t.Helper()
+	tmp := t.TempDir()
+	content := make([]byte, 100)
+	for i := range content {
+		content[i] = byte(i)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "r.bin"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	taskIDHex := "0000000000000000000000000000ab01"
+	taskID := mustParseTaskID(t, taskIDHex)
+
+	sess := &Session{NoWorktree: true}
+	sess.initMaps()
+	sess.tasks[taskIDHex] = &taskEntry{repoPath: tmp}
+
+	clientEnd, runnerEnd := newMemoryBidiPair()
+	sess.Streams = staticStreamLookup{1: runnerEnd}
+
+	req := &protocol.RunnerOpenFileTransferRequest{
+		TaskId:    taskID,
+		StreamId:  1,
+		Direction: dir,
+		Offset:    offset,
+		Length:    length,
+	}
+	req.SetRelPath([]byte("r.bin"))
+
+	go sess.handleOpenFileTransfer(context.Background(), req)
+
+	ack := readAck(t, clientEnd)
+	body, err := io.ReadAll(streamReader(clientEnd))
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	return ack, body
+}
+
+func pullRangeContent(from, to int) []byte {
+	out := make([]byte, 0, to-from)
+	for i := from; i < to; i++ {
+		out = append(out, byte(i))
+	}
+	return out
+}
+
+// total_size is asserted in every case: it is the number the ack change exists
+// to carry, and it is the one a whole-file pull could never have told apart.
+func TestRunPullRangeMidFile(t *testing.T) {
+	ack, body := pullRangeCase(t, protocol.FileTransferDirection_Pull, 10, 10)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("status = %v", ack.Status)
+	}
+	if ack.ActualSize != 10 || ack.TotalSize != 100 {
+		t.Fatalf("actual=%d total=%d, want 10/100", ack.ActualSize, ack.TotalSize)
+	}
+	if !bytes.Equal(body, pullRangeContent(10, 20)) {
+		t.Fatalf("body = %v", body)
+	}
+}
+
+func TestRunPullRangeLengthPastEOFIsClamped(t *testing.T) {
+	ack, body := pullRangeCase(t, protocol.FileTransferDirection_Pull, 90, 999)
+	if ack.ActualSize != 10 || ack.TotalSize != 100 {
+		t.Fatalf("actual=%d total=%d, want 10/100", ack.ActualSize, ack.TotalSize)
+	}
+	if !bytes.Equal(body, pullRangeContent(90, 100)) {
+		t.Fatalf("body = %v", body)
+	}
+}
+
+func TestRunPullRangeOffsetAtEOFIsEmptyOk(t *testing.T) {
+	ack, body := pullRangeCase(t, protocol.FileTransferDirection_Pull, 100, 0)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("status = %v, want ok", ack.Status)
+	}
+	if ack.ActualSize != 0 || ack.TotalSize != 100 {
+		t.Fatalf("actual=%d total=%d, want 0/100", ack.ActualSize, ack.TotalSize)
+	}
+	if len(body) != 0 {
+		t.Fatalf("body = %v, want empty", body)
+	}
+}
+
+// Past the end is ok-with-nothing, not an error: a caller paging a file that
+// shrank has to be able to tell that apart from a failed read, and a status
+// collapses them.
+func TestRunPullRangeOffsetPastEOFIsEmptyOk(t *testing.T) {
+	ack, body := pullRangeCase(t, protocol.FileTransferDirection_Pull, 5000, 0)
+	if ack.Status != protocol.FileTransferStatus_Ok {
+		t.Fatalf("status = %v, want ok", ack.Status)
+	}
+	if ack.ActualSize != 0 || ack.TotalSize != 100 {
+		t.Fatalf("actual=%d total=%d, want 0/100", ack.ActualSize, ack.TotalSize)
+	}
+	if len(body) != 0 {
+		t.Fatalf("body = %v, want empty", body)
+	}
+}
+
+// The default path, asserted so the zero value cannot regress.
+func TestRunPullWholeFileUnchanged(t *testing.T) {
+	ack, body := pullRangeCase(t, protocol.FileTransferDirection_Pull, 0, 0)
+	if ack.ActualSize != 100 || ack.TotalSize != 100 {
+		t.Fatalf("actual=%d total=%d, want 100/100", ack.ActualSize, ack.TotalSize)
+	}
+	if !bytes.Equal(body, pullRangeContent(0, 100)) {
+		t.Fatalf("body length = %d", len(body))
+	}
+}
+
+func TestRangeOnNonPullDirectionIsRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		dir            protocol.FileTransferDirection
+		offset, length uint64
+	}{
+		{"dir_pull with offset", protocol.FileTransferDirection_DirPull, 1, 0},
+		{"push with length", protocol.FileTransferDirection_Push, 0, 1},
+		{"delete with offset", protocol.FileTransferDirection_Delete, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ack, _ := pullRangeCase(t, tc.dir, tc.offset, tc.length)
+			if ack.Status != protocol.FileTransferStatus_RangeInvalid {
+				t.Fatalf("status = %v, want range_invalid", ack.Status)
+			}
+		})
+	}
+}
