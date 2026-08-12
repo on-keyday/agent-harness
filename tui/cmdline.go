@@ -178,6 +178,8 @@ type FilePullAction struct {
 	LocalDst  string
 	Recursive bool
 	Force     bool
+	Offset    uint64
+	Length    uint64 // 0 = to end of file
 }
 
 // FileDeleteAction removes a path from a task's worktree. Recursive uses
@@ -715,16 +717,27 @@ func parseFile(args []string) (Action, error) {
 		fs.BoolVar(recursive, "r", false, "")
 		force := fs.Bool("force", false, "")
 		fs.BoolVar(force, "f", false, "")
+		offset := fs.Uint64("offset", 0, "")
+		fs.Uint64Var(offset, "o", 0, "")
+		length := fs.Uint64("length", 0, "")
+		fs.Uint64Var(length, "n", 0, "")
 		if err := fs.Parse(rest); err != nil {
 			return nil, fmt.Errorf("file pull: %w", err)
 		}
 		pargs := fs.Args()
 		if len(pargs) != 3 {
-			return nil, fmt.Errorf("file pull: usage: file pull [-r] [-f] <task-id> <worktree-rel-src> <local-dst>")
+			return nil, fmt.Errorf("file pull: usage: file pull [-r] [-f] [-o off] [-n len] <task-id> <worktree-rel-src> <local-dst>")
+		}
+		// A directory pull is a generated tar; its byte offsets are not a
+		// stable thing to index into, so the combination is refused here
+		// rather than sent for the runner to reject.
+		if *recursive && (*offset != 0 || *length != 0) {
+			return nil, fmt.Errorf("file pull: -o/-n cannot be combined with -r")
 		}
 		return FilePullAction{
 			TaskID: pargs[0], RemoteSrc: pargs[1], LocalDst: pargs[2],
 			Recursive: *recursive, Force: *force,
+			Offset: *offset, Length: *length,
 		}, nil
 	case "delete":
 		fs := flag.NewFlagSet("file delete", flag.ContinueOnError)

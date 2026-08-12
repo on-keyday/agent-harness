@@ -1044,3 +1044,25 @@ func TestParseGitFileWithSubrepo(t *testing.T) {
 		t.Fatalf("action = %+v", a)
 	}
 }
+
+func TestParseFilePullRange(t *testing.T) {
+	got, err := ParseCommand(`file pull -o 10 -n 20 deadbeef rel/file.txt ./local.txt`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	act, ok := got.(FilePullAction)
+	if !ok {
+		t.Fatalf("got %T", got)
+	}
+	if act.Offset != 10 || act.Length != 20 {
+		t.Fatalf("offset=%d length=%d, want 10/20", act.Offset, act.Length)
+	}
+}
+
+// A directory pull is a generated tar; its byte offsets mean nothing stable,
+// so the combination is refused at parse time rather than sent.
+func TestParseFilePullRangeWithRecursiveIsRejected(t *testing.T) {
+	if _, err := ParseCommand(`file pull -r -o 10 deadbeef rel ./local`, "/cwd"); err == nil {
+		t.Fatal("want an error for -r with -o")
+	}
+}

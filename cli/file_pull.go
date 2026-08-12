@@ -18,8 +18,13 @@ import (
 
 // FilePull copies remoteRel from the task's worktree to localPath. If the
 // runner reports a non-ok ack, no local file is created.
-func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string, force bool) error {
-	return c.filePullDo(ctx, taskIDHex, remoteRel, FileTransferRange{}, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
+//
+// rng takes a parameter here rather than a separate FilePullRange, because the
+// return type does not change: the caller wanted a file written, and it gets
+// one. FilePullBytesRange is a separate function only because it has to hand
+// back the file's total size alongside the bytes.
+func (c *Client) FilePull(ctx context.Context, taskIDHex, remoteRel, localPath string, rng FileTransferRange, force bool) error {
+	return c.filePullDo(ctx, taskIDHex, remoteRel, rng, func(stream trsf.BidirectionalStream, expectedSize, _ uint64) error {
 		flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
 		if force {
 			flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC

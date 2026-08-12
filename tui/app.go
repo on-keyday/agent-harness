@@ -2211,7 +2211,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file ls <task-id> [<rel>]                          - list a directory in the task's worktree (root if rel omitted)")
 		a.cmdresult.Append("file push [-r] [-f] [-p] <task-id> <local-src> <rel-dst>  - copy a local file/dir into the worktree (-r tar, -f overwrite, -p mkdir parents)")
 		a.cmdresult.Append("file mkdir [-p] <task-id> <rel-dir>                - create a directory in the worktree (-p: mkdir -p)")
-		a.cmdresult.Append("file pull [-r] [-f] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
+		a.cmdresult.Append("file pull [-r] [-f] [-o off] [-n len] <task-id> <rel-src> <local-dst>  - copy from the worktree to a local path")
 		a.cmdresult.Append("file delete [-r [-f]] <task-id> <rel>              - remove a file (no -r) or directory (-r empty / -r -f recursive)")
 		a.cmdresult.Append("file edit <task-id> <rel>                          - open a text file in the editor popup and push it back (ctrl+j save, ctrl+o $EDITOR)")
 		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
@@ -2447,7 +2447,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render(errStr))
 			return a, nil
 		}
-		return a, DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force)
+		return a, DoFilePull(a.client, full, v.RemoteSrc, v.LocalDst, v.Recursive, v.Force,
+			cli.FileTransferRange{Offset: v.Offset, Length: v.Length})
 	case FileDeleteAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {

@@ -403,18 +403,28 @@ func main() {
 			fs.BoolVar(recursive, "r", false, "alias for --recursive")
 			force := fs.Bool("force", false, "overwrite existing destination")
 			fs.BoolVar(force, "f", false, "alias for --force")
+			offset := fs.Uint64("offset", 0, "first byte to pull (single-file pull only)")
+			length := fs.Uint64("length", 0, "max bytes to pull; 0 = to end of file")
 			fs.Parse(rest)
 			pargs := fs.Args()
 			if len(pargs) != 3 {
-				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull [-r] [-f] <task-id> <worktree-rel-src> <local-dst>")
+				fmt.Fprintln(os.Stderr, "usage: harness-cli file pull [-r] [-f] [--offset N] [--length N] <task-id> <worktree-rel-src> <local-dst>")
 				os.Exit(2)
 			}
 			if *recursive {
+				// A directory pull is a generated tar, whose byte offsets are
+				// not a stable thing to index into. Refused here rather than
+				// sent, so the message names the combination.
+				if *offset != 0 || *length != 0 {
+					fmt.Fprintln(os.Stderr, "file pull: --offset/--length cannot be combined with --recursive")
+					os.Exit(2)
+				}
 				if err := c.FilePullDir(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
 					die(err)
 				}
 			} else {
-				if err := c.FilePull(ctx, pargs[0], pargs[1], pargs[2], *force); err != nil {
+				rng := cli.FileTransferRange{Offset: *offset, Length: *length}
+				if err := c.FilePull(ctx, pargs[0], pargs[1], pargs[2], rng, *force); err != nil {
 					die(err)
 				}
 			}

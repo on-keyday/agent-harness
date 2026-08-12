@@ -573,7 +573,7 @@ func (m FilePickerModel) commitInputPath(path string) (FilePickerModel, tea.Cmd)
 		}
 		m.inputMode = pickerNone
 		m.localBrowseActive = false
-		return m, DoFilePull(m.client, m.taskID, src, path, recursive, true)
+		return m, DoFilePull(m.client, m.taskID, src, path, recursive, true, cli.FileTransferRange{})
 	}
 	return m, nil
 }
@@ -793,7 +793,7 @@ func (m FilePickerModel) handlePullOverwriteKey(k tea.KeyMsg) (FilePickerModel, 
 		m.pendingPullRecursive = false
 		m.inputMode = pickerNone
 		m.localBrowseActive = false
-		return m, DoFilePull(m.client, m.taskID, src, dst, rec, true)
+		return m, DoFilePull(m.client, m.taskID, src, dst, rec, true, cli.FileTransferRange{})
 	case "n", "N", "esc":
 		m.pendingPullSrc = ""
 		m.pendingPullDst = ""

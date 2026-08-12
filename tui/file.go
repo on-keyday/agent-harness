@@ -94,7 +94,7 @@ func DoFileMkdir(c *cli.Client, taskID, relPath string, parents bool) tea.Cmd {
 // The recursive variant uses dir_pull (tar over the wire); the
 // non-recursive variant uses the single-file pull path with optional
 // force overwrite of the local destination.
-func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, force bool) tea.Cmd {
+func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, force bool, rng cli.FileTransferRange) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -102,7 +102,7 @@ func DoFilePull(c *cli.Client, taskID, remoteSrc, localDst string, recursive, fo
 		if recursive {
 			err = c.FilePullDir(ctx, taskID, remoteSrc, localDst, force)
 		} else {
-			err = c.FilePull(ctx, taskID, remoteSrc, localDst, force)
+			err = c.FilePull(ctx, taskID, remoteSrc, localDst, rng, force)
 		}
 		return FileResultMsg{
 			Op:     "pull",
