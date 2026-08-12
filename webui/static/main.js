@@ -432,7 +432,19 @@ const POLL_INTERVAL_MS = 5000;
 
   // Preview never pulls more than this into browser memory; oversize files
   // are rejected up front using the size from fileLs (no fetch attempted).
-  const PREVIEW_MAX_BYTES = 1 * 1024 * 1024; // 1 MiB
+  // Preview caps are per renderer, not one number, because the renderers do
+  // very different things with the bytes. Only the EXTENSION is known here:
+  // the check runs on the size from fileLs so an oversize file is refused
+  // without being pulled, and isLikelyBinary needs the bytes themselves, so a
+  // binary file with no telling extension is capped as text.
+  const PREVIEW_MAX_BYTES_HTML  = 8 * 1024 * 1024; // decoded to a string, then srcdoc
+  const PREVIEW_MAX_BYTES_IMAGE = 8 * 1024 * 1024; // Blob + object URL; the browser owns the decode
+  const PREVIEW_MAX_BYTES       = 4 * 1024 * 1024; // <pre>: layout cost grows with the line count
+  function previewMaxBytesFor(name) {
+    if (isHtmlExt(name)) return PREVIEW_MAX_BYTES_HTML;
+    if (isImageExt(name)) return PREVIEW_MAX_BYTES_IMAGE;
+    return PREVIEW_MAX_BYTES;
+  }
   // Binary files are rendered as a hex dump truncated to this many bytes.
   const HEX_PREVIEW_MAX_BYTES = 4 * 1024;    // 4 KiB
   // Object URL held open for an image preview; revoked when the modal closes.
@@ -1125,16 +1137,23 @@ const POLL_INTERVAL_MS = 5000;
     const rel = joinFsPath(filePickerCurDir, sel.name);
     // Reject oversize before fetching — sel.size comes from fileLs, so we
     // never pull a huge file into browser memory just to refuse it.
-    if (sel.size > PREVIEW_MAX_BYTES) {
+    const cap = previewMaxBytesFor(sel.name);
+    if (sel.size > cap) {
       openFilePreview(rel, sel.size, null,
-        `File is too large to preview (${sel.size} bytes, limit ${PREVIEW_MAX_BYTES}). Use Pull to download it.`);
+        `File is too large to preview (${formatBytes(sel.size)}, limit ${formatBytes(cap)} for this type). Use Pull to download it.`);
       return;
     }
+    // Same progress row the Pull button uses. At the caps above a pull is
+    // seconds long over wasm, and without this the modal opens on a page that
+    // has simply stopped.
+    const fp = beginFileProgress(sel.name);
     try {
-      const bytes = await window.harness.filePullBytes(taskID, rel);
+      const bytes = await window.harness.filePullBytes(taskID, rel, fp.onProgress);
       renderFilePreview(rel, sel.size, sel.name, bytes);
     } catch (e) {
       openFilePreview(rel, sel.size, null, `preview error: ${e.message}`);
+    } finally {
+      fp.end();
     }
   });
 
