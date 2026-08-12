@@ -261,6 +261,12 @@
            inputmode="numeric" autocomplete="off" spellcheck="false"
            placeholder="API host:port"
            title="Let the rendered page fetch this port inside the task (empty = no network)">
+    <!-- Rendered-HTML-only. Off means alert/confirm/prompt, window.open and
+         downloads stay inert; a page that calls prompt() sees null. -->
+    <label id="file-preview-modals-label" class="preview-modals" hidden
+           title="Let the page use alert / confirm / prompt, window.open and downloads. These interrupt your tab while open.">
+      <input id="file-preview-modals" type="checkbox"> dialogs
+    </label>
     <button id="file-preview-close" class="preview-close" aria-label="Close">✕</button>
   </div>
   <div id="file-preview-body" class="preview-body"></div>

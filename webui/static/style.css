@@ -638,6 +638,16 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   padding: 0 0.5em;
 }
 .preview-api::placeholder { color: #777; }
+.preview-modals {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  color: #d4d4d4;
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+.preview-modals[hidden] { display: none; }
 .preview-api[hidden] { display: none; }
 .preview-body iframe.preview-iframe {
   width: 100%;

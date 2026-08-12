@@ -408,6 +408,8 @@ const POLL_INTERVAL_MS = 5000;
   const filePreviewCopy   = document.getElementById("file-preview-copy");
   const filePreviewEdit   = document.getElementById("file-preview-edit");
   const filePreviewApi    = document.getElementById("file-preview-api");
+  const filePreviewModals = document.getElementById("file-preview-modals");
+  const filePreviewModalsLabel = document.getElementById("file-preview-modals-label");
   // The host:port the OPERATOR pinned for the rendered preview, or null. This
   // is the only thing the bridge below trusts: the shim runs in the page's own
   // realm and can be deleted or lied to by the page it is meant to constrain.
@@ -447,6 +449,11 @@ const POLL_INTERVAL_MS = 5000;
   }
   // Binary files are rendered as a hex dump truncated to this many bytes.
   const HEX_PREVIEW_MAX_BYTES = 4 * 1024;    // 4 KiB
+  // Sandbox tokens for the rendered-HTML iframe. See showHtmlPreview for why
+  // the split is "does this interrupt the operator", and why allow-same-origin
+  // appears in neither list.
+  const PREVIEW_SANDBOX_BASE = "allow-scripts allow-forms allow-pointer-lock";
+  const PREVIEW_SANDBOX_INTERRUPTING = "allow-modals allow-popups allow-downloads";
   // Object URL held open for an image preview; revoked when the modal closes.
   let filePreviewObjectURL = null;
 
@@ -1187,6 +1194,8 @@ const POLL_INTERVAL_MS = 5000;
     previewApiInFlight = 0;
     filePreviewApi.hidden = true;
     filePreviewApi.value = "";
+    filePreviewModalsLabel.hidden = true;
+    filePreviewModals.checked = false;
     filePreviewCopyPayload = null;
     filePreviewCopy.hidden = true;
     filePreviewEditRel = null;
@@ -1240,10 +1249,23 @@ const POLL_INTERVAL_MS = 5000;
     if (mode === "render") {
       const iframe = document.createElement("iframe");
       iframe.className = "preview-iframe";
-      // SECURITY: allow-scripts WITHOUT allow-same-origin => opaque origin,
-      // cannot reach the WebUI origin / trsf / DOM / storage. Do not add
-      // allow-same-origin.
-      iframe.setAttribute("sandbox", "allow-scripts");
+      // SECURITY: allow-same-origin is NEVER granted, with or without the
+      // toggle — an opaque origin is what keeps the page away from the WebUI
+      // origin / trsf / DOM / storage, and it is the whole basis of rendering
+      // attacker-influenced HTML at all.
+      //
+      // The rest are graded by whether they INTERRUPT THE OPERATOR, not by
+      // whether the page can reach the network: srcdoc previews carry no CSP,
+      // so a page can already send requests out through ordinary subresource
+      // loads and fetch (CORS hides the responses, not the requests). Forms
+      // and pointer-lock therefore add no reach and ride along by default,
+      // while modals, popups and downloads each seize the operator's tab —
+      // a page looping on alert() makes the tab unusable until it is closed,
+      // which on a phone means killing it. Those wait for an explicit opt-in,
+      // default off, like the API pin.
+      iframe.setAttribute("sandbox", filePreviewModals.checked
+        ? PREVIEW_SANDBOX_BASE + " " + PREVIEW_SANDBOX_INTERRUPTING
+        : PREVIEW_SANDBOX_BASE);
       // An empty pin injects nothing: no shim, no marker, no reach. That is
       // byte-for-byte the behaviour that shipped before the pin existed, and it
       // is the default every time the modal opens.
@@ -1265,6 +1287,7 @@ const POLL_INTERVAL_MS = 5000;
     // Source view has no realm to constrain, so the input only makes sense
     // while something is actually rendering.
     filePreviewApi.hidden = mode !== "render";
+    filePreviewModalsLabel.hidden = mode !== "render";
     // Copy always yields the raw HTML source, regardless of render/source view.
     showPreviewCopy({ text });
     // HTML is text: offer Edit in both the rendered and the source view.
@@ -1298,6 +1321,12 @@ const POLL_INTERVAL_MS = 5000;
   // to exist before the page's scripts run, so it cannot be added to a page
   // that is already running.
   filePreviewApi.addEventListener("change", () => {
+    if (filePreviewHtml && filePreviewHtml.mode === "render") showHtmlPreview();
+  });
+
+  // sandbox is read when the iframe is created, so granting dialogs means
+  // building a new frame — the page restarts, exactly as it does for the pin.
+  filePreviewModals.addEventListener("change", () => {
     if (filePreviewHtml && filePreviewHtml.mode === "render") showHtmlPreview();
   });
 
