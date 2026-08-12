@@ -250,6 +250,8 @@
 <dialog id="file-preview-modal" class="preview-modal">
   <div class="preview-header">
     <span id="file-preview-title" class="preview-title"></span>
+    <button id="file-preview-reload" class="preview-toggle" hidden
+            title="Pull this file again — an agent may have rewritten it since the preview opened">↻ Reload</button>
     <button id="file-preview-toggle" class="preview-toggle" hidden>View source</button>
     <button id="file-preview-copy" class="preview-toggle preview-copy" hidden
             title="Copy file contents to clipboard">Copy</button>
@@ -263,6 +265,12 @@
            title="Let the rendered page fetch this port inside the task (empty = no network)">
     <!-- Rendered-HTML-only. Off means alert/confirm/prompt, window.open and
          downloads stay inert; a page that calls prompt() sees null. -->
+    <!-- Opt-in, like the dialogs toggle: re-pull the file on every rebuild of
+         the view rather than reusing the bytes the modal opened with. -->
+    <label id="file-preview-refetch-label" class="preview-modals" hidden
+           title="Re-pull the file whenever the view is rebuilt (view toggle, API target, dialogs)">
+      <input id="file-preview-refetch" type="checkbox"> refetch
+    </label>
     <label id="file-preview-modals-label" class="preview-modals" hidden
            title="Let the page use alert / confirm / prompt, window.open and downloads. These interrupt your tab while open.">
       <input id="file-preview-modals" type="checkbox"> dialogs

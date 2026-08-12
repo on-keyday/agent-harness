@@ -408,6 +408,13 @@ const POLL_INTERVAL_MS = 5000;
   const filePreviewCopy   = document.getElementById("file-preview-copy");
   const filePreviewEdit   = document.getElementById("file-preview-edit");
   const filePreviewApi    = document.getElementById("file-preview-api");
+  const filePreviewReload = document.getElementById("file-preview-reload");
+  const filePreviewRefetch = document.getElementById("file-preview-refetch");
+  const filePreviewRefetchLabel = document.getElementById("file-preview-refetch-label");
+  // What the open preview was loaded from, so Reload and the opt-in refetch can
+  // re-pull it. filePickerSelected is not usable for that: the picker keeps
+  // working behind the modal.
+  let previewSource = null;
   const filePreviewModals = document.getElementById("file-preview-modals");
   const filePreviewModalsLabel = document.getElementById("file-preview-modals-label");
   // The host:port the OPERATOR pinned for the rendered preview, or null. This
@@ -1142,30 +1149,32 @@ const POLL_INTERVAL_MS = 5000;
     }
   });
 
-  filePreviewBtn.addEventListener("click", async () => {
-    const taskID = fileTaskSelect.value;
-    if (!taskID || !filePickerSelected || filePickerSelected.isDir) return;
-    const sel = filePickerSelected;
-    const rel = joinFsPath(filePickerCurDir, sel.name);
-    // Oversize is no longer refused: the cap now bounds how much is PULLED,
-    // and anything beyond it renders as a head with a note.
-    const cap = previewMaxBytesFor(sel.name);
+  // loadPreview pulls the file and renders it. Split out of the Preview button
+  // so Reload and the opt-in refetch drive exactly the same path — a second
+  // copy would drift, and the caps and the two-step sniff are the fiddly part.
+  //
+  // The length asked for is the CAP, never the size from the listing: the
+  // runner clamps a range past EOF, so this stays correct when the file has
+  // changed since the picker last listed it — which is the whole point of a
+  // reload.
+  async function loadPreview(taskID, rel, name, preferredMode) {
+    const cap = previewMaxBytesFor(name);
     // Same progress row the Pull button uses. At these caps a pull is seconds
     // long over wasm, and without it the modal opens on a page that has simply
     // stopped.
-    const fp = beginFileProgress(sel.name);
+    const fp = beginFileProgress(name);
     try {
       let bytes, total;
-      if (isHtmlExt(sel.name) || isImageExt(sel.name)) {
+      if (isHtmlExt(name) || isImageExt(name)) {
         // The extension settles which renderer runs, so one request is enough.
-        ({ bytes, total } = await pullPreviewSlice(taskID, rel, 0, Math.min(sel.size, cap), fp));
+        ({ bytes, total } = await pullPreviewSlice(taskID, rel, 0, cap, fp));
       } else {
         // Unknown type: fetch only what a hex dump would show, decide from
         // those bytes, and continue only if it turns out to be text. This is
         // what stops a multi-megabyte binary being pulled in full to render
         // 4 KiB of hex — isLikelyBinary needs the bytes, so the decision
         // cannot be made before the first read.
-        const head = await pullPreviewSlice(taskID, rel, 0, Math.min(sel.size, HEX_PREVIEW_MAX_BYTES), fp);
+        const head = await pullPreviewSlice(taskID, rel, 0, Math.min(cap, HEX_PREVIEW_MAX_BYTES), fp);
         total = head.total;
         if (isLikelyBinary(head.bytes) || head.total <= HEX_PREVIEW_MAX_BYTES) {
           bytes = head.bytes;
@@ -1177,23 +1186,46 @@ const POLL_INTERVAL_MS = 5000;
           bytes.set(rest.bytes, head.bytes.length);
         }
       }
-      renderFilePreview(rel, sel.size, sel.name, bytes);
+      // total, not the listing's size: after a reload the title should say how
+      // big the file is NOW.
+      previewSource = { taskID, rel, name };
+      renderFilePreview(rel, total, name, bytes);
+      // renderFilePreview always opens HTML rendered; a reload triggered from
+      // the source view must not silently flip the view under the operator.
+      if (preferredMode === "source" && filePreviewHtml) {
+        filePreviewHtml.mode = "source";
+        showHtmlPreview();
+      }
       if (bytes.byteLength < total) {
-        const p = document.createElement("p");
-        p.className = "preview-note";
         // Say what is MISSING, not two totals. formatBytes rounds to one
         // decimal, so a file 200 bytes past the cap rendered as "showing the
         // first 4.0 MB of 4.0 MB" — the same number twice, next to a demand to
         // download the rest. The remainder cannot collide: the note only exists
         // when it is at least one byte.
-        p.textContent = `showing the first ${formatBytes(bytes.byteLength)} — ${formatBytes(total - bytes.byteLength)} not shown. Use Pull to download the whole file.`;
-        filePreviewBody.appendChild(p);
+        appendPreviewNote(`showing the first ${formatBytes(bytes.byteLength)} — ${formatBytes(total - bytes.byteLength)} not shown. Use Pull to download the whole file.`);
       }
+      showPreviewReload();
     } catch (e) {
-      openFilePreview(rel, sel.size, null, `preview error: ${e.message}`);
+      openFilePreview(rel, 0, null, `preview error: ${e.message}`);
     } finally {
       fp.end();
     }
+  }
+
+  filePreviewBtn.addEventListener("click", async () => {
+    const taskID = fileTaskSelect.value;
+    if (!taskID || !filePickerSelected || filePickerSelected.isDir) return;
+    const sel = filePickerSelected;
+    await loadPreview(taskID, joinFsPath(filePickerCurDir, sel.name), sel.name);
+  });
+
+  // Reload re-pulls the open preview. The file is usually being written by an
+  // agent while it is on screen, so the bytes the modal opened with go stale
+  // within seconds.
+  filePreviewReload.addEventListener("click", () => {
+    if (!previewSource) return;
+    const { taskID, rel, name } = previewSource;
+    loadPreview(taskID, rel, name, filePreviewHtml && filePreviewHtml.mode);
   });
 
   fileEditBtn.addEventListener("click", async () => {
@@ -1229,6 +1261,10 @@ const POLL_INTERVAL_MS = 5000;
     releasePreviewPin();
     filePreviewApi.hidden = true;
     filePreviewApi.value = "";
+    filePreviewReload.hidden = true;
+    filePreviewRefetchLabel.hidden = true;
+    filePreviewRefetch.checked = false;
+    previewSource = null;
     filePreviewModalsLabel.hidden = true;
     filePreviewModals.checked = false;
     filePreviewCopyPayload = null;
@@ -1260,6 +1296,10 @@ const POLL_INTERVAL_MS = 5000;
     // hex dumps and the oversize note never offer it.
     filePreviewEditRel = null;
     filePreviewEdit.hidden = true;
+    // Reload and refetch likewise: loadPreview re-enables them on success, so
+    // the error path does not offer to reload something that never loaded.
+    filePreviewReload.hidden = true;
+    filePreviewRefetchLabel.hidden = true;
     filePreviewTitle.textContent = `${rel}  (${size} bytes)`;
     filePreviewBody.innerHTML = "";
     if (bodyNode) {
@@ -1339,6 +1379,9 @@ const POLL_INTERVAL_MS = 5000;
     filePreviewModalsLabel.hidden = mode !== "render";
     // Copy always yields the raw HTML source, regardless of render/source view.
     showPreviewCopy({ text });
+    // Re-enable Reload here too: this path rebuilds from cached bytes without
+    // going through loadPreview, and openFilePreview has just hidden them.
+    showPreviewReload();
     // HTML is text: offer Edit in both the rendered and the source view.
     showPreviewEdit(rel);
   }
@@ -1359,10 +1402,22 @@ const POLL_INTERVAL_MS = 5000;
     }
   });
 
+  // rebuildPreview is every path that re-renders the open preview. With refetch
+  // on it re-pulls first, which is the point: the bytes the modal opened with
+  // go stale the moment an agent writes the file again.
+  function rebuildPreview(mode) {
+    if (filePreviewRefetch.checked && previewSource) {
+      const { taskID, rel, name } = previewSource;
+      loadPreview(taskID, rel, name, mode);
+      return;
+    }
+    showHtmlPreview();
+  }
+
   filePreviewToggle.addEventListener("click", () => {
     if (!filePreviewHtml) return;
     filePreviewHtml.mode = filePreviewHtml.mode === "render" ? "source" : "render";
-    showHtmlPreview();
+    rebuildPreview(filePreviewHtml.mode);
   });
 
   // Changing the target rebuilds the iframe from the bytes already in hand —
@@ -1370,7 +1425,7 @@ const POLL_INTERVAL_MS = 5000;
   // to exist before the page's scripts run, so it cannot be added to a page
   // that is already running.
   filePreviewApi.addEventListener("change", () => {
-    if (filePreviewHtml && filePreviewHtml.mode === "render") showHtmlPreview();
+    if (filePreviewHtml && filePreviewHtml.mode === "render") rebuildPreview("render");
   });
 
   // releasePreviewPin drops the registration if there is one. Safe to call when
@@ -1403,7 +1458,7 @@ const POLL_INTERVAL_MS = 5000;
   // sandbox is read when the iframe is created, so granting dialogs means
   // building a new frame — the page restarts, exactly as it does for the pin.
   filePreviewModals.addEventListener("change", () => {
-    if (filePreviewHtml && filePreviewHtml.mode === "render") showHtmlPreview();
+    if (filePreviewHtml && filePreviewHtml.mode === "render") rebuildPreview("render");
   });
 
   // The preview shim relays the page's fetch()/XHR here. Nothing in this
@@ -1570,6 +1625,16 @@ const POLL_INTERVAL_MS = 5000;
     openFilePreview(rel, size, pre, null);
     showPreviewCopy({ text });
     showPreviewEdit(rel);
+  }
+
+  // showPreviewReload enables Reload and the refetch toggle. Same contract as
+  // showPreviewCopy / showPreviewEdit above: openFilePreview clears them on
+  // every render, so each path that produced a real preview turns them back on
+  // and the error path stays without them.
+  function showPreviewReload() {
+    if (!previewSource) return;
+    filePreviewReload.hidden = false;
+    filePreviewRefetchLabel.hidden = false;
   }
 
   // showPreviewEdit enables the Edit button for the open preview. Called only
