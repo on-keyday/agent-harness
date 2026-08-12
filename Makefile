@@ -55,6 +55,12 @@ test-integration:
 
 vet:
 	@go vet ./...
+# Files behind the `integration` build tag are invisible to the pass above, to
+# `go build ./...` and to `go test ./...`. Only a tagged pass type-checks them.
+# Without this, integration/wake_e2e_test.go sat uncompilable for days after an
+# agentboard signature change: its only other compiler was a CI job nobody was
+# reading, so nothing on the local path could report it.
+	@go vet -tags integration ./...
 
 clean:
 	# Remove only the binaries; leave bin/.run/ alone so scripts/runner.sh

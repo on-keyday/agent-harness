@@ -196,7 +196,11 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	// board.Attach does NOT validate against the ticket registry — validation
 	// is the server's agent_handler's job.  We call it directly here to inject
 	// a subscriber without going through the agentboard wire protocol.
-	conn := board.Attach(fakeRid, realTid, "integration-test")
+	//
+	// The empty agent profile is deliberate: it is sender attestation shown to
+	// other agents, and this subscriber is not running one. agent_handler
+	// passes the real profile there.
+	conn := board.Attach(fakeRid, realTid, "integration-test", "")
 	defer board.Detach(conn)
 	if err := board.Subscribe(conn, "topic/wake-smoke"); err != nil {
 		t.Fatalf("board.Subscribe: %v", err)
@@ -213,7 +217,9 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 	var fromTid protocol.TaskID
 	copy(fromTid.Id[:], rawTid) // use the same task as sender for simplicity
 
-	seq, err := board.Send("topic/wake-smoke", []byte("ping"), fromRid, fromTid, "integration-test")
+	// Empty profile and inReplyTo 0 — the same shape the server uses for its own
+	// synthetic sends (server/await_idle_handler.go). 0 means "not a reply".
+	seq, err := board.Send("topic/wake-smoke", []byte("ping"), fromRid, fromTid, "integration-test", "", 0)
 	if err != nil {
 		t.Fatalf("board.Send: %v", err)
 	}
