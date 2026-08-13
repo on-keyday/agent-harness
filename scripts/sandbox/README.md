@@ -126,11 +126,13 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 - **Network: open by default; opt-in egress allowlist via `--firewall`.** Pass
   `--agent-arg --firewall` (or runner `--agent-args "--firewall"`) to apply a
   default-deny iptables+ipset allowlist inside the container — GitHub IP ranges
-  (api.github.com/meta) + npm/anthropic/pypi + the harness server **+ the
-  container's whole default-route /24**, IPv6 blocked, everything else REJECTed.
-  That /24 is upstream behaviour and it is wider than it looks: on a LAN it
-  allowlists *every host on your local network*, so `--firewall` bounds internet
-  egress, not lateral reach. Adapted from Anthropic's `init-firewall.sh`; runs as
+  (api.github.com/meta) + npm/anthropic/pypi + the harness server + the
+  default-route gateway (**/32**), IPv6 blocked, everything else REJECTed.
+  Upstream allowlists that gateway's whole /24, which stays inside the bridge
+  network under docker; podman rootless defaults to **pasta**, which hands the
+  container the host's own interface, so the same rule would allowlist your
+  entire LAN. This kit narrows it to the gateway /32 — the harness server is
+  reached through its own /32, not through that rule. Adapted from Anthropic's `init-firewall.sh`; runs as
   container-root (needs `--user 0` + `NET_ADMIN`/`NET_RAW`, added automatically)
   then drops to the agent user. **Fail-closed:** if the firewall can't be applied
   the task aborts rather than running unconfined. Two behaviours to know: (1)

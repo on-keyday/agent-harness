@@ -74,13 +74,19 @@ if [ -n "${SANDBOX_SERVER_IP:-}" ]; then
   ipset add allowed-domains "$SANDBOX_SERVER_IP" 2>/dev/null || true
 fi
 
-# Container default-route /24 (upstream behaviour)
+# Default-route gateway, /32 — deliberately NOT upstream's /24.
+#
+# Upstream widens the gateway address to a /24, which is contained on a docker
+# bridge (172.17.0.0/24 is the bridge itself). podman rootless defaults to
+# pasta, which gives the container the HOST's interface configuration — a live
+# run had the container on 192.168.3.14/24 with `default via 192.168.3.1`, so
+# the same line allowlisted the entire LAN in both directions. Keep the gateway
+# alone; the harness server is allowlisted by its own /32 above.
 HOST_IP=$(ip route | awk '/^default/ {print $3; exit}')
 if [ -n "$HOST_IP" ]; then
-  HOST_NET=$(echo "$HOST_IP" | sed 's/\.[0-9]*$/.0\/24/')
-  echo "Allowing default-route network $HOST_NET"
-  iptables -A INPUT  -s "$HOST_NET" -j ACCEPT
-  iptables -A OUTPUT -d "$HOST_NET" -j ACCEPT
+  echo "Allowing default-route gateway $HOST_IP/32"
+  iptables -A INPUT  -s "$HOST_IP/32" -j ACCEPT
+  iptables -A OUTPUT -d "$HOST_IP/32" -j ACCEPT
 fi
 
 # Default DROP, then established + allowlist, REJECT the rest. These are the
