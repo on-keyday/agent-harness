@@ -411,6 +411,90 @@ All three clients, per the repo rule that a feature spans CLI, TUI and WebUI.
 the prune paragraph's convention text is rewritten to describe the enforced
 rule rather than asking the agent to self-restrict.
 
+### 8. Wire skew and upgrade order
+
+Verified against the generated codec, not assumed.
+
+**Field additions break hard, in both directions.** `DecodeExact` rejects
+trailing bytes — `expect no remaining bytes but got %d bytes`
+(`runner/protocol/message.go:273`) — and a short buffer errors
+`not enough data to read for field "…"`. There is no optional-field mechanism
+in the schema, so a new sender talking to an old receiver and an old sender
+talking to a new receiver both fail.
+
+On the server side the failure is silent. `TaskHandler.Handle`
+(`server/task_handler.go:216`) logs the decode error and returns **without
+sending a response**. The client blocks in its round-trip on a context that
+`cmd/harness-cli/main.go:45` builds as `context.Background()` — no deadline —
+so a skewed request presents as a hang until Ctrl-C, not as an error.
+
+**Enum value additions are safe.** Decoding assigns the raw byte with no
+`is_defined` check (`s.Status = SubmitStatus(tmp10332)`,
+`runner/protocol/message.go:13928`) and `String()` falls back to
+`SubmitStatus(%d)` (`message.go:13722`). So `scope_not_permitted` on
+`SubmitStatus` / `OpenInteractiveStatus`, and `CancelResult` with `ok = 0`,
+cannot break an old peer's decode — an unfamiliar status renders as a number.
+
+**Blast radius is client↔server only.** `protocol.TaskControlRequest` appears
+in `cli/` and `server/` and in no other non-test package; the runner never
+decodes it. Changed formats:
+
+| format | direction | change |
+|---|---|---|
+| `SubmitRequest` | client→server | `+= scope :TaskScope` |
+| `OpenInteractiveRequest` | client→server | `+= scope :TaskScope` |
+| `SetCapsRequest` / `SetCapsResponse` | client↔server | new |
+| `TaskInfo` | server→client | `+= scope` |
+| `WhoAmIResponse` | server→client | `+= scope` |
+| `CancelStatus` | server→client | field retyped `u8` → `CancelResult`; bytes unchanged |
+| `SubmitStatus` / `OpenInteractiveStatus` | server→client | new enum value |
+| `TaskControlKind` | client↔server | `set_caps` appended, existing ordinals stable |
+
+No `Runner*` format changes. `AssignTask`, `OpenExecRunnerRequest`,
+`RunnerHello`, the PSK handshake and every file-transfer / port-forward relay
+format are untouched, so **a runner built before this change speaks correctly
+to a server built after it.**
+
+**That is not sufficient, because recovery from the restart runs over the
+formats that changed.** The server must restart, and after WAL replay every
+task still Running is forced to Failed with reason `server_restart`
+(`server/taskstore.go:731`); Detached is deliberately not persisted
+(`taskstore.go:528`), so detached sessions replay as Running and land there
+too. Recovering them *is* resume — and resume travels on `SubmitRequest` and
+`OpenInteractiveRequest`, the two formats this change modifies. An
+un-rebuilt TUI or `harness-cli` therefore fails precisely when it is needed,
+and fails by hanging.
+
+**Order.**
+
+1. `make build` everywhere a client binary lives, and rebuild the wasm.
+   Restart nothing yet.
+2. Run the dummy-harness checks below against a *new* server with a *new*
+   client, including resume of an interactive session. This is the gate.
+3. Restart the server, then the runners
+   (`scripts/build_and_restart_all.py`, self-last).
+4. Resume the sessions the restart failed, using the rebuilt client.
+5. Hard-reload every WebUI tab. A tab holding a cached pre-change wasm is an
+   old client and will hang on submit and resume.
+
+**Rollback** is reverting the server binary. The WAL is JSON and the reader
+sets no `DisallowUnknownFields`, so `task_created` / `task_caps_changed`
+records carrying `scope_base` / `scope_ids` replay cleanly on the old server,
+which ignores them and reproduces the pre-change behaviour.
+
+**One diagnostic fix belongs in this change.** `Handle`'s decode-failure log
+gains the kind, request id and payload length. Both are readable from fixed
+offsets before any union arm — `kind :u8` at byte 0 and `request_id :u32` at
+bytes 1..5 (`runner/protocol/message.go:22450`) — so a skewed client is
+identifiable from one server log line instead of being diagnosed from a hang.
+Replying with a typed decode-error response is deliberately *not* proposed: an
+old client cannot decode a response kind it does not know, so the reply would
+not reach the peer that needs it.
+
+A client-side request deadline would turn the remaining hang into an error,
+but it changes the behaviour of every CLI command and is left out of this
+change.
+
 ## Testing
 
 **Unit (`server/`)**
@@ -427,6 +511,17 @@ rule rather than asking the agent to self-restrict.
   replaying as `subtree`.
 - `scope_completeness_test.go` as described in §3.
 
+**Wire (`runner/protocol/scope_wire_test.go`, beside the existing
+`file_transfer_wire_test.go` / `agent_profile_wire_test.go`)**
+
+- A hand-built pre-change `SubmitRequest` / `OpenInteractiveRequest` payload is
+  rejected by the new decoder with `not enough data`, and a new-layout payload
+  is rejected by a decoder truncated to the old field list with
+  `expect no remaining bytes` — the skew is asserted, not assumed.
+- A `SubmitResponse` carrying `scope_not_permitted` decodes without error under
+  an enum switch that does not know the value, and renders as `SubmitStatus(8)`.
+- `CancelStatus{ok}` encodes to the same single zero byte as before.
+
 **Integration (dummy harness, `scripts/dummy-harness.sh`)**
 
 - A `--scope subtree` child cannot `cancel`, `attach` or `file pull` a sibling,
@@ -437,3 +532,7 @@ rule rather than asking the agent to self-restrict.
   `harness-cli ls` reflects the new set with no restart.
 - The same call while the child holds an attach to a grandchild: the attach
   drops, and the child's own session stays alive.
+- **Resume across the restart, on the new build**: spawn an interactive
+  session, restart the server so the task lands in Failed/`server_restart`,
+  and resume it with the rebuilt client. This is step 2 of the upgrade order
+  and the check that the recovery path itself is not what the change broke.
