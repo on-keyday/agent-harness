@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // TestRunAction_NilClientGuarded verifies that client-requiring cmdline
@@ -20,6 +22,7 @@ func TestRunAction_NilClientGuarded(t *testing.T) {
 		{"prune-id", PruneAction{TaskIDs: []string{id}}},
 		{"prune-time", PruneAction{Before: 0}},
 		{"cancel", CancelAction{IDPrefix: id}},
+		{"caps-set", SetCapsAction{TaskID: id}},
 		{"submit", SubmitAction{Repo: "/r", Prompt: "hi"}},
 		{"notify", NotifyAction{Title: "t", Text: "x"}},
 		{"session-ls", SessionLsAction{}},
@@ -50,6 +53,8 @@ func TestRunAction_NilClientAllowsLocalActions(t *testing.T) {
 		{"help", HelpAction{}},
 		{"clear", ClearAction{}},
 		{"caps-show", CapsAction{Show: true}},
+		{"scope-show", ScopeAction{Show: true}},
+		{"scope-set", ScopeAction{Scope: protocol.TaskScope{Base: protocol.ScopeBase_None}}},
 		{"repo", RepoAction{Path: "/tmp"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -2213,7 +2213,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	// treated as client-requiring, so a future Do*-dispatching action is
 	// guarded by default rather than silently re-opening this panic.
 	switch act.(type) {
-	case QuitAction, ClearAction, HelpAction, RepoAction, CapsAction, RefreshAction, TrsfDebugAction:
+	case QuitAction, ClearAction, HelpAction, RepoAction, CapsAction, ScopeAction, RefreshAction, TrsfDebugAction:
 		// no client needed (Refresh/Trsf carry their own nil-client notice)
 	default:
 		if a.client == nil {
