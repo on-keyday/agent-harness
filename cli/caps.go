@@ -72,6 +72,26 @@ func CapDescription(c protocol.Capability) string {
 	}
 }
 
+// ScopeInfo is the machine-readable description of one scope form, emitted
+// alongside the capability catalog by `harness-cli caps --json`.
+type ScopeInfo struct {
+	Syntax      string `json:"syntax"`
+	Description string `json:"description"`
+}
+
+// ScopesCatalog describes what a --scope value may say. A capability names a
+// verb; a scope names which tasks that verb may be pointed at, and without one
+// every granted bit reaches every task on the server.
+func ScopesCatalog() []ScopeInfo {
+	return []ScopeInfo{
+		{"subtree", "self + every task it spawned, transitively (the default when --scope is omitted)"},
+		{"none", "self only; a task that may create children but not supervise them"},
+		{"global", "every task on the server; the explicit opt-out from confinement"},
+		{"ids:<id>[,<id>]", "self + exactly the named tasks, and nothing else"},
+		{"subtree+ids:<id>", "self + descendants + the named tasks"},
+	}
+}
+
 // CapInfo is the machine-readable description of one capability, emitted by
 // `harness-cli caps --json`.
 type CapInfo struct {
@@ -98,14 +118,36 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(cat)
+		return enc.Encode(struct {
+			Capabilities []CapInfo   `json:"capabilities"`
+			Scopes       []ScopeInfo `json:"scopes"`
+		}{cat, ScopesCatalog()})
 	}
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "CAPABILITY\tBIT\tDESCRIPTION")
+	// Each section gets its own tabwriter. One shared writer would align the
+	// capability column to the width of the scope syntaxes and the trailing
+	// prose, which is how the first version of this came out.
+	capsTW := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(capsTW, "CAPABILITY\tBIT\tDESCRIPTION")
 	for _, ci := range cat {
-		fmt.Fprintf(tw, "%s\t0x%03x\t%s\n", ci.Name, ci.Bit, ci.Description)
+		fmt.Fprintf(capsTW, "%s\t0x%03x\t%s\n", ci.Name, ci.Bit, ci.Description)
 	}
-	return tw.Flush()
+	if err := capsTW.Flush(); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(w)
+	scopeTW := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(scopeTW, "SCOPE\tDESCRIPTION")
+	for _, si := range ScopesCatalog() {
+		fmt.Fprintf(scopeTW, "%s\t%s\n", si.Syntax, si.Description)
+	}
+	if err := scopeTW.Flush(); err != nil {
+		return err
+	}
+
+	_, err := fmt.Fprint(w, "\nA capability names a verb; a scope names which tasks it may target.\n"+
+		"Both attenuate on spawn, and `caps set` re-grants either on a live task.\n")
+	return err
 }
 
 // CapNames returns the string representation of each capability.

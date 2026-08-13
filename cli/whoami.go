@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // WhoAmIWith sends a whoami TaskControl request over an already-connected
@@ -72,11 +72,16 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 			creatorHex = hex.EncodeToString(resp.CreatorTaskId.Id[:])
 		}
 		_, err := fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q}\n",
-			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities))
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q}\n",
+			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope))
 		return err
 	}
 	caps := "caps=" + CapsLabel(resp.Capabilities)
+	// The default subtree scope is the common case and would be noise on every
+	// line; only a narrowed or widened one is worth the width.
+	if !IsDefaultScope(resp.Scope) {
+		caps += "  scope=" + ScopeLabel(resp.Scope)
+	}
 	if operator {
 		_, err := fmt.Fprintf(out, "operator  %s\n", caps)
 		return err

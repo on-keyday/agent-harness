@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -190,6 +190,11 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 			createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
 		}
 		caps := "  caps=" + CapsLabel(t.Capabilities)
+		// Only a non-default scope earns row width: subtree is what almost
+		// every task has and repeating it would push the prompt off screen.
+		if !IsDefaultScope(t.Scope) {
+			caps += "  scope=" + ScopeLabel(t.Scope)
+		}
 		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s%s%s%s%s  prompt=%q%s\n",
 			taskIDStr(t.Id.Id[:]),
 			taskStatusStr(t.Status),
@@ -239,6 +244,7 @@ type taskJSON struct {
 	ResumedBy    string `json:"resumed_by,omitempty"`
 	Activity     string `json:"activity,omitempty"`
 	Caps         string `json:"caps"`
+	Scope        string `json:"scope"`
 	CreatedBy    string `json:"created_by,omitempty"`
 	Prompt       string `json:"prompt"`
 	ExitCode     int32  `json:"exit_code"`
@@ -323,6 +329,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		ResumedBy:    resumedBy,
 		Activity:     activity,
 		Caps:         CapsLabel(t.Capabilities),
+		Scope:        ScopeLabel(t.Scope),
 		CreatedBy:    taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
 		Prompt:       string(t.Prompt),
 		ExitCode:     t.ExitCode,

@@ -98,6 +98,7 @@ func main() {
 		resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch so claude's project key matches the previous run; --repo is ignored")
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); a name may be subtracted with a leading dash, as in all,-spawn; default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
+		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants alongside --caps")
 		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
@@ -116,6 +117,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "submit: --caps:", err)
 			os.Exit(2)
 		}
+		scope, err := cli.ParseScope(*scopeFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "submit: --scope:", err)
+			os.Exit(2)
+		}
 		sel := resolveSelector()
 		// Dial sends the merged PSK+identity handshake (kind=Cli or auto-upgrades
 		// to Agent when in-task env is present); no separate SayHelloAuto needed.
@@ -126,7 +132,8 @@ func main() {
 		defer c.Close()
 		id, err := c.Submit(ctx, repoVal, *task, cli.SessionOpts{
 			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
+			Caps: cli.CapsPtr(caps), Scope: scope,
+			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
 			ResumeConversation: *resumeConversation, AgentProfile: *agent,
 		})
 		if err != nil {
@@ -181,6 +188,10 @@ func main() {
 		}
 
 	case "caps":
+		if len(args) > 0 && args[0] == "set" {
+			runCapsSet(ctx, parseCID(), args[1:])
+			return
+		}
 		fs := flag.NewFlagSet("caps", flag.ExitOnError)
 		asJSON := fs.Bool("json", false, "output the capability catalog as JSON")
 		fs.Parse(args)
@@ -329,6 +340,7 @@ func main() {
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume; --repo is ignored")
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); a name may be subtracted with a leading dash, as in all,-spawn; default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
+		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants alongside --caps")
 		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
@@ -343,6 +355,11 @@ func main() {
 			fmt.Fprintln(os.Stderr, "interactive: --caps:", err)
 			os.Exit(2)
 		}
+		scope, err := cli.ParseScope(*scopeFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "interactive: --scope:", err)
+			os.Exit(2)
+		}
 		sel := resolveSelector()
 		// Dial sends the merged PSK+identity handshake; no separate SayHelloAuto needed.
 		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
@@ -354,7 +371,8 @@ func main() {
 		// operator client can take it over via reattach.
 		if _, err := c.Interactive(ctx, repoVal, cli.SessionOpts{
 			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
+			Caps: cli.CapsPtr(caps), Scope: scope,
+			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
 			ResumeConversation: *resumeConversation, AgentProfile: *agent,
 		}); err != nil {
 			die(err)
@@ -888,16 +906,19 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (default /ws)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
-	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES] [--scope SPEC]")
 	fmt.Fprintln(os.Stderr, "                                      enqueue a new task (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
 	fmt.Fprintln(os.Stderr, "                                      --agent: agent profile name to run this task under (empty = runner default; not to be confused with --agent-arg)")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal task id + worktree branch (so `--agent-arg --resume <uuid>` forwards the agent's stored-session flag)")
 	fmt.Fprintln(os.Stderr, "                                      --caps: comma-separated capability names to grant (e.g. spawn,file_read / all / none); default all. On --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
+	fmt.Fprintln(os.Stderr, "                                      --scope: which tasks those caps may target: "+cli.ScopeGrammar+"; default subtree")
 	fmt.Fprintln(os.Stderr, "  ls [--json]                         list runners and recent tasks; --json emits one {runners,tasks} object")
 	fmt.Fprintln(os.Stderr, "  conns [-f|--follow] [--json]        snapshot live connections (requires info_global cap); -f streams live events; --json emits JSON lines")
-	fmt.Fprintln(os.Stderr, "  caps [--json]                       list the grantable --caps capability names and what each authorizes")
-	fmt.Fprintln(os.Stderr, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps (no cap required)")
+	fmt.Fprintln(os.Stderr, "  caps [--json]                       list the grantable --caps capability names and --scope forms")
+	fmt.Fprintln(os.Stderr, "  caps set TASK_ID [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]")
+	fmt.Fprintln(os.Stderr, "                                      OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart")
+	fmt.Fprintln(os.Stderr, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps and scope (no cap required)")
 	fmt.Fprintln(os.Stderr, "  skill [NAME | --list]               print the embedded agent skill (default: harness-cli); --list/ls names them all")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  notify [--title T] [--level info|warn|error] <text>")
@@ -913,12 +934,12 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  logs [-f|--follow] TASK_ID          dump task log history; -f also streams live chunks until task terminal")
 	fmt.Fprintln(os.Stderr, "  watch                               stream task and runner status events")
 	fmt.Fprintln(os.Stderr, "  notify-watch                        stream notifications (backlog + live); one human-readable line each")
-	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  interactive --repo REPO [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES] [--scope SPEC]")
 	fmt.Fprintln(os.Stderr, "                                      attach an interactive PTY agent; the session is detachable (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
 	fmt.Fprintln(os.Stderr, "                                      --agent: agent profile name to run this session under (empty = runner default; not to be confused with --agent-arg)")
 	fmt.Fprintln(os.Stderr, "                                      --resume reuses an existing terminal interactive task id + worktree branch")
-	fmt.Fprintln(os.Stderr, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES]")
+	fmt.Fprintln(os.Stderr, "  session new --repo REPO [-d|--detach] [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES] [--scope SPEC]")
 	fmt.Fprintln(os.Stderr, "                                      open a detachable interactive PTY session (--repo: HARNESS_REPO_PATH)")
 	fmt.Fprintln(os.Stderr, "                                      --agent-arg is repeatable; appended after runner-global --agent-args; --claude-arg remains as a deprecated alias")
 	fmt.Fprintln(os.Stderr, "                                      --agent: agent profile name to run this session under (empty = runner default; not to be confused with --agent-arg)")
@@ -1104,14 +1125,68 @@ func (r *repeatableStrings) Set(v string) error {
 // capsExplicitlySet reports whether the "caps" flag was explicitly provided on
 // the command line (as opposed to taking its zero-value default). It uses
 // flag.FlagSet.Visit which iterates only over flags that were actually set.
-func capsExplicitlySet(fs *flag.FlagSet) bool {
+func capsExplicitlySet(fs *flag.FlagSet) bool { return flagExplicitlySet(fs, "caps") }
+
+// flagExplicitlySet reports whether the named flag was actually typed. Both
+// --caps and --scope need this: their zero values are meaningful ("none" and
+// "subtree"), so "was it given?" cannot be read off the value.
+func flagExplicitlySet(fs *flag.FlagSet, name string) bool {
 	found := false
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "caps" {
+		if f.Name == name {
 			found = true
 		}
 	})
 	return found
+}
+
+// runCapsSet backs `harness-cli caps set <task-id>`: an operator-only live
+// re-grant of a task's capabilities and/or scope. It takes effect on the
+// target's next request — nothing restarts.
+func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []string) {
+	fs := flag.NewFlagSet("caps set", flag.ExitOnError)
+	capsFlag := fs.String("caps", "", "new capability set (same syntax as --caps on submit); omitted = keep the task's current caps")
+	scopeFlag := fs.String("scope", "", "new scope: "+cli.ScopeGrammar+"; omitted = keep the task's current scope")
+	cascade := fs.Bool("cascade", false, "also clamp every descendant to the new authority — without this a revoked task can still act through a child it spawned while it was wider")
+	keepConns := fs.Bool("keep-conns", false, "on a narrowing, leave the affected tasks' connections open (default: close them, so in-flight attaches and transfers die with the grant)")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "caps set: task id required")
+		fmt.Fprintln(os.Stderr, "  usage: harness-cli caps set <task-id> [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]")
+		os.Exit(2)
+	}
+	opts := cli.SetCapsOpts{TaskID: fs.Arg(0), Cascade: *cascade, KeepConns: *keepConns}
+	if flagExplicitlySet(fs, "caps") {
+		caps, err := cli.ParseCaps(*capsFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "caps set: --caps:", err)
+			os.Exit(2)
+		}
+		opts.Caps = cli.CapsPtr(caps)
+	}
+	if flagExplicitlySet(fs, "scope") {
+		scope, err := cli.ParseScope(*scopeFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "caps set: --scope:", err)
+			os.Exit(2)
+		}
+		opts.Scope = &scope
+	}
+	if opts.Caps == nil && opts.Scope == nil {
+		fmt.Fprintln(os.Stderr, "caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
+		os.Exit(2)
+	}
+
+	res, err := cli.SetCaps(ctx, serverCID, opts)
+	if err != nil {
+		die(err)
+	}
+	for _, id := range res.Affected {
+		fmt.Println(id)
+	}
+	fmt.Fprintf(os.Stderr, "changed %d task(s); closed %d connection(s)\n",
+		len(res.Affected), res.ConnsClosed)
 }
 
 // runFileEdit pulls a worktree file, opens it in $EDITOR, and writes it back.

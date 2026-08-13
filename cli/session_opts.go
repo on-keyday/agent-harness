@@ -29,6 +29,11 @@ type SessionOpts struct {
 	ResumeCapsOverride bool   // resume only: re-grant Caps instead of keeping the task's persisted mask
 	ResumeConversation bool   // resume the agent's own conversation (--continue-equivalent)
 	AgentProfile       string // "" = runner default; e.g. "codex"
+	// Scope bounds WHICH tasks Caps may be pointed at. Unlike Caps this needs
+	// no pointer: the zero value is ScopeBase_Subtree, which IS the intended
+	// default, and "explicitly none" is a distinct non-zero value. There is no
+	// unset-vs-none ambiguity to encode.
+	Scope protocol.TaskScope
 }
 
 // resolvedCaps returns the capability mask to send on the wire: the explicit
@@ -58,5 +63,6 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.SetResumeCapsOverride(opts.ResumeCapsOverride)
 	oi.SetResumeConversation(opts.ResumeConversation)
 	oi.SetAgentProfile([]byte(opts.AgentProfile))
+	oi.Scope = opts.Scope
 	return oi
 }
