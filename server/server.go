@@ -215,6 +215,8 @@ func New(cfg Config) *Server {
 		ResolveVia:            s.registry.GetByConnectionID,
 		ViaSendEstablishRelay: s.sendEstablishRelayRequest,
 	}
+	// Wire the conn-drop hook so a set_caps narrowing reaches in-flight work.
+	s.taskHandler.DropConnsForPrincipal = s.dropConnsForPrincipal
 	// Wire ConnListFn so the list_conns RPC handler can call s.ConnList.
 	s.taskHandler.ConnListFn = s.ConnList
 	// Wire notify ring + egress hook into the TaskHandler.
@@ -760,6 +762,39 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 			}()
 		}
 	}
+}
+
+// dropConnsForPrincipal closes every live connection whose principal is
+// taskIDHex and returns how many were closed.
+//
+// One close tears down every stream on that connection at once — attach, file
+// transfer, port forwards — which is why a revoked grant is enforced here
+// rather than per stream type (file transfers keep no registry at all).
+//
+// What gets closed is what the task opened OUTWARD. A task's own PTY rides the
+// runner connection, not its client connection, so a narrowed agent keeps
+// running and simply finds its next harness-cli call reconnecting under the
+// new authority.
+func (s *Server) dropConnsForPrincipal(taskIDHex string) int {
+	var victims []streamingConn
+	s.activeConnsMu.Lock()
+	for cid, sc := range s.activeConns {
+		p := s.taskHandler.lookupPrincipal(cid.String())
+		if p.Id != ([16]byte{}) && hex.EncodeToString(p.Id[:]) == taskIDHex {
+			victims = append(victims, sc)
+		}
+	}
+	s.activeConnsMu.Unlock()
+
+	// Closed outside the lock: teardown re-enters connection bookkeeping that
+	// takes activeConnsMu itself.
+	for _, sc := range victims {
+		if err := sc.Close(); err != nil {
+			slog.Warn("set_caps: closing a revoked task's connection failed",
+				"task", taskIDHex, "cid", sc.ConnectionID().String(), "err", err)
+		}
+	}
+	return len(victims)
 }
 
 // streamingConn wraps an objproto.Connection together with the trsf transport

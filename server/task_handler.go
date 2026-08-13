@@ -117,6 +117,13 @@ type TaskHandler struct {
 	// not established (minimal test wiring); ClientHello falls back to Ok.
 	OnAgentHello func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus
 
+	// DropConnsForPrincipal, when non-nil, closes every live connection whose
+	// principal is the given task, and returns how many it closed. Wired by
+	// Server to reach activeConns. set_caps calls it when a re-grant removes
+	// authority, so attaches, file transfers and port forwards opened under
+	// the old grant do not outlive it. nil in tests that do not need it.
+	DropConnsForPrincipal func(taskIDHex string) int
+
 	// OnConnIdentified, when non-nil, is called after a client connection's
 	// identity is successfully recorded (ClientHello accepted). It fires with
 	// the connection ID string so the server can emit a conn_identified event.
@@ -563,6 +570,16 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_SetCaps:
+		// Deliberately NOT in requiredCap: the gate is operator identity, and a
+		// requiredCap entry would let anyone holding that bit through.
+		sc := req.SetCaps()
+		if sc == nil {
+			slog.Error("TaskHandler: SetCaps variant is nil")
+			return
+		}
+		h.handleSetCaps(conn, req.RequestId, cid, sc)
 
 	case protocol.TaskControlKind_AwaitIdle:
 		h.handleAwaitIdle(conn, &req)
