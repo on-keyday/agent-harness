@@ -119,8 +119,10 @@ if a spawner must be able to reach what it spawns, do not narrow its base below
 ### 2. One resolution function, one choke point
 
 ```go
-// scopeSet resolves the caller's effective target set.
-//   all=true  → operator, Capability_InfoGlobal, or ScopeBase_Global.
+// scopeSet resolves the caller's effective TARGET set from its stored scope.
+// It does NOT consult Capability_InfoGlobal — that bit widens what may be
+// SEEN, and folding it in here would make it widen what may be DONE.
+//   all=true  → operator (zero principal), or ScopeBase_Global.
 //   otherwise → {self} ∪ baseSet ∪ scope.ids, keyed by task-id hex.
 func (h *TaskHandler) scopeSet(connID string) (all bool, allowed map[string]bool)
 
@@ -132,21 +134,64 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
     all, allowed := h.scopeSet(connID)
     return all || allowed[targetHex]
 }
+
+// visibleToCaller keeps its name and signature: the action set, widened by
+// info_global. ls, task log, the port-forward list and the conns filter call
+// it as they do today and inherit the scope with no further change.
+func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool) {
+    if hasCap(h.callerCaps(connID), protocol.Capability_InfoGlobal) {
+        return true, nil
+    }
+    return h.scopeSet(connID)
+}
 ```
 
-`visibleToCaller` keeps its name and signature and becomes a call to
-`scopeSet`, so `ls`, `task log`, the port-forward list and the conns filter
-inherit the scope without further change. `listVisibleToCaller` (the extra
-one-hop-to-parent LIST rule) stacks on top unchanged.
+`listVisibleToCaller` stacks on top of `visibleToCaller` unchanged — see §2a.
 
-Visibility and action share the set deliberately. Splitting them would produce
-a task that can `cancel X` while `ls` denies that X exists.
+The two sets are the same one except for that single bit, which is the point:
+without a deliberate `info_global` grant, a task can never `cancel X` while
+`ls` denies that X exists.
 
-`Capability_InfoGlobal` keeps its present meaning — see everything — and is now
-strictly a *visibility* override: it widens `scopeSet` for the INFO-scoped
-kinds but `authorize` still requires the verb bit, and a caller with
-`info_global` and `--scope subtree` sees a foreign task without being able to
-act on it.
+`Capability_InfoGlobal` therefore keeps its present meaning — see everything —
+and becomes strictly a *visibility* override. A caller holding `info_global`,
+`cancel` and `--scope subtree` lists a foreign task in full and is still
+refused when it tries to kill it. That asymmetry is deliberate: reading the
+task table is how an agent orients itself, and it is not the operation whose
+blast radius §1 is about.
+
+### 2a. The parent hop stays where it is
+
+`listVisibleToCaller` (`server/capabilities.go:129`) returns the ACCESS set
+plus one extra entry — the caller's direct creator — which `handleList`
+renders through `redactParentTaskInfo` (`server/task_handler.go:1684`, blanking
+repo path, worktree, prompt, error message, agent profile and assigned runner).
+
+That hop is justified by the creator relationship, not by the target set: a
+child needs to know whether the parent driving it is still alive, and it can
+already read the creator id from the ungated `whoami` response. Scope does not
+change that reasoning, so the hop is unconditional and survives every base —
+a `--scope none` task still sees exactly one redacted parent row in `ls`.
+
+What the hop must never do is feed `authorize`. The separation the existing
+comment argues for gets stronger here, because the kinds being wired in §3 are
+destructive: opening upward would let a child `cancel` or `file_write` a task
+that, by attenuation, holds a superset of its own capabilities. So:
+
+- `authorize` resolves through `scopeSet` only. The parent is not a target.
+- `visibleToCaller` = `scopeSet`. LIST-only widening stays in
+  `listVisibleToCaller`, one hop, redacted, as today.
+- `base = global` sets `all = true`, so `parentHex` is empty and the hop is
+  moot — unchanged from how `info_global` behaves today.
+
+**`ids` may point upward, and that is the one way the parent becomes
+actionable.** The spawn-time rule is "every requested id is in the granter's
+effective set", and `self` is unconditionally in that set, so a parent can
+spawn a child with `--scope ids:<parent-id>`. Reach stays monotone — the
+target is inside the granter's own reach — and the child's row for the parent
+is a full one rather than a redacted hop, because the id is in `allowed` and
+the existing `if allowed[creatorHex]` early-return skips the redaction. The
+inversion is therefore explicit, opt-in, and visible in `ls`; it is not
+something the default `subtree` scope can produce.
 
 ### 3. The enforcement invariant
 
@@ -175,6 +220,15 @@ Out-of-scope targets answer "no such task", never `permission_denied` — the
 rule `server/task_handler.go:434` already states for forwards: a
 missing-capability answer for something the caller cannot see is an existence
 oracle.
+
+Two rows need reading carefully. `kill_port_forward` keeps its present
+two-step shape — `visibleToCaller` decides whether the server answers about the
+forward at all, and inside that branch `authorize` replaces the bare `hasCap`,
+so a *visible* forward the caller may not act on still answers
+`permission_denied` and an invisible one still answers `no_such_forward`. The
+INFO rows (`get_task_log`, `list_port_forwards`) keep their code verbatim; what
+changes underneath them is that `visibleToCaller` now resolves through
+`scopeSet` rather than a hardcoded subtree BFS.
 
 `CancelStatus` is currently `status :u8` with no vocabulary
 (`runner/protocol/message.bgn:934`) and always replies 0. It gains an enum:
@@ -239,8 +293,15 @@ format SetCapsRequest:
     task_id    :TaskID
     caps       :Capability
     scope      :TaskScope
-    cascade    :u8          # 1 = also clamp descendants
-    keep_conns :u8          # 1 = do not drop the affected tasks' connections
+    # set_caps / set_scope are presence bits, not conveniences: caps = 0 is
+    # Capability.none and scope{base:none, ids:[]} is the strictest scope, so
+    # neither field has a spare value meaning "leave it alone". Same shape as
+    # SubmitRequest.resume_caps_override.
+    set_caps   :u1          # 1 = write caps;  0 = keep the persisted bitmask
+    set_scope  :u1          # 1 = write scope; 0 = keep the persisted scope
+    cascade    :u1          # 1 = also clamp descendants
+    keep_conns :u1          # 1 = do not drop the affected tasks' connections
+    reserved   :u4
 
 format SetCapsResponse:
     status       :SetCapsStatus
@@ -264,8 +325,10 @@ existing `task_caps_changed` WAL event (extended with the scope fields). Because
 `callerCaps` and `scopeSet` read the store per request, the change is live on
 the target's next RPC. Nothing restarts.
 
-**Cascade** (`--cascade`, default off). Breadth-first over descendants using the
-same child index `scopeSet` builds:
+**Cascade** (`--cascade`, default off). Breadth-first over descendants using
+the same `creatorHex → []childHex` index the `subtree` base walk builds — the
+walk is needed here regardless of the target's own base, so it is factored out
+of `scopeSet` rather than called through it:
 
 - `child.caps &= newCaps`
 - `child.scope.base = min(child.scope.base, newScope.base)`
@@ -318,8 +381,9 @@ All three clients, per the repo rule that a feature spans CLI, TUI and WebUI.
   is not `none`, so `ids:X` and `none+ids:X` parse identically and
   `ParseScope` accepts both.
 - `harness-cli caps set <task-id> [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]`.
-  Omitting `--caps` keeps the stored bitmask; omitting `--scope` keeps the
-  stored scope; at least one must be given. Prints the affected ids and the
+  Omitting `--caps` sends `set_caps = 0` and keeps the stored bitmask;
+  omitting `--scope` sends `set_scope = 0` and keeps the stored scope. A call
+  with neither is rejected client-side. Prints the affected ids and the
   number of connections closed.
 - `harness-cli caps` gains a `SCOPE` section documenting the grammar; `--json`
   gains a sibling `scopes` array.
