@@ -1197,3 +1197,166 @@ func TestRequiredCap_BoardSubscribers(t *testing.T) {
 		t.Errorf("cap = %v, want InfoGlobal (matching board_topics / board_read)", got)
 	}
 }
+
+// ---- scope resolution (spec §2 / §2a) ------------------------------------
+
+// scopeFixture builds: P (root) → C (child of P) → G (grandchild of C), plus an
+// unrelated task U. Returns the handler and the four id hexes.
+func scopeFixture(t *testing.T) (h *TaskHandler, p, c, g, u string) {
+	t.Helper()
+	h = &TaskHandler{Tasks: NewTaskStore()}
+	// Deliberately NOT Capability_All: that includes info_global, which makes
+	// visibleToCaller answer all=true and quietly voids every scope assertion
+	// below. Tests that want it grant it explicitly.
+	caps := protocol.Capability_All &^ protocol.Capability_InfoGlobal
+	mk := func(prompt string, creator protocol.TaskID) string {
+		return h.Tasks.Create("/r", prompt, protocol.TaskKind_Oneshot,
+			protocol.ClientKind_Agent, creator, "", protocol.RunnerSelector{},
+			nil, caps, Scope{}, "")
+	}
+	p = mk("p", protocol.TaskID{})
+	c = mk("c", hexToTaskID(t, p))
+	g = mk("g", hexToTaskID(t, c))
+	u = mk("u", protocol.TaskID{})
+	return h, p, c, g, u
+}
+
+// bindPrincipal points a fake connection id at a task and returns the conn id.
+func bindPrincipal(t *testing.T, h *TaskHandler, taskHex string) string {
+	t.Helper()
+	cid := "ws:127.0.0.1:9999-" + taskHex[:4]
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.principals[cid] = hexToTaskID(t, taskHex)
+	return cid
+}
+
+func setScope(t *testing.T, h *TaskHandler, taskHex string, sc Scope) {
+	t.Helper()
+	if _, ok := h.Tasks.SetCaps(taskHex, false, 0, true, sc); !ok {
+		t.Fatalf("SetCaps on %s: task not found", taskHex)
+	}
+}
+
+func TestScopeSetHonoursBaseAndIDs(t *testing.T) {
+	h, p, c, g, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+
+	// subtree (the default): self + descendants, not the parent, not a stranger.
+	all, allowed := h.scopeSet(cid)
+	if all || !allowed[c] || !allowed[g] || allowed[p] || allowed[u] {
+		t.Errorf("subtree: all=%v allowed=%v, want {c,g} only", all, allowed)
+	}
+
+	// none: self only. Descendants are NOT reachable.
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None})
+	all, allowed = h.scopeSet(cid)
+	if all || !allowed[c] || allowed[g] || allowed[p] || allowed[u] {
+		t.Errorf("none: all=%v allowed=%v, want {c} only", all, allowed)
+	}
+
+	// none + ids: self plus exactly the named strangers.
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None, IDs: []string{u}})
+	all, allowed = h.scopeSet(cid)
+	if all || !allowed[c] || !allowed[u] || allowed[g] {
+		t.Errorf("none+ids: all=%v allowed=%v, want {c,u}", all, allowed)
+	}
+
+	// subtree + ids: both.
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{u}})
+	all, allowed = h.scopeSet(cid)
+	if all || !allowed[c] || !allowed[g] || !allowed[u] {
+		t.Errorf("subtree+ids: all=%v allowed=%v, want {c,g,u}", all, allowed)
+	}
+
+	// global: everything, allowed nil.
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Global})
+	if all, allowed = h.scopeSet(cid); !all || allowed != nil {
+		t.Errorf("global: all=%v allowed=%v, want true/nil", all, allowed)
+	}
+}
+
+func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
+	h, _, c, _, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+
+	// Cap held, target out of scope.
+	if h.authorize(cid, protocol.Capability_Cancel, u) {
+		t.Error("authorized a stranger while scope is subtree")
+	}
+	// Target in scope, cap missing.
+	h.Tasks.SetCaps(c, true, protocol.Capability_FileRead, false, Scope{}) //nolint:errcheck
+	if h.authorize(cid, protocol.Capability_Cancel, c) {
+		t.Error("authorized cancel without the cancel bit")
+	}
+	// Both.
+	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, false, Scope{}) //nolint:errcheck
+	if !h.authorize(cid, protocol.Capability_Cancel, c) {
+		t.Error("denied a self-target with the cap held")
+	}
+	// Operator: no principal, everything.
+	if !h.authorize("ws:127.0.0.1:1-0", protocol.Capability_Cancel, u) {
+		t.Error("denied an operator")
+	}
+}
+
+// info_global widens what may be SEEN. It must not widen what may be DONE —
+// folding it into scopeSet would let info_global + cancel kill anything.
+func TestInfoGlobalWidensVisibilityNotAction(t *testing.T) {
+	h, _, c, _, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	h.Tasks.SetCaps(c, true, protocol.Capability_InfoGlobal|protocol.Capability_Cancel, false, Scope{}) //nolint:errcheck
+
+	if all, _ := h.visibleToCaller(cid); !all {
+		t.Error("info_global did not widen visibility")
+	}
+	if all, allowed := h.scopeSet(cid); all || allowed[u] {
+		t.Error("info_global leaked into the ACTION set")
+	}
+	if h.authorize(cid, protocol.Capability_Cancel, u) {
+		t.Error("info_global + cancel authorized a stranger")
+	}
+}
+
+// Spec §2a: the LIST-only parent hop is justified by the creator relationship,
+// so it survives the narrowest base — and never becomes an authorize target.
+func TestParentHopSurvivesNoneBaseAndIsNotActionable(t *testing.T) {
+	h, p, c, _, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None})
+
+	all, allowed, parentHex := h.listVisibleToCaller(cid)
+	if all {
+		t.Fatal("a scope=none caller should not see everything")
+	}
+	if parentHex != p {
+		t.Errorf("parentHex = %q, want the creator %q", parentHex, p)
+	}
+	if allowed[p] {
+		t.Error("the parent leaked into the ACCESS set")
+	}
+	if h.authorize(cid, protocol.Capability_Cancel, p) {
+		t.Error("the parent hop made the parent actionable")
+	}
+}
+
+// An explicit ids:<parent> grant is the one way the parent becomes actionable,
+// and then it is a full row rather than a redacted hop.
+func TestParentInIDsIsActionableAndUnredacted(t *testing.T) {
+	h, p, c, _, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None, IDs: []string{p}})
+
+	if !h.authorize(cid, protocol.Capability_Cancel, p) {
+		t.Error("an explicit ids:<parent> grant did not authorize the parent")
+	}
+	_, allowed, parentHex := h.listVisibleToCaller(cid)
+	if !allowed[p] {
+		t.Error("the parent is not in the ACCESS set despite being named")
+	}
+	if parentHex != "" {
+		t.Errorf("parentHex = %q, want empty — the parent is already in allowed "+
+			"so it must be listed unredacted, not as a hop", parentHex)
+	}
+}
