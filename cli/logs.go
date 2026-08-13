@@ -5,9 +5,9 @@ import (
 	"encoding/hex"
 	"io"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // Logs writes the task's log to out, mirroring the TUI's two-source view:

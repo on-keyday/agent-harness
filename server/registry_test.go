@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func TestRegistryAddFindRemove(t *testing.T) {
@@ -331,13 +331,13 @@ func TestRegistry_PhaseAEntry_NoVia(t *testing.T) {
 	r := NewRegistry()
 	now := time.Now()
 	r.Add(&RunnerEntry{
-		ID:          "ws:127.0.0.1:8540-1",
-		Hostname:    "direct-runner",
+		ID:           "ws:127.0.0.1:8540-1",
+		Hostname:     "direct-runner",
 		AllowedRoots: []string{"/x"},
-		MaxTasks:    1,
-		ActiveTasks: map[string]struct{}{},
-		ConnectedAt: now,
-		LastSeen:    now,
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{},
+		ConnectedAt:  now,
+		LastSeen:     now,
 		// Via and ViaDialAddr intentionally left zero (Phase A direct).
 	})
 	entry, ok := r.Get("ws:127.0.0.1:8540-1")

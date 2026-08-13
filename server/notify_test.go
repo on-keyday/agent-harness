@@ -192,8 +192,8 @@ func (c *captureConn) SendMessage(b []byte) (int, uint64, error) {
 	c.last = append([]byte(nil), b...)
 	return len(b), 0, nil
 }
-func (c *captureConn) CreateSendStream() trsf.SendStream                   { return nil }
-func (c *captureConn) CreateBidirectionalStream() trsf.BidirectionalStream { return nil }
+func (c *captureConn) CreateSendStream() trsf.SendStream                    { return nil }
+func (c *captureConn) CreateBidirectionalStream() trsf.BidirectionalStream  { return nil }
 func (c *captureConn) GetReceiveStream(id trsf.StreamID) trsf.ReceiveStream { return nil }
 func (c *captureConn) GetBidirectionalStream(id trsf.StreamID) trsf.BidirectionalStream {
 	return nil

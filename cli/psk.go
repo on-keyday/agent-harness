@@ -164,4 +164,3 @@ func SendMergedHandshake(ctx context.Context, sendFn func([]byte) error, psk, tr
 		return ctx.Err()
 	}
 }
-

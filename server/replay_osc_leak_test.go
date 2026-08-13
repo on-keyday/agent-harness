@@ -92,9 +92,9 @@ func TestCapReplayTail_DropsAtSafeBoundary(t *testing.T) {
 
 func TestVTGroundScan(t *testing.T) {
 	cases := []struct {
-		name  string
-		in    string
-		want  bool // ground after consuming in
+		name string
+		in   string
+		want bool // ground after consuming in
 	}{
 		{"plain text", "hello world", true},
 		{"complete OSC BEL", "\x1b]0;title\x07", true},

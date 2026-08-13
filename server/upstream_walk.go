@@ -11,9 +11,9 @@ import (
 
 // hopErr holds per-hop failure details returned by walkAndDispatchUpstreamHops.
 type hopErr struct {
-	HopID     string
-	Status    protocol.EstablishRelayStatus
-	Err       error
+	HopID  string
+	Status protocol.EstablishRelayStatus
+	Err    error
 }
 
 // walkAndDispatchUpstreamHops walks entry.Via.Via... and dispatches

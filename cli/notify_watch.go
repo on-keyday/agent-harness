@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // watchNotifications subscribes to the notifications topic and writes one

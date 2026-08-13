@@ -182,4 +182,3 @@ func listFilesStatusError(s protocol.ListFilesStatus) error {
 		return fmt.Errorf("file ls: server error (status=%d)", s)
 	}
 }
-

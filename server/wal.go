@@ -22,11 +22,11 @@ import (
 // pre-date this field decode as a zero RunnerSelector (Kind == RunnerSelectorKind_Any),
 // which is the correct "any runner" default.
 type WALEvent struct {
-	Type        string `json:"type"` // "task_created" | "task_assigned" | "task_finished" | "task_cancelled" | "task_failed"
-	TaskID      string `json:"task_id,omitempty"`
-	RunnerID    string `json:"runner_id,omitempty"`
-	RepoPath    string `json:"repo_path,omitempty"`
-	Prompt      string `json:"prompt,omitempty"`
+	Type     string `json:"type"` // "task_created" | "task_assigned" | "task_finished" | "task_cancelled" | "task_failed"
+	TaskID   string `json:"task_id,omitempty"`
+	RunnerID string `json:"runner_id,omitempty"`
+	RepoPath string `json:"repo_path,omitempty"`
+	Prompt   string `json:"prompt,omitempty"`
 	// Kind distinguishes oneshot vs interactive tasks. Encoded as the
 	// numeric protocol.TaskKind value so the wire format is stable across
 	// schema renames. 0 (oneshot) is the default for legacy WAL entries
@@ -58,8 +58,8 @@ type WALEvent struct {
 	// entries default to "" (zero). Also reused by task_resumed events.
 	AgentProfile string `json:"agent_profile,omitempty"`
 	WorktreeDir  string `json:"worktree_dir,omitempty"`
-	ExitCode    *int32 `json:"exit_code,omitempty"`
-	DiffInfo    []byte `json:"diff_info,omitempty"`
+	ExitCode     *int32 `json:"exit_code,omitempty"`
+	DiffInfo     []byte `json:"diff_info,omitempty"`
 	// BoundRunnerID, when non-empty, pins the task to a specific runner.
 	BoundRunnerID string `json:"bound_runner_id,omitempty"`
 	// Reason holds a human-readable failure description (used by task_failed events).

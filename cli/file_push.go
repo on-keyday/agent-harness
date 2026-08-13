@@ -220,4 +220,3 @@ func ackError(op string, ack *protocol.FileTransferAck) error {
 	}
 	return &FileAckError{Op: op, Status: ack.Status, Msg: msg}
 }
-

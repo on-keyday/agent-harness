@@ -15,7 +15,7 @@ type fakeHandle struct {
 	once sync.Once
 }
 
-func newFakeHandle() *fakeHandle { return &fakeHandle{done: make(chan struct{})} }
+func newFakeHandle() *fakeHandle            { return &fakeHandle{done: make(chan struct{})} }
 func (h *fakeHandle) Done() <-chan struct{} { return h.done }
 func (h *fakeHandle) Close()                { h.once.Do(func() { close(h.done) }) }
 

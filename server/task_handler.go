@@ -562,9 +562,13 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		pid := h.lookupPrincipal(cid)
 		caps := h.callerCaps(cid)
 		var creator protocol.TaskID
+		// An operator has no principal task and therefore no stored scope; its
+		// effective one is global, which is what scopeSet already answers.
+		scope := Scope{Base: protocol.ScopeBase_Global}
 		if pid.Id != ([16]byte{}) {
 			if t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:])); ok {
 				creator = t.CreatorTaskID
+				scope = t.Scope
 			}
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Whoami, RequestId: req.RequestId}
@@ -572,6 +576,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			PrincipalTaskId: pid,
 			CreatorTaskId:   creator,
 			Capabilities:    caps,
+			Scope:           scope.toWire(),
 		})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck

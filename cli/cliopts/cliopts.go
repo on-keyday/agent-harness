@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // ResolveServerCID returns the ConnectionID from the flag value or HARNESS_SERVER_CID env.

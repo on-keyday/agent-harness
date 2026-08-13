@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // toTaskInfo / toRunnerInfo copy a store entry into its wire struct field by
@@ -46,14 +47,14 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 	now := time.Now()
 	ec := int32(3)
 	e := TaskEntry{
-		ID:              "00112233445566778899aabbccddeeff",
-		RepoPath:        "/repo",
-		Prompt:          "do it",
-		Kind:            protocol.TaskKind_Interactive,
-		OriginKind:      protocol.ClientKind_Tui,
-		ResumedByKind:   protocol.ClientKind_Cli,
-		CreatorTaskID:   protocol.TaskID{Id: [16]byte{1}},
-		Capabilities:    protocol.Capability_All,
+		ID:            "00112233445566778899aabbccddeeff",
+		RepoPath:      "/repo",
+		Prompt:        "do it",
+		Kind:          protocol.TaskKind_Interactive,
+		OriginKind:    protocol.ClientKind_Tui,
+		ResumedByKind: protocol.ClientKind_Cli,
+		CreatorTaskID: protocol.TaskID{Id: [16]byte{1}},
+		Capabilities:  protocol.Capability_All,
 		// Non-default on purpose: the default scope is the ZERO TaskScope, so a
 		// mapper that forgot Scope would still pass against defaultScope().
 		Scope:           Scope{Base: protocol.ScopeBase_None, IDs: []string{"00112233445566778899aabbccddeeff"}},
@@ -123,4 +124,36 @@ func TestPortForwardInfoMapsEveryField(t *testing.T) {
 	}
 	info := portForwardInfo(pf)
 	assertNoZeroFields(t, info, map[string]string{})
+}
+
+// WhoAmIResponse is built by hand in the Whoami dispatch case, with the same
+// exposure as toTaskInfo: a field added to the wire struct and forgotten at the
+// build site round-trips as its zero and every client shows a default. That is
+// not hypothetical either — Scope was added to the schema and left unpopulated
+// here, and the symptom was `whoami` printing no scope for a task that had one.
+//
+// This asserts the handler fills every field, using a confined principal so
+// nothing is legitimately zero.
+func TestWhoamiResponseMapsEveryField(t *testing.T) {
+	h, _, c, _, _ := scopeFixture(t)
+	// A grandchild: non-zero principal AND non-zero creator.
+	child := h.Tasks.Create("/r", "gc", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		hexToTaskID(t, c), "", protocol.RunnerSelector{}, nil,
+		protocol.Capability_Spawn, Scope{Base: protocol.ScopeBase_None}, "")
+	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9960-1")}
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, child)
+
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Whoami, RequestId: 1}
+	req.SetWhoami(protocol.WhoAmIRequest{})
+	h.Handle(conn, encodeTaskControlRequest(t, req))
+
+	resp := lastTaskControlResponse(t, conn)
+	w := resp.Whoami()
+	if w == nil {
+		t.Fatalf("no whoami response (kind %v)", resp.Kind)
+	}
+	assertNoZeroFields(t, *w, map[string]string{})
 }

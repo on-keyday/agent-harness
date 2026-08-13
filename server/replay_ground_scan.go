@@ -23,12 +23,12 @@ type vtGroundScan struct {
 type gsState int
 
 const (
-	gsGround   gsState = iota // between sequences — safe to crop here
-	gsEsc                     // saw ESC
-	gsEscInt                  // saw ESC + intermediate byte(s) (0x20-0x2f)
-	gsCSI                     // inside a CSI sequence, awaiting its final byte
-	gsStr                     // inside an OSC/DCS/SOS/PM/APC string
-	gsStrEsc                  // inside a string, saw ESC (awaiting '\' for ST)
+	gsGround gsState = iota // between sequences — safe to crop here
+	gsEsc                   // saw ESC
+	gsEscInt                // saw ESC + intermediate byte(s) (0x20-0x2f)
+	gsCSI                   // inside a CSI sequence, awaiting its final byte
+	gsStr                   // inside an OSC/DCS/SOS/PM/APC string
+	gsStrEsc                // inside a string, saw ESC (awaiting '\' for ST)
 )
 
 // ground reports whether the scanner is at a sequence boundary.

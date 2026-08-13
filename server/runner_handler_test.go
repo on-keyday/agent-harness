@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // encodeRunnerMessage encodes a RunnerMessage to its wire form (including Kind byte).
@@ -410,14 +410,14 @@ func TestRunnerHandlerTaskFinishedReleasesCapacity(t *testing.T) {
 	taskIDHex := hex.EncodeToString(rawID[:])
 
 	reg.Add(&RunnerEntry{
-		ID:          runnerID,
-		Hostname:    "host",
+		ID:           runnerID,
+		Hostname:     "host",
 		AllowedRoots: []string{"/repo"},
-		MaxTasks:    1,
-		ActiveTasks: map[string]struct{}{taskIDHex: {}},
-		ConnectedAt: time.Now(),
-		LastSeen:    time.Now(),
-		Conn:        fc,
+		MaxTasks:     1,
+		ActiveTasks:  map[string]struct{}{taskIDHex: {}},
+		ConnectedAt:  time.Now(),
+		LastSeen:     time.Now(),
+		Conn:         fc,
 	})
 
 	// Step 2: add + MarkRunning task t1 in the TaskStore.

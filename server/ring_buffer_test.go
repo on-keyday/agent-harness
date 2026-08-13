@@ -43,7 +43,7 @@ func TestRingBuffer_DropsMultipleOldFrames(t *testing.T) {
 	rb := NewRingBuffer(10)
 	rb.Append([]byte("aaa"))
 	rb.Append([]byte("bbb"))
-	rb.Append([]byte("ccc")) // 9 bytes total
+	rb.Append([]byte("ccc"))      // 9 bytes total
 	rb.Append([]byte("dddddddd")) // 8 bytes — evict aaa,bbb,ccc (9) → total 8
 	got := rb.Snapshot()
 	if !bytes.Equal(got, []byte("dddddddd")) {

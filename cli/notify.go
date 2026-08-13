@@ -6,9 +6,9 @@ import (
 	"os"
 	"unicode/utf8"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // notifyWireBudget is a conservative cap on the encoded TaskControlRequest

@@ -5,8 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // Cancel sends a Cancel TaskControl request for taskIDHex over an existing
@@ -30,7 +30,29 @@ func (c *Client) Cancel(ctx context.Context, taskIDHex string) error {
 	if resp.Kind != protocol.TaskControlKind_Cancel {
 		return fmt.Errorf("unexpected response kind: %v", resp.Kind)
 	}
-	return nil
+	// The status used to be a bare u8 the server always wrote as 0, so there
+	// was nothing to check and this returned nil unconditionally. It now
+	// carries no_such_task, which is also the answer for a task outside the
+	// caller's scope — reporting that as success would tell an agent it had
+	// cancelled something it had not.
+	return cancelStatusErr(resp, taskIDHex)
+}
+
+// cancelStatusErr maps the response status to an error. Split out so it can be
+// tested without a live connection.
+func cancelStatusErr(resp *protocol.TaskControlResponse, taskIDHex string) error {
+	st := resp.Cancel()
+	if st == nil {
+		return fmt.Errorf("cancel: response missing status")
+	}
+	switch st.Status {
+	case protocol.CancelResult_Ok:
+		return nil
+	case protocol.CancelResult_NoSuchTask:
+		return fmt.Errorf("no such task %s (it does not exist, or it is outside your scope)", taskIDHex)
+	default:
+		return fmt.Errorf("cancel failed: %v", st.Status)
+	}
 }
 
 // Cancel (package-level) is a thin wrapper that opens a fresh Client per call.

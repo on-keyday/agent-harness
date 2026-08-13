@@ -10,9 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
-	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // frameHeaderSize is the wire size of exec/frame.FrameHeader: 1-byte Type

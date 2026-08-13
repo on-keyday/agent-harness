@@ -769,7 +769,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Capabilities = protocol.Capability(ev.Capabilities)
-			t.Scope = scopeFromWAL(ev.ScopeBase, ev.ScopeIDs)
+				t.Scope = scopeFromWAL(ev.ScopeBase, ev.ScopeIDs)
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {

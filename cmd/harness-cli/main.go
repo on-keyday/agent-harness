@@ -1149,14 +1149,28 @@ func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []str
 	scopeFlag := fs.String("scope", "", "new scope: "+cli.ScopeGrammar+"; omitted = keep the task's current scope")
 	cascade := fs.Bool("cascade", false, "also clamp every descendant to the new authority — without this a revoked task can still act through a child it spawned while it was wider")
 	keepConns := fs.Bool("keep-conns", false, "on a narrowing, leave the affected tasks' connections open (default: close them, so in-flight attaches and transfers die with the grant)")
-	fs.Parse(args)
+	// Interspersed parse: Go's flag package stops at the first non-flag
+	// argument, so `caps set <id> --caps X` would silently leave --caps unset
+	// with the id in front. Re-parsing after each positional accepts either
+	// order, which is what anyone types.
+	var positional []string
+	for rest := args; ; {
+		if err := fs.Parse(rest); err != nil {
+			os.Exit(2)
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
 
-	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "caps set: task id required")
+	if len(positional) != 1 {
+		fmt.Fprintln(os.Stderr, "caps set: exactly one task id required")
 		fmt.Fprintln(os.Stderr, "  usage: harness-cli caps set <task-id> [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]")
 		os.Exit(2)
 	}
-	opts := cli.SetCapsOpts{TaskID: fs.Arg(0), Cascade: *cascade, KeepConns: *keepConns}
+	opts := cli.SetCapsOpts{TaskID: positional[0], Cascade: *cascade, KeepConns: *keepConns}
 	if flagExplicitlySet(fs, "caps") {
 		caps, err := cli.ParseCaps(*capsFlag)
 		if err != nil {

@@ -129,7 +129,7 @@ func (s *recordingSendStream) Close() error {
 	}
 	return nil
 }
-func (s *recordingSendStream) Cancel() {}
+func (s *recordingSendStream) Cancel()           {}
 func (s *recordingSendStream) HasSendData() bool { return len(s.bytes) > 0 }
 func (s *recordingSendStream) Completed() bool   { return s.eofSent }
 func (s *recordingSendStream) AppendData(eof bool, payloads ...[]byte) error {
@@ -187,21 +187,21 @@ type noopBidiStream struct {
 	closed   atomic.Bool
 }
 
-func (s *noopBidiStream) ID() trsf.StreamID                       { return s.streamID }
-func (s *noopBidiStream) Write(p []byte) (int, error)             { return len(p), nil }
-func (s *noopBidiStream) Close() error                            { return nil }
+func (s *noopBidiStream) ID() trsf.StreamID           { return s.streamID }
+func (s *noopBidiStream) Write(p []byte) (int, error) { return len(p), nil }
+func (s *noopBidiStream) Close() error                { return nil }
 func (s *noopBidiStream) WriteContext(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
-func (s *noopBidiStream) HasSendData() bool                       { return false }
-func (s *noopBidiStream) Completed() bool                         { return true }
-func (s *noopBidiStream) AppendData(_ bool, _ ...[]byte) error    { return nil }
+func (s *noopBidiStream) HasSendData() bool                    { return false }
+func (s *noopBidiStream) Completed() bool                      { return true }
+func (s *noopBidiStream) AppendData(_ bool, _ ...[]byte) error { return nil }
 func (s *noopBidiStream) AppendDataContext(_ context.Context, _ bool, _ ...[]byte) error {
 	return nil
 }
-func (s *noopBidiStream) Read([]byte) (int, error)                            { return 0, io.EOF }
+func (s *noopBidiStream) Read([]byte) (int, error)                             { return 0, io.EOF }
 func (s *noopBidiStream) ReadContext(_ context.Context, _ []byte) (int, error) { return 0, io.EOF }
-func (s *noopBidiStream) ReadDirect(_ uint64) ([]byte, bool, error)           { return nil, true, nil }
+func (s *noopBidiStream) ReadDirect(_ uint64) ([]byte, bool, error)            { return nil, true, nil }
 func (s *noopBidiStream) ReadDirectContext(_ context.Context, _ uint64) ([]byte, bool, error) {
 	return nil, true, nil
 }

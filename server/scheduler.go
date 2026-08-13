@@ -37,8 +37,8 @@ type Scheduler struct {
 // assign for dispatching work to runners.
 func NewScheduler(reg *Registry, store *TaskStore, assign AssignFunc) *Scheduler {
 	return &Scheduler{
-		reg:   reg,
-		store: store,
+		reg:    reg,
+		store:  store,
 		assign: assign,
 	}
 }

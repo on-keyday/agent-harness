@@ -107,3 +107,31 @@ func TestBothSpawnBuildersCarryScope(t *testing.T) {
 		t.Errorf("open-interactive request scope = %+v, want %+v", got, sc)
 	}
 }
+
+// The Cancel status used to be a bare u8 that the server always wrote as 0, so
+// the client returned nil unconditionally. It now carries no_such_task — which
+// is also the answer for a target outside the caller's scope — and reporting
+// that as success would tell an agent it had cancelled something it had not.
+func TestCancelReportsNoSuchTask(t *testing.T) {
+	id := strings.Repeat("ab", 16)
+	for _, c := range []struct {
+		status  protocol.CancelResult
+		wantErr string
+	}{
+		{protocol.CancelResult_Ok, ""},
+		{protocol.CancelResult_NoSuchTask, "no such task"},
+	} {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel}
+		resp.SetCancel(protocol.CancelStatus{Status: c.status})
+		err := cancelStatusErr(&resp, id)
+		if c.wantErr == "" {
+			if err != nil {
+				t.Errorf("status %v: err = %v, want nil", c.status, err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), c.wantErr) {
+			t.Errorf("status %v: err = %v, want it to mention %q", c.status, err, c.wantErr)
+		}
+	}
+}

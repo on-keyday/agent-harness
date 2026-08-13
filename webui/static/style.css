@@ -479,6 +479,13 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 
 /* --- Scope input (#scope-input inside #compose) --- */
+/* Own block: inline here would share the line with the caps-on-resume label
+   and break that label's checkbox onto a line of its own at 390px. */
+.scope-block {
+  display: block;
+  margin: 0.4rem 0 0.2rem;
+}
+.scope-block label { display: block; margin-bottom: 0.2rem; }
 #scope-input {
   background: #2a2a2a;
   color: #d4d4d4;

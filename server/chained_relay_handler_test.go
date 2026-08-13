@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // buildTestCID is a helper that returns a ConnectionID from a plain string,
@@ -85,11 +85,11 @@ func TestChainedRelay_2Hop(t *testing.T) {
 	addEntry(reg, lCID.String(), pEntry, lDialAddr)
 
 	var (
-		callCount  int32
-		calledEntry *RunnerEntry
-		calledSlot  uint16
+		callCount    int32
+		calledEntry  *RunnerEntry
+		calledSlot   uint16
 		calledTarget protocol.RunnerID
-		mu          sync.Mutex
+		mu           sync.Mutex
 	)
 
 	h := &ChainedRelayHandler{
@@ -153,8 +153,8 @@ func TestChainedRelay_3Hop_Parallel(t *testing.T) {
 	var callCount int32
 
 	h := &ChainedRelayHandler{
-		Logger:   slog.Default(),
-		Registry: reg,
+		Logger:     slog.Default(),
+		Registry:   reg,
 		HopTimeout: 5 * time.Second,
 		SendEstablishRelay: func(_ context.Context, _ *RunnerEntry, _ protocol.EstablishRelayRequest) (protocol.EstablishRelayResponse, error) {
 			time.Sleep(200 * time.Millisecond)

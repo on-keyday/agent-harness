@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"os"
 
-	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
 // AttachSession re-attaches to an existing detachable interactive session

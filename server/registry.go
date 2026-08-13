@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // RunnerEntry holds the current state of a connected runner.
@@ -24,21 +24,21 @@ import (
 // ActiveTasks is a set of task IDs (hex strings) currently bound to this
 // runner. len(ActiveTasks) is the current load; capacity is MaxTasks.
 type RunnerEntry struct {
-	ID           string              // = objproto.ConnectionID.String()
-	Hostname     string              // from RunnerHello.hostname
-	AllowedRoots []string            // POSIX '/'-paths, path.Clean'd at Hello receipt (wire-format)
-	MaxTasks     int                 // from RunnerHello.max_tasks (>=1)
-	AgentBin       string            // from RunnerHello.agent_bin (basename of --claude-bin)
+	ID           string   // = objproto.ConnectionID.String()
+	Hostname     string   // from RunnerHello.hostname
+	AllowedRoots []string // POSIX '/'-paths, path.Clean'd at Hello receipt (wire-format)
+	MaxTasks     int      // from RunnerHello.max_tasks (>=1)
+	AgentBin     string   // from RunnerHello.agent_bin (basename of --claude-bin)
 	// AgentProfiles is the ordered list of agent profile names advertised in
 	// RunnerHello.AgentProfiles. The first entry is this runner's default
 	// (see DefaultProfile). Empty for legacy runners that don't advertise any
 	// profiles — HasProfile/DefaultProfile fall back to AgentBin in that case.
-	AgentProfiles []string
-	SkillsInjected bool              // from RunnerHello.skills_injected
-	ActiveTasks  map[string]struct{} // task_id (hex) set; len() = current load
-	ConnectedAt  time.Time
-	LastSeen     time.Time
-	Conn         ConnHandle // set by server.go on registration; nil in zero-value / test stubs
+	AgentProfiles  []string
+	SkillsInjected bool                // from RunnerHello.skills_injected
+	ActiveTasks    map[string]struct{} // task_id (hex) set; len() = current load
+	ConnectedAt    time.Time
+	LastSeen       time.Time
+	Conn           ConnHandle // set by server.go on registration; nil in zero-value / test stubs
 
 	// Via, when non-nil, is the proxy_runner this runner was registered
 	// through via Phase C (--via). nil for Phase A direct and reverse-dial
@@ -100,7 +100,7 @@ type Registry struct {
 	mu      sync.RWMutex
 	runners map[string]*RunnerEntry
 
-	OnAdd    func(RunnerEntry)               // optional; called after Add inserts an entry.
+	OnAdd    func(RunnerEntry)                 // optional; called after Add inserts an entry.
 	OnRemove func(id string, snap RunnerEntry) // optional; called after Remove deletes an entry.
 }
 

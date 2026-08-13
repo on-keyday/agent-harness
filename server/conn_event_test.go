@@ -534,7 +534,7 @@ func (r *recordingTransport) GetReceiveStream(_ trsf.StreamID) trsf.ReceiveStrea
 func (r *recordingTransport) GetBidirectionalStream(_ trsf.StreamID) trsf.BidirectionalStream {
 	return r.created
 }
-func (r *recordingTransport) Send(_ *objproto.Message)        {}
+func (r *recordingTransport) Send(_ *objproto.Message)                {}
 func (r *recordingTransport) Recv(_ context.Context) *trsf.SendAction { return nil }
 
 // recordingStream is a trsf.BidirectionalStream that counts AppendData calls
@@ -564,17 +564,17 @@ func (s *recordingStream) AppendData(_ bool, _ ...[]byte) error {
 func (s *recordingStream) AppendDataContext(_ context.Context, eof bool, p ...[]byte) error {
 	return s.AppendData(eof, p...)
 }
-func (s *recordingStream) ID() trsf.StreamID                       { return 1 }
-func (s *recordingStream) Write(p []byte) (int, error)             { return len(p), nil }
+func (s *recordingStream) ID() trsf.StreamID           { return 1 }
+func (s *recordingStream) Write(p []byte) (int, error) { return len(p), nil }
 func (s *recordingStream) WriteContext(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
-func (s *recordingStream) Close() error      { return nil }
-func (s *recordingStream) HasSendData() bool { return false }
-func (s *recordingStream) Completed() bool   { return true }
-func (s *recordingStream) Read([]byte) (int, error)                            { return 0, io.EOF }
+func (s *recordingStream) Close() error                                         { return nil }
+func (s *recordingStream) HasSendData() bool                                    { return false }
+func (s *recordingStream) Completed() bool                                      { return true }
+func (s *recordingStream) Read([]byte) (int, error)                             { return 0, io.EOF }
 func (s *recordingStream) ReadContext(_ context.Context, _ []byte) (int, error) { return 0, io.EOF }
-func (s *recordingStream) ReadDirect(_ uint64) ([]byte, bool, error)           { return nil, true, nil }
+func (s *recordingStream) ReadDirect(_ uint64) ([]byte, bool, error)            { return nil, true, nil }
 func (s *recordingStream) ReadDirectContext(_ context.Context, _ uint64) ([]byte, bool, error) {
 	return nil, true, nil
 }

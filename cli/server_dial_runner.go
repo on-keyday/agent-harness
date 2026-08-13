@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // taskControlClient is the minimal interface ServerDialRunnerWith needs
