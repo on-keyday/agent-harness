@@ -23,6 +23,7 @@ func TestRunAction_NilClientGuarded(t *testing.T) {
 		{"prune-time", PruneAction{Before: 0}},
 		{"cancel", CancelAction{IDPrefix: id}},
 		{"caps-set", SetCapsAction{TaskID: id}},
+		{"caps-set-parent", SetParentAction{TaskID: id, Detach: true}},
 		{"submit", SubmitAction{Repo: "/r", Prompt: "hi"}},
 		{"notify", NotifyAction{Title: "t", Text: "x"}},
 		{"session-ls", SessionLsAction{}},

@@ -754,6 +754,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(OKStyle.Render(line))
 		return a, RefreshSnapshot(a.client)
 
+	case SetParentResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("set-parent failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		a.cmdresult.Append(OKStyle.Render(cli.SetParentMessage(msg.Opts, msg.Res)))
+		return a, RefreshSnapshot(a.client)
+
 	case ServerDialResultMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("server dial-runner %s: %v", msg.RunnerCID, msg.Err)))
@@ -1374,6 +1382,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return a, nil
 			case msg.Type == tea.KeyEnter:
+				if a.authorityPicker.Mode() == PickerModeParent {
+					parentHex, _, swap, ok := a.authorityPicker.ParentChoice()
+					target := a.authorityPicker.TargetID()
+					a.authorityPicker.Close()
+					if !ok {
+						return a, nil
+					}
+					if a.client == nil {
+						a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
+						return a, nil
+					}
+					// ParentID == "" without Swap IS the detach form on the wire.
+					return a, DoSetParent(a.client, cli.SetParentOpts{
+						TaskID: target, ParentID: parentHex, Swap: swap,
+					})
+				}
 				caps, spec, cascade, keep := a.authorityPicker.Result()
 				mode, target := a.authorityPicker.Mode(), a.authorityPicker.TargetID()
 				a.authorityPicker.Close()
@@ -1818,6 +1842,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			a.authorityPicker.SetSize(a.width, a.height)
 			a.authorityPicker.OpenRegrant(*t, a.tasks.Rows())
+			return a, nil
+		}
+		// `A` opens the same picker as a parent chooser: re-point the selected
+		// task's parent link (root / swap / another task). Operator-only
+		// server-side, like re-grant; applying goes through the picker's
+		// Enter handler.
+		if a.focus == focusTasks && msg.String() == mainKeys.SetParent {
+			t := a.tasks.SelectedTask()
+			if t == nil {
+				a.cmdresult.Append(WarnStyle.Render("no task selected"))
+				return a, nil
+			}
+			a.authorityPicker.SetSize(a.width, a.height)
+			a.authorityPicker.OpenParent(*t, a.tasks.Rows())
 			return a, nil
 		}
 		// `r` / `R` re-enter the selected session: reattach a live Detached
@@ -2456,6 +2494,23 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, DoSetCaps(a.client, cli.SetCapsOpts{
 			TaskID: full, Caps: v.Caps, Scope: v.Scope,
 			Cascade: v.Cascade, KeepConns: v.KeepConns,
+		})
+	case SetParentAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		parentFull := ""
+		if v.ParentID != "" {
+			parentFull, errStr = a.resolveTaskIDPrefix(v.ParentID)
+			if errStr != "" {
+				a.cmdresult.Append(ErrorStyle.Render(errStr))
+				return a, nil
+			}
+		}
+		return a, DoSetParent(a.client, cli.SetParentOpts{
+			TaskID: full, ParentID: parentFull, Swap: v.Swap,
 		})
 	case InteractiveAction:
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")

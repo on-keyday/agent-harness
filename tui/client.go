@@ -181,6 +181,26 @@ func DoSetCaps(c *cli.Client, opts cli.SetCapsOpts) tea.Cmd {
 	}
 }
 
+// SetParentResultMsg carries the outcome of a parent-link change. Opts rides
+// along so the result line can name the target and the form that was applied
+// (cli.SetParentMessage).
+type SetParentResultMsg struct {
+	Opts cli.SetParentOpts
+	Res  cli.SetParentResult
+	Err  error
+}
+
+// DoSetParent re-points a live task's parent link (or swaps it with its
+// parent). Uses the long-lived client the TUI already holds — see DoSetCaps.
+func DoSetParent(c *cli.Client, opts cli.SetParentOpts) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		res, err := cli.SetParentWith(ctx, c, opts)
+		return SetParentResultMsg{Opts: opts, Res: res, Err: err}
+	}
+}
+
 func DoCancel(c *cli.Client, idPrefix, resolved string) tea.Cmd {
 	return func() tea.Msg {
 		if resolved == "" {

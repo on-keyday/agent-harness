@@ -272,9 +272,20 @@ type SetCapsAction struct {
 	KeepConns bool
 }
 
+// SetParentAction re-points a LIVE task's parent link, the edge subtree
+// scopes walk. Operator-only, enforced server-side. Exactly one of ParentID /
+// Detach / Swap is set — the parser rejects zero or two.
+type SetParentAction struct {
+	TaskID   string
+	ParentID string
+	Detach   bool
+	Swap     bool
+}
+
 func (SubmitAction) isAction()           {}
 func (ScopeAction) isAction()            {}
 func (SetCapsAction) isAction()          {}
+func (SetParentAction) isAction()        {}
 func (CancelAction) isAction()           {}
 func (PruneAction) isAction()            {}
 func (ClearAction) isAction()            {}
@@ -356,6 +367,9 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		}
 		if tokens[1] == "set" {
 			return parseSetCaps(tokens[2:])
+		}
+		if tokens[1] == "set-parent" {
+			return parseSetParent(tokens[2:])
 		}
 		c, err := cli.ParseCaps(strings.Join(tokens[1:], ""))
 		if err != nil {
@@ -1104,6 +1118,48 @@ func parseSetCaps(args []string) (Action, error) {
 	}
 	if act.Caps == nil && act.Scope == nil {
 		return nil, fmt.Errorf("caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
+	}
+	return act, nil
+}
+
+// parseSetParent backs `caps set-parent <task-id> (--parent <task-id> |
+// --none | --swap)`, the TUI form of harness-cli caps set-parent.
+func parseSetParent(args []string) (Action, error) {
+	usage := "caps set-parent: usage: caps set-parent <task-id> (--parent <task-id> | --none | --swap)"
+	act := SetParentAction{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--none":
+			act.Detach = true
+		case "--swap":
+			act.Swap = true
+		case "--parent":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("caps set-parent: --parent needs a value")
+			}
+			i++
+			act.ParentID = args[i]
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return nil, fmt.Errorf("caps set-parent: unknown flag %q\n%s", args[i], usage)
+			}
+			if act.TaskID != "" {
+				return nil, fmt.Errorf("caps set-parent: more than one task id\n%s", usage)
+			}
+			act.TaskID = args[i]
+		}
+	}
+	if act.TaskID == "" {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	picked := 0
+	for _, on := range []bool{act.ParentID != "", act.Detach, act.Swap} {
+		if on {
+			picked++
+		}
+	}
+	if picked != 1 {
+		return nil, fmt.Errorf("caps set-parent: pass exactly one of --parent <task-id>, --none, --swap\n%s", usage)
 	}
 	return act, nil
 }

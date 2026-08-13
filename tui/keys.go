@@ -36,6 +36,7 @@ type mainKeyMap struct {
 
 	Cancel                 string
 	ReGrant                string
+	SetParent              string
 	ResumeAssignedContinue string
 	ResumeAssignedFresh    string
 	ResumeAnyContinue      string
@@ -67,6 +68,7 @@ var mainKeys = mainKeyMap{
 
 	Cancel:                 "c",
 	ReGrant:                "a",
+	SetParent:              "A",
 	ResumeAssignedContinue: "r",
 	ResumeAssignedFresh:    "R",
 	ResumeAnyContinue:      "u",
@@ -182,6 +184,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.ViewOnly}, Scope: scopeTasks, Short: "v view-only", Long: "attach read-only (no input forwarded)"},
 	{Keys: []string{mainKeys.Cancel}, Scope: scopeTasks, Short: "c cancel", Long: "cancel the selected task"},
 	{Keys: []string{mainKeys.ReGrant}, Scope: scopeTasks, Short: "a re-grant", Long: "open the re-grant picker for the selected task's caps/scope (operator-only)"},
+	{Keys: []string{mainKeys.SetParent}, Scope: scopeTasks, Short: "A set parent", Long: "re-point the selected task's parent link (root / swap / another task; operator-only)"},
 	{Keys: []string{mainKeys.AwaitIdle, mainKeys.AwaitIdleNotify}, Scope: scopeTasks,
 		Short: "w/W await-idle", Long: "arm a one-shot idle watcher (W also notifies the operator)"},
 	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Short: "F files", Long: "open the file picker on the selected task's worktree"},

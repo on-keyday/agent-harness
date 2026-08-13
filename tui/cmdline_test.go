@@ -1180,3 +1180,46 @@ func TestParseCapsSetCommand(t *testing.T) {
 		t.Fatal("caps set without a task id was accepted")
 	}
 }
+
+func TestParseCapsSetParentCommand(t *testing.T) {
+	id := strings.Repeat("ab", 16)
+	pid := strings.Repeat("cd", 16)
+
+	act, err := ParseCommand("caps set-parent "+id+" --parent "+pid, "/cwd")
+	if err != nil {
+		t.Fatalf("set-parent --parent: %v", err)
+	}
+	sp, ok := act.(SetParentAction)
+	if !ok || sp.TaskID != id || sp.ParentID != pid || sp.Detach || sp.Swap {
+		t.Fatalf("set-parent --parent = %#v", act)
+	}
+
+	act, err = ParseCommand("caps set-parent "+id+" --none", "/cwd")
+	if err != nil {
+		t.Fatalf("set-parent --none: %v", err)
+	}
+	sp, ok = act.(SetParentAction)
+	if !ok || sp.TaskID != id || !sp.Detach || sp.Swap || sp.ParentID != "" {
+		t.Fatalf("set-parent --none = %#v", act)
+	}
+
+	act, err = ParseCommand("caps set-parent --swap "+id, "/cwd")
+	if err != nil {
+		t.Fatalf("set-parent --swap (flag first): %v", err)
+	}
+	sp, ok = act.(SetParentAction)
+	if !ok || sp.TaskID != id || !sp.Swap || sp.Detach {
+		t.Fatalf("set-parent --swap = %#v", act)
+	}
+
+	// Exactly one of the three forms; zero or two is an error.
+	if _, err := ParseCommand("caps set-parent "+id, "/cwd"); err == nil {
+		t.Fatal("set-parent with no form parsed")
+	}
+	if _, err := ParseCommand("caps set-parent "+id+" --none --swap", "/cwd"); err == nil {
+		t.Fatal("set-parent with two forms parsed")
+	}
+	if _, err := ParseCommand("caps set-parent --parent "+pid, "/cwd"); err == nil {
+		t.Fatal("set-parent without a target parsed")
+	}
+}

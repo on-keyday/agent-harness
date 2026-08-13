@@ -226,3 +226,53 @@ func TestAuthorityPickerSessionModeRows(t *testing.T) {
 		t.Fatal("Close must close")
 	}
 }
+
+// TestAuthorityPickerParentMode drives the single-choice parent chooser: the
+// detach row, the swap row (only when the target has a parent), a candidate
+// row, and Toggle being inert.
+func TestAuthorityPickerParentMode(t *testing.T) {
+	parent := pickerTask(0xaa, "parent")
+	target := pickerTask(0xbb, "target")
+	target.CreatorTaskId = parent.Id
+	other := pickerTask(0xcc, "other")
+	otherHex := FormatTaskID(other.Id)
+
+	var m AuthorityPickerModel
+	m.OpenParent(target, []protocol.TaskInfo{parent, target, other})
+
+	// Row 0 is the detach row.
+	if p, detach, swap, ok := m.ParentChoice(); !ok || !detach || swap || p != "" {
+		t.Fatalf("row 0 = (%q,%v,%v,%v), want detach", p, detach, swap, ok)
+	}
+	// The swap row names the current parent.
+	moveTo(t, &m, "swap with "+FormatTaskID(parent.Id)[:8])
+	if p, detach, swap, ok := m.ParentChoice(); !ok || detach || !swap || p != "" {
+		t.Fatalf("swap row = (%q,%v,%v,%v)", p, detach, swap, ok)
+	}
+	// A candidate task row yields its id; Toggle changes nothing.
+	moveTo(t, &m, otherHex[:8])
+	m.Toggle()
+	if p, detach, swap, ok := m.ParentChoice(); !ok || detach || swap || p != otherHex {
+		t.Fatalf("task row = (%q,%v,%v,%v), want %q", p, detach, swap, ok, otherHex)
+	}
+	// The current parent's row is annotated.
+	moveTo(t, &m, "current parent")
+	if p, _, _, ok := m.ParentChoice(); !ok || p != FormatTaskID(parent.Id) {
+		t.Fatalf("current-parent row = %q", p)
+	}
+	// The target itself is not offered.
+	for _, r := range m.rows {
+		if r.idHex == FormatTaskID(target.Id) {
+			t.Fatal("the target lists itself as a parent candidate")
+		}
+	}
+
+	// A rootless target gets no swap row.
+	var m2 AuthorityPickerModel
+	m2.OpenParent(other, []protocol.TaskInfo{parent, target, other})
+	for _, r := range m2.rows {
+		if r.kind == rowParentSwap {
+			t.Fatal("swap row offered for an operator-rooted target")
+		}
+	}
+}

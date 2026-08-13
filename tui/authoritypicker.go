@@ -42,6 +42,10 @@ const (
 	PickerModeRegrant AuthorityPickerMode = iota
 	// PickerModeSession edits the session-default caps+scope for spawns.
 	PickerModeSession
+	// PickerModeParent picks a new parent for a live task and applies via
+	// set_parent. Single-choice: Enter applies the CURSOR row (root / swap /
+	// a task); there is no toggling and no caps/base/cascade rows.
+	PickerModeParent
 )
 
 type pickerRowKind int
@@ -52,6 +56,8 @@ const (
 	rowTask
 	rowCascade
 	rowKeepConns
+	rowParentRoot // parent mode: detach to the operator root
+	rowParentSwap // parent mode: swap with the current parent
 )
 
 type pickerRow struct {
@@ -74,6 +80,57 @@ func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []pro
 func (m *AuthorityPickerModel) OpenSession(caps protocol.Capability, scope protocol.TaskScope, tasks []protocol.TaskInfo) {
 	m.reset(PickerModeSession, caps, scope)
 	m.buildRows(tasks)
+}
+
+// OpenParent opens the picker as a parent chooser for target: a detach row, a
+// swap row when the target currently has a parent, then every other task as a
+// candidate. Single-choice — Enter applies the cursor row via ParentChoice.
+func (m *AuthorityPickerModel) OpenParent(target protocol.TaskInfo, tasks []protocol.TaskInfo) {
+	m.reset(PickerModeParent, 0, protocol.TaskScope{})
+	m.targetHex = FormatTaskID(target.Id)
+	parentHex := ""
+	if target.CreatorTaskId.Id != ([16]byte{}) {
+		parentHex = FormatTaskID(target.CreatorTaskId)
+	}
+	m.rows = m.rows[:0]
+	m.rows = append(m.rows, pickerRow{kind: rowParentRoot, label: "(root — detach)"})
+	if parentHex != "" {
+		m.rows = append(m.rows, pickerRow{kind: rowParentSwap,
+			label: "(swap with " + parentHex[:8] + " — take its place, it becomes the child)"})
+	}
+	for _, t := range tasks {
+		idHex := FormatTaskID(t.Id)
+		if idHex == m.targetHex {
+			continue
+		}
+		label := idHex[:8] + " " + taskStatusStr(t.Status) + " " + string(t.AgentProfile) +
+			" " + truncateLeft(string(t.RepoPath), 20)
+		if p := string(t.Prompt); p != "" {
+			label += " " + runewidth.Truncate(p, 24, "…")
+		}
+		if idHex == parentHex {
+			label += "  ← current parent"
+		}
+		m.rows = append(m.rows, pickerRow{kind: rowTask, label: label, idHex: idHex})
+	}
+}
+
+// ParentChoice reads the cursor row as the parent-mode selection. ok is false
+// outside parent mode or on a row kind that cannot occur there.
+func (m *AuthorityPickerModel) ParentChoice() (parentHex string, detach, swap, ok bool) {
+	if m.mode != PickerModeParent || len(m.rows) == 0 {
+		return "", false, false, false
+	}
+	switch r := m.rows[m.cursor]; r.kind {
+	case rowParentRoot:
+		return "", true, false, true
+	case rowParentSwap:
+		return "", false, true, true
+	case rowTask:
+		return r.idHex, false, false, true
+	default:
+		return "", false, false, false
+	}
 }
 
 func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Capability, scope protocol.TaskScope) {
@@ -173,7 +230,9 @@ func (m *AuthorityPickerModel) SetAllCaps(all bool) {
 // Toggle flips the current row; on the base row it cycles
 // subtree → none → global → subtree.
 func (m *AuthorityPickerModel) Toggle() {
-	if len(m.rows) == 0 {
+	if len(m.rows) == 0 || m.mode == PickerModeParent {
+		// Parent mode is single-choice: the cursor is the selection and Enter
+		// applies it; there is nothing to toggle.
 		return
 	}
 	switch r := m.rows[m.cursor]; r.kind {
@@ -254,8 +313,11 @@ func (m *AuthorityPickerModel) View() string {
 		return ""
 	}
 	title := "session default authority"
-	if m.mode == PickerModeRegrant {
+	switch m.mode {
+	case PickerModeRegrant:
 		title = "re-grant " + m.targetHex[:8]
+	case PickerModeParent:
+		title = "set parent of " + m.targetHex[:8]
 	}
 
 	// The popup's width depends only on the terminal, never on the content:
@@ -296,6 +358,11 @@ func (m *AuthorityPickerModel) View() string {
 	for i := start; i < end; i++ {
 		r := m.rows[i]
 		line := "[ ] "
+		if m.mode == PickerModeParent {
+			// Single-choice: the cursor IS the selection, so checkboxes would
+			// suggest a multi-select that does not exist.
+			line = "  "
+		}
 		switch r.kind {
 		case rowCap:
 			if m.caps&r.bit == r.bit {
@@ -304,7 +371,7 @@ func (m *AuthorityPickerModel) View() string {
 		case rowBase:
 			line = "    "
 		case rowTask:
-			if m.selected[r.idHex] {
+			if m.mode != PickerModeParent && m.selected[r.idHex] {
 				line = "[x] "
 			}
 		case rowCascade:
@@ -330,6 +397,10 @@ func (m *AuthorityPickerModel) View() string {
 		b.WriteString(line + "\n")
 	}
 
+	if m.mode == PickerModeParent {
+		b.WriteString(fit("j/k move · enter apply · esc cancel"))
+		return pickerBorderStyle.Render(b.String())
+	}
 	_, spec, _, _ := m.Result()
 	if spec == "" {
 		spec = "(default subtree)"
