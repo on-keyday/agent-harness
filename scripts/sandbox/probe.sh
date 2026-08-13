@@ -38,21 +38,30 @@ add "id" "$(id 2>&1)"
 add "in_container" "$({ [ -f /run/.containerenv ] || [ -f /.dockerenv ]; } && echo yes || echo NO)"
 
 # --- filesystem: what leaks in from the host ---------------------------------
-# The parent of the mounted repo is the interesting one: under confinement it
-# must NOT list your other checkouts.
-add "siblings_listing" "$(ls -1 "$(dirname "$repo")" 2>&1 | tr '\n' ',')"
-add "home_listing" "$(ls -1 "$HOME" 2>&1 | tr '\n' ',')"
+# host_mounts is the authoritative answer to "what of the host is in here" — a
+# listing is cwd-dependent and says nothing about what else was bind-mounted.
+add "host_mounts" "$(awk '$5 ~ /^\/(home|root|mnt|media|opt|srv)/ {print $5}' /proc/self/mountinfo 2>/dev/null | sort -u | tr '\n' ',')"
+add "siblings_listing" "$(ls -1a "$(dirname "$repo")" 2>&1 | tr '\n' ',')"
+add "home_listing" "HOME=$HOME -> $(ls -1a "$HOME" 2>&1 | tr '\n' ',')"
 add "repo_writable" "$(touch "$repo/.probe_write" 2>&1 && echo yes-and-cleaned && rm -f "$repo/.probe_write" || echo NO)"
 add "etc_passwd_host_users" "$(getent passwd 2>/dev/null | wc -l) entries"
-add "claude_home_mounted" "$([ -d "$HOME/.claude" ] && echo yes-mount-auth || echo no-token-auth)"
+# Token auth leaves an EPHEMERAL ~/.claude in the image's own home, so a bare
+# -d test reports the host login as present when it is not. Only a bind mount
+# proves the host's ~/.claude is exposed.
+add "claude_home_mounted" "$(grep -qE ' /[^ ]*/\.claude(\.json)?( |$)' /proc/self/mountinfo 2>/dev/null && echo yes-HOST-mount-auth || echo no-token-auth-or-ephemeral)"
 
 # --- processes ---------------------------------------------------------------
-add "proc_total" "$(ps -e 2>/dev/null | wc -l) procs"
-add "host_proc_leak" "$(ps -e -o comm 2>/dev/null | grep -Ec 'agent-runner|claude-in-pod') matches (expect 0)"
+# Read /proc directly: the image ships no procps, and `ps` missing made the
+# leak count read 0 — indistinguishable from a real pass.
+add "proc_total" "$(ls -d /proc/[0-9]* 2>/dev/null | wc -l) procs (via /proc)"
+add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runner|claude-in-pod') matches (expect 0)"
 
 # --- network: one allowlisted target, one that must be refused ---------------
+# The second one is a control: it is EXPECTED to succeed when the slot runs
+# without --firewall / --firewall-proxy. It only proves confinement when one of
+# those is on — read it together with the wrapper's "firewall=" log line.
 add "egress_allowed" "$(curl -sS -m 6 https://api.github.com/zen 2>&1 | head -c 90)"
-add "egress_blocked_ctl" "$(curl -sS -m 6 -o /dev/null -w '%{http_code}' https://example.com 2>&1 | head -c 90)"
+add "egress_nonallowlisted" "$(curl -sS -m 6 -o /dev/null -w '%{http_code}' https://example.com 2>&1 | head -c 90) (refusal expected ONLY under --firewall*)"
 
 # --- control plane (the OTHER confinement layer: server-enforced caps) -------
 add "harness_cli" "$(command -v harness-cli 2>&1 || echo MISSING)"
