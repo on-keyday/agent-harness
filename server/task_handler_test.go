@@ -163,7 +163,7 @@ func TestListReturnsRunnersAndTasks(t *testing.T) {
 	})
 
 	// Pre-populate TaskStore with 1 Queued task on "/x".
-	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+	taskID := tasks.Create("/x", "list-prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "")
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_List}
 	req.SetList(protocol.ListQuery{})
@@ -509,7 +509,7 @@ func TestSubmitResumeProfileUnavailableWhenRunnerLostProfile(t *testing.T) {
 
 	// Original task bound to profile "codex" on runner "A" (test-only shortcut
 	// via TaskStore.Create; equivalent to what handleSubmit would have stored).
-	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
 	h.Tasks.Assign(taskIDHex, "A", "/wt")
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
@@ -534,7 +534,7 @@ func TestSubmitResumeEmptyProfileReusesOriginal(t *testing.T) {
 	h := newTestHandler(t)
 	now := time.Now()
 
-	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
 	h.Tasks.Assign(taskIDHex, "A", "/wt")
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
@@ -574,7 +574,7 @@ func TestSubmitResumeProfileFilterNarrowsAmbiguity(t *testing.T) {
 	now := time.Now()
 
 	// Original task recorded as bound to the "codex" profile.
-	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "B", protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "B", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
 	h.Tasks.Assign(taskIDHex, "B", "/wt")
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
@@ -864,7 +864,7 @@ func TestOpenInteractiveUnpinnedResumeExpandsToPicker(t *testing.T) {
 	now := time.Now()
 
 	// Terminal interactive task, recorded profile "codex".
-	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
 	h.Tasks.Assign(taskIDHex, "A", "/wt")
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
@@ -904,7 +904,7 @@ func TestOpenInteractivePinnedResumeStillDefaultsProfile(t *testing.T) {
 	runnerCID := objproto.MustParseConnectionID("ws:127.0.0.1:9300-1")
 	runnerIDHex := runnerCID.String()
 
-	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, runnerIDHex, protocol.RunnerSelector{}, nil, protocol.Capability_All, "codex")
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, runnerIDHex, protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
 	h.Tasks.Assign(taskIDHex, runnerIDHex, "/wt")
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
@@ -1014,7 +1014,7 @@ func TestOpenInteractiveResumeCrossModeNotRejected(t *testing.T) {
 	now := time.Now()
 
 	// Original task created (and finished) as Oneshot.
-	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "")
 	h.Tasks.Assign(taskIDHex, "A", "/wt")
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
@@ -1270,7 +1270,7 @@ func TestSubmitResumeProfileMatchesAcrossExeSuffix(t *testing.T) {
 	// --agent-bin era); the runner has since been reconfigured with a bare
 	// bin and now advertises "claude". Same binary, two spellings — pinned
 	// resume must keep working.
-	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, "claude.exe")
+	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "claude.exe")
 	h.Tasks.Assign(taskIDHex, "A", "/wt")
 	h.Tasks.Finish(taskIDHex, 0, nil)
 

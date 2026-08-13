@@ -148,7 +148,7 @@ func newTaskID() string {
 // --agent-args at exec time; pass nil for none.
 // agentProfile is the resolved agent profile name (see TaskEntry.AgentProfile);
 // pass "" when the bound runner advertised no profiles (legacy runner).
-func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, agentProfile string) string {
+func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin protocol.ClientKind, creatorTaskID protocol.TaskID, boundRunnerID string, selector protocol.RunnerSelector, extraArgs []string, caps protocol.Capability, scope Scope, agentProfile string) string {
 	s.mu.Lock()
 	id := newTaskID()
 	s.tasks[id] = &TaskEntry{
@@ -159,6 +159,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		OriginKind:    origin,
 		CreatorTaskID: creatorTaskID,
 		Capabilities:  caps,
+		Scope:         scope,
 		AgentProfile:  agentProfile,
 		Status:        protocol.TaskStatus_Queued,
 		CreatedAt:     time.Now(),
@@ -172,6 +173,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		if creatorTaskID.Id != ([16]byte{}) {
 			creatorHex = hex.EncodeToString(creatorTaskID.Id[:])
 		}
+		scopeBase, scopeIDs := scope.walFields()
 		if err := s.wal.Write(WALEvent{
 			Type:          "task_created",
 			TaskID:        id,
@@ -184,6 +186,8 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			Selector:      selector,
 			ExtraArgs:     extraArgs,
 			Capabilities:  uint32(caps),
+			ScopeBase:     scopeBase,
+			ScopeIDs:      scopeIDs,
 			AgentProfile:  agentProfile,
 		}); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
@@ -195,6 +199,53 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		onCreate(id)
 	}
 	return id
+}
+
+// writeCapsChangedLocked emits one task_caps_changed record carrying the
+// task's post-change authority. Caller holds s.mu.
+//
+// The record is a snapshot, not a delta: replay assigns both halves from it,
+// so a record that named only the field that changed would silently reset the
+// other to its zero on the next restart.
+func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, scope Scope) {
+	if s.wal == nil {
+		return
+	}
+	base, ids := scope.walFields()
+	if err := s.wal.Write(WALEvent{
+		Type: "task_caps_changed", TaskID: id,
+		Capabilities: uint32(caps), ScopeBase: base, ScopeIDs: ids,
+	}); err != nil {
+		slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
+	}
+}
+
+// SetCaps rewrites a live task's authority: the capability bitmask, the scope,
+// or both, according to the two presence flags.
+//
+// Unlike Resume it has NO terminal-state precondition — the point is to change
+// a task that is still running. Enforcement re-reads the store on every
+// request (see TaskHandler.callerCaps / scopeSet), so the new authority is in
+// force from the target's next RPC with nothing restarted.
+//
+// Returns the post-change entry and whether the task existed.
+func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, setScope bool, scope Scope) (TaskEntry, bool) {
+	s.mu.Lock()
+	e, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return TaskEntry{}, false
+	}
+	if setCaps {
+		e.Capabilities = caps
+	}
+	if setScope {
+		e.Scope = scope
+	}
+	s.writeCapsChangedLocked(id, e.Capabilities, e.Scope)
+	snapshot := *e
+	s.mu.Unlock()
+	return snapshot, true
 }
 
 // ResumeError is the typed error TaskStore.Resume returns when the resume
@@ -241,7 +292,7 @@ func (e ResumeError) Error() string {
 // mode it was invoked as (submit → Oneshot, open_interactive → Interactive)
 // and which profile was resolved for this open, independent of the values
 // the task was originally Created with.
-func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, newKind protocol.TaskKind, agentProfile string) (TaskEntry, error) {
+func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector protocol.RunnerSelector, boundRunnerID string, resumerKind protocol.ClientKind, capsOverride bool, newCaps protocol.Capability, scopeOverride bool, newScope Scope, newKind protocol.TaskKind, agentProfile string) (TaskEntry, error) {
 	s.mu.Lock()
 	e, ok := s.tasks[id]
 	if !ok {
@@ -295,13 +346,17 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 		}
 	}
 
-	if capsOverride {
-		e.Capabilities = newCaps
-		if s.wal != nil {
-			if err := s.wal.Write(WALEvent{Type: "task_caps_changed", TaskID: id, Capabilities: uint32(newCaps)}); err != nil {
-				slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
-			}
+	if capsOverride || scopeOverride {
+		if capsOverride {
+			e.Capabilities = newCaps
 		}
+		if scopeOverride {
+			e.Scope = newScope
+		}
+		// One event carries the post-change state of BOTH halves, whichever was
+		// asked for: replay applies what the record says, so writing only the
+		// changed half would leave the other reading as its zero on restart.
+		s.writeCapsChangedLocked(id, e.Capabilities, e.Scope)
 	}
 
 	snapshot := *e
@@ -638,6 +693,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				OriginKind:    protocol.ClientKind(ev.OriginKind),
 				CreatorTaskID: creatorTaskID,
 				Capabilities:  protocol.Capability(ev.Capabilities),
+				Scope:         scopeFromWAL(ev.ScopeBase, ev.ScopeIDs),
 				AgentProfile:  ev.AgentProfile,
 				Status:        protocol.TaskStatus_Queued,
 				CreatedAt:     time.Unix(0, ev.Ts),
@@ -713,6 +769,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Capabilities = protocol.Capability(ev.Capabilities)
+			t.Scope = scopeFromWAL(ev.ScopeBase, ev.ScopeIDs)
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {

@@ -93,10 +93,10 @@ func TestResumedTaskLogNotDuplicated(t *testing.T) {
 	ts.OnCreate = func(id string) { taps.Register(id) }
 
 	id := ts.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, 0, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, 0, Scope{}, "")
 	ts.Finish(id, 0, nil)
 	if _, err := ts.Resume(id, "again", nil, protocol.RunnerSelector{}, "",
-		protocol.ClientKind_Tui, false, 0, protocol.TaskKind_Oneshot, ""); err != nil {
+		protocol.ClientKind_Tui, false, 0, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 		t.Fatal(err)
 	}
 

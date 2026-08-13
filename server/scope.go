@@ -129,3 +129,11 @@ func (s Scope) String() string {
 	}
 	return base + "+" + ids
 }
+
+// walFields / scopeFromWAL are the WAL projection. Kept next to the type so
+// the two directions cannot drift apart.
+func (s Scope) walFields() (base uint8, ids []string) { return uint8(s.Base), s.IDs }
+
+func scopeFromWAL(base uint8, ids []string) Scope {
+	return Scope{Base: protocol.ScopeBase(base), IDs: normalizeScopeIDs(ids)}
+}

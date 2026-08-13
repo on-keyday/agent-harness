@@ -47,6 +47,12 @@ type WALEvent struct {
 	// Capabilities is the bitmask stored at task_created time. Legacy WAL
 	// entries without this field default to 0 (Capability_None).
 	Capabilities uint32 `json:"capabilities,omitempty"`
+	// ScopeBase / ScopeIDs are the task's TaskScope (see server/scope.go),
+	// written on task_created and task_caps_changed. A legacy entry has
+	// neither key, so ScopeBase reads back as 0 — which is ScopeBase_Subtree,
+	// the pre-scope behaviour. That is why subtree is the zero value.
+	ScopeBase uint8    `json:"scope_base,omitempty"`
+	ScopeIDs  []string `json:"scope_ids,omitempty"`
 	// AgentProfile is the resolved agent profile name for this task (see
 	// TaskEntry.AgentProfile). Written on task_created events; legacy
 	// entries default to "" (zero). Also reused by task_resumed events.
@@ -84,6 +90,8 @@ type walEventJSON struct {
 	ResumedByKind uint8    `json:"resumed_by_kind,omitempty"`
 	CreatorTaskID string   `json:"creator_task_id,omitempty"`
 	Capabilities  uint32   `json:"capabilities,omitempty"`
+	ScopeBase     uint8    `json:"scope_base,omitempty"`
+	ScopeIDs      []string `json:"scope_ids,omitempty"`
 	AgentProfile  string   `json:"agent_profile,omitempty"`
 	WorktreeDir   string   `json:"worktree_dir,omitempty"`
 	ExitCode      *int32   `json:"exit_code,omitempty"`
@@ -111,6 +119,8 @@ func (e WALEvent) MarshalJSON() ([]byte, error) {
 		ResumedByKind: e.ResumedByKind,
 		CreatorTaskID: e.CreatorTaskID,
 		Capabilities:  e.Capabilities,
+		ScopeBase:     e.ScopeBase,
+		ScopeIDs:      e.ScopeIDs,
 		AgentProfile:  e.AgentProfile,
 		WorktreeDir:   e.WorktreeDir,
 		ExitCode:      e.ExitCode,
@@ -145,6 +155,8 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.ResumedByKind = j.ResumedByKind
 	e.CreatorTaskID = j.CreatorTaskID
 	e.Capabilities = j.Capabilities
+	e.ScopeBase = j.ScopeBase
+	e.ScopeIDs = j.ScopeIDs
 	e.AgentProfile = j.AgentProfile
 	e.WorktreeDir = j.WorktreeDir
 	e.ExitCode = j.ExitCode

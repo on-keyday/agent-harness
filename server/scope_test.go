@@ -1,6 +1,7 @@
 package server
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -80,5 +81,76 @@ func TestDefaultScopeIsTheZeroValue(t *testing.T) {
 	d := defaultScope()
 	if d.Base != (Scope{}).Base || len(d.IDs) != 0 {
 		t.Fatal("defaultScope must be the zero value so an absent scope reads as subtree")
+	}
+}
+
+// SetCaps is the store half of the operator's live re-grant. Unlike Resume it
+// has no terminal-state precondition — the whole point is to change a task
+// that is still Running — and it must persist BOTH halves in one record.
+func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "setcaps.log")
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		t.Fatalf("OpenWAL: %v", err)
+	}
+	s := NewTaskStore()
+	s.SetWAL(wal)
+
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	s.Assign(id, "runner-x", "/wt/x")
+	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Running {
+		t.Fatalf("status = %v, want Running (the precondition this method must NOT have)", got.Status)
+	}
+
+	peer := strings.Repeat("ab", 16)
+	e, ok := s.SetCaps(id, true, protocol.Capability_Cancel, true,
+		Scope{Base: protocol.ScopeBase_None, IDs: []string{peer}})
+	if !ok {
+		t.Fatal("SetCaps reported the task missing")
+	}
+	if e.Capabilities != protocol.Capability_Cancel {
+		t.Errorf("caps = %v, want cancel", e.Capabilities)
+	}
+	if e.Scope.Base != protocol.ScopeBase_None || len(e.Scope.IDs) != 1 || e.Scope.IDs[0] != peer {
+		t.Errorf("scope = %+v, want none+ids:%s", e.Scope, peer)
+	}
+
+	// Half-writes must leave the other half alone.
+	if e2, _ := s.SetCaps(id, false, protocol.Capability_All, true, Scope{Base: protocol.ScopeBase_Global}); true {
+		if e2.Capabilities != protocol.Capability_Cancel {
+			t.Errorf("caps changed on a scope-only write: %v", e2.Capabilities)
+		}
+		if e2.Scope.Base != protocol.ScopeBase_Global {
+			t.Errorf("scope = %v, want global", e2.Scope.Base)
+		}
+	}
+	if _, ok := s.SetCaps("no-such-task", true, protocol.Capability_None, false, Scope{}); ok {
+		t.Error("SetCaps on a missing task reported ok")
+	}
+
+	wal.Close() //nolint:errcheck
+	events, readErr := ReadWAL(walPath)
+	if readErr != nil {
+		t.Fatalf("ReadWAL: %v", readErr)
+	}
+	var last *WALEvent
+	for i := range events {
+		if events[i].Type == "task_caps_changed" && events[i].TaskID == id {
+			last = &events[i]
+		}
+	}
+	if last == nil {
+		t.Fatal("no task_caps_changed event written")
+	}
+	// The record is a snapshot, not a delta: the scope-only write must still
+	// carry the caps, or replay would reset them to zero.
+	if protocol.Capability(last.Capabilities) != protocol.Capability_Cancel {
+		t.Errorf("WAL caps = %v, want cancel carried through a scope-only write",
+			protocol.Capability(last.Capabilities))
+	}
+	if protocol.ScopeBase(last.ScopeBase) != protocol.ScopeBase_Global {
+		t.Errorf("WAL scope base = %v, want global", protocol.ScopeBase(last.ScopeBase))
 	}
 }

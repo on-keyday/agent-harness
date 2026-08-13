@@ -61,7 +61,7 @@ func TestCallerCaps(t *testing.T) {
 	parentCaps := protocol.Capability_FileRead | protocol.Capability_Spawn
 	agentTaskIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, parentCaps, "")
+		protocol.RunnerSelector{}, nil, parentCaps, Scope{}, "")
 	tid := hexToTaskID(t, agentTaskIDHex)
 
 	// Set the principal directly on the map (white-box; same package).
@@ -106,7 +106,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	parentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 	parentIDHex := h.Tasks.Create("/x/repo", "parent", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "A",
-		protocol.RunnerSelector{}, nil, parentCaps, "")
+		protocol.RunnerSelector{}, nil, parentCaps, Scope{}, "")
 	ptid := hexToTaskID(t, parentIDHex)
 
 	// Wire the parent as the principal on "agent-conn".
@@ -202,7 +202,7 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 	// Create the agent principal task holding NO caps.
 	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_None, "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
 	ptid := hexToTaskID(t, parentIDHex)
 
 	// Wire a caller conn with a distinct CID.
@@ -216,7 +216,7 @@ func TestHandleDeniesWithoutCap(t *testing.T) {
 	// Victim task to attempt cancelling (with full caps — irrelevant; caller's caps are what matter).
 	victimIDHex := h.Tasks.Create("repo", "v", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 	vtid := hexToTaskID(t, victimIDHex)
 
 	// Build and encode a Cancel request targeting the victim.
@@ -304,7 +304,7 @@ func makeAgentConn(t *testing.T, caps protocol.Capability) (*TaskHandler, *fakeC
 	h := newTestHandler(t)
 	parentIDHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, caps, "")
+		protocol.RunnerSelector{}, nil, caps, Scope{}, "")
 	ptid := hexToTaskID(t, parentIDHex)
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9700-1")}
 	if h.principals == nil {
@@ -549,16 +549,16 @@ func TestVisibleSubtree(t *testing.T) {
 
 	// B: has Spawn but no InfoGlobal; no parent.
 	bHex := h.Tasks.Create("r", "B", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
 	bTID := hexToTaskID(t, bHex)
 
 	// C: child of B.
 	cHex := h.Tasks.Create("r", "C", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, "")
+		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
 
 	// D: sibling (no parent), unrelated to B.
 	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
 
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -598,14 +598,14 @@ func TestListFilteredToSubtree(t *testing.T) {
 
 	// Create two root tasks (operator-created).
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
 	_ = h.Tasks.Create("r", "B-root", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
 
 	// Create a child of A.
 	aTID := hexToTaskID(t, aHex)
 	aChildHex := h.Tasks.Create("r", "A-child", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		aTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, "")
+		aTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
 
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -666,14 +666,14 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	h.LogsDir = t.TempDir() // so the log gate runs before the file open
 
 	aHex := h.Tasks.Create("/repo/a", "grandparent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "claude")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "claude")
 	bHex := h.Tasks.Create("/repo/b", "parent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
-		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "claude")
+		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "claude")
 	bTID := hexToTaskID(t, bHex)
 	cHex := h.Tasks.Create("/repo/c", "child prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "claude")
+		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "claude")
 	sHex := h.Tasks.Create("/repo/s", "stranger prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
 	// Give B a worktree + assigned runner so redaction has something to strip.
 	h.Tasks.mu.Lock()
@@ -815,7 +815,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 
 	// Confined caller: task A with Spawn but no InfoGlobal.
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
 	aTID := hexToTaskID(t, aHex)
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
@@ -891,12 +891,12 @@ func TestGetTaskLogOutOfSubtreeDenied(t *testing.T) {
 	h.LogsDir = t.TempDir() // enable log path so the gate runs before the open
 
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
 	aTID := hexToTaskID(t, aHex)
 
 	// D is an unrelated task (operator-created).
 	dHex := h.Tasks.Create("r", "D", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_None, Scope{}, "")
 	dTID := hexToTaskID(t, dHex)
 
 	if h.principals == nil {
@@ -1088,14 +1088,14 @@ func TestResumeCapsOverride(t *testing.T) {
 	t.Run("operator_override_replaces_caps", func(t *testing.T) {
 		h := newTestHandler(t)
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
 
 		markTerminalForTest(t, h, id)
 
 		// Operator caller: not in h.principals → callerCaps = Capability_All.
 		// override=true, requested=FileRead → intersect(All, FileRead) = FileRead.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), protocol.TaskKind_Oneshot, ""); err != nil {
+			true, intersectCaps(protocol.Capability_All, protocol.Capability_FileRead), false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1114,13 +1114,13 @@ func TestResumeCapsOverride(t *testing.T) {
 		h := newTestHandler(t)
 		wantCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 		id := h.Tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, wantCaps, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, wantCaps, Scope{}, "")
 
 		markTerminalForTest(t, h, id)
 
 		// override=false → Capabilities must stay wantCaps regardless of newCaps arg.
 		if _, err := h.Tasks.Resume(id, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
-			false, protocol.Capability_None, protocol.TaskKind_Oneshot, ""); err != nil {
+			false, protocol.Capability_None, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(id)
@@ -1142,12 +1142,12 @@ func TestResumeCapsOverride(t *testing.T) {
 		agentCaps := protocol.Capability_Spawn | protocol.Capability_FileRead
 		agentTaskIDHex := h.Tasks.Create("/r", "agent", protocol.TaskKind_Oneshot,
 			protocol.ClientKind_Agent, protocol.TaskID{}, "",
-			protocol.RunnerSelector{}, nil, agentCaps, "")
+			protocol.RunnerSelector{}, nil, agentCaps, Scope{}, "")
 		agentTID := hexToTaskID(t, agentTaskIDHex)
 
 		// Create the target task (original caps = All).
 		targetID := h.Tasks.Create("/r", "target", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
-			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, "")
+			protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 		markTerminalForTest(t, h, targetID)
 
 		// Wire the agent as a principal on a distinct conn.
@@ -1162,7 +1162,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		callerCaps := h.callerCaps(agentConnID)
 		newCaps := intersectCaps(callerCaps, protocol.Capability_All)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, newCaps, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume: %v", err)
 		}
 		e, ok := h.Tasks.Get(targetID)
@@ -1178,7 +1178,7 @@ func TestResumeCapsOverride(t *testing.T) {
 		markTerminalForTest(t, h, targetID)
 		newCaps2 := intersectCaps(callerCaps, protocol.Capability_FileWrite)
 		if _, err := h.Tasks.Resume(targetID, "", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Agent,
-			true, newCaps2, protocol.TaskKind_Oneshot, ""); err != nil {
+			true, newCaps2, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
 			t.Fatalf("Resume2: %v", err)
 		}
 		e2, _ := h.Tasks.Get(targetID)
