@@ -117,6 +117,10 @@ type App struct {
 	// whichever pane is selected now.
 	rawGenSeq uint64
 
+	// authorityPicker is the selection UI for a task re-grant (tasks-pane
+	// `a`) and the session-default authority (`caps` / `scope`, no args).
+	authorityPicker AuthorityPickerModel
+
 	// runnerPicker shows candidate runners when an interactive open returns
 	// AmbiguousRunner; a pick re-issues the request pinned to the chosen cid.
 	runnerPicker RunnerPickerModel
@@ -1033,6 +1037,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.gitModal.SetSize(a.width, a.height)
 		a.grid.SetSize(a.width, a.height)
 		a.rawModal.SetSize(a.width, a.height)
+		a.authorityPicker.SetSize(a.width, a.height)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -1305,6 +1310,60 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var pcmd tea.Cmd
 			a.popup, pcmd = a.popup.Update(msg)
 			return a, pcmd
+		}
+		// Authority picker intercepts keys when open: j/k move, space
+		// toggles, enter applies, esc cancels.
+		if a.authorityPicker.IsOpen() {
+			switch {
+			case msg.Type == tea.KeyEsc:
+				a.authorityPicker.Close()
+				return a, nil
+			case msg.Type == tea.KeyUp || msg.String() == "k":
+				a.authorityPicker.Move(-1)
+				return a, nil
+			case msg.Type == tea.KeyDown || msg.String() == "j":
+				a.authorityPicker.Move(1)
+				return a, nil
+			case msg.Type == tea.KeySpace:
+				a.authorityPicker.Toggle()
+				return a, nil
+			case msg.Type == tea.KeyEnter:
+				caps, spec, cascade, keep := a.authorityPicker.Result()
+				mode, target := a.authorityPicker.Mode(), a.authorityPicker.TargetID()
+				a.authorityPicker.Close()
+				if mode == PickerModeSession {
+					a.sessionCaps = caps
+					if spec == "" {
+						a.sessionScope = protocol.TaskScope{Base: protocol.ScopeBase_Subtree}
+					} else {
+						sc, err := cli.ParseScope(spec)
+						if err != nil {
+							a.cmdresult.Append(ErrorStyle.Render("scope: " + err.Error()))
+							return a, nil
+						}
+						a.sessionScope = sc
+					}
+					a.cmdresult.Append(OKStyle.Render("defaults set: ") + capsLabel(a.sessionCaps) +
+						"  scope=" + cli.ScopeLabel(a.sessionScope))
+					return a, nil
+				}
+				if a.client == nil {
+					a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
+					return a, nil
+				}
+				sc, err := cli.ParseScope(spec)
+				if err != nil {
+					// Unreachable for picker-built specs; surfaced rather
+					// than swallowed in case the serializer regresses.
+					a.cmdresult.Append(ErrorStyle.Render("scope: " + err.Error()))
+					return a, nil
+				}
+				return a, DoSetCaps(a.client, cli.SetCapsOpts{
+					TaskID: target, Caps: &caps, Scope: &sc,
+					Cascade: cascade, KeepConns: keep,
+				})
+			}
+			return a, nil
 		}
 		// Runner picker intercepts keys when open (digit picks, Esc cancels).
 		if a.runnerPicker.IsOpen() {
@@ -1699,20 +1758,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, DoCancel(a.client, id, id)
 		}
-		// `a` re-grants the selected task's authority: focus jumps to the
-		// command line prefilled with `caps set <id> ` so the operator appends
-		// --caps / --scope and Enter routes through parseSetCaps → DoSetCaps.
+		// `a` re-grants the selected task's authority: it opens the authority
+		// picker prefilled from the task's stored caps/scope. Opening needs
+		// no client; applying goes through the picker's Enter handler.
 		// Unconditionally available — a TUI connection is an operator
-		// connection by construction (spec §7).
+		// connection by construction (spec §7). The typed
+		// `caps set <id> --caps/--scope` cmdline form remains for scripting.
 		if a.focus == focusTasks && msg.String() == mainKeys.ReGrant {
-			id := a.tasks.SelectedID()
-			if id == "" {
+			t := a.tasks.SelectedTask()
+			if t == nil {
 				a.cmdresult.Append(WarnStyle.Render("no task selected"))
 				return a, nil
 			}
-			a.setFocus(focusCmdline)
-			a.cmdline.SetValue("caps set " + id + " ")
-			a.cmdline.CursorEnd()
+			a.authorityPicker.SetSize(a.width, a.height)
+			a.authorityPicker.OpenRegrant(*t, a.tasks.Rows())
 			return a, nil
 		}
 		// `r` / `R` re-enter the selected session: reattach a live Detached
@@ -2065,6 +2124,9 @@ func (a *App) View() string {
 	if a.forwardPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardPicker.View())
 	}
+	if a.authorityPicker.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.authorityPicker.View())
+	}
 	if a.runnerPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.runnerPicker.View())
 	}
@@ -2319,7 +2381,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, nil
 	case CapsAction:
 		if v.Show {
-			a.cmdresult.Append("caps: " + capsLabel(a.sessionCaps) + "   (default for new spawns; resume keeps its own unless --caps is given)")
+			// `caps` with no argument opens the session-default picker — it
+			// shows the current value AND lets it be edited by selection.
+			a.authorityPicker.SetSize(a.width, a.height)
+			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.tasks.Rows())
 		} else {
 			a.sessionCaps = v.Caps
 			a.cmdresult.Append(OKStyle.Render("caps set: ") + capsLabel(a.sessionCaps))
@@ -2327,8 +2392,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		return a, nil
 	case ScopeAction:
 		if v.Show {
-			a.cmdresult.Append("scope: " + cli.ScopeLabel(a.sessionScope) +
-				"   (default for new spawns; which tasks the caps may target)")
+			// Same picker as `caps` — the session default is one caps+scope
+			// pair, edited together.
+			a.authorityPicker.SetSize(a.width, a.height)
+			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.tasks.Rows())
 		} else {
 			a.sessionScope = v.Scope
 			a.cmdresult.Append(OKStyle.Render("scope set: ") + cli.ScopeLabel(a.sessionScope))

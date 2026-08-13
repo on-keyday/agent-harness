@@ -2,42 +2,147 @@ package tui
 
 import (
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-// TestReGrantKeyPrefillsCmdline: `a` on the tasks pane is the task list's
-// re-grant action — focus jumps to the command line prefilled with
-// `caps set <id> ` so Enter routes through parseSetCaps → DoSetCaps.
-func TestReGrantKeyPrefillsCmdline(t *testing.T) {
+func regrantApp(t *testing.T) (*App, string) {
+	t.Helper()
 	a := New(Config{})
 	var tid protocol.TaskID
 	tid.Id[0] = 0xab
 	a.tasks.SetRows([]protocol.TaskInfo{{Id: tid, Status: protocol.TaskStatus_Running}}, nil)
+	return a, hex.EncodeToString(tid.Id[:])
+}
 
+// TestReGrantKeyOpensPicker: `a` on the tasks pane is the task list's
+// re-grant action — it opens the authority picker on the selected task.
+func TestReGrantKeyOpensPicker(t *testing.T) {
+	a, want := regrantApp(t)
 	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	a = m.(*App)
-	if a.focus != focusCmdline {
-		t.Fatalf("focus = %v, want focusCmdline", a.focus)
+	if !a.authorityPicker.IsOpen() {
+		t.Fatal("picker must open")
 	}
-	want := "caps set " + hex.EncodeToString(tid.Id[:]) + " "
-	if got := a.cmdline.Value(); got != want {
-		t.Fatalf("cmdline = %q, want %q", got, want)
+	if a.authorityPicker.Mode() != PickerModeRegrant {
+		t.Fatal("picker must open in regrant mode")
+	}
+	if got := a.authorityPicker.TargetID(); got != want {
+		t.Fatalf("TargetID = %q, want %q", got, want)
+	}
+	if got := a.cmdline.Value(); got != "" {
+		t.Fatalf("cmdline must stay empty, got %q", got)
 	}
 }
 
-// TestReGrantKeyNoSelection: with nothing selected the key warns instead of
-// leaving a half-built `caps set  ` on the command line.
+// TestReGrantKeyNoSelection: with nothing selected the key warns and the
+// picker stays closed.
 func TestReGrantKeyNoSelection(t *testing.T) {
 	a := New(Config{})
 	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	a = m.(*App)
-	if a.focus == focusCmdline {
-		t.Fatal("no selection must not move focus to the command line")
+	if a.authorityPicker.IsOpen() {
+		t.Fatal("picker must not open without a selection")
 	}
-	if got := a.cmdline.Value(); got != "" {
-		t.Fatalf("cmdline = %q, want empty", got)
+}
+
+// TestPickerEscCloses: Esc closes without dispatching anything.
+func TestPickerEscCloses(t *testing.T) {
+	a, _ := regrantApp(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a = m.(*App)
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	a = m.(*App)
+	if a.authorityPicker.IsOpen() {
+		t.Fatal("Esc must close the picker")
+	}
+	if cmd != nil {
+		t.Fatal("Esc must not dispatch a command")
+	}
+}
+
+// TestPickerEnterDispatchesSetCaps: Enter in regrant mode dispatches the
+// DoSetCaps closure when a client is bound. The closure is not executed.
+func TestPickerEnterDispatchesSetCaps(t *testing.T) {
+	a, _ := regrantApp(t)
+	a.BindClient(&cli.Client{})
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a = m.(*App)
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if a.authorityPicker.IsOpen() {
+		t.Fatal("Enter must close the picker")
+	}
+	if cmd == nil {
+		t.Fatal("Enter with a bound client must dispatch DoSetCaps")
+	}
+}
+
+// TestPickerEnterNilClient: Enter with a nil client warns instead of
+// dispatching (the closure would nil-panic when executed).
+func TestPickerEnterNilClient(t *testing.T) {
+	a, _ := regrantApp(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a = m.(*App)
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if cmd != nil {
+		t.Fatal("nil client must not dispatch")
+	}
+	if !strings.Contains(strings.Join(a.cmdresult.lines, "\n"), "not connected") {
+		t.Fatal("expected a 'not connected' notice")
+	}
+}
+
+// TestCapsNoArgOpensPicker / TestScopeNoArgOpensPicker: the no-arg cmdline
+// forms open the picker in session mode instead of printing.
+func TestCapsNoArgOpensPicker(t *testing.T) {
+	a := New(Config{})
+	a.runAction(CapsAction{Show: true})
+	if !a.authorityPicker.IsOpen() || a.authorityPicker.Mode() != PickerModeSession {
+		t.Fatal("caps (no arg) must open the picker in session mode")
+	}
+}
+
+func TestScopeNoArgOpensPicker(t *testing.T) {
+	a := New(Config{})
+	a.runAction(ScopeAction{Show: true})
+	if !a.authorityPicker.IsOpen() || a.authorityPicker.Mode() != PickerModeSession {
+		t.Fatal("scope (no arg) must open the picker in session mode")
+	}
+}
+
+// TestPickerSessionApplyWritesDefaults: applying in session mode writes
+// sessionCaps and sessionScope, no client needed.
+func TestPickerSessionApplyWritesDefaults(t *testing.T) {
+	a := New(Config{})
+	a.runAction(ScopeAction{Show: true})
+	// Toggle the first cap row off, then cycle base to none.
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeySpace})
+	a = m.(*App)
+	firstBit := a.authorityPicker.rows[0].bit
+	for !strings.Contains(a.authorityPicker.rows[a.authorityPicker.cursor].label, "base:") {
+		m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+		a = m.(*App)
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeySpace}) // subtree -> none
+	a = m.(*App)
+	m, cmd := a.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	a = m.(*App)
+	if cmd != nil {
+		t.Fatal("session apply must not dispatch a client command")
+	}
+	if a.authorityPicker.IsOpen() {
+		t.Fatal("Enter must close the picker")
+	}
+	if a.sessionScope.Base != protocol.ScopeBase_None {
+		t.Fatalf("sessionScope.Base = %v, want None", a.sessionScope.Base)
+	}
+	if a.sessionCaps&firstBit != 0 {
+		t.Fatalf("sessionCaps still has the toggled-off bit %v", firstBit)
 	}
 }

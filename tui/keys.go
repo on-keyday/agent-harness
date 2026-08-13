@@ -181,7 +181,7 @@ var mainKeyBindings = []keyBinding{
 		Short: "u/U any resume", Long: "same as r/R but unpinned — any runner may take it"},
 	{Keys: []string{mainKeys.ViewOnly}, Scope: scopeTasks, Short: "v view-only", Long: "attach read-only (no input forwarded)"},
 	{Keys: []string{mainKeys.Cancel}, Scope: scopeTasks, Short: "c cancel", Long: "cancel the selected task"},
-	{Keys: []string{mainKeys.ReGrant}, Scope: scopeTasks, Short: "a re-grant", Long: "re-grant the selected task's caps/scope (prefills `caps set <id>` on the command line; operator-only)"},
+	{Keys: []string{mainKeys.ReGrant}, Scope: scopeTasks, Short: "a re-grant", Long: "open the re-grant picker for the selected task's caps/scope (operator-only)"},
 	{Keys: []string{mainKeys.AwaitIdle, mainKeys.AwaitIdleNotify}, Scope: scopeTasks,
 		Short: "w/W await-idle", Long: "arm a one-shot idle watcher (W also notifies the operator)"},
 	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Short: "F files", Long: "open the file picker on the selected task's worktree"},

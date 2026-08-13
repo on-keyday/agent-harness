@@ -105,6 +105,14 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 }
 
 // SelectedID returns the full 32-char hex ID of the focused row, or "" if empty.
+// Rows returns a copy of the current task rows in table order, for callers
+// that need the full snapshot (the authority picker's id checklist).
+func (m *TasksModel) Rows() []protocol.TaskInfo {
+	out := make([]protocol.TaskInfo, len(m.rowTasks))
+	copy(out, m.rowTasks)
+	return out
+}
+
 func (m *TasksModel) SelectedID() string {
 	if len(m.rowIDs) == 0 {
 		return ""
