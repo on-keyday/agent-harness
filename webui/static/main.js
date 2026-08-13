@@ -2766,14 +2766,17 @@ const POLL_INTERVAL_MS = 5000;
         keepConns: document.getElementById("regrant-keep-conns").checked,
       };
       regrantModal.close();
+      // Results go to the Command output like the other task-sheet actions
+      // (see the ✕ Cancel handler) — setStatus is the CONNECTION indicator,
+      // and writing here left "caps set: …" sitting where "connected" lives.
       try {
         const res = await window.harness.setCaps(req);
         let msg = "caps set: " + res.affected.length + " task(s) changed";
         if (res.connsClosed > 0) msg += ", " + res.connsClosed + " connection(s) closed";
-        setStatus(msg, "connected");
+        appendCmdOutput(msg);
         await refreshSnapshot();
       } catch (e) {
-        setStatus("caps set failed: " + (e && e.message ? e.message : e), "error");
+        appendCmdOutput("caps set failed: " + (e && e.message ? e.message : e));
       }
     });
   }
