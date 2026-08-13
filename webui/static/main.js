@@ -294,7 +294,12 @@ const POLL_INTERVAL_MS = 5000;
       resumeConversation,
       caps: spawnCaps,
       scope: spawnScope,
+      // One checkbox gates BOTH halves of the resume re-grant: silently
+      // applying the Compose scope picker's leftover state to a resumed
+      // task would be the exact invisible rewrite scope_present exists to
+      // prevent.
       resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false,
+      scopePresent: resumeTaskId ? applyCapsOnResume : false,
     };
     if (runner) req.runner = runner;
     return req;

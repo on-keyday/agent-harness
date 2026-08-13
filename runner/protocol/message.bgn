@@ -591,7 +591,13 @@ format SubmitRequest:
     # state in addition to reusing the harness task/worktree. The runner maps
     # this intent to the configured agent CLI (for Claude Code, --continue).
     resume_conversation :u1
-    reserved :u6
+    # resume only: 1 = write scope onto the resumed task (attenuated); 0 =
+    # keep its persisted scope. Independent of resume_caps_override — the two
+    # halves of authority re-grant separately, same shape as SetCapsRequest's
+    # caps_present/scope_present. Ignored on create (scope always applies to
+    # a fresh task; its zero value IS the subtree default).
+    scope_present :u1
+    reserved :u5
     # resume_task_id, when all-zero, means "create a new task". When non-zero,
     # the server looks up that TaskID, validates it is in a terminal state
     # (Succeeded / Failed / Cancelled), and re-queues it under the SAME id so
@@ -771,7 +777,9 @@ format OpenInteractiveRequest:
     # state in addition to reusing the harness task/worktree. The runner maps
     # this intent to the configured agent CLI (for Claude Code, --continue).
     resume_conversation :u1
-    reserved :u5
+    # resume only: same semantics as SubmitRequest.scope_present.
+    scope_present :u1
+    reserved :u4
     resume_task_id :TaskID
     # agent_profile: same semantics as SubmitRequest.agent_profile.
     agent_profile_len :u8

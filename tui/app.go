@@ -183,6 +183,19 @@ func (a App) resolveSpawnCaps(explicit *protocol.Capability, resuming bool) (pro
 	return *explicit, resuming
 }
 
+// spawnAuthority is resolveSpawnCaps' target-set half, folded into the
+// Authority the Do* helpers carry: an explicit --scope wins over the session
+// default, and on a resume ONLY an explicit --scope re-grants (ScopePresent)
+// — the session default must never silently rewrite a resumed task's scope.
+func (a App) spawnAuthority(explicit *protocol.TaskScope, resumeTaskID string, caps protocol.Capability) Authority {
+	auth := Authority{Caps: caps, Scope: a.sessionScope}
+	if explicit != nil {
+		auth.Scope = *explicit
+		auth.ScopePresent = resumeTaskID != ""
+	}
+	return auth
+}
+
 // pendingInteractive captures what an interactive open needs so a runner-picker
 // selection can re-issue it. repo is "" for resume (server reuses the task's
 // repo); resumeTaskID is "" for a fresh session.
@@ -2446,10 +2459,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		})
 	case InteractiveAction:
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SubmitAction:
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -2471,13 +2484,14 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
+		auth := a.spawnAuthority(v.Scope, v.ResumeTaskID, caps)
 		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 		}
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:

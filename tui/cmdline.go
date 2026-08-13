@@ -20,6 +20,7 @@ type Action interface{ isAction() }
 type SubmitAction struct {
 	Repo               string
 	Caps               *protocol.Capability
+	Scope              *protocol.TaskScope
 	Prompt             string
 	ExtraArgs          []string
 	ResumeTaskID       string
@@ -67,6 +68,7 @@ type TrsfDebugAction struct{}
 type SessionNewAction struct {
 	Repo               string
 	Caps               *protocol.Capability
+	Scope              *protocol.TaskScope
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
@@ -205,6 +207,7 @@ type ForwardKillAction struct{ ForwardID uint64 }
 type InteractiveAction struct {
 	Repo               string
 	Caps               *protocol.Capability
+	Scope              *protocol.TaskScope
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
@@ -436,13 +439,15 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	var caps capsFlag
 	fs.Var(&caps, "caps", capsFlagUsage)
+	var scope scopeFlag
+	fs.Var(&scope, "scope", scopeFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("interactive: %w", err)
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("interactive: unexpected positional argument %q", fs.Arg(0))
 	}
-	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value()}, nil
+	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value()}, nil
 }
 
 func parseRepo(args []string) (Action, error) {
@@ -466,6 +471,8 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 	var caps capsFlag
 	fs.Var(&caps, "caps", capsFlagUsage)
+	var scope scopeFlag
+	fs.Var(&scope, "scope", scopeFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("submit: %w", err)
 	}
@@ -473,7 +480,7 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	if len(rest) == 0 {
 		return nil, fmt.Errorf("submit: prompt is required")
 	}
-	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value()}, nil
+	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value()}, nil
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence,
@@ -531,6 +538,41 @@ func (c *capsFlag) Value() *protocol.Capability {
 const capsFlagUsage = "capability mask for this spawn (overrides the `caps` default); " +
 	"names are comma-separated and may be subtracted, e.g. all,-spawn"
 
+// scopeFlag is the optional --scope flag on submit / interactive / session
+// new — the target-set half of capsFlag, with the same "not given" vs "given
+// the zero value" distinction (base subtree is the zero TaskScope).
+type scopeFlag struct {
+	set bool
+	val protocol.TaskScope
+}
+
+func (s *scopeFlag) String() string {
+	if s == nil || !s.set {
+		return ""
+	}
+	return cli.ScopeLabel(s.val)
+}
+
+func (s *scopeFlag) Set(v string) error {
+	parsed, err := cli.ParseScope(v)
+	if err != nil {
+		return err
+	}
+	s.set, s.val = true, parsed
+	return nil
+}
+
+func (s *scopeFlag) Value() *protocol.TaskScope {
+	if s == nil || !s.set {
+		return nil
+	}
+	v := s.val
+	return &v
+}
+
+const scopeFlagUsage = "target scope for this spawn (overrides the `scope` default): " +
+	cli.ScopeGrammar + "; on a resume it re-grants the scope (omitted = keep the task's), independently of --caps"
+
 func parseCancel(args []string) (Action, error) {
 	fs := flag.NewFlagSet("cancel", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -579,6 +621,8 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		fs.Var(&extra, "claude-arg", "extra CLI arg forwarded to claude (repeatable)")
 		var caps capsFlag
 		fs.Var(&caps, "caps", capsFlagUsage)
+		var scope scopeFlag
+		fs.Var(&scope, "scope", scopeFlagUsage)
 		if err := fs.Parse(rest); err != nil {
 			return nil, fmt.Errorf("session new: %w", err)
 		}
@@ -604,6 +648,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			X11Display:         *x11Display,
 			AgentProfile:       *agent,
 			Caps:               caps.Value(),
+			Scope:              scope.Value(),
 		}, nil
 	case "attach":
 		if len(rest) == 0 {

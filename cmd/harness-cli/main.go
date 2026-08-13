@@ -98,7 +98,7 @@ func main() {
 		resume := fs.String("resume", "", "task id (32 hex) to resume — server reuses the id and worktree branch so claude's project key matches the previous run; --repo is ignored")
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); a name may be subtracted with a leading dash, as in all,-spawn; default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
-		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants alongside --caps")
+		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
 		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
@@ -134,6 +134,7 @@ func main() {
 			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
 			Caps: cli.CapsPtr(caps), Scope: scope,
 			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
+			ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
 			ResumeConversation: *resumeConversation, AgentProfile: *agent,
 		})
 		if err != nil {
@@ -340,7 +341,7 @@ func main() {
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume; --repo is ignored")
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		capsFlag := fs.String("caps", "", "comma-separated capability names to grant the task (e.g. spawn,file_read / all / none); a name may be subtracted with a leading dash, as in all,-spawn; default: inherit all the spawner holds. With --resume, --caps re-grants caps to the task (else its persisted caps are kept)")
-		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants alongside --caps")
+		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
 		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
@@ -373,6 +374,7 @@ func main() {
 			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
 			Caps: cli.CapsPtr(caps), Scope: scope,
 			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
+			ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
 			ResumeConversation: *resumeConversation, AgentProfile: *agent,
 		}); err != nil {
 			die(err)

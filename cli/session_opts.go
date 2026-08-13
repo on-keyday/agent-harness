@@ -32,8 +32,15 @@ type SessionOpts struct {
 	// Scope bounds WHICH tasks Caps may be pointed at. Unlike Caps this needs
 	// no pointer: the zero value is ScopeBase_Subtree, which IS the intended
 	// default, and "explicitly none" is a distinct non-zero value. There is no
-	// unset-vs-none ambiguity to encode.
+	// unset-vs-none ambiguity to encode — on a FRESH spawn. A resume does
+	// have one ("re-grant this scope" vs "keep the task's"), so it carries
+	// its own presence bit:
 	Scope protocol.TaskScope
+	// ScopePresent, on a resume, writes Scope onto the task (attenuated);
+	// false keeps the task's persisted scope. Independent of
+	// ResumeCapsOverride — the two halves of authority re-grant separately.
+	// Ignored on create.
+	ScopePresent bool
 }
 
 // resolvedCaps returns the capability mask to send on the wire: the explicit
@@ -64,5 +71,6 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.SetResumeConversation(opts.ResumeConversation)
 	oi.SetAgentProfile([]byte(opts.AgentProfile))
 	oi.Scope = opts.Scope
+	oi.SetScopePresent(opts.ScopePresent)
 	return oi
 }

@@ -576,3 +576,27 @@ change.
   session, restart the server so the task lands in Failed/`server_restart`,
   and resume it with the rebuilt client. This is step 2 of the upgrade order
   and the check that the recovery path itself is not what the change broke.
+
+## Amendment (2026-08-13): scope re-grants independently on resume
+
+Shipped as designed, the resume paths gated BOTH halves of authority behind
+the single `resume_caps_override` bit, which produced two silent behaviours:
+a lone `--scope` on a resume was ignored without a word, and `--caps` without
+`--scope` silently reset the task's scope to the request's zero value
+(subtree) — `TaskStore.Resume` already took independent booleans, but both
+handlers passed the caps override twice.
+
+Fix: `SubmitRequest` and `OpenInteractiveRequest` gain `scope_present :u1`
+out of their existing reserved bits (wire layout unchanged — no size skew;
+an old client's zero bit reads as "keep", which is the safe default). On a
+resume, caps re-grant iff `resume_caps_override`, scope re-grants
+(attenuated, validated) iff `scope_present`; the two are independent, the
+same shape as `SetCapsRequest.caps_present`/`scope_present`. On create the
+bit is ignored — a fresh task's scope always applies and its zero value IS
+the subtree default.
+
+Clients: the CLI sets the bit when `--scope` was literally typed
+(`flagExplicitlySet`), the TUI cmdline when its `--scope` flag was typed
+(session defaults never rewrite a resumed task), and the WebUI gates both
+halves behind the one "apply caps/scope on resume" checkbox — the Compose
+scope picker's leftover state must not silently rewrite a resumed task.

@@ -67,6 +67,11 @@ type LogHistoryMsg struct {
 type Authority struct {
 	Caps  protocol.Capability
 	Scope protocol.TaskScope
+	// ScopePresent, on a resume, re-grants Scope onto the task instead of
+	// keeping its persisted one (SessionOpts.ScopePresent). Ignored on
+	// create. Set only when the command line named --scope explicitly —
+	// the session default must never silently rewrite a resumed task.
+	ScopePresent bool
 }
 
 func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
@@ -100,7 +105,7 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 		}
 		id, err := c.Submit(ctx, repo, prompt, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
+			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if err != nil {

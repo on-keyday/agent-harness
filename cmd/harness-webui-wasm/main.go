@@ -473,6 +473,10 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
 				resumeCapsOverride = rcov.Bool()
 			}
+			scopePresent := false
+			if sp := opts.Get("scopePresent"); sp.Type() == js.TypeBoolean {
+				scopePresent = sp.Bool()
+			}
 			resumeConversation := false
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
@@ -486,7 +490,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			}
 			id, err := c.Submit(rootCtx, repo, task, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(caps), Scope: scope, ResumeCapsOverride: resumeCapsOverride,
+				Caps: cli.CapsPtr(caps), Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {
@@ -1386,6 +1390,10 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
 				resumeCapsOverride = rcov.Bool()
 			}
+			scopePresent := false
+			if sp := opts.Get("scopePresent"); sp.Type() == js.TypeBoolean {
+				scopePresent = sp.Bool()
+			}
 			resumeConversation := false
 			if rc := opts.Get("resumeConversation"); rc.Type() == js.TypeBoolean {
 				resumeConversation = rc.Bool()
@@ -1399,7 +1407,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			}
 			taskID, err := c.Interactive(rootCtx, repo, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(caps), Scope: scope, ResumeCapsOverride: resumeCapsOverride,
+				Caps: cli.CapsPtr(caps), Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {

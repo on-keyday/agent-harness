@@ -740,11 +740,12 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	if !h.inScope(cid, idHex) {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
 	}
-	// The scope rides the same override bit as the caps: --caps on a resume
-	// re-grants authority, and authority now has two halves. Validated up
-	// front for the same reason as the fresh path.
+	// The two halves of authority re-grant independently: caps behind
+	// resume_caps_override, scope behind scope_present — same shape as
+	// SetCapsRequest. Validated up front for the same reason as the fresh
+	// path, but only when the scope will actually be written.
 	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
-	if req.ResumeCapsOverride() && !scopeOK {
+	if req.ScopePresent() && !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte("scope id " + offender + " is outside your own scope"))
 		return resp
@@ -811,7 +812,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps, override, newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
+	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps, req.ScopePresent(), newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
@@ -967,7 +968,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// shared between the two paths.
 	// Validated before runner resolution — see handleSubmit.
 	reqScope, _, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
-	if !scopeOK && (isZeroTaskID(req.ResumeTaskId) || req.ResumeCapsOverride()) {
+	if !scopeOK && (isZeroTaskID(req.ResumeTaskId) || req.ScopePresent()) {
 		// OpenInteractiveResponse has no error_msg field, so the status is the
 		// whole answer; the client names the ids it sent.
 		return errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
@@ -1083,7 +1084,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, override, reqScope, protocol.TaskKind_Interactive, resolved); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, req.ScopePresent(), reqScope, protocol.TaskKind_Interactive, resolved); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)

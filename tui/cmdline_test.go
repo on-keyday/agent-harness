@@ -688,6 +688,66 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 	}
 }
 
+// TestParseSpawnScopeFlag: --scope on the cmdline spawn commands, the
+// target-set half of --caps, with the same unset-vs-zero distinction.
+func TestParseSpawnScopeFlag(t *testing.T) {
+	act, err := ParseCommand("submit hello", "r")
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if s := act.(SubmitAction).Scope; s != nil {
+		t.Errorf("submit without --scope: Scope = %v, want nil", *s)
+	}
+
+	act, err = ParseCommand("submit --scope none hello", "r")
+	if err != nil {
+		t.Fatalf("submit --scope none: %v", err)
+	}
+	s := act.(SubmitAction).Scope
+	if s == nil || s.Base != protocol.ScopeBase_None {
+		t.Fatalf("submit --scope none = %v, want base none", s)
+	}
+
+	act, err = ParseCommand("interactive --scope global", "r")
+	if err != nil {
+		t.Fatalf("interactive --scope: %v", err)
+	}
+	is := act.(InteractiveAction).Scope
+	if is == nil || is.Base != protocol.ScopeBase_Global {
+		t.Errorf("interactive --scope global = %v", is)
+	}
+
+	act, err = ParseCommand("session new --scope subtree", "r")
+	if err != nil {
+		t.Fatalf("session new --scope subtree: %v", err)
+	}
+	ss := act.(SessionNewAction).Scope
+	if ss == nil || ss.Base != protocol.ScopeBase_Subtree {
+		t.Fatal("session new --scope subtree: explicit subtree must be distinguishable from unset")
+	}
+
+	if _, err := ParseCommand("submit --scope bogus hello", "r"); err == nil {
+		t.Error("expected an error for an unknown scope form")
+	}
+}
+
+// TestParseScopeOnResumeStandsAlone: --scope on a resume re-grants the scope
+// through its own presence bit (scope_present), with or without --caps.
+func TestParseScopeOnResumeStandsAlone(t *testing.T) {
+	id := "0123456789abcdef0123456789abcdef"
+	act, err := ParseCommand("submit --resume "+id+" --scope none hello", "r")
+	if err != nil {
+		t.Fatalf("lone --scope on resume must parse: %v", err)
+	}
+	sa := act.(SubmitAction)
+	if sa.Scope == nil || sa.Scope.Base != protocol.ScopeBase_None {
+		t.Fatalf("Scope = %v, want explicit none", sa.Scope)
+	}
+	if sa.Caps != nil {
+		t.Fatal("Caps must stay nil (kept) when only --scope is given")
+	}
+}
+
 // TestParseRefresh verifies `refresh` and its `sync` alias parse to a
 // RefreshAction (force full snapshot re-sync).
 func TestParseRefresh(t *testing.T) {
