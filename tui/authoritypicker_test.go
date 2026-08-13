@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -176,6 +177,23 @@ func TestAuthorityPickerBaseCycle(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("cycle[%d] = %v, want %v", i, got[i], want[i])
 		}
+	}
+}
+
+// TestAuthorityPickerStableWidth: the popup's width must not change when a
+// selection lengthens the footer echo (the frame visibly jumped otherwise).
+func TestAuthorityPickerStableWidth(t *testing.T) {
+	target := pickerTask(0xaa, "t")
+	sib := pickerTask(0xbb, "sibling")
+	var m AuthorityPickerModel
+	m.OpenRegrant(target, []protocol.TaskInfo{target, sib})
+	m.SetSize(120, 40)
+	before := lipgloss.Width(m.View())
+	moveTo(t, &m, FormatTaskID(sib.Id)[:8])
+	m.Toggle() // footer echo now carries a 32-hex id
+	after := lipgloss.Width(m.View())
+	if before != after {
+		t.Fatalf("popup width changed %d -> %d after selecting an id", before, after)
 	}
 }
 

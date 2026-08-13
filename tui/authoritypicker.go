@@ -107,7 +107,8 @@ func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
 		if idHex == m.targetHex {
 			continue
 		}
-		label := idHex[:8] + " " + taskStatusStr(t.Status) + " " + string(t.AgentProfile)
+		label := idHex[:8] + " " + taskStatusStr(t.Status) + " " + string(t.AgentProfile) +
+			" " + truncateLeft(string(t.RepoPath), 20)
 		if p := string(t.Prompt); p != "" {
 			label += " " + runewidth.Truncate(p, 24, "…")
 		}
@@ -257,6 +258,24 @@ func (m *AuthorityPickerModel) View() string {
 		title = "re-grant " + m.targetHex[:8]
 	}
 
+	// The popup's width depends only on the terminal, never on the content:
+	// sizing to the longest line makes the frame jump every time a selected
+	// id lengthens the footer echo. Lines are truncated AND padded to inner.
+	inner := m.w * 3 / 5
+	if inner > 100 {
+		inner = 100
+	}
+	if inner < 44 {
+		inner = 44
+	}
+	if inner > m.w-4 {
+		inner = m.w - 4
+	}
+	fit := func(s string) string {
+		s = runewidth.Truncate(s, inner, "…")
+		return s + strings.Repeat(" ", inner-runewidth.StringWidth(s))
+	}
+
 	// Rows visible: popup height minus title + footer (2 lines each side of
 	// the border are added by lipgloss).
 	visible := m.h - 4
@@ -273,7 +292,7 @@ func (m *AuthorityPickerModel) View() string {
 	}
 
 	var b strings.Builder
-	b.WriteString(title + "\n")
+	b.WriteString(fit(title) + "\n")
 	for i := start; i < end; i++ {
 		r := m.rows[i]
 		line := "[ ] "
@@ -301,11 +320,7 @@ func (m *AuthorityPickerModel) View() string {
 		if r.kind == rowBase {
 			label = "base: " + cli.ScopeLabel(protocol.TaskScope{Base: m.base})
 		}
-		line += label
-		maxW := m.w - 6
-		if maxW > 8 {
-			line = runewidth.Truncate(line, maxW, "…")
-		}
+		line = fit(line + label)
 		switch {
 		case i == m.cursor:
 			line = pickerCursorStyle.Render(line)
@@ -319,11 +334,6 @@ func (m *AuthorityPickerModel) View() string {
 	if spec == "" {
 		spec = "(default subtree)"
 	}
-	footer := "space toggle · A/N all/none caps · enter apply · esc cancel · scope=" + spec
-	maxW := m.w - 6
-	if maxW > 8 {
-		footer = runewidth.Truncate(footer, maxW, "…")
-	}
-	b.WriteString(footer)
+	b.WriteString(fit("space toggle · A/N all/none caps · enter apply · esc cancel · scope=" + spec))
 	return pickerBorderStyle.Render(b.String())
 }
