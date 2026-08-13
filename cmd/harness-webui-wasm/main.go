@@ -108,6 +108,8 @@ func main() {
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
 		"capList":            js.FuncOf(harnessCapList),
+		"scopeForms":         js.FuncOf(harnessScopeForms),
+		"setCaps":            js.FuncOf(harnessSetCaps),
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
 		"boardRead":          js.FuncOf(harnessBoardRead),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
@@ -303,6 +305,99 @@ func harnessOnConnectionChange(this js.Value, args []js.Value) any {
 	return nil
 }
 
+// scopeFromOpts reads the optional `scope` string off a JS options object and
+// parses it with the same cli.ParseScope the CLI and TUI use, so the three
+// surfaces cannot drift on the grammar. Absent or empty = the subtree default.
+func scopeFromOpts(opts js.Value) (protocol.TaskScope, error) {
+	sv := opts.Get("scope")
+	if sv.Type() != js.TypeString || sv.String() == "" {
+		return protocol.TaskScope{Base: protocol.ScopeBase_Subtree}, nil
+	}
+	sc, err := cli.ParseScope(sv.String())
+	if err != nil {
+		return protocol.TaskScope{}, fmt.Errorf("scope: %w", err)
+	}
+	return sc, nil
+}
+
+// harnessScopeForms returns the --scope syntaxes with their descriptions, so
+// the spawn dialog can offer them without hardcoding a second copy of the
+// grammar.
+//
+//	harness.scopeForms() -> [{syntax: string, description: string}, ...]
+func harnessScopeForms(this js.Value, args []js.Value) any {
+	var out []any
+	for _, si := range cli.ScopesCatalog() {
+		out = append(out, map[string]any{"syntax": si.Syntax, "description": si.Description})
+	}
+	return js.ValueOf(out)
+}
+
+// harnessSetCaps re-grants a live task's caps and/or scope. Operator-only,
+// enforced server-side; a WebUI connection is an operator connection by
+// construction, so there is no client-side gate here.
+//
+//	harness.setCaps({taskId, caps?, scope?, cascade?, keepConns?})
+//	  -> Promise<{affected: string[], connsClosed: number}>
+func harnessSetCaps(this js.Value, args []js.Value) any {
+	opts := js.Undefined()
+	if len(args) >= 1 && args[0].Type() == js.TypeObject {
+		opts = args[0]
+	}
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if opts.IsUndefined() {
+				rejectErr(reject, fmt.Errorf("setCaps: options object required"))
+				return
+			}
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			sc := cli.SetCapsOpts{}
+			if tv := opts.Get("taskId"); tv.Type() == js.TypeString {
+				sc.TaskID = tv.String()
+			}
+			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
+				sc.Caps = cli.CapsPtr(protocol.Capability(uint32(cv.Int())))
+			}
+			if sv := opts.Get("scope"); sv.Type() == js.TypeString && sv.String() != "" {
+				parsed, perr := cli.ParseScope(sv.String())
+				if perr != nil {
+					rejectErr(reject, fmt.Errorf("setCaps: scope: %w", perr))
+					return
+				}
+				sc.Scope = &parsed
+			}
+			if v := opts.Get("cascade"); v.Type() == js.TypeBoolean {
+				sc.Cascade = v.Bool()
+			}
+			if v := opts.Get("keepConns"); v.Type() == js.TypeBoolean {
+				sc.KeepConns = v.Bool()
+			}
+			res, err := cli.SetCapsWith(rootCtx, c, sc)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("setCaps: %w", err))
+				return
+			}
+			affected := make([]any, 0, len(res.Affected))
+			for _, id := range res.Affected {
+				affected = append(affected, id)
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"affected":    affected,
+				"connsClosed": float64(res.ConnsClosed),
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
 // harnessCapList returns the granular caps as [{name, bit}] for the UI chips
 // (excludes none/all — those are quick-set buttons). Names from Capability.String().
 //
@@ -359,6 +454,11 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
+			scope, scopeErr := scopeFromOpts(opts)
+			if scopeErr != nil {
+				rejectErr(reject, scopeErr)
+				return
+			}
 			resumeCapsOverride := false
 			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
 				resumeCapsOverride = rcov.Bool()
@@ -376,7 +476,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			}
 			id, err := c.Submit(rootCtx, repo, task, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+				Caps: cli.CapsPtr(caps), Scope: scope, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {
@@ -511,6 +611,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"resumedBy":  clientKindLower(t.ResumedByKind),
 					"createdBy":  creatorShort(t.CreatorTaskId),
 					"caps":       cli.CapsLabel(t.Capabilities),
+					"scope":      cli.ScopeLabel(t.Scope),
 					// agentProfile is the named profile this task last ran under
 					// (empty = runner default); the resume action sheet's agent
 					// dropdown defaults to this (multi-agent-profile design §4b).
@@ -1259,6 +1360,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
+			scope, scopeErr := scopeFromOpts(opts)
+			if scopeErr != nil {
+				rejectErr(reject, scopeErr)
+				return
+			}
 			resumeCapsOverride := false
 			if rcov := opts.Get("resumeCapsOverride"); rcov.Type() == js.TypeBoolean {
 				resumeCapsOverride = rcov.Bool()
@@ -1276,7 +1382,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			}
 			taskID, err := c.Interactive(rootCtx, repo, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+				Caps: cli.CapsPtr(caps), Scope: scope, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {

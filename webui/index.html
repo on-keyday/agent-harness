@@ -68,6 +68,9 @@
       <input id="claude-args-input" type="text" size="60" placeholder='e.g. --add-dir "C:/path"'>
       <div id="caps-row" class="caps-row" aria-label="Capability chips"></div>
       <label class="caps-on-resume-toggle"><input type="checkbox" id="caps-on-resume"> apply caps on resume</label>
+      <label for="scope-input">Scope (which tasks those caps may target):</label>
+      <input id="scope-input" type="text" size="60" placeholder="subtree (default) | none | global | [subtree+]ids:&lt;id&gt;[,&lt;id&gt;]">
+      <div id="scope-hint" class="scope-hint"></div>
       <div class="actions">
         <button id="open-detachable">Open interactive session</button>
       </div>

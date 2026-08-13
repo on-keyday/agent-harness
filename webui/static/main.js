@@ -268,6 +268,7 @@ const POLL_INTERVAL_MS = 5000;
   let capDefs = [];          // [{name:string, bit:number}] — populated by initCaps()
   let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
+  let spawnScope = "";       // mirrors #scope-input; "" = the subtree default
 
   // sessionReq builds the ONE request object shape the harness.submit /
   // harness.startInteractive wasm bridges consume. Every session request goes
@@ -287,6 +288,7 @@ const POLL_INTERVAL_MS = 5000;
       resumeTaskId,
       resumeConversation,
       caps: spawnCaps,
+      scope: spawnScope,
       resumeCapsOverride: resumeTaskId ? applyCapsOnResume : false,
     };
     if (runner) req.runner = runner;
@@ -2599,6 +2601,89 @@ const POLL_INTERVAL_MS = 5000;
         applyCapsOnResume = capsOnResumeCb.checked;
       });
     }
+    initScope();
+  }
+
+  // The scope input is free text validated on the Go side by cli.ParseScope,
+  // the same parser the CLI flag and the TUI command use — a second copy of the
+  // grammar here would be one more place for it to drift. The hint lists the
+  // forms from harness.scopeForms() for the same reason.
+  function initScope() {
+    const input = document.getElementById("scope-input");
+    const hint = document.getElementById("scope-hint");
+    if (!input) return;
+    if (hint && typeof window.harness.scopeForms === "function") {
+      hint.textContent = window.harness.scopeForms()
+        .map(f => f.syntax + " — " + f.description).join("   ·   ");
+    }
+    input.addEventListener("input", () => {
+      spawnScope = input.value.trim();
+      // No client-side parse: an invalid value is reported by the spawn itself,
+      // with the server's own wording. Clearing the marker on edit is enough.
+      input.classList.remove("invalid");
+      if (hint) hint.classList.remove("error");
+    });
+  }
+
+  // Re-grant a live task's authority. Operator-only server-side; a WebUI
+  // connection is an operator connection by construction, so the control is
+  // shown unconditionally.
+  async function promptSetCaps(taskId) {
+    if (typeof window.harness.setCaps !== "function") return;
+    const scope = window.prompt(
+      "New scope for " + taskId.slice(0, 8) + "\n" +
+      "subtree | none | global | [subtree+]ids:<id>[,<id>]\n" +
+      "(leave empty to keep the task's current scope)", "");
+    if (scope === null) return;
+    const capsText = window.prompt(
+      "New caps for " + taskId.slice(0, 8) + "\n" +
+      "e.g. all / none / spawn,file_read / all,-spawn\n" +
+      "(leave empty to keep the task's current caps)", "");
+    if (capsText === null) return;
+    if (!scope && !capsText) {
+      setStatus("caps set: nothing to change", "warn");
+      return;
+    }
+    const req = { taskId, cascade: window.confirm("Also clamp every descendant? (--cascade)") };
+    if (scope) req.scope = scope;
+    if (capsText) {
+      const bits = capsTextToBits(capsText);
+      if (bits === null) {
+        setStatus("caps set: unknown capability in " + capsText, "error");
+        return;
+      }
+      req.caps = bits;
+    }
+    try {
+      const res = await window.harness.setCaps(req);
+      let msg = "caps set: " + res.affected.length + " task(s) changed";
+      if (res.connsClosed > 0) msg += ", " + res.connsClosed + " connection(s) closed";
+      setStatus(msg, "connected");
+      await refreshSnapshot();
+    } catch (e) {
+      setStatus("caps set failed: " + (e && e.message ? e.message : e), "error");
+    }
+  }
+
+  // capsTextToBits mirrors cli.ParseCaps for the subset the prompt accepts.
+  // Returns null on an unknown name.
+  function capsTextToBits(text) {
+    const t = text.trim();
+    if (t === "all") return capsAllBits();
+    if (t === "none") return 0;
+    let bits = 0, negated = 0, sawPositive = false;
+    for (let term of t.split(",")) {
+      term = term.trim();
+      const neg = term.startsWith("-");
+      const name = neg ? term.slice(1).trim() : term;
+      if (name === "all") { if (neg) { negated |= capsAllBits(); } else { bits |= capsAllBits(); sawPositive = true; } continue; }
+      if (name === "none") { sawPositive = true; continue; }
+      const def = capDefs.find(c => c.name === name);
+      if (!def) return null;
+      if (neg) negated |= def.bit; else { bits |= def.bit; sawPositive = true; }
+    }
+    if (negated && !sawPositive) return null;
+    return bits & ~negated;
   }
 
   // Quick-reattach button (terminal tab): shown after a takeover so the user
@@ -3416,6 +3501,9 @@ const POLL_INTERVAL_MS = 5000;
       if (t.createdBy) metaText += `  by=${t.createdBy}`;
       if (t.resumedBy) metaText += `  resumed_by=${t.resumedBy}`;
       if (t.caps) metaText += `  caps=${t.caps}`;
+      // subtree is what almost every task has; only a narrowed or widened
+      // scope is worth the row width.
+      if (t.scope && t.scope !== "subtree") metaText += `  scope=${t.scope}`;
       meta.textContent = metaText;
       if (t.errorMsg) {
         const err = document.createElement("span");
@@ -3603,6 +3691,11 @@ const POLL_INTERVAL_MS = 5000;
     }
 
     // Files — always available.
+    // Live re-grant. Shown for every task: a WebUI connection is an operator
+    // connection by construction (the PSK gate makes any non-agent client
+    // prove operatorPSK), so there is no non-operator state to hide it in.
+    addItem("🔑 caps/scope 再付与", "", () => promptSetCaps(t.id));
+
     addItem("📁 ファイル", "", () => {
       fileTaskSelect.value = t.id;
       filePickerCurDir = "";
