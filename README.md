@@ -67,11 +67,8 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
   - `cmd/harness-cli` — request/control surface:
     - Task lifecycle: `submit`, `ls`, `logs`, `cancel`, `prune`,
       `prune-local`, `watch`.
-    - Interactive: `session new` (detachable PTY: client disconnect
-      leaves claude running on the runner), `session attach <id>`,
-      `session ls`, `session kill <id>`; `interactive` opens the same
-      kind of detachable session and splices it to the client
-      immediately (shorthand for `session new`).
+    - Interactive: `session {new,attach,ls,kill}`, `interactive`
+      (semantics in Quick start 5).
     - File transfer: `file ls`, `file push`, `file pull`, `file delete`
       against a task's worktree (recursive variants via `-r`, force
       overwrite via `-f`; paths are confined to the worktree root).
@@ -167,18 +164,14 @@ bin/harness-cli cancel <task-id>
 bin/harness-cli prune --before 168h     # forget terminal tasks older than 7d
 bin/harness-cli prune-local --before 168h   # remove old local worktrees
 
-# 5a. Open a detachable session: a PTY claude spliced to your terminal that
-# SURVIVES client disconnect — reattach from any client via `session attach
-# <id>`. `-d` returns immediately without splicing the local terminal (spawn
-# only). This is the recommended interactive path.
+# 5. Open a detachable session: a PTY claude spliced to your terminal that
+# SURVIVES client disconnect (Detached) — reattach from any client via
+# `session attach <id>`. `-d` spawns without splicing the local terminal.
+# `interactive` is shorthand: session new + attach in one step.
 bin/harness-cli session new --repo /abs/path/to/repo
 bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
-
-# 5b. `interactive` is shorthand for the same thing: it opens a detachable
-# session and splices it to your terminal in one step. Disconnecting leaves
-# the session alive (Detached) — reattach or kill it via `session ...`.
 bin/harness-cli interactive --repo /abs/path/to/repo
 
 # 6. File transfer against a running task's worktree (paths are confined
@@ -222,16 +215,9 @@ bin/harness-cli git <task-id> file [--staged | --rev REV] <path>
 # submodule's changes into one combined diff (off by default: that output is
 # not an applyable patch).
 #
-#
-# `file` shows one file WHOLE rather than the lines that changed, from the side
-# you name (working tree by default). In the TUI's modal `o` toggles between
-# the diff and the file; in the WebUI a file header inside a diff is clickable.
-# Either way the side matches the diff being read.
-#
-# The same view is on `G` in the TUI (Enter on a [REPO] row descends, Backspace
-# goes back up, `B` sets the baseline, `m` toggles submodule content, `o` opens
-# the whole file; the content pane scrolls with space/f/b/d/u since the arrows
-# drive the row picker) and the Git tab in the WebUI.
+# `file` shows one file WHOLE rather than the lines that changed, from the
+# side you name (working tree by default). The same view is on `G` in the
+# TUI (keys in its `?` help) and the Git tab in the WebUI.
 
 # 7. Port-forward a runner-side port to your machine (SSH -L style). The runner
 # dials remote-host:remote-port; bytes relay over the harness transport. Handy
@@ -447,22 +433,14 @@ Layout:
 tab focus · s submit · enter follow · c cancel · ? help · q quit
 ```
 
-Keys:
-
-| Key | Action |
-|---|---|
-| `Tab` / `Shift+Tab` | Cycle focus runners → tasks → logs → cmdresult → cmdline |
-| `s` | Open the multi-line submit popup (`Ctrl+J` / `Ctrl+Enter` to send, `Esc` to cancel) |
-| `S` | Open a detachable session in the default repo (equivalent to `harness-cli session new`) |
-| `i` | Open a new interactive PTY session in the default repo (equivalent to `harness-cli interactive`; detachable, like `S`, but skips the ambiguous-runner picker). Does not attach to the focused task — reattach/resume lives on `r` / `R`. |
-| `r` / `R` (tasks focus) | `r`: reattach (take over) a Detached / Running session, or resume a finished task with `--continue`. `R`: resume fresh (no `--continue`). A running one-shot has no PTY: `c` cancel it first, then `r` reopens the conversation interactively. |
-| `F` (tasks focus) | Open the file browser for the selected task's worktree (push / pull / delete). |
-| `p` / `P` (tasks focus) | `p`: open the port-forward prompt (enter a `-L` spec) for the selected task; the forward runs in the background. `P`: stop that task's active forward. |
-| `d` | Detail popup for the focused row (runners or tasks) |
-| `Enter` (tasks focus) | Follow the selected task's log |
-| `c` (tasks focus) | Cancel the selected task |
-| `/` (logs focus) | Enter/edit filter; `Esc` clears |
-| `q`, `Ctrl+C` | Quit |
+Keys for orientation — `Tab` cycles focus, `s` submit popup, `S`/`i` open
+a detachable session, `r`/`R` reattach/resume the selected task, `Enter`
+follows its log, `d` detail, `c` cancel, `a` re-grant caps/scope, `G`
+git, `F` files, `q` quit. **The authoritative list is the TUI itself**:
+the footer shows the keys that work in the focused pane and `?` shows
+everything — both render from the same table the dispatcher uses
+(`tui/keys.go`, test-enforced), so unlike a README table they cannot go
+stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
 / file {ls,push,pull,delete} / caps / scope / caps set / server
