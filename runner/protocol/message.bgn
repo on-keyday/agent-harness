@@ -279,6 +279,14 @@ enum TaskControlKind:
                             # on a capability bit — a bit authorising "rewrite
                             # capabilities" grants itself all on first use and
                             # spawn-time intersection can never claw it back.
+    set_parent              # operator-only: re-point a live task's parent link,
+                            # or swap it with its current parent. Gated on the
+                            # caller having NO principal task, not on a
+                            # capability bit — same self-amplification argument
+                            # as set_caps: a task able to re-point parents would
+                            # adopt any victim under itself and inherit that
+                            # victim's whole subtree as a target set, and
+                            # spawn-time intersection can never claw that back.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -960,6 +968,7 @@ format TaskControlRequest:
         TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardRequest
         TaskControlKind.git_query             => git_query             :GitQueryRequest
         TaskControlKind.set_caps              => set_caps              :SetCapsRequest
+        TaskControlKind.set_parent            => set_parent            :SetParentRequest
         .. => error("Unexpected task")
 
 # CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
@@ -1008,6 +1017,7 @@ format TaskControlResponse:
         TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardResponse
         TaskControlKind.git_query             => git_query             :GitQueryResponse
         TaskControlKind.set_caps              => set_caps              :SetCapsResponse
+        TaskControlKind.set_parent            => set_parent            :SetParentResponse
 
 enum SetCapsStatus:
     :u8
@@ -1044,6 +1054,59 @@ format SetCapsResponse:
     affected_len :u16
     affected     :[affected_len]TaskID   # target + every descendant changed
     conns_closed :u32
+
+enum SetParentStatus:
+    :u8
+    ok                   = "ok"
+    not_found            = "not_found"
+    # parent_not_found covers both a named parent_id that is not in the store
+    # and, on the swap path, a current parent whose record is gone (a pruned
+    # creator — listVisibleToCaller already treats that as a reachable state).
+    parent_not_found     = "parent_not_found"
+    would_cycle          = "would_cycle"
+    # swap on a task that is already operator-rooted: there is nothing to
+    # invert. Named rather than silently succeeding as a no-op.
+    no_parent            = "no_parent"
+    # swap == 1 with a non-zero parent_id. Rejected rather than ignored: a
+    # typed option either takes effect or errors.
+    swap_takes_no_parent = "swap_takes_no_parent"
+    not_operator         = "not_operator"
+    internal_error       = "internal_error"
+
+# SetParentRequest re-points task_id's parent link (its creator_task_id).
+#
+# Unlike SetCapsRequest this format has no presence bits. caps = 0 is
+# Capability.none and scope{subtree, []} is a real scope, so neither has a
+# spare value meaning "leave this alone" — a parent link does: all-zero is
+# already the encoding for "operator-rooted". And there is no "not given"
+# case to distinguish, because the request IS the assignment.
+format SetParentRequest:
+    task_id   :TaskID
+    # New parent. All-zero detaches the task to the operator root. Must be
+    # all-zero when swap == 1 (else swap_takes_no_parent).
+    parent_id :TaskID
+    # swap: invert task_id with its CURRENT parent. The target takes the
+    # parent's place — inheriting the parent's own parent, which may be the
+    # root — and the former parent becomes the target's child. Both links are
+    # rewritten under one TaskStore lock, so the two-cycle that the equivalent
+    # two-call sequence forms transiently is never observable, and this path
+    # needs no cycle check.
+    swap      :u1
+    reserved  :u7
+
+format SetParentResponse:
+    status     :SetParentStatus
+    # The target's parent before and after the change. All-zero means
+    # operator-rooted, in both fields.
+    #
+    # new_parent is on the wire rather than left implicit because on the swap
+    # path the client does not know it: the server resolves it from the former
+    # parent's own link. Echoing it on the plain path too keeps one shape.
+    old_parent :TaskID
+    new_parent :TaskID
+    # swap only: the former parent, which is now the target's child. All-zero
+    # when swap was not requested.
+    swapped_id :TaskID
 
 enum NotifyLevel:
     :u8
