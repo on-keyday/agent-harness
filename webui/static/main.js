@@ -2087,6 +2087,31 @@ const POLL_INTERVAL_MS = 5000;
           await window.harness.cancel(tokens[1]);
           out = "cancelled";
           break;
+        case "set-parent": {
+          // set-parent <task-id> (--parent <id> | --none | --swap)
+          // Mirrors harness-cli caps set-parent; ids are full 32-hex.
+          let parent = null, none = false, swap = false, target = null;
+          for (let i = 1; i < tokens.length; i++) {
+            const t = tokens[i];
+            if (t === "--none") none = true;
+            else if (t === "--swap") swap = true;
+            else if (t === "--parent") { i++; parent = tokens[i]; }
+            else if (t.startsWith("--parent=")) parent = t.slice("--parent=".length);
+            else if (t.startsWith("-")) throw new Error(`set-parent: unknown flag ${t}`);
+            else if (!target) target = t;
+            else throw new Error(`set-parent: unexpected arg ${t}`);
+          }
+          if (!target) throw new Error("set-parent: missing task id");
+          const picked = [parent !== null, none, swap].filter(Boolean).length;
+          if (picked !== 1) throw new Error("set-parent: pass exactly one of --parent <id>, --none, --swap");
+          const req = { taskId: target };
+          if (swap) req.swap = true;
+          else if (parent !== null) req.parentId = parent;
+          const r = await window.harness.setParent(req);
+          out = setParentMessage(target, swap, r);
+          await refreshSnapshot();
+          break;
+        }
         case "preview":
           if (!tokens[1]) throw new Error("preview: missing task id");
           openSessionPreview(tokens[1]);
@@ -2202,6 +2227,8 @@ const POLL_INTERVAL_MS = 5000;
             "  await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
             "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
             "  cancel <task-id>          cancel a task",
+            "  set-parent <task-id> (--parent <id> | --none | --swap)",
+            "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
             "  preview <task-id>         live read-only screen preview of a session (⏸/▶ pause-resume)",
             "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
@@ -2788,6 +2815,79 @@ const POLL_INTERVAL_MS = 5000;
         await refreshSnapshot();
       } catch (e) {
         appendCmdOutput("caps set failed: " + (e && e.message ? e.message : e));
+      }
+    });
+  }
+
+  // Parent-picker modal: re-points a task's parent link via harness.setParent.
+  // Single-choice radios; the current parent (or root when the task has none)
+  // is pre-checked so an accidental apply is a no-op.
+  const parentModal = document.getElementById("parent-modal");
+  let parentTaskId = "";
+
+  // setParentMessage renders the same result shapes as cli.SetParentMessage —
+  // one line naming the target and the change (shared by runCmd and the
+  // dialog; "" from the wasm bridge means the root).
+  const setParentMessage = (taskId, swap, r) => {
+    const s8 = (h) => (h ? h.slice(0, 8) : "(root)");
+    const t8 = taskId.slice(0, 8);
+    if (swap) {
+      return `set-parent ${t8} --swap: ${t8} now under ${s8(r.newParent)}, ${s8(r.swappedId)} now under ${t8}`;
+    }
+    return `set-parent ${t8}: parent=${s8(r.oldParent)} → ${s8(r.newParent)}`;
+  };
+
+  function openParentDialog(t) {
+    if (!parentModal || typeof window.harness.setParent !== "function") return;
+    parentTaskId = t.id;
+    const title = document.getElementById("parent-task");
+    if (title) title.textContent = t.id.slice(0, 8);
+    const rows = document.getElementById("parent-rows");
+    rows.innerHTML = "";
+    const currentParent = t.createdById || "";
+    const addRow = (value, text, checked) => {
+      const label = document.createElement("label");
+      const rb = document.createElement("input");
+      rb.type = "radio";
+      rb.name = "parent-choice";
+      rb.value = value;
+      rb.checked = checked;
+      label.appendChild(rb);
+      label.appendChild(document.createTextNode(" " + text));
+      rows.appendChild(label);
+    };
+    addRow("root", "(root — 親から切り離す)", currentParent === "");
+    if (currentParent) {
+      addRow("swap", `(swap with ${currentParent.slice(0, 8)} — 入れ替えて自分が親になる)`, false);
+    }
+    const truncLeft = (s, n) => (s && s.length > n ? "…" + s.slice(-n) : (s || ""));
+    for (const row of (lastTasks || [])) {
+      if (row.id === t.id) continue;
+      const head = (row.prompt || "").slice(0, 30);
+      let text = `${row.id.slice(0, 8)} ${row.status} ${row.agentProfile || ""} ${truncLeft(row.repoPath, 20)} ${head}`;
+      if (row.id === currentParent) text += " ← 現在の親";
+      addRow(row.id, text, row.id === currentParent);
+    }
+    parentModal.showModal();
+  }
+
+  if (parentModal) {
+    document.getElementById("parent-cancel").addEventListener("click", () => parentModal.close());
+    document.getElementById("parent-apply").addEventListener("click", async () => {
+      const picked = parentModal.querySelector('input[name="parent-choice"]:checked');
+      parentModal.close();
+      if (!picked) return;
+      const req = { taskId: parentTaskId };
+      if (picked.value === "swap") req.swap = true;
+      else if (picked.value !== "root") req.parentId = picked.value;
+      // Results go to the Command output, like the other task-sheet actions
+      // (see the ✕ Cancel handler) — setStatus is the CONNECTION indicator.
+      try {
+        const r = await window.harness.setParent(req);
+        appendCmdOutput(setParentMessage(parentTaskId, req.swap === true, r));
+        await refreshSnapshot();
+      } catch (e) {
+        appendCmdOutput("set-parent failed: " + (e && e.message ? e.message : e));
       }
     });
   }
@@ -3807,6 +3907,7 @@ const POLL_INTERVAL_MS = 5000;
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
     addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
+    addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
 
     addItem("📁 ファイル", "", () => {
       fileTaskSelect.value = t.id;

@@ -340,6 +340,20 @@
     </menu>
   </form>
 </dialog>
+<!-- Parent-picker modal: re-points a task's parent link (harness.setParent).
+     Single-choice radios: root / swap-with-current-parent / another task.
+     The current parent row is pre-checked so an accidental apply is a no-op.
+     Body-level for the same top-layer reason as file-preview-modal above. -->
+<dialog id="parent-modal" class="picker-modal regrant-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title">親タスク変更 <span id="parent-task"></span></h3>
+    <div id="parent-rows" class="task-checklist" aria-label="Parent choice"></div>
+    <menu class="picker-actions">
+      <button type="button" id="parent-apply">適用</button>
+      <button type="button" id="parent-cancel">キャンセル</button>
+    </menu>
+  </form>
+</dialog>
 <!-- Runner-picker modal: shown when an interactive open hits ambiguous_runner
      (>=2 candidate runners for the selector). Body-level for the same
      top-layer reason as file-preview-modal above. -->
