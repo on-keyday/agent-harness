@@ -150,6 +150,32 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         self.assertEqual(out[out.index("--agent-log-format") + 1], "")
         self.assertNotIn("--agent-profiles", out)
 
+    def test_sandbox_preset_matches_claude_except_bin(self) -> None:
+        # The sandbox runs the same claude through a pass-through wrapper, so
+        # every argv/logFormat value must equal claude's — this is what keeps
+        # one-shot progress streaming instead of arriving as one final blob.
+        sandbox = expand_agents_preset("sandbox", [])
+        claude = expand_agents_preset("claude", [])
+        for flag in (
+            "--agent-oneshot-argv",
+            "--agent-resume-oneshot-argv",
+            "--agent-resume-interactive-argv",
+            "--agent-log-format",
+        ):
+            self.assertEqual(
+                sandbox[sandbox.index(flag) + 1],
+                claude[claude.index(flag) + 1],
+                f"{flag} drifted from the claude preset",
+            )
+
+        # A preset bin may be a path, not only a bare command name.
+        bin_path = Path(sandbox[sandbox.index("--agent-bin") + 1])
+        self.assertTrue(bin_path.is_absolute())
+        self.assertEqual(bin_path.name, "claude-in-podman.sh")
+        # Resolved against this module, so a runner started from any checkout
+        # gets the wrapper that ships beside the presets it just expanded.
+        self.assertTrue(bin_path.exists(), f"{bin_path} does not exist")
+
 
 if __name__ == "__main__":
     unittest.main()

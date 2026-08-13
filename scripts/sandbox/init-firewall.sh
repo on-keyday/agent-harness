@@ -5,13 +5,14 @@
 #
 # Default-deny OUTPUT; allow only DNS/SSH/loopback/established, a GitHub IP-range
 # set (api.github.com/meta), a fixed domain allowlist, the container's
-# default-route /24, and the harness server.
+# default-route gateway (/32), and the harness server.
 #
 # Deltas vs upstream:
 #   - dropped the docker-bridge DNS (127.0.0.11) save/restore — not used under
 #     rootless podman / pasta;
-#   - allow $SANDBOX_SERVER_IP (the harness server is on the LAN, NOT on the
-#     container's default-route /24) so the bridged harness-cli keeps working;
+#   - allow $SANDBOX_SERVER_IP by its own /32 so the bridged harness-cli keeps
+#     working — it must not depend on the gateway rule, which under pasta would
+#     otherwise have to cover the whole LAN to reach the server;
 #   - added the PyPI domains (the image ships python3 + pip);
 #   - **fail-closed, not fail-open**: a single unresolvable domain or a failed
 #     GitHub fetch only DROPS that allowlist entry — the script still reaches the
@@ -68,7 +69,8 @@ for domain in \
   done < <(echo "$ips")
 done
 
-# Harness server (LAN address — NOT on the container's default-route /24)
+# Harness server, by its own /32 (under pasta it sits on the same LAN as the
+# container, so the gateway rule below deliberately does not reach it)
 if [ -n "${SANDBOX_SERVER_IP:-}" ]; then
   echo "Allowing harness server $SANDBOX_SERVER_IP"
   ipset add allowed-domains "$SANDBOX_SERVER_IP" 2>/dev/null || true

@@ -27,7 +27,7 @@ Arguments: $ARGUMENTS
    | `bash`       | `--agents bash --no-worktree --roots $HOME/workspace` (bin+argv from `scripts/agent_presets.py`) | Linux / macOS shell runner |
    | `cmd`        | `--no-worktree --agent-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --agent-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
-   | `sandbox`    | `--agent-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --agent-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
+   | `sandbox`    | `--agents sandbox --agent-args "--dangerously-skip-permissions"` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
 
@@ -41,7 +41,12 @@ Arguments: $ARGUMENTS
    `scripts/sandbox/README.md`). The preset
    defaults `--agent-args "--dangerously-skip-permissions"` — safe here because
    the container is the boundary and keep-id runs claude non-root (so the flag is
-   accepted); the wrapper itself stays a pure pass-through. Optional wrapper
+   accepted); the wrapper itself stays a pure pass-through. Because it IS a
+   pass-through, the preset carries claude's own argv templates and
+   `claude-stream-json` log format, so a one-shot streams its steps into `logs`
+   exactly like a host claude slot — spawn it with bare `--agent-bin` instead and
+   you silently get the runner's raw defaults, i.e. no progress until the task
+   ends. Optional wrapper
    controls, passed the same way (`--agent-arg` / `--agent-args`): `--firewall`
    (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works),

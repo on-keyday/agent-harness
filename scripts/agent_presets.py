@@ -27,6 +27,7 @@ JSON directly instead.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 # name -> {bin, oneshotArgv, resumeOneshotArgv, resumeInteractiveArgv,
 # logFormat}. The argv values are the flag-STRING template form
@@ -101,6 +102,26 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeInteractiveArgv": "{args}",
         "logFormat": "",
     },
+}
+
+# The podman sandbox runs the SAME claude, launched through a wrapper that is a
+# pure pass-through (scripts/sandbox/README.md), so its argv templates and
+# logFormat must never drift from the claude preset: derived from that entry
+# with only `bin` replaced, rather than copied. Spawned without this, the slot
+# fell back to the runner's raw defaults and one-shot progress was invisible —
+# a whole task arrived as one final blob instead of streamed events.
+#
+# `bin` is an absolute path, which presets fully support: nothing constrains it
+# to a bare command name (runner/agent_profile.go ResolveBinPaths LookPath+Abs's
+# every profile bin — a path is in fact the better-behaved form there — and
+# runner/connect.go reports agentBinBase(bin) for display).
+#
+# --agent-args is NOT part of the preset: the sandbox slot's
+# --dangerously-skip-permissions is the caller's choice and --agent-args does
+# not collide with --agents (see _CONFLICTING_FLAGS).
+KNOWN_AGENT_PRESETS["sandbox"] = {
+    **{k: v for k, v in KNOWN_AGENT_PRESETS["claude"].items() if k != "bin"},
+    "bin": str(Path(__file__).resolve().parent / "sandbox" / "claude-in-podman.sh"),
 }
 
 # Flags --agents would itself set. If the caller already passed one of
