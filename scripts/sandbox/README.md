@@ -144,7 +144,7 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   those endpoints and fail-closed won't stall on them.
 - **`--firewall-proxy` (stronger egress):** instead of an IP allowlist, deny ALL
   raw egress for the agent uid (iptables owner-match) and run an in-container
-  allowlisting CONNECT proxy (`connect-proxy.py`) as a separate uid; the agent's
+  allowlisting CONNECT proxy (`cmd/sandbox-connect-proxy`) as a separate uid; the agent's
   API/WebFetch are forced through it via `HTTPS_PROXY`. Wins over `--firewall`:
   client-side **WebFetch works** (routed through the proxy), domain-based allowlist
   (no CDN-IP rotation / ipset), and injected code cannot open a raw socket at all.
@@ -185,7 +185,7 @@ harness-cli submit --repo <sandbox-root> \
   `init-firewall.sh`; fail-closed. Verified end-to-end (blocked domains rejected,
   allowed reachable, claude runs + writes the worktree as the host user). ✅
 - **proxy-broker egress (opt-in `--firewall-proxy`, stronger):** an in-container
-  allowlisting CONNECT proxy (`connect-proxy.py`) runs as a dedicated uid; iptables
+  allowlisting CONNECT proxy (`cmd/sandbox-connect-proxy`) runs as a dedicated uid; iptables
   **owner-match** gives the agent uid NO raw-socket egress, so its API + WebFetch
   funnel through the proxy (domain allowlist, no CDN-IP fragility, **WebFetch
   works** unlike the IP allowlist). harness-cli still reaches the harness server

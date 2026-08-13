@@ -32,7 +32,7 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #   --firewall          apply the iptables+ipset egress allowlist
 #                       (init-firewall.sh); default is an open network.
 #   --firewall-proxy    stronger egress: deny-all + an in-container allowlisting
-#                       CONNECT proxy (connect-proxy.py); the agent gets no raw
+#                       CONNECT proxy (cmd/sandbox-connect-proxy); the agent gets no raw
 #                       egress and its API/WebFetch funnel through the proxy.
 #                       Takes precedence over --firewall if both are given.
 #   --mount-auth        force MOUNT auth (bind-mount the host ~/.claude) even when

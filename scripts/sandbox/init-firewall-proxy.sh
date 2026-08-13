@@ -3,9 +3,9 @@
 # container via entrypoint.sh, AFTER the CONNECT proxy is started.
 #
 # L3 deny-all egress except:
-#   1. loopback        — the agent reaches connect-proxy.py here (HTTPS_PROXY).
+#   1. loopback        — the agent reaches cmd/sandbox-connect-proxy here (HTTPS_PROXY).
 #   2. the proxy's uid — it egresses to allowlisted domains; the L7 allowlist is
-#                        enforced in connect-proxy.py, so L3 trusts that uid.
+#                        enforced in cmd/sandbox-connect-proxy, so L3 trusts that uid.
 #   3. the harness server — harness-cli connects directly (it does NOT honor
 #                        HTTPS_PROXY), so the agent uid is allowed to reach it.
 #

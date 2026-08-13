@@ -21,7 +21,7 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   PROXY_UID="${SANDBOX_PROXY_UID:-1001}"
   PROXY_PORT="${SANDBOX_PROXY_PORT:-18080}"
   gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
-    python3 /usr/local/bin/sandbox-connect-proxy.py &
+    /usr/local/bin/sandbox-connect-proxy &
   for _ in $(seq 1 50); do
     if (exec 3<>"/dev/tcp/127.0.0.1/$PROXY_PORT") 2>/dev/null; then break; fi
     sleep 0.1
