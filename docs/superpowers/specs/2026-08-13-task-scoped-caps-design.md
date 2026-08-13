@@ -81,9 +81,18 @@ Two independent axes rather than one enum, so "narrow below the subtree" and
 
 enum ScopeBase:
     :u8
-    none    = "none"       # no set beyond self
-    subtree = "subtree"    # self + descendants (today's visibility rule)
-    global  = "global"     # every task
+    # subtree is 0 deliberately. It is the default in three places that all
+    # read a zero: a client that sends no scope, a WAL record written before
+    # this change (the JSON fields are omitempty), and a zero-valued Go
+    # struct. Making the default the zero value removes the "was it unset or
+    # was it none?" question from every one of them.
+    subtree = 0, "subtree"    # self + descendants (today's visibility rule)
+    none    = 1, "none"       # no set beyond self
+    global  = 2, "global"     # every task
+
+# Ordering for clamping is by permissiveness (none < subtree < global), NOT by
+# numeric value. minScopeBase ranks explicitly, and an unrecognised byte from a
+# newer peer ranks as none — fail closed.
 
 format TaskScope:
     base    :ScopeBase
@@ -110,6 +119,11 @@ session regardless of how narrowly it was scoped.
 
 No new `Capability` bit is added; `all` stays `0xfff`. "May act on anything" is
 `--scope global`, not a twelfth verb.
+
+A child never *inherits* a wider base. `--scope` omitted means `subtree`, not
+"whatever the creator has" — an operator is `global`, so an inheriting default
+would hand `global` to every task the operator spawns and reproduce exactly the
+unscoped behaviour §1 is about. Widening past `subtree` is always explicit.
 
 `ScopeBase.none` combined with `Capability_Spawn` yields a task that can create
 children it cannot then supervise. That is expressible and left expressible —
