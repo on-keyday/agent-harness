@@ -805,11 +805,18 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 // are left alone and counted in skippedActive. Ids not present in the store
 // are counted in skippedMissing. Log files are deleted via the same path as
 // PruneTerminal.
-func (s *TaskStore) PruneByIDs(ids []string, force bool, logDir string) (removed, skippedActive, skippedMissing int) {
+func (s *TaskStore) PruneByIDs(allowed map[string]bool, ids []string, force bool, logDir string) (removed, skippedActive, skippedMissing int) {
 	s.mu.Lock()
 	pruned := make([]string, 0, len(ids))
 	toRemove := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
+		// Out of the caller's scope counts as missing, deliberately the same
+		// bucket as a nonexistent id: the count must not distinguish "not
+		// yours" from "not there".
+		if allowed != nil && !allowed[id] {
+			skippedMissing++
+			continue
+		}
 		t, ok := s.tasks[id]
 		if !ok {
 			skippedMissing++
@@ -869,13 +876,20 @@ func (s *TaskStore) PruneByIDs(ids []string, force bool, logDir string) (removed
 // For each pruned task, its log file at <logDir>/<id>.log is also deleted (errors are logged but non-fatal).
 // A "task_pruned" WAL event is emitted so a subsequent replay applies the same removal.
 // Returns the number of tasks removed. logDir may be "" to skip log-file deletion.
-func (s *TaskStore) PruneTerminal(cutoff time.Time, logDir string) int {
+func (s *TaskStore) PruneTerminal(allowed map[string]bool, cutoff time.Time, logDir string) int {
 	s.mu.Lock()
 	var pruned []string
 	keepOrder := s.order[:0]
 	for _, id := range s.order {
 		t := s.tasks[id]
 		if t == nil {
+			continue
+		}
+		if allowed != nil && !allowed[id] {
+			// The age sweep is the dangerous form: unfiltered it forgets every
+			// terminal task on the server, which the agent skill could only ask
+			// callers not to do.
+			keepOrder = append(keepOrder, id)
 			continue
 		}
 		terminal := false

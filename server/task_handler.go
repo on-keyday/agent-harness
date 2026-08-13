@@ -56,7 +56,7 @@ type TaskHandler struct {
 	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply
 	// with all-zero counts. Server.New wires this to a closure that dispatches
 	// to TaskStore.PruneTerminal (time mode) or TaskStore.PruneByIDs (id mode).
-	PruneFn func(req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int)
+	PruneFn func(allowed map[string]bool, req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int)
 
 	// LogsDir is the directory containing per-task log files
 	// (<LogsDir>/<task-id>.log). Empty disables GetTaskLog responses
@@ -307,7 +307,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		var removed, skippedActive, skippedMissing uint32
 		if h.PruneFn != nil {
-			r, sa, sm := h.PruneFn(pr)
+			// nil allowed = unrestricted (operator, or a global base).
+			var allowed map[string]bool
+			if all, set := h.scopeSet(cid); !all {
+				allowed = set
+			}
+			r, sa, sm := h.PruneFn(allowed, pr)
 			removed = uint32(r)
 			skippedActive = uint32(sa)
 			skippedMissing = uint32(sm)

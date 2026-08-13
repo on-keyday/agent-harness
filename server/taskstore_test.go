@@ -338,7 +338,7 @@ func TestTaskStore_PruneByIDsFiresOnPrune(t *testing.T) {
 	var pruned []string
 	s.OnPrune = func(pid string) { pruned = append(pruned, pid) }
 
-	removed, _, _ := s.PruneByIDs([]string{id}, false, "")
+	removed, _, _ := s.PruneByIDs(nil, []string{id}, false, "")
 	if removed != 1 {
 		t.Fatalf("removed=%d want 1", removed)
 	}
@@ -359,7 +359,7 @@ func TestTaskStore_PruneSkipsActiveNoOnPrune(t *testing.T) {
 	fired := false
 	s.OnPrune = func(string) { fired = true }
 
-	removed, skippedActive, _ := s.PruneByIDs([]string{id}, false, "")
+	removed, skippedActive, _ := s.PruneByIDs(nil, []string{id}, false, "")
 	if removed != 0 || skippedActive != 1 {
 		t.Fatalf("removed=%d skippedActive=%d want 0/1", removed, skippedActive)
 	}
@@ -517,7 +517,7 @@ func TestTaskStorePruneTerminal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	removed := s.PruneTerminal(cutoff, logDir)
+	removed := s.PruneTerminal(nil, cutoff, logDir)
 	if removed != 2 {
 		t.Fatalf("removed=%d, want 2", removed)
 	}
@@ -567,7 +567,7 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 	}
 
 	// Pass 1: force=false should refuse the active task and report missing.
-	removed, active, missing := s.PruneByIDs([]string{idActive, idTerminal, missingID}, false, logDir)
+	removed, active, missing := s.PruneByIDs(nil, []string{idActive, idTerminal, missingID}, false, logDir)
 	if removed != 1 || active != 1 || missing != 1 {
 		t.Fatalf("PruneByIDs(force=false): removed=%d active=%d missing=%d, want 1/1/1", removed, active, missing)
 	}
@@ -582,7 +582,7 @@ func TestTaskStorePruneByIDs(t *testing.T) {
 	}
 
 	// Pass 2: force=true should now remove the active one too.
-	removed, active, missing = s.PruneByIDs([]string{idActive}, true, logDir)
+	removed, active, missing = s.PruneByIDs(nil, []string{idActive}, true, logDir)
 	if removed != 1 || active != 0 || missing != 0 {
 		t.Fatalf("PruneByIDs(force=true): removed=%d active=%d missing=%d, want 1/0/0", removed, active, missing)
 	}

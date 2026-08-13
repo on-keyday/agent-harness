@@ -198,16 +198,21 @@ func New(cfg Config) *Server {
 		OnAgentHello: func(conn ConnHandle, info *protocol.AgentInfo) protocol.ClientHelloStatus {
 			return clientHelloStatusFromBoard(s.establishAgentIdentity(conn, info))
 		},
-		PruneFn: func(req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int) {
+		// allowed is the caller's effective target set, or nil for an operator
+		// (and anyone whose base is global). Prune is the one kind whose
+		// self-restriction lived only in prose: the supervising-workers skill
+		// asks agents not to run the bare age sweep on a shared server because
+		// it forgets everyone's tasks. Now the server enforces it.
+		PruneFn: func(allowed map[string]bool, req *protocol.PruneTasksRequest) (removed, skippedActive, skippedMissing int) {
 			if req.TaskIdsLen == 0 {
 				cutoff := time.Unix(0, int64(req.BeforeTs))
-				return s.tasks.PruneTerminal(cutoff, logsDir), 0, 0
+				return s.tasks.PruneTerminal(allowed, cutoff, logsDir), 0, 0
 			}
 			ids := make([]string, 0, req.TaskIdsLen)
 			for i := range req.TaskIds {
 				ids = append(ids, hex.EncodeToString(req.TaskIds[i].Id[:]))
 			}
-			return s.tasks.PruneByIDs(ids, req.Force != 0, logsDir)
+			return s.tasks.PruneByIDs(allowed, ids, req.Force != 0, logsDir)
 		},
 		// Via-relay hooks for dial-runner --via path. Endpoint + OnDialed are
 		// wired later in Run (they need the constructed Endpoint), but these
@@ -604,7 +609,9 @@ func (s *Server) serve(ctx context.Context, ep objproto.Endpoint, mux *http.Serv
 			logsDir := filepath.Join(s.cfg.DataDir, "logs")
 			runPrune := func() {
 				cutoff := time.Now().Add(-s.cfg.TaskRetention)
-				if n := s.tasks.PruneTerminal(cutoff, logsDir); n > 0 {
+				// nil = unrestricted: the retention sweep is the server's own,
+				// not any caller's.
+				if n := s.tasks.PruneTerminal(nil, cutoff, logsDir); n > 0 {
 					s.cfg.Logger.Info("auto-prune", "removed", n, "cutoff", cutoff)
 				}
 			}
