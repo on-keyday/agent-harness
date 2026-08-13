@@ -153,6 +153,22 @@ func (m *AuthorityPickerModel) rowDisabled(r pickerRow) bool {
 	return r.kind == rowTask && m.base == protocol.ScopeBase_Global
 }
 
+// SetAllCaps sets every granular capability bit on (all=true) or off
+// (all=false) — the TUI counterpart of the WebUI chip row's [all] / [none]
+// quick-set buttons.
+func (m *AuthorityPickerModel) SetAllCaps(all bool) {
+	if !all {
+		m.caps = protocol.Capability_None
+		return
+	}
+	m.caps = protocol.Capability_None
+	for _, r := range m.rows {
+		if r.kind == rowCap {
+			m.caps |= r.bit
+		}
+	}
+}
+
 // Toggle flips the current row; on the base row it cycles
 // subtree → none → global → subtree.
 func (m *AuthorityPickerModel) Toggle() {
@@ -303,7 +319,7 @@ func (m *AuthorityPickerModel) View() string {
 	if spec == "" {
 		spec = "(default subtree)"
 	}
-	footer := "space toggle · enter apply · esc cancel · scope=" + spec
+	footer := "space toggle · A/N all/none caps · enter apply · esc cancel · scope=" + spec
 	maxW := m.w - 6
 	if maxW > 8 {
 		footer = runewidth.Truncate(footer, maxW, "…")

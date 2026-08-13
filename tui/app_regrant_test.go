@@ -98,6 +98,38 @@ func TestPickerEnterNilClient(t *testing.T) {
 	}
 }
 
+// TestPickerBatchedRunes: fast key-repeat (or paste) delivers ONE KeyMsg
+// carrying several runes; each rune must be applied, not dropped.
+func TestPickerBatchedRunes(t *testing.T) {
+	a, _ := regrantApp(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a = m.(*App)
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("jjj")})
+	a = m.(*App)
+	if a.authorityPicker.cursor != 3 {
+		t.Fatalf("cursor = %d after a batched jjj, want 3", a.authorityPicker.cursor)
+	}
+}
+
+// TestPickerAllNoneQuickKeys: A / N mirror the WebUI chip row's [all]/[none].
+func TestPickerAllNoneQuickKeys(t *testing.T) {
+	a, _ := regrantApp(t)
+	m, _ := a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	a = m.(*App)
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	a = m.(*App)
+	caps, _, _, _ := a.authorityPicker.Result()
+	if caps != protocol.Capability_None {
+		t.Fatalf("N must clear all caps, got %v", caps)
+	}
+	m, _ = a.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	a = m.(*App)
+	caps, _, _, _ = a.authorityPicker.Result()
+	if caps != protocol.Capability_All {
+		t.Fatalf("A must set every granular bit (== all), got %v", caps)
+	}
+}
+
 // TestCapsNoArgOpensPicker / TestScopeNoArgOpensPicker: the no-arg cmdline
 // forms open the picker in session mode instead of printing.
 func TestCapsNoArgOpensPicker(t *testing.T) {

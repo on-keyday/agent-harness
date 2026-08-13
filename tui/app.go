@@ -1318,14 +1318,34 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case msg.Type == tea.KeyEsc:
 				a.authorityPicker.Close()
 				return a, nil
-			case msg.Type == tea.KeyUp || msg.String() == "k":
+			case msg.Type == tea.KeyUp:
 				a.authorityPicker.Move(-1)
 				return a, nil
-			case msg.Type == tea.KeyDown || msg.String() == "j":
+			case msg.Type == tea.KeyDown:
 				a.authorityPicker.Move(1)
 				return a, nil
 			case msg.Type == tea.KeySpace:
 				a.authorityPicker.Toggle()
+				return a, nil
+			case msg.Type == tea.KeyRunes:
+				// Fast key-repeat (and paste) batches runes into ONE KeyMsg,
+				// so compare per rune, not msg.String() — a "jjj" burst is
+				// three moves, not an unknown key.
+				for _, r := range msg.Runes {
+					switch r {
+					case 'j':
+						a.authorityPicker.Move(1)
+					case 'k':
+						a.authorityPicker.Move(-1)
+					case ' ':
+						a.authorityPicker.Toggle()
+					case 'A':
+						// WebUI chip row's [all] / [none] quick-set, as keys.
+						a.authorityPicker.SetAllCaps(true)
+					case 'N':
+						a.authorityPicker.SetAllCaps(false)
+					}
+				}
 				return a, nil
 			case msg.Type == tea.KeyEnter:
 				caps, spec, cascade, keep := a.authorityPicker.Result()
