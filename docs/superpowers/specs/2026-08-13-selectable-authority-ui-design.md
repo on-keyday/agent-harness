@@ -135,7 +135,10 @@ unchanged: opening the picker needs no client, applying goes through
 ### 4. What does not change
 
 - CLI: no changes.
-- Wire/protocol: no changes.
+- Wire/protocol: no changes. (The wasm snapshot conversion — JS-side JSON,
+  not wire — gains raw `capsBits`/`scopeBase`/`scopeIds` fields beside the
+  existing label strings, because prefill from label forms like `all,-spawn`
+  would mean re-implementing `ParseCaps` in JS.)
 - The scope grammar and `cli.ParseScope`: no changes — the pickers are a
   front end to the same strings.
 - `supervising-workers` skill text: no changes (agent-side is CLI).
