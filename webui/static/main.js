@@ -2654,12 +2654,15 @@ const POLL_INTERVAL_MS = 5000;
       if (!known) label.style.color = "#b8864b";
       container.appendChild(label);
     };
+    // Repo tail beside the agent, left-truncated like the TUI picker rows —
+    // multi-root runners tell tasks apart by repo, not agent.
+    const truncLeft = (s, n) => (s && s.length > n ? "…" + s.slice(-n) : (s || ""));
     const seen = new Set();
     for (const t of (lastTasks || [])) {
       if (t.id === excludeId) continue;
       seen.add(t.id);
       const head = (t.prompt || "").slice(0, 30);
-      addRow(t.id, `${t.id.slice(0, 8)} ${t.status} ${t.agentProfile || ""} ${head}`, true);
+      addRow(t.id, `${t.id.slice(0, 8)} ${t.status} ${t.agentProfile || ""} ${truncLeft(t.repoPath, 20)} ${head}`, true);
     }
     for (const id of [...idsSet].sort()) {
       if (!seen.has(id) && id !== excludeId) addRow(id, `${id.slice(0, 8)} (不明なタスク)`, false);

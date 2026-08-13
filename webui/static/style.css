@@ -531,7 +531,14 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.regrant-modal .picker-form { min-width: min(26rem, 90vw); max-width: min(34rem, 94vw); }
+/* Fixed width, not sized-to-content: content-driven sizing made the dialog
+   resize as selections changed row/echo lengths (same fix as the TUI picker
+   frame). The width lives on the DIALOG — .picker-modal pins dialogs to
+   480px and a wider form would just overflow into a scrollbar. */
+/* .picker-modal.regrant-modal (two classes) so this outranks .picker-modal's
+   own width, which is declared LATER in this file and ties on specificity. */
+.picker-modal.regrant-modal { width: min(94vw, 36rem); }
+.regrant-modal .picker-form { width: 100%; box-sizing: border-box; }
 /* The mobile stacked-form rules (#compose label/input block, width:100%)
    split a radio/checkbox from its text; the scope picker's controls must
    keep their inline pairing. */
