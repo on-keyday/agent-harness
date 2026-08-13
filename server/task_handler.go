@@ -591,6 +591,16 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		h.handleSetCaps(conn, req.RequestId, cid, sc)
 
+	case protocol.TaskControlKind_SetParent:
+		// Same operator-identity gate as SetCaps; deliberately NOT in
+		// requiredCap for the same reason.
+		sp := req.SetParent()
+		if sp == nil {
+			slog.Error("TaskHandler: SetParent variant is nil")
+			return
+		}
+		h.handleSetParent(conn, req.RequestId, cid, sp)
+
 	case protocol.TaskControlKind_AwaitIdle:
 		h.handleAwaitIdle(conn, &req)
 
@@ -1783,12 +1793,16 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 //     embeds paths)
 //
 // Capabilities, CreatorTaskId, the origin kinds and the timestamps stay.
-// Spawn-time attenuation already guarantees caps_parent ⊇ caps_self, so the
-// bitmask discloses nothing the caller cannot derive; zeroing it would instead
-// make the row read as "caps: none" (cli.CapsLabel), which is not redaction but
-// a false claim. Same reason for CreatorTaskId: a zeroed one reads as
-// "operator-created". An absent string field is honestly absent; a zeroed enum
-// is a different statement.
+// Spawn-time attenuation guarantees caps_parent ⊇ caps_self for links Create
+// made (an operator set_parent can re-point the link afterwards, so the
+// superset relation is not an invariant of the CURRENT parent). The disclosure
+// argument is unaffected either way: seeing the exact bitmask was always
+// strictly more information than the superset relation implied, and a subset
+// bitmask is not a larger disclosure than a superset one. Zeroing it would
+// instead make the row read as "caps: none" (cli.CapsLabel), which is not
+// redaction but a false claim. Same reason for CreatorTaskId: a zeroed one
+// reads as "operator-created". An absent string field is honestly absent; a
+// zeroed enum is a different statement.
 func redactParentTaskInfo(info *protocol.TaskInfo) {
 	info.SetRepoPath(nil)
 	info.SetWorktreeDir(nil)

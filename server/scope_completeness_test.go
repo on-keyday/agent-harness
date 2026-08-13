@@ -64,15 +64,17 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_BoardRead:        noTarget,
 	protocol.TaskControlKind_BoardPurge:       noTarget,
 	protocol.TaskControlKind_BoardSubscribers: noTarget,
-	// set_caps names a target task but is operator-only by principal identity,
-	// which is strictly stronger than any scope: an operator's scope is global.
-	protocol.TaskControlKind_SetCaps: noTarget,
+	// set_caps / set_parent name a target task but are operator-only by
+	// principal identity, which is strictly stronger than any scope: an
+	// operator's scope is global.
+	protocol.TaskControlKind_SetCaps:   noTarget,
+	protocol.TaskControlKind_SetParent: noTarget,
 	// permission_denied is a RESPONSE kind; it never arrives as a request.
 	protocol.TaskControlKind_PermissionDenied: noTarget,
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_SetCaps); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_SetParent); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -87,12 +89,12 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// set_caps is the last kind; if the enum grows past it the loop above stops
+// set_parent is the last kind; if the enum grows past it the loop above stops
 // short and silently covers nothing new.
-func TestSetCapsIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_SetCaps) + 1)
+func TestSetParentIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_SetParent) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after set_caps (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after set_parent (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified, which otherwise stops before it", next)
 	}
 }
