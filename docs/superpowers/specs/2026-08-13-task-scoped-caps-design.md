@@ -307,15 +307,17 @@ format SetCapsRequest:
     task_id    :TaskID
     caps       :Capability
     scope      :TaskScope
-    # set_caps / set_scope are presence bits, not conveniences: caps = 0 is
-    # Capability.none and scope{base:none, ids:[]} is the strictest scope, so
-    # neither field has a spare value meaning "leave it alone". Same shape as
-    # SubmitRequest.resume_caps_override.
-    set_caps   :u1          # 1 = write caps;  0 = keep the persisted bitmask
-    set_scope  :u1          # 1 = write scope; 0 = keep the persisted scope
-    cascade    :u1          # 1 = also clamp descendants
-    keep_conns :u1          # 1 = do not drop the affected tasks' connections
-    reserved   :u4
+    # Presence bits, not conveniences: caps = 0 is Capability.none and
+    # scope{subtree, []} is a real scope, so neither field has a spare value
+    # meaning "leave it alone". Same shape as
+    # SubmitRequest.resume_caps_override. Named *_present rather than set_*
+    # because brgen's getter for a u1 named set_scope is `SetScope() bool`,
+    # which reads as a setter for the neighbouring scope field.
+    caps_present  :u1       # 1 = write caps;  0 = keep the persisted bitmask
+    scope_present :u1       # 1 = write scope; 0 = keep the persisted scope
+    cascade       :u1       # 1 = also clamp descendants
+    keep_conns    :u1       # 1 = do not drop the affected tasks' connections
+    reserved      :u4
 
 format SetCapsResponse:
     status       :SetCapsStatus
@@ -395,8 +397,8 @@ All three clients, per the repo rule that a feature spans CLI, TUI and WebUI.
   is not `none`, so `ids:X` and `none+ids:X` parse identically and
   `ParseScope` accepts both.
 - `harness-cli caps set <task-id> [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]`.
-  Omitting `--caps` sends `set_caps = 0` and keeps the stored bitmask;
-  omitting `--scope` sends `set_scope = 0` and keeps the stored scope. A call
+  Omitting `--caps` sends `caps_present = 0` and keeps the stored bitmask;
+  omitting `--scope` sends `scope_present = 0` and keeps the stored scope. A call
   with neither is rejected client-side. Prints the affected ids and the
   number of connections closed.
 - `harness-cli caps` gains a `SCOPE` section documenting the grammar; `--json`

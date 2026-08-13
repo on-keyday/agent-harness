@@ -37,6 +37,11 @@ type TaskEntry struct {
 	// computed at Create as creatorCaps ∩ requested. Persisted to the WAL and
 	// restored on resume; never changed by resume.
 	Capabilities protocol.Capability
+	// Scope bounds WHICH tasks Capabilities may be pointed at — the axis the
+	// bitmask does not carry. Zero value is subtree (self + descendants), the
+	// rule the server applied to visibility before scopes existed. See
+	// server/scope.go.
+	Scope Scope
 	// AgentProfile is the resolved agent profile name for this task, chosen
 	// by the submit-path filter/resolution (server/task_handler.go) from the
 	// bound runner's advertised RunnerHello.AgentProfiles. Set at Create time;

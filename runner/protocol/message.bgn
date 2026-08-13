@@ -274,6 +274,11 @@ enum TaskControlKind:
     board_subscribers       # list each task's agentboard subscription set,
                             # optionally narrowed to the tasks a publish to one
                             # topic would reach. Requires info_global.
+    set_caps                # operator-only: rewrite a live task's caps + scope.
+                            # Gated on the caller having NO principal task, not
+                            # on a capability bit — a bit authorising "rewrite
+                            # capabilities" grants itself all on first use and
+                            # spawn-time intersection can never claw it back.
 
 # ClientKind tags the kind of caller that opened a TaskControl session.
 # `agent` is an in-task harness-cli that proves its identity via agent_info;
@@ -518,6 +523,7 @@ format TaskInfo:
                           # not now()-last_output_at, to derive busy/idle.
     agent_profile_len :u8   # named agent profile this task was launched under
     agent_profile :[agent_profile_len]u8  # (empty = runner default).
+    scope :TaskScope        # which tasks this task's capabilities may target
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes
@@ -599,6 +605,11 @@ format SubmitRequest:
     # runner default (--claude-bin).
     agent_profile_len :u8
     agent_profile :[agent_profile_len]u8
+    # scope bounds which tasks this task's capabilities may target; see
+    # TaskScope. Omitted (zero) = subtree. Never inherit-the-creator: an
+    # operator is global, so an inheriting default would hand global to every
+    # task the operator spawns.
+    scope :TaskScope
 
 # SubmitStatus indicates the outcome of a SubmitRequest.
 enum SubmitStatus:
@@ -618,6 +629,10 @@ enum SubmitStatus:
     # requested agent_profile is not among the target runner's advertised
     # AgentProfileName list.
     profile_unavailable = "profile_unavailable"
+    # requested scope is not a subset of the spawner's effective scope. Named
+    # rather than silently clamped: a task whose scope differs from the one the
+    # caller wrote, with nothing saying so, is the failure mode this rejects.
+    scope_not_permitted = "scope_not_permitted"
 
 # SubmitResponse replaces the old bare task_id with a status + optional error.
 format SubmitResponse:
@@ -761,6 +776,8 @@ format OpenInteractiveRequest:
     # agent_profile: same semantics as SubmitRequest.agent_profile.
     agent_profile_len :u8
     agent_profile :[agent_profile_len]u8
+    # scope: same semantics as SubmitRequest.scope.
+    scope :TaskScope
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
     if x11_enabled == 1:
@@ -780,6 +797,10 @@ enum OpenInteractiveStatus:
     # See SubmitStatus — same resume semantics for the interactive path.
     resume_not_found    = "resume_not_found"
     resume_not_terminal = "resume_not_terminal"
+    # See SubmitStatus.scope_not_permitted. This response carries no error_msg
+    # field, so the status is the whole answer and the client supplies the
+    # offending ids from the scope it sent.
+    scope_not_permitted = "scope_not_permitted"
 
 # One candidate runner returned when an OpenInteractive request is ambiguous
 # (>=2 runners tie on longest-prefix roots score under an Any selector). `cid`
@@ -866,6 +887,7 @@ format WhoAmIResponse:
     principal_task_id :TaskID
     creator_task_id   :TaskID
     capabilities      :Capability
+    scope             :TaskScope
 # await_idle: one-shot idle-edge watch on an interactive session's PTY output.
 # Fires when now - last_output >= threshold (byte-level quiescence; measured
 # claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),
@@ -929,10 +951,20 @@ format TaskControlRequest:
         TaskControlKind.list_port_forwards    => list_port_forwards    :PortForwardListQuery
         TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardRequest
         TaskControlKind.git_query             => git_query             :GitQueryRequest
+        TaskControlKind.set_caps              => set_caps              :SetCapsRequest
         .. => error("Unexpected task")
 
+# CancelResult replaces a bare u8 that every reply wrote as 0. ok stays 0, so
+# the success byte is unchanged on the wire; no_such_task is the answer for a
+# target outside the caller's scope, which is deliberately indistinguishable
+# from a target that does not exist.
+enum CancelResult:
+    :u8
+    ok           = 0, "ok"
+    no_such_task = 1, "no_such_task"
+
 format CancelStatus:
-    status :u8
+    status :CancelResult
 
 format PermissionDeniedResponse:
     requested_kind :TaskControlKind
@@ -967,6 +999,43 @@ format TaskControlResponse:
         TaskControlKind.list_port_forwards    => list_port_forwards    :PortForwardListResult
         TaskControlKind.kill_port_forward     => kill_port_forward     :KillPortForwardResponse
         TaskControlKind.git_query             => git_query             :GitQueryResponse
+        TaskControlKind.set_caps              => set_caps              :SetCapsResponse
+
+enum SetCapsStatus:
+    :u8
+    ok             = "ok"
+    not_found      = "not_found"
+    not_operator   = "not_operator"
+    internal_error = "internal_error"
+
+# SetCapsRequest rewrites a live task's authority. Unlike a resume-time
+# re-grant it has no terminal-state precondition: the point is to change a task
+# that is still running.
+#
+# caps_present / scope_present are presence bits, not conveniences. They are
+# named *_present rather than set_* because the generated getter for a u1
+# named set_scope is `SetScope() bool`, which reads as a setter for the
+# neighbouring scope field. caps = 0 is
+# Capability.none and scope{subtree, []} is a real scope, so neither field has
+# a spare value meaning "leave this one alone" — the same reason
+# SubmitRequest.resume_caps_override exists.
+format SetCapsRequest:
+    task_id    :TaskID
+    caps       :Capability
+    scope      :TaskScope
+    caps_present  :u1   # 1 = write caps;  0 = keep the persisted bitmask
+    scope_present :u1   # 1 = write scope; 0 = keep the persisted scope
+    cascade       :u1   # 1 = also clamp every descendant to the new authority
+    keep_conns    :u1   # 1 = leave the affected tasks' connections open even on
+                        # a narrowing (default: close them, so in-flight attaches
+                        # and transfers die with the grant)
+    reserved      :u4
+
+format SetCapsResponse:
+    status       :SetCapsStatus
+    affected_len :u16
+    affected     :[affected_len]TaskID   # target + every descendant changed
+    conns_closed :u32
 
 enum NotifyLevel:
     :u8
@@ -1300,6 +1369,33 @@ enum Capability:
     # channel. Different blast radius → its own bit, default-off.
     purge          = 0x800, "purge"
     all            = 0xfff, "all"
+
+# ScopeBase is the base target set a TaskScope starts from, before its explicit
+# id list is unioned in. Self is always in the effective set regardless of base.
+enum ScopeBase:
+    :u8
+    # subtree is 0 deliberately. Three things read a zero and all three must
+    # mean the default: a client that sends no scope, a WAL record written
+    # before scopes existed (its JSON fields are omitempty), and a zero-valued
+    # Go struct. With none = 0 each would have needed a "was it unset, or was
+    # it none?" special case.
+    subtree = 0, "subtree"
+    none    = 1, "none"
+    global  = 2, "global"
+
+# TaskScope bounds WHICH tasks a task's capabilities may be pointed at, the
+# axis Capability does not carry. The effective target set is
+#
+#     {self} u baseSet(base) u ids
+#
+# so `none` is not "nothing" — a task can always reach its own log, worktree
+# and session. Clamping a child's scope at spawn ranks bases by permissiveness
+# (none < subtree < global), NOT by numeric value, and an unrecognised byte
+# from a newer peer ranks as none so the failure is closed.
+format TaskScope:
+    base    :ScopeBase
+    ids_len :u16
+    ids     :[ids_len]TaskID
 
 enum OpenPortForwardStatus:
     :u8

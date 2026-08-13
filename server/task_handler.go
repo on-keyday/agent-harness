@@ -264,7 +264,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		h.Tasks.Cancel(taskID)
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel, RequestId: req.RequestId}
-		resp.SetCancel(protocol.CancelStatus{Status: 0})
+		resp.SetCancel(protocol.CancelStatus{Status: protocol.CancelResult_Ok})
 
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -1633,6 +1633,7 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		ResumedByKind: t.ResumedByKind,
 		CreatorTaskId: t.CreatorTaskID,
 		Capabilities:  t.Capabilities,
+		Scope:         t.Scope.toWire(),
 		CreatedAt:     uint64(t.CreatedAt.UnixNano()),
 	}
 	info.SetRepoPath([]byte(t.RepoPath))

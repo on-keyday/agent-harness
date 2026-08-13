@@ -54,6 +54,9 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		ResumedByKind:   protocol.ClientKind_Cli,
 		CreatorTaskID:   protocol.TaskID{Id: [16]byte{1}},
 		Capabilities:    protocol.Capability_All,
+		// Non-default on purpose: the default scope is the ZERO TaskScope, so a
+		// mapper that forgot Scope would still pass against defaultScope().
+		Scope:           Scope{Base: protocol.ScopeBase_None, IDs: []string{"00112233445566778899aabbccddeeff"}},
 		AgentProfile:    "codex",
 		Status:          protocol.TaskStatus_Running,
 		AssignedTo:      "ws:127.0.0.1:8539-1",
