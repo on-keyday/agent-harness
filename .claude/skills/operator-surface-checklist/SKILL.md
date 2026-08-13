@@ -26,6 +26,7 @@ superset checklist to actually walk.
 | 7 | WebUI command input | `runCmd` in `main.js` — a separate parser from the buttons |
 | 8 | wasm bridge | `cmd/harness-webui-wasm/main.go` `opts.Get("…")` names must match the JS request keys |
 | 9 | Session-default state | TUI `App.sessionCaps`/`sessionScope`; WebUI `spawnCaps`/`spawnScope` — every spawn call site must read them |
+| 10 | Every OTHER verb family | `file` / `git` / `forward` / `prune` / `notify` / `board` / `session` sub-verbs / `caps set` — each exists as a CLI flag set, a TUI cmdline parser, and (subset) a WebUI control or `runCmd` case. A new option on one family member (`file pull -n`) has the same per-UI parity obligations as a spawn flag; this table is not spawn-only. |
 
 ## B. Display surfaces (field must be VISIBLE, not just accepted)
 
@@ -50,11 +51,15 @@ superset checklist to actually walk.
 Walking A and B finds missing knobs and missing pixels; this table finds
 wrong MEANINGS. The resume-scope reset shipped through both tables above —
 every surface had the flag, every view displayed the value — because nobody
-asked what the flag meant on the other path.
+asked what the flag meant on the other path. These axes apply to EVERY verb
+family (A#10), not just spawns: any option reachable from more than one
+verb, mode, or path needs its meaning written down per path (`prune` with
+ids vs the bare age sweep, `file push -f` vs `pull -f`, a forward flag on
+register vs kill — same discipline).
 
 | Axis | Question to answer explicitly |
 |------|------------------------------|
-| fresh vs resume | For every spawn option: what happens on create AND on resume? "Applied", "kept", or "presence-gated" — written down, not implied. A zero value that means "default" on create means "overwrite with default" on resume unless a presence bit says otherwise. |
+| same option, other path | For every option on a multi-path verb: what happens on EACH path? "Applied", "kept", "ignored-with-error" — written down, not implied. The incident: spawn options on the resume path — a zero value that means "default" on create means "overwrite with default" on resume unless a presence bit says otherwise. |
 | presence | Can the wire tell "not given" from "given the zero value"? If not and the difference matters (resume, set-style RPCs), add a presence bit — reserved bits in an existing byte first (`scope_present` cost zero layout change). |
 | session defaults | Defaults (TUI `sessionCaps`/`sessionScope`, WebUI Compose state) feed FRESH spawns only. A resume must never inherit whatever the default picker happens to hold — gate it behind an explicit control. |
 | shared funnel | New request fields land in the shared builders (`cli.buildSubmitRequest` / `buildOpenInteractiveRequest`), never in one caller — native, wasm, and x11 all funnel through them, so a per-path field silently misses the other two. |
