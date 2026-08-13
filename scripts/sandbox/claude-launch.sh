@@ -20,20 +20,17 @@ except Exception:
     cfg = {}
 cfg.setdefault("hasCompletedOnboarding", True)
 cfg.setdefault("theme", "dark")
-# NOTE: this clears the plain trust dialog, but NOT the variant claude 2.1.x
-# shows when the folder's .claude/settings.json carries permissions.allow — the
-# harness injects one for `Bash(harness-cli *)`, so every interactive sandbox
-# session opens on "Quick safety check … this folder pre-approves 1 tool
-# permission" and waits. Measured, not guessed: a container inspected before any
-# input already had hasTrustDialogAccepted true, and answering the dialog
-# changed NOTHING on disk (same container, before/after diff of ~/.claude.json
-# and the whole ~/.claude tree). The acceptance is not persisted, so no seedable
-# key exists to pre-set — seeding hasCompletedProjectOnboarding was tried and
-# did not clear it. Removing the trigger (the injected permissions.allow, which
-# --dangerously-skip-permissions makes redundant anyway) is the only fix that
-# would work; oneshot is unaffected because it cannot prompt and just logs
-# "Ignoring 1 permissions.allow entry".
-cfg.setdefault("projects", {}).setdefault(proj, {})["hasTrustDialogAccepted"] = True
+# Trust is keyed on the REPO ROOT, not the cwd. Seeding only $PWD (the task
+# worktree) left every interactive session opening on "Quick safety check …
+# this folder pre-approves 1 tool permission in .claude/settings.json", and
+# answering it wrote an entry for /…/<repo>, not for the worktree — which is
+# also the path the one-shot warning names ("set
+# projects[\"/…/<repo>\"].hasTrustDialogAccepted: true"). So seed the mounted
+# roots the wrapper passes in as well as $PWD.
+for p in [proj] + os.environ.get("SANDBOX_SEED_PROJECTS", "").split("\n"):
+    p = p.strip()
+    if p:
+        cfg.setdefault("projects", {}).setdefault(p, {})["hasTrustDialogAccepted"] = True
 json.dump(cfg, open(cfg_path, "w"))
 # ~/.claude/settings.json — suppress the one-time "Bypass Permissions mode"
 # acceptance prompt (skip-permissions runs unattended in the container).

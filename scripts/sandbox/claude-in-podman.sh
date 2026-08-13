@@ -103,7 +103,16 @@ if [ -s "$TOKEN_FILE" ] && [ "$force_mount" != 1 ]; then
   CLAUDE_HOME="/home/node"
   # SANDBOX_SEED_CONFIG tells the in-container launcher to pre-seed onboarding +
   # trust-this-folder for the worktree (ephemeral home re-prompts otherwise).
-  AUTH=( --env CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")" --env SANDBOX_SEED_CONFIG=1 )
+  # SANDBOX_SEED_PROJECTS carries the mounted roots, newline-separated. claude
+  # keys "trust this folder" on the REPO ROOT, not the cwd: seeding only $PWD
+  # (the task worktree) left every session opening on the safety-check dialog,
+  # and answering it wrote an entry for the repo root. The launcher seeds each
+  # of these plus its own $PWD.
+  AUTH=(
+    --env CLAUDE_CODE_OAUTH_TOKEN="$(cat "$TOKEN_FILE")"
+    --env SANDBOX_SEED_CONFIG=1
+    --env SANDBOX_SEED_PROJECTS="$(printf '%s\n' "${MOUNT_PATHS[@]}")"
+  )
 else
   AUTH=( -v "$HOME_DIR/.claude:$HOME_DIR/.claude" )
   [ -f "$HOME_DIR/.claude.json" ] && AUTH+=( -v "$HOME_DIR/.claude.json:$HOME_DIR/.claude.json" )

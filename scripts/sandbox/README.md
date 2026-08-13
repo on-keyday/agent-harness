@@ -183,18 +183,16 @@ harness-cli submit --repo <sandbox-root> \
   round-trips — claude ran `id -un`/`pwd` and answered
   `node@…/.harness-worktrees/<task-id>`, i.e. it executed as the container user
   in the bind-mounted worktree. ✅
-  **One caveat, every session:** it opens on claude's "Quick safety check … this
-  folder pre-approves 1 tool permission in `.claude/settings.json`:
-  `Bash(harness-cli *)`" and waits. The pre-seeded `hasTrustDialogAccepted` does
-  not cover that variant, and answering it persists nothing (verified by
-  diffing a container's `~/.claude.json` and whole `~/.claude` tree before and
-  after answering), so an ephemeral token-auth home cannot be pre-seeded past
-  it. Send one Enter (`harness-cli session send -e <id> '\r'`) — or remove the
-  trigger by not injecting `permissions.allow` into a sandbox worktree, which
-  `--dangerously-skip-permissions` makes redundant there anyway. `session
-  snapshot` also warns "reported no terminal size; rendering at 120x40" for a
-  session opened with no attached terminal; that is the renderer's fallback,
-  not the container's PTY.
+  It used to open on claude's "Quick safety check … this folder pre-approves 1
+  tool permission in `.claude/settings.json`" every time: trust is keyed on the
+  **repo root**, while the launcher seeded only `$PWD` (the task worktree). The
+  wrapper now passes the mounted roots as `SANDBOX_SEED_PROJECTS` and the
+  launcher seeds each. The one-shot warning named the same path all along —
+  "set `projects["/…/<repo>"].hasTrustDialogAccepted: true`" — and under `-p`
+  it is not a prompt but a silent drop of the injected rule.
+  `session snapshot` still warns "reported no terminal size; rendering at
+  120x40" for a session opened with no attached terminal; that is the
+  renderer's fallback, not the container's PTY.
 - **egress firewall (opt-in `--firewall`):** default-deny iptables+ipset allowlist
   (GitHub ranges + npm/anthropic/pypi + the harness server), IPv6 blocked, applied
   as container-root then dropped to the agent user. Adapted from Anthropic's
