@@ -59,6 +59,14 @@ func creatorShort(t protocol.TaskID) string {
 	return hex.EncodeToString(t.Id[:])[:8]
 }
 
+// creatorFull is the untruncated form of creatorShort ("" for the zero id).
+func creatorFull(t protocol.TaskID) string {
+	if t.Id == ([16]byte{}) {
+		return ""
+	}
+	return hex.EncodeToString(t.Id[:])
+}
+
 // outputIdleMs maps the wire pair (last_output_at, output_idle_ms) to the JS
 // convention: the server-computed idle age in ms, or -1 when the task has no
 // live interactive session output (last_output_at == 0, where output_idle_ms
@@ -110,6 +118,7 @@ func main() {
 		"capList":            js.FuncOf(harnessCapList),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
 		"setCaps":            js.FuncOf(harnessSetCaps),
+		"setParent":          js.FuncOf(harnessSetParent),
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
 		"boardRead":          js.FuncOf(harnessBoardRead),
 		"boardPurge":         js.FuncOf(harnessBoardPurge),
@@ -408,6 +417,59 @@ func harnessSetCaps(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
+// harnessSetParent re-points a live task's parent link, or swaps the task
+// with its current parent. Operator-only, enforced server-side; a WebUI
+// connection is an operator connection by construction, so there is no
+// client-side gate here. Omitting parentId without swap detaches the task to
+// the operator root.
+//
+//	harness.setParent({taskId, parentId?, swap?})
+//	  -> Promise<{oldParent: string, newParent: string, swappedId: string}>  ("" = root)
+func harnessSetParent(this js.Value, args []js.Value) any {
+	opts := js.Undefined()
+	if len(args) >= 1 && args[0].Type() == js.TypeObject {
+		opts = args[0]
+	}
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			if opts.IsUndefined() {
+				rejectErr(reject, fmt.Errorf("setParent: options object required"))
+				return
+			}
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			sp := cli.SetParentOpts{}
+			if tv := opts.Get("taskId"); tv.Type() == js.TypeString {
+				sp.TaskID = tv.String()
+			}
+			if pv := opts.Get("parentId"); pv.Type() == js.TypeString {
+				sp.ParentID = pv.String()
+			}
+			if v := opts.Get("swap"); v.Type() == js.TypeBoolean {
+				sp.Swap = v.Bool()
+			}
+			res, err := cli.SetParentWith(rootCtx, c, sp)
+			if err != nil {
+				rejectErr(reject, fmt.Errorf("setParent: %w", err))
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"oldParent": res.OldParent,
+				"newParent": res.NewParent,
+				"swappedId": res.SwappedID,
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
 // harnessCapList returns the granular caps as [{name, bit}] for the UI chips
 // (excludes none/all — those are quick-set buttons). Names from Capability.String().
 //
@@ -624,6 +686,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"origin":     clientKindLower(t.OriginKind),
 					"resumedBy":  clientKindLower(t.ResumedByKind),
 					"createdBy":  creatorShort(t.CreatorTaskId),
+					// createdById is the RAW full id beside the short label:
+					// the parent-picker dialog highlights the current parent
+					// by exact id (a truncated prefix could match the wrong
+					// row) — same label+raw pattern as capsBits/scopeBase.
+					"createdById": creatorFull(t.CreatorTaskId),
 					"caps":       cli.CapsLabel(t.Capabilities),
 					"scope":      cli.ScopeLabel(t.Scope),
 					// Raw prefill fields beside the labels: the re-grant
