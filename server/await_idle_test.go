@@ -228,7 +228,12 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	// Confined agent principal holding exec_attach but NOT notify.
 	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_ExecAttach, Scope{}, "")
+		protocol.RunnerSelector{}, nil, protocol.Capability_ExecAttach,
+		// The target is not a descendant, so give the caller an explicit scope
+		// id for it. Without this the target gate answers not_found first and
+		// the sink gate under test is never reached — which is correct
+		// behaviour, but not what this test is about.
+		Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{"ee000000000000000000000000000000"}}, "")
 	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9601-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

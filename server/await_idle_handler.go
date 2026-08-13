@@ -44,6 +44,13 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		conn.SendMessage(out) //nolint:errcheck
 	}
 
+	// Target gate. The exec_attach cap was checked centrally; this is the
+	// scope half, and an out-of-scope session is reported as absent.
+	if !h.inScope(conn.ConnectionID().String(), hex.EncodeToString(ai.TaskId.Id[:])) {
+		respond(protocol.AwaitIdleStatus_NotFound, 0)
+		return
+	}
+
 	topic := string(ai.Topic)
 	switch ai.Sink {
 	case protocol.AwaitIdleSink_Reply:

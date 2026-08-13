@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"log/slog"
@@ -214,7 +215,18 @@ func (h *TaskHandler) denyTaskControl(conn ConnHandle, reqKind protocol.TaskCont
 func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 	var req protocol.TaskControlRequest
 	if err := req.DecodeExact(payload); err != nil {
-		slog.Error("TaskHandler: failed to decode TaskControlRequest", "error", err)
+		// An undecodable request gets no response at all, so a version-skewed
+		// client sees a hang rather than an error. kind and request_id sit at
+		// fixed offsets ahead of the union arm, so name them here: one server
+		// log line identifies the skewed peer instead of leaving the hang to be
+		// diagnosed from the other end.
+		kind, reqID := "?", uint32(0)
+		if len(payload) >= 5 {
+			kind = protocol.TaskControlKind(payload[0]).String()
+			reqID = binary.BigEndian.Uint32(payload[1:5])
+		}
+		slog.Error("TaskHandler: failed to decode TaskControlRequest",
+			"error", err, "kind", kind, "request_id", reqID, "payload_len", len(payload))
 		return
 	}
 
@@ -261,15 +273,22 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		taskID := hex.EncodeToString(can.TaskId.Id[:])
-		h.Tasks.Cancel(taskID)
+		// The cancel cap was checked centrally; this is the target gate. An
+		// out-of-scope task answers no_such_task, indistinguishable from one
+		// that does not exist.
+		result := protocol.CancelResult_NoSuchTask
+		if h.inScope(cid, taskID) {
+			h.Tasks.Cancel(taskID)
+			result = protocol.CancelResult_Ok
+		}
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Cancel, RequestId: req.RequestId}
-		resp.SetCancel(protocol.CancelStatus{Status: protocol.CancelResult_Ok})
+		resp.SetCancel(protocol.CancelStatus{Status: result})
 
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
-		if h.OnChange != nil {
+		if result == protocol.CancelResult_Ok && h.OnChange != nil {
 			h.OnChange()
 		}
 
@@ -335,7 +354,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
 			return
 		}
-		oresp := h.handleOpenFileTransfer(conn, oft)
+		oresp := protocol.OpenFileTransferResponse{Status: protocol.OpenFileTransferStatus_NoSuchTask}
+		if h.inScope(cid, hex.EncodeToString(oft.TaskId.Id[:])) {
+			oresp = h.handleOpenFileTransfer(conn, oft)
+		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.RequestId}
 		resp.SetOpenFileTransfer(oresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -355,7 +377,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				return
 			}
 		}
-		lresp := h.handleListFiles(conn, lf)
+		lresp := protocol.ListFilesResponse{Status: protocol.ListFilesStatus_NoSuchTask}
+		if h.inScope(cid, hex.EncodeToString(lf.TaskId.Id[:])) {
+			lresp = h.handleListFiles(conn, lf)
+		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.RequestId}
 		resp.SetListFiles(lresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -368,7 +393,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: GitQuery variant is nil")
 			return
 		}
-		gresp := h.handleGitQuery(conn, gq)
+		gresp := protocol.GitQueryResponse{Status: protocol.GitQueryStatus_NoSuchTask}
+		if h.inScope(cid, hex.EncodeToString(gq.TaskId.Id[:])) {
+			gresp = h.handleGitQuery(conn, gq)
+		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GitQuery, RequestId: req.RequestId}
 		resp.SetGitQuery(gresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -384,7 +412,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			h.denyTaskControl(conn, req.Kind, req.RequestId, protocol.Capability_ForwardLocal)
 			return
 		}
-		presp := h.handleOpenPortForward(conn, pf)
+		presp := protocol.OpenPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
+		if h.inScope(cid, hex.EncodeToString(pf.TaskId.Id[:])) {
+			presp = h.handleOpenPortForward(conn, pf)
+		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
 		resp.SetOpenPortForward(presp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -406,7 +437,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				return
 			}
 		}
-		rresp := h.handleRegisterPortForward(conn, rf, cid)
+		// RegisterPortForwardResponse shares OpenPortForwardStatus.
+		rresp := protocol.RegisterPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
+		if h.inScope(cid, hex.EncodeToString(rf.TaskId.Id[:])) {
+			rresp = h.handleRegisterPortForward(conn, rf, cid)
+		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: req.RequestId}
 		resp.SetRegisterPortForward(rresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -436,7 +471,9 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				if pf.direction == protocol.PortForwardDirection_Remote {
 					need = protocol.Capability_ForwardRemote
 				}
-				if !hasCap(h.callerCaps(cid), need) {
+				// authorize, not hasCap: a forward VISIBLE through info_global
+				// may still belong to a task outside the caller's action scope.
+				if !h.authorize(cid, need, pf.taskIDHex) {
 					h.denyTaskControl(conn, req.Kind, req.RequestId, need)
 					return
 				}
@@ -453,7 +490,10 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AttachSession variant nil")
 			return
 		}
-		aresp := h.handleAttachSession(conn, a)
+		aresp := protocol.AttachSessionResponse{Status: protocol.AttachSessionStatus_NotFound}
+		if h.inScope(cid, hex.EncodeToString(a.TaskId.Id[:])) {
+			aresp = h.handleAttachSession(conn, a)
+		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AttachSession, RequestId: req.RequestId}
 		resp.SetAttach(aresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})

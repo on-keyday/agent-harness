@@ -138,6 +138,19 @@ func (h *TaskHandler) scopeSet(connID string) (all bool, allowed map[string]bool
 	return false, allowed
 }
 
+// inScope reports whether targetHex is inside the caller's effective target
+// set, ignoring capabilities.
+//
+// It exists so a dispatch case can answer the two failures differently: a
+// MISSING CAP is permission_denied (informative — it says nothing about any
+// particular task), while an OUT-OF-SCOPE TARGET is the kind's own "no such
+// task" (a missing-capability answer about something the caller cannot see is
+// an existence oracle).
+func (h *TaskHandler) inScope(connID, targetHex string) bool {
+	all, allowed := h.scopeSet(connID)
+	return all || allowed[targetHex]
+}
+
 // authorize is the single gate for every request naming a target task: the
 // caller must hold the verb AND the target must be inside its scope.
 //
@@ -148,8 +161,7 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 	if !hasCap(h.callerCaps(connID), want) {
 		return false
 	}
-	all, allowed := h.scopeSet(connID)
-	return all || allowed[targetHex]
+	return h.inScope(connID, targetHex)
 }
 
 // visibleToCaller is the INFO scope: the action set widened by
