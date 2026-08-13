@@ -248,7 +248,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		creatorCaps := h.callerCaps(cid)
-		submitResp := h.handleSubmit(sub, origin, creator, creatorCaps)
+		submitResp := h.handleSubmit(cid, sub, origin, creator, creatorCaps)
 
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_Submit, RequestId: req.RequestId}
 		resp.SetSubmit(submitResp)
@@ -333,7 +333,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		origin := h.lookupClientKind(cid)
 		creator := h.lookupPrincipal(cid)
 		oiCreatorCaps := h.callerCaps(cid)
-		oresp := h.handleOpenInteractive(conn, oi, origin, creator, oiCreatorCaps)
+		oresp := h.handleOpenInteractive(cid, conn, oi, origin, creator, oiCreatorCaps)
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenInteractive, RequestId: req.RequestId}
 		resp.SetOpenInteractive(oresp)
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
@@ -609,14 +609,25 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 //   - SubmitStatus_AmbiguousRunner — more than one candidate (error_msg lists hostnames)
 //
 // On Ok, the returned SubmitResponse carries the new TaskId.
-func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.SubmitResponse {
 	// Resume branch: when ResumeTaskId is non-zero the server reuses that id
 	// (so the runner re-attaches the worktree to the retained `harness/<id>`
 	// branch) instead of allocating a fresh one. The repo on the request is
 	// ignored — the existing TaskEntry's RepoPath is authoritative because
 	// that's the directory claude's session storage is keyed under.
 	if !isZeroTaskID(req.ResumeTaskId) {
-		return h.handleSubmitResume(req, origin, creatorCaps)
+		return h.handleSubmitResume(cid, req, origin, creatorCaps)
+	}
+
+	// Request validation before runner resolution: whether the caller may ask
+	// for this scope does not depend on which runners happen to be up, and
+	// resolving first would answer no_runner to a request that is malformed
+	// either way.
+	scope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
+	if !scopeOK {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
+		resp.SetErrorMsg([]byte("scope id " + offender + " is outside your own scope"))
+		return resp
 	}
 
 	// Wire is POSIX '/'-paths; use path.Clean (not filepath.Clean) so the
@@ -660,7 +671,7 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 		resolved = bound.DefaultProfile()
 	}
 	caps := intersectCaps(creatorCaps, req.RequestedCaps)
-	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, defaultScope(), resolved)
+	taskIDHex := h.Tasks.Create(repo, string(req.Prompt), protocol.TaskKind_Oneshot, origin, creator, bound.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, scope, resolved)
 	h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	var tid protocol.TaskID
 	raw, _ := hex.DecodeString(taskIDHex)
@@ -693,8 +704,24 @@ func (h *TaskHandler) handleSubmit(req *protocol.SubmitRequest, origin protocol.
 //  6. Tasks.Resume — atomic terminal-check + reset. Errors map to the new
 //     resume_not_terminal / resume_not_found wire codes; the latter handles
 //     the (rare) race where the entry was pruned between steps 1 and 6.
-func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) protocol.SubmitResponse {
+func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest, origin protocol.ClientKind, callerCaps protocol.Capability) protocol.SubmitResponse {
 	idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
+	// Resume is an operation on someone else's task, not a lookup: it re-queues
+	// that id under a prompt of the caller's choosing, and with
+	// resume_caps_override it rewrites the target's authority. Gate the target
+	// like any other, and report an out-of-scope task as absent.
+	if !h.inScope(cid, idHex) {
+		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
+	}
+	// The scope rides the same override bit as the caps: --caps on a resume
+	// re-grants authority, and authority now has two halves. Validated up
+	// front for the same reason as the fresh path.
+	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
+	if req.ResumeCapsOverride() && !scopeOK {
+		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
+		resp.SetErrorMsg([]byte("scope id " + offender + " is outside your own scope"))
+		return resp
+	}
 	// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume through
 	// the submit path is valid regardless of the task's previously recorded
 	// Kind; the invoked path (submit ⇒ Oneshot) is what Tasks.Resume records
@@ -757,7 +784,7 @@ func (h *TaskHandler) handleSubmitResume(req *protocol.SubmitRequest, origin pro
 	// AgentProfile) — persisting it here closes the Task 4/6 gap where
 	// handleSubmitResume computed `resolved` but never wrote it back through
 	// Tasks.Resume.
-	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps, false, Scope{}, protocol.TaskKind_Oneshot, resolved); err != nil {
+	if _, err := h.Tasks.Resume(idHex, string(req.Prompt), req.ExtraArgs.AsStrings(), req.Selector, bound.ID, origin, override, newCaps, override, newScope, protocol.TaskKind_Oneshot, resolved); err != nil {
 		switch err {
 		case ResumeErrNotFound:
 			return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
@@ -900,7 +927,7 @@ func isZeroTaskID(t protocol.TaskID) bool {
 // does not pick it up for a parallel AssignTask. The runner finalizes the task
 // lifecycle by sending TaskStarted (worktree dir filled in) and TaskFinished
 // (exit code from claude) over the regular RunnerControl path.
-func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.OpenInteractiveResponse {
+func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req *protocol.OpenInteractiveRequest, origin protocol.ClientKind, creator protocol.TaskID, creatorCaps protocol.Capability) protocol.OpenInteractiveResponse {
 	errResp := func(status protocol.OpenInteractiveStatus) protocol.OpenInteractiveResponse {
 		slog.Error("handleOpenInteractive: rejecting request", "status", status.String(), "repo", string(req.RepoPath), "selector", req.Selector)
 		return protocol.OpenInteractiveResponse{Status: status}
@@ -911,11 +938,23 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 	// task entry is then transitioned via Tasks.Resume (atomic) instead of
 	// Tasks.Create. The downstream stream-allocation + open_exec block is
 	// shared between the two paths.
+	// Validated before runner resolution — see handleSubmit.
+	reqScope, _, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
+	if !scopeOK && (isZeroTaskID(req.ResumeTaskId) || req.ResumeCapsOverride()) {
+		// OpenInteractiveResponse has no error_msg field, so the status is the
+		// whole answer; the client names the ids it sent.
+		return errResp(protocol.OpenInteractiveStatus_ScopeNotPermitted)
+	}
+
 	resuming := !isZeroTaskID(req.ResumeTaskId)
 	var repo string
 	var existingTaskIDHex string
 	if resuming {
 		idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
+		// Same target gate as the oneshot resume path — see handleSubmitResume.
+		if !h.inScope(cid, idHex) {
+			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
+		}
 		// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume
 		// through the interactive-open path is valid regardless of the
 		// task's previously recorded Kind; the invoked path (open ⇒
@@ -1017,7 +1056,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, false, Scope{}, protocol.TaskKind_Interactive, resolved); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, override, reqScope, protocol.TaskKind_Interactive, resolved); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1036,7 +1075,7 @@ func (h *TaskHandler) handleOpenInteractive(tuiConn ConnHandle, req *protocol.Op
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, defaultScope(), resolved)
+		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, reqScope, resolved)
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID

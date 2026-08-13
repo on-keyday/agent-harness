@@ -120,7 +120,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	req1.SetRepoPath([]byte("/x/repo"))
 	req1.SetPrompt([]byte("child1"))
 
-	resp1 := h.handleSubmit(req1, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
+	resp1 := h.handleSubmit("", req1, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
 	if resp1.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("case1 status=%v want Ok", resp1.Status)
 	}
@@ -138,7 +138,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	req2.SetRepoPath([]byte("/x/repo"))
 	req2.SetPrompt([]byte("child2"))
 
-	resp2 := h.handleSubmit(req2, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
+	resp2 := h.handleSubmit("", req2, protocol.ClientKind_Cli, ptid, h.callerCaps("agent-conn"))
 	if resp2.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("case2 status=%v want Ok", resp2.Status)
 	}
@@ -157,7 +157,7 @@ func TestSpawnAttenuation(t *testing.T) {
 	req3.SetPrompt([]byte("child3"))
 
 	operatorCaps := h.callerCaps("operator-conn") // not in principals → All
-	resp3 := h.handleSubmit(req3, protocol.ClientKind_Cli, protocol.TaskID{}, operatorCaps)
+	resp3 := h.handleSubmit("", req3, protocol.ClientKind_Cli, protocol.TaskID{}, operatorCaps)
 	if resp3.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("case3 status=%v want Ok", resp3.Status)
 	}

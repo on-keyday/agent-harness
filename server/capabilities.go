@@ -164,6 +164,57 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 	return h.inScope(connID, targetHex)
 }
 
+// attenuateScope clamps a requested scope to the creator's effective one, so a
+// spawned task can never reach further than its spawner.
+//
+// Both axes are clamped independently:
+//   - base by permissiveness (see minScopeBase), which is why a subtree parent
+//     asking for a global child yields subtree. The child's own subtree is a
+//     subset of the parent's, so nothing is gained.
+//   - ids by membership in the creator's set AT SPAWN TIME. This is a static,
+//     one-shot check: the ids are literal, so a later narrowing of the parent
+//     does not retroactively invalidate the child (that is what set_caps
+//     --cascade is for).
+//
+// A rejected id is returned as `offender` with ok=false rather than being
+// dropped. Silent clamping would produce a task whose scope differs from the
+// one the caller wrote with nothing saying so — the same invisible-divergence
+// failure the presence bits on set_caps exist to avoid.
+//
+// An operator creator (all=true) may request anything, including ids for tasks
+// it has never touched.
+func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, offender string, ok bool) {
+	all, allowed := h.scopeSet(creatorCID)
+	out = Scope{
+		Base: req.Base,
+		IDs:  normalizeScopeIDs(req.IDs),
+	}
+	if all {
+		return out, "", true
+	}
+	out.Base = minScopeBase(req.Base, h.callerScopeBase(creatorCID))
+	for _, id := range out.IDs {
+		if !allowed[id] {
+			return Scope{}, id, false
+		}
+	}
+	return out, "", true
+}
+
+// callerScopeBase is the stored base of the connection's principal task, or
+// global for an operator.
+func (h *TaskHandler) callerScopeBase(connID string) protocol.ScopeBase {
+	pid := h.lookupPrincipal(connID)
+	if pid.Id == ([16]byte{}) {
+		return protocol.ScopeBase_Global
+	}
+	t, ok := h.Tasks.Get(hex.EncodeToString(pid.Id[:]))
+	if !ok {
+		return protocol.ScopeBase_None
+	}
+	return t.Scope.Base
+}
+
 // visibleToCaller is the INFO scope: the action set widened by
 // Capability_InfoGlobal. ls, task logs, the port-forward list and the conns
 // filter call it exactly as before and inherit the scope with no change of

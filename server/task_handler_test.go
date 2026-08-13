@@ -335,7 +335,7 @@ func TestHandleSubmitNoRunnerForRepo(t *testing.T) {
 	req.SetPrompt([]byte("p"))
 	// Selector is zero value == RunnerSelectorKind_Any (no pinning)
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_NoRunner {
 		t.Fatalf("status=%v want NoRunner", resp.Status)
 	}
@@ -351,7 +351,7 @@ func TestHandleSubmitAmbiguousRunner(t *testing.T) {
 	req.SetRepoPath([]byte("/shared/repo"))
 	req.SetPrompt([]byte("p"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
 	}
@@ -371,7 +371,7 @@ func TestHandleSubmitPinnedNotFound(t *testing.T) {
 	req.SetRepoPath([]byte("/x/repo"))
 	req.SetPrompt([]byte("p"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_PinnedNotFound {
 		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
 	}
@@ -386,7 +386,7 @@ func TestHandleSubmitOK(t *testing.T) {
 	req.SetRepoPath([]byte("/x/repo"))
 	req.SetPrompt([]byte("p"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -420,7 +420,7 @@ func TestSubmitProfileUnavailable(t *testing.T) {
 	req.SetRepoPath([]byte("/repo"))
 	req.SetPrompt([]byte("x"))
 	req.SetAgentProfile([]byte("codex"))
-	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_ProfileUnavailable {
 		t.Fatalf("got %v", resp.Status)
 	}
@@ -437,7 +437,7 @@ func TestSubmitEmptyProfileUsesDefault(t *testing.T) {
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/repo"))
 	req.SetPrompt([]byte("x")) // no agent_profile
-	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("got %v", resp.Status)
 	}
@@ -463,7 +463,7 @@ func TestSubmitProfileFilterNarrowsAmbiguity(t *testing.T) {
 	req.SetRepoPath([]byte("/shared/repo"))
 	req.SetPrompt([]byte("p"))
 	req.SetAgentProfile([]byte("codex"))
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -489,7 +489,7 @@ func TestSubmitLegacyRunnerNoProfilesFallsBackToAgentBin(t *testing.T) {
 	req := &protocol.SubmitRequest{}
 	req.SetRepoPath([]byte("/repo"))
 	req.SetPrompt([]byte("x")) // no agent_profile
-	resp := h.handleSubmit(req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("got %v", resp.Status)
 	}
@@ -524,7 +524,7 @@ func TestSubmitResumeProfileUnavailableWhenRunnerLostProfile(t *testing.T) {
 	req := &protocol.SubmitRequest{ResumeTaskId: tid}
 	req.SetPrompt([]byte("resume")) // no agent_profile -> falls back to "codex"
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_ProfileUnavailable {
 		t.Fatalf("status=%v want ProfileUnavailable", resp.Status)
 	}
@@ -549,7 +549,7 @@ func TestSubmitResumeEmptyProfileReusesOriginal(t *testing.T) {
 	req := &protocol.SubmitRequest{ResumeTaskId: tid}
 	req.SetPrompt([]byte("resume"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -589,7 +589,7 @@ func TestSubmitResumeProfileFilterNarrowsAmbiguity(t *testing.T) {
 	req := &protocol.SubmitRequest{ResumeTaskId: tid}
 	req.SetPrompt([]byte("resume")) // no agent_profile -> falls back to recorded "codex"
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("status=%v want Ok, error_msg=%q", resp.Status, resp.ErrorMsg)
 	}
@@ -618,7 +618,7 @@ func TestHandleOpenInteractiveNoRunnerForRepo(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/x/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_NoRunnerForRepo {
 		t.Fatalf("status=%v want NoRunnerForRepo", resp.Status)
 	}
@@ -634,7 +634,7 @@ func TestHandleOpenInteractiveBusy(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/x/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_RunnerBusy {
 		t.Fatalf("status=%v want RunnerBusy", resp.Status)
 	}
@@ -649,7 +649,7 @@ func TestHandleOpenInteractiveAmbiguous(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
 	}
@@ -679,7 +679,7 @@ func TestHandleOpenInteractivePinnedNotFound(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{Selector: sel}
 	req.SetRepoPath([]byte("/x/repo"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_PinnedNotFound {
 		t.Fatalf("status=%v want PinnedNotFound", resp.Status)
 	}
@@ -707,7 +707,7 @@ func TestHandleOpenInteractiveOkSetsRepoPathOnOpenExec(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/shared/repo"))
 
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -756,7 +756,7 @@ func TestOpenInteractiveMultiProfileBecomesCombos(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/repo")) // Selector defaults to Any
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner", resp.Status)
 	}
@@ -787,7 +787,7 @@ func TestOpenInteractiveAgentFilterPicksProfile(t *testing.T) {
 	req.SetRepoPath([]byte("/repo"))
 	req.SetAgentProfile([]byte("codex"))
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatal("filtered to codex should not be ambiguous")
 	}
@@ -807,7 +807,7 @@ func TestOpenInteractiveAgentUnavailable(t *testing.T) {
 	req.SetRepoPath([]byte("/repo"))
 	req.SetAgentProfile([]byte("gemini")) // not advertised
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_ProfileUnavailable {
 		t.Fatalf("status=%v want ProfileUnavailable", resp.Status)
 	}
@@ -829,7 +829,7 @@ func TestOpenInteractivePinnedEmptyProfileUsesDefault(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{Selector: sel}
 	req.SetRepoPath([]byte("/repo")) // empty agent_profile
 
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status=%v want Ok (one combo, default profile)", resp.Status)
 	}
@@ -878,7 +878,7 @@ func TestOpenInteractiveUnpinnedResumeExpandsToPicker(t *testing.T) {
 	// Selector left at its zero value: Kind == RunnerSelectorKind_Any (unpinned).
 	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid}
 
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("status=%v want AmbiguousRunner (picker must fire on unpinned resume)", resp.Status)
 	}
@@ -924,7 +924,7 @@ func TestOpenInteractivePinnedResumeStillDefaultsProfile(t *testing.T) {
 	// tuiConn is nil: fine for asserting non-ambiguity — the Ok path itself
 	// would hit the nil-tuiConn InternalError guard, but that only proves
 	// the request cleared the ambiguity check with exactly one combo.
-	resp := h.handleOpenInteractive(nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", nil, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status == protocol.OpenInteractiveStatus_AmbiguousRunner {
 		t.Fatalf("status=%v — pinned resume must not expand to the picker (1 combo using recorded profile)", resp.Status)
 	}
@@ -954,7 +954,7 @@ func TestHandleOpenInteractive_RegistersSessionMux(t *testing.T) {
 	req := &protocol.OpenInteractiveRequest{}
 	req.SetRepoPath([]byte("/repo"))
 
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", tuiConn, req, protocol.ClientKind_Unspecified, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.OpenInteractiveStatus_Ok {
 		t.Fatalf("status=%v want Ok", resp.Status)
 	}
@@ -1033,7 +1033,7 @@ func TestOpenInteractiveResumeCrossModeNotRejected(t *testing.T) {
 
 	req := &protocol.OpenInteractiveRequest{ResumeTaskId: tid}
 
-	resp := h.handleOpenInteractive(tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleOpenInteractive("", tuiConn, req, protocol.ClientKind_Tui, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status == protocol.OpenInteractiveStatus_ResumeNotFound {
 		t.Fatalf("status=%v — cross-mode resume still rejected; Kind guard not relaxed", resp.Status)
 	}
@@ -1283,7 +1283,7 @@ func TestSubmitResumeProfileMatchesAcrossExeSuffix(t *testing.T) {
 	req := &protocol.SubmitRequest{ResumeTaskId: tid}
 	req.SetPrompt([]byte("resume"))
 
-	resp := h.handleSubmit(req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
+	resp := h.handleSubmit("", req, protocol.ClientKind_Cli, protocol.TaskID{}, protocol.Capability_All)
 	if resp.Status != protocol.SubmitStatus_Ok {
 		t.Fatalf("status=%v want Ok (claude.exe task on claude runner)", resp.Status)
 	}
