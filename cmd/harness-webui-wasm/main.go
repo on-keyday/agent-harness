@@ -308,6 +308,16 @@ func harnessOnConnectionChange(this js.Value, args []js.Value) any {
 // scopeFromOpts reads the optional `scope` string off a JS options object and
 // parses it with the same cli.ParseScope the CLI and TUI use, so the three
 // surfaces cannot drift on the grammar. Absent or empty = the subtree default.
+// scopeIDStrings renders a scope's explicit id list as hex strings for the
+// snapshot JSON ([]any so js.ValueOf accepts it).
+func scopeIDStrings(s protocol.TaskScope) []any {
+	out := make([]any, 0, len(s.Ids))
+	for _, id := range s.Ids {
+		out = append(out, hex.EncodeToString(id.Id[:]))
+	}
+	return out
+}
+
 func scopeFromOpts(opts js.Value) (protocol.TaskScope, error) {
 	sv := opts.Get("scope")
 	if sv.Type() != js.TypeString || sv.String() == "" {
@@ -612,6 +622,13 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"createdBy":  creatorShort(t.CreatorTaskId),
 					"caps":       cli.CapsLabel(t.Capabilities),
 					"scope":      cli.ScopeLabel(t.Scope),
+					// Raw prefill fields beside the labels: the re-grant
+					// dialog seeds its chips/radios/checklist from these —
+					// back-parsing label forms like "all,-spawn" would mean
+					// re-implementing ParseCaps in JS.
+					"capsBits":  float64(uint32(t.Capabilities)),
+					"scopeBase": t.Scope.Base.String(),
+					"scopeIds":  scopeIDStrings(t.Scope),
 					// agentProfile is the named profile this task last ran under
 					// (empty = runner default); the resume action sheet's agent
 					// dropdown defaults to this (multi-agent-profile design §4b).

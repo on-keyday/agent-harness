@@ -268,7 +268,9 @@ const POLL_INTERVAL_MS = 5000;
   let capDefs = [];          // [{name:string, bit:number}] — populated by initCaps()
   let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
-  let spawnScope = "";       // mirrors #scope-input; "" = the subtree default
+  let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
+  let spawnBase = "subtree"; // scope base radio state (spawn picker)
+  const spawnScopeIds = new Set(); // checked task ids (spawn picker)
 
   // sessionReq builds the ONE request object shape the harness.submit /
   // harness.startInteractive wasm bridges consume. Every session request goes
@@ -2545,48 +2547,58 @@ const POLL_INTERVAL_MS = 5000;
     return capDefs.reduce((m, c) => m | c.bit, 0);
   }
 
-  function capsLabel() {
+  function capsLabel() { return capsLabelFor(spawnCaps); }
+  function capsLabelFor(bits) {
     const allBits = capsAllBits();
-    if (spawnCaps === allBits) return "all";
-    if (spawnCaps === 0)       return "none";
-    return capDefs.filter(c => (spawnCaps & c.bit) === c.bit).map(c => c.name).join(",");
+    if (bits === allBits) return "all";
+    if (bits === 0)       return "none";
+    return capDefs.filter(c => (bits & c.bit) === c.bit).map(c => c.name).join(",");
+  }
+
+  // buildCapChips renders the quick-set buttons + one chip per granular cap
+  // + the readout into row, bound to a bitmask through the two accessors.
+  // Shared by Compose and the re-grant dialog so chip behaviour cannot drift
+  // between them. Re-renders the whole row on every change (small list).
+  function buildCapChips(row, getBits, setBits) {
+    if (!row) return;
+    const rerender = () => {
+      row.innerHTML = "";
+
+      const allBtn = document.createElement("button");
+      allBtn.type = "button";
+      allBtn.className = "cap-quick";
+      allBtn.textContent = "[all]";
+      allBtn.addEventListener("click", () => { setBits(capsAllBits()); rerender(); });
+      row.appendChild(allBtn);
+
+      const noneBtn = document.createElement("button");
+      noneBtn.type = "button";
+      noneBtn.className = "cap-quick";
+      noneBtn.textContent = "[none]";
+      noneBtn.addEventListener("click", () => { setBits(0); rerender(); });
+      row.appendChild(noneBtn);
+
+      for (const c of capDefs) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "cap-chip" + ((getBits() & c.bit) === c.bit ? " on" : "");
+        btn.dataset.bit = String(c.bit);
+        btn.textContent = c.name;
+        btn.addEventListener("click", () => { setBits(getBits() ^ c.bit); rerender(); });
+        row.appendChild(btn);
+      }
+
+      const readout = document.createElement("span");
+      readout.className = "caps-readout";
+      readout.textContent = "caps: " + capsLabelFor(getBits());
+      row.appendChild(readout);
+    };
+    rerender();
   }
 
   function renderCaps() {
-    const row = document.getElementById("caps-row");
-    if (!row) return;
-    // Re-render the whole row on every state change (small list — no perf concern).
-    row.innerHTML = "";
-
-    // [all] / [none] quick-set buttons
-    const allBtn = document.createElement("button");
-    allBtn.className = "cap-quick";
-    allBtn.textContent = "[all]";
-    allBtn.addEventListener("click", () => { spawnCaps = capsAllBits(); renderCaps(); });
-    row.appendChild(allBtn);
-
-    const noneBtn = document.createElement("button");
-    noneBtn.className = "cap-quick";
-    noneBtn.textContent = "[none]";
-    noneBtn.addEventListener("click", () => { spawnCaps = 0; renderCaps(); });
-    row.appendChild(noneBtn);
-
-    // One chip per granular cap
-    for (const c of capDefs) {
-      const btn = document.createElement("button");
-      btn.className = "cap-chip" + ((spawnCaps & c.bit) === c.bit ? " on" : "");
-      btn.dataset.bit = String(c.bit);
-      btn.textContent = c.name;
-      btn.addEventListener("click", () => { spawnCaps ^= c.bit; renderCaps(); });
-      row.appendChild(btn);
-    }
-
-    // Readout span
-    const readout = document.createElement("span");
-    readout.id = "caps-readout";
-    readout.className = "caps-readout";
-    readout.textContent = "caps: " + capsLabel();
-    row.appendChild(readout);
+    buildCapChips(document.getElementById("caps-row"),
+      () => spawnCaps, (v) => { spawnCaps = v; });
   }
 
   function initCaps() {
@@ -2604,86 +2616,161 @@ const POLL_INTERVAL_MS = 5000;
     initScope();
   }
 
-  // The scope input is free text validated on the Go side by cli.ParseScope,
-  // the same parser the CLI flag and the TUI command use — a second copy of the
-  // grammar here would be one more place for it to drift. The hint lists the
-  // forms from harness.scopeForms() for the same reason.
+  // scopeSpecJS mirrors the Go scopeSpecFor (tui/authoritypicker.go):
+  // serialize a base + checked-id set to the --scope grammar string, which
+  // still goes through the single cli.ParseScope funnel behind the bridge.
+  // sessionMode: base-subtree-no-ids -> "" (the spawn default); the re-grant
+  // path always gets an explicit string. Ids are ignored under global — the
+  // grammar has no global+ids form.
+  function scopeSpecJS(base, idsSet, sessionMode) {
+    const ids = [...idsSet].sort();
+    if (base === "global") return "global";
+    if (base === "none") return ids.length ? "ids:" + ids.join(",") : "none";
+    if (ids.length) return "subtree+ids:" + ids.join(",");
+    return sessionMode ? "" : "subtree";
+  }
+
+  // buildTaskChecklist renders one checkbox row per snapshot task (terminal
+  // included, table order) into container, bound to idsSet. excludeId drops
+  // the re-grant target from its own list ({self} is always in scope).
+  // Checked ids whose task is no longer in the snapshot still get a row —
+  // silently dropping them would make an apply narrow the scope invisibly.
+  function buildTaskChecklist(container, idsSet, excludeId, onChange) {
+    if (!container) return;
+    container.innerHTML = "";
+    const addRow = (id, text, known) => {
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = idsSet.has(id);
+      cb.addEventListener("change", () => {
+        if (cb.checked) idsSet.add(id); else idsSet.delete(id);
+        onChange();
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(" " + text));
+      if (!known) label.style.color = "#b8864b";
+      container.appendChild(label);
+    };
+    const seen = new Set();
+    for (const t of (lastTasks || [])) {
+      if (t.id === excludeId) continue;
+      seen.add(t.id);
+      const head = (t.prompt || "").slice(0, 30);
+      addRow(t.id, `${t.id.slice(0, 8)} ${t.status} ${t.agentProfile || ""} ${head}`, true);
+    }
+    for (const id of [...idsSet].sort()) {
+      if (!seen.has(id) && id !== excludeId) addRow(id, `${id.slice(0, 8)} (不明なタスク)`, false);
+    }
+    if (!container.childElementCount) {
+      const d = document.createElement("div");
+      d.className = "empty";
+      d.textContent = "(タスクなし)";
+      container.appendChild(d);
+    }
+  }
+
+  // Spawn scope picker: base radios + task checklist, serialized into
+  // spawnScope exactly where the old free-text field's value went.
+  function updateSpawnScope() {
+    spawnScope = scopeSpecJS(spawnBase, spawnScopeIds, true);
+    const list = document.getElementById("spawn-scope-tasks");
+    if (list) list.classList.toggle("disabled", spawnBase === "global");
+    const sum = document.getElementById("spawn-scope-summary");
+    if (sum) {
+      const n = spawnBase === "global" ? 0 : spawnScopeIds.size;
+      sum.textContent = `対象タスクを選択 (${n})`;
+    }
+    const echo = document.getElementById("spawn-scope-echo");
+    if (echo) echo.textContent = "scope: " + (spawnScope || "subtree (default)");
+  }
+
+  function refreshSpawnScopeChecklist() {
+    buildTaskChecklist(document.getElementById("spawn-scope-tasks"),
+      spawnScopeIds, "", updateSpawnScope);
+    updateSpawnScope();
+  }
+
   function initScope() {
-    const input = document.getElementById("scope-input");
-    const hint = document.getElementById("scope-hint");
-    if (!input) return;
-    if (hint && typeof window.harness.scopeForms === "function") {
-      hint.textContent = window.harness.scopeForms()
-        .map(f => f.syntax + " — " + f.description).join("   ·   ");
+    const baseRow = document.getElementById("spawn-base-row");
+    if (!baseRow) return;
+    for (const r of baseRow.querySelectorAll('input[type="radio"]')) {
+      r.addEventListener("change", () => {
+        if (r.checked) { spawnBase = r.value; updateSpawnScope(); }
+      });
     }
-    input.addEventListener("input", () => {
-      spawnScope = input.value.trim();
-      // No client-side parse: an invalid value is reported by the spawn itself,
-      // with the server's own wording. Clearing the marker on edit is enough.
-      input.classList.remove("invalid");
-      if (hint) hint.classList.remove("error");
-    });
+    refreshSpawnScopeChecklist();
   }
 
-  // Re-grant a live task's authority. Operator-only server-side; a WebUI
-  // connection is an operator connection by construction, so the control is
-  // shown unconditionally.
-  async function promptSetCaps(taskId) {
-    if (typeof window.harness.setCaps !== "function") return;
-    const scope = window.prompt(
-      "New scope for " + taskId.slice(0, 8) + "\n" +
-      "subtree | none | global | [subtree+]ids:<id>[,<id>]\n" +
-      "(leave empty to keep the task's current scope)", "");
-    if (scope === null) return;
-    const capsText = window.prompt(
-      "New caps for " + taskId.slice(0, 8) + "\n" +
-      "e.g. all / none / spawn,file_read / all,-spawn\n" +
-      "(leave empty to keep the task's current caps)", "");
-    if (capsText === null) return;
-    if (!scope && !capsText) {
-      setStatus("caps set: nothing to change", "warn");
-      return;
+  // Re-grant dialog: selection UI over a live task's authority. Operator-only
+  // server-side; a WebUI connection is an operator connection by construction,
+  // so the control is shown unconditionally. An apply always sends BOTH
+  // fields explicitly — the dialog is prefilled with the current values, so
+  // an untouched field sends its current value, which is the same keep.
+  const regrantModal = document.getElementById("regrant-modal");
+  let regrantTaskId = "";
+  let regrantBits = 0;
+  let regrantBase = "subtree";
+  const regrantIds = new Set();
+
+  function updateRegrantEcho() {
+    const list = document.getElementById("regrant-tasks");
+    if (list) list.classList.toggle("disabled", regrantBase === "global");
+    const echo = document.getElementById("regrant-echo");
+    if (echo) {
+      echo.textContent = "→ caps=" + capsLabelFor(regrantBits) +
+        "  scope=" + scopeSpecJS(regrantBase, regrantIds, false);
     }
-    const req = { taskId, cascade: window.confirm("Also clamp every descendant? (--cascade)") };
-    if (scope) req.scope = scope;
-    if (capsText) {
-      const bits = capsTextToBits(capsText);
-      if (bits === null) {
-        setStatus("caps set: unknown capability in " + capsText, "error");
-        return;
+  }
+
+  function openRegrantDialog(t) {
+    if (!regrantModal || typeof window.harness.setCaps !== "function") return;
+    regrantTaskId = t.id;
+    regrantBits = typeof t.capsBits === "number" ? t.capsBits : 0;
+    regrantBase = t.scopeBase || "subtree";
+    regrantIds.clear();
+    for (const id of (t.scopeIds || [])) regrantIds.add(id);
+    const title = document.getElementById("regrant-task");
+    if (title) title.textContent = t.id.slice(0, 8);
+    buildCapChips(document.getElementById("regrant-chips"),
+      () => regrantBits, (v) => { regrantBits = v; updateRegrantEcho(); });
+    for (const r of document.querySelectorAll('#regrant-base-row input[type="radio"]')) {
+      r.checked = (r.value === regrantBase);
+    }
+    buildTaskChecklist(document.getElementById("regrant-tasks"),
+      regrantIds, t.id, updateRegrantEcho);
+    document.getElementById("regrant-cascade").checked = false;
+    document.getElementById("regrant-keep-conns").checked = false;
+    updateRegrantEcho();
+    regrantModal.showModal();
+  }
+
+  if (regrantModal) {
+    for (const r of document.querySelectorAll('#regrant-base-row input[type="radio"]')) {
+      r.addEventListener("change", () => {
+        if (r.checked) { regrantBase = r.value; updateRegrantEcho(); }
+      });
+    }
+    document.getElementById("regrant-cancel").addEventListener("click", () => regrantModal.close());
+    document.getElementById("regrant-apply").addEventListener("click", async () => {
+      const req = {
+        taskId: regrantTaskId,
+        caps: regrantBits,
+        scope: scopeSpecJS(regrantBase, regrantIds, false),
+        cascade: document.getElementById("regrant-cascade").checked,
+        keepConns: document.getElementById("regrant-keep-conns").checked,
+      };
+      regrantModal.close();
+      try {
+        const res = await window.harness.setCaps(req);
+        let msg = "caps set: " + res.affected.length + " task(s) changed";
+        if (res.connsClosed > 0) msg += ", " + res.connsClosed + " connection(s) closed";
+        setStatus(msg, "connected");
+        await refreshSnapshot();
+      } catch (e) {
+        setStatus("caps set failed: " + (e && e.message ? e.message : e), "error");
       }
-      req.caps = bits;
-    }
-    try {
-      const res = await window.harness.setCaps(req);
-      let msg = "caps set: " + res.affected.length + " task(s) changed";
-      if (res.connsClosed > 0) msg += ", " + res.connsClosed + " connection(s) closed";
-      setStatus(msg, "connected");
-      await refreshSnapshot();
-    } catch (e) {
-      setStatus("caps set failed: " + (e && e.message ? e.message : e), "error");
-    }
-  }
-
-  // capsTextToBits mirrors cli.ParseCaps for the subset the prompt accepts.
-  // Returns null on an unknown name.
-  function capsTextToBits(text) {
-    const t = text.trim();
-    if (t === "all") return capsAllBits();
-    if (t === "none") return 0;
-    let bits = 0, negated = 0, sawPositive = false;
-    for (let term of t.split(",")) {
-      term = term.trim();
-      const neg = term.startsWith("-");
-      const name = neg ? term.slice(1).trim() : term;
-      if (name === "all") { if (neg) { negated |= capsAllBits(); } else { bits |= capsAllBits(); sawPositive = true; } continue; }
-      if (name === "none") { sawPositive = true; continue; }
-      const def = capDefs.find(c => c.name === name);
-      if (!def) return null;
-      if (neg) negated |= def.bit; else { bits |= def.bit; sawPositive = true; }
-    }
-    if (negated && !sawPositive) return null;
-    return bits & ~negated;
+    });
   }
 
   // Quick-reattach button (terminal tab): shown after a takeover so the user
@@ -3434,6 +3521,12 @@ const POLL_INTERVAL_MS = 5000;
 
   function renderTaskList(tasks) {
     lastTasks = tasks || [];
+    // The spawn scope checklist renders from the same snapshot; rebuild it
+    // here so new/finished tasks appear without a manual refresh. The
+    // re-grant dialog's list is deliberately NOT rebuilt mid-open — its
+    // checked set is the source of truth and a rebuild would only reorder
+    // rows under the operator's cursor.
+    refreshSpawnScopeChecklist();
     const finished = lastTasks.filter((t) => TERMINAL_STATES.has(t.status)).length;
     taskChips.active.textContent   = `Active (${lastTasks.length - finished})`;
     taskChips.finished.textContent = `Finished (${finished})`;
@@ -3694,7 +3787,7 @@ const POLL_INTERVAL_MS = 5000;
     // Live re-grant. Shown for every task: a WebUI connection is an operator
     // connection by construction (the PSK gate makes any non-agent client
     // prove operatorPSK), so there is no non-operator state to hide it in.
-    addItem("🔑 caps/scope 再付与", "", () => promptSetCaps(t.id));
+    addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
 
     addItem("📁 ファイル", "", () => {
       fileTaskSelect.value = t.id;

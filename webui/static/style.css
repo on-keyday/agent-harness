@@ -478,7 +478,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   #toast-host .toast { border-radius: 0 0 6px 6px; }
 }
 
-/* --- Scope input (#scope-input inside #compose) --- */
+/* --- Scope picker (base radios + task checklist, inside #compose and the
+   re-grant modal) --- */
 /* Own block: inline here would share the line with the caps-on-resume label
    and break that label's checkbox onto a line of its own at 390px. */
 .scope-block {
@@ -486,26 +487,58 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   margin: 0.4rem 0 0.2rem;
 }
 .scope-block label { display: block; margin-bottom: 0.2rem; }
-#scope-input {
-  background: #2a2a2a;
-  color: #d4d4d4;
-  border: 1px solid #444;
-  border-radius: 4px;
-  padding: 0.3rem 0.45rem;
+.scope-base-row { margin: 0.15rem 0; }
+.scope-base-row label {
+  display: inline-block;
+  margin: 0 0.8rem 0 0;
   font-family: monospace;
-  font-size: 0.82rem;
-  max-width: 100%;
-  box-sizing: border-box;
+  font-size: 0.85rem;
+  cursor: pointer;
 }
-#scope-input.invalid { border-color: #a33; }
-.scope-hint {
+.task-checklist {
+  max-height: 10rem;
+  overflow-y: auto;
+  border: 1px solid #3a3a3a;
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+  margin: 0.2rem 0;
+  background: #242424;
+}
+.task-checklist label {
+  display: block;
+  font-family: monospace;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  margin: 0.1rem 0;
+}
+.task-checklist.disabled { opacity: 0.4; pointer-events: none; }
+.task-checklist .empty { color: #777; font-size: 0.78rem; }
+#spawn-scope-details summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #9a9a9a;
+}
+.scope-echo {
+  display: block;
   color: #888;
   font-size: 0.75rem;
   font-family: monospace;
   margin: 0.2rem 0 0.4rem;
-  overflow-x: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.scope-hint.error { color: #e07a7a; }
+.regrant-modal .picker-form { min-width: min(26rem, 90vw); max-width: min(34rem, 94vw); }
+.regrant-flag {
+  display: block;
+  font-family: monospace;
+  font-size: 0.8rem;
+  margin: 0.15rem 0;
+  cursor: pointer;
+}
 
 /* --- Cap chips (#caps-row inside #compose) --- */
 .caps-row {

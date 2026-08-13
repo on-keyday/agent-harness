@@ -69,9 +69,17 @@
       <div id="caps-row" class="caps-row" aria-label="Capability chips"></div>
       <label class="caps-on-resume-toggle"><input type="checkbox" id="caps-on-resume"> apply caps on resume</label>
       <div class="scope-block">
-        <label for="scope-input">Scope (which tasks those caps may target):</label>
-        <input id="scope-input" type="text" size="60" placeholder="subtree (default) | none | global | [subtree+]ids:&lt;id&gt;[,&lt;id&gt;]">
-        <div id="scope-hint" class="scope-hint"></div>
+        <label>Scope (which tasks those caps may target):</label>
+        <div class="scope-base-row" id="spawn-base-row" aria-label="Scope base">
+          <label><input type="radio" name="spawn-base" value="subtree" checked> subtree</label>
+          <label><input type="radio" name="spawn-base" value="none"> none</label>
+          <label><input type="radio" name="spawn-base" value="global"> global</label>
+        </div>
+        <details id="spawn-scope-details">
+          <summary id="spawn-scope-summary">対象タスクを選択 (0)</summary>
+          <div id="spawn-scope-tasks" class="task-checklist"></div>
+        </details>
+        <code id="spawn-scope-echo" class="scope-echo"></code>
       </div>
       <div class="actions">
         <button id="open-detachable">Open interactive session</button>
@@ -307,6 +315,30 @@
       <button id="file-editor-cancel">Cancel</button>
     </div>
   </div>
+</dialog>
+<!-- Re-grant modal: selection UI for caps set on a live task (task detail's
+     🔑 button). Chips/radios/checklist instead of typed grammar; the choice
+     is serialized to the --scope grammar string and sent through the same
+     harness.setCaps bridge. Body-level for the same top-layer reason as
+     file-preview-modal above. -->
+<dialog id="regrant-modal" class="picker-modal regrant-modal">
+  <form method="dialog" class="picker-form">
+    <h3 class="picker-title">caps/scope 再付与 <span id="regrant-task"></span></h3>
+    <div id="regrant-chips" class="caps-row" aria-label="Capability chips"></div>
+    <div class="scope-base-row" id="regrant-base-row" aria-label="Scope base">
+      <label><input type="radio" name="regrant-base" value="subtree"> subtree</label>
+      <label><input type="radio" name="regrant-base" value="none"> none</label>
+      <label><input type="radio" name="regrant-base" value="global"> global</label>
+    </div>
+    <div id="regrant-tasks" class="task-checklist"></div>
+    <label class="regrant-flag"><input type="checkbox" id="regrant-cascade"> --cascade（子孫の caps/scope も締める）</label>
+    <label class="regrant-flag"><input type="checkbox" id="regrant-keep-conns"> --keep-conns（対象の既存接続を切らない）</label>
+    <code id="regrant-echo" class="scope-echo"></code>
+    <menu class="picker-actions">
+      <button type="button" id="regrant-apply">適用</button>
+      <button type="button" id="regrant-cancel">キャンセル</button>
+    </menu>
+  </form>
 </dialog>
 <!-- Runner-picker modal: shown when an interactive open hits ambiguous_runner
      (>=2 candidate runners for the selector). Body-level for the same
