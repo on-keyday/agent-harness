@@ -1066,3 +1066,57 @@ func TestParseFilePullRangeWithRecursiveIsRejected(t *testing.T) {
 		t.Fatal("want an error for -r with -o")
 	}
 }
+
+// scope is the target-set companion to caps: same show/set shape, and the
+// session default reaches every spawn through App.authority().
+func TestParseScopeCommand(t *testing.T) {
+	id := strings.Repeat("ab", 16)
+	act, err := ParseCommand("scope", "/cwd")
+	if err != nil {
+		t.Fatalf("scope: %v", err)
+	}
+	if sa, ok := act.(ScopeAction); !ok || !sa.Show {
+		t.Fatalf("bare `scope` = %#v, want ScopeAction{Show:true}", act)
+	}
+	act, err = ParseCommand("scope none+ids:"+id, "/cwd")
+	if err != nil {
+		t.Fatalf("scope none+ids: %v", err)
+	}
+	sa, ok := act.(ScopeAction)
+	if !ok || sa.Show || sa.Scope.Base != protocol.ScopeBase_None || sa.Scope.IdsLen != 1 {
+		t.Fatalf("scope none+ids = %#v", act)
+	}
+	if _, err := ParseCommand("scope bogus", "/cwd"); err == nil {
+		t.Fatal("an unknown scope base parsed")
+	}
+}
+
+func TestParseCapsSetCommand(t *testing.T) {
+	id := strings.Repeat("cd", 16)
+	act, err := ParseCommand("caps set "+id+" --caps spawn --scope global --cascade", "/cwd")
+	if err != nil {
+		t.Fatalf("caps set: %v", err)
+	}
+	sc, ok := act.(SetCapsAction)
+	if !ok {
+		t.Fatalf("act = %#v, want SetCapsAction", act)
+	}
+	if sc.TaskID != id || sc.Caps == nil || *sc.Caps != protocol.Capability_Spawn {
+		t.Fatalf("caps set = %#v", sc)
+	}
+	if sc.Scope == nil || sc.Scope.Base != protocol.ScopeBase_Global || !sc.Cascade || sc.KeepConns {
+		t.Fatalf("caps set flags = %#v", sc)
+	}
+
+	// Either half alone is fine; neither is not — a call that changes nothing
+	// is a typo, not a no-op worth sending.
+	if _, err := ParseCommand("caps set "+id+" --scope none", "/cwd"); err != nil {
+		t.Fatalf("scope-only caps set: %v", err)
+	}
+	if _, err := ParseCommand("caps set "+id, "/cwd"); err == nil {
+		t.Fatal("caps set with neither --caps nor --scope was accepted")
+	}
+	if _, err := ParseCommand("caps set --caps spawn", "/cwd"); err == nil {
+		t.Fatal("caps set without a task id was accepted")
+	}
+}

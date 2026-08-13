@@ -58,8 +58,8 @@ func (b *editBuffer) SetSize(w, h int) {
 	b.scrollToCursor()
 }
 
-func (b *editBuffer) Focus()      { b.focused = true }
-func (b *editBuffer) Blur()       { b.focused = false }
+func (b *editBuffer) Focus()        { b.focused = true }
+func (b *editBuffer) Blur()         { b.focused = false }
 func (b *editBuffer) Focused() bool { return b.focused }
 
 // SetValue replaces the document and puts the cursor at the end, matching

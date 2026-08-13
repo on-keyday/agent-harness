@@ -36,11 +36,11 @@ type PopupModel struct {
 	agentChoices []string
 	agentIdx     int
 	ta           textarea.Model
-	args        textinput.Model
-	resume      textinput.Model
-	resumeConv  bool
-	focus       popupFocus
-	open        bool
+	args         textinput.Model
+	resume       textinput.Model
+	resumeConv   bool
+	focus        popupFocus
+	open         bool
 }
 
 func NewPopup(defaultRepo string) PopupModel {

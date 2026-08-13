@@ -157,6 +157,10 @@ type App struct {
 	// (submit / interactive / session new) issued from this TUI session.
 	// Controlled by the `caps` command; defaults to Capability_All.
 	sessionCaps protocol.Capability
+	// sessionScope is the default target scope applied to every spawn, the
+	// companion to sessionCaps: caps say which verbs, scope says which tasks
+	// they may be pointed at. Zero value is subtree (self + descendants).
+	sessionScope protocol.TaskScope
 }
 
 // resolveSpawnCaps picks the capability mask for one spawn and says whether the
@@ -178,11 +182,17 @@ func (a App) resolveSpawnCaps(explicit *protocol.Capability, resuming bool) (pro
 // pendingInteractive captures what an interactive open needs so a runner-picker
 // selection can re-issue it. repo is "" for resume (server reuses the task's
 // repo); resumeTaskID is "" for a fresh session.
+// authority is the session default a spawn carries when the command line did
+// not name its own: the caps mask paired with the target scope.
+func (a *App) authority() Authority {
+	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope}
+}
+
 type pendingInteractive struct {
 	repo               string
 	resumeTaskID       string
 	extraArgs          []string
-	caps               protocol.Capability
+	auth               Authority
 	capsOverride       bool
 	resumeConversation bool
 }
@@ -245,6 +255,7 @@ func New(cfg Config) *App {
 		actRecvAt:       map[string]time.Time{},
 		activeForwards:  map[int]*PortForwardSession{},
 		sessionCaps:     protocol.Capability_All,
+		sessionScope:    protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
 	}
 	a.tasks.Focus()
 	return a
@@ -698,6 +709,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("notify [%s] %q sent", msg.Level, msg.Title)))
 		return a, nil
+
+	case SetCapsResultMsg:
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("caps set failed: " + msg.Err.Error()))
+			return a, nil
+		}
+		line := fmt.Sprintf("caps set: %d task(s) changed", len(msg.Affected))
+		if msg.ConnsClosed > 0 {
+			// Worth saying out loud: a narrowing tears down the affected tasks'
+			// live connections, so an attach or transfer they had open is gone.
+			line += fmt.Sprintf(", %d connection(s) closed", msg.ConnsClosed)
+		}
+		a.cmdresult.Append(OKStyle.Render(line))
+		return a, RefreshSnapshot(a.client)
 
 	case ServerDialResultMsg:
 		if msg.Err != nil {
@@ -1260,7 +1285,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.cmdresult.Append(WarnStyle.Render("submit cancelled (no repo — wait for a runner to register, then reopen with `s`)"))
 					return a, nil
 				}
-				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.sessionCaps, false, resumeConversation, agent)
+				return a, DoSubmitWithOpts(a.client, repo, prompt, host, extraArgs, resumeID, a.authority(), false, resumeConversation, agent)
 			case tea.KeyTab:
 				a.popup.CycleRepo(+1)
 				return a, nil
@@ -1297,7 +1322,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					pickLabel += "  (" + agentProfile + ")"
 				}
 				a.cmdresult.Append(OKStyle.Render("pinned runner: ") + pickLabel)
-				return a, DoOpenDetachableSession(a.client, p.repo, sel, p.extraArgs, p.resumeTaskID, p.caps, p.capsOverride, p.resumeConversation, agentProfile)
+				return a, DoOpenDetachableSession(a.client, p.repo, sel, p.extraArgs, p.resumeTaskID, p.auth, p.capsOverride, p.resumeConversation, agentProfile)
 			}
 			return a, nil
 		}
@@ -1561,17 +1586,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// detachable (like `S`); `i` differs only in skipping the ambiguous-
 		// runner picker. Reattach lives on `r` (see below).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Interactive {
-			return a, DoOpenInteractive(a.client, a.defaultRepo, a.sessionCaps)
+			return a, DoOpenInteractive(a.client, a.defaultRepo, a.authority())
 		}
 		// `S` (capital) opens a new detachable interactive PTY session in the
 		// default repo (equivalent to `harness-cli session new`).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Session {
 			a.pendingInteractive = pendingInteractive{
 				repo: a.defaultRepo, resumeTaskID: "", extraArgs: nil,
-				caps: a.sessionCaps, capsOverride: false,
+				auth: a.authority(), capsOverride: false,
 			}
 			a.pickerArmed = true
-			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.sessionCaps, false, false, "")
+			return a, DoOpenDetachableSession(a.client, a.defaultRepo, cli.SelectorOpts{}, nil, "", a.authority(), false, false, "")
 		}
 		// `F` opens the file picker for the task currently focused in the
 		// tasks pane. No-op when the tasks pane is not focused or no task
@@ -1699,7 +1724,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// use Any instead, which can reopen the ambiguous runner picker.
 				a.pendingInteractive = pendingInteractive{
 					repo: "", resumeTaskID: a.tasks.SelectedID(),
-					extraArgs: nil, caps: a.sessionCaps, capsOverride: false,
+					extraArgs: nil, auth: a.authority(), capsOverride: false,
 					resumeConversation: act.ResumeConversation,
 				}
 				a.pickerArmed = true
@@ -1708,11 +1733,11 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// (runner, profile) picker (§4a) supplies both when the
 					// combo set is ambiguous, exactly like the Any-selector
 					// runner pin above.
-					return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, nil, a.tasks.SelectedID(), a.sessionCaps, false, act.ResumeConversation, "")
+					return a, DoOpenDetachableSession(a.client, "", cli.SelectorOpts{}, nil, a.tasks.SelectedID(), a.authority(), false, act.ResumeConversation, "")
 				}
 				// Pinned (r/R): default to the task's own recorded profile
 				// (§4b) so the pinned path stays one keypress — no picker.
-				return a, DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.sessionCaps, false, act.ResumeConversation, string(t.AgentProfile))
+				return a, DoResumeSession(a.client, t.AssignedTo, nil, a.tasks.SelectedID(), a.authority(), false, act.ResumeConversation, string(t.AgentProfile))
 			case actionNone:
 				a.cmdresult.Append(WarnStyle.Render(act.Hint))
 				return a, nil
@@ -2189,12 +2214,15 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("refreshing snapshot…")
 		return a, RefreshSnapshot(a.client)
 	case HelpAction:
-		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] [--force] [<task-id>...] / repo <path> / caps / refresh / clear / help / quit")
+		a.cmdresult.Append("commands: submit / interactive [--repo=PATH] / cancel <id> / notify <text> / prune [--before=DUR] [--force] [<task-id>...] / repo <path> / caps / scope / caps set <id> / refresh / clear / help / quit")
 		a.cmdresult.Append("refresh (alias: sync)          - force a full runners+tasks snapshot re-sync now")
 		a.cmdresult.Append("submit [--resume ID] [--resume-conversation] <prompt>  - submit/resume a task")
 		a.cmdresult.Append("interactive [--resume ID] [--resume-conversation]      - open/resume interactive session (detachable)")
 		a.cmdresult.Append("session new [--resume ID] [--resume-conversation]      - open/resume detachable interactive")
 		a.cmdresult.Append("caps [<names>]              - show, or set the session-default capability mask for spawns (e.g. caps spawn,file_read / caps all / caps all,-spawn / caps none)")
+		a.cmdresult.Append("scope [<spec>]              - show, or set the session-default TARGET scope for spawns: subtree (default) | none | global | [subtree+]ids:<id>[,<id>]")
+		a.cmdresult.Append("caps set <id> [--caps N] [--scope S] [--cascade] [--keep-conns]")
+		a.cmdresult.Append("                            - OPERATOR: re-grant a LIVE task's authority; effective on its next request, no restart. --cascade also clamps its descendants")
 		a.cmdresult.Append("submit|interactive|session new --caps <names>  - capability mask for THIS spawn only, overriding the default; with --resume it re-grants that mask to the task")
 		a.cmdresult.Append("notify [info|warn|error] <title> [<text>...]        - send a notification (shows in this feed + --notify-hook egress; keep it one line)")
 		a.cmdresult.Append("session new [--detach] [--host NAME | --runner HEX | --ip ADDR] - open detachable interactive session (--detach: background, print id)")
@@ -2276,12 +2304,31 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(OKStyle.Render("caps set: ") + capsLabel(a.sessionCaps))
 		}
 		return a, nil
+	case ScopeAction:
+		if v.Show {
+			a.cmdresult.Append("scope: " + cli.ScopeLabel(a.sessionScope) +
+				"   (default for new spawns; which tasks the caps may target)")
+		} else {
+			a.sessionScope = v.Scope
+			a.cmdresult.Append(OKStyle.Render("scope set: ") + cli.ScopeLabel(a.sessionScope))
+		}
+		return a, nil
+	case SetCapsAction:
+		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoSetCaps(a.client, cli.SetCapsOpts{
+			TaskID: full, Caps: v.Caps, Scope: v.Scope,
+			Cascade: v.Cascade, KeepConns: v.KeepConns,
+		})
 	case InteractiveAction:
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, caps, capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SubmitAction:
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, caps, capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -2304,12 +2351,12 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
 		if v.X11 {
-			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, caps, capsOverride, v.ResumeConversation, v.AgentProfile)
+			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, caps, capsOverride, v.ResumeConversation, v.AgentProfile)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
 		}
-		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, caps, capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, Authority{Caps: caps, Scope: a.sessionScope}, capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
 	case SessionLsAction:

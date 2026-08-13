@@ -71,22 +71,22 @@ func TestDrainNotifyEventsCoalesced(t *testing.T) {
 	// Use NotifyOrigin_External — NotifyOrigin_Worker (zero value) triggers
 	// a union-type assertion in Append that panics on zero-value structs.
 	e1 := (&protocol.NotifyEvent{
-		Ts:      10,
-		Level:   protocol.NotifyLevel_Info,
-		Origin:  protocol.NotifyOrigin_External,
+		Ts:       10,
+		Level:    protocol.NotifyLevel_Info,
+		Origin:   protocol.NotifyOrigin_External,
 		TitleLen: 5,
-		Title:   []byte("hello"),
-		TextLen: 5,
-		Text:    []byte("world"),
+		Title:    []byte("hello"),
+		TextLen:  5,
+		Text:     []byte("world"),
 	}).MustAppend(nil)
 	e2 := (&protocol.NotifyEvent{
-		Ts:      20,
-		Level:   protocol.NotifyLevel_Warn,
-		Origin:  protocol.NotifyOrigin_External,
+		Ts:       20,
+		Level:    protocol.NotifyLevel_Warn,
+		Origin:   protocol.NotifyOrigin_External,
 		TitleLen: 3,
-		Title:   []byte("foo"),
-		TextLen: 3,
-		Text:    []byte("bar"),
+		Title:    []byte("foo"),
+		TextLen:  3,
+		Text:     []byte("bar"),
 	}).MustAppend(nil)
 
 	// Coalesce e1 + e2 + partial third event into one buffer.

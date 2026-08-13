@@ -1,5 +1,11 @@
 package tui
-import ("strings";"testing";"github.com/charmbracelet/x/vt")
+
+import (
+	"github.com/charmbracelet/x/vt"
+	"strings"
+	"testing"
+)
+
 func TestPaneStreamer_CropAnchorsToContent(t *testing.T) {
 	p := &PaneStreamer{emu: vt.NewEmulator(80, 40), cols: 80, rows: 40}
 	defer p.emu.Close()

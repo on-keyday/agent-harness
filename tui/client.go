@@ -57,8 +57,19 @@ type LogHistoryMsg struct {
 }
 
 // DoSubmit issues a Submit RPC over the existing persistent client.
-func DoSubmit(c *cli.Client, repo, prompt string, caps protocol.Capability) tea.Cmd {
-	return DoSubmitWithOpts(c, repo, prompt, "", nil, "", caps, false, false, "")
+// Authority is what a spawn grants the new task: the capability mask AND the
+// scope bounding which tasks those capabilities may target. The two always
+// travel together, so they are one value rather than two adjacent positional
+// arguments — the ladder cli.SessionOpts exists to avoid.
+//
+// Zero value = no capabilities, subtree scope.
+type Authority struct {
+	Caps  protocol.Capability
+	Scope protocol.TaskScope
+}
+
+func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
+	return DoSubmitWithOpts(c, repo, prompt, "", nil, "", auth, false, false, "")
 }
 
 // DoSubmitWithOpts issues a Submit RPC with an optional hostname pin,
@@ -67,8 +78,8 @@ func DoSubmit(c *cli.Client, repo, prompt string, caps protocol.Capability) tea.
 // extraArgs are forwarded verbatim to the runner and appended to its
 // --claude-args baseline at exec time. resumeTaskID, when non-empty, asks
 // the server to reuse that terminal task's id and worktree branch.
-// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
-// for the inherit-all behaviour.
+// auth carries RequestedCaps and the target scope; pass
+// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh submit).
@@ -77,7 +88,7 @@ func DoSubmit(c *cli.Client, repo, prompt string, caps protocol.Capability) tea.
 // task's own recorded profile — resolved server-side). Submit has no picker
 // (§4a scope boundary): a profile no runner serves comes back as the flat
 // SubmitStatus.profile_unavailable, surfaced as an error here.
-func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -88,7 +99,7 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 		}
 		id, err := c.Submit(ctx, repo, prompt, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if err != nil {
@@ -129,6 +140,29 @@ func shortTaskID(id string) string {
 
 // DoCancel issues a Cancel RPC over the existing persistent client.
 // resolved is the full hex id (callers resolve prefixes against tasksByID).
+// SetCapsResultMsg carries the outcome of a live re-grant.
+type SetCapsResultMsg struct {
+	TaskID      string
+	Affected    []string
+	ConnsClosed uint32
+	Err         error
+}
+
+// DoSetCaps re-grants a live task's caps and/or scope. It uses the long-lived
+// client the TUI already holds (cli.SetCapsWith), not the dial-and-close
+// cli.SetCaps — a fresh connection would throw away the handshake for one RPC.
+func DoSetCaps(c *cli.Client, opts cli.SetCapsOpts) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		res, err := cli.SetCapsWith(ctx, c, opts)
+		return SetCapsResultMsg{
+			TaskID: opts.TaskID, Affected: res.Affected,
+			ConnsClosed: res.ConnsClosed, Err: err,
+		}
+	}
+}
+
 func DoCancel(c *cli.Client, idPrefix, resolved string) tea.Cmd {
 	return func() tea.Msg {
 		if resolved == "" {

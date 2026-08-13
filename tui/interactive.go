@@ -44,18 +44,18 @@ type InteractiveDoneMsg struct {
 // posts InteractiveReadyMsg back to the program. The actual terminal handover
 // happens in the App's Update when InteractiveReadyMsg arrives — Update is the
 // only place that can gate it against a handover already in flight.
-// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
-// for the inherit-all behaviour.
-func DoOpenInteractive(c *cli.Client, repo string, caps protocol.Capability) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, "", nil, "", caps, false, false, "")
+// auth carries RequestedCaps and the target scope; pass
+// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
+func DoOpenInteractive(c *cli.Client, repo string, auth Authority) tea.Cmd {
+	return DoOpenInteractiveWithOpts(c, repo, "", nil, "", auth, false, false, "")
 }
 
 // DoOpenInteractiveWithHost is the same as DoOpenInteractive but accepts an
 // optional hostname pin.
-// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
-// for the inherit-all behaviour.
-func DoOpenInteractiveWithHost(c *cli.Client, repo, host string, caps protocol.Capability) tea.Cmd {
-	return DoOpenInteractiveWithOpts(c, repo, host, nil, "", caps, false, false, "")
+// auth carries RequestedCaps and the target scope; pass
+// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
+func DoOpenInteractiveWithHost(c *cli.Client, repo, host string, auth Authority) tea.Cmd {
+	return DoOpenInteractiveWithOpts(c, repo, host, nil, "", auth, false, false, "")
 }
 
 // DoOpenDetachableSession opens a new detachable interactive session (equivalent
@@ -65,12 +65,12 @@ func DoOpenInteractiveWithHost(c *cli.Client, repo, host string, caps protocol.C
 // resumeTaskID may be "" for a fresh session, or a 32-hex task id to resume
 // an existing terminal interactive task's worktree and branch.
 // selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
-// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
-// for the inherit-all behaviour.
+// auth carries RequestedCaps and the target scope; pass
+// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -78,7 +78,7 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
@@ -114,7 +114,7 @@ func resumeSelectorOpts(assignedTo protocol.RunnerID) cli.SelectorOpts {
 // runner has since disconnected (e.g. restarted with a new RunnerID), the
 // pinned attempt fails with ErrPinnedNotFound and this retries once with
 // the Any selector.
-func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		opts := resumeSelectorOpts(assignedTo)
 		sel, err := cli.BuildSelector(opts)
@@ -123,7 +123,7 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), "", cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
@@ -133,7 +133,7 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 			}
 			stream, taskID, err = c.OpenInteractive(context.Background(), "", cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+				Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 		}
@@ -154,7 +154,7 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, displayN int, program *tea.Program, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -162,7 +162,7 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 		}
 		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		}, displayN)
 		if err != nil {
@@ -193,12 +193,12 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 // AmbiguousRunner here the error is surfaced as a flat line in
 // InteractiveReadyMsg.Err with a hint to supply a host, rather than opening
 // the picker.
-// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
-// for the inherit-all behaviour.
+// auth carries RequestedCaps and the target scope; pass
+// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(cli.SelectorOpts{Host: host})
 		if err != nil {
@@ -206,7 +206,7 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
@@ -240,12 +240,12 @@ type SessionStartedMsg struct {
 // closes the local stream, and returns SessionStartedMsg with the task id.
 // Equivalent to `harness-cli session new -d`.
 // selOpts pins the runner; zero-value SelectorOpts selects any matching runner.
-// caps sets RequestedCaps on the wire request; pass protocol.Capability_All
-// for the inherit-all behaviour.
+// auth carries RequestedCaps and the target scope; pass
+// Authority{Caps: protocol.Capability_All} for the inherit-all behaviour.
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, caps protocol.Capability, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -253,7 +253,7 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(caps), ResumeCapsOverride: resumeCapsOverride,
+			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if err != nil {

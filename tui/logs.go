@@ -61,9 +61,9 @@ type LogsModel struct {
 	// Substring filter applied to each logical line. Empty means "show all".
 	// During interactive editing (after `/`), filterDraft is used for live
 	// preview while filter holds the previously-committed pattern.
-	filter         string
-	filterDraft    string
-	editingFilter  bool
+	filter        string
+	filterDraft   string
+	editingFilter bool
 }
 
 // hScrollStep is the per-keypress horizontal scroll distance, in display cells.
@@ -234,6 +234,7 @@ func (m *LogsModel) Prepend(content []byte) {
 //   - 0 / $ : jump to leftmost / rightmost edge (vim-style)
 //   - /    : enter filter edit mode (live preview while typing)
 //   - Esc  : clear committed filter (when not editing)
+//
 // While editingFilter is true, all printable runes feed filterDraft;
 // Enter commits, Esc cancels, Backspace trims one rune (UTF-8 aware).
 // Other keys (↑/↓/PgUp/PgDn/g/G) are handled by the viewport for vertical

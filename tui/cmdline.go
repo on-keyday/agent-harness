@@ -246,7 +246,32 @@ type CapsAction struct {
 	Show bool // true = display current set (no args), false = set to Caps
 }
 
+// ScopeAction is the target-set companion to CapsAction: caps say which verbs
+// a spawned task may use, scope says which tasks it may point them at. Same
+// show/set shape, same "does not apply on resume" rule.
+type ScopeAction struct {
+	Scope protocol.TaskScope
+	Show  bool
+}
+
+// SetCapsAction re-grants a LIVE task's authority. Operator-only, enforced by
+// the server on the caller having no principal task — the TUI is always an
+// operator connection, so there is no client-side gate to add here.
+//
+// Caps and Scope are pointers: omitting either keeps what the task has, and
+// neither has a spare value to mean "unset" (Capability(0) is "none",
+// TaskScope{} is "subtree").
+type SetCapsAction struct {
+	TaskID    string
+	Caps      *protocol.Capability
+	Scope     *protocol.TaskScope
+	Cascade   bool
+	KeepConns bool
+}
+
 func (SubmitAction) isAction()           {}
+func (ScopeAction) isAction()            {}
+func (SetCapsAction) isAction()          {}
 func (CancelAction) isAction()           {}
 func (PruneAction) isAction()            {}
 func (ClearAction) isAction()            {}
@@ -326,11 +351,23 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		if tokens[1] == "--on-resume" {
 			return nil, fmt.Errorf("caps --on-resume was removed: pass --caps on the resuming command instead (e.g. `session new --resume <id> --caps all,-spawn`), which re-grants that mask for that one resume")
 		}
+		if tokens[1] == "set" {
+			return parseSetCaps(tokens[2:])
+		}
 		c, err := cli.ParseCaps(strings.Join(tokens[1:], ""))
 		if err != nil {
 			return nil, err
 		}
 		return CapsAction{Caps: c}, nil
+	case "scope":
+		if len(tokens) == 1 {
+			return ScopeAction{Show: true}, nil
+		}
+		sc, err := cli.ParseScope(strings.Join(tokens[1:], ""))
+		if err != nil {
+			return nil, err
+		}
+		return ScopeAction{Scope: sc}, nil
 	default:
 		return nil, fmt.Errorf("unknown command: %q", tokens[0])
 	}
@@ -972,6 +1009,56 @@ func parseGit(args []string) (Action, error) {
 
 	default:
 		return nil, fmt.Errorf("git: unknown sub-verb %q (log | diff | show | status | subrepos | file)", act.Sub)
+	}
+	return act, nil
+}
+
+// parseSetCaps backs `caps set <task-id> [--caps NAMES] [--scope SPEC]
+// [--cascade] [--keep-conns]`, the TUI form of harness-cli caps set.
+func parseSetCaps(args []string) (Action, error) {
+	usage := "caps set: usage: caps set <task-id> [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]"
+	act := SetCapsAction{}
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--cascade":
+			act.Cascade = true
+		case "--keep-conns":
+			act.KeepConns = true
+		case "--caps":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("caps set: --caps needs a value")
+			}
+			i++
+			c, err := cli.ParseCaps(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("caps set: --caps: %w", err)
+			}
+			act.Caps = &c
+		case "--scope":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("caps set: --scope needs a value")
+			}
+			i++
+			sc, err := cli.ParseScope(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("caps set: --scope: %w", err)
+			}
+			act.Scope = &sc
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return nil, fmt.Errorf("caps set: unknown flag %q\n%s", args[i], usage)
+			}
+			if act.TaskID != "" {
+				return nil, fmt.Errorf("caps set: more than one task id\n%s", usage)
+			}
+			act.TaskID = args[i]
+		}
+	}
+	if act.TaskID == "" {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	if act.Caps == nil && act.Scope == nil {
+		return nil, fmt.Errorf("caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
 	}
 	return act, nil
 }

@@ -35,7 +35,7 @@ func TestPaneStreamer_FeedResizeResetsScrollRegion(t *testing.T) {
 	defer p.emu.Close()
 
 	p.feed([]byte("\x1b[1;58r"), 0, 0, false) // region valid at 60 rows
-	if !p.feed([]byte("x"), 24, 80, true) {    // shrink to 24 (feed emits ESC[r)
+	if !p.feed([]byte("x"), 24, 80, true) {   // shrink to 24 (feed emits ESC[r)
 		t.Fatal("feed reported dead on resize")
 	}
 	if p.rows != 24 || p.cols != 80 {

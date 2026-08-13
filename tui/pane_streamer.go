@@ -25,11 +25,11 @@ import (
 type PaneStreamer struct {
 	taskID string
 
-	mu     sync.Mutex
-	emu    *vt.Emulator
-	cols   int
-	rows   int
-	err    error
+	mu      sync.Mutex
+	emu     *vt.Emulator
+	cols    int
+	rows    int
+	err     error
 	stream  *agentexec.CommandExecutionStream
 	cancel  context.CancelFunc
 	stopped bool // Stop() ran; a still-attaching pump must close its stream
@@ -43,10 +43,10 @@ type PaneStreamer struct {
 	// Diagnostics (HARNESS_GRID_DIAG): count bytes/reads/attaches/panics so a
 	// black pane can render its own state — is this "no bytes arrived" or "bytes
 	// arrived but the emulator is blank"? Guarded by mu.
-	rxBytes   int
-	reads     int
-	attaches  int
-	vtPanics  int
+	rxBytes  int
+	reads    int
+	attaches int
+	vtPanics int
 }
 
 func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
