@@ -600,3 +600,14 @@ Clients: the CLI sets the bit when `--scope` was literally typed
 (session defaults never rewrite a resumed task), and the WebUI gates both
 halves behind the one "apply caps/scope on resume" checkbox — the Compose
 scope picker's leftover state must not silently rewrite a resumed task.
+
+## Amendment (2026-08-14): the creator link is operator-mutable
+
+This spec describes the subtree walk over an immutable `creator_task_id`.
+Since the task-reparent feature
+(`docs/superpowers/specs/2026-08-14-task-reparent-design.md`) an operator can
+re-point that link on a live task (`caps set-parent`, TaskControlKind
+`set_parent`), including an atomic swap with the current parent. Resume still
+never touches it. Consequently "caps_parent ⊇ caps_self" holds for links Create
+made but is not an invariant of the CURRENT parent, and subtree membership is
+whatever the (possibly re-pointed) links say at request time.

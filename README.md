@@ -362,6 +362,26 @@ narrowing drops the affected tasks' open connections unless
 picker; `A`/`N` = all/none quick-set) and the WebUI task sheet to
 「🔑 caps/scope 再付与」.
 
+The **subtree** walk follows each task's parent link (who spawned whom,
+`by=` in `ls`). The link itself is operator-mutable on a live task:
+
+```bash
+bin/harness-cli caps set-parent <task-id> --parent <task-id>  # move under another task
+bin/harness-cli caps set-parent <task-id> --none              # detach to the root
+bin/harness-cli caps set-parent <task-id> --swap              # invert with its current parent
+```
+
+`--swap` is for the mid-flight role reversal: the task takes its
+parent's place (inheriting the parent's own parent, possibly the root)
+and the former parent becomes its child — applied atomically, so no
+half-swapped state is ever visible. Caps and scope are untouched
+(combine with `caps set` to actually shift authority), no connection is
+dropped, and cycles are rejected. Task ids, worktrees and conversation
+history stay put — that is the point: the alternative was destroying
+and recreating both tasks. The TUI binds this to `A` (root / swap /
+task picker) and the WebUI task sheet to 「⇄ 親タスク変更」; both also
+accept the typed `caps set-parent` / `set-parent` command forms.
+
 On **resume**, the task's persisted authority is kept by default; the
 two halves re-grant independently — `--caps` re-grants the mask,
 `--scope` re-grants the scope (each only when literally given; WebUI
@@ -443,8 +463,8 @@ everything — both render from the same table the dispatcher uses
 stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ file {ls,push,pull,delete} / caps / scope / caps set / server
-dial-runner / cancel / prune / repo / clear / help / quit`. `caps NAMES`
+/ file {ls,push,pull,delete} / caps / scope / caps set / caps set-parent
+/ server dial-runner / cancel / prune / repo / clear / help / quit`. `caps NAMES`
 / `scope SPEC` set the session-default authority for subsequent spawns
 (no argument opens the selection picker); per-spawn `--caps` / `--scope`
 override it, and on a resume re-grant only what was literally typed.
