@@ -68,7 +68,7 @@ add "harness_cli" "$(command -v harness-cli 2>&1 || echo MISSING)"
 add "harness_ls" "$(harness-cli ls 2>&1 | grep -c .) lines (or err above)"
 # 2>/dev/null on purpose: harness-cli logs two INFO connection lines to stderr,
 # and merging them ate the caps/scope answer inside the 200-char budget.
-add "harness_whoami" "$(harness-cli whoami 2>/dev/null | tr '\n' ' ' | head -c 200 || true)"
+add "harness_whoami" "$(harness-cli whoami 2>/dev/null | tr '\n' ' ' | head -c 300 || true)"
 
 report="=== SANDBOX CAPABILITY PROBE RESULT ===
 ${R}=== END ==="
