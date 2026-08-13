@@ -1174,3 +1174,119 @@ func TestResumeSwitchesKindAndReplays(t *testing.T) {
 		t.Fatalf("AgentProfile after replay = %q, want codex", got2.AgentProfile)
 	}
 }
+
+// --- task reparenting (set_parent) ---
+
+// reparentCreate creates a minimal task under the given creator and returns
+// its store key plus the same id decoded as a wire TaskID.
+func reparentCreate(t *testing.T, s *TaskStore, creator protocol.TaskID) (string, protocol.TaskID) {
+	t.Helper()
+	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		creator, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+	return id, taskIDFromHex(id)
+}
+
+func TestSetParentRepoints(t *testing.T) {
+	s := NewTaskStore()
+	a, aID := reparentCreate(t, s, protocol.TaskID{})
+	b, _ := reparentCreate(t, s, aID)
+
+	// detach
+	got, ok := s.SetParent(b, protocol.TaskID{})
+	if !ok || got.CreatorTaskID.Id != ([16]byte{}) {
+		t.Fatalf("detach: ok=%v creator=%x", ok, got.CreatorTaskID.Id)
+	}
+	// re-point a under b
+	got, ok = s.SetParent(a, taskIDFromHex(b))
+	if !ok || got.CreatorTaskID != taskIDFromHex(b) {
+		t.Fatalf("repoint: ok=%v creator=%x", ok, got.CreatorTaskID.Id)
+	}
+	if _, ok := s.SetParent("00000000000000000000000000000000", protocol.TaskID{}); ok {
+		t.Fatal("missing task should return ok=false")
+	}
+}
+
+func TestSwapWithParent(t *testing.T) {
+	s := NewTaskStore()
+	p, pID := reparentCreate(t, s, protocol.TaskID{})
+	a, aID := reparentCreate(t, s, pID)
+	b, bID := reparentCreate(t, s, aID)
+	c, _ := reparentCreate(t, s, aID) // sibling stays under a
+
+	target, former, err := s.SwapWithParent(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.CreatorTaskID != pID {
+		t.Fatalf("b's parent = %x, want p", target.CreatorTaskID.Id)
+	}
+	if former.CreatorTaskID != bID {
+		t.Fatalf("a's parent = %x, want b", former.CreatorTaskID.Id)
+	}
+	sib, _ := s.Get(c)
+	if sib.CreatorTaskID != aID {
+		t.Fatal("sibling c moved; must stay under a")
+	}
+	// error paths
+	if _, _, err := s.SwapWithParent(p); err != ErrSwapNoParent {
+		t.Fatalf("root swap: %v", err)
+	}
+	if _, _, err := s.SwapWithParent("00000000000000000000000000000000"); err != ErrSwapNotFound {
+		t.Fatalf("missing: %v", err)
+	}
+	// dangling parent link: point c at a pruned id, then swap
+	var ghost protocol.TaskID
+	ghost.Id[15] = 0xEE
+	if _, ok := s.SetParent(c, ghost); !ok {
+		t.Fatal("SetParent to dangling id must succeed at the store layer")
+	}
+	if _, _, err := s.SwapWithParent(c); err != ErrSwapParentMissing {
+		t.Fatalf("dangling parent swap: %v", err)
+	}
+	_ = a
+}
+
+func TestWALReplayRestoresParentChange(t *testing.T) {
+	dir := t.TempDir()
+	walPath := filepath.Join(dir, "parent.log")
+	wal, err := OpenWAL(walPath)
+	if err != nil {
+		t.Fatalf("OpenWAL: %v", err)
+	}
+	s := NewTaskStore()
+	s.SetWAL(wal)
+
+	_, pID := reparentCreate(t, s, protocol.TaskID{})
+	a, aID := reparentCreate(t, s, pID)
+	b, _ := reparentCreate(t, s, aID)
+	d, _ := reparentCreate(t, s, aID)
+
+	// swap b with a, then detach d.
+	if _, _, err := s.SwapWithParent(b); err != nil {
+		t.Fatalf("SwapWithParent: %v", err)
+	}
+	if _, ok := s.SetParent(d, protocol.TaskID{}); !ok {
+		t.Fatal("SetParent detach failed")
+	}
+	wal.Close() //nolint:errcheck
+
+	events, readErr := ReadWAL(walPath)
+	if readErr != nil {
+		t.Fatalf("ReadWAL: %v", readErr)
+	}
+	s2 := NewTaskStore()
+	s2.ReplayEvents(events)
+
+	gotB, _ := s2.Get(b)
+	if gotB.CreatorTaskID != pID {
+		t.Fatalf("b after replay: %x, want p", gotB.CreatorTaskID.Id)
+	}
+	gotA, _ := s2.Get(a)
+	if gotA.CreatorTaskID != taskIDFromHex(b) {
+		t.Fatalf("a after replay: %x, want b", gotA.CreatorTaskID.Id)
+	}
+	gotD, _ := s2.Get(d)
+	if gotD.CreatorTaskID.Id != ([16]byte{}) {
+		t.Fatalf("d after replay: %x, want zero (detached via ABSENT creator_task_id key)", gotD.CreatorTaskID.Id)
+	}
+}

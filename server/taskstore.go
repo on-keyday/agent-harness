@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -248,6 +249,81 @@ func (s *TaskStore) SetCaps(id string, setCaps bool, caps protocol.Capability, s
 	return snapshot, true
 }
 
+// writeParentChangedLocked emits one task_parent_changed record carrying the
+// task's post-change parent. Caller holds s.mu. An all-zero parent marshals
+// with the creator_task_id key absent (omitempty); for THIS event type absence
+// means "set to zero" — the type itself carries the intent, unlike
+// task_created where an absent key means the link was never set.
+func (s *TaskStore) writeParentChangedLocked(id string, parent protocol.TaskID) {
+	if s.wal == nil {
+		return
+	}
+	creatorHex := ""
+	if parent.Id != ([16]byte{}) {
+		creatorHex = hex.EncodeToString(parent.Id[:])
+	}
+	if err := s.wal.Write(WALEvent{Type: "task_parent_changed", TaskID: id, CreatorTaskID: creatorHex}); err != nil {
+		slog.Error("WAL write failed", "op", "task_parent_changed", "task_id", id, "err", err)
+	}
+}
+
+// SetParent re-points a live task's parent link. Operator-only at the handler;
+// the store itself only refuses a missing task. Cycle prevention is the
+// HANDLER's job (descendantsOf) — by the time this runs the request is valid.
+func (s *TaskStore) SetParent(id string, parent protocol.TaskID) (TaskEntry, bool) {
+	s.mu.Lock()
+	e, ok := s.tasks[id]
+	if !ok {
+		s.mu.Unlock()
+		return TaskEntry{}, false
+	}
+	e.CreatorTaskID = parent
+	s.writeParentChangedLocked(id, parent)
+	snapshot := *e
+	s.mu.Unlock()
+	return snapshot, true
+}
+
+// Typed errors SwapWithParent returns; the handler maps them to wire-level
+// SetParentStatus codes (not_found / no_parent / parent_not_found).
+var (
+	ErrSwapNotFound      = errors.New("set_parent: task not found")
+	ErrSwapNoParent      = errors.New("set_parent: task has no parent to swap with")
+	ErrSwapParentMissing = errors.New("set_parent: parent record is gone")
+)
+
+// SwapWithParent inverts id with its current parent A: id takes A's own parent
+// (possibly the root) and A becomes id's child. Both links are rewritten under
+// one hold of s.mu, so the two-cycle the equivalent two-call sequence forms
+// transiently is never observable — which is why this path needs no cycle
+// check. A's grandparent link is deliberately not validated: a dangling
+// creator (pruned) is a state the store already reaches today, and rejecting
+// it would make an unrelated prune block a reparent.
+func (s *TaskStore) SwapWithParent(id string) (target, former TaskEntry, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok {
+		return TaskEntry{}, TaskEntry{}, ErrSwapNotFound
+	}
+	if t.CreatorTaskID.Id == ([16]byte{}) {
+		return TaskEntry{}, TaskEntry{}, ErrSwapNoParent
+	}
+	pHex := hex.EncodeToString(t.CreatorTaskID.Id[:])
+	p, ok := s.tasks[pHex]
+	if !ok {
+		return TaskEntry{}, TaskEntry{}, ErrSwapParentMissing
+	}
+	tid := taskIDFromHex(id)
+	if tid.Id == ([16]byte{}) {
+		return TaskEntry{}, TaskEntry{}, ErrSwapNotFound // store keys are valid hex by construction
+	}
+	t.CreatorTaskID, p.CreatorTaskID = p.CreatorTaskID, tid
+	s.writeParentChangedLocked(id, t.CreatorTaskID)
+	s.writeParentChangedLocked(pHex, tid)
+	return *t, *p, nil
+}
+
 // ResumeError is the typed error TaskStore.Resume returns when the resume
 // preconditions fail. The handler maps these to wire-level
 // SubmitStatus_ResumeNotFound / SubmitStatus_ResumeNotTerminal codes.
@@ -312,8 +388,9 @@ func (s *TaskStore) Resume(id, prompt string, extraArgs []string, selector proto
 	// Reset the per-run fields. CreatedAt is preserved (first submission
 	// time stays meaningful in List output); StartedAt/EndedAt/ExitCode/
 	// DiffInfo/AssignedTo/WorktreeDir all become "fresh run" defaults.
-	// CreatorTaskID is intentionally NOT reset — it records the original
-	// creator and must not change on resume.
+	// CreatorTaskID is intentionally NOT reset — resume never touches the
+	// parent link; SetParent/SwapWithParent (operator-only) are the only
+	// writers after Create.
 	e.Status = protocol.TaskStatus_Queued
 	e.AssignedTo = ""
 	e.WorktreeDir = ""
@@ -743,8 +820,9 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			// + bound runner + resumer kind from the event. If the entry
 			// doesn't exist (corrupt WAL ordering), drop the event silently —
 			// the task_created that should precede this would have already
-			// failed to apply too. CreatorTaskID is NOT reset — it records the
-			// original creator and must survive resume replay. Kind and
+			// failed to apply too. CreatorTaskID is NOT reset — resume never
+			// touches the parent link (only a task_parent_changed event,
+			// replayed in log order, moves it). Kind and
 			// AgentProfile ARE reset unconditionally — mode and profile are
 			// per-open, latest-recorded attributes (spec §4c/§4b), not
 			// creation-immutable; TaskKind_Oneshot == 0 so legacy WAL entries
@@ -770,6 +848,19 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Capabilities = protocol.Capability(ev.Capabilities)
 				t.Scope = scopeFromWAL(ev.ScopeBase, ev.ScopeIDs)
+			}
+		case "task_parent_changed":
+			// An absent creator_task_id key on THIS event type means "set to
+			// zero" (a detach) — the event type carries the intent, unlike
+			// task_created where absence means the link was never set.
+			if t, ok := s.tasks[ev.TaskID]; ok {
+				var p protocol.TaskID
+				if ev.CreatorTaskID != "" {
+					if raw, err := hex.DecodeString(ev.CreatorTaskID); err == nil && len(raw) == len(p.Id) {
+						copy(p.Id[:], raw)
+					}
+				}
+				t.CreatorTaskID = p
 			}
 		case "task_pruned":
 			if _, ok := s.tasks[ev.TaskID]; ok {
