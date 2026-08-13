@@ -217,14 +217,17 @@ repo, pin a spawn with `--runner <cid>` / `--host <name>` / `--ip <addr>`.
 ### Pruning tasks you spawned
 
 `harness-cli prune` asks the server to forget tasks (they vanish from `ls`).
-Conventions — pruning is shared-state surgery, so stay narrow:
+The server now bounds this to your scope — an id outside it is counted as
+missing, and the age sweep only reaches tasks you can see — so the rules below
+are about not destroying your OWN work, not about staying out of other
+people's:
 
 - Prune **only terminal** tasks (Succeeded / Failed / Cancelled) that **you**
-  spawned — `by=<your-short-id>` in `ls`. Leave the user's tasks, and any task
-  you did not create, alone.
+  spawned — `by=<your-short-id>` in `ls`.
 - `harness-cli prune <id>...` forgets the listed terminal tasks. With **no**
-  ids it forgets every terminal task older than `--before` (default 168h) — do
-  **not** run that bare/age form on a shared server; it sweeps everyone's tasks.
+  ids it forgets every terminal task older than `--before` (default 168h)
+  within your scope. If your scope is `global`, that is still everyone's tasks:
+  do not run the bare/age form.
 - `--force` also forgets **non-terminal** tasks (Queued / Running / Detached).
   Those are live or resumable, so `--force` is destructive and hard to reverse
   — use it only with an explicit, current reason (e.g. the user asked you to
@@ -241,12 +244,13 @@ harness-cli ls | sed -n '/^TASKS/,$p' | grep "$REPO" \
   | awk '{print $1}' | xargs -r harness-cli prune
 ```
 
-## Capabilities (`--caps`) — attenuate what a child task may do
+## Capabilities and scope (`--caps` / `--scope`)
 
-`submit`, `interactive`, and `session new` all accept `--caps <names>` to bound
-what the task you spawn may do on the control plane. This is the harness's
-privilege-attenuation seam for delegated work — list the names and what each
-authorizes with `harness-cli caps` (`--json` for the machine-readable form).
+`submit`, `interactive`, and `session new` accept both. **`--caps` names the
+verbs; `--scope` names which tasks those verbs may be pointed at.** A cap
+without a scope is not "may cancel" — it is "may cancel anything on the
+server", which is why both exist. `harness-cli caps` lists the capability names
+and the scope forms (`--json` for the machine-readable form).
 
 - **Attenuating, never amplifying.** A child receives `creator_caps ∩ requested`
   — you can only grant a subset of what you yourself hold, and caps are
@@ -257,11 +261,24 @@ authorizes with `harness-cli caps` (`--json` for the machine-readable form).
   `--caps spawn,file_read` to grant exactly those.
 - **Operator = full set.** A task launched directly by the human operator (no
   principal task) is the trusted root and holds `all`.
+- **`--scope` bounds the targets.** Default `subtree` = yourself and everything
+  you spawned, transitively. `none` = yourself only. `global` = every task on
+  the server, the explicit opt-out. `ids:<id>[,<id>]` = yourself plus exactly
+  those tasks; `subtree+ids:<id>` = both. Every request naming a task — cancel,
+  attach, file pull/push, git, await-idle, port forwards, and **resume** — is
+  checked against it, and a task outside your scope answers *no such task*, the
+  same as one that does not exist. Do not read that as a bug; read it as "not
+  yours".
+- **Scope attenuates like caps.** A child's base is clamped to yours
+  (`none < subtree < global`), and every id you name must already be inside
+  your own set at spawn time. An id that is not is an error, not a silent drop.
+  You may name your own id, which is how you hand a child access to yourself.
 - **Visibility is a cap too.** Without `info_global`, a confined task's `ls` and
-  `agent topics` show only its own task subtree (itself + descendants), not the
-  whole board; `info_global` (part of `all`) lifts that. `info_global` also
-  gates the operator board reads — `board topics`, `board read` and
-  `board subscribers`.
+  `agent topics` show only its own scope, not the whole board; `info_global`
+  (part of `all`) lifts that — but only for LOOKING. It does not widen what you
+  may DO: with `info_global` you can see a task and still be refused when you
+  try to cancel it. `info_global` also gates the operator board reads —
+  `board topics`, `board read` and `board subscribers`.
 - **You also see your parent, redacted.** `ls` / `session ls` include one row
   for your direct creator so you can tell whether the task driving you is still
   running / idle. That row is deliberately sparse — `repo`, `prompt`,
@@ -269,8 +286,15 @@ authorizes with `harness-cli caps` (`--json` for the machine-readable form).
   stripped, not absent; do not report "my parent has no prompt". Its `caps` and
   `created_by` ARE real. One hop only: your grandparent is not listed, and
   `logs` against your parent still returns not-found.
+- **The operator can change your caps or scope while you run.** `harness-cli
+  caps set <id>` is operator-only and takes effect on your very next request,
+  with nothing restarted. If a call that worked a minute ago starts answering
+  *no such task* or *permission denied*, re-run `whoami` before assuming a bug —
+  and if the change narrowed you, your open attaches and transfers were closed
+  with it.
 - **Check your own caps with `harness-cli whoami`.** It prints THIS connection's
-  own principal task id and the exact capability set the server enforces for you
+  own principal task id and the exact capability set and scope the server
+  enforces for you
   (`--json` for the machine-readable form). No cap is required — it is
   self-introspection, not a peek at another task's record. Use it when unsure
   whether a denied RPC is a missing cap vs. a real error.
