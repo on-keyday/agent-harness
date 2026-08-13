@@ -1,6 +1,6 @@
 ---
 name: operator-surface-checklist
-description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting. A NUMBERED checklist (1–33) that must be walked item by item with a verdict per number — never summarized. Every input surface, every display surface, the per-path semantics axes, and the result/display conventions across CLI/TUI/WebUI/wasm.
+description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting. A NUMBERED checklist (1–36) that must be walked item by item with a verdict per number — never summarized. Every input surface, every display surface, the per-path semantics axes, and the result/display conventions across CLI/TUI/WebUI/wasm.
 ---
 
 # Operator-surface checklist
@@ -14,7 +14,7 @@ checklist.
 ## How to use — non-negotiable
 
 This is a CHECKLIST, not reference prose. When this skill applies, walk
-**every number from 1 to 33 in order** and record a verdict for each:
+**every number from 1 to 36 in order** and record a verdict for each:
 
 - `done` — implemented/verified, with the file touched
 - `n/a` — genuinely not applicable, WITH the reason stated
@@ -127,6 +127,20 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     `--scope` on resume was dropped, and `--caps` without `--scope` reset
     the task's scope. When the wire cannot express "keep", the fix is a
     presence bit, not documentation.
+
+## Documentation surfaces
+
+34. `README.md` — the feature's section (e.g. "Capabilities and scope"),
+    the per-binary summaries near the top, AND the TUI cmdline verb list.
+    Incident: the README still recommended the REMOVED `caps --on-resume`
+    command and described the caps-only era a full feature later.
+35. Agent-facing skill texts — `runner/agentskills/*/SKILL.md` is the
+    go:embed source of truth; mirror to `.claude/skills/` and
+    `.agents/skills/` in the same commit. Repo-dev skills
+    (`implementation-pitfalls`, this file) live in `.claude/` only.
+36. The feature's spec under `docs/superpowers/specs/` — semantic changes
+    land as an Amendment section there, so the spec never contradicts the
+    shipped behaviour a later reader verifies against.
 
 ## When to invoke
 

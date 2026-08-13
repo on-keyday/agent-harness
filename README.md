@@ -84,9 +84,11 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       SKILL.md` for conventions.
     - Capabilities: `submit` / `session new` / `interactive` take
       `--caps NAMES` to grant a spawned task a restricted capability set
-      (`caps_child = caps_parent ∩ requested`, server-enforced); `caps`
-      lists the grantable names and what each authorizes. See
-      **Capabilities** below.
+      (`caps_child = caps_parent ∩ requested`, server-enforced) and
+      `--scope SPEC` to bound WHICH tasks those capabilities may target;
+      `caps` lists the grantable names and scope forms, and
+      `caps set` re-grants both on a live task. See **Capabilities and
+      scope** below.
   - `cmd/harness-tui`: Bubble Tea interactive frontend (sections below).
   - `cmd/harness-webui-wasm`: in-browser WebUI compiled to WASM, served
     by `harness-server`.
@@ -334,36 +336,54 @@ isolated checkout. Two flags adjust this:
   persist after task end (no auto-cleanup); manage them manually if
   desired.
 
-## Capabilities
+## Capabilities and scope
 
 Each task carries a **capability set** — a server-enforced bitmask of
 what control-plane operations it may request (spawn, cancel,
 exec-attach, file read / write, local / remote port-forward, notify,
-prune, runner-admin, global info). `harness-cli caps` lists the
-grantable names with a one-line description of each; `caps --json`
-emits the machine-readable catalog (name / bit / description).
+prune, purge, runner-admin, global info) — and a **target scope**
+bounding WHICH tasks those capabilities may be pointed at.
+`harness-cli caps` lists the grantable names and the scope forms with a
+one-line description of each; `caps --json` emits the machine-readable
+catalog.
 
-By default a spawned task inherits everything its spawner holds.
-`--caps NAMES` (on `submit` / `session new` / `interactive`, also in the
-TUI and WebUI spawn surfaces) narrows that: the server grants
-`caps_child = caps_parent ∩ requested`, so a task can never exceed its
-parent. `NAMES` is comma-separated (e.g. `spawn,file_read`), or the
-shorthands `all` / `none`. The current set is visible per task in
-`ls`, the TUI detail popup, and the WebUI task rows.
+By default a spawned task inherits every capability its spawner holds,
+scoped to **subtree** (itself + everything it spawns). `--caps NAMES`
+and `--scope SPEC` (on `submit` / `session new` / `interactive`, also in
+the TUI and WebUI spawn surfaces) narrow or redirect that: the server
+grants `caps_child = caps_parent ∩ requested` and clamps the scope to
+the spawner's own reach, so a task can never exceed its parent. `NAMES`
+is comma-separated (e.g. `spawn,file_read`, subtractive `all,-spawn`);
+`SPEC` is `subtree | none | global | [subtree+]ids:<task-id>[,…]` —
+`ids:` naming specific tasks is the everyday form ("this worker may
+touch exactly that sibling"). Out-of-scope targets answer *no such
+task*; `info_global` widens only what may be SEEN, never what may be
+done. Both halves are visible per task in `ls`, `whoami`, the TUI
+detail popup, and the WebUI task rows.
 
 ```bash
-bin/harness-cli caps                       # list grantable capabilities
+bin/harness-cli caps                       # capability names + scope forms
 bin/harness-cli submit --repo /abs/repo --task "..." --caps none
-bin/harness-cli session new --repo /abs/repo --caps spawn,file_read
+bin/harness-cli session new --repo /abs/repo --caps cancel --scope ids:<sibling>
+bin/harness-cli caps set <task-id> --caps all,-spawn --scope subtree \
+    [--cascade] [--keep-conns]             # operator-only LIVE re-grant
 ```
 
-On **resume**, the task's persisted caps are kept by default; passing
-`--caps` (CLI), `caps --on-resume` (TUI), or the apply-on-resume
-checkbox (WebUI) re-grants the named set instead (intersected with what
-the resumer holds). This composes with the podman sandbox (see
-**Sandboxing** below) as a server-layer confinement: `--caps none`
-closes the control-plane escape path (an agent spawning an unsandboxed
-child) regardless of what is inside the container.
+`caps set` rewrites a live task's authority with no restart — effective
+on its next request; `--cascade` clamps its descendants too, and a
+narrowing drops the affected tasks' open connections unless
+`--keep-conns`. The TUI task list binds this to `a` (a selection
+picker; `A`/`N` = all/none quick-set) and the WebUI task sheet to
+「🔑 caps/scope 再付与」.
+
+On **resume**, the task's persisted authority is kept by default; the
+two halves re-grant independently — `--caps` re-grants the mask,
+`--scope` re-grants the scope (each only when literally given; WebUI
+gates both behind the apply-on-resume checkbox). This composes with the
+podman sandbox (see **Sandboxing** below) as a server-layer
+confinement: `--caps none` closes the control-plane escape path (an
+agent spawning an unsandboxed child) regardless of what is inside the
+container.
 
 ## Sandboxing (rootless podman)
 
@@ -393,7 +413,7 @@ allowlist, and `--firewall-proxy` routes egress through an in-container
 allowlisting CONNECT proxy (raw sockets blocked, WebFetch works).
 
 This is the **OS-layer** half of a two-layer model; the **server-layer**
-half is the capability bitmask (**Capabilities** above) — e.g.
+half is the capability bitmask (**Capabilities and scope** above) — e.g.
 `submit --caps none` closes the control-plane escape path. Neither layer
 configures the other. Full details, security model, and verification
 status are in [`scripts/sandbox/README.md`](scripts/sandbox/README.md).
@@ -445,10 +465,12 @@ Keys:
 | `q`, `Ctrl+C` | Quit |
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ file {ls,push,pull,delete} / caps / server dial-runner / cancel / prune
-/ repo / clear / help / quit`. `caps NAMES` sets a session-default
-capability set applied to subsequent spawns (`caps --on-resume` toggles
-re-granting that set on resume). `session new` supports
+/ file {ls,push,pull,delete} / caps / scope / caps set / server
+dial-runner / cancel / prune / repo / clear / help / quit`. `caps NAMES`
+/ `scope SPEC` set the session-default authority for subsequent spawns
+(no argument opens the selection picker); per-spawn `--caps` / `--scope`
+override it, and on a resume re-grant only what was literally typed.
+`session new` supports
 `--host NAME | --runner HEX | --ip ADDR` for runner-pinning (mutually
 exclusive), plus `--detach` to spawn-and-exit without splicing the
 local terminal. Use `harness-cli prune-local` for local-only worktree
