@@ -194,6 +194,10 @@ Build an explicit surface matrix and fill every cell before claiming coverage:
 
 If a feature intentionally omits a surface, document the omission in the diff or spec. "No parser there" is not an implicit excuse; the absence itself is a design decision.
 
+**The full walkable matrix — input AND display surfaces plus the
+result-message conventions — lives in the `operator-surface-checklist`
+skill; this pitfall is the incident record, that skill is the checklist.**
+
 **Mitigation — insert into IMPLEMENTER prompts for operator-facing features:**
 
 > Before editing, enumerate CLI, TUI keybindings, TUI cmdline, TUI popups, WebUI buttons/forms, WebUI cmdline, WASM bridge, shared cli/server/runner handling. For each, say "implemented", "not applicable", or "intentionally omitted because ...". Do not report "TUI/WebUI done" unless both their direct controls and command-entry surfaces were checked.
