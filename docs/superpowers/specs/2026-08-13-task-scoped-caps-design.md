@@ -395,15 +395,39 @@ All three clients, per the repo rule that a feature spans CLI, TUI and WebUI.
 
 - The `caps` cmdline command accepts a scope argument, stored alongside
   `App.sessionCaps` and shown in the same places.
-- The task list gains an operator-only re-grant action opening a prompt for
-  caps + scope, calling `set_caps` and reporting the affected count.
+- The task list gains a re-grant action opening a prompt for caps + scope,
+  calling `set_caps` and reporting the affected count. Unconditionally
+  visible — see below.
 
 **WebUI** (`webui/static/main.js`, `cmd/harness-webui-wasm`)
 
 - Scope input in the spawn dialog next to the existing caps input.
 - Scope column in the task table.
-- Re-grant action on the task detail view, hidden when the session is not an
-  operator connection.
+- Re-grant action on the task detail view. Unconditionally visible — see
+  below.
+
+**Why the re-grant action is not conditionally hidden.** The operator/agent
+split is made at the PSK gate, before the application layer sees the
+connection. `pskGate.binderKey` (`server/psk.go:110`) requires any
+`role=Client` connection whose `ClientHello.Kind` is not `agent` — that is
+cli, tui and webui — to prove `operatorPSK`, a secret deliberately never
+injected into an agent task's environment. `RecordClientIdentity`
+(`server/task_handler.go:186`) then populates `principals[cid]` only for
+`kind=agent`, so an accepted TUI or WebUI connection has a zero principal and
+`callerCaps` returns `Capability_All`.
+
+A non-operator TUI or WebUI session therefore does not exist: a client that
+cannot prove `operatorPSK` never reaches the app layer as `kind=webui` at all.
+Hiding the action on those surfaces would be gating on a state that cannot
+occur. `SetCapsStatus.not_operator` is reachable from exactly one place —
+`harness-cli` invoked inside a task, which connects as `kind=agent` — and that
+is where the gate does its work.
+
+One deployment caveat, pre-existing and named rather than addressed here: when
+`operatorPSK` is unset, `binderKey` falls back to the shared connect psk, which
+agents *do* hold, so an in-task agent could connect as `kind=webui` and be
+taken for an operator. That is the hole the separate operator secret exists to
+close, and no client-side check can substitute for configuring it.
 
 **Agent skills.** `runner/agentskills/supervising-workers/SKILL.md` is the
 `go:embed` source of truth and must be edited there, then mirrored to
