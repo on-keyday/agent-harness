@@ -1699,6 +1699,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return a, DoCancel(a.client, id, id)
 		}
+		// `a` re-grants the selected task's authority: focus jumps to the
+		// command line prefilled with `caps set <id> ` so the operator appends
+		// --caps / --scope and Enter routes through parseSetCaps → DoSetCaps.
+		// Unconditionally available — a TUI connection is an operator
+		// connection by construction (spec §7).
+		if a.focus == focusTasks && msg.String() == mainKeys.ReGrant {
+			id := a.tasks.SelectedID()
+			if id == "" {
+				a.cmdresult.Append(WarnStyle.Render("no task selected"))
+				return a, nil
+			}
+			a.setFocus(focusCmdline)
+			a.cmdline.SetValue("caps set " + id + " ")
+			a.cmdline.CursorEnd()
+			return a, nil
+		}
 		// `r` / `R` re-enter the selected session: reattach a live Detached
 		// session, or resume a finished task into a new detachable session.
 		// r resumes with --continue (keep claude's memory); R resumes fresh.
@@ -1899,6 +1915,11 @@ func (a *App) navigateCmdHistory(previous bool) bool {
 }
 
 func (a *App) cycleFocus(delta int) {
+	a.setFocus(focus((int(a.focus) + delta + numFocus) % numFocus))
+}
+
+// setFocus moves focus straight to one pane, blurring the rest.
+func (a *App) setFocus(f focus) {
 	a.runners.Blur()
 	a.tasks.Blur()
 	a.logs.Blur()
@@ -1906,7 +1927,7 @@ func (a *App) cycleFocus(delta int) {
 	a.cmdresult.Blur()
 	a.cmdline.Blur()
 
-	a.focus = focus((int(a.focus) + delta + numFocus) % numFocus)
+	a.focus = f
 
 	switch a.focus {
 	case focusRunners:
