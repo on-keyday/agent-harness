@@ -20,7 +20,17 @@ except Exception:
     cfg = {}
 cfg.setdefault("hasCompletedOnboarding", True)
 cfg.setdefault("theme", "dark")
-cfg.setdefault("projects", {}).setdefault(proj, {})["hasTrustDialogAccepted"] = True
+proj_cfg = cfg.setdefault("projects", {}).setdefault(proj, {})
+proj_cfg["hasTrustDialogAccepted"] = True
+# hasTrustDialogAccepted alone is NOT enough on claude 2.1.x when the worktree
+# carries a .claude/settings.json with permissions.allow (the harness injects
+# one for `Bash(harness-cli *)`): the folder still opens on "Quick safety check
+# … this folder pre-approves 1 tool permission". Verified against a container
+# whose config already had hasTrustDialogAccepted true before claude started.
+# Interactive then blocks until somebody answers; oneshot logs "Ignoring 1
+# permissions.allow entry … this workspace has not been trusted" and runs on
+# WITHOUT the injected rule.
+proj_cfg["hasCompletedProjectOnboarding"] = True
 json.dump(cfg, open(cfg_path, "w"))
 # ~/.claude/settings.json — suppress the one-time "Bypass Permissions mode"
 # acceptance prompt (skip-permissions runs unattended in the container).
