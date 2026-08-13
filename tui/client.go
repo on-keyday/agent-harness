@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -140,9 +141,13 @@ func shortTaskID(id string) string {
 
 // DoCancel issues a Cancel RPC over the existing persistent client.
 // resolved is the full hex id (callers resolve prefixes against tasksByID).
-// SetCapsResultMsg carries the outcome of a live re-grant.
+// SetCapsResultMsg carries the outcome of a live re-grant. Summary is the
+// human echo of what was written ("caps=… scope=…", omitting kept fields) —
+// the result line names the target and the change, because "1 task changed"
+// carries no information on the usual single-target call.
 type SetCapsResultMsg struct {
 	TaskID      string
+	Summary     string
 	Affected    []string
 	ConnsClosed uint32
 	Err         error
@@ -152,12 +157,20 @@ type SetCapsResultMsg struct {
 // client the TUI already holds (cli.SetCapsWith), not the dial-and-close
 // cli.SetCaps — a fresh connection would throw away the handshake for one RPC.
 func DoSetCaps(c *cli.Client, opts cli.SetCapsOpts) tea.Cmd {
+	var parts []string
+	if opts.Caps != nil {
+		parts = append(parts, "caps="+capsLabel(*opts.Caps))
+	}
+	if opts.Scope != nil {
+		parts = append(parts, "scope="+cli.ScopeLabel(*opts.Scope))
+	}
+	summary := strings.Join(parts, "  ")
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		res, err := cli.SetCapsWith(ctx, c, opts)
 		return SetCapsResultMsg{
-			TaskID: opts.TaskID, Affected: res.Affected,
+			TaskID: opts.TaskID, Summary: summary, Affected: res.Affected,
 			ConnsClosed: res.ConnsClosed, Err: err,
 		}
 	}

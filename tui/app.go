@@ -719,7 +719,20 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.cmdresult.Append(ErrorStyle.Render("caps set failed: " + msg.Err.Error()))
 			return a, nil
 		}
-		line := fmt.Sprintf("caps set: %d task(s) changed", len(msg.Affected))
+		// Name the target and the change — "1 task changed" says nothing on
+		// the usual single-target call. The count appears only when a cascade
+		// actually reached descendants.
+		short := msg.TaskID
+		if len(short) > 8 {
+			short = short[:8]
+		}
+		line := "caps set " + short
+		if msg.Summary != "" {
+			line += ": " + msg.Summary
+		}
+		if n := len(msg.Affected) - 1; n > 0 {
+			line += fmt.Sprintf("  (+%d descendant(s) clamped)", n)
+		}
 		if msg.ConnsClosed > 0 {
 			// Worth saying out loud: a narrowing tears down the affected tasks'
 			// live connections, so an attach or transfer they had open is gone.

@@ -2771,7 +2771,13 @@ const POLL_INTERVAL_MS = 5000;
       // and writing here left "caps set: …" sitting where "connected" lives.
       try {
         const res = await window.harness.setCaps(req);
-        let msg = "caps set: " + res.affected.length + " task(s) changed";
+        // Name the target and the change — "1 task changed" says nothing on
+        // the usual single-target call. The count appears only when a
+        // cascade actually reached descendants.
+        let msg = "caps set " + regrantTaskId.slice(0, 8) +
+          ": caps=" + capsLabelFor(regrantBits) + "  scope=" + req.scope;
+        const extra = res.affected.length - 1;
+        if (extra > 0) msg += `  (+${extra} descendant(s) clamped)`;
         if (res.connsClosed > 0) msg += ", " + res.connsClosed + " connection(s) closed";
         appendCmdOutput(msg);
         await refreshSnapshot();
@@ -3602,9 +3608,9 @@ const POLL_INTERVAL_MS = 5000;
       if (t.createdBy) metaText += `  by=${t.createdBy}`;
       if (t.resumedBy) metaText += `  resumed_by=${t.resumedBy}`;
       if (t.caps) metaText += `  caps=${t.caps}`;
-      // subtree is what almost every task has; only a narrowed or widened
-      // scope is worth the row width.
-      if (t.scope && t.scope !== "subtree") metaText += `  scope=${t.scope}`;
+      // Always shown, subtree included: hiding the default read as "this
+      // task has no scope", which is never true.
+      if (t.scope) metaText += `  scope=${t.scope}`;
       meta.textContent = metaText;
       if (t.errorMsg) {
         const err = document.createElement("span");

@@ -98,6 +98,7 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 		fmt.Fprintf(&sb, "resumed by:    %s\n", originCell(t.ResumedByKind))
 	}
 	fmt.Fprintf(&sb, "caps:          %s\n", cli.CapsLabel(t.Capabilities))
+	fmt.Fprintf(&sb, "scope:         %s\n", cli.ScopeLabel(t.Scope))
 	fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
 	if len(t.WorktreeDir) > 0 {
 		fmt.Fprintf(&sb, "worktree:      %s\n", string(t.WorktreeDir))
