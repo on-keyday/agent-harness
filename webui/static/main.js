@@ -271,6 +271,9 @@ const POLL_INTERVAL_MS = 5000;
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
   let spawnBase = "subtree"; // scope base radio state (spawn picker)
   const spawnScopeIds = new Set(); // checked task ids (spawn picker)
+  // Declared here (not beside the snapshot poller) because initCaps →
+  // initScope → the spawn checklist reads it before the poller section runs.
+  let lastTasks = [];        // latest snapshot; re-render source for filter events
 
   // sessionReq builds the ONE request object shape the harness.submit /
   // harness.startInteractive wasm bridges consume. Every session request goes
@@ -331,7 +334,6 @@ const POLL_INTERVAL_MS = 5000;
     all:      document.getElementById("task-chip-all"),
   };
   let taskStatusFilter = "active"; // "active" | "finished" | "all"
-  let lastTasks = [];              // latest snapshot; re-render source for filter events
   let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
   for (const [key, btn] of Object.entries(taskChips)) {
     btn.addEventListener("click", () => {

@@ -532,6 +532,25 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   white-space: nowrap;
 }
 .regrant-modal .picker-form { min-width: min(26rem, 90vw); max-width: min(34rem, 94vw); }
+/* The mobile stacked-form rules (#compose label/input block, width:100%)
+   split a radio/checkbox from its text; the scope picker's controls must
+   keep their inline pairing. */
+@media (max-width: 600px) {
+    #compose .scope-base-row label {
+        display: inline-block;
+        margin: 0 0.8rem 0 0;
+    }
+    #compose .scope-base-row input[type="radio"],
+    #compose .task-checklist input[type="checkbox"] {
+        display: inline;
+        width: auto;
+        padding: 0;
+    }
+    #compose .task-checklist label {
+        display: block;
+        margin: 0.1rem 0;
+    }
+}
 .regrant-flag {
   display: block;
   font-family: monospace;
