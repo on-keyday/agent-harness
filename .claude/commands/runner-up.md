@@ -25,9 +25,9 @@ Arguments: $ARGUMENTS
    | tag          | default flags                                                                                                              | target |
    |--------------|----------------------------------------------------------------------------------------------------------------------------|--------|
    | `bash`       | `--agents bash --no-worktree --roots $HOME/workspace` (bin+argv from `scripts/agent_presets.py`) | Linux / macOS shell runner |
-   | `cmd`        | `--no-worktree --claude-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
-   | `powershell` | `--no-worktree --claude-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
-   | `sandbox`    | `--claude-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --claude-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
+   | `cmd`        | `--no-worktree --agent-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
+   | `powershell` | `--no-worktree --agent-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
+   | `sandbox`    | `--agent-bin $HARNESS_REPO_PATH/scripts/sandbox/claude-in-podman.sh --agent-args "--dangerously-skip-permissions"`        | Linux rootless-podman confinement (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
 
@@ -39,10 +39,10 @@ Arguments: $ARGUMENTS
    built once via `scripts/sandbox/build.sh`. one-shot is verified; interactive
    is bridged via a conditional `podman -t` (worth confirming on real use; see
    `scripts/sandbox/README.md`). The preset
-   defaults `--claude-args "--dangerously-skip-permissions"` — safe here because
+   defaults `--agent-args "--dangerously-skip-permissions"` — safe here because
    the container is the boundary and keep-id runs claude non-root (so the flag is
    accepted); the wrapper itself stays a pure pass-through. Optional wrapper
-   controls, passed the same way (`--claude-arg` / `--claude-args`): `--firewall`
+   controls, passed the same way (`--agent-arg` / `--agent-args`): `--firewall`
    (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works),
    `--omit-harness-cli` (drop the control-plane bridge for full isolation), and
@@ -67,7 +67,7 @@ Arguments: $ARGUMENTS
      interactive-only.
    - `resume_conversation` interactive invokes `resume --last` (codex does
      not take `--continue`).
-   - `{args}` = runner-global `--claude-args` + per-task `--claude-arg`;
+   - `{args}` = runner-global `--agent-args` + per-task `--agent-arg`;
      `{prompt}` = the one-shot prompt as a single argv element. Templates are
      shlex-split and executed via argv, not a shell.
 
@@ -94,7 +94,7 @@ Arguments: $ARGUMENTS
    `--agents bash` emits only that bin+argv; a real bash slot still needs
    `--no-worktree` and `--roots` (see the table row).
 
-   **Windows: always specify `--claude-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
+   **Windows: always specify `--agent-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 
    **Use forward slashes (`/`) in Windows paths**, not backslashes. The agent (claude) sometimes executes shell commands via git-bash on Windows, where backslashes in path literals get interpreted as escape sequences and produce subtly broken commands. Forward slashes are accepted by every Windows shell (cmd, powershell, git-bash) and every Windows API that takes a path string, so they are the safe portable form. Do not "normalize" the slashes back to `\` when writing into this file or into command lines.
 
@@ -121,9 +121,9 @@ Arguments: $ARGUMENTS
          --max-tasks <N> \
          [--hostname <label>] \
          [--no-worktree] \
-         [--claude-bin <path>] \
+         [--agent-bin <path>] \
          [--psk-file <path>] \
-         [--claude-args "<...>"] \
+         [--agent-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
@@ -139,9 +139,9 @@ Arguments: $ARGUMENTS
          --max-tasks <N> \
          [--hostname <label>] \
          [--no-worktree] \
-         [--claude-bin <path>] \
+         [--agent-bin <path>] \
          [--psk-file <path>] \
-         [--claude-args "<...>"] \
+         [--agent-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \

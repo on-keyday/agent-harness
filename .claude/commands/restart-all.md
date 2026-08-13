@@ -79,7 +79,7 @@ skip.
    The runner does **not** re-spawn the session on restart: `/restart-all`
    cycles runners, not sessions, and the new runner comes up idle. Your session
    returns only when a **human** resumes it through a client (TUI/WebUI/CLI) — a
-   resume RPC, optionally `--claude-arg --continue` to also reload claude's prior
+   resume RPC, optionally `--agent-arg --continue` to also reload claude's prior
    conversation. `--continue` is a *silent history reload* that injects no
    user-side message, so a literal `continue` turn is the human operator typing
    it, never an auto-generated token. Either way a resumed / `continue` turn

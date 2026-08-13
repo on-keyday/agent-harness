@@ -57,8 +57,8 @@
             "args": [
                 "--server=127.0.0.1:8539",
                 "--repo=${workspaceFolder}",
-                "--claude-bin=claude",
-                "--claude-args=--dangerously-skip-permissions"
+                "--agent-bin=claude",
+                "--agent-args=--dangerously-skip-permissions"
             ]
         }
     ]

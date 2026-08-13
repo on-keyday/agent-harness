@@ -309,7 +309,7 @@ isolated checkout. Two flags adjust this:
 - `--no-worktree`: skip worktree creation and run each task directly
   in the bound repo path (the request's `--repo`, which must match
   `--roots`). Intended for generic-process workloads (e.g.
-  `--claude-bin bash`). Disables `.claude/settings.json` and
+  `--agent-bin bash`). Disables `.claude/settings.json` and
   `.claude/skills/` injection by default — agentboard hooks are not
   auto-installed in this mode. The user's repo is left untouched on
   task end (no `git worktree remove` is ever called). `HARNESS_*`
@@ -377,12 +377,12 @@ An **opt-in** kit under `scripts/sandbox/` runs a runner's spawned
 `claude` inside a **rootless podman** container instead of directly on
 the host, to shrink the blast radius of an agent run with
 `--dangerously-skip-permissions`. It needs no harness core changes — it
-plugs in through the existing `--claude-bin` seam:
+plugs in through the existing `--agent-bin` seam:
 
 ```bash
 scripts/sandbox/build.sh                       # build harness-claude-sandbox:latest
 scripts/runner.sh up --as sandboxed \
-  --claude-bin "$PWD/scripts/sandbox/claude-in-podman.sh" \
+  --agent-bin "$PWD/scripts/sandbox/claude-in-podman.sh" \
   --roots "$HOME/workspace/<repo>"
 ```
 
@@ -394,7 +394,7 @@ root (worktree + shared `.git`) and, in the default **mount auth** mode,
 exposes the refresh token to the container). **Token auth** (a
 dedicated revocable `CLAUDE_CODE_OAUTH_TOKEN`, no `~/.claude` mount)
 removes that exposure but disables resume. Egress is open by default;
-`--claude-arg --firewall` applies a default-deny iptables+ipset
+`--agent-arg --firewall` applies a default-deny iptables+ipset
 allowlist, and `--firewall-proxy` routes egress through an in-container
 allowlisting CONNECT proxy (raw sockets blocked, WebFetch works).
 
@@ -503,7 +503,7 @@ Run WS+UDP dualstack if you want both.
   CWD, not a chroot. Single-user dogfood deployments only; do not point
   the broker at networks you do not control. See the trust model section
   in `runner/agentskills/harness-cli/SKILL.md`. An **opt-in** rootless
-  podman confinement is available via the `--claude-bin` seam — see
+  podman confinement is available via the `--agent-bin` seam — see
   **Sandboxing** below.
 - **Agent CLI integration is argv-template based.** The runner spawns
   `claude` by default and its default templates target Claude Code
@@ -571,7 +571,7 @@ scripts/              {runner,server,restart}.{py,sh} daemon lifecycle helpers (
                       and restarts every alive runner, self last.
 scripts/sandbox/      opt-in rootless-podman confinement kit for spawned claude
                       (Containerfile + claude-in-podman.sh wrapper + egress
-                      firewall / CONNECT-proxy); plugs in via --claude-bin
+                      firewall / CONNECT-proxy); plugs in via --agent-bin
 examples/             notify-hook samples (e.g. Discord webhook relay)
 testdata/             fake-claude.sh used by tests
 integration/          end-to-end smoke test (build tag: integration)

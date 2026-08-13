@@ -3,7 +3,7 @@
 Run a runner's spawned `claude` confined inside a **rootless podman** container
 instead of directly on the host, to shrink the blast radius of an agent that
 runs with `--dangerously-skip-permissions`. No harness core changes: it plugs in
-through the existing `--claude-bin` seam.
+through the existing `--agent-bin` seam.
 
 ## Why podman (not docker)
 
@@ -35,11 +35,11 @@ tools (`iptables`/`ipset`/`iproute2`/`dnsutils`/`aggregate`/`jq`/`gosu`) +
 
 ## Use it from a runner
 
-Point `--claude-bin` at the wrapper; the runner spawns claude through podman:
+Point `--agent-bin` at the wrapper; the runner spawns claude through podman:
 
 ```sh
 scripts/runner.sh up --as sandboxed \
-  --claude-bin "$PWD/scripts/sandbox/claude-in-podman.sh" \
+  --agent-bin "$PWD/scripts/sandbox/claude-in-podman.sh" \
   --roots "$HOME/workspace/<repo>"
 ```
 
@@ -120,11 +120,11 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
     spawn or file-write.
 
   For full control-plane removal (no harness-cli at all inside the container),
-  use `--claude-arg --omit-harness-cli` / `--claude-args "--omit-harness-cli"`.
+  use `--agent-arg --omit-harness-cli` / `--agent-args "--omit-harness-cli"`.
   (Bridge assumes the server is directly reachable; behind
   `HARNESS_PROXY_VIA_RUNNER` it would need `--network=host` — not handled yet.)
 - **Network: open by default; opt-in egress allowlist via `--firewall`.** Pass
-  `--claude-arg --firewall` (or runner `--claude-args "--firewall"`) to apply a
+  `--agent-arg --firewall` (or runner `--agent-args "--firewall"`) to apply a
   default-deny iptables+ipset allowlist inside the container — GitHub IP ranges
   (api.github.com/meta) + npm/anthropic/pypi + the harness server, IPv6 blocked,
   everything else REJECTed. Adapted from Anthropic's `init-firewall.sh`; runs as
