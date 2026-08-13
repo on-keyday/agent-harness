@@ -20,17 +20,20 @@ except Exception:
     cfg = {}
 cfg.setdefault("hasCompletedOnboarding", True)
 cfg.setdefault("theme", "dark")
-proj_cfg = cfg.setdefault("projects", {}).setdefault(proj, {})
-proj_cfg["hasTrustDialogAccepted"] = True
-# hasTrustDialogAccepted alone is NOT enough on claude 2.1.x when the worktree
-# carries a .claude/settings.json with permissions.allow (the harness injects
-# one for `Bash(harness-cli *)`): the folder still opens on "Quick safety check
-# … this folder pre-approves 1 tool permission". Verified against a container
-# whose config already had hasTrustDialogAccepted true before claude started.
-# Interactive then blocks until somebody answers; oneshot logs "Ignoring 1
-# permissions.allow entry … this workspace has not been trusted" and runs on
-# WITHOUT the injected rule.
-proj_cfg["hasCompletedProjectOnboarding"] = True
+# NOTE: this clears the plain trust dialog, but NOT the variant claude 2.1.x
+# shows when the folder's .claude/settings.json carries permissions.allow — the
+# harness injects one for `Bash(harness-cli *)`, so every interactive sandbox
+# session opens on "Quick safety check … this folder pre-approves 1 tool
+# permission" and waits. Measured, not guessed: a container inspected before any
+# input already had hasTrustDialogAccepted true, and answering the dialog
+# changed NOTHING on disk (same container, before/after diff of ~/.claude.json
+# and the whole ~/.claude tree). The acceptance is not persisted, so no seedable
+# key exists to pre-set — seeding hasCompletedProjectOnboarding was tried and
+# did not clear it. Removing the trigger (the injected permissions.allow, which
+# --dangerously-skip-permissions makes redundant anyway) is the only fix that
+# would work; oneshot is unaffected because it cannot prompt and just logs
+# "Ignoring 1 permissions.allow entry".
+cfg.setdefault("projects", {}).setdefault(proj, {})["hasTrustDialogAccepted"] = True
 json.dump(cfg, open(cfg_path, "w"))
 # ~/.claude/settings.json — suppress the one-time "Bypass Permissions mode"
 # acceptance prompt (skip-permissions runs unattended in the container).
