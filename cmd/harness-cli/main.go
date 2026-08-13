@@ -193,6 +193,10 @@ func main() {
 			runCapsSet(ctx, parseCID(), args[1:])
 			return
 		}
+		if len(args) > 0 && args[0] == "set-parent" {
+			runCapsSetParent(ctx, parseCID(), args[1:])
+			return
+		}
 		fs := flag.NewFlagSet("caps", flag.ExitOnError)
 		asJSON := fs.Bool("json", false, "output the capability catalog as JSON")
 		fs.Parse(args)
@@ -1203,6 +1207,57 @@ func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []str
 	}
 	fmt.Fprintf(os.Stderr, "changed %d task(s); closed %d connection(s)\n",
 		len(res.Affected), res.ConnsClosed)
+}
+
+// runCapsSetParent backs `harness-cli caps set-parent <task-id>`: an
+// operator-only re-point of a live task's parent link (the edge subtree
+// scopes walk), or --swap to invert the task with its current parent. Caps
+// and scope are untouched — `caps set` is the verb that changes authority.
+func runCapsSetParent(ctx context.Context, serverCID objproto.ConnectionID, args []string) {
+	fs := flag.NewFlagSet("caps set-parent", flag.ExitOnError)
+	parentFlag := fs.String("parent", "", "new parent task id (32 hex); the target and its whole subtree move under it")
+	noneFlag := fs.Bool("none", false, "detach the task to the operator root")
+	swapFlag := fs.Bool("swap", false, "invert the task with its CURRENT parent: the task takes the parent's place and the parent becomes its child")
+	// Interspersed parse, same as runCapsSet: Go's flag package stops at the
+	// first non-flag argument, so `caps set-parent <id> --swap` would silently
+	// leave --swap unset with the id in front.
+	var positional []string
+	for rest := args; ; {
+		if err := fs.Parse(rest); err != nil {
+			os.Exit(2)
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+
+	usage := func() {
+		fmt.Fprintln(os.Stderr, "  usage: harness-cli caps set-parent <task-id> (--parent <task-id> | --none | --swap)")
+		os.Exit(2)
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(os.Stderr, "caps set-parent: exactly one task id required")
+		usage()
+	}
+	picked := 0
+	for _, on := range []bool{*parentFlag != "", *noneFlag, *swapFlag} {
+		if on {
+			picked++
+		}
+	}
+	if picked != 1 {
+		fmt.Fprintln(os.Stderr, "caps set-parent: pass exactly one of --parent <task-id>, --none, --swap")
+		usage()
+	}
+
+	opts := cli.SetParentOpts{TaskID: positional[0], ParentID: *parentFlag, Swap: *swapFlag}
+	res, err := cli.SetParent(ctx, serverCID, opts)
+	if err != nil {
+		die(err)
+	}
+	fmt.Println(cli.SetParentMessage(opts, res))
 }
 
 // runFileEdit pulls a worktree file, opens it in $EDITOR, and writes it back.

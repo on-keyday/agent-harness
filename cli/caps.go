@@ -146,7 +146,10 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 	}
 
 	_, err := fmt.Fprint(w, "\nA capability names a verb; a scope names which tasks it may target.\n"+
-		"Both attenuate on spawn, and `caps set` re-grants either on a live task.\n")
+		"Both attenuate on spawn, and `caps set` re-grants either on a live task.\n"+
+		"subtree membership follows the task's parent link (who spawned whom);\n"+
+		"`caps set-parent` re-points that link on a live task (--swap inverts\n"+
+		"the task with its current parent) without touching caps or scope.\n")
 	return err
 }
 
