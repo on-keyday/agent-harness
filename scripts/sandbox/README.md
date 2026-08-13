@@ -152,6 +152,20 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   GitHub gist, since `github.com` is allowlisted). Trim the allowlist for
   sensitive tasks; full DLP would need a MITM proxy (out of scope).
 
+### Verifying the above, instead of trusting it
+
+`probe.sh` runs **inside** the container and reports the measured state of every
+claim in this section — what the mounts actually expose, whether host processes
+are visible, which egress succeeds (it probes one allowlisted target *and* one
+that must be refused), and what caps the server grants the bridged control plane.
+Run it as a task on the sandbox slot; `--topic` also publishes the report to the
+agentboard so a supervising agent needn't read logs:
+
+```sh
+harness-cli submit --repo <sandbox-root> \
+  --task 'bash scripts/sandbox/probe.sh --topic chat.<your-task-id>'
+```
+
 ## Scope / roadmap
 
 - **one-shot / print mode (`claude -p`):** rootless, keep-id, FS confinement.
