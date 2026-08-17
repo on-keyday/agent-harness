@@ -73,13 +73,14 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		type topicRow struct {
 			name      string
 			msgs      int
+			retracted int
 			lastSeq   uint64
 			lastMs    uint64
 			published bool
 		}
 		byName := map[string]topicRow{}
 		for _, r := range rows {
-			byName[r.Name] = topicRow{r.Name, r.MsgCount, r.LastSeq, r.LastPublishedAtMs, true}
+			byName[r.Name] = topicRow{r.Name, r.MsgCount, r.RetractedCount, r.LastSeq, r.LastPublishedAtMs, true}
 		}
 		for pat := range subs {
 			if _, ok := byName[pat]; !ok {
@@ -101,8 +102,17 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 				fmt.Fprintf(out, "%s  msgs=0%s  (nothing published yet)\n", r.name, subCol)
 				continue
 			}
-			fmt.Fprintf(out, "%s  msgs=%d%s  last_seq=%d  last=%s\n",
-				r.name, r.msgs, subCol, r.lastSeq, boardMsToRFC3339(r.lastMs))
+			// retracted= appears only when the topic holds withdrawn messages.
+			// It is NOT part of msgs=: msgs answers "how much would a
+			// subscriber receive", so a topic whose ring emptied through
+			// retraction must read msgs=0 while still showing what is there to
+			// audit.
+			retractedCol := ""
+			if r.retracted > 0 {
+				retractedCol = fmt.Sprintf("  retracted=%d", r.retracted)
+			}
+			fmt.Fprintf(out, "%s  msgs=%d%s%s  last_seq=%d  last=%s\n",
+				r.name, r.msgs, retractedCol, subCol, r.lastSeq, boardMsToRFC3339(r.lastMs))
 		}
 
 	case "read":
@@ -144,9 +154,17 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			if m.InReplyTo != 0 {
 				re = fmt.Sprintf(" re=%d", m.InReplyTo)
 			}
-			fmt.Fprintf(out, "#%d%s from=%s host=%s agent=%s size=%d at=%s\n",
+			// Same rule as re= above: the marker prints only when it applies.
+			// A retracted= on every live line would be noise, and this row is
+			// the only place a withdrawn message is visible at all — the agent
+			// paths dropped it the moment its author called retract.
+			retracted := ""
+			if m.Retracted {
+				retracted = fmt.Sprintf(" RETRACTED at=%s", boardMsToRFC3339(m.RetractedAtMs))
+			}
+			fmt.Fprintf(out, "#%d%s from=%s host=%s agent=%s size=%d at=%s%s\n",
 				m.Seq, re, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
-				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs))
+				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs), retracted)
 			if json.Valid(m.Payload) {
 				var buf bytes.Buffer
 				_ = json.Indent(&buf, m.Payload, "", "  ")

@@ -4015,7 +4015,14 @@ const POLL_INTERVAL_MS = 5000;
           const lastTime = t.lastPublishedAtMs
             ? new Date(t.lastPublishedAtMs).toISOString()
             : "-";
-          metaSpan.textContent = `msgs=${t.msgCount}${subs}  last=${lastTime}`;
+          // retracted= shows only when the topic holds withdrawn messages, and
+          // is never folded into msgs= — that count answers "how much would a
+          // subscriber receive", so a topic emptied by retraction reads msgs=0
+          // while still saying there is something here to audit.
+          const retracted = t.retractedCount
+            ? `  retracted=${t.retractedCount}`
+            : "";
+          metaSpan.textContent = `msgs=${t.msgCount}${retracted}${subs}  last=${lastTime}`;
         } else {
           metaSpan.textContent = `msgs=0${subs}  (nothing published yet)`;
         }
@@ -4060,6 +4067,12 @@ const POLL_INTERVAL_MS = 5000;
       for (const m of r.msgs) {
         const card = document.createElement("div");
         card.className = "board-msg";
+        // A message its author withdrew (agent retract). It reaches no agent
+        // any more; this pane is the only place it still exists, so it is
+        // marked and dimmed rather than hidden — hiding it would give the
+        // operator the same blank the agents get, which defeats the point of
+        // keeping it.
+        if (m.retracted) card.classList.add("board-msg-retracted");
 
         const hdr = document.createElement("div");
         hdr.className = "board-msg-header";
@@ -4095,6 +4108,16 @@ const POLL_INTERVAL_MS = 5000;
           ? new Date(m.receivedAtMs).toISOString()
           : "-";
 
+        // Same rule as re= above: the badge appears only when it applies.
+        const retractedSpan = document.createElement("span");
+        retractedSpan.className = "board-msg-retracted-badge";
+        if (m.retracted) {
+          const when = m.retractedAtMs
+            ? new Date(m.retractedAtMs).toISOString()
+            : "-";
+          retractedSpan.textContent = `RETRACTED ${when}`;
+        }
+
         const purgeBtn = document.createElement("button");
         purgeBtn.className = "board-msg-purge";
         purgeBtn.textContent = "✕";
@@ -4116,6 +4139,7 @@ const POLL_INTERVAL_MS = 5000;
         hdr.appendChild(hostSpan);
         hdr.appendChild(agentSpan);
         hdr.appendChild(timeSpan);
+        if (retractedSpan.textContent) hdr.appendChild(retractedSpan);
         hdr.appendChild(purgeBtn);
 
         const pre = document.createElement("pre");

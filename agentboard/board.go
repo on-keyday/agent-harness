@@ -418,6 +418,72 @@ func (b *Board) ListRetained(name string) (msgs []RetainedMessage, found bool) {
 	return t.snapshot(), true
 }
 
+// ListRetracted returns the topic's withdrawn messages — the ones an author
+// retracted. found reports whether the topic exists.
+//
+// It is a separate call from ListRetained rather than a flag on it because the
+// board is the storage layer and deciding who may see a message is a
+// protocol-level call, the same split Retained and Send already use. The
+// operator handlers ask for both and merge; every agent-facing handler asks
+// for neither, and gets the live ring through ListRetained.
+func (b *Board) ListRetracted(name string) (msgs []RetainedMessage, found bool) {
+	b.mu.Lock()
+	t, ok := b.topics[name]
+	b.mu.Unlock()
+	if !ok {
+		return nil, false
+	}
+	return t.snapshotRetracted(), true
+}
+
+// RetractedCount reports how many withdrawn messages a topic holds. found
+// reports whether the topic exists.
+func (b *Board) RetractedCount(name string) (n int, found bool) {
+	b.mu.Lock()
+	t, ok := b.topics[name]
+	b.mu.Unlock()
+	if !ok {
+		return 0, false
+	}
+	return t.retractedCount(), true
+}
+
+// RetractSeq withdraws the message with this seq when by published it: the
+// entry leaves the live ring — and so every agent-facing read — and moves to
+// the topic's withdrawn list, where only the operator surfaces look.
+//
+// It returns the topic the message was on, for logging. ok is false when no
+// live ring holds that seq (never published, rotated out, already withdrawn,
+// purged) AND when the seq belongs to somebody else; callers must answer both
+// with the same status, or the reply confirms the existence of any seq on any
+// ring the caller cannot name.
+//
+// Like LookupSeq this is a full scan of every ring, and for the same reason: a
+// seq -> topic index would have to be invalidated in seven places now, and a
+// missed one desynchronizes it intermittently. See LookupSeq for the cost
+// bound.
+func (b *Board) RetractSeq(seq uint64, by protocol.TaskID) (topicName string, ok bool) {
+	if seq == 0 || by.Id == ([16]byte{}) {
+		return "", false
+	}
+	now := time.Now()
+	b.mu.Lock()
+	names := make([]string, 0, len(b.topics))
+	tps := make([]*topic, 0, len(b.topics))
+	for n, t := range b.topics {
+		names = append(names, n)
+		tps = append(tps, t)
+	}
+	b.mu.Unlock()
+
+	for i, t := range tps {
+		if t.retract(seq, by, now) {
+			return names[i], true
+		}
+	}
+	return "", false
+}
+
 // LookupSeq resolves a published seq to the topic whose ring still retains it
 // and the task that published it. ok is false for seq 0, for a seq that was
 // never published, and for one whose entry has since left its ring (count

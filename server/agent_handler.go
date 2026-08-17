@@ -90,6 +90,8 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		s.agentHandleListRetained(conn, ac, msg.ListRetained())
 	case agentboard.AgentMessageKind_ReadSeq:
 		s.agentHandleReadSeq(conn, ac, msg.ReadSeq())
+	case agentboard.AgentMessageKind_Retract:
+		s.agentHandleRetract(conn, ac, msg.Retract())
 	}
 }
 
@@ -604,6 +606,41 @@ func (s *Server) agentHandlePurge(conn ConnHandle, ac *agentConn, r *agentboard.
 		return
 	}
 	reply(agentboard.PurgeStatus_Ok, 1)
+}
+
+// agentHandleRetract withdraws one message the CALLER published. The withdrawn
+// message leaves every agent-facing path (deliver / inbox / wait / read_seq /
+// list_retained) and stays only on the operator surfaces, so a task can drop a
+// spent instruction at agent speed without shrinking the window a human has to
+// audit what was said.
+//
+// There is NO capability gate here, and that is the design rather than an
+// omission. Purge needs Capability_Purge because it can destroy a topic full
+// of other agents' unread messages; retract reaches exactly the bytes the
+// caller wrote and nothing else, so the authority argument is authorship, not
+// a grantable bit. The gate lives in Board.RetractSeq, which matches FromTask
+// against the caller's authenticated task id.
+//
+// Both failure modes answer not_found — see RetractStatus in agentboard.bgn
+// for why "not yours" must not be distinguishable.
+func (s *Server) agentHandleRetract(conn ConnHandle, ac *agentConn, r *agentboard.RetractRequest) {
+	if !ac.helloed || r == nil {
+		return
+	}
+	reply := func(status agentboard.RetractStatus) {
+		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_RetractResponse}
+		resp.SetRetractResponse(agentboard.RetractResponse{RequestId: r.RequestId, Status: status})
+		s.sendAgent(conn, resp)
+	}
+
+	_, tid, _, _ := ac.state.Identity()
+	topic, ok := s.Board.RetractSeq(r.Seq, tid)
+	if !ok {
+		reply(agentboard.RetractStatus_NotFound)
+		return
+	}
+	slog.Info("agent retract", "task_id", hex.EncodeToString(tid.Id[:]), "seq", r.Seq, "topic", topic)
+	reply(agentboard.RetractStatus_Ok)
 }
 
 // agentHandleListRetained returns a topic's retained ring as metadata only (no

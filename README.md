@@ -347,6 +347,16 @@ task*; `info_global` widens only what may be SEEN, never what may be
 done. Both halves are visible per task in `ls`, `whoami`, the TUI
 detail popup, and the WebUI task rows.
 
+Not everything an agent can destroy is a capability. `agent retract
+<seq>` withdraws a message the caller itself published — the server
+checks authorship, not a bit, because the operation cannot reach bytes
+the caller did not write. A withdrawn message disappears from every
+agent-facing path but stays on the operator surfaces (`board read`, the
+TUI board view, the WebUI board panel) marked as retracted, so an agent
+withdrawing in seconds cannot shrink the window a human has to audit it.
+`purge` remains capability-gated: it erases the bytes outright,
+including from that operator view.
+
 ```bash
 bin/harness-cli caps                       # capability names + scope forms
 bin/harness-cli submit --repo /abs/repo --task "..." --caps none

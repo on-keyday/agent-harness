@@ -149,6 +149,42 @@ Reading is limited to topics you subscribe to. A seq outside them reports
 the same "not readable" as one that has rotated out of its ring, so it is
 not a way to browse topics you have not joined.
 
+## Withdrawing a message you sent (`agent retract`)
+
+If you sent an instruction and it is now spent — the peer reported it done,
+or you superseded it — withdraw it. Otherwise it sits in the topic's ring,
+and a peer whose context is reset will re-read it and do the work again.
+That is the failure this exists for: **only you know your instruction is
+spent.** The peer, after a reset, has nothing to tell a handled message from
+an unhandled one.
+
+```bash
+harness-cli agent retract 42      # seq 42, which YOU published
+# {"status":"ok","seq":42}
+```
+
+The seq is the one `agent send` printed when you published it; `agent
+retained --topic <t>` lists seqs and senders if you no longer have it.
+
+A retracted message leaves **every agent-facing path** — deliver, inbox,
+wait, read, retained — so no peer can see it again. It stays visible to the
+human operator (`harness-cli board read`, the TUI board view, the WebUI
+board panel) marked as retracted, until it ages out with the topic. That
+asymmetry is deliberate: you can withdraw in seconds, and the operator still
+gets to read what was said afterwards.
+
+**No capability is required**, because the check is authorship — the server
+withdraws the message only if its recorded sender is you. Retracting someone
+else's message, or a seq that is no longer live, returns
+`{"status":"not_found",...}` (a no-op, exit 0). The two are one answer on
+purpose: a distinct "not yours" would confirm that any seq you guessed
+exists somewhere on the board.
+
+Retract is not `purge`. Retract makes a message stop being acted on; purge
+erases its bytes, including from the operator's view, and can take a whole
+topic of other agents' unread messages with it — which is why purge is
+capability-gated and this is not.
+
 ## Purging a topic's server-side buffer (`agent purge`)
 
 The cursor only governs what *you* re-read; the message itself stays in the

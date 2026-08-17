@@ -34,6 +34,8 @@ enum AgentMessageKind:
     list_retained_response
     read_seq
     read_seq_response
+    retract
+    retract_response
 
 enum HelloStatus:
     :u8
@@ -264,6 +266,44 @@ format ReadSeqResponse:
     msgs_len :u16
     msgs :[msgs_len]DeliveredMessage
 
+# RetractRequest withdraws ONE message the CALLER published, named by its
+# board-global seq. Withdrawal is a LOGICAL delete: the message leaves every
+# agent-facing path (deliver / inbox / wait / read_seq / list_retained) but
+# stays readable on the operator surfaces (harness-cli board read, TUI, WebUI)
+# until it ages out like anything else. That asymmetry is the point — an agent
+# can withdraw a stale instruction in seconds without shrinking the window a
+# human has to audit what was said.
+#
+# The problem it solves: a task whose context was reset re-reads a topic's
+# retained ring and re-executes instructions it already carried out. The
+# knowledge that an instruction is spent lives with its SENDER, not with the
+# reset recipient, so the withdrawal has to be the sender's to make.
+#
+# No capability gate. The gate is AUTHORSHIP — the server compares the stored
+# message's from_task against the caller's authenticated task id and refuses
+# otherwise, so a retract can never destroy something the caller did not write.
+# Capability.purge stays the gate for PurgeRequest, which erases the bytes for
+# real; that remains the escape hatch for a payload which must not survive at
+# all (a leaked credential), and it reaches retracted messages too.
+format RetractRequest:
+    request_id :u32
+    seq :u64
+
+enum RetractStatus:
+    :u8
+    ok
+    # not_found deliberately merges "no live message carries that seq" (never
+    # published, rotated out of its ring, already retracted, purged) with
+    # "published by somebody else", exactly as ReadSeqStatus.not_found merges
+    # its two cases. seq is board-global and consecutive, so a separate
+    # "not yours" answer would confirm the existence of any seq on any ring —
+    # an enumeration oracle over topics the caller can neither name nor read.
+    not_found
+
+format RetractResponse:
+    request_id :u32
+    status :RetractStatus
+
 format AgentMessage:
     kind :AgentMessageKind
     match kind:
@@ -287,4 +327,6 @@ format AgentMessage:
         AgentMessageKind.list_retained_response => list_retained_response :ListRetainedResponse
         AgentMessageKind.read_seq => read_seq :ReadSeqRequest
         AgentMessageKind.read_seq_response => read_seq_response :ReadSeqResponse
+        AgentMessageKind.retract => retract :RetractRequest
+        AgentMessageKind.retract_response => retract_response :RetractResponse
         .. => error("Unexpected agent message kind")

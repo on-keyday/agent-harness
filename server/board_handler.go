@@ -2,6 +2,7 @@ package server
 
 import (
 	"log/slog"
+	"sort"
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -22,6 +23,16 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 			row.MsgCount = 65535
 		} else {
 			row.MsgCount = uint16(r.MsgCount)
+		}
+		// Withdrawn messages are counted separately, never folded into
+		// MsgCount: MsgCount answers "how much would a subscriber receive",
+		// which is what every agent-facing path reports.
+		if n, found := h.Board.RetractedCount(r.Name); found {
+			if n > 65535 {
+				row.RetractedCount = 65535
+			} else {
+				row.RetractedCount = uint16(n)
+			}
 		}
 		out.Topics = append(out.Topics, row)
 	}
@@ -88,6 +99,16 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		respond(protocol.BoardStatus_NotFound, 0, nil)
 		return
 	}
+	// The operator sees live AND withdrawn messages, in one seq-ordered list.
+	// This is the only surface that reads the withdrawn list: an author can
+	// retract in seconds, and if that also emptied the operator's view there
+	// would be no window left in which to audit what was said. Merging here
+	// rather than in the board keeps the storage layer neutral about who may
+	// see what (see agentboard.Board.Retained).
+	if withdrawn, ok := h.Board.ListRetracted(topic); ok && len(withdrawn) > 0 {
+		msgs = append(msgs, withdrawn...)
+		sort.Slice(msgs, func(i, j int) bool { return msgs[i].Seq < msgs[j].Seq })
+	}
 	rows := make([]protocol.BoardMessageRow, 0, len(msgs))
 	payloads := make([][]byte, 0, len(msgs))
 	for _, m := range msgs {
@@ -104,6 +125,10 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		}
 		row.SetFromHostname([]byte(m.FromHostname))
 		row.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		if !m.RetractedAt.IsZero() {
+			row.SetRetracted(true)
+			row.RetractedAtUnixMs = uint64(m.RetractedAt.UnixMilli())
+		}
 		rows = append(rows, row)
 		payloads = append(payloads, m.Payload)
 	}

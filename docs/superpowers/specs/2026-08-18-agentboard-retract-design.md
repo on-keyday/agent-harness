@@ -1,0 +1,336 @@
+# Sender-side retraction on the agentboard (`retract`)
+
+Date: 2026-08-18
+
+## Problem
+
+- **The board retains, but nothing consumes.** A published message stays in
+  its topic's ring until the ring overflows or the topic is evicted
+  (`agentboard/topic.go:46-66`). The only "already handled" marker in the
+  system is a client-side cursor file,
+  `~/.cache/harness/agent-cursor-<task-id>` (`cli/agent/cursor.go:13-27`),
+  advanced by the `UserPromptSubmit` hook (`runner/settings.go:38`). The
+  server never sees it and the ring is not touched by it.
+
+- **So a context reset resurfaces spent instructions.** The cursor survives
+  the reset — it is on disk, keyed by task id — but the *content* it
+  guarded lived only in the agent's context. Three paths hand the same
+  messages back to a task that no longer remembers acting on them:
+
+  1. `agent inbox --since-last` without `--commit` reads from the **prev**
+     snapshot, deliberately re-emitting the batch the hook last delivered
+     (`cli/agent/inbox.go:20-27,70-82`). To a reset agent that batch is
+     indistinguishable from new work.
+  2. `agent retained --self` followed by `agent read <seq>` — neither is
+     capability-gated (`cli/agent/retained.go:17-23`,
+     `server/agent_handler.go:610-620`).
+  3. Any `inbox --since 0`.
+
+  The observed failure is a task re-executing instructions it had already
+  carried out.
+
+- **Retention bounds do not solve it.** `--agentboard-ttl` defaults to 30
+  minutes, but eviction is *whole-topic* and keyed on last publish
+  (`cmd/harness-server/main.go:31`, `agentboard/board.go:345-357`), so a
+  topic that is still being used never expires. `--agentboard-ring`
+  defaults to 64 entries per topic (`cmd/harness-server/main.go:30`), which
+  bounds the resurfacing but does not stop it, and pushing entries out by
+  volume destroys unread messages just as readily as read ones.
+
+- **The only destruction primitive is `purge`, and it cannot be narrowed.**
+  `Capability_Purge` is a single bit (`runner/protocol/message.bgn` —
+  `Capability.purge = 0x800`), enforced at `server/agent_handler.go:577-583`
+  and `server/capabilities.go:34`. Neither axis of narrowing exists:
+  - *By topic*: `TaskScope` bounds which **tasks** a capability may target;
+    the agentboard kinds are recorded as `noTarget` precisely because topics
+    have no owner (`server/scope_completeness_test.go:61-66`).
+  - *By author*: nothing consults the stored `FromTask` before destroying.
+
+  A task therefore either cannot clear anything, or can wipe every topic on
+  the board. In practice the operator purges by hand, which is the cost this
+  change is meant to remove.
+
+- **Giving the RECIPIENT the authority does not work.** A `--self` form
+  already exists client-side: `agent purge --self` derives
+  `chat.<short-id>` from the caller's own task id
+  (`cli/agent/purge.go:25,32-39`, `agentboard/ids.go:44-50`), and the server
+  rejects it anyway for want of the cap. Honouring it would still be wrong:
+  the reset recipient holds *no information* distinguishing a handled
+  instruction from an unhandled one — that missing information is the bug
+  itself. It would also let the container's owner destroy other tasks'
+  messages, since `subscribe` has no ownership check
+  (`server/agent_handler.go:368-379`) and the messages in a task's inbound
+  topic were written by others. Authority would sit where knowledge does
+  not.
+
+- **Giving the SENDER unrestricted destruction trades one hazard for
+  another.** The sender does know when its instruction is spent. But an
+  agent retracts at agent speed — seconds — while a human reads the board
+  asynchronously, so straightforward deletion shrinks the window for
+  auditing what was said to nothing.
+
+## Goal
+
+Make "withdraw the message I published" a first-class operation, gated on
+**authorship** rather than on a capability bit, which removes the message
+from every agent-facing path while leaving it readable on the operator
+surfaces for the topic's normal retention window.
+
+Non-goals, each deliberate:
+
+- **Not an undo of delivery.** A message already ingested into a
+  recipient's context cannot be recalled. This addresses re-reading after a
+  reset, which is where the observed damage occurs.
+- **Not an audit log.** Board retention remains a bounded ring under a TTL.
+  A durable ledger of agent traffic is a separate concern and is not
+  smuggled in here.
+- **No automatic retraction.** Reply-implies-retire and publish-side TTL
+  were both considered and are left out of this change: each needs a
+  publish-side schema field and a policy decision for multi-subscriber
+  topics, and both would be built on the primitive defined here. Retract
+  first, automate later or not at all.
+
+## Design
+
+### 1. Storage: a second list per topic
+
+`agentboard/topic.go` gains a withdrawn-message list beside the live ring:
+
+```go
+type topic struct {
+	mu              sync.Mutex
+	name            string
+	cap             int
+	ring            []RetainedMessage   // live
+	retracted       []RetainedMessage   // withdrawn, operator-visible only
+	lastPublishedAt time.Time
+}
+```
+
+`RetainedMessage` gains `RetractedAt time.Time` (zero value = live).
+
+**Why a second list rather than a `retracted bool` on the entry.** Every
+agent-facing read goes through the live ring: `Board.Inbox`, `Board.Wait`,
+`Board.Retained`, `Board.ListRetained`, via `topic.since` / `topic.snapshot`
+/ `topic.summary`. Moving the entry out of `ring` makes all of them stop
+returning it with **no filter added at any call site**. A filter is
+something that can be forgotten at one of six places, and forgetting one
+reintroduces exactly the bug being fixed; a move cannot be forgotten. It
+also matches the existing layering note at `agentboard/board.go:451-458` —
+the board is storage, and who may see a message is decided one layer up.
+
+**Why the withdrawn list has its own capacity.** The live ring is a FIFO
+that drops its oldest entry on overflow (`agentboard/topic.go:51-54`). If
+withdrawn entries stayed in it, a task that sends and retracts in a loop
+would push *other senders'* live messages out of the window — erosion of
+the operator's view at agent speed, by a different route than deletion. The
+withdrawn list is capped independently at the same `cfg.RingN`, so retracts
+cost nothing from live capacity. Worst-case retention per topic doubles;
+against the shipped `--agentboard-max-topics × 64 × --agentboard-max-payload`
+bound this is a theoretical figure that is nowhere near reached.
+
+Eviction: the withdrawn list is FIFO at its own cap. TTL eviction and
+whole-topic purge delete the topic outright, taking both lists.
+
+### 2. Wire schema
+
+`agentboard/agentboard.bgn` — new kinds, request, status, response:
+
+```
+enum AgentMessageKind:
+    ...
+    retract
+    retract_response
+
+format RetractRequest:
+    request_id :u32
+    seq :u64
+
+enum RetractStatus:
+    :u8
+    ok
+    not_found
+
+format RetractResponse:
+    request_id :u32
+    status :RetractStatus
+```
+
+Both arms are appended to the `AgentMessage` match.
+
+`runner/protocol/message.bgn` — the operator-facing rows:
+
+```
+format BoardTopicRow:
+    ...
+    msg_count :u16
+    retracted_count :u16
+
+format BoardMessageRow:
+    ...
+    received_at_unix_ms :u64
+    size :u32
+    retracted :u1
+    reserved  :u7
+    retracted_at_unix_ms :u64
+```
+
+`retracted_at_unix_ms` is 0 unless `retracted` is 1. There is no
+`retracted_by`: only the author may retract, so the field would always
+repeat `from_task`, and a redundant field is one that starts lying the day
+the rule changes.
+
+`retracted_count` is kept out of `msg_count` because `msg_count` answers
+"how much would a subscriber receive" — the number every agent-facing path
+reports. A topic with an empty ring and a non-empty withdrawn log must not
+read as if it still carried live traffic.
+
+### 3. Server: the gate is authorship
+
+```go
+func (s *Server) agentHandleRetract(conn ConnHandle, ac *agentConn, r *agentboard.RetractRequest)
+```
+
+resolves the caller's task id from `ac.state.Identity()` and calls
+`Board.RetractSeq(seq, callerTid)`, which scans the rings the way
+`LookupSeq` already does (`agentboard/board.go:478-500`), matches on
+`FromTask`, and moves the entry to that topic's withdrawn list with
+`RetractedAt` stamped. **No capability is consulted.** The authority
+argument is that the operation can only reach bytes the caller itself
+wrote.
+
+`Capability_Purge` is unchanged and still gates `PurgeRequest`. The two
+verbs answer different needs: retract makes a message stop being acted on,
+purge makes its bytes stop existing — the escape hatch for a payload that
+must not survive at all, such as a leaked credential. Consequently
+**`PurgeSeq` must search the withdrawn list as well as the live ring**, or
+retracting would put a message beyond the reach of the operator's only
+destruction tool.
+
+Operator-facing handlers merge the two lists:
+
+- `handleBoardRead` (`server/board_handler.go:76`) reads
+  `Board.ListRetained(topic)` ∪ `Board.ListRetracted(topic)`, sorts by
+  `Seq`, and sets `retracted` / `retracted_at_unix_ms` per row. Payload
+  bytes for withdrawn messages ride the same stream as live ones: the
+  operator's job here is to read what was said.
+- `handleBoardTopics` fills `retracted_count`.
+
+The board API stays visibility-neutral — `ListRetained` (live) and
+`ListRetracted` (withdrawn) are separate calls, and the protocol layer
+decides who sees which, per the layering already stated in
+`agentboard/board.go:451-458`.
+
+### 4. Agent CLI
+
+```
+harness-cli agent retract <seq>
+```
+
+A bare positional seq, mirroring `agent read <seq>` (`cli/agent/read.go:24-33`)
+— the sender already holds the value from `SendResponse.seq`, and
+`agent retained --topic <t>` lists `from_task` for recovering it later.
+
+Not a flag on `purge`. The two verbs differ in what survives, not in what
+they target, and a flag that silently changes which authority check applies
+hides that difference at the call site.
+
+### 5. Operator surfaces
+
+Walk of the `operator-surface-checklist` items that apply; the rest are
+recorded in the checklist walk in the implementation notes.
+
+| Surface | Change |
+| --- | --- |
+| CLI `agent retract` | new verb + help text (`cmd/harness-cli/main.go`) |
+| CLI `board read` | `#12 [retracted at=<rfc3339>]` prefix on withdrawn rows (`cli/cmd_board.go`) |
+| CLI `board topics` | `retracted=N` column when non-zero |
+| `cli.BoardMessage` / `BoardTopicRow` | `Retracted bool`, `RetractedAtMs uint64`, `RetractedCount int` |
+| TUI board modal | withdrawn rows rendered dimmed with a `retracted` tag (`tui/board.go`) |
+| WebUI board panel | same marker in the message list (`webui/static/main.js`) |
+| wasm bridge | `retracted` / `retractedAtMs` in the `boardRead` result, `retractedCount` in `boardTopics` (`cmd/harness-webui-wasm/main.go`) |
+
+Intentionally omitted: `submit` / `session new` flags, `ParseCaps` /
+`ParseScope`, spawn-default state, task pickers and task detail views. None
+of them address a board message; the feature adds no task field and no
+capability.
+
+### 6. Documentation
+
+- `runner/agentskills/harness-cli/SKILL.md` (go:embed source of truth) gains
+  a "withdrawing a message you sent" section, mirrored to `.claude/skills/`
+  and `.agents/skills/` in the same commit.
+- `README.md` agentboard section: the retract/purge split and which one
+  needs a capability.
+
+## Error handling
+
+- **`not_found` merges "no such live message" with "not yours."** `seq` is
+  board-global and consecutive, so a distinct "not yours" status would
+  confirm the existence of any seq on any ring, including topics the caller
+  can neither name nor read. `ReadSeqStatus.not_found`
+  (`agentboard/agentboard.bgn` — `ReadSeqStatus`) merges its two cases for
+  the same reason; this follows that precedent rather than inventing a
+  second policy.
+- Retracting an already-retracted seq answers `not_found`: it is no longer
+  in a live ring. Idempotent from the caller's side.
+- Retract after purge: `not_found`. Purge after retract: succeeds, because
+  `PurgeSeq` searches both lists.
+- A retract from a connection with no authenticated identity (zero task id)
+  answers `not_found` — it matches no author.
+
+## Rollout
+
+The change appends enum members and appends fields to existing formats; no
+layout shifts under an existing field. It is still a `.bgn` change, so:
+
+1. `scripts/wire-skew-check.sh` before landing (Pitfall 10).
+2. **Restart the server first**, then the runners. The server is on a
+   different host and an old server cannot decode a new hello.
+
+No migration shim: single-operator dogfood, and a message that fails to
+retract during the skew window simply stays live.
+
+## Testing
+
+Unit (`agentboard/`):
+
+- retract moves the entry: live reads (`Inbox`, `Wait`, `Retained`,
+  `ListRetained`) stop returning it; `ListRetracted` returns it with
+  `RetractedAt` set.
+- authorship: a retract naming another task's message leaves the ring
+  untouched.
+- live capacity is unaffected by retracts — publish `cap` messages,
+  retract them all, publish `cap` more, assert none of the second batch was
+  evicted.
+- withdrawn list is FIFO at its own cap.
+- `PurgeSeq` removes a retracted entry; `PurgeTopic` takes both lists.
+
+Server: `agentHandleRetract` needs no cap (a task with `Capability_None`
+retracts its own message); `handleBoardRead` returns live and withdrawn in
+seq order with the flag set.
+
+E2E: a sibling of `cli/agent/purge_e2e_test.go` — send, retract, assert the
+peer's `inbox --since 0` no longer carries it while `board read` still does.
+
+Manual: dummy harness, two tasks, retract from the sender and confirm the
+recipient's `inbox --since 0` is clean while the TUI and WebUI board views
+still show the message marked as withdrawn.
+
+## Decisions taken
+
+Recorded so no reader has to guess which were deliberate:
+
+1. Withdrawn messages live in a **separate list**, not behind a flag on the
+   ring entry — filters can be forgotten at a call site; a move cannot.
+2. The withdrawn list has **its own capacity**, equal to the ring's, so
+   retracts never evict live messages.
+3. Agents see **nothing** of a withdrawn message — not even metadata. A
+   "there was something here" marker invites a reset agent to go looking.
+4. **No `retracted_by`** field: only the author can retract, so it would
+   duplicate `from_task`.
+5. `RetractStatus` has **two members**; "not yours" is folded into
+   `not_found` to avoid an existence oracle.
+6. A **new verb**, not a flag on `purge`, because the authority check
+   differs.
+7. **No automatic retraction** in this change.

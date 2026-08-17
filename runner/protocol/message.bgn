@@ -691,6 +691,13 @@ format BoardTopicRow:
     last_seq :u64
     last_published_at_unix_ms :u64
     msg_count :u16
+    # retracted_count is how many withdrawn messages the topic still holds for
+    # operator audit (see BoardMessageRow.retracted). They are deliberately NOT
+    # folded into msg_count: msg_count answers "how much would a subscriber
+    # receive", which is the number every agent-facing path reports, and a
+    # topic whose ring is empty but whose withdrawn log is not must not read as
+    # if it still had live traffic.
+    retracted_count :u16
 
 format BoardTopicsResponse:
     request_id :u32
@@ -718,6 +725,18 @@ format BoardMessageRow:
     from_agent_profile :[from_agent_profile_len]u8
     received_at_unix_ms :u64
     size :u32
+    # retracted marks a message its AUTHOR withdrew (agentboard RetractRequest).
+    # A withdrawn message has left every agent-facing path (deliver / inbox /
+    # wait / read_seq / list_retained) and survives only here, so that an agent
+    # retracting in seconds cannot shrink the window a human has to audit what
+    # was said. It ages out with the topic like anything else — this is a
+    # logical delete, not a durable ledger.
+    #
+    # There is no retracted_by: only the author may retract, so it would always
+    # repeat from_task.
+    retracted :u1
+    reserved  :u7
+    retracted_at_unix_ms :u64   # 0 unless retracted is 1
 
 format BoardReadResponse:
     request_id :u32

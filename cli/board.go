@@ -17,6 +17,10 @@ type BoardTopicRow struct {
 	LastSeq           uint64
 	LastPublishedAtMs uint64
 	MsgCount          int
+	// RetractedCount is how many withdrawn messages the topic still holds for
+	// operator audit. Kept out of MsgCount, which answers "how much would a
+	// subscriber receive".
+	RetractedCount int
 }
 
 // BoardMessage holds one retained message returned by BoardRead.
@@ -35,6 +39,13 @@ type BoardMessage struct {
 	FromAgentProfile string
 	ReceivedAtMs     uint64
 	Payload          []byte
+	// Retracted is true when the message's author withdrew it (agent retract).
+	// A withdrawn message is invisible to every agent-facing path and reaches
+	// only this operator view, so a retract at agent speed cannot shrink the
+	// window a human has to audit what was said. RetractedAtMs is 0 unless
+	// Retracted is true.
+	Retracted     bool
+	RetractedAtMs uint64
 }
 
 // BoardSubscriberRow is one task's agentboard subscription set as returned by
@@ -110,6 +121,7 @@ func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 			LastSeq:           r.LastSeq,
 			LastPublishedAtMs: r.LastPublishedAtUnixMs,
 			MsgCount:          int(r.MsgCount),
+			RetractedCount:    int(r.RetractedCount),
 		})
 	}
 	return out, nil
@@ -149,6 +161,8 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 			FromHostname:     string(m.FromHostname),
 			FromAgentProfile: string(m.FromAgentProfile),
 			ReceivedAtMs:     m.ReceivedAtUnixMs,
+			Retracted:        m.Retracted(),
+			RetractedAtMs:    m.RetractedAtUnixMs,
 		}
 		total += int(m.Size)
 	}

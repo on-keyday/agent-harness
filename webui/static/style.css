@@ -1449,6 +1449,21 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-msg-seq { font-weight: 700; color: #d4d4d4; }
 .board-msg-reply { color: #c586c0; }
+/* A message its author withdrew: no agent can see it any more, and this pane
+   is the only place it survives. Dimmed so it reads as inactive, not removed —
+   the whole reason it is still here is that a human may want to read it. */
+.board-msg-retracted {
+  opacity: 0.55;
+  border-style: dashed;
+}
+.board-msg-retracted .board-msg-seq { text-decoration: line-through; }
+.board-msg-retracted-badge {
+  color: #d7ba7d;
+  border: 1px solid #5a4d2b;
+  border-radius: 3px;
+  padding: 0 0.3rem;
+  white-space: nowrap;
+}
 #board-subscribers {
   margin: 0 0 0.6rem 0;
   padding: 0.4rem 0.6rem;

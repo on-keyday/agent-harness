@@ -1,0 +1,250 @@
+package agentboard
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
+
+// taskIDFromByte builds a distinct TaskID for author-vs-other tests.
+func taskIDFromByte(b byte) protocol.TaskID {
+	var t protocol.TaskID
+	t.Id[0] = b
+	return t
+}
+
+func newRetractBoard(t *testing.T) *Board {
+	t.Helper()
+	b := New(Config{RingN: 4, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	t.Cleanup(b.Close)
+	return b
+}
+
+// TestRetract_LeavesEveryAgentFacingPath is the property the whole feature
+// rests on: after an author retracts, no path an agent can reach still returns
+// the message. It exercises each of them rather than one representative,
+// because the design deliberately relies on the entry MOVING out of the live
+// ring instead of on a filter at each call site — if some path ever grew its
+// own copy of the ring, this is what catches it.
+func TestRetract_LeavesEveryAgentFacingPath(t *testing.T) {
+	b := newRetractBoard(t)
+	author := taskIDFromByte(1)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	if err := b.Subscribe(conn, "t.retract"); err != nil {
+		t.Fatal(err)
+	}
+	seq, err := b.Send("t.retract", []byte("stale instruction"), testRid, author, "test-host", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if topic, ok := b.RetractSeq(seq, author); !ok || topic != "t.retract" {
+		t.Fatalf("RetractSeq = (%q, %v), want (t.retract, true)", topic, ok)
+	}
+
+	if msgs, _ := b.Inbox(conn, 0); len(msgs) != 0 {
+		t.Errorf("Inbox after retract = %d msgs, want 0", len(msgs))
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if msgs, timedOut, _ := b.Wait(ctx, conn, "t.retract", 0); len(msgs) != 0 || !timedOut {
+		t.Errorf("Wait after retract = %d msgs (timedOut=%v), want 0 and a timeout", len(msgs), timedOut)
+	}
+	if _, ok := b.Retained(seq); ok {
+		t.Error("Retained(seq) still resolves a retracted message")
+	}
+	if msgs, found := b.ListRetained("t.retract"); !found || len(msgs) != 0 {
+		t.Errorf("ListRetained = (%d msgs, found=%v), want (0, true)", len(msgs), found)
+	}
+	if _, _, ok := b.LookupSeq(seq); ok {
+		t.Error("LookupSeq still resolves a retracted message")
+	}
+}
+
+// TestRetract_OperatorStillSees is the other half: the operator view keeps the
+// message, with the withdrawal timestamped. An agent retracts in seconds; if
+// that also emptied this list there would be no window left to audit it.
+func TestRetract_OperatorStillSees(t *testing.T) {
+	b := newRetractBoard(t)
+	author := taskIDFromByte(1)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "t.audit")
+	seq, err := b.Send("t.audit", []byte("what was said"), testRid, author, "test-host", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := time.Now()
+	if _, ok := b.RetractSeq(seq, author); !ok {
+		t.Fatal("RetractSeq failed")
+	}
+
+	msgs, found := b.ListRetracted("t.audit")
+	if !found || len(msgs) != 1 {
+		t.Fatalf("ListRetracted = (%d msgs, found=%v), want (1, true)", len(msgs), found)
+	}
+	if got := string(msgs[0].Payload); got != "what was said" {
+		t.Errorf("payload = %q, want it preserved verbatim", got)
+	}
+	if msgs[0].RetractedAt.IsZero() || msgs[0].RetractedAt.Before(before.Add(-time.Second)) {
+		t.Errorf("RetractedAt = %v, want a stamp at retraction time", msgs[0].RetractedAt)
+	}
+	if n, _ := b.RetractedCount("t.audit"); n != 1 {
+		t.Errorf("RetractedCount = %d, want 1", n)
+	}
+}
+
+// TestRetract_AuthorshipIsTheGate: there is no capability check, so authorship
+// is the only thing standing between a task and another task's messages.
+func TestRetract_AuthorshipIsTheGate(t *testing.T) {
+	b := newRetractBoard(t)
+	author, other := taskIDFromByte(1), taskIDFromByte(2)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "t.auth")
+	seq, err := b.Send("t.auth", []byte("not yours"), testRid, author, "test-host", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := b.RetractSeq(seq, other); ok {
+		t.Fatal("a non-author retracted somebody else's message")
+	}
+	if msgs, _ := b.ListRetained("t.auth"); len(msgs) != 1 {
+		t.Errorf("live ring = %d msgs after a refused retract, want 1", len(msgs))
+	}
+	// A zero task id is what an unauthenticated connection carries; it must
+	// match no author rather than everything.
+	if _, ok := b.RetractSeq(seq, protocol.TaskID{}); ok {
+		t.Error("a zero task id retracted a message")
+	}
+	// The author still can.
+	if _, ok := b.RetractSeq(seq, author); !ok {
+		t.Error("the author could not retract its own message")
+	}
+}
+
+// TestRetract_DoesNotConsumeLiveCapacity guards the reason withdrawn messages
+// live in their own list: if they shared the ring, a task sending and
+// retracting in a loop would push OTHER senders' live messages out of a FIFO
+// that is only RingN deep — eroding the operator's view at agent speed by a
+// different route than deletion.
+func TestRetract_DoesNotConsumeLiveCapacity(t *testing.T) {
+	b := newRetractBoard(t) // RingN = 4
+	author := taskIDFromByte(1)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "t.cap")
+
+	for i := 0; i < 4; i++ {
+		seq, err := b.Send("t.cap", []byte("noise"), testRid, author, "test-host", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := b.RetractSeq(seq, author); !ok {
+			t.Fatalf("retract %d failed", i)
+		}
+	}
+	keep := make([]uint64, 0, 4)
+	for i := 0; i < 4; i++ {
+		seq, err := b.Send("t.cap", []byte("keep"), testRid, taskIDFromByte(2), "test-host", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keep = append(keep, seq)
+	}
+
+	msgs, _ := b.ListRetained("t.cap")
+	if len(msgs) != 4 {
+		t.Fatalf("live ring = %d, want the full 4: retracted entries must not occupy it", len(msgs))
+	}
+	for i, seq := range keep {
+		if msgs[i].Seq != seq {
+			t.Errorf("live[%d].Seq = %d, want %d — a retract evicted a live message", i, msgs[i].Seq, seq)
+		}
+	}
+}
+
+// TestRetract_WithdrawnListIsBounded: the withdrawn list is FIFO at its own
+// cap, so retracting forever cannot grow memory without bound.
+func TestRetract_WithdrawnListIsBounded(t *testing.T) {
+	b := newRetractBoard(t) // RingN = 4
+	author := taskIDFromByte(1)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "t.bound")
+
+	for i := 0; i < 6; i++ {
+		seq, err := b.Send("t.bound", []byte("x"), testRid, author, "test-host", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := b.RetractSeq(seq, author); !ok {
+			t.Fatalf("retract %d failed", i)
+		}
+	}
+	msgs, _ := b.ListRetracted("t.bound")
+	if len(msgs) != 4 {
+		t.Fatalf("withdrawn list = %d entries, want it capped at RingN=4", len(msgs))
+	}
+	// FIFO: the oldest two were dropped.
+	if msgs[0].Seq >= msgs[len(msgs)-1].Seq {
+		t.Errorf("withdrawn list is not in ascending seq order: %d..%d", msgs[0].Seq, msgs[len(msgs)-1].Seq)
+	}
+}
+
+// TestRetract_PurgeStillReaches: purge is the only way to make bytes stop
+// existing, so retracting must not put a message beyond its reach.
+func TestRetract_PurgeStillReaches(t *testing.T) {
+	b := newRetractBoard(t)
+	author := taskIDFromByte(1)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "t.purge")
+	seq, err := b.Send("t.purge", []byte("secret"), testRid, author, "test-host", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.RetractSeq(seq, author); !ok {
+		t.Fatal("RetractSeq failed")
+	}
+
+	removed, found := b.PurgeSeq("t.purge", seq)
+	if !found || !removed {
+		t.Fatalf("PurgeSeq on a retracted message = (removed=%v, found=%v), want both true", removed, found)
+	}
+	if msgs, _ := b.ListRetracted("t.purge"); len(msgs) != 0 {
+		t.Errorf("withdrawn list = %d after purge, want 0", len(msgs))
+	}
+}
+
+// TestRetract_IsIdempotentAndBlind: a second retract of the same seq answers
+// the same "no" as a seq that never existed. The CLI turns both into
+// not_found, which is what keeps the status from confirming the existence of
+// any seq on any topic the caller cannot name.
+func TestRetract_IsIdempotentAndBlind(t *testing.T) {
+	b := newRetractBoard(t)
+	author := taskIDFromByte(1)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "t.twice")
+	seq, err := b.Send("t.twice", []byte("once"), testRid, author, "test-host", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.RetractSeq(seq, author); !ok {
+		t.Fatal("first retract failed")
+	}
+	if _, ok := b.RetractSeq(seq, author); ok {
+		t.Error("second retract of the same seq reported success")
+	}
+	if _, ok := b.RetractSeq(seq+9999, author); ok {
+		t.Error("retracting a seq that was never published reported success")
+	}
+	if _, ok := b.RetractSeq(0, author); ok {
+		t.Error("seq 0 is never a real message; retract must refuse it")
+	}
+}

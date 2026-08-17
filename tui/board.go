@@ -158,12 +158,26 @@ type BoardModal struct {
 	status    string         // one-line error / confirmation rendered below the table
 }
 
+// Column positions in the topics table. boardTopicToRow builds its row in this
+// order and tests index by these names, so inserting a column cannot silently
+// shift an assertion onto its neighbour (which is exactly what adding Retr
+// did to the Subs assertion).
+const (
+	boardColTopic = iota
+	boardColMsgs
+	boardColRetr
+	boardColSubs
+	boardColLastSeq
+	boardColLastAt
+)
+
 // NewBoardModal constructs a BoardModal with fixed column widths for the topics
 // table. Mirrors NewConnsModal.
 func NewBoardModal() BoardModal {
 	cols := []table.Column{
 		{Title: "Topic", Width: 30},
 		{Title: "Msgs", Width: 5},
+		{Title: "Retr", Width: 5},
 		{Title: "Subs", Width: 5},
 		{Title: "LastSeq", Width: 9},
 		{Title: "LastAt", Width: 22},
@@ -333,9 +347,14 @@ func boardTopicToRow(r *cli.BoardTopicRow, subs map[string]int) table.Row {
 	if subs != nil {
 		sub = fmt.Sprintf("%d", subs[r.Name])
 	}
+	// Retr counts withdrawn messages (agent retract), kept out of Msgs so that
+	// column keeps answering "how much would a subscriber receive". Unlike Subs
+	// it is printed even when zero: the count is always available, and a blank
+	// here would collide with the meaning blank already carries next door.
 	return table.Row{
 		r.Name,
 		fmt.Sprintf("%d", r.MsgCount),
+		fmt.Sprintf("%d", r.RetractedCount),
 		sub,
 		lastSeq,
 		at,
@@ -401,7 +420,15 @@ func (m *BoardModal) updateContentFromCursor() {
 	if msg.InReplyTo != 0 {
 		inReplyTo = fmt.Sprintf("  re=%d", msg.InReplyTo)
 	}
-	header := fmt.Sprintf("seq=%d%s  from=%s  host=%s  agent=%s  at=%s", msg.Seq, inReplyTo, fromShort, msg.FromHostname, agentName, at)
+	// Same rule as re= : the marker prints only when it applies. The payload is
+	// still shown in full — a withdrawn message is invisible to agents, not to
+	// the operator auditing what was said.
+	retracted := ""
+	if msg.Retracted {
+		retracted = fmt.Sprintf("  RETRACTED at=%s",
+			time.UnixMilli(int64(msg.RetractedAtMs)).UTC().Format(time.RFC3339))
+	}
+	header := fmt.Sprintf("seq=%d%s  from=%s  host=%s  agent=%s  at=%s%s", msg.Seq, inReplyTo, fromShort, msg.FromHostname, agentName, at, retracted)
 	m.content.SetContent(header + "\n\n" + payloadStr)
 }
 
@@ -480,8 +507,16 @@ func (m BoardModal) View() string {
 				agentName = "-"
 			}
 			at := time.UnixMilli(int64(msg.ReceivedAtMs)).UTC().Format("15:04:05Z")
-			msgList.WriteString(fmt.Sprintf("%s[%d] seq=%-5d  from=%s  agent=%s  %s\n",
-				cursor, i+1, msg.Seq, fromShort, agentName, at))
+			line := fmt.Sprintf("%s[%d] seq=%-5d  from=%s  agent=%s  %s",
+				cursor, i+1, msg.Seq, fromShort, agentName, at)
+			// A withdrawn message reaches no agent any more; this view is the
+			// only place it still exists. Marked and muted rather than hidden —
+			// hiding it here would hand the operator the same blank the agents
+			// see, which is the opposite of the point.
+			if msg.Retracted {
+				line = MutedStyle.Render(line + "  RETRACTED")
+			}
+			msgList.WriteString(line + "\n")
 		}
 		if len(m.msgs) == 0 {
 			msgList.WriteString("  " + boardEmptyReason(m.curFound) + "\n")

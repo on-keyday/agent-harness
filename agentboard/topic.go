@@ -28,14 +28,32 @@ type RetainedMessage struct {
 	// DeliveredMessage.from_agent_profile).
 	FromAgentProfile string
 	ReceivedAt       time.Time
+	// RetractedAt is when the message's AUTHOR withdrew it, zero while it is
+	// live. Set only on entries in topic.retracted — an entry in the live ring
+	// always carries the zero value.
+	RetractedAt time.Time
 }
 
 // topic holds a bounded ring of recent messages plus metadata used for TTL eviction.
+//
+// Withdrawn messages move OUT of ring and into retracted rather than being
+// flagged in place. Two reasons, both load-bearing:
+//
+//   - Every agent-facing read reaches the ring (since / snapshot / summary,
+//     hence Board.Inbox / Wait / Retained / ListRetained). Moving the entry
+//     makes all of them stop returning it without a filter at any call site,
+//     and a filter is what gets forgotten at the sixth site.
+//   - The ring is a FIFO that drops its oldest entry on overflow. Leaving
+//     withdrawn entries in it would let one task's send/retract loop push
+//     OTHER senders' live messages out of the window — the operator's view
+//     eroded at agent speed, which is the thing retraction is supposed not to
+//     do. retracted therefore has its own capacity.
 type topic struct {
 	mu              sync.Mutex
 	name            string
 	cap             int
 	ring            []RetainedMessage
+	retracted       []RetainedMessage
 	lastPublishedAt time.Time
 }
 
@@ -67,6 +85,11 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 
 // removeSeq drops the single retained message with the given seq, preserving
 // the order of the rest. Returns whether an entry was found and removed.
+//
+// It searches the withdrawn list as well as the live ring. Purge is the only
+// way to make a payload's bytes stop existing (the escape hatch for something
+// that must not survive at all), so a retract must not put a message beyond
+// its reach.
 func (t *topic) removeSeq(seq uint64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -76,7 +99,64 @@ func (t *topic) removeSeq(seq uint64) bool {
 			return true
 		}
 	}
+	for i := range t.retracted {
+		if t.retracted[i].Seq == seq {
+			t.retracted = append(t.retracted[:i], t.retracted[i+1:]...)
+			return true
+		}
+	}
 	return false
+}
+
+// retract moves the live message with the given seq into the withdrawn list,
+// but only when by published it. Returns whether the move happened; a seq that
+// is absent, already withdrawn, or authored by somebody else all answer false,
+// and the caller must not tell those cases apart on the wire (see
+// RetractStatus.not_found in agentboard.bgn).
+//
+// now is passed in rather than read here so the server stamps one time for the
+// whole operation.
+func (t *topic) retract(seq uint64, by protocol.TaskID, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for i := range t.ring {
+		if t.ring[i].Seq != seq {
+			continue
+		}
+		if t.ring[i].FromTask.Id != by.Id {
+			return false
+		}
+		m := t.ring[i]
+		m.RetractedAt = now
+		t.ring = append(t.ring[:i], t.ring[i+1:]...)
+		if len(t.retracted) == t.cap {
+			copy(t.retracted, t.retracted[1:])
+			t.retracted = t.retracted[:t.cap-1]
+		}
+		t.retracted = append(t.retracted, m)
+		return true
+	}
+	return false
+}
+
+// snapshotRetracted returns a copy of the withdrawn list in ascending seq
+// order. Only operator-facing handlers call it; every agent-facing read goes
+// through the live ring.
+func (t *topic) snapshotRetracted() []RetainedMessage {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]RetainedMessage, len(t.retracted))
+	copy(out, t.retracted)
+	return out
+}
+
+// retractedCount is the number of withdrawn messages held for operator audit.
+// Deliberately separate from summary()'s msgCount, which answers "how much
+// would a subscriber receive".
+func (t *topic) retractedCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.retracted)
 }
 
 // snapshot returns a copy of the ring (metadata + payload) in ascending seq

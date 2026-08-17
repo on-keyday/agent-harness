@@ -791,6 +791,8 @@ func main() {
 			err = agent.Retained(ctx, rest, os.Stdout)
 		case "read":
 			err = agent.Read(ctx, rest, os.Stdout)
+		case "retract":
+			err = agent.Retract(ctx, rest, os.Stdout)
 		default:
 			agentUsage()
 			os.Exit(2)
@@ -1056,6 +1058,8 @@ func agentUsage() {
 	fmt.Fprintln(os.Stderr, "  subscriptions                       list this agent's registered patterns (JSON Lines)")
 	fmt.Fprintln(os.Stderr, "  retained --topic T | --self          list a topic's retained ring as metadata only, no payload (no cap)")
 	fmt.Fprintln(os.Stderr, "  purge --topic T | --self [--seq N]   drop a topic's retained buffer, or one message by seq (cap: purge)")
+	fmt.Fprintln(os.Stderr, "  retract SEQ                         withdraw a message YOU sent: gone from every agent path, still")
+	fmt.Fprintln(os.Stderr, "                                       visible to the operator as retracted (no cap; authorship-checked)")
 }
 
 func die(err error) {

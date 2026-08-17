@@ -67,12 +67,29 @@ func TestBoardModalApplyTopicsUnion(t *testing.T) {
 	// The Subs column shows 0 for a topic nobody subscribes to, and blank (not
 	// 0) when counts are unavailable — an absent count must not read as "nobody".
 	withCounts := boardTopicToRow(&m.rowTopics[1], subs) // orphan.x
-	if withCounts[2] != "0" {
-		t.Errorf("orphan.x Subs = %q, want 0", withCounts[2])
+	if withCounts[boardColSubs] != "0" {
+		t.Errorf("orphan.x Subs = %q, want 0", withCounts[boardColSubs])
 	}
 	noCounts := boardTopicToRow(&m.rowTopics[1], nil)
-	if noCounts[2] != "" {
-		t.Errorf("Subs with nil counts = %q, want blank", noCounts[2])
+	if noCounts[boardColSubs] != "" {
+		t.Errorf("Subs with nil counts = %q, want blank", noCounts[boardColSubs])
+	}
+	// Retr is printed even at zero, unlike Subs: the count is always available,
+	// so a blank would read as "unavailable" the way it does one column over.
+	if noCounts[boardColRetr] != "0" {
+		t.Errorf("Retr with no retractions = %q, want 0", noCounts[boardColRetr])
+	}
+	withRetracted := m.rowTopics[1]
+	withRetracted.RetractedCount = 3
+	if got := boardTopicToRow(&withRetracted, subs); got[boardColRetr] != "3" {
+		t.Errorf("Retr = %q, want 3", got[boardColRetr])
+	}
+	// Withdrawn messages must never be folded into Msgs: that column answers
+	// "how much would a subscriber receive", so setting RetractedCount leaves
+	// it exactly where it was.
+	live := boardTopicToRow(&m.rowTopics[1], subs)[boardColMsgs]
+	if got := boardTopicToRow(&withRetracted, subs); got[boardColMsgs] != live {
+		t.Errorf("Msgs changed when RetractedCount was set: %q -> %q", live, got[boardColMsgs])
 	}
 }
 

@@ -809,7 +809,7 @@ func harnessCancel(this js.Value, args []js.Value) any {
 
 // harnessBoardTopics lists all agentboard topics with aggregate metadata.
 //
-//	harness.boardTopics() -> Promise<[{name, lastSeq, lastPublishedAtMs, msgCount}]>
+//	harness.boardTopics() -> Promise<[{name, lastSeq, lastPublishedAtMs, msgCount, retractedCount}]>
 func harnessBoardTopics(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -836,6 +836,10 @@ func harnessBoardTopics(this js.Value, args []js.Value) any {
 					"lastSeq":           strconv.FormatUint(t.LastSeq, 10),
 					"lastPublishedAtMs": float64(t.LastPublishedAtMs),
 					"msgCount":          float64(t.MsgCount),
+					// Withdrawn messages (agent retract), counted apart from
+					// msgCount so that one keeps meaning "what a subscriber
+					// would receive".
+					"retractedCount": float64(t.RetractedCount),
 				})
 			}
 			resolve.Invoke(js.ValueOf(out))
@@ -897,7 +901,7 @@ func harnessBoardSubscribers(this js.Value, args []js.Value) any {
 
 // harnessBoardRead returns all retained messages for a topic.
 //
-//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,agentProfile,receivedAtMs,payload}]}>
+//	harness.boardRead(topic) -> Promise<{found, msgs:[{seq,fromTask,fromHostname,agentProfile,receivedAtMs,payload,retracted,retractedAtMs}]}>
 func harnessBoardRead(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -933,6 +937,12 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 					"agentProfile": m.FromAgentProfile,
 					"receivedAtMs": float64(m.ReceivedAtMs),
 					"payload":      string(m.Payload),
+					// A message its author withdrew. It reaches no agent any
+					// more and exists only on this operator surface, so the
+					// flag has to cross the bridge or the WebUI would show a
+					// withdrawn message as if it were still live.
+					"retracted":     m.Retracted,
+					"retractedAtMs": float64(m.RetractedAtMs),
 				})
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{
