@@ -63,6 +63,26 @@ format SendRequest:
     # on UDP. See docs/superpowers/specs/2026-05-09-udp-dualstack-design.md
     # §12.1.
     payload_stream_id :u64
+    # no_retire_on_reply suppresses the reply-retire rule for THIS message:
+    # normally, when the task a point-to-point message was addressed to
+    # replies to it, the server retracts the original on the author's behalf
+    # (see RetractRequest). A reply is proof the instruction was handled, and
+    # retracting it there is what stops a recipient whose context is reset
+    # from re-reading and re-doing it — without the author having to remember
+    # to withdraw it.
+    #
+    # The bit is NEGATIVE so that its zero value is the default behaviour, the
+    # same reason ScopeBase.subtree is 0: a caller that sets no bits, and a
+    # struct nobody filled in, must both mean "retire on reply". Set it for a
+    # message that has to survive being answered — a standing instruction, or
+    # anything whose reply is an acknowledgement rather than a completion.
+    #
+    # The rule fires only when the parent sits on the REPLIER's own
+    # chat.<short-id>, i.e. it was addressed to them specifically. A publish to
+    # a shared topic is never auto-retired however this bit is set, because one
+    # subscriber's reply says nothing about whether the others have read it.
+    no_retire_on_reply :u1
+    reserved :u7
 
 enum SendStatus:
     :u8

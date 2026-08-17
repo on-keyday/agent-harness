@@ -89,6 +89,9 @@ Non-goals, each deliberate:
   publish-side schema field and a policy decision for multi-subscriber
   topics, and both would be built on the primitive defined here. Retract
   first, automate later or not at all.
+  *(Superseded — see the Amendment at the end of this document, which adds
+  reply-implies-retire and records why publish-side TTL was dropped
+  outright rather than deferred.)*
 
 ## Design
 
@@ -333,4 +336,115 @@ Recorded so no reader has to guess which were deliberate:
    `not_found` to avoid an existence oracle.
 6. A **new verb**, not a flag on `purge`, because the authority check
    differs.
-7. **No automatic retraction** in this change.
+7. **No automatic retraction** in this change. *(Superseded by the
+   Amendment below.)*
+
+---
+
+# Amendment 2026-08-18 — reply-implies-retire
+
+## Why this returns so soon
+
+Explicit `retract` still depends on the author remembering to call it, and
+the author is an agent whose own context can be reset. When that happens
+nobody withdraws anything and the recipient re-reads the instruction — the
+original failure, one level up.
+
+A reply is the one moment when "this instruction is spent" is known to
+somebody who still has the context to know it. So the reply carries the
+retraction.
+
+## Rule
+
+When a task publishes with `in_reply_to = P` and the publish succeeds, the
+server withdraws `P` on its author's behalf if **all four** hold:
+
+1. `P` is still live. An already-withdrawn, purged or rotated-out seq is
+   nothing to do — not an error.
+2. Its author did not set `no_retire_on_reply`.
+3. `P` sits on the **replier's own** `chat.<short-id>` — it was addressed to
+   them specifically.
+4. The replier is not `P`'s author.
+
+Condition 3 is the one that took a decision. A publish to a shared topic is
+**never** auto-retired, however the flag is set: one subscriber answering
+says nothing about whether the others have read it, and retiring it there
+would destroy their unread copy. Broadcast senders retract explicitly. The
+cost of the choice is the opposite surprise — a sender who set no flag and
+published to a custom topic will find the message still live after an answer.
+That is the direction the failure should point: a message that outlives its
+answer is noise, a message destroyed before its other recipients read it is
+lost work.
+
+The retraction goes through the same authorship-gated `Board.RetractSeq` an
+explicit retract uses, with the PARENT'S author as the actor. The author
+authorised it by publishing without the opt-out; no new authority path
+exists.
+
+## Wire schema
+
+`agentboard/agentboard.bgn`, appended to `SendRequest`:
+
+```
+    no_retire_on_reply :u1
+    reserved :u7
+```
+
+The bit is **negative** so its zero value is the default behaviour — the
+same reason `ScopeBase.subtree` is 0. A caller that sets no bits, and a
+struct nobody filled in, must both mean "retire on reply".
+
+`Board.Send` grows a variadic `...SendOption` rather than an eighth
+positional parameter: it already takes seven and is called from about fifty
+places, nearly all tests with no opinion about any of this.
+
+## Agent CLI
+
+```
+harness-cli agent send --topic T --data D --no-retire-on-reply
+```
+
+Set it for a message that must survive being answered — a standing
+instruction, or one whose reply is an acknowledgement rather than a
+completion.
+
+## Deliberately not surfaced to the operator
+
+`no_retire_on_reply` is **not** carried on `BoardMessageRow`. A live
+message that has been replied to can be live for three different reasons —
+the flag, the point-to-point condition, or the replier being the author —
+and a field naming only the first would read as the whole story. The
+operator sees outcomes (`RETRACTED`), and the rule is documented.
+
+## Publish-side TTL: dropped, not deferred
+
+The original Non-goals deferred it alongside reply-retire. On inspection it
+is not an independent axis. A per-message TTL that deletes is the existing
+`--agentboard-ttl` at a different granularity, and it deletes from the
+operator's view too — the opposite of what this design is for. A per-message
+TTL that *retracts* is this amendment with a timer instead of a reply as its
+trigger. Since explicit retract covers "no reply is coming", the remaining
+value did not justify a second publish-side field, so it is dropped rather
+than left open.
+
+Worth recording because it is the actual reason the existing TTL does not
+solve the original problem either: `evictExpiredTopics` keys on the topic's
+LAST PUBLISH, so a topic still in use never expires and a stale instruction
+inside it never ages out.
+
+## Decisions taken (amendment)
+
+1. Default **on**, opt-out per message. The failure mode of forgetting to
+   opt in is the bug this exists to fix.
+2. The bit is **negative**, so zero means the default.
+3. Point-to-point only (condition 3). Shared topics are never auto-retired.
+4. A self-reply never retires (condition 4).
+5. The flag is **not** shown on operator surfaces.
+6. Publish-side TTL is **dropped**, not deferred.
+
+## Testing (amendment)
+
+Unit (`server/retire_on_reply_test.go`): the point-to-point path fires and
+stamps `RetractedAt`; the opt-out survives; a shared topic never fires even
+so; a self-reply never fires; an unknown / already-retired parent is a
+no-op, and a zero replier id matches nobody.

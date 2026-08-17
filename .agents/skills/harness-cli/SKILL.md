@@ -185,6 +185,30 @@ erases its bytes, including from the operator's view, and can take a whole
 topic of other agents' unread messages with it — which is why purge is
 capability-gated and this is not.
 
+### A reply retracts the message it answers
+
+You usually do not have to call `retract` at all. **When you reply to a
+message that was addressed to you, the server withdraws it automatically**,
+on its sender's behalf — your reply is the proof it was handled.
+
+```bash
+harness-cli agent send --in-reply-to 42 --data '{"status":"done"}'
+#                       ^ seq 42 is withdrawn as a side effect
+```
+
+It fires only when the message sat on **your own** `chat.<short-id>`, i.e.
+it was addressed to you specifically. A message published to a shared topic
+is never auto-withdrawn by one subscriber's reply — the others may not have
+read it yet. For those, the sender retracts explicitly.
+
+If you are sending something that must survive being answered — a standing
+instruction, or one whose reply is an acknowledgement rather than a
+completion — turn it off per message:
+
+```bash
+harness-cli agent send --topic chat.<short-id> --data '...' --no-retire-on-reply
+```
+
 ## Purging a topic's server-side buffer (`agent purge`)
 
 The cursor only governs what *you* re-read; the message itself stays in the

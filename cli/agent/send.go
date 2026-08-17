@@ -34,6 +34,7 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 	topic := fs.String("topic", "", "agentboard topic")
 	data := fs.String("data", "-", `payload string, or "-" to read stdin`)
 	inReplyTo := fs.Uint64("in-reply-to", 0, "seq of the message being replied to; with it, --topic may be omitted and the server routes to the parent's sender")
+	noRetireOnReply := fs.Bool("no-retire-on-reply", false, "keep this message on the board even after its recipient replies (default: a reply withdraws it, so a peer whose context resets cannot re-read a spent instruction)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -113,6 +114,11 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 	}
 
 	req := agentboard.SendRequest{RequestId: reqID, PayloadStreamId: uint64(stream.ID()), InReplyTo: *inReplyTo}
+	// Negative on the wire too, so the zero value means the default. Only set
+	// it when the caller asked to opt out.
+	if *noRetireOnReply {
+		req.SetNoRetireOnReply(true)
+	}
 	// An empty topic is the wire's "derive the destination from the parent"; the
 	// schema assertion guarantees it can only be empty on a reply.
 	req.SetTopic([]byte(wireTopic))

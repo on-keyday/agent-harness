@@ -213,9 +213,13 @@ var (
 // whole and having Send reject it afterwards.
 func (b *Board) MaxPayload() int { return b.cfg.MaxPayload }
 
-func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64) (uint64, error) {
+func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, opts ...SendOption) (uint64, error) {
 	if len(payload) > b.cfg.MaxPayload {
 		return 0, ErrPayloadTooLarge
+	}
+	var cfg sendConfig
+	for _, o := range opts {
+		o(&cfg)
 	}
 	b.mu.Lock()
 	t, ok := b.topics[topicName]
@@ -239,7 +243,7 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 	b.mu.Unlock()
 
 	seq := b.seq.Add(1)
-	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo)
+	t.append(seq, payload, fromRid, fromTid, fromHost, fromProfile, inReplyTo, cfg)
 
 	b.mu.Lock()
 	fn := b.onDeliver
@@ -416,6 +420,25 @@ func (b *Board) ListRetained(name string) (msgs []RetainedMessage, found bool) {
 		return nil, false
 	}
 	return t.snapshot(), true
+}
+
+// SendOption records a per-publish choice that is not part of the message
+// body. They are options rather than more positional parameters because Send
+// already takes seven and is called from ~50 places, nearly all of them tests
+// that have no opinion about any of this.
+type SendOption func(*sendConfig)
+
+type sendConfig struct {
+	noRetireOnReply bool
+}
+
+// NoRetireOnReply marks the message as one that must survive being answered:
+// the reply-retire rule (see Server.retireRepliedParent) will skip it. The
+// option is the negative because the DEFAULT is to retire — a caller that
+// passes no options gets the behaviour that makes a spent instruction go away
+// on its own.
+func NoRetireOnReply() SendOption {
+	return func(c *sendConfig) { c.noRetireOnReply = true }
 }
 
 // ListRetracted returns the topic's withdrawn messages — the ones an author

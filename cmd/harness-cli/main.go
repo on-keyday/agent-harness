@@ -1060,6 +1060,8 @@ func agentUsage() {
 	fmt.Fprintln(os.Stderr, "  purge --topic T | --self [--seq N]   drop a topic's retained buffer, or one message by seq (cap: purge)")
 	fmt.Fprintln(os.Stderr, "  retract SEQ                         withdraw a message YOU sent: gone from every agent path, still")
 	fmt.Fprintln(os.Stderr, "                                       visible to the operator as retracted (no cap; authorship-checked)")
+	fmt.Fprintln(os.Stderr, "                                       a reply to a message addressed to you retracts it automatically;")
+	fmt.Fprintln(os.Stderr, "                                       send --no-retire-on-reply to keep one alive past its answer")
 }
 
 func die(err error) {

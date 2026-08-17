@@ -32,6 +32,12 @@ type RetainedMessage struct {
 	// live. Set only on entries in topic.retracted — an entry in the live ring
 	// always carries the zero value.
 	RetractedAt time.Time
+	// NoRetireOnReply carries SendRequest.no_retire_on_reply: the author asked
+	// that answering this message must NOT withdraw it. Negative, so the zero
+	// value is the default (a reply does retire it). The rule itself lives in
+	// the server, which is where the point-to-point condition can be evaluated;
+	// the board only remembers what the author asked for.
+	NoRetireOnReply bool
 }
 
 // topic holds a bounded ring of recent messages plus metadata used for TTL eviction.
@@ -61,7 +67,7 @@ func newTopic(name string, cap int) *topic {
 	return &topic{name: name, cap: cap, ring: make([]RetainedMessage, 0, cap)}
 }
 
-func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64) {
+func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, cfg sendConfig) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := time.Now()
@@ -80,6 +86,7 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 		FromHostname:     fromHost,
 		FromAgentProfile: fromProfile,
 		ReceivedAt:       now,
+		NoRetireOnReply:  cfg.noRetireOnReply,
 	})
 }
 

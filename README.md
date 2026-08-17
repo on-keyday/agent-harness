@@ -357,6 +357,13 @@ withdrawing in seconds cannot shrink the window a human has to audit it.
 `purge` remains capability-gated: it erases the bytes outright,
 including from that operator view.
 
+Usually nothing calls `retract` by hand: **replying to a message that was
+addressed to you withdraws it**, since the reply is proof it was handled.
+That only applies point-to-point (the message sat on the replier's own
+`chat.<short-id>`) — one subscriber's answer never withdraws a shared-topic
+publish the others may not have read. `agent send --no-retire-on-reply`
+opts a message out.
+
 ```bash
 bin/harness-cli caps                       # capability names + scope forms
 bin/harness-cli submit --repo /abs/repo --task "..." --caps none

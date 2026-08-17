@@ -167,6 +167,50 @@ func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (st
 	return topic, true
 }
 
+// retireRepliedParent applies the reply-retire rule: answering a message that
+// was addressed to you withdraws it, on its author's behalf.
+//
+// A reply is the one moment when "this instruction is spent" is known to
+// somebody who still has the context to know it. The author knows too, but the
+// author has to remember — and if the author's own context is reset, nobody
+// withdraws anything and the recipient re-reads the instruction forever. So the
+// reply carries the retraction.
+//
+// Four conditions, each load-bearing:
+//
+//   - the parent is still live (an already-withdrawn or purged seq is nothing
+//     to do, not an error);
+//   - its author did not opt out with no_retire_on_reply;
+//   - the parent sits on the REPLIER's own chat.<short-id>, i.e. it was
+//     addressed to them specifically. A publish to a shared topic is never
+//     auto-retired: one subscriber answering says nothing about whether the
+//     others have read it, and retiring it there would destroy their unread
+//     copy. Those senders retract explicitly instead;
+//   - the replier is not the author, so a task answering itself on its own
+//     topic does not erase its own message.
+//
+// Retraction goes through the same authorship-gated primitive an explicit
+// retract uses, with the PARENT'S author as the actor — the author authorised
+// it by publishing without the opt-out.
+func (s *Server) retireRepliedParent(parentSeq uint64, replier protocol.TaskID) {
+	if parentSeq == 0 || replier.Id == ([16]byte{}) {
+		return
+	}
+	m, ok := s.Board.Retained(parentSeq)
+	if !ok || m.NoRetireOnReply {
+		return
+	}
+	if m.Topic != agentboard.SelfTopic(replier) || m.FromTask.Id == replier.Id {
+		return
+	}
+	if topic, retired := s.Board.RetractSeq(parentSeq, m.FromTask); retired {
+		slog.Info("agentboard: parent retired by reply",
+			"seq", parentSeq, "topic", topic,
+			"author", hex.EncodeToString(m.FromTask.Id[:]),
+			"replier", hex.EncodeToString(replier.Id[:]))
+	}
+}
+
 func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.SendRequest) {
 	if !ac.helloed || r == nil {
 		return
@@ -198,11 +242,21 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 			s.sendAgent(conn, resp)
 			return
 		}
-		seq, sendErr := s.Board.Send(destTopic, payload, fromRid, fromTid, fromHost, fromProfile, r.InReplyTo)
+		var sendOpts []agentboard.SendOption
+		if r.NoRetireOnReply() {
+			sendOpts = append(sendOpts, agentboard.NoRetireOnReply())
+		}
+		seq, sendErr := s.Board.Send(destTopic, payload, fromRid, fromTid, fromHost, fromProfile, r.InReplyTo, sendOpts...)
 		var status agentboard.SendStatus
 		switch sendErr {
 		case nil:
 			status = agentboard.SendStatus_Ok
+			// Only after the reply is safely on the board: if the publish
+			// failed, the acknowledgement never happened and the parent must
+			// stay where the recipient can still act on it.
+			if r.InReplyTo != 0 {
+				s.retireRepliedParent(r.InReplyTo, fromTid)
+			}
 		case agentboard.ErrPayloadTooLarge:
 			status = agentboard.SendStatus_PayloadTooLarge
 		case agentboard.ErrTooManyTopics:
