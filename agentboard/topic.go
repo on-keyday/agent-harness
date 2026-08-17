@@ -157,6 +157,14 @@ func (t *topic) snapshotRetracted() []RetainedMessage {
 	return out
 }
 
+// hasRetracted reports whether the topic still holds withdrawn messages. Revoke
+// uses it to decide whether a topic may follow its last subscriber out.
+func (t *topic) hasRetracted() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.retracted) > 0
+}
+
 // retractedCount is the number of withdrawn messages held for operator audit.
 // Deliberately separate from summary()'s msgCount, which answers "how much
 // would a subscriber receive".

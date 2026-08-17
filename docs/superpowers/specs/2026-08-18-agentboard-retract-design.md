@@ -133,7 +133,8 @@ against the shipped `--agentboard-max-topics × 64 × --agentboard-max-payload`
 bound this is a theoretical figure that is nowhere near reached.
 
 Eviction: the withdrawn list is FIFO at its own cap. TTL eviction and
-whole-topic purge delete the topic outright, taking both lists.
+whole-topic purge delete the topic outright, taking both lists. (Revoke —
+the last-subscriber path — does not; see Amendment 2026-08-18b.)
 
 ### 2. Wire schema
 
@@ -448,3 +449,47 @@ Unit (`server/retire_on_reply_test.go`): the point-to-point path fires and
 stamps `RetractedAt`; the opt-out survives; a shared topic never fires even
 so; a self-reply never fires; an unknown / already-retired parent is a
 no-op, and a zero replier id matches nobody.
+
+---
+
+# Amendment 2026-08-18b — a topic holding withdrawn messages outlives its last subscriber
+
+## The hole this closes
+
+Found while verifying the base design on a live harness, twice.
+
+`Board.Revoke` deletes topics that only the finishing task subscribed
+(`agentboard/board.go`). A worker's `chat.<short-id>` is subscribed by that
+one task, so the moment the worker's task ended, the topic went — **and the
+withdrawn list with it**. Every instruction the worker had retracted
+disappeared at exactly the point an operator has most reason to read them:
+after the worker is done.
+
+The base spec's wording ("stays visible… until it ages out with the topic")
+was literally accurate and practically misleading. For the very case the
+design targets — a supervisor's instruction to a worker, retired by the
+worker's reply — the audit trail lasted only as long as the worker.
+
+## Rule
+
+In `Revoke`, a topic whose last subscriber is leaving is dropped **only if
+its withdrawn list is empty**. Otherwise it stays and ages out under the
+normal TTL, which is the bound an operator already lives with.
+
+Deliberately NOT applied to `evictOldestTopicLocked` (the `MaxTopics`
+pressure path): that runs when something has to go, and a rule able to
+refuse every candidate would turn a full board into a permanent publish
+failure.
+
+## Decision
+
+Narrow exemption, keyed on "is there anything to audit", not on the topic's
+shape or age. A topic with nothing withdrawn in it still follows its last
+subscriber out exactly as before — tested both ways, since an exemption
+that quietly stopped collecting garbage would be its own defect.
+
+## Testing (amendment b)
+
+`agentboard/retract_test.go`: a retracted message survives its topic's last
+subscriber being revoked; a topic with no withdrawn messages is still
+dropped by the same Revoke.

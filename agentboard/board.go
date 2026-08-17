@@ -153,9 +153,24 @@ func (b *Board) Revoke(rid protocol.RunnerID, tid protocol.TaskID) {
 	delete(b.tasks, key)
 	if ts != nil {
 		for _, p := range ts.snapshotPatterns() {
-			if _, ok := b.topics[p]; ok && !b.anyTaskMatchesLocked(p) {
-				delete(b.topics, p)
+			t, ok := b.topics[p]
+			if !ok || b.anyTaskMatchesLocked(p) {
+				continue
 			}
+			// A topic still holding WITHDRAWN messages outlives its last
+			// subscriber. Otherwise the audit trail retract exists to preserve
+			// would vanish at exactly the moment it matters most: a worker's
+			// chat.<short-id> is subscribed by that one task, so finishing the
+			// task destroyed every instruction it had retracted — including the
+			// ones an operator had not read yet. TTL still takes it, which is
+			// the bound the operator already lives with.
+			//
+			// Lock order is b.mu -> t.mu; no topic method reaches back into the
+			// board, so the nesting cannot invert.
+			if t.hasRetracted() {
+				continue
+			}
+			delete(b.topics, p)
 		}
 	}
 	b.mu.Unlock()
@@ -361,6 +376,10 @@ func (b *Board) evictExpiredTopics() {
 	}
 }
 
+// evictOldestTopicLocked frees a slot when MaxTopics is reached. Unlike Revoke
+// it does NOT spare topics holding withdrawn messages: this runs under capacity
+// pressure, where something has to go, and a rule that can refuse every
+// candidate would turn a full board into a permanent publish failure.
 func (b *Board) evictOldestTopicLocked() {
 	var oldestName string
 	var oldestT time.Time

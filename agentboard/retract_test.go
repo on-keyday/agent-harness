@@ -221,6 +221,56 @@ func TestRetract_PurgeStillReaches(t *testing.T) {
 	}
 }
 
+// TestRetract_SurvivesSubscriberRevoke: a worker's chat.<short-id> is
+// subscribed by that one task, so Revoke used to destroy the topic — and with
+// it every instruction the worker had retracted — the moment the task
+// finished. That is exactly when an operator has most reason to read them, so a
+// topic still holding withdrawn messages outlives its last subscriber.
+func TestRetract_SurvivesSubscriberRevoke(t *testing.T) {
+	b := newRetractBoard(t)
+	author := taskIDFromByte(1)
+	worker := taskIDFromByte(2)
+	var rid protocol.RunnerID
+	b.RegisterTask(rid, worker, [16]byte{}, "")
+	self := SelfTopic(worker)
+
+	seq, err := b.Send(self, []byte("spent instruction"), testRid, author, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.RetractSeq(seq, author); !ok {
+		t.Fatal("RetractSeq failed")
+	}
+
+	b.Revoke(rid, worker) // the worker's task ends
+
+	msgs, found := b.ListRetracted(self)
+	if !found || len(msgs) != 1 {
+		t.Fatalf("after Revoke: (%d withdrawn, found=%v), want (1, true) — the audit trail must outlive the task", len(msgs), found)
+	}
+}
+
+// TestRevoke_StillDropsEmptyTopics is the other half: the exemption is narrow.
+// A topic with nothing withdrawn in it still follows its last subscriber out,
+// exactly as before.
+func TestRevoke_StillDropsEmptyTopics(t *testing.T) {
+	b := newRetractBoard(t)
+	worker := taskIDFromByte(3)
+	var rid protocol.RunnerID
+	b.RegisterTask(rid, worker, [16]byte{}, "")
+	self := SelfTopic(worker)
+
+	if _, err := b.Send(self, []byte("read and done"), testRid, taskIDFromByte(1), "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	b.Revoke(rid, worker)
+
+	if _, found := b.ListRetained(self); found {
+		t.Error("a topic with no withdrawn messages must still be dropped with its last subscriber")
+	}
+}
+
 // TestRetract_IsIdempotentAndBlind: a second retract of the same seq answers
 // the same "no" as a seq that never existed. The CLI turns both into
 // not_found, which is what keeps the status from confirming the existence of
