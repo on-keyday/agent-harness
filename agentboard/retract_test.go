@@ -271,6 +271,87 @@ func TestRevoke_StillDropsEmptyTopics(t *testing.T) {
 	}
 }
 
+// TestRetract_KeptTopicStillTTLEvicts is the other end of the Revoke
+// exemption. Revoke runs once, at task end, so nothing re-evaluates "is the
+// withdrawn list still non-empty?" afterwards — if the TTL sweep did not take
+// these topics they would be a leak with no second chance to collect them.
+//
+// It does: evictExpiredTopics has no subscriber condition and keys on the
+// topic's LAST PUBLISH, which retraction does not touch. So a topic kept alive
+// past its last subscriber still dies at the same moment it always would have.
+// The exemption blocks the EARLY deletion; it does not extend the lifetime.
+func TestRetract_KeptTopicStillTTLEvicts(t *testing.T) {
+	b := New(Config{RingN: 4, TopicTTL: 300 * time.Millisecond, MaxTopics: 16, MaxPayload: 1024})
+	t.Cleanup(b.Close)
+	author := taskIDFromByte(1)
+	worker := taskIDFromByte(2)
+	var rid protocol.RunnerID
+	b.RegisterTask(rid, worker, [16]byte{}, "")
+	self := SelfTopic(worker)
+
+	seq, err := b.Send(self, []byte("spent"), testRid, author, "h", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := b.RetractSeq(seq, author); !ok {
+		t.Fatal("RetractSeq failed")
+	}
+	b.Revoke(rid, worker)
+	if msgs, found := b.ListRetracted(self); !found || len(msgs) != 1 {
+		t.Fatalf("precondition: topic should have survived Revoke, got (%d, %v)", len(msgs), found)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, found := b.ListRetained(self); !found {
+			return // TTL collected it
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("a topic kept past its last subscriber never TTL-evicted: that is a leak, not a longer audit window")
+}
+
+// TestRetract_EmptiedWithdrawnListLeavesNoLiveTopic: purging the last withdrawn
+// message leaves an empty, subscriber-less topic. Revoke has already run and
+// will not run again, so this too has to fall to the TTL sweep — the same
+// "harmless, it TTL-evicts like any quiet topic" that PurgeSeq already relies
+// on.
+func TestRetract_EmptiedWithdrawnListLeavesNoLiveTopic(t *testing.T) {
+	b := New(Config{RingN: 4, TopicTTL: 300 * time.Millisecond, MaxTopics: 16, MaxPayload: 1024})
+	t.Cleanup(b.Close)
+	author := taskIDFromByte(1)
+	worker := taskIDFromByte(2)
+	var rid protocol.RunnerID
+	b.RegisterTask(rid, worker, [16]byte{}, "")
+	self := SelfTopic(worker)
+
+	seq, _ := b.Send(self, []byte("spent"), testRid, author, "h", "", 0)
+	b.RetractSeq(seq, author)
+	b.Revoke(rid, worker)
+
+	// The operator erases the withdrawn message outright.
+	if removed, found := b.PurgeSeq(self, seq); !removed || !found {
+		t.Fatalf("PurgeSeq = (%v, %v), want both true", removed, found)
+	}
+	if n, _ := b.RetractedCount(self); n != 0 {
+		t.Fatalf("withdrawn list = %d after purge, want 0", n)
+	}
+	// The topic must still EXIST here, or the wait below would pass without the
+	// TTL having collected anything.
+	if _, found := b.ListRetained(self); !found {
+		t.Fatal("precondition: PurgeSeq must empty the topic, not delete it")
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, found := b.ListRetained(self); !found {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("an emptied topic kept by the Revoke exemption never TTL-evicted")
+}
+
 // TestRetract_IsIdempotentAndBlind: a second retract of the same seq answers
 // the same "no" as a seq that never existed. The CLI turns both into
 // not_found, which is what keeps the status from confirming the existence of
