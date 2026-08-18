@@ -46,6 +46,7 @@ type mainConfig struct {
 	ClaudeArgs                 string
 	AgentOneshotArgv           string
 	AgentResumeOneshotArgv     string
+	AgentInteractiveArgv       string
 	AgentResumeInteractiveArgv string
 	AgentProfilesJSON          string
 	AgentLogFormat             string
@@ -111,8 +112,9 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.ClaudeArgs, "claude-args", c.ClaudeArgs, "deprecated alias for --agent-args")
 	fs.StringVar(&c.AgentOneshotArgv, "agent-oneshot-argv", c.AgentOneshotArgv, "argv template for oneshot tasks; tokens {args} and {prompt}; default \"{args} -p {prompt}\"")
 	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
+	fs.StringVar(&c.AgentInteractiveArgv, "agent-interactive-argv", c.AgentInteractiveArgv, "argv template for FRESH interactive opens; token {args}; default \"{args}\" (the bare binary, which is right for claude/codex/agy/a shell) — set it for an agent whose interactive entry point needs a subcommand, e.g. \"chat {args}\"")
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; token {args}; default \"{args} --continue\"")
-	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,resumeInteractiveArgv,agentArgs,logFormat}]")
+	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,interactiveArgv,resumeInteractiveArgv,agentArgs,logFormat}]")
 	fs.StringVar(&c.AgentLogFormat, "agent-log-format", c.AgentLogFormat, "stdout log decoder for the default agent profile: \"\" (raw), claude-stream-json, or codex-jsonl")
 	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
@@ -148,6 +150,14 @@ func (c *mainConfig) validate() error {
 	}
 	if strings.TrimSpace(c.AgentOneshotArgv) != "" && strings.TrimSpace(c.AgentResumeOneshotArgv) == "" {
 		return fmt.Errorf("--agent-resume-oneshot-argv is required when --agent-oneshot-argv is customized")
+	}
+	// Same pairing rule, same reason: an agent whose fresh interactive open
+	// needs a subcommand ("chat {args}") almost certainly needs it on the
+	// resume open too, and the resume DEFAULT is "{args} --continue" — which
+	// would drop the subcommand and launch something else entirely. Requiring
+	// both makes that impossible to get half-right.
+	if strings.TrimSpace(c.AgentInteractiveArgv) != "" && strings.TrimSpace(c.AgentResumeInteractiveArgv) == "" {
+		return fmt.Errorf("--agent-resume-interactive-argv is required when --agent-interactive-argv is customized")
 	}
 	return nil
 }
@@ -226,6 +236,15 @@ func main() {
 		fmt.Fprintf(os.Stderr, "agent-runner: --agent-resume-oneshot-argv: %v\n", err)
 		os.Exit(1)
 	}
+	interactiveArgv, err := parseAgentArgsFlag("--agent-interactive-argv", cfg.AgentInteractiveArgv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	if err := runner.ValidateInteractiveArgvTemplate(interactiveArgv); err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: --agent-interactive-argv: %v\n", err)
+		os.Exit(1)
+	}
 	resumeInteractiveArgv, err := parseAgentArgsFlag("--agent-resume-interactive-argv", cfg.AgentResumeInteractiveArgv)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
@@ -248,6 +267,7 @@ func main() {
 		AgentArgs:             strings.Fields(cfg.ClaudeArgs),
 		OneshotArgv:           oneshotArgv,
 		ResumeOneshotArgv:     resumeOneshotArgv,
+		InteractiveArgv:       interactiveArgv,
 		ResumeInteractiveArgv: resumeInteractiveArgv,
 		LogFormat:             cfg.AgentLogFormat,
 	}

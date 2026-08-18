@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -137,6 +137,7 @@ Arguments: $ARGUMENTS
          [--agent-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
+         [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
          [--agent-log-format "<claude-stream-json|codex-jsonl>"]
      ```
@@ -155,6 +156,7 @@ Arguments: $ARGUMENTS
          [--agent-args "<...>"] \
          [--agent-oneshot-argv "<...>"] \
          [--agent-resume-oneshot-argv "<...>"] \
+         [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
          [--agent-log-format "<claude-stream-json|codex-jsonl>"]
      ```

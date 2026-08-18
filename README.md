@@ -564,11 +564,18 @@ Run WS+UDP dualstack if you want both.
   **Sandboxing** below.
 - **Agent CLI integration is argv-template based.** The runner spawns
   `claude` by default and its default templates target Claude Code
-  (`{args} -p {prompt}`, `{args} --continue -p {prompt}`, and
+  (`{args} -p {prompt}`, `{args} --continue -p {prompt}`, `{args}` and
   `{args} --continue`). Non-Claude agents can use `--agent-bin`,
-  `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`, and
-  `--agent-resume-interactive-argv` to map harness submit/resume
-  intent onto their own CLI surface. `--claude-bin` remains as a
+  `--agent-oneshot-argv`, `--agent-resume-oneshot-argv`,
+  `--agent-interactive-argv` and `--agent-resume-interactive-argv` to map
+  harness submit/resume intent onto their own CLI surface — one template
+  per launch mode, so every mode a profile can be launched in is one the
+  profile can describe. `--agent-interactive-argv` defaults to the bare
+  binary (`{args}`), which is what claude / codex / agy / a shell all
+  want; set it for an agent whose interactive entry point needs a
+  subcommand, and the runner then also requires
+  `--agent-resume-interactive-argv` so the resume open cannot silently
+  drop that subcommand. `--claude-bin` remains as a
   deprecated alias for `--agent-bin`; `--no-worktree --agent-bin
   {bash,cmd.exe,powershell.exe}` is also a supported pattern for
   generic-process sandbox slots.

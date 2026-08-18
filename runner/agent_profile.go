@@ -22,6 +22,7 @@ type AgentProfile struct {
 	AgentArgs             []string
 	OneshotArgv           []string
 	ResumeOneshotArgv     []string
+	InteractiveArgv       []string
 	ResumeInteractiveArgv []string
 
 	// LogFormat names the agentlog decoder for this agent's stdout:
@@ -63,6 +64,9 @@ func NewProfileSet(defaultP AgentProfile, extra []AgentProfile) (ProfileSet, err
 		}
 		if err := ValidateOneshotArgvTemplate(p.ResumeOneshotArgv); err != nil {
 			return ProfileSet{}, fmt.Errorf("agent profile %q: resumeOneshotArgv: %w", p.Name, err)
+		}
+		if err := ValidateInteractiveArgvTemplate(p.InteractiveArgv); err != nil {
+			return ProfileSet{}, fmt.Errorf("agent profile %q: interactiveArgv: %w", p.Name, err)
 		}
 		if err := ValidateResumeInteractiveArgvTemplate(p.ResumeInteractiveArgv); err != nil {
 			return ProfileSet{}, fmt.Errorf("agent profile %q: resumeInteractiveArgv: %w", p.Name, err)
@@ -162,6 +166,7 @@ type agentProfileJSON struct {
 	AgentArgs             []string `json:"agentArgs"`
 	OneshotArgv           []string `json:"oneshotArgv"`
 	ResumeOneshotArgv     []string `json:"resumeOneshotArgv"`
+	InteractiveArgv       []string `json:"interactiveArgv"`
 	ResumeInteractiveArgv []string `json:"resumeInteractiveArgv"`
 	LogFormat             string   `json:"logFormat"`
 }
@@ -187,6 +192,7 @@ func ParseAgentProfilesJSON(s string) ([]AgentProfile, error) {
 			AgentArgs:             r.AgentArgs,
 			OneshotArgv:           r.OneshotArgv,
 			ResumeOneshotArgv:     r.ResumeOneshotArgv,
+			InteractiveArgv:       r.InteractiveArgv,
 			ResumeInteractiveArgv: r.ResumeInteractiveArgv,
 			LogFormat:             r.LogFormat,
 		})

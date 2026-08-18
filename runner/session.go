@@ -348,7 +348,7 @@ func resolveExec(ps ProfileSet, profile string, oneshot, resume bool, extra []st
 	if oneshot {
 		argv, err = buildOneshotArgs(p.OneshotArgv, p.ResumeOneshotArgv, args, prompt, resume)
 	} else {
-		argv, err = buildInteractiveArgs(args, p.ResumeInteractiveArgv, resume)
+		argv, err = buildInteractiveArgs(args, p.InteractiveArgv, p.ResumeInteractiveArgv, resume)
 	}
 	if err != nil {
 		return "", nil, err
