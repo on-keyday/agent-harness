@@ -328,9 +328,44 @@ record of sent packets, but confirm it does not assume contiguity.
    short-circuits through `mayCloseProxy` for proxied packets
    (`objproto.go:494-505`), so only the log line depends on it.
 4. **Verify brgen's bitfield packing** for a `u1` + `u7` leading byte matches
-   `ProtectedHeader`'s `u1` + `u63` MSB-first layout. Confirm at codegen time.
-   `objtrsf` has no Makefile; the `packet.go` regeneration command needs to be
-   recorded.
+   `ProtectedHeader`'s `u1` + `u63` MSB-first layout. This can only be checked
+   once the schema changes; do it first, before writing any Go against the new
+   field names.
+
+## Regenerating packet.go
+
+`objtrsf` has no codegen tooling of its own. It borrows this repo's
+`scripts/protoregen.sh` (`make protoregen`), which drives the brgen local api
+server at `lang=go3` (= ebm2go). The per-target loop uses the path as given and
+writes `${bgn%.bgn}.go` beside it, so an absolute out-of-tree path works:
+
+```
+./scripts/protoregen.sh <objtrsf>/objproto/packet/packet.bgn
+```
+
+`--all` is scoped to this repo (`find .`) and will not reach objtrsf; always
+pass the path explicitly. The `~/.cache/brgen-kit` cache must already exist or
+the first run does a ~20 MB download plus an npm install.
+
+### Toolchain drift: regenerate as a separate commit first
+
+The committed `objproto/packet/packet.go` is stamped
+`ebm2go at https://github.com/on-keyday/rebrgen`, while the current toolchain
+emits `.../brgen`. `objproto/packet` and `exec/frame` carry the older stamp;
+`trsf/wire` and this repo's `runner/protocol` carry the current one.
+
+Measured on 2026-08-18 by regenerating the **unchanged** schema into a scratch
+directory and diffing: same 1651 lines, and after normalising generated
+identifier numbering the entire difference is cosmetic — `tmpNNN` /
+`io_temp_NNN` renumbering, `Variant161` -> `Variant164` (no references outside
+the generated file), and redundant `int(...)` wrapping. Swapping the
+regenerated file in gave `go build ./...` clean and
+`go test ./objproto/... ./trsf/...` all passing.
+
+So the drift is safe, but it is ~978 raw diff lines of noise. **Land it as a
+preparatory commit that regenerates packet.go with no schema change**, verified
+green, before the wire-format change. Otherwise the wire diff is unreviewable
+and a bisect cannot separate the two.
 
 ## Tests
 
