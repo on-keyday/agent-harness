@@ -20,8 +20,14 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   # agent at the proxy. Fail CLOSED on firewall error.
   PROXY_UID="${SANDBOX_PROXY_UID:-1001}"
   PROXY_PORT="${SANDBOX_PROXY_PORT:-18080}"
-  gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
-    /usr/local/bin/sandbox-connect-proxy &
+  # Double-forked on purpose: this shell EXECs claude below, so a plain `... &`
+  # leaves the proxy a direct child of the pid that becomes claude — and node
+  # only reaps pids it spawned itself, so a dead proxy would sit <defunct> for
+  # the container's life, outside the reach of the wrapper's --init. The
+  # subshell exits immediately, reparenting the proxy onto catatonit, which
+  # does reap it. (Measured 2026-08-18: `&` -> 1 zombie, `( & )` -> 0.)
+  ( gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
+      /usr/local/bin/sandbox-connect-proxy & )
   for _ in $(seq 1 50); do
     if (exec 3<>"/dev/tcp/127.0.0.1/$PROXY_PORT") 2>/dev/null; then break; fi
     sleep 0.1

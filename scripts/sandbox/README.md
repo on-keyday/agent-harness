@@ -18,6 +18,8 @@ created in a bind mount are owned by `1000:1000` on the host.
 ## Prerequisites
 
 - `podman` (`sudo pacman -S podman` on Arch). Coexists with docker.
+  The wrapper's `--init` needs `catatonit`; Arch's podman hard-depends on it,
+  other distros may package it separately.
 - `/etc/subuid` + `/etc/subgid` entries for your user (present by default).
 
 ## Build the image
@@ -228,3 +230,19 @@ harness-cli submit --repo <sandbox-root> \
   via a direct L3 carve-out on that one port (it doesn't honor `HTTPS_PROXY`).
   Verified end-to-end (allowed via proxy, denied refused, raw-socket bypass
   blocked, claude runs + writes the worktree as the host user). ✅
+- **PID 1 / zombie reaping (`podman run --init`):** the whole command chain
+  execs (`entrypoint.sh` → `gosu` → `claude-launch.sh` → `claude`), so without
+  `--init` **claude itself is PID 1** — and node/libuv only `waitpid()`s the pids
+  it spawned, never reparented orphans. Every background job whose own parent
+  shell exited (agent `run_in_background` commands, nohup'd builds) therefore
+  accumulated as `<defunct>` for the container's whole life; observed
+  2026-08-18 as three stuck `python3 <defunct>` under a live sandbox agent.
+  `--init` puts catatonit at PID 1 and claude under it. The `--firewall-proxy`
+  broker needed a second fix: `entrypoint.sh` starts it before its own `exec`,
+  so it is a direct child of the pid that *becomes* claude and `--init` cannot
+  see it — it is now double-forked (`( … & )`) onto catatonit.
+  Verified end-to-end through the wrapper with a node stand-in for claude:
+  without `--init`, `PID1=node` and an orphan left 1 zombie; with it,
+  `PID1=podman-init` and 0. TTY input, foreground process group
+  (`PGRP == TPGID`), exit-code propagation, the `gosu` uid drop and the
+  proxy-mode firewall all re-checked unchanged under a real PTY. ✅

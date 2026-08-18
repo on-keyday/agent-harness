@@ -276,7 +276,21 @@ setsid bash -c '
   rm -f "$cidfile"
 ' _ "$$" "$cidfile" </dev/null >/dev/null 2>&1 &
 
+# --init is load-bearing, not hygiene. Every layer of our command chain execs
+# (entrypoint.sh -> gosu -> claude-launch.sh -> claude), so claude — a node
+# process — ends up as the container's PID 1. node/libuv only ever waitpid()s
+# the pids IT spawned; a process reparented to it (any background job whose
+# own parent shell exited: `run_in_background` bash tools, nohup'd builds, the
+# --firewall-proxy broker) is unknown to it and stays <defunct> for the
+# container's whole life. Measured 2026-08-18 in a live sandbox: 3 stuck
+# `python3 <defunct>` under the containerized claude, and an A/B on this image
+# (orphan `setsid sleep 1`) gave 1 zombie without --init, 0 with it.
+# --init makes catatonit PID 1 (claude becomes its child), which reaps orphans
+# and forwards signals; it costs one ~800KB binary bind-mounted at
+# /run/podman-init and does not disturb the TTY (the child stays in the
+# foreground process group).
 exec podman run --rm -i "${TTY[@]}" \
+  --init \
   --userns=keep-id \
   --security-opt label=disable \
   --security-opt no-new-privileges \
