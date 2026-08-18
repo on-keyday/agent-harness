@@ -171,6 +171,11 @@ bin/harness-cli prune-local --before 168h   # remove old local worktrees
 # `session attach <id>`. `-d` spawns without splicing the local terminal.
 # `interactive` is shorthand: session new + attach in one step.
 bin/harness-cli session new --repo /abs/path/to/repo
+# --rows/--cols size the session's PTY at open. Only worth it with -d: a
+# detached session has NO size until someone attaches, and attaching needs
+# exec_attach — which the spawner may not hold. Without them a full-screen
+# TUI in that session draws nothing.
+bin/harness-cli session new -d --repo /abs/path/to/repo --rows 40 --cols 150
 bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>

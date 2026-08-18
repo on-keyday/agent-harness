@@ -245,7 +245,13 @@ type SessionStartedMsg struct {
 // resumeCapsOverride, when true, signals the server to re-grant caps from
 // the resumer's caps rather than keeping the persisted caps of the resumed task.
 // Ignored (no-op) when resumeTaskID is empty (fresh session).
-func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
+// TermSize is the initial PTY size handed to a detached session start. A named
+// type rather than two bare uint16 parameters: rows and cols are the classic
+// transposition pair, and this function's argument list is already long enough
+// that a silent swap would survive review.
+type TermSize struct{ Rows, Cols uint16 }
+
+func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string, size TermSize) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -255,6 +261,11 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+			// Nobody will attach to this session, so this is its only chance to
+			// get a PTY size at all; the TUI's own terminal is the best proxy
+			// available. Without it the session sits at 0x0 and a full-screen
+			// TUI inside it paints nothing.
+			InitialRows: size.Rows, InitialCols: size.Cols,
 		})
 		if err != nil {
 			return SessionStartedMsg{Err: err}

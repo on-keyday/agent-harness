@@ -210,6 +210,13 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	x11 := false
 	fs.BoolVar(&x11, "x11", false, "forward X11: inject DISPLAY/XAUTHORITY so GUI apps in the session render on your local X server (requires xauth + a running local X server)")
 	x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N; default 10)")
+	// Sizes the session's PTY, unlike `session snapshot --rows/--cols`, which
+	// sizes the offscreen renderer and never touches the PTY. Both must be
+	// given to take effect. Matters most with -d: a detached session's PTY has
+	// no size at all until a client attaches, and attaching needs exec_attach,
+	// which the spawner may not hold.
+	rows := fs.Uint("rows", 0, "initial PTY rows for the session (0 = unset; needs --cols too)")
+	cols := fs.Uint("cols", 0, "initial PTY columns for the session (0 = unset; needs --rows too)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -261,6 +268,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		Caps: caps, Scope: scope, ResumeCapsOverride: resumeCapsOverride,
 		ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
 		ResumeConversation: *resumeConversation, AgentProfile: *agent,
+		InitialRows: uint16(*rows), InitialCols: uint16(*cols),
 	}
 
 	if detach {
@@ -269,6 +277,15 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 			return exitOnAmbiguous(err)
 		}
 		_ = stream.Close() // immediately detach → server transitions Running -> Detached
+		// This process exits on the next line, and exiting takes the transport
+		// down with it. sendStream.Close() only FLAGS eof — anything still in
+		// the send buffer (notably the initial window-size frame written by
+		// OpenInteractive) has not left yet, so exiting here silently drops it.
+		// Measured: `session new --rows 40 --cols 150 -d` produced a PTY of
+		// `0 0`, and a blind 300ms sleep in this spot produced `40 150`.
+		// Completed() is the real condition that sleep was approximating: eof
+		// sent AND every sent range acknowledged.
+		waitStreamCompleted(stream, 2*time.Second)
 		fmt.Println(taskIDHex)
 		return nil
 	}
@@ -612,5 +629,20 @@ func awaitIdleStatusStr(s protocol.AwaitIdleStatus) string {
 		return "bad_request"
 	default:
 		return s.String()
+	}
+}
+
+// waitStreamCompleted blocks until s reports its data fully sent and
+// acknowledged, or until timeout. Polling is the available mechanism: the
+// stream exposes Completed() but no completion signal to wait on.
+//
+// The timeout is a bound, not an expectation — on a healthy link this returns
+// in a few milliseconds. Exceeding it means the frames did not make it, which
+// is not worth failing the detach over: the session itself is already open and
+// usable, only the size hint is lost.
+func waitStreamCompleted(s interface{ Completed() bool }, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for !s.Completed() && time.Now().Before(deadline) {
+		time.Sleep(2 * time.Millisecond)
 	}
 }

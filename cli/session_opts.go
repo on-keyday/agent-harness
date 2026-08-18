@@ -38,6 +38,21 @@ type SessionOpts struct {
 	// have one ("re-grant this scope" vs "keep the task's"), so it carries
 	// its own presence bit:
 	Scope protocol.TaskScope
+	// InitialRows / InitialCols size the session's PTY at open time. Both must
+	// be non-zero to take effect; 0 (the zero value) sends nothing and leaves
+	// the historical behaviour, where a PTY has NO size until an attached
+	// client sends its own TerminalWindowSize frame.
+	//
+	// This is the only chance a detached session gets: resizing is a control
+	// frame on an attached stream, and a spawner holding just `spawn` can never
+	// attach (AttachSession requires exec_attach), so a session it opens with
+	// -d would stay 0x0 for its whole life. Measured 2026-08-18: codex's and
+	// agy's full-screen TUIs paint nothing at that size.
+	//
+	// On an ATTACHED open the value is short-lived by design — the client's own
+	// resize loop overwrites it with the real terminal size moments later.
+	InitialRows uint16
+	InitialCols uint16
 	// ScopePresent, on a resume, writes Scope onto the task (attenuated);
 	// false keeps the task's persisted scope. Independent of
 	// ResumeCapsOverride — the two halves of authority re-grant separately.

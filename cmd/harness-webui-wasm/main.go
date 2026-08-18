@@ -1510,10 +1510,21 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if av := opts.Get("agent"); av.Type() == js.TypeString {
 				agentProfile = av.String()
 			}
+			// Initial PTY size. The WebUI itself resizes from the xterm
+			// element as soon as it attaches, so these matter for scripted
+			// callers opening a session they will not attach to.
+			var initRows, initCols uint16
+			if rv := opts.Get("rows"); rv.Type() == js.TypeNumber {
+				initRows = uint16(rv.Int())
+			}
+			if cv := opts.Get("cols"); cv.Type() == js.TypeNumber {
+				initCols = uint16(cv.Int())
+			}
 			taskID, err := c.Interactive(rootCtx, repo, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 				Caps: caps, Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
+				InitialRows: initRows, InitialCols: initCols,
 			})
 			if err != nil {
 				var are *cli.AmbiguousRunnerError

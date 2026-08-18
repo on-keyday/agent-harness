@@ -75,8 +75,13 @@ Renders the session's current screen to plain text via a headless VT emulator
 (`--rows/--cols` are a fallback if the session reports no size). Note they only
 affect *rendering*: a session started without an attached terminal may have no
 size at all, and a full-screen program in it refuses to draw ("terminal too
-small"). Set the real size from inside instead — `session exec <id> 'stty rows
-40 cols 140'` — then start the program. Each snapshot
+small" — codex and agy paint nothing whatsoever at 0x0).
+
+Give the session a real size **when you open it**: `session new -d --rows 40
+--cols 150`. That is the only route open to a spawner holding just `spawn`,
+because every later resize path goes through attach (`exec_attach`). For a
+session that is already running and whose agent is a shell, `session exec <id>
+'stty rows 40 cols 140'` still works — but it needs `exec_attach` too. Each snapshot
 already waits `--settle-ms` (default 1500) collecting output before rendering —
 factor that beat into poll loops.
 

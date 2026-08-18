@@ -2562,7 +2562,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)})
 		}
 		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SessionAttachAction:
