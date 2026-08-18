@@ -1,13 +1,16 @@
 ---
-name: operator-surface-checklist
-description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting. A NUMBERED checklist (1–36) that must be walked item by item with a verdict per number — never summarized. Every input surface, every display surface, the per-path semantics axes, and the result/display conventions across CLI/TUI/WebUI/wasm.
+name: surface-parity-checklist
+description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, log format, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–36 for every input surface, display surface, per-path semantics axis and result/display convention across CLI/TUI/WebUI/wasm, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
 ---
 
-# Operator-surface checklist
+# Surface-parity checklist
 
 Every operator-visible field lives on ~15 surfaces across three UIs, and
 every option's MEANING exists once per path it is reachable from. History
-shows these get found one at a time, by the user, after landing. Sibling:
+shows these get found one at a time, by the user, after landing. A second,
+narrower axis lives at the bottom (S1–S6): an agent the operator launches
+is described in a preset table AND re-described in the podman sandbox
+wrapper, and no UI grep reaches that pair. Sibling:
 `implementation-pitfalls` Pitfall 9 is the incident record; this file is the
 checklist.
 
@@ -24,6 +27,11 @@ This is a CHECKLIST, not reference prose. When this skill applies, walk
 A walk that skips numbers or collapses into "surfaces covered" is invalid —
 the summary sentence is exactly where discretionary omission hides. If an
 item is expensive, say so and mark it; do not silently drop it.
+
+Items S1–S6 (agent-launch parity) are a SEPARATE list with its own trigger,
+kept out of 1–36 on purpose: they are `n/a` for almost every field change,
+and a list that trains you to type `n/a` is how the walk decays. Walk them
+when their trigger fires, with the same three verdicts.
 
 ## Input surfaces (new flag / option / request field)
 
@@ -142,6 +150,62 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     land as an Amendment section there, so the spec never contradicts the
     shipped behaviour a later reader verifies against.
 
+## Agent-launch parity — SEPARATE trigger, walk S1–S6
+
+Items 1–36 are one field across ~15 UI surfaces. This section is a
+different axis: an agent is launched by the operator through a preset, and
+the podman sandbox (`scripts/sandbox/`) re-runs that same agent through a
+wrapper that must be kept in lockstep by hand. Nothing in `cli/`, `tui/`
+or `webui/` mentions it, so a 1–36 walk cannot reach it.
+
+**Trigger (walk S1–S6 instead of, or in addition to, 1–36):** adding,
+renaming or removing an agent; changing an agent's bin path, argv
+templates, log format, config directory, credential mode, or endpoint
+domains; changing what env the runner hands an agent; changing the
+`HARNESS_SERVER_CID` format or the server's addressing.
+
+S1. Preset derivation — `scripts/agent_presets.py`: `KNOWN_AGENT_PRESETS`
+    plus the `for _base in (…)` tuple that derives each `sandbox-<base>`.
+    A new agent added to the map alone gets NO sandbox twin. The twin must
+    stay DERIVED (only `bin` changes) — the first hand-copied version
+    drifted and one-shot progress arrived as a single final blob instead
+    of streamed events.
+S2. Wrapper dispatch — `scripts/sandbox/agent-in-podman.sh` selects the
+    agent from `basename $0`, so each agent needs its
+    `<base>-in-podman.sh` symlink next to it. The default arm is
+    `AGENT=claude`: a missing symlink does not fail, it runs Claude Code
+    while the task row still reads `agent=sandbox-<name>`. Same silent
+    wrong-binary class as a fresh interactive launch carrying no argv
+    template — the BIN is the only selector every launch path carries.
+S3. Agent table — the `case "$AGENT" in` block in that wrapper is the ONE
+    place per-agent differences live: host bin, container bin, image
+    fallback, config mounts, token file + token env, always-env,
+    firewall-only env, egress domains, HOME (mount auth) and ephemeral
+    HOME (token auth). An agent with no revocable-token mode is
+    mount-auth ONLY —
+    state that, because it puts that provider's credentials in the
+    container with no narrower option.
+S4. Firewall-only fields — `A_DOMAINS` and `A_FW_ENV` take effect ONLY
+    under `--firewall` / `--firewall-proxy`, and `SANDBOX_PROXY_ALLOW`
+    only under the proxy mode. A run in the default (open-egress) mode
+    proves nothing about them; a missing domain surfaces as a fail-closed
+    abort on someone else's task.
+S5. Env and addressing contract — the wrapper forwards env by PREFIX
+    (`HARNESS_*`), so a new `HARNESS_…` var rides along automatically and
+    a differently-named one silently does not. Separately it parses
+    `HARNESS_SERVER_CID` into ip/proto/port to build the harness-server
+    carve-out; if the format changes and the parse fails, the carve-out is
+    skipped entirely (deliberately fail-closed) and the bridged
+    `harness-cli` stops working inside the container.
+S6. Sandbox docs + the verifier — `scripts/sandbox/README.md` (agent table
+    AND the security-model section), `.claude/commands/runner-up.md`
+    (preset table), and `scripts/sandbox/probe.sh`: probe measures the
+    claims from inside the container, so a claim added to the README with
+    no probe line reads as verified while being unmeasured. Also state the
+    upgrade step for any bin/path rename — `build_and_restart_all.py`
+    replays a running slot's recorded argv, so live slots do NOT migrate;
+    they must be stopped and brought back up.
+
 ## When to invoke
 
 - Adding a field to `TaskInfo` / `RunnerInfo` / any snapshot row
@@ -149,6 +213,10 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
 - Adding an option to ANY verb family (spawn or otherwise)
 - Adding an operator action (new keybinding / button / dialog / verb)
 - Reviewing a diff that claims "CLI, TUI and WebUI covered"
+- (S1–S6) Adding or renaming an agent, or changing its bin / argv templates
+  / log format / config dir / credential mode / egress domains
+- (S1–S6) Changing the env or the server addressing an agent is launched
+  with — the sandbox wrapper re-derives both
 
 When a defect ships through this checklist anyway: fix the defect AND add
 the number that would have caught it. The list grows by incident, and the

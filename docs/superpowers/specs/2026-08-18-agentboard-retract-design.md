@@ -241,7 +241,7 @@ hides that difference at the call site.
 
 ### 5. Operator surfaces
 
-Walk of the `operator-surface-checklist` items that apply; the rest are
+Walk of the `surface-parity-checklist` items that apply; the rest are
 recorded in the checklist walk in the implementation notes.
 
 | Surface | Change |

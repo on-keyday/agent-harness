@@ -250,7 +250,7 @@ They keep asserting that for Create and Resume, and gain a sibling case for the
 
 ## Operator surfaces
 
-Walk of the `operator-surface-checklist`, items 1–36. Verdicts are the
+Walk of the `surface-parity-checklist`, items 1–36. Verdicts are the
 implementation plan; re-verified against the diff at review.
 
 ### Input surfaces
