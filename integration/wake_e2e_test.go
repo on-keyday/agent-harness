@@ -219,7 +219,7 @@ func TestOpenInteractiveWakeE2E(t *testing.T) {
 
 	// Empty profile and inReplyTo 0 — the same shape the server uses for its own
 	// synthetic sends (server/await_idle_handler.go). 0 means "not a reply".
-	seq, err := board.Send("topic/wake-smoke", []byte("ping"), fromRid, fromTid, "integration-test", "", 0)
+	seq, _, err := board.Send("topic/wake-smoke", []byte("ping"), fromRid, fromTid, "integration-test", "", 0)
 	if err != nil {
 		t.Fatalf("board.Send: %v", err)
 	}
