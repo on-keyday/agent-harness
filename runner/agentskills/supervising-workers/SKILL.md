@@ -186,9 +186,11 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
   when output has been seen. The top-level `ls` renders the same as an
   `act=busy` / `act=idle:Xs` badge, and `ls --json` carries the identical
   `activity` / `output_idle_ms` / `last_output_at` fields.
-- **Edge (one-shot)**: `session await-idle <id>` fires ONCE when the session
-  next goes quiescent for the threshold (default 2500ms; `--threshold-ms N`
-  to override), then disarms itself. Sinks:
+- **Push (one-shot)**: `session await-idle <id>` fires ONCE as soon as the
+  session is quiescent for the threshold (default 2500ms; `--threshold-ms N`
+  to override), then disarms itself. It is level-triggered, not edge-triggered:
+  a session already idle when you arm fires immediately, and worst-case fire
+  latency otherwise is threshold + the 500ms watch tick. Sinks:
   - default (no flag): LONG-POLLS — blocks until the fire, prints
     `{"status":"fired",...}` (exit 3 = session ended first). Fine for shell
     scripts; **never use this blocking form from an agent turn** (same rule
@@ -197,13 +199,35 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
     `{"kind":"session_idle","task":"<32-hex>","status":"fired"|"session_stopped"}`
     to T. THE agent pattern: arm with your own `chat.<short-id>`, end the
     turn, and the fire wakes you via the inbox hook — replaces snapshot
-    polling when babysitting a worker session.
+    polling when babysitting a worker session, but NOT a reply you already
+    asked for (below).
   - `--notify`: replies `armed` immediately; on fire the operator gets a
     notification. For "tell the human when it's done" (they may be away).
 
 An idle fire means "waiting for input" — turn finished, permission prompt,
 or a menu all look the same at the byte level. `snapshot` once after the
 fire to see which; requires `exec_attach` (same cap as snapshot/send).
+
+**Do not arm it for a peer you asked to report back.** A skill-aware claude
+worker runs `agent send` *during* its turn, so its reply reaches you while the
+PTY is still emitting; the idle fire lands ~3s later and, per the paragraph
+above, cannot even say which kind of "waiting for input" it found. Two wakes
+for one event, the second one strictly weaker. And **an armed watcher cannot be
+disarmed** — `await-idle` takes only `--threshold-ms` / `--notify` / `--topic`,
+and the server-side watcher ends by firing or by the session stopping — so
+noticing that the reply came first does not get the wake back.
+
+Arm it when **no reply is coming**:
+
+- the peer has no agentboard path — `agent=bash`, an `agent=claude` without
+  `+skills`, or any non-claude peer that must poll its own inbox;
+- you drove the session by **keystrokes** (`session send`) rather than by
+  message — a `/clear`, a permission answer, a menu selection. Quiescence is
+  the only completion edge that exists there;
+- `--notify`, to tell the human.
+
+`await-idle` is the completion signal for the keyboard channel. The agentboard
+channel already has one: the reply.
 
 **Reading / driving a session as the agent (you have no TTY).** `session attach`
 runs `RemoteShell`, which flips the *local* terminal into raw mode and splices it
