@@ -562,15 +562,24 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 		return
 	}
 
-	// Gate: callers without Capability_InfoGlobal receive an empty topic list.
+	// Gate: callers without Capability_InfoGlobal do not get the topic list.
 	// This prevents agents from enumerating all board topics (visibility scope).
+	//
+	// The refusal is carried as Status_Denied, not as the empty list alone: an
+	// empty list is also the honest answer for a board with no topics, and a
+	// confined agent debugging "my messages aren't arriving" read the collapsed
+	// form as "nobody is subscribed". Topics stays empty either way — Status is
+	// the only thing that separates the two.
 	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_InfoGlobal) {
-		slog.Warn("agentHandleListTopics: caller lacks InfoGlobal; returning empty list",
+		slog.Warn("agentHandleListTopics: caller lacks InfoGlobal; denying",
 			"task_id", func() string {
 				_, tid, _, _ := ac.state.Identity()
 				return hex.EncodeToString(tid.Id[:])
 			}())
-		out := agentboard.ListTopicsResponse{RequestId: req.RequestId}
+		out := agentboard.ListTopicsResponse{
+			RequestId: req.RequestId,
+			Status:    agentboard.ListTopicsStatus_Denied,
+		}
 		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_ListTopicsResponse}
 		resp.SetListTopicsResponse(out)
 		s.sendAgent(conn, resp)
@@ -579,7 +588,10 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 
 	rows := s.Board.ListTopics()
 
-	out := agentboard.ListTopicsResponse{RequestId: req.RequestId}
+	out := agentboard.ListTopicsResponse{
+		RequestId: req.RequestId,
+		Status:    agentboard.ListTopicsStatus_Ok,
+	}
 	for _, r := range rows {
 		ts := agentboard.TopicSummary{
 			LastSeq:               r.LastSeq,

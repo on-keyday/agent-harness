@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -58,6 +59,16 @@ func Topics(ctx context.Context, args []string, stdout io.Writer) error {
 
 	select {
 	case r := <-respCh:
+		switch r.Status {
+		case agentboard.ListTopicsStatus_Ok:
+		case agentboard.ListTopicsStatus_Denied:
+			// Not an empty list: the caller may not enumerate the board at all.
+			// Same shape as purge.go's Denied arm — the status is what makes an
+			// empty result distinguishable from a refused one.
+			return errors.New("topics denied: requires capability \"info_global\"")
+		default:
+			return fmt.Errorf("topics: unexpected status %v", r.Status)
+		}
 		for _, s := range r.Topics {
 			rec := map[string]any{
 				"name":              string(s.Name),

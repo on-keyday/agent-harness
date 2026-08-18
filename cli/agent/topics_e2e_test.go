@@ -125,15 +125,21 @@ func TestAgentCLI_E2E_Topics_NoInfoGlobal(t *testing.T) {
 	}
 	restoreD()
 
-	// C lists topics — has no InfoGlobal, should receive an empty list.
+	// C lists topics — has no InfoGlobal, so the call must FAIL rather than
+	// report an empty board. Both halves matter: the error is what tells a
+	// confined agent it asked a question it may not ask, and the empty stdout
+	// is what keeps the gate a gate.
 	restoreC := setAgentEnv(addr, ridStrC, tidC, ticketC)
 	defer restoreC()
 	var out bytes.Buffer
-	if err := agent.Topics(ctx, nil, &out); err != nil {
-		t.Fatalf("Topics: %v", err)
+	err := agent.Topics(ctx, nil, &out)
+	if err == nil {
+		t.Fatalf("Topics: want a denial error for a caller without InfoGlobal, got nil (out=%q)", out.String())
+	}
+	if !strings.Contains(err.Error(), "info_global") {
+		t.Errorf("denial should name the missing capability; got: %v", err)
 	}
 	got := out.String()
-	// The gate returns an empty list; the JSON output should not contain the published topic.
 	if strings.Contains(got, "secret/topic") {
 		t.Errorf("confined agent (no InfoGlobal) should not see topic list; got: %s", got)
 	}

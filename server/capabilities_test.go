@@ -992,8 +992,13 @@ func TestAgentCallerCaps(t *testing.T) {
 }
 
 // TestTopicsGated verifies the InfoGlobal gate on agentHandleListTopics:
-//   - caller without InfoGlobal → zero topics returned.
-//   - caller with InfoGlobal → topics returned (Board has one published topic).
+//   - caller without InfoGlobal → Status_Denied and zero topics.
+//   - caller with InfoGlobal → Status_Ok and topics returned (Board has one
+//     published topic).
+//
+// Status is asserted here, not only through the CLI: zero topics is also the
+// honest answer for an empty board, so the status byte is the only thing on
+// the wire that separates "refused" from "nothing to show".
 func TestTopicsGated(t *testing.T) {
 	// Helper: decode the ListTopicsResponse from the last sent agent message.
 	decodeListTopicsResp := func(t *testing.T, conn *fakeConn) *agentboard.ListTopicsResponse {
@@ -1038,6 +1043,9 @@ func TestTopicsGated(t *testing.T) {
 		req := &agentboard.ListTopicsRequest{RequestId: 1}
 		s.agentHandleListTopics(conn, ac, req)
 		resp := decodeListTopicsResp(t, conn)
+		if resp.Status != agentboard.ListTopicsStatus_Denied {
+			t.Errorf("expected Status_Denied without InfoGlobal, got %v", resp.Status)
+		}
 		if resp.TopicsLen != 0 || len(resp.Topics) != 0 {
 			t.Errorf("expected 0 topics without InfoGlobal, got TopicsLen=%d Topics=%v",
 				resp.TopicsLen, resp.Topics)
@@ -1052,6 +1060,9 @@ func TestTopicsGated(t *testing.T) {
 		req := &agentboard.ListTopicsRequest{RequestId: 2}
 		s.agentHandleListTopics(conn, ac, req)
 		resp := decodeListTopicsResp(t, conn)
+		if resp.Status != agentboard.ListTopicsStatus_Ok {
+			t.Errorf("expected Status_Ok with InfoGlobal, got %v", resp.Status)
+		}
 		if resp.TopicsLen == 0 {
 			t.Error("expected non-zero topics with InfoGlobal")
 		}

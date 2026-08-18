@@ -178,8 +178,26 @@ format TopicSummary:
     last_published_at_unix_ms :u64
     msg_count :u16
 
+enum ListTopicsStatus:
+    :u8
+    ok
+    # denied is its own answer rather than an empty list. The gate is a
+    # visibility scope (info_global), and an empty list is ALSO what a board
+    # with no topics returns — so collapsing the two made a confined agent
+    # debugging "my messages aren't arriving" read the denial as "nobody is
+    # subscribed", with rc=0. Every sibling response that can be refused
+    # (SendStatus / PurgeStatus / RetractStatus) already carries its refusal
+    # in the schema; this one expressed it as an absence.
+    #
+    # Unlike RetractStatus / ReadSeqStatus below, there is no enumeration
+    # oracle to guard against here: denied reports a property of the CALLER
+    # (it lacks info_global — whoami already tells it that) and nothing about
+    # which topics exist.
+    denied
+
 format ListTopicsResponse:
     request_id :u32
+    status :ListTopicsStatus
     topics_len :u16
     topics :[topics_len]TopicSummary
 
