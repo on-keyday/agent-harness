@@ -41,6 +41,13 @@ Three lifetimes are in play and only the last one is yours:
 - **the conversation** — replayed into a fresh process when a session is
   resumed.
 - **this OS process** — new every time.
+- **the server** — independent of all three. Its board is in memory: a restart
+  drops every retained message and every subscription, then re-seeds only
+  `chat.<short-id>` for live assignments. Anything else you subscribed to is
+  gone, and `agent subscriptions` reports the reduced set without comment.
+  Detect it without any capability: a board `seq` carries the server's boot
+  time in its high bits (`seq >> 20` is Unix ms), so a fresh `seq` whose prefix
+  differs from one you saw earlier means the server restarted in between.
 
 `session new --resume <id>`, and the TUI/WebUI resume actions, reuse the first
 two and replace the third, with a **new auth ticket** and possibly a different
@@ -191,6 +198,10 @@ You usually do not have to call `retract` at all. **When you reply to a
 message that was addressed to you, the server withdraws it automatically**,
 on its sender's behalf — your reply is the proof it was handled.
 
+Do not read the reverse as an ack. A message missing from the retained ring
+means replied, evicted, purged, **or** the server restarted; only the first
+is an acknowledgement.
+
 ```bash
 harness-cli agent send --in-reply-to 42 --data '{"status":"done"}'
 #                       ^ seq 42 is withdrawn as a side effect
@@ -336,9 +347,10 @@ receiver correlates it without parsing your text. Pass `--topic` as well
 only when the reply belongs somewhere other than the parent's sender.
 
 The server validates the link when you publish. If the parent has fallen
-out of its topic ring (64 messages) or its TTL (30 minutes), or was purged,
-the send is **rejected** with `unknown_in_reply_to`; drop the flag to send
-the same body as an ordinary message.
+out of its topic ring (64 messages) or its TTL (30 minutes), was purged, or
+the server restarted since you read it (the board is in memory), the send is
+**rejected** with `unknown_in_reply_to`; drop the flag to send the same body
+as an ordinary message.
 
 Collect the replies to one message with:
 
@@ -356,6 +368,8 @@ harness-cli agent subscribe   --topic build.events
 harness-cli agent unsubscribe --topic build.events
 harness-cli agent subscriptions   # JSON Lines: this agent's patterns
 harness-cli agent topics          # JSON Lines: every topic on the board
+                                  # (needs info_global; without it: an error,
+                                  #  not an empty board)
 
 # Shorthand for "subscribe to my own inbound topic" — derives
 # chat.<first-8-hex-of-HARNESS_TASK_ID>. The server normally seeds this
@@ -603,7 +617,10 @@ Limits worth knowing before you rely on it:
   thing. Each subject costs an explicit `subscribe` and `unsubscribe`.
 - Each topic retains **64** messages; older ones are dropped.
 - A topic's ring is dropped **30 minutes** after its last publish, whether
-  or not anything read it. The subscription itself survives.
+  or not anything read it. The subscription itself survives that — but NOT a
+  server restart, which drops every subscription and re-seeds only
+  `chat.<short-id>`. Per-subject topics are exactly the ones not re-seeded, so
+  re-read `agent subscriptions` rather than assuming yours is still there.
 - Past **1024** topics the board evicts the least recently published one —
   which is exactly a quiet per-subject topic.
 - A single message is capped at **1 MiB** by default
@@ -620,10 +637,21 @@ not replied yet, the peer replied somewhere else, or the message was
 published to a topic **nobody subscribes to** — in which case it sits
 retained on the board and reaches no inbox.
 
-`harness-cli board subscribers <topic>` (needs `info_global`) separates the
-third from the first two: it lists the tasks that would receive a publish to
-that topic. An empty result means nothing is listening. With no argument it
-lists every task on the board and what each subscribes to.
+**The third cause you already answered when you sent.** `agent send` reports
+`delivered_to` — the number of subscribers the publish matched — and it needs
+no capability. `delivered_to: 0` IS the third cause; anything above 0 rules it
+out and leaves you with the first two. Re-send is not how you check: publish a
+throwaway to the same topic if you no longer have the original response.
+
+The `board` commands below answer the same question about topics you did not
+send to, and about the whole board at once. Both need `info_global`, so a task
+spawned with a restricted `--caps` cannot run them — which is precisely when
+`delivered_to` is the only answer available.
+
+`harness-cli board subscribers <topic>` (needs `info_global`) lists the tasks
+that would receive a publish to that topic. An empty result means nothing is
+listening. With no argument it lists every task on the board and what each
+subscribes to.
 
 `harness-cli board topics` (same capability) answers it for everything at
 once: each row carries `subs=N`, so `subs=0` is a topic holding messages
