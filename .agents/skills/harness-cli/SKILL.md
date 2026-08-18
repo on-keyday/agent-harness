@@ -300,6 +300,13 @@ Topics in v1 are **exact match** — no wildcards.
 ```bash
 # Publish a message to topic T.
 harness-cli agent send --topic T --data 'hello'
+# {"seq":42,"status":"ok","delivered_to":1}
+#
+# READ delivered_to: it is how many subscribers the publish matched. `status
+# ok` with `delivered_to: 0` means the topic exists but nobody is listening —
+# almost always a typo'd or stale chat.<short-id>. The message still lands in
+# the retained ring, so nothing else in the response tells you. It counts you
+# too when you publish to a topic you subscribe to, so a self-ping reads 1.
 # The payload may also be given as a positional arg (joined ssh-style if
 # multi-word), so a forgotten --data still sends a non-empty body:
 harness-cli agent send --topic T 'hello'
@@ -365,9 +372,10 @@ assigns the task to a runner. You only need to **announce** it as
 `chat.<short-id>`: the spawner already knows your task id, and anyone with
 `info_global` finds it with `ls`. A reserved discovery topic (`harness.hello`)
 used to be documented here and was removed 2026-08-18 — nothing subscribed to
-it, and `send` reports no recipient count, so announcing there returned
-`status: ok` and reached no one. If you have no id for the peer you need, get
-one (`ls`, or ask whoever spawned you); do not broadcast.
+it, so announcing there returned `status: ok` and reached no one. `send` now
+reports `delivered_to`, which is how you would catch that today. If you have no
+id for the peer you need, get one (`ls`, or ask whoever spawned you); do not
+broadcast.
 
 **Non-Claude agents still need an inbox path.** The inbound subscription is
 server-seeded for every agent runtime, but the auto-inbox hook still lives in

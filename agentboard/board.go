@@ -228,9 +228,13 @@ var (
 // whole and having Send reject it afterwards.
 func (b *Board) MaxPayload() int { return b.cfg.MaxPayload }
 
-func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, opts ...SendOption) (uint64, error) {
+// Send publishes to topicName and returns the assigned seq plus deliveredTo —
+// how many subscribers matched. The count is built here anyway (targets below)
+// and used to be discarded, which left every caller unable to distinguish a
+// delivered publish from one into a topic nobody holds.
+func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID, fromTid protocol.TaskID, fromHost, fromProfile string, inReplyTo uint64, opts ...SendOption) (uint64, int, error) {
 	if len(payload) > b.cfg.MaxPayload {
-		return 0, ErrPayloadTooLarge
+		return 0, 0, ErrPayloadTooLarge
 	}
 	var cfg sendConfig
 	for _, o := range opts {
@@ -243,7 +247,7 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 			b.evictOldestTopicLocked()
 			if len(b.topics) >= b.cfg.MaxTopics {
 				b.mu.Unlock()
-				return 0, ErrTooManyTopics
+				return 0, 0, ErrTooManyTopics
 			}
 		}
 		t = newTopic(topicName, b.cfg.RingN)
@@ -281,7 +285,7 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 			fn(rid, tid)
 		}
 	}
-	return seq, nil
+	return seq, len(targets), nil
 }
 
 // Inbox returns retained messages for all topics the (rid, tid) taskState is

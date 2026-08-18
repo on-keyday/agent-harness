@@ -1032,7 +1032,7 @@ func TestTopicsGated(t *testing.T) {
 		fromRID.UniqueNumber = 2
 		var fromTID protocol.TaskID
 		fromTID.Id[0] = 0xFF
-		_, _ = board.Send("test.topic", []byte("hello"), fromRID, fromTID, "testhost", "", 0)
+		_, _, _ = board.Send("test.topic", []byte("hello"), fromRID, fromTID, "testhost", "", 0)
 	}
 
 	// Case 1: no InfoGlobal → zero topics.

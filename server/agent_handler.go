@@ -246,7 +246,7 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 		if r.NoRetireOnReply() {
 			sendOpts = append(sendOpts, agentboard.NoRetireOnReply())
 		}
-		seq, sendErr := s.Board.Send(destTopic, payload, fromRid, fromTid, fromHost, fromProfile, r.InReplyTo, sendOpts...)
+		seq, deliveredTo, sendErr := s.Board.Send(destTopic, payload, fromRid, fromTid, fromHost, fromProfile, r.InReplyTo, sendOpts...)
 		var status agentboard.SendStatus
 		switch sendErr {
 		case nil:
@@ -264,8 +264,19 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 		default:
 			status = agentboard.SendStatus_BadFrame
 		}
+		// deliveredTo rides along so `ok` stops covering both "everyone got it"
+		// and "nobody holds this topic". Clamped like every other u16 count on
+		// this wire; zero only ever means zero subscribers, never an error.
+		if deliveredTo > 65535 {
+			deliveredTo = 65535
+		}
 		resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_SendResponse}
-		resp.SetSendResponse(agentboard.SendResponse{RequestId: r.RequestId, Status: status, Seq: seq})
+		resp.SetSendResponse(agentboard.SendResponse{
+			RequestId:   r.RequestId,
+			Status:      status,
+			Seq:         seq,
+			DeliveredTo: uint16(deliveredTo),
+		})
 		s.sendAgent(conn, resp)
 	}()
 }

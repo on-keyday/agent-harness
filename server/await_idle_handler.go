@@ -172,7 +172,7 @@ func (h *TaskHandler) fireIdleBoard(topic, taskIDHex string, requester protocol.
 	// The last argument is the sender's agent profile: empty because this
 	// publish originates in the server itself, not in any agent. Receivers
 	// recognise it by the "server" hostname above.
-	if _, err := h.Board.Send(topic, []byte(payload), placeholderRunnerID(), requester, "server", "", 0); err != nil {
+	if _, _, err := h.Board.Send(topic, []byte(payload), placeholderRunnerID(), requester, "server", "", 0); err != nil {
 		slog.Warn("await-idle: board publish failed", "topic", topic, "task", taskIDHex, "err", err)
 	}
 }

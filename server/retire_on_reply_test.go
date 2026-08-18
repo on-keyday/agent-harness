@@ -36,7 +36,7 @@ func newRetireFixture(t *testing.T) *retireFixture {
 
 func (f *retireFixture) send(t *testing.T, topic string, opts ...agentboard.SendOption) uint64 {
 	t.Helper()
-	seq, err := f.board.Send(topic, []byte("do the thing"), protocol.RunnerID{}, f.author, "h", "", 0, opts...)
+	seq, _, err := f.board.Send(topic, []byte("do the thing"), protocol.RunnerID{}, f.author, "h", "", 0, opts...)
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestRetireOnReply_SelfReplyDoesNotFire(t *testing.T) {
 	f := newRetireFixture(t)
 	// Author publishes to its OWN inbound topic, then "replies" to itself.
 	ownTopic := agentboard.SelfTopic(f.author)
-	seq, err := f.board.Send(ownTopic, []byte("note to self"), protocol.RunnerID{}, f.author, "h", "", 0)
+	seq, _, err := f.board.Send(ownTopic, []byte("note to self"), protocol.RunnerID{}, f.author, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

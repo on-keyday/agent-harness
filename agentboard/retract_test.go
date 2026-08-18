@@ -36,7 +36,7 @@ func TestRetract_LeavesEveryAgentFacingPath(t *testing.T) {
 	if err := b.Subscribe(conn, "t.retract"); err != nil {
 		t.Fatal(err)
 	}
-	seq, err := b.Send("t.retract", []byte("stale instruction"), testRid, author, "test-host", "", 0)
+	seq, _, err := b.Send("t.retract", []byte("stale instruction"), testRid, author, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestRetract_OperatorStillSees(t *testing.T) {
 	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.audit")
-	seq, err := b.Send("t.audit", []byte("what was said"), testRid, author, "test-host", "", 0)
+	seq, _, err := b.Send("t.audit", []byte("what was said"), testRid, author, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestRetract_AuthorshipIsTheGate(t *testing.T) {
 	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.auth")
-	seq, err := b.Send("t.auth", []byte("not yours"), testRid, author, "test-host", "", 0)
+	seq, _, err := b.Send("t.auth", []byte("not yours"), testRid, author, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestRetract_DoesNotConsumeLiveCapacity(t *testing.T) {
 	_ = b.Subscribe(conn, "t.cap")
 
 	for i := 0; i < 4; i++ {
-		seq, err := b.Send("t.cap", []byte("noise"), testRid, author, "test-host", "", 0)
+		seq, _, err := b.Send("t.cap", []byte("noise"), testRid, author, "test-host", "", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -150,7 +150,7 @@ func TestRetract_DoesNotConsumeLiveCapacity(t *testing.T) {
 	}
 	keep := make([]uint64, 0, 4)
 	for i := 0; i < 4; i++ {
-		seq, err := b.Send("t.cap", []byte("keep"), testRid, taskIDFromByte(2), "test-host", "", 0)
+		seq, _, err := b.Send("t.cap", []byte("keep"), testRid, taskIDFromByte(2), "test-host", "", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -178,7 +178,7 @@ func TestRetract_WithdrawnListIsBounded(t *testing.T) {
 	_ = b.Subscribe(conn, "t.bound")
 
 	for i := 0; i < 6; i++ {
-		seq, err := b.Send("t.bound", []byte("x"), testRid, author, "test-host", "", 0)
+		seq, _, err := b.Send("t.bound", []byte("x"), testRid, author, "test-host", "", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,7 +204,7 @@ func TestRetract_PurgeStillReaches(t *testing.T) {
 	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.purge")
-	seq, err := b.Send("t.purge", []byte("secret"), testRid, author, "test-host", "", 0)
+	seq, _, err := b.Send("t.purge", []byte("secret"), testRid, author, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestRetract_SurvivesSubscriberRevoke(t *testing.T) {
 	b.RegisterTask(rid, worker, [16]byte{}, "")
 	self := SelfTopic(worker)
 
-	seq, err := b.Send(self, []byte("spent instruction"), testRid, author, "h", "", 0)
+	seq, _, err := b.Send(self, []byte("spent instruction"), testRid, author, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestRevoke_StillDropsEmptyTopics(t *testing.T) {
 	b.RegisterTask(rid, worker, [16]byte{}, "")
 	self := SelfTopic(worker)
 
-	if _, err := b.Send(self, []byte("read and done"), testRid, taskIDFromByte(1), "h", "", 0); err != nil {
+	if _, _, err := b.Send(self, []byte("read and done"), testRid, taskIDFromByte(1), "h", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -289,7 +289,7 @@ func TestRetract_KeptTopicStillTTLEvicts(t *testing.T) {
 	b.RegisterTask(rid, worker, [16]byte{}, "")
 	self := SelfTopic(worker)
 
-	seq, err := b.Send(self, []byte("spent"), testRid, author, "h", "", 0)
+	seq, _, err := b.Send(self, []byte("spent"), testRid, author, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestRetract_EmptiedWithdrawnListLeavesNoLiveTopic(t *testing.T) {
 	b.RegisterTask(rid, worker, [16]byte{}, "")
 	self := SelfTopic(worker)
 
-	seq, _ := b.Send(self, []byte("spent"), testRid, author, "h", "", 0)
+	seq, _, _ := b.Send(self, []byte("spent"), testRid, author, "h", "", 0)
 	b.RetractSeq(seq, author)
 	b.Revoke(rid, worker)
 
@@ -362,7 +362,7 @@ func TestRetract_IsIdempotentAndBlind(t *testing.T) {
 	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	defer b.Detach(conn)
 	_ = b.Subscribe(conn, "t.twice")
-	seq, err := b.Send("t.twice", []byte("once"), testRid, author, "test-host", "", 0)
+	seq, _, err := b.Send("t.twice", []byte("once"), testRid, author, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

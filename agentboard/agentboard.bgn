@@ -96,6 +96,23 @@ format SendResponse:
     request_id :u32
     status :SendStatus
     seq :u64
+    # delivered_to is how many subscribers the publish matched at send time.
+    # Without it `ok` covers both "everyone got it" and "nobody is listening",
+    # and the sender cannot tell them apart: the retained ring accepts the
+    # message either way, and the one command that would answer the question
+    # (board subscribers) needs info_global, which a confined task lacks. A
+    # typo'd or stale chat.<short-id> is the common way to land on zero.
+    #
+    # It counts the PUBLISHER too when the publisher subscribes to the target
+    # topic — sending to your own chat.<short-id> is a deliberate self-ping and
+    # reports 1. Clamped to u16.
+    #
+    # This is a weak enumeration signal (publish to a name, learn whether
+    # anyone holds it), accepted on the same ground list_retained is ungated:
+    # subscribe takes no capability, so whoever knows a topic name can already
+    # subscribe and read its payloads via inbox. It reveals nothing to someone
+    # who cannot name the topic, so it is not a discovery sweep.
+    delivered_to :u16
 
 format SubscribeRequest:
     request_id :u32

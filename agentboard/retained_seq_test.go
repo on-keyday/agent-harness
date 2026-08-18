@@ -13,10 +13,10 @@ func TestBoard_Retained_FindsMessageAcrossTopics(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	if _, err := b.Send("topic/a", []byte("first"), testRid, testTid, "h", "", 0); err != nil {
+	if _, _, err := b.Send("topic/a", []byte("first"), testRid, testTid, "h", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	seq, err := b.Send("topic/b", []byte("second"), testRid, testTid, "h", "", 0)
+	seq, _, err := b.Send("topic/b", []byte("second"), testRid, testTid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,12 +44,12 @@ func TestBoard_Retained_MissesEvictedMessage(t *testing.T) {
 	b := New(Config{RingN: 2, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
 
-	first, err := b.Send("topic/a", []byte("1"), testRid, testTid, "h", "", 0)
+	first, _, err := b.Send("topic/a", []byte("1"), testRid, testTid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, body := range []string{"2", "3"} {
-		if _, err := b.Send("topic/a", []byte(body), testRid, testTid, "h", "", 0); err != nil {
+		if _, _, err := b.Send("topic/a", []byte(body), testRid, testTid, "h", "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -43,7 +43,7 @@ func TestHandleBoardTopics_ListsTopics(t *testing.T) {
 
 func TestHandleBoardPurge_WholeAndSeq(t *testing.T) {
 	h, conn := newBoardTestHandler(t)
-	s1, _ := h.Board.Send("chat.p", []byte("a"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+	s1, _, _ := h.Board.Send("chat.p", []byte("a"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
 	h.Board.Send("chat.p", []byte("b"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
 
 	// seq purge drops exactly one
@@ -105,11 +105,11 @@ func TestHandleBoardRead_StreamsPayloadsInOrder(t *testing.T) {
 
 func TestHandleBoardRead_CarriesInReplyTo(t *testing.T) {
 	h, conn := newBoardTestHandler(t)
-	parent, err := h.Board.Send("chat.r", []byte("q"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
+	parent, _, err := h.Board.Send("chat.r", []byte("q"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.Board.Send("chat.r", []byte("a"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", parent); err != nil {
+	if _, _, err := h.Board.Send("chat.r", []byte("a"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", parent); err != nil {
 		t.Fatal(err)
 	}
 

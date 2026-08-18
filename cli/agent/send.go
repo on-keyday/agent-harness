@@ -185,7 +185,13 @@ func sendResult(resp agentboard.SendResponse, inReplyTo uint64, stdout io.Writer
 	if resp.Status != agentboard.SendStatus_Ok {
 		return fmt.Errorf("send rejected: %v", resp.Status)
 	}
-	out, _ := json.Marshal(map[string]any{"seq": resp.Seq, "status": "ok"})
+	// delivered_to is the point of the line for a sender debugging silence:
+	// status ok with 0 means the topic exists but nobody holds it (typo'd or
+	// stale chat.<short-id> is the usual cause), which is otherwise
+	// indistinguishable from a delivered send.
+	out, _ := json.Marshal(map[string]any{
+		"seq": resp.Seq, "status": "ok", "delivered_to": resp.DeliveredTo,
+	})
 	fmt.Fprintln(stdout, string(out))
 	return nil
 }

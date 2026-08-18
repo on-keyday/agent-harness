@@ -29,7 +29,7 @@ func TestResolveReplyTarget_DerivesParentSenderTopic(t *testing.T) {
 		parentTid.Id[i] = byte(i + 1)
 	}
 
-	parent, err := b.Send("chat.deadbeef", []byte("q"), replyTestRunnerID(), parentTid, "h", "", 0)
+	parent, _, err := b.Send("chat.deadbeef", []byte("q"), replyTestRunnerID(), parentTid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestResolveReplyTarget_ExplicitTopicWins(t *testing.T) {
 	var parentTid protocol.TaskID
 	parentTid.Id[0] = 9
 
-	parent, err := b.Send("chat.deadbeef", []byte("q"), replyTestRunnerID(), parentTid, "h", "", 0)
+	parent, _, err := b.Send("chat.deadbeef", []byte("q"), replyTestRunnerID(), parentTid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

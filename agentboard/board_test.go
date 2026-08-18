@@ -19,7 +19,7 @@ func TestBoard_SendThenInboxReturnsMessage(t *testing.T) {
 	if err := b.Subscribe(conn, "topic/foo"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("topic/foo", []byte("hello"), testRid, testTid, "test-host", "", 0); err != nil {
+	if _, _, err := b.Send("topic/foo", []byte("hello"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := b.Inbox(conn, 0)
@@ -37,7 +37,7 @@ func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		_, _ = b.Send("topic/bar", []byte("ping"), testRid, testTid, "test-host", "", 0)
+		_, _, _ = b.Send("topic/bar", []byte("ping"), testRid, testTid, "test-host", "", 0)
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -68,7 +68,7 @@ func TestBoard_WaitTimesOut(t *testing.T) {
 func TestBoard_PayloadTooLargeRejected(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 4})
 	defer b.Close()
-	if _, err := b.Send("topic/big", []byte("toolong"), testRid, testTid, "test-host", "", 0); err == nil {
+	if _, _, err := b.Send("topic/big", []byte("toolong"), testRid, testTid, "test-host", "", 0); err == nil {
 		t.Fatal("expected payload_too_large error")
 	}
 }
@@ -92,7 +92,7 @@ func TestBoard_SubscriptionSurvivesDetach(t *testing.T) {
 
 	// Send while no connection is attached. Message should land in the topic
 	// ring and become visible to a future Inbox call.
-	if _, err := b.Send("topic/persistent", []byte("delivered"), testRid, testTid, "test-host", "", 0); err != nil {
+	if _, _, err := b.Send("topic/persistent", []byte("delivered"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -124,7 +124,7 @@ func TestBoard_RegisterTaskSeedsSelfTopic(t *testing.T) {
 
 	b.RegisterTask(rid, tid, ticket, "")
 
-	if _, err := b.Send(SelfTopic(tid), []byte("hello"), testRid, testTid, "sender", "", 0); err != nil {
+	if _, _, err := b.Send(SelfTopic(tid), []byte("hello"), testRid, testTid, "sender", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -164,7 +164,7 @@ func TestBoard_RegisterTaskReseedsSelfTopicOnRunnerChange(t *testing.T) {
 
 	c2 := b.Attach(toAgentboardRunnerID(rid2), toAgentboardTaskID(tid), "host2", "")
 	defer b.Detach(c2)
-	if _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender", "", 0); err != nil {
+	if _, _, err := b.Send(SelfTopic(tid), []byte("after-resume"), testRid, testTid, "sender", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -231,7 +231,7 @@ func TestBoard_AttachHostOverridesRegisterTaskSeed(t *testing.T) {
 	if err := b.Subscribe(recv, "chat.attr-test"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("chat.attr-test", []byte("x"), gotRid, gotTid, gotHost, gotProfile, 0); err != nil {
+	if _, _, err := b.Send("chat.attr-test", []byte("x"), gotRid, gotTid, gotHost, gotProfile, 0); err != nil {
 		t.Fatal(err)
 	}
 	msgs, _ := b.Inbox(recv, 0)
@@ -262,7 +262,7 @@ func TestBoard_RevokeDestroysTaskState(t *testing.T) {
 	// Revoke the (rid, tid) — destroys the taskState.
 	b.Revoke(protoRunnerIDFromBoard(rid), protoTaskIDFromBoard(tid))
 
-	if _, err := b.Send("topic/scoped", []byte("after-revoke"), testRid, testTid, "test-host", "", 0); err != nil {
+	if _, _, err := b.Send("topic/scoped", []byte("after-revoke"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,10 +296,10 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	_ = b.Subscribe(c2, "shared.topic") // shared
 
 	// Publish to both topics so they exist in b.topics.
-	if _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
+	if _, _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("shared.topic", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
+	if _, _, err := b.Send("shared.topic", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -317,6 +317,61 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	}
 	if !names["shared.topic"] {
 		t.Error("shared.topic should still be present (task2 is still subscribed)")
+	}
+}
+
+// TestBoard_SendReportsDeliveredTo pins the count Send returns. Zero is the
+// case that matters: it is what a publish to a topic nobody holds looks like,
+// and before this count existed it was indistinguishable from a delivered one
+// (the retained ring accepts the message either way and the status is still
+// ok). The publisher-counts-itself case is pinned too, because the schema
+// promises it and a self-ping to one's own chat.<short-id> must read as 1, not
+// 0.
+func TestBoard_SendReportsDeliveredTo(t *testing.T) {
+	b := New(Config{RingN: 4, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	var rid1, rid2 RunnerID
+	rid1.SetTransport([]byte("ws"))
+	rid2.SetTransport([]byte("ws"))
+	rid2.Port = 2
+	tid1, tid2 := TaskID{Id: [16]byte{1}}, TaskID{Id: [16]byte{2}}
+	c1 := b.Attach(rid1, tid1, "host1", "")
+	c2 := b.Attach(rid2, tid2, "host2", "")
+	pRid, pTid := protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1)
+
+	send := func(topic string) int {
+		t.Helper()
+		_, n, err := b.Send(topic, []byte("x"), pRid, pTid, "host1", "", 0)
+		if err != nil {
+			t.Fatalf("Send(%s): %v", topic, err)
+		}
+		return n
+	}
+
+	if n := send("nobody.holds.this"); n != 0 {
+		t.Errorf("publish to an unsubscribed topic: delivered_to = %d, want 0", n)
+	}
+	_ = b.Subscribe(c2, "one.subscriber")
+	if n := send("one.subscriber"); n != 1 {
+		t.Errorf("one subscriber: delivered_to = %d, want 1", n)
+	}
+	_ = b.Subscribe(c1, "two.subscribers")
+	_ = b.Subscribe(c2, "two.subscribers")
+	if n := send("two.subscribers"); n != 2 {
+		t.Errorf("two subscribers: delivered_to = %d, want 2", n)
+	}
+	// Publisher subscribes to its own target: it is a real recipient (it gets
+	// the wake), so it counts.
+	_ = b.Subscribe(c1, "self.ping")
+	if n := send("self.ping"); n != 1 {
+		t.Errorf("self-ping: delivered_to = %d, want 1 (publisher counts itself)", n)
+	}
+	// Unsubscribing takes the count back down — the value tracks live
+	// subscriptions, not whether the topic was ever populated.
+	b.Unsubscribe(c2, "one.subscriber")
+	if n := send("one.subscriber"); n != 0 {
+		t.Errorf("after unsubscribe: delivered_to = %d, want 0", n)
 	}
 }
 
@@ -366,7 +421,7 @@ func TestBoard_SendFiresOnDeliverForPublisherToo(t *testing.T) {
 
 	fromRid := protoRunnerIDFromBoard(pubRid)
 	fromTid := protoTaskIDFromBoard(pubTid)
-	if _, err := b.Send("topic/x", []byte("hello"), fromRid, fromTid, "pub-host", "", 0); err != nil {
+	if _, _, err := b.Send("topic/x", []byte("hello"), fromRid, fromTid, "pub-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -396,7 +451,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 
 	// Retain three messages, advance the consumer cursor past them.
 	for _, p := range []string{"m1", "m2", "m3"} {
-		if _, err := b.Send("chat.poison", []byte(p), testRid, testTid, "test-host", "", 0); err != nil {
+		if _, _, err := b.Send("chat.poison", []byte(p), testRid, testTid, "test-host", "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -425,7 +480,7 @@ func TestBoard_PurgeTopicDropsRetainedAndKeepsCursorValid(t *testing.T) {
 	// seq is board-global, so a post-purge message gets a strictly higher seq
 	// than the old cursor: the consumer's persisted cursor stays valid and the
 	// fresh message is delivered exactly once.
-	if _, err := b.Send("chat.poison", []byte("after"), testRid, testTid, "test-host", "", 0); err != nil {
+	if _, _, err := b.Send("chat.poison", []byte("after"), testRid, testTid, "test-host", "", 0); err != nil {
 		t.Fatal(err)
 	}
 	msgs, newCursor := b.Inbox(conn, cursor)
@@ -448,7 +503,7 @@ func TestBoard_PurgeSeqAndListRetained(t *testing.T) {
 
 	var seqs []uint64
 	for _, p := range []string{"a", "b", "c"} {
-		s, err := b.Send("chat.mix", []byte(p), testRid, testTid, "test-host", "", 0)
+		s, _, err := b.Send("chat.mix", []byte(p), testRid, testTid, "test-host", "", 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -523,7 +578,7 @@ func protoTaskIDFromBoard(t TaskID) protocol.TaskID {
 func TestBoard_SeqSeedDefaultsToLegacy(t *testing.T) {
 	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
 	defer b.Close()
-	seq, err := b.Send("topic/first", []byte("x"), testRid, testTid, "test-host", "", 0)
+	seq, _, err := b.Send("topic/first", []byte("x"), testRid, testTid, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +601,7 @@ func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	_ = b1.Subscribe(c1, "chat.task")
 	var cursor uint64
 	for i := 0; i < 56; i++ {
-		if _, err := b1.Send("chat.task", []byte("old"), testRid, testTid, "test-host", "", 0); err != nil {
+		if _, _, err := b1.Send("chat.task", []byte("old"), testRid, testTid, "test-host", "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -564,7 +619,7 @@ func TestBoard_SeqSeedKeepsCursorValidAcrossRestart(t *testing.T) {
 	defer b2.Close()
 	c2 := b2.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	_ = b2.Subscribe(c2, "chat.task")
-	newSeq, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host", "", 0)
+	newSeq, _, err := b2.Send("chat.task", []byte("new"), testRid, testTid, "test-host", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -595,7 +650,7 @@ func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
 	if profile != "codex" {
 		t.Fatalf("Identity() profile = %q, want %q", profile, "codex")
 	}
-	if _, err := b.Send("topic/resumed", []byte("from codex"), rid, tid, host, profile, 0); err != nil {
+	if _, _, err := b.Send("topic/resumed", []byte("from codex"), rid, tid, host, profile, 0); err != nil {
 		t.Fatal(err)
 	}
 	b.Detach(first)
@@ -609,7 +664,7 @@ func TestBoard_RetainedProfileFrozenAcrossReattach(t *testing.T) {
 	if profile != "claude" {
 		t.Fatalf("Identity() after re-attach = %q, want %q", profile, "claude")
 	}
-	if _, err := b.Send("topic/resumed", []byte("from claude"), rid, tid, host, profile, 0); err != nil {
+	if _, _, err := b.Send("topic/resumed", []byte("from claude"), rid, tid, host, profile, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -634,11 +689,11 @@ func TestBoard_Send_RetainsInReplyTo(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 1
 
-	parent, err := b.Send("t", []byte("q"), rid, tid, "h", "", 0)
+	parent, _, err := b.Send("t", []byte("q"), rid, tid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("t", []byte("a"), rid, tid, "h", "", parent); err != nil {
+	if _, _, err := b.Send("t", []byte("a"), rid, tid, "h", "", parent); err != nil {
 		t.Fatal(err)
 	}
 	msgs, found := b.ListRetained("t")
@@ -659,10 +714,10 @@ func TestBoard_LookupSeq_AcrossTopics(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 7
 
-	if _, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0); err != nil {
+	if _, _, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	seqB, err := b.Send("b", []byte("2"), rid, tid, "h", "", 0)
+	seqB, _, err := b.Send("b", []byte("2"), rid, tid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -700,12 +755,12 @@ func TestBoard_LookupSeq_GoneAfterEviction(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 7
 
-	first, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0)
+	first, _, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if _, err := b.Send("a", []byte("x"), rid, tid, "h", "", 0); err != nil {
+		if _, _, err := b.Send("a", []byte("x"), rid, tid, "h", "", 0); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -723,7 +778,7 @@ func TestBoard_LookupSeq_GoneAfterPurge(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 7
 
-	seq, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0)
+	seq, _, err := b.Send("a", []byte("1"), rid, tid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,7 +789,7 @@ func TestBoard_LookupSeq_GoneAfterPurge(t *testing.T) {
 		t.Error("purged seq still resolves")
 	}
 
-	seq2, err := b.Send("a", []byte("2"), rid, tid, "h", "", 0)
+	seq2, _, err := b.Send("a", []byte("2"), rid, tid, "h", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}

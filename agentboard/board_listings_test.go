@@ -42,13 +42,13 @@ func TestBoard_ListTopics_AfterSends(t *testing.T) {
 	var tid protocol.TaskID
 	tid.Id[0] = 1
 
-	if _, err := b.Send("a/x", []byte("1"), rid, tid, "h", "", 0); err != nil {
+	if _, _, err := b.Send("a/x", []byte("1"), rid, tid, "h", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("a/x", []byte("2"), rid, tid, "h", "", 0); err != nil {
+	if _, _, err := b.Send("a/x", []byte("2"), rid, tid, "h", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("b/y", []byte("3"), rid, tid, "h", "", 0); err != nil {
+	if _, _, err := b.Send("b/y", []byte("3"), rid, tid, "h", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,7 +146,7 @@ func TestBoard_OnDeliver_FiresPerSubscriber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := b.Send("topic/x", []byte("hello"), mkRid(99), mkTid(0x99), "host-S", "", 0); err != nil {
+	if _, _, err := b.Send("topic/x", []byte("hello"), mkRid(99), mkTid(0x99), "host-S", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
