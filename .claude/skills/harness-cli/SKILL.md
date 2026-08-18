@@ -27,7 +27,11 @@ harness-cli skill <name>     # print another one, e.g. `harness-cli skill landin
 ```
 
 `harness-cli version` reports the commit this binary was built from, which is
-also the version of every skill it prints — they are embedded in it. Worth
+also the version of every skill it PRINTS — they are embedded in it. It does
+not describe the copies on disk under `.claude/skills/` and `.agents/skills/`:
+the runner writes those at spawn time out of its own binary, so their vintage
+comes from a different build and `version` cannot vouch for it. If it matters
+which you are reading, print the skill rather than opening the file. Worth
 knowing when your `harness-cli` is bind-mounted from elsewhere (the podman
 sandbox does this) and can therefore be older than the repo it came from: the
 binary cannot see that repo's HEAD, so compare the revision against a peer or
