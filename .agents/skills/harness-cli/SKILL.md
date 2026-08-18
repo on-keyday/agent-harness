@@ -370,12 +370,8 @@ assigns the task to a runner. You only need to **announce** it as
 
 **There is no board-wide rendezvous topic.** Peers reach you id-directed on
 `chat.<short-id>`: the spawner already knows your task id, and anyone with
-`info_global` finds it with `ls`. A reserved discovery topic (`harness.hello`)
-used to be documented here and was removed 2026-08-18 — nothing subscribed to
-it, so announcing there returned `status: ok` and reached no one. `send` now
-reports `delivered_to`, which is how you would catch that today. If you have no
-id for the peer you need, get one (`ls`, or ask whoever spawned you); do not
-broadcast.
+`info_global` finds it with `ls`. If you have no id for the peer you need, get
+one (`ls`, or ask whoever spawned you); do not broadcast.
 
 **Non-Claude agents still need an inbox path.** The inbound subscription is
 server-seeded for every agent runtime, but the auto-inbox hook still lives in
