@@ -33,6 +33,29 @@ done
 R=""
 add() { R="${R}${1}: ${2}"$'\n'; }
 
+# --- which launch configuration this run measured ----------------------------
+# FIRST, because every finding below is conditional on it, and the modes differ
+# in ways a mode-less record hides. Two that already bit us: the ip allowlist
+# leaves udp/53 open to any host while the proxy mode does not, so "DNS blocked"
+# measured under --firewall-proxy says nothing about --firewall; and upstream's
+# blanket ssh rule existed only in ip mode, so a proxy-mode run structurally
+# could not reach it. Likewise ~/.claude is a host-persistent write surface under
+# mount auth and does not exist at all under token auth. Without these two lines
+# a partial sweep reads later as a full one.
+if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then fw="proxy (deny-all + CONNECT proxy)"
+elif [ "${SANDBOX_FIREWALL:-0}" = "1" ]; then fw="ip (iptables+ipset allowlist)"
+else fw="none (open egress)"; fi
+# Auth mode is MEASURED, not declared: only a bind mount proves the host's
+# ~/.claude is in here (token auth leaves an ephemeral one in the image's home,
+# which a bare -d test cannot tell apart).
+if grep -qE ' /[^ ]*/\.claude(\.json)?( |$)' /proc/self/mountinfo 2>/dev/null; then
+	auth="mount (host ~/.claude bind-mounted rw; persists past the container)"
+else
+	auth="token-or-ephemeral (no host ~/.claude mount)"
+fi
+add "config_firewall" "$fw [HTTPS_PROXY=${HTTPS_PROXY:-unset}]"
+add "config_auth" "$auth"
+
 # --- identity / am I even in a container -------------------------------------
 add "id" "$(id 2>&1)"
 add "in_container" "$({ [ -f /run/.containerenv ] || [ -f /.dockerenv ]; } && echo yes || echo NO)"
@@ -45,10 +68,8 @@ add "siblings_listing" "$(ls -1a "$(dirname "$repo")" 2>&1 | tr '\n' ',')"
 add "home_listing" "HOME=$HOME -> $(ls -1a "$HOME" 2>&1 | tr '\n' ',')"
 add "repo_writable" "$(touch "$repo/.probe_write" 2>&1 && echo yes-and-cleaned && rm -f "$repo/.probe_write" || echo NO)"
 add "etc_passwd_host_users" "$(getent passwd 2>/dev/null | wc -l) entries"
-# Token auth leaves an EPHEMERAL ~/.claude in the image's own home, so a bare
-# -d test reports the host login as present when it is not. Only a bind mount
-# proves the host's ~/.claude is exposed.
-add "claude_home_mounted" "$(grep -qE ' /[^ ]*/\.claude(\.json)?( |$)' /proc/self/mountinfo 2>/dev/null && echo yes-HOST-mount-auth || echo no-token-auth-or-ephemeral)"
+# The mount lines themselves, as evidence behind config_auth above.
+add "claude_mount_lines" "$(grep -oE ' /[^ ]*/\.claude(\.json)?( |$)' /proc/self/mountinfo 2>/dev/null | tr -d ' ' | tr '\n' ',')"
 
 # --- processes ---------------------------------------------------------------
 # Read /proc directly: the image ships no procps, and `ps` missing made the
@@ -61,7 +82,7 @@ add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runn
 # without --firewall / --firewall-proxy. It only proves confinement when one of
 # those is on — read it together with the wrapper's "firewall=" log line.
 add "egress_allowed" "$(curl -sS -m 6 https://api.github.com/zen 2>&1 | head -c 90)"
-add "egress_nonallowlisted" "$(curl -sS -m 6 -o /dev/null -w '%{http_code}' https://example.com 2>&1 | head -c 90) (refusal expected ONLY under --firewall*)"
+add "egress_nonallowlisted" "$(curl -sS -m 6 -o /dev/null -w '%{http_code}' https://example.com 2>&1 | head -c 90) (refusal expected ONLY under --firewall*; read against config_firewall)"
 
 # The harness-server carve-out must name ONE port, not the whole machine. Both
 # firewall modes allowed it by address until 2026-08-18, and a smoke run reached

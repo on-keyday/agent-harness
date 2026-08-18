@@ -173,7 +173,13 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 ### Verifying the above, instead of trusting it
 
 `probe.sh` runs **inside** the container and reports the measured state of every
-claim in this section — what the mounts actually expose, whether host processes
+claim in this section. Its first two lines are `config_firewall` / `config_auth`,
+naming the configuration the run actually measured — read every later line
+against them. The modes are not interchangeable: the ip allowlist leaves udp/53
+open to any host and the proxy mode does not, upstream's blanket ssh rule existed
+only in ip mode, and `~/.claude` is a host-persistent write surface under mount
+auth but absent under token auth. A mode-less "blocked" reads later as "blocked
+in every mode", which is how partial coverage passes for full. The rest — what the mounts actually expose, whether host processes
 are visible, which egress succeeds (it probes one allowlisted target *and* one
 that must be refused), whether the harness-server carve-out is still one port
 (`server_other_port` must not read `open` — that is how the host-wide carve-out
