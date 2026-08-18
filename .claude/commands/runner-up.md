@@ -27,12 +27,13 @@ Arguments: $ARGUMENTS
    | `bash`       | `--agents bash --no-worktree --roots $HOME/workspace` (bin+argv from `scripts/agent_presets.py`) | Linux / macOS shell runner |
    | `cmd`        | `--no-worktree --agent-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --agent-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
-   | `sandbox`    | `--agents sandbox --agent-args "--dangerously-skip-permissions"` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement (see below) |
+   | `sandbox`    | `--agents sandbox --agent-args "--dangerously-skip-permissions"` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement, claude (see below) |
+   | `sandbox-codex` / `sandbox-agy` / `sandbox-bash` | `--agents sandbox-<name>` (bin+argv from `scripts/agent_presets.py`; same `--hostname` advice) | The same container for the other agents (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
 
-   **The `sandbox` preset is NOT a shell preset.** It runs the *full* claude
-   inside a rootless-podman container (`scripts/sandbox/`), confining the agent's
+   **The `sandbox*` presets are NOT shell presets.** They run the *full* agent
+   inside a rootless-podman container (`scripts/sandbox/`), confining its
    command execution while keeping worktree-based isolation — so it does **not**
    set `--no-worktree`, and the user must still supply `roots=` (no sensible
    default). Prerequisites before spawning: `podman` installed and the image
@@ -42,11 +43,16 @@ Arguments: $ARGUMENTS
    defaults `--agent-args "--dangerously-skip-permissions"` — safe here because
    the container is the boundary and keep-id runs claude non-root (so the flag is
    accepted); the wrapper itself stays a pure pass-through. Because it IS a
-   pass-through, the preset carries claude's own argv templates and
-   `claude-stream-json` log format, so a one-shot streams its steps into `logs`
-   exactly like a host claude slot — spawn it with bare `--agent-bin` instead and
-   you silently get the runner's raw defaults, i.e. no progress until the task
-   ends. Optional wrapper
+   pass-through, each preset carries its BASE agent's argv templates and log
+   format (`sandbox` = `sandbox-claude` = claude's `claude-stream-json`,
+   `sandbox-codex` = `codex-jsonl`, and so on), so a one-shot streams its steps
+   into `logs` exactly like the corresponding host slot — spawn it with bare
+   `--agent-bin` instead and you silently get the runner's raw defaults, i.e. no
+   progress until the task ends. `sandbox` remains an alias of `sandbox-claude`.
+   One wrapper serves all four: which agent runs is `--sandbox-agent <name>`,
+   which the preset supplies. codex and agy are **mount-auth only** (their
+   provider credentials go into the container; no revocable-token mode exists
+   for them) — see `scripts/sandbox/README.md`. Optional wrapper
    controls, passed the same way (`--agent-arg` / `--agent-args`): `--firewall`
    (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works),

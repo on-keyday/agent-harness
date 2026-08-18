@@ -420,34 +420,44 @@ container.
 
 ## Sandboxing (rootless podman)
 
-An **opt-in** kit under `scripts/sandbox/` runs a runner's spawned
-`claude` inside a **rootless podman** container instead of directly on
-the host, to shrink the blast radius of an agent run with
-`--dangerously-skip-permissions`. It needs no harness core changes — it
-plugs in through the existing `--agent-bin` seam:
+An **opt-in** kit under `scripts/sandbox/` runs a runner's spawned agent
+— **claude, codex, agy, or a plain bash shell** — inside a **rootless
+podman** container instead of directly on the host, to shrink the blast
+radius of an agent run with `--dangerously-skip-permissions`. It needs
+no harness core changes: it plugs in through the existing `--agent-bin`
+seam, via presets that carry the wrapper path and each agent's argv.
 
 ```bash
-scripts/sandbox/build.sh                       # build harness-claude-sandbox:latest
+scripts/sandbox/build.sh                       # build harness-agent-sandbox:latest
 scripts/runner.sh up --as sandboxed \
-  --agent-bin "$PWD/scripts/sandbox/claude-in-podman.sh" \
+  --agents sandbox-claude,sandbox-codex,sandbox-agy,sandbox-bash \
   --roots "$HOME/workspace/<repo>"
 ```
+
+Which agent runs is `--sandbox-agent NAME`, and every per-agent
+difference (host binary, config mounts, auth mode, egress domains) lives
+in one table at the top of `agent-in-podman.sh`. No agent is installed
+into the image — the host binary is bind-mounted over the container
+path.
 
 `--userns=keep-id` maps the host uid into the container so worktree
 edits land on disk owned by the host user (podman, not docker, makes
 non-root + host-owned writes coexist). The wrapper bind-mounts the repo
 root (worktree + shared `.git`) and, in the default **mount auth** mode,
-`~/.claude` + `~/.claude.json` (host login / session resume — note this
-exposes the refresh token to the container). **Token auth** (a
+the agent's config paths (host login / session resume — note this
+exposes that provider's credentials to the container). **Token auth** (a
 dedicated revocable `CLAUDE_CODE_OAUTH_TOKEN`, no `~/.claude` mount)
-removes that exposure but disables resume. Egress is open by default;
+removes that exposure but disables resume, and **only claude has it**:
+codex and agy are mount-auth only. Egress is open by default;
 `--agent-arg --firewall` applies a default-deny iptables+ipset
 allowlist, and `--firewall-proxy` routes egress through an in-container
 allowlisting CONNECT proxy (raw sockets blocked, WebFetch works).
 
 This is the **OS-layer** half of a two-layer model; the **server-layer**
-half is the capability bitmask (**Capabilities and scope** above) — e.g.
-`submit --caps none` closes the control-plane escape path. Neither layer
+half is the capability bitmask (**Capabilities and scope** above), which
+now closes the control-plane escape path by default — an omitted
+`--caps` grants nothing, so a sandboxed task has no control plane to
+escape through unless the spawn asked for one. Neither layer
 configures the other. Full details, security model, and verification
 status are in [`scripts/sandbox/README.md`](scripts/sandbox/README.md).
 
@@ -617,7 +627,7 @@ scripts/              {runner,server,restart}.{py,sh} daemon lifecycle helpers (
                       boot/login persistence. build_and_restart_all.py rebuilds
                       and restarts every alive runner, self last.
 scripts/sandbox/      opt-in rootless-podman confinement kit for spawned claude
-                      (Containerfile + claude-in-podman.sh wrapper + egress
+                      (Containerfile + agent-in-podman.sh wrapper + egress
                       firewall / CONNECT-proxy); plugs in via --agent-bin
 examples/             notify-hook samples (e.g. Discord webhook relay)
 testdata/             fake-claude.sh used by tests

@@ -1,9 +1,45 @@
-# Claude Code sandbox kit (rootless podman)
+# Agent sandbox kit (rootless podman)
 
-Run a runner's spawned `claude` confined inside a **rootless podman** container
-instead of directly on the host, to shrink the blast radius of an agent that
-runs with `--dangerously-skip-permissions`. No harness core changes: it plugs in
-through the existing `--agent-bin` seam.
+Run a runner's spawned agent — **claude, codex, agy, or a plain bash shell** —
+confined inside a **rootless podman** container instead of directly on the host,
+to shrink the blast radius of an agent that runs with
+`--dangerously-skip-permissions`. No harness core changes: it plugs in through
+the existing `--agent-bin` seam.
+
+## Supported agents
+
+Which agent runs is `--sandbox-agent NAME` (default `claude`), and every
+per-agent difference lives in ONE table at the top of `agent-in-podman.sh`.
+An unknown name exits 2 rather than falling back to claude: a slot quietly
+running the wrong agent looks identical to the right one in every listing.
+
+| agent | host binary bridged in | config mounted (mount auth) | token auth | image fallback |
+|---|---|---|---|---|
+| claude | `~/.local/bin/claude` | `~/.claude` + `~/.claude.json` | yes (`setup-token`) | yes (npm copy) |
+| codex | `~/.local/bin/codex` | `~/.codex` | **no** | no |
+| agy | `~/.local/bin/agy` | `~/.gemini` | **no** | no |
+| bash | — (the image's own) | — | — | yes |
+
+No agent is installed into the image: the host binary is bind-mounted over the
+container path. Measured 2026-08-18 that all three run on the image's glibc
+2.36 — claude is a Bun ELF, agy is glibc-dynamic (197MB), codex is static-pie
+musl and so libc-independent by construction. Only claude keeps an image copy,
+as a fallback; codex and agy hard-error when their host binary is missing,
+because exec'ing a container path that does not exist surfaces several layers
+from the actual cause.
+
+**codex and agy are mount-auth only.** Neither has a known revocable-token mode
+of the kind claude's `setup-token` provides, so running them here puts that
+provider's OAuth credentials in the container with no narrower option:
+`~/.codex/auth.json` for codex, `~/.gemini` for agy — the latter shared with
+gemini-cli, so it carries that product's credentials too (tier-ineligible on
+this host, but present). `--firewall-proxy` is the mitigation that matters for
+them, since it removes raw-socket egress entirely.
+
+**codex brings its own sandbox.** It warns `could not find bubblewrap on PATH …
+will use the bundled bubblewrap` and then works — nested inside podman. The
+wrapper does not disable it: approval / sandbox flags are the caller's business
+via `--agent-args`, exactly as `--dangerously-skip-permissions` is for claude.
 
 ## Why podman (not docker)
 
@@ -30,22 +66,39 @@ scripts/sandbox/build.sh
 scripts/sandbox/build.sh --build-arg CLAUDE_VERSION=2.1.169
 ```
 
-Produces `harness-claude-sandbox:latest` (override via `HARNESS_SANDBOX_IMAGE`):
+Produces `harness-agent-sandbox:latest` (override via `HARNESS_SANDBOX_IMAGE`):
 `node:22` base + `git` + `ripgrep` + `python3`/`pip`/`venv` + the egress-firewall
 tools (`iptables`/`ipset`/`iproute2`/`dnsutils`/`aggregate`/`jq`/`gosu`) +
 `@anthropic-ai/claude-code`.
 
 ## Use it from a runner
 
-Point `--agent-bin` at the wrapper; the runner spawns claude through podman:
+The `sandbox-*` presets carry the wrapper path AND each agent's argv templates,
+so a slot gets them without hand-typing `--agent-bin`:
 
 ```sh
 scripts/runner.sh up --as sandboxed \
-  --agent-bin "$PWD/scripts/sandbox/claude-in-podman.sh" \
+  --agents sandbox-claude,sandbox-codex,sandbox-agy,sandbox-bash \
   --roots "$HOME/workspace/<repo>"
 ```
 
-The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
+`sandbox` remains an alias of `sandbox-claude`. Each preset is DERIVED from its
+base agent's entry with only `bin` changed and `--sandbox-agent <name>`
+prefixed, so a sandboxed slot cannot drift from its unsandboxed twin — the
+first version of this preset did drift, and one-shot progress arrived as a
+single final blob instead of streamed events.
+
+### Upgrading an existing sandbox slot
+
+The wrapper and image were renamed (`claude-in-podman.sh` →
+`agent-in-podman.sh`, `harness-claude-sandbox` → `harness-agent-sandbox`). A
+running runner slot records its `--agent-bin` argv and
+`scripts/build_and_restart_all.py` **replays the running argv**, so restart-all
+will not migrate it — it re-execs the old path. Stop the slot and bring it back
+up with the presets above (`systemctl --user restart <unit>` for a registered
+slot, or `runner.sh down` then `runner.sh up --agents sandbox-…`).
+
+The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
 
 - the **repo root** (covers the task worktree + the shared `.git`, so git
   worktree links and claude's cwd-hash session resume work);
@@ -70,8 +123,9 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 
 ### Authentication
 
-- **Mount auth (default):** bind-mounts `~/.claude` so the sandbox reuses your
-  host login + session resume. Simplest, but the personal **refresh token** is in
+- **Mount auth (default, and the ONLY mode for codex and agy):** bind-mounts the
+  agent's config paths (see the table above) so the sandbox reuses your host
+  login + session resume. Simplest, but the personal **refresh token** is in
   the container — combined with open egress + untrusted input that's a real
   exfil-to-permanent-compromise risk (mitigate with `--firewall-proxy`).
 - **Token auth (hardened, recommended for untrusted work):** put a dedicated,
@@ -134,8 +188,10 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 - **Network: open by default; opt-in egress allowlist via `--firewall`.** Pass
   `--agent-arg --firewall` (or runner `--agent-args "--firewall"`) to apply a
   default-deny iptables+ipset allowlist inside the container — GitHub IP ranges
-  (api.github.com/meta) + npm/anthropic/pypi + the harness server (**its one
-  port**) + the default-route gateway (**/32**), IPv6 blocked, everything else
+  (api.github.com/meta) + the shared dev hosts (npm / pypi) + **the running
+  agent's own endpoints** (`SANDBOX_AGENT_DOMAINS`, from the agent table — so a
+  codex container allowlists chatgpt.com and not anthropic's API) + the harness
+  server (**its one port**) + the default-route gateway (**/32**), IPv6 blocked, everything else
   REJECTed. Two more deltas from upstream, both narrowing: upstream's blanket
   `--dport 22 ACCEPT` (ssh to *any* host — a general-purpose tunnel that reopens
   what the default-DROP closes) is dropped, and the harness server is allowed as
@@ -165,7 +221,8 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   API/WebFetch are forced through it via `HTTPS_PROXY`. Wins over `--firewall`:
   client-side **WebFetch works** (routed through the proxy), domain-based allowlist
   (no CDN-IP rotation / ipset), and injected code cannot open a raw socket at all.
-  Default proxy allowlist = `api.anthropic.com` + github/npm/pypi; extend for
+  Default proxy allowlist = github/npm/pypi (shared) + the agent's own
+  domains from the table; extend for
   WebFetch research targets by setting `SANDBOX_PROXY_ALLOW=domain1,domain2` in the
   runner env. harness-cli is unaffected (direct L3 carve-out to the harness
   server's own `ip:proto:port`; it doesn't use `HTTPS_PROXY`). Residual: a CONNECT proxy sees SNI/host
@@ -220,7 +277,8 @@ harness-cli submit --repo <sandbox-root> \
   120x40" for a session opened with no attached terminal; that is the
   renderer's fallback, not the container's PTY.
 - **egress firewall (opt-in `--firewall`):** default-deny iptables+ipset allowlist
-  (GitHub ranges + npm/anthropic/pypi + the harness server), IPv6 blocked, applied
+  (GitHub ranges + npm/pypi + the agent's own endpoints + the harness server),
+  IPv6 blocked, applied
   as container-root then dropped to the agent user. Adapted from Anthropic's
   `init-firewall.sh`; fail-closed. Verified end-to-end (blocked domains rejected,
   allowed reachable, claude runs + writes the worktree as the host user). ✅
@@ -233,7 +291,7 @@ harness-cli submit --repo <sandbox-root> \
   Verified end-to-end (allowed via proxy, denied refused, raw-socket bypass
   blocked, claude runs + writes the worktree as the host user). ✅
 - **PID 1 / zombie reaping (`podman run --init`):** the whole command chain
-  execs (`entrypoint.sh` → `gosu` → `claude-launch.sh` → `claude`), so without
+  execs (`entrypoint.sh` → `gosu` → `agent-launch.sh` → `claude`), so without
   `--init` **claude itself is PID 1** — and claude is an application, not an
   init: it waits on the pids it spawned and on nothing else, so anything
   *reparented* onto it is never reaped. Every background job whose own parent
