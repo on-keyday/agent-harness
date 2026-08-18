@@ -25,6 +25,14 @@
 #   NOT asserted: OLD runner x NEW server. Pre-fix runners exit fatally by
 #   construction; that is history and cannot be fixed retroactively.
 #
+#   FOURTH OUTCOME: SKEW BELOW THE HANDSHAKE LAYER
+#   objproto's packet.bgn lives in the objtrsf module, so a bump can move the
+#   packet HEADER itself. The old server then cannot decode the datagram at all
+#   and the ECDH exchange times out — no PSK-layer rejection is ever produced,
+#   because the connection never reaches that layer. Seen for real on the
+#   2026-08-18 key-phase change (`ecdh: message receive timeout`). Treated as
+#   "skew exercised": the same retry / no-fatal-exit assertions apply.
+#
 #   THIRD OUTCOME: HANDSHAKE-COMPATIBLE SKEW
 #   Not every .bgn change touches the handshake wire format (RunnerHello /
 #   PskAuthRequest) — e.g. a change to file-transfer request bits or an
@@ -64,11 +72,25 @@ OLD_REF="${1:-$(git merge-base origin/main HEAD 2>/dev/null)}"
 OLD_SHA="$(git rev-parse --short "$OLD_REF" 2>/dev/null)" || { echo "wire-skew-check: bad ref '$OLD_REF'"; exit 2; }
 NEW_SHA="$(git rev-parse --short HEAD)"
 
-if [ -z "$(git diff --name-only "$OLD_REF"...HEAD -- '*.bgn')" ]; then
-  echo "wire-skew-check: no .bgn change between $OLD_SHA..$NEW_SHA — skipped (exit 0)"
+# A wire change reaches this repo two ways. Local .bgn files are one. The other
+# is a go.mod bump of github.com/on-keyday/objtrsf, which owns objproto's
+# packet.bgn since the shared-module extraction — the handshake wire format
+# lives THERE now, so a bump alone can change it with no local .bgn diff. Only
+# looking at '*.bgn' silently skipped exactly the change this guard exists for.
+WIRE_CHANGED=""
+[ -n "$(git diff --name-only "$OLD_REF"...HEAD -- '*.bgn')" ] && WIRE_CHANGED="local .bgn"
+if git diff "$OLD_REF"...HEAD -- go.mod | grep -q 'on-keyday/objtrsf'; then
+  WIRE_CHANGED="${WIRE_CHANGED:+$WIRE_CHANGED + }objtrsf bump"
+fi
+if [ -n "${WIRE_SKEW_FORCE:-}" ]; then
+  WIRE_CHANGED="${WIRE_CHANGED:-forced}"
+fi
+if [ -z "$WIRE_CHANGED" ]; then
+  echo "wire-skew-check: no wire change between $OLD_SHA..$NEW_SHA — skipped (exit 0)"
+  echo "  (set WIRE_SKEW_FORCE=1 to run anyway)"
   exit 0
 fi
-echo "wire-skew-check: wire changed $OLD_SHA -> $NEW_SHA; verifying the skew stays recoverable"
+echo "wire-skew-check: wire changed $OLD_SHA -> $NEW_SHA ($WIRE_CHANGED); verifying the skew stays recoverable"
 
 TMP="$(mktemp -d)"; PORT="${WIRE_SKEW_PORT:-18899}"; CID="ws:127.0.0.1:${PORT}-*"; PSK="wire-skew-check"
 SPID=""; RPID=""
@@ -118,7 +140,16 @@ start_server "$TMP/old-server" || { echo "wire-skew-check: OLD server ($OLD_SHA)
 "$TMP/new-runner" --server-cid "$CID" --psk "$PSK" --roots "$TMP/repo" --no-worktree \
   --agent-bin /bin/true >"$TMP/runner.log" 2>&1 &
 RPID=$!
-sleep 8   # several backoff cycles
+# Poll for an outcome rather than sleeping a fixed time. An objproto-layer skew
+# only surfaces after DoECDHHandshake's 10s timeout, so the old fixed `sleep 8`
+# always sampled before the evidence existed and reported the catch-all
+# "neither rejected nor connected" -- a false FAIL that looks like a real one.
+for _ in $(seq 1 40); do
+  grep -qiE "server rejected|NoIdentity|BadPsk|BadTicket|psk auth failed|persist: connected|connection refused|ecdh: message receive timeout|ecdh: message channel closed" "$TMP/runner.log" && break
+  kill -0 "$RPID" 2>/dev/null || break   # died early: the assertions below report it
+  sleep 1
+done
+sleep 3   # let a couple of backoff cycles land in the log
 
 # POSITIVE CONTROL: prove the skew was actually EXERCISED — either a rejection
 # reached the runner, or the runner connected. Without this, a dead server /
@@ -136,6 +167,17 @@ elif grep -q "persist: connected" "$TMP/runner.log"; then
   runner_alive || fail "runner connected to the OLD server, then EXITED — investigate before landing (a fatal path was apparently taken after a successful handshake)."
   grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' despite being connected (fatal path taken on a supposedly compatible skew)"
   echo "  [1/2] PASS — no rejection: OLD server accepted the new hello (handshake-compatible skew); runner registered and stays alive"
+elif grep -qiE "ecdh: message receive timeout|ecdh: message channel closed" "$TMP/runner.log"; then
+  # Outcome 4: the wire change is BELOW the handshake application layer -- the
+  # objproto packet header itself moved, so the old server cannot even decode
+  # the datagram and the ECDH exchange times out. No PSK-layer rejection is
+  # ever produced, because the connection never gets that far. The skew IS
+  # exercised (this error only happens because the formats disagree), so the
+  # same two assertions apply.
+  echo "        skew exercised at the objproto layer: $(grep -oiE 'ecdh: [a-z ]+' "$TMP/runner.log" | head -1)"
+  runner_alive || fail "runner EXITED against the old server — an objproto-layer handshake timeout is being classified FATAL. A landing would wipe the fleet."
+  grep -q "runner exit" "$TMP/runner.log" && fail "runner logged 'runner exit' (fatal path taken on skew)"
+  echo "  [1/2] PASS — objproto handshake timed out, stayed alive, kept retrying"
 elif grep -qi "connection refused" "$TMP/runner.log"; then
   # Outcome 3a: setup broken — the OLD server was never reachable at all.
   fail "the OLD server was not reachable — skew never exercised (setup broken, not a pass)"
