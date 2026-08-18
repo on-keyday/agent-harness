@@ -124,7 +124,14 @@ case "$AGENT" in
     A_CONFIG_MOUNTS=( "$HOME_DIR/.codex" )
     A_TOKEN_FILE=""
     A_TOKEN_ENV=""
-    A_DOMAINS=""
+    # MEASURED 2026-08-18 by running codex under --firewall-proxy with this
+    # list empty and reading the proxy's 403s: every call it made
+    # (backend-api/codex/responses over wss, .../models, .../ps/mcp) is under
+    # chatgpt.com, which suffix-matching covers. NOT included because this run
+    # never exercised them: auth.openai.com / api.openai.com (token refresh and
+    # API-key auth). If one is needed the proxy will refuse it BY NAME, which is
+    # how this list was built in the first place — extend it then, don't guess.
+    A_DOMAINS="chatgpt.com"
     A_HOME="$HOME_DIR"
     ;;
   agy)
@@ -138,7 +145,21 @@ case "$AGENT" in
     A_CONFIG_MOUNTS=( "$HOME_DIR/.gemini" )
     A_TOKEN_FILE=""
     A_TOKEN_ENV=""
-    A_DOMAINS=""
+    # MEASURED 2026-08-18, same procedure as codex above, and it took three
+    # rounds because agy's startup "eligibility check" fans out: the model host
+    # (daily-cloudcode-pa), then oauth2/v2/userinfo on www.googleapis.com, then
+    # — fatally — the user's PROFILE PICTURE on lh3.googleusercontent.com
+    # ("Eligibility check failed: failed to get profile picture"). All three are
+    # hard requirements; with them the run succeeds.
+    # Left DENIED on purpose, because the run completes without them:
+    # antigravity-unleash.goog (feature flags) and play.googleapis.com. That is
+    # the same non-essential traffic claude suppresses with
+    # CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC; agy has no such knob, so it is
+    # dropped at the allowlist instead and shows up as DENY lines in the log.
+    # Deliberately NOT widened to googleapis.com (that would allowlist every
+    # Google API), and token-refresh hosts (oauth2.googleapis.com /
+    # accounts.google.com) are absent because a fresh token never hit them.
+    A_DOMAINS="daily-cloudcode-pa.googleapis.com,www.googleapis.com,lh3.googleusercontent.com"
     A_HOME="$HOME_DIR"
     ;;
   bash)

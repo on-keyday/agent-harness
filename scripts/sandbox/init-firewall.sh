@@ -58,16 +58,15 @@ else
 fi
 
 # Fixed domain allowlist (resolve A records → ipset). A miss skips that domain.
-for domain in \
-    registry.npmjs.org \
-    api.anthropic.com \
-    platform.claude.com \
-    console.anthropic.com \
-    sentry.io \
-    statsig.anthropic.com \
-    statsig.com \
-    pypi.org \
-    files.pythonhosted.org; do
+#
+# Two sources, deliberately: the shared dev hosts every agent needs, plus the
+# running agent's own endpoints in SANDBOX_AGENT_DOMAINS (set by the wrapper
+# from its agent table). Keeping the provider list out of here is what lets one
+# image serve claude, codex and agy without this script knowing which is
+# running — and stops a codex container from allowlisting anthropic's API.
+base_domains="registry.npmjs.org pypi.org files.pythonhosted.org"
+agent_domains="$(echo "${SANDBOX_AGENT_DOMAINS:-}" | tr ',' ' ')"
+for domain in $base_domains $agent_domains; do
   ips=$(dig +noall +answer +nocomments A "$domain" 2>/dev/null | awk '$4 == "A" {print $5}')
   if [ -z "$ips" ]; then
     echo "WARN: could not resolve $domain — skipping" >&2

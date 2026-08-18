@@ -45,13 +45,13 @@ const (
 	keepAlivePeriod = 30 * time.Second
 )
 
-// Essentials: api.anthropic.com (API + server-side WebSearch) + common dev
-// hosts. Extend per task with SANDBOX_PROXY_ALLOW for WebFetch research
+// Shared dev hosts, needed whichever agent this proxy is fronting. The agent's
+// own endpoints (api.anthropic.com and friends) arrive in SANDBOX_AGENT_DOMAINS
+// from the wrapper's agent table, so this binary does not have to know which
+// agent is running — and a codex container does not carry anthropic's API in
+// its allowlist. Extend per task with SANDBOX_PROXY_ALLOW for WebFetch research
 // domains.
 var defaultAllow = []string{
-	"api.anthropic.com",
-	"platform.claude.com",   // token auth validates CLAUDE_CODE_OAUTH_TOKEN here
-	"console.anthropic.com", // oauth / account
 	"github.com",            // + api. / codeload. via suffix
 	"githubusercontent.com", // raw. / objects.
 	"npmjs.org",             // registry.
@@ -145,7 +145,9 @@ func main() {
 		port = "18080"
 	}
 	cfg := config{
-		allow:      loadAllow(os.Getenv("SANDBOX_PROXY_ALLOW")),
+		// Merged, not one-or-the-other: a per-task SANDBOX_PROXY_ALLOW must not
+		// be able to drop the agent's own API host by replacing the list.
+		allow:      loadAllow(os.Getenv("SANDBOX_AGENT_DOMAINS") + "," + os.Getenv("SANDBOX_PROXY_ALLOW")),
 		idle:       envDuration("SANDBOX_PROXY_IDLE", 5*time.Minute),
 		maxTunnels: envInt("SANDBOX_PROXY_MAX_TUNNELS", 256),
 	}

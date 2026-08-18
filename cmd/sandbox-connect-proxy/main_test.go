@@ -10,7 +10,10 @@ import (
 )
 
 func TestPermitted(t *testing.T) {
-	allow := loadAllow("Example.COM, .research.example.org. , ")
+	// api.anthropic.com is no longer a built-in default: it is claude's entry in
+	// the wrapper's agent table, delivered through SANDBOX_AGENT_DOMAINS, which
+	// this merged string stands in for.
+	allow := loadAllow("api.anthropic.com,Example.COM, .research.example.org. , ")
 	cases := []struct {
 		host string
 		want bool
@@ -45,7 +48,11 @@ func TestLoadAllowDedupesAndKeepsDefaults(t *testing.T) {
 			t.Errorf("%q appears %d times, want 1", d, n)
 		}
 	}
-	if !permitted(allow, "api.anthropic.com") {
+	// A shared default the env list did NOT name must survive it. (This used to
+	// check api.anthropic.com, which is no longer a default — it is claude's
+	// agent-table entry now, so it could not tell "extends the defaults" from
+	// "the env happened to carry it".)
+	if !permitted(allow, "files.pythonhosted.org") {
 		t.Error("env list must extend the defaults, not replace them")
 	}
 }
@@ -228,5 +235,19 @@ func TestMaxTunnelsRefusesWithoutBlocking(t *testing.T) {
 	}
 	if _, status := connectVia(t, addr, target); !strings.Contains(status, "503") {
 		t.Errorf("second tunnel past the cap: status = %q, want 503", status)
+	}
+}
+
+// TestLoadAllowMergesAgentAndTaskDomains pins that both env sources survive the
+// merge. The failure this guards against is silent: if a per-task
+// SANDBOX_PROXY_ALLOW replaced rather than extended the agent's list, the agent
+// would lose its own API host the moment an operator named one WebFetch target,
+// and the symptom would be a refused API call attributed to the firewall.
+func TestLoadAllowMergesAgentAndTaskDomains(t *testing.T) {
+	allow := loadAllow("api.anthropic.com" + "," + "research.example.org")
+	for _, want := range []string{"api.anthropic.com", "research.example.org", "github.com"} {
+		if !permitted(allow, want) {
+			t.Errorf("loadAllow dropped %q; got %v", want, allow)
+		}
 	}
 }
