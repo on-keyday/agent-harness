@@ -58,6 +58,7 @@ func dialViaProxyAttempt(ctx context.Context, proxyCID objproto.ConnectionID, ta
 		return nil, fmt.Errorf("build client endpoint: %w", err)
 	}
 	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
 
 	localConn, err := peer.Dial(ctx, ep, proxyCID, peer.DialConfig{
 		Logger:       slog.Default(),

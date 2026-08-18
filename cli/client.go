@@ -234,6 +234,7 @@ func DialPeerConn(ctx context.Context, peerCID objproto.ConnectionID) (*peer.Con
 			return nil, err
 		}
 		go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+		go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
 		return peer.Dial(ctx, ep, peerCID, peer.DialConfig{
 			Logger: slog.Default(),
 		})

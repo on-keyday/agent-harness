@@ -68,6 +68,8 @@ func (f *fakeRawConn) GetTranscript() []byte  { return nil }
 func (f *fakeRawConn) ConnectedAt() time.Time { return time.Time{} }
 func (f *fakeRawConn) LastTime() time.Time    { return time.Time{} }
 func (f *fakeRawConn) Close() error           { return nil }
+func (f *fakeRawConn) UpdateKey() error       { return nil }
+func (f *fakeRawConn) KeyPhaseAt() time.Time  { return time.Time{} }
 func (f *fakeRawConn) IsActive() bool         { return true }
 func (f *fakeRawConn) Done() <-chan struct{} {
 	ch := make(chan struct{})

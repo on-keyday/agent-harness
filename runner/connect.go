@@ -167,6 +167,7 @@ func Connect(ctx context.Context, cfg Config) (*RunHandle, error) {
 		return nil, err
 	}
 	go objproto.AutoGarbageCollect(ep, 10*time.Second, 30*time.Second, 1*time.Minute, 5*time.Minute)
+	go objproto.AutoKeyUpdate(ep, 1*time.Minute, objproto.DefaultKeyUpdateInterval)
 
 	pc, err := peer.Dial(ctx, ep, cfg.ServerCID, peer.DialConfig{
 		Logger:       cfg.Logger,
