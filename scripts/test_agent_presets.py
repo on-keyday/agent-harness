@@ -150,31 +150,47 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         self.assertEqual(out[out.index("--agent-log-format") + 1], "")
         self.assertNotIn("--agent-profiles", out)
 
-    def test_sandbox_preset_matches_claude_except_bin(self) -> None:
-        # The sandbox runs the same claude through a pass-through wrapper, so
-        # every argv/logFormat value must equal claude's — this is what keeps
-        # one-shot progress streaming instead of arriving as one final blob.
-        sandbox = expand_agents_preset("sandbox", [])
-        claude = expand_agents_preset("claude", [])
-        for flag in (
-            "--agent-oneshot-argv",
-            "--agent-resume-oneshot-argv",
-            "--agent-resume-interactive-argv",
-            "--agent-log-format",
-        ):
-            self.assertEqual(
-                sandbox[sandbox.index(flag) + 1],
-                claude[claude.index(flag) + 1],
-                f"{flag} drifted from the claude preset",
-            )
+    def test_sandbox_presets_derive_their_base_agent(self) -> None:
+        # Each sandbox-* preset runs its BASE agent through a pass-through
+        # wrapper, so its argv must be the base's with only the wrapper's own
+        # --sandbox-agent selector prefixed. Anything else means a sandboxed
+        # slot silently behaves unlike its unsandboxed twin — which is how the
+        # first sandbox preset lost stream-json progress and delivered a whole
+        # one-shot as one final blob.
+        for base in ("claude", "codex", "agy", "bash"):
+            with self.subTest(base=base):
+                sb = expand_agents_preset(f"sandbox-{base}", [])
+                plain = expand_agents_preset(base, [])
+                for flag in (
+                    "--agent-oneshot-argv",
+                    "--agent-resume-oneshot-argv",
+                    "--agent-resume-interactive-argv",
+                ):
+                    self.assertEqual(
+                        sb[sb.index(flag) + 1],
+                        f"--sandbox-agent {base} " + plain[plain.index(flag) + 1],
+                        f"{flag} drifted from the {base} preset",
+                    )
+                self.assertEqual(
+                    sb[sb.index("--agent-log-format") + 1],
+                    plain[plain.index("--agent-log-format") + 1],
+                )
+                # A preset bin may be a path, not only a bare command name.
+                bin_path = Path(sb[sb.index("--agent-bin") + 1])
+                self.assertTrue(bin_path.is_absolute())
+                self.assertEqual(bin_path.name, "agent-in-podman.sh")
+                # Resolved against this module, so a runner started from any
+                # checkout gets the wrapper that ships beside the presets it
+                # just expanded.
+                self.assertTrue(bin_path.exists(), f"{bin_path} does not exist")
 
-        # A preset bin may be a path, not only a bare command name.
-        bin_path = Path(sandbox[sandbox.index("--agent-bin") + 1])
-        self.assertTrue(bin_path.is_absolute())
-        self.assertEqual(bin_path.name, "claude-in-podman.sh")
-        # Resolved against this module, so a runner started from any checkout
-        # gets the wrapper that ships beside the presets it just expanded.
-        self.assertTrue(bin_path.exists(), f"{bin_path} does not exist")
+    def test_sandbox_is_an_alias_of_sandbox_claude(self) -> None:
+        # `sandbox` is what the claude-only kit was called; existing runner
+        # slots and docs still name it.
+        self.assertEqual(
+            expand_agents_preset("sandbox", []),
+            expand_agents_preset("sandbox-claude", []),
+        )
 
 
 if __name__ == "__main__":
