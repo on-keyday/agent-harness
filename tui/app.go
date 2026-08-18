@@ -159,7 +159,7 @@ type App struct {
 
 	// sessionCaps is the default capability mask applied to every spawn
 	// (submit / interactive / session new) issued from this TUI session.
-	// Controlled by the `caps` command; defaults to Capability_All.
+	// Controlled by the `caps` command; defaults to Capability_None.
 	sessionCaps protocol.Capability
 	// sessionScope is the default target scope applied to every spawn, the
 	// companion to sessionCaps: caps say which verbs, scope says which tasks
@@ -271,7 +271,7 @@ func New(cfg Config) *App {
 		tasksByID:       map[string]protocol.TaskInfo{},
 		actRecvAt:       map[string]time.Time{},
 		activeForwards:  map[int]*PortForwardSession{},
-		sessionCaps:     protocol.Capability_All,
+		sessionCaps:     protocol.Capability_None,
 		sessionScope:    protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
 	}
 	a.tasks.Focus()

@@ -106,13 +106,15 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   layer configures the other — they compose.
 
   **Capability middle ground (without removing the control plane):** the
-  sandbox-escape risk above is now closable without `--omit-harness-cli`. Spawn
-  the sandboxed task with a restricted capability set via `submit --caps` or
-  `session new --caps` (the server enforces `caps_child = caps_parent ∩
-  requested` at spawn time — the sandboxed task's own caps cannot exceed what
-  its parent granted). Examples:
+  sandbox-escape risk above is closed by DEFAULT — an omitted `--caps` grants
+  nothing, so a sandboxed task has no control plane to escape through unless
+  the spawn asked for one. `submit --caps` / `session new --caps` widen it
+  within what the spawner holds (the server enforces `caps_child = caps_parent
+  ∩ requested` at spawn time — the sandboxed task's own caps cannot exceed what
+  its parent granted). Examples, of which the first is now what you get for
+  free:
 
-  - `submit --caps none` — data-plane only: the agent can still use
+  - `submit --caps none` (the default) — data-plane only: the agent can still use
     `agent send` / `inbox` to talk to its parent, but the server denies
     `spawn`, `file_read`, `file_write`, `forward_local`, `forward_remote`,
     `exec_attach`, `notify`, and all other control-plane operations with

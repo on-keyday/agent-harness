@@ -146,6 +146,9 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 	}
 
 	_, err := fmt.Fprint(w, "\nA capability names a verb; a scope names which tasks it may target.\n"+
+		"An omitted --caps grants NONE of these: a spawn hands its child no\n"+
+		"control plane unless the flag names one (the data plane - agentboard,\n"+
+		"its own subtree's logs/ls - needs no capability and is always there).\n"+
 		"Both attenuate on spawn, and `caps set` re-grants either on a live task.\n"+
 		"subtree membership follows the task's parent link (who spawned whom);\n"+
 		"`caps set-parent` re-points that link on a live task (--swap inverts\n"+
@@ -184,8 +187,25 @@ func CapsLabel(c protocol.Capability) string {
 	return strings.Join(names, ",")
 }
 
+// CapsFlagUsage is the --caps help text shared by submit / interactive /
+// session new (cmd/harness-cli). It lived as three identical literals, which is
+// exactly the shape that ends up describing two different defaults after one
+// edit. The TUI keeps its own text because its flag overrides a session
+// default rather than the parser default (tui/cmdline.go capsFlagUsage).
+const CapsFlagUsage = "comma-separated capability names to grant the task " +
+	"(e.g. spawn,file_read / all / none); a name may be subtracted with a " +
+	"leading dash, as in all,-spawn; default: none — a spawn grants nothing " +
+	"unless this flag names it. With --resume, --caps re-grants caps to the " +
+	"task (else its persisted caps are kept)"
+
 // ParseCaps converts a comma-separated list of capability names into a bitmask.
-// Empty/whitespace → Capability_All (inherit-all); unknown name → error.
+// Empty/whitespace → Capability_None (default-deny); unknown name → error.
+//
+// The empty case is the DEFAULT of every --caps flag, so omitting the flag
+// grants nothing: authority has to be typed out. It used to mean
+// Capability_All ("inherit whatever the spawner holds"), which made every
+// unadorned `submit` hand its child the full control plane. Nothing is lost
+// by the flip that `caps set` cannot restore on a live task.
 //
 // Names are case-sensitive and match the snake_case string representation
 // produced by Capability.String() (e.g. "spawn", "file_read", "exec_attach").
@@ -199,7 +219,7 @@ func CapsLabel(c protocol.Capability) string {
 // keeps the flag value from ever starting with "-".
 func ParseCaps(s string) (protocol.Capability, error) {
 	if strings.TrimSpace(s) == "" {
-		return protocol.Capability_All, nil // omitted → inherit-all (server intersects with parent's caps)
+		return protocol.Capability_None, nil // omitted → grant nothing (default-deny)
 	}
 	grantable := GrantableCaps()
 	byName := make(map[string]protocol.Capability, len(grantable))

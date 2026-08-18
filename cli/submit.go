@@ -14,7 +14,7 @@ import (
 // (32 hex chars). Method form: callable repeatedly without re-dialing — used
 // by long-lived consumers (tui, wasm) that hold one *Client for the lifetime
 // of the process. opts zero value = new task, any runner, default agent,
-// inherit-all caps (see SessionOpts).
+// no caps (see SessionOpts).
 func (c *Client) Submit(ctx context.Context, repo, prompt string, opts SessionOpts) (string, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_Submit}
 	sub := buildSubmitRequest(repo, prompt, opts)
@@ -40,7 +40,7 @@ func buildSubmitRequest(repo, prompt string, opts SessionOpts) protocol.SubmitRe
 	sub.SetPrompt([]byte(prompt))
 	sub.Selector = opts.Selector
 	sub.ExtraArgs = protocol.ClaudeArgsFromStrings(opts.ExtraArgs)
-	sub.RequestedCaps = opts.resolvedCaps()
+	sub.RequestedCaps = opts.Caps
 	sub.SetResumeCapsOverride(opts.ResumeCapsOverride)
 	sub.SetResumeConversation(opts.ResumeConversation)
 	sub.SetAgentProfile([]byte(opts.AgentProfile))

@@ -152,8 +152,11 @@ func TestScopeNoArgOpensPicker(t *testing.T) {
 // sessionCaps and sessionScope, no client needed.
 func TestPickerSessionApplyWritesDefaults(t *testing.T) {
 	a := New(Config{})
+	before := a.sessionCaps
 	a.runAction(ScopeAction{Show: true})
-	// Toggle the first cap row off, then cycle base to none.
+	// Toggle the first cap row, then cycle base to none. Which DIRECTION it
+	// toggles follows the session default (none since default-deny), so the
+	// assertion below is on the flip, not on the resulting level.
 	m, _ := a.Update(tea.KeyMsg{Type: tea.KeySpace})
 	a = m.(*App)
 	firstBit := a.authorityPicker.rows[0].bit
@@ -174,7 +177,7 @@ func TestPickerSessionApplyWritesDefaults(t *testing.T) {
 	if a.sessionScope.Base != protocol.ScopeBase_None {
 		t.Fatalf("sessionScope.Base = %v, want None", a.sessionScope.Base)
 	}
-	if a.sessionCaps&firstBit != 0 {
-		t.Fatalf("sessionCaps still has the toggled-off bit %v", firstBit)
+	if (a.sessionCaps^before)&firstBit != firstBit {
+		t.Fatalf("sessionCaps did not flip the toggled bit %v (before=%v after=%v)", firstBit, before, a.sessionCaps)
 	}
 }

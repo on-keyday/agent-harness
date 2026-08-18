@@ -382,3 +382,41 @@ now.
   whether the parent is alive; no raise/lower.
 - **Two-layer invariant**: a static check/test that every server-touching
   `harness-cli` subcommand maps to a cap decision (no ungated server path).
+
+## Amendment 2026-08-18 — the omitted-request default is now `none` (policy B)
+
+"Omitted-request default — policy C (inherit-all + sandbox confines)" above is
+**superseded**. An omitted `--caps` now parses to `Capability.none`, so
+`caps_child = caps_creator ∩ none = none`: a spawn grants nothing unless it
+names what to grant. Everything else in this document — attenuation,
+operator-as-root, persistence, resume semantics — is unchanged.
+
+**Why the rejection of policy B did not survive.** It rested on "breaking every
+existing worker spawn to force explicit grants is high-friction with low
+marginal payoff". Live re-grant did not exist when that was written: `caps set`
+(server `09e1094`, CLI/TUI/WebUI `908f391`) landed 2026-08-13, ~2 months after
+this spec. The friction it priced in was "re-spawn the task with the right
+flags"; it is now "`caps set <id> --caps …` on the running task, no restart, on
+any of the three surfaces". With the recovery cost that low, the asymmetry
+flips: the cost of a forgotten `--caps` under policy C is a worker holding the
+full control plane for its whole life, silently.
+
+**What this does NOT change.** Policy C's other half still holds — confinement
+is still decided at the spawn point, and the sandbox path still has to think
+about caps. The difference is only which way an unstated `--caps` falls.
+
+**Implementation is client-side, deliberately.** The default lives in
+`cli.ParseCaps("")` (CLI), `cli.SessionOpts.Caps`'s zero value (programmatic
+callers), `App.sessionCaps` (TUI) and `spawnCaps` (WebUI Compose) — not in the
+server. A `requested_caps_present` bit was considered and rejected: presence
+only earns its keep when the default differs from the zero value, which was
+true of `Capability.all` (4095) and is not true of `none` (0). Unset and
+"explicitly none" now denote the same request, so `SessionOpts.Caps` also
+stopped being a pointer.
+
+The residual this leaves is version skew: a client that predates the flip still
+sends `Capability.all` for an unadorned spawn, and the sandbox bind-mounts
+`harness-cli` as a frozen inode for the container's life
+(`scripts/sandbox/README.md`). Bounded by `caps_child = caps_creator ∩
+requested` — it can only matter under a creator that itself holds broad caps —
+and correctable with `caps set --cascade`.

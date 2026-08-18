@@ -93,7 +93,7 @@ func TestScopeRoundTripAndLiveSetCaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	taskID, err := c.Submit(ctx, repo, "scoped", cli.SessionOpts{
-		Caps:  cli.CapsPtr(protocol.Capability_Spawn | protocol.Capability_FileRead),
+		Caps:  protocol.Capability_Spawn | protocol.Capability_FileRead,
 		Scope: scope,
 	})
 	if err != nil {

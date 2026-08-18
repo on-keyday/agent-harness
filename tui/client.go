@@ -105,7 +105,7 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 		}
 		id, err := c.Submit(ctx, repo, prompt, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if err != nil {

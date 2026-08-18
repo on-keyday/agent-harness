@@ -109,44 +109,13 @@ func TestCapabilityDeniedErrorMessage(t *testing.T) {
 	}
 }
 
-// TestBuilderDefaultsToCapabilityAll verifies that SubmitWithSelectorAndArgs
-// sets RequestedCaps = Capability_All on the wire, guarding against the
-// zero-value (Capability_None) regression.
-func TestBuilderDefaultsToCapabilityAll(t *testing.T) {
-	captured := &capturingClient{}
-
-	// SubmitWithSelectorAndArgs delegates to SubmitWithSelectorArgsAndCaps
-	// with Capability_All. We call it via a fake that captures the request.
-	// We don't need a real server; the fake returns an error so the Submit
-	// call fails, but we've already captured the request.
-	_, _ = captured.roundTrip(func() error {
-		c := &Client{conn: nil, pending: map[uint32]chan *protocol.TaskControlResponse{}}
-		// We can't call SubmitWithSelectorAndArgs directly (it uses the real
-		// peer.Conn), so we verify by constructing the request manually and
-		// checking that the RequestedCaps field is set to All by the builder.
-		//
-		// Direct field inspection of the builder's output:
-		sub := protocol.SubmitRequest{}
-		sub.RequestedCaps = protocol.Capability_All // baseline set by builder
-		if sub.RequestedCaps != protocol.Capability_All {
-			t.Errorf("SubmitRequest.RequestedCaps default = %v, want Capability_All", sub.RequestedCaps)
-		}
-		_ = c
-		return nil
-	})
-
-	oi := protocol.OpenInteractiveRequest{}
-	oi.RequestedCaps = protocol.Capability_All // baseline set by builder
-	if oi.RequestedCaps != protocol.Capability_All {
-		t.Errorf("OpenInteractiveRequest.RequestedCaps default = %v, want Capability_All", oi.RequestedCaps)
-	}
-}
-
-type capturingClient struct{}
-
-func (c *capturingClient) roundTrip(fn func() error) (*protocol.TaskControlResponse, error) {
-	return nil, fn()
-}
+// The builders' capability default is pinned in session_opts_test.go
+// (TestSessionOptsCapsResolution), which runs the real
+// buildSubmitRequest / buildOpenInteractiveRequest. A
+// TestBuilderDefaultsToCapabilityAll used to sit here asserting the opposite
+// default, and it could never have caught a regression either way: it
+// assigned Capability_All to a bare protocol.SubmitRequest and then asserted
+// that same literal back, without calling a builder at all.
 
 func containsSubstring(s, sub string) bool {
 	if len(sub) == 0 {

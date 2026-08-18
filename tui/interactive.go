@@ -78,7 +78,7 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
@@ -123,7 +123,7 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), "", cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
@@ -133,7 +133,7 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 			}
 			stream, taskID, err = c.OpenInteractive(context.Background(), "", cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+				Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 		}
@@ -162,7 +162,7 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 		}
 		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		}, displayN)
 		if err != nil {
@@ -206,7 +206,7 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
@@ -253,7 +253,7 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 		}
 		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: cli.CapsPtr(auth.Caps), Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if err != nil {

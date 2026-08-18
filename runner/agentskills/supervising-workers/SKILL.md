@@ -255,10 +255,14 @@ and the scope forms (`--json` for the machine-readable form).
 - **Attenuating, never amplifying.** A child receives `creator_caps ∩ requested`
   — you can only grant a subset of what you yourself hold, and caps are
   monotonically non-increasing down a spawn chain.
-- **Omitted ⇒ inherit-all.** No `--caps` flag means the child inherits every cap
-  you hold (the server intersects with your set). Pass `--caps none` for a
-  data-plane-only worker (agentboard + its own logs/ls), or a comma list like
-  `--caps spawn,file_read` to grant exactly those.
+- **Omitted ⇒ none.** No `--caps` flag means the child gets NOTHING: it is a
+  data-plane-only worker (agentboard + its own logs/ls) and every
+  control-plane verb answers `permission denied`. Name what it needs —
+  `--caps spawn,file_read`, or `--caps all` for an unattenuated child (still
+  intersected with your own set). A worker you expect to spawn or supervise
+  its own children, attach to a PTY, move files, or notify the operator will
+  NOT be able to until you say so. Forgot at spawn time? `caps set <id>
+  --caps …` fixes it on the live task without a restart.
 - **Operator = full set.** A task launched directly by the human operator (no
   principal task) is the trusted root and holds `all`.
 - **`--scope` bounds the targets.** Default `subtree` = yourself and everything

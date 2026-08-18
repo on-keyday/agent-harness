@@ -22,6 +22,12 @@ type SetCapsOpts struct {
 	KeepConns bool
 }
 
+// CapsPtr wraps a Capability for SetCapsOpts.Caps, whose pointer still encodes
+// "the operator did not name this half of the authority" — unlike a spawn,
+// where an omitted --caps means Capability_None and needs no pointer (see
+// SessionOpts).
+func CapsPtr(c protocol.Capability) *protocol.Capability { return &c }
+
 // SetCapsResult is the decoded server answer.
 type SetCapsResult struct {
 	Status      protocol.SetCapsStatus

@@ -82,8 +82,9 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - Capabilities: `submit` / `session new` / `interactive` take
       `--caps NAMES` to grant a spawned task a restricted capability set
       (`caps_child = caps_parent ∩ requested`, server-enforced) and
-      `--scope SPEC` to bound WHICH tasks those capabilities may target;
-      `caps` lists the grantable names and scope forms, and
+      `--scope SPEC` to bound WHICH tasks those capabilities may target
+      (omitted `--caps` = **none**: authority is granted, never
+      inherited); `caps` lists the grantable names and scope forms, and
       `caps set` re-grants both on a live task. See **Capabilities and
       scope** below.
   - `cmd/harness-tui`: Bubble Tea interactive frontend (sections below).
@@ -334,12 +335,20 @@ bounding WHICH tasks those capabilities may be pointed at.
 one-line description of each; `caps --json` emits the machine-readable
 catalog.
 
-By default a spawned task inherits every capability its spawner holds,
-scoped to **subtree** (itself + everything it spawns). `--caps NAMES`
-and `--scope SPEC` (on `submit` / `session new` / `interactive`, also in
-the TUI and WebUI spawn surfaces) narrow or redirect that: the server
-grants `caps_child = caps_parent ∩ requested` and clamps the scope to
-the spawner's own reach, so a task can never exceed its parent. `NAMES`
+By default a spawned task gets **no capabilities at all**, scoped to
+**subtree** (itself + everything it spawns). An omitted `--caps` grants
+nothing — the task can still use the agentboard and read its own
+subtree's logs / `ls`, but every control-plane verb (spawn, cancel,
+attach, file read/write, forwards, notify, prune, purge, runner-admin,
+global info) answers `permission denied` until something grants it.
+`--caps NAMES` and `--scope SPEC` (on `submit` / `session new` /
+`interactive`, also in the TUI and WebUI spawn surfaces) widen or
+redirect that within what the spawner itself holds: the server grants
+`caps_child = caps_parent ∩ requested` and clamps the scope to the
+spawner's own reach, so a task can never exceed its parent. A supervisor
+that spawns and drives workers therefore has to say so —
+`--caps spawn,exec_attach,notify` — and anything missed afterwards is
+`caps set <id> --caps …` on the live task, no restart. `NAMES`
 is comma-separated (e.g. `spawn,file_read`, subtractive `all,-spawn`);
 `SPEC` is `subtree | none | global | [subtree+]ids:<task-id>[,…]` —
 `ids:` naming specific tasks is the everyday form ("this worker may

@@ -20,26 +20,28 @@ func TestCapsLabel(t *testing.T) {
 }
 
 // TestParseCaps verifies the three behaviours of ParseCaps:
-//  1. Empty input → Capability_All (inherit-all default).
+//  1. Empty input → Capability_None (default-deny; the flag must be typed to
+//     grant anything). Pinned here because this is the whole fail-closed
+//     property: a regression to All would re-open every spawn silently.
 //  2. Comma-separated valid names → correct OR mask.
 //  3. Unknown name → error (not a silent no-op or panic).
 func TestParseCaps(t *testing.T) {
-	// Empty → All
+	// Empty → None
 	got, err := ParseCaps("")
 	if err != nil {
 		t.Fatalf("ParseCaps(\"\") error: %v", err)
 	}
-	if got != protocol.Capability_All {
-		t.Fatalf("ParseCaps(\"\") = %#x, want %#x (Capability_All)", got, protocol.Capability_All)
+	if got != protocol.Capability_None {
+		t.Fatalf("ParseCaps(\"\") = %#x, want %#x (Capability_None)", got, protocol.Capability_None)
 	}
 
-	// Whitespace-only → All
+	// Whitespace-only → None
 	got, err = ParseCaps("   ")
 	if err != nil {
 		t.Fatalf("ParseCaps(whitespace) error: %v", err)
 	}
-	if got != protocol.Capability_All {
-		t.Fatalf("ParseCaps(whitespace) = %#x, want %#x (Capability_All)", got, protocol.Capability_All)
+	if got != protocol.Capability_None {
+		t.Fatalf("ParseCaps(whitespace) = %#x, want %#x (Capability_None)", got, protocol.Capability_None)
 	}
 
 	// "spawn,file_read" → OR of the two bits

@@ -522,7 +522,11 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("submit: selector: %w", err))
 				return
 			}
-			caps := protocol.Capability_All
+			// Default-deny, matching ParseCaps(""): a JS caller that omits
+			// `caps` spawns a task with no control plane. The WebUI always
+			// sends its Compose state, so this is the floor for scripted
+			// callers, not the button path.
+			caps := protocol.Capability_None
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
@@ -552,7 +556,7 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			}
 			id, err := c.Submit(rootCtx, repo, task, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(caps), Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
+				Caps: caps, Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {
@@ -1474,7 +1478,11 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("startInteractive: selector: %w", err))
 				return
 			}
-			caps := protocol.Capability_All
+			// Default-deny, matching ParseCaps(""): a JS caller that omits
+			// `caps` spawns a task with no control plane. The WebUI always
+			// sends its Compose state, so this is the floor for scripted
+			// callers, not the button path.
+			caps := protocol.Capability_None
 			if cv := opts.Get("caps"); cv.Type() == js.TypeNumber {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
@@ -1504,7 +1512,7 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			}
 			taskID, err := c.Interactive(rootCtx, repo, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: cli.CapsPtr(caps), Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
+				Caps: caps, Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {

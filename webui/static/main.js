@@ -2688,7 +2688,7 @@ const POLL_INTERVAL_MS = 5000;
   function initCaps() {
     if (typeof window.harness.capList !== "function") return;
     capDefs = window.harness.capList();
-    spawnCaps = capsAllBits();  // all granular bits on by default
+    spawnCaps = 0;  // default-deny: no bits on until the operator picks some
     renderCaps();
     const capsOnResumeCb = document.getElementById("caps-on-resume");
     if (capsOnResumeCb) {
