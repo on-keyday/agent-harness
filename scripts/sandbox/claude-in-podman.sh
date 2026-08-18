@@ -148,8 +148,13 @@ declare -a TTY=()
 # harness-cli mtime 04:38 and a 692-line embedded skill while the host was at
 # 04:50 / 720 lines, and a container started at that moment saw 04:50 / 720.
 # That matters because harness-cli carries the agent skills (`harness-cli
-# skill`), so a confined agent can be reading guidance several commits old with
-# nothing on its side to reveal it. Only a NEW container picks up a rebuild.
+# skill`), so a confined agent can be reading guidance several commits old.
+# It can at least SAY which: `harness-cli version` prints the commit the binary
+# was built from (go build stamps vcs.* into it), and the sandbox task read
+# exactly that from inside a container with no go and no strings. What it
+# cannot do is judge whether that commit is current — the repo's HEAD is not
+# visible from in there — so the revision has to be compared against a peer or
+# the operator. Only a NEW container picks up a rebuild.
 declare -a CLI=()
 if [ "$bridge_cli" = 1 ]; then
   hcli=$(command -v harness-cli 2>/dev/null)

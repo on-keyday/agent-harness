@@ -228,6 +228,14 @@ func main() {
 			die(err)
 		}
 
+	case "version":
+		fs := flag.NewFlagSet("version", flag.ExitOnError)
+		asJSON := fs.Bool("json", false, "output the build stamp as a JSON object")
+		fs.Parse(args)
+		if err := writeVersion(os.Stdout, *asJSON); err != nil {
+			die(err)
+		}
+
 	case "skill":
 		if len(args) > 0 && (args[0] == "--list" || args[0] == "-l" || args[0] == "ls") {
 			names, err := agentskills.List()
@@ -940,6 +948,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      OPERATOR ONLY: re-grant a LIVE task's caps and/or scope; effective on its next request, no restart")
 	fmt.Fprintln(os.Stderr, "  whoami [--json]                     show THIS connection's own principal + server-enforced caps and scope (no cap required)")
 	fmt.Fprintln(os.Stderr, "  skill [NAME | --list]               print the embedded agent skill (default: harness-cli); --list/ls names them all")
+	fmt.Fprintln(os.Stderr, "  version [--json]                    the commit this binary — and the skills embedded in it — was built from")
 	fmt.Fprintln(os.Stderr, "  cancel TASK_ID                      cancel a queued/running task")
 	fmt.Fprintln(os.Stderr, "  notify [--title T] [--level info|warn|error] <text>")
 	fmt.Fprintln(os.Stderr, "                                      send a notification (one short line; detail goes in the task log)")

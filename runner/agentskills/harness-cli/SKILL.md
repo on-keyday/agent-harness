@@ -26,6 +26,13 @@ harness-cli skill ls         # list the embedded skills + descriptions (alias: -
 harness-cli skill <name>     # print another one, e.g. `harness-cli skill landing-to-main`
 ```
 
+`harness-cli version` reports the commit this binary was built from, which is
+also the version of every skill it prints — they are embedded in it. Worth
+knowing when your `harness-cli` is bind-mounted from elsewhere (the podman
+sandbox does this) and can therefore be older than the repo it came from: the
+binary cannot see that repo's HEAD, so compare the revision against a peer or
+ask the operator. `--json` for the machine-readable form.
+
 `skill ls` enumerates whatever is embedded — run it rather than trusting a
 list written here, which goes stale the moment a skill is added; an unknown
 name errors and echoes the available names. The agentboard wake prompt tells you to
