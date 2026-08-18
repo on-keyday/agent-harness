@@ -1688,11 +1688,38 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.cmdresult.Append(WarnStyle.Render("grid: not connected"))
 				return a, nil
 			}
-			tasks := make([]protocol.TaskInfo, 0, len(a.tasksByID))
-			for _, t := range a.tasksByID {
-				tasks = append(tasks, t)
+			a.grid.Open(a.appCtx, a.client, a.visibleTasks(), "")
+			a.grid.SetSize(a.width, a.height)
+			return a, gridTick()
+		}
+		// `z` opens the same grid narrowed to the SELECTED task's subtree —
+		// itself plus every task it spawned, transitively. It is the answer to
+		// "show me just this worker's crew" once the fleet holds more sessions
+		// than a page. The narrowing is cli.TaskSubtree, the same filter behind
+		// the WebUI's per-task button, so the two surfaces cannot disagree
+		// about who is whose child.
+		//
+		// It refuses on an empty result instead of opening: a full-screen
+		// overlay that says "nothing here" costs the operator a keystroke to
+		// escape and tells them less than the one line below does.
+		if a.focus == focusTasks && !logsEditing && msg.String() == mainKeys.GridSubtree {
+			if a.client == nil {
+				a.cmdresult.Append(WarnStyle.Render("grid: not connected"))
+				return a, nil
 			}
-			a.grid.Open(a.appCtx, a.client, tasks)
+			anchor := a.tasks.SelectedID()
+			if anchor == "" {
+				a.cmdresult.Append(WarnStyle.Render("grid: no task selected"))
+				return a, nil
+			}
+			sub := cli.TaskSubtree(a.visibleTasks(), anchor)
+			if n := len(gridLiveTasks(sub)); n == 0 {
+				a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf(
+					"grid: no live interactive session under %s (self + %d descendant(s))",
+					shortTaskID(anchor), len(sub)-1)))
+				return a, nil
+			}
+			a.grid.Open(a.appCtx, a.client, sub, anchor)
 			a.grid.SetSize(a.width, a.height)
 			return a, gridTick()
 		}
@@ -2322,6 +2349,18 @@ func (a *App) refreshTasksTable() {
 		all = all[:100]
 	}
 	a.tasks.SetRows(all, a.runnersSnapshot)
+}
+
+// visibleTasks is the operator's current task set as a slice. tasksByID is the
+// store; everything that filters, tiles or walks the creator tree wants a
+// slice, and each of those sites building its own was how the grid's input and
+// the table's input drifted apart in the first place.
+func (a *App) visibleTasks() []protocol.TaskInfo {
+	out := make([]protocol.TaskInfo, 0, len(a.tasksByID))
+	for _, t := range a.tasksByID {
+		out = append(out, t)
+	}
+	return out
 }
 
 // resolveTaskIDPrefix returns the full hex id matching prefix (case-insensitive).

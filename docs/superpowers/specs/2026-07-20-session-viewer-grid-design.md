@@ -151,3 +151,54 @@ e. Scale/crop: a full-screen app (e.g. claude) in a pane is recognizable in
    WebUI (scaled) and shows its bottom region in TUI (crop).
 f. WebUI 390px: 1-column stack renders and scrolls.
 g. `make check` / wasm-check / vet / test.
+
+## Amendment 2026-08-19 — subtree scope
+
+Pane population above is "all live sessions, activity-sorted, capped". Once a
+fleet holds several supervisors' worth of workers, that page answers the wrong
+question: the operator wants one supervisor's crew, not everything running.
+
+**The narrowing is an ANCHOR, not a scope expression.** One task is named — the
+row the cursor is on, the row whose sheet is open — and the grid shows that
+task plus every task it spawned, transitively. There is deliberately no
+scope-grammar input on this path: `--scope`'s `subtree` / `ids:` grammar is
+anchored at the holder task, and an operator has no holder task, so reusing the
+spelling would make the same string mean two different things depending on
+which field it was typed into.
+
+- **Membership**: `cli.TaskSubtree(tasks, anchorHex)`, which reads
+  `BuildTaskTree`'s pre-order rows (a node's descendants are the rows following
+  it until the depth drops back) rather than walking creator links a second
+  time. One definition of "who is whose child", shared with the tree view, the
+  `ls --tree` gutter and the WebUI graph. An anchor not in the visible set
+  yields EMPTY — never the unfiltered set.
+- **Tileability stays where it was**: `gridLiveTasks` (TUI) /
+  `liveInteractiveTasks` (WebUI) still decide what a pane can show, and the
+  WebUI's per-session グリッドに含める toggles still subtract. The subtree
+  picks candidates, the existing predicates filter them, and the pane cap
+  (24 TUI / 9 WebUI) applies to the result.
+- **Entry points**: TUI `z` on the tasks pane (`g` remains the whole fleet);
+  WebUI task sheet `▦ この配下をグリッド` — offered on EVERY task, not only
+  live interactive ones, because the useful anchor is often a one-shot
+  supervisor or a finished parent whose workers are still running; WebUI
+  `grid --under <32-hex>` (full id only, no prefix resolution, matching
+  `prune`). Bare `grid <id...>` keeps its meaning — an explicit list, never
+  expanded into subtrees, mirroring `--scope ids:`.
+- **An empty result opens nothing.** Both surfaces report
+  `no live interactive session under <id> (self + N descendant(s))` on their
+  result surface (TUI cmdresult / WebUI `appendCmdOutput`) instead of opening a
+  full-screen overlay that says the same thing.
+- **The scope is always stated**: TUI status bar `scope:all` or
+  `scope:<id8>+desc`, WebUI modal title the same pair. A blank would read as
+  "no narrowing in effect", which is exactly what a narrowed grid missing its
+  label also looks like.
+- No wire, WAL or `TaskInfo` change: the anchor is per-view UI state that dies
+  with the overlay. The WebUI reaches the shared filter through a new
+  `harness.taskSubtree(anchorId) -> Promise<string[]>` wasm export.
+
+Verification for this amendment: (h) a three-level tree (parent → two workers →
+one grandchild) plus an unrelated session — `z` on the parent shows exactly its
+own live descendants, `z` on a worker shows only its own, the unrelated session
+appears in neither; (i) the same through the WebUI button and `grid --under`,
+desktop and 390px; (j) an anchor with no live descendants reports instead of
+opening.

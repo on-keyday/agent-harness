@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/hex"
 	"sort"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -117,6 +118,45 @@ func BuildTaskTree(tasks []protocol.TaskInfo) []TaskTreeRow {
 		}
 	}
 	return out
+}
+
+// TaskSubtree returns anchorHex's task plus every task transitively created by
+// it, in the order BuildTaskTree places them (the anchor, then its descendants
+// pre-order). An anchor that is not in tasks yields nil — a caller that
+// mistyped an id must get nothing back, never the unfiltered set.
+//
+// It reads BuildTaskTree's output rather than walking the creator links a
+// second time: those rows are a pre-order walk, so a node's descendants are
+// exactly the rows that follow it until the depth drops back to its own. That
+// is the same property TaskTreeLayout recovers parents from, and it keeps the
+// hierarchy defined in ONE place — a viewer filtering by its own walk could
+// disagree with the tree drawn next to it about who is whose child.
+//
+// Two consequences of reusing that walk, both wanted: an orphan (creator
+// pruned or out of scope) is a root here too and keeps its own children, and a
+// task caught in a creator cycle — which the server refuses to build but a
+// replayed WAL record could carry — is parked at depth 0 by BuildTaskTree and
+// so comes back alone instead of dragging in whatever follows it.
+func TaskSubtree(tasks []protocol.TaskInfo, anchorHex string) []protocol.TaskInfo {
+	anchor := strings.ToLower(strings.TrimSpace(anchorHex))
+	if anchor == "" {
+		return nil
+	}
+	rows := BuildTaskTree(tasks)
+	for i, r := range rows {
+		if hex.EncodeToString(r.Task.Id.Id[:]) != anchor {
+			continue
+		}
+		out := []protocol.TaskInfo{r.Task}
+		for _, d := range rows[i+1:] {
+			if d.Depth <= r.Depth {
+				break
+			}
+			out = append(out, d.Task)
+		}
+		return out
+	}
+	return nil
 }
 
 // TreePrefix renders the ├─ / └─ / │ gutter for a row. Depth 0 yields "".

@@ -415,7 +415,7 @@ const POLL_INTERVAL_MS = 5000;
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
     if (!ids.length) { appendCmdOutput("grid: no sessions selected", true); return; }
-    openSessionGrid(ids);
+    openSessionGrid(ids, "");
   });
   gridAllOn.addEventListener("click", () => { gridExcluded.clear(); renderTaskList(lastTasks); });
   gridAllOff.addEventListener("click", () => {
@@ -2168,17 +2168,47 @@ const POLL_INTERVAL_MS = 5000;
           out = `preview ${tokens[1].slice(0, 12)}…`;
           break;
         case "grid": {
-          // grid [id...] — explicit ids, else every live interactive session
-          // (activity-desc, same ordering as the task list — taskActivityMs).
-          let ids = tokens.slice(1);
-          if (ids.length === 0) {
+          // grid [--under <task-id>] [id...] — flags before positionals, as in
+          // the file verbs. --under narrows to one task's subtree (the ▦ button
+          // in a task sheet); bare ids stay an EXPLICIT list and are never
+          // expanded into their subtrees, matching `--scope ids:` which also
+          // names tasks one at a time. No ids at all = every included live
+          // interactive session (activity-desc, same ordering as the task list).
+          let under = null;
+          const ids = [];
+          for (let i = 1; i < tokens.length; i++) {
+            const tok = tokens[i];
+            if (tok === "--under") {
+              i++;
+              if (i >= tokens.length) throw new Error("grid: --under: missing task id");
+              under = tokens[i];
+            } else if (tok.startsWith("--under=")) {
+              under = tok.slice("--under=".length);
+            } else if (tok.startsWith("-")) {
+              throw new Error(`grid: unknown flag ${tok}`);
+            } else {
+              ids.push(tok);
+            }
+          }
+          if (under !== null) {
+            if (ids.length) throw new Error("grid: --under names one subtree — drop the extra ids");
+            // Full 32-hex only, no prefix resolution: same rule as `prune`, so a
+            // mistype misses instead of resolving onto a neighbouring task.
+            if (!/^[0-9a-fA-F]{32}$/.test(under)) {
+              throw new Error("grid: --under needs a full 32-hex task id");
+            }
+            out = await openSubtreeGrid(under);
+            break;
+          }
+          let paneIds = ids;
+          if (paneIds.length === 0) {
             // no explicit ids: the currently-included live sessions (respects
             // the per-session グリッドに含める toggles), same as the show button.
-            ids = (await liveInteractiveIds()).filter((id) => !gridExcluded.has(id));
+            paneIds = (await liveInteractiveIds()).filter((id) => !gridExcluded.has(id));
           }
-          if (ids.length === 0) { out = "grid: no included live interactive sessions"; break; }
-          openSessionGrid(ids);
-          out = `grid: ${ids.length} pane(s)${ids.length > 9 ? " (capped at 9)" : ""}`;
+          if (paneIds.length === 0) { out = "grid: no included live interactive sessions"; break; }
+          openSessionGrid(paneIds, "");
+          out = `grid: ${paneIds.length} pane(s)${paneIds.length > 9 ? " (capped at 9)" : ""}`;
           break;
         }
         case "prune": {
@@ -2281,6 +2311,7 @@ const POLL_INTERVAL_MS = 5000;
             "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
             "  preview <task-id>         live read-only screen preview of a session (⏸/▶ pause-resume)",
             "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
+            "  grid --under <task-id>    same grid narrowed to that task's subtree (itself + every task it spawned)",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  prune [--force] <task-id>...",
             "                            forget specific tasks by id (--force: also active tasks)",
@@ -3510,6 +3541,7 @@ const POLL_INTERVAL_MS = 5000;
   //     verbatim with the single preview above. Pane cap: 9 (v1).
   const gridModal = document.getElementById("session-grid-modal");
   const gridBody  = document.getElementById("session-grid-body");
+  const gridTitle = document.getElementById("session-grid-title");
   let gridKeys = [];
 
   // teardownGridPanes stops every current grid pane's stream and clears the
@@ -3542,7 +3574,19 @@ const POLL_INTERVAL_MS = 5000;
       .map((t) => t.id);
   }
 
-  function openSessionGrid(ids) {
+  // openSessionGrid tiles ids. anchorId names the task whose subtree the caller
+  // narrowed them to, or "" for the whole visible set — display only (the
+  // narrowing already happened), but the title has to say it: a grid showing
+  // three of eleven sessions with no word about why is indistinguishable from
+  // eight dead ones. "scope: all" is spelled out for the same reason the TUI's
+  // status bar spells it out — a blank reads as "no narrowing", which is what a
+  // narrowed grid missing its label also looks like.
+  function openSessionGrid(ids, anchorId) {
+    if (gridTitle) {
+      gridTitle.textContent = anchorId
+        ? `セッショングリッド (scope: ${anchorId.slice(0, 8)}+desc)`
+        : "セッショングリッド (scope: all)";
+    }
     teardownGridPanes();
     gridBody.replaceChildren();
     const capped = [...new Set(ids)].slice(0, 9); // dedupe (same id twice must not orphan a cell), then pane cap (v1)
@@ -3598,6 +3642,44 @@ const POLL_INTERVAL_MS = 5000;
       startPane(key, p);
     }
     if (!gridModal.open) gridModal.showModal();
+  }
+
+  // openSubtreeGrid narrows the session grid to one task's subtree — the anchor
+  // plus every task it spawned, transitively. Returns the line to report and
+  // never throws: both callers (the task sheet's ▦ button and `grid --under`)
+  // render the outcome the same way, through appendCmdOutput.
+  //
+  // Membership is answered by the wasm side (cli.TaskSubtree — the same call
+  // the TUI's `z` makes), so the two surfaces cannot disagree about who is
+  // whose child. WHICH of those tasks is tileable is decided here, by the same
+  // liveInteractiveTasks + gridExcluded pair the show button uses: the subtree
+  // picks the candidates, the per-session toggles still subtract from them.
+  //
+  // An empty result opens nothing. A modal that says "no sessions" costs a tap
+  // to dismiss and tells the operator less than this line does.
+  async function openSubtreeGrid(anchorId) {
+    let subIds;
+    try {
+      subIds = await window.harness.taskSubtree(anchorId);
+    } catch (e) {
+      return `grid: ${e.message}`;
+    }
+    const inSub = new Set(subIds || []);
+    if (inSub.size === 0) {
+      // Empty, not "everything": a mistyped id must narrow to nothing.
+      return `grid: task ${anchorId.slice(0, 12)}… is not in the current snapshot`;
+    }
+    const ids = liveInteractiveTasks()
+      .filter((t) => inSub.has(t.id) && !gridExcluded.has(t.id))
+      .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
+      .map((t) => t.id);
+    if (ids.length === 0) {
+      return `grid: no live interactive session under ${anchorId.slice(0, 12)}…` +
+        ` (self + ${inSub.size - 1} descendant(s))`;
+    }
+    openSessionGrid(ids, anchorId);
+    return `grid ${anchorId.slice(0, 12)}…+desc: ${ids.length} pane(s)` +
+      (ids.length > 9 ? " (capped at 9)" : "");
   }
 
   function dismissPane(key, cell) {
@@ -3901,6 +3983,15 @@ const POLL_INTERVAL_MS = 5000;
         }
       });
     }
+
+    // Subtree grid — NOT gated on this task being a live interactive session.
+    // The useful anchor is often a supervisor that is itself a one-shot, or a
+    // finished parent whose workers are still running; gating this on the row's
+    // own kind would hide the button exactly where it is wanted. An anchor with
+    // nothing tileable under it reports that instead of opening.
+    addItem("▦ この配下をグリッド", "", async () => {
+      appendCmdOutput(await openSubtreeGrid(t.id), true);
+    });
 
     // Resume — finished task's worktree, opened as a fresh interactive session.
     // Reflect the Compose "Extra claude args" box (same as Submit / Open) so a

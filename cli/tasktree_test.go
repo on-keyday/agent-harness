@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -139,6 +140,109 @@ func TestBuildTaskTree_EveryTaskAppearsExactlyOnce(t *testing.T) {
 func TestBuildTaskTree_EmptyInput(t *testing.T) {
 	if rows := BuildTaskTree(nil); len(rows) != 0 {
 		t.Errorf("nil input produced %d rows", len(rows))
+	}
+}
+
+// hexOf renders the id mkTask built, so a test can name an anchor the way
+// every caller does: a full 32-char task-id hex.
+func hexOf(id byte) string {
+	var t protocol.TaskID
+	t.Id[0] = id
+	return hex.EncodeToString(t.Id[:])
+}
+
+// ids renders a task slice as its single-byte ids, matching shape()'s idiom.
+func ids(ts []protocol.TaskInfo) string {
+	var b strings.Builder
+	for _, t := range ts {
+		b.WriteByte(t.Id.Id[0])
+	}
+	return b.String()
+}
+
+func TestTaskSubtree_AnchorPlusEveryDescendant(t *testing.T) {
+	// a ├─ b ─ d
+	//   └─ c        and an unrelated root e.
+	in := []protocol.TaskInfo{
+		mkTask('a', 0, 10),
+		mkTask('b', 'a', 20),
+		mkTask('d', 'b', 30),
+		mkTask('c', 'a', 40),
+		mkTask('e', 0, 50),
+	}
+	if got, want := ids(TaskSubtree(in, hexOf('a'))), "abdc"; got != want {
+		t.Errorf("subtree of a = %q, want %q", got, want)
+	}
+	// From b: itself and d only — a's other branch and the unrelated root are
+	// not below it.
+	if got, want := ids(TaskSubtree(in, hexOf('b'))), "bd"; got != want {
+		t.Errorf("subtree of b = %q, want %q", got, want)
+	}
+}
+
+func TestTaskSubtree_LeafIsJustItself(t *testing.T) {
+	in := []protocol.TaskInfo{
+		mkTask('a', 0, 10),
+		mkTask('b', 'a', 20),
+	}
+	if got, want := ids(TaskSubtree(in, hexOf('b'))), "b"; got != want {
+		t.Errorf("subtree of leaf b = %q, want %q", got, want)
+	}
+}
+
+func TestTaskSubtree_UnknownAnchorIsEmpty(t *testing.T) {
+	// Empty, not "everything": a caller that mistyped an id must see nothing
+	// happen and be told, never get the unfiltered set back.
+	in := []protocol.TaskInfo{mkTask('a', 0, 10)}
+	if got := TaskSubtree(in, hexOf('z')); len(got) != 0 {
+		t.Errorf("unknown anchor returned %q, want empty", ids(got))
+	}
+	if got := TaskSubtree(in, ""); len(got) != 0 {
+		t.Errorf("empty anchor returned %q, want empty", ids(got))
+	}
+	if got := TaskSubtree(nil, hexOf('a')); len(got) != 0 {
+		t.Errorf("nil input returned %q, want empty", ids(got))
+	}
+}
+
+func TestTaskSubtree_OrphanAnchorKeepsItsDescendants(t *testing.T) {
+	// b's creator is not in the visible set, so BuildTaskTree re-roots it as an
+	// orphan. Its own children are still its children — anchoring on a task
+	// whose parent is out of scope must not come back empty-handed.
+	in := []protocol.TaskInfo{
+		mkTask('a', 0, 10),
+		mkTask('b', 'x', 20), // creator 'x' not present
+		mkTask('c', 'b', 30),
+	}
+	if got, want := ids(TaskSubtree(in, hexOf('b'))), "bc"; got != want {
+		t.Errorf("subtree of orphan b = %q, want %q", got, want)
+	}
+}
+
+func TestTaskSubtree_CycleMemberTerminates(t *testing.T) {
+	// a<-b, b<-a: the server refuses to build this (would_cycle) but a broken
+	// WAL replay could. BuildTaskTree parks cycle members at the end as depth-0
+	// rows, so a subtree query must return the anchor alone rather than hang or
+	// swallow the row after it.
+	in := []protocol.TaskInfo{
+		mkTask('a', 'b', 10),
+		mkTask('b', 'a', 20),
+		mkTask('c', 0, 30),
+	}
+	if got, want := ids(TaskSubtree(in, hexOf('a'))), "a"; got != want {
+		t.Errorf("subtree of cycle member a = %q, want %q", got, want)
+	}
+}
+
+func TestTaskSubtree_AnchorHexIsCaseAndSpaceInsensitive(t *testing.T) {
+	// Ids reach this from a WebUI command line and a pasted id as readily as
+	// from a table row, so normalise the way ParseScope does.
+	in := []protocol.TaskInfo{
+		mkTask('a', 0, 10),
+		mkTask('b', 'a', 20),
+	}
+	if got, want := ids(TaskSubtree(in, "  "+strings.ToUpper(hexOf('a'))+" ")), "ab"; got != want {
+		t.Errorf("subtree of padded upper-case anchor = %q, want %q", got, want)
 	}
 }
 

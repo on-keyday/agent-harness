@@ -56,9 +56,40 @@ type GridModel struct {
 	page   int
 	input  bool // input mode: keystrokes go to the focused pane (cowrite)
 	client *cli.Client
+	// anchor is the task whose subtree this grid was narrowed to, "" for the
+	// whole visible set. Display only — the caller has already filtered — but
+	// it is what the status bar reports, because a grid showing four of twelve
+	// sessions with no word about why is indistinguishable from eight dead ones.
+	anchor string
 }
 
 func NewGridModel() GridModel { return GridModel{} }
+
+// gridLiveTasks selects the tasks a grid can tile — live (Running/Detached)
+// interactive sessions — most-recently-active first.
+//
+// Separate from Open because a caller has to know whether opening is worth a
+// full-screen overlay BEFORE it opens one (the subtree entry point refuses on
+// an empty result), and that decision has to use the same predicate the panes
+// do. Two copies of "what counts as tileable" is how a key that reports
+// "nothing here" ends up opening a grid with two panes in it.
+//
+// Activity-desc: TaskInfo carries no single "last activity" timestamp;
+// LastOutputAt (the same field the task list's idle/busy badge reads, see
+// refreshTasksTable) is the closest analog — higher (more recent) first, with
+// never-yet-active (0) sessions sinking to the end.
+func gridLiveTasks(tasks []protocol.TaskInfo) []protocol.TaskInfo {
+	live := make([]protocol.TaskInfo, 0, len(tasks))
+	for _, t := range tasks {
+		if t.Kind == protocol.TaskKind_Interactive && taskSessionAlive(t.Status) {
+			live = append(live, t)
+		}
+	}
+	sort.Slice(live, func(i, j int) bool {
+		return live[i].LastOutputAt > live[j].LastOutputAt
+	})
+	return live
+}
 
 func (m GridModel) IsOpen() bool { return m.open }
 
@@ -103,21 +134,14 @@ func (m GridModel) pageCols() int { return gridCols(m.pageEnd() - m.pageStart())
 // dials a fresh connection and never sends a PTY size — the grid has no size
 // authority (Global Constraint); each PaneStreamer sizes its own emulator to
 // whatever the server replays.
-func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.TaskInfo) {
-	live := make([]protocol.TaskInfo, 0, len(tasks))
-	for _, t := range tasks {
-		if t.Kind == protocol.TaskKind_Interactive && taskSessionAlive(t.Status) {
-			live = append(live, t)
-		}
-	}
-	// Activity-desc: most recently active session first. TaskInfo carries no
-	// single "last activity" timestamp; LastOutputAt (the same field the task
-	// list uses for its idle/busy badge, see refreshTasksTable) is the closest
-	// analog — higher (more recent) first, with never-yet-active (0) sessions
-	// sinking to the end.
-	sort.Slice(live, func(i, j int) bool {
-		return live[i].LastOutputAt > live[j].LastOutputAt
-	})
+//
+// anchor names the task whose subtree the caller narrowed tasks to, or "" when
+// tasks is the whole visible set. Narrowing happens in the CALLER
+// (cli.TaskSubtree) rather than here: the pane cap has to apply to the narrowed
+// set, and one filter shared with the WebUI beats a second one hidden in this
+// model.
+func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.TaskInfo, anchor string) {
+	live := gridLiveTasks(tasks)
 	if len(live) > gridMaxPanes {
 		live = live[:gridMaxPanes]
 	}
@@ -137,6 +161,7 @@ func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.Ta
 	m.focus = 0
 	m.page = 0
 	m.client = c
+	m.anchor = anchor
 }
 
 // Close stops every pane (idempotent — safe even if some panes already
@@ -150,6 +175,7 @@ func (m *GridModel) Close() {
 	m.focus = 0
 	m.page = 0
 	m.input = false
+	m.anchor = ""
 }
 
 // attachFocused closes the grid and returns a cmd that attaches the focused
@@ -391,13 +417,33 @@ func (m *GridModel) dismissFocused() {
 	}
 }
 
-// statusLine is the one-row header: page position, session count, and key hints.
-// In input mode it flips to an INPUT bar so it is obvious keystrokes go to the
-// pane, not the grid.
+// scopeLabel names the set the grid was built from: "all" for every visible
+// live session, or "<id8>+desc" when it was narrowed to one task's subtree.
+//
+// "all" is written out rather than left blank. A blank would read as "no
+// narrowing is in effect", which is exactly what a narrowed grid missing its
+// label also looks like — and the difference between "eight sessions" and
+// "eight of twenty" is the whole point of the bar.
+func (m GridModel) scopeLabel() string {
+	if m.anchor == "" {
+		return "all"
+	}
+	// 8 hex, matching the pane headers and the tree gutter's `by=` — a reader
+	// comparing the bar against a pane sees the same prefix width.
+	id := m.anchor
+	if len(id) > 8 {
+		id = id[:8]
+	}
+	return id + "+desc"
+}
+
+// statusLine is the one-row header: scope, page position, session count, and
+// key hints. In input mode it flips to an INPUT bar so it is obvious keystrokes
+// go to the pane, not the grid.
 func (m GridModel) statusLine() string {
 	bg, fg := lipgloss.Color("236"), lipgloss.Color("252")
-	txt := fmt.Sprintf(" grid  page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  i:input  ⏎:attach  v:view  x:close  q:quit ",
-		m.page+1, m.pageCount(), len(m.panes))
+	txt := fmt.Sprintf(" grid  scope:%s · page %d/%d · %d sessions   [ ]:page  ⇧HJKL:move  hjkl:focus  i:input  ⏎:attach  v:view  x:close  q:quit ",
+		m.scopeLabel(), m.page+1, m.pageCount(), len(m.panes))
 	if m.input {
 		bg, fg = lipgloss.Color("22"), lipgloss.Color("231") // green bar
 		id := m.FocusedTaskID()
@@ -417,7 +463,15 @@ func (m GridModel) statusLine() string {
 
 func (m GridModel) View() string {
 	if len(m.panes) == 0 {
-		return PanelStyleFocused.Padding(0, 1).Render("grid: no live interactive sessions (esc to close)")
+		// Reachable by dismissing (`x`) every pane — the anchored entry point
+		// refuses to open an empty grid in the first place. Name the scope
+		// anyway: "no live interactive sessions" is a different claim about
+		// the whole fleet than about one subtree.
+		msg := "grid: no live interactive sessions (esc to close)"
+		if m.anchor != "" {
+			msg = "grid: no live interactive sessions under " + m.scopeLabel() + " (esc to close)"
+		}
+		return PanelStyleFocused.Padding(0, 1).Render(msg)
 	}
 	status := m.statusLine()
 

@@ -27,6 +27,7 @@ type mainKeyMap struct {
 	Interactive string
 	Detail      string
 	Grid        string
+	GridSubtree string
 	Conns       string
 	Board       string
 	Tree        string
@@ -60,6 +61,7 @@ var mainKeys = mainKeyMap{
 	Interactive: "i",
 	Detail:      "d",
 	Grid:        "g",
+	GridSubtree: "z",
 	Conns:       "C",
 	Board:       "O",
 	Tree:        "T",
@@ -196,6 +198,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.ForwardRemote, mainKeys.ForwardRemoteStop}, Scope: scopeTasks,
 		Short: "b/B R-forward", Long: "start / stop a remote port forward for the selected task"},
 	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
+	{Keys: []string{mainKeys.GridSubtree}, Scope: scopeTasks, Short: "z subtree grid",
+		Long: "grid of the selected task's own subtree (itself + every task it spawned); g is the whole fleet"},
 
 	// --- logs pane ---
 	{Keys: []string{"left", "right"}, Scope: scopeLogs, Short: "←/→ scroll", Long: "scroll the log horizontally"},
