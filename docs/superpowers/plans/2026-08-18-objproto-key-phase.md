@@ -1662,8 +1662,11 @@ Follow the `landing-to-main` skill for objtrsf: rebase the work onto current tru
 
 - [ ] **Step 2: Bump the dependency**
 
+`proxy.golang.org` lags a fresh push, so go direct and pin to the branch that
+was just fast-forwarded, not `@latest`:
+
 ```bash
-go get github.com/on-keyday/objtrsf@latest && go mod tidy
+GOPROXY=direct go get github.com/on-keyday/objtrsf@main && go mod tidy
 ```
 
 - [ ] **Step 3: Find every break**
@@ -1697,10 +1700,12 @@ At each call site, start `AutoKeyUpdate` the same way — as a goroutine alongsi
 - [ ] **Step 6: Verify**
 
 ```bash
-make check && make wasm-check && make vet && make test
+make wasm-check && make check && make vet && make test && make webui-build
 ```
 
-Expected: all green. Use the make targets, not ad-hoc `go build ./...`.
+Expected: all green. Use the make targets, not ad-hoc `go build ./...`, which
+hides pattern breaks. `make webui-build` refreshes `webui/static/main.wasm`,
+which is an untracked build artifact — do not commit it.
 
 - [ ] **Step 7: Commit**
 
