@@ -67,19 +67,6 @@ harness-cli session new -d --repo /path/to/repo \
   --agent-arg --permission-mode --agent-arg auto
 ```
 
-Give the session a **PTY size** at the same time if the worker's agent draws a
-full-screen TUI (codex and agy do; at the default 0x0 they paint literally
-nothing):
-
-```bash
-harness-cli session new -d --repo /path/to/repo --rows 40 --cols 150
-```
-
-A detached session has no size until a client attaches, and every resize path
-goes through attach — which needs `exec_attach`. If you spawned the session
-with only `spawn`, `--rows/--cols` at open time is your ONLY chance to size it;
-there is no later fix. Both flags are required together (one alone is ignored).
-
 `--permission-mode auto` is **Claude's** flag, and `--agent-arg` forwards it
 verbatim to whatever binary the profile runs. Check the profile's `agent=` in
 `ls`: a worker on another agent CLI needs that runtime's own equivalent, passed
@@ -94,6 +81,21 @@ as the default for delegated work; reserve narrower modes for cases
 where you have an explicit reason.
 
 `--claude-arg` remains accepted as a deprecated alias for older scripts.
+
+### Give the session a PTY size if its agent draws a TUI
+
+```bash
+harness-cli session new -d --repo /path/to/repo --rows 40 --cols 150
+```
+
+A detached session has **no size at all** until a client attaches, and every
+resize path goes through attach — which needs `exec_attach`. If you spawned the
+worker holding only `spawn`, this is your ONLY chance to size it; there is no
+later fix. Both flags are required together (one alone is ignored).
+
+It matters when the worker's agent draws a full-screen TUI: at 0x0 codex and
+agy paint literally nothing, so `snapshot` returns a blank screen and the
+worker looks hung when it is merely undrawn. A claude worker is unaffected.
 
 ### Reuse the same task id with `--resume`
 
