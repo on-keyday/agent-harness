@@ -22,10 +22,16 @@ type TasksModel struct {
 	// popup so it can show fields the row truncates (full prompt, worktree
 	// dir, timestamps, exit code).
 	rowTasks []protocol.TaskInfo
+	// tree orders rows by the creator link and draws a gutter in the ID
+	// column instead of listing tasks flat. A mode, not a filter: every task
+	// the flat view shows is still here, orphans re-rooted with a marker.
+	tree bool
 }
 
-func NewTasks() TasksModel {
-	cols := []table.Column{
+// flatCols is the default column set. Kept as a function so NewTasks and
+// SetTree cannot drift apart on what "not tree mode" looks like.
+func flatCols() []table.Column {
+	return []table.Column{
 		{Title: "Status", Width: 9},
 		{Title: "ID", Width: 12},
 		{Title: "From", Width: 6},
@@ -34,9 +40,44 @@ func NewTasks() TasksModel {
 		{Title: "Repo", Width: 28},
 		{Title: "Prompt", Width: 0}, // resized later via SetSize
 	}
+}
+
+func NewTasks() TasksModel {
+	cols := flatCols()
 	t := table.New(table.WithColumns(cols), table.WithFocused(false))
 	return TasksModel{table: t, baseCols: cols}
 }
+
+// treeCols is the column set for tree mode. ID is wider because the gutter
+// shares the cell with the id: three columns per level, so ~24 fits four
+// levels of an 8-hex id, which is deeper than the creator chains this harness
+// produces in practice.
+func treeCols() []table.Column {
+	return []table.Column{
+		{Title: "Status", Width: 9},
+		{Title: "ID (by creator)", Width: 24},
+		{Title: "From", Width: 6},
+		{Title: "Agent", Width: 14},
+		{Title: "Act", Width: 8},
+		{Title: "Repo", Width: 22},
+		{Title: "Prompt", Width: 0},
+	}
+}
+
+// SetTree switches between the flat listing and the creator tree. Returns the
+// new state so the caller can report it.
+func (m *TasksModel) SetTree(on bool) bool {
+	m.tree = on
+	if on {
+		m.baseCols = treeCols()
+	} else {
+		m.baseCols = flatCols()
+	}
+	return m.tree
+}
+
+// TreeMode reports whether the tree ordering is active.
+func (m *TasksModel) TreeMode() bool { return m.tree }
 
 func (m *TasksModel) Focus() {
 	m.focused = true
@@ -65,9 +106,28 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 	for _, r := range runners {
 		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
 	}
-	rows := make([]table.Row, 0, len(ts))
-	ids := make([]string, 0, len(ts))
-	for _, t := range ts {
+	// One ordering decision, applied to the row cells AND to the parallel
+	// rowIDs / rowTasks slices below. They index by table position, so a
+	// reordering applied to only one of them opens the detail popup on a
+	// different task than the cursor is on.
+	ordered := ts
+	gutter := make([]string, len(ts))
+	if m.tree {
+		treeRows := cli.BuildTaskTree(ts)
+		ordered = make([]protocol.TaskInfo, len(treeRows))
+		gutter = make([]string, len(treeRows))
+		for i, r := range treeRows {
+			ordered[i] = r.Task
+			gutter[i] = cli.TreePrefix(r)
+			if r.Orphan {
+				gutter[i] += "\u2020"
+			}
+		}
+	}
+
+	rows := make([]table.Row, 0, len(ordered))
+	ids := make([]string, 0, len(ordered))
+	for i, t := range ordered {
 		idHex := hex.EncodeToString(t.Id.Id[:])
 		// Prefer the task's own resolved AgentProfile (§6 of the
 		// multi-agent-profile design) — the agent this task actually ran
@@ -88,20 +148,35 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 		if t.LastOutputAt > 0 {
 			act = cli.ActivityStr(t.OutputIdleMs)
 		}
+		idCell := idHex[:12]
+		if m.tree {
+			// 8 hex is what `by=` has always shown, so a reader comparing the
+			// tree against a log line sees the same prefix.
+			idCell = gutter[i] + idHex[:8]
+		}
 		rows = append(rows, table.Row{
 			taskStatusStr(t.Status),
-			idHex[:12],
+			idCell,
 			originCell(t.OriginKind),
 			agent,
 			act,
-			truncateLeft(string(t.RepoPath), 28),
+			truncateLeft(string(t.RepoPath), repoCellWidth(m.tree)),
 			renderPromptCell(t),
 		})
 		ids = append(ids, idHex)
 	}
 	m.rowIDs = ids
-	m.rowTasks = ts
+	m.rowTasks = ordered
 	m.table.SetRows(rows)
+}
+
+// repoCellWidth matches the Repo column width of the active column set; the
+// tree's wider ID column takes its space from Repo.
+func repoCellWidth(tree bool) int {
+	if tree {
+		return 22
+	}
+	return 28
 }
 
 // SelectedID returns the full 32-char hex ID of the focused row, or "" if empty.

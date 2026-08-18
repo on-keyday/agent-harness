@@ -29,6 +29,7 @@ type mainKeyMap struct {
 	Grid        string
 	Conns       string
 	Board       string
+	Tree        string
 	Forwards    string
 	FilePicker  string
 	Git         string
@@ -61,6 +62,7 @@ var mainKeys = mainKeyMap{
 	Grid:        "g",
 	Conns:       "C",
 	Board:       "O",
+	Tree:        "T",
 	Forwards:    "f",
 	FilePicker:  "F",
 	Git:         "G",
@@ -214,6 +216,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.Grid}, Scope: scopeGlobal, Short: "g grid", Long: "live session viewer grid"},
 	{Keys: []string{mainKeys.Conns}, Scope: scopeGlobal, Short: "C conns", Long: "connections view"},
 	{Keys: []string{mainKeys.Board}, Scope: scopeGlobal, Short: "O board", Long: "agentboard topics view"},
+	{Keys: []string{mainKeys.Tree}, Scope: scopeGlobal, Short: "T tree", Long: "toggle the task list between flat and creator-tree order"},
 	{Keys: []string{mainKeys.Forwards}, Scope: scopeGlobal, Short: "f forwards", Long: "port-forward list (x kills the selected row)"},
 	{Keys: []string{mainKeys.Help}, Scope: scopeGlobal, Long: "this key list"},
 	{Keys: []string{mainKeys.Quit}, Scope: scopeGlobal, Long: "quit"},

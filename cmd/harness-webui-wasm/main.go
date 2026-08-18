@@ -691,8 +691,8 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// by exact id (a truncated prefix could match the wrong
 					// row) — same label+raw pattern as capsBits/scopeBase.
 					"createdById": creatorFull(t.CreatorTaskId),
-					"caps":       cli.CapsLabel(t.Capabilities),
-					"scope":      cli.ScopeLabel(t.Scope),
+					"caps":        cli.CapsLabel(t.Capabilities),
+					"scope":       cli.ScopeLabel(t.Scope),
 					// Raw prefill fields beside the labels: the re-grant
 					// dialog seeds its chips/radios/checklist from these —
 					// back-parsing label forms like "all,-spawn" would mean
@@ -714,6 +714,23 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"outputIdleMs": outputIdleMs(t),
 				})
 			}
+			// taskTree is the creator hierarchy, computed HERE rather than in
+			// JS so there is exactly one implementation of it: cli.BuildTaskTree
+			// already backs `ls --tree` and the TUI, and a JS twin would be a
+			// second grammar to keep pinned (checklist 32). JS stays a dumb
+			// renderer — it walks this array in order and looks each id up in
+			// `tasks`.
+			treeRows := cli.BuildTaskTree(lr.Tasks)
+			taskTree := make([]any, 0, len(treeRows))
+			for _, r := range treeRows {
+				taskTree = append(taskTree, map[string]any{
+					"id":     hex.EncodeToString(r.Task.Id.Id[:]),
+					"depth":  float64(r.Depth),
+					"prefix": cli.TreePrefix(r),
+					"orphan": r.Orphan,
+				})
+			}
+
 			// Fetch the live connection list using the same long-lived client
 			// (Pitfall 3 / feedback_reuse_long_lived_client: never dial+close here).
 			// If ConnListWith fails (e.g. server lacks the capability), we return an
@@ -767,6 +784,7 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 			resolve.Invoke(js.ValueOf(map[string]any{
 				"runners":  runners,
 				"tasks":    tasks,
+				"taskTree": taskTree,
 				"conns":    conns,
 				"forwards": forwards,
 			}))

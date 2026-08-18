@@ -96,6 +96,18 @@ func (c *Client) List(ctx context.Context, out io.Writer) error {
 	return nil
 }
 
+// ListTree is the --tree counterpart of List: the same snapshot, ordered by
+// the creator link. Reuses List's renderer for the row bodies, so the two views
+// differ only in ordering and the leading gutter.
+func (c *Client) ListTree(ctx context.Context, out io.Writer) error {
+	lr, err := c.Snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	renderListTree(lr, out)
+	return nil
+}
+
 // ListJSON is the --json counterpart of List: it snapshots the server and writes
 // a single JSON object ({"runners":[...],"tasks":[...]}) to out. A single object
 // (rather than JSON Lines) keeps the two heterogeneous lists in one jq-navigable
@@ -156,61 +168,128 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		fmt.Fprintln(out, "  (none)")
 	}
 	for _, t := range lr.Tasks {
-		// Prefer the task's own resolved agent profile (which can differ from
-		// its runner's default AgentBin on a multi-profile runner or after a
-		// cross-agent resume); fall back to the runner descriptor for tasks
-		// predating the field.
-		agent := ""
-		if len(t.AgentProfile) > 0 {
-			agent = "  agent=" + string(t.AgentProfile)
-		} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
-			agent = "  " + agentStr(string(r.AgentBin), r.SkillsInjected())
-		}
-		// exit= / err= render only when meaningful so the common rows stay
-		// short: exit= for a finished task with a non-zero code, err= for a
-		// server- or runner-recorded failure reason (e.g. runner_disconnected
-		// — which marks a resumable task, not a dead one).
-		suffix := ""
-		if t.EndedAt > 0 && t.ExitCode != 0 {
-			suffix += fmt.Sprintf("  exit=%d", t.ExitCode)
-		}
-		if len(t.ErrorMessage) > 0 {
-			suffix += fmt.Sprintf("  err=%q", string(t.ErrorMessage))
-		}
-		resumedBy := ""
-		if t.ResumedByKind != protocol.ClientKind_Unspecified {
-			resumedBy = "  resumed_by=" + originStr(t.ResumedByKind)
-		}
-		act := ""
-		if t.LastOutputAt > 0 {
-			act = "  act=" + ActivityStr(t.OutputIdleMs)
-		}
-		createdBy := ""
-		if t.CreatorTaskId.Id != ([16]byte{}) {
-			createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
-		}
-		caps := "  caps=" + CapsLabel(t.Capabilities)
-		// Only a non-default scope earns row width: subtree is what almost
-		// every task has and repeating it would push the prompt off screen.
-		if !IsDefaultScope(t.Scope) {
-			caps += "  scope=" + ScopeLabel(t.Scope)
-		}
-		fmt.Fprintf(out, "  %s  %s  %s  repo=%s  from=%s%s%s%s%s%s  prompt=%q%s\n",
-			taskIDStr(t.Id.Id[:]),
-			taskStatusStr(t.Status),
-			taskKindStr(t.Kind),
-			string(t.RepoPath),
-			originStr(t.OriginKind),
-			agent,
-			resumedBy,
-			act,
-			createdBy,
-			caps,
-			string(t.Prompt),
-			suffix,
-		)
+		fmt.Fprintf(out, "  %s\n", taskLine(t, runnerByID))
 	}
 }
+
+// taskLine renders one task row without its leading indent. Extracted from
+// renderList so the flat listing and the --tree listing cannot drift into two
+// different column sets: the tree only prepends a gutter to this.
+func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) string {
+	// Prefer the task's own resolved agent profile (which can differ from
+	// its runner's default AgentBin on a multi-profile runner or after a
+	// cross-agent resume); fall back to the runner descriptor for tasks
+	// predating the field.
+	agent := ""
+	if len(t.AgentProfile) > 0 {
+		agent = "  agent=" + string(t.AgentProfile)
+	} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
+		agent = "  " + agentStr(string(r.AgentBin), r.SkillsInjected())
+	}
+	// exit= / err= render only when meaningful so the common rows stay
+	// short: exit= for a finished task with a non-zero code, err= for a
+	// server- or runner-recorded failure reason (e.g. runner_disconnected
+	// — which marks a resumable task, not a dead one).
+	suffix := ""
+	if t.EndedAt > 0 && t.ExitCode != 0 {
+		suffix += fmt.Sprintf("  exit=%d", t.ExitCode)
+	}
+	if len(t.ErrorMessage) > 0 {
+		suffix += fmt.Sprintf("  err=%q", string(t.ErrorMessage))
+	}
+	resumedBy := ""
+	if t.ResumedByKind != protocol.ClientKind_Unspecified {
+		resumedBy = "  resumed_by=" + originStr(t.ResumedByKind)
+	}
+	act := ""
+	if t.LastOutputAt > 0 {
+		act = "  act=" + ActivityStr(t.OutputIdleMs)
+	}
+	createdBy := ""
+	if t.CreatorTaskId.Id != ([16]byte{}) {
+		createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
+	}
+	caps := "  caps=" + CapsLabel(t.Capabilities)
+	// Only a non-default scope earns row width: subtree is what almost
+	// every task has and repeating it would push the prompt off screen.
+	if !IsDefaultScope(t.Scope) {
+		caps += "  scope=" + ScopeLabel(t.Scope)
+	}
+	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s  prompt=%q%s",
+		taskIDStr(t.Id.Id[:]),
+		taskStatusStr(t.Status),
+		taskKindStr(t.Kind),
+		string(t.RepoPath),
+		originStr(t.OriginKind),
+		agent,
+		resumedBy,
+		act,
+		createdBy,
+		caps,
+		string(t.Prompt),
+		suffix,
+	)
+}
+
+// renderListTree is `ls --tree`: the same rows as renderList, ordered by the
+// creator link and prefixed with a gutter. It exists because `by=<8hex>` makes
+// a reader reconstruct the hierarchy in their head, and past a couple of
+// levels nobody does that reliably.
+//
+// It is deliberately NOT a filter: BuildTaskTree returns every task the caller
+// can see, orphans included, so a row can never go missing by being in the
+// tree view instead of the flat one.
+func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
+	fmt.Fprintln(out, "RUNNERS")
+	if len(lr.Runners) == 0 {
+		fmt.Fprintln(out, "  (none)")
+	}
+	for _, r := range lr.Runners {
+		roots := make([]string, len(r.AllowedRoots))
+		for i, ar := range r.AllowedRoots {
+			roots[i] = string(ar.Path)
+		}
+		fmt.Fprintf(out, "  %s  host=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
+			runnerStatusStr(r.Status),
+			string(r.Hostname),
+			len(r.ActiveTasks),
+			r.MaxTasks,
+			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
+			strings.Join(roots, ","),
+			protocol.RunnerIDToConnID(r.Id).String(),
+		)
+	}
+
+	runnerByID := make(map[string]protocol.RunnerInfo, len(lr.Runners))
+	for _, r := range lr.Runners {
+		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+	}
+	fmt.Fprintln(out, "TASKS (by creator)")
+	if len(lr.Tasks) == 0 {
+		fmt.Fprintln(out, "  (none)")
+	}
+	for _, row := range BuildTaskTree(lr.Tasks) {
+		// by= is dropped in this view: the gutter already says who the creator
+		// is, and repeating it on every row is the noise the tree replaces.
+		// The orphan marker stays, because there the gutter says nothing.
+		line := taskLine(row.Task, runnerByID)
+		if i := strings.Index(line, "  by="); i >= 0 {
+			if j := strings.Index(line[i+2:], "  "); j >= 0 {
+				line = line[:i] + line[i+2+j:]
+			}
+		}
+		marker := ""
+		if row.Orphan {
+			marker = " " + orphanMarker
+		}
+		fmt.Fprintf(out, "  %s%s%s\n", TreePrefix(row), line, marker)
+	}
+}
+
+// orphanMarker flags a task whose creator is not in the listing — pruned, or
+// out of scope. Shown rather than silently re-rooted so the reader knows the
+// row's position is a fallback, not a fact about who spawned it.
+const orphanMarker = "\u2020 orphan"
 
 // runnerJSON is the single source of truth for the JSON shape of a runner row
 // in `ls --json`. A struct (not map[string]any) gives deterministic field
@@ -488,6 +567,16 @@ func List(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) err
 
 // ListJSON is the package-level --json wrapper: opens a fresh Client, writes the
 // snapshot as one JSON object, and closes. Mirrors List for short-lived CLI use.
+// ListTree is a package-level fresh-dial wrapper for (*Client).ListTree.
+func ListTree(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
+	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.ListTree(ctx, out)
+}
+
 func ListJSON(ctx context.Context, peerCID objproto.ConnectionID, out io.Writer) error {
 	c, err := Dial(ctx, peerCID, protocol.ClientKind_Cli)
 	if err != nil {

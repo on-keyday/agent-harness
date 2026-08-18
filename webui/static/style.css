@@ -1753,3 +1753,36 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   #git .actions label { display: flex; width: 100%; }
   #git-task-select { flex: 1; min-width: 0; }
 }
+
+/* Task creator tree (🌳 ツリー). The gutter is monospace so ├─ / └─ / │ line
+   up column-for-column with the rows above and below; the task list itself is
+   proportional, which would otherwise stagger the connectors. */
+.task-tree-gutter {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: #6a6a6a;
+  white-space: pre;
+  flex: none;
+}
+.task-tree-orphan {
+  color: #d7ba7d;
+  flex: none;
+  margin-right: 0.25rem;
+}
+/* While the tree is on, the status chips do not apply — dimmed rather than
+   disabled so their counts stay readable. */
+.task-chip.is-muted {
+  opacity: 0.45;
+}
+/* The SELECTED status chip keeps its green through a plain opacity fade, which
+   reads as "still in effect". In tree mode it is not, so drop the selection
+   colour too: all three chips must look equally inapplicable. */
+.task-chip.is-muted.is-active {
+  background: #2a2a2a;
+  color: #ccc;
+  border-color: #555;
+  font-weight: normal;
+}
+#task-filter-input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

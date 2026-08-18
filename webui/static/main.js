@@ -339,11 +339,33 @@ const POLL_INTERVAL_MS = 5000;
     all:      document.getElementById("task-chip-all"),
   };
   let taskStatusFilter = "active"; // "active" | "finished" | "all"
+  // Creator-tree ordering. A MODE, not a filter: while it is on the status
+  // chips are ignored, because a tree with its middle links filtered out is a
+  // set of disconnected fragments pretending to be a hierarchy.
+  let taskTreeMode = false;
+  let lastTaskTree = [];           // wasm-computed order+gutter; see snapshot()
   let lastForwards = [];           // latest snapshot; `forward ls` reads this, no second RPC
   for (const [key, btn] of Object.entries(taskChips)) {
     btn.addEventListener("click", () => {
       taskStatusFilter = key;
       for (const b of Object.values(taskChips)) b.classList.toggle("is-active", b === btn);
+      renderTaskList(lastTasks);
+    });
+  }
+  const taskTreeChip = document.getElementById("task-chip-tree");
+  if (taskTreeChip) {
+    taskTreeChip.addEventListener("click", () => {
+      taskTreeMode = !taskTreeMode;
+      taskTreeChip.classList.toggle("is-active", taskTreeMode);
+      // The status chips AND the text filter both stop applying in tree mode —
+      // filtering a hierarchy leaves disconnected fragments. Disabled visibly
+      // rather than silently ignored: a search box that swallows typing is the
+      // worse of the two failures.
+      for (const b of Object.values(taskChips)) b.classList.toggle("is-muted", taskTreeMode);
+      taskFilterInput.disabled = taskTreeMode;
+      taskFilterInput.placeholder = taskTreeMode
+        ? "ツリー表示中はフィルタ無効（全可視タスクを表示）"
+        : "filter: repo / id / status (space = AND)";
       renderTaskList(lastTasks);
     });
   }
@@ -518,6 +540,7 @@ const POLL_INTERVAL_MS = 5000;
     knownAgentProfiles = collectAgentProfiles(sortedRunners);
     renderAgentSelect(agentSelect, knownAgentProfiles);
     runnerList.textContent = renderRunners(sortedRunners);
+    lastTaskTree = snap.taskTree || [];
     renderTaskList(snap.tasks);
     renderFileTaskSelect(snap.tasks);
     if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
@@ -3651,9 +3674,28 @@ const POLL_INTERVAL_MS = 5000;
     taskChips.finished.textContent = `Finished (${finished})`;
     taskChips.all.textContent      = `All (${lastTasks.length})`;
     const terms = taskFilterInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const visible = lastTasks
-      .filter((t) => taskMatchesFilter(t, terms))
-      .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
+    // Tree mode takes its order (and the gutter strings) from the wasm side,
+    // which runs the same cli.BuildTaskTree that backs `ls --tree` and the TUI.
+    // Building it again here would be a second implementation to keep honest.
+    const treeByID = new Map();
+    let visible;
+    if (taskTreeMode) {
+      const byID = new Map(lastTasks.map((t) => [t.id, t]));
+      visible = [];
+      for (const node of lastTaskTree) {
+        const t = byID.get(node.id);
+        if (!t) continue;
+        treeByID.set(node.id, node);
+        visible.push(t);
+      }
+      // Anything the tree did not mention (a snapshot race) still gets shown:
+      // a view that silently drops rows is worse than one with a flat tail.
+      for (const t of lastTasks) if (!treeByID.has(t.id)) visible.push(t);
+    } else {
+      visible = lastTasks
+        .filter((t) => taskMatchesFilter(t, terms))
+        .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
+    }
     // The rebuild below wipes all sheet DOM, which would close the open sheet
     // and reset any agent dropdown the user changed — every 5s poll. Capture
     // that per-task UI state first and restore it after the rebuild.
@@ -3679,6 +3721,20 @@ const POLL_INTERVAL_MS = 5000;
 
       const line1 = document.createElement("div");
       line1.className = "task-row-line1";
+      const treeNode = treeByID.get(t.id);
+      if (treeNode && treeNode.prefix) {
+        const gutter = document.createElement("span");
+        gutter.className = "task-tree-gutter";
+        gutter.textContent = treeNode.prefix;
+        line1.appendChild(gutter);
+      }
+      if (treeNode && treeNode.orphan) {
+        const orph = document.createElement("span");
+        orph.className = "task-tree-orphan";
+        orph.textContent = "†";
+        orph.title = "作成者が一覧に居ない（prune 済み / スコープ外）";
+        line1.appendChild(orph);
+      }
       const dot = document.createElement("span");
       dot.className = "task-status-dot";
       dot.style.background = taskStatusColor(t.status);
@@ -3710,7 +3766,9 @@ const POLL_INTERVAL_MS = 5000;
       const meta = document.createElement("div");
       meta.className = "task-row-meta";
       let metaText = `${t.id.slice(0, 12)}…  ${t.kind}  from=${t.origin || "-"}`;
-      if (t.createdBy) metaText += `  by=${t.createdBy}`;
+      // by= is what the gutter already says in tree mode; repeating it on every
+      // row is the noise the tree replaces (same rule as `ls --tree`).
+      if (t.createdBy && !taskTreeMode) metaText += `  by=${t.createdBy}`;
       if (t.resumedBy) metaText += `  resumed_by=${t.resumedBy}`;
       if (t.caps) metaText += `  caps=${t.caps}`;
       // Always shown, subtree included: hiding the default read as "this

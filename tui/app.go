@@ -1708,6 +1708,24 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.boardModal.SetSize(a.width, a.height)
 			return a, DoBoardTopics(a.client)
 		}
+		// `T` flips the task table between flat order and creator-tree order.
+		// Purely local: the rows are already in hand, so it re-renders from the
+		// last snapshot instead of waiting for the next poll — a toggle that
+		// visibly does nothing for five seconds reads as broken.
+		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Tree {
+			on := a.tasks.SetTree(!a.tasks.TreeMode())
+			// Same geometry the layout pass uses; the column set changed, so
+			// the widths have to be refitted before the rows are rebuilt.
+			half := a.width / 2
+			a.tasks.SetSize(a.width-half-2, 10)
+			a.tasks.SetRows(a.tasks.Rows(), a.runnersSnapshot)
+			mode := "flat"
+			if on {
+				mode = "creator tree"
+			}
+			a.cmdresult.Append("tasks: " + mode + " order")
+			return a, nil
+		}
 		// `i` opens a new interactive PTY session in the default repo. The
 		// dance is two-stage: the Cmd dispatches the RPC, the response arrives
 		// as InteractiveReadyMsg, and Update then hands the terminal to the

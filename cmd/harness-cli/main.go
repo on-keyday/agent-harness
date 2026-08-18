@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -145,12 +146,23 @@ func main() {
 	case "ls":
 		fs := flag.NewFlagSet("ls", flag.ExitOnError)
 		asJSON := fs.Bool("json", false, "emit a single JSON object {\"runners\":[...],\"tasks\":[...]} instead of the human-readable table")
+		asTree := fs.Bool("tree", false, "order tasks by their creator link and draw the hierarchy; shows every visible task, orphans included")
 		fs.Parse(args)
-		if *asJSON {
+		switch {
+		case *asTree && *asJSON:
+			// Not silently ignored: --json already carries created_by on every
+			// row, so a consumer builds the tree itself. Nesting the JSON to
+			// match would give the same data two shapes.
+			die(errors.New("ls: --tree and --json are mutually exclusive (--json rows carry created_by; build the tree from those)"))
+		case *asTree:
+			if err := cli.ListTree(ctx, parseCID(), os.Stdout); err != nil {
+				die(err)
+			}
+		case *asJSON:
 			if err := cli.ListJSON(ctx, parseCID(), os.Stdout); err != nil {
 				die(err)
 			}
-		} else {
+		default:
 			if err := cli.List(ctx, parseCID(), os.Stdout); err != nil {
 				die(err)
 			}

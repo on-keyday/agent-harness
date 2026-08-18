@@ -158,6 +158,7 @@ bin/harness-cli --server-cid 'ws:HOSTNAME:8539-*' \
 
 # 4. Inspect / control
 bin/harness-cli ls
+bin/harness-cli ls --tree               # order tasks under whoever spawned them
 bin/harness-cli logs <task-id>          # stream the task's log
 bin/harness-cli watch                   # stream task / runner status events
 bin/harness-cli cancel <task-id>
@@ -467,7 +468,7 @@ Layout:
 │ [log] 11:06AM INFO ws session started ...             │
 └───────────────────────────────────────────────────────┘
 > [cmdline]
-tab focus · s submit · enter follow · c cancel · ? help · q quit
+tab focus · s submit · enter follow · c cancel · T tree · ? help · q quit
 ```
 
 Keys for orientation — `Tab` cycles focus, `s` submit popup, `S`/`i` open
