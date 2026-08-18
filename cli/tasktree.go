@@ -143,3 +143,95 @@ func TreePrefix(row TaskTreeRow) string {
 	}
 	return string(out)
 }
+
+// TaskTreeNodePos is one node placed on a grid: Depth is the row, Col is the
+// horizontal slot. Both are UNITLESS — the renderer multiplies them by whatever
+// pixel spacing it wants. Keeping the geometry here rather than in the WebUI's
+// JavaScript is the same call BuildTaskTree makes: it is the half that can be
+// wrong in interesting ways (overlapping siblings, a parent off-centre), and Go
+// is where this repo can test it.
+type TaskTreeNodePos struct {
+	ID     string
+	Parent string // "" for a root, and for an orphan whose creator is off-screen
+	Depth  int
+	Col    float64
+	Orphan bool
+}
+
+// TaskTreeLayout assigns grid positions to the rows BuildTaskTree produced.
+//
+// Leaves take consecutive columns in tree order; every other node centres over
+// its own children. That is the classic tidy-tree assignment, and it is chosen
+// over "indent by depth" because a diagram whose parents sit above the middle
+// of their subtree reads as a hierarchy, while a left-aligned one reads as a
+// ladder.
+//
+// Orphans are roots for layout purposes and carry no Parent, so the renderer
+// never draws an edge toward a node that is not on screen.
+func TaskTreeLayout(rows []TaskTreeRow) []TaskTreeNodePos {
+	if len(rows) == 0 {
+		return nil
+	}
+	// rows is a pre-order walk, so a node's children are exactly the following
+	// rows at depth+1 until the depth drops back. Recovering the parent from
+	// that is cheaper than re-deriving it from creator ids, and it cannot
+	// disagree with the tree that was already built.
+	parentOf := make(map[int]int, len(rows)) // row index -> parent row index, -1 for roots
+	stack := []int{}
+	for i, r := range rows {
+		for len(stack) > r.Depth {
+			stack = stack[:len(stack)-1]
+		}
+		if r.Depth == 0 || len(stack) == 0 {
+			parentOf[i] = -1
+		} else {
+			parentOf[i] = stack[len(stack)-1]
+		}
+		stack = append(stack, i)
+	}
+	children := make(map[int][]int, len(rows))
+	for i := range rows {
+		if p := parentOf[i]; p >= 0 {
+			children[p] = append(children[p], i)
+		}
+	}
+
+	cols := make([]float64, len(rows))
+	next := 0.0
+	// Post-order: a node's column needs its children's, so they must be placed
+	// first. Iterative to avoid a deep recursion on a pathological chain.
+	var place func(i int)
+	place = func(i int) {
+		kids := children[i]
+		if len(kids) == 0 {
+			cols[i] = next
+			next++
+			return
+		}
+		for _, k := range kids {
+			place(k)
+		}
+		cols[i] = (cols[kids[0]] + cols[kids[len(kids)-1]]) / 2
+	}
+	for i := range rows {
+		if parentOf[i] == -1 {
+			place(i)
+		}
+	}
+
+	out := make([]TaskTreeNodePos, 0, len(rows))
+	for i, r := range rows {
+		parent := ""
+		if p := parentOf[i]; p >= 0 {
+			parent = hex.EncodeToString(rows[p].Task.Id.Id[:])
+		}
+		out = append(out, TaskTreeNodePos{
+			ID:     hex.EncodeToString(r.Task.Id.Id[:]),
+			Parent: parent,
+			Depth:  r.Depth,
+			Col:    cols[i],
+			Orphan: r.Orphan,
+		})
+	}
+	return out
+}

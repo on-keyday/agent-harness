@@ -714,20 +714,22 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"outputIdleMs": outputIdleMs(t),
 				})
 			}
-			// taskTree is the creator hierarchy, computed HERE rather than in
-			// JS so there is exactly one implementation of it: cli.BuildTaskTree
-			// already backs `ls --tree` and the TUI, and a JS twin would be a
-			// second grammar to keep pinned (checklist 32). JS stays a dumb
-			// renderer — it walks this array in order and looks each id up in
-			// `tasks`.
+			// taskTree is the creator hierarchy WITH its grid positions, both
+			// computed here rather than in JS. cli.BuildTaskTree already backs
+			// `ls --tree` and the TUI, and cli.TaskTreeLayout is the half that
+			// can be subtly wrong (siblings on top of each other, a parent off
+			// centre) — Go is where this repo can test that. JS is left a
+			// painter: multiply col/depth by a spacing, draw a circle and an
+			// edge to parent.
 			treeRows := cli.BuildTaskTree(lr.Tasks)
 			taskTree := make([]any, 0, len(treeRows))
-			for _, r := range treeRows {
+			for _, n := range cli.TaskTreeLayout(treeRows) {
 				taskTree = append(taskTree, map[string]any{
-					"id":     hex.EncodeToString(r.Task.Id.Id[:]),
-					"depth":  float64(r.Depth),
-					"prefix": cli.TreePrefix(r),
-					"orphan": r.Orphan,
+					"id":     n.ID,
+					"parent": n.Parent,
+					"depth":  float64(n.Depth),
+					"col":    n.Col,
+					"orphan": n.Orphan,
 				})
 			}
 

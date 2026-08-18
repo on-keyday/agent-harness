@@ -54,7 +54,12 @@
         <button type="button" id="grid-all-on" class="task-chip">☑ 全</button>
         <button type="button" id="grid-all-off" class="task-chip">☐ 全解除</button>
       </div>
-      <div id="task-list" class="task-list"></div>
+            <!-- Creator tree: a node-link diagram of who spawned whom. Toggled by
+           #task-chip-tree, hidden otherwise. Deliberately NOT a re-ordering of
+           the list below — a task card is tall, so an indented list never reads
+           as a hierarchy. -->
+      <div id="task-tree-graph" class="task-tree-graph" hidden aria-label="Task creator tree"></div>
+<div id="task-list" class="task-list"></div>
     </section>
     <section id="compose" data-tabgroup="tasks">
       <h2>Compose</h2>

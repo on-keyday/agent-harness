@@ -355,18 +355,16 @@ const POLL_INTERVAL_MS = 5000;
   const taskTreeChip = document.getElementById("task-chip-tree");
   if (taskTreeChip) {
     taskTreeChip.addEventListener("click", () => {
+      // The chip opens a DIAGRAM above the list; it does not touch the list.
+      // An earlier version reordered and indented the rows instead, which meant
+      // the status chips and the text filter had to stop applying (filtering a
+      // hierarchy leaves disconnected fragments) — and the indent was unreadable
+      // anyway, because a task card is tall enough that its neighbours never sit
+      // close enough for the gutter to line up. The graph carries the hierarchy;
+      // the list stays a list.
       taskTreeMode = !taskTreeMode;
       taskTreeChip.classList.toggle("is-active", taskTreeMode);
-      // The status chips AND the text filter both stop applying in tree mode —
-      // filtering a hierarchy leaves disconnected fragments. Disabled visibly
-      // rather than silently ignored: a search box that swallows typing is the
-      // worse of the two failures.
-      for (const b of Object.values(taskChips)) b.classList.toggle("is-muted", taskTreeMode);
-      taskFilterInput.disabled = taskTreeMode;
-      taskFilterInput.placeholder = taskTreeMode
-        ? "ツリー表示中はフィルタ無効（全可視タスクを表示）"
-        : "filter: repo / id / status (space = AND)";
-      renderTaskList(lastTasks);
+      renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor);
     });
   }
   taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
@@ -542,6 +540,7 @@ const POLL_INTERVAL_MS = 5000;
     runnerList.textContent = renderRunners(sortedRunners);
     lastTaskTree = snap.taskTree || [];
     renderTaskList(snap.tasks);
+    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor);
     renderFileTaskSelect(snap.tasks);
     if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
     renderRawTaskSelect(snap.tasks);
@@ -3674,28 +3673,9 @@ const POLL_INTERVAL_MS = 5000;
     taskChips.finished.textContent = `Finished (${finished})`;
     taskChips.all.textContent      = `All (${lastTasks.length})`;
     const terms = taskFilterInput.value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    // Tree mode takes its order (and the gutter strings) from the wasm side,
-    // which runs the same cli.BuildTaskTree that backs `ls --tree` and the TUI.
-    // Building it again here would be a second implementation to keep honest.
-    const treeByID = new Map();
-    let visible;
-    if (taskTreeMode) {
-      const byID = new Map(lastTasks.map((t) => [t.id, t]));
-      visible = [];
-      for (const node of lastTaskTree) {
-        const t = byID.get(node.id);
-        if (!t) continue;
-        treeByID.set(node.id, node);
-        visible.push(t);
-      }
-      // Anything the tree did not mention (a snapshot race) still gets shown:
-      // a view that silently drops rows is worse than one with a flat tail.
-      for (const t of lastTasks) if (!treeByID.has(t.id)) visible.push(t);
-    } else {
-      visible = lastTasks
-        .filter((t) => taskMatchesFilter(t, terms))
-        .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
-    }
+    const visible = lastTasks
+      .filter((t) => taskMatchesFilter(t, terms))
+      .sort((a, b) => taskActivityMs(b) - taskActivityMs(a));
     // The rebuild below wipes all sheet DOM, which would close the open sheet
     // and reset any agent dropdown the user changed — every 5s poll. Capture
     // that per-task UI state first and restore it after the rebuild.
@@ -3721,20 +3701,6 @@ const POLL_INTERVAL_MS = 5000;
 
       const line1 = document.createElement("div");
       line1.className = "task-row-line1";
-      const treeNode = treeByID.get(t.id);
-      if (treeNode && treeNode.prefix) {
-        const gutter = document.createElement("span");
-        gutter.className = "task-tree-gutter";
-        gutter.textContent = treeNode.prefix;
-        line1.appendChild(gutter);
-      }
-      if (treeNode && treeNode.orphan) {
-        const orph = document.createElement("span");
-        orph.className = "task-tree-orphan";
-        orph.textContent = "†";
-        orph.title = "作成者が一覧に居ない（prune 済み / スコープ外）";
-        line1.appendChild(orph);
-      }
       const dot = document.createElement("span");
       dot.className = "task-status-dot";
       dot.style.background = taskStatusColor(t.status);
@@ -3766,9 +3732,7 @@ const POLL_INTERVAL_MS = 5000;
       const meta = document.createElement("div");
       meta.className = "task-row-meta";
       let metaText = `${t.id.slice(0, 12)}…  ${t.kind}  from=${t.origin || "-"}`;
-      // by= is what the gutter already says in tree mode; repeating it on every
-      // row is the noise the tree replaces (same rule as `ls --tree`).
-      if (t.createdBy && !taskTreeMode) metaText += `  by=${t.createdBy}`;
+      if (t.createdBy) metaText += `  by=${t.createdBy}`;
       if (t.resumedBy) metaText += `  resumed_by=${t.resumedBy}`;
       if (t.caps) metaText += `  caps=${t.caps}`;
       // Always shown, subtree included: hiding the default read as "this
@@ -5884,6 +5848,114 @@ function svgEl(tag, attrs) {
     el.setAttribute(k, v);
   }
   return el;
+}
+
+// renderTaskTreeGraph draws the creator hierarchy as a node-link diagram into
+// #task-tree-graph, or hides the panel when the toggle is off.
+//
+// It is a PICTURE, not a second task list: the list below keeps its own order,
+// its filter and its action sheets. An earlier version indented the list rows
+// instead, which forced the filter off (a filtered hierarchy is disconnected
+// fragments) and still did not read as a tree, because a task card is tall
+// enough that a parent and its child never sit close enough for the gutter to
+// connect them.
+//
+// Every position comes from the wasm side (cli.TaskTreeLayout): `col` and
+// `depth` are unitless grid slots, multiplied here by the pixel spacing. This
+// file decides what a node LOOKS like and nothing about where it goes.
+function renderTaskTreeGraph(nodes, tasks, statusColor) {
+  const host = document.getElementById("task-tree-graph");
+  if (!host) return;
+  // nodes null/empty is how the caller says "the toggle is off": the state
+  // lives with the chip, and this stays a renderer that is handed its data —
+  // the same shape renderConnTopology uses.
+  if (!nodes) {
+    host.hidden = true;
+    host.innerHTML = "";
+    return;
+  }
+  host.hidden = false;
+  if (nodes.length === 0) {
+    host.innerHTML = '<span class="ct-empty">(no tasks)</span>';
+    return;
+  }
+
+  const COL_W = 132;   // horizontal slot; wide enough for an 8-hex label
+  const ROW_H = 74;
+  const PAD_X = 70, PAD_Y = 34;
+  const R = 9;
+
+  const byID = new Map((tasks || []).map((t) => [t.id, t]));
+  const pos = new Map();
+  let maxCol = 0, maxDepth = 0;
+  for (const n of nodes) {
+    pos.set(n.id, { x: PAD_X + n.col * COL_W, y: PAD_Y + n.depth * ROW_H });
+    if (n.col > maxCol) maxCol = n.col;
+    if (n.depth > maxDepth) maxDepth = n.depth;
+  }
+  const W = PAD_X * 2 + maxCol * COL_W;
+  const H = PAD_Y * 2 + maxDepth * ROW_H;
+
+  host.innerHTML = "";
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`,
+    width: W,
+    height: H,
+    class: "task-tree-svg",
+  });
+
+  // Edges first so the nodes paint over them.
+  for (const n of nodes) {
+    if (!n.parent || !pos.has(n.parent)) continue;
+    const a = pos.get(n.parent), b = pos.get(n.id);
+    const midY = (a.y + b.y) / 2;
+    svg.appendChild(svgEl("path", {
+      class: "tt-edge",
+      // Elbow rather than a straight diagonal: with several children the
+      // straight lines fan into a starburst that is hard to trace back.
+      d: `M ${a.x} ${a.y + R} V ${midY} H ${b.x} V ${b.y - R}`,
+    }));
+  }
+
+  for (const n of nodes) {
+    const p = pos.get(n.id);
+    const t = byID.get(n.id);
+    const g = svgEl("g", {
+      class: "tt-node" + (n.orphan ? " tt-orphan" : ""),
+      transform: `translate(${p.x},${p.y})`,
+    });
+    const circle = svgEl("circle", { r: R, class: "tt-dot" });
+    // The palette comes in from the caller rather than being restated here:
+    // the list's status dots use the same function, and two copies of a colour
+    // table drift the moment one status is added.
+    if (t && statusColor) circle.setAttribute("fill", statusColor(t.status));
+    g.appendChild(circle);
+
+    const label = svgEl("text", { class: "tt-label", y: -R - 6 });
+    label.textContent = (n.orphan ? "† " : "") + n.id.slice(0, 8);
+    g.appendChild(label);
+
+    const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
+    sub.textContent = t ? `${t.status}${t.agentProfile ? " " + t.agentProfile : ""}` : "(gone)";
+    g.appendChild(sub);
+
+    const title = svgEl("title", {});
+    title.textContent = t
+      ? `${n.id}\n${t.status}  ${t.repoPath || ""}\n${n.orphan ? "作成者が一覧に居ない（prune 済み / スコープ外）" : ""}`
+      : n.id;
+    g.appendChild(title);
+
+    // The diagram is a navigator: clicking a node opens that task's sheet in
+    // the list below, so the picture is never a dead end.
+    g.addEventListener("click", () => {
+      const row = document.querySelector(`.task-sheet[data-task-id="${n.id}"]`);
+      if (!row) return;
+      row.hidden = false;
+      row.scrollIntoView({ block: "center", behavior: "smooth" });
+    });
+    svg.appendChild(g);
+  }
+  host.appendChild(svg);
 }
 
 // renderConnTopology renders the radial hub-and-spoke SVG topology into
