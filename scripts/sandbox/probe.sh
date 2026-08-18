@@ -45,16 +45,23 @@ add() { R="${R}${1}: ${2}"$'\n'; }
 if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then fw="proxy (deny-all + CONNECT proxy)"
 elif [ "${SANDBOX_FIREWALL:-0}" = "1" ]; then fw="ip (iptables+ipset allowlist)"
 else fw="none (open egress)"; fi
-# Auth mode is MEASURED, not declared: only a bind mount proves the host's
-# ~/.claude is in here (token auth leaves an ephemeral one in the image's home,
-# which a bare -d test cannot tell apart).
-if grep -qE ' /[^ ]*/\.claude(\.json)?( |$)' /proc/self/mountinfo 2>/dev/null; then
-	auth="mount (host ~/.claude bind-mounted rw; persists past the container)"
+# Auth mode is MEASURED, not declared: only a bind mount proves a host config
+# dir is in here (token auth leaves an ephemeral one in the image's home, which
+# a bare -d test cannot tell apart). The pattern covers every agent the wrapper
+# supports — a claude-only regex reported "token-or-ephemeral" for a codex
+# container that had ~/.codex bind-mounted rw, i.e. it understated the exposure.
+cfg_re=' /[^ ]*/(\.claude(\.json)?|\.codex|\.gemini)( |$)'
+if grep -qE "$cfg_re" /proc/self/mountinfo 2>/dev/null; then
+	auth="mount (host agent config bind-mounted rw; persists past the container)"
 else
-	auth="token-or-ephemeral (no host ~/.claude mount)"
+	auth="token-or-ephemeral (no host agent config mount)"
 fi
 add "config_firewall" "$fw [HTTPS_PROXY=${HTTPS_PROXY:-unset}]"
 add "config_auth" "$auth"
+# WHICH agent this container is running. Same reason as the two lines above: a
+# report that does not name its subject reads later as a claim about all of
+# them, and the agents differ in exactly what config_auth measures.
+add "config_agent" "${SANDBOX_AGENT:-unset (pre-generic wrapper — assume claude)}"
 
 # --- identity / am I even in a container -------------------------------------
 add "id" "$(id 2>&1)"
@@ -69,13 +76,13 @@ add "home_listing" "HOME=$HOME -> $(ls -1a "$HOME" 2>&1 | tr '\n' ',')"
 add "repo_writable" "$(touch "$repo/.probe_write" 2>&1 && echo yes-and-cleaned && rm -f "$repo/.probe_write" || echo NO)"
 add "etc_passwd_host_users" "$(getent passwd 2>/dev/null | wc -l) entries"
 # The mount lines themselves, as evidence behind config_auth above.
-add "claude_mount_lines" "$(grep -oE ' /[^ ]*/\.claude(\.json)?( |$)' /proc/self/mountinfo 2>/dev/null | tr -d ' ' | tr '\n' ',')"
+add "agent_config_mount_lines" "$(grep -oE "$cfg_re" /proc/self/mountinfo 2>/dev/null | tr -d ' ' | tr '\n' ',')"
 
 # --- processes ---------------------------------------------------------------
 # Read /proc directly: the image ships no procps, and `ps` missing made the
 # leak count read 0 — indistinguishable from a real pass.
 add "proc_total" "$(ls -d /proc/[0-9]* 2>/dev/null | wc -l) procs (via /proc)"
-add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runner|claude-in-pod') matches (expect 0)"
+add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runner|agent-in-pod') matches (expect 0)"
 
 # --- network: one allowlisted target, one that must be refused ---------------
 # The second one is a control: it is EXPECTED to succeed when the slot runs
