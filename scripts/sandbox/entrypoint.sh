@@ -21,11 +21,12 @@ if [ "${SANDBOX_FIREWALL_PROXY:-0}" = "1" ]; then
   PROXY_UID="${SANDBOX_PROXY_UID:-1001}"
   PROXY_PORT="${SANDBOX_PROXY_PORT:-18080}"
   # Double-forked on purpose: this shell EXECs claude below, so a plain `... &`
-  # leaves the proxy a direct child of the pid that becomes claude — and node
+  # leaves the proxy a direct child of the pid that becomes claude — and claude
   # only reaps pids it spawned itself, so a dead proxy would sit <defunct> for
-  # the container's life, outside the reach of the wrapper's --init. The
-  # subshell exits immediately, reparenting the proxy onto catatonit, which
-  # does reap it. (Measured 2026-08-18: `&` -> 1 zombie, `( & )` -> 0.)
+  # the container's life, outside the reach of the wrapper's --init (which only
+  # covers REPARENTED orphans). The subshell exits immediately, handing the
+  # proxy to catatonit, which does reap it.
+  # (Measured 2026-08-18: `&` -> ppid=claude, 1 zombie; `( & )` -> ppid=1, 0.)
   ( gosu "$PROXY_UID" env SANDBOX_PROXY_PORT="$PROXY_PORT" \
       /usr/local/bin/sandbox-connect-proxy & )
   for _ in $(seq 1 50); do

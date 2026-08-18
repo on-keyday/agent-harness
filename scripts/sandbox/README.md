@@ -232,8 +232,9 @@ harness-cli submit --repo <sandbox-root> \
   blocked, claude runs + writes the worktree as the host user). ✅
 - **PID 1 / zombie reaping (`podman run --init`):** the whole command chain
   execs (`entrypoint.sh` → `gosu` → `claude-launch.sh` → `claude`), so without
-  `--init` **claude itself is PID 1** — and node/libuv only `waitpid()`s the pids
-  it spawned, never reparented orphans. Every background job whose own parent
+  `--init` **claude itself is PID 1** — and claude is an application, not an
+  init: it waits on the pids it spawned and on nothing else, so anything
+  *reparented* onto it is never reaped. Every background job whose own parent
   shell exited (agent `run_in_background` commands, nohup'd builds) therefore
   accumulated as `<defunct>` for the container's whole life; observed
   2026-08-18 as three stuck `python3 <defunct>` under a live sandbox agent.
@@ -241,8 +242,14 @@ harness-cli submit --repo <sandbox-root> \
   broker needed a second fix: `entrypoint.sh` starts it before its own `exec`,
   so it is a direct child of the pid that *becomes* claude and `--init` cannot
   see it — it is now double-forked (`( … & )`) onto catatonit.
-  Verified end-to-end through the wrapper with a node stand-in for claude:
-  without `--init`, `PID1=node` and an orphan left 1 zombie; with it,
-  `PID1=podman-init` and 0. TTY input, foreground process group
-  (`PGRP == TPGID`), exit-code propagation, the `gosu` uid drop and the
-  proxy-mode firewall all re-checked unchanged under a real PTY. ✅
+  Verified end-to-end through the wrapper with the **real** binary
+  (`claude=host:2.1.234`), one orphaned `setsid sleep 1`: without `--init`,
+  `PID1COMM=claude` and 1 zombie; with it, `PID1COMM=podman-init` and 0.
+  TTY input, foreground process group (`PGRP == TPGID`), exit-code propagation,
+  the `gosu` uid drop and the proxy-mode firewall all re-checked unchanged
+  under a real PTY. ✅
+  Do not reason about this from claude's install layout: it lives under
+  `node_modules` and its binary is named `claude.exe`, but it is a Bun-compiled
+  single-file **ELF**, not a node process. A stand-in used to model PID 1 must
+  match that — a `bash` stand-in silently invalidates the test, because bash as
+  PID 1 *does* reap orphans and shows 0 zombies either way.

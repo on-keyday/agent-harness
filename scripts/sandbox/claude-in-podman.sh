@@ -277,14 +277,18 @@ setsid bash -c '
 ' _ "$$" "$cidfile" </dev/null >/dev/null 2>&1 &
 
 # --init is load-bearing, not hygiene. Every layer of our command chain execs
-# (entrypoint.sh -> gosu -> claude-launch.sh -> claude), so claude — a node
-# process — ends up as the container's PID 1. node/libuv only ever waitpid()s
-# the pids IT spawned; a process reparented to it (any background job whose
-# own parent shell exited: `run_in_background` bash tools, nohup'd builds, the
-# --firewall-proxy broker) is unknown to it and stays <defunct> for the
-# container's whole life. Measured 2026-08-18 in a live sandbox: 3 stuck
-# `python3 <defunct>` under the containerized claude, and an A/B on this image
-# (orphan `setsid sleep 1`) gave 1 zombie without --init, 0 with it.
+# (entrypoint.sh -> gosu -> claude-launch.sh -> claude), so `claude` itself ends
+# up as the container's PID 1 — and it is an application, not an init: it waits
+# on the child pids it spawned and on nothing else. A process REPARENTED onto it
+# (any background job whose own parent shell exited: `run_in_background` bash
+# tools, nohup'd builds, the --firewall-proxy broker) is unknown to it and stays
+# <defunct> for the container's whole life. Seen in the wild 2026-08-18 as 3
+# stuck `python3 <defunct>` under a live sandbox agent; A/B'd through this
+# wrapper with the REAL binary (claude=host:2.1.234) and one orphaned
+# `setsid sleep 1`: PID1COMM=claude -> 1 zombie, PID1COMM=podman-init -> 0.
+# (claude is a Bun-compiled single-file ELF, not a node process — the
+# node_modules path it installs under says nothing about its runtime, and no
+# app runtime does the blanket waitpid(-1) that reaping orphans requires.)
 # --init makes catatonit PID 1 (claude becomes its child), which reaps orphans
 # and forwards signals; it costs one ~800KB binary bind-mounted at
 # /run/podman-init and does not disturb the TTY (the child stays in the
