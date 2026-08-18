@@ -1,6 +1,9 @@
-# Sandbox image for running Claude Code confined in a ROOTLESS podman container.
+# Sandbox image for running a coding agent confined in a ROOTLESS podman
+# container. The agent binaries themselves are bridged in from the host by the
+# wrapper (measured: claude/codex/agy all run on this image's glibc), so only
+# claude has a copy baked in here, as a fallback.
 #
-# Built to be run as `podman run --userns=keep-id` (see claude-in-podman.sh):
+# Built to be run as `podman run --userns=keep-id` (see agent-in-podman.sh):
 # keep-id maps the invoking host user (e.g. uid 1000) into the container
 # unchanged, so claude runs as a NON-root user — which both satisfies its
 # "refuse --dangerously-skip-permissions as root" rule AND keeps the agent's
@@ -33,12 +36,12 @@ RUN apt-get update \
 COPY init-firewall.sh       /usr/local/bin/sandbox-init-firewall.sh
 COPY init-firewall-proxy.sh /usr/local/bin/sandbox-init-firewall-proxy.sh
 COPY sandbox-connect-proxy  /usr/local/bin/sandbox-connect-proxy
-COPY claude-launch.sh       /usr/local/bin/sandbox-claude-launch.sh
+COPY agent-launch.sh        /usr/local/bin/sandbox-agent-launch.sh
 COPY entrypoint.sh          /usr/local/bin/sandbox-entrypoint.sh
 RUN chmod +x /usr/local/bin/sandbox-init-firewall.sh \
              /usr/local/bin/sandbox-init-firewall-proxy.sh \
              /usr/local/bin/sandbox-connect-proxy \
-             /usr/local/bin/sandbox-claude-launch.sh \
+             /usr/local/bin/sandbox-agent-launch.sh \
              /usr/local/bin/sandbox-entrypoint.sh
 
 # Token-auth runs from the image's own home (/home/node) with an ephemeral

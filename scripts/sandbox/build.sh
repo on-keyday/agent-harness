@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Claude Code sandbox image used by claude-in-podman.sh.
+# Build the agent sandbox image used by agent-in-podman.sh.
 #
 #   scripts/sandbox/build.sh                       # :latest, claude latest
 #   scripts/sandbox/build.sh --build-arg CLAUDE_VERSION=2.1.169
@@ -7,7 +7,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$DIR/../.." && pwd)"
-IMAGE="${HARNESS_SANDBOX_IMAGE:-harness-claude-sandbox:latest}"
+IMAGE="${HARNESS_SANDBOX_IMAGE:-harness-agent-sandbox:latest}"
 
 # The CONNECT proxy is Go (cmd/sandbox-connect-proxy) so it lives under the
 # repo's go vet / go test, unlike the shell and python pieces around it. Build

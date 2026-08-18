@@ -1,5 +1,9 @@
 #!/bin/bash
-# Token-auth launcher. In token auth the home (/home/node) is ephemeral, so
+# In-container launcher: execs the agent the wrapper selected
+# (SANDBOX_AGENT_BIN, set from agent-in-podman.sh's agent table), after the
+# first-run seeding that only claude needs.
+#
+# Token-auth seeding. In token auth the home (/home/node) is ephemeral, so
 # interactive claude re-runs first-run onboarding (theme wizard) AND the
 # trust-this-folder dialog every run. The theme/onboarding state is pre-seeded in
 # the image; the trust dialog is per-CWD (the task worktree, which is dynamic), so
@@ -45,4 +49,7 @@ json.dump(st, open(s_path, "w"))
 PY
 fi
 
-exec claude "$@"
+# The wrapper's table decides which binary this is; the fallback keeps a
+# container started by an older wrapper (which set no SANDBOX_AGENT_BIN) working
+# rather than exec'ing the empty string.
+exec "${SANDBOX_AGENT_BIN:-/usr/local/bin/claude}" "$@"
