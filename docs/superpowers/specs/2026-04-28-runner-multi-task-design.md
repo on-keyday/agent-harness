@@ -536,3 +536,41 @@ Existing tests run unchanged with `--max-tasks 1` defaulted. A single new test a
 - Persistent runner identity across reconnect.
 - Cross-runner task migration on runner failure (orphaned tasks become `Failed`, not re-dispatched).
 - Compound selectors (one of runner_id / hostname / ip; not "host AND ip").
+
+## Amendment 2026-08-18 — the selector now binds at ASSIGNMENT, not only at submit
+
+This design introduced `RunnerSelector` on `SubmitRequest` /
+`OpenInteractiveRequest` and the `Candidates(repo, selector)` filter, but only
+one of the two assignment paths ever consulted it:
+
+- **Interactive opens** resolve candidates and assign **synchronously** to the
+  one they picked (`handleOpenInteractive`: "interactive sessions cannot
+  queue"). The selector has always bound here.
+- **Oneshot submits** are validated against the selector
+  (`PinnedNotFound` / `AmbiguousRunner` / `ProfileUnavailable`) and then merely
+  **enqueued**. The actual assignment ran in `Scheduler.Tick`, which predates
+  selectors (2026-04-25) and matched on `RepoPath` alone — so `submit --host h2`
+  went to whichever idle runner served a matching root. `Dispatcher.TryDispatch`,
+  written the same day as the selector and honoring it correctly, was never
+  wired to a caller.
+
+Measured 2026-08-18 with two runners on one root: 6 of 9 pinned submits ran on
+the wrong runner (`--runner` and `--host` alike, in both directions), while
+interactive opens pinned by profile were correct 4/4. It stayed invisible for
+~4 months because a root served by exactly one runner makes the submit-time
+ambiguity checks sufficient on their own.
+
+`Scheduler.Tick` now narrows the queue per runner with
+`NextQueuedForRepoFunc(root, eligible)`, where eligible = selector matches this
+runner AND (the task named no profile OR this runner advertises it). Two
+deliberate choices:
+
+- **Skip, don't stop.** An ineligible task at the head of the queue is stepped
+  over. Stopping would let one task pinned to an offline runner stall every
+  later task on that root.
+- **`BoundRunnerID` is not enforced.** It is the candidate snapshot taken at
+  submit time; a reconnected runner returns under a new ConnectionID, so
+  enforcing it would strand queued tasks across a runner restart. The Selector
+  is what the operator typed and survives reconnects, so it is the pin that
+  binds. `BoundRunnerID` keeps its existing roles (cancel routing, display) and
+  its doc comment was corrected to say so.

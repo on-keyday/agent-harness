@@ -283,3 +283,113 @@ func TestSchedulerMultipleRunnersFIFO(t *testing.T) {
 		t.Fatalf("expected r2 Status=Busy, got %v", r2.Status())
 	}
 }
+
+// hostnameSelector builds a ByHostname RunnerSelector for the tests below.
+func hostnameSelector(t *testing.T, name string) protocol.RunnerSelector {
+	t.Helper()
+	var sel protocol.RunnerSelector
+	sel.Kind = protocol.RunnerSelectorKind_ByHostname
+	var h protocol.Hostname
+	if !h.SetName([]byte(name)) {
+		t.Fatalf("hostname %q too long", name)
+	}
+	sel.SetHostname(h)
+	return sel
+}
+
+func idleRunner(id, hostname string, profiles []string) *RunnerEntry {
+	return &RunnerEntry{
+		ID:            id,
+		Hostname:      hostname,
+		AllowedRoots:  []string{"/x"},
+		AgentProfiles: profiles,
+		MaxTasks:      4,
+		ActiveTasks:   map[string]struct{}{},
+		ConnectedAt:   time.Unix(1, 0),
+		LastSeen:      time.Unix(1, 0),
+		Conn:          &fakeConn{},
+	}
+}
+
+// TestSchedulerHonorsSelector: the assignment step must respect the selector the
+// task was submitted with. handleSubmit only VALIDATES the pin (PinnedNotFound /
+// AmbiguousRunner) — without this, Tick handed the task to whichever idle runner
+// served a matching repo path, so `submit --host h2` ran on h1 roughly half the
+// time. Interactive opens never had the bug: they assign synchronously to the
+// candidate they resolved.
+func TestSchedulerHonorsSelector(t *testing.T) {
+	reg := NewRegistry()
+	reg.Add(idleRunner("r1", "h1", nil))
+	reg.Add(idleRunner("r2", "h2", nil))
+
+	store := NewTaskStore()
+	taskID := store.Create("/x", "pinned", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		protocol.TaskID{}, "r2", hostnameSelector(t, "h2"), nil, protocol.Capability_All, Scope{}, "")
+
+	var captured []string
+	s := NewScheduler(reg, store, func(runnerID, tID string) error {
+		captured = append(captured, runnerID+":"+tID)
+		return nil
+	})
+	s.Tick()
+
+	if len(captured) != 1 {
+		t.Fatalf("expected exactly one assignment, got %v", captured)
+	}
+	if captured[0] != "r2:"+taskID {
+		t.Fatalf("task pinned to h2 was assigned to %q, want r2:%s", captured[0], taskID)
+	}
+}
+
+// TestSchedulerHonorsAgentProfile: a task naming a profile must not be handed to
+// a runner that does not advertise it. That combination failed at the RUNNER
+// with `agent_profile: unknown agent profile "x" (have [...])` — a wrong-runner
+// symptom reported as a profile error.
+func TestSchedulerHonorsAgentProfile(t *testing.T) {
+	reg := NewRegistry()
+	reg.Add(idleRunner("r1", "h1", []string{"claude"}))
+	reg.Add(idleRunner("r2", "h2", []string{"codex"}))
+
+	store := NewTaskStore()
+	taskID := store.Create("/x", "codex task", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		protocol.TaskID{}, "r2", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "codex")
+
+	var captured []string
+	s := NewScheduler(reg, store, func(runnerID, tID string) error {
+		captured = append(captured, runnerID+":"+tID)
+		return nil
+	})
+	s.Tick()
+
+	if len(captured) != 1 || captured[0] != "r2:"+taskID {
+		t.Fatalf("task requesting profile codex assigned to %v, want r2:%s", captured, taskID)
+	}
+}
+
+// TestSchedulerPinnedTaskDoesNotBlockQueue: skipping ineligible tasks must not
+// turn into head-of-line blocking. An older task pinned to an absent runner has
+// to be stepped over, not allowed to stall every later task on that root.
+func TestSchedulerPinnedTaskDoesNotBlockQueue(t *testing.T) {
+	reg := NewRegistry()
+	reg.Add(idleRunner("r1", "h1", nil))
+
+	store := NewTaskStore()
+	blocked := store.Create("/x", "pinned elsewhere", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		protocol.TaskID{}, "", hostnameSelector(t, "h-absent"), nil, protocol.Capability_All, Scope{}, "")
+	runnable := store.Create("/x", "any runner", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
+
+	var captured []string
+	s := NewScheduler(reg, store, func(runnerID, tID string) error {
+		captured = append(captured, runnerID+":"+tID)
+		return nil
+	})
+	s.Tick()
+
+	if len(captured) != 1 || captured[0] != "r1:"+runnable {
+		t.Fatalf("expected r1 to skip the pinned task and take %s, got %v", runnable, captured)
+	}
+	if got, _ := store.Get(blocked); got.Status != protocol.TaskStatus_Queued {
+		t.Fatalf("pinned task should stay Queued, got %v", got.Status)
+	}
+}

@@ -68,11 +68,35 @@ func (s *Scheduler) Tick() {
 			continue
 		}
 
-		// Find a queued task for any root this runner serves.
+		// Find a queued task for any root this runner serves AND that this
+		// runner is actually allowed to run. Root match alone is not the
+		// eligibility test: a task carries the runner Selector it was
+		// submitted with and the agent profile it asked for, and handleSubmit
+		// only VALIDATES those (PinnedNotFound / AmbiguousRunner /
+		// ProfileUnavailable) — it does not assign. Without the check here,
+		// `submit --host h2` was handed to whichever idle runner served a
+		// matching root, and a task naming a profile could land on a runner
+		// that does not advertise it (surfacing as the runner's own
+		// `agent_profile: unknown agent profile ...`, which reads as a profile
+		// bug rather than a routing one).
+		//
+		// BoundRunnerID is deliberately NOT enforced here. It is a snapshot of
+		// the candidate chosen at submit time, and a runner that reconnects
+		// comes back under a new ConnectionID — enforcing it would strand
+		// queued tasks across a runner restart. The Selector is the operator's
+		// actual intent and survives reconnects (ByHostname especially), so it
+		// is the pin that binds.
+		runnerEntry := runner
+		eligible := func(t TaskEntry) bool {
+			if !selectorMatches(t.Selector, &runnerEntry) {
+				return false
+			}
+			return t.AgentProfile == "" || runnerEntry.HasProfile(t.AgentProfile)
+		}
 		var task *TaskEntry
 		var foundRepo string
 		for _, root := range runner.AllowedRoots {
-			if t, ok := s.store.NextQueuedForRepo(root); ok {
+			if t, ok := s.store.NextQueuedForRepoFunc(root, eligible); ok {
 				task = &t
 				foundRepo = root
 				break

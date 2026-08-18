@@ -61,9 +61,12 @@ type TaskEntry struct {
 	// Selector is the runner-selection constraint supplied at task submission.
 	// A zero value (Kind == RunnerSelectorKind_Any) means "any available runner".
 	Selector protocol.RunnerSelector
-	// BoundRunnerID, when non-empty, pins this task to a specific runner ID
-	// (the registry's string key). Populated by the scheduler or submit handler
-	// when the caller supplies a ByRunnerId selector.
+	// BoundRunnerID records the candidate handleSubmit resolved at submit time
+	// (the registry's string key). It is used for cancel routing and display —
+	// it is NOT the pin the scheduler enforces. Selector is: a reconnected
+	// runner returns under a new ConnectionID, so enforcing this snapshot would
+	// strand queued tasks across a runner restart, while the Selector the
+	// operator actually typed still matches. See Scheduler.Tick.
 	BoundRunnerID string
 	// ExtraArgs are per-task CLI arguments that the runner appends to its
 	// runner-global --agent-args baseline before exec'ing the agent.
@@ -729,14 +732,32 @@ func (s *TaskStore) SetRingBufferBytes(id string, n uint64) bool {
 // NextQueuedForRepo returns a value snapshot of the earliest-created Queued
 // task whose RepoPath equals repo. Returns (zero, false) if no such task exists.
 func (s *TaskStore) NextQueuedForRepo(repo string) (TaskEntry, bool) {
+	return s.NextQueuedForRepoFunc(repo, nil)
+}
+
+// NextQueuedForRepoFunc is NextQueuedForRepo narrowed by an eligibility
+// predicate: it returns the earliest-created Queued task on repo for which
+// eligible reports true. A nil predicate accepts every task.
+//
+// The predicate exists because "earliest queued task on this root" is NOT the
+// same question as "earliest queued task this runner may run": a task carries a
+// runner Selector and an AgentProfile, and handing it to a runner that fails
+// either is how `submit --host h2` ended up running on h1. Skipping (rather
+// than stopping at) an ineligible task is deliberate — stopping would let one
+// task pinned to an offline runner stall every later task on that root.
+func (s *TaskStore) NextQueuedForRepoFunc(repo string, eligible func(TaskEntry) bool) (TaskEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	// order slice preserves insertion (creation) order; iterate to find first match.
 	for _, id := range s.order {
 		e := s.tasks[id]
-		if e.RepoPath == repo && e.Status == protocol.TaskStatus_Queued {
-			return *e, true
+		if e.RepoPath != repo || e.Status != protocol.TaskStatus_Queued {
+			continue
 		}
+		if eligible != nil && !eligible(*e) {
+			continue
+		}
+		return *e, true
 	}
 	return TaskEntry{}, false
 }
