@@ -3,16 +3,19 @@
 # .devcontainer/init-firewall.sh (github.com/anthropics/claude-code). Runs as
 # root INSIDE the container (via entrypoint.sh) before dropping to the agent user.
 #
-# Default-deny OUTPUT; allow only DNS/SSH/loopback/established, a GitHub IP-range
+# Default-deny OUTPUT; allow only DNS/loopback/established, a GitHub IP-range
 # set (api.github.com/meta), a fixed domain allowlist, the container's
-# default-route gateway (/32), and the harness server.
+# default-route gateway (/32), and the harness server's one port.
 #
 # Deltas vs upstream:
 #   - dropped the docker-bridge DNS (127.0.0.11) save/restore — not used under
 #     rootless podman / pasta;
-#   - allow $SANDBOX_SERVER_IP by its own /32 so the bridged harness-cli keeps
-#     working — it must not depend on the gateway rule, which under pasta would
-#     otherwise have to cover the whole LAN to reach the server;
+#   - dropped upstream's blanket `--dport 22 ACCEPT`: ssh to an arbitrary host is
+#     a general-purpose tunnel, so it reopens everything the default-DROP closes;
+#   - allow the harness server as $SANDBOX_SERVER_IP/32 on its own port only, so
+#     the bridged harness-cli keeps working without exposing the rest of that
+#     machine — it must not depend on the gateway rule either, which under pasta
+#     would otherwise have to cover the whole LAN to reach the server;
 #   - added the PyPI domains (the image ships python3 + pip);
 #   - **fail-closed, not fail-open**: a single unresolvable domain or a failed
 #     GitHub fetch only DROPS that allowlist entry — the script still reaches the
@@ -26,11 +29,17 @@ iptables -t nat -F; iptables -t nat -X
 iptables -t mangle -F; iptables -t mangle -X
 ipset destroy allowed-domains 2>/dev/null || true
 
-# DNS + SSH + loopback (added before the default-DROP below)
+# DNS + loopback (added before the default-DROP below)
+#
+# Upstream also opens tcp/22 to EVERY destination. That is a hole the size of the
+# whole allowlist: ssh to any reachable sshd is a general-purpose tunnel, so one
+# blanket rule undoes the default-DROP for anyone who can reach a box on :22 (the
+# harness server runs one). Dropped here — git-over-ssh to GitHub still works,
+# because github.com is in the ipset by address, which is how every other
+# allowlisted service is reached. The matching INPUT --sport 22 line went with it;
+# the general ESTABLISHED,RELATED rule below already covers the return traffic.
 iptables -A OUTPUT -p udp --dport 53 -j ACCEPT
 iptables -A INPUT  -p udp --sport 53 -j ACCEPT
-iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
-iptables -A INPUT  -p tcp --sport 22 -m state --state ESTABLISHED -j ACCEPT
 iptables -A INPUT  -i lo -j ACCEPT
 iptables -A OUTPUT -o lo -j ACCEPT
 
@@ -69,11 +78,21 @@ for domain in \
   done < <(echo "$ips")
 done
 
-# Harness server, by its own /32 (under pasta it sits on the same LAN as the
-# container, so the gateway rule below deliberately does not reach it)
+# Harness server, by its own /32 AND its own port (under pasta it sits on the
+# same LAN as the container, so the gateway rule below deliberately does not
+# reach it). Not via the ipset: an ipset entry is address-only, so it allowed
+# every port on the server machine — measured 2026-08-18, its sshd answered from
+# inside the sandbox. The wrapper parses ip/port/proto out of HARNESS_SERVER_CID.
+# No port -> no carve-out at all: harness-cli then fails, which is the fail-closed
+# direction (this whole script's stance: a partial allowlist means more blocked).
 if [ -n "${SANDBOX_SERVER_IP:-}" ]; then
-  echo "Allowing harness server $SANDBOX_SERVER_IP"
-  ipset add allowed-domains "$SANDBOX_SERVER_IP" 2>/dev/null || true
+  if [ -n "${SANDBOX_SERVER_PORT:-}" ]; then
+    proto="${SANDBOX_SERVER_PROTO:-tcp}"
+    echo "Allowing harness server $SANDBOX_SERVER_IP/32 $proto/$SANDBOX_SERVER_PORT"
+    iptables -A OUTPUT -d "$SANDBOX_SERVER_IP/32" -p "$proto" --dport "$SANDBOX_SERVER_PORT" -j ACCEPT
+  else
+    echo "WARN: harness server port unknown — NOT allowlisting $SANDBOX_SERVER_IP; harness-cli will be blocked" >&2
+  fi
 fi
 
 # Default-route gateway, /32 — deliberately NOT upstream's /24.

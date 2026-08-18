@@ -63,6 +63,23 @@ add "host_proc_leak" "$(cat /proc/[0-9]*/comm 2>/dev/null | grep -Ec 'agent-runn
 add "egress_allowed" "$(curl -sS -m 6 https://api.github.com/zen 2>&1 | head -c 90)"
 add "egress_nonallowlisted" "$(curl -sS -m 6 -o /dev/null -w '%{http_code}' https://example.com 2>&1 | head -c 90) (refusal expected ONLY under --firewall*)"
 
+# The harness-server carve-out must name ONE port, not the whole machine. Both
+# firewall modes allowed it by address until 2026-08-18, and a smoke run reached
+# that host's sshd from inside the sandbox — lateral movement the rest of the
+# design closes. curl can't see this (it's L4 on a non-HTTP port), so probe the
+# socket directly: the server's own port must connect, any other must not.
+srv="${HARNESS_SERVER_CID:-}"; srv="${srv#*:}"; srv="${srv%-*}"
+srv_ip="${srv%:*}"; srv_port="${srv##*:}"
+tcp_probe() {  # host port -> open | refused-or-blocked (DROP shows as the timeout)
+	timeout 6 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null && echo open || echo refused-or-blocked
+}
+if [ -n "$srv_ip" ] && [ -n "$srv_port" ]; then
+	add "server_own_port" "$srv_ip:$srv_port -> $(tcp_probe "$srv_ip" "$srv_port") (expect open: harness-cli needs it)"
+	add "server_other_port" "$srv_ip:22 -> $(tcp_probe "$srv_ip" 22) (expect refused-or-blocked under --firewall*; open = the carve-out is host-wide again)"
+else
+	add "server_own_port" "HARNESS_SERVER_CID unparsable ('${HARNESS_SERVER_CID:-unset}') — server probes skipped"
+fi
+
 # --- control plane (the OTHER confinement layer: server-enforced caps) -------
 add "harness_cli" "$(command -v harness-cli 2>&1 || echo MISSING)"
 add "harness_ls" "$(harness-cli ls 2>&1 | grep -c .) lines (or err above)"

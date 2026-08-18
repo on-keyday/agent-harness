@@ -154,12 +154,28 @@ fi
 # HARNESS_SERVER_CID) is allowlisted so the bridged harness-cli still reaches it.
 declare -a FW=()
 if [ "$firewall" = 1 ] || [ "$firewall_proxy" = 1 ]; then
-  server_ip=$(printf '%s' "${HARNESS_SERVER_CID:-}" | sed -E 's#^[a-z]+:##; s#[:-].*##')
+  # Split HARNESS_SERVER_CID into the three fields the harness-server carve-out
+  # needs. Format is objproto ConnectionID.String(): "<transport>:<host>:<port>-<id>"
+  # (the id may be a literal "*"). Both firewall modes used to pass only the IP
+  # and allow the whole host: measured 2026-08-18 from inside a --firewall-proxy
+  # container, every port on the server machine was reachable, its sshd included.
+  # The server is an ordinary LAN box, not a single-purpose appliance, so the
+  # carve-out has to name the one port harness-cli actually dials.
+  cid="${HARNESS_SERVER_CID:-}"
+  server_hostport="${cid#*:}"; server_hostport="${server_hostport%-*}"
+  server_ip="${server_hostport%:*}"
+  server_port="${server_hostport##*:}"
+  case "${cid%%:*}" in udp) server_proto=udp ;; *) server_proto=tcp ;; esac
+  # An unparsable port means NO carve-out (the firewall scripts warn and skip):
+  # losing the control plane is the fail-closed outcome, re-opening the host is not.
+  [[ "$server_port" =~ ^[0-9]+$ ]] || server_port=""
   FW=(
     --user 0
     --cap-add=NET_ADMIN --cap-add=NET_RAW
     --env DROP_UID="$(id -u)" --env DROP_GID="$(id -g)"
     --env SANDBOX_SERVER_IP="$server_ip"
+    --env SANDBOX_SERVER_PORT="$server_port"
+    --env SANDBOX_SERVER_PROTO="$server_proto"
     # Disable claude's non-essential egress (telemetry → datadog, statsig
     # feature-flags, auto-update, error reporting). Verified A/B that this drops
     # http-intake.logs.us5.datadoghq.com etc. — so neither the allowlist nor the

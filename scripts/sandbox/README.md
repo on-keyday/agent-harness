@@ -56,11 +56,15 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 - **Confined:** filesystem outside the mounted repo, host processes, the rest of
   your home. The agent sees only the repo it's working in (+ `~/.claude`).
 - **Exposed (intentional):** the mounted repo worktree (that's where edits go),
-  plus — in the default **mount auth** mode — `~/.claude` + `~/.claude.json`
-  (login/session/config; the container can read your full claude config,
-  **including the permanent refresh token**). Use **token auth** (below) to remove
-  that exposure. Do **not** treat the container as a boundary against a hostile
-  agent; it reduces *accidental* blast radius for dogfood use.
+  plus — in the default **mount auth** mode — `~/.claude` + `~/.claude.json`,
+  bind-mounted **read-write** (login/session/config; the container can read your
+  full claude config, **including the permanent refresh token**, and can rewrite
+  it). Together with the worktree that is the complete set of writes that outlive
+  the container. They cannot be made read-only in this mode — claude writes its
+  session store there, which is the whole point of mount auth. Use **token auth**
+  (below) to remove the exposure instead; it keeps `~/.claude` inside the image's
+  own ephemeral home. Do **not** treat the container as a boundary against a
+  hostile agent; it reduces *accidental* blast radius for dogfood use.
 
 ### Authentication
 
@@ -126,8 +130,17 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 - **Network: open by default; opt-in egress allowlist via `--firewall`.** Pass
   `--agent-arg --firewall` (or runner `--agent-args "--firewall"`) to apply a
   default-deny iptables+ipset allowlist inside the container — GitHub IP ranges
-  (api.github.com/meta) + npm/anthropic/pypi + the harness server + the
-  default-route gateway (**/32**), IPv6 blocked, everything else REJECTed.
+  (api.github.com/meta) + npm/anthropic/pypi + the harness server (**its one
+  port**) + the default-route gateway (**/32**), IPv6 blocked, everything else
+  REJECTed. Two more deltas from upstream, both narrowing: upstream's blanket
+  `--dport 22 ACCEPT` (ssh to *any* host — a general-purpose tunnel that reopens
+  what the default-DROP closes) is dropped, and the harness server is allowed as
+  an `ip:proto:port` rule rather than a bare ipset address, which had left every
+  other port on that machine — its sshd included — reachable from the sandbox
+  (measured 2026-08-18). git-over-ssh to GitHub still works: github.com is in the
+  ipset by address, like every other allowlisted service. If the port can't be
+  parsed out of `HARNESS_SERVER_CID` the carve-out is skipped entirely
+  (harness-cli then fails) rather than widened back to the host.
   Upstream allowlists that gateway's whole /24, which stays inside the bridge
   network under docker; podman rootless defaults to **pasta**, which hands the
   container the host's own interface, so the same rule would allowlist your
@@ -151,7 +164,7 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
   Default proxy allowlist = `api.anthropic.com` + github/npm/pypi; extend for
   WebFetch research targets by setting `SANDBOX_PROXY_ALLOW=domain1,domain2` in the
   runner env. harness-cli is unaffected (direct L3 carve-out to the harness
-  server; it doesn't use `HTTPS_PROXY`). Residual: a CONNECT proxy sees SNI/host
+  server's own `ip:proto:port`; it doesn't use `HTTPS_PROXY`). Residual: a CONNECT proxy sees SNI/host
   only (no TLS-body inspection without MITM) — it closes raw-socket and
   non-allowlisted exfil, but cannot stop exfil *to an allowlisted domain* (e.g. a
   GitHub gist, since `github.com` is allowlisted). Trim the allowlist for
@@ -162,7 +175,10 @@ The wrapper (`claude-in-podman.sh`) bind-mounts, at identical host paths:
 `probe.sh` runs **inside** the container and reports the measured state of every
 claim in this section — what the mounts actually expose, whether host processes
 are visible, which egress succeeds (it probes one allowlisted target *and* one
-that must be refused), and what caps the server grants the bridged control plane.
+that must be refused), whether the harness-server carve-out is still one port
+(`server_other_port` must not read `open` — that is how the host-wide carve-out
+above was found, and curl can't see it because it is L4 on a non-HTTP port), and
+what caps the server grants the bridged control plane.
 Run it as a task on the sandbox slot; `--topic` also publishes the report to the
 agentboard so a supervising agent needn't read logs:
 
@@ -203,6 +219,6 @@ harness-cli submit --repo <sandbox-root> \
   **owner-match** gives the agent uid NO raw-socket egress, so its API + WebFetch
   funnel through the proxy (domain allowlist, no CDN-IP fragility, **WebFetch
   works** unlike the IP allowlist). harness-cli still reaches the harness server
-  via a direct L3 carve-out (it doesn't honor `HTTPS_PROXY`). Verified end-to-end
-  (allowed via proxy, denied refused, raw-socket bypass blocked, claude runs +
-  writes the worktree as the host user). ✅
+  via a direct L3 carve-out on that one port (it doesn't honor `HTTPS_PROXY`).
+  Verified end-to-end (allowed via proxy, denied refused, raw-socket bypass
+  blocked, claude runs + writes the worktree as the host user). ✅
