@@ -46,9 +46,7 @@ want the current text; open the file when you want to know what was injected.
 the inode that existed at `podman run` time; a later rebuild writes a
 replacement and the running container keeps the old, now-unlinked one — the
 rebuild is invisible to it, not merely delayed, and only a NEW container picks
-one up (measured and written up in the harness repo's own
-`scripts/sandbox/agent-in-podman.sh` — not a path in your worktree unless the
-harness repo is what you are working on).
+one up (measured, not inferred).
 A confined agent can therefore be reading guidance several commits old with no
 way to refresh it in place. `version` still names the commit it was built from,
 but the repo's HEAD is not visible from in there, so it cannot judge whether
