@@ -270,8 +270,10 @@ These 8 bytes are already under header protection (`objproto.go:990, 1142`), so
 `control` is not observable, and they are the nonce input
 (`objproto.go:996`), so the bit is implicitly authenticated.
 
-**Required:** pass `recvTracker.InsertNonce` the value with bit 63 cleared. The
-raw `uint64` would jump to 2^63 and destroy replay tracking.
+**Required:** read the counter through `ProtectedHeader.NonceCounter()`, which
+returns bits 0..62. The current code does a raw `binary.BigEndian.Uint64` over
+the same 8 bytes (`objproto.go:991`); left as-is, a set control bit would push
+the value to 2^63 and destroy replay tracking.
 
 ```
 enum ControlKind:
@@ -327,10 +329,25 @@ record of sent packets, but confirm it does not assume contiguity.
    there. The value flows to `PacketData.Kind` and then `closeCannotSend`, which
    short-circuits through `mayCloseProxy` for proxied packets
    (`objproto.go:494-505`), so only the log line depends on it.
-4. **Verify brgen's bitfield packing** for a `u1` + `u7` leading byte matches
-   `ProtectedHeader`'s `u1` + `u63` MSB-first layout. This can only be checked
-   once the schema changes; do it first, before writing any Go against the new
-   field names.
+4. **brgen bitfield packing — resolved 2026-08-18.** Generated from the proposed
+   schema and asserted against real bytes. `u1` + `u7` packs MSB-first exactly
+   like `u1` + `u63`: `PacketHeader{KeyPhase=1, MaskSeed=0x2a, MaskedKind=0x33,
+   MaskedConnectionId=0xEBBC, Len=0x0102}` encodes to `aa 33 eb bc 01 02`, and
+   `ProtectedHeader{Control=1, NonceCounter=1}` to `80 00 00 00 00 00 00 01`.
+
+   Two consequences for the implementation:
+
+   - Bitfields become a **private backing field plus accessors**, not struct
+     fields: `KeyPhase() bool` / `SetKeyPhase(bool)`, `MaskSeed() uint8` /
+     `SetMaskSeed(uint8)`, `Control() bool` / `SetControl(bool)`,
+     `NonceCounter() uint64` / `SetNonceCounter(uint64)`. `MaskedKind`,
+     `MaskedConnectionId` and `Len` stay plain exported fields. The first wire
+     byte is not directly addressable and must be reassembled from the two
+     accessors.
+   - `NonceCounter()` returns bits 0..62 only, so **the "clear bit 63 before
+     InsertNonce" trap disappears** as long as the accessor is used instead of
+     a raw `binary.BigEndian.Uint64`. The trap is now a code-review rule about
+     not reintroducing the raw read, not a computation to remember.
 
 ## Regenerating packet.go
 
