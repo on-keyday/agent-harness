@@ -139,6 +139,17 @@ declare -a TTY=()
 # in the container: use `submit --caps none` (or other restricted sets) when
 # spawning this sandboxed task to close specific control-plane operations
 # (spawn, file_read/write, forward, exec_attach, ...) server-side.
+#
+# The bridged binary is FROZEN for the container's lifetime. This is a
+# single-FILE bind mount, so the container holds the inode that existed at
+# `podman run` time; `make build` writes a replacement and the running
+# container keeps the old, now-unlinked one — the rebuild is invisible to it,
+# not merely delayed. Measured 2026-08-18: a long-running sandbox task reported
+# harness-cli mtime 04:38 and a 692-line embedded skill while the host was at
+# 04:50 / 720 lines, and a container started at that moment saw 04:50 / 720.
+# That matters because harness-cli carries the agent skills (`harness-cli
+# skill`), so a confined agent can be reading guidance several commits old with
+# nothing on its side to reveal it. Only a NEW container picks up a rebuild.
 declare -a CLI=()
 if [ "$bridge_cli" = 1 ]; then
   hcli=$(command -v harness-cli 2>/dev/null)
