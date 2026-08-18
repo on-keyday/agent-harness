@@ -57,7 +57,9 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 // the agentboard auth ticket for a runner assignment. That path is
 // agent-runtime-neutral, covers no-worktree and non-Claude agents, and
 // re-applies on resume or runner reassignment where the `(runner, task)` broker
-// key changes. `harness.hello` remains opt-in discovery only.
+// key changes. That id-directed topic is the WHOLE seeded set: the opt-in
+// discovery topic this line used to name (`harness.hello`) was removed
+// 2026-08-18, so there is nothing else a SessionStart hook would subscribe.
 //
 // There is deliberately no Stop hook. A Stop-hook-based re-entry blocks
 // Claude Code's stdin while the agent continues its current turn, which

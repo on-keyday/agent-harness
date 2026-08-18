@@ -19,7 +19,8 @@ const claudeMdMinimal = `This task runs inside a harness-managed worktree.
 - Read the harness-cli skill for agent-to-agent messaging on the agentboard:
   run ` + "`harness-cli skill harness-cli`" + ` (works in any agent), or open
   ` + "`.claude/skills/harness-cli/SKILL.md`" + ` / ` + "`.agents/skills/harness-cli/SKILL.md`" + `.
-- Reserved well-known topic for the initial handshake: ` + "`harness.hello`" + `.
+- Your inbound agentboard topic is ` + "`chat.<first-8-hex-of-HARNESS_TASK_ID>`" + `;
+  the server subscribes you to it. There is no board-wide discovery topic.
 
 Harness-injected files in this worktree are NOT your work — do not commit them
 as your own: this file (CLAUDE.md/AGENTS.md/GEMINI.md), ` + "`.claude/`" + `, and

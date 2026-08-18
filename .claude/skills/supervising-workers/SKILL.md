@@ -95,7 +95,7 @@ harness-cli session new -d --repo /path/to/repo --resume "$TASK_ID"
 Same task id means the same `chat.<short-id>` inbound topic, so:
 
 - Other agents that handshook with the previous session can keep talking
-  to the new one without re-discovering it via `harness.hello`.
+  to the new one; there is nothing to re-discover.
 - The worktree branch `harness/<task-id>` is reused, so any commits the
   previous session made are still reachable.
 

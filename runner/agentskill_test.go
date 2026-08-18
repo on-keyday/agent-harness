@@ -21,8 +21,11 @@ func TestWriteAgentSkills_WritesHarnessCliSkill(t *testing.T) {
 	if !strings.Contains(s, "name: harness-cli") {
 		t.Errorf("SKILL.md missing frontmatter name: %q", s[:min(len(s), 200)])
 	}
-	if !strings.Contains(s, "harness.hello") {
-		t.Error("SKILL.md should document the harness.hello handshake topic")
+	// The id-directed convention is the whole addressing story now — the
+	// harness.hello discovery topic was removed 2026-08-18, so assert the
+	// naming rule that replaced it rather than the retired topic.
+	if !strings.Contains(s, "chat.<first-8") {
+		t.Error("SKILL.md should document the chat.<first-8-...> inbound topic convention")
 	}
 	if !strings.Contains(s, "payload_b64") || !strings.Contains(s, "json.Valid") {
 		t.Error("SKILL.md should explain the JSON-vs-base64 inbox behaviour")

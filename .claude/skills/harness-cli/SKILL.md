@@ -361,12 +361,13 @@ The server seeds the conventional inbound topic `chat.<short-id>` when it
 assigns the task to a runner. You only need to **announce** it as
 `reply_topic` in outbound messages, not subscribe to it yourself.
 
-The runner does **not** auto-subscribe you to `harness.hello`. Peers reach
-you id-directed on `chat.<short-id>` (the spawner already knows your task
-id; humans use `ls` to find it), so a global topic everyone subscribed to
-only turned every peer introduction into broadcast wake-noise. If you
-genuinely need to discover a peer you have no prior id for, subscribe to
-`harness.hello` yourself — see below.
+**There is no board-wide rendezvous topic.** Peers reach you id-directed on
+`chat.<short-id>`: the spawner already knows your task id, and anyone with
+`info_global` finds it with `ls`. A reserved discovery topic (`harness.hello`)
+used to be documented here and was removed 2026-08-18 — nothing subscribed to
+it, and `send` reports no recipient count, so announcing there returned
+`status: ok` and reached no one. If you have no id for the peer you need, get
+one (`ls`, or ask whoever spawned you); do not broadcast.
 
 **Non-Claude agents still need an inbox path.** The inbound subscription is
 server-seeded for every agent runtime, but the auto-inbox hook still lives in
@@ -393,22 +394,6 @@ empty `from.agent` means the server could not attribute a runtime — a
 server-originated message such as an `await-idle` notification, identifiable
 by `from.hostname == "server"`.
 
-### Opt-in discovery on `harness.hello`
-
-For the rarer case where you need to find a peer you have **no prior id
-for**, there is one reserved rendezvous topic: **`harness.hello`**. It is
-opt-in — you are NOT auto-subscribed to it.
-
-- Only if you need discovery: `subscribe --topic harness.hello`, announce
-  yourself there (role, the topic(s) you accept work on, payload hints),
-  and read others' announcements.
-- Once two agents have agreed on a per-pair / per-purpose topic, switch the
-  conversation to that topic and stop posting on `harness.hello`. It is for
-  meeting, not ongoing chat.
-- Don't reflexively announce on `harness.hello` at startup. If your peer
-  relationship is already established by id (the usual case), skip it
-  entirely — a startup broadcast to a topic nobody needs is pure noise.
-
 ## Finding other agents / tasks
 
 Two views, used together:
@@ -426,14 +411,16 @@ harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...
 
 # Agentboard view: every active topic (JSON Lines). Reveals who is listening —
 # e.g. chat.<short-id> inbound channels and any per-purpose topics in use.
+# Needs info_global; without it the server answers "denied" and you get an
+# error, not an empty board.
 harness-cli agent topics
 ```
 
 To reach a task you found in `ls`, derive its inbound channel the way every
 agent here names its own: `chat.<first-8-hex-of-task-id>`, and send a `hello`
-there (see the spawn examples). This id-directed send is the normal way to
-introduce yourself; `harness.hello` is only for the case where you have no id
-to derive a channel from.
+there (see the spawn examples). This id-directed send is the only way to
+introduce yourself — there is no discovery topic to fall back on, so an id you
+cannot derive is an id you have to ask for.
 
 ## Delegating to worker agents — see the `supervising-workers` skill
 
@@ -559,7 +546,6 @@ Typical per-agent setup:
 
 ```
 subscribe:  chat.<my-short-id>     # my inbound channel (peers write here) — server-seeded
-subscribe:  harness.hello          # OPT-IN, only if you need peer discovery
 # do NOT subscribe: chat.<peer-short-id>   ← peer's inbound, not mine
 ```
 
@@ -597,12 +583,6 @@ set `in_reply_to` (`agent=bash`, or any peer without skill injection).
    (see "Async by default").
 4. Use `"kind": "hello_ack"` when acknowledging a peer's hello, to
    distinguish it from a fresh announcement.
-
-### Discovery variant (only when you have no peer id)
-
-`subscribe --topic harness.hello`, post the same `hello` payload there
-instead of to a peer topic, then end the turn. When a peer answers, switch
-to the pair topics and stop posting on `harness.hello`.
 
 ### Per-subject reply topics (fallback)
 

@@ -291,15 +291,15 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	c1 := b.Attach(rid1, tid1, "host1", "")
 	c2 := b.Attach(rid2, tid2, "host2", "")
 
-	_ = b.Subscribe(c1, "chat.task1")    // exclusive to task1
-	_ = b.Subscribe(c1, "harness.hello") // shared
-	_ = b.Subscribe(c2, "harness.hello") // shared
+	_ = b.Subscribe(c1, "chat.task1")   // exclusive to task1
+	_ = b.Subscribe(c1, "shared.topic") // shared
+	_ = b.Subscribe(c2, "shared.topic") // shared
 
 	// Publish to both topics so they exist in b.topics.
 	if _, err := b.Send("chat.task1", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send("harness.hello", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
+	if _, err := b.Send("shared.topic", []byte("hi"), protoRunnerIDFromBoard(rid1), protoTaskIDFromBoard(tid1), "host1", "", 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -315,8 +315,8 @@ func TestBoard_RevokeEvictsOrphanedTopics(t *testing.T) {
 	if names["chat.task1"] {
 		t.Error("chat.task1 should have been evicted after Revoke (no remaining subscribers)")
 	}
-	if !names["harness.hello"] {
-		t.Error("harness.hello should still be present (task2 is still subscribed)")
+	if !names["shared.topic"] {
+		t.Error("shared.topic should still be present (task2 is still subscribed)")
 	}
 }
 
