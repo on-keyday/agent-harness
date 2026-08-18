@@ -1775,8 +1775,14 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   stroke-width: 1.5;
 }
 .tt-node { cursor: pointer; }
-.tt-dot { stroke: #1b1b1b; stroke-width: 2; }
-.tt-node:hover .tt-dot { stroke: #d4d4d4; }
+.tt-dot { stroke: #1b1b1b; stroke-width: 2; transition: r 80ms ease-out; }
+/* Hover says "this is clickable", nothing more. It used to draw a light ring,
+   which reads as a SELECTED state — and there is no selection here: clicking
+   reveals the task in the list below and the node goes back to looking like
+   its neighbours. Growing the dot and brightening the label carries the
+   affordance without claiming a state the diagram does not have. */
+.tt-node:hover .tt-dot { r: 12; }
+.tt-node:hover .tt-label { fill: #fff; }
 .tt-label {
   fill: #d4d4d4;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

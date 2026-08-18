@@ -352,6 +352,34 @@ const POLL_INTERVAL_MS = 5000;
       renderTaskList(lastTasks);
     });
   }
+  // revealTaskInList opens one task's sheet, widening the filters first if that
+  // task is not currently listed.
+  //
+  // The graph shows every visible task; the list shows the filtered ones. A
+  // click on a node outside the filter used to do nothing at all — no sheet, no
+  // message — which is the worst of the three possible behaviours. Widening is
+  // visible in itself (the chip moves, the search box empties), so the operator
+  // can see why the list changed under them.
+  function revealTaskInList(id) {
+    const find = () => taskList.querySelector(`.task-sheet[data-task-id="${id}"]`);
+    if (!find()) {
+      taskStatusFilter = "all";
+      for (const [k, b] of Object.entries(taskChips)) b.classList.toggle("is-active", k === "all");
+      taskFilterInput.value = "";
+      renderTaskList(lastTasks);
+    }
+    const sheet = find();
+    if (!sheet) return;
+    // Same single-open rule a row click follows. Without it two sheets end up
+    // open, and the next poll's rebuild restores only the first one in DOM
+    // order — so the sheet this click opened could quietly close again.
+    for (const s of taskList.querySelectorAll(".task-sheet")) {
+      if (s !== sheet) s.hidden = true;
+    }
+    sheet.hidden = false;
+    sheet.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
   const taskTreeChip = document.getElementById("task-chip-tree");
   if (taskTreeChip) {
     taskTreeChip.addEventListener("click", () => {
@@ -364,7 +392,7 @@ const POLL_INTERVAL_MS = 5000;
       // the list stays a list.
       taskTreeMode = !taskTreeMode;
       taskTreeChip.classList.toggle("is-active", taskTreeMode);
-      renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor);
+      renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor, revealTaskInList);
     });
   }
   taskFilterInput.addEventListener("input", () => renderTaskList(lastTasks));
@@ -540,7 +568,7 @@ const POLL_INTERVAL_MS = 5000;
     runnerList.textContent = renderRunners(sortedRunners);
     lastTaskTree = snap.taskTree || [];
     renderTaskList(snap.tasks);
-    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor);
+    renderTaskTreeGraph(taskTreeMode ? lastTaskTree : null, lastTasks, taskStatusColor, revealTaskInList);
     renderFileTaskSelect(snap.tasks);
     if (window.__renderGitTaskSelect) window.__renderGitTaskSelect(snap.tasks);
     renderRawTaskSelect(snap.tasks);
@@ -5871,7 +5899,7 @@ function repoBasename(p) {
 // Every position comes from the wasm side (cli.TaskTreeLayout): `col` and
 // `depth` are unitless grid slots, multiplied here by the pixel spacing. This
 // file decides what a node LOOKS like and nothing about where it goes.
-function renderTaskTreeGraph(nodes, tasks, statusColor) {
+function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
   const host = document.getElementById("task-tree-graph");
   if (!host) return;
   // nodes null/empty is how the caller says "the toggle is off": the state
@@ -5966,14 +5994,11 @@ function renderTaskTreeGraph(nodes, tasks, statusColor) {
       : n.id;
     g.appendChild(title);
 
-    // The diagram is a navigator: clicking a node opens that task's sheet in
-    // the list below, so the picture is never a dead end.
-    g.addEventListener("click", () => {
-      const row = document.querySelector(`.task-sheet[data-task-id="${n.id}"]`);
-      if (!row) return;
-      row.hidden = false;
-      row.scrollIntoView({ block: "center", behavior: "smooth" });
-    });
+    // The diagram is a navigator: clicking a node reveals that task in the
+    // list below. The list's own rules (which sheet may be open, what the
+    // filters currently hide) belong to the list, so this hands the id over
+    // rather than reaching into it.
+    if (onSelect) g.addEventListener("click", () => onSelect(n.id));
     svg.appendChild(g);
   }
   host.appendChild(svg);
