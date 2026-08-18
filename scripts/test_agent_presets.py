@@ -168,7 +168,7 @@ class ExpandAgentsPresetTest(unittest.TestCase):
                 ):
                     self.assertEqual(
                         sb[sb.index(flag) + 1],
-                        f"--sandbox-agent {base} " + plain[plain.index(flag) + 1],
+                        plain[plain.index(flag) + 1],
                         f"{flag} drifted from the {base} preset",
                     )
                 self.assertEqual(
@@ -176,9 +176,13 @@ class ExpandAgentsPresetTest(unittest.TestCase):
                     plain[plain.index("--agent-log-format") + 1],
                 )
                 # A preset bin may be a path, not only a bare command name.
+                # The agent is carried by the BIN, because a fresh interactive
+                # launch passes no argv template at all — a selector in the
+                # templates is absent exactly there, and `session new --agent
+                # sandbox-bash` opened Claude Code when it lived there.
                 bin_path = Path(sb[sb.index("--agent-bin") + 1])
                 self.assertTrue(bin_path.is_absolute())
-                self.assertEqual(bin_path.name, "agent-in-podman.sh")
+                self.assertEqual(bin_path.name, f"{base}-in-podman.sh")
                 # Resolved against this module, so a runner started from any
                 # checkout gets the wrapper that ships beside the presets it
                 # just expanded.

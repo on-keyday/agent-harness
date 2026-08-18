@@ -36,6 +36,39 @@ gemini-cli, so it carries that product's credentials too (tier-ineligible on
 this host, but present). `--firewall-proxy` is the mitigation that matters for
 them, since it removes raw-socket egress entirely.
 
+**Which agent runs is decided by the BIN, not by a flag.** Each preset points
+at that agent's `<agent>-in-podman.sh` symlink, all of which are the same
+script; it reads `basename $0`. That is not decoration: the runner builds a
+FRESH interactive launch as bin + args with no argv template at all
+(`runner/agent_command.go` `buildInteractiveArgs` returns the extra args
+unchanged when `resumeConversation` is false), so a selector carried in the
+oneshot/resume templates is simply absent on that path. It was, and
+`session new --agent sandbox-bash` opened Claude Code while the task row still
+read `agent=sandbox-bash`. `--sandbox-agent NAME` still works as a manual
+override for direct invocation.
+
+**Addressing the default profile.** The FIRST name in `--agents` becomes the
+runner's unnamed default profile, addressed by its bin basename rather than by
+the preset name: `--agent claude-in-podman.sh`, not `--agent sandbox-claude`.
+`harness-cli session new` without `--agent` lists the exact flag for each
+profile when more than one is configured, so this is discoverable, but it is
+worth knowing before you type the name you expected to work.
+
+**What each agent actually writes, measured through a real runner slot:**
+
+- **bash** and **claude** write into the task worktree, owned by the host user
+  (`kforfk:kforfk`) — this is what `--userns=keep-id` buys, verified end to end.
+- **codex** refused: its own sandbox reports the environment read-only for
+  `codex exec`, and its edit tool fails with `codex-code-mode-host` not found
+  (that helper is not in the image). Give it its own approval/sandbox flags via
+  `--agent-args` if you want it writing in the worktree — the wrapper will not
+  decide that for you.
+- **agy** created the file in `~/.gemini/antigravity-cli/scratch/`, NOT in the
+  worktree — and since mount auth bind-mounts `~/.gemini` read-write, that write
+  landed on the **host's real config directory** and outlived the container.
+  Expected given the mount, but worth stating plainly: agy's default file
+  destination is inside the credential directory you mounted.
+
 **codex brings its own sandbox.** It warns `could not find bubblewrap on PATH …
 will use the bundled bubblewrap` and then works — nested inside podman. The
 wrapper does not disable it: approval / sandbox flags are the caller's business

@@ -106,12 +106,19 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 
 # The podman sandbox runs the SAME agent binaries through a wrapper that is a
 # pure pass-through (scripts/sandbox/README.md), so each sandbox-* preset is
-# DERIVED from its base entry rather than copied: only `bin` changes, plus the
-# wrapper's own agent selector prefixed onto the argv templates (the wrapper
-# filters its control flags out of the stream before the agent sees them, so a
-# prefix is invisible to the agent). Spawned without this derivation, the first
-# sandbox slot fell back to the runner's raw defaults and one-shot progress was
-# invisible — a whole task arrived as one final blob instead of streamed events.
+# DERIVED from its base entry rather than copied: ONLY `bin` changes, to that
+# agent's <agent>-in-podman.sh symlink. Spawned without this derivation, the
+# first sandbox slot fell back to the runner's raw defaults and one-shot
+# progress was invisible — a whole task arrived as one final blob instead of
+# streamed events.
+#
+# The agent is carried by the BIN, not by a flag in the argv templates. A fresh
+# interactive launch uses NO argv template (runner/agent_command.go
+# buildInteractiveArgs returns the extra args unchanged when
+# resumeConversation is false), so a template-borne selector vanishes on that
+# path: `session new --agent sandbox-bash` opened Claude Code while the task
+# row still read agent=sandbox-bash. The bin is the one thing every launch path
+# carries.
 #
 # `bin` is an absolute path, which presets fully support: nothing constrains it
 # to a bare command name (runner/agent_profile.go ResolveBinPaths LookPath+Abs's
@@ -121,14 +128,11 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # --agent-args is NOT part of a preset: the sandbox slot's
 # --dangerously-skip-permissions is the caller's choice and --agent-args does
 # not collide with --agents (see _CONFLICTING_FLAGS).
-_SANDBOX_WRAPPER = str(Path(__file__).resolve().parent / "sandbox" / "agent-in-podman.sh")
-_ARGV_KEYS = ("oneshotArgv", "resumeOneshotArgv", "resumeInteractiveArgv")
+_SANDBOX_DIR = Path(__file__).resolve().parent / "sandbox"
 
 for _base in ("claude", "codex", "agy", "bash"):
     _entry = dict(KNOWN_AGENT_PRESETS[_base])
-    _entry["bin"] = _SANDBOX_WRAPPER
-    for _k in _ARGV_KEYS:
-        _entry[_k] = f"--sandbox-agent {_base} " + _entry[_k]
+    _entry["bin"] = str(_SANDBOX_DIR / f"{_base}-in-podman.sh")
     KNOWN_AGENT_PRESETS[f"sandbox-{_base}"] = _entry
 
 # Back-compat: `sandbox` is what the claude-only kit was called, and existing

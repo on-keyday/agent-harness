@@ -33,10 +33,14 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 
 # Consume our own control flags from the arg stream (NOT agent flags, so they
 # must not reach the agent). Pass them via `--agent-arg` / runner `--agent-args`:
-#   --sandbox-agent N   which agent to run: claude (default) | codex | agy | bash.
-#                       An unknown name is a hard error, never a silent fallback
-#                       to claude — a slot that quietly ran the wrong agent would
-#                       look like the right one in every listing.
+#   --sandbox-agent N   which agent to run: claude | codex | agy | bash. Normally
+#                       you do NOT pass this: the agent comes from the name this
+#                       script was invoked as (<agent>-in-podman.sh symlinks),
+#                       which is the only selector every runner launch path
+#                       carries. See "agent selection" below. An unknown name is
+#                       a hard error, never a silent fallback to claude — a slot
+#                       that quietly ran the wrong agent would look like the
+#                       right one in every listing.
 #   --omit-harness-cli  run with NO harness control plane in the container (full
 #                       isolation); default is to bridge harness-cli + HARNESS_* in.
 #   --firewall          apply the iptables+ipset egress allowlist
@@ -57,7 +61,22 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 #                       claude has an image copy. --image-claude is accepted as a
 #                       deprecated alias: it can still appear in a live runner
 #                       slot's recorded --agent-args.
-AGENT=claude
+# Agent selection comes from ARGV[0], not from a flag, and that is load-bearing.
+# The runner builds a fresh interactive launch as bin + args with NO argv
+# template at all (runner/agent_command.go buildInteractiveArgs returns `extra`
+# unchanged when resumeConversation is false), so a selector living in the
+# oneshot/resume templates is simply absent on that path. It was: `session new
+# --agent sandbox-bash` opened Claude Code, with the task row still reading
+# agent=sandbox-bash. The BIN is the one thing every path carries, so the
+# symlink name decides, and --sandbox-agent stays only as a manual override for
+# direct invocation.
+case "$(basename "$0")" in
+  claude-in-podman.sh) AGENT=claude ;;
+  codex-in-podman.sh)  AGENT=codex ;;
+  agy-in-podman.sh)    AGENT=agy ;;
+  bash-in-podman.sh)   AGENT=bash ;;
+  *)                   AGENT=claude ;;   # agent-in-podman.sh itself
+esac
 bridge_cli=1
 firewall=0
 firewall_proxy=0
