@@ -1792,3 +1792,8 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
    than a fact — dashed to say so. */
 .tt-orphan .tt-dot { stroke-dasharray: 2 2; stroke: #d7ba7d; }
 .tt-orphan .tt-label { fill: #d7ba7d; }
+.tt-repo {
+  fill: #7ec8e3;
+  font-size: 10px;
+  text-anchor: middle;
+}

@@ -5850,6 +5850,14 @@ function svgEl(tag, attrs) {
   return el;
 }
 
+// repoBasename is the last path segment of a repo path, for labels too narrow
+// to carry the whole thing. Handles both separators: runners on Windows report
+// backslash paths, and this runs in the operator's browser, not on that host.
+function repoBasename(p) {
+  const cut = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return cut >= 0 ? p.slice(cut + 1) || p : p;
+}
+
 // renderTaskTreeGraph draws the creator hierarchy as a node-link diagram into
 // #task-tree-graph, or hides the panel when the toggle is off.
 //
@@ -5881,20 +5889,23 @@ function renderTaskTreeGraph(nodes, tasks, statusColor) {
   }
 
   const COL_W = 132;   // horizontal slot; wide enough for an 8-hex label
-  const ROW_H = 74;
-  const PAD_X = 70, PAD_Y = 34;
+  const ROW_H = 88;   // three label lines per node (id / status+agent / repo)
+  // Asymmetric vertical padding: a node's labels sit ABOVE it (id) and BELOW
+  // it (status, repo), and the lowest one reaches R+26. Equal padding clipped
+  // the bottom row's repo against the panel edge.
+  const PAD_X = 70, PAD_TOP = 34, PAD_BOTTOM = 46;
   const R = 9;
 
   const byID = new Map((tasks || []).map((t) => [t.id, t]));
   const pos = new Map();
   let maxCol = 0, maxDepth = 0;
   for (const n of nodes) {
-    pos.set(n.id, { x: PAD_X + n.col * COL_W, y: PAD_Y + n.depth * ROW_H });
+    pos.set(n.id, { x: PAD_X + n.col * COL_W, y: PAD_TOP + n.depth * ROW_H });
     if (n.col > maxCol) maxCol = n.col;
     if (n.depth > maxDepth) maxDepth = n.depth;
   }
   const W = PAD_X * 2 + maxCol * COL_W;
-  const H = PAD_Y * 2 + maxDepth * ROW_H;
+  const H = PAD_TOP + PAD_BOTTOM + maxDepth * ROW_H;
 
   host.innerHTML = "";
   const svg = svgEl("svg", {
@@ -5938,6 +5949,16 @@ function renderTaskTreeGraph(nodes, tasks, statusColor) {
     const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
     sub.textContent = t ? `${t.status}${t.agentProfile ? " " + t.agentProfile : ""}` : "(gone)";
     g.appendChild(sub);
+
+    // Which repo the task belongs to. The fleet serves several, and without
+    // this a subtree is a set of ids with no idea what they are working on.
+    // Basename only — a full path is far wider than a node's slot, and the
+    // tooltip already carries it.
+    if (t && t.repoPath) {
+        const repo = svgEl("text", { class: "tt-repo", y: R + 26 });
+        repo.textContent = repoBasename(t.repoPath);
+        g.appendChild(repo);
+    }
 
     const title = svgEl("title", {});
     title.textContent = t
