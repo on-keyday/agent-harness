@@ -167,8 +167,20 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 
-	if *style || *colorOut {
-		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond, *style, *colorOut)
+	return printSessionScreen(ctx, c, taskIDHex, uint16(*rows), uint16(*cols),
+		time.Duration(*settleMs)*time.Millisecond, *style, *colorOut)
+}
+
+// printSessionScreen renders taskIDHex's current screen to stdout — plain, or
+// followed by the attribute/color span report when asked.
+//
+// Shared by `session snapshot` and `session send --snapshot` so the two cannot
+// drift into two renderings of the same screen. `--raw` deliberately stays with
+// snapshot alone: it bypasses the VT render entirely and emits replay BYTES,
+// which is a different artifact, not a formatting option.
+func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, rows, cols uint16, settle time.Duration, withAttrs, withColor bool) error {
+	if withAttrs || withColor {
+		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, rows, cols, settle, withAttrs, withColor)
 		if err != nil {
 			return err
 		}
@@ -178,7 +190,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		return nil
 	}
 
-	snap, err := c.SessionSnapshot(ctx, taskIDHex, uint16(*rows), uint16(*cols), time.Duration(*settleMs)*time.Millisecond)
+	snap, err := c.SessionSnapshot(ctx, taskIDHex, rows, cols, settle)
 	if err != nil {
 		return err
 	}
@@ -341,24 +353,57 @@ func runSessionAttach(cid objproto.ConnectionID, args []string) error {
 }
 
 // runSessionSend injects input into a session via a co-writer attach
-// (non-takeover, no size authority). Pair with `session snapshot` to drive a
-// session statelessly: send keystrokes, then snapshot to read the result.
+// (non-takeover, no size authority). --snapshot renders the resulting screen in
+// the same call, which is the whole drive loop — send keystrokes, read what the
+// program made of them — without a second dial or a guessed sleep.
 func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	fs := flag.NewFlagSet("session send", flag.ExitOnError)
 	enter := fs.Bool("enter", false, "append a carriage return (Enter) after the text")
 	interp := fs.Bool("e", false, `interpret backslash escapes (\n \r \t \e \xHH \\)`)
 	flushMs := fs.Uint("flush-ms", 400, "ms to let the input drain to the runner before detaching")
 	quiet := fs.Bool("quiet", false, "suppress the one-line summary of what was sent (stderr)")
+	// send→snapshot is the documented way to drive a non-shell foreground, and
+	// running it as two commands means two dials and a guessed sleep between
+	// them. --snapshot folds the read into this invocation on the SAME client:
+	// send, let the input drain, then view-attach and render.
+	//
+	// Opt-in, because `send` writes nothing to stdout today (its summary goes
+	// to stderr) and a caller piping it must keep getting that.
+	snapshot := fs.Bool("snapshot", false, "after sending, render the session's screen to stdout — the same view-attach render `session snapshot` prints")
+	rows := fs.Uint("rows", 40, "with --snapshot: fallback rows when the session reports no size (sizes the offscreen renderer only, never the PTY)")
+	cols := fs.Uint("cols", 120, "with --snapshot: fallback cols when the session reports no size (sizes the offscreen renderer only, never the PTY)")
+	settleMs := fs.Uint("settle-ms", 1500, "with --snapshot: ms to collect output before rendering — the window the program has to react to what was just sent")
+	style := fs.Bool("style", false, "with --snapshot: also print attribute spans (faint/bold/reverse/...) — the plain render drops SGR, so a faint placeholder reads like real typed text and WHICH ROW IS SELECTED is invisible without this")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// A snapshot-only flag given without --snapshot has no effect, so refuse
+	// rather than ignore it: a typed option that silently does nothing is the
+	// failure mode this repo keeps re-fixing. fs.Visit reports only the flags
+	// actually given, which is what distinguishes "left at the default 40"
+	// from "asked for 40".
+	if !*snapshot {
+		var stray []string
+		fs.Visit(func(f *flag.Flag) {
+			switch f.Name {
+			case "rows", "cols", "settle-ms", "style":
+				stray = append(stray, "--"+f.Name)
+			}
+		})
+		if len(stray) > 0 {
+			return fmt.Errorf("session send: %s take effect only with --snapshot", strings.Join(stray, ", "))
+		}
+	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] <id> <text>...
-  -enter  append a carriage return, i.e. actually SUBMIT the line
-  -e      interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
-          -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
-          without -enter the text is typed onto the prompt and just sits there.
-  -quiet  suppress the one-line summary of what was sent (stderr)
+		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style]] <id> <text>...
+  -enter     append a carriage return, i.e. actually SUBMIT the line
+  -e         interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
+             -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
+             without -enter the text is typed onto the prompt and just sits there.
+  -quiet     suppress the one-line summary of what was sent (stderr)
+  --snapshot after sending, render the screen to stdout (send + session snapshot
+             in one call, one dial). --rows/--cols/--settle-ms/--style mean what
+             they mean on ` + "`session snapshot`" + ` and require --snapshot.
 flags must precede <id>; everything after <id> is joined with spaces and sent
 literally (ssh-style), so multi-word text needs no quoting. Quote it as one
 argument to preserve exact whitespace.`)
@@ -402,6 +447,18 @@ argument to preserve exact whitespace.`)
 	// completely silently — the text lands on the prompt and sits there, and a
 	// later snapshot renders it echoed on the input line, which reads exactly
 	// like it ran. -quiet drops it for callers that only want the exit code.
+	// The summary goes to stderr and the screen to stdout, so a caller can pipe
+	// one without the other — and --quiet composes with --snapshot rather than
+	// suppressing it.
+	if *snapshot {
+		// withColor stays false: `session snapshot --color` remains the route
+		// for the verbose per-cell colour report, which is not what a
+		// did-my-keystroke-land check wants.
+		if err := printSessionScreen(ctx, c, taskIDHex, uint16(*rows), uint16(*cols),
+			time.Duration(*settleMs)*time.Millisecond, *style, false); err != nil {
+			return err
+		}
+	}
 	if *quiet {
 		return nil
 	}

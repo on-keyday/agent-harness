@@ -52,7 +52,21 @@ Get `<id>` from `harness-cli session ls` (interactive sessions) or `ls`
 
 ## The drive loop (send → snapshot → assert)
 
-Poll for the expected render instead of guessing a sleep:
+For a single step, `--snapshot` does both halves in one call — it sends, lets
+the input drain, then renders the screen to stdout (the summary stays on
+stderr, so a pipe gets only the screen):
+
+```bash
+harness-cli session send -enter --snapshot "$ID" 'echo pong-$RANDOM'
+harness-cli session send -e --snapshot --style "$ID" '\x1b[B'   # ↓, then look
+```
+
+`--settle-ms` (default 1500) is the window the program gets to react before the
+render; `--rows/--cols/--style` mean what they mean on `session snapshot`, and
+all four are refused without `--snapshot` rather than silently ignored.
+
+When you are waiting for something rather than reading one result, poll for the
+expected render instead of guessing a sleep:
 
 ```bash
 harness-cli session send -enter "$ID" ./mytui
@@ -132,7 +146,7 @@ a session already running whose agent is a shell, `session exec <id> 'stty rows
   rows, so a grep can miss it. For greppable logical lines use `exec` (below)
   or `--raw`.
 
-### `session send [-enter] [-e] [--flush-ms MS] <id> <text>...`
+### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style]] <id> <text>...`
 
 Injects keystrokes via a `cowrite` attach. **Flags go BEFORE `<id>`;
 everything after `<id>` is the text**, joined ssh-style
@@ -140,6 +154,12 @@ everything after `<id>` is the text**, joined ssh-style
 needed; quote as one argument to preserve exact whitespace). A `-enter` placed
 AFTER the text is taken as literal text — you will see it *typed* in the
 snapshot instead of submitting.
+
+`--snapshot` renders the screen after sending, on the same connection: one call
+instead of send + snapshot + a guessed sleep. The screen goes to **stdout** and
+the "N bytes sent" summary to **stderr**, so a pipe gets only the screen, and
+`-quiet` (which drops that summary) composes with it. The four snapshot-only
+flags are refused without `--snapshot` instead of being ignored.
 
 ### `session exec [--timeout D] [--json] [--exit-only] [--raw] <id> <cmd>...`
 
