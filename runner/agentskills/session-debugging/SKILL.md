@@ -88,16 +88,13 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
   too.
 - **Give an agent TUI its Enter in a SECOND call.** Whether a CR arriving in
   the same burst as the text submits is the foreground program's decision, not
-  the harness's — the harness is a byte pipe and neither inspects nor alters
-  it — and it has been observed BOTH WAYS in the same agent across versions:
-  codex leaves the text sitting in its input box (verified live); claude did
-  the same when this was written and, as of 2026-08-19, submits it (idle: the
-  turn starts; mid-turn: it queues and runs when the turn ends). Do not
-  memorise which — the two-call form is correct under either, and needs no
-  re-verifying after an agent upgrade: `send <id> <text>` (no `-enter`),
-  snapshot to confirm the text is in the box, then `send -e <id> '\r'`
-  separately. Plain shells and classic line-editors are fine with `-enter` in
-  one call.
+  the harness's — the harness is a byte pipe that neither inspects nor alters
+  it. It differs between agents, and it has changed between versions of the
+  same agent, so there is nothing here worth learning as a fact: the two-call
+  form is correct either way and survives the next upgrade. `send <id> <text>`
+  (no `-enter`), snapshot to confirm the text is in the box, then
+  `send -e <id> '\r'` separately. Plain shells and classic line-editors are
+  fine with `-enter` in one call.
 - **One call per keypress in a TUI.** Printable runes that arrive in a single
   write are delivered to the program as ONE key event, so `send <id> 'jjj'`
   reaches a TUI as the single key `"jjj"`, which matches no binding: the cursor
