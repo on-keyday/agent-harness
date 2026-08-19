@@ -12,12 +12,12 @@ import (
 	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
-// previewSlot is one live pane's view stream plus a generation guard, so a
+// previewSlot is one live pane's stream plus a generation guard, so a
 // superseded StartPreview (or a StopPreview) makes the old pump exit
 // silently. Panes are keyed by an opaque paneKey string chosen by the JS
-// side, so N panes can each hold an independent read-only view stream over
-// the one shared client — the single preview the WebUI has today is just
-// one pane keyed "preview".
+// side, so N panes can each hold an independent cowrite stream over the one
+// shared client — the single preview the WebUI has today is just one pane
+// keyed "preview".
 //
 // previewGen mirrors the interactiveGen pattern, but is shared across ALL
 // panes rather than per-pane: every Start/Stop of any pane reserves the
@@ -39,17 +39,31 @@ type previewSlot struct {
 	gen    uint64
 }
 
-// StartPreview view-attaches taskIDHex read-only and pumps its output to
-// the JS hooks tagged with paneKey. Any previous preview stream for
-// paneKey is superseded and closed first. The attach uses
-// AttachMode_View, so it never takes over the session's controlling
-// client.
-// gridPreviewReplayLimit caps a grid pane's replay the same way the TUI does —
-// a pane shows a small crop, not the full ~1 MiB ring. The single preview
-// (cowrite=false) keeps the full replay (limit 0).
-const gridPreviewReplayLimit = 128 * 1024
+// GridPaneReplayLimit caps a grid pane's replay the same way the TUI does — a
+// pane shows a small crop, not the full ~1 MiB ring. The single preview passes
+// 0 (uncapped): it is a full-size terminal, and the scrollback is the point.
+//
+// This is the ONLY difference left between the two kinds of pane. It used to
+// ride on the same boolean as the attach mode, so making the single preview
+// typable would silently have shrunk its scrollback to 128 KiB as well — two
+// unrelated properties welded to one flag.
+const GridPaneReplayLimit = 128 * 1024
 
-func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string, cowrite bool) error {
+// StartPreview cowrite-attaches taskIDHex and pumps its output to the JS hooks
+// tagged with paneKey. Any previous preview stream for paneKey is superseded
+// and closed first.
+//
+// AttachMode_Cowrite observes output exactly like a viewer and additionally
+// accepts input; it does NOT take over the session's controlling client and
+// carries no size authority (the server drops a cowriter's winsize frames,
+// session_mux.go forwardCowriterFrames). So every pane — grid cell and single
+// preview alike — can be typed into without disturbing whoever is driving,
+// which is why the read-only variant is gone: a preview you cannot type into
+// looked identical to one you could, and the only feedback was the keystroke
+// vanishing.
+//
+// replayLimit caps the replayed ring (0 = uncapped); see GridPaneReplayLimit.
+func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string, replayLimit uint32) error {
 	// Reserve a generation BEFORE the RPC: a StopPreview (modal close) or a
 	// newer StartPreview for this paneKey that lands while our attach is
 	// still in flight supersedes us, and we discard our stream instead of
@@ -65,15 +79,7 @@ func (c *Client) StartPreview(ctx context.Context, paneKey, taskIDHex string, co
 		_ = old.stream.Close()
 	}
 
-	// Cowrite (grid panes) observes output like a viewer AND can forward input;
-	// view (single preview) is read-only. Grid panes also cap the replay.
-	mode := protocol.AttachMode_View
-	var replayLimit uint32
-	if cowrite {
-		mode = protocol.AttachMode_Cowrite
-		replayLimit = gridPreviewReplayLimit
-	}
-	st, _, err := c.attachSessionRPC(ctx, taskIDHex, mode, replayLimit)
+	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_Cowrite, replayLimit)
 	if err != nil {
 		return err
 	}
@@ -110,8 +116,8 @@ func StopPreview(paneKey string) {
 }
 
 // SendPreviewInput forwards raw bytes (a key's xterm data) to paneKey's session
-// over its cowrite stream. No-op if the pane has no stream, or was attached
-// read-only (view) — a view stream's input is discarded by the server anyway.
+// over its cowrite stream. No-op if the pane has no stream — a keystroke racing
+// teardown is dropped rather than written to a closed stream.
 func SendPreviewInput(paneKey string, data []byte) {
 	previewMu.Lock()
 	slot := previewSlots[paneKey]
@@ -126,7 +132,7 @@ func SendPreviewInput(paneKey string, data []byte) {
 	_, _ = s.Stdin().Write(data)
 }
 
-// previewPump reads paneKey's view stream and forwards it to the JS hooks.
+// previewPump reads paneKey's stream and forwards it to the JS hooks.
 // The size control frame the server replays ahead of the ring is parsed by
 // the CommandExecutionStream demux before the first Stdout bytes become
 // readable, so LastWindowSize at the first successful read is the

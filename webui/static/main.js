@@ -2318,7 +2318,7 @@ const POLL_INTERVAL_MS = 5000;
             "  cancel <task-id>          cancel a task",
             "  set-parent <task-id> (--parent <id> | --none | --swap)",
             "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
-            "  preview <task-id>         live read-only screen preview of a session (⏸/▶ pause-resume)",
+            "  preview <task-id>         live screen preview of a session — click it to type (⏸/▶ pause-resume)",
             "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
             "  grid --under <task-id> [--descendants]",
             "                            that task's working set: its subtree PLUS the tasks its own scope names (ids:);",
@@ -3254,16 +3254,17 @@ const POLL_INTERVAL_MS = 5000;
 
   document.getElementById("reattach").addEventListener("click", () => reattachTo(taskIdInput.value.trim()));
 
-  // --- Session preview: LIVE read-only view of interactive session(s). A
-  //     view-mode attach stream stays open per pane while shown; bytes flow
+  // --- Session preview: LIVE view of interactive session(s), typable. A
+  //     cowrite attach stream stays open per pane while shown; bytes flow
   //     into a throwaway xterm sized to the session's real grid and
   //     CSS-scaled to fit. ⏸ pauses by CLOSING the stream (the frozen frame
   //     stays; zero load while paused); ▶ re-attaches — the server's ring
   //     replay reconstructs the current screen, so resume jumps to now.
-  //     Closing disconnects immediately. View mode never takes over the
-  //     controlling client, and each stream is independent of the main
-  //     terminal's singleton, so peeking is always safe — including at the
-  //     session currently attached here.
+  //     Closing disconnects immediately. A cowrite attach never takes over
+  //     the controlling client and carries no size authority, and each stream
+  //     is independent of the main terminal's singleton, so peeking is always
+  //     safe — including at the session currently attached here — while
+  //     click-to-focus still lets you type into what you are watching.
   //
   //     previewPanes is a registry of every live pane, keyed by an opaque
   //     paneKey that matches the wasm side's previewSlots map
@@ -3319,11 +3320,12 @@ const POLL_INTERVAL_MS = 5000;
   // original's immediate ⏸-available feedback.
   async function startPane(key, p) {
     const epoch = ++p.epoch;
+    p.pausedNote = null; // a fresh stream invalidates the "paused" hint
     disposePaneTerm(p);
     const note = paneNote(p, "connecting…");
     p.live = true;
     try {
-      await window.harness.previewStart(key, p.taskId, !!p.cowrite);
+      await window.harness.previewStart(key, p.taskId, !!p.capReplay);
     } catch (e) {
       // Guard against a stale continuation: teardown paths (stopPane /
       // teardownGridPanes / dismissPane) flip p.live off and stop the wasm
@@ -3396,25 +3398,31 @@ const POLL_INTERVAL_MS = 5000;
     p.scaleBox = scaleBox;
     p.term = new Terminal({
       cols, rows,
-      // A cowrite pane (session grid) accepts keystrokes when focused; the
-      // single session preview stays strictly read-only. xterm fires onData
-      // only for the focused terminal, so click/tap-to-focus routes typing to
-      // exactly one pane — no explicit focus bookkeeping needed.
-      disableStdin: !p.cowrite,
+      // EVERY pane accepts keystrokes when focused — grid cell and single
+      // preview alike. The preview used to be read-only, which looked
+      // identical to a typable one: you clicked in, typed, and the keys went
+      // nowhere with no feedback at all. xterm fires onData only for the
+      // focused terminal, so click/tap-to-focus routes typing to exactly one
+      // pane — no explicit focus bookkeeping needed.
+      disableStdin: false,
       convertEol: true,  // match the main terminal so the stream renders identically
       fontSize: PANE_FONT_BASE,
       fontFamily: '"Cascadia Mono", "JetBrains Mono", "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, "Courier New", monospace',
     });
     p.term.open(termBox);
-    if (p.cowrite) {
-      // Forward this pane's keystrokes to its session over the cowrite stream.
-      // Guarded by p.live so a keystroke racing teardown is dropped rather than
-      // sent to a stopped stream (the wasm side additionally no-ops an unknown
-      // paneKey). The pane claims no size authority, so no resize is forwarded.
-      p.term.onData((data) => {
-        if (p.live) window.harness.previewInput(p.key, data);
-      });
-    }
+    // Forward this pane's keystrokes to its session over the cowrite stream.
+    // Guarded by p.live so a keystroke racing teardown is dropped rather than
+    // sent to a stopped stream (the wasm side additionally no-ops an unknown
+    // paneKey). The pane claims no size authority, so no resize is forwarded.
+    //
+    // Typing into a PAUSED pane says so instead of vanishing: ⏸ closes the
+    // stream, so there is nothing to write to, and silently swallowing the
+    // keystroke is the same failure the read-only preview had.
+    p.term.onData((data) => {
+      if (p.live) { window.harness.previewInput(p.key, data); return; }
+      if (p.pausedNote) return; // already said it; don't stack notes per key
+      p.pausedNote = paneNote(p, "一時停止中 — ▶ で再開すると入力できます");
+    });
     p.onResize = () => fitPaneScale(p);
     p.onResize();
   }
@@ -3502,13 +3510,16 @@ const POLL_INTERVAL_MS = 5000;
   // its pane under the fixed key "preview".
   function openSessionPreview(id) {
     const key = "preview";
-    sessionPreviewTitle.textContent = `🔍 ${id.slice(0, 12)}…`;
+    // The hint rides in the title because the affordance is invisible
+    // otherwise: a pane you can type into looks exactly like one you cannot,
+    // and the previous read-only version taught exactly the wrong reflex.
+    sessionPreviewTitle.textContent = `🔍 ${id.slice(0, 12)}… · クリックで入力`;
     const p = {
       taskId: id, live: false, epoch: 0, term: null,
       bodyEl: sessionPreviewBody, scaleBox: null, spacer: null, noteEl: null,
       onResize: null,
       onClosed: () => setPreviewPauseLabel(),
-      key, cowrite: false, // single preview is strictly read-only (view attach)
+      key, capReplay: false, // full-size terminal: keep the whole scrollback
     };
     previewPanes.set(key, p);
     if (!sessionPreviewModal.open) sessionPreviewModal.showModal();
@@ -3643,7 +3654,7 @@ const POLL_INTERVAL_MS = 5000;
         taskId: id, live: false, epoch: 0, term: null,
         bodyEl: body, scaleBox: null, spacer: null, noteEl: null,
         onResize: null, onClosed: null,
-        key, cowrite: true, // grid cells forward keystrokes (click-to-focus)
+        key, capReplay: true, // small crop: 128 KiB of replay is plenty
       };
       previewPanes.set(key, p);
       gridKeys.push(key);

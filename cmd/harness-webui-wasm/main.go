@@ -1741,13 +1741,13 @@ func harnessAttachSession(this js.Value, args []js.Value) any {
 // their first argument — until harness.previewStop(paneKey) or a fresh
 // previewStart for the same paneKey supersedes it.
 //
-// The optional third argument selects the attach mode: cowrite=true
-// (AttachMode_Cowrite) lets the pane forward keystrokes via
-// harness.previewInput (the session grid's per-cell typing); cowrite falsey
-// (AttachMode_View) is strictly read-only (the single session preview). Both
-// are non-takeover and claim no size authority.
+// EVERY pane cowrite-attaches, so any of them can be typed into via
+// harness.previewInput — non-takeover, no size authority. The optional third
+// argument is not a mode: capReplay=true caps the replayed ring at
+// cli.GridPaneReplayLimit, which the grid's small crops want and the full-size
+// single preview does not (its scrollback is the point).
 //
-//	harness.previewStart(paneKey, taskIDHex, cowrite?) -> Promise<taskIDHex>
+//	harness.previewStart(paneKey, taskIDHex, capReplay?) -> Promise<taskIDHex>
 func harnessPreviewStart(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
@@ -1764,8 +1764,11 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 			}
 			paneKey := args[0].String()
 			taskID := args[1].String()
-			cowrite := len(args) >= 3 && args[2].Truthy()
-			if err := c.StartPreview(rootCtx, paneKey, taskID, cowrite); err != nil {
+			var replayLimit uint32
+			if len(args) >= 3 && args[2].Truthy() {
+				replayLimit = cli.GridPaneReplayLimit
+			}
+			if err := c.StartPreview(rootCtx, paneKey, taskID, replayLimit); err != nil {
 				rejectErr(reject, err)
 				return
 			}
@@ -1777,9 +1780,9 @@ func harnessPreviewStart(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessPreviewInput forwards a focused grid pane's keystrokes to its session
-// over the pane's cowrite stream. No-op for a read-only (view) pane — the
-// server discards a viewer's input — or an unknown/closed paneKey. Synchronous
+// harnessPreviewInput forwards a focused pane's keystrokes to its session over
+// the pane's cowrite stream — grid cell or single preview alike. No-op for an
+// unknown/closed paneKey. Synchronous
 // and panic-safe (a missing arg is a no-op, not a wasm-crashing args[i] panic),
 // matching harnessPreviewStop.
 //

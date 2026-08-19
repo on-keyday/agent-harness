@@ -123,3 +123,44 @@ e. Stream-death path: kill the sandbox session (cancel/exit bash) with the
    modal open → "(ストリーム終了)" note + ▶ state; ▶ shows the attach error
    in the pane.
 f. 390px layout still renders as the fullscreen sheet with the live term.
+
+## Amendment 2026-08-19 — the preview is typable
+
+**"Preview stays read-only" (Decisions taken) is withdrawn.** The reasoning
+there — "taking input is what ↪ Reattach is for" — predates the session grid,
+whose cells cowrite-attach and have run that way without disturbing anyone.
+
+The failure it produced is the one a mode you cannot see always produces: you
+open the preview, click into it, type, and nothing happens. No error, no hint,
+no echo — a read-only pane and a typable one are pixel-identical, and the only
+feedback was the keystroke vanishing. Reattaching to fix a one-line typo also
+takes over the session, which is exactly what the preview exists to avoid.
+
+So EVERY pane cowrite-attaches now, grid cell and single preview alike:
+
+- `AttachMode_Cowrite` observes output exactly as a viewer does and
+  additionally accepts input. It does not take over the controlling client and
+  claims no size authority (the server drops a cowriter's winsize frames,
+  `session_mux.go` `forwardCowriterFrames`), so the property the read-only rule
+  was protecting — peeking never disturbs the session — is unchanged.
+- There is no view/cowrite toggle. A mode the operator has to notice is what
+  broke; the fix is to remove the mode, not to label it.
+- **The replay cap is now its own argument.** It used to ride on the same
+  boolean as the attach mode: grid panes capped the replayed ring at 128 KiB
+  (a small crop needs no more) while the single preview kept it uncapped.
+  Flipping the preview to cowrite would silently have shrunk its scrollback
+  too — two unrelated properties welded to one flag. `StartPreview` now takes
+  `replayLimit uint32`, and `harness.previewStart(paneKey, taskID, capReplay?)`
+  says which kind of pane is asking.
+- Typing into a PAUSED pane says `一時停止中 — ▶ で再開すると入力できます` once,
+  instead of dropping the keystroke: ⏸ closes the stream, so there is nothing
+  to write to, and a silent swallow there is the same defect in a new place.
+- The modal title carries `· クリックで入力`, because an affordance with no
+  visible sign is how the original problem was learned in the first place.
+
+Verification: (g) with the modal open, click the pane, type `echo <nonce>` and
+Enter — the shell runs it, confirmed OUT OF BAND via `harness-cli session
+snapshot` rather than from the preview's own render; (h) ⏸ then a keystroke
+shows the paused note and sends nothing, ▶ clears the note and typing works
+again; (i) a grid cell still types after the signature change; (j) desktop and
+390px.
