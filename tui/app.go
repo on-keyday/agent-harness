@@ -1684,44 +1684,26 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// split). Reuses the long-lived client (no fresh dial) and never
 		// sends a PTY size (the grid has no size authority).
 		if a.focus != focusCmdline && !logsEditing && msg.String() == mainKeys.Grid {
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("grid: not connected"))
-				return a, nil
-			}
-			a.grid.Open(a.appCtx, a.client, a.visibleTasks(), "")
-			a.grid.SetSize(a.width, a.height)
-			return a, gridTick()
+			return a, a.openGrid(cli.GridAll, "", nil)
 		}
-		// `z` opens the same grid narrowed to the SELECTED task's subtree —
-		// itself plus every task it spawned, transitively. It is the answer to
-		// "show me just this worker's crew" once the fleet holds more sessions
-		// than a page. The narrowing is cli.TaskSubtree, the same filter behind
-		// the WebUI's per-task button, so the two surfaces cannot disagree
-		// about who is whose child.
-		//
-		// It refuses on an empty result instead of opening: a full-screen
-		// overlay that says "nothing here" costs the operator a keystroke to
-		// escape and tells them less than the one line below does.
-		if a.focus == focusTasks && !logsEditing && msg.String() == mainKeys.GridSubtree {
-			if a.client == nil {
-				a.cmdresult.Append(WarnStyle.Render("grid: not connected"))
-				return a, nil
+		// `z` / `Z` open the same grid narrowed to the SELECTED task's subtree —
+		// itself plus every task it spawned (z), or only what it spawned (Z),
+		// for when that one session is already on screen in another terminal
+		// and its workers are what is missing. Both narrow through cli.GridSet,
+		// the same call behind the `grid` verb and the WebUI's button, so no
+		// two surfaces can disagree about who is whose child.
+		if a.focus == focusTasks && !logsEditing &&
+			(msg.String() == mainKeys.GridSubtree || msg.String() == mainKeys.GridDescendants) {
+			mode := cli.GridSubtree
+			if msg.String() == mainKeys.GridDescendants {
+				mode = cli.GridDescendants
 			}
 			anchor := a.tasks.SelectedID()
 			if anchor == "" {
 				a.cmdresult.Append(WarnStyle.Render("grid: no task selected"))
 				return a, nil
 			}
-			sub := cli.TaskSubtree(a.visibleTasks(), anchor)
-			if n := len(gridLiveTasks(sub)); n == 0 {
-				a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf(
-					"grid: no live interactive session under %s (self + %d descendant(s))",
-					shortTaskID(anchor), len(sub)-1)))
-				return a, nil
-			}
-			a.grid.Open(a.appCtx, a.client, sub, anchor)
-			a.grid.SetSize(a.width, a.height)
-			return a, gridTick()
+			return a, a.openGrid(mode, anchor, nil)
 		}
 		// `O` (capital) opens the agentboard topics view. Fetches the topic
 		// list on open via DoBoardTopics (long-lived client, no new dial).
@@ -2351,6 +2333,35 @@ func (a *App) refreshTasksTable() {
 	a.tasks.SetRows(all, a.runnersSnapshot)
 }
 
+// openGrid is the ONE way this TUI opens the session viewer: the keys and the
+// `grid` verb both land here, so the set, its label and the refusal wording
+// cannot drift between them.
+//
+// It refuses on an empty result rather than opening. A full-screen overlay
+// reading "nothing here" costs a keystroke to escape and says less than the
+// line this appends — and the two counts are the useful part: a scope holding
+// four tasks none of which is watchable is a different situation from a scope
+// holding none.
+func (a *App) openGrid(mode cli.GridScopeMode, anchor string, ids []string) tea.Cmd {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("grid: not connected"))
+		return nil
+	}
+	set, label, err := cli.GridSet(a.visibleTasks(), mode, anchor, ids)
+	if err != nil {
+		a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+		return nil
+	}
+	if n := len(gridLiveTasks(set)); n == 0 {
+		a.cmdresult.Append(WarnStyle.Render(fmt.Sprintf(
+			"grid %s: no live interactive session in this set (%d task(s) in it)", label, len(set))))
+		return nil
+	}
+	a.grid.Open(a.appCtx, a.client, set, label)
+	a.grid.SetSize(a.width, a.height)
+	return gridTick()
+}
+
 // visibleTasks is the operator's current task set as a slice. tasksByID is the
 // store; everything that filters, tiles or walks the creator tree wants a
 // slice, and each of those sites building its own was how the grid's input and
@@ -2454,6 +2465,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("session ls                  - list detachable sessions")
 		a.cmdresult.Append("session kill <id>           - terminate a session")
 		a.cmdresult.Append("session await-idle <id> [--threshold-ms N] [--notify | --topic T] - fire when the session's output goes idle (default: result line here; --notify: operator notification)")
+		a.cmdresult.Append("grid [<task-id>...]         - live session viewer over exactly these tasks (also: g for all, z/Z for the selected task's subtree)")
+		a.cmdresult.Append("grid --under <id> [--descendants] - that task's working set: its subtree PLUS the tasks its own scope names (ids:); --descendants leaves the task itself out")
 		a.cmdresult.Append("git <task-id> log [--max N] [-- <path>]            - the task's commits (also: tasks-pane G)")
 		a.cmdresult.Append("git <task-id> diff [--staged] [<base>] [<target>] [-- <path>] - revisions counted as git counts them: none=unstaged, one=<base> vs working tree, two=commit vs commit")
 		a.cmdresult.Append("git <task-id> show [<rev>] [-- <path>]             - one commit and its diff")
@@ -2635,6 +2648,29 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		// the session actually goes idle. The cmd goroutine carries it; the
 		// UI stays fully interactive meanwhile.
 		return a, DoAwaitIdle(a.appCtx, a.client, full, v.ThresholdMs, sink, v.Topic)
+	case GridAction:
+		// Prefixes are resolved HERE, before the set is built: cli.GridSet
+		// compares full ids, and a half-typed one must be reported as
+		// ambiguous rather than silently matching nothing.
+		anchor := ""
+		if v.Anchor != "" {
+			full, errStr := a.resolveTaskIDPrefix(v.Anchor)
+			if errStr != "" {
+				a.cmdresult.Append(ErrorStyle.Render("grid: " + errStr))
+				return a, nil
+			}
+			anchor = full
+		}
+		var ids []string
+		for _, p := range v.IDs {
+			full, errStr := a.resolveTaskIDPrefix(p)
+			if errStr != "" {
+				a.cmdresult.Append(ErrorStyle.Render("grid: " + errStr))
+				return a, nil
+			}
+			ids = append(ids, full)
+		}
+		return a, a.openGrid(v.Mode, anchor, ids)
 	case GitAction:
 		full, errStr := a.resolveTaskIDPrefix(v.TaskID)
 		if errStr != "" {

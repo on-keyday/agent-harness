@@ -415,7 +415,7 @@ const POLL_INTERVAL_MS = 5000;
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
     if (!ids.length) { appendCmdOutput("grid: no sessions selected", true); return; }
-    openSessionGrid(ids, "");
+    openSessionGrid(ids, "all");
   });
   gridAllOn.addEventListener("click", () => { gridExcluded.clear(); renderTaskList(lastTasks); });
   gridAllOff.addEventListener("click", () => {
@@ -2168,17 +2168,21 @@ const POLL_INTERVAL_MS = 5000;
           out = `preview ${tokens[1].slice(0, 12)}…`;
           break;
         case "grid": {
-          // grid [--under <task-id>] [id...] — flags before positionals, as in
-          // the file verbs. --under narrows to one task's subtree (the ▦ button
-          // in a task sheet); bare ids stay an EXPLICIT list and are never
-          // expanded into their subtrees, matching `--scope ids:` which also
-          // names tasks one at a time. No ids at all = every included live
-          // interactive session (activity-desc, same ordering as the task list).
+          // grid [--under <id> [--descendants]] [id...] — flags before
+          // positionals, as in the file verbs, and the same spellings the TUI's
+          // grid verb takes. --under is a task's WORKING set: its subtree plus
+          // whatever its own scope names individually; --descendants drops the
+          // task itself, for when you are watching that one elsewhere. Bare ids
+          // stay an EXPLICIT list and are never expanded into subtrees, matching
+          // `--scope ids:` which also names tasks one at a time.
           let under = null;
-          const ids = [];
+          let descendants = false;
+          const gridIds = [];
           for (let i = 1; i < tokens.length; i++) {
             const tok = tokens[i];
-            if (tok === "--under") {
+            if (tok === "--descendants") {
+              descendants = true;
+            } else if (tok === "--under") {
               i++;
               if (i >= tokens.length) throw new Error("grid: --under: missing task id");
               under = tokens[i];
@@ -2187,27 +2191,32 @@ const POLL_INTERVAL_MS = 5000;
             } else if (tok.startsWith("-")) {
               throw new Error(`grid: unknown flag ${tok}`);
             } else {
-              ids.push(tok);
+              gridIds.push(tok);
             }
           }
+          // Full 32-hex only, no prefix resolution: same rule as `prune`, so a
+          // mistype misses instead of resolving onto a neighbouring task.
+          const full = (id) => /^[0-9a-fA-F]{32}$/.test(id);
           if (under !== null) {
-            if (ids.length) throw new Error("grid: --under names one subtree — drop the extra ids");
-            // Full 32-hex only, no prefix resolution: same rule as `prune`, so a
-            // mistype misses instead of resolving onto a neighbouring task.
-            if (!/^[0-9a-fA-F]{32}$/.test(under)) {
-              throw new Error("grid: --under needs a full 32-hex task id");
-            }
-            out = await openSubtreeGrid(under);
+            if (gridIds.length) throw new Error("grid: --under names one subtree — drop the extra ids");
+            if (!full(under)) throw new Error("grid: --under needs a full 32-hex task id");
+            out = await openGridSet({ mode: descendants ? "descendants" : "subtree", anchor: under });
             break;
           }
-          let paneIds = ids;
-          if (paneIds.length === 0) {
-            // no explicit ids: the currently-included live sessions (respects
-            // the per-session グリッドに含める toggles), same as the show button.
-            paneIds = (await liveInteractiveIds()).filter((id) => !gridExcluded.has(id));
+          if (descendants) {
+            throw new Error("grid: --descendants needs --under <task-id> to take the descendants OF");
           }
+          if (gridIds.length) {
+            const bad = gridIds.filter((id) => !full(id));
+            if (bad.length) throw new Error(`grid: not a full 32-hex task id: ${bad.join(", ")}`);
+            out = await openGridSet({ mode: "ids", ids: gridIds });
+            break;
+          }
+          // No ids at all: the currently-included live sessions (respects the
+          // per-session グリッドに含める toggles), same as the show button.
+          const paneIds = (await liveInteractiveIds()).filter((id) => !gridExcluded.has(id));
           if (paneIds.length === 0) { out = "grid: no included live interactive sessions"; break; }
-          openSessionGrid(paneIds, "");
+          openSessionGrid(paneIds, "all");
           out = `grid: ${paneIds.length} pane(s)${paneIds.length > 9 ? " (capped at 9)" : ""}`;
           break;
         }
@@ -2311,7 +2320,9 @@ const POLL_INTERVAL_MS = 5000;
             "                            re-point the task's parent link (--none: to root; --swap: invert with its current parent); operator-only",
             "  preview <task-id>         live read-only screen preview of a session (⏸/▶ pause-resume)",
             "  grid [id...]              live monitor grid of sessions (default: all live interactive, cap 9)",
-            "  grid --under <task-id>    same grid narrowed to that task's subtree (itself + every task it spawned)",
+            "  grid --under <task-id> [--descendants]",
+            "                            that task's working set: its subtree PLUS the tasks its own scope names (ids:);",
+            "                            --descendants leaves the task itself out (watching that one elsewhere)",
             "  prune [--before=DUR]      forget terminal tasks older than DUR",
             "  prune [--force] <task-id>...",
             "                            forget specific tasks by id (--force: also active tasks)",
@@ -3574,18 +3585,15 @@ const POLL_INTERVAL_MS = 5000;
       .map((t) => t.id);
   }
 
-  // openSessionGrid tiles ids. anchorId names the task whose subtree the caller
-  // narrowed them to, or "" for the whole visible set — display only (the
-  // narrowing already happened), but the title has to say it: a grid showing
-  // three of eleven sessions with no word about why is indistinguishable from
-  // eight dead ones. "scope: all" is spelled out for the same reason the TUI's
-  // status bar spells it out — a blank reads as "no narrowing", which is what a
-  // narrowed grid missing its label also looks like.
-  function openSessionGrid(ids, anchorId) {
+  // openSessionGrid tiles ids. scopeLabel is cli.GridSet's name for how they
+  // were chosen — display only (the narrowing already happened), but the title
+  // has to carry it: a grid showing three of eleven sessions with no word about
+  // why is indistinguishable from eight dead ones. It falls back to "all" for
+  // the same reason the TUI's status bar spells that out — a blank reads as "no
+  // narrowing", which is what a narrowed grid missing its label also looks like.
+  function openSessionGrid(ids, scopeLabel) {
     if (gridTitle) {
-      gridTitle.textContent = anchorId
-        ? `セッショングリッド (scope: ${anchorId.slice(0, 8)}+desc)`
-        : "セッショングリッド (scope: all)";
+      gridTitle.textContent = `セッショングリッド (scope: ${scopeLabel || "all"})`;
     }
     teardownGridPanes();
     gridBody.replaceChildren();
@@ -3644,42 +3652,39 @@ const POLL_INTERVAL_MS = 5000;
     if (!gridModal.open) gridModal.showModal();
   }
 
-  // openSubtreeGrid narrows the session grid to one task's subtree — the anchor
-  // plus every task it spawned, transitively. Returns the line to report and
-  // never throws: both callers (the task sheet's ▦ button and `grid --under`)
-  // render the outcome the same way, through appendCmdOutput.
+  // openGridSet opens the session grid over the set cli.GridSet picks, and
+  // returns the line to report. It never throws: every caller (the task
+  // sheet's ▦ button, the `grid` command's every form) renders the outcome the
+  // same way, through appendCmdOutput.
   //
-  // Membership is answered by the wasm side (cli.TaskSubtree — the same call
-  // the TUI's `z` makes), so the two surfaces cannot disagree about who is
-  // whose child. WHICH of those tasks is tileable is decided here, by the same
-  // liveInteractiveTasks + gridExcluded pair the show button uses: the subtree
+  // req is {mode, anchor, ids} — see harness.gridSet. The wasm side answers
+  // which TASKS and what the set is called, so the two surfaces cannot disagree
+  // about either. WHICH of those tasks is tileable is decided here, by the same
+  // liveInteractiveTasks + gridExcluded pair the show button uses: the set
   // picks the candidates, the per-session toggles still subtract from them.
   //
   // An empty result opens nothing. A modal that says "no sessions" costs a tap
-  // to dismiss and tells the operator less than this line does.
-  async function openSubtreeGrid(anchorId) {
-    let subIds;
+  // to dismiss and tells the operator less than this line does — including the
+  // two counts, since a set of four tasks none of which is watchable is a
+  // different situation from a set of none.
+  async function openGridSet(req) {
+    let res;
     try {
-      subIds = await window.harness.taskSubtree(anchorId);
+      res = await window.harness.gridSet(req);
     } catch (e) {
       return `grid: ${e.message}`;
     }
-    const inSub = new Set(subIds || []);
-    if (inSub.size === 0) {
-      // Empty, not "everything": a mistyped id must narrow to nothing.
-      return `grid: task ${anchorId.slice(0, 12)}… is not in the current snapshot`;
-    }
+    const inSet = new Set(res.ids || []);
+    const label = res.label || "";
     const ids = liveInteractiveTasks()
-      .filter((t) => inSub.has(t.id) && !gridExcluded.has(t.id))
+      .filter((t) => inSet.has(t.id) && !gridExcluded.has(t.id))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
     if (ids.length === 0) {
-      return `grid: no live interactive session under ${anchorId.slice(0, 12)}…` +
-        ` (self + ${inSub.size - 1} descendant(s))`;
+      return `grid ${label}: no live interactive session in this set (${inSet.size} task(s) in it)`;
     }
-    openSessionGrid(ids, anchorId);
-    return `grid ${anchorId.slice(0, 12)}…+desc: ${ids.length} pane(s)` +
-      (ids.length > 9 ? " (capped at 9)" : "");
+    openSessionGrid(ids, label);
+    return `grid ${label}: ${ids.length} pane(s)` + (ids.length > 9 ? " (capped at 9)" : "");
   }
 
   function dismissPane(key, cell) {
@@ -3984,13 +3989,21 @@ const POLL_INTERVAL_MS = 5000;
       });
     }
 
-    // Subtree grid — NOT gated on this task being a live interactive session.
-    // The useful anchor is often a supervisor that is itself a one-shot, or a
-    // finished parent whose workers are still running; gating this on the row's
-    // own kind would hide the button exactly where it is wanted. An anchor with
-    // nothing tileable under it reports that instead of opening.
+    // Working-set grids — NOT gated on this task being a live interactive
+    // session. The useful anchor is often a supervisor that is itself a
+    // one-shot, or a finished parent whose workers are still running; gating
+    // these on the row's own kind would hide them exactly where they are
+    // wanted. An anchor with nothing tileable under it reports that instead of
+    // opening.
+    //
+    // Two buttons, because the second is not a refinement of the first: it is
+    // for when THIS session is already on screen in another terminal and its
+    // workers are what is missing.
     addItem("▦ この配下をグリッド", "", async () => {
-      appendCmdOutput(await openSubtreeGrid(t.id), true);
+      appendCmdOutput(await openGridSet({ mode: "subtree", anchor: t.id }), true);
+    });
+    addItem("▦ 配下のみ (自分を除く)", "", async () => {
+      appendCmdOutput(await openGridSet({ mode: "descendants", anchor: t.id }), true);
     });
 
     // Resume — finished task's worktree, opened as a fresh interactive session.

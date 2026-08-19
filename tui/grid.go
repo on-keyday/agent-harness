@@ -56,11 +56,12 @@ type GridModel struct {
 	page   int
 	input  bool // input mode: keystrokes go to the focused pane (cowrite)
 	client *cli.Client
-	// anchor is the task whose subtree this grid was narrowed to, "" for the
-	// whole visible set. Display only — the caller has already filtered — but
-	// it is what the status bar reports, because a grid showing four of twelve
-	// sessions with no word about why is indistinguishable from eight dead ones.
-	anchor string
+	// scope is cli.GridSet's label for the set these panes were built from
+	// ("all", "<id8>+desc", "ids×3", …). Display only — the caller has already
+	// filtered — but it is what the status bar reports, because a grid showing
+	// four of twelve sessions with no word about why is indistinguishable from
+	// eight dead ones.
+	scope string
 }
 
 func NewGridModel() GridModel { return GridModel{} }
@@ -135,12 +136,11 @@ func (m GridModel) pageCols() int { return gridCols(m.pageEnd() - m.pageStart())
 // authority (Global Constraint); each PaneStreamer sizes its own emulator to
 // whatever the server replays.
 //
-// anchor names the task whose subtree the caller narrowed tasks to, or "" when
-// tasks is the whole visible set. Narrowing happens in the CALLER
-// (cli.TaskSubtree) rather than here: the pane cap has to apply to the narrowed
-// set, and one filter shared with the WebUI beats a second one hidden in this
-// model.
-func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.TaskInfo, anchor string) {
+// scope is cli.GridSet's label for how tasks was chosen. Both the set and its
+// label come from that one call rather than being re-derived here: the pane cap
+// has to apply to the already-narrowed set, and the WebUI has to be able to
+// print the same words for the same choice.
+func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.TaskInfo, scope string) {
 	live := gridLiveTasks(tasks)
 	if len(live) > gridMaxPanes {
 		live = live[:gridMaxPanes]
@@ -161,7 +161,7 @@ func (m *GridModel) Open(ctx context.Context, c *cli.Client, tasks []protocol.Ta
 	m.focus = 0
 	m.page = 0
 	m.client = c
-	m.anchor = anchor
+	m.scope = scope
 }
 
 // Close stops every pane (idempotent — safe even if some panes already
@@ -175,7 +175,7 @@ func (m *GridModel) Close() {
 	m.focus = 0
 	m.page = 0
 	m.input = false
-	m.anchor = ""
+	m.scope = ""
 }
 
 // attachFocused closes the grid and returns a cmd that attaches the focused
@@ -417,24 +417,16 @@ func (m *GridModel) dismissFocused() {
 	}
 }
 
-// scopeLabel names the set the grid was built from: "all" for every visible
-// live session, or "<id8>+desc" when it was narrowed to one task's subtree.
-//
-// "all" is written out rather than left blank. A blank would read as "no
-// narrowing is in effect", which is exactly what a narrowed grid missing its
-// label also looks like — and the difference between "eight sessions" and
-// "eight of twenty" is the whole point of the bar.
+// scopeLabel is what the bar prints for the set on screen. It falls back to
+// "all" rather than to a blank: a blank would read as "no narrowing is in
+// effect", which is exactly what a narrowed grid missing its label also looks
+// like — and the difference between "eight sessions" and "eight of twenty" is
+// the whole point of the bar.
 func (m GridModel) scopeLabel() string {
-	if m.anchor == "" {
-		return "all"
+	if m.scope == "" {
+		return string(cli.GridAll)
 	}
-	// 8 hex, matching the pane headers and the tree gutter's `by=` — a reader
-	// comparing the bar against a pane sees the same prefix width.
-	id := m.anchor
-	if len(id) > 8 {
-		id = id[:8]
-	}
-	return id + "+desc"
+	return m.scope
 }
 
 // statusLine is the one-row header: scope, page position, session count, and
@@ -463,15 +455,12 @@ func (m GridModel) statusLine() string {
 
 func (m GridModel) View() string {
 	if len(m.panes) == 0 {
-		// Reachable by dismissing (`x`) every pane — the anchored entry point
-		// refuses to open an empty grid in the first place. Name the scope
+		// Reachable by dismissing (`x`) every pane — the narrowed entry points
+		// refuse to open an empty grid in the first place. Name the scope
 		// anyway: "no live interactive sessions" is a different claim about
 		// the whole fleet than about one subtree.
-		msg := "grid: no live interactive sessions (esc to close)"
-		if m.anchor != "" {
-			msg = "grid: no live interactive sessions under " + m.scopeLabel() + " (esc to close)"
-		}
-		return PanelStyleFocused.Padding(0, 1).Render(msg)
+		return PanelStyleFocused.Padding(0, 1).Render(
+			"grid: no live interactive sessions in scope " + m.scopeLabel() + " (esc to close)")
 	}
 	status := m.statusLine()
 

@@ -88,7 +88,7 @@ func main() {
 		"submit":             js.FuncOf(harnessSubmit),
 		"list":               js.FuncOf(harnessList),
 		"snapshot":           js.FuncOf(harnessSnapshot),
-		"taskSubtree":        js.FuncOf(harnessTaskSubtree),
+		"gridSet":            js.FuncOf(harnessGridSet),
 		"previewStart":       js.FuncOf(harnessPreviewStart),
 		"previewStop":        js.FuncOf(harnessPreviewStop),
 		"previewInput":       js.FuncOf(harnessPreviewInput),
@@ -802,25 +802,23 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 	return js.Global().Get("Promise").New(executor)
 }
 
-// harnessTaskSubtree returns the ids of one task's subtree — the anchor plus
-// every task it spawned, transitively — in creator-tree order.
+// harnessGridSet answers the session grid's one question — WHICH tasks — plus
+// the label naming that choice.
 //
-//	harness.taskSubtree("0123abcd…") -> Promise<string[]>
+//	harness.gridSet({mode, anchor, ids}) -> Promise<{ids: string[], label: string}>
+//	  mode:   "all" | "subtree" | "descendants" | "ids"
+//	  anchor: 32-hex task id, for subtree / descendants
+//	  ids:    array of 32-hex task ids, for "ids"
 //
-// An anchor the server does not show this operator yields an empty array, so a
-// mistyped id narrows to nothing rather than falling back to everything.
+// Both halves come from cli.GridSet, the same call the TUI's g / z / Z keys and
+// its `grid` verb make. The set has to be shared because "who is whose child"
+// and "which tasks did this one's scope name" are answered in Go; the LABEL has
+// to be shared for a duller reason — two surfaces formatting it themselves is
+// how the same set ends up with two names.
 //
-// The membership question is answered by cli.TaskSubtree, the same call the
-// TUI's `z` makes, rather than by walking snapshot.taskTree's parent links in
-// JS. The tree is already computed in Go for exactly this reason (see the
-// taskTree note in harnessSnapshot); a JS descendant filter would be a second
-// definition of "who is whose child" sitting next to the diagram drawn from
-// the first one.
-//
-// What counts as TILEABLE stays on the JS side (liveInteractiveTasks), which
-// already owns that predicate for the other two grid entry points — this
-// export answers only the hierarchy half.
-func harnessTaskSubtree(this js.Value, args []js.Value) any {
+// What is TILEABLE stays on the JS side (liveInteractiveTasks + the per-session
+// toggles), which already owns that predicate for the other entry points.
+func harnessGridSet(this js.Value, args []js.Value) any {
 	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
 		resolve := promiseArgs[0]
 		reject := promiseArgs[1]
@@ -830,26 +828,50 @@ func harnessTaskSubtree(this js.Value, args []js.Value) any {
 				rejectErr(reject, err)
 				return
 			}
-			if len(args) < 1 {
-				rejectErr(reject, errors.New("taskSubtree: missing anchor task id"))
+			if len(args) < 1 || args[0].Type() != js.TypeObject {
+				rejectErr(reject, errors.New("gridSet: pass {mode, anchor, ids}"))
 				return
+			}
+			req := args[0]
+			mode, err := cli.ParseGridScopeMode(jsString(req, "mode"))
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			var idHexes []string
+			if v := req.Get("ids"); v.Type() == js.TypeObject {
+				for i := 0; i < v.Length(); i++ {
+					idHexes = append(idHexes, v.Index(i).String())
+				}
 			}
 			lr, err := c.Snapshot(rootCtx)
 			if err != nil {
-				rejectErr(reject, fmt.Errorf("taskSubtree: %w", err))
+				rejectErr(reject, fmt.Errorf("gridSet: %w", err))
 				return
 			}
-			sub := cli.TaskSubtree(lr.Tasks, args[0].String())
-			ids := make([]any, 0, len(sub))
-			for _, t := range sub {
+			set, label, err := cli.GridSet(lr.Tasks, mode, jsString(req, "anchor"), idHexes)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			ids := make([]any, 0, len(set))
+			for _, t := range set {
 				ids = append(ids, hex.EncodeToString(t.Id.Id[:]))
 			}
-			resolve.Invoke(js.ValueOf(ids))
+			resolve.Invoke(js.ValueOf(map[string]any{"ids": ids, "label": label}))
 		}()
 		return nil
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// jsString reads an optional string field, treating a missing/null one as "".
+func jsString(o js.Value, key string) string {
+	if v := o.Get(key); v.Type() == js.TypeString {
+		return v.String()
+	}
+	return ""
 }
 
 // harnessCancel cancels a queued/running task.

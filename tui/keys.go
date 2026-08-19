@@ -20,21 +20,22 @@ import (
 
 // mainKeyMap holds the keys the main view (no modal open) dispatches on.
 type mainKeyMap struct {
-	Quit        string
-	Help        string
-	Submit      string
-	Session     string
-	Interactive string
-	Detail      string
-	Grid        string
-	GridSubtree string
-	Conns       string
-	Board       string
-	Tree        string
-	Forwards    string
-	FilePicker  string
-	Git         string
-	LogFilter   string
+	Quit            string
+	Help            string
+	Submit          string
+	Session         string
+	Interactive     string
+	Detail          string
+	Grid            string
+	GridSubtree     string
+	GridDescendants string
+	Conns           string
+	Board           string
+	Tree            string
+	Forwards        string
+	FilePicker      string
+	Git             string
+	LogFilter       string
 
 	Cancel                 string
 	ReGrant                string
@@ -54,21 +55,22 @@ type mainKeyMap struct {
 }
 
 var mainKeys = mainKeyMap{
-	Quit:        "q",
-	Help:        "?",
-	Submit:      "s",
-	Session:     "S",
-	Interactive: "i",
-	Detail:      "d",
-	Grid:        "g",
-	GridSubtree: "z",
-	Conns:       "C",
-	Board:       "O",
-	Tree:        "T",
-	Forwards:    "f",
-	FilePicker:  "F",
-	Git:         "G",
-	LogFilter:   "/",
+	Quit:            "q",
+	Help:            "?",
+	Submit:          "s",
+	Session:         "S",
+	Interactive:     "i",
+	Detail:          "d",
+	Grid:            "g",
+	GridSubtree:     "z",
+	GridDescendants: "Z",
+	Conns:           "C",
+	Board:           "O",
+	Tree:            "T",
+	Forwards:        "f",
+	FilePicker:      "F",
+	Git:             "G",
+	LogFilter:       "/",
 
 	Cancel:                 "c",
 	ReGrant:                "a",
@@ -198,8 +200,8 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.ForwardRemote, mainKeys.ForwardRemoteStop}, Scope: scopeTasks,
 		Short: "b/B R-forward", Long: "start / stop a remote port forward for the selected task"},
 	{Keys: []string{mainKeys.RawConnect}, Scope: scopeTasks, Short: "t raw connect", Long: "raw-connect to a forwarded port"},
-	{Keys: []string{mainKeys.GridSubtree}, Scope: scopeTasks, Short: "z subtree grid",
-		Long: "grid of the selected task's own subtree (itself + every task it spawned); g is the whole fleet"},
+	{Keys: []string{mainKeys.GridSubtree, mainKeys.GridDescendants}, Scope: scopeTasks, Short: "z/Z subtree grid",
+		Long: "grid of the selected task's subtree — z includes the task itself, Z is its descendants only (for when you are watching that one elsewhere); g is the whole fleet"},
 
 	// --- logs pane ---
 	{Keys: []string{"left", "right"}, Scope: scopeLogs, Short: "←/→ scroll", Long: "scroll the log horizontally"},

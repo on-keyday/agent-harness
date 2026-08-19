@@ -505,7 +505,7 @@ everything — both render from the same table the dispatcher uses
 stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ file {ls,push,pull,delete} / caps / scope / caps set / caps set-parent
+/ file {ls,push,pull,delete} / grid / caps / scope / caps set / caps set-parent
 / server dial-runner / cancel / prune / repo / clear / help / quit`. `caps NAMES`
 / `scope SPEC` set the session-default authority for subsequent spawns
 (no argument opens the selection picker); per-spawn `--caps` / `--scope`
@@ -513,7 +513,12 @@ override it, and on a resume re-grant only what was literally typed.
 `session new` supports
 `--host NAME | --runner HEX | --ip ADDR` for runner-pinning (mutually
 exclusive), plus `--detach` to spawn-and-exit without splicing the
-local terminal. Use `harness-cli prune-local` for local-only worktree
+local terminal. `grid` opens the live session viewer over a chosen set:
+bare for every live session (the `g` key), `grid <id>...` for exactly
+those, `grid --under <id>` for one task's working set — its subtree plus
+whatever its own scope names individually (`z`) — and `--descendants` to
+leave that task itself out, for when it is already on screen in another
+terminal (`Z`). Use `harness-cli prune-local` for local-only worktree
 cleanup; the TUI's `prune` command is server-only. slog output
 (transport / pubsub / etc.) is folded into the cmdresult pane with a
 `[log]` prefix so it never scribbles over the alt screen.

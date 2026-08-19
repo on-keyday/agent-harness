@@ -130,6 +130,19 @@ type GitAction struct {
 	Max       uint32
 }
 
+// GridAction opens the live session viewer grid over a chosen set of tasks —
+// the cmdline form of the g / z / Z keys, and the only way to name an arbitrary
+// set. Mode and the two selectors are handed straight to cli.GridSet, so the
+// TUI, the WebUI command line and the keys all agree on what each mode means.
+//
+// Anchor and IDs are id PREFIXES here; app.go resolves them against the task
+// table before the set is built, the same as every other id-taking action.
+type GridAction struct {
+	Mode   cli.GridScopeMode
+	Anchor string
+	IDs    []string
+}
+
 // FileLsAction lists a directory under a task's worktree. RelPath empty
 // means the worktree root.
 type FileLsAction struct {
@@ -301,6 +314,7 @@ func (SessionLsAction) isAction()        {}
 func (SessionKillAction) isAction()      {}
 func (SessionAwaitIdleAction) isAction() {}
 func (GitAction) isAction()              {}
+func (GridAction) isAction()             {}
 func (FileLsAction) isAction()           {}
 func (FilePushAction) isAction()         {}
 func (FileMkdirAction) isAction()        {}
@@ -376,6 +390,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 			return nil, err
 		}
 		return CapsAction{Caps: c}, nil
+	case "grid":
+		return parseGrid(tokens[1:])
 	case "scope":
 		if len(tokens) == 1 {
 			return ScopeAction{Show: true}, nil
@@ -1118,6 +1134,58 @@ func parseSetCaps(args []string) (Action, error) {
 	}
 	if act.Caps == nil && act.Scope == nil {
 		return nil, fmt.Errorf("caps set: pass --caps, --scope, or both — there is nothing to change otherwise")
+	}
+	return act, nil
+}
+
+// parseGrid backs the `grid` verb. The modes are cli.GridScopeMode's, spelled
+// the same here as in the WebUI's grid command:
+//
+//	grid                                 every visible task (the g key)
+//	grid <id>...                         exactly these, in this order
+//	grid --under <id>                    id + its descendants (the z key)
+//	grid --under <id> --descendants      its descendants only (the Z key)
+//
+// --under's set is the task's WORKING set: its subtree plus whatever its own
+// scope names individually (cli.GridSubtree). --descendants without --under is
+// rejected rather than silently ignored — there is no subtree to strip a root
+// from.
+func parseGrid(args []string) (Action, error) {
+	usage := "grid: usage: grid [<task-id>...] | grid --under <task-id> [--descendants]"
+	act := GridAction{Mode: cli.GridAll}
+	var under string
+	descendants := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--descendants":
+			descendants = true
+		case "--under":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("grid: --under needs a task id")
+			}
+			i++
+			under = args[i]
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return nil, fmt.Errorf("grid: unknown flag %q\n%s", args[i], usage)
+			}
+			act.IDs = append(act.IDs, args[i])
+		}
+	}
+
+	switch {
+	case under != "":
+		if len(act.IDs) > 0 {
+			return nil, fmt.Errorf("grid: --under names one subtree; drop the extra ids\n%s", usage)
+		}
+		act.Mode, act.Anchor = cli.GridSubtree, under
+		if descendants {
+			act.Mode = cli.GridDescendants
+		}
+	case descendants:
+		return nil, fmt.Errorf("grid: --descendants needs --under <task-id> to take the descendants OF\n%s", usage)
+	case len(act.IDs) > 0:
+		act.Mode = cli.GridIds
 	}
 	return act, nil
 }

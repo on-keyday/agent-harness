@@ -69,21 +69,21 @@ func TestGridModel_ScopeLabelNamesTheNarrowing(t *testing.T) {
 	// otherwise be indistinguishable from an unfiltered one.
 	var m GridModel
 	if got := m.scopeLabel(); got != "all" {
-		t.Errorf("unanchored scopeLabel = %q, want %q", got, "all")
+		t.Errorf("unlabelled scopeLabel = %q, want %q", got, "all")
 	}
-	m.anchor = "0123456789abcdef0123456789abcdef"
+	m.scope = "01234567+desc"
 	if got := m.scopeLabel(); got != "01234567+desc" {
-		t.Errorf("anchored scopeLabel = %q, want %q", got, "01234567+desc")
+		t.Errorf("scopeLabel = %q, want %q", got, "01234567+desc")
 	}
 	m.open = true
 	m.SetSize(200, 40)
 	if line := m.statusLine(); !strings.Contains(line, "scope:01234567+desc") {
 		t.Errorf("status bar must carry the scope, got:\n%s", line)
 	}
-	// An emptied anchored grid says which subtree is empty, not that the whole
+	// An emptied narrowed grid says which set is empty, not that the whole
 	// fleet is.
-	if view := m.View(); !strings.Contains(view, "under 01234567+desc") {
-		t.Errorf("empty anchored grid must name its scope, got:\n%s", view)
+	if view := m.View(); !strings.Contains(view, "in scope 01234567+desc") {
+		t.Errorf("empty narrowed grid must name its scope, got:\n%s", view)
 	}
 }
 

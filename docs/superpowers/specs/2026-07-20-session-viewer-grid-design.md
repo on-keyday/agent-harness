@@ -152,53 +152,81 @@ e. Scale/crop: a full-screen app (e.g. claude) in a pane is recognizable in
 f. WebUI 390px: 1-column stack renders and scrolls.
 g. `make check` / wasm-check / vet / test.
 
-## Amendment 2026-08-19 — subtree scope
+## Amendment 2026-08-19 — which tasks a grid shows
 
 Pane population above is "all live sessions, activity-sorted, capped". Once a
 fleet holds several supervisors' worth of workers, that page answers the wrong
 question: the operator wants one supervisor's crew, not everything running.
 
-**The narrowing is an ANCHOR, not a scope expression.** One task is named — the
-row the cursor is on, the row whose sheet is open — and the grid shows that
-task plus every task it spawned, transitively. There is deliberately no
-scope-grammar input on this path: `--scope`'s `subtree` / `ids:` grammar is
-anchored at the holder task, and an operator has no holder task, so reusing the
-spelling would make the same string mean two different things depending on
-which field it was typed into.
+So "which tasks" becomes an explicit choice with four modes, decided once in
+`cli.GridSet(tasks, mode, anchor, ids) -> (set, label, err)` and consumed by
+every surface. `GridSet` returns the LABEL as well as the set, because two
+surfaces formatting their own is how one choice ends up with two names.
 
-- **Membership**: `cli.TaskSubtree(tasks, anchorHex)`, which reads
-  `BuildTaskTree`'s pre-order rows (a node's descendants are the rows following
-  it until the depth drops back) rather than walking creator links a second
-  time. One definition of "who is whose child", shared with the tree view, the
-  `ls --tree` gutter and the WebUI graph. An anchor not in the visible set
-  yields EMPTY — never the unfiltered set.
+| mode | set |
+|---|---|
+| `all` | every visible task (TUI `g`, the WebUI show button, bare `grid`) |
+| `subtree` | an anchor's **working set** (TUI `z`, `grid --under`) |
+| `descendants` | the same minus the anchor itself (TUI `Z`, `--descendants`) |
+| `ids` | exactly the tasks named, in the order named (`grid <id>...`) |
+
+**The anchor's working set is BOTH halves**: its subtree (every task it spawned,
+transitively) *and* the tasks its own `TaskScope` names individually. Either
+alone is a half-answer. The creator tree says what the task STARTED; a scope's
+`ids:` names peers it was handed that are nobody's descendant — which is exactly
+why they had to be named. A supervisor working with a task it did not spawn is
+the case a subtree-only grid cannot show, and the first cut of this amendment
+shipped that bug: the ids half was dropped along with the scope-grammar input,
+which was a different decision entirely.
+
+**There is still no scope grammar for an operator to type.** `--scope`'s
+`subtree` / `ids:` are anchored at the holder task, and an operator has no
+holder task; the ids are read from the task's stored scope
+(`cli.TaskScopeIDs`), where those words already mean what they mean.
+
+- **Membership**: `cli.TaskSubtree` reads `BuildTaskTree`'s pre-order rows (a
+  node's descendants are the rows following it until the depth drops back)
+  rather than walking creator links a second time — one definition of "who is
+  whose child", shared with the tree view, the `ls --tree` gutter and the WebUI
+  graph. An anchor or a named id the operator cannot see is an ERROR, not an
+  empty set: those ids were typed, and a typo that silently shows nothing is
+  the failure this repo keeps re-fixing. A legitimately empty set (the
+  descendants of a task that has none) is not an error.
 - **Tileability stays where it was**: `gridLiveTasks` (TUI) /
   `liveInteractiveTasks` (WebUI) still decide what a pane can show, and the
-  WebUI's per-session グリッドに含める toggles still subtract. The subtree
-  picks candidates, the existing predicates filter them, and the pane cap
+  WebUI's per-session グリッドに含める toggles still subtract. `GridSet` picks
+  candidates, the existing predicates filter them, and the pane cap
   (24 TUI / 9 WebUI) applies to the result.
-- **Entry points**: TUI `z` on the tasks pane (`g` remains the whole fleet);
-  WebUI task sheet `▦ この配下をグリッド` — offered on EVERY task, not only
-  live interactive ones, because the useful anchor is often a one-shot
-  supervisor or a finished parent whose workers are still running; WebUI
-  `grid --under <32-hex>` (full id only, no prefix resolution, matching
-  `prune`). Bare `grid <id...>` keeps its meaning — an explicit list, never
+- **Entry points**: TUI keys `g` / `z` / `Z` on the tasks pane and a `grid`
+  verb on its command line (`grid [<id>...]`, `grid --under <id>
+  [--descendants]`, ids resolved from prefixes like every other TUI verb);
+  WebUI task sheet `▦ この配下をグリッド` and `▦ 配下のみ (自分を除く)` —
+  offered on EVERY task, not only live interactive ones, because the useful
+  anchor is often a one-shot supervisor or a finished parent whose workers are
+  still running — plus the same `grid` command (full 32-hex only, no prefix
+  resolution, matching `prune`). Bare `grid <id...>` is an explicit list, never
   expanded into subtrees, mirroring `--scope ids:`.
 - **An empty result opens nothing.** Both surfaces report
-  `no live interactive session under <id> (self + N descendant(s))` on their
-  result surface (TUI cmdresult / WebUI `appendCmdOutput`) instead of opening a
-  full-screen overlay that says the same thing.
-- **The scope is always stated**: TUI status bar `scope:all` or
-  `scope:<id8>+desc`, WebUI modal title the same pair. A blank would read as
-  "no narrowing in effect", which is exactly what a narrowed grid missing its
-  label also looks like.
-- No wire, WAL or `TaskInfo` change: the anchor is per-view UI state that dies
-  with the overlay. The WebUI reaches the shared filter through a new
-  `harness.taskSubtree(anchorId) -> Promise<string[]>` wasm export.
+  `grid <label>: no live interactive session in this set (N task(s) in it)` on
+  their result surface (TUI cmdresult / WebUI `appendCmdOutput`) instead of
+  opening a full-screen overlay that says the same thing. The count matters: a
+  set of four tasks none of which is watchable is a different situation from a
+  set of none.
+- **The scope is always stated**: TUI status bar `scope:<label>`, WebUI modal
+  title `(scope: <label>)`, where label is `all` / `<id8>+desc` /
+  `<id8>+desc+ids×N` / `<id8>/desc-only` / `ids×N`. The `+ids×N` suffix appears
+  only when the scope half actually contributed, so the common case stays quiet
+  and a pane that is nobody's child is never unexplained. A blank would read as
+  "no narrowing in effect", which is what a narrowed grid missing its label
+  also looks like.
+- No wire, WAL or `TaskInfo` change: the choice is per-view UI state that dies
+  with the overlay. The WebUI reaches the shared decision through a
+  `harness.gridSet({mode, anchor, ids}) -> Promise<{ids, label}>` wasm export.
 
-Verification for this amendment: (h) a three-level tree (parent → two workers →
-one grandchild) plus an unrelated session — `z` on the parent shows exactly its
-own live descendants, `z` on a worker shows only its own, the unrelated session
-appears in neither; (i) the same through the WebUI button and `grid --under`,
-desktop and 390px; (j) an anchor with no live descendants reports instead of
-opening.
+Verification for this amendment: (h) a three-level tree (parent → worker →
+grandchild) plus an unrelated session — `z` on the parent tiles exactly its own
+live descendants, `Z` drops the parent's own pane, the unrelated session appears
+in neither; (i) a task granted `--scope subtree+ids:<unrelated>` shows that
+unrelated session under `z` and says so in the label; (j) the same through the
+WebUI buttons and every `grid` form, desktop and 390px; (k) an anchor with
+nothing watchable under it reports instead of opening.

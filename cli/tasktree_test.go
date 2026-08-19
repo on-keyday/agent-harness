@@ -246,6 +246,147 @@ func TestTaskSubtree_AnchorHexIsCaseAndSpaceInsensitive(t *testing.T) {
 	}
 }
 
+// withScope attaches a TaskScope to a task built by mkTask, so the
+// scope-target tests read as "this task may point at …".
+func withScope(t protocol.TaskInfo, base protocol.ScopeBase, ids ...byte) protocol.TaskInfo {
+	t.Scope = protocol.TaskScope{Base: base}
+	for _, id := range ids {
+		var tid protocol.TaskID
+		tid.Id[0] = id
+		t.Scope.Ids = append(t.Scope.Ids, tid)
+	}
+	t.Scope.IdsLen = uint16(len(t.Scope.Ids))
+	return t
+}
+
+func TestTaskScopeIDs_NamedTasksOnly(t *testing.T) {
+	// b names e explicitly: e is nobody's descendant here, which is exactly
+	// why a scope had to name it. d IS b's child and is NOT returned — the
+	// creator tree already covers that half.
+	in := []protocol.TaskInfo{
+		mkTask('a', 0, 10),
+		withScope(mkTask('b', 'a', 20), protocol.ScopeBase_Subtree, 'e'),
+		mkTask('d', 'b', 30),
+		mkTask('e', 0, 40),
+	}
+	if got, want := ids(TaskScopeIDs(in, hexOf('b'))), "e"; got != want {
+		t.Errorf("scope ids = %q, want %q", got, want)
+	}
+	// A task that names nobody has no named tasks, whatever its base.
+	if got := TaskScopeIDs(in, hexOf('a')); len(got) != 0 {
+		t.Errorf("scope ids of a = %q, want empty", ids(got))
+	}
+}
+
+func TestTaskScopeIDs_UnknownTaskIsEmpty(t *testing.T) {
+	in := []protocol.TaskInfo{mkTask('a', 0, 10)}
+	if got := TaskScopeIDs(in, hexOf('z')); len(got) != 0 {
+		t.Errorf("unknown task returned %q, want empty", ids(got))
+	}
+}
+
+func TestTaskScopeIDs_NamedIdOutsideTheVisibleSetIsSkipped(t *testing.T) {
+	// A scope can name a task this operator cannot see (pruned, or granted
+	// before it ended). There is nothing to tile for it, and inventing a row
+	// would claim a session exists.
+	in := []protocol.TaskInfo{
+		withScope(mkTask('a', 0, 10), protocol.ScopeBase_None, 'q'),
+	}
+	if got := TaskScopeIDs(in, hexOf('a')); len(got) != 0 {
+		t.Errorf("targets = %q, want empty", ids(got))
+	}
+}
+
+func TestGridSet_ModesAndLabels(t *testing.T) {
+	in := []protocol.TaskInfo{
+		mkTask('a', 0, 10),
+		withScope(mkTask('b', 'a', 20), protocol.ScopeBase_Subtree, 'e'),
+		mkTask('d', 'b', 30),
+		mkTask('e', 0, 40),
+	}
+	for _, tc := range []struct {
+		name      string
+		mode      GridScopeMode
+		anchor    string
+		idList    []string
+		wantIDs   string
+		wantLabel string
+	}{
+		{"all", GridAll, "", nil, "abde", "all"},
+		// a names nobody, so its set is the plain subtree and the label says so.
+		{"subtree", GridSubtree, hexOf('a'), nil, "abd", hexOf('a')[:8] + "+desc"},
+		{"descendants", GridDescendants, hexOf('a'), nil, "bd", hexOf('a')[:8] + "/desc-only"},
+		// b names e, which is nobody's descendant: the subtree half misses it
+		// entirely, and the label announces that the set grew by one.
+		{"subtree with granted peers", GridSubtree, hexOf('b'), nil, "bde", hexOf('b')[:8] + "+desc+ids×1"},
+		{"descendants with granted peers", GridDescendants, hexOf('b'), nil, "de", hexOf('b')[:8] + "/desc-only+ids×1"},
+		{"ids", GridIds, "", []string{hexOf('e'), hexOf('b')}, "eb", "ids×2"},
+	} {
+		got, label, err := GridSet(in, tc.mode, tc.anchor, tc.idList)
+		if err != nil {
+			t.Errorf("%s: GridSet: %v", tc.name, err)
+			continue
+		}
+		if ids(got) != tc.wantIDs {
+			t.Errorf("%s: ids = %q, want %q", tc.name, ids(got), tc.wantIDs)
+		}
+		if label != tc.wantLabel {
+			t.Errorf("%s: label = %q, want %q", tc.name, label, tc.wantLabel)
+		}
+	}
+}
+
+func TestGridSet_IdsModeKeepsTheOrderAsked(t *testing.T) {
+	// The caller named them in an order; a grid is a layout, so honour it
+	// rather than re-sorting into tree order behind their back.
+	in := []protocol.TaskInfo{mkTask('a', 0, 10), mkTask('b', 0, 20), mkTask('c', 0, 30)}
+	got, _, err := GridSet(in, GridIds, "", []string{hexOf('c'), hexOf('a')})
+	if err != nil {
+		t.Fatalf("GridSet: %v", err)
+	}
+	if want := "ca"; ids(got) != want {
+		t.Errorf("ids = %q, want %q", ids(got), want)
+	}
+}
+
+func TestGridSet_RejectsWhatItCannotAnswer(t *testing.T) {
+	in := []protocol.TaskInfo{mkTask('a', 0, 10)}
+	for _, tc := range []struct {
+		name   string
+		mode   GridScopeMode
+		anchor string
+		idList []string
+	}{
+		{"unknown mode", GridScopeMode("sideways"), "", nil},
+		{"subtree without an anchor", GridSubtree, "", nil},
+		{"descendants without an anchor", GridDescendants, "", nil},
+		{"ids with no ids", GridIds, "", nil},
+		{"anchor not visible", GridSubtree, hexOf('z'), nil},
+		{"named id not visible", GridIds, "", []string{hexOf('z')}},
+	} {
+		if _, _, err := GridSet(in, tc.mode, tc.anchor, tc.idList); err == nil {
+			t.Errorf("%s: want an error, got none", tc.name)
+		}
+	}
+}
+
+func TestGridSet_DescendantsOfALeafIsEmptyNotAnError(t *testing.T) {
+	// "I am watching this one myself, grid the rest" against a task with no
+	// children: an empty set is the honest answer, and the caller reports it.
+	// An error here would read as "you typed something wrong".
+	in := []protocol.TaskInfo{mkTask('a', 0, 10)}
+	got, label, err := GridSet(in, GridDescendants, hexOf('a'), nil)
+	if err != nil {
+		t.Fatalf("GridSet: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("ids = %q, want empty", ids(got))
+	}
+	if want := hexOf('a')[:8] + "/desc-only"; label != want {
+		t.Errorf("label = %q, want %q", label, want)
+	}
+}
+
 func TestTreePrefix_DrawsAncestorGutters(t *testing.T) {
 	// A row two levels deep whose grandparent still has siblings below it keeps
 	// a │ in the outer column; one whose grandparent was the last child leaves

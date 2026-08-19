@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -1221,5 +1222,52 @@ func TestParseCapsSetParentCommand(t *testing.T) {
 	}
 	if _, err := ParseCommand("caps set-parent --parent "+pid, "/cwd"); err == nil {
 		t.Fatal("set-parent without a target parsed")
+	}
+}
+
+func TestParseGrid_Modes(t *testing.T) {
+	for _, tc := range []struct {
+		line       string
+		wantMode   cli.GridScopeMode
+		wantAnchor string
+		wantIDs    []string
+	}{
+		{"grid", cli.GridAll, "", nil},
+		{"grid ab12 cd34", cli.GridIds, "", []string{"ab12", "cd34"}},
+		{"grid --under ab12", cli.GridSubtree, "ab12", nil},
+		{"grid --under ab12 --descendants", cli.GridDescendants, "ab12", nil},
+		// Flag order is free here (unlike send/exec, whose text is free-form).
+		{"grid --descendants --under ab12", cli.GridDescendants, "ab12", nil},
+	} {
+		got, err := ParseCommand(tc.line, "/cwd")
+		if err != nil {
+			t.Errorf("%q: %v", tc.line, err)
+			continue
+		}
+		a, ok := got.(GridAction)
+		if !ok {
+			t.Errorf("%q: got %T, want GridAction", tc.line, got)
+			continue
+		}
+		if a.Mode != tc.wantMode || a.Anchor != tc.wantAnchor || strings.Join(a.IDs, ",") != strings.Join(tc.wantIDs, ",") {
+			t.Errorf("%q: got mode=%q anchor=%q ids=%v, want mode=%q anchor=%q ids=%v",
+				tc.line, a.Mode, a.Anchor, a.IDs, tc.wantMode, tc.wantAnchor, tc.wantIDs)
+		}
+	}
+}
+
+func TestParseGrid_RejectsContradictions(t *testing.T) {
+	// Each of these has no single reading, so it must be refused rather than
+	// resolved by precedence — a grid that quietly showed the other half of
+	// what was asked for is worse than one that did nothing.
+	for _, line := range []string{
+		"grid --descendants",     // nothing to take the descendants OF
+		"grid --under ab12 cd34", // one subtree, plus stray ids
+		"grid --under",           // missing value
+		"grid --nope",            // unknown flag
+	} {
+		if _, err := ParseCommand(line, "/cwd"); err == nil {
+			t.Errorf("%q: want an error, got none", line)
+		}
 	}
 }
