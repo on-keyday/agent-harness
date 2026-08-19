@@ -1,6 +1,9 @@
 package agentskills
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -107,5 +110,84 @@ func TestSkillSessionDebugging(t *testing.T) {
 func TestSkillUnknown(t *testing.T) {
 	if _, err := Skill("nope"); err == nil {
 		t.Fatal("expected error for unknown skill")
+	}
+}
+
+// mirrorDirs are the checked-in copies of the embedded skills, relative to the
+// repo root: .claude/ is what a claude session in THIS repo loads, .agents/ is
+// what other harnesses read. This package is the go:embed source of truth, so
+// both are copies and neither may drift from it.
+var mirrorDirs = []string{".claude/skills", ".agents/skills"}
+
+// repoRoot is this package's directory (the test's working dir) walked back to
+// the checkout root.
+const repoRoot = "../.."
+
+// TestMirrorsMatchEmbeddedSkills is the mechanical form of surface-parity
+// checklist item 35: an embedded skill is edited HERE and mirrored to
+// .claude/skills and .agents/skills in the same commit.
+//
+// It exists because that rule was manual and drifted three times in a row: at
+// the time this test was written, .agents/ carried an older harness-cli,
+// landing-to-main and supervising-workers than the embed FS did, so agents in
+// other repositories were reading instructions this repo had already replaced —
+// silently, because nothing compared the two. Same reasoning as keys_test's
+// binding/help pair: a rule that only lives in a checklist is a rule that gets
+// walked past.
+//
+// Byte-identical, not "close enough": a mirror that is merely similar is the
+// state that produced the drift, and there is no editorial difference between
+// the copies to preserve.
+func TestMirrorsMatchEmbeddedSkills(t *testing.T) {
+	names, err := List()
+	if err != nil {
+		t.Fatalf("List(): %v", err)
+	}
+	for _, n := range names {
+		want, err := Skill(n)
+		if err != nil {
+			t.Fatalf("Skill(%q): %v", n, err)
+		}
+		for _, dir := range mirrorDirs {
+			path := filepath.Join(repoRoot, dir, n, "SKILL.md")
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Errorf("%s: %v — mirror the embedded skill there in the same commit", path, err)
+				continue
+			}
+			if !bytes.Equal(got, want) {
+				t.Errorf("%s differs from the embedded runner/agentskills/%s/SKILL.md "+
+					"(%d vs %d bytes); copy the embedded file over it", path, n, len(got), len(want))
+			}
+		}
+	}
+}
+
+// TestAgentsMirrorHasNoExtraSkills guards the other direction for .agents/,
+// which is read by agents in OTHER repositories: a skill there that this
+// package does not embed is either a stale copy of a removed skill or a
+// repo-dev skill that leaked out of .claude/ (implementation-pitfalls,
+// surface-parity-checklist and dummy-harness are about THIS repository and are
+// deliberately .claude-only). Either way the agents reading it are being told
+// about something that is not theirs.
+func TestAgentsMirrorHasNoExtraSkills(t *testing.T) {
+	names, err := List()
+	if err != nil {
+		t.Fatalf("List(): %v", err)
+	}
+	embedded := make(map[string]bool, len(names))
+	for _, n := range names {
+		embedded[n] = true
+	}
+	entries, err := os.ReadDir(filepath.Join(repoRoot, ".agents/skills"))
+	if err != nil {
+		t.Fatalf("read .agents/skills: %v", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() || embedded[e.Name()] {
+			continue
+		}
+		t.Errorf(".agents/skills/%s is not an embedded skill: remove it, or add it to "+
+			"runner/agentskills if agents in other repos are meant to have it", e.Name())
 	}
 }

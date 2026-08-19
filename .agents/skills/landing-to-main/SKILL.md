@@ -6,7 +6,7 @@ description: Use when landing / pushing / merging a harness task-branch's work t
 # Landing harness task-branch work
 
 Harness tasks run on a `harness/<taskID>` branch created **once** from the repo's
-HEAD at task-creation (`runner/worktree.go` `Create`, no start-point) and **never
+HEAD at task-creation (no start-point is passed) and **never
 re-synced** — resume just re-attaches the same branch. So the branch drifts from
 the trunk the longer it lives. **Landing is where that drift becomes divergence
 if you do it wrong.** This skill is about landing safely on any repo the harness

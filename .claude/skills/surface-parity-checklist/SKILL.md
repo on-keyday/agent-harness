@@ -145,7 +145,17 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
 35. Agent-facing skill texts — `runner/agentskills/*/SKILL.md` is the
     go:embed source of truth; mirror to `.claude/skills/` and
     `.agents/skills/` in the same commit. Repo-dev skills
-    (`implementation-pitfalls`, this file) live in `.claude/` only.
+    (`implementation-pitfalls`, `dummy-harness`, this file) live in
+    `.claude/` only. **Now test-enforced** — `runner/agentskills`'
+    `TestMirrorsMatchEmbeddedSkills` fails on a byte difference and
+    `TestAgentsMirrorHasNoExtraSkills` fails on a `.agents/` skill this
+    package does not embed, so this item is a reminder rather than the only
+    guard. It became one because the manual form drifted three times at
+    once: `.agents/` shipped an older `harness-cli`, `landing-to-main` and
+    `supervising-workers` than the embed FS, which meant agents in OTHER
+    repositories were reading instructions this repo had already replaced.
+    Editing only the copy you happen to be reading is the way in — the
+    embedded file is the one to edit, then copy it over both mirrors.
 36. The feature's spec under `docs/superpowers/specs/` — semantic changes
     land as an Amendment section there, so the spec never contradicts the
     shipped behaviour a later reader verifies against.

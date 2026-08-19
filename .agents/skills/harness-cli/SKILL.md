@@ -30,12 +30,28 @@ harness-cli skill <name>     # print another one, e.g. `harness-cli skill landin
 also the version of every skill it PRINTS — they are embedded in it. It does
 not describe the copies on disk under `.claude/skills/` and `.agents/skills/`:
 the runner writes those at spawn time out of its own binary, so their vintage
-comes from a different build and `version` cannot vouch for it. If it matters
-which you are reading, print the skill rather than opening the file. Worth
-knowing when your `harness-cli` is bind-mounted from elsewhere (the podman
-sandbox does this) and can therefore be older than the repo it came from: the
-binary cannot see that repo's HEAD, so compare the revision against a peer or
-ask the operator. `--json` for the machine-readable form.
+comes from a different build and `version` cannot vouch for it. `--json` for
+the machine-readable form.
+
+**Expect the two to disagree.** A runner is a long-lived process holding the
+embed it started with, so every rebuild after that leaves the injected files
+older than what `harness-cli skill` prints. That is the ordinary case — no
+container involved — and nothing needs repairing: the next `harness-cli`
+invocation already runs the new binary, while the files on disk keep recording
+what the agent in this worktree was actually handed. Print the skill when you
+want the current text; open the file when you want to know what was injected.
+
+**The podman sandbox inverts it, and there the skew does not self-correct.**
+`harness-cli` is bridged in as a single-FILE bind mount, so the container holds
+the inode that existed at `podman run` time; a later rebuild writes a
+replacement and the running container keeps the old, now-unlinked one — the
+rebuild is invisible to it, not merely delayed, and only a NEW container picks
+one up (measured, not inferred).
+A confined agent can therefore be reading guidance several commits old with no
+way to refresh it in place. `version` still names the commit it was built from,
+but the repo's HEAD is not visible from in there, so it cannot judge whether
+that commit is current — compare the revision against a peer or ask the
+operator.
 
 `skill ls` enumerates whatever is embedded — run it rather than trusting a
 list written here, which goes stale the moment a skill is added; an unknown
