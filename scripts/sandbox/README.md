@@ -1,7 +1,7 @@
 # Agent sandbox kit (rootless podman)
 
-Run a runner's spawned agent — **claude, codex, agy, or a plain bash shell** —
-confined inside a **rootless podman** container instead of directly on the host,
+Run a runner's spawned agent — **claude, codex, agy, opencode, or a plain bash
+shell** — confined inside a **rootless podman** container instead of on the host,
 to shrink the blast radius of an agent that runs with
 `--dangerously-skip-permissions`. No harness core changes: it plugs in through
 the existing `--agent-bin` seam.
@@ -18,23 +18,42 @@ running the wrong agent looks identical to the right one in every listing.
 | claude | `~/.local/bin/claude` | `~/.claude` + `~/.claude.json` | yes (`setup-token`) | yes (npm copy) |
 | codex | `~/.local/bin/codex` | `~/.codex` | **no** | no |
 | agy | `~/.local/bin/agy` | `~/.gemini` | **no** | no |
+| opencode | `/usr/bin/opencode` | `~/.config/opencode` + `~/.local/share/opencode` + `~/.cache/opencode` + `~/.local/state/opencode` | **no** | no |
 | bash | — (the image's own) | — | — | yes |
 
 No agent is installed into the image: the host binary is bind-mounted over the
 container path. Measured 2026-08-18 that all three run on the image's glibc
 2.36 — claude is a Bun ELF, agy is glibc-dynamic (197MB), codex is static-pie
-musl and so libc-independent by construction. Only claude keeps an image copy,
-as a fallback; codex and agy hard-error when their host binary is missing,
-because exec'ing a container path that does not exist surfaces several layers
-from the actual cause.
+musl and so libc-independent by construction; opencode (Bun ELF, added
+2026-08-19) likewise. Only claude keeps an image copy, as a fallback; the others
+hard-error when their host binary is missing, because exec'ing a container path
+that does not exist surfaces several layers from the actual cause.
 
-**codex and agy are mount-auth only.** Neither has a known revocable-token mode
-of the kind claude's `setup-token` provides, so running them here puts that
-provider's OAuth credentials in the container with no narrower option:
+opencode is the one whose host binary is **not** under your home: the Arch
+package installs it at `/usr/bin/opencode`. Nothing in the bridge cares, but
+check which one `opencode` resolves to before assuming — the upstream
+curl/npm installer puts a *separate* copy at `~/.opencode/bin/opencode` and
+prepends that to `PATH` in `~/.bashrc`, so a machine with both silently runs the
+older one everywhere, this wrapper included.
+
+**codex, agy and opencode are mount-auth only.** None has a known
+revocable-token mode of the kind claude's `setup-token` provides, so running them
+here puts that provider's credentials in the container with no narrower option:
 `~/.codex/auth.json` for codex, `~/.gemini` for agy — the latter shared with
 gemini-cli, so it carries that product's credentials too (tier-ineligible on
-this host, but present). `--firewall-proxy` is the mitigation that matters for
-them, since it removes raw-socket egress entirely.
+this host, but present) — and `~/.local/share/opencode/auth.json` for opencode.
+`--firewall-proxy` is the mitigation that matters for them, since it removes
+raw-socket egress entirely.
+
+**opencode needs four mounts, and each is load-bearing.** It spreads across all
+four XDG directories: config + plugins, `auth.json` + `opencode.db`, the
+models.dev catalog cache, and `model.json` + `locks/`. Omitting one is not a
+degraded mode but a failed run — HOME is the host path and podman creates mount
+parents root-owned, so anything opencode tries to `mkdir` under HOME that the
+table does not name aborts before the first token (`EACCES: mkdir
+'$HOME/.cache'`). Dropping the data dir would be worse than an abort: it
+authenticates fine and then makes `run --continue` find no session, i.e. a
+resume that silently starts a new conversation.
 
 **Which agent runs is decided by the BIN, not by a flag.** Each preset points
 at that agent's `<agent>-in-podman.sh` symlink, all of which are the same
@@ -56,8 +75,13 @@ worth knowing before you type the name you expected to work.
 
 **What each agent actually writes, measured through a real runner slot:**
 
-- **bash** and **claude** write into the task worktree, owned by the host user
-  (`kforfk:kforfk`) — this is what `--userns=keep-id` buys, verified end to end.
+- **bash**, **claude** and **opencode** write into the task worktree, owned by the
+  host user (`kforfk:kforfk`) — this is what `--userns=keep-id` buys, verified end
+  to end. opencode measured 2026-08-19: asked for a file in the cwd, it wrote one
+  containing `node` and the worktree path, and the host saw it as `kforfk:kforfk`.
+  It needs `--auto` (its own auto-approve-permissions flag) to act without a
+  prompt in one-shot mode — the caller's business via `--agent-args`, exactly as
+  `--dangerously-skip-permissions` is for claude.
 - **codex** refused: its own sandbox reports the environment read-only for
   `codex exec`, and its edit tool fails with `codex-code-mode-host` not found
   (that helper is not in the image). Give it its own approval/sandbox flags via
@@ -111,7 +135,7 @@ so a slot gets them without hand-typing `--agent-bin`:
 
 ```sh
 scripts/runner.sh up --as sandboxed \
-  --agents sandbox-claude,sandbox-codex,sandbox-agy,sandbox-bash \
+  --agents sandbox-claude,sandbox-codex,sandbox-agy,sandbox-opencode,sandbox-bash \
   --roots "$HOME/workspace/<repo>"
 ```
 
@@ -156,7 +180,7 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
 
 ### Authentication
 
-- **Mount auth (default, and the ONLY mode for codex and agy):** bind-mounts the
+- **Mount auth (default, and the ONLY mode for codex, agy and opencode):** bind-mounts the
   agent's config paths (see the table above) so the sandbox reuses your host
   login + session resume. Simplest, but the personal **refresh token** is in
   the container — combined with open egress + untrusted input that's a real

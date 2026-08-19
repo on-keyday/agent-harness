@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # agent-in-podman.sh — an `--agent-bin` target that runs a real coding agent
-# (claude / codex / agy, or a plain bash shell) inside a ROOTLESS podman
-# container, confining its command execution while keeping worktree edits owned
-# by the host user.
+# (claude / codex / agy / opencode, or a plain bash shell) inside a ROOTLESS
+# podman container, confining its command execution while keeping worktree edits
+# owned by the host user.
 #
 # Which agent is selected by --sandbox-agent (default claude, the only agent
 # this wrapper ran when it was called claude-in-podman.sh). EVERY per-agent
@@ -33,7 +33,7 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 
 # Consume our own control flags from the arg stream (NOT agent flags, so they
 # must not reach the agent). Pass them via `--agent-arg` / runner `--agent-args`:
-#   --sandbox-agent N   which agent to run: claude | codex | agy | bash. Normally
+#   --sandbox-agent N   which agent: claude | codex | agy | bash | opencode. Normally
 #                       you do NOT pass this: the agent comes from the name this
 #                       script was invoked as (<agent>-in-podman.sh symlinks),
 #                       which is the only selector every runner launch path
@@ -71,11 +71,12 @@ HOME_DIR="${HOME:-/home/$(id -un)}"
 # symlink name decides, and --sandbox-agent stays only as a manual override for
 # direct invocation.
 case "$(basename "$0")" in
-  claude-in-podman.sh) AGENT=claude ;;
-  codex-in-podman.sh)  AGENT=codex ;;
-  agy-in-podman.sh)    AGENT=agy ;;
-  bash-in-podman.sh)   AGENT=bash ;;
-  *)                   AGENT=claude ;;   # agent-in-podman.sh itself
+  claude-in-podman.sh)   AGENT=claude ;;
+  codex-in-podman.sh)    AGENT=codex ;;
+  agy-in-podman.sh)      AGENT=agy ;;
+  bash-in-podman.sh)     AGENT=bash ;;
+  opencode-in-podman.sh) AGENT=opencode ;;
+  *)                     AGENT=claude ;;   # agent-in-podman.sh itself
 esac
 bridge_cli=1
 firewall=0
@@ -181,6 +182,75 @@ case "$AGENT" in
     A_DOMAINS="daily-cloudcode-pa.googleapis.com,www.googleapis.com,lh3.googleusercontent.com"
     A_HOME="$HOME_DIR"
     ;;
+  opencode)
+    # The only agent here installed system-wide rather than under the user's
+    # home (Arch package -> /usr/bin/opencode). Nothing in the bridge cares —
+    # A_HOST_BIN is readlink -f'd and bind-mounted from wherever it is — but it
+    # is the reason this entry does not follow the "$HOME_DIR/.local/bin/…"
+    # shape the other three share. Measured 2026-08-19: the packaged binary
+    # (Bun-compiled ELF, libc/libm/libpthread/libdl only) runs on this image's
+    # glibc and reports 1.18.18 inside the container.
+    A_HOST_BIN=/usr/bin/opencode
+    A_CONTAINER_BIN=/usr/local/bin/opencode
+    A_IMAGE_FALLBACK=0
+    # THREE paths, each load-bearing for a different reason:
+    #   ~/.config/opencode      config + installed plugins
+    #   ~/.local/share/opencode auth.json AND opencode.db. The db is where
+    #                           sessions live, so omitting it would
+    #                           authenticate fine and then make
+    #                           `run --continue` find nothing to continue — a
+    #                           resume that silently starts a new conversation.
+    #   ~/.cache/opencode       the models.dev catalog + plugin node_modules.
+    #                           Not just a speed-up: opencode refreshes that
+    #                           catalog over the network at startup, so an
+    #                           unmounted cache would add a models.dev egress
+    #                           requirement to every run.
+    #   ~/.local/state/opencode model.json (last model) and locks/. Sharing the
+    #                           lock dir is deliberate: concurrent tasks on one
+    #                           project must contend for the same lock, which is
+    #                           what keeps them off the same db concurrently.
+    # An omitted path is not a degraded mode but a failed one. HOME is the host
+    # path and podman creates its mount parents root-owned, so anything opencode
+    # tries to mkdir under HOME that we did not name aborts the run before the
+    # first token: measured 2026-08-19, first `EACCES: mkdir '$HOME/.cache'`,
+    # then `EACCES: mkdir '$HOME/.local/state'`. The full set was then taken in
+    # one shot by running opencode against a virgin HOME on the host and listing
+    # what it created — do that, rather than discovering them one abort at a
+    # time. The fifth path it creates there, ~/.npm/_cacache, is npm's own cache
+    # for the plugin install, which does not run here because
+    # ~/.config/opencode/node_modules arrives already populated.
+    A_CONFIG_MOUNTS=(
+      "$HOME_DIR/.config/opencode"
+      "$HOME_DIR/.local/share/opencode"
+      "$HOME_DIR/.cache/opencode"
+      "$HOME_DIR/.local/state/opencode"
+    )
+    A_TOKEN_FILE=""
+    A_TOKEN_ENV=""
+    # MEASURED 2026-08-19, same procedure as codex and agy above: run under
+    # --firewall-proxy with this list empty and read the proxy's DENY lines.
+    # Two hosts: models.opencode.ai (the model catalog, fetched at startup) and
+    # opencode.ai itself (the OpenCode Zen gateway that serves the completion).
+    #
+    # BOTH are listed even though the proxy's suffix matching would cover the
+    # subdomain from the parent alone, because the two firewall modes consume
+    # this list differently and only one of them suffix-matches. --firewall
+    # (ip) runs `dig A` per entry and ipsets the addresses (init-firewall.sh),
+    # so a name absent here is simply unresolved: opencode.ai answers
+    # 172.65.90.20-23 and models.opencode.ai answers 104.20.32.17 /
+    # 172.66.173.149 — disjoint, so the parent entry allowlists none of the
+    # catalog's addresses. A list written against proxy-mode behaviour alone
+    # fails closed in ip mode, on a host nothing here named.
+    #
+    # NOT included because this run never exercised them: any provider host a
+    # BYOK credential would dial (api.anthropic.com, api.openai.com, …) and any
+    # token-refresh endpoint. This host's opencode has no credentials
+    # configured, so it authenticated anonymously against Zen and nothing else
+    # was reached. Add a host when the proxy refuses it BY NAME — that is how
+    # this entry was built — rather than pre-allowing providers on a guess.
+    A_DOMAINS="opencode.ai,models.opencode.ai"
+    A_HOME="$HOME_DIR"
+    ;;
   bash)
     # A shell sandbox, not a conversational agent: nothing to bridge, nothing to
     # authenticate. HOME is the image's own so a stray write lands somewhere
@@ -194,7 +264,7 @@ case "$AGENT" in
     A_HOME=/home/node
     ;;
   *)
-    echo "[agent-in-podman] unknown --sandbox-agent '$AGENT' (want: claude|codex|agy|bash)" >&2
+    echo "[agent-in-podman] unknown --sandbox-agent '$AGENT' (want: claude|codex|agy|bash|opencode)" >&2
     exit 2
     ;;
 esac
@@ -230,9 +300,10 @@ add_mount "$WT"
 #      (no host-session resume — accepted trade for not exposing the refresh
 #      token). We never read the token's bytes; podman receives it as an env.
 #
-#      ONLY claude has this. codex and agy have no known revocable-token mode,
-#      so their table entries leave A_TOKEN_FILE empty and they always land on
-#      (b) — which the README states plainly rather than implying.
+#      ONLY claude has this. codex, agy and opencode have no known
+#      revocable-token mode, so their table entries leave A_TOKEN_FILE empty and
+#      they always land on (b) — which the README states plainly rather than
+#      implying.
 #
 #  (b) Mount (fallback): reuse the host login by bind-mounting the agent's
 #      config paths. This exposes that provider's credentials to the container
@@ -370,7 +441,8 @@ fi
 # can't self-update. Instead bind-mount the host's auto-updated binary over the
 # image path — measured 2026-08-18 that all three host binaries run on the
 # image's glibc 2.36: claude (Bun ELF), agy (glibc-dynamic, 197MB) and codex
-# (static-pie musl, so libc-independent by construction).
+# (static-pie musl, so libc-independent by construction); opencode (Bun ELF,
+# Arch-packaged) added 2026-08-19 and likewise runs there.
 # DISABLE_AUTOUPDATER (claude's A_ALWAYS_ENV) silences update attempts either
 # way: the ro mount can't be replaced, and the image copy is fixed until the
 # next image build.

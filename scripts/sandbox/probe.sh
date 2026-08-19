@@ -50,7 +50,12 @@ else fw="none (open egress)"; fi
 # a bare -d test cannot tell apart). The pattern covers every agent the wrapper
 # supports — a claude-only regex reported "token-or-ephemeral" for a codex
 # container that had ~/.codex bind-mounted rw, i.e. it understated the exposure.
-cfg_re=' /[^ ]*/(\.claude(\.json)?|\.codex|\.gemini)( |$)'
+# opencode is the one that does NOT live in a single dotdir: its four mounts sit
+# under the XDG parents (~/.config, ~/.cache, ~/.local/share, ~/.local/state) as
+# a plain `opencode` component, so it is matched via those parents rather than by
+# a bare `opencode` alternative — which would also match any mounted worktree
+# that happens to be named opencode.
+cfg_re=' /[^ ]*/(\.claude(\.json)?|\.codex|\.gemini|(\.config|\.cache|\.local/(share|state))/opencode)( |$)'
 if grep -qE "$cfg_re" /proc/self/mountinfo 2>/dev/null; then
 	auth="mount (host agent config bind-mounted rw; persists past the container)"
 else

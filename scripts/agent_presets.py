@@ -89,6 +89,41 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
     },
+    "opencode": {
+        "bin": "opencode",
+        # `run` is a SUBCOMMAND and the prompt is its positional `message..`,
+        # so {prompt} carries no flag of its own — the same subcommand shape
+        # codex needs, not claude's `-p {prompt}`.
+        #
+        # No --format is requested, for agy's reason: opencode's
+        # `run --format json` emits its OWN event schema, not claude's, and
+        # agentlog has no decoder for it. Structured output nothing can decode
+        # only makes the task log unreadable, so plain text passes through and
+        # logFormat stays "".
+        #
+        # RESUME SCOPE — the reason this preset could not exist before. The
+        # harness gives each task its own linked git worktree, and opencode
+        # groups sessions by the git COMMON dir, so every task on one repo
+        # shares a project. Measured on 1.1.35: seeding a session in worktree
+        # A and running `run --continue` from worktree B attached to A's
+        # session — a resumed task would have continued a SIBLING task's
+        # conversation. Measured on 1.18.18 (2026-08-19) the project is still
+        # shared but --continue now filters by the session's recorded
+        # directory: two worktrees of one repo were seeded with distinct
+        # codewords and each --continue recalled its own. This preset is
+        # therefore valid for 1.18.18+ and NOT for 1.1.35.
+        #
+        # Verified against opencode 1.18.18: `run <prompt>` exits 0 with the
+        # response on stdout (logs go to stderr); `run --continue <prompt>`
+        # recalls the prior turn in the same worktree; bare `opencode` starts
+        # the TUI under a PTY. Note it does NOT refuse a missing TTY the way
+        # agy does — without a PTY it renders the TUI into the pipe and hangs,
+        # so a non-PTY launch fails by timeout rather than by error.
+        "oneshotArgv": "run {args} {prompt}",
+        "resumeOneshotArgv": "run --continue {args} {prompt}",
+        "resumeInteractiveArgv": "{args} --continue",
+        "logFormat": "",
+    },
     # Shell-sandbox preset, not a conversational agent — included because
     # it's a trivial copy of the runner-up.md "bash" preset row. --agents
     # only emits the bin/argv triplet; the accompanying --no-worktree and
@@ -130,7 +165,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # not collide with --agents (see _CONFLICTING_FLAGS).
 _SANDBOX_DIR = Path(__file__).resolve().parent / "sandbox"
 
-for _base in ("claude", "codex", "agy", "bash"):
+for _base in ("claude", "codex", "agy", "bash", "opencode"):
     _entry = dict(KNOWN_AGENT_PRESETS[_base])
     _entry["bin"] = str(_SANDBOX_DIR / f"{_base}-in-podman.sh")
     KNOWN_AGENT_PRESETS[f"sandbox-{_base}"] = _entry

@@ -80,6 +80,27 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         # must NOT request structured output nor claim a decoder.
         self.assertEqual(agy["logFormat"], "")
 
+    def test_opencode_preset_argv(self) -> None:
+        out = expand_agents_preset("claude,opencode", [])
+        profiles = json.loads(out[out.index("--agent-profiles") + 1])
+        self.assertEqual(len(profiles), 1)
+        oc = profiles[0]
+        self.assertEqual(oc["name"], "opencode")
+        self.assertEqual(oc["bin"], "opencode")
+        # `run` is a SUBCOMMAND and the prompt is its positional message, so
+        # {prompt} carries no flag of its own — codex's shape, not claude's.
+        self.assertEqual(oc["oneshotArgv"], ["run", "{args}", "{prompt}"])
+        self.assertEqual(
+            oc["resumeOneshotArgv"], ["run", "--continue", "{args}", "{prompt}"]
+        )
+        # The resume flag must stay on the `run` subcommand for the one-shot
+        # and on the bare binary for the TUI — opencode accepts --continue in
+        # both places and they are different launch paths.
+        self.assertEqual(oc["resumeInteractiveArgv"], ["{args}", "--continue"])
+        # agentlog has no decoder for opencode's `--format json` event schema,
+        # so the preset must neither request it nor claim a decoder.
+        self.assertEqual(oc["logFormat"], "")
+
     def test_single_agent_emits_no_profiles_flag(self) -> None:
         out = expand_agents_preset("claude", [])
         self.assertNotIn("--agent-profiles", out)
@@ -157,7 +178,7 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         # slot silently behaves unlike its unsandboxed twin — which is how the
         # first sandbox preset lost stream-json progress and delivered a whole
         # one-shot as one final blob.
-        for base in ("claude", "codex", "agy", "bash"):
+        for base in ("claude", "codex", "agy", "bash", "opencode"):
             with self.subTest(base=base):
                 sb = expand_agents_preset(f"sandbox-{base}", [])
                 plain = expand_agents_preset(base, [])

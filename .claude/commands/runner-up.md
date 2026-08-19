@@ -28,9 +28,10 @@ Arguments: $ARGUMENTS
    | `cmd`        | `--no-worktree --agent-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --agent-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--agents sandbox --agent-args "--dangerously-skip-permissions"` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement, claude (see below) |
-   | `sandbox-codex` / `sandbox-agy` / `sandbox-bash` | `--agents sandbox-<name>` (bin+argv from `scripts/agent_presets.py`; same `--hostname` advice) | The same container for the other agents (see below) |
+   | `sandbox-codex` / `sandbox-agy` / `sandbox-opencode` / `sandbox-bash` | `--agents sandbox-<name>` (bin+argv from `scripts/agent_presets.py`; same `--hostname` advice) | The same container for the other agents (see below) |
    | `codex`      | `--agents codex` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-codex` when roots overlap a Claude slot) | Codex CLI runner |
    | `agy`        | `--agents agy` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-agy` when roots overlap a Claude slot) | Antigravity CLI runner (gemini-cli's successor) |
+   | `opencode`   | `--agents opencode` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-opencode` when roots overlap a Claude slot) | OpenCode CLI runner (**1.18.18+ only**, see below) |
 
    **The `sandbox*` presets are NOT shell presets.** They run the *full* agent
    inside a rootless-podman container (`scripts/sandbox/`), confining its
@@ -49,10 +50,10 @@ Arguments: $ARGUMENTS
    into `logs` exactly like the corresponding host slot — spawn it with bare
    `--agent-bin` instead and you silently get the runner's raw defaults, i.e. no
    progress until the task ends. `sandbox` remains an alias of `sandbox-claude`.
-   One wrapper serves all four: which agent runs is `--sandbox-agent <name>`,
-   which the preset supplies. codex and agy are **mount-auth only** (their
-   provider credentials go into the container; no revocable-token mode exists
-   for them) — see `scripts/sandbox/README.md`. Optional wrapper
+   One wrapper serves all five: which agent runs is `--sandbox-agent <name>`,
+   which the preset supplies. codex, agy and opencode are **mount-auth only**
+   (their provider credentials go into the container; no revocable-token mode
+   exists for them) — see `scripts/sandbox/README.md`. Optional wrapper
    controls, passed the same way (`--agent-arg` / `--agent-args`): `--firewall`
    (default-deny IP allowlist), `--firewall-proxy` (stronger: in-container
    allowlisting CONNECT proxy, no raw agent egress, WebFetch works),
@@ -96,6 +97,46 @@ Arguments: $ARGUMENTS
    A Codex slot usually needs explicit `--hostname $HARNESS_HOSTNAME-codex`
    when its roots overlap an existing Claude slot, for the same dispatch
    ambiguity reason as the sandbox slot.
+
+   **OpenCode preset details.** Same source of truth as above — the literal
+   argv lives only in `scripts/agent_presets.py`. Its shape is codex's, not
+   claude's: one-shot invokes the `run` subcommand and the prompt is `run`'s
+   positional `message`, so `{prompt}` carries no flag. `resume_conversation`
+   one-shot is `run --continue`; interactive resume is bare `opencode
+   --continue` (opencode accepts `--continue` on both). No structured output is
+   requested: `run --format json` emits opencode's own event schema and
+   `runner/agentlog` has no decoder for it, so `logFormat` stays `""` and the
+   task log is plain text — the same call agy's preset makes.
+
+   Two things to check before spawning a slot:
+
+   - **Version.** This preset is valid for **1.18.18+ only**. The harness gives
+     each task its own linked git worktree, and opencode groups sessions by the
+     git common dir, so every task on one repo shares a project. Measured on
+     1.1.35, `run --continue` from worktree B attached to worktree A's session —
+     a resumed task would have continued a *sibling task's* conversation. On
+     1.18.18 the project is still shared but `--continue` filters by the
+     session's recorded directory; two worktrees of one repo, seeded with
+     distinct codewords, each recalled their own.
+   - **Runner binary.** That directory filter only helps if the agent sees the
+     task's directory, and opencode reads `PWD` rather than calling `getcwd()`.
+     Setting a child's working directory does not update `PWD`, so a runner
+     built before `AgentCwdEnv` (`runner/agentenv.go`) handed every opencode
+     task the *runner's* directory — collapsing them into one recorded
+     directory and putting the cross-task resume back. A slot must run a
+     runner built with that fix; `make build` plus a restart of the slot.
+   - **Which binary `opencode` resolves to.** The Arch package installs
+     `/usr/bin/opencode`, while the upstream curl/npm installer puts a separate
+     copy at `~/.opencode/bin/opencode` and prepends it to `PATH` in `~/.bashrc`.
+     With both present the older one wins everywhere. Note a registered slot
+     freezes `PATH` into its systemd unit as a literal `Environment=PATH=…` at
+     `register` time, so fixing `~/.bashrc` does NOT reach it — neither
+     `systemctl --user restart` nor `build_and_restart_all.py` (which replays the
+     running argv) will pick up the change. Edit the unit or re-register.
+
+   Also: opencode's auto-approve-permissions flag is `--auto`, the analogue of
+   claude's `--dangerously-skip-permissions`. Like that flag it is the caller's
+   choice via `--agent-args`, not part of the preset.
 
    **Bash preset details.** The bash slot is a shell runner, not an agent with
    conversation state. Its argv (defined in `scripts/agent_presets.py`) runs
