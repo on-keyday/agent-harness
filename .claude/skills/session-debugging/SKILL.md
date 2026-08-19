@@ -78,6 +78,15 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
   them in two calls: `send <id> <text>` (no `-enter`), snapshot to confirm the
   text is in the box, then `send -e <id> '\r'` as a separate call. Plain
   shells and classic line-editors are fine with `-enter` in one call.
+- **One call per keypress in a TUI.** Printable runes that arrive in a single
+  write are delivered to the program as ONE key event, so `send <id> 'jjj'`
+  reaches a TUI as the single key `"jjj"`, which matches no binding: the cursor
+  does not move three rows, it does not move at all (verified live against a
+  bubbletea table). Repeat the call per keypress instead of batching. This is
+  not a harness artifact — key-repeat and paste batch the same way, which is
+  why a widget that means to accept a burst has to read it rune by rune, and
+  not every widget does. A shell is unaffected: it consumes the whole write as
+  typed text.
 
 ## Command reference
 
@@ -214,6 +223,7 @@ as line boundaries — matching on `\n`-terminated lines alone misses markers.
 | grep misses a long line in snapshot | Width-wrapped grid → `exec` (logical lines) or `--raw` |
 | Text sits in the input box, never submits | Agent TUI ignores same-burst CR → send text, then `send -e <id> '\r'` separately |
 | Screen unchanged after `send` | Render lag (poll longer) or input plumbing broken → nonce echo round-trip |
+| A repeated key in one `send` does nothing | Runes in one write arrive as ONE key event (`"jjj"` matches no binding) → one call per keypress |
 | Screen looks garbled in snapshot | Render artifact vs real bytes → `--raw` and inspect escapes |
 | `/clear` sent over the agentboard did nothing | Payload lands as prompt text, never as a slash command → `session send` |
 | `await-idle` woke you with nothing to do | The peer's agentboard reply was already the completion edge → don't arm one for a peer you asked to report back |

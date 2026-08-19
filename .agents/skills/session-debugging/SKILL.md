@@ -34,9 +34,21 @@ Get `<id>` from `harness-cli session ls` (interactive sessions) or `ls`
   **`send` + `snapshot` loop**. `exec` on a non-shell foreground finds no
   completion marker and times out with a diagnostic — that timeout is your
   signal to switch.
-- Target is a **claude worker you're coordinating** (tasks, corrections) →
-  the **agentboard**, not the keyboard. Reserve send/snapshot for
-  terminal-level inspection and unsticking (below).
+- Target is a **claude worker you're coordinating** → the **agentboard** for
+  anything expressible as prompt text (tasks, corrections, questions), and the
+  keyboard ONLY for what is not: **client-level control** — `/clear`,
+  `/compact` and other slash commands, an Esc interrupt, a permission-prompt
+  answer, a menu selection (see "Diagnosing a stuck claude worker" below). An
+  agentboard payload reaches a claude peer as prompt *text*: the runner types
+  only the fixed `<harness:agentboard-wake>` marker into the PTY, and the
+  payload arrives through the `UserPromptSubmit` inbox hook. So `agent send
+  --data '/clear'` clears nothing — the worker reads the two words as content.
+  That is structural, not a gap to route around.
+- **Completion is signalled per channel too.** An agentboard instruction ends
+  with the peer's reply; a keystroke-level one has no reply coming, so its only
+  edge is PTY quiescence (`session await-idle` — see `harness-cli skill
+  supervising-workers`). Do not arm an idle watcher for a peer you already
+  asked to report back on the agentboard.
 
 ## The drive loop (send → snapshot → assert)
 
@@ -66,6 +78,15 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
   them in two calls: `send <id> <text>` (no `-enter`), snapshot to confirm the
   text is in the box, then `send -e <id> '\r'` as a separate call. Plain
   shells and classic line-editors are fine with `-enter` in one call.
+- **One call per keypress in a TUI.** Printable runes that arrive in a single
+  write are delivered to the program as ONE key event, so `send <id> 'jjj'`
+  reaches a TUI as the single key `"jjj"`, which matches no binding: the cursor
+  does not move three rows, it does not move at all (verified live against a
+  bubbletea table). Repeat the call per keypress instead of batching. This is
+  not a harness artifact — key-repeat and paste batch the same way, which is
+  why a widget that means to accept a burst has to read it rune by rune, and
+  not every widget does. A shell is unaffected: it consumes the whole write as
+  typed text.
 
 ## Command reference
 
@@ -176,6 +197,14 @@ stay before `<id>`.
 Unsticking the terminal is keyboard work; handing the worker new instructions
 afterwards still belongs on the agentboard.
 
+### After a keystroke-level reset
+
+`/clear` and `/compact` leave the worker with no memory of what you agreed on,
+while its retained inbound messages stay on the board. Re-brief it over the
+agentboard afterwards — and note that an instruction it already carried out
+will be re-read as pending unless you retracted it (`harness-cli skill
+harness-cli` → "Withdrawing a message you sent").
+
 ## Parsing raw PTY bytes
 
 A PTY echoes an injected Enter as a **bare `\r` with no LF**. When grepping
@@ -194,4 +223,7 @@ as line boundaries — matching on `\n`-terminated lines alone misses markers.
 | grep misses a long line in snapshot | Width-wrapped grid → `exec` (logical lines) or `--raw` |
 | Text sits in the input box, never submits | Agent TUI ignores same-burst CR → send text, then `send -e <id> '\r'` separately |
 | Screen unchanged after `send` | Render lag (poll longer) or input plumbing broken → nonce echo round-trip |
+| A repeated key in one `send` does nothing | Runes in one write arrive as ONE key event (`"jjj"` matches no binding) → one call per keypress |
 | Screen looks garbled in snapshot | Render artifact vs real bytes → `--raw` and inspect escapes |
+| `/clear` sent over the agentboard did nothing | Payload lands as prompt text, never as a slash command → `session send` |
+| `await-idle` woke you with nothing to do | The peer's agentboard reply was already the completion edge → don't arm one for a peer you asked to report back |
