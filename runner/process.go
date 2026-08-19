@@ -163,8 +163,12 @@ func (p *Process) Run(ctx context.Context, prompt string, sink LogSink) (int, er
 	}
 	cmd := exec.CommandContext(runCtx, p.ClaudeBin, args...)
 	cmd.Dir = p.CWD
-	if len(p.Env) > 0 {
-		cmd.Env = append(os.Environ(), p.Env...)
+	// PWD comes from cmd.Dir's own source so the two cannot drift; see
+	// AgentCwdEnv for why the chdir alone leaves some agents pointed at the
+	// runner's directory instead of the task's.
+	extraEnv := append(append([]string(nil), p.Env...), AgentCwdEnv(p.CWD)...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
 	}
 	// Give SIGTERM 5s grace before SIGKILL when ctx fires.
 	cmd.WaitDelay = 5 * time.Second

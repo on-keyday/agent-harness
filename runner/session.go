@@ -745,6 +745,11 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// agentBin/agentArgv were already resolved from the requested profile by
 	// the gate above. Args order matches handleAssign: profile baseline
 	// first, per-task extras appended.
+	// PWD is derived from `dir` — the same value passed as the working
+	// directory on the next line — so the two cannot drift; see AgentCwdEnv
+	// for why the chdir alone leaves some agents pointed at the runner's
+	// directory instead of the task's.
+	env = append(env, AgentCwdEnv(dir)...)
 	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()

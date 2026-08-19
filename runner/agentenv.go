@@ -104,6 +104,38 @@ func BuildAgentEnv(s AgentEnvSpec) []string {
 	return env
 }
 
+// AgentCwdEnv returns the env entries that make a spawned agent's idea of its
+// own working directory agree with the directory it was actually started in.
+// An empty dir yields nil, so a caller that does not set a working directory
+// does not claim one either.
+//
+// Why this is needed at all: setting a child's working directory (os/exec's
+// cmd.Dir, and go-pty's Cmd.Dir on the interactive path) performs a chdir but
+// leaves the inherited PWD untouched, so the child sees the RUNNER's PWD —
+// one fixed value for every task that runner ever runs. Most programs call
+// getcwd() and never notice. opencode does not: measured 2026-08-19 with real
+// cwd = worktree A and PWD = worktree B, it recorded B as its session's
+// directory, and that directory is the key `run --continue` resolves against.
+// Left alone, every opencode task on a runner would share one recorded
+// directory and a resumed task would continue whichever task ran last —
+// across worktrees and across repos.
+//
+// A bash-shaped agent hides the bug rather than avoiding it: bash recomputes
+// PWD from getcwd() at startup, which is why the podman wrapper (whose
+// `WT="$PWD"` decides what gets bind-mounted) has always seen the right
+// directory. Anything spawned directly does not get that.
+//
+// Callers must derive dir from the SAME value they pass as the working
+// directory, not from a parallel field — the two must agree by construction.
+// Appending the result after os.Environ() is what makes it take effect: both
+// os/exec and go-pty's Windows path dedupe on key and keep the LAST entry.
+func AgentCwdEnv(dir string) []string {
+	if dir == "" {
+		return nil
+	}
+	return []string{"PWD=" + dir}
+}
+
 // rewriteProxyViaForLocalDial converts a runner-listen-side bind address
 // inside a ConnectionID string into one suitable for the agent (same host)
 // to dial.
