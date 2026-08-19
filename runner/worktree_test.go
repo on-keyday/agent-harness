@@ -310,7 +310,7 @@ func TestRemoveIfCleanRemovesWhenOnlyInjectedDirty(t *testing.T) {
 	if err := WriteAgentSettings(dir); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteAgentSkills(dir); err != nil {
+	if err := WriteAgentSkills(dir, nil); err != nil {
 		t.Fatal(err)
 	}
 

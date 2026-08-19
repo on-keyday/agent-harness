@@ -5,6 +5,7 @@ package agentskills
 
 import (
 	"embed"
+	"io/fs"
 	"sort"
 	"strings"
 )
@@ -21,8 +22,19 @@ func Skill(name string) ([]byte, error) {
 // embed FS (each skill is a top-level directory holding a SKILL.md) rather
 // than hardcoding names, so extending the //go:embed directive above is the
 // only edit needed to surface a new skill.
-func List() ([]string, error) {
-	entries, err := FS.ReadDir(".")
+func List() ([]string, error) { return ListFS(FS) }
+
+// ListFS is List over an arbitrary fs.FS. It exists because the runner can be
+// pointed at an on-disk skill directory instead of this embed FS
+// (agent-runner --agentskills-dir), and an on-disk directory is NOT curated the
+// way the //go:embed directive is: os.DirFS("runner/agentskills") also exposes
+// embed.go and agentskills_test.go, and a checkout's .claude/skills holds
+// repo-only skills. So "a skill is a top-level directory containing SKILL.md"
+// has to be an enforced filter over whatever FS is supplied, not a property the
+// caller can assume — copying an unfiltered DirFS would ship .go files to every
+// task worktree as if they were agent guidance.
+func ListFS(fsys fs.FS) ([]string, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +43,7 @@ func List() ([]string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		if _, err := FS.Open(e.Name() + "/SKILL.md"); err != nil {
+		if _, err := fs.Stat(fsys, e.Name()+"/SKILL.md"); err != nil {
 			continue // a directory without a SKILL.md is not a skill
 		}
 		names = append(names, e.Name())

@@ -21,8 +21,13 @@
 #
 # Usage:
 #   scripts/dummy-harness.sh up [--agent claude|fake] [--model NAME] [--detach] [--name N]
+#                               [-- <extra agent-runner flags>]
 #   scripts/dummy-harness.sh env  [--name N]   # print `export` lines for an instance
 #   scripts/dummy-harness.sh down [--name N]
+#
+# Flags after `--` go to agent-runner verbatim, appended last. The runner here
+# defaults to --no-worktree, which switches skill/settings injection OFF; add
+# `-- --force-inject-harness-settings` when the check needs them injected.
 #
 # --name lets independent instances coexist. That is not a nicety: checking
 # what a client does when its server restarts needs the window you are
@@ -110,11 +115,18 @@ cmd_down() {
 
 cmd_up() {
   local agent=claude model=claude-haiku-4-5-20251001 detach=0
+  # Everything after a literal `--` is passed through to agent-runner verbatim,
+  # appended last so it overrides the defaults built below. Needed for runner
+  # flags this script has no opinion about — e.g. --agentskills-dir, or
+  # --force-inject-harness-settings to re-enable skill injection, which the
+  # --no-worktree default below otherwise switches off.
+  local -a runner_extra=()
   while [ $# -gt 0 ]; do
     case "$1" in
       --agent) agent="${2:?--agent needs a value}"; shift 2 ;;
       --model) model="${2:?--model needs a value}"; shift 2 ;;
       --detach|-d) detach=1; shift ;;
+      --) shift; runner_extra=("$@"); break ;;
       *) die "unknown flag: $1" ;;
     esac
   done
@@ -205,6 +217,7 @@ FAKE
       ;;
     *) die "unknown --agent: $agent (want claude or fake)" ;;
   esac
+  runner_args+=("${runner_extra[@]+"${runner_extra[@]}"}")
 
   "$BIN/agent-runner" "${runner_args[@]}" >"$tmp/runner.log" 2>&1 &
   local runner_pid=$!

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -63,6 +64,14 @@ type Config struct {
 	// it re-enables WriteAgentSettings / WriteAgentSkills (target = RepoPath).
 	// Worktree cleanup remains disabled in NoWorktree mode regardless.
 	ForceInjectHarnessSettings bool
+
+	// AgentSkillsFS, when non-nil, replaces the embedded skill tree as the
+	// source WriteAgentSkills copies into each task worktree. agent-runner sets
+	// it from --agentskills-dir (an os.DirFS). Since it is read per task assign
+	// rather than at process start, an edited SKILL.md reaches the next task
+	// without restarting the runner — which the embedded copy cannot do, a
+	// running process keeping its loaded binary across `make build`.
+	AgentSkillsFS fs.FS
 
 	// PingInterval overrides peer.DialConfig.PingInterval (default 15s).
 	PingInterval time.Duration
@@ -231,6 +240,7 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 		Now:                        time.Now,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
+		AgentSkillsFS:              cfg.AgentSkillsFS,
 		// Endpoint is set by Connect (dial mode) or handleServerConn (listen
 		// mode) after driveAfterConn returns, so the ep is available.
 	}

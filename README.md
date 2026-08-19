@@ -329,6 +329,41 @@ isolated checkout. Two flags adjust this:
   persist after task end (no auto-cleanup); manage them manually if
   desired.
 
+### Where the injected skills come from
+
+By default the skills written into `.claude/skills/` and
+`.agents/skills/` are the copy embedded in the runner binary
+(`runner/agentskills`, `//go:embed`). That copy is frozen when the
+process starts: `make build` replaces `bin/agent-runner` on disk, but a
+running runner keeps the binary it already loaded, so an edited
+`SKILL.md` does not reach new tasks until the runner is restarted.
+
+`--agentskills-dir DIR` (env `HARNESS_AGENTSKILLS_DIR`) points the
+runner at a directory on disk instead. It is read on **every task
+assign**, so an edited `SKILL.md` reaches the next task with no rebuild
+and no restart — the same trade the server's `--webui-dir` makes for
+WebUI assets:
+
+```bash
+scripts/runner.sh up --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo \
+  --agentskills-dir /abs/path/to/agent-harness/runner/agentskills
+```
+
+- A subdirectory counts as a skill only if it contains a `SKILL.md`.
+  That filter is why the checkout's `runner/agentskills` is a safe
+  target even though it also holds `embed.go` and the package's tests.
+- The directory **replaces** the embedded set rather than layering over
+  it, and a path that resolves to zero skills fails at startup — skill
+  injection is otherwise a warn-only step in the task path, so a typo
+  would silently give every task no skills at all.
+- The pointed-at directory is read as it is on disk, committed or not.
+  Uncommitted edits there are handed to every task the runner starts,
+  which is the point during development and worth remembering
+  afterwards.
+- `harness-cli skill <name>` is unaffected: it prints the copy embedded
+  in the `harness-cli` binary, which `make build` refreshes without any
+  restart.
+
 ## Capabilities and scope
 
 Each task carries a **capability set** — a server-enforced bitmask of
@@ -625,7 +660,8 @@ server/               harness server: registry / taskstore / scheduler / WAL / l
 runner/               harness runner: worktree manager / claude exec / connect loop /
                       agent env injection / settings.json + skills materialisation
 runner/agentskills/   embedded skill files (e.g. harness-cli SKILL.md) the runner
-                      writes into each worktree's .claude/skills/
+                      writes into each worktree's .claude/skills/; also the
+                      directory to hand --agentskills-dir for hot-reload
 cli/                  harness client library
 cli/agent/            harness-cli `agent ...` subcommands (broker IO from agent side)
 tui/                  Bubble Tea TUI components and event loop

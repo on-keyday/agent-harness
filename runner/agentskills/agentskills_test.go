@@ -113,6 +113,82 @@ func TestSkillUnknown(t *testing.T) {
 	}
 }
 
+// TestListFSFiltersNonSkillEntries pins the filter the runner's on-disk source
+// depends on. The embed FS is curated by the //go:embed directive, so List()
+// never had to reject anything; an os.DirFS handed to ListFS is not curated —
+// os.DirFS("runner/agentskills") also carries this package's .go files, and a
+// checkout's .claude/skills carries repo-only skills. Only a top-level
+// directory holding a SKILL.md counts.
+func TestListFSFiltersNonSkillEntries(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"beta-skill", "alpha-skill"} {
+		if err := os.MkdirAll(filepath.Join(dir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name, "SKILL.md"), []byte("body\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A directory with no SKILL.md, and a plain file at top level.
+	if err := os.MkdirAll(filepath.Join(dir, "references"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "embed.go"), []byte("package agentskills\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err := ListFS(os.DirFS(dir))
+	if err != nil {
+		t.Fatalf("ListFS: %v", err)
+	}
+	want := []string{"alpha-skill", "beta-skill"} // sorted
+	if len(names) != len(want) {
+		t.Fatalf("ListFS = %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Fatalf("ListFS = %v, want %v", names, want)
+		}
+	}
+}
+
+// TestListFSEmptyDir: a directory with nothing skill-shaped in it lists no
+// skills rather than erroring. agent-runner turns that into a startup failure
+// (see resolveAgentSkillsDir) — the distinction matters because injection
+// itself is a Warn-only step, so a typo'd path must be caught before any task
+// runs, not per task.
+func TestListFSEmptyDir(t *testing.T) {
+	names, err := ListFS(os.DirFS(t.TempDir()))
+	if err != nil {
+		t.Fatalf("ListFS on an empty dir: %v", err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("ListFS on an empty dir = %v, want none", names)
+	}
+}
+
+// TestListFSOverEmbedMatchesList keeps the two entry points from drifting:
+// List() must stay a thin wrapper, or the embedded and on-disk paths could
+// start disagreeing about what a skill is.
+func TestListFSOverEmbedMatchesList(t *testing.T) {
+	viaList, err := List()
+	if err != nil {
+		t.Fatalf("List(): %v", err)
+	}
+	viaFS, err := ListFS(FS)
+	if err != nil {
+		t.Fatalf("ListFS(FS): %v", err)
+	}
+	if len(viaList) != len(viaFS) {
+		t.Fatalf("List() = %v, ListFS(FS) = %v", viaList, viaFS)
+	}
+	for i := range viaList {
+		if viaList[i] != viaFS[i] {
+			t.Fatalf("List() = %v, ListFS(FS) = %v", viaList, viaFS)
+		}
+	}
+}
+
 // mirrorDirs are the checked-in copies of the embedded skills, relative to the
 // repo root: .claude/ is what a claude session in THIS repo loads, .agents/ is
 // what other harnesses read. This package is the go:embed source of truth, so

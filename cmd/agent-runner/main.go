@@ -4,6 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	// Aliased: this file already uses `fs` as the local name for a
+	// *flag.FlagSet (bindFlags' parameter, main's flag.CommandLine), so a plain
+	// `io/fs` import would be shadowed inside exactly the functions most likely
+	// to need it next.
+	iofs "io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -16,6 +21,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner"
 	"github.com/on-keyday/agent-harness/runner/agentlog"
+	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
 )
@@ -56,6 +62,7 @@ type mainConfig struct {
 	PSKFile                    string
 	NoWorktree                 bool
 	ForceInjectHarnessSettings bool
+	AgentSkillsDir             string
 	Persist                    bool
 	NoPersist                  bool
 	PingInterval               time.Duration
@@ -122,6 +129,7 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.PSKFile, "psk-file", c.PSKFile, "path to PSK file (env: HARNESS_PSK_FILE)")
 	fs.BoolVar(&c.NoWorktree, "no-worktree", c.NoWorktree, "skip per-task git worktree creation; run agent processes directly in the bound repo path. Disables .claude/settings.json and .claude/skills/ injection by default (see --force-inject-harness-settings).")
 	fs.BoolVar(&c.ForceInjectHarnessSettings, "force-inject-harness-settings", c.ForceInjectHarnessSettings, "only meaningful with --no-worktree: re-enable .claude/settings.json and .claude/skills/ injection at the bound repo path.")
+	fs.StringVar(&c.AgentSkillsDir, "agentskills-dir", c.AgentSkillsDir, "hot-reload: inject agent skills from this directory on disk instead of the embedded copy (env: HARNESS_AGENTSKILLS_DIR). Point it at the repo's runner/agentskills dir; then editing a SKILL.md reaches the NEXT task with no runner rebuild or restart. A subdirectory counts as a skill only if it holds a SKILL.md, so non-skill files in the directory are ignored. Empty (default) injects the embedded copy, which is frozen at this process's launch.")
 	fs.BoolVar(&c.Persist, "persist", c.Persist, "auto-reconnect on disconnect (set --no-persist to disable)")
 	fs.BoolVar(&c.NoPersist, "no-persist", c.NoPersist, "shortcut for --persist=false")
 	fs.DurationVar(&c.PingInterval, "ping-interval", c.PingInterval, "underlying ping cadence; also bounds disconnect detection delay")
@@ -160,6 +168,46 @@ func (c *mainConfig) validate() error {
 		return fmt.Errorf("--agent-resume-interactive-argv is required when --agent-interactive-argv is customized")
 	}
 	return nil
+}
+
+// resolveAgentSkillsDir applies the --agentskills-dir / HARNESS_AGENTSKILLS_DIR
+// precedence (flag wins) and returns the on-disk skill source plus the skill
+// names it holds. An empty resolution returns (nil, nil, nil) — the caller
+// leaves runner.Config.AgentSkillsFS nil and the embedded copy is used.
+//
+// A non-empty dir that yields zero skills is an ERROR rather than a silent
+// fallback. Skill injection is a best-effort step in the task path (its failure
+// is only Warn-logged, see session.go handleAssign), so a typo'd path would
+// otherwise produce tasks with no skills at all and nothing louder than one
+// warning per task. Failing at startup puts the mistake where the operator is
+// still looking.
+func resolveAgentSkillsDir(flagVal, envVal string) (iofs.FS, []string, error) {
+	dir := strings.TrimSpace(flagVal)
+	if dir == "" {
+		dir = strings.TrimSpace(envVal)
+	}
+	if dir == "" {
+		return nil, nil, nil
+	}
+	// Stat first: os.DirFS does not check the path, so a bad one surfaces from
+	// ListFS as `open .: no such file or directory` — the "." is the root of the
+	// DirFS, and reads as a bug in the runner rather than a wrong flag value.
+	st, err := os.Stat(dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("--agentskills-dir %q: %w", dir, err)
+	}
+	if !st.IsDir() {
+		return nil, nil, fmt.Errorf("--agentskills-dir %q is not a directory", dir)
+	}
+	fsys := os.DirFS(dir)
+	names, err := agentskills.ListFS(fsys)
+	if err != nil {
+		return nil, nil, fmt.Errorf("--agentskills-dir %q: %w", dir, err)
+	}
+	if len(names) == 0 {
+		return nil, nil, fmt.Errorf("--agentskills-dir %q holds no skills (a skill is a subdirectory containing SKILL.md)", dir)
+	}
+	return fsys, names, nil
 }
 
 func parseAgentArgsFlag(name, value string) ([]string, error) {
@@ -319,6 +367,23 @@ func main() {
 	}
 	resolvedPSK := resolvePSK(pskVal, cfg.PSKFile)
 
+	// Agent skills: embedded by default; a non-empty --agentskills-dir (or
+	// HARNESS_AGENTSKILLS_DIR) swaps in an on-disk FS that WriteAgentSkills
+	// re-reads on every task assign. Warn-level like harness-server's
+	// --webui-dir, and for the same reason: it bypasses the embedded copy, so
+	// what agents are told now depends on a directory rather than on this
+	// binary. Logging the resolved skill names makes a half-populated
+	// directory visible immediately instead of at the next task.
+	agentSkillsFS, agentSkillNames, err := resolveAgentSkillsDir(cfg.AgentSkillsDir, os.Getenv("HARNESS_AGENTSKILLS_DIR"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "agent-runner: %v\n", err)
+		os.Exit(1)
+	}
+	if agentSkillsFS != nil {
+		slog.Warn("agent skills hot-reload: injecting from disk, embedded copy bypassed",
+			"skills", agentSkillNames)
+	}
+
 	runCfg := runner.Config{
 		AllowedRoots:               abs,
 		MaxTasks:                   cfg.MaxTasks,
@@ -328,6 +393,7 @@ func main() {
 		PSK:                        resolvedPSK,
 		NoWorktree:                 cfg.NoWorktree,
 		ForceInjectHarnessSettings: cfg.ForceInjectHarnessSettings,
+		AgentSkillsFS:              agentSkillsFS,
 		PingInterval:               cfg.PingInterval,
 	}
 

@@ -33,12 +33,27 @@ one of them, that addition IS legitimate work and may be committed.
 // minimal instruction pointer to CLAUDE.md/AGENTS.md/GEMINI.md when each is
 // absent. Skill files are always overwritten so runner upgrades ship updated
 // guidance; pointer files are never overwritten — a project may provide its own.
-func WriteAgentSkills(worktreeDir string) error {
+//
+// src is the skill source: nil means the embedded copy (agentskills.FS), which
+// is what a plain runner uses. A non-nil src is the --agentskills-dir override
+// (an os.DirFS), read fresh here — and this function runs per task assign
+// (session.go handleAssign / handleOpenExec), which is what makes an edited
+// SKILL.md reach the NEXT task without restarting the runner. The embedded copy
+// cannot do that: a running process keeps its loaded binary, so its embed FS is
+// frozen at launch even after `make build` replaces bin/agent-runner.
+//
+// src is a parameter rather than a package-level default so the compiler names
+// every call site when the source becomes configurable; a silently-defaulting
+// global would let a new caller keep reading the frozen embed unnoticed.
+func WriteAgentSkills(worktreeDir string, src fs.FS) error {
+	if src == nil {
+		src = agentskills.FS
+	}
 	for _, root := range []string{
 		filepath.Join(worktreeDir, ".claude", "skills"),
 		filepath.Join(worktreeDir, ".agents", "skills"),
 	} {
-		if err := materializeSkills(root); err != nil {
+		if err := materializeSkills(root, src); err != nil {
 			return err
 		}
 	}
@@ -50,29 +65,45 @@ func WriteAgentSkills(worktreeDir string) error {
 	return nil
 }
 
-// materializeSkills copies the embedded skill tree into destRoot, overwriting
+// materializeSkills copies the skill tree in src into destRoot, overwriting
 // existing files.
-func materializeSkills(destRoot string) error {
-	return fs.WalkDir(agentskills.FS, ".", func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+//
+// It walks per skill directory named by agentskills.ListFS rather than walking
+// src wholesale: src may be an on-disk directory that holds more than skills
+// (os.DirFS("runner/agentskills") also carries embed.go and agentskills_test.go),
+// and a wholesale walk would write those into every task worktree's
+// .claude/skills as if they were agent guidance.
+func materializeSkills(destRoot string, src fs.FS) error {
+	names, err := agentskills.ListFS(src)
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		walkErr := fs.WalkDir(src, name, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			dst := filepath.Join(destRoot, filepath.FromSlash(p))
+			if d.IsDir() {
+				return os.MkdirAll(dst, 0o755)
+			}
+			if !d.Type().IsRegular() {
+				return nil // skip symlinks/devices an on-disk source may contain
+			}
+			data, err := fs.ReadFile(src, p)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return err
+			}
+			return os.WriteFile(dst, data, 0o644)
+		})
+		if walkErr != nil {
+			return walkErr
 		}
-		if p == "." {
-			return nil
-		}
-		dst := filepath.Join(destRoot, filepath.FromSlash(p))
-		if d.IsDir() {
-			return os.MkdirAll(dst, 0o755)
-		}
-		data, err := agentskills.FS.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(dst, data, 0o644)
-	})
+	}
+	return nil
 }
 
 // writePointerIfAbsent writes claudeMdMinimal to path only when no file exists

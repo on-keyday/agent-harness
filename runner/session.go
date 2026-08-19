@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"sync"
 	"time"
@@ -185,6 +186,13 @@ type Session struct {
 	// No-op when NoWorktree=false (worktree mode always injects regardless).
 	// Set from runner.Config.ForceInjectHarnessSettings.
 	ForceInjectHarnessSettings bool
+
+	// AgentSkillsFS, when non-nil, is the skill tree WriteAgentSkills
+	// materialises into each task worktree instead of the embedded copy. Set
+	// from runner.Config.AgentSkillsFS (agent-runner --agentskills-dir). It is
+	// read on every task assign, so editing a SKILL.md on disk reaches the next
+	// task without restarting this runner.
+	AgentSkillsFS fs.FS
 
 	mu    sync.Mutex
 	tasks map[string]*taskEntry       // taskID (hex) → cancel + repo
@@ -488,7 +496,7 @@ func (s *Session) handleAssign(ctx context.Context, taskID protocol.TaskID, body
 		if err := WriteAgentSettings(dir); err != nil {
 			s.logger().Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
 		}
-		if err := WriteAgentSkills(dir); err != nil {
+		if err := WriteAgentSkills(dir, s.AgentSkillsFS); err != nil {
 			s.logger().Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
 		}
 	}
@@ -688,7 +696,7 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		if err := WriteAgentSettings(dir); err != nil {
 			log.Warn("write agent settings failed", "task_id", taskIDHex, "err", err)
 		}
-		if err := WriteAgentSkills(dir); err != nil {
+		if err := WriteAgentSkills(dir, s.AgentSkillsFS); err != nil {
 			log.Warn("write agent skills failed", "task_id", taskIDHex, "err", err)
 		}
 	}
