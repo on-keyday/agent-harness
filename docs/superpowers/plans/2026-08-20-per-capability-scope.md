@@ -1420,6 +1420,82 @@ git commit -m "test(integration): per-capability scope end to end"
 
 ---
 
+### Task 14b: Deploy gate — prove a client can get INTO a task, on new binaries
+
+**This is a hard gate. Without a written PASS here, the deploy does not happen.**
+
+Nothing in Tasks 1-14 proves the thing that matters most after a wire break:
+that there is still a way in. Unit tests run in-process; the integration suite
+drives a fake agent. Neither exercises a real client opening a real session
+against a real server — the path that fails by **hanging**, silently, on a
+deadline-less context. The failure guarded against is not "a feature
+regressed", it is "the fleet is upgraded and nothing can attach to anything",
+with the recovery path itself being the broken one.
+
+**Files:** none — a procedure against a throwaway instance.
+
+- [ ] **Step 1: Load the dummy-harness skill first**
+
+Invoke the `dummy-harness` skill before running anything. It documents the
+environment traps that make a dummy instance fail in *misleading* ways; misread
+one and this gate reports a false red, or worse a false green.
+
+- [ ] **Step 2: Bring up a dummy instance, both ends on the NEW binaries**
+
+```bash
+scripts/dummy-harness.sh up --detach --agent fake --name deploy-gate
+```
+
+Evaluate the env it prints. A dummy whose server is stale tests nothing — check
+that the server it started came from this branch's build.
+
+- [ ] **Step 3: Prove entry, with real keystrokes**
+
+```bash
+harness-cli session new -d --repo <dummy repo> --rows 40 --cols 120
+harness-cli session ls
+harness-cli session exec <task-id> 'echo ENTRY-PROOF-$$'
+harness-cli session snapshot <task-id>
+```
+
+The snapshot must contain the echoed nonce. **Rendering is not proof — feed
+real input and read the result back**: a session that draws but accepts no
+keystrokes looks identical in a screenshot. Match on the nonce, never on cursor
+position — Enter echoes as a bare CR in a PTY, so position-based matching lies.
+
+- [ ] **Step 4: Prove entry survives the restart the deploy performs**
+
+```bash
+scripts/dummy-harness.sh restart-server --name deploy-gate
+harness-cli ls                      # the task should be Failed/server_restart
+harness-cli session new --repo <dummy repo> --resume <task-id>
+harness-cli session exec <task-id> 'echo RESUME-PROOF-$$'
+```
+
+Recovery travels on `SubmitRequest` / `OpenInteractiveRequest` — the two
+formats this change breaks — so this step, not Step 3, is the one that would
+have caught the historical fleet wipe. If `restart-server` is not a subcommand
+of the script, restart it by whatever means the dummy-harness skill documents;
+do not skip the step.
+
+- [ ] **Step 5: Prove a second client kind gets in**
+
+Repeat Step 3's entry from the TUI (`bin/harness-tui`, `S` opens a session)
+against the same dummy server. One working client is the minimum asked for; a
+second is what distinguishes "the wire is fine" from "the CLI happens to work".
+
+- [ ] **Step 6: Tear down and write the result down**
+
+```bash
+scripts/dummy-harness.sh down --name deploy-gate
+```
+
+Record in the handoff notes: which client kinds were proven, the nonces
+observed, and whether resume worked. Task 15's deploy proceeds only on that
+written PASS.
+
+---
+
 ### Task 15: Documentation and the upgrade rehearsal
 
 **Files:**
@@ -1443,7 +1519,7 @@ Expected: all clean. **Do not restart anything yet.**
 This is the gate, not a formality — recovery from the restart travels on the two formats this change breaks, so an un-rebuilt client fails exactly when it is needed, and fails by hanging.
 
 1. `make build` everywhere a client binary lives; rebuild the wasm.
-2. On a **dummy** instance with new server + new client: spawn an interactive session, restart the server so the task lands in `Failed`/`server_restart`, and resume it with the rebuilt client. Only proceed if this works.
+2. **Task 14b's written PASS must already exist.** Do not re-derive it here and do not proceed without it.
 3. Restart the real server, then the runners: `scripts/build_and_restart_all.py` (self-last).
 4. Resume the sessions the restart failed, with the rebuilt client.
 5. Hard-reload every WebUI tab — a cached pre-change wasm is an old client and will hang.
