@@ -84,6 +84,26 @@ Item **34 was born here**: making the column set dynamic panics inside bubbles'
 probe run, not by review. Per the skill's closing rule the number was added and
 the list renumbered to 1–37.
 
+### 2026-08-20 `06c534e` + `session resize` — exec_resize and its verb
+
+done:    1 (session.go verb + flags), 2 (parseResizeSpec — one grammar, one
+         parser), 15 (caps catalog), 33 (--resize refused on a bad spec; an
+         unapplied resize exits 3 instead of passing silently), 36, 37
+n/a:     3, 4, 5, 6, 7, 9 — the TUI and WebUI already emit winsize frames from
+         their own terminals, so they gained the ability with no edit; nothing
+         to type there. 11–14, 16–23: nothing new is DISPLAYED.
+omitted: 10 — `session resize` is a new member of the `session` family, and the
+         TUI cmdline / WebUI runCmd do not parse it. Neither parses
+         `session snapshot`/`send`/`exec` either: the non-TTY trio is an
+         agent-facing surface. Consistent, but it IS an omission.
+missed:  —
+
+Item **33 earned its keep** here rather than merely being satisfied: the server
+discards a disallowed resize SILENTLY, which is right for the implicit
+per-SIGWINCH stream and wrong for a typed command. Noticing that is what
+produced the echo-wait acknowledgement and the exit-3, instead of a command
+that prints success and changes nothing.
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -94,6 +114,8 @@ Update when adding an entry.
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 1 | 0 | New. |
+| 33 (take effect or error) | 1 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. |
+| 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 
 **Never fired yet:** 8, 9, 21, 22, 25, 26, 27, 29, 30, 33. Too few walks to

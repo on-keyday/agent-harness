@@ -70,11 +70,11 @@ func exitOnAmbiguous(err error) error {
 }
 
 // runSession dispatches session sub-verbs: new / attach / snapshot / send /
-// exec / ls / kill / await-idle. cid is the already-resolved server
+// exec / ls / kill / await-idle / resize. cid is the already-resolved server
 // ConnectionID from main()'s parseCID().
 func runSession(cid objproto.ConnectionID, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill|await-idle> [args]")
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill|await-idle|resize> [args]")
 		os.Exit(2)
 	}
 	verb := args[0]
@@ -96,6 +96,8 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 		return runSessionKill(cid, rest)
 	case "await-idle":
 		return runSessionAwaitIdle(cid, rest)
+	case "resize":
+		return runSessionResize(cid, rest)
 	default:
 		return fmt.Errorf("unknown session verb %q", verb)
 	}
@@ -373,6 +375,14 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	rows := fs.Uint("rows", 40, "with --snapshot: fallback rows when the session reports no size (sizes the offscreen renderer only, never the PTY)")
 	cols := fs.Uint("cols", 120, "with --snapshot: fallback cols when the session reports no size (sizes the offscreen renderer only, never the PTY)")
 	settleMs := fs.Uint("settle-ms", 1500, "with --snapshot: ms to collect output before rendering — the window the program has to react to what was just sent")
+	// Sizing then driving is one intent, and doing it as two commands lets the
+	// program receive keystrokes before it knows how big it is — a full-screen
+	// TUI then paints at the wrong size or refuses to paint at all. Applied
+	// BEFORE the text for exactly that reason.
+	//
+	// Spelled ROWSxCOLS rather than reusing --rows/--cols, which on this very
+	// command already mean the offscreen RENDER size for --snapshot.
+	resize := fs.String("resize", "", "before sending, set the session's PTY size to ROWSxCOLS (e.g. 40x150) — needs exec_resize and an unattached control seat; fails the command if it does not take")
 	style := fs.Bool("style", false, "with --snapshot: also print attribute spans (faint/bold/reverse/...) — the plain render drops SGR, so a faint placeholder reads like real typed text and WHICH ROW IS SELECTED is invisible without this")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -404,11 +414,22 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
   --snapshot after sending, render the screen to stdout (send + session snapshot
              in one call, one dial). --rows/--cols/--settle-ms/--style mean what
              they mean on ` + "`session snapshot`" + ` and require --snapshot.
+  --resize   ROWSxCOLS: set the PTY size BEFORE sending, so a full-screen
+             program is the right size when the keys land. NOT --rows/--cols,
+             which on this command size the --snapshot render instead.
 flags must precede <id>; everything after <id> is joined with spaces and sent
 literally (ssh-style), so multi-word text needs no quoting. Quote it as one
 argument to preserve exact whitespace.`)
 	}
 	taskIDHex := fs.Arg(0)
+	var resizeRows, resizeCols uint16
+	if *resize != "" {
+		var perr error
+		resizeRows, resizeCols, perr = parseResizeSpec(*resize)
+		if perr != nil {
+			return perr
+		}
+	}
 	// Join everything after <id> as the text to send, ssh-style (`ssh host cmd
 	// args...`). This matches the common instinct of typing words without
 	// quoting; otherwise a stray space would silently drop all but the first
@@ -433,6 +454,22 @@ argument to preserve exact whitespace.`)
 		return err
 	}
 	defer c.Close()
+	// Before the text, so the program is the right size when the keys land.
+	// Hard failure rather than a warning: the caller asked for a size, and
+	// driving a TUI that is still 0x0 produces a screenful of nothing that
+	// looks like the send failing.
+	if resizeRows > 0 {
+		applied, rerr := c.SessionResize(ctx, taskIDHex, resizeRows, resizeCols, 2*time.Second)
+		if rerr != nil {
+			return rerr
+		}
+		if !applied {
+			return fmt.Errorf("session send --resize %dx%d: %s", resizeRows, resizeCols, cli.ResizeRejectedHint)
+		}
+		if !*quiet {
+			fmt.Fprintf(os.Stderr, "session send: resized to %dx%d before sending\n", resizeRows, resizeCols)
+		}
+	}
 	if err := c.SessionSend(ctx, taskIDHex, data, time.Duration(*flushMs)*time.Millisecond); err != nil {
 		return err
 	}
@@ -702,4 +739,69 @@ func waitStreamCompleted(s interface{ Completed() bool }, timeout time.Duration)
 	for !s.Completed() && time.Now().Before(deadline) {
 		time.Sleep(2 * time.Millisecond)
 	}
+}
+
+// parseResizeSpec parses "ROWSxCOLS" (e.g. "40x150"). One flag rather than a
+// --rows/--cols pair on purpose: `session send --snapshot` and `session
+// snapshot` already have --rows/--cols meaning the OFFSCREEN RENDER size, and
+// `session new` has them meaning the PTY size. A third spelling of the same two
+// words on the same command line is how the existing confusion gets worse.
+func parseResizeSpec(spec string) (rows, cols uint16, err error) {
+	var r, c int
+	if n, _ := fmt.Sscanf(spec, "%dx%d", &r, &c); n != 2 {
+		return 0, 0, fmt.Errorf("resize %q: want ROWSxCOLS, e.g. 40x150", spec)
+	}
+	if r <= 0 || c <= 0 || r > 65535 || c > 65535 {
+		return 0, 0, fmt.Errorf("resize %q: rows and cols must be 1..65535", spec)
+	}
+	return uint16(r), uint16(c), nil
+}
+
+// runSessionResize sets a live session's PTY size from a non-control attach.
+//
+// It reports whether the size TOOK, because the server discards a disallowed
+// resize silently — correct for the implicit per-SIGWINCH stream a real
+// terminal emits, wrong for someone who typed this command. Exit 3 on "not
+// applied" so a script can branch without parsing text.
+func runSessionResize(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session resize", flag.ExitOnError)
+	spec := fs.String("size", "", "new PTY size as ROWSxCOLS (e.g. 40x150)")
+	waitMs := fs.Uint("wait-ms", 2000, "ms to wait for the server to echo the new size back — that echo is the acknowledgement")
+	quiet := fs.Bool("quiet", false, "suppress the one-line result on stderr")
+	pargs, err := parsePermuted(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pargs) < 1 || *spec == "" {
+		return fmt.Errorf(`usage: session resize --size ROWSxCOLS [--wait-ms MS] [-quiet] <id>
+Sets the PTY size WITHOUT taking the session over. Needs exec_view to attach and
+exec_resize to be honoured, and applies only while no control client is attached
+— the control attach owns the size whenever it holds the seat. Exits 3 when the
+size was not applied.`)
+	}
+	rows, cols, err := parseResizeSpec(*spec)
+	if err != nil {
+		return err
+	}
+	taskIDHex := pargs[0]
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	applied, err := c.SessionResize(ctx, taskIDHex, rows, cols, time.Duration(*waitMs)*time.Millisecond)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		fmt.Fprintf(os.Stderr, "session resize: %s\n", cli.ResizeRejectedHint)
+		os.Exit(3)
+	}
+	if !*quiet {
+		fmt.Fprintf(os.Stderr, "session resize: %s now %dx%d (rows x cols)\n", taskIDHex, rows, cols)
+	}
+	return nil
 }

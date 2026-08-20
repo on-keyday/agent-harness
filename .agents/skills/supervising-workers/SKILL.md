@@ -93,11 +93,14 @@ belongs to the CONTROL attach whenever someone holds it. Two ways to give one a
 size without taking it over:
 
 - size it here, at open — always available to the spawner;
-- later, with **`exec_resize`**: a viewer or cowriter holding that capability
-  may resize a session while **no control client is attached**. That is the
-  unattended worker you spawned with `-d`, which is the case that used to have
-  no answer at all. It is orthogonal to `exec_view`/`exec_cowrite` — ask for it
-  explicitly; it is not implied by being allowed to type.
+- later, with **`harness-cli session resize --size 40x150 <id>`** (or
+  `session send --resize 40x150 <id> <text>` to size and drive in one call).
+  Needs `exec_resize` on top of `exec_view`, and applies only while **no
+  control client is attached** — the unattended worker you spawned with `-d`,
+  which is the case that used to have no answer at all. The capability is
+  orthogonal to `exec_view`/`exec_cowrite`: ask for it explicitly, it is not
+  implied by being allowed to type. The command exits 3 when the size did not
+  take, so do not assume it worked.
 
 Without either, `session exec <id> 'stty rows 40 cols 150'` still works when the
 foreground is a POSIX shell — but not when it is the full-screen TUI whose size

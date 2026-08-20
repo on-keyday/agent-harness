@@ -15,6 +15,7 @@ live interactive session:
 harness-cli session snapshot <id>            # SEE the current screen (read-only)
 harness-cli session send -enter <id> <text>  # TYPE keystrokes (co-write, no takeover)
 harness-cli session exec <id> <cmd>...       # RUN one shell cmd, wait, get output + exit code
+harness-cli session resize --size 40x150 <id>  # SIZE the PTY (no takeover)
 ```
 
 All three authenticate with your task ticket — no operator PSK — but they do
@@ -24,6 +25,7 @@ All three authenticate with your task ticket — no operator PSK — but they do
 |------|-------------|------------|
 | `snapshot` | `view` | `exec_view` |
 | `send` / `exec` | `cowrite` | `exec_cowrite` |
+| `resize` | `view` | `exec_view` **+ `exec_resize`** |
 
 `snapshot` is a read-only attach and never disturbs whoever is driving;
 `send`/`exec` co-write into the live PTY without taking over the human
@@ -134,15 +136,30 @@ before rendering — factor that beat into poll loops.
 **`--rows/--cols` here are NOT the same flags as on `session new`.** Same
 spelling, different subject: on `snapshot` they size the offscreen renderer and
 never touch the PTY; on `session new` they size the PTY itself. To actually
-give a session a size, do it when you OPEN it — `session new -d --rows 40
---cols 150` — which is the route always open to the spawner. Afterwards the
-size belongs to the CONTROL attach whenever someone holds it, but **`exec_resize`**
-lets a viewer or cowriter set it while **no control client is attached** — the
-unattended `-d` session, which is the case that matters. That capability is
-orthogonal to the three modes and is not implied by being allowed to type.
+give a session a size, use **`session resize`**:
+
+```bash
+harness-cli session resize --size 40x150 "$ID"      # standalone
+harness-cli session send -enter --resize 40x150 "$ID" ./mytui   # size, THEN type
+```
+
+`--resize` on `send` applies before the text, which matters: a full-screen
+program that receives keystrokes while it is still 0x0 paints nothing, and that
+reads like the send having failed.
+
+It needs `exec_resize` on top of `exec_view`, and applies only while **no
+control client is attached** — the size belongs to the control seat whenever
+someone holds it. Both refusals look the same from here (the server discards
+the frame either way), so the command reports "not applied" and **exits 3**
+rather than pretending; do not treat a silent success as proof.
+
+Sizing at open (`session new -d --rows 40 --cols 150`) is still the route
+always available to the spawner and needs no extra capability.
+
 For a running session whose agent is a shell, `session exec <id> 'stty rows 40
-cols 140'` still works with only `exec_cowrite` — it types the resize rather
-than claiming it, and so is unaffected by who holds the seat.
+cols 140'` also works with only `exec_cowrite` — it types the resize rather
+than claiming it, so it is unaffected by who holds the seat, but it only works
+when the foreground IS a shell.
 
 - The plain render **drops SGR**, so a *faint* placeholder / ghost-autocomplete
   / dim hint looks identical to real input. **`--style`** prints a
@@ -180,6 +197,18 @@ instead of send + snapshot + a guessed sleep. The screen goes to **stdout** and
 the "N bytes sent" summary to **stderr**, so a pipe gets only the screen, and
 `-quiet` (which drops that summary) composes with it. The four snapshot-only
 flags are refused without `--snapshot` instead of being ignored.
+
+### `session resize --size ROWSxCOLS [--wait-ms MS] [-quiet] <id>`
+
+Sets the PTY size from a view attach — no takeover, the controlling client (if
+any) keeps its stream. Needs `exec_view` + `exec_resize`.
+
+The acknowledgement is real, not assumed: an accepted size is fanned back out
+to every observer including the sender, so the command waits for its own size
+to come back (`--wait-ms`, default 2000). No echo → **exit 3** and a message
+naming both possible reasons. `--size` is ONE flag spelled `ROWSxCOLS`
+deliberately — `--rows/--cols` already mean two other things nearby (the
+offscreen render on `snapshot`, the PTY on `session new`).
 
 ### `session exec [--timeout D] [--json] [--exit-only] [--raw] <id> <cmd>...`
 
