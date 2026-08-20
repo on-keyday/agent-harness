@@ -146,12 +146,43 @@ would surface.
 
 Two flags found while establishing the above are worth the plan's attention:
 
-- `--session-id <uuid>` lets the CALLER choose the session id, so a task id can
-  be correlated to a session without parsing it back out of `init`.
 - `--replay-user-messages` re-emits user messages from stdin back on stdout
   "for acknowledgment". That is an ack for "the turn was accepted", and it also
   gives a read-only observer (`exec_view`) the text a cowriter sent — which on
   the PTY path is only visible because keystrokes echo.
+- `--session-id <uuid>` lets the CALLER choose the session id. **Create only** —
+  see the next section before building anything on it.
+
+### Resume: `--continue` works, and `--session-id` is not the resume mechanism
+
+Measured, because the harness's resume path is the one that would have broken.
+
+| | result |
+|---|---|
+| `--session-id <uuid>` on a fresh session | honoured; `init` reports the chosen id |
+| `--continue` with `--input-format stream-json` | **works** — recalled a codeword set in the previous run, and stayed on the SAME session id rather than forking |
+| `--resume <uuid>` with `--input-format stream-json` | works, same recall, same id |
+| `--session-id <uuid>` naming an EXISTING session | **refused**: `Error: Session ID … is already in use.`, exit 1, no `init` |
+
+So conversation resume needs nothing new: `--continue` composes with the framed
+stdin exactly as it already does with the text one, which is what
+`resumeOneshotArgv` uses today (`scripts/agent_presets.py`). The existing
+`--resume-conversation` option carries over to this kind unchanged, which is
+the answer this section was written to settle.
+
+**Correction to the previous section, which this supersedes.** It recorded
+`--session-id` as a way to correlate a task id with a session "without parsing
+it back out of `init`". That works exactly once. Keying a session id off a task
+id would succeed on the first spawn and fail on every resume of that task, with
+an exit-1 and no `init` — the fresh path working while the resume path dies is
+the failure shape this repo has already had once, when a fresh interactive
+launch carried no argv template. If a session id is wanted, take it from `init`
+and resume with `--resume <id>`; do not mint it.
+
+`--continue` is documented as "the most recent conversation in the current
+directory", and each task owns its worktree, so per-task cwd makes it
+unambiguous without bookkeeping. `--resume <id>` is the exact form if a
+worktree ever holds more than one conversation.
 
 The channel is undocumented and version-coupled. `system/init.capabilities`
 advertises `interrupt_receipt_v1`, `interrupt_cancel_queued_v1` and
