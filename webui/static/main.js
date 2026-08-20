@@ -294,6 +294,7 @@ const POLL_INTERVAL_MS = 5000;
       resumeConversation,
       caps: spawnCaps,
       scope: spawnScope,
+      scopeFor: scopeForLines("spawn-scope-for"),
       // One checkbox gates BOTH halves of the resume re-grant: silently
       // applying the Compose scope picker's leftover state to a resumed
       // task would be the exact invisible rewrite scope_present exists to
@@ -2742,6 +2743,17 @@ const POLL_INTERVAL_MS = 5000;
     initScope();
   }
 
+  // scopeForLines reads a --scope-for textarea into the array the wasm bridge
+  // parses. Deliberately NOT parsed here: ParseScopeFor and the disjointness
+  // check live in Go, so the browser cannot drift from what the CLI accepts.
+  // Blank lines are dropped; everything else is sent as written and rejected
+  // with the server's own message if it is wrong.
+  function scopeForLines(id) {
+    const el = document.getElementById(id);
+    if (!el || !el.value) return [];
+    return el.value.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  }
+
   // scopeSpecJS mirrors the Go scopeSpecFor (tui/authoritypicker.go):
   // serialize a base + checked-id set to the --scope grammar string, which
   // still goes through the single cli.ParseScope funnel behind the bridge.
@@ -2811,7 +2823,12 @@ const POLL_INTERVAL_MS = 5000;
       sum.textContent = `対象タスクを選択 (${n})`;
     }
     const echo = document.getElementById("spawn-scope-echo");
-    if (echo) echo.textContent = "scope: " + (spawnScope || "subtree (default)");
+    if (echo) {
+      let line = "scope: " + (spawnScope || "subtree (default)");
+      const sf = scopeForLines("spawn-scope-for");
+      if (sf.length > 0) line += "  +" + sf.join(" ");
+      echo.textContent = line;
+    }
   }
 
   function refreshSpawnScopeChecklist() {
@@ -2828,6 +2845,8 @@ const POLL_INTERVAL_MS = 5000;
         if (r.checked) { spawnBase = r.value; updateSpawnScope(); }
       });
     }
+    const spawnSF = document.getElementById("spawn-scope-for");
+    if (spawnSF) spawnSF.addEventListener("input", updateSpawnScope);
     refreshSpawnScopeChecklist();
   }
 
@@ -2847,8 +2866,11 @@ const POLL_INTERVAL_MS = 5000;
     if (list) list.classList.toggle("disabled", regrantBase === "global");
     const echo = document.getElementById("regrant-echo");
     if (echo) {
-      echo.textContent = "→ caps=" + capsLabelFor(regrantBits) +
+      let line = "→ caps=" + capsLabelFor(regrantBits) +
         "  scope=" + scopeSpecJS(regrantBase, regrantIds, false);
+      const sf = scopeForLines("regrant-scope-for");
+      if (sf.length > 0) line += "  +" + sf.join(" ");
+      echo.textContent = line;
     }
   }
 
@@ -2859,6 +2881,11 @@ const POLL_INTERVAL_MS = 5000;
     regrantBase = t.scopeBase || "subtree";
     regrantIds.clear();
     for (const id of (t.scopeIds || [])) regrantIds.add(id);
+    // Prefilled, not blank: overrides travel with the scope under one presence
+    // bit, so applying with an empty box CLEARS them. Showing them is what
+    // makes that an operator's choice rather than a silent erase.
+    const sfBox = document.getElementById("regrant-scope-for");
+    if (sfBox) sfBox.value = (t.scopeForSpecs || []).join("\n");
     const title = document.getElementById("regrant-task");
     if (title) title.textContent = t.id.slice(0, 8);
     buildCapChips(document.getElementById("regrant-chips"),
@@ -2880,12 +2907,15 @@ const POLL_INTERVAL_MS = 5000;
         if (r.checked) { regrantBase = r.value; updateRegrantEcho(); }
       });
     }
+    const regrantSF = document.getElementById("regrant-scope-for");
+    if (regrantSF) regrantSF.addEventListener("input", updateRegrantEcho);
     document.getElementById("regrant-cancel").addEventListener("click", () => regrantModal.close());
     document.getElementById("regrant-apply").addEventListener("click", async () => {
       const req = {
         taskId: regrantTaskId,
         caps: regrantBits,
         scope: scopeSpecJS(regrantBase, regrantIds, false),
+        scopeFor: scopeForLines("regrant-scope-for"),
         cascade: document.getElementById("regrant-cascade").checked,
         keepConns: document.getElementById("regrant-keep-conns").checked,
       };
@@ -3864,6 +3894,10 @@ const POLL_INTERVAL_MS = 5000;
       // Always shown, subtree included: hiding the default read as "this
       // task has no scope", which is never true.
       if (t.scope) metaText += `  scope=${t.scope}`;
+      // Appended only when present, matching ls and the TUI detail popup: the
+      // scope is half a task's authority and is never absent, a narrowing that
+      // is not there has nothing to report.
+      if (t.scopeFor) metaText += `  +${t.scopeFor}`;
       // Who is on the live session, cowriters first — same wording and the same
       // always-printed rule as the CLI row: zeros included, so "nobody is
       // watching" never looks like "this row does not report watchers". This is

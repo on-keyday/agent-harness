@@ -328,6 +328,58 @@ func scopeIDStrings(s protocol.TaskScope) []any {
 	return out
 }
 
+// overridesFromOpts reads the optional `scopeFor` array off a JS options
+// object: each entry is a "CAPS=SCOPE" string in the --scope-for spelling, so
+// the browser sends what the CLI accepts and the parse/merge rules — including
+// the disjointness check — live in one place rather than being re-implemented
+// in JS.
+// overrideSpecs renders each override in the "CAPS=SCOPE" spelling that
+// overridesFromOpts reads back, so the browser can echo what it was given.
+func overrideSpecs(in []protocol.ScopeOverride) []any {
+	out := make([]any, 0, len(in))
+	for _, o := range in {
+		sc := protocol.TaskScope{Base: o.Base, Ids: o.Ids, IdsLen: o.IdsLen}
+		sc.SetExcludeSelf(o.ExcludeSelf())
+		out = append(out, cli.CapsLabel(o.Caps)+"="+cli.ScopeLabel(sc))
+	}
+	return out
+}
+
+// scopeByCapJS is the resolved capability -> scope map, merge already done, so
+// the browser never re-derives which override covers a bit.
+func scopeByCapJS(caps protocol.Capability, base protocol.TaskScope, ov []protocol.ScopeOverride) map[string]any {
+	resolved := cli.ResolvedScopeByCap(caps, base, ov)
+	out := make(map[string]any, len(resolved))
+	for k, v := range resolved {
+		out[k] = v
+	}
+	return out
+}
+
+func overridesFromOpts(opts js.Value) ([]protocol.ScopeOverride, error) {
+	v := opts.Get("scopeFor")
+	if v.Type() != js.TypeObject || v.Length() == 0 {
+		return nil, nil
+	}
+	var out []protocol.ScopeOverride
+	for i := 0; i < v.Length(); i++ {
+		e := v.Index(i)
+		if e.Type() != js.TypeString || e.String() == "" {
+			continue
+		}
+		_, ov, err := cli.ParseScopeFor(e.String())
+		if err != nil {
+			return nil, err
+		}
+		merged, err := cli.MergeScopeOverride(out, ov)
+		if err != nil {
+			return nil, err
+		}
+		out = merged
+	}
+	return out, nil
+}
+
 func scopeFromOpts(opts js.Value) (protocol.TaskScope, error) {
 	sv := opts.Get("scope")
 	if sv.Type() != js.TypeString || sv.String() == "" {
@@ -391,6 +443,12 @@ func harnessSetCaps(this js.Value, args []js.Value) any {
 					return
 				}
 				sc.Scope = &parsed
+				ov, ovErr := overridesFromOpts(opts)
+				if ovErr != nil {
+					rejectErr(reject, fmt.Errorf("setCaps: scope-for: %w", ovErr))
+					return
+				}
+				sc.Overrides = ov
 			}
 			if v := opts.Get("cascade"); v.Type() == js.TypeBoolean {
 				sc.Cascade = v.Bool()
@@ -532,6 +590,10 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
 			scope, scopeErr := scopeFromOpts(opts)
+			overrides, ovErr := overridesFromOpts(opts)
+			if ovErr != nil && scopeErr == nil {
+				scopeErr = ovErr
+			}
 			if scopeErr != nil {
 				rejectErr(reject, scopeErr)
 				return
@@ -557,7 +619,8 @@ func harnessSubmit(this js.Value, args []js.Value) any {
 			}
 			id, err := c.Submit(rootCtx, repo, task, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: caps, Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
+				Caps: caps, Scope: scope, Overrides: overrides,
+				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			})
 			if err != nil {
@@ -706,6 +769,13 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"capsBits":  float64(uint32(t.Capabilities)),
 					"scopeBase": t.Scope.Base.String(),
 					"scopeIds":  scopeIDStrings(t.Scope),
+					// scopeFor is the label; scopeForSpecs is the raw
+					// "CAPS=SCOPE" list the re-grant dialog sends straight
+					// back, so a round trip through the UI cannot lose a
+					// narrowing it did not show a control for.
+					"scopeFor":      cli.OverridesLabel(t.Overrides),
+					"scopeForSpecs": overrideSpecs(t.Overrides),
+					"scopeByCap":    scopeByCapJS(t.Capabilities, t.Scope, t.Overrides),
 					// agentProfile is the named profile this task last ran under
 					// (empty = runner default); the resume action sheet's agent
 					// dropdown defaults to this (multi-agent-profile design §4b).
@@ -1572,6 +1642,10 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 				caps = protocol.Capability(uint32(cv.Int()))
 			}
 			scope, scopeErr := scopeFromOpts(opts)
+			overrides, ovErr := overridesFromOpts(opts)
+			if ovErr != nil && scopeErr == nil {
+				scopeErr = ovErr
+			}
 			if scopeErr != nil {
 				rejectErr(reject, scopeErr)
 				return
@@ -1607,7 +1681,8 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			}
 			taskID, err := c.Interactive(rootCtx, repo, cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: caps, Scope: scope, ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
+				Caps: caps, Scope: scope, Overrides: overrides,
+				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 				InitialRows: initRows, InitialCols: initCols,
 			})

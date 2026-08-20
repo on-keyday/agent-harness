@@ -85,6 +85,13 @@
           <summary id="spawn-scope-summary">対象タスクを選択 (0)</summary>
           <div id="spawn-scope-tasks" class="task-checklist"></div>
         </details>
+        <details id="spawn-scope-for-details">
+          <summary>個別 capability を絞る（--scope-for）</summary>
+          <textarea id="spawn-scope-for" rows="2" spellcheck="false"
+            placeholder="exec_cowrite,file_write=descendants&#10;cancel=none"></textarea>
+          <p class="hint">1 行 1 件、<code>CAPS=SCOPE</code>。可視性は タスク側の設定なので
+            ここには書けません（verb は ls に出るものより先へは届きません）。</p>
+        </details>
         <code id="spawn-scope-echo" class="scope-echo"></code>
       </div>
       <div class="actions">
@@ -339,6 +346,12 @@
     <div id="regrant-tasks" class="task-checklist"></div>
     <label class="regrant-flag"><input type="checkbox" id="regrant-cascade"> --cascade（子孫の caps/scope も締める）</label>
     <label class="regrant-flag"><input type="checkbox" id="regrant-keep-conns"> --keep-conns（対象の既存接続を切らない）</label>
+    <details id="regrant-scope-for-details">
+      <summary>個別 capability を絞る（--scope-for）</summary>
+      <textarea id="regrant-scope-for" rows="2" spellcheck="false"></textarea>
+      <p class="hint">既存の設定が入っています。<strong>消すと消えます</strong> —
+        scope と同じ半分として一緒に書き込まれるためです。</p>
+    </details>
     <code id="regrant-echo" class="scope-echo"></code>
     <menu class="picker-actions">
       <button type="button" id="regrant-apply">適用</button>

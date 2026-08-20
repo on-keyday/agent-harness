@@ -521,6 +521,34 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   font-size: 0.8rem;
   color: #9a9a9a;
 }
+/* --scope-for inputs, in both the spawn form and the re-grant dialog. Dark
+   like every other control here; the monospace matches the scope echo the
+   value is echoed into. */
+#spawn-scope-for,
+#regrant-scope-for {
+  width: 100%;
+  box-sizing: border-box;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  font-family: monospace;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.35rem;
+  resize: vertical;
+}
+
+.hint {
+  color: #888;
+  font-size: 0.7rem;
+  margin: 0.2rem 0 0.3rem;
+  line-height: 1.35;
+}
+
+.hint code {
+  color: #b5b5b5;
+}
+
 .scope-echo {
   display: block;
   color: #888;
