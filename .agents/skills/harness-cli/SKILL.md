@@ -466,8 +466,11 @@ harness-cli agent topics
 thing: whether a *control* attach holds the writer slot. A read-only viewer or
 an input-forwarding cowriter — the WebUI preview, a TUI grid pane — does not
 take that slot, so a session three people are watching still reads `Detached`.
-The `cowrite=N viewer=N` pair is what actually says who is on it (`viewers` /
-`cowriters` in `--json`, always present, 0 when nobody is). Do not read
+The `cowrite=N viewer=N` pair is what actually says who is on it. It is printed
+on every row that HAS a session, zeros included — `cowrite=0 viewer=0` means
+nobody is attached, and it is never dropped just because it is zero, so you
+never have to wonder whether a row is silent or empty. (`viewers` / `cowriters`
+in `--json`, likewise always present.) Do not read
 `Detached` as "abandoned", and do not read it as "dead" either: the task is
 alive and its agent may be mid-turn — that is what `act=` is for.
 

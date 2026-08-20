@@ -125,12 +125,35 @@ func TestTaskLineShowsObserversOnDetached(t *testing.T) {
 	}
 }
 
-// Elided when nobody is attached — the status column already says whether a
-// session exists, so a Running row with no pair means "nobody", not "unknown".
-func TestTaskLineElidesZeroObservers(t *testing.T) {
+// NEVER elided on the value. A row that drops the pair when it happens to be 0
+// makes "nobody is watching" and "this row does not report watchers" look the
+// same, which is the ambiguity every other field on this line exists to avoid.
+func TestTaskLinePrintsZeroObservers(t *testing.T) {
 	line := taskLine(taskWithObservers(protocol.TaskStatus_Running, 0, 0), nil)
-	if strings.Contains(line, "viewer=") || strings.Contains(line, "cowrite=") {
-		t.Errorf("row spends width on an all-zero pair: %s", line)
+	if !strings.Contains(line, "cowrite=0 viewer=0") {
+		t.Errorf("a live session with nobody on it must say so explicitly: %s", line)
+	}
+}
+
+// A task with no session has no observers to report — the pair is gated on the
+// task HAVING a session, not on the counts being non-zero. Printing 0/0 for a
+// finished task would describe a session that does not exist.
+func TestTaskLineOmitsObserversWithoutASession(t *testing.T) {
+	for _, st := range []protocol.TaskStatus{
+		protocol.TaskStatus_Queued,
+		protocol.TaskStatus_Succeeded,
+		protocol.TaskStatus_Failed,
+		protocol.TaskStatus_Cancelled,
+	} {
+		line := taskLine(taskWithObservers(st, 0, 0), nil)
+		if strings.Contains(line, "cowrite=") {
+			t.Errorf("status %v has no session but the row reports observers: %s", st, line)
+		}
+	}
+	// Detached DOES have one — that is the whole point.
+	line := taskLine(taskWithObservers(protocol.TaskStatus_Detached, 0, 0), nil)
+	if !strings.Contains(line, "cowrite=0 viewer=0") {
+		t.Errorf("Detached is a live session and must report its (empty) observer set: %s", line)
 	}
 }
 

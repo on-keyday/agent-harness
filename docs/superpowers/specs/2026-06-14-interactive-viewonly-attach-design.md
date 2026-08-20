@@ -291,10 +291,14 @@ learn about busy/idle.
   DO — one discards input, the other forwards it to the runner.
 - `TaskInfo.viewers` / `.cowriters` (u16 each, appended). Live-only, like
   `last_output_at`: never stored, never in the WAL, 0 when there is no session.
-- Display: CLI `ls` row as `cowrite=N viewer=N` (elided at zero — the status
-  column already says whether a session exists); `ls --json` / `session ls`
-  always carry both (0 is an answer, an absent key is not); the TUI `d` popup as
-  `attached: no control, 1 cowrite, 2 viewer`; the WebUI task row meta.
+- Display: CLI `ls` row as `cowrite=N viewer=N`, printed on every row that HAS
+  a session and never elided on the value — an all-zero pair that disappears
+  makes "nobody is watching" indistinguishable from "this row does not report
+  watchers", which is the ambiguity the field was added to remove. Gated on the
+  task having a session (Running / Detached), not on the counts. `ls --json` /
+  `session ls` carry both unconditionally; the TUI `d` popup spells it out as
+  `attached: no control, 1 cowrite, 2 viewer`; the WebUI task row meta uses the
+  same rule as the CLI row.
 - The parent-hop redaction (`redactParentTaskInfo`) does NOT strip them — it
   runs before the live enrichment, deliberately, because liveness is what that
   hop is for.

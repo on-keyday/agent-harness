@@ -213,14 +213,18 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if t.LastOutputAt > 0 {
 		act = "  act=" + ActivityStr(t.OutputIdleMs)
 	}
-	// Observers on the live session, split by what they can do. Elided when
-	// there are none, for row width — and unambiguously so: only a Running or
-	// Detached task HAS a session, and that is the status column two fields to
-	// the left. The pair is independent of Detached: only the CONTROL attach
-	// moves that status, so a task watched through the WebUI preview reads
-	// Detached with viewer=N.
+	// Observers on the live session, split by what they can do. Printed
+	// whenever the task HAS a session, zeros included — never elided on the
+	// value. A row that omits the pair when it happens to be 0 makes "nobody is
+	// watching" and "this row does not report watchers" look identical, which is
+	// the ambiguity every other field on this line was fixed to avoid. Row width
+	// is not worth reintroducing it.
+	//
+	// The pair is independent of Detached: only the CONTROL attach moves that
+	// status, so a task watched through the WebUI preview reads Detached with a
+	// non-zero count.
 	obs := ""
-	if t.Cowriters > 0 || t.Viewers > 0 {
+	if t.Status == protocol.TaskStatus_Running || t.Status == protocol.TaskStatus_Detached {
 		obs = fmt.Sprintf("  cowrite=%d viewer=%d", t.Cowriters, t.Viewers)
 	}
 	createdBy := ""
