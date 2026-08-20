@@ -208,3 +208,72 @@ agent:
 the server-side owner (a `SessionMux` sibling that buffers EVENTS rather than
 bytes — the ring truncates mid-line), `pending=N` reaching `TaskInfo`, and the
 §3 verbs.
+
+## 9. Correction: `agentexec` is not PTY-only, and it already does the framing
+
+Entry 5 and the comment at the top of `runner/streamtask.go` both say the
+adapter cannot use `agentexec` because "that package exists to splice a PTY and
+there is no PTY here". **I had not read it.** The operator asked whether I had.
+
+`ExecuteCommandWithOption(ctx, stream, logger, command, args, cwd, ptyEnabled
+bool, extraEnv, opt)` takes `ptyEnabled` as a parameter, and the `false` branch
+is:
+
+```go
+cmd := exec.CommandContext(grCtx, command, args...)
+cmd.Stdin  = pipeOut   // fed by handleInput from FrameType_Stdin frames
+cmd.Stdout = stdout    // outStreamWrapper → FrameType_Stdout
+cmd.Stderr = stderr    // outStreamWrapper → FrameType_Stderr
+```
+
+That is what `runner/streamtask.go` does by hand. The spike reimplemented
+framing that already exists, and — worse — invented a framing **the server and
+the client do not speak**. `SessionMux` pumps `frame` frames; so does the
+client's `CommandExecutionStream`. Neutral NDJSON riding inside
+`FrameType_Stdout` needs no new frame type at all, which also satisfies the
+standing rule that `exec/frame` is legacy and not to be extended.
+
+So the wiring is smaller than the spike suggests:
+
+```
+runner: ExecuteCommandWithOption(ctx, stream, log, adapterPath, adapterArgv, dir,
+                                 /*ptyEnabled=*/false, env, opt)
+```
+
+with the adapter as the command. Its stdout NDJSON becomes Stdout frames, a
+client's Stdin frames become its stdin. What the spike genuinely adds and
+`agentexec` cannot is the **pending table and the log rendering**, which need a
+tap on the frames going past — a wrapper around the stream, not a parallel
+implementation of it.
+
+Things I got for free by reading and would otherwise have rebuilt: separate
+stderr framing, Signal control frames, the audit hook, `OnStdinWriter` (the
+agentboard wake path), and a teardown that calls `stream.Cancel()` to terminate
+the input handler — which is the cancellable read entry 6 said did not exist.
+
+### And it answers entry 5's open question
+
+`handleInput` has this:
+
+```go
+if hdr.Header.Type == frame.FrameType_Stdin {
+    if hdr.Header.Len == 0 { // close stdin
+        pipeIn.Close()
+        continue
+    }
+```
+
+**A zero-length Stdin frame closes the child's stdin without killing it.** That
+is exactly the `finish` semantic entry 5 called for and assumed did not exist:
+a client can end an event-stream agent cleanly — stdin closes, the agent
+finishes its turn and exits on its own — as distinct from `kill`. The mechanism
+is already on the wire and already understood by both ends.
+
+### What this costs
+
+`runner/streamtask.go` as committed is the wrong vehicle for the framing half.
+It stays useful as the pending-table + rendering + adapter-argv logic, and its
+tests keep their value, but the transport must be replaced with `agentexec`
+before any of it is wired for real. Recorded rather than quietly rewritten,
+because the reason it exists in the wrong shape — an unread assumption stated
+with the same confidence as a read fact — is the thing worth keeping.
