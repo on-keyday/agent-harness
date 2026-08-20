@@ -135,6 +135,13 @@ type SessionHooks struct {
 	// quiet for the threshold). Edge-triggered with idleWatchTick granularity;
 	// no per-frame cost. lastOutputUnixNano is the timestamp at detection.
 	OnActivity func(taskID string, busy bool, lastOutputUnixNano int64)
+	// OnObservers fires when the observer set changes — a viewer or cowriter
+	// attached or left. It exists because those attaches deliberately do NOT
+	// touch the task state machine (only a control attach moves
+	// Running/Detached), so nothing else tells an event-driven client that the
+	// counts moved. Always dispatched off the mux lock: it is called from
+	// under m.mu on the drop path.
+	OnObservers func(taskID string)
 }
 
 // SessionMux owns the runner-side bidi stream for a detachable interactive
@@ -190,9 +197,10 @@ type SessionMux struct {
 	// learn the size and would mis-render full-screen TUIs. Guarded by mu.
 	lastWinSize []byte
 
-	onDetach func(taskID string)
-	onAttach func(taskID string)
-	onStop   func(taskID string)
+	onDetach    func(taskID string)
+	onAttach    func(taskID string)
+	onObservers func(taskID string)
+	onStop      func(taskID string)
 
 	stopOnce sync.Once
 	stopped  chan struct{}
@@ -204,17 +212,18 @@ type SessionMux struct {
 func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.BidirectionalStream, ring *RingBuffer, hooks SessionHooks) *SessionMux {
 	ctx, cancel := context.WithCancel(parentCtx)
 	m := &SessionMux{
-		ctx:      ctx,
-		cancel:   cancel,
-		taskID:   taskID,
-		runner:   runner,
-		ring:     ring,
-		modes:    newModeTracker(),
-		stopped:  make(chan struct{}),
-		viewers:  make(map[*viewerConn]struct{}),
-		onAttach: hooks.OnAttach,
-		onDetach: hooks.OnDetach,
-		onStop:   hooks.OnStop,
+		ctx:         ctx,
+		cancel:      cancel,
+		taskID:      taskID,
+		runner:      runner,
+		ring:        ring,
+		modes:       newModeTracker(),
+		stopped:     make(chan struct{}),
+		viewers:     make(map[*viewerConn]struct{}),
+		onAttach:    hooks.OnAttach,
+		onDetach:    hooks.OnDetach,
+		onObservers: hooks.OnObservers,
+		onStop:      hooks.OnStop,
 	}
 	go m.runnerPump()
 	if hooks.OnActivity != nil {
@@ -379,6 +388,15 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 	return nil
 }
 
+// notifyObservers dispatches the observer-set-changed hook without holding
+// m.mu — dropViewerLocked runs under the lock, and a hook that publishes to
+// pubsub from there would invert the lock order against runnerPump's fan-out.
+func (m *SessionMux) notifyObservers() {
+	if m.onObservers != nil {
+		go m.onObservers(m.taskID)
+	}
+}
+
 // AttachViewer adds a read-only observer (its input is discarded). Unlike
 // Attach it does NOT take the writer slot or fire onAttach. replayLimit caps the
 // replayed ring bytes (0 = full).
@@ -442,6 +460,9 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 	} else {
 		go m.viewerInputDrain(vctx, v)
 	}
+	// Announce only once the observer is actually streaming, so a subscriber
+	// that refreshes on the event sees the count it is being told about.
+	m.notifyObservers()
 	return nil
 }
 
@@ -476,6 +497,18 @@ func (m *SessionMux) viewerInputDrain(ctx context.Context, v *viewerConn) {
 	}
 }
 
+// anyViewerForTest returns one attached observer, or nil. Test-only accessor:
+// the viewers map is unexported and a test that wants to drop "one of them"
+// has no other way to name a member.
+func (m *SessionMux) anyViewerForTest() *viewerConn {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for v := range m.viewers {
+		return v
+	}
+	return nil
+}
+
 func (m *SessionMux) dropViewer(v *viewerConn) {
 	m.mu.Lock()
 	m.dropViewerLocked(v)
@@ -492,6 +525,7 @@ func (m *SessionMux) dropViewerLocked(v *viewerConn) {
 	delete(m.viewers, v)
 	v.cancel()
 	_ = v.stream.CloseBoth()
+	m.notifyObservers()
 }
 
 // ObserverCounts reports the attached observers split by kind: viewers (input
@@ -753,6 +787,10 @@ func (m *SessionMux) Stop() {
 			m.tuiCancel()
 			m.tuiCancel = nil
 		}
+		// Cleared directly rather than through dropViewerLocked, so no
+		// OnObservers fires here: the session is ending, and the task status
+		// event that follows carries the counts (zero — the mux is gone). An
+		// extra observers event would be a second wake for one outcome.
 		vs := make([]*viewerConn, 0, len(m.viewers))
 		for v := range m.viewers {
 			vs = append(vs, v)

@@ -387,6 +387,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			ti.Kind = msg.Event.TaskKind
 			ti.CreatedAt = msg.Event.Ts
 			a.applyEventAct(&ti, id, msg.Event)
+			a.applyEventObservers(&ti, msg.Event)
 			a.tasksByID[id] = ti
 			a.refreshTasksTable()
 			return a, RefreshSnapshot(a.client)
@@ -397,6 +398,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cur.EndedAt = msg.Event.Ts
 		}
 		a.applyEventAct(&cur, id, msg.Event)
+		a.applyEventObservers(&cur, msg.Event)
 		a.tasksByID[id] = cur
 		a.refreshTasksTable()
 		return a, nil
@@ -2308,6 +2310,26 @@ func (a *App) applyEventAct(ti *protocol.TaskInfo, id string, ev protocol.TaskSt
 	ti.LastOutputAt = ev.LastOutputAt
 	ti.OutputIdleMs = ev.OutputIdleMs
 	a.actRecvAt[id] = time.Now()
+}
+
+// applyEventObservers copies the observer counts from a task event into ti.
+// Every task event carries them (the server stamps them alongside the act
+// fields), and a task_observers event exists precisely because an observer
+// attaching moves no status — without it this row would keep whatever the last
+// List snapshot said, and the TUI polls no snapshots of its own.
+//
+// A terminal task has no session and therefore no observers; a stale non-zero
+// count on a finished row would read as "someone is still watching this".
+func (a *App) applyEventObservers(ti *protocol.TaskInfo, ev protocol.TaskStatusEvent) {
+	terminal := ev.TaskStatus == protocol.TaskStatus_Succeeded ||
+		ev.TaskStatus == protocol.TaskStatus_Failed ||
+		ev.TaskStatus == protocol.TaskStatus_Cancelled
+	if terminal {
+		ti.Viewers, ti.Cowriters = 0, 0
+		return
+	}
+	ti.Viewers = ev.Viewers
+	ti.Cowriters = ev.Cowriters
 }
 
 // refreshTasksTable rebuilds the tasks table from tasksByID, sorted by

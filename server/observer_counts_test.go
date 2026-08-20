@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 )
@@ -93,4 +94,94 @@ func TestObserverCountsDropWithTheStream(t *testing.T) {
 		v, cw := mux.ObserverCounts()
 		return v == 0 && cw == 0
 	})
+}
+
+// An observer attaching or leaving moves NO task status by design, so the hook
+// is the only signal an event-driven client gets. Verified live before it
+// existed: `ls` reported a viewer while the TUI showed none, and the TUI
+// corrected itself only when an unrelated task event happened to arrive.
+func TestObserverHookFiresOnAttachAndDetach(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+
+	var mu sync.Mutex
+	var fired []string
+	mux := NewSessionMux(ctx, "task-obs", runner, NewRingBuffer(256), SessionHooks{
+		OnObservers: func(id string) {
+			mu.Lock()
+			fired = append(fired, id)
+			mu.Unlock()
+		},
+	})
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fired)
+	}
+
+	v := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, v, 0); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	waitFor(t, func() bool { return count() >= 1 })
+
+	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0); err != nil {
+		t.Fatalf("AttachCoWriter: %v", err)
+	}
+	waitFor(t, func() bool { return count() >= 2 })
+
+	// Leaving fires too, or a count that went up never comes down for a
+	// client that refreshes only on events.
+	mux.dropViewer(mux.anyViewerForTest())
+	waitFor(t, func() bool { return count() >= 3 })
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, id := range fired {
+		if id != "task-obs" {
+			t.Errorf("hook fired with task id %q, want task-obs", id)
+		}
+	}
+}
+
+// The hook must not be dispatched while the mux lock is held: dropViewerLocked
+// runs under m.mu, and a hook that publishes (the server's does) would invert
+// the lock order against runnerPump's fan-out. Firing into a callback that
+// takes the mux lock deadlocks if this regresses.
+func TestObserverHookIsNotCalledUnderTheMuxLock(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+
+	done := make(chan struct{}, 4)
+	var mux *SessionMux
+	mux = NewSessionMux(ctx, "task-lock", runner, NewRingBuffer(256), SessionHooks{
+		OnObservers: func(string) {
+			// Re-entering the mux is exactly what a publishing hook does
+			// (the server reads ObserverCounts to fill the event).
+			mux.ObserverCounts()
+			done <- struct{}{}
+		},
+	})
+
+	if err := mux.AttachViewer(ctx, newFakeStream(t), 0); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the attach hook never completed — it is being called under the mux lock")
+	}
+
+	// dropViewer is the under-lock path: it takes m.mu and calls
+	// dropViewerLocked. Stop() is deliberately NOT used here — it clears the
+	// viewer map directly and fires no hook, because a stopping session is
+	// followed by a task status event that carries the (now zero) counts.
+	mux.dropViewer(mux.anyViewerForTest())
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the drop hook never completed — dropViewerLocked is calling it under the lock")
+	}
 }

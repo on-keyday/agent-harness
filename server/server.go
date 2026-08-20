@@ -276,6 +276,12 @@ func New(cfg Config) *Server {
 				ev.LastOutputAt = uint64(lo)
 				ev.OutputIdleMs = uint64(time.Since(time.Unix(0, lo)) / time.Millisecond)
 			}
+			// Same reason as the act fields above: stamped on EVERY event so
+			// any of them refreshes a subscriber's row. task_observers events
+			// carry this as their payload of interest.
+			v, cw := mux.ObserverCounts()
+			ev.Viewers = uint16(v)
+			ev.Cowriters = uint16(cw)
 		}
 		raw, err := hex.DecodeString(taskID)
 		if err == nil {
@@ -295,6 +301,21 @@ func New(cfg Config) *Server {
 			return // task already forgotten; a badge refresh for it is meaningless
 		}
 		publishTaskEvent(taskID, protocol.StatusEventKind_TaskActivity, t.Status, 0)
+	}
+
+	// An observer attaching to or leaving a live session changes nothing the
+	// task state machine tracks — Running/Detached follows the CONTROL attach
+	// alone — so without this event an event-driven client (the TUI refreshes
+	// its snapshot on task events, it does not poll) shows a stale observer
+	// count until something unrelated happens. Verified live before it existed:
+	// `ls` reported a viewer while the TUI still showed none, and the TUI
+	// corrected itself the moment an unrelated task event arrived.
+	s.taskHandler.OnSessionObservers = func(taskID string) {
+		t, ok := s.tasks.Get(taskID)
+		if !ok {
+			return // task already forgotten; a count for it is meaningless
+		}
+		publishTaskEvent(taskID, protocol.StatusEventKind_TaskObservers, t.Status, 0)
 	}
 
 	// publishRunnerEvent constructs and publishes a RunnerStatusEvent to

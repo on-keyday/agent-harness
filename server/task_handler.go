@@ -36,6 +36,12 @@ type TaskHandler struct {
 	// for tests that construct TaskHandler directly.
 	OnSessionActivity func(taskID string, busy bool, lastOutputUnixNano int64)
 
+	// OnSessionObservers fires when a session's observer set changes (a viewer
+	// or cowriter attached or left). Those attaches move no task status by
+	// design, so this is the only signal an event-driven client gets that the
+	// counts changed.
+	OnSessionObservers func(taskID string)
+
 	// NotifyHook is the configured external command for the egress leg of
 	// notify (empty = egress disabled). See server/notify_hook.go.
 	NotifyHook string
@@ -1223,6 +1229,11 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		OnAttach: func(id string) { h.Tasks.MarkAttached(id, true) },
 		OnDetach: func(id string) { _ = h.Tasks.SetDetached(id) },
 		OnStop:   func(id string) { h.Sessions.Remove(id) },
+		OnObservers: func(id string) {
+			if h.OnSessionObservers != nil {
+				h.OnSessionObservers(id)
+			}
+		},
 		OnActivity: func(id string, busy bool, lo int64) {
 			if h.OnSessionActivity != nil {
 				h.OnSessionActivity(id, busy, lo)

@@ -1234,6 +1234,16 @@ enum StatusEventKind:
                       # crossed the busy/idle edge (server-side byte-quiescence
                       # watcher). Carries the same task_status the store holds;
                       # the payload of interest is last_output_at/output_idle_ms.
+    task_observers    # appended: an observer attached to or left a live
+                      # session (viewer or cowriter). Its own kind rather than
+                      # a reuse of task_activity, which means something else
+                      # entirely — the agent's output, not who is watching.
+                      # NEEDED because an observer attach deliberately does not
+                      # touch the task state machine (Running/Detached tracks
+                      # only the CONTROL attach), so without this nothing tells
+                      # an event-driven client the counts moved and it shows a
+                      # stale figure until some unrelated event happens to
+                      # arrive. Payload of interest is viewers/cowriters.
 
 format TaskStatusEvent:
     kind :StatusEventKind
@@ -1253,6 +1263,13 @@ format TaskStatusEvent:
     output_idle_ms :u64   # server-computed now-last_output_at at emission, in
                           # ms (clock-skew-safe for clients on other hosts).
                           # Meaningless when last_output_at == 0.
+    # Observers on the live session at emission, split by what they can do —
+    # same values TaskInfo carries, stamped on EVERY task event for the same
+    # reason last_output_at is: any event then keeps a subscriber's row current
+    # without waiting for the next List snapshot. 0/0 = no live session, or a
+    # session nobody is observing; the task's status separates those.
+    viewers :u16
+    cowriters :u16
 
 format RunnerStatusEvent:
     kind :StatusEventKind
