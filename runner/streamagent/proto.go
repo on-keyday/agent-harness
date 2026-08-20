@@ -8,20 +8,36 @@
 // side of this seam. The runner frames NDJSON and routes; it does not parse
 // vendor JSON, does not know the sentinel, and does not decide approvals.
 //
-// # Where the schema lives, and where it must end up
+// # Where the schema lives, and why it is not `.bgn`
 //
-// The spec says the neutral event is defined once in `.bgn`, with this JSON as
-// its projection. **It is not, yet, and that is deliberate**: the vocabulary is
-// carried over from runner/agentlog (proven across two vendors), but the
-// extras rules and the approval types are new and unproven, and committing
-// them to the wire before the shape is exercised buys a migration rather than a
-// design. So this package holds the definition FOR NOW.
+// An earlier version of this comment said these types move into `.bgn` "the
+// moment any of this crosses the harness wire — reaching the server, a client,
+// or the WAL". That was decided before thinking about what carries them, and
+// it is wrong.
 //
-// The condition on that: the moment any of this crosses the harness wire —
-// reaching the server, a client, or the WAL — it moves into `.bgn` and this
-// becomes the generated type's JSON projection. What must never exist is both:
-// a hand-written Go definition AND a `.bgn` one, drifting. When it moves,
-// delete these structs rather than keeping them "for the adapter".
+// This protocol rides INSIDE `exec/frame` Stdout payloads, which the wire
+// schema already treats as opaque bytes — the same field a PTY's output goes
+// through. And §2 makes the adapter protocol a PUBLIC contract with its own
+// `protocol_version`: third-party adapters are a first-class use, and a `.bgn`
+// definition would mean writing one requires brgen. So it stays JSON, defined
+// here.
+//
+// That is only honest if the schema says so. `feedback_no_schema_invisible_bytes`
+// is satisfied not by describing every field on the wire but by the wire
+// naming its payload: Stdout frames on a stream task carry "the adapter
+// protocol, version N", which is a documented and versioned thing rather than
+// a convention someone has to infer.
+//
+// The line that does hold:
+//
+//   - the adapter protocol is JSON, and lives here — runner, adapter and
+//     clients all read these types
+//   - anything the HARNESS derives from it and keeps as its own state —
+//     `pending=N` on a task, the kind, the status — is `.bgn`, because that is
+//     harness state rather than a payload in transit
+//
+// So a field like the pending count is NOT added here. It is added to
+// TaskInfo, and the runner sets it by reading this protocol.
 package streamagent
 
 import (
