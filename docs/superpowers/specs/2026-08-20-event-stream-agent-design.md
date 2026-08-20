@@ -38,6 +38,16 @@ Probed against `claude 2.1.237` on 2026-08-20 (`project_claude_stdio_can_use_too
 - One process with `-p --input-format stream-json --output-format stream-json`
   accepts **multiple user turns**, keeping one `session_id`, and exits cleanly
   when stdin closes. A PTY-free multi-turn agent is mechanically possible.
+  Re-measured 2026-08-21 because every later probe here sent a single turn,
+  which makes their `num_turns: 1` a fact about the probe rather than the CLI:
+  three turns down one framed stdin produced **three `result` messages under
+  one `session_id`**, and turn 3 recalled a codeword set in turn 1, so context
+  carries. `exit 0` on stdin close.
+- **`num_turns` counts agent-loop iterations for ONE user message, not turns in
+  the session.** Each of those three results carried `num_turns: 1`, while the
+  deny probe's single turn carried 2 (a tool call plus the reply after it).
+  Worth stating because it is easy to read as a session counter and cite as
+  evidence for the wrong thing.
 - Without `--permission-prompt-tool`, a tool needing approval produces a
   one-way `{"type":"system","subtype":"permission_denied"}` notice and the tool
   is refused outright.
