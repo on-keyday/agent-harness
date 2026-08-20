@@ -2,11 +2,12 @@
 
 Date: 2026-08-20
 
-**Status: PENDING.** §§1–4 were agreed in discussion and are recorded here so
-they survive a context compaction. §5 is blocked on
-[`2026-08-20-per-capability-scope-design.md`](2026-08-20-per-capability-scope-design.md).
-Nothing here is approved for implementation, and no implementation plan has
-been written.
+**Status: READY FOR A PLAN.** §§1–5 are agreed and unblocked. The three open
+questions that gated the adapter were probed against the real binary on
+2026-08-20 and are answered below; §5's dependency
+([`2026-08-20-per-capability-scope-design.md`](2026-08-20-per-capability-scope-design.md))
+shipped. What remains before code is the implementation plan itself — nothing
+here has been implemented.
 
 ## Problem
 
@@ -50,8 +51,60 @@ Probed against `claude 2.1.237` on 2026-08-20 (`project_claude_stdio_can_use_too
 - `updatedInput` lets the answering host **rewrite the tool's arguments**
   before allowing.
 
-Untested and therefore not designed around: the `deny` response shape, and the
-`hook_callback` / `mcp_message` control subtypes that exist in the binary.
+### Second probe round — the three open questions, answered
+
+Probed 2026-08-20 against the same `claude 2.1.237`, driving the process over
+pipes with no PTY. Transcripts were kept; each claim below is an observation,
+not a reading of the `allow` shape.
+
+**`deny` (was: "do not infer it from the `allow` shape").** The envelope is the
+same `control_response` with `subtype: "success"` — that field reports the
+TRANSPORT, not the verdict — and the payload is
+`{"behavior":"deny","message":"…"}`. Three consequences:
+
+- The tool does not run, and the agent does not retry it.
+- **The `message` reaches the agent verbatim**, as a `tool_result` with
+  `is_error: true`. A deny reason is not swallowed by the CLI; it becomes
+  something the model reads and reasons about. So `session approve --deny`
+  takes a reason, and that reason is operator-authored text entering an agent's
+  context — worth saying out loud, not a private audit note.
+- The request carries `description` and `display_name` as well as the fields
+  the first probe recorded.
+
+**Hooks do NOT ride the control channel** — the guess in the old text was
+wrong in an interesting direction. No `hook_callback` ever arrived. Hooks
+surface on the EVENT stream as `system/hook_started` and
+`system/hook_response`, the latter carrying `hook_name`, `hook_event`,
+`output`, `stdout`, `stderr`, `exit_code` and `outcome`.
+
+The interaction that does exist is the opposite of the one feared: a
+`PreToolUse` hook that exits non-zero **preempts the permission request
+entirely** — the tool is refused and no `can_use_tool` is ever emitted, so the
+operator is never asked. Verified with a positive control, because "no hook
+event arrived" is equally consistent with "`--settings` was never loaded": a
+blocking hook produced `PreToolUse:Write hook error: …` in the tool result and
+zero `control_request`s. Since the runner already injects
+`.claude/settings.json`, a hook there is a silent suppression path for the
+approval gate, and §4's audit invariant has to cover it.
+
+`hook_response.output` can be large — in this probe it carried a whole
+injected-context blob — which is a sizing input for whatever forwards it.
+
+**`interrupt` works and is not a kill.** `{"subtype":"interrupt"}` is answered
+with `{"subtype":"success","response":{"still_queued":[]}}` (the
+`interrupt_receipt_v1` receipt). The in-flight turn stops and terminates as
+`result` with subtype **`error_during_execution`** and zero cost; the process
+survives and answers the next user turn normally. So for this kind, `cancel`
+has two distinct meanings the PTY kind cannot distinguish: cancel the TURN
+(interrupt) and kill the TASK (what the PTY kind does).
+
+One thing an implementer must not be surprised by: **a second `system/init` is
+emitted after an interrupt**. A reader that treats `init` as "the session
+started" will double-count sessions or reject the stream.
+
+Still unobserved: `mcp_message`. The probe configured no MCP server, so this
+says nothing about whether it rides the channel — it remains untested rather
+than answered.
 
 The channel is undocumented and version-coupled. `system/init.capabilities`
 advertises `interrupt_receipt_v1`, `interrupt_cancel_queued_v1` and
@@ -107,6 +160,14 @@ actually needs it, not on suspicion.
 | `rate_limit_event` (five-hour window) | `claude.rate_limit.*` | subscription windows are claude-specific |
 | `system/informational` | `claude.informational` | meaning not established |
 | `permission_suggestions` | **core**, on the request type (§4) | the approval UI needs it structurally, and "allow and stop asking" is not vendor-specific |
+
+The one suggestion actually observed is
+`{"type":"setMode","mode":"acceptEdits","destination":"session"}`, so the core
+type carries those three fields rather than a rendered label — a label cannot
+be acted on. Only `setMode` has been seen; schema it as a typed entry with an
+unknown-`type` entry surviving as an `extras`-style passthrough, because a
+suggestion the harness cannot render must not become a suggestion the harness
+silently drops from the button row.
 
 Only concepts that exist for agents in general belong in the core.
 
@@ -200,6 +261,29 @@ codebase's precedent for a power on a different axis is a sibling bit
 (`exec_resize` exists for exactly that reason). If the need appears, it gets
 its own bit.
 
+**That need appeared, in a concrete form, and the bit is still not being
+added.** The second probe round found that `permission_suggestions` is not a
+per-call allow list — the one observed entry is
+`{"type":"setMode","mode":"acceptEdits","destination":"session"}`, a change to
+the session's standing permission mode. Accepting it is "stop asking", which is
+exactly the durable decision the paragraph above says `exec_cowrite` was not
+scoped to.
+
+Decision (2026-08-20, operator's call): **`exec_cowrite` covers it for now**,
+and whether it earns its own capability is decided on operational evidence
+rather than in advance. The consequence is recorded here rather than argued
+away: a holder of `exec_cowrite` can accept one suggestion and stop the gate
+asking for the rest of the session, so `exclude_self` (§5) closes self-approval
+of individual requests while leaving this second route open. The two are worth
+distinguishing when the evidence arrives — self-approving one write is a small
+act, disarming the gate is a standing one.
+
+Two things keep that from being invisible while it stands: §4's rule that every
+answered request is emitted as an event applies to an accepted suggestion too,
+and the mode in force belongs in `session requests` output, so "why did it stop
+asking" is answerable without reading a transcript. Revisit when an operator
+first wants a task that may answer requests but may not disarm the gate.
+
 **One divergence from the PTY path is permanent and is documented rather than
 papered over.** On a PTY, "allow once" and "allow and stop asking" are the same
 keystroke class, so `exec_cowrite` can do both and no gate can tell them apart.
@@ -259,7 +343,7 @@ lies.
 died has no request to restore; after resume the agent re-issues whatever it
 still wants.
 
-### 5. Self-approval — PENDING
+### 5. Self-approval — UNBLOCKED
 
 The default scope is `subtree`, which **includes self**. A task holding
 `exec_cowrite` can therefore answer its own approval requests, which makes the
@@ -272,22 +356,48 @@ where it becomes an ordinary grant: `exec_cowrite` with
 `exclude_self = 1`. Nothing in this document should be implemented against the
 hardcoded form.
 
-**Blocked on**: that design being reviewed and implemented. When it is, this
-section becomes "the default grant for a spawned event-stream task sets an
-`exec_cowrite` override with `exclude_self = 1`", and the rule is visible in
-`ls`, `whoami` and both spawn dialogs like any other authority.
+**Unblocked 2026-08-20.** Per-capability scope shipped (`c8965b3` and the
+commits before it), so the grant exists and needs no new mechanism:
+
+```
+--caps exec_view,exec_cowrite --scope-for exec_cowrite=subtree-self
+```
+
+`subtree-self` is `descendants`: the task may answer its workers' requests and
+not its own. It is an ordinary authority, so it appears in `ls` as
+`+exec_cowrite:descendants`, in `whoami --json` under `scope_by_cap`, in the
+TUI picker and in both WebUI dialogs, and `caps set` can change it live.
+
+One thing that changed under this section while it waited. The design it was
+blocked on originally forbade an action rank wider than the visibility rank;
+that rule was **removed** (`c8965b3`) as wrong, on a use case this kind makes
+concrete — an agent that acts only on ids handed to it over the agentboard and
+must not enumerate the server. Nothing here depended on the rule, and the
+removal widens what a spawner may grant an event-stream task.
+
+**The default a spawn hands this kind is still `--caps` with no bits**, as for
+every other kind. The `exclude_self` grant above is what an operator writes
+when they want a task to supervise its workers; it is not applied implicitly.
+A task that holds no `exec_cowrite` at all cannot self-approve either, which is
+the common case and needs no override.
 
 ## Open questions
 
-- The `deny` control response shape is unverified. Probe it before the adapter
-  is written; do not infer it from the `allow` shape.
-- `hook_callback` and `mcp_message` exist as control subtypes in the binary and
-  are unexplored. If hooks ride the same channel, the runner's existing
-  `.claude/settings.json` injection may interact with the adapter in ways this
-  design has not considered.
-- Whether `interrupt_receipt_v1` (advertised in `system/init.capabilities`) is
-  the right mechanism for `cancel` against this kind, versus killing the
-  process as the PTY kind does.
+The three that stood here — the `deny` shape, `hook_callback`, and whether
+`interrupt_receipt_v1` is the right cancel — are answered in the second probe
+round above. What the answers left open is narrower and no longer empirical:
+
+- **Does "accept a permission suggestion" need its own capability bit?**
+  Decided in §3: no, `exec_cowrite` covers it, revisited on operational
+  evidence rather than in advance. Listed here because it is a decision taken
+  with a known consequence, not a question with no answer.
+- `mcp_message` remains untested — no MCP server was configured. If the harness
+  ever runs an event-stream agent with MCP servers, probe it before assuming
+  the router can ignore that subtype.
+- Whether the interrupted turn's `result` (`error_during_execution`) should
+  surface as `AgentEvent.Error` or as a `Finish` with a cancelled marker. It is
+  a display decision, not a protocol one, and the implementation plan decides
+  it rather than leaving it to whoever writes the renderer.
 
 ## Not in this design
 
