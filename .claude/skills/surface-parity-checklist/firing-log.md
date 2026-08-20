@@ -118,6 +118,10 @@ Update when adding an entry.
 | 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 
-**Never fired yet:** 8, 9, 21, 22, 25, 26, 27, 29, 30, 33. Too few walks to
-call any of them dead — revisit after a change that adds a spawn OPTION rather
-than a display field, which is what most of them are for.
+**Never fired yet:** 8, 9, 21, 22, 25, 26, 27, 29, 30. Too few walks to call
+any of them dead — revisit after a change that adds a spawn OPTION rather than
+a display field, which is what most of them are for.
+
+(33 was on this list until `aa4a1dd`. Keeping the two halves consistent is
+manual, so check the tallies against the entries when adding one — a log that
+contradicts itself is worse than no log.)
