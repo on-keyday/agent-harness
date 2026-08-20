@@ -440,6 +440,83 @@ Resume is unchanged in shape. The base spec's Amendment (2026-08-13) rule —
 scope re-grants iff `scope_present`, independently of `resume_caps_override` —
 covers the new fields for the same reason it covers `ids`.
 
+### 11. The legal-value matrix
+
+Enumerated so the model can be reviewed by inspection rather than by argument,
+and so the test matrix is the same table.
+
+**Rank pair — `base` against `visRank`.** Legal iff `rank(base) ≤ rank(visRank)`
+over `none < subtree < global` (§3).
+
+| `base` | `visRank` | | meaning |
+|---|---|---|---|
+| none | none | ✅ | sees and acts on self and named ids only — the tightest grant |
+| none | subtree | ✅ | sees its subtree, acts only on self and named ids |
+| none | global | ✅ | sees the server, acts only on self and named ids — today's `info_global` with `--scope none` |
+| subtree | subtree | ✅ | **the default**, and today's omitted scope |
+| subtree | global | ✅ | sees the server, acts on its subtree — today's `info_global` with `--scope subtree` |
+| global | global | ✅ | today's `--scope global` |
+| subtree | none | ❌ | action rank exceeds visibility (§4) |
+| global | none | ❌ | same |
+| global | subtree | ❌ | same |
+
+**`vis_base_present = 0` pins the pair to the diagonal**, so the default value
+and every legacy record are legal by construction — an illegal pair can only be
+produced by explicitly asking for one.
+
+**Override rank — `override.base` against `visRank`.** The same three-by-three,
+and note what it is *not* compared against:
+
+| `override.base` vs `base` | legal? |
+|---|---|
+| narrower | ✅ the ordinary case: `exec_cowrite` confined below the task's own base |
+| equal | ✅ (usually only to carry `exclude_self` or different ids) |
+| **wider** | ✅ **so long as it is ≤ `visRank`** |
+
+The last row is the one that changed when visibility became an axis. Under a
+single scope, `base=none` with `override{exec_view, base=global}` had to be
+refused — the action would have reached past `ls`. With `vis_base=global`
+stated explicitly, it is a legal and useful grant: read any session, act on
+nothing but self. Overrides are bounded by *visibility*, never by the action
+base.
+
+**Modifiers, orthogonal to the ranks.**
+
+| field | value | effect | notes |
+|---|---|---|---|
+| `exclude_self` | 0 | self in the action set | the default; today's unconditional `self` |
+| | 1 | self removed **from that action set only** | still visible; other bits unaffected |
+| `ids` | empty | — | |
+| | non-empty | adds action targets, and they become visible | clamped against the parent at grant time |
+| | non-empty **with `base=global`** | accepted, no effect | already covered by the base; a no-op, not an error |
+| `vis_ids` | empty | — | the common case |
+| | non-empty | adds view-only targets | the only way to see without acting |
+| | non-empty **with `visRank=global`** | accepted, no effect | same reasoning |
+| override mask | names an unheld bit | inert, retained | applies if `caps set` grants the bit later |
+
+**Every rejection, in one list.** A write (spawn or `caps set`) is refused with
+`scope_not_permitted`, naming the offending bit where one applies, iff:
+
+1. `rank(base) > rank(visRank)`
+2. `rank(override.base) > rank(visRank)` for any override
+3. an override's mask is empty
+4. two overrides' masks intersect
+5. `vis_base ≠ 0` while `vis_base_present = 0` — see below
+6. an `ids` entry is outside the parent's effective set for that capability
+7. a `vis_ids` entry is outside the parent's visibility set
+
+**Rule 5 is new, and it is wire hygiene rather than authority.** With
+`vis_base_present = 0` the `vis_base` byte is ignored, so a non-zero value
+there gives two encodings of one authority — they would compare unequal,
+render differently in `--json`, and disagree across a round-trip through a
+client that normalises. Requiring the canonical form makes the value's
+identity its bytes. It is the only rejection in the list that is not about what
+a task may do.
+
+**The empty action set is legal.** `base=none`, `exclude_self=1`, no ids: holds
+the bit, can point it at nothing. That is a real state during a staged re-grant
+and is left expressible rather than special-cased into an error.
+
 ## Wire, persistence, upgrade
 
 `TaskScope` grows two enum bytes, a flags byte and a list; every format
@@ -566,6 +643,12 @@ Extends, rather than replaces, the base spec's set.
 - A `ScopeOverride` with an empty mask is rejected, and two overrides whose
   masks intersect are rejected — at spawn and at `caps set`, not only at
   decode, since the same list arrives on both paths.
+- `vis_base ≠ 0` with `vis_base_present = 0` is rejected as non-canonical
+  (§11 rule 5), so one authority has one encoding.
+- **§11's matrix is the test matrix**: every ✅ row round-trips and resolves to
+  the stated set; every ❌ row and every numbered rejection is refused with
+  `scope_not_permitted`; every "accepted, no effect" row is accepted and
+  changes nothing.
 - A mask naming a bit the task does not hold round-trips unchanged and applies
   the moment `caps set` grants that bit.
 
