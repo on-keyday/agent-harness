@@ -593,8 +593,13 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
         display: inline-block;
         margin: 0 0.8rem 0 0;
     }
-    #compose .scope-base-row input[type="radio"],
-    #compose .task-checklist input[type="checkbox"] {
+    /* By CONTAINER, not by input type. The enumerated form listed the two
+       kinds that existed when it was written -- radio in the base row,
+       checkbox in the checklist -- so the base row's own exclude-self
+       CHECKBOX fell between the selectors and rendered as a full-width block
+       above its label. Any control inside these two stays inline. */
+    #compose .scope-base-row input,
+    #compose .task-checklist input {
         display: inline;
         width: auto;
         padding: 0;

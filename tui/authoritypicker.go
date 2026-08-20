@@ -27,6 +27,17 @@ type AuthorityPickerModel struct {
 
 	caps protocol.Capability
 	base protocol.ScopeBase
+	// excludeSelf is the base's other half. The six scopes are three ranks
+	// times this flag (subtree/descendants, none/none-self, global/global-self),
+	// so as a fourth base value it could only ever have meant "subtree without
+	// self" and the other two ranks could not say it at all.
+	excludeSelf bool
+	// visHalf is CARRIED, not edited, for the same reason as overrides below:
+	// the visibility rank and vis-ids travel with the scope under one presence
+	// bit, so re-serializing without them would silently collapse a
+	// `global/subtree` task to `subtree` on any re-grant. They are typed on the
+	// cmdline; this keeps them alive across a picker apply.
+	visHalf protocol.TaskScope
 	// overrides is CARRIED, not edited. The picker edits the base scope and
 	// the id set; per-capability narrowings are typed on the cmdline. It has
 	// to be kept because overrides travel with the scope under one presence
@@ -59,6 +70,7 @@ type pickerRowKind int
 const (
 	rowCap pickerRowKind = iota
 	rowBase
+	rowExcludeSelf
 	rowTask
 	rowCascade
 	rowKeepConns
@@ -148,6 +160,9 @@ func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Cap
 	m.cursor = 0
 	m.caps = caps
 	m.base = scope.Base
+	m.excludeSelf = scope.ExcludeSelf()
+	m.visHalf = protocol.TaskScope{VisBase: scope.VisBase, VisIds: scope.VisIds, VisIdsLen: scope.VisIdsLen}
+	m.visHalf.SetVisBasePresent(scope.VisBasePresent())
 	m.overrides = nil
 	m.selected = map[string]bool{}
 	for _, id := range scope.Ids {
@@ -168,6 +183,8 @@ func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
 		m.rows = append(m.rows, pickerRow{kind: rowCap, label: c.Name, bit: protocol.Capability(c.Bit)})
 	}
 	m.rows = append(m.rows, pickerRow{kind: rowBase, label: "base:"})
+	m.rows = append(m.rows, pickerRow{kind: rowExcludeSelf,
+		label: "exclude self (subtree→descendants; none→the empty set)"})
 	for _, t := range tasks {
 		idHex := FormatTaskID(t.Id)
 		if idHex == m.targetHex {
@@ -256,6 +273,8 @@ func (m *AuthorityPickerModel) Toggle() {
 		default:
 			m.base = protocol.ScopeBase_Subtree
 		}
+	case rowExcludeSelf:
+		m.excludeSelf = !m.excludeSelf
 	case rowTask:
 		m.selected[r.idHex] = !m.selected[r.idHex]
 	case rowCascade:
@@ -283,33 +302,47 @@ func (m *AuthorityPickerModel) Result() (caps protocol.Capability, scopeSpec str
 			}
 		}
 	}
-	spec := scopeSpecFor(m.base, ids, m.mode == PickerModeSession)
+	spec := m.scopeSpec(ids)
 	if m.mode == PickerModeSession {
 		return m.caps, spec, false, false
 	}
 	return m.caps, spec, m.cascade, m.keepConns
 }
 
-// scopeSpecFor serializes a base + id set to the `--scope` grammar.
-func scopeSpecFor(base protocol.ScopeBase, ids []string, sessionMode bool) string {
+// scope assembles the picker's selection into a wire TaskScope: the edited
+// base + exclude-self + id set, plus the visibility half it is carrying
+// untouched.
+func (m *AuthorityPickerModel) scope(ids []string) protocol.TaskScope {
+	sc := m.visHalf
+	sc.Base = m.base
+	sc.SetExcludeSelf(m.excludeSelf)
 	sort.Strings(ids)
-	switch base {
-	case protocol.ScopeBase_Global:
-		return "global"
-	case protocol.ScopeBase_None:
-		if len(ids) == 0 {
-			return "none"
+	for _, id := range ids {
+		tid, err := ParseTaskID(id)
+		if err != nil {
+			continue // rows are built from formatted ids; a bad one cannot select
 		}
-		return "ids:" + strings.Join(ids, ",")
-	default: // subtree
-		if len(ids) == 0 {
-			if sessionMode {
-				return "" // the spawn default
-			}
-			return "subtree"
-		}
-		return "subtree+ids:" + strings.Join(ids, ",")
+		sc.Ids = append(sc.Ids, tid)
 	}
+	sc.IdsLen = uint16(len(sc.Ids))
+	return sc
+}
+
+// scopeSpec serializes that scope to the `--scope` grammar with cli.ScopeLabel
+// — the same function `ls` renders with, so there is ONE serializer rather
+// than a picker-local copy. The copy this replaced knew only three of the six
+// bases and neither half of the visibility pair, so a picker apply silently
+// turned `descendants` into `subtree` and dropped `global/…` entirely.
+//
+// Session mode returns "" for the plain default, which is what "--scope not
+// named" means on a spawn; a re-grant is always explicit.
+func (m *AuthorityPickerModel) scopeSpec(ids []string) string {
+	sc := m.scope(ids)
+	if m.mode == PickerModeSession && len(sc.Ids) == 0 && !m.excludeSelf &&
+		!sc.VisBasePresent() && len(sc.VisIds) == 0 && m.base == protocol.ScopeBase_Subtree {
+		return ""
+	}
+	return cli.ScopeLabel(sc)
 }
 
 func (m *AuthorityPickerModel) SetSize(w, h int) { m.w, m.h = w, h }
@@ -388,6 +421,10 @@ func (m *AuthorityPickerModel) View() string {
 			if m.mode != PickerModeParent && m.selected[r.idHex] {
 				line = "[x] "
 			}
+		case rowExcludeSelf:
+			if m.excludeSelf {
+				line = "[x] "
+			}
 		case rowCascade:
 			if m.cascade {
 				line = "[x] "
@@ -399,7 +436,7 @@ func (m *AuthorityPickerModel) View() string {
 		}
 		label := r.label
 		if r.kind == rowBase {
-			label = "base: " + cli.ScopeLabel(protocol.TaskScope{Base: m.base})
+			label = "base: " + cli.ScopeLabel(m.scope(nil))
 		}
 		line = fit(line + label)
 		switch {

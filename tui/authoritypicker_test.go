@@ -305,3 +305,113 @@ func TestPickerCarriesOverridesItDoesNotEdit(t *testing.T) {
 		t.Errorf("Overrides() = %+v after a fresh open, want empty", got)
 	}
 }
+
+// mkScope builds a wire scope from the grammar, so these tests name a scope
+// the way an operator does rather than assembling flag bits.
+func mkScope(t *testing.T, spec string) protocol.TaskScope {
+	t.Helper()
+	sc, err := cli.ParseScope(spec)
+	if err != nil {
+		t.Fatalf("ParseScope(%q): %v", spec, err)
+	}
+	return sc
+}
+
+// pickerToggleRow moves the cursor onto the first row of kind k and toggles it.
+func pickerToggleRow(t *testing.T, m *AuthorityPickerModel, k pickerRowKind) {
+	t.Helper()
+	for i, r := range m.rows {
+		if r.kind == k {
+			m.cursor = i
+			m.Toggle()
+			return
+		}
+	}
+	t.Fatalf("no row of kind %v in the picker", k)
+}
+
+// The picker serialized with a local copy that knew three of the six bases, so
+// re-granting a `descendants` task handed self straight back.
+func TestPickerPreservesExcludeSelf(t *testing.T) {
+	var m AuthorityPickerModel
+	m.OpenRegrant(protocol.TaskInfo{
+		Id:           protocol.TaskID{Id: [16]byte{1}},
+		Capabilities: protocol.Capability_Spawn,
+		Scope:        mkScope(t, "descendants"),
+	}, nil)
+
+	_, spec, _, _ := m.Result()
+	if spec != "descendants" {
+		t.Fatalf("re-grant spec = %q, want descendants — the picker gave self back", spec)
+	}
+
+	// And it is editable, not merely preserved.
+	pickerToggleRow(t, &m, rowExcludeSelf)
+	if _, spec, _, _ := m.Result(); spec != "subtree" {
+		t.Errorf("after unticking exclude-self, spec = %q, want subtree", spec)
+	}
+	pickerToggleRow(t, &m, rowExcludeSelf)
+	if _, spec, _, _ := m.Result(); spec != "descendants" {
+		t.Errorf("after re-ticking, spec = %q, want descendants", spec)
+	}
+}
+
+// The visibility pair has no control in the picker, so it must survive an
+// apply untouched — the same rule the carried overrides already follow.
+func TestPickerCarriesTheVisibilityHalf(t *testing.T) {
+	var m AuthorityPickerModel
+	m.OpenRegrant(protocol.TaskInfo{
+		Id:           protocol.TaskID{Id: [16]byte{2}},
+		Capabilities: protocol.Capability_ExecView,
+		Scope:        mkScope(t, "global/subtree"),
+	}, nil)
+
+	_, spec, _, _ := m.Result()
+	sc := mkScope(t, spec)
+	if !sc.VisBasePresent() || sc.VisBase != protocol.ScopeBase_Global {
+		t.Fatalf("spec %q lost the visibility rank; a picker with no control for "+
+			"it must not clear it", spec)
+	}
+}
+
+// Session mode's empty spec means "--scope not named". It must stay empty for
+// the plain default and become explicit the moment anything is chosen —
+// otherwise ticking exclude-self would silently do nothing on a spawn.
+func TestPickerSessionModeEmptyOnlyForTheDefault(t *testing.T) {
+	var m AuthorityPickerModel
+	m.OpenSession(protocol.Capability_Spawn, protocol.TaskScope{Base: protocol.ScopeBase_Subtree}, nil, nil)
+	if _, spec, _, _ := m.Result(); spec != "" {
+		t.Errorf("plain default spec = %q, want the empty spawn default", spec)
+	}
+	pickerToggleRow(t, &m, rowExcludeSelf)
+	if _, spec, _, _ := m.Result(); spec != "descendants" {
+		t.Errorf("after ticking exclude-self, spec = %q, want descendants", spec)
+	}
+}
+
+// All six bases must be reachable by driving the two controls, which is the
+// property the WebUI copy failed and the picker copy failed with it.
+func TestPickerReachesAllSixBases(t *testing.T) {
+	seen := map[string]bool{}
+	for _, excl := range []bool{false, true} {
+		var m AuthorityPickerModel
+		m.OpenRegrant(protocol.TaskInfo{Id: protocol.TaskID{Id: [16]byte{3}}}, nil)
+		if excl {
+			pickerToggleRow(t, &m, rowExcludeSelf)
+		}
+		// The base row cycles subtree -> none -> global -> subtree.
+		for i := 0; i < 3; i++ {
+			_, spec, _, _ := m.Result()
+			if seen[spec] {
+				t.Errorf("spec %q produced twice; the six scopes must be six strings", spec)
+			}
+			seen[spec] = true
+			pickerToggleRow(t, &m, rowBase)
+		}
+	}
+	for _, want := range []string{"subtree", "descendants", "none", "none-self", "global", "global-self"} {
+		if !seen[want] {
+			t.Errorf("%s is not reachable from the picker's controls", want)
+		}
+	}
+}

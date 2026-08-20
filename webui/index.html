@@ -80,6 +80,10 @@
           <label><input type="radio" name="spawn-base" value="subtree" checked> subtree</label>
           <label><input type="radio" name="spawn-base" value="none"> none</label>
           <label><input type="radio" name="spawn-base" value="global"> global</label>
+          <!-- exclude_self is orthogonal to the rank, so it is a checkbox: the
+               six scopes are three ranks x this flag. As a fourth radio it
+               could only ever have said "subtree without self". -->
+          <label title="subtree なら descendants、none なら空集合（ビットは持つが何にも向かない）"><input type="checkbox" id="spawn-exclude-self"> 自分自身を除く</label>
         </div>
         <details id="spawn-scope-details">
           <summary id="spawn-scope-summary">対象タスクを選択 (0)</summary>
@@ -342,6 +346,7 @@
       <label><input type="radio" name="regrant-base" value="subtree"> subtree</label>
       <label><input type="radio" name="regrant-base" value="none"> none</label>
       <label><input type="radio" name="regrant-base" value="global"> global</label>
+      <label title="subtree なら descendants、none なら空集合（ビットは持つが何にも向かない）"><input type="checkbox" id="regrant-exclude-self"> 自分自身を除く</label>
     </div>
     <div id="regrant-tasks" class="task-checklist"></div>
     <label class="regrant-flag"><input type="checkbox" id="regrant-cascade"> --cascade（子孫の caps/scope も締める）</label>

@@ -118,6 +118,7 @@ func main() {
 		"watchNotifications": js.FuncOf(harnessWatchNotifications),
 		"capList":            js.FuncOf(harnessCapList),
 		"scopeForms":         js.FuncOf(harnessScopeForms),
+		"scopeSpec":          js.FuncOf(harnessScopeSpec),
 		"setCaps":            js.FuncOf(harnessSetCaps),
 		"setParent":          js.FuncOf(harnessSetParent),
 		"boardTopics":        js.FuncOf(harnessBoardTopics),
@@ -390,6 +391,41 @@ func scopeFromOpts(opts js.Value) (protocol.TaskScope, error) {
 		return protocol.TaskScope{}, fmt.Errorf("scope: %w", err)
 	}
 	return sc, nil
+}
+
+// harnessScopeSpec serializes an edited scope to the --scope grammar via
+// cli.ScopeSpec, so the browser holds no copy of it.
+//
+//	harness.scopeSpec({base, excludeSelf, ids, carry}) -> string
+//
+// carry is the task's current scope string on a re-grant ("" on a spawn); only
+// its visibility half is kept. Throws on a bad base word or id, which is what
+// the caller wants: a silently-wrong scope is the failure this replaced.
+func harnessScopeSpec(this js.Value, args []js.Value) any {
+	if len(args) == 0 || args[0].Type() != js.TypeObject {
+		panic(js.Error{Value: js.ValueOf("scopeSpec: want an options object")})
+	}
+	opts := args[0]
+	base := "subtree"
+	if v := opts.Get("base"); v.Type() == js.TypeString {
+		base = v.String()
+	}
+	excludeSelf := opts.Get("excludeSelf").Truthy()
+	carry := ""
+	if v := opts.Get("carry"); v.Type() == js.TypeString {
+		carry = v.String()
+	}
+	var ids []string
+	if v := opts.Get("ids"); v.Type() == js.TypeObject {
+		for i := 0; i < v.Length(); i++ {
+			ids = append(ids, v.Index(i).String())
+		}
+	}
+	spec, err := cli.ScopeSpec(base, excludeSelf, ids, carry)
+	if err != nil {
+		panic(js.Error{Value: js.ValueOf(err.Error())})
+	}
+	return js.ValueOf(spec)
 }
 
 // harnessScopeForms returns the --scope syntaxes with their descriptions, so
@@ -769,6 +805,12 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"capsBits":  float64(uint32(t.Capabilities)),
 					"scopeBase": t.Scope.Base.String(),
 					"scopeIds":  scopeIDStrings(t.Scope),
+					// exclude_self is the base's other half, and `scope` above
+					// is the WHOLE scope in grammar form — the dialog seeds its
+					// checkbox from the first and hands the second back as
+					// ScopeSpec's carry, so the visibility pair survives a UI
+					// round trip that shows no control for it.
+					"scopeExcludeSelf": t.Scope.ExcludeSelf(),
 					// scopeFor is the label; scopeForSpecs is the raw
 					// "CAPS=SCOPE" list the re-grant dialog sends straight
 					// back, so a round trip through the UI cannot lose a

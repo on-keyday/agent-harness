@@ -270,6 +270,9 @@ const POLL_INTERVAL_MS = 5000;
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
   let spawnBase = "subtree"; // scope base radio state (spawn picker)
+  // The base's other half. Declared beside spawnBase rather than near its
+  // checkbox: the echo updater runs during init, before the control is wired.
+  let spawnExcludeSelf = false;
   const spawnScopeIds = new Set(); // checked task ids (spawn picker)
   // Per-capability override rows, one list per dialog. Declared HERE with the
   // other spawn state rather than beside the builder, because initCaps ->
@@ -2959,18 +2962,20 @@ const POLL_INTERVAL_MS = 5000;
     container.appendChild(add);
   }
 
-  // scopeSpecJS mirrors the Go scopeSpecFor (tui/authoritypicker.go):
-  // serialize a base + checked-id set to the --scope grammar string, which
-  // still goes through the single cli.ParseScope funnel behind the bridge.
-  // sessionMode: base-subtree-no-ids -> "" (the spawn default); the re-grant
-  // path always gets an explicit string. Ids are ignored under global — the
-  // grammar has no global+ids form.
-  function scopeSpecJS(base, idsSet, sessionMode) {
-    const ids = [...idsSet].sort();
-    if (base === "global") return "global";
-    if (base === "none") return ids.length ? "ids:" + ids.join(",") : "none";
-    if (ids.length) return "subtree+ids:" + ids.join(",");
-    return sessionMode ? "" : "subtree";
+  // scopeSpec serializes a base + exclude-self + id set to the --scope grammar
+  // by calling cli.ScopeSpec through the bridge, so the browser holds no copy
+  // of the grammar. The JS copy this replaced knew three of the six bases and
+  // neither half of the visibility pair, which is why a re-grant on a
+  // `descendants` task silently handed self back.
+  //
+  // carry is the task's current scope string on a re-grant ("" on a spawn):
+  // only its visibility half is kept, the half no control here can edit.
+  // sessionMode collapses the plain default to "", which is what "--scope not
+  // named" means on a spawn.
+  function scopeSpec(base, excludeSelf, idsSet, sessionMode, carry) {
+    const ids = base === "global" ? [] : [...idsSet].sort();
+    if (sessionMode && base === "subtree" && !excludeSelf && ids.length === 0 && !carry) return "";
+    return window.harness.scopeSpec({ base, excludeSelf, ids, carry: carry || "" });
   }
 
   // buildTaskChecklist renders one checkbox row per snapshot task (terminal
@@ -3019,7 +3024,7 @@ const POLL_INTERVAL_MS = 5000;
   // Spawn scope picker: base radios + task checklist, serialized into
   // spawnScope exactly where the old free-text field's value went.
   function updateSpawnScope() {
-    spawnScope = scopeSpecJS(spawnBase, spawnScopeIds, true);
+    spawnScope = scopeSpec(spawnBase, spawnExcludeSelf, spawnScopeIds, true, "");
     const list = document.getElementById("spawn-scope-tasks");
     if (list) list.classList.toggle("disabled", spawnBase === "global");
     const sum = document.getElementById("spawn-scope-summary");
@@ -3053,6 +3058,13 @@ const POLL_INTERVAL_MS = 5000;
         if (r.checked) { spawnBase = r.value; updateSpawnScope(); }
       });
     }
+    const selfCb = document.getElementById("spawn-exclude-self");
+    if (selfCb) {
+      selfCb.addEventListener("change", () => {
+        spawnExcludeSelf = selfCb.checked;
+        updateSpawnScope();
+      });
+    }
     buildOverrideRows("spawn", "spawn-scope-for-rows", updateSpawnScope);
     // Also on open. The snapshot-driven rebuild below only fires once a task
     // list arrives, so an operator who expands this before the first snapshot
@@ -3075,6 +3087,10 @@ const POLL_INTERVAL_MS = 5000;
   let regrantTaskId = "";
   let regrantBits = 0;
   let regrantBase = "subtree";
+  let regrantExcludeSelf = false;
+  // The target's scope string as it stood when the dialog opened; ScopeSpec
+  // reads only its visibility half back out.
+  let regrantCarry = "";
   const regrantIds = new Set();
 
   function updateRegrantEcho() {
@@ -3083,7 +3099,7 @@ const POLL_INTERVAL_MS = 5000;
     const echo = document.getElementById("regrant-echo");
     if (echo) {
       let line = "→ caps=" + capsLabelFor(regrantBits) +
-        "  scope=" + scopeSpecJS(regrantBase, regrantIds, false);
+        "  scope=" + scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false, regrantCarry);
       const sf = overrideSpecsFrom("regrant");
       if (sf.length > 0) line += "  +" + sf.join(" ");
       echo.textContent = line;
@@ -3095,6 +3111,11 @@ const POLL_INTERVAL_MS = 5000;
     regrantTaskId = t.id;
     regrantBits = typeof t.capsBits === "number" ? t.capsBits : 0;
     regrantBase = t.scopeBase || "subtree";
+    regrantExcludeSelf = !!t.scopeExcludeSelf;
+    // The whole scope string, handed back to ScopeSpec as carry so the
+    // visibility half survives an apply. Same reason the override rows are
+    // seeded: this dialog must not erase what it shows no control for.
+    regrantCarry = t.scope || "";
     regrantIds.clear();
     for (const id of (t.scopeIds || [])) regrantIds.add(id);
     // Seeded, not blank: overrides travel with the scope under one presence
@@ -3110,6 +3131,8 @@ const POLL_INTERVAL_MS = 5000;
     for (const r of document.querySelectorAll('#regrant-base-row input[type="radio"]')) {
       r.checked = (r.value === regrantBase);
     }
+    const rSelf = document.getElementById("regrant-exclude-self");
+    if (rSelf) rSelf.checked = regrantExcludeSelf;
     buildTaskChecklist(document.getElementById("regrant-tasks"),
       regrantIds, t.id, updateRegrantEcho);
     buildOverrideRows("regrant", "regrant-scope-for-rows", updateRegrantEcho);
@@ -3125,12 +3148,19 @@ const POLL_INTERVAL_MS = 5000;
         if (r.checked) { regrantBase = r.value; updateRegrantEcho(); }
       });
     }
+    const rSelfCb = document.getElementById("regrant-exclude-self");
+    if (rSelfCb) {
+      rSelfCb.addEventListener("change", () => {
+        regrantExcludeSelf = rSelfCb.checked;
+        updateRegrantEcho();
+      });
+    }
     document.getElementById("regrant-cancel").addEventListener("click", () => regrantModal.close());
     document.getElementById("regrant-apply").addEventListener("click", async () => {
       const req = {
         taskId: regrantTaskId,
         caps: regrantBits,
-        scope: scopeSpecJS(regrantBase, regrantIds, false),
+        scope: scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false, regrantCarry),
         scopeFor: overrideSpecsFrom("regrant"),
         cascade: document.getElementById("regrant-cascade").checked,
         keepConns: document.getElementById("regrant-keep-conns").checked,

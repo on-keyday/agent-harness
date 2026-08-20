@@ -241,6 +241,52 @@ func joinTaskIDs(in []protocol.TaskID) string {
 	return strings.Join(ids, ",")
 }
 
+// ScopeSpec builds a `--scope` string from the pieces a graphical control can
+// edit, carrying forward the halves it cannot.
+//
+// base is a rank word ("subtree"/"none"/"global"), excludeSelf is the flag that
+// turns each into its without-self twin, and ids is the target list. carry is
+// an existing scope string — a task's current scope on a re-grant, "" on a
+// fresh spawn — and ONLY its visibility half (the `vis/` rank and `+vis-ids:`)
+// is taken from it.
+//
+// It exists so a browser never re-implements this grammar. The WebUI used to
+// serialize with a JS copy that knew three of the six bases and neither half of
+// the visibility pair, so opening the re-grant dialog on a `descendants` task
+// and pressing apply handed self back, and a `global/subtree` task lost its
+// visibility rank — silently, in both cases.
+func ScopeSpec(base string, excludeSelf bool, ids []string, carry string) (string, error) {
+	rank, rankExcludes, err := parseScopeBaseWord(strings.TrimSpace(base))
+	if err != nil {
+		return "", err
+	}
+	// The word may already carry the flag ("descendants"); the checkbox is the
+	// other input to the same field, so either source setting it is enough.
+	out := protocol.TaskScope{Base: rank}
+	out.SetExcludeSelf(excludeSelf || rankExcludes)
+
+	if len(ids) > 0 {
+		parsed, err := parseScopeIDs(strings.Join(ids, ","), strings.Join(ids, ","))
+		if err != nil {
+			return "", err
+		}
+		out.Ids = parsed
+		out.IdsLen = uint16(len(parsed))
+	}
+
+	if strings.TrimSpace(carry) != "" {
+		prev, err := ParseScope(carry)
+		if err != nil {
+			return "", fmt.Errorf("carrying the visibility half of %q: %w", carry, err)
+		}
+		out.VisBase = prev.VisBase
+		out.SetVisBasePresent(prev.VisBasePresent())
+		out.VisIds = prev.VisIds
+		out.VisIdsLen = prev.VisIdsLen
+	}
+	return ScopeLabel(out), nil
+}
+
 // ScopeForFlagUsage is the --scope-for help text, shared by every verb that
 // takes --scope.
 const ScopeForFlagUsage = "narrow ONE capability (or a comma-separated list of them) " +

@@ -280,3 +280,20 @@ func subscribeAndStream(ctx context.Context, c *cli.Client, topic string, progra
 func FormatTaskID(t protocol.TaskID) string {
 	return hex.EncodeToString(t.Id[:])
 }
+
+// ParseTaskID is FormatTaskID's inverse: it turns a 32-hex id back into the
+// wire type. The picker needs it to rebuild a TaskScope from the ids it holds
+// as strings; every other caller in this repo hex-decodes inline because it is
+// going straight into a request.
+func ParseTaskID(s string) (protocol.TaskID, error) {
+	raw, err := hex.DecodeString(s)
+	if err != nil {
+		return protocol.TaskID{}, fmt.Errorf("task id %q is not hex: %w", s, err)
+	}
+	if len(raw) != 16 {
+		return protocol.TaskID{}, fmt.Errorf("task id %q: want 16 bytes, got %d", s, len(raw))
+	}
+	var out protocol.TaskID
+	copy(out.Id[:], raw)
+	return out, nil
+}

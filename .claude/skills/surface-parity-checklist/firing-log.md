@@ -156,13 +156,44 @@ Both defects were found by the operator using the feature, not by review — the
 same pattern as `c8965b3`, where the invariant this feature was built around
 was falsified by a live `ls`.
 
+### 2026-08-20 `f4bb369` — exclude self, on the task's own scope
+
+Operator question, not a bug report: 「webui ってデフォルトについては自分を除く
+はできないんだっけ」. It could not, and the follow-on was worse than the gap.
+
+done:    2 (`cli.ScopeSpec`, one builder), 6, 8, 22 (`scopeExcludeSelf` raw
+         beside `scopeBase`), 23, 28a, 34a, 37
+missed:  **34a** — the exclude-self checkbox went onto the OVERRIDE rows
+         (`b7b4d35`) and not onto the task's own base row directly above them,
+         in the same dialog. So the WebUI could say `descendants` for one
+         capability and not for the task: three of the six bases unreachable
+         from every graphical control, TUI picker included. A control added to
+         one row must be carried to its siblings in the same walk.
+missed:  **32** — second miss, same session, and the wording was the licence.
+         "One serializer per grammar per RUNTIME" made two hand-written copies
+         of the scope grammar sound correct; both were lossy in the same two
+         ways and neither had the round-trip test the item claimed. Reworded to
+         one serializer, full stop: the browser now calls `cli.ScopeSpec`
+         through the wasm bridge and `scopeSpecJS` is deleted.
+missed:  **31** — third miss, in its "do not lose what you do not show" form.
+         The re-grant dialog rebuilt the scope from `scopeBase` + `scopeIds`,
+         so `exclude_self` and the whole visibility pair were dropped on every
+         apply: opening the dialog on a `global/descendants` task and pressing
+         適用 wrote `subtree`. The scope string was already in the snapshot the
+         entire time. Now carried through `ScopeSpec(..., carry)`.
+
+Verified in a browser at 1280 and 390: all six bases reachable from the two
+controls, and applying the dialog unchanged on a `global/descendants` task
+leaves it `global/descendants`.
+
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 2 | **2** | Both misses were the same shape: an elision the item's own text licensed. The row-width exception is now withdrawn — if 31 misses again, the wording is still wrong. |
+| 31 (don't hide a value for what it IS) | 2 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
@@ -171,8 +202,9 @@ Update when adding an entry.
 | 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 1 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 1 | **1** | Same walk. The pair existed, the round trip was never asserted, and the doc comment asserted it in prose instead. A claim of "pasteable/round-trips" in a comment is the cue to write the test, not evidence there is one. |
+| 32 (one serializer, round-trip tested) | 2 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. |
 | 28a (follow the value to the request build) | 1 | 0 | New, born from 27's miss. |
+| 34a (same KIND of control as its neighbours) | 1 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 
 **Never fired yet:** 21, 26, 29, 30. Too few walks to call any of them dead —
 revisit after another change that adds a spawn OPTION rather than a display

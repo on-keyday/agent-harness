@@ -165,9 +165,19 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     checking their axis is how this recurs, and it did: the observer
     counts shipped eliding-at-zero in the same change that added them to
     fix exactly that ambiguity elsewhere.
-32. One serializer per grammar per runtime, pinned by tests —
-    `scopeSpecFor` (Go) / `scopeSpecJS` (JS), both feeding
-    `cli.ParseScope`; round-trip tests keep them honest. Fixed frames:
+32. One serializer per grammar, pinned by tests. Not one PER RUNTIME — that
+    was the old wording and it licensed exactly what went wrong: `scopeSpecFor`
+    (Go) and `scopeSpecJS` (JS) were both hand-written next to
+    `cli.ScopeLabel`, and both knew three of the six scope bases and neither
+    half of the visibility pair. A picker or dialog apply silently turned
+    `descendants` into `subtree` and dropped `global/…`. Neither copy had the
+    round-trip test this item claimed for them; the sentence was the evidence.
+    Both are gone: the picker calls `cli.ScopeLabel`, the browser calls
+    `cli.ScopeSpec` over the wasm bridge (`harness.scopeSpec`). When a grammar
+    must be produced in the browser, EXPORT the Go serializer rather than
+    mirroring it — a mirror has no way to fail loudly when the grammar grows.
+    A "round-trips" / "can be pasted back" claim in a comment is the cue to
+    write the test, never evidence that one exists. Fixed frames:
     popup/dialog width derives from the terminal/viewport, never content
     (TUI picker `fit()`, `.picker-modal.regrant-modal`).
 33. A typed option either takes effect or errors — never silently ignored,
@@ -217,6 +227,16 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     Do not make a control depend on the first snapshot arriving: build it on
     `toggle` of its `<details>` as well, or an operator who opens the section
     on an empty server finds it blank.
+    **And carry the control to its siblings in the same walk.** The
+    exclude-self checkbox was added to the override rows and not to the
+    task's own base row directly above them, so the WebUI could express
+    `descendants` for one capability but not for the task — three of the six
+    bases unreachable, in the dialog the fix had just been applied to. The
+    same edit left a CSS hole: the mobile rule that keeps a control inline
+    with its label enumerated `input[type="radio"]` in the base row and
+    `input[type="checkbox"]` in the checklist, so a CHECKBOX in the BASE ROW
+    fell between the selectors and rendered as a block above its text at
+    390px. Select by container, not by control type.
 
 ## Documentation surfaces
 
