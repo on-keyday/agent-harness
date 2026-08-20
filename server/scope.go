@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/hex"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -77,6 +78,93 @@ const taskIDHexLen = 32
 // existed. It is also the zero value, deliberately — see ScopeBase in the
 // schema.
 func defaultScope() Scope { return Scope{Base: protocol.ScopeBase_Subtree} }
+
+// VisRank is the visibility rank: VisBase when the presence bit is set, the
+// action Base otherwise. The absent case pins the rank pair to the diagonal,
+// which is why the zero value and every pre-change record are legal without a
+// check of their own.
+func (s Scope) VisRank() protocol.ScopeBase {
+	if s.VisBasePresent {
+		return s.VisBase
+	}
+	return s.Base
+}
+
+// ForCap resolves the scope ONE capability sees: the override covering it, or
+// the base scope. Masks are validated pairwise disjoint where the value is
+// written, so at most one entry matches and the first hit is the only hit —
+// there is no precedence rule to get wrong.
+//
+// A mask may name bits the task does not hold. Those stay inert but retained,
+// so a grant template survives reuse and a bit granted later by caps set picks
+// its override up. Safe by construction: an override only ever narrows.
+func (s Scope) ForCap(c protocol.Capability) (base protocol.ScopeBase, excludeSelf bool, ids []string) {
+	for _, o := range s.Overrides {
+		if o.Caps&c != 0 {
+			return o.Base, o.ExcludeSelf, o.IDs
+		}
+	}
+	return s.Base, s.ExcludeSelf, s.IDs
+}
+
+// capsLabelForMask renders a capability mask for error text, so a rejection
+// names bits rather than a number. cli.CapsLabel does the same job for the
+// operator surfaces; duplicating the walk here keeps server/ from importing
+// cli/ for one string.
+func capsLabelForMask(m protocol.Capability) string {
+	var parts []string
+	for bit := protocol.Capability(1); bit != 0 && bit <= protocol.Capability_All; bit <<= 1 {
+		if m&bit != 0 {
+			parts = append(parts, bit.String())
+		}
+	}
+	if len(parts) == 0 {
+		return protocol.Capability_None.String()
+	}
+	return strings.Join(parts, ",")
+}
+
+// validateScope enforces the rules that make "no capability acts outside what
+// ls shows" hold by construction. Two of them are about authority and one is
+// about encoding:
+//
+//   - The action base, and every override's base, must rank at or below the
+//     visibility rank. Only the BASE axis is restricted, because only the base
+//     reaches targets nobody named — an override may carry ids outside the
+//     base, since a granted id was disclosed by the granter and joins the
+//     visible set.
+//   - Override masks are non-empty and pairwise disjoint, which is what keeps
+//     ForCap a lookup.
+//   - VisBase must be zero when VisBasePresent is not set. That one is wire
+//     hygiene rather than authority: otherwise one authority has two
+//     encodings, which compare unequal and render differently.
+//
+// Ids are deliberately NOT checked here. Their bound is the parent's effective
+// set at grant time (attenuateScope), not the task's own base.
+func validateScope(s Scope) error {
+	vis := s.VisRank()
+	if scopeBaseRank(s.Base) > scopeBaseRank(vis) {
+		return fmt.Errorf("scope base %s outranks visibility %s", s.Base, vis)
+	}
+	if !s.VisBasePresent && s.VisBase != protocol.ScopeBase(0) {
+		return fmt.Errorf("vis_base %s set while vis_base_present is 0 (non-canonical encoding)", s.VisBase)
+	}
+	var seen protocol.Capability
+	for _, o := range s.Overrides {
+		if o.Caps == protocol.Capability_None {
+			return fmt.Errorf("scope override with an empty capability mask")
+		}
+		if overlap := seen & o.Caps; overlap != 0 {
+			return fmt.Errorf("scope override masks intersect at %s", capsLabelForMask(overlap))
+		}
+		seen |= o.Caps
+		if scopeBaseRank(o.Base) > scopeBaseRank(vis) {
+			return fmt.Errorf("scope override for %s: base %s outranks visibility %s",
+				capsLabelForMask(o.Caps), o.Base, vis)
+		}
+	}
+	return nil
+}
 
 // scopeBaseRank orders bases by permissiveness. It is NOT the numeric value:
 // subtree is 0 so that a zero reads as the default, which puts the numbers out

@@ -154,3 +154,93 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 		t.Errorf("WAL scope base = %v, want global", protocol.ScopeBase(last.ScopeBase))
 	}
 }
+
+// VisRank follows the action base unless the presence bit says otherwise. The
+// absent case is what pins the rank pair to the diagonal, so a legacy record
+// and a zero struct can never encode an illegal pair.
+func TestVisRankFollowsBaseWhenAbsent(t *testing.T) {
+	s := Scope{Base: protocol.ScopeBase_None}
+	if got := s.VisRank(); got != protocol.ScopeBase_None {
+		t.Errorf("VisRank = %v, want none (follows base)", got)
+	}
+	s.VisBasePresent = true
+	s.VisBase = protocol.ScopeBase_Global
+	if got := s.VisRank(); got != protocol.ScopeBase_Global {
+		t.Errorf("VisRank = %v, want global", got)
+	}
+}
+
+// An override binds the bits in its mask and no others. The leak this guards
+// against is one bit's narrowing silently applying to a neighbour.
+func TestForCapPrefersTheOverride(t *testing.T) {
+	s := Scope{
+		Base: protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{
+			Caps: protocol.Capability_ExecCowrite | protocol.Capability_FileWrite,
+			Base: protocol.ScopeBase_Subtree, ExcludeSelf: true,
+		}},
+	}
+	for _, c := range []protocol.Capability{protocol.Capability_ExecCowrite, protocol.Capability_FileWrite} {
+		if _, ex, _ := s.ForCap(c); !ex {
+			t.Errorf("%v: ExcludeSelf = false, want true from the mask", c)
+		}
+	}
+	if _, ex, _ := s.ForCap(protocol.Capability_ExecView); ex {
+		t.Error("exec_view picked up an override that does not name it")
+	}
+}
+
+// validateScope is the design's rejection list. Ids are deliberately absent
+// from it: their bound is the parent's set at grant time, not the task's base.
+func TestValidateScopeRejections(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Scope
+	}{
+		{"base outranks visibility", Scope{
+			Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_None}},
+		{"override outranks visibility", Scope{
+			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
+			Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecControl, Base: protocol.ScopeBase_Subtree}}}},
+		{"empty mask", Scope{
+			Overrides: []ScopeOverride{{Caps: protocol.Capability_None}}}},
+		{"masks intersect", Scope{Overrides: []ScopeOverride{
+			{Caps: protocol.Capability_ExecView | protocol.Capability_Cancel},
+			{Caps: protocol.Capability_Cancel},
+		}}},
+		{"non-canonical vis_base", Scope{VisBase: protocol.ScopeBase_Global}},
+	}
+	for _, tc := range cases {
+		if err := validateScope(tc.s); err == nil {
+			t.Errorf("%s: validateScope = nil, want an error", tc.name)
+		}
+	}
+}
+
+// The shapes that look wrong and are legal. Rejecting these would turn a
+// redundant grant into a failed spawn.
+func TestValidateScopeAccepts(t *testing.T) {
+	id := hexID(7)
+	cases := []struct {
+		name string
+		s    Scope
+	}{
+		{"the zero value", Scope{}},
+		{"named reach out of a blind base", Scope{
+			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
+			Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{id}}}}},
+		{"override wider than base, within visibility", Scope{
+			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+			Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}}}},
+		{"ids redundant under a global base", Scope{
+			Base: protocol.ScopeBase_Global, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+			IDs: []string{id}}},
+		{"the empty action set", Scope{
+			Base: protocol.ScopeBase_None, ExcludeSelf: true}},
+	}
+	for _, tc := range cases {
+		if err := validateScope(tc.s); err != nil {
+			t.Errorf("%s: validateScope = %v, want nil", tc.name, err)
+		}
+	}
+}
