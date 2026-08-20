@@ -303,18 +303,32 @@ is two fields of one value.
 **Watch a sibling without touching it.** `scope: base=subtree, vis_ids:[X]`.
 `X` appears in `ls` and in nothing else — no override, no bit to forget.
 
-### 8. `info_global` is retired as a visibility power
+### 8. `info_global` is retired as a *visibility* power, and keeps its bit
 
-`visibleToCaller` no longer reads the bit. Translation happens once, at each
-boundary, never on an ongoing basis:
+`visibleToCaller` no longer reads the bit. Everything else about the bit
+survives under a new name (below), so both translations are **additive — they
+grant the visibility rank and never clear a capability**:
 
-- **Parsing.** `--caps info_global` sets `vis_base = global` (unless `--scope`
-  states a visibility rank explicitly) and emits a deprecation notice. The bit
-  is not stored. `--caps all` continues to yield global visibility, because it
-  contains `info_global` and the translation applies — preserving today's
+- **Parsing.** `--caps info_global` grants the renamed bit *and* sets
+  `vis_base = global` (unless `--scope` states a visibility rank explicitly),
+  with a deprecation notice. `--caps all` continues to yield global visibility,
+  because it contains the bit and the translation applies — preserving today's
   behaviour rather than silently narrowing every `all` grant.
 - **WAL replay.** A legacy record whose caps contain the bit replays with
-  `vis_base_present = 1, vis_base = global`, and the bit cleared.
+  `vis_base_present = 1, vis_base = global`, **keeping the bit**.
+
+**Migration never clears a bit, and that rule is load-bearing.** An earlier
+draft of this section had replay drop the bit once its visibility duty moved.
+That would have silently revoked `board topics` / `board read` /
+`board subscribers` from every task that had them, at the moment of a server
+restart, with no operator action requesting it and no way to tell the result
+apart from a deliberate narrowing afterwards. A replay is a reconstruction of
+recorded state; the only authority it may add is the one the record already
+implied, and the only thing it may remove is nothing.
+
+The reverse direction is safe and is why the translation can be additive at
+all: granting `vis_base = global` to a task that held the bit gives it exactly
+the visibility it already had.
 
 **The bit has three duties today, and they split two ways.** Enumerated from
 every non-test use:
@@ -452,8 +466,21 @@ one non-zero migration is §8's: caps containing `info_global` set
 
 Rollback is reverting the server binary. The WAL reader sets no
 `DisallowUnknownFields`, so records carrying the new keys replay cleanly on the
-old server, which ignores them — with the caveat that a task migrated off
-`info_global` loses global visibility until the bit is restored by hand.
+old server, which ignores them.
+
+**Rollback is clean precisely because the migration is additive.** A task that
+held `info_global` still holds the bit in every record, so an old server reads
+it and restores global visibility exactly as before; the `vis_*` keys it does
+not understand are dropped, which is the correct result on a binary whose
+visibility model is the bit. Had replay cleared the bit, rolling back would
+have left those tasks visible only in their own subtree with nothing in the WAL
+to say why.
+
+The one thing rollback does lose is authority that was *only* expressible in
+the new model — a per-capability override, or a narrower visibility rank than
+the action base. Those collapse to the old single-scope reading, which is a
+widening. An operator rolling back with confined tasks in flight should expect
+that and re-narrow with the old `caps set`.
 
 ## Surfaces
 
@@ -511,6 +538,13 @@ Extends, rather than replaces, the base spec's set.
 - `info_global` migration: a legacy task replays with `vis_base = global` and
   keeps the renamed bit, so `ls`, `conns` and the three board kinds all answer
   exactly as before; a task without the bit is unchanged on both axes.
+- **Replay clears no capability bit, asserted directly**: for a corpus of
+  legacy records, the post-replay mask equals the recorded mask for every task.
+  This is the check that would have caught the draft where the bit was dropped
+  once its visibility duty moved — a silent board-access revocation triggered
+  by nothing but a restart.
+- Rollback: a WAL written by the new server replays on the old one with the
+  bit still granting global visibility.
 - The conn surfaces specifically — `ListConns` and the `conns_status` fanout —
   resolve through `vis_base` and no longer read a capability bit.
 - `--caps info_global` still parses, sets `vis_base = global`, grants the
