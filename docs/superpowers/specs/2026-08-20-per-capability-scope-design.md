@@ -325,6 +325,41 @@ keeps the bit under its new name, so both duties survive intact. A task without
 it is unchanged on both axes. `--caps all` continues to mean what it means
 today.
 
+### 8a. Scope applies to task-space only; other surfaces take a bit
+
+Three operator-visible surfaces exist — tasks, connections, the agentboard —
+and it is tempting to read that as three visibility axes. It is one:
+
+- **Tasks** are the only thing a scope names. `vis_base` / `vis_ids` are about
+  task ids, and every id in a scope is a `TaskID`.
+- **Connections are a projection of the task set, not an axis.**
+  `connInfoFor` (`server/server.go:1117`) shows a row to a confined caller only
+  when `allowed[principalHex]` — the conn's principal task is in the
+  task-visible set — and unidentified, runner and non-agent client conns are
+  invisible to confined callers outright. A conn row carries its
+  `PrincipalTask`, so "visible conn, invisible task" is not a state the data
+  can be in. There is nothing left to scope separately.
+- **The agentboard is keyed by topic**, which the task hierarchy does not
+  contain, so no task scope can bound it. Hence §8's bit.
+
+That yields the rule this design commits to:
+
+> Scope is a target set over tasks. A surface whose objects are not tasks, or
+> whose rows are a projection of the task set, is controlled by a capability
+> bit — never by a scope of its own.
+
+`board_read` holding no scope is therefore not an anomaly; it is the first
+instance of the rule. The extension path for "hide this surface entirely" is a
+new bit beside it, and the axis count stays at one however many surfaces
+appear.
+
+Note what this does *not* claim: today the conn and task list surfaces are not
+capability-gated at all. `requiredCap` has eleven entries and `List`,
+`ListConns`, `GetTaskLog` and `ListPortForwards` are in none of them — they are
+scoped and otherwise open, which the base spec records as the always-allowed
+data plane. Withholding one is a new gate, not a translation of an existing
+one; see Deferred.
+
 ### 9. Attenuation at spawn, per capability
 
 The base spec's rules apply per bit:
@@ -496,6 +531,12 @@ Extends, rather than replaces, the base spec's set.
   import a structure it deliberately does not have. Either direction needs its
   own design, starting from what the board is for rather than from what `ls`
   does.
+- **`conns_read`, and any other per-surface withholding bit.** §8a fixes the
+  shape should it be wanted: a scope-less bit beside `board_read`, never a
+  fourth visibility axis. It is left out because no requirement asks for it,
+  and because `ListConns` is currently ungated — adding the bit narrows a
+  surface that is open today, which is a behaviour change needing its own
+  three-surface sweep rather than a line in a migration.
 - **Per-capability scope defaults at grant time.** A table mapping bits to
   default scopes adds a second site where authority is decided.
 - **A `descendants` base value.** Rejected in §5 and recorded so it is not
