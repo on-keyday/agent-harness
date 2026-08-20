@@ -580,14 +580,18 @@ func TestVisibleSubtree(t *testing.T) {
 		t.Errorf("B should NOT see sibling D; dHex=%s allowed=%v", dHex, allowed)
 	}
 
-	// Now give B InfoGlobal → all=true.
+	// Now widen B's VISIBILITY rank -> all=true. This used to be a capability
+	// bit (info_global); it is an axis of the scope now, so the grant that
+	// produces the same reach is vis_base = global.
 	h.Tasks.mu.Lock()
-	h.Tasks.tasks[bHex].Capabilities = protocol.Capability_BoardObserve
+	h.Tasks.tasks[bHex].Scope = Scope{
+		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+	}
 	h.Tasks.mu.Unlock()
 
 	all2, _ := h.visibleToCaller("b-conn")
 	if !all2 {
-		t.Fatal("B with InfoGlobal should have all=true")
+		t.Fatal("B with vis_base=global should have all=true")
 	}
 }
 
@@ -850,8 +854,12 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 		t.Errorf("operator: expected 2 runners, got %d", opBody.RunnersLen)
 	}
 
-	// -- Case 3: confined caller WITH InfoGlobal sees both runners ---
-	h.Tasks.tasks[aHex].Capabilities = protocol.Capability_BoardObserve
+	// -- Case 3: confined caller with GLOBAL VISIBILITY sees both runners ---
+	// The runner list rides visibleToCaller's all=true, which is task-space
+	// visibility -- so the grant is the axis, not a capability bit.
+	h.Tasks.tasks[aHex].Scope = Scope{
+		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+	}
 	igConn := &fakeConn{
 		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9820-3"),
 		nextSendStreamID: 12,
@@ -860,7 +868,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 	h.Handle(igConn, encodeTaskControlRequest(t, req))
 	igBody := decodeListBody(t, igConn.sendStreams[0].bytes)
 	if igBody.RunnersLen != 2 {
-		t.Errorf("caller with InfoGlobal: expected 2 runners, got %d", igBody.RunnersLen)
+		t.Errorf("caller with vis_base=global: expected 2 runners, got %d", igBody.RunnersLen)
 	}
 }
 
@@ -1205,7 +1213,7 @@ func TestRequiredCap_BoardSubscribers(t *testing.T) {
 		t.Fatal("board_subscribers missing from requiredCap; an ungated kind is reachable by any helloed agent")
 	}
 	if got != protocol.Capability_BoardObserve {
-		t.Errorf("cap = %v, want InfoGlobal (matching board_topics / board_read)", got)
+		t.Errorf("cap = %v, want board_observe (matching board_topics / board_read)", got)
 	}
 }
 
@@ -1255,35 +1263,35 @@ func TestScopeSetHonoursBaseAndIDs(t *testing.T) {
 	cid := bindPrincipal(t, h, c)
 
 	// subtree (the default): self + descendants, not the parent, not a stranger.
-	all, allowed := h.scopeSet(cid)
+	all, allowed := h.scopeSet(cid, protocol.Capability_Cancel)
 	if all || !allowed[c] || !allowed[g] || allowed[p] || allowed[u] {
 		t.Errorf("subtree: all=%v allowed=%v, want {c,g} only", all, allowed)
 	}
 
 	// none: self only. Descendants are NOT reachable.
 	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None})
-	all, allowed = h.scopeSet(cid)
+	all, allowed = h.scopeSet(cid, protocol.Capability_Cancel)
 	if all || !allowed[c] || allowed[g] || allowed[p] || allowed[u] {
 		t.Errorf("none: all=%v allowed=%v, want {c} only", all, allowed)
 	}
 
 	// none + ids: self plus exactly the named strangers.
 	setScope(t, h, c, Scope{Base: protocol.ScopeBase_None, IDs: []string{u}})
-	all, allowed = h.scopeSet(cid)
+	all, allowed = h.scopeSet(cid, protocol.Capability_Cancel)
 	if all || !allowed[c] || !allowed[u] || allowed[g] {
 		t.Errorf("none+ids: all=%v allowed=%v, want {c,u}", all, allowed)
 	}
 
 	// subtree + ids: both.
 	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{u}})
-	all, allowed = h.scopeSet(cid)
+	all, allowed = h.scopeSet(cid, protocol.Capability_Cancel)
 	if all || !allowed[c] || !allowed[g] || !allowed[u] {
 		t.Errorf("subtree+ids: all=%v allowed=%v, want {c,g,u}", all, allowed)
 	}
 
 	// global: everything, allowed nil.
 	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Global})
-	if all, allowed = h.scopeSet(cid); !all || allowed != nil {
+	if all, allowed = h.scopeSet(cid, protocol.Capability_Cancel); !all || allowed != nil {
 		t.Errorf("global: all=%v allowed=%v, want true/nil", all, allowed)
 	}
 }
@@ -1312,21 +1320,25 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 	}
 }
 
-// info_global widens what may be SEEN. It must not widen what may be DONE —
-// folding it into scopeSet would let info_global + cancel kill anything.
-func TestInfoGlobalWidensVisibilityNotAction(t *testing.T) {
+// A wide visibility rank widens what may be SEEN and must not widen what may
+// be DONE. The base spec protected this by keeping info_global out of
+// scopeSet; it is now a property of two fields of one value, which is the same
+// asymmetry with the fence removed.
+func TestVisBaseWidensVisibilityNotAction(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	h.Tasks.SetCaps(c, true, protocol.Capability_BoardObserve|protocol.Capability_Cancel, false, Scope{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_Cancel, true, Scope{ //nolint:errcheck
+		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+	})
 
 	if all, _ := h.visibleToCaller(cid); !all {
-		t.Error("info_global did not widen visibility")
+		t.Error("vis_base=global did not widen visibility")
 	}
-	if all, allowed := h.scopeSet(cid); all || allowed[u] {
-		t.Error("info_global leaked into the ACTION set")
+	if all, allowed := h.scopeSet(cid, protocol.Capability_Cancel); all || allowed[u] {
+		t.Error("the visibility rank leaked into the ACTION set")
 	}
 	if h.authorize(cid, protocol.Capability_Cancel, u) {
-		t.Error("info_global + cancel authorized a stranger")
+		t.Error("vis_base=global + cancel authorized a stranger")
 	}
 }
 
@@ -1369,5 +1381,117 @@ func TestParentInIDsIsActionableAndUnredacted(t *testing.T) {
 	if parentHex != "" {
 		t.Errorf("parentHex = %q, want empty — the parent is already in allowed "+
 			"so it must be listed unredacted, not as a hop", parentHex)
+	}
+}
+
+// ---- per-capability resolution (2026-08-20 design §2, §4) -----------------
+
+// An override binds the bit in its mask and nothing else, and it never narrows
+// what ls shows. Both halves matter: the first is the feature, the second is
+// the invariant that keeps a caller from acting on what it cannot see.
+func TestScopeSetPerCapability(t *testing.T) {
+	h, _, c, g, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{
+		Base:      protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
+	})
+
+	if _, allowed := h.scopeSet(cid, protocol.Capability_ExecView); !allowed[g] {
+		t.Error("exec_view lost the grandchild; only cancel was overridden")
+	}
+	if _, allowed := h.scopeSet(cid, protocol.Capability_Cancel); allowed[g] {
+		t.Error("cancel reached the grandchild despite an override of base none")
+	}
+	if _, allowed := h.visibleToCaller(cid); !allowed[g] {
+		t.Error("visibility narrowed by an action override; overrides bind actions only")
+	}
+}
+
+// exclude_self removes self from ONE action set. It must not remove self from
+// visibility, and must not touch another capability.
+func TestExcludeSelfIsPerCapabilityAndNeverHidesSelf(t *testing.T) {
+	h, _, c, g, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{
+		Base: protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{
+			Caps: protocol.Capability_ExecCowrite, Base: protocol.ScopeBase_Subtree, ExcludeSelf: true,
+		}},
+	})
+
+	if _, allowed := h.scopeSet(cid, protocol.Capability_ExecCowrite); allowed[c] {
+		t.Error("exec_cowrite still reaches self; exclude_self did not apply")
+	}
+	if _, allowed := h.scopeSet(cid, protocol.Capability_ExecCowrite); !allowed[g] {
+		t.Error("exclude_self also dropped the descendants; it must remove self alone")
+	}
+	if _, allowed := h.scopeSet(cid, protocol.Capability_ExecView); !allowed[c] {
+		t.Error("exec_view lost self; exclude_self must not leak to another bit")
+	}
+	if _, allowed := h.visibleToCaller(cid); !allowed[c] {
+		t.Error("self vanished from ls; seeing your own row is orientation, not authority")
+	}
+}
+
+// A granted id is a disclosed id: it joins the visible set without being
+// repeated in vis_ids, which is what lets an override name targets outside the
+// base while "never act on what ls denies" still holds.
+func TestOverrideIDsAreVisible(t *testing.T) {
+	h, _, c, _, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{
+		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
+		Overrides: []ScopeOverride{{
+			Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{u},
+		}},
+	})
+
+	if _, allowed := h.scopeSet(cid, protocol.Capability_Cancel); !allowed[u] {
+		t.Error("cancel cannot reach the id its own override names")
+	}
+	if _, allowed := h.scopeSet(cid, protocol.Capability_ExecView); allowed[u] {
+		t.Error("exec_view reached an id only cancel was granted")
+	}
+	if _, allowed := h.visibleToCaller(cid); !allowed[u] {
+		t.Error("a granted id is not visible; it was disclosed by the granter and must be listed")
+	}
+}
+
+// vis_ids are seen and never actionable -- the "watch this sibling, touch
+// nothing" grant that otherwise needs an action id plus an override on every
+// held bit, where one forgotten bit reaches it.
+func TestVisIDsAreVisibleButNotActionable(t *testing.T) {
+	h, _, c, _, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree, VisIDs: []string{u}})
+
+	if _, allowed := h.visibleToCaller(cid); !allowed[u] {
+		t.Error("vis_ids target is not visible")
+	}
+	for _, bit := range []protocol.Capability{
+		protocol.Capability_Cancel, protocol.Capability_ExecView, protocol.Capability_FileWrite,
+	} {
+		if _, allowed := h.scopeSet(cid, bit); allowed[u] {
+			t.Errorf("%v reached a view-only target", bit)
+		}
+	}
+}
+
+// vis_base widens what may be SEEN without widening what may be DONE -- the
+// asymmetry the base spec kept info_global out of scopeSet to protect, now a
+// property of the value rather than a fence around a bit.
+func TestVisBaseWidensSightNotAction(t *testing.T) {
+	h, _, c, _, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{
+		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+	})
+
+	if all, _ := h.visibleToCaller(cid); !all {
+		t.Error("vis_base global did not widen visibility")
+	}
+	if all, allowed := h.scopeSet(cid, protocol.Capability_Cancel); all || allowed[u] {
+		t.Errorf("cancel reached an unrelated task: all=%v allowed[u]=%v", all, allowed[u])
 	}
 }

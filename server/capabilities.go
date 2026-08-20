@@ -149,7 +149,7 @@ func descendantsOf(children map[string][]string, selfHex string, allowed map[str
 // may be SEEN; folding it in here would make it widen what may be DONE, and a
 // caller holding info_global and cancel would be able to kill anything on the
 // server. visibleToCaller is the wrapper that adds it.
-func (h *TaskHandler) scopeSet(connID string) (all bool, allowed map[string]bool) {
+func (h *TaskHandler) scopeSet(connID string, want protocol.Capability) (all bool, allowed map[string]bool) {
 	pid := h.lookupPrincipal(connID)
 	if pid.Id == ([16]byte{}) {
 		// Operator: unrestricted.
@@ -161,20 +161,88 @@ func (h *TaskHandler) scopeSet(connID string) (all bool, allowed map[string]bool
 	if t, ok := h.Tasks.Get(callerHex); ok {
 		scope = t.Scope
 	}
-	if scope.Base == protocol.ScopeBase_Global {
-		return true, nil
+
+	if want == protocol.Capability_None {
+		return h.visibilitySet(callerHex, scope)
 	}
 
-	// Self is unconditional: a task must reach its own log, worktree and
-	// session however narrowly it was scoped.
+	base, excludeSelf, ids := scope.ForCap(want)
+	if base == protocol.ScopeBase_Global {
+		return true, nil
+	}
+	allowed = map[string]bool{}
+	if !excludeSelf {
+		allowed[callerHex] = true
+	}
+	for _, id := range ids {
+		allowed[id] = true
+	}
+	if base == protocol.ScopeBase_Subtree {
+		// descendantsOf seeds from callerHex and marks it, so exclude_self has
+		// to be applied AFTER the walk. Deleting first would make the walk skip
+		// its own root and return without expanding a single child — the same
+		// trap the visited/allowed split in descendantsOf documents.
+		descendantsOf(h.childIndex(), callerHex, allowed)
+		if excludeSelf {
+			delete(allowed, callerHex)
+		}
+	}
+	return false, allowed
+}
+
+// visibilitySet is the want == Capability_None branch of scopeSet: what the
+// caller may SEE.
+//
+//	{self} u baseSet(visRank) u VisIDs u IDs u every override's IDs
+//
+// Two things it does that the action branch does not, both deliberate:
+//
+//   - self is unconditional. ExcludeSelf removes self from an ACTION set only;
+//     seeing your own row is orientation, not authority, and a task denied
+//     write access to itself still knows it exists.
+//   - every action id joins the set without being repeated in VisIDs. An id
+//     written into a grant was disclosed by the granter, so hiding it protects
+//     nothing — and it is what makes "no capability acts outside what ls shows"
+//     hold while an override may still name targets outside the base.
+func (h *TaskHandler) visibilitySet(callerHex string, scope Scope) (all bool, allowed map[string]bool) {
+	visRank := scope.VisRank()
+	if visRank == protocol.ScopeBase_Global {
+		return true, nil
+	}
 	allowed = map[string]bool{callerHex: true}
+	for _, id := range scope.VisIDs {
+		allowed[id] = true
+	}
 	for _, id := range scope.IDs {
 		allowed[id] = true
 	}
-	if scope.Base == protocol.ScopeBase_Subtree {
+	for _, o := range scope.Overrides {
+		for _, id := range o.IDs {
+			allowed[id] = true
+		}
+	}
+	if visRank == protocol.ScopeBase_Subtree {
 		descendantsOf(h.childIndex(), callerHex, allowed)
 	}
 	return false, allowed
+}
+
+// attachModeScopeCap is the SINGLE bit whose scope governs an attach in the
+// given mode. Distinct from attachModeCap, which returns the set of bits that
+// SATISFY the request: a holder of exec_control attaching in view mode is
+// exercising the view power, so the view scope is the one that binds it.
+//
+// An unrecognised mode falls through to exec_control, matching attachModeCap's
+// fail-closed default.
+func attachModeScopeCap(mode protocol.AttachMode) protocol.Capability {
+	switch mode {
+	case protocol.AttachMode_View:
+		return protocol.Capability_ExecView
+	case protocol.AttachMode_Cowrite:
+		return protocol.Capability_ExecCowrite
+	default:
+		return protocol.Capability_ExecControl
+	}
 }
 
 // inScope reports whether targetHex is inside the caller's effective target
@@ -185,8 +253,8 @@ func (h *TaskHandler) scopeSet(connID string) (all bool, allowed map[string]bool
 // particular task), while an OUT-OF-SCOPE TARGET is the kind's own "no such
 // task" (a missing-capability answer about something the caller cannot see is
 // an existence oracle).
-func (h *TaskHandler) inScope(connID, targetHex string) bool {
-	all, allowed := h.scopeSet(connID)
+func (h *TaskHandler) inScope(connID string, want protocol.Capability, targetHex string) bool {
+	all, allowed := h.scopeSet(connID, want)
 	return all || allowed[targetHex]
 }
 
@@ -200,7 +268,7 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 	if !hasCap(h.callerCaps(connID), want) {
 		return false
 	}
-	return h.inScope(connID, targetHex)
+	return h.inScope(connID, want, targetHex)
 }
 
 // attenuateScope clamps a requested scope to the creator's effective one, so a
@@ -223,7 +291,7 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 // An operator creator (all=true) may request anything, including ids for tasks
 // it has never touched.
 func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, offender string, ok bool) {
-	all, allowed := h.scopeSet(creatorCID)
+	all, allowed := h.scopeSet(creatorCID, protocol.Capability_None)
 	out = Scope{
 		Base: req.Base,
 		IDs:  normalizeScopeIDs(req.IDs),
@@ -262,10 +330,7 @@ func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[stri
 	if h.lookupPrincipal(connID).Id == ([16]byte{}) {
 		return true, nil
 	}
-	if hasCap(h.callerCaps(connID), protocol.Capability_BoardObserve) {
-		return true, nil
-	}
-	return h.scopeSet(connID)
+	return h.scopeSet(connID, protocol.Capability_None)
 }
 
 // listVisibleToCaller is the LIST scope: visibleToCaller (the ACCESS scope)

@@ -290,7 +290,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		// out-of-scope task answers no_such_task, indistinguishable from one
 		// that does not exist.
 		result := protocol.CancelResult_NoSuchTask
-		if h.inScope(cid, taskID) {
+		if h.inScope(cid, protocol.Capability_Cancel, taskID) {
 			h.Tasks.Cancel(taskID)
 			result = protocol.CancelResult_Ok
 		}
@@ -315,7 +315,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		if h.PruneFn != nil {
 			// nil allowed = unrestricted (operator, or a global base).
 			var allowed map[string]bool
-			if all, set := h.scopeSet(cid); !all {
+			if all, set := h.scopeSet(cid, protocol.Capability_Prune); !all {
 				allowed = set
 			}
 			r, sa, sm := h.PruneFn(allowed, pr)
@@ -373,7 +373,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		oresp := protocol.OpenFileTransferResponse{Status: protocol.OpenFileTransferStatus_NoSuchTask}
-		if h.inScope(cid, hex.EncodeToString(oft.TaskId.Id[:])) {
+		if h.inScope(cid, need, hex.EncodeToString(oft.TaskId.Id[:])) {
 			oresp = h.handleOpenFileTransfer(conn, oft)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenFileTransfer, RequestId: req.RequestId}
@@ -387,6 +387,11 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ListFiles variant is nil")
 			return
 		}
+		// Either bit satisfies the call, so the SCOPE has to be resolved through
+		// the one the caller actually holds -- the two may carry different
+		// overrides, and resolving through a fixed representative would apply
+		// file_read's target set to a caller that only holds file_write.
+		lfNeed := protocol.Capability_FileRead
 		{
 			caps := h.callerCaps(cid)
 			if !hasCap(caps, protocol.Capability_FileRead) && !hasCap(caps, protocol.Capability_FileWrite) {
@@ -394,9 +399,12 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 				h.denyTaskControl(conn, req.Kind, req.RequestId, protocol.Capability_FileRead)
 				return
 			}
+			if !hasCap(caps, protocol.Capability_FileRead) {
+				lfNeed = protocol.Capability_FileWrite
+			}
 		}
 		lresp := protocol.ListFilesResponse{Status: protocol.ListFilesStatus_NoSuchTask}
-		if h.inScope(cid, hex.EncodeToString(lf.TaskId.Id[:])) {
+		if h.inScope(cid, lfNeed, hex.EncodeToString(lf.TaskId.Id[:])) {
 			lresp = h.handleListFiles(conn, lf)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ListFiles, RequestId: req.RequestId}
@@ -412,7 +420,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		gresp := protocol.GitQueryResponse{Status: protocol.GitQueryStatus_NoSuchTask}
-		if h.inScope(cid, hex.EncodeToString(gq.TaskId.Id[:])) {
+		if h.inScope(cid, protocol.Capability_FileRead, hex.EncodeToString(gq.TaskId.Id[:])) {
 			gresp = h.handleGitQuery(conn, gq)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GitQuery, RequestId: req.RequestId}
@@ -431,7 +439,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		presp := protocol.OpenPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
-		if h.inScope(cid, hex.EncodeToString(pf.TaskId.Id[:])) {
+		if h.inScope(cid, protocol.Capability_ForwardLocal, hex.EncodeToString(pf.TaskId.Id[:])) {
 			presp = h.handleOpenPortForward(conn, pf)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenPortForward, RequestId: req.RequestId}
@@ -445,19 +453,20 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: RegisterPortForward variant is nil")
 			return
 		}
-		{
-			need := protocol.Capability_ForwardLocal
-			if rf.Direction == protocol.PortForwardDirection_Remote {
-				need = protocol.Capability_ForwardRemote
-			}
-			if !hasCap(h.callerCaps(cid), need) {
-				h.denyTaskControl(conn, req.Kind, req.RequestId, need)
-				return
-			}
+		// Hoisted out of the block it used to live in: the scope now resolves
+		// through the same bit the capability check used, so the two cannot
+		// disagree about which direction is being authorised.
+		need := protocol.Capability_ForwardLocal
+		if rf.Direction == protocol.PortForwardDirection_Remote {
+			need = protocol.Capability_ForwardRemote
+		}
+		if !hasCap(h.callerCaps(cid), need) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, need)
+			return
 		}
 		// RegisterPortForwardResponse shares OpenPortForwardStatus.
 		rresp := protocol.RegisterPortForwardResponse{Status: protocol.OpenPortForwardStatus_NoSuchTask}
-		if h.inScope(cid, hex.EncodeToString(rf.TaskId.Id[:])) {
+		if h.inScope(cid, need, hex.EncodeToString(rf.TaskId.Id[:])) {
 			rresp = h.handleRegisterPortForward(conn, rf, cid)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_RegisterPortForward, RequestId: req.RequestId}
@@ -518,7 +527,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			return
 		}
 		aresp := protocol.AttachSessionResponse{Status: protocol.AttachSessionStatus_NotFound}
-		if h.inScope(cid, hex.EncodeToString(a.TaskId.Id[:])) {
+		if h.inScope(cid, attachModeScopeCap(a.Mode), hex.EncodeToString(a.TaskId.Id[:])) {
 			aresp = h.handleAttachSession(conn, a)
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_AttachSession, RequestId: req.RequestId}
@@ -764,7 +773,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// that id under a prompt of the caller's choosing, and with
 	// resume_caps_override it rewrites the target's authority. Gate the target
 	// like any other, and report an out-of-scope task as absent.
-	if !h.inScope(cid, idHex) {
+	if !h.inScope(cid, protocol.Capability_Spawn, idHex) {
 		return protocol.SubmitResponse{Status: protocol.SubmitStatus_ResumeNotFound}
 	}
 	// The two halves of authority re-grant independently: caps behind
@@ -1007,7 +1016,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	if resuming {
 		idHex := hex.EncodeToString(req.ResumeTaskId.Id[:])
 		// Same target gate as the oneshot resume path — see handleSubmitResume.
-		if !h.inScope(cid, idHex) {
+		if !h.inScope(cid, protocol.Capability_Spawn, idHex) {
 			return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
 		}
 		// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume

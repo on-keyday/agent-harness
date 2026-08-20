@@ -185,12 +185,12 @@ func TestSetParentSwapMovesScope(t *testing.T) {
 	}
 
 	gCID := bindPrincipal(t, h, g)
-	all, allowed := h.scopeSet(gCID)
+	all, allowed := h.scopeSet(gCID, protocol.Capability_Cancel)
 	if all || !allowed[c] {
 		t.Fatalf("g's subtree after swap: all=%v allowed[c]=%v, want c inside", all, allowed[c])
 	}
 	cCID := bindPrincipal(t, h, c)
-	all, allowed = h.scopeSet(cCID)
+	all, allowed = h.scopeSet(cCID, protocol.Capability_Cancel)
 	if all || allowed[g] {
 		t.Fatalf("c's subtree after swap: all=%v allowed[g]=%v, want g outside", all, allowed[g])
 	}
