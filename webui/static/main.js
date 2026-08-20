@@ -271,6 +271,11 @@ const POLL_INTERVAL_MS = 5000;
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
   let spawnBase = "subtree"; // scope base radio state (spawn picker)
   const spawnScopeIds = new Set(); // checked task ids (spawn picker)
+  // Per-capability override rows, one list per dialog. Declared HERE with the
+  // other spawn state rather than beside the builder, because initCaps ->
+  // initScope runs before that point in the file and a const in the temporal
+  // dead zone throws rather than reading as undefined.
+  const overrideRowsFor = { spawn: [], regrant: [] };
   // Declared here (not beside the snapshot poller) because initCaps →
   // initScope → the spawn checklist reads it before the poller section runs.
   let lastTasks = [];        // latest snapshot; re-render source for filter events
@@ -294,7 +299,7 @@ const POLL_INTERVAL_MS = 5000;
       resumeConversation,
       caps: spawnCaps,
       scope: spawnScope,
-      scopeFor: scopeForLines("spawn-scope-for"),
+      scopeFor: overrideSpecsFrom("spawn"),
       // One checkbox gates BOTH halves of the resume re-grant: silently
       // applying the Compose scope picker's leftover state to a resumed
       // task would be the exact invisible rewrite scope_present exists to
@@ -2743,15 +2748,175 @@ const POLL_INTERVAL_MS = 5000;
     initScope();
   }
 
-  // scopeForLines reads a --scope-for textarea into the array the wasm bridge
-  // parses. Deliberately NOT parsed here: ParseScopeFor and the disjointness
-  // check live in Go, so the browser cannot drift from what the CLI accepts.
-  // Blank lines are dropped; everything else is sent as written and rejected
-  // with the server's own message if it is wrong.
-  function scopeForLines(id) {
-    const el = document.getElementById(id);
-    if (!el || !el.value) return [];
-    return el.value.split("\n").map((l) => l.trim()).filter((l) => l !== "");
+  // ---- per-capability overrides -----------------------------------------
+  //
+  // An override IS a capability mask plus a scope, and this form already has a
+  // control for each half: chips for the mask, a base radio and a task
+  // checklist for the scope. So it is built from those rather than from a text
+  // box — typing `CAPS=SCOPE` belongs in the Command input, which is the
+  // surface for typing, not in a form whose every other field is a control.
+  //
+  // Model: overrideRows = [{caps:number, base:string, ids:Set<string>}].
+  // Serialization to the `CAPS=SCOPE` strings the wasm bridge parses happens
+  // at send time, so ParseScopeFor and the disjointness check still run in Go
+  // and the browser cannot drift from what the CLI accepts.
+  //
+  // Disjointness is ALSO enforced here, by disabling a chip already claimed by
+  // another row: the server rejects an overlap, but a control that lets you
+  // build one and then refuses is a worse control than one that cannot.
+
+  function overrideSpecsFrom(which) {
+    const out = [];
+    for (const r of overrideRowsFor[which]) {
+      if (!r.caps) continue; // a row with no chip lit describes nothing
+      let scope = r.base;
+      if (r.base !== "global" && r.ids.size > 0) {
+        const ids = [...r.ids].sort().join(",");
+        scope = r.base === "none" ? "ids:" + ids : r.base + "+ids:" + ids;
+      }
+      out.push(capsLabelFor(r.caps) + "=" + scope);
+    }
+    return out;
+  }
+
+  // parseOverrideSpec turns a stored "CAPS=SCOPE" string back into a row, so
+  // the re-grant dialog opens showing the task's existing rules as controls
+  // rather than as text the operator has to re-type to keep.
+  function parseOverrideSpec(spec) {
+    const eq = spec.indexOf("=");
+    if (eq < 0) return null;
+    const capNames = spec.slice(0, eq).split(",").map((x) => x.trim());
+    let caps = 0;
+    for (const n of capNames) {
+      const d = capDefs.find((c) => c.name === n);
+      if (d) caps |= d.bit;
+    }
+    const rest = spec.slice(eq + 1).trim();
+    const ids = new Set();
+    let base = rest, idPart = "";
+    const i = rest.indexOf("ids:");
+    if (i >= 0) {
+      base = rest.slice(0, i).replace(/\+$/, "").trim() || "none";
+      idPart = rest.slice(i + 4);
+      for (const id of idPart.split(",")) { const t = id.trim(); if (t) ids.add(t); }
+    }
+    if (!["subtree", "descendants", "none", "global"].includes(base)) base = "subtree";
+    return { caps, base, ids };
+  }
+
+  // claimedElsewhere is the mask every OTHER row already holds, which is what
+  // the chip disabling reads.
+  function claimedElsewhere(which, self) {
+    let m = 0;
+    for (const r of overrideRowsFor[which]) if (r !== self) m |= r.caps;
+    return m;
+  }
+
+  function buildOverrideRows(which, containerId, onChange) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const rows = overrideRowsFor[which];
+    container.innerHTML = "";
+
+    rows.forEach((row, idx) => {
+      const box = document.createElement("div");
+      box.className = "override-row";
+
+      const head = document.createElement("div");
+      head.className = "override-head";
+      const title = document.createElement("span");
+      title.textContent = "絞り込み " + (idx + 1);
+      head.appendChild(title);
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "cap-quick";
+      del.textContent = "✕ 削除";
+      del.addEventListener("click", () => {
+        rows.splice(idx, 1);
+        buildOverrideRows(which, containerId, onChange);
+        onChange();
+      });
+      head.appendChild(del);
+      box.appendChild(head);
+
+      // Capability chips, with the ones another row already claims disabled.
+      const chips = document.createElement("div");
+      chips.className = "caps-row";
+      const taken = claimedElsewhere(which, row);
+      for (const c of capDefs) {
+        if (c.name === "all" || c.name === "none") continue;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        const on = (row.caps & c.bit) === c.bit;
+        const blocked = (taken & c.bit) === c.bit;
+        btn.className = "cap-chip" + (on ? " on" : "") + (blocked ? " disabled" : "");
+        btn.textContent = c.name;
+        btn.disabled = blocked;
+        if (blocked) btn.title = "別の絞り込みが既にこの capability を持っています";
+        btn.addEventListener("click", () => {
+          row.caps ^= c.bit;
+          buildOverrideRows(which, containerId, onChange);
+          onChange();
+        });
+        chips.appendChild(btn);
+      }
+      box.appendChild(chips);
+
+      // Scope base. `descendants` is offered here and NOT on the task's own
+      // scope radios, because it is the shape an override is usually for:
+      // "may drive its workers, may not drive itself".
+      const baseRow = document.createElement("div");
+      baseRow.className = "scope-base-row";
+      for (const b of ["subtree", "descendants", "none", "global"]) {
+        const label = document.createElement("label");
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = which + "-override-base-" + idx;
+        radio.value = b;
+        radio.checked = row.base === b;
+        radio.addEventListener("change", () => {
+          if (radio.checked) {
+            row.base = b;
+            buildOverrideRows(which, containerId, onChange);
+            onChange();
+          }
+        });
+        label.appendChild(radio);
+        label.appendChild(document.createTextNode(" " + b));
+        baseRow.appendChild(label);
+      }
+      box.appendChild(baseRow);
+
+      // Ids, only where they mean something. Under `global` the base already
+      // covers every task, so the list is hidden rather than shown-and-ignored.
+      if (row.base !== "global") {
+        const det = document.createElement("details");
+        const sum = document.createElement("summary");
+        sum.textContent = "対象タスクを追加 (" + row.ids.size + ")";
+        det.appendChild(sum);
+        const list = document.createElement("div");
+        list.className = "task-checklist";
+        det.appendChild(list);
+        box.appendChild(det);
+        buildTaskChecklist(list, row.ids, "", () => {
+          sum.textContent = "対象タスクを追加 (" + row.ids.size + ")";
+          onChange();
+        });
+      }
+
+      container.appendChild(box);
+    });
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "cap-quick";
+    add.textContent = "＋ 絞り込みを追加";
+    add.addEventListener("click", () => {
+      rows.push({ caps: 0, base: "descendants", ids: new Set() });
+      buildOverrideRows(which, containerId, onChange);
+      onChange();
+    });
+    container.appendChild(add);
   }
 
   // scopeSpecJS mirrors the Go scopeSpecFor (tui/authoritypicker.go):
@@ -2825,7 +2990,7 @@ const POLL_INTERVAL_MS = 5000;
     const echo = document.getElementById("spawn-scope-echo");
     if (echo) {
       let line = "scope: " + (spawnScope || "subtree (default)");
-      const sf = scopeForLines("spawn-scope-for");
+      const sf = overrideSpecsFrom("spawn");
       if (sf.length > 0) line += "  +" + sf.join(" ");
       echo.textContent = line;
     }
@@ -2834,6 +2999,9 @@ const POLL_INTERVAL_MS = 5000;
   function refreshSpawnScopeChecklist() {
     buildTaskChecklist(document.getElementById("spawn-scope-tasks"),
       spawnScopeIds, "", updateSpawnScope);
+    // Override rows carry their own checklists, so they need the same refresh:
+    // a row opened before the first snapshot would otherwise offer no tasks.
+    buildOverrideRows("spawn", "spawn-scope-for-rows", updateSpawnScope);
     updateSpawnScope();
   }
 
@@ -2845,8 +3013,16 @@ const POLL_INTERVAL_MS = 5000;
         if (r.checked) { spawnBase = r.value; updateSpawnScope(); }
       });
     }
-    const spawnSF = document.getElementById("spawn-scope-for");
-    if (spawnSF) spawnSF.addEventListener("input", updateSpawnScope);
+    buildOverrideRows("spawn", "spawn-scope-for-rows", updateSpawnScope);
+    // Also on open. The snapshot-driven rebuild below only fires once a task
+    // list arrives, so an operator who expands this before the first snapshot
+    // — or on a server with no tasks yet — would otherwise find it empty.
+    const sfDetails = document.getElementById("spawn-scope-for-details");
+    if (sfDetails) {
+      sfDetails.addEventListener("toggle", () => {
+        if (sfDetails.open) buildOverrideRows("spawn", "spawn-scope-for-rows", updateSpawnScope);
+      });
+    }
     refreshSpawnScopeChecklist();
   }
 
@@ -2868,7 +3044,7 @@ const POLL_INTERVAL_MS = 5000;
     if (echo) {
       let line = "→ caps=" + capsLabelFor(regrantBits) +
         "  scope=" + scopeSpecJS(regrantBase, regrantIds, false);
-      const sf = scopeForLines("regrant-scope-for");
+      const sf = overrideSpecsFrom("regrant");
       if (sf.length > 0) line += "  +" + sf.join(" ");
       echo.textContent = line;
     }
@@ -2881,11 +3057,12 @@ const POLL_INTERVAL_MS = 5000;
     regrantBase = t.scopeBase || "subtree";
     regrantIds.clear();
     for (const id of (t.scopeIds || [])) regrantIds.add(id);
-    // Prefilled, not blank: overrides travel with the scope under one presence
-    // bit, so applying with an empty box CLEARS them. Showing them is what
+    // Seeded, not blank: overrides travel with the scope under one presence
+    // bit, so applying with no rows CLEARS them. Showing them as rows is what
     // makes that an operator's choice rather than a silent erase.
-    const sfBox = document.getElementById("regrant-scope-for");
-    if (sfBox) sfBox.value = (t.scopeForSpecs || []).join("\n");
+    overrideRowsFor.regrant = (t.scopeForSpecs || [])
+      .map(parseOverrideSpec)
+      .filter((r) => r !== null);
     const title = document.getElementById("regrant-task");
     if (title) title.textContent = t.id.slice(0, 8);
     buildCapChips(document.getElementById("regrant-chips"),
@@ -2895,6 +3072,7 @@ const POLL_INTERVAL_MS = 5000;
     }
     buildTaskChecklist(document.getElementById("regrant-tasks"),
       regrantIds, t.id, updateRegrantEcho);
+    buildOverrideRows("regrant", "regrant-scope-for-rows", updateRegrantEcho);
     document.getElementById("regrant-cascade").checked = false;
     document.getElementById("regrant-keep-conns").checked = false;
     updateRegrantEcho();
@@ -2907,15 +3085,13 @@ const POLL_INTERVAL_MS = 5000;
         if (r.checked) { regrantBase = r.value; updateRegrantEcho(); }
       });
     }
-    const regrantSF = document.getElementById("regrant-scope-for");
-    if (regrantSF) regrantSF.addEventListener("input", updateRegrantEcho);
     document.getElementById("regrant-cancel").addEventListener("click", () => regrantModal.close());
     document.getElementById("regrant-apply").addEventListener("click", async () => {
       const req = {
         taskId: regrantTaskId,
         caps: regrantBits,
         scope: scopeSpecJS(regrantBase, regrantIds, false),
-        scopeFor: scopeForLines("regrant-scope-for"),
+        scopeFor: overrideSpecsFrom("regrant"),
         cascade: document.getElementById("regrant-cascade").checked,
         keepConns: document.getElementById("regrant-keep-conns").checked,
       };

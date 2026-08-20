@@ -87,10 +87,10 @@
         </details>
         <details id="spawn-scope-for-details">
           <summary>個別 capability を絞る（--scope-for）</summary>
-          <textarea id="spawn-scope-for" rows="2" spellcheck="false"
-            placeholder="exec_cowrite,file_write=descendants&#10;cancel=none"></textarea>
-          <p class="hint">1 行 1 件、<code>CAPS=SCOPE</code>。可視性は タスク側の設定なので
-            ここには書けません（verb は ls に出るものより先へは届きません）。</p>
+          <div id="spawn-scope-for-rows" class="override-rows"></div>
+          <p class="hint">選んだ capability だけ、上の scope より狭い対象に絞ります。
+            可視性はタスク側の設定なので個別には持てません（verb は ls に出るものより
+            先へは届きません）。</p>
         </details>
         <code id="spawn-scope-echo" class="scope-echo"></code>
       </div>
@@ -348,9 +348,9 @@
     <label class="regrant-flag"><input type="checkbox" id="regrant-keep-conns"> --keep-conns（対象の既存接続を切らない）</label>
     <details id="regrant-scope-for-details">
       <summary>個別 capability を絞る（--scope-for）</summary>
-      <textarea id="regrant-scope-for" rows="2" spellcheck="false"></textarea>
-      <p class="hint">既存の設定が入っています。<strong>消すと消えます</strong> —
-        scope と同じ半分として一緒に書き込まれるためです。</p>
+      <div id="regrant-scope-for-rows" class="override-rows"></div>
+      <p class="hint">現在の設定が入っています。<strong>行を消すとその絞り込みも消えます</strong>
+        — scope と同じ半分として一緒に書き込まれるためです。</p>
     </details>
     <code id="regrant-echo" class="scope-echo"></code>
     <menu class="picker-actions">

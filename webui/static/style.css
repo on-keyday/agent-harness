@@ -521,21 +521,39 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   font-size: 0.8rem;
   color: #9a9a9a;
 }
-/* --scope-for inputs, in both the spawn form and the re-grant dialog. Dark
-   like every other control here; the monospace matches the scope echo the
-   value is echoed into. */
-#spawn-scope-for,
-#regrant-scope-for {
-  width: 100%;
-  box-sizing: border-box;
-  background: #1e1e1e;
-  color: #d4d4d4;
+/* Per-capability override rows. Each row is the same pair of controls the
+   form uses for the task's own authority — cap chips and a scope base — so
+   the narrowing reads as the thing it is rather than as a string to type. */
+.override-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin: 0.2rem 0 0.3rem;
+}
+
+.override-row {
   border: 1px solid #3a3a3a;
   border-radius: 3px;
-  font-family: monospace;
-  font-size: 0.75rem;
-  padding: 0.25rem 0.35rem;
-  resize: vertical;
+  padding: 0.3rem 0.35rem;
+  background: #1e1e1e;
+}
+
+.override-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  color: #9a9a9a;
+  font-size: 0.72rem;
+  margin-bottom: 0.25rem;
+}
+
+/* A chip another row already claims: visibly unavailable rather than merely
+   inert, since the masks must stay disjoint. */
+.cap-chip.disabled,
+.cap-chip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .hint {

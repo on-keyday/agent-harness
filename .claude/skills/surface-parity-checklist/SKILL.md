@@ -165,6 +165,33 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     cells are built. Grep for every caller of the rebuild path before
     adding a cell.
 
+34a. **A form field must be the same KIND of control as its neighbours.**
+    The WebUI spawn form expresses caps as chips, a scope base as radios and
+    scope ids as a task checklist. `--scope-for` shipped there as a
+    `<textarea>` you typed `CAPS=SCOPE` into — an override IS a capability
+    mask plus a scope, so both halves already had controls and neither was
+    used. Caught on operator complaint (2026-08-20): *"UI として文字列打たせる
+    のどうなの"*.
+    The command input is where typing belongs; a form is not. If a new option
+    decomposes into things the surface already has controls for, build it from
+    those — `buildCapChips`, the base radio row, `buildTaskChecklist` — and
+    serialize to the wire grammar at send time, so the PARSER still lives in
+    Go and the browser cannot drift from what the CLI accepts.
+    Corollary, and the reason this is worth a control rather than a box: a
+    constraint the server enforces should be **unbuildable** in the UI, not
+    merely rejected. Overlapping override masks are refused server-side; the
+    row UI disables a chip another row already claims, so the operator cannot
+    construct the rejected state at all.
+    Two traps met while doing it, both costing a rebuild-and-reload cycle:
+    the dummy server serves the EMBEDDED assets, so `make webui-build` alone
+    changes nothing it hands out (`make build` + restart it, or run it with
+    `--webui-dir`); and re-navigating to the SAME url differing only in its
+    `#fragment` does not reload the page, so every check after an edit can
+    silently read the old DOM — add a throwaway query param.
+    Do not make a control depend on the first snapshot arriving: build it on
+    `toggle` of its `<details>` as well, or an operator who opens the section
+    on an empty server finds it blank.
+
 ## Documentation surfaces
 
 35. `README.md` — the feature's section (e.g. "Capabilities and scope"),
