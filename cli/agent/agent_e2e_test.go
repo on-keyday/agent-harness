@@ -190,7 +190,7 @@ func TestAgentCLI_E2E_SendThenWait(t *testing.T) {
 
 // TestAgentCLI_E2E_DeliveredMessageCarriesSenderProfile asserts that the server
 // attests the SENDER's agent profile on delivery: agent B learns that agent A
-// runs under "codex" without holding InfoGlobal (board delivery is uncapped,
+// runs under "codex" without holding board_observe (board delivery is uncapped,
 // `ls` is not), and without A having supplied the value.
 //
 // Unlike the other E2Es here, this one creates a real TaskStore entry — the

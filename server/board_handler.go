@@ -44,7 +44,7 @@ func (h *TaskHandler) handleBoardTopics(conn ConnHandle, requestID uint32) {
 
 // handleBoardSubscribers reports each task's agentboard subscription set,
 // optionally narrowed to the tasks a publish to one topic would reach. Cap
-// (InfoGlobal) is enforced centrally via requiredCap before dispatch, matching
+// (board_observe) is enforced centrally via requiredCap before dispatch, matching
 // its board_topics / board_read siblings: this is a sweep across every task on
 // the board.
 //
@@ -74,7 +74,7 @@ func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, 
 
 // handleBoardRead returns metadata for all retained messages in a topic plus a
 // server-initiated send-stream carrying the raw payloads in ring order.
-// Cap (InfoGlobal) is enforced centrally via requiredCap before dispatch.
+// Cap (board_observe) is enforced centrally via requiredCap before dispatch.
 //
 // Wire shape mirrors handleGetTaskLog: respond first with stream_id, then
 // write payloads asynchronously so the metadata response is never blocked by

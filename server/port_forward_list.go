@@ -55,7 +55,8 @@ func (h *TaskHandler) handleListPortForwards(conn ConnHandle, requestID uint32, 
 
 // visiblePortForwards returns the registrations connID may see, reaping any whose
 // task has left Running/Detached on the way past. Visibility mirrors
-// handleListConns: an operator (zero principal) or an InfoGlobal holder sees
+// handleListConns: an operator (zero principal) or a caller whose visibility
+// rank is global sees
 // everything; anyone else sees only forwards for tasks in its own subtree.
 //
 // The reap is deliberately lazy — here, at the single call site — rather than

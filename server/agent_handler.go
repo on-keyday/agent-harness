@@ -574,7 +574,10 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 	}
 
 	// Gate: callers without Capability_BoardObserve do not get the topic list.
-	// This prevents agents from enumerating all board topics (visibility scope).
+	// This prevents agents from enumerating OTHER agents' board topics. It is a
+	// verb permission, not the task-visibility axis: the board is keyed by
+	// topic, which the task hierarchy does not contain, so no task scope can
+	// bound it.
 	//
 	// The refusal is carried as Status_Denied, not as the empty list alone: an
 	// empty list is also the honest answer for a board with no topics, and a
@@ -582,7 +585,7 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 	// form as "nobody is subscribed". Topics stays empty either way — Status is
 	// the only thing that separates the two.
 	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_BoardObserve) {
-		slog.Warn("agentHandleListTopics: caller lacks InfoGlobal; denying",
+		slog.Warn("agentHandleListTopics: caller lacks board_observe; denying",
 			"task_id", func() string {
 				_, tid, _, _ := ac.state.Identity()
 				return hex.EncodeToString(tid.Id[:])

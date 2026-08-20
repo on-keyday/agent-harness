@@ -87,7 +87,7 @@ type TaskHandler struct {
 	// ConnListFn is wired by Server.New to s.ConnList. It is called from the
 	// list_conns TaskControl handler. When nil, list_conns responds with
 	// StreamId=0 (error; safe for tests that don't exercise the conn-list path).
-	ConnListFn func(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []protocol.ConnInfo
+	ConnListFn func(viewerTaskID protocol.TaskID, globalView bool) []protocol.ConnInfo
 
 	// RingBufferSize is the capacity of the RingBuffer allocated for each
 	// detachable session. When zero, defaults to 1 MiB (1 << 20 bytes).
@@ -1498,10 +1498,10 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 
 	all, allowed, parentHex := h.listVisibleToCaller(connID)
 	tasks := h.Tasks.List(100)
-	// RUNNERS visibility is gated on InfoGlobal exactly like agentHandleListTopics:
-	// a confined caller (no InfoGlobal, not operator) sees zero runners, so it
+	// RUNNERS visibility rides the task-visibility answer: a confined caller
+	// (visibility rank below global, not an operator) sees zero runners, so it
 	// cannot enumerate the operator's runner topology (hostnames, dial addrs,
-	// AllowedRoots paths). Operators and InfoGlobal-holders get the full list.
+	// AllowedRoots paths). Operators and global-visibility callers get the full list.
 	var runnerInfos []protocol.RunnerInfo
 	if all {
 		runners := h.Registry.List()
@@ -1595,7 +1595,7 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 // carries only the stream id; the actual ConnListResultBody is encoded onto the
 // stream so the response fits in any path MTU.
 //
-// Gating mirrors ls: an operator or InfoGlobal caller gets the full set; a
+// Gating mirrors ls: an operator or a global-visibility caller gets the full set; a
 // confined caller gets only its own subtree (reusing visibleToCaller via the
 // ConnListFn closure wired in Server.New).
 //
@@ -1614,13 +1614,16 @@ func (h *TaskHandler) handleListConns(conn ConnHandle, requestID uint32, connID 
 		return
 	}
 
-	// Determine visibility scope using the same predicate visibleToCaller uses:
-	// operator (zero principal) → all=true; InfoGlobal cap → all=true.
+	// Connection visibility is a PROJECTION of task visibility, not an axis of
+	// its own: connInfoFor shows a row only when the conn's principal task is
+	// in the caller's visible set, and a row carries its PrincipalTask, so
+	// "visible conn, invisible task" is not a state the data can hold. So this
+	// asks visibleToCaller and reads no capability bit — the widening that used
+	// to come from info_global comes from the scope's visibility rank now.
 	pid := h.lookupPrincipal(connID)
-	isOperator := pid.Id == ([16]byte{})
-	hasInfoGlobal := !isOperator && hasCap(h.callerCaps(connID), protocol.Capability_BoardObserve)
+	globalView, _ := h.visibleToCaller(connID)
 
-	conns := h.ConnListFn(pid, isOperator || hasInfoGlobal)
+	conns := h.ConnListFn(pid, globalView)
 
 	var body protocol.ConnListResultBody
 	body.SetConns(conns)

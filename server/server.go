@@ -337,7 +337,8 @@ func New(cfg Config) *Server {
 	// All eligible subscribers see the same encoded payload (ConnInfo is not
 	// personalised per subscriber). The filter function is called per subscriber
 	// to decide whether that subscriber receives the event; it mirrors the
-	// ConnList visibility rules: operators and InfoGlobal holders see all events;
+	// ConnList visibility rules: operators and callers whose visibility rank is
+	// global see all events;
 	// confined subscribers see only agent conns whose principal is in their
 	// subtree.
 	publishConnEvent := func(kind protocol.StatusEventKind, sc streamingConn) {
@@ -355,16 +356,16 @@ func New(cfg Config) *Server {
 		payload := ev.MustAppend(nil)
 		// Per-subscriber gating: mirrors ConnList's visibility logic.
 		s.pubsub.PublishFiltered("server", topics.ConnsStatus(), payload, func(subCID objproto.ConnectionID) bool {
+			// Mirrors ListConns, which is the point: one predicate for the
+			// snapshot and the stream, so a subscriber cannot be told about a
+			// conn the list would deny. visibleToCaller already answers
+			// all=true for an operator and for a global visibility rank, so
+			// neither case needs its own branch here any more.
 			subCIDStr := subCID.String()
-			isOperator := s.taskHandler.lookupPrincipal(subCIDStr).Id == ([16]byte{})
-			if isOperator {
+			all, allowed := s.taskHandler.visibleToCaller(subCIDStr)
+			if all {
 				return true
 			}
-			if hasCap(s.taskHandler.callerCaps(subCIDStr), protocol.Capability_BoardObserve) {
-				return true
-			}
-			// Confined subscriber: allowed only if this conn is visible in their subtree.
-			_, allowed := s.taskHandler.visibleToCaller(subCIDStr)
 			return s.connInfoFor(sc, allowed, false) != nil
 		})
 	}
@@ -1045,14 +1046,14 @@ func (s *Server) RegisteredRunners() []RunnerEntry {
 // and the runner registry (CID → ConnRole_Runner).
 //
 // viewerTaskID is the principal TaskID of the caller (zero = operator).
-// hasInfoGlobal is true when the caller holds Capability_BoardObserve.
-// When !hasInfoGlobal and the viewer is not an operator (non-zero viewerTaskID),
+// globalView is true when the caller holds Capability_BoardObserve.
+// When !globalView and the viewer is not an operator (non-zero viewerTaskID),
 // only the caller's own connection and descendant agent connections are returned
 // (same subtree filter that visibleToCaller applies to ls).
 //
 // This is the server-side half; TaskHandler.HandleListConns is the RPC handler
 // that calls it (wired via TaskHandler.ConnListFn in Server.New).
-func (s *Server) ConnList(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []protocol.ConnInfo {
+func (s *Server) ConnList(viewerTaskID protocol.TaskID, globalView bool) []protocol.ConnInfo {
 	s.activeConnsMu.Lock()
 	snapshot := make([]streamingConn, 0, len(s.activeConns))
 	for _, c := range s.activeConns {
@@ -1064,7 +1065,7 @@ func (s *Server) ConnList(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []pr
 	// Zero viewerTaskID = operator → no filtering needed.
 	isOperator := viewerTaskID.Id == ([16]byte{})
 	var allowed map[string]bool
-	if !isOperator && !hasInfoGlobal {
+	if !isOperator && !globalView {
 		allTasks := s.tasks.List(0)
 		callerHex := hex.EncodeToString(viewerTaskID.Id[:])
 		children := make(map[string][]string, len(allTasks))
@@ -1094,7 +1095,7 @@ func (s *Server) ConnList(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []pr
 
 	infos := make([]protocol.ConnInfo, 0, len(snapshot))
 	for _, sc := range snapshot {
-		info := s.connInfoFor(sc, allowed, isOperator || hasInfoGlobal)
+		info := s.connInfoFor(sc, allowed, isOperator || globalView)
 		if info != nil {
 			infos = append(infos, *info)
 		}
@@ -1112,7 +1113,9 @@ func (s *Server) ConnList(viewerTaskID protocol.TaskID, hasInfoGlobal bool) []pr
 
 // connInfoFor derives a protocol.ConnInfo for one active connection.
 // allowed is the subtree task-id set (nil means unrestricted).
-// globalView = true when the caller is an operator or holds InfoGlobal.
+// globalView = true when the caller is an operator or its visibility rank is
+// global. It is answered by visibleToCaller, so the snapshot and the stream
+// cannot disagree.
 // Returns nil when the connection is not visible to the caller.
 func (s *Server) connInfoFor(sc streamingConn, allowed map[string]bool, globalView bool) *protocol.ConnInfo {
 	cid := sc.ConnectionID()

@@ -408,7 +408,8 @@ func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[stri
 // return below fires, and the row is shown unredacted.
 //
 // Exactly ONE hop: grandparents and siblings stay invisible. parentHex is ""
-// for operators, InfoGlobal holders (all=true covers everything anyway),
+// for operators, callers whose visibility rank is global (all=true covers
+// everything anyway),
 // operator-created tasks (zero creator), and a creator no longer in the store.
 // The row itself is redacted by the caller — see redactParentTaskInfo.
 func (h *TaskHandler) listVisibleToCaller(connID string) (all bool, allowed map[string]bool, parentHex string) {

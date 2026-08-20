@@ -84,9 +84,9 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	}
 }
 
-// TestAgentCLI_E2E_Topics_NoInfoGlobal verifies that an agent whose TaskStore
+// TestAgentCLI_E2E_Topics_NoBoardObserve verifies that an agent whose TaskStore
 // entry lacks Capability_BoardObserve receives an empty topic list from the gate.
-func TestAgentCLI_E2E_Topics_NoInfoGlobal(t *testing.T) {
+func TestAgentCLI_E2E_Topics_NoBoardObserve(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)
 
@@ -97,7 +97,7 @@ func TestAgentCLI_E2E_Topics_NoInfoGlobal(t *testing.T) {
 	ridC := mkRidE2E([4]byte{9, 10, 11, 12}, 9302, 33)
 	board.Registry().Register(ridC, tidC, ticketC)
 
-	// Inject entry WITHOUT InfoGlobal (Capability_None = 0).
+	// Inject entry WITHOUT board_observe (Capability_None = 0).
 	srv.Tasks().ReplayEvents([]server.WALEvent{
 		{
 			Type:         "task_created",
@@ -125,7 +125,7 @@ func TestAgentCLI_E2E_Topics_NoInfoGlobal(t *testing.T) {
 	}
 	restoreD()
 
-	// C lists topics — has no InfoGlobal, so the call must FAIL rather than
+	// C lists topics — has no board_observe, so the call must FAIL rather than
 	// report an empty board. Both halves matter: the error is what tells a
 	// confined agent it asked a question it may not ask, and the empty stdout
 	// is what keeps the gate a gate.
