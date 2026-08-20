@@ -2769,10 +2769,17 @@ const POLL_INTERVAL_MS = 5000;
     const out = [];
     for (const r of overrideRowsFor[which]) {
       if (!r.caps) continue; // a row with no chip lit describes nothing
-      let scope = r.base;
+      // base x excludeSelf is 3 x 2, and the grammar spells the six as
+      // subtree / descendants / none / none-self / global / global-self.
+      // Collapsing them into four radio labels — which the first version of
+      // this did — makes none-self and global-self unreachable from here while
+      // the CLI and TUI can say both.
+      let base = r.base;
+      if (r.excludeSelf) base = r.base === "subtree" ? "descendants" : r.base + "-self";
+      let scope = base;
       if (r.base !== "global" && r.ids.size > 0) {
         const ids = [...r.ids].sort().join(",");
-        scope = r.base === "none" ? "ids:" + ids : r.base + "+ids:" + ids;
+        scope = (r.base === "none" && !r.excludeSelf) ? "ids:" + ids : base + "+ids:" + ids;
       }
       out.push(capsLabelFor(r.caps) + "=" + scope);
     }
@@ -2800,8 +2807,11 @@ const POLL_INTERVAL_MS = 5000;
       idPart = rest.slice(i + 4);
       for (const id of idPart.split(",")) { const t = id.trim(); if (t) ids.add(t); }
     }
-    if (!["subtree", "descendants", "none", "global"].includes(base)) base = "subtree";
-    return { caps, base, ids };
+    let excludeSelf = false;
+    if (base === "descendants") { base = "subtree"; excludeSelf = true; }
+    else if (base.endsWith("-self")) { base = base.slice(0, -5); excludeSelf = true; }
+    if (!["subtree", "none", "global"].includes(base)) base = "subtree";
+    return { caps, base, excludeSelf, ids };
   }
 
   // claimedElsewhere is the mask every OTHER row already holds, which is what
@@ -2867,7 +2877,7 @@ const POLL_INTERVAL_MS = 5000;
       // "may drive its workers, may not drive itself".
       const baseRow = document.createElement("div");
       baseRow.className = "scope-base-row";
-      for (const b of ["subtree", "descendants", "none", "global"]) {
+      for (const b of ["subtree", "none", "global"]) {
         const label = document.createElement("label");
         const radio = document.createElement("input");
         radio.type = "radio";
@@ -2885,6 +2895,23 @@ const POLL_INTERVAL_MS = 5000;
         label.appendChild(document.createTextNode(" " + b));
         baseRow.appendChild(label);
       }
+      // exclude_self is ORTHOGONAL to the base, so it is a checkbox beside the
+      // radios rather than a fourth radio. As a radio it could only ever mean
+      // "subtree without self", leaving the other two bases unable to say it.
+      const selfLabel = document.createElement("label");
+      const selfCb = document.createElement("input");
+      selfCb.type = "checkbox";
+      selfCb.checked = !!row.excludeSelf;
+      selfCb.addEventListener("change", () => {
+        row.excludeSelf = selfCb.checked;
+        buildOverrideRows(which, containerId, onChange);
+        onChange();
+      });
+      selfLabel.appendChild(selfCb);
+      selfLabel.appendChild(document.createTextNode(" 自分自身を除く"));
+      selfLabel.title = "subtree なら descendants、none なら空集合（ビットは持つが何にも向かない）";
+      baseRow.appendChild(selfLabel);
+
       box.appendChild(baseRow);
 
       // Ids, only where they mean something. Under `global` the base already
@@ -2912,7 +2939,7 @@ const POLL_INTERVAL_MS = 5000;
     add.className = "cap-quick";
     add.textContent = "＋ 絞り込みを追加";
     add.addEventListener("click", () => {
-      rows.push({ caps: 0, base: "descendants", ids: new Set() });
+      rows.push({ caps: 0, base: "subtree", excludeSelf: true, ids: new Set() });
       buildOverrideRows(which, containerId, onChange);
       onChange();
     });
