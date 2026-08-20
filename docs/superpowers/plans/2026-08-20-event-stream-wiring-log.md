@@ -403,3 +403,55 @@ sibling that buffers events" from entry 8 is not needed. The mux is frame-aware
 but not PTY-aware — it moves complete frames, stamps activity on
 Stdout/Stderr, and special-cases only TerminalWindowSize, which an event-stream
 session simply never sends.
+
+## 13. Correction: the mux DOES carry PTY semantics — and they are inert here
+
+Entry 12 said "the mux is frame-aware but not PTY-aware". Asked whether there
+was something PTY-assuming we had already seen. There is, and I had read its
+doc comment before writing the opposite:
+
+`SessionMux` runs a **VT mode parser over every Stdout/Stderr frame**
+(`m.modes.feed(frameBytes[frameHeaderSize:])`, `server/mode_tracker.go`). It
+tracks private DEC modes to know when a full-screen app leaves the alt screen,
+stamps `mainMark` at that frame, and replays from there instead of the ring
+head so a reattach does not repaint a finished alt-screen episode. It also
+replays `lastWinSize` and a mode `preamble()` to a new viewer.
+
+That is terminal semantics living in the mux, not around it.
+
+**For an event-stream session it is inert, and that is now checked rather than
+assumed.** `encoding/json` escapes every control byte below 0x20 in a string,
+so a raw 0x1B cannot appear in well-formed NDJSON — not in `Event.Text`, and
+not in the vendor `Input` passed through as `json.RawMessage`. The parser stays
+in its normal state, `onAltScreen()` stays false, `mainMark` stays 0 (full
+replay, which is what an event stream wants), `preamble()` is empty and no
+winsize frame is ever sent.
+
+The cost is real but small: every event frame is walked by an ANSI parser that
+will never match. Worth knowing before someone measures it and calls it a bug.
+
+## 14. The client side needs no new transport either
+
+`CommandExecutionStream` already exposes `Stdout() io.Reader`,
+`Stdin() io.Writer` and `Stderr() io.Reader`. The only PTY-assuming entry point
+is `RemoteShell()`, which puts the LOCAL terminal into raw mode
+(`term.MakeRaw(os.Stdin)`) — an event-stream client simply does not call it.
+
+And `Stdin().Close()` is the zero-length Stdin frame, i.e. the clean `finish`
+of entry 9, already reachable from the client API.
+
+So the §3 verbs are not new plumbing. `attach` for this kind is "read
+`Stdout()`, render events, write responses to `Stdin()`" instead of "hand the
+terminal to `RemoteShell`".
+
+### Remaining work, after entries 12–14
+
+Three of the four items entry 8 listed as "not started" turn out to already
+exist:
+
+| entry 8 said | actually |
+|---|---|
+| `.bgn` additions | done, and needed **no layout change** — an enum value plus two spare reserved bits |
+| a `SessionMux` sibling buffering events | not needed; the ring is frame-granular and the mux's PTY logic is inert |
+| client transport | not needed; `Stdout()`/`Stdin()` are already exposed |
+| `pending=N` on `TaskInfo`, and the verbs | still real work |
