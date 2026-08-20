@@ -118,35 +118,28 @@ than answered.
 
 ### Why `-p`, and what stdin actually carries
 
-`-p` reads as the wrong mode for a long-lived multi-turn agent. **It is a
-choice, and a corrected claim**: an earlier version of this section said it was
-not one, on the strength of the help text alone — `--input-format <format>` is
-documented as *"only works with `--print`"*. That is not enforced. Measured
-2026-08-21, same prompt, piped stdin, non-TTY stdout:
+`-p` reads as the wrong mode for a long-lived multi-turn agent. **Whether it is
+required depends on what stdout is**, which took three passes to get right and
+is worth the space because the conditional is invisible from either the docs or
+a single test.
 
-| | exit | `result` lines | answer |
-|---|---|---|---|
-| `-p --input-format stream-json --output-format stream-json` | 0 | 1 | correct |
-| the same **without `-p`** | 0 | 1 | correct |
+| stdout | `--input-format stream-json` without `-p` |
+|---|---|
+| a pipe | **works** — measured at one turn and again at three: three `result` messages, one `session_id`, a codeword from turn 1 recalled in turn 3, `exit 0` on stdin close, line for line identical to the `-p` run |
+| a terminal | **refused** — `Error: --input-format=stream-json requires --print.`, exit 1 |
 
-Identical. `--output-format stream-json` is what suppresses the TUI; `-p` adds
-nothing here.
+So the help text's "only works with `--print`" is enforced, but only when
+stdout is a TTY; with a pipe the CLI behaves as though `-p` were given.
 
-That first comparison was one turn, so it said nothing about the axis that
-actually matters for this kind. Re-run at three turns, also without `-p`:
-three `result` messages, one `session_id`, a codeword from turn 1 recalled in
-turn 3, `exit 0` on stdin close — the same numbers as the `-p` run, line for
-line.
+What this section said before, twice, both wrong in different directions: first
+that `-p` was required (read from the help, never run), then that it was not
+(run, but only against a pipe — and I dismissed the TTY case as unreachable
+rather than testing it, which is exactly where the answer changes).
 
-The one axis still untested is a TTY on stdout, and it is untested because it
-cannot arise: this kind runs the agent through `agentexec` with
-`ptyEnabled=false`, so its stdout is a pipe by construction.
-
-So the reason to pass `-p` is not necessity. It is that the vendor's own
-programmatic spawn does, verbatim in the binary (below), and that naming the
-non-interactive mode explicitly is worth more than the flag costs. `-p`'s own
-help ("Print response and exit") describes the `text` input default, not what
-it becomes with a framed stdin.
+**The harness always pipes**, so either form would work here. Pass `-p` anyway:
+it makes the invocation correct independent of what stdout happens to be, which
+matters the first time a human runs the adapter's inner command by hand to
+debug it. It is also what the vendor's own programmatic spawn passes.
 
 The vendor's own programmatic spawn, verbatim in the binary, is that pairing:
 
