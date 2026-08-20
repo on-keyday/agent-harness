@@ -452,14 +452,22 @@ Extends, rather than replaces, the base spec's set.
 
 ## Deferred
 
-- **Filtering the agentboard surfaces by the visibility set** instead of
-  gating them on `visRank == global`. `handleBoardSubscribers` returns every
-  subscriber of a topic unfiltered, so a `subtree`-scoped task sees all of them
-  or none. Filtering rows the way `ls` does is the better end state, but it
-  *changes who sees what* — a scoped task would newly see its own subtree's
-  subscribers — so it is a behaviour change, not a migration, and does not
-  belong in the same wire break. It is also the only place where this design
-  leaves an all-or-nothing gate standing.
+- **Whether the agentboard surfaces should be scoped at all, and along what
+  axis.** `board topics` / `board read` / `board subscribers` are all-or-nothing
+  today and stay that way here, with the gate translated to
+  `visRank == global`. This is the one place the design leaves such a gate
+  standing, and no replacement is proposed on purpose.
+
+  Row-filtering by the task visibility set is **not** the obvious answer and is
+  not recommended: a subscriber list answers "who is listening on this topic",
+  which is a different namespace from "who is in my subtree". Agents message
+  peers precisely because they are *outside* each other's subtrees, so that
+  filter would empty the surface for every scoped task and break what it is
+  for. Filtering by topic membership would fit the data better, but the board
+  has no topic-ownership model and inventing one from the task hierarchy would
+  import a structure it deliberately does not have. Either direction needs its
+  own design, starting from what the board is for rather than from what `ls`
+  does.
 - **Per-capability scope defaults at grant time.** A table mapping bits to
   default scopes adds a second site where authority is decided.
 - **A `descendants` base value.** Rejected in §5 and recorded so it is not
