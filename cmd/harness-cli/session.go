@@ -214,6 +214,8 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 	capsFlag := fs.String("caps", "", cli.CapsFlagUsage)
 	scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
+	var scopeFor scopeForFlag
+	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
 	agent := fs.String("agent", "", "agent profile name (empty = runner default)")
 	var extraArgs repeatableStrings
 	fs.Var(&extraArgs, "agent-arg", "extra CLI arg to forward to the agent (repeatable; appended after runner-global --agent-args)")
@@ -280,6 +282,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	sopts := cli.SessionOpts{
 		Selector: sel, ExtraArgs: []string(extraArgs), ResumeTaskID: *resume,
 		Caps: caps, Scope: scope, ResumeCapsOverride: resumeCapsOverride,
+		Overrides:          scopeFor.out,
 		ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
 		ResumeConversation: *resumeConversation, AgentProfile: *agent,
 		InitialRows: uint16(*rows), InitialCols: uint16(*cols),

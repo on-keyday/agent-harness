@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -71,9 +72,16 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		if !isZeroTaskID(resp.CreatorTaskId) {
 			creatorHex = hex.EncodeToString(resp.CreatorTaskId.Id[:])
 		}
-		_, err := fmt.Fprintf(out,
-			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q}\n",
-			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope))
+		// Hand-built rather than encoding/json because the field ORDER is part
+		// of what a reader greps; scope_by_cap is marshalled on its own so the
+		// map still escapes correctly.
+		byCap, err := json.Marshal(ResolvedScopeByCap(resp.Capabilities, resp.Scope, resp.Overrides))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(out,
+			"{\"operator\":%t,\"principal_task_id\":%q,\"creator_task_id\":%q,\"capabilities\":%q,\"scope\":%q,\"scope_by_cap\":%s}\n",
+			operator, taskHex, creatorHex, CapsLabel(resp.Capabilities), ScopeLabel(resp.Scope), byCap)
 		return err
 	}
 	caps := "caps=" + CapsLabel(resp.Capabilities)
@@ -82,6 +90,9 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 	// default leaves a caller unable to tell a subtree scope from a whoami that
 	// does not report scope at all. The --json form always carried it.
 	caps += "  scope=" + ScopeLabel(resp.Scope)
+	if ov := OverridesLabel(resp.Overrides); ov != "" {
+		caps += " +" + ov
+	}
 	if operator {
 		_, err := fmt.Fprintf(out, "operator  %s\n", caps)
 		return err

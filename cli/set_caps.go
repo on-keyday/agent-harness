@@ -15,9 +15,15 @@ import (
 // has a spare value to mean unset. The wire carries the same distinction as
 // caps_present / scope_present bits.
 type SetCapsOpts struct {
-	TaskID    string // hex
-	Caps      *protocol.Capability
-	Scope     *protocol.TaskScope
+	TaskID string // hex
+	Caps   *protocol.Capability
+	Scope  *protocol.TaskScope
+	// Overrides travels with Scope under the same presence bit: they are one
+	// half of the authority, so a request that set the scope and kept the old
+	// overrides would write an authority the operator never described. Sending
+	// a non-nil Scope with an empty Overrides is therefore the only way to
+	// CLEAR them -- the same shape as writing an empty ids list.
+	Overrides []protocol.ScopeOverride
 	Cascade   bool
 	KeepConns bool
 }
@@ -55,6 +61,8 @@ func SetCapsWith(ctx context.Context, c taskControlClient, opts SetCapsOpts) (Se
 	}
 	if opts.Scope != nil {
 		body.Scope = *opts.Scope
+		body.Overrides = opts.Overrides
+		body.OverridesLen = uint8(len(opts.Overrides))
 		body.SetScopePresent(true)
 	}
 	body.SetCascade(opts.Cascade)

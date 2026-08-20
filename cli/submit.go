@@ -45,6 +45,8 @@ func buildSubmitRequest(repo, prompt string, opts SessionOpts) protocol.SubmitRe
 	sub.SetResumeConversation(opts.ResumeConversation)
 	sub.SetAgentProfile([]byte(opts.AgentProfile))
 	sub.Scope = opts.Scope
+	sub.Overrides = opts.Overrides
+	sub.OverridesLen = uint8(len(opts.Overrides))
 	sub.SetScopePresent(opts.ScopePresent)
 	return sub
 }

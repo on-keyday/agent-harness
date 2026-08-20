@@ -307,3 +307,41 @@ func OverridesLabel(in []protocol.ScopeOverride) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+// ResolvedScopeByCap renders the scope that actually applies to each capability
+// the task holds, override merge already done.
+//
+// Machine readers get this rather than the raw pair, because re-deriving
+// "which override covers this bit" in every consumer is how two consumers end
+// up disagreeing. Empty when the mask is empty; `none` and `all` are not
+// listed, being the absence and the union rather than grantable targets.
+func ResolvedScopeByCap(caps protocol.Capability, base protocol.TaskScope, overrides []protocol.ScopeOverride) map[string]string {
+	out := make(map[string]string)
+	for _, bit := range GrantableCaps() {
+		if bit == protocol.Capability_None || bit == protocol.Capability_All {
+			continue
+		}
+		if caps&bit != bit {
+			continue
+		}
+		out[bit.String()] = ScopeLabel(scopeForCap(base, overrides, bit))
+	}
+	return out
+}
+
+// scopeForCap mirrors the server's Scope.ForCap: the override covering the bit,
+// else the base scope. Masks are disjoint, so the first hit is the only hit.
+func scopeForCap(base protocol.TaskScope, overrides []protocol.ScopeOverride, bit protocol.Capability) protocol.TaskScope {
+	for _, o := range overrides {
+		if o.Caps&bit != 0 {
+			sc := protocol.TaskScope{Base: o.Base, Ids: o.Ids, IdsLen: o.IdsLen}
+			sc.SetExcludeSelf(o.ExcludeSelf())
+			return sc
+		}
+	}
+	// The visibility half belongs to the task, not to a verb: strip it so the
+	// per-capability entry reports a TARGET set and nothing else.
+	sc := protocol.TaskScope{Base: base.Base, Ids: base.Ids, IdsLen: base.IdsLen}
+	sc.SetExcludeSelf(base.ExcludeSelf())
+	return sc
+}

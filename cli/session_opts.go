@@ -38,6 +38,12 @@ type SessionOpts struct {
 	// have one ("re-grant this scope" vs "keep the task's"), so it carries
 	// its own presence bit:
 	Scope protocol.TaskScope
+	// Overrides narrow individual capabilities below Scope. It rides HERE
+	// rather than beside each caller's request build, because a field set in
+	// one caller and missed in the others is the established failure mode on
+	// these routes -- the wire carries it as a sibling of scope, and both
+	// shared builders below copy it under the same presence bit.
+	Overrides []protocol.ScopeOverride
 	// InitialRows / InitialCols size the session's PTY at open time. Both must
 	// be non-zero to take effect; 0 (the zero value) sends nothing and leaves
 	// the historical behaviour, where a PTY has NO size until an attached
@@ -75,6 +81,8 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.SetResumeConversation(opts.ResumeConversation)
 	oi.SetAgentProfile([]byte(opts.AgentProfile))
 	oi.Scope = opts.Scope
+	oi.Overrides = opts.Overrides
+	oi.OverridesLen = uint8(len(opts.Overrides))
 	oi.SetScopePresent(opts.ScopePresent)
 	return oi
 }

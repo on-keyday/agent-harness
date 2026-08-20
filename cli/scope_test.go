@@ -103,12 +103,29 @@ func TestBothSpawnBuildersCarryScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts := SessionOpts{Scope: sc}
-	if got := buildSubmitRequest("/r", "p", opts).Scope; got.Base != sc.Base || got.IdsLen != 1 {
-		t.Errorf("submit request scope = %+v, want %+v", got, sc)
+	// The override list rides the same funnel and is checked here too: it is a
+	// SIBLING wire field, which is exactly the shape that gets set in one
+	// builder and forgotten in the other.
+	_, ov, err := ParseScopeFor("cancel=none")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := buildOpenInteractiveRequest("/r", opts).Scope; got.Base != sc.Base || got.IdsLen != 1 {
-		t.Errorf("open-interactive request scope = %+v, want %+v", got, sc)
+	opts := SessionOpts{Scope: sc, Overrides: []protocol.ScopeOverride{ov}}
+
+	sub := buildSubmitRequest("/r", "p", opts)
+	if sub.Scope.Base != sc.Base || sub.Scope.IdsLen != 1 {
+		t.Errorf("submit request scope = %+v, want %+v", sub.Scope, sc)
+	}
+	if sub.OverridesLen != 1 || len(sub.Overrides) != 1 {
+		t.Errorf("submit request overrides = %d/%d, want one", sub.OverridesLen, len(sub.Overrides))
+	}
+
+	oi := buildOpenInteractiveRequest("/r", opts)
+	if oi.Scope.Base != sc.Base || oi.Scope.IdsLen != 1 {
+		t.Errorf("open-interactive request scope = %+v, want %+v", oi.Scope, sc)
+	}
+	if oi.OverridesLen != 1 || len(oi.Overrides) != 1 {
+		t.Errorf("open-interactive request overrides = %d/%d, want one", oi.OverridesLen, len(oi.Overrides))
 	}
 }
 

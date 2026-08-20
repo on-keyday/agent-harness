@@ -25,6 +25,27 @@ import (
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
+// scopeForFlag collects repeatable --scope-for values. It parses and merges on
+// every Set, so an overlapping capability list is rejected at the flag rather
+// than one round trip later — the server refuses it too, but a typo should not
+// cost a spawn.
+type scopeForFlag struct{ out []protocol.ScopeOverride }
+
+func (f *scopeForFlag) String() string { return cli.OverridesLabel(f.out) }
+
+func (f *scopeForFlag) Set(v string) error {
+	_, ov, err := cli.ParseScopeFor(v)
+	if err != nil {
+		return err
+	}
+	merged, err := cli.MergeScopeOverride(f.out, ov)
+	if err != nil {
+		return err
+	}
+	f.out = merged
+	return nil
+}
+
 func main() {
 	serverCID := flag.String("server-cid", "",
 		"server ConnectionID (env: HARNESS_SERVER_CID; default ws:127.0.0.1:8539-*)")
@@ -101,6 +122,8 @@ func main() {
 		capsFlag := fs.String("caps", "", cli.CapsFlagUsage)
 		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
 		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
+		var scopeFor scopeForFlag
+		fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
 		fs.Parse(args)
@@ -133,7 +156,7 @@ func main() {
 		defer c.Close()
 		id, err := c.Submit(ctx, repoVal, *task, cli.SessionOpts{
 			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
-			Caps: caps, Scope: scope,
+			Caps: caps, Scope: scope, Overrides: scopeFor.out,
 			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
 			ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
 			ResumeConversation: *resumeConversation, AgentProfile: *agent,
@@ -367,6 +390,8 @@ func main() {
 		capsFlag := fs.String("caps", "", cli.CapsFlagUsage)
 		scopeFlag := fs.String("scope", "", "which tasks this task's capabilities may target: "+cli.ScopeGrammar+"; default subtree (self + descendants). With --resume, --scope re-grants the scope (omitted = keep the task's), independently of --caps")
 		agent := fs.String("agent", "", "agent profile name (empty = runner default)")
+		var scopeFor scopeForFlag
+		fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
 		resolveSelector := addSelectorFlags(fs)
 		extraArgs := addAgentArgFlags(fs)
 		fs.Parse(args)
@@ -396,7 +421,7 @@ func main() {
 		// operator client can take it over via reattach.
 		if _, err := c.Interactive(ctx, repoVal, cli.SessionOpts{
 			Selector: sel, ExtraArgs: *extraArgs, ResumeTaskID: *resume,
-			Caps: caps, Scope: scope,
+			Caps: caps, Scope: scope, Overrides: scopeFor.out,
 			ResumeCapsOverride: *resume != "" && capsExplicitlySet(fs),
 			ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
 			ResumeConversation: *resumeConversation, AgentProfile: *agent,
@@ -1180,6 +1205,8 @@ func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []str
 	fs := flag.NewFlagSet("caps set", flag.ExitOnError)
 	capsFlag := fs.String("caps", "", "new capability set (same syntax as --caps on submit); omitted = keep the task's current caps")
 	scopeFlag := fs.String("scope", "", "new scope: "+cli.ScopeGrammar+"; omitted = keep the task's current scope")
+	var scopeFor scopeForFlag
+	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage+" (written with --scope; they are one half of the authority)")
 	cascade := fs.Bool("cascade", false, "also clamp every descendant to the new authority — without this a revoked task can still act through a child it spawned while it was wider")
 	keepConns := fs.Bool("keep-conns", false, "on a narrowing, leave the affected tasks' connections open (default: close them, so in-flight attaches and transfers die with the grant)")
 	// Interspersed parse: Go's flag package stops at the first non-flag
@@ -1219,6 +1246,7 @@ func runCapsSet(ctx context.Context, serverCID objproto.ConnectionID, args []str
 			os.Exit(2)
 		}
 		opts.Scope = &scope
+		opts.Overrides = scopeFor.out
 	}
 	if opts.Caps == nil && opts.Scope == nil {
 		fmt.Fprintln(os.Stderr, "caps set: pass --caps, --scope, or both — there is nothing to change otherwise")

@@ -99,8 +99,12 @@ func ScopesCatalog() []ScopeInfo {
 		{"subtree", "self + every task it spawned, transitively (the default when --scope is omitted)"},
 		{"none", "self only; a task that may create children but not supervise them"},
 		{"global", "every task on the server; the explicit opt-out from confinement"},
+		{"descendants", "the subtree WITHOUT self; e.g. may drive its workers but not itself"},
+		{"<base>-self", "any base with self removed; none-self is the empty set (holds the bit, points nowhere)"},
 		{"ids:<id>[,<id>]", "self + exactly the named tasks, and nothing else"},
 		{"subtree+ids:<id>", "self + descendants + the named tasks"},
+		{"<visibility>/<action>", "visibility rank / action rank; e.g. global/subtree sees the server, acts on its subtree"},
+		{"+vis-ids:<id>", "additionally SEE those tasks without being able to act on them"},
 	}
 }
 
@@ -158,6 +162,10 @@ func WriteCaps(w io.Writer, asJSON bool) error {
 	}
 
 	_, err := fmt.Fprint(w, "\nA capability names a verb; a scope names which tasks it may target.\n"+
+		"--scope-for CAPS=SCOPE narrows ONE capability (or a comma-separated list)\n"+
+		"below the task's own scope; the lists must not overlap. Visibility is a\n"+
+		"property of the task, so it has no per-capability form: a verb can never\n"+
+		"reach further than what `ls` shows.\n"+
 		"An omitted --caps grants NONE of these: a spawn hands its child no\n"+
 		"control plane unless the flag names one (the data plane - agentboard,\n"+
 		"its own subtree's logs/ls - needs no capability and is always there).\n"+

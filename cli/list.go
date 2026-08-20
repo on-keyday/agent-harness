@@ -238,6 +238,12 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	// and both JSON forms had already dropped that exception; only this line
 	// still carried it. Scope is half of a task's authority and is never absent.
 	caps += "  scope=" + ScopeLabel(t.Scope)
+	// Overrides are appended only when present: the base scope is half a task's
+	// authority and is never absent, while a narrowing that is not there has
+	// nothing to report. A row with no "+" carries no per-capability rule.
+	if ov := OverridesLabel(t.Overrides); ov != "" {
+		caps += " +" + ov
+	}
 	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),
@@ -355,19 +361,24 @@ type taskJSON struct {
 	// session nobody is watching") and an absent key would read as "not
 	// reported". Both are 0 for a task with no live session at all — `status`
 	// is what separates the two.
-	Viewers      uint16 `json:"viewers"`
-	Cowriters    uint16 `json:"cowriters"`
-	Caps         string `json:"caps"`
-	Scope        string `json:"scope"`
-	CreatedBy    string `json:"created_by,omitempty"`
-	Prompt       string `json:"prompt"`
-	ExitCode     int32  `json:"exit_code"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	CreatedAt    uint64 `json:"created_at"`
-	StartedAt    uint64 `json:"started_at"`
-	EndedAt      uint64 `json:"ended_at"`
-	LastOutputAt uint64 `json:"last_output_at"`
-	OutputIdleMs uint64 `json:"output_idle_ms"`
+	Viewers   uint16 `json:"viewers"`
+	Cowriters uint16 `json:"cowriters"`
+	Caps      string `json:"caps"`
+	Scope     string `json:"scope"`
+	// ScopeByCap is the FULLY RESOLVED capability -> scope map: every bit the
+	// task holds, with the scope that actually applies after the override
+	// merge. Emitted always, overrides or not, so a machine reader never has
+	// to redo the merge to learn what a verb may target.
+	ScopeByCap   map[string]string `json:"scope_by_cap"`
+	CreatedBy    string            `json:"created_by,omitempty"`
+	Prompt       string            `json:"prompt"`
+	ExitCode     int32             `json:"exit_code"`
+	ErrorMessage string            `json:"error_message,omitempty"`
+	CreatedAt    uint64            `json:"created_at"`
+	StartedAt    uint64            `json:"started_at"`
+	EndedAt      uint64            `json:"ended_at"`
+	LastOutputAt uint64            `json:"last_output_at"`
+	OutputIdleMs uint64            `json:"output_idle_ms"`
 }
 
 // listJSON is the top-level `ls --json` document.
@@ -449,6 +460,7 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		Cowriters:      t.Cowriters,
 		Caps:           CapsLabel(t.Capabilities),
 		Scope:          ScopeLabel(t.Scope),
+		ScopeByCap:     ResolvedScopeByCap(t.Capabilities, t.Scope, t.Overrides),
 		CreatedBy:      taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
 		Prompt:         string(t.Prompt),
 		ExitCode:       t.ExitCode,
