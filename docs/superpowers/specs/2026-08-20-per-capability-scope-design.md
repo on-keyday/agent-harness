@@ -345,18 +345,22 @@ task hierarchy contains. Gating it on `visRank == global` would mix the two
 namespaces the same way the row-filter idea in Deferred does — which is why
 the board keeps a verb permission rather than inheriting a target-set rank.
 
-**Rename to `board_read`, same ordinal (1024).** Decided. It names exactly the
-set of kinds it gates and sits beside `BoardPurge`'s `Capability_Purge`.
+**Rename to `board_observe`, same ordinal (1024).** Decided.
 
-`board_observe` was the runner-up and is the more literal description — the bit
-is not needed to send, to subscribe, or to read your own inbox, only to observe
-*other* topics, messages and subscribers. `board_read` wins on matching the
-kind names an operator already sees in `harness-cli board …`; the narrower
-reading belongs in the `caps` catalogue text, which must say what the bit does
-**not** gate:
+`board_read` was the runner-up: it matches the kind names an operator types
+(`board read`, `board topics`, `board subscribers`). It loses on the failure
+mode that matters. The bit is not needed to send, to subscribe, or to read your
+own inbox — only to observe *other* agents' topics, messages and subscribers.
+An agent denied `board_read` reads that as "I cannot read the board" and starts
+debugging a messaging path that is working fine; denied `board_observe`, it
+does not. The primary audience for a capability name is the agent reading its
+own denial, and `observe` is the word that does not lie to it.
 
-> `board_read` — list board topics, read a topic's retained messages, and list
-> its subscribers. Not required to send, subscribe, or read your own inbox.
+The catalogue text carries the boundary explicitly all the same:
+
+> `board_observe` — list board topics, read a topic's retained messages, and
+> list its subscribers. Not required to send, subscribe, or read your own
+> inbox.
 
 Nothing about the rename touches the wire: capabilities persist to the WAL as a
 bitmask, not by name, so no record migrates. What changes is the generated
@@ -394,7 +398,7 @@ That yields the rule this design commits to:
 > whose rows are a projection of the task set, is controlled by a capability
 > bit — never by a scope of its own.
 
-`board_read` holding no scope is therefore not an anomaly; it is the first
+`board_observe` holding no scope is therefore not an anomaly; it is the first
 instance of the rule. The extension path for "hide this surface entirely" is a
 new bit beside it, and the axis count stays at one however many surfaces
 appear.
@@ -702,7 +706,7 @@ Extends, rather than replaces, the base spec's set.
   own design, starting from what the board is for rather than from what `ls`
   does.
 - **`conns_read`, and any other per-surface withholding bit.** §8a fixes the
-  shape should it be wanted: a scope-less bit beside `board_read`, never a
+  shape should it be wanted: a scope-less bit beside `board_observe`, never a
   fourth visibility axis. It is left out because no requirement asks for it,
   and because `ListConns` is currently ungated — adding the bit narrows a
   surface that is open today, which is a behaviour change needing its own
