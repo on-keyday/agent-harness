@@ -96,6 +96,14 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 		fmt.Fprintf(&sb, "act:           %s\n", cli.ActivityStr(t.OutputIdleMs))
 		fmt.Fprintf(&sb, "last output:   %s\n", formatNanoTs(t.LastOutputAt))
 	}
+	// Who is on this session, spelled out. Only a live session has observers at
+	// all, so the line is gated on that rather than printed as a hollow "0" for
+	// every finished task. Worth its own line because the status field cannot
+	// carry it: Running/Detached tracks ONLY the control attach, so a task with
+	// viewers reads Detached and looks abandoned.
+	if taskSessionAlive(t.Status) {
+		fmt.Fprintf(&sb, "attached:      %s\n", attachDetail(t))
+	}
 	fmt.Fprintf(&sb, "from:          %s\n", originCell(t.OriginKind))
 	if t.CreatorTaskId.Id != ([16]byte{}) {
 		fmt.Fprintf(&sb, "created by:    %s\n", hex.EncodeToString(t.CreatorTaskId.Id[:]))
@@ -125,6 +133,24 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 		fmt.Fprintf(&sb, "\nprompt:\n%s\n", string(t.Prompt))
 	}
 	return sb.String()
+}
+
+// attachDetail words who is attached to a live session for the detail popup:
+// the control slot (the only one that moves Running/Detached) plus the observer
+// counts. "no control" is stated rather than left blank, because that IS what
+// Detached means and a reader looking for the difference should find it here.
+func attachDetail(t protocol.TaskInfo) string {
+	parts := []string{"no control"}
+	if t.IsAttached() {
+		parts[0] = "control"
+	}
+	if t.Cowriters > 0 {
+		parts = append(parts, fmt.Sprintf("%d cowrite", t.Cowriters))
+	}
+	if t.Viewers > 0 {
+		parts = append(parts, fmt.Sprintf("%d viewer", t.Viewers))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // skillsInjectedDetail words TaskInfo.skills_injected for the detail popup.

@@ -450,7 +450,8 @@ harness-cli ls
 # RUNNERS                      (withheld entirely without info_global)
 #   Idle    host=<h>  tasks=N/M  agent=<names>[+skills]  roots=<paths>  id=<runner-cid>
 # TASKS
-#   <task-id>  <status>  <kind>  repo=<path>  from=<origin>  agent=<name>[+skills]  caps=<...>  prompt="..."
+#   <task-id>  <status>  <kind>  repo=<path>  from=<origin>  agent=<name>[+skills]
+#     [act=busy|idle:Nm] [cowrite=N viewer=N]  caps=<...>  prompt="..."
 harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...]}
                         # jq-friendly; e.g. `harness-cli ls --json | jq -r '.tasks[].id'`
 
@@ -460,6 +461,15 @@ harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...
 # error, not an empty board.
 harness-cli agent topics
 ```
+
+**`Detached` does not mean nobody is there.** Running vs Detached tracks ONE
+thing: whether a *control* attach holds the writer slot. A read-only viewer or
+an input-forwarding cowriter — the WebUI preview, a TUI grid pane — does not
+take that slot, so a session three people are watching still reads `Detached`.
+The `cowrite=N viewer=N` pair is what actually says who is on it (`viewers` /
+`cowriters` in `--json`, always present, 0 when nobody is). Do not read
+`Detached` as "abandoned", and do not read it as "dead" either: the task is
+alive and its agent may be mid-turn — that is what `act=` is for.
 
 To reach a task you found in `ls`, derive its inbound channel the way every
 agent here names its own: `chat.<first-8-hex-of-task-id>`, and send a `hello`

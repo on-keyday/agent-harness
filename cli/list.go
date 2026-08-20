@@ -213,6 +213,16 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if t.LastOutputAt > 0 {
 		act = "  act=" + ActivityStr(t.OutputIdleMs)
 	}
+	// Observers on the live session, split by what they can do. Elided when
+	// there are none, for row width — and unambiguously so: only a Running or
+	// Detached task HAS a session, and that is the status column two fields to
+	// the left. The pair is independent of Detached: only the CONTROL attach
+	// moves that status, so a task watched through the WebUI preview reads
+	// Detached with viewer=N.
+	obs := ""
+	if t.Cowriters > 0 || t.Viewers > 0 {
+		obs = fmt.Sprintf("  cowrite=%d viewer=%d", t.Cowriters, t.Viewers)
+	}
 	createdBy := ""
 	if t.CreatorTaskId.Id != ([16]byte{}) {
 		createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
@@ -223,7 +233,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	if !IsDefaultScope(t.Scope) {
 		caps += "  scope=" + ScopeLabel(t.Scope)
 	}
-	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s  prompt=%q%s",
+	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),
 		taskKindStr(t.Kind),
@@ -232,6 +242,7 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 		agent,
 		resumedBy,
 		act,
+		obs,
 		createdBy,
 		caps,
 		string(t.Prompt),
@@ -335,17 +346,23 @@ type taskJSON struct {
 	SkillsInjected bool   `json:"skills_injected"`
 	ResumedBy      string `json:"resumed_by,omitempty"`
 	Activity       string `json:"activity,omitempty"`
-	Caps           string `json:"caps"`
-	Scope          string `json:"scope"`
-	CreatedBy      string `json:"created_by,omitempty"`
-	Prompt         string `json:"prompt"`
-	ExitCode       int32  `json:"exit_code"`
-	ErrorMessage   string `json:"error_message,omitempty"`
-	CreatedAt      uint64 `json:"created_at"`
-	StartedAt      uint64 `json:"started_at"`
-	EndedAt        uint64 `json:"ended_at"`
-	LastOutputAt   uint64 `json:"last_output_at"`
-	OutputIdleMs   uint64 `json:"output_idle_ms"`
+	// Observers on the live session. NOT omitempty: 0 is a real answer ("a
+	// session nobody is watching") and an absent key would read as "not
+	// reported". Both are 0 for a task with no live session at all — `status`
+	// is what separates the two.
+	Viewers      uint16 `json:"viewers"`
+	Cowriters    uint16 `json:"cowriters"`
+	Caps         string `json:"caps"`
+	Scope        string `json:"scope"`
+	CreatedBy    string `json:"created_by,omitempty"`
+	Prompt       string `json:"prompt"`
+	ExitCode     int32  `json:"exit_code"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	CreatedAt    uint64 `json:"created_at"`
+	StartedAt    uint64 `json:"started_at"`
+	EndedAt      uint64 `json:"ended_at"`
+	LastOutputAt uint64 `json:"last_output_at"`
+	OutputIdleMs uint64 `json:"output_idle_ms"`
 }
 
 // listJSON is the top-level `ls --json` document.
@@ -423,6 +440,8 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		SkillsInjected: skills,
 		ResumedBy:      resumedBy,
 		Activity:       activity,
+		Viewers:        t.Viewers,
+		Cowriters:      t.Cowriters,
 		Caps:           CapsLabel(t.Capabilities),
 		Scope:          ScopeLabel(t.Scope),
 		CreatedBy:      taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),

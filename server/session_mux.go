@@ -31,6 +31,11 @@ type viewerConn struct {
 	stream trsf.BidirectionalStream
 	ch     chan []byte
 	cancel context.CancelFunc
+	// cowriter distinguishes the two observer kinds that share this struct and
+	// this map: a viewer's input is discarded, a cowriter's is forwarded to the
+	// runner. They differ in what the operator can DO through them, so the
+	// counts are reported apart rather than as one "observers" total.
+	cowriter bool
 }
 
 // readOneFrame reads exactly one wire-encoded frame (header + payload)
@@ -401,7 +406,7 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 		return errors.New("session_mux: stopped")
 	}
 	vctx, vcancel := context.WithCancel(m.ctx)
-	v := &viewerConn{stream: stream, ch: make(chan []byte, viewerQueueDepth), cancel: vcancel}
+	v := &viewerConn{stream: stream, ch: make(chan []byte, viewerQueueDepth), cancel: vcancel, cowriter: forwardInput}
 	m.viewers[v] = struct{}{}
 	// Snapshot replay state under the SAME lock as the insert so runnerPump's
 	// fan-out cannot interleave between "added" and "snapshotted".
@@ -489,11 +494,30 @@ func (m *SessionMux) dropViewerLocked(v *viewerConn) {
 	_ = v.stream.CloseBoth()
 }
 
-// ViewerCount reports the number of attached viewers (test/inspection helper).
-func (m *SessionMux) ViewerCount() int {
+// ObserverCounts reports the attached observers split by kind: viewers (input
+// discarded) and cowriters (input forwarded to the runner). The CONTROL attach
+// is not an observer and is not counted here — ask IsAttached for that.
+//
+// Both are read under one lock so a caller can never see a total that no single
+// moment produced.
+func (m *SessionMux) ObserverCounts() (viewers, cowriters int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.viewers)
+	for v := range m.viewers {
+		if v.cowriter {
+			cowriters++
+		} else {
+			viewers++
+		}
+	}
+	return viewers, cowriters
+}
+
+// ViewerCount reports attached VIEWERS only (cowriters excluded). Delegates so
+// the two never disagree.
+func (m *SessionMux) ViewerCount() int {
+	v, _ := m.ObserverCounts()
+	return v
 }
 
 // tuiPump forwards control-client input frames to the runner, frame-atomically

@@ -544,6 +544,20 @@ format TaskInfo:
     agent_profile_len :u8   # named agent profile this task was launched under
     agent_profile :[agent_profile_len]u8  # (empty = runner default).
     scope :TaskScope        # which tasks this task's capabilities may target
+    # Observers attached to this task's live session, split by what they can DO:
+    # a viewer's input is discarded, a cowriter's is forwarded to the runner.
+    # The CONTROL attach is neither — is_attached carries that, and only the
+    # control attach moves the task between Running and Detached. So a task
+    # being watched through the WebUI preview reads Detached with viewers > 0,
+    # and "Detached" must not be read as "nobody is looking".
+    #
+    # Live-only, like last_output_at/output_idle_ms: populated at List time from
+    # the SessionMux, never stored and never in the WAL, because the observer
+    # set of an ended session is not a fact that survives it. Both are 0 when
+    # the task has no live session at all — the status column is what separates
+    # that from "a live session nobody is observing".
+    viewers :u16
+    cowriters :u16
 
 format ListResult:
     # Server-initiated send-stream id; client reads ListResultBody bytes

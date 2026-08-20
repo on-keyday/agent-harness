@@ -3864,6 +3864,14 @@ const POLL_INTERVAL_MS = 5000;
       // Always shown, subtree included: hiding the default read as "this
       // task has no scope", which is never true.
       if (t.scope) metaText += `  scope=${t.scope}`;
+      // Who is on the live session, cowriters first — same wording as the CLI
+      // row. Elided when nobody is; the status badge already says whether a
+      // session exists. This is the surface where it matters most: opening the
+      // preview here IS a viewer attach, and it does not move the task out of
+      // Detached, so without this the page gives no sign anyone is watching.
+      if (t.cowriters > 0 || t.viewers > 0) {
+        metaText += `  cowrite=${t.cowriters || 0} viewer=${t.viewers || 0}`;
+      }
       meta.textContent = metaText;
       if (t.errorMsg) {
         const err = document.createElement("span");

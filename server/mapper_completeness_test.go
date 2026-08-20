@@ -77,6 +77,12 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		// handler fills these from the session registry after toTaskInfo.
 		"LastOutputAt": "filled by the list handler from live session state, not from TaskEntry",
 		"OutputIdleMs": "filled by the list handler from live session state, not from TaskEntry",
+		// Same family as the two above: read off the live SessionMux at List
+		// time. Deliberately not stored — the observer set of an ended session
+		// is not a fact that survives it, so there is nothing for a mapper from
+		// TaskEntry to copy.
+		"Viewers":   "filled by the list handler from the live SessionMux, not from TaskEntry",
+		"Cowriters": "filled by the list handler from the live SessionMux, not from TaskEntry",
 	})
 	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
 	// skills_injected share one unexported byte, so setting either makes the

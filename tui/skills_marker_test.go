@@ -87,3 +87,36 @@ func TestTaskDetailSpellsOutSkills(t *testing.T) {
 		t.Errorf("detail popup reports an unassigned task as if a runner had answered:\n%s", body)
 	}
 }
+
+// --- observer counts in the detail popup ---
+
+// The TUI task table has no Obs column (see tasks.go: an eighth column breaks
+// the 80-cell frame), so the detail popup is the TUI's only surface for this.
+// It must therefore be unambiguous where the table cannot be.
+func TestTaskDetailSpellsOutWhoIsAttached(t *testing.T) {
+	// Detached with observers: the case the counts exist for.
+	watched := taskWithSkills("claude", true)
+	watched.Status = protocol.TaskStatus_Detached
+	watched.Viewers = 2
+	watched.Cowriters = 1
+	body := formatTaskDetail(watched)
+	if !strings.Contains(body, "attached:      no control, 1 cowrite, 2 viewer") {
+		t.Errorf("detail popup does not say who is on a Detached session:\n%s", body)
+	}
+
+	// Control attached, nobody spectating.
+	solo := taskWithSkills("claude", true)
+	solo.Status = protocol.TaskStatus_Running
+	solo.SetIsAttached(true)
+	if body := formatTaskDetail(solo); !strings.Contains(body, "attached:      control\n") {
+		t.Errorf("detail popup mis-words a plain control attach:\n%s", body)
+	}
+
+	// A terminal task has no session, so the line is absent rather than a
+	// hollow "no control" about a session that does not exist.
+	done := taskWithSkills("claude", true)
+	done.Status = protocol.TaskStatus_Succeeded
+	if body := formatTaskDetail(done); strings.Contains(body, "attached:") {
+		t.Errorf("detail popup describes attachment on a finished task:\n%s", body)
+	}
+}

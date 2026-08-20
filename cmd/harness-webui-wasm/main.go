@@ -630,7 +630,7 @@ func connRemoteAddr(cid string) string {
 //	  runners:  [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
-//	              errorMsg}],
+//	              viewers, cowriters, errorMsg}],
 //	  conns:    [{cid, role, remoteAddr, principalTask, connectedAt, identified}],
 //	  forwards: [{forward_id, dir, task, spec, origin}]
 //	}>
@@ -715,6 +715,12 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// rides on the task, not on the runners array, because a
 					// confined caller is served zero runners — see handleList.
 					"skillsInjected": t.SkillsInjected(),
+					// Observers on the live session, split by what they can do.
+					// Independent of the Running/Detached status, which tracks
+					// only the CONTROL attach — a task watched through this
+					// UI's own preview reads Detached with viewers > 0.
+					"viewers":   float64(t.Viewers),
+					"cowriters": float64(t.Cowriters),
 					// Terminal-failure reason (e.g. "runner_disconnected"); empty
 					// for non-failed tasks. Rendered in red on the task card.
 					"errorMsg": string(t.ErrorMessage),

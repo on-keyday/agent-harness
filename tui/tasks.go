@@ -175,6 +175,15 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 	m.table.SetRows(rows)
 }
 
+// The observer counts (TaskInfo.viewers / .cowriters) deliberately have NO
+// column here. An eighth column does not fit: fitColumns floors every column at
+// minColWidth, so the cost is the COUNT, not the declared width, and at an
+// 80-cell terminal the tasks panel already spends its half on seven — adding
+// one puts the table back outside its frame, which is the bug columns.go
+// exists to fix (TestViewFitsTerminalWidth guards it). They are shown in the
+// `d` detail popup instead; the CLI row, ls --json and the WebUI carry them
+// unconditionally. Revisit only with width-conditional column sets.
+
 // repoCellWidth matches the Repo column width of the active column set; the
 // tree's wider ID column takes its space from Repo.
 func repoCellWidth(tree bool) int {

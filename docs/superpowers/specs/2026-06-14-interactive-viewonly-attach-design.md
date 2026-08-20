@@ -268,3 +268,51 @@ wasm-check`** + `go vet` + `go test` on the affected packages.
 - Watcher-count indicator (would need viewer-membership push to clients).
 - Auto-reconnect of dropped viewers.
 - Promoting a viewer to controller in place.
+
+## Amendment (2026-08-20) — the watcher count ships, and the reason it was deferred was wrong
+
+The first "out of scope" bullet, and the matching Non-goal at the top
+("Avoids pushing viewer membership changes to every client"), are withdrawn.
+**No push is required**, and that mistaken premise is what deferred the feature.
+
+`TaskInfo` already carries live-session telemetry the same way: `last_output_at`
+and `output_idle_ms` are not stored anywhere — `handleList` fills them from the
+live `SessionMux` on every snapshot, and clients already poll that snapshot.
+The observer counts ride the identical path. Nothing is pushed, nothing is
+stored, and no client learns anything between polls that it did not already
+learn about busy/idle.
+
+### What shipped
+
+- `viewerConn` gains `cowriter bool`; `SessionMux.ObserverCounts() (viewers,
+  cowriters int)` reports the two apart under one lock. `ViewerCount()` now
+  means viewers ONLY and delegates, so the two cannot disagree. The counts are
+  split rather than totalled because the kinds differ in what the observer can
+  DO — one discards input, the other forwards it to the runner.
+- `TaskInfo.viewers` / `.cowriters` (u16 each, appended). Live-only, like
+  `last_output_at`: never stored, never in the WAL, 0 when there is no session.
+- Display: CLI `ls` row as `cowrite=N viewer=N` (elided at zero — the status
+  column already says whether a session exists); `ls --json` / `session ls`
+  always carry both (0 is an answer, an absent key is not); the TUI `d` popup as
+  `attached: no control, 1 cowrite, 2 viewer`; the WebUI task row meta.
+- The parent-hop redaction (`redactParentTaskInfo`) does NOT strip them — it
+  runs before the live enrichment, deliberately, because liveness is what that
+  hop is for.
+
+### Deliberately NOT shipped: a TUI table column
+
+An eighth column does not fit. `fitColumns` floors every column at
+`minColWidth`, so the cost is the column COUNT, not its declared width, and at
+an 80-cell terminal the tasks panel already spends its half on seven —
+`TestViewFitsTerminalWidth` goes red. The TUI shows the counts in the `d` popup
+only. Revisit with width-conditional column sets, not by narrowing the column.
+
+### Why this matters more than "delight"
+
+The State machine section above is right that a viewer-only session stays
+**Detached**, and calls that the primary use case. What it does not say is that
+the operator surfaces then render such a session identically to an abandoned
+one. `Detached` answers "is a control attach present", and readers take it for
+"is anyone here" — the two diverge exactly in the case this feature was built
+for. The counts are the only thing that closes that gap, so they are not a
+nicety on top of view-only attach; they are the missing half of it.

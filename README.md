@@ -180,6 +180,13 @@ bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
 bin/harness-cli interactive --repo /abs/path/to/repo
+# Running vs Detached tracks ONLY the control attach (the sole writer). A
+# read-only viewer or an input-forwarding cowriter — the WebUI preview, a TUI
+# grid pane — takes no writer slot, so a session several people are watching
+# still reads Detached. `ls` therefore also shows `cowrite=N viewer=N` when
+# anyone is attached that way (`viewers` / `cowriters` in `ls --json` and
+# `session ls`, always present); the TUI `d` popup spells it out as
+# `attached: no control, 1 cowrite, 2 viewer`. Detached ≠ abandoned.
 
 # 6. File transfer against a running task's worktree (paths are confined
 # to the worktree root; `..` escapes are rejected).

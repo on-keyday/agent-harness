@@ -1498,8 +1498,9 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 	for i, t := range filteredTasks {
 		taskInfos[i] = toTaskInfo(t)
 		// Before the live-session enrichment below, never after: the parent row
-		// keeps its busy/idle signal — that is what the hop is for — and loses
-		// only the stored fields.
+		// keeps its live signals — busy/idle AND the observer counts, which the
+		// enrichment writes after this runs — because that liveness is what the
+		// hop is for. It loses only the stored fields.
 		if t.ID == redactedHex {
 			redactParentTaskInfo(&taskInfos[i])
 		}
@@ -1515,6 +1516,12 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 				taskInfos[i].OutputIdleMs = uint64(time.Since(time.Unix(0, lo)) / time.Millisecond)
 			}
 			taskInfos[i].RingBufferBytes = uint64(mux.RingBufferLen())
+			// Observers, split by kind. Read here rather than stored because
+			// they describe who is watching RIGHT NOW; a terminal task's
+			// observer set is not a fact that outlives its session.
+			v, cw := mux.ObserverCounts()
+			taskInfos[i].Viewers = uint16(v)
+			taskInfos[i].Cowriters = uint16(cw)
 		}
 	}
 	var body protocol.ListResultBody

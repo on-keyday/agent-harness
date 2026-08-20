@@ -105,3 +105,55 @@ func TestSessionLsCarriesSkillsInjected(t *testing.T) {
 		t.Errorf("session ls row dropped skills_injected: %s", buf.String())
 	}
 }
+
+// --- observer counts (viewers / cowriters) ---
+
+func taskWithObservers(status protocol.TaskStatus, viewers, cowriters uint16) protocol.TaskInfo {
+	t := taskWithProfile("claude", true)
+	t.Status = status
+	t.Viewers = viewers
+	t.Cowriters = cowriters
+	return t
+}
+
+// The motivating case: a Detached task being watched through the WebUI preview.
+// The status says "no control attached"; only these counts say anyone is there.
+func TestTaskLineShowsObserversOnDetached(t *testing.T) {
+	line := taskLine(taskWithObservers(protocol.TaskStatus_Detached, 2, 1), nil)
+	if !strings.Contains(line, "cowrite=1 viewer=2") {
+		t.Errorf("Detached row hides its observers, which is what makes it read as abandoned: %s", line)
+	}
+}
+
+// Elided when nobody is attached — the status column already says whether a
+// session exists, so a Running row with no pair means "nobody", not "unknown".
+func TestTaskLineElidesZeroObservers(t *testing.T) {
+	line := taskLine(taskWithObservers(protocol.TaskStatus_Running, 0, 0), nil)
+	if strings.Contains(line, "viewer=") || strings.Contains(line, "cowrite=") {
+		t.Errorf("row spends width on an all-zero pair: %s", line)
+	}
+}
+
+// JSON carries both unconditionally: 0 is a real answer there, and an absent
+// key would read as "not reported".
+func TestListJSONAlwaysCarriesObserverCounts(t *testing.T) {
+	body := &protocol.ListResultBody{}
+	body.SetTasks([]protocol.TaskInfo{taskWithObservers(protocol.TaskStatus_Running, 0, 0)})
+	var buf bytes.Buffer
+	renderListJSON(body, &buf)
+	out := buf.String()
+	if !strings.Contains(out, `"viewers":0`) || !strings.Contains(out, `"cowriters":0`) {
+		t.Errorf("zero counts must still appear as keys: %s", out)
+	}
+}
+
+func TestSessionLsCarriesObserverCounts(t *testing.T) {
+	body := &protocol.ListResultBody{}
+	body.SetTasks([]protocol.TaskInfo{taskWithObservers(protocol.TaskStatus_Detached, 3, 2)})
+	var buf bytes.Buffer
+	renderSessionsJSON(body, &buf)
+	out := buf.String()
+	if !strings.Contains(out, `"viewers":3`) || !strings.Contains(out, `"cowriters":2`) {
+		t.Errorf("session ls row dropped the observer counts: %s", out)
+	}
+}
