@@ -123,6 +123,39 @@ Worth noting for item 32's "fixed frames" clause, which already says
 popup/dialog WIDTH must derive from the viewport, never content. Height was
 not covered, and that is exactly the axis that broke.
 
+### 2026-08-20 `a280738` — per-capability scope (`--scope-for`): the TUI never sent it
+
+**No entry was made when the feature landed** (`32c2417`…`c8965b3`). That is the
+largest option-adding change in this log — a new spawn flag, a new wire field, a
+new display column on every surface — and precisely the shape the tallies said
+items 8, 9, 21, 22, 25, 26 and 27 were waiting for. The walk was not recorded,
+and this entry is reconstructed from what the operator hit afterwards.
+
+done (reconstructed, verified after the fact): 1, 2, 3, 6, 7, 8, 15, 17, 20, 22,
+         23, 25 (`scope_present`), 33, 34a, 35, 37
+missed:  **27** — its first firing, and a miss. `Overrides` was added to
+         `cli.SessionOpts` and copied by BOTH shared builders, so the item was
+         genuinely satisfied as written. But `SessionOpts` is a struct its
+         callers fill by hand: seven literals in `tui/`, and the six in
+         `interactive.go` predated the field. `session new --resume … --caps
+         spawn --scope-for spawn=global` therefore spawned with the bare scope.
+         `--caps` DID arrive, which made it read as a scope-parsing bug rather
+         than a dropped field. Item **28a was born here**: reaching the funnel is
+         not reaching the wire, and one input-surface cell hides N request
+         builds ("TUI cmdline" hides six). Fixed by collapsing all seven onto
+         `Authority.opts` with a test that fails when a second literal appears.
+missed:  **32** — first firing, also a miss. `OverridesLabel` prints
+         `spawn:global`; `ParseScopeFor` accepted only `spawn=global`; and the
+         label's own doc comment claimed ls output "can be pasted back as
+         flags". A serializer/parser pair with no round-trip test is exactly
+         what 32 exists to prevent, and the false claim sat in the comment that
+         should have prompted the test. Now accepts both spellings, with the
+         round trip asserted.
+
+Both defects were found by the operator using the feature, not by review — the
+same pattern as `c8965b3`, where the invariant this feature was built around
+was falsified by a live `ls`.
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -137,10 +170,16 @@ Update when adding an entry.
 | 33 (take effect or error) | 1 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. |
 | 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
+| 27 (shared funnel) | 1 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
+| 32 (one serializer, round-trip tested) | 1 | **1** | Same walk. The pair existed, the round trip was never asserted, and the doc comment asserted it in prose instead. A claim of "pasteable/round-trips" in a comment is the cue to write the test, not evidence there is one. |
+| 28a (follow the value to the request build) | 1 | 0 | New, born from 27's miss. |
 
-**Never fired yet:** 8, 9, 21, 22, 25, 26, 27, 29, 30. Too few walks to call
-any of them dead — revisit after a change that adds a spawn OPTION rather than
-a display field, which is what most of them are for.
+**Never fired yet:** 21, 26, 29, 30. Too few walks to call any of them dead —
+revisit after another change that adds a spawn OPTION rather than a display
+field, which is what most of them are for.
+
+(8, 9, 22 and 25 came off this list with the `--scope-for` entry above; 27
+came off it by MISSING, which is still a firing.)
 
 (33 was on this list until `aa4a1dd`. Keeping the two halves consistent is
 manual, so check the tallies against the entries when adding one — a log that

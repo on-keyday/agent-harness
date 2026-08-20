@@ -79,6 +79,56 @@ type Authority struct {
 	ScopePresent bool
 }
 
+// sessionRequest is the half of a session or submit request that is NOT the
+// authority: which runner, what to resume, how the PTY starts. It exists so
+// Authority.opts can be the one place in this package that builds a
+// cli.SessionOpts.
+//
+// Every call site names its fields. The two resume booleans are adjacent and
+// interchangeable to the compiler, and the Do* helpers already pass them
+// positionally through argument lists long enough to hide a swap.
+type sessionRequest struct {
+	Selector           protocol.RunnerSelector
+	ExtraArgs          []string
+	ResumeTaskID       string // hex; "" = fresh task
+	ResumeCapsOverride bool
+	ResumeConversation bool
+	AgentProfile       string
+	// InitialRows / InitialCols size a detached session's PTY at open time;
+	// both must be non-zero to take effect (cli.SessionOpts.InitialRows).
+	InitialRows uint16
+	InitialCols uint16
+}
+
+// opts folds an Authority and a sessionRequest into the cli.SessionOpts the
+// client takes. Every session and submit path in this package goes through
+// here, and TestSessionOptsIsBuiltInOnePlace fails if a second cli.SessionOpts
+// literal appears in the package.
+//
+// It exists because the comment on cli.SessionOpts.Overrides — "a field set in
+// one caller and missed in the others is the established failure mode on these
+// routes" — described this package while six literals in interactive.go were
+// dropping that exact field. `--scope-for` parsed, rode SessionNewAction and
+// spawnAuthority, and died at the request build, so every operator surface
+// reported the flag as supported while `session new` granted the bare scope.
+// A warning comment is not a mechanism.
+func (a Authority) opts(r sessionRequest) cli.SessionOpts {
+	return cli.SessionOpts{
+		Selector:           r.Selector,
+		ExtraArgs:          r.ExtraArgs,
+		ResumeTaskID:       r.ResumeTaskID,
+		ResumeCapsOverride: r.ResumeCapsOverride,
+		ResumeConversation: r.ResumeConversation,
+		AgentProfile:       r.AgentProfile,
+		InitialRows:        r.InitialRows,
+		InitialCols:        r.InitialCols,
+		Caps:               a.Caps,
+		Scope:              a.Scope,
+		Overrides:          a.Overrides,
+		ScopePresent:       a.ScopePresent,
+	}
+}
+
 func DoSubmit(c *cli.Client, repo, prompt string, auth Authority) tea.Cmd {
 	return DoSubmitWithOpts(c, repo, prompt, "", nil, "", auth, false, false, "")
 }
@@ -108,12 +158,11 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 		if err != nil {
 			return SubmitResultMsg{Err: fmt.Errorf("selector: %w", err), Echo: echo}
 		}
-		id, err := c.Submit(ctx, repo, prompt, cli.SessionOpts{
+		id, err := c.Submit(ctx, repo, prompt, auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: auth.Caps, Scope: auth.Scope, Overrides: auth.Overrides,
-			ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-		})
+		}))
 		if err != nil {
 			return SubmitResultMsg{Err: err, Echo: echo}
 		}

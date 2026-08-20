@@ -76,11 +76,11 @@ func DoOpenDetachableSession(c *cli.Client, repo string, selOpts cli.SelectorOpt
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
+		stream, taskID, err := c.OpenInteractive(context.Background(), repo, auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-		})
+		}))
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -121,21 +121,21 @@ func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []st
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractive(context.Background(), "", cli.SessionOpts{
+		stream, taskID, err := c.OpenInteractive(context.Background(), "", auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-		})
+		}))
 		if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
 			sel, err = cli.BuildSelector(cli.SelectorOpts{})
 			if err != nil {
 				return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 			}
-			stream, taskID, err = c.OpenInteractive(context.Background(), "", cli.SessionOpts{
+			stream, taskID, err = c.OpenInteractive(context.Background(), "", auth.opts(sessionRequest{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+				ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-			})
+			}))
 		}
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
@@ -160,11 +160,11 @@ func DoOpenX11Session(c *cli.Client, repo string, selOpts cli.SelectorOpts, extr
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, cli.SessionOpts{
+		stream, taskID, sp, warn, err := c.OpenInteractiveX11(context.Background(), repo, auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-		}, displayN)
+		}), displayN)
 		if err != nil {
 			return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 		}
@@ -204,11 +204,11 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
+		stream, taskID, err := c.OpenInteractive(context.Background(), repo, auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-		})
+		}))
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
 	}
 }
@@ -257,16 +257,16 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 		if err != nil {
 			return SessionStartedMsg{Err: fmt.Errorf("selector: %w", err)}
 		}
-		stream, taskID, err := c.OpenInteractive(context.Background(), repo, cli.SessionOpts{
+		stream, taskID, err := c.OpenInteractive(context.Background(), repo, auth.opts(sessionRequest{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 			// Nobody will attach to this session, so this is its only chance to
 			// get a PTY size at all; the TUI's own terminal is the best proxy
 			// available. Without it the session sits at 0x0 and a full-screen
 			// TUI inside it paints nothing.
 			InitialRows: size.Rows, InitialCols: size.Cols,
-		})
+		}))
 		if err != nil {
 			return SessionStartedMsg{Err: err}
 		}

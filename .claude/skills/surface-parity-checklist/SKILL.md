@@ -108,9 +108,35 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     (`cli.buildSubmitRequest` / `buildOpenInteractiveRequest` via
     `cli.SessionOpts`), never in one caller — native, wasm, and x11 all
     funnel through them, so a per-path field silently misses the other two.
+    **Reaching the funnel is not reaching the wire.** `cli.SessionOpts` is a
+    struct its callers fill by hand, so "the field is in SessionOpts and both
+    builders copy it" can be true while callers never set it — which is what
+    happened to `--scope-for`: seven hand-written `cli.SessionOpts{…}` literals
+    in `tui/`, six of them older than the field. This item passed. Item 28a is
+    the half it does not cover.
 28. Persistence — a new task field needs its `WALEvent` fields AND a
     decided replay meaning for records written before it existed (scope
     chose zero = subtree = old behaviour).
+
+28a. **Follow the value to the request build, and count the builds.** Items
+    1–10 check that a surface ACCEPTS the option; they stop at the parser.
+    For each surface that accepts it, grep every construction of the request
+    struct that surface reaches and confirm the field is set in each. One
+    checklist cell routinely hides several: "TUI cmdline" reaches SIX request
+    builds (`session new`, `session new -d`, `--x11`, `r`/`R` resume — pinned
+    AND its Any-selector retry — and `interactive`), plus `submit` on another
+    file. `--scope-for` parsed correctly, rode `SessionNewAction` and
+    `spawnAuthority`, and died at those six; every 1–10 cell read `done` and
+    the operator got a task with the bare scope. `--caps` arrived, which made
+    the loss look like a scope bug rather than a dropped field.
+    The fix that ends the class is a constructor, not a comment — the field's
+    doc comment already said "a field set in one caller and missed in the
+    others is the established failure mode on these routes". Give the struct
+    one builder (`Authority.opts`) and pin it with a test that fails when a
+    second literal appears (`tui/session_opts_test.go`), so the next authority
+    field cannot be added in one place and missed in six.
+    Cheap check when you cannot restructure: `grep -c 'TheStruct{'` per package
+    and diff it against the count of sites that set your new field.
 
 ## Conventions (each learned from a user complaint)
 

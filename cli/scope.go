@@ -252,8 +252,16 @@ const ScopeForFlagUsage = "narrow ONE capability (or a comma-separated list of t
 // scope. The left side takes the same comma-separated form as --caps, so a
 // grouped narrowing ("every write-ish bit gets descendants") is one flag
 // rather than one per bit.
+//
+// ':' is accepted in place of '=' because that is the separator OverridesLabel
+// prints, and ls output claims to be pasteable back as flags. Cutting on '='
+// first keeps the two unambiguous: a scope may itself contain ':' (ids:, but
+// never '='), so the fallback only ever fires on a label-spelled value.
 func ParseScopeFor(str string) (protocol.Capability, protocol.ScopeOverride, error) {
 	capsText, scopeText, ok := strings.Cut(str, "=")
+	if !ok {
+		capsText, scopeText, ok = strings.Cut(str, ":")
+	}
 	if !ok {
 		return 0, protocol.ScopeOverride{}, fmt.Errorf(
 			"--scope-for %q: want CAPS=SCOPE (e.g. exec_cowrite,file_write=descendants)", str)
@@ -293,8 +301,10 @@ func MergeScopeOverride(in []protocol.ScopeOverride, ov protocol.ScopeOverride) 
 	return append(in, ov), nil
 }
 
-// OverridesLabel renders an override list in the --scope-for spelling, joined
-// by spaces, so what ls prints can be pasted back as flags.
+// OverridesLabel renders an override list joined by spaces, so what ls prints
+// can be pasted back as --scope-for flags. It uses ':' rather than '=' to match
+// the '+ids:' / '+vis-ids:' separator of the --scope grammar it sits beside;
+// ParseScopeFor accepts both for exactly this reason.
 func OverridesLabel(in []protocol.ScopeOverride) string {
 	if len(in) == 0 {
 		return ""

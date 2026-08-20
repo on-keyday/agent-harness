@@ -674,6 +674,10 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		resume := fs.String("resume", "", "task id (32 hex) of a terminal interactive task to resume into a detachable session")
 		resumeConversation := fs.Bool("resume-conversation", false, "with --resume, also ask the runner to resume the agent's own conversation state")
 		detach := fs.Bool("detach", false, "start the session and immediately detach (run in background, print task id)")
+		// The CLI registers -d as a shorthand (cmd/harness-cli/session.go); an
+		// operator who learned the command there types it here and gets "flag
+		// provided but not defined".
+		fs.BoolVar(detach, "d", false, "shorthand for --detach")
 		host := fs.String("host", "", "pin to a runner by reported hostname (mutually exclusive with --runner / --ip)")
 		runner := fs.String("runner", "", "pin to a runner by 32-hex RunnerID (mutually exclusive with --host / --ip)")
 		ip := fs.String("ip", "", "pin to a runner by IP address (mutually exclusive with --host / --runner)")
