@@ -345,12 +345,18 @@ task hierarchy contains. Gating it on `visRank == global` would mix the two
 namespaces the same way the row-filter idea in Deferred does — which is why
 the board keeps a verb permission rather than inheriting a target-set rank.
 
-**Rename, same ordinal (1024).** `info_global` becomes `board_read`: it is
-exactly the set of kinds whose names it now matches, and it sits beside
-`BoardPurge`'s `Capability_Purge`. (`board_observe` is the more precise name —
-the bit is not needed to send, subscribe or read your own inbox, only to
-observe *other* topics, messages and subscribers — and is the better choice if
-the narrower reading should be obvious from the name.)
+**Rename to `board_read`, same ordinal (1024).** Decided. It names exactly the
+set of kinds it gates and sits beside `BoardPurge`'s `Capability_Purge`.
+
+`board_observe` was the runner-up and is the more literal description — the bit
+is not needed to send, to subscribe, or to read your own inbox, only to observe
+*other* topics, messages and subscribers. `board_read` wins on matching the
+kind names an operator already sees in `harness-cli board …`; the narrower
+reading belongs in the `caps` catalogue text, which must say what the bit does
+**not** gate:
+
+> `board_read` — list board topics, read a topic's retained messages, and list
+> its subscribers. Not required to send, subscribe, or read your own inbox.
 
 Nothing about the rename touches the wire: capabilities persist to the WAL as a
 bitmask, not by name, so no record migrates. What changes is the generated
