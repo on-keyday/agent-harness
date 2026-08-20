@@ -7,9 +7,11 @@ import "testing"
 // buffer and leftover bytes. These tests assert that skew is a hard, visible
 // failure rather than a silent misparse, in both directions.
 
-// A pre-scope SubmitRequest payload is one TaskScope short. TaskScope encodes
-// as base(1) + ids_len(2) with no ids, so trimming three bytes reproduces what
-// an older client would send.
+// A pre-scope SubmitRequest payload is one TaskScope short. An empty TaskScope
+// encodes as base(1) + vis_base(1) + flags(1) + vis_ids_len(2) + ids_len(2) =
+// seven bytes, plus the overrides_len(1) that rides beside it — so trimming
+// eight reproduces what a client from before the per-capability change sends.
+// (It was three bytes when TaskScope was base + ids_len alone.)
 func TestSubmitRequestRejectsPreScopePayload(t *testing.T) {
 	var req SubmitRequest
 	req.SetRepoPath([]byte("/r"))
@@ -18,11 +20,11 @@ func TestSubmitRequestRejectsPreScopePayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	if len(buf) < 4 {
+	if len(buf) < 9 {
 		t.Fatalf("encoded payload is implausibly short (%d bytes)", len(buf))
 	}
 	var got SubmitRequest
-	if err := got.DecodeExact(buf[:len(buf)-3]); err == nil {
+	if err := got.DecodeExact(buf[:len(buf)-8]); err == nil {
 		t.Fatal("a pre-scope payload decoded; want a short-buffer error")
 	}
 }
@@ -113,6 +115,100 @@ func TestSetCapsRequestPresenceBitsRoundTrip(t *testing.T) {
 	}
 	if got.Caps != Capability_Spawn || got.Scope.Base != ScopeBase_None {
 		t.Fatalf("payload = caps %v scope %v", got.Caps, got.Scope.Base)
+	}
+}
+
+// Every field added by the per-capability change must have a zero value that
+// reproduces the pre-change reading: visibility follows the action base, self
+// is in the action set, both id lists empty. An all-zeros TaskScope is the old
+// default exactly, which is what makes legacy WAL records and absent scopes
+// legal without a migration.
+func TestTaskScopeZeroValueIsPreChangeDefault(t *testing.T) {
+	var s TaskScope
+	if s.Base != ScopeBase_Subtree {
+		t.Errorf("Base = %v, want subtree", s.Base)
+	}
+	if s.VisBasePresent() {
+		t.Error("VisBasePresent = true; visibility must follow the action base")
+	}
+	if s.ExcludeSelf() {
+		t.Error("ExcludeSelf = true; self was unconditional before this change")
+	}
+	if len(s.Ids) != 0 || len(s.VisIds) != 0 {
+		t.Errorf("ids = %d, vis_ids = %d, want both empty", len(s.Ids), len(s.VisIds))
+	}
+}
+
+// The two new flags share a byte with the reserved bits and must round-trip
+// independently — the same property the SetCapsRequest presence bits have.
+func TestTaskScopeVisibilityFlagsRoundTrip(t *testing.T) {
+	in := TaskScope{Base: ScopeBase_None, VisBase: ScopeBase_Global}
+	in.SetVisBasePresent(true)
+	in.SetExcludeSelf(true)
+	buf, err := in.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got TaskScope
+	if err := got.DecodeExact(buf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Base != ScopeBase_None || got.VisBase != ScopeBase_Global {
+		t.Errorf("bases = %v / %v, want none / global", got.Base, got.VisBase)
+	}
+	if !got.VisBasePresent() || !got.ExcludeSelf() {
+		t.Errorf("flags = vis_present %v, exclude_self %v; both should survive",
+			got.VisBasePresent(), got.ExcludeSelf())
+	}
+}
+
+// An override is a capability MASK plus a scope. Two bits in one entry is the
+// point — "every write-ish bit gets the same narrowing" must cost one entry,
+// not one per bit.
+func TestScopeOverrideCarriesAMask(t *testing.T) {
+	in := ScopeOverride{
+		Caps: Capability_ExecCowrite | Capability_FileWrite,
+		Base: ScopeBase_Subtree,
+	}
+	in.SetExcludeSelf(true)
+	buf, err := in.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got ScopeOverride
+	if err := got.DecodeExact(buf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Caps != (Capability_ExecCowrite | Capability_FileWrite) {
+		t.Errorf("caps = %v, want both bits", got.Caps)
+	}
+	if got.Base != ScopeBase_Subtree || !got.ExcludeSelf() {
+		t.Errorf("base = %v, exclude_self = %v", got.Base, got.ExcludeSelf())
+	}
+}
+
+// The override list rides beside the scope on every format that carries one.
+func TestSubmitRequestCarriesOverrides(t *testing.T) {
+	var req SubmitRequest
+	req.SetRepoPath([]byte("/r"))
+	req.SetPrompt([]byte("p"))
+	req.Scope = TaskScope{Base: ScopeBase_Subtree}
+	req.Overrides = []ScopeOverride{{Caps: Capability_Cancel, Base: ScopeBase_None}}
+	req.OverridesLen = uint8(len(req.Overrides))
+
+	buf, err := req.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got SubmitRequest
+	if err := got.DecodeExact(buf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.OverridesLen != 1 || len(got.Overrides) != 1 {
+		t.Fatalf("overrides = %d / %d, want one", got.OverridesLen, len(got.Overrides))
+	}
+	if got.Overrides[0].Caps != Capability_Cancel {
+		t.Errorf("override caps = %v, want cancel", got.Overrides[0].Caps)
 	}
 }
 

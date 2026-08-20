@@ -573,7 +573,7 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 		return
 	}
 
-	// Gate: callers without Capability_InfoGlobal do not get the topic list.
+	// Gate: callers without Capability_BoardObserve do not get the topic list.
 	// This prevents agents from enumerating all board topics (visibility scope).
 	//
 	// The refusal is carried as Status_Denied, not as the empty list alone: an
@@ -581,7 +581,7 @@ func (s *Server) agentHandleListTopics(conn ConnHandle, ac *agentConn, req *agen
 	// confined agent debugging "my messages aren't arriving" read the collapsed
 	// form as "nobody is subscribed". Topics stays empty either way — Status is
 	// the only thing that separates the two.
-	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_InfoGlobal) {
+	if !hasCap(s.agentCallerCaps(ac), protocol.Capability_BoardObserve) {
 		slog.Warn("agentHandleListTopics: caller lacks InfoGlobal; denying",
 			"task_id", func() string {
 				_, tid, _, _ := ac.state.Identity()

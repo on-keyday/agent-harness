@@ -360,7 +360,7 @@ func New(cfg Config) *Server {
 			if isOperator {
 				return true
 			}
-			if hasCap(s.taskHandler.callerCaps(subCIDStr), protocol.Capability_InfoGlobal) {
+			if hasCap(s.taskHandler.callerCaps(subCIDStr), protocol.Capability_BoardObserve) {
 				return true
 			}
 			// Confined subscriber: allowed only if this conn is visible in their subtree.
@@ -1045,7 +1045,7 @@ func (s *Server) RegisteredRunners() []RunnerEntry {
 // and the runner registry (CID → ConnRole_Runner).
 //
 // viewerTaskID is the principal TaskID of the caller (zero = operator).
-// hasInfoGlobal is true when the caller holds Capability_InfoGlobal.
+// hasInfoGlobal is true when the caller holds Capability_BoardObserve.
 // When !hasInfoGlobal and the viewer is not an operator (non-zero viewerTaskID),
 // only the caller's own connection and descendant agent connections are returned
 // (same subtree filter that visibleToCaller applies to ls).

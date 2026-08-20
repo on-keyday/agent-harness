@@ -56,7 +56,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 		newCaps = req.Caps
 	}
 	if req.ScopePresent() {
-		newScope = scopeFromWire(req.Scope)
+		newScope = scopeFromWire(req.Scope, req.Overrides)
 	}
 
 	after, ok := h.Tasks.SetCaps(targetHex, req.CapsPresent(), newCaps, req.ScopePresent(), newScope)

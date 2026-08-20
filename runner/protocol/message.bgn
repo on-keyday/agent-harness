@@ -548,6 +548,8 @@ format TaskInfo:
     agent_profile_len :u8   # named agent profile this task was launched under
     agent_profile :[agent_profile_len]u8  # (empty = runner default).
     scope :TaskScope        # which tasks this task's capabilities may target
+    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
+    overrides     :[overrides_len]ScopeOverride
     # Observers attached to this task's live session, split by what they can DO:
     # a viewer's input is discarded, a cowriter's is forwarded to the runner.
     # The CONTROL attach is neither — is_attached carries that, and only the
@@ -654,6 +656,8 @@ format SubmitRequest:
     # operator is global, so an inheriting default would hand global to every
     # task the operator spawns.
     scope :TaskScope
+    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
+    overrides     :[overrides_len]ScopeOverride
 
 # SubmitStatus indicates the outcome of a SubmitRequest.
 enum SubmitStatus:
@@ -843,6 +847,8 @@ format OpenInteractiveRequest:
     agent_profile :[agent_profile_len]u8
     # scope: same semantics as SubmitRequest.scope.
     scope :TaskScope
+    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
+    overrides     :[overrides_len]ScopeOverride
     # X11 block is on the wire ONLY when x11_enabled == 1 (no invisible bytes
     # when disabled).
     if x11_enabled == 1:
@@ -953,6 +959,8 @@ format WhoAmIResponse:
     creator_task_id   :TaskID
     capabilities      :Capability
     scope             :TaskScope
+    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
+    overrides     :[overrides_len]ScopeOverride
 # await_idle: one-shot idle-edge watch on an interactive session's PTY output.
 # Fires when now - last_output >= threshold (byte-level quiescence; measured
 # claude busy-side max gap is ~0.5s, so the 2500ms default has wide margin),
@@ -1090,6 +1098,8 @@ format SetCapsRequest:
     task_id    :TaskID
     caps       :Capability
     scope      :TaskScope
+    overrides_len :u8   # per-capability scope overrides; masks pairwise disjoint
+    overrides     :[overrides_len]ScopeOverride
     caps_present  :u1   # 1 = write caps;  0 = keep the persisted bitmask
     scope_present :u1   # 1 = write scope; 0 = keep the persisted scope
     cascade       :u1   # 1 = also clamp every descendant to the new authority
@@ -1508,7 +1518,17 @@ enum Capability:
     notify         = 0x080, "notify"
     prune          = 0x100, "prune"
     runner_admin   = 0x200, "runner_admin"
-    info_global    = 0x400, "info_global"
+    # board_observe keeps 0x400 -- it was info_global, which gated task
+    # visibility, connection visibility AND the agentboard enumeration
+    # surfaces. The first two moved to TaskScope.vis_base; this bit kept the
+    # third, because the board is keyed by topic and no task scope can bound
+    # it. The WAL persists the number, so no record migrates.
+    #
+    # "observe" rather than "read": the bit is not needed to send, to
+    # subscribe, or to read your own inbox -- only to observe OTHER agents'
+    # topics, messages and subscribers. An agent denied "board_read" would go
+    # debugging a messaging path that is working fine.
+    board_observe  = 0x400, "board_observe"
     # purge authorizes destroying an agentboard topic's retained-message ring
     # (agent purge --topic). Distinct from prune (which forgets TERMINAL TASK
     # records, self-scoped/benign): purge drops LIVE retained messages on a
@@ -1549,7 +1569,9 @@ enum Capability:
     all            = 0x7fff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
-# id list is unioned in. Self is always in the effective set regardless of base.
+# id list is unioned in. Self joins that union unless exclude_self removes it,
+# and it is in the VISIBILITY set unconditionally either way: seeing your own
+# row is orientation, not authority.
 enum ScopeBase:
     :u8
     # subtree is 0 deliberately. Three things read a zero and all three must
@@ -1571,9 +1593,43 @@ enum ScopeBase:
 # (none < subtree < global), NOT by numeric value, and an unrecognised byte
 # from a newer peer ranks as none so the failure is closed.
 format TaskScope:
-    base    :ScopeBase
-    ids_len :u16
-    ids     :[ids_len]TaskID
+    base             :ScopeBase
+    # Visibility rank. Read only when vis_base_present is 1, and MUST be 0 when
+    # it is 0 -- otherwise one authority has two encodings, which compare
+    # unequal and render differently. vis_base_present = 0 pins the pair to the
+    # diagonal, which is why every pre-change record is legal by construction.
+    vis_base         :ScopeBase
+    # 0 = {self} is in the ACTION set. Phrased negatively so the zero value is
+    # the old unconditional self; include_self would have replayed every legacy
+    # record into "cannot touch my own worktree".
+    exclude_self     :u1
+    vis_base_present :u1
+    reserved         :u6
+    # View-only extras: seen, never actionable. The one way to express "watch
+    # this sibling, touch nothing" without granting an action id and then
+    # overriding every bit to exclude it -- a form where one forgotten bit
+    # reaches it.
+    vis_ids_len      :u16
+    vis_ids          :[vis_ids_len]TaskID
+    ids_len          :u16
+    ids              :[ids_len]TaskID
+
+# One override: a capability MASK and the scope those bits resolve through.
+# Masks within one list are pairwise disjoint (validated where the value is
+# written), so override(cap) is a lookup and never needs a precedence rule.
+#
+# Not a nested TaskScope: an override has no visibility of its own, so nesting
+# would carry vis_* fields that must be validated as always-zero. An override
+# narrows on the base axis only -- it may name ids outside the base set,
+# because a granted id was disclosed by the granter and joins the visibility
+# set, while a wider BASE would reach targets nobody named.
+format ScopeOverride:
+    caps         :Capability
+    base         :ScopeBase
+    exclude_self :u1
+    reserved     :u7
+    ids_len      :u16
+    ids          :[ids_len]TaskID
 
 enum OpenPortForwardStatus:
     :u8

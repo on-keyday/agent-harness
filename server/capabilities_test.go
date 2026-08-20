@@ -582,7 +582,7 @@ func TestVisibleSubtree(t *testing.T) {
 
 	// Now give B InfoGlobal → all=true.
 	h.Tasks.mu.Lock()
-	h.Tasks.tasks[bHex].Capabilities = protocol.Capability_InfoGlobal
+	h.Tasks.tasks[bHex].Capabilities = protocol.Capability_BoardObserve
 	h.Tasks.mu.Unlock()
 
 	all2, _ := h.visibleToCaller("b-conn")
@@ -851,7 +851,7 @@ func TestListRunnersGatedByInfoGlobal(t *testing.T) {
 	}
 
 	// -- Case 3: confined caller WITH InfoGlobal sees both runners ---
-	h.Tasks.tasks[aHex].Capabilities = protocol.Capability_InfoGlobal
+	h.Tasks.tasks[aHex].Capabilities = protocol.Capability_BoardObserve
 	igConn := &fakeConn{
 		id:               objproto.MustParseConnectionID("ws:127.0.0.1:9820-3"),
 		nextSendStreamID: 12,
@@ -1054,7 +1054,7 @@ func TestTopicsGated(t *testing.T) {
 
 	// Case 2: with InfoGlobal → topics returned.
 	t.Run("info_global_sees_topics", func(t *testing.T) {
-		s, ac := makeTestAgentConn(t, protocol.Capability_InfoGlobal)
+		s, ac := makeTestAgentConn(t, protocol.Capability_BoardObserve)
 		publishToBoard(t, s.Board)
 		conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9820-2")}
 		req := &agentboard.ListTopicsRequest{RequestId: 2}
@@ -1204,7 +1204,7 @@ func TestRequiredCap_BoardSubscribers(t *testing.T) {
 	if !ok {
 		t.Fatal("board_subscribers missing from requiredCap; an ungated kind is reachable by any helloed agent")
 	}
-	if got != protocol.Capability_InfoGlobal {
+	if got != protocol.Capability_BoardObserve {
 		t.Errorf("cap = %v, want InfoGlobal (matching board_topics / board_read)", got)
 	}
 }
@@ -1219,7 +1219,7 @@ func scopeFixture(t *testing.T) (h *TaskHandler, p, c, g, u string) {
 	// Deliberately NOT Capability_All: that includes info_global, which makes
 	// visibleToCaller answer all=true and quietly voids every scope assertion
 	// below. Tests that want it grant it explicitly.
-	caps := protocol.Capability_All &^ protocol.Capability_InfoGlobal
+	caps := protocol.Capability_All &^ protocol.Capability_BoardObserve
 	mk := func(prompt string, creator protocol.TaskID) string {
 		return h.Tasks.Create("/r", prompt, protocol.TaskKind_Oneshot,
 			protocol.ClientKind_Agent, creator, "", protocol.RunnerSelector{},
@@ -1317,7 +1317,7 @@ func TestAuthorizeRequiresBothCapAndScope(t *testing.T) {
 func TestInfoGlobalWidensVisibilityNotAction(t *testing.T) {
 	h, _, c, _, u := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
-	h.Tasks.SetCaps(c, true, protocol.Capability_InfoGlobal|protocol.Capability_Cancel, false, Scope{}) //nolint:errcheck
+	h.Tasks.SetCaps(c, true, protocol.Capability_BoardObserve|protocol.Capability_Cancel, false, Scope{}) //nolint:errcheck
 
 	if all, _ := h.visibleToCaller(cid); !all {
 		t.Error("info_global did not widen visibility")

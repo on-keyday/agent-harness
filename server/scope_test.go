@@ -35,7 +35,7 @@ func TestMinScopeBaseRanksByPermissiveness(t *testing.T) {
 func TestScopeWireRoundTripNormalises(t *testing.T) {
 	a, b := hexID(0xa), hexID(0xb)
 	in := Scope{Base: protocol.ScopeBase_None, IDs: []string{b, a, a}}
-	got := scopeFromWire(in.toWire())
+	got := scopeFromWire(in.toWire(), in.overridesToWire())
 	if got.Base != protocol.ScopeBase_None {
 		t.Fatalf("base = %v, want none", got.Base)
 	}
@@ -53,7 +53,7 @@ func TestScopeFromWireDropsMalformedIDs(t *testing.T) {
 	if w.IdsLen != 1 || len(w.Ids) != 1 {
 		t.Fatalf("IdsLen = %d, want 1 (short and empty hex dropped)", w.IdsLen)
 	}
-	if got := scopeFromWire(w); len(got.IDs) != 1 || got.IDs[0] != hexID(1) {
+	if got := scopeFromWire(w, nil); len(got.IDs) != 1 || got.IDs[0] != hexID(1) {
 		t.Fatalf("round trip = %v, want [%s]", got.IDs, hexID(1))
 	}
 }

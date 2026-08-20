@@ -62,7 +62,7 @@ type BoardSubscriberRow struct {
 // BoardSubscribers lists each task's agentboard subscription set. A non-empty
 // topic narrows the result to the tasks a publish to that topic would reach;
 // each returned row still carries its full pattern set. Requires
-// Capability_InfoGlobal, like BoardTopics / BoardRead.
+// Capability_BoardObserve, like BoardTopics / BoardRead.
 //
 // Rows are sorted by task id here rather than on the board: Board.ListSubscribers
 // iterates a map and declares its order unspecified, and stable output is a
@@ -101,7 +101,7 @@ func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSub
 
 // BoardTopics lists every topic currently held in the board with aggregate
 // metadata (last seq, last publish time, message count). Requires the caller
-// to hold Capability_InfoGlobal; operator connections (ClientKind_Cli with no
+// to hold Capability_BoardObserve; operator connections (ClientKind_Cli with no
 // principal task) hold Capability_All and pass this gate unconditionally.
 func (c *Client) BoardTopics(ctx context.Context) ([]BoardTopicRow, error) {
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_BoardTopics}

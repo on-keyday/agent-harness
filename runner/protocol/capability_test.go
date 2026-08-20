@@ -17,7 +17,7 @@ func TestCapabilityBits(t *testing.T) {
 	or := Capability_Spawn | Capability_Cancel | Capability_ExecControl |
 		Capability_FileRead | Capability_FileWrite | Capability_ForwardLocal |
 		Capability_ForwardRemote | Capability_Notify | Capability_Prune |
-		Capability_RunnerAdmin | Capability_InfoGlobal | Capability_Purge |
+		Capability_RunnerAdmin | Capability_BoardObserve | Capability_Purge |
 		Capability_ExecView | Capability_ExecCowrite | Capability_ExecResize
 	if or != Capability_All {
 		t.Fatalf("OR of bits = %#x, want All = %#x", uint32(or), uint32(Capability_All))

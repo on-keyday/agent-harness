@@ -35,10 +35,10 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_PruneTasks:       protocol.Capability_Prune,
 	protocol.TaskControlKind_Notify:           protocol.Capability_Notify,
 	protocol.TaskControlKind_DialRunner:       protocol.Capability_RunnerAdmin,
-	protocol.TaskControlKind_BoardTopics:      protocol.Capability_InfoGlobal,
-	protocol.TaskControlKind_BoardRead:        protocol.Capability_InfoGlobal,
+	protocol.TaskControlKind_BoardTopics:      protocol.Capability_BoardObserve,
+	protocol.TaskControlKind_BoardRead:        protocol.Capability_BoardObserve,
 	protocol.TaskControlKind_BoardPurge:       protocol.Capability_Purge,
-	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_InfoGlobal,
+	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_BoardObserve,
 	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
 }
 
@@ -145,7 +145,7 @@ func descendantsOf(children map[string][]string, selfHex string, allowed map[str
 //   - otherwise allowed = {self} ∪ scope.IDs, plus every descendant when the
 //     base is subtree.
 //
-// It deliberately does NOT consult Capability_InfoGlobal. That bit widens what
+// It deliberately does NOT consult Capability_BoardObserve. That bit widens what
 // may be SEEN; folding it in here would make it widen what may be DONE, and a
 // caller holding info_global and cancel would be able to kill anything on the
 // server. visibleToCaller is the wrapper that adds it.
@@ -255,14 +255,14 @@ func (h *TaskHandler) callerScopeBase(connID string) protocol.ScopeBase {
 }
 
 // visibleToCaller is the INFO scope: the action set widened by
-// Capability_InfoGlobal. ls, task logs, the port-forward list and the conns
+// Capability_BoardObserve. ls, task logs, the port-forward list and the conns
 // filter call it exactly as before and inherit the scope with no change of
 // their own.
 func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool) {
 	if h.lookupPrincipal(connID).Id == ([16]byte{}) {
 		return true, nil
 	}
-	if hasCap(h.callerCaps(connID), protocol.Capability_InfoGlobal) {
+	if hasCap(h.callerCaps(connID), protocol.Capability_BoardObserve) {
 		return true, nil
 	}
 	return h.scopeSet(connID)

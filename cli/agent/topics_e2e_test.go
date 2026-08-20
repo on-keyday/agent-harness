@@ -31,7 +31,7 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	board.Registry().Register(ridA, tidA, ticketA)
 	board.Registry().Register(ridB, tidB, ticketB)
 
-	// Inject TaskStore entries so agentCallerCaps can resolve Capability_InfoGlobal.
+	// Inject TaskStore entries so agentCallerCaps can resolve Capability_BoardObserve.
 	// In production, every agentboard agent has a TaskStore entry created at task
 	// spawn time (sendAssign). The E2E test bypasses that path, so we replay a
 	// synthetic task_created event here to make the gate work the same way.
@@ -39,12 +39,12 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tidA.Id[:]),
-			Capabilities: uint32(protocol.Capability_InfoGlobal),
+			Capabilities: uint32(protocol.Capability_BoardObserve),
 		},
 		{
 			Type:         "task_created",
 			TaskID:       hex.EncodeToString(tidB.Id[:]),
-			Capabilities: uint32(protocol.Capability_InfoGlobal),
+			Capabilities: uint32(protocol.Capability_BoardObserve),
 		},
 	})
 
@@ -65,7 +65,7 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 	}
 	restoreA()
 
-	// B lists topics — requires Capability_InfoGlobal (now injected above).
+	// B lists topics — requires Capability_BoardObserve (now injected above).
 	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
 	defer restoreB()
 	var out bytes.Buffer
@@ -85,7 +85,7 @@ func TestAgentCLI_E2E_Topics(t *testing.T) {
 }
 
 // TestAgentCLI_E2E_Topics_NoInfoGlobal verifies that an agent whose TaskStore
-// entry lacks Capability_InfoGlobal receives an empty topic list from the gate.
+// entry lacks Capability_BoardObserve receives an empty topic list from the gate.
 func TestAgentCLI_E2E_Topics_NoInfoGlobal(t *testing.T) {
 	addr := freePortE2E(t)
 	board, srv := startServerE2E(t, addr)

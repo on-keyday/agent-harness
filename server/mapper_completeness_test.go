@@ -57,7 +57,17 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		Capabilities:  protocol.Capability_All,
 		// Non-default on purpose: the default scope is the ZERO TaskScope, so a
 		// mapper that forgot Scope would still pass against defaultScope().
-		Scope:           Scope{Base: protocol.ScopeBase_None, IDs: []string{"00112233445566778899aabbccddeeff"}},
+		// Every axis non-default on purpose: the pre-change reading is the ZERO
+		// value of each new field, so a mapper that forgot one would still pass
+		// against a scope that only set Base.
+		Scope: Scope{
+			Base: protocol.ScopeBase_None, IDs: []string{"00112233445566778899aabbccddeeff"},
+			VisBase: protocol.ScopeBase_Global, VisBasePresent: true,
+			ExcludeSelf: true, VisIDs: []string{"aabbccddeeff00112233445566778899"},
+			Overrides: []ScopeOverride{{
+				Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None,
+			}},
+		},
 		AgentProfile:    "codex",
 		Status:          protocol.TaskStatus_Running,
 		AssignedTo:      "ws:127.0.0.1:8539-1",
@@ -156,7 +166,13 @@ func TestWhoamiResponseMapsEveryField(t *testing.T) {
 	// A grandchild: non-zero principal AND non-zero creator.
 	child := h.Tasks.Create("/r", "gc", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
 		hexToTaskID(t, c), "", protocol.RunnerSelector{}, nil,
-		protocol.Capability_Spawn, Scope{Base: protocol.ScopeBase_None}, "")
+		protocol.Capability_Spawn, Scope{
+			Base: protocol.ScopeBase_None,
+			// Non-zero on every axis for the same reason as toTaskInfo's fixture.
+			VisBase: protocol.ScopeBase_Global, VisBasePresent: true, ExcludeSelf: true,
+			VisIDs:    []string{"aabbccddeeff00112233445566778899"},
+			Overrides: []ScopeOverride{{Caps: protocol.Capability_Spawn, Base: protocol.ScopeBase_None}},
+		}, "")
 	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9960-1")}
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)

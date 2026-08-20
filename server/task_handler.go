@@ -592,6 +592,8 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			CreatorTaskId:   creator,
 			Capabilities:    caps,
 			Scope:           scope.toWire(),
+			Overrides:       scope.overridesToWire(),
+			OverridesLen:    uint8(len(scope.Overrides)),
 		})
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
@@ -675,7 +677,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	// for this scope does not depend on which runners happen to be up, and
 	// resolving first would answer no_runner to a request that is malformed
 	// either way.
-	scope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
+	scope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
 	if !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte("scope id " + offender + " is outside your own scope"))
@@ -769,7 +771,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	// resume_caps_override, scope behind scope_present — same shape as
 	// SetCapsRequest. Validated up front for the same reason as the fresh
 	// path, but only when the scope will actually be written.
-	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
+	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
 	if req.ScopePresent() && !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
 		resp.SetErrorMsg([]byte("scope id " + offender + " is outside your own scope"))
@@ -992,7 +994,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Tasks.Create. The downstream stream-allocation + open_exec block is
 	// shared between the two paths.
 	// Validated before runner resolution — see handleSubmit.
-	reqScope, _, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope))
+	reqScope, _, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
 	if !scopeOK && (isZeroTaskID(req.ResumeTaskId) || req.ScopePresent()) {
 		// OpenInteractiveResponse has no error_msg field, so the status is the
 		// whole answer; the client names the ids it sent.
@@ -1607,7 +1609,7 @@ func (h *TaskHandler) handleListConns(conn ConnHandle, requestID uint32, connID 
 	// operator (zero principal) → all=true; InfoGlobal cap → all=true.
 	pid := h.lookupPrincipal(connID)
 	isOperator := pid.Id == ([16]byte{})
-	hasInfoGlobal := !isOperator && hasCap(h.callerCaps(connID), protocol.Capability_InfoGlobal)
+	hasInfoGlobal := !isOperator && hasCap(h.callerCaps(connID), protocol.Capability_BoardObserve)
 
 	conns := h.ConnListFn(pid, isOperator || hasInfoGlobal)
 
@@ -1784,6 +1786,8 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 		CreatorTaskId: t.CreatorTaskID,
 		Capabilities:  t.Capabilities,
 		Scope:         t.Scope.toWire(),
+		Overrides:     t.Scope.overridesToWire(),
+		OverridesLen:  uint8(len(t.Scope.Overrides)),
 		CreatedAt:     uint64(t.CreatedAt.UnixNano()),
 	}
 	info.SetRepoPath([]byte(t.RepoPath))
