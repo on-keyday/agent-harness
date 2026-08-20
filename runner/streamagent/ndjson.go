@@ -47,6 +47,20 @@ func (w *Writer) User(t UserTurn) error     { return w.Write(Msg{Kind: KindUser,
 func (w *Writer) Hello(h Hello) error       { return w.Write(Msg{Kind: KindHello, Hello: &h}) }
 func (w *Writer) Exit(e Exit) error         { return w.Write(Msg{Kind: KindExit, Exit: &e}) }
 
+// DecodeMsg parses one NDJSON line. It exists so a consumer that already has
+// line boundaries -- the runner's Auditor tap, which is handed raw payload
+// chunks rather than a stream -- can decode without standing up a Reader.
+func DecodeMsg(line []byte) (Msg, error) {
+	var m Msg
+	if err := json.Unmarshal(line, &m); err != nil {
+		return Msg{}, fmt.Errorf("malformed line: %w", err)
+	}
+	if m.V != 0 && m.V != ProtocolVersion {
+		return Msg{}, fmt.Errorf("protocol version %d, this build speaks %d", m.V, ProtocolVersion)
+	}
+	return m, nil
+}
+
 // Reader decodes Msgs from a stream.
 type Reader struct{ sc *bufio.Scanner }
 
@@ -73,14 +87,7 @@ func (r *Reader) Next() (Msg, error) {
 		if len(trimSpace(line)) == 0 {
 			continue
 		}
-		var m Msg
-		if err := json.Unmarshal(line, &m); err != nil {
-			return Msg{}, fmt.Errorf("malformed line: %w", err)
-		}
-		if m.V != 0 && m.V != ProtocolVersion {
-			return Msg{}, fmt.Errorf("protocol version %d, this build speaks %d", m.V, ProtocolVersion)
-		}
-		return m, nil
+		return DecodeMsg(line)
 	}
 }
 

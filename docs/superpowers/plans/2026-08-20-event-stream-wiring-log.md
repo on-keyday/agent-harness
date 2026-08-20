@@ -277,3 +277,48 @@ tests keep their value, but the transport must be replaced with `agentexec`
 before any of it is wired for real. Recorded rather than quietly rewritten,
 because the reason it exists in the wrong shape — an unread assumption stated
 with the same confidence as a read fact — is the thing worth keeping.
+
+## 10. Interactive tasks have never reported an exit code
+
+Asked while reviewing entry 9: if `ExecuteCommandWithOption` always returns
+nil, where did the exit code come from until now?
+
+**Nowhere.** Read, then measured on a dummy harness: a `bash` session driven to
+`exit 3` reports
+
+```
+status = succeeded | exit_code = 0
+```
+
+The path: `waitFn()`'s `*exec.ExitError` goes into the errgroup, `gr.Wait()`
+returns it, `executeCommandImpl` logs it and returns `nil` unconditionally. So
+`handleOpenExec`'s
+
+```go
+if runErr != nil { tf.ExitCode = -1; tf.ErrorMessage = ...("interactive_error: ") }
+```
+
+can only fire when the process failed to START (pty.New, cmd.Start). Every
+interactive task that runs at all reports 0, and `TaskStore.Finish` maps
+`exit == 0` to **Succeeded**. The oneshot path is unaffected and correct —
+`Process.Run` reads `cmd.ProcessState.ExitCode()` / `*exec.ExitError` directly.
+
+**Two readings, and I do not think this one is mine to settle:**
+
+1. A bug. The dead `if runErr != nil` branch and its `interactive_error:`
+   message say the author expected a real error there.
+2. Deliberate. A detach sends SIGHUP and the agent exits non-zero; surfacing
+   that would mark every ordinary detach **Failed**, which is worse than
+   reporting 0. If that is the reason, the swallow is in the wrong layer —
+   it sits in objtrsf's generic exec rather than in the harness's policy — and
+   it is undocumented either way.
+
+Fixing it properly means changing `objtrsf/exec` to surface the wait error
+(return it, or add it to `Auditor.Exit`), which is a shared-module publish plus
+a go.mod bump, not a local edit.
+
+**What it means for this kind:** nothing to fix, by accident of design. The
+adapter reports its own exit in-band as a neutral `exit` message, so
+`StreamTask.Exit()` has a real code where the PTY kind has none — and the
+distinction the PTY kind cannot make (agent exited 3 vs client detached) is one
+this kind gets for free, because a detach is not an exit here at all.

@@ -1,45 +1,55 @@
 package runner
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"os"
+	"log/slog"
 	"os/exec"
 	"sync"
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
+	agentexec "github.com/on-keyday/objtrsf/exec"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// StreamTask runs an event-stream agent for one task: it spawns the adapter,
-// carries neutral NDJSON between the adapter and the server-allocated stream,
-// and keeps the pending-approval table.
+// StreamTask runs an event-stream agent for one task.
 //
-// It deliberately does NOT use agentexec. That package exists to splice a PTY,
-// and there is no PTY here — the precedent this follows is
-// handleOpenFileTransfer, which waits for the server-allocated stream and then
-// speaks its own protocol on it.
+// The transport is agentexec with ptyEnabled=false, NOT a hand-rolled framer.
+// The first version of this file said agentexec "exists to splice a PTY, and
+// there is no PTY here" and framed NDJSON onto the stream itself. That was
+// written without reading agentexec: ptyEnabled is a PARAMETER, and its false
+// branch is a plain exec.CommandContext whose stdout/stderr are wrapped into
+// FrameType_Stdout/Stderr and whose stdin is fed from FrameType_Stdin frames —
+// which is what the hand-rolled version did, except in a framing that neither
+// SessionMux nor the client's CommandExecutionStream speaks. The neutral NDJSON
+// rides inside Stdout frames and needs no new frame type, which also keeps the
+// standing rule that exec/frame is legacy and not extended.
 //
-// The three negatives from §2 of the design hold here and are worth stating
-// where they can be checked: this file does not parse vendor JSON (it reads the
-// NEUTRAL protocol, which is the runner's own), does not know the permission
-// sentinel, and does not decide approvals — it routes them and blocks.
+// What this file still owns, and agentexec deliberately does not: the
+// pending-approval table, the task-log rendering, and the adapter argv. Those
+// hang off ExecuteOption.Audit, which taps raw stdout/stdin payloads — the hook
+// that exists for exactly this and made a stream wrapper unnecessary.
+//
+// The three negatives from §2 of the design hold: this file does not parse
+// vendor JSON (it reads the NEUTRAL protocol, which is the runner's own), does
+// not know the permission sentinel, and does not decide approvals.
 type StreamTask struct {
-	// AdapterPath is the adapter binary. Read per task, not cached, so editing
-	// an adapter reaches the next task with no rebuild and no restart.
+	// AdapterPath is the adapter binary. Resolved per task, not cached, so
+	// editing an adapter reaches the next task with no rebuild and no restart.
 	AdapterPath string
-	// AgentArgv is the resolved agent command (bin + any sandbox wrapper),
-	// passed to the adapter after `--`.
+	// AgentArgv is the resolved agent command (bin plus any sandbox wrapper),
+	// passed to the adapter after `--`. When the runner resolved --agent-bin to
+	// agent-in-podman.sh this leaves the adapter outside the container and the
+	// agent inside.
 	AgentArgv []string
 	Dir       string
 	Env       []string
 	Prompt    string
 
 	ResumeConversation bool
+
+	Logger *slog.Logger
 
 	// LogSink receives rendered log lines in the same shape the oneshot path
 	// publishes, so `logs` and the log panes need no changes for this kind.
@@ -52,6 +62,7 @@ type StreamTask struct {
 
 	mu      sync.Mutex
 	pending map[string]streamagent.Request
+	exit    *streamagent.Exit
 }
 
 // Pending returns the requests currently awaiting an answer.
@@ -65,160 +76,77 @@ func (t *StreamTask) Pending() []streamagent.Request {
 	return out
 }
 
-// Run carries the session until the adapter exits or the stream closes.
-// stream is the server-allocated bidi stream: neutral NDJSON both ways.
-func (t *StreamTask) Run(ctx context.Context, stream io.ReadWriter) (int, error) {
-	if t.AdapterPath == "" {
-		return -1, fmt.Errorf("no stream adapter configured for this profile")
-	}
-	// Fail at start, loudly, rather than warn: §2's failure discipline. An
-	// unresolvable adapter with a warning would hand the task a silently
-	// agent-less run.
-	if _, err := exec.LookPath(t.AdapterPath); err != nil {
-		return -1, fmt.Errorf("stream adapter %q: %w", t.AdapterPath, err)
-	}
+// Exit is what the adapter reported on its way out, or nil if it never did.
+//
+// It is the ONLY exit signal available for this kind: ExecuteCommandWithOption
+// logs a failing errgroup and then returns nil unconditionally, so neither its
+// return value nor Auditor.Exit carries a non-zero agent exit on the normal
+// path. (handleOpenExec's `if runErr != nil` is dead for the same reason.) The
+// adapter reporting its own exit in-band is what makes the code observable.
+func (t *StreamTask) Exit() *streamagent.Exit {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.exit
+}
 
+// AdapterArgv is the command agentexec runs: the adapter, its own flags, then
+// `--` and the agent.
+func (t *StreamTask) AdapterArgv() []string {
 	argv := []string{t.AdapterPath, "--dir", t.Dir}
 	if t.Prompt != "" {
 		argv = append(argv, "--prompt", t.Prompt)
 	}
 	if t.ResumeConversation {
+		// An intent, not a vendor flag: the adapter picks the spelling.
 		argv = append(argv, "--resume-conversation")
 	}
 	argv = append(argv, "--")
-	argv = append(argv, t.AgentArgv...)
+	return append(argv, t.AgentArgv...)
+}
 
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
-	cmd.Dir = t.Dir
-	cmd.Env = append(os.Environ(), t.Env...)
-	adapterIn, err := cmd.StdinPipe()
-	if err != nil {
-		return -1, err
+func (t *StreamTask) logger() *slog.Logger {
+	if t.Logger != nil {
+		return t.Logger
 	}
-	adapterOut, err := cmd.StdoutPipe()
-	if err != nil {
-		return -1, err
+	return slog.Default()
+}
+
+// Run carries the session until the agent exits or the stream ends. stream is
+// the server-allocated bidi stream; agentexec closes it.
+//
+// Note what does NOT end this: a client detaching. The server holds the runner
+// stream for the task's whole life (server/session_mux.go), so an event-stream
+// task runs until it is cancelled, or until a client closes the agent's stdin
+// with a ZERO-LENGTH Stdin frame — the clean `finish`, which agentexec's
+// handleInput already implements and which the design had assumed did not
+// exist.
+func (t *StreamTask) Run(ctx context.Context, stream trsf.BidirectionalStream) error {
+	if t.AdapterPath == "" {
+		return fmt.Errorf("no stream adapter configured for this profile")
 	}
-	adapterErr, err := cmd.StderrPipe()
-	if err != nil {
-		return -1, err
-	}
-	if err := cmd.Start(); err != nil {
-		return -1, fmt.Errorf("start adapter: %w", err)
+	// Fail at start, loudly, rather than warn: §2's failure discipline. A warn
+	// would hand the task a silently agent-less run, which is the shape the
+	// vendor already has when its own flags are wrong.
+	if _, err := exec.LookPath(t.AdapterPath); err != nil {
+		return fmt.Errorf("stream adapter %q: %w", t.AdapterPath, err)
 	}
 
 	t.mu.Lock()
 	t.pending = map[string]streamagent.Request{}
+	t.exit = nil
 	t.mu.Unlock()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	// adapter → stream, with a tap for the log and the pending table.
-	go func() { defer wg.Done(); t.pumpOut(adapterOut, stream) }()
-	// The adapter's stderr is the AGENT's stderr, already passed through
-	// verbatim. It goes to the task log tagged, exactly as the oneshot path
-	// tags it, and never onto the neutral stream.
-	go func() { defer wg.Done(); t.pumpStderr(adapterErr) }()
-
-	// stream → adapter. Closing the adapter's stdin when this returns is what
-	// STARTS the teardown, and the ordering is load-bearing: an event-stream
-	// agent waits for another turn forever, so waiting for the process before
-	// closing its input deadlocks — the runner waits for the adapter, the
-	// adapter waits for its stdin, the agent waits for its own. Measured, as a
-	// 300-second test hang, before it was written this way.
-	// Not waited on. A plain io.Reader has no cancellable read, so this
-	// goroutine ends only when the STREAM ends -- which in the real system is
-	// the server closing it as the task finishes, and never on our own
-	// timeline. Waiting for it here deadlocks a cancelled task: the second
-	// hang measured while writing this, after the first was fixed.
-	go func() {
-		t.pumpIn(stream, adapterIn)
-		_ = adapterIn.Close()
-	}()
-
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
-
-	var waitErr error
-	select {
-	case waitErr = <-waitCh:
-		// The agent finished on its own (a one-shot-shaped prompt, or a crash).
-	case <-ctx.Done():
-		// The task was cancelled. This is the ORDINARY way an event-stream
-		// task ends: nothing else can end it, because a detach must not and
-		// the agent will not. See the wiring log for why that is a semantic
-		// this kind does not share with the other two.
-		_ = adapterIn.Close()
-		waitErr = <-waitCh
-	}
-	wg.Wait()
-	return exitStatus(waitErr), waitErr
+	argv := t.AdapterArgv()
+	return agentexec.ExecuteCommandWithOption(ctx, stream, t.logger(),
+		argv[0], argv[1:], t.Dir,
+		false, // no PTY: this kind is events, not a terminal
+		t.Env,
+		agentexec.ExecuteOption{Audit: &streamTap{task: t}})
 }
 
-func (t *StreamTask) pumpOut(adapterOut io.Reader, stream io.Writer) {
-	rd := streamagent.NewReader(adapterOut)
-	for {
-		m, err := rd.Next()
-		if err != nil {
-			return
-		}
-		switch m.Kind {
-		case streamagent.KindRequest:
-			if m.Request != nil {
-				t.mu.Lock()
-				t.pending[m.Request.ID] = *m.Request
-				n := len(t.pending)
-				t.mu.Unlock()
-				t.notifyPending(n)
-				t.log("[out]" + fmt.Sprintf("⏸ approval needed: %s (%s)", m.Request.Tool, m.Request.ID))
-			}
-		case streamagent.KindEvent:
-			if m.Event != nil {
-				t.log("[out]" + agentlog.Render(toAgentlog(*m.Event)))
-			}
-		case streamagent.KindExit:
-			if m.Exit != nil && m.Exit.Err != "" {
-				t.log("[err]adapter: " + m.Exit.Err)
-			}
-		}
-		// Everything is forwarded verbatim, including kinds this build does
-		// not act on: the runner is a router, and a client that understands a
-		// newer adapter must not be cut off by an older runner.
-		if err := writeLine(stream, m); err != nil {
-			return
-		}
-	}
-}
-
-func (t *StreamTask) pumpIn(stream io.Reader, adapterIn io.Writer) {
-	rd := streamagent.NewReader(stream)
-	for {
-		m, err := rd.Next()
-		if err != nil {
-			return
-		}
-		if m.Kind == streamagent.KindResponse && m.Response != nil {
-			t.mu.Lock()
-			_, known := t.pending[m.Response.ID]
-			delete(t.pending, m.Response.ID)
-			n := len(t.pending)
-			t.mu.Unlock()
-			if known {
-				t.notifyPending(n)
-				t.log("[out]" + fmt.Sprintf("▶ %s: %s", m.Response.ID, m.Response.Behavior))
-			}
-		}
-		if err := writeLine(adapterIn, m); err != nil {
-			return
-		}
-	}
-}
-
-func (t *StreamTask) pumpStderr(r io.Reader) {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64<<10), 8<<20)
-	for sc.Scan() {
-		t.log("[err]" + sc.Text())
+func (t *StreamTask) log(s string) {
+	if t.LogSink != nil {
+		t.LogSink([]byte(s + "\n"))
 	}
 }
 
@@ -228,25 +156,164 @@ func (t *StreamTask) notifyPending(n int) {
 	}
 }
 
-func (t *StreamTask) log(s string) {
-	if t.LogSink != nil {
-		t.LogSink([]byte(s + "\n"))
+// streamTap reads the neutral protocol as it passes, without being in its way.
+// It is an agentexec.Auditor: Stdout carries what the adapter wrote before it
+// was framed, Stdin what a client sent after it was unframed.
+//
+// Two constraints come from that interface and are not optional. The buffers
+// are REUSED by the caller, so anything retained past the call is copied; and
+// the methods are called concurrently from the stdout, stderr and stdin
+// goroutines, so each direction keeps its own line buffer under its own lock.
+type streamTap struct {
+	task *StreamTask
+
+	outMu  sync.Mutex
+	outBuf []byte
+
+	inMu  sync.Mutex
+	inBuf []byte
+}
+
+func (s *streamTap) Start(string, []string, bool) {}
+func (s *streamTap) Exit(error)                   {}
+
+func (s *streamTap) Stdout(data []byte) {
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
+	s.outBuf = appendLines(s.outBuf, data, s.onAdapterLine)
+}
+
+func (s *streamTap) Stdin(data []byte) {
+	s.inMu.Lock()
+	defer s.inMu.Unlock()
+	s.inBuf = appendLines(s.inBuf, data, s.onClientLine)
+}
+
+// Stderr is the AGENT's stderr, already passed through verbatim by the adapter.
+// It reaches the client as Stderr frames on its own; this copy goes to the task
+// log, tagged the way the oneshot path tags it.
+func (s *streamTap) Stderr(data []byte) {
+	for _, line := range splitLines(data) {
+		s.task.log("[err]" + line)
 	}
 }
 
-func writeLine(w io.Writer, m streamagent.Msg) error {
-	b, err := json.Marshal(m)
+// onAdapterLine is the adapter → client direction.
+func (s *streamTap) onAdapterLine(line []byte) {
+	m, err := streamagent.DecodeMsg(line)
 	if err != nil {
-		return err
+		// A line the runner cannot read still reaches the client untouched —
+		// it was already framed by the time this ran. Logging it is all the
+		// runner can honestly do; failing the task on a line it merely does not
+		// understand would make an adapter newer than the runner fatal.
+		s.task.log("[err]adapter line not understood: " + err.Error())
+		return
 	}
-	_, err = w.Write(append(b, '\n'))
-	return err
+	switch m.Kind {
+	case streamagent.KindRequest:
+		if m.Request == nil {
+			return
+		}
+		req := *m.Request
+		s.task.mu.Lock()
+		s.task.pending[req.ID] = req
+		n := len(s.task.pending)
+		s.task.mu.Unlock()
+		s.task.notifyPending(n)
+		s.task.log(fmt.Sprintf("[out]⏸ approval needed: %s (%s)", req.Tool, req.ID))
+	case streamagent.KindEvent:
+		if m.Event != nil {
+			s.task.log("[out]" + agentlog.Render(toAgentlog(*m.Event)))
+		}
+	case streamagent.KindExit:
+		if m.Exit != nil {
+			ex := *m.Exit
+			s.task.mu.Lock()
+			s.task.exit = &ex
+			s.task.mu.Unlock()
+			if ex.Err != "" {
+				s.task.log("[err]adapter: " + ex.Err)
+			}
+		}
+	}
 }
 
-// toAgentlog is toNeutral's inverse, so a neutral event renders through the
-// SAME Render the oneshot path uses and the two kinds' log lines cannot drift.
-// The round trip agentlog.Event → neutral → agentlog.Event is asserted in the
-// tests: if it were lossy, this kind's logs would quietly say less.
+// onClientLine is the client → adapter direction.
+func (s *streamTap) onClientLine(line []byte) {
+	m, err := streamagent.DecodeMsg(line)
+	if err != nil {
+		return // a client's malformed line is the adapter's to reject
+	}
+	if m.Kind != streamagent.KindResponse || m.Response == nil {
+		return
+	}
+	s.task.mu.Lock()
+	_, known := s.task.pending[m.Response.ID]
+	delete(s.task.pending, m.Response.ID)
+	n := len(s.task.pending)
+	s.task.mu.Unlock()
+	if !known {
+		return
+	}
+	s.task.notifyPending(n)
+	// NOTE: this fires when the answer was FORWARDED, not when the agent acted
+	// on it. There is no delivery ack in the protocol; see the wiring log.
+	s.task.log(fmt.Sprintf("[out]▶ %s: %s", m.Response.ID, m.Response.Behavior))
+}
+
+// appendLines accumulates data into buf and calls fn for each complete line,
+// returning the unconsumed remainder. Every line handed to fn is a fresh copy,
+// because the Auditor contract says the caller's buffers are reused.
+func appendLines(buf, data []byte, fn func([]byte)) []byte {
+	buf = append(buf, data...)
+	for {
+		i := indexNewline(buf)
+		if i < 0 {
+			return buf
+		}
+		line := make([]byte, i)
+		copy(line, buf[:i])
+		buf = buf[i+1:]
+		if len(line) > 0 {
+			fn(line)
+		}
+	}
+}
+
+func indexNewline(b []byte) int {
+	for i := range b {
+		if b[i] == '\n' {
+			return i
+		}
+	}
+	return -1
+}
+
+// splitLines is appendLines' one-shot form for stderr, which needs no
+// cross-call buffering: a partial trailing line is logged as-is rather than
+// held back, because a diagnostic that arrives late is worse than one that
+// arrives split.
+func splitLines(data []byte) []string {
+	var out []string
+	start := 0
+	for i := range data {
+		if data[i] == '\n' {
+			if i > start {
+				out = append(out, string(data[start:i]))
+			}
+			start = i + 1
+		}
+	}
+	if start < len(data) {
+		out = append(out, string(data[start:]))
+	}
+	return out
+}
+
+// toAgentlog is the adapter's toNeutral inverted, so a neutral event renders
+// through the SAME Render the oneshot path uses and the two kinds' log lines
+// cannot drift. The round trip is asserted in the tests: if it were lossy, this
+// kind's logs would quietly say less.
 func toAgentlog(e streamagent.Event) agentlog.Event {
 	out := agentlog.Event{
 		Text: e.Text, Tool: e.Tool, Args: e.Args, Result: e.Result,
@@ -277,15 +344,4 @@ func toAgentlog(e streamagent.Event) agentlog.Event {
 		}
 	}
 	return out
-}
-
-func exitStatus(err error) int {
-	if err == nil {
-		return 0
-	}
-	var ee *exec.ExitError
-	if errors.As(err, &ee) {
-		return ee.ExitCode()
-	}
-	return -1
 }
