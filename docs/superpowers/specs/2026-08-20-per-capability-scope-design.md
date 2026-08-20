@@ -480,19 +480,27 @@ stated explicitly, it is a legal and useful grant: read any session, act on
 nothing but self. Overrides are bounded by *visibility*, never by the action
 base.
 
-**Modifiers, orthogonal to the ranks.**
+**The modifiers do not interact with the rank pair.** Each does one thing, and
+none can turn a legal pair illegal or the reverse:
 
-| field | value | effect | notes |
-|---|---|---|---|
-| `exclude_self` | 0 | self in the action set | the default; today's unconditional `self` |
-| | 1 | self removed **from that action set only** | still visible; other bits unaffected |
-| `ids` | empty | — | |
-| | non-empty | adds action targets, and they become visible | clamped against the parent at grant time |
-| | non-empty **with `base=global`** | accepted, no effect | already covered by the base; a no-op, not an error |
-| `vis_ids` | empty | — | the common case |
-| | non-empty | adds view-only targets | the only way to see without acting |
-| | non-empty **with `visRank=global`** | accepted, no effect | same reasoning |
-| override mask | names an unheld bit | inert, retained | applies if `caps set` grants the bit later |
+- `exclude_self = 1` removes `self` from **one action set** — the one it is
+  written on. It never removes `self` from `visible`, and never affects another
+  capability.
+- `ids` adds action targets for that scope. They join `visible` automatically
+  (§2) and are clamped against the parent at grant time.
+- `vis_ids` adds view-only targets. It is the only way to see without acting.
+
+**Accepted, and deliberately not errors.** These read like mistakes. Each is a
+legal value that resolves to something already true, and rejecting them would
+turn a redundant grant into a failed spawn:
+
+| written | resolves to | why it is not rejected |
+|---|---|---|
+| `ids:X` with `base = global` | no change; `X` was already reachable | the writer may not know the base is global — a template that always names its target stays correct |
+| `vis_ids:X` with `visRank = global` | no change; `X` was already visible | same |
+| `vis_ids:X` where `X` is also an action id | no change; action ids are visible anyway | the two lists are written for different reasons and may legitimately overlap |
+| override mask naming a bit the task does not hold | inert, retained | a grant template outlives the mask it was written for; the bit may arrive later via `caps set` |
+| `base = none`, `exclude_self = 1`, no ids | the empty action set | "holds the bit, can point it at nothing" is a real state during a staged re-grant |
 
 **Every rejection, in one list.** A write (spawn or `caps set`) is refused with
 `scope_not_permitted`, naming the offending bit where one applies, iff:
@@ -512,10 +520,6 @@ render differently in `--json`, and disagree across a round-trip through a
 client that normalises. Requiring the canonical form makes the value's
 identity its bytes. It is the only rejection in the list that is not about what
 a task may do.
-
-**The empty action set is legal.** `base=none`, `exclude_self=1`, no ids: holds
-the bit, can point it at nothing. That is a real state during a staged re-grant
-and is left expressible rather than special-cased into an error.
 
 ## Wire, persistence, upgrade
 
