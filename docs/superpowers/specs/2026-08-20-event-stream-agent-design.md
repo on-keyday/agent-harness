@@ -477,6 +477,42 @@ round above. What the answers left open is narrower and no longer empirical:
   a display decision, not a protocol one, and the implementation plan decides
   it rather than leaving it to whoever writes the renderer.
 
+## Implementation status
+
+**The adapter half exists; nothing is wired to the runner.** Built first on
+purpose: §2's seam is the part that decides whether the rest is worth building,
+and it can be proven without touching the wire or the fleet.
+
+Shipped — `runner/streamagent` + `cmd/harness-stream-adapter`:
+
+- the neutral NDJSON protocol (`hello` / `event` / `request` / `response` /
+  `user` / `exit`) with a `protocol_version` in the hello
+- the claude adapter: appends the vendor flags itself, refuses an argv that
+  already names one, translates through `runner/agentlog` (so the neutral
+  vocabulary IS the proven one), owns the vendor↔neutral request-id mapping,
+  and carries `--resume-conversation` as an intent rather than a flag
+- the §1 extras rules, for the keys the neutrality table names
+- unit tests against a fake agent, each negative-controlled, plus a smoke run
+  against real claude: allow wrote the file, a second user turn ran on the same
+  process, deny did not write, exit 0
+
+**The schema is NOT in `.bgn` yet**, deliberately — see the package doc for the
+condition on that. The vocabulary is inherited from `agentlog`, but the extras
+rules and the approval types are new, and putting them on the wire before the
+shape is exercised buys a migration rather than a design. They move to `.bgn`
+the moment any of it reaches the server, a client or the WAL, and the Go
+structs are deleted in the same change rather than kept "for the adapter".
+
+Not started, and what the implementation plan has to cover: the runner side
+(framer, pending table, `pending=N` on the task, capability declaration on
+`RunnerHello`), the `TaskKind`, the verbs of §3 with their per-kind verdicts,
+and the three UIs.
+
+One observation from the smoke run that the plan should not rediscover:
+`tool_start` is emitted BEFORE the approval request for that tool, so a
+surface shows "Write starting" and then blocks. Count `pending` from requests,
+never from tool events.
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind

@@ -1,4 +1,4 @@
-CMDS := agent-runner harness-cli harness-server harness-tui
+CMDS := agent-runner harness-cli harness-server harness-tui harness-stream-adapter
 GOEXE := $(shell go env GOEXE)
 BIN_TARGETS := $(addsuffix $(GOEXE),$(addprefix bin/,$(CMDS)))
 
