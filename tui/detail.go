@@ -13,6 +13,16 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
+// scrollHint names the keys that scroll any viewport-backed pane here. It
+// deliberately does NOT mention PgUp/PgDn: those need an Fn combination on most
+// laptops, printed in faint legend on the key caps, and a footer that advertises
+// the one control the reader cannot find is worse than one that says nothing.
+// bubbles' viewport binds all of these out of the box — the keys always worked,
+// only the hint was pointing at the wrong ones.
+//
+// Shared by every pane that scrolls, so the wording cannot drift between them.
+const scrollHint = "space/f,b: page · d/u: half · j/k: line"
+
 // DetailPopup is a read-only popup that displays formatted details for a
 // selected runner or task row, and the `?` key list. Long fields (full repo
 // path, worktree dir, multi-line prompt) that the row table truncates are shown
@@ -94,7 +104,7 @@ func (d *DetailPopup) View() string {
 	header := HeaderStyle.Render(d.title)
 	hint := "Esc: close"
 	if d.overflow {
-		hint = "↑/↓ PgUp/PgDn scroll · Esc: close"
+		hint = scrollHint + " · Esc: close"
 	}
 	footer := FooterStyle.Render(hint)
 	return box.Render(header + "\n\n" + d.vp.View() + "\n\n" + footer)

@@ -522,7 +522,7 @@ func (m BoardModal) View() string {
 			msgList.WriteString("  " + boardEmptyReason(m.curFound) + "\n")
 		}
 		header := HeaderStyle.Render(fmt.Sprintf("topic: %s  (%d msgs)", m.curTopic, len(m.msgs)))
-		footer := FooterStyle.Render("↑/↓ select · PgUp/PgDn scroll · X: purge msg  r: re-read  Esc: back")
+		footer := FooterStyle.Render("↑/↓ select · " + scrollHint + " · X: purge msg  r: re-read  Esc: back")
 		return box.Render(header + "\n" + msgList.String() + "\n" + m.content.View() + statusLine + "\n" + footer)
 
 	case boardSubscribers:

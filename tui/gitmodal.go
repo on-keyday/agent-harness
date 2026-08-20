@@ -541,9 +541,6 @@ func (m GitModal) View() string {
 	if m.truncated {
 		notes = "  " + WarnStyle.Render("truncated")
 	}
-	// The scroll keys are spelled out because PgUp/PgDn need a Fn combination
-	// on most laptops, and f/b/d/u/space need no reaching.
-	const scrollHint = "space/f,b: page · d/u: half · j/k: line"
 	footerText := "↑/↓ select · Enter: show/enter · " + scrollHint + " · " +
 		modalKeys.GitSetBase + ": base · " +
 		modalKeys.GitStatus + ": status · " +

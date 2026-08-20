@@ -353,8 +353,11 @@ func TestDetailPopupScrollsWhenItOverflows(t *testing.T) {
 	d.SetSize(100, 24)
 
 	top := d.View()
-	if !strings.Contains(top, "scroll") {
-		t.Error("an overflowing popup does not offer scrolling in its footer")
+	// Assert the shared hint, not a magic word: the wording is deliberately
+	// laptop-reachable keys rather than "scroll", and a test that pins prose
+	// would fight the next improvement to it.
+	if !strings.Contains(top, scrollHint) {
+		t.Errorf("an overflowing popup does not offer scrolling in its footer:\n%s", top)
 	}
 	// The first group must be visible before anything is scrolled.
 	if !strings.Contains(top, "global") {
@@ -373,7 +376,38 @@ func TestDetailPopupHidesTheScrollHintWhenItFits(t *testing.T) {
 	var d DetailPopup = NewDetailPopup()
 	d.Open("tiny", "one line")
 	d.SetSize(100, 40)
-	if v := d.View(); strings.Contains(v, "scroll") {
+	if v := d.View(); strings.Contains(v, scrollHint) {
 		t.Errorf("a body that fits offered scrolling:\n%s", v)
+	}
+}
+
+// The keys the hint names must actually be the ones bound. bubbles' viewport
+// binds them; the bug was a footer pointing at PgUp/PgDn instead, which need an
+// Fn combination on most laptops and are printed in faint legend on the caps.
+func TestScrollHintNamesKeysThatWork(t *testing.T) {
+	if strings.Contains(scrollHint, "Pg") || strings.Contains(scrollHint, "pg") {
+		t.Errorf("the scroll hint advertises a page key that needs Fn on a laptop: %q", scrollHint)
+	}
+	var d DetailPopup = NewDetailPopup()
+	d.Open("keys", keyHelpBody())
+	d.SetSize(100, 24)
+	at := func() string { return d.View() }
+
+	for _, k := range []struct {
+		name string
+		msg  tea.KeyMsg
+	}{
+		{"j", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}},
+		{"space", tea.KeyMsg{Type: tea.KeySpace}},
+		{"f", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}}},
+		{"d", tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}}},
+	} {
+		d.Open("keys", keyHelpBody())
+		d.SetSize(100, 24)
+		before := at()
+		d, _ = d.Update(k.msg)
+		if at() == before {
+			t.Errorf("%q did not scroll the popup — the hint names a key that does nothing", k.name)
+		}
 	}
 }
