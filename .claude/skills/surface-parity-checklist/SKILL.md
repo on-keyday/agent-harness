@@ -261,3 +261,13 @@ When a defect ships through this checklist anyway: fix the defect AND add
 the number that would have caught it. The list grows by incident, and the
 1–N walk is renumbered — a stale N in reports is harmless; a skipped
 surface is not.
+
+**Then record it in `firing-log.md`, beside this file.** One entry per walk,
+listing only the items that came back `done`/`omitted` and — filled in later,
+when a defect surfaces — `missed`. Everything unlisted was `n/a`; writing
+that out would bury the signal. The log answers the two things this list
+cannot answer about itself: which items keep getting missed (their wording is
+wrong, not the walker), and which never fire at all (dead weight, and the
+`n/a` reflex is how the walk decays). It also records **walks that were
+skipped**, which is a fact about when the trigger fails to fire in practice
+rather than on paper — that has already happened twice.
