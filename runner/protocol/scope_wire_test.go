@@ -229,3 +229,52 @@ func TestTaskScopeIDsRoundTrip(t *testing.T) {
 		t.Fatalf("round trip = %+v", got)
 	}
 }
+
+// Disjointness and the empty mask are validated where the value is WRITTEN
+// (server: validateScope; client: MergeScopeOverride), not at decode. This
+// pins that split rather than leaving a reader to assume the wire rejects
+// them: an override list that violates either still decodes cleanly, and the
+// gate is the handler.
+func TestScopeOverrideDisjointnessIsNotAWireConcern(t *testing.T) {
+	in := SubmitRequest{}
+	in.SetRepoPath([]byte("/r"))
+	in.SetPrompt([]byte("p"))
+	in.Overrides = []ScopeOverride{
+		{Caps: Capability_Cancel | Capability_Purge},
+		{Caps: Capability_Purge}, // intersects the first
+		{Caps: Capability_None},  // empty mask
+	}
+	in.OverridesLen = uint8(len(in.Overrides))
+
+	buf, err := in.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got SubmitRequest
+	if err := got.DecodeExact(buf); err != nil {
+		t.Fatalf("decode: %v — the wire must carry what it is given; the REJECTION "+
+			"belongs to the handler, which can name the offending bit", err)
+	}
+	if got.OverridesLen != 3 {
+		t.Errorf("overrides = %d, want all three carried through", got.OverridesLen)
+	}
+}
+
+// The visibility rank and its presence bit share a byte with exclude_self and
+// the reserved bits. A canonical zero must stay a canonical zero across the
+// wire, or the rule that one authority has one encoding is unenforceable.
+func TestTaskScopeCanonicalZeroSurvivesTheWire(t *testing.T) {
+	in := TaskScope{Base: ScopeBase_None}
+	buf, err := in.Append(nil)
+	if err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	var got TaskScope
+	if err := got.DecodeExact(buf); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.VisBasePresent() || got.VisBase != ScopeBase(0) || got.ExcludeSelf() {
+		t.Errorf("a canonical zero came back non-canonical: present=%v vis=%v exclude=%v",
+			got.VisBasePresent(), got.VisBase, got.ExcludeSelf())
+	}
+}

@@ -105,9 +105,9 @@ trap cleanup EXIT
 fail(){ echo; echo "wire-skew-check: FAIL — $1"; echo "--- runner log (tail) ---"; tail -15 "$TMP/runner.log" 2>/dev/null; exit 1; }
 
 echo "  building NEW ($NEW_SHA) server+runner+cli..."
-go build -o "$TMP/new-server" ./cmd/harness-server || exit 2
-go build -o "$TMP/new-runner" ./cmd/agent-runner  || exit 2
-go build -o "$TMP/new-cli"    ./cmd/harness-cli   || exit 2
+go build -buildvcs=false -o "$TMP/new-server" ./cmd/harness-server || exit 2
+go build -buildvcs=false -o "$TMP/new-runner" ./cmd/agent-runner  || exit 2
+go build -buildvcs=false -o "$TMP/new-cli"    ./cmd/harness-cli   || exit 2
 echo "  building OLD ($OLD_SHA) server in a detached worktree (main checkout untouched)..."
 git worktree add --detach "$TMP/old" "$OLD_REF" >/dev/null 2>&1 || exit 2
 # A fresh worktree has no webui/static/main.wasm (gitignored build artifact) and
@@ -116,7 +116,13 @@ git worktree add --detach "$TMP/old" "$OLD_REF" >/dev/null 2>&1 || exit 2
 # nothing (see "THIS SCRIPT MUST BE ABLE TO FAIL" above).
 cp webui/static/main.wasm "$TMP/old/webui/static/main.wasm" 2>/dev/null \
   || { echo "wire-skew-check: webui/static/main.wasm missing — run 'make webui-build' first"; exit 2; }
-( cd "$TMP/old" && go build -o "$TMP/old-server" ./cmd/harness-server ) || exit 2
+# -buildvcs=false: Go stamps VCS metadata by default, and doing so in a DETACHED
+# worktree fails here with "error obtaining VCS status: exit status 128" —
+# which made this whole guard exit 2 (setup error) on every run, so it could
+# not fail OR pass. The stamp is commit metadata in a throwaway binary; nothing
+# under test reads it. Applied to the NEW builds too, so both sides are built
+# the same way and a future breakage cannot be blamed on the asymmetry.
+( cd "$TMP/old" && go build -buildvcs=false -o "$TMP/old-server" ./cmd/harness-server ) || exit 2
 
 mkdir -p "$TMP/repo" "$TMP/data"
 ( cd "$TMP/repo" && git init -q && git commit -q --allow-empty -m init ) 2>/dev/null
