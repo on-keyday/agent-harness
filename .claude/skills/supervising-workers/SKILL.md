@@ -88,10 +88,11 @@ where you have an explicit reason.
 harness-cli session new -d --repo /path/to/repo --rows 40 --cols 150
 ```
 
-A detached session has **no size at all** until a client attaches, and every
-resize path goes through attach — which needs `exec_attach`. If you spawned the
-worker holding only `spawn`, this is your ONLY chance to size it; there is no
-later fix. Both flags are required together (one alone is ignored).
+A detached session has **no size at all** until a client attaches, and size
+authority belongs to the CONTROL attach alone — so every later resize path
+needs `exec_control`, the strongest of the three attach caps. If you spawned
+the worker holding only `spawn`, this is your ONLY chance to size it; there is
+no later fix. Both flags are required together (one alone is ignored).
 
 It matters when the worker's agent draws a full-screen TUI: at 0x0 codex and
 agy paint literally nothing, so `snapshot` returns a blank screen and the
@@ -206,7 +207,10 @@ spinner ~every 100ms, an idle prompt emits nothing at all. Two surfaces:
 
 An idle fire means "waiting for input" — turn finished, permission prompt,
 or a menu all look the same at the byte level. `snapshot` once after the
-fire to see which; requires `exec_attach` (same cap as snapshot/send).
+fire to see which; that needs `exec_view`. **Arming the watcher itself needs
+no capability at all** — it reports `last_output_at`, which `ls` already gives
+you — except `--notify`, which needs `notify` because it reaches the operator's
+egress.
 
 **Do not arm it for a peer you asked to report back.** A skill-aware claude
 worker runs `agent send` *during* its turn, so its reply reaches you while the
@@ -234,8 +238,10 @@ runs `RemoteShell`, which flips the *local* terminal into raw mode and splices i
 to the remote PTY — it needs a real interactive TTY, which the human operator has
 (TUI / WebUI) but you do not. Your tools are the non-TTY trio above —
 `snapshot` (read the screen), `send` (inject keystrokes), `exec` (run one shell
-command synchronously) — all authenticated by your task ticket's `exec_attach`
-capability, no operator PSK. The full playbook lives in the
+command synchronously) — authenticated by your task ticket, no operator PSK.
+They do not share one capability: `snapshot` is a `view` attach (`exec_view`),
+`send`/`exec` are `cowrite` attaches (`exec_cowrite`). The caps imply downward,
+so `exec_cowrite` covers all three. The full playbook lives in the
 **session-debugging** skill (`harness-cli skill session-debugging`, or open
 `.claude/skills/session-debugging/SKILL.md` /
 `.agents/skills/session-debugging/SKILL.md`): tool choice (exec only fits a
@@ -342,9 +348,14 @@ and the scope forms (`--json` for the machine-readable form).
   self-introspection, not a peek at another task's record. Use it when unsure
   whether a denied RPC is a missing cap vs. a real error.
 
-Granular names: `spawn`, `cancel`, `exec_attach`, `file_read`, `file_write`,
-`forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`,
-`info_global`, `purge` — plus the aliases `none` / `all`. When you spawn a worker you
+Granular names: `spawn`, `cancel`, `exec_view`, `exec_cowrite`,
+`exec_control`, `file_read`, `file_write`, `forward_local`, `forward_remote`,
+`notify`, `prune`, `runner_admin`, `info_global`, `purge` — plus the aliases
+`none` / `all`. The three attach caps are ranked and checked with implication:
+`exec_view` reads a session, `exec_cowrite` also types into one, `exec_control`
+also takes it over from whoever is driving. Grant a worker you only want to
+WATCH `exec_view`; grant one you need to DRIVE `exec_cowrite`. `exec_control`
+is for taking a terminal away from someone, which is rarely what you want. When you spawn a worker you
 intend to keep driving, grant the narrowest set that lets it finish, and widen
 only if it hits a capability-denied error.
 

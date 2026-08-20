@@ -674,13 +674,13 @@ func TestParseSpawnCapsFlag(t *testing.T) {
 		t.Errorf("session new --caps none = %#x, want %#x", *sc, protocol.Capability_None)
 	}
 
-	act, err = ParseCommand("interactive --caps exec_attach", "r")
+	act, err = ParseCommand("interactive --caps exec_control", "r")
 	if err != nil {
 		t.Fatalf("interactive --caps: %v", err)
 	}
 	ic := act.(InteractiveAction).Caps
-	if ic == nil || *ic != protocol.Capability_ExecAttach {
-		t.Errorf("interactive --caps exec_attach = %v", ic)
+	if ic == nil || *ic != protocol.Capability_ExecControl {
+		t.Errorf("interactive --caps exec_control = %v", ic)
 	}
 
 	// A bad mask must fail the whole command, not spawn with a default.

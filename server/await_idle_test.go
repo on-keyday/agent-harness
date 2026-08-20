@@ -207,8 +207,9 @@ func TestHandleAwaitIdle_BadRequest_BoardWithoutTopic(t *testing.T) {
 
 // TestHandleAwaitIdle_NotifySinkRequiresNotifyCap: the notify sink reaches
 // the operator-notification egress, which the Notify RPC gates behind
-// Capability_Notify — arriving via await_idle (kind gate: exec_attach) must
-// not bypass that. A caller holding ONLY exec_attach gets permission_denied
+// Capability_Notify — arriving via await_idle must not bypass that. await_idle
+// itself is ungated now, so a caller holding NO capability at all gets
+// permission_denied
 // for sink=notify, while sink=reply on the same caller proceeds normally.
 func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -225,10 +226,11 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	h := newTestHandler(t)
 	h.Sessions = reg
 
-	// Confined agent principal holding exec_attach but NOT notify.
+	// Confined agent principal holding nothing at all: await_idle needs no
+	// capability, so `none` is the sharpest case for the notify-sink gate.
 	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Agent, protocol.TaskID{}, "",
-		protocol.RunnerSelector{}, nil, protocol.Capability_ExecAttach,
+		protocol.RunnerSelector{}, nil, protocol.Capability_None,
 		// The target is not a descendant, so give the caller an explicit scope
 		// id for it. Without this the target gate answers not_found first and
 		// the sink gate under test is never reached — which is correct
@@ -263,7 +265,7 @@ func TestHandleAwaitIdle_NotifySinkRequiresNotifyCap(t *testing.T) {
 	resp2 := lastTaskControlResponse(t, callerConn)
 	if resp2.Kind != protocol.TaskControlKind_AwaitIdle || resp2.AwaitIdle() == nil ||
 		resp2.AwaitIdle().Status != protocol.AwaitIdleStatus_Fired {
-		t.Fatalf("sink=reply with exec_attach: got kind=%v, want AwaitIdle/Fired", resp2.Kind)
+		t.Fatalf("sink=reply with caps=none: got kind=%v, want AwaitIdle/Fired", resp2.Kind)
 	}
 }
 

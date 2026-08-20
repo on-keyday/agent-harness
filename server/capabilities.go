@@ -20,20 +20,59 @@ import (
 // ops because it is read-only by construction — there is no write direction to
 // discriminate. It is also the one task-scoped kind that does NOT require
 // Running/Detached; see handleGitQuery for why.
+//
+// AttachSession is absent because its cap depends on the requested AttachMode,
+// which this map cannot see — the gate is inline in the dispatch case, via
+// attachModeCap. AwaitIdle is absent because it needs NO capability: it reports
+// last_output_at, which `ls` hands to any caller that can see the task, so a
+// gate here would only make the edge-triggered path cost more authority than
+// polling for the same fact. Its one side effect, sink=notify, is gated on
+// `notify` inside the handler.
 var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_Submit:           protocol.Capability_Spawn,
 	protocol.TaskControlKind_OpenInteractive:  protocol.Capability_Spawn,
 	protocol.TaskControlKind_Cancel:           protocol.Capability_Cancel,
 	protocol.TaskControlKind_PruneTasks:       protocol.Capability_Prune,
 	protocol.TaskControlKind_Notify:           protocol.Capability_Notify,
-	protocol.TaskControlKind_AttachSession:    protocol.Capability_ExecAttach,
-	protocol.TaskControlKind_AwaitIdle:        protocol.Capability_ExecAttach,
 	protocol.TaskControlKind_DialRunner:       protocol.Capability_RunnerAdmin,
 	protocol.TaskControlKind_BoardTopics:      protocol.Capability_InfoGlobal,
 	protocol.TaskControlKind_BoardRead:        protocol.Capability_InfoGlobal,
 	protocol.TaskControlKind_BoardPurge:       protocol.Capability_Purge,
 	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_InfoGlobal,
 	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
+}
+
+// attachModeCap returns the capability set that satisfies an attach in the
+// given mode. The three attach powers are RANKED, not orthogonal, so each mode
+// accepts its own bit or any stronger one:
+//
+//	view    <- exec_view | exec_cowrite | exec_control
+//	cowrite <- exec_cowrite | exec_control
+//	control <- exec_control
+//
+// A holder of the stronger power can always choose to exercise the weaker one;
+// requiring it to also hold the weaker bit would be bookkeeping, not
+// confinement. The returned value is therefore checked with hasAnyCap, not
+// hasCap — it is a set of alternatives, not a set of requirements.
+//
+// An unrecognised mode from a newer peer falls through to exec_control, the
+// strictest answer, so an unknown mode fails closed.
+func attachModeCap(mode protocol.AttachMode) protocol.Capability {
+	switch mode {
+	case protocol.AttachMode_View:
+		return protocol.Capability_ExecView | protocol.Capability_ExecCowrite | protocol.Capability_ExecControl
+	case protocol.AttachMode_Cowrite:
+		return protocol.Capability_ExecCowrite | protocol.Capability_ExecControl
+	default:
+		return protocol.Capability_ExecControl
+	}
+}
+
+// hasAnyCap reports whether have includes AT LEAST ONE bit of want. Distinct
+// from hasCap (which requires every bit) because attachModeCap returns
+// alternatives that satisfy the same request.
+func hasAnyCap(have, want protocol.Capability) bool {
+	return have&want != 0
 }
 
 // hasCap reports whether have includes every bit in want.

@@ -502,6 +502,15 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: AttachSession variant nil")
 			return
 		}
+		// Mode-dependent gate: the requiredCap map is keyed on the kind alone
+		// and cannot see AttachMode, and the three modes are three different
+		// powers. Denied BEFORE the scope check so a caller that may not attach
+		// this way at all gets permission_denied rather than a scope answer
+		// about a task it cannot reach anyway.
+		if want := attachModeCap(a.Mode); !hasAnyCap(h.callerCaps(cid), want) {
+			h.denyTaskControl(conn, req.Kind, req.RequestId, want)
+			return
+		}
 		aresp := protocol.AttachSessionResponse{Status: protocol.AttachSessionStatus_NotFound}
 		if h.inScope(cid, hex.EncodeToString(a.TaskId.Id[:])) {
 			aresp = h.handleAttachSession(conn, a)

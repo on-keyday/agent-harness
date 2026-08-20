@@ -18,9 +18,18 @@ import (
 const defaultAwaitIdleThreshold = 2500 * time.Millisecond
 
 // handleAwaitIdle arms a one-shot idle watcher on a live interactive
-// session's SessionMux. Capability gating (exec_attach, same as
-// AttachSession — this is read-only observation of a session) already
-// happened in Handle via the requiredCap map.
+// session's SessionMux.
+//
+// It requires NO capability. It used to require exec_attach, on the reasoning
+// that it is read-only observation of a session — true, but the fact it
+// observes is last_output_at, which `ls` already returns to any caller that can
+// see the task at all. Gating only the edge-triggered path made the efficient
+// route cost strictly more authority than polling for the same answer, which
+// protects nothing and taxes the cheap path. The scope check below is the real
+// gate: a session outside the caller's reach reports NotFound.
+//
+// sink=notify is the one exception and it is gated below, on `notify` — the
+// egress, not the observation, is what needs authority.
 //
 // sink=reply long-polls: the response is deferred until the watcher fires
 // (request_id correlation makes a delayed TaskControlResponse safe). If the
@@ -44,7 +53,8 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 		conn.SendMessage(out) //nolint:errcheck
 	}
 
-	// Target gate. The exec_attach cap was checked centrally; this is the
+	// Target gate. This is the ONLY gate for sink=reply/board; there is no
+	// capability half any more (see the doc comment), so this is the
 	// scope half, and an out-of-scope session is reported as absent.
 	if !h.inScope(conn.ConnectionID().String(), hex.EncodeToString(ai.TaskId.Id[:])) {
 		respond(protocol.AwaitIdleStatus_NotFound, 0)
@@ -57,10 +67,10 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	case protocol.AwaitIdleSink_Notify:
 		// The notify sink reaches the operator-notification egress
 		// (notify-hook → e.g. the operator's phone), which the Notify RPC
-		// gates behind Capability_Notify. Require the SAME cap here — the
-		// kind-level gate only checked exec_attach, and without this a
-		// confined task could spam operator notifications through await-idle
-		// that it could not send via `harness-cli notify`. (The fire text is
+		// gates behind Capability_Notify. Require the SAME cap here — this is
+		// now the ONLY gate on await-idle, and without it a confined task
+		// could spam operator notifications through await-idle that it could
+		// not send via `harness-cli notify`. (The fire text is
 		// server-synthesized, so this is a noise vector, not spoofing — but
 		// an egress gate that depends on which RPC you arrive by is not a
 		// gate.) The board sink needs no extra cap: agentboard sends are

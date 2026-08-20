@@ -262,7 +262,11 @@ enum TaskControlKind:
                     # (no cap required: self-introspection of THIS connection's
                     # server-resolved identity, not another task's record)
     await_idle      # one-shot: fire when an interactive session's PTY output
-                    # goes quiescent (see AwaitIdleRequest). Requires exec_attach.
+                    # goes quiescent (see AwaitIdleRequest). Requires NO
+                    # capability: it reports last_output_at, which `ls` already
+                    # returns to any caller that can see the task at all. Only
+                    # sink=notify adds a gate, and it is `notify` — see
+                    # AwaitIdleSink.
     register_port_forward   # register a -L/-R forward; returns forward_id + control stream
     list_port_forwards      # enumerate the caller's visible registrations
     kill_port_forward       # close one registration by id
@@ -963,8 +967,8 @@ enum AwaitIdleSink:
     board = 2                 # reply `armed` now; agentboard publish to `topic`
                               # on fire (JSON {"kind":"session_idle",...})
 
-# NOTE: a caller lacking exec_attach is rejected via the shared
-# permission_denied response (requiredCap map), never via this enum.
+# NOTE: sink=notify without the `notify` capability is rejected via the shared
+# permission_denied response, never via this enum. No other sink is gated.
 enum AwaitIdleStatus:
     :u8
     fired = 0                 # idle edge observed
@@ -1469,7 +1473,17 @@ enum Capability:
     none           = 0x000, "none"
     spawn          = 0x001, "spawn"
     cancel         = 0x002, "cancel"
-    exec_attach    = 0x004, "exec_attach"
+    # The three attach modes are three different powers, so they are three bits,
+    # ranked by blast radius. They are checked with IMPLICATION (control ⊇
+    # cowrite ⊇ view) rather than as an exact match: a holder of the stronger
+    # power can always choose to exercise the weaker one, and making it hold two
+    # bits to do so would be bookkeeping, not confinement.
+    #
+    # exec_control keeps 0x004 — it was exec_attach, which gated all three modes
+    # at once. Keeping the bit means every task already carrying it keeps the
+    # strongest power it was granted and loses nothing; only the NAME changed,
+    # and the WAL persists the number.
+    exec_control   = 0x004, "exec_control"
     file_read      = 0x008, "file_read"
     file_write     = 0x010, "file_write"
     forward_local  = 0x020, "forward_local"
@@ -1484,7 +1498,19 @@ enum Capability:
     # possibly-shared topic, so it can wipe another agent's unconsumed inbound
     # channel. Different blast radius → its own bit, default-off.
     purge          = 0x800, "purge"
-    all            = 0xfff, "all"
+    # exec_view / exec_cowrite are the two weaker attach powers, split out of
+    # what exec_attach used to grant wholesale. Default-off and appended, so no
+    # existing grant changes meaning.
+    #
+    # exec_view can only READ a session's stream. exec_cowrite can additionally
+    # inject keystrokes into it — a session someone else is driving — but cannot
+    # take the writer slot; exec_control can, which evicts whoever holds it.
+    # The distinction is what a grant actually hands over: "let this supervisor
+    # watch its workers" used to also mean "let it type into them and kick the
+    # human off", because one bit gated all three.
+    exec_view      = 0x1000, "exec_view"
+    exec_cowrite   = 0x2000, "exec_cowrite"
+    all            = 0x3fff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self is always in the effective set regardless of base.

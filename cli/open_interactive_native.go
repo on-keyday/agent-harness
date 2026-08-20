@@ -82,7 +82,7 @@ func (c *Client) openInteractive(ctx context.Context, repoPath string, opts Sess
 	stream := agentexec.NewCommandExecutionStream(st)
 	// Size the PTY here, in the one place every native interactive open funnels
 	// through, so a detached open gets it too — that open closes the stream
-	// immediately, and it is the last moment anyone without exec_attach can
+	// immediately, and it is the last moment anyone without exec_control can
 	// touch this session.
 	if err := applyInitialWindowSize(stream, opts); err != nil {
 		return nil, taskIDHex, fmt.Errorf("OpenInteractive: initial window size: %w", err)

@@ -193,7 +193,7 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	installAndPumpSession(session)
 	// Same policy as the native funnel (see applyInitialWindowSize): size the
 	// PTY at open time when the caller asked, since a detached session can
-	// never be resized by anyone lacking exec_attach. ResizeInteractive acts on
+	// never be resized by anyone lacking exec_control. ResizeInteractive acts on
 	// the session installed above, so this must follow the install.
 	if opts.InitialRows != 0 && opts.InitialCols != 0 {
 		if err := ResizeInteractive(opts.InitialCols, opts.InitialRows); err != nil {

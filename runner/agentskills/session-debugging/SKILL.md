@@ -17,11 +17,24 @@ harness-cli session send -enter <id> <text>  # TYPE keystrokes (co-write, no tak
 harness-cli session exec <id> <cmd>...       # RUN one shell cmd, wait, get output + exit code
 ```
 
-All three authenticate with your task ticket's `exec_attach` capability — no
-operator PSK. `snapshot` is a read-only `view` attach and never disturbs
-whoever is driving; `send`/`exec` co-write into the live PTY without taking
-over the human controller and without resizing. The human may be attached in
-parallel — that is expected.
+All three authenticate with your task ticket — no operator PSK — but they do
+**not** need the same capability, because they are not the same power:
+
+| tool | attach mode | capability |
+|------|-------------|------------|
+| `snapshot` | `view` | `exec_view` |
+| `send` / `exec` | `cowrite` | `exec_cowrite` |
+
+`snapshot` is a read-only attach and never disturbs whoever is driving;
+`send`/`exec` co-write into the live PTY without taking over the human
+controller and without resizing. The human may be attached in parallel — that
+is expected.
+
+The caps are checked with implication (each accepts itself or anything
+stronger), so `exec_cowrite` alone covers all three and `exec_control` covers
+everything. If you were granted only `exec_view` you can look but not type —
+that is a deliberate grant, not a misconfiguration: ask your spawner for
+`exec_cowrite` rather than assuming it was an oversight.
 
 Get `<id>` from `harness-cli session ls` (interactive sessions) or `ls`
 (all tasks) — pipe it into a variable; never hand-type a 32-hex id.
@@ -123,9 +136,11 @@ spelling, different subject: on `snapshot` they size the offscreen renderer and
 never touch the PTY; on `session new` they size the PTY itself. To actually
 give a session a size, do it when you OPEN it — `session new -d --rows 40
 --cols 150` — which is also the only route open to a spawner holding just
-`spawn`, since every later resize path goes through attach (`exec_attach`). For
-a session already running whose agent is a shell, `session exec <id> 'stty rows
-40 cols 140'` still works, and needs `exec_attach` too.
+`spawn`, since size authority belongs to the CONTROL attach alone and so every
+later resize path needs `exec_control`, the strongest of the three. For a
+session already running whose agent is a shell, `session exec <id> 'stty rows
+40 cols 140'` still works and needs only `exec_cowrite` — it types the resize
+rather than claiming it.
 
 - The plain render **drops SGR**, so a *faint* placeholder / ghost-autocomplete
   / dim hint looks identical to real input. **`--style`** prints a

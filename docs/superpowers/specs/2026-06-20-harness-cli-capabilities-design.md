@@ -420,3 +420,66 @@ sends `Capability.all` for an unadorned spawn, and the sandbox bind-mounts
 (`scripts/sandbox/README.md`). Bounded by `caps_child = caps_creator ∩
 requested` — it can only matter under a creator that itself holds broad caps —
 and correctable with `caps set --cascade`.
+
+## Amendment 2026-08-20 — `EXEC_ATTACH` splits into three, by the rule this spec already wrote
+
+The `EXEC_ATTACH` row of the capability table is **superseded** by three caps:
+
+| cap | bit | what it allows | risk class |
+|---|---|---|---|
+| `exec_view` | 0x1000 | read a session's PTY stream — `session snapshot`, TUI grid panes, `attach --view` | confidentiality (screen contents) |
+| `exec_cowrite` | 0x2000 | additionally inject keystrokes into a session someone else is driving — `session send` / `session exec` | integrity (acts as that session) |
+| `exec_control` | 0x004 | additionally seize the writer slot, **evicting whoever holds it**, and own the PTY size — `session attach` | availability (takes the terminal away) |
+
+`exec_control` keeps 0x004, the old `EXEC_ATTACH` bit, so every task already
+carrying it holds exactly the power it was granted and nothing changed for it.
+Only the name moved; the WAL persists the number. `all` becomes `0x3fff`.
+
+Checked with **implication**, not exact match: `view` accepts any of the three,
+`cowrite` accepts cowrite or control, `control` accepts only itself. A holder of
+the stronger power can always exercise the weaker one, and making it hold two
+bits to do so would be bookkeeping rather than confinement. An unrecognised mode
+from a newer peer resolves to `exec_control` so it fails closed.
+
+### This is the spec's own rule, applied late
+
+The governing split rule above is:
+
+> Split one operation class into multiple caps only when (a) the risk class
+> genuinely differs AND (b) the wire already carries the distinction (zero
+> schema invention).
+
+Both bars are met, and (b) is met the same way `FILE_*` and `FORWARD_*` meet
+it: **`AttachMode` is already on `AttachSessionRequest`** — `control` / `view`
+(2026-06-14 spec) and `cowrite` (added later). The cap table simply kept one row
+after the wire grew the distinction underneath it. The result was that
+`EXEC_ATTACH` was the one entry in the table whose single bit spanned three risk
+classes, while the two entries the rule was written for got split.
+
+### What the over-grant actually cost
+
+Granting a supervisor the ability to WATCH its workers — the whole point of
+view-only attach, and what `session snapshot` needs — also granted it the
+ability to type into them and to evict the human operator from their terminals.
+There was no way to express "you may look" at all. The confined-preset paragraph
+above lists `EXEC_ATTACH` among the caps to drop for a sandboxed worker, which
+was the only available answer and is a blunt one: it also removes the ability to
+read a screen, which is harmless.
+
+### Enforcement point moved
+
+`AttachSession` leaves the `requiredCap` map, which is keyed on the
+`TaskControlKind` alone and therefore cannot see the mode. Its gate is inline in
+the dispatch case (the shape `KillPortForward` already uses for a
+direction-dependent gate), via `attachModeCap` + `hasAnyCap` — the latter being
+new precisely because the returned set is **alternatives**, not requirements,
+unlike `hasCap`.
+
+`AwaitIdle` leaves the map too, and gains no replacement: it needs no capability
+at all. See the amendment in `2026-07-12-session-idle-detection-design.md`.
+
+### Count
+
+"The capability set (11)" in the heading is now **14** (the 11 here, plus
+`purge` from the agentboard work, plus these two). The table above is
+authoritative for the three attach rows; the rest of the original table stands.

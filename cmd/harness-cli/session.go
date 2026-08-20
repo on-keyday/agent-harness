@@ -225,7 +225,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	// Sizes the session's PTY, unlike `session snapshot --rows/--cols`, which
 	// sizes the offscreen renderer and never touches the PTY. Both must be
 	// given to take effect. Matters most with -d: a detached session's PTY has
-	// no size at all until a client attaches, and attaching needs exec_attach,
+	// no size at all until a client attaches, and a resize needs a CONTROL attach (exec_control),
 	// which the spawner may not hold.
 	rows := fs.Uint("rows", 0, "initial PTY rows for the session (0 = unset; needs --cols too)")
 	cols := fs.Uint("cols", 0, "initial PTY columns for the session (0 = unset; needs --rows too)")

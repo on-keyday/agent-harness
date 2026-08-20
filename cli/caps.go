@@ -18,7 +18,11 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_None,
 		protocol.Capability_Spawn,
 		protocol.Capability_Cancel,
-		protocol.Capability_ExecAttach,
+		// Listed weakest-first so a reader scanning the catalog meets the
+		// read-only power before the one that evicts whoever is driving.
+		protocol.Capability_ExecView,
+		protocol.Capability_ExecCowrite,
+		protocol.Capability_ExecControl,
 		protocol.Capability_FileRead,
 		protocol.Capability_FileWrite,
 		protocol.Capability_ForwardLocal,
@@ -45,8 +49,12 @@ func CapDescription(c protocol.Capability) string {
 		return "submit tasks and open interactive sessions"
 	case protocol.Capability_Cancel:
 		return "cancel / kill tasks"
-	case protocol.Capability_ExecAttach:
-		return "attach to a session's PTY"
+	case protocol.Capability_ExecView:
+		return "watch a session's PTY read-only (session snapshot, grid panes, attach --view)"
+	case protocol.Capability_ExecCowrite:
+		return "type into a session someone else is driving, without evicting them (session send / exec); implies exec_view"
+	case protocol.Capability_ExecControl:
+		return "take a session's PTY over as sole writer, evicting the current one (session attach); implies exec_cowrite"
 	case protocol.Capability_FileRead:
 		return "read files from task worktrees (file pull / ls)"
 	case protocol.Capability_FileWrite:
@@ -208,7 +216,7 @@ const CapsFlagUsage = "comma-separated capability names to grant the task " +
 // by the flip that `caps set` cannot restore on a live task.
 //
 // Names are case-sensitive and match the snake_case string representation
-// produced by Capability.String() (e.g. "spawn", "file_read", "exec_attach").
+// produced by Capability.String() (e.g. "spawn", "file_read", "exec_view").
 //
 // A term may be prefixed with "-" to subtract it: "all,-spawn" is every
 // capability except spawn. Parsing is two-pass — every positive term is OR'd

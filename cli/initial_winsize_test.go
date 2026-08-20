@@ -17,7 +17,7 @@ func (f *fakeWinsizeSetter) SetTerminalWindowSize(rows, columns, width, height u
 
 // A detached session's PTY has no size until a client attaches, and a spawner
 // holding only `spawn` can never attach to fix it (AttachSession needs
-// exec_attach). So the one chance to size it is the stream OpenInteractive
+// exec_control). So the one chance to size it is the stream OpenInteractive
 // hands back, before it is closed — which is what these pin.
 func TestApplyInitialWindowSize(t *testing.T) {
 	tests := []struct {

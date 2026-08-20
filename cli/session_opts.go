@@ -45,7 +45,7 @@ type SessionOpts struct {
 	//
 	// This is the only chance a detached session gets: resizing is a control
 	// frame on an attached stream, and a spawner holding just `spawn` can never
-	// attach (AttachSession requires exec_attach), so a session it opens with
+	// attach, and a resize needs the CONTROL mode (exec_control), so a session it opens with
 	// -d would stay 0x0 for its whole life. Measured 2026-08-18: codex's and
 	// agy's full-screen TUIs paint nothing at that size.
 	//

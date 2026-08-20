@@ -360,7 +360,7 @@ declare -a TTY=()
 # Control-plane authority is server-enforced via capabilities, not by what's
 # in the container: use `submit --caps none` (or other restricted sets) when
 # spawning this sandboxed task to close specific control-plane operations
-# (spawn, file_read/write, forward, exec_attach, ...) server-side.
+# (spawn, file_read/write, forward, exec_view/cowrite/control, ...) server-side.
 #
 # The bridged binary is FROZEN for the container's lifetime. This is a
 # single-FILE bind mount, so the container holds the inode that existed at

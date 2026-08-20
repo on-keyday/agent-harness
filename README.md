@@ -172,9 +172,10 @@ bin/harness-cli prune-local --before 168h   # remove old local worktrees
 # `interactive` is shorthand: session new + attach in one step.
 bin/harness-cli session new --repo /abs/path/to/repo
 # --rows/--cols size the session's PTY at open. Only worth it with -d: a
-# detached session has NO size until someone attaches, and attaching needs
-# exec_attach — which the spawner may not hold. Without them a full-screen
-# TUI in that session draws nothing.
+# detached session has NO size until someone attaches, and only a CONTROL
+# attach carries size authority, which needs exec_control — the strongest of
+# the three attach caps and one the spawner may not hold. Without them a
+# full-screen TUI in that session draws nothing.
 bin/harness-cli session new -d --repo /abs/path/to/repo --rows 40 --cols 150
 bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
@@ -388,10 +389,26 @@ scripts/runner.sh up --server-cid 'ws:HOSTNAME:8539-*' --roots /abs/repo \
 ## Capabilities and scope
 
 Each task carries a **capability set** — a server-enforced bitmask of
-what control-plane operations it may request (spawn, cancel,
-exec-attach, file read / write, local / remote port-forward, notify,
-prune, purge, runner-admin, global info) — and a **target scope**
+what control-plane operations it may request (spawn, cancel, the three
+session-attach powers, file read / write, local / remote port-forward,
+notify, prune, purge, runner-admin, global info) — and a **target scope**
 bounding WHICH tasks those capabilities may be pointed at.
+
+Attaching to a session is three capabilities, not one, because the three
+attach modes hand over three different powers. They are checked with
+implication (each accepts itself or anything stronger), so a grant of the
+stronger one never needs the weaker one alongside it:
+
+| cap | what it allows |
+| --- | --- |
+| `exec_view` | read a session's PTY stream — `session snapshot`, TUI grid panes, `session attach --view` |
+| `exec_cowrite` | additionally type into a session someone else is driving, without evicting them — `session send`, `session exec`, the WebUI preview |
+| `exec_control` | additionally take the session over as sole writer, evicting whoever holds it, and own its size — `session attach`, TUI `r` |
+
+`exec_control` is the former `exec_attach` under a name that says which of
+the three it is; it keeps the same bit, so every task already holding it
+kept exactly the power it had. Watching a worker no longer implies being
+able to type into it or kick the operator off it.
 `harness-cli caps` lists the grantable names and the scope forms with a
 one-line description of each; `caps --json` emits the machine-readable
 catalog.
@@ -408,7 +425,7 @@ redirect that within what the spawner itself holds: the server grants
 `caps_child = caps_parent ∩ requested` and clamps the scope to the
 spawner's own reach, so a task can never exceed its parent. A supervisor
 that spawns and drives workers therefore has to say so —
-`--caps spawn,exec_attach,notify` — and anything missed afterwards is
+`--caps spawn,exec_cowrite,notify` — and anything missed afterwards is
 `caps set <id> --caps …` on the live task, no restart. `NAMES`
 is comma-separated (e.g. `spawn,file_read`, subtractive `all,-spawn`);
 `SPEC` is `subtree | none | global | [subtree+]ids:<task-id>[,…]` —

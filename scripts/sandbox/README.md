@@ -228,7 +228,8 @@ The wrapper (`agent-in-podman.sh`) bind-mounts, at identical host paths:
   - `submit --caps none` (the default) — data-plane only: the agent can still use
     `agent send` / `inbox` to talk to its parent, but the server denies
     `spawn`, `file_read`, `file_write`, `forward_local`, `forward_remote`,
-    `exec_attach`, `notify`, and all other control-plane operations with
+    the three `exec_*` attach caps, `notify`, and all other control-plane
+    operations with
     `PermissionDenied`. The escape path (spawn an unsandboxed child) is
     closed server-side regardless of what's in the container.
     Its own task subtree (`ls`, `logs`) stays readable — that needs no cap —

@@ -240,3 +240,41 @@ harness-cli session await-idle [--threshold-ms N] [--notify] [--topic T] <id>
   shows last_output_at advancing on `echo`; `await-idle` long-poll returns
   after the prompt settles; `--topic` sink delivers a board message.
 - `make check` (+ wasm-check) before landing, per project rule.
+
+## Amendment (2026-08-20) — await_idle is ungated
+
+The `exec_attach` requirement is removed. `await_idle` now needs **no
+capability**; only `sink=notify` is gated, on `notify`, exactly as this spec
+already specified for it.
+
+The two "Decisions taken" bullets state the contradiction side by side and
+never resolve it:
+
+> - exec_attach gates await_idle. List already carries last_output_at under
+>   the existing List gate (info visibility rules unchanged).
+
+If `ls` hands `last_output_at` to any caller that can see the task, then a
+watcher over that same value discloses nothing new. The gate did not protect
+information — it made the **edge-triggered path cost strictly more authority
+than polling for the same answer**, which taxes the cheap path and pushes a
+confined caller toward the wasteful one. That is backwards from the Problem
+statement, which names "a babysitter agent polls `session snapshot` on an
+interval — wasteful and laggy" as the thing to fix.
+
+The remaining gates are unchanged and sufficient:
+
+- **Scope**: `inScope` in the handler. A session outside the caller's reach
+  answers `not_found`, so the ungating widens no visibility.
+- **`sink=notify`**: still `notify`, for the reason this spec gives — the
+  egress is the privileged part, not the observation.
+- **`sink=board`**: still nothing, per the board trust model.
+
+Consequently `AwaitIdleStatus`'s schema note ("a caller lacking exec_attach is
+rejected via the shared permission_denied response") now applies to the notify
+sink only, and `AwaitIdle` is out of the `requiredCap` map.
+
+Related, same date: `exec_attach` itself was split into `exec_view` /
+`exec_cowrite` / `exec_control` — see the amendment in
+`2026-06-20-harness-cli-capabilities-design.md`. Where this spec says
+"`exec_attach` (same gate as snapshot/view attach)", the modern reading of
+that comparison is `exec_view`; but await_idle needs neither.
