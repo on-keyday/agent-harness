@@ -2939,7 +2939,20 @@ const POLL_INTERVAL_MS = 5000;
     add.className = "cap-quick";
     add.textContent = "＋ 絞り込みを追加";
     add.addEventListener("click", () => {
-      rows.push({ caps: 0, base: "subtree", excludeSelf: true, ids: new Set() });
+      // A new row starts at `none` with the self box CLEAR.
+      //
+      // exclude_self is at its wire zero, because that flag was phrased
+      // negatively precisely so every default reads as the pre-change meaning;
+      // a box that starts checked removes self without the operator asking,
+      // and the task-level base radios right above default to the wire value
+      // too. An earlier version defaulted this row to `descendants` on the
+      // guess that it is the common case — a guess about usage, not a rule.
+      //
+      // The base starts at `none` rather than `subtree` so the row narrows
+      // from the moment it exists: a control called "絞り込み" that defaults to
+      // the same set the base already grants would sit there doing nothing,
+      // and `none` fails closed while the operator picks.
+      rows.push({ caps: 0, base: "none", excludeSelf: false, ids: new Set() });
       buildOverrideRows(which, containerId, onChange);
       onChange();
     });
