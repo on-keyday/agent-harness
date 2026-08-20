@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"os"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -750,6 +753,13 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// for why the chdir alone leaves some agents pointed at the runner's
 	// directory instead of the task's.
 	env = append(env, AgentCwdEnv(dir)...)
+	// exitCode is the CHILD's own, read from its ProcessState rather than
+	// inferred from an error: the errgroup inside agentexec returns whichever
+	// goroutine failed first, and on Linux the pty's EIO at teardown beats the
+	// exit status to it. Sniffing the error type reported a clean session as
+	// "read /dev/ptmx: input/output error"; ProcessState cannot lose that race.
+	var exitCode atomic.Int32
+	exitCode.Store(0)
 	runErr := agentexec.ExecuteCommandWithOption(taskCtx, stream, log, agentBin, agentArgv, dir, true, env, agentexec.ExecuteOption{
 		OnStdinWriter: func(write func([]byte) (int, error)) {
 			s.mu.Lock()
@@ -758,6 +768,11 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			}
 			s.mu.Unlock()
 		},
+		OnProcessExit: func(st *os.ProcessState, _ error) {
+			if st != nil {
+				exitCode.Store(int32(st.ExitCode()))
+			}
+		},
 	})
 
 	if runErr != nil {
@@ -765,12 +780,34 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	}
 
 	// Step 5: TaskFinished.
+	//
+	// This branch used to be unreachable for an agent that actually ran:
+	// ExecuteCommandWithOption returned nil unconditionally, so every
+	// interactive task reported exit 0 and TaskStore mapped that to
+	// Succeeded whatever the agent did (measured: a shell driven to `exit 3`
+	// came back status=succeeded exit_code=0). objtrsf now returns the child's
+	// outcome, which splits three cases that used to be one.
 	{
 		m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
 		tf := protocol.TaskFinished{TaskId: oer.TaskId}
-		if runErr != nil {
-			// Could be claude's non-zero exit (passed up by errgroup as an
-			// *exec.ExitError) or a stream/setup error. Bucket as Failed.
+		code := exitCode.Load()
+		switch {
+		case runErr == nil && code == 0:
+			// Clean exit.
+		case taskCtx.Err() != nil:
+			// WE killed it — a cancel, or the runner shutting down. The child
+			// dies as "signal: killed", which is the ordinary end of these
+			// sessions rather than a crash. Reporting it as one would relabel
+			// every cancelled task Failed, because TaskStore.Finish
+			// deliberately overwrites Cancelled with what the agent did.
+			log.Info("interactive task ended by cancellation", "task_id", taskIDHex)
+		case code != 0:
+			// The agent exited on its own, non-zero. Report the REAL code
+			// rather than a flat -1.
+			tf.ExitCode = code
+			tf.ErrorMessage = []byte("agent exited " + strconv.Itoa(int(code)))
+		default:
+			// A stream or setup failure, not the agent's own exit.
 			tf.ExitCode = -1
 			tf.ErrorMessage = []byte("interactive_error: " + runErr.Error())
 		}

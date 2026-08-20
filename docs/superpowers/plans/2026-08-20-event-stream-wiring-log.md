@@ -322,3 +322,48 @@ adapter reports its own exit in-band as a neutral `exit` message, so
 `StreamTask.Exit()` has a real code where the PTY kind has none — and the
 distinction the PTY kind cannot make (agent exited 3 vs client detached) is one
 this kind gets for free, because a detach is not an exit here at all.
+
+## 11. Fixing the exit code took three attempts, two of them wrong
+
+The operator decided to fix objtrsf rather than leave entry 10 recorded. What
+that cost is worth writing down, because two of the three attempts looked right
+and shipped a regression.
+
+**Attempt 1 — return `gr.Wait()`'s error.** Obvious, and wrong. On Linux the
+pty master returns EIO the instant the slave closes, so the stdout copy fails
+BEFORE the exit status is collected and the errgroup hands back the EIO.
+Measured: a clean `exit 0` session came back
+`interactive_error: read /dev/ptmx: input/output error` — a session that
+succeeded, reported Failed. **The original `return nil` was load-bearing after
+all**, for exactly this, and nothing said so.
+
+**Attempt 2 — keep the child's error in its own variable** so it does not race
+the group. Correct as far as it went, and still made the caller type-assert
+through `*exec.ExitError` to recover an int.
+
+**Attempt 3 (the operator's suggestion) — read `ProcessState`.** After
+`waitFn` returns, both branches have one; go-pty copies the `exec.Cmd`'s
+across. It cannot lose the race, because the wait itself sets it. So
+`ExecuteOption.OnProcessExit(state, err)` hands over an `ExitCode()` int and
+the caller never sniffs an error type — which is what the ONESHOT path in this
+repo has always done (`cmd.ProcessState.ExitCode()`), one file away.
+
+Measured after, all three endings:
+
+| ending | before | after |
+|---|---|---|
+| `exit 0` | succeeded / 0 | succeeded / 0 |
+| `exit 3` | **succeeded / 0** | **failed / 3** |
+| cancel | succeeded / 0 | succeeded / 0 |
+
+A third hang turned up on the way, unrelated to the exit code and worth its own
+line: **a non-PTY child that exits could not complete its own `Wait`.** Handing
+`cmd.Stdin` a non-`*os.File` makes os/exec own the stdin copier, and that
+goroutine parks in `Read` on a pipe only the stream closes — so `Cmd.Wait`
+waited for it while the child's status sat there unread. Owning the copy fixes
+it. The PTY path never had this, a pty being an `*os.File`.
+
+One thing left as it was: a CANCELLED task still reports 0 and lands on
+Succeeded, because `TaskStore.Finish` deliberately overwrites Cancelled. That
+is unchanged behaviour rather than something this touched, and whether
+"cancelled" should survive is a separate decision.

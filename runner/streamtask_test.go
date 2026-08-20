@@ -3,23 +3,30 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
+	"github.com/on-keyday/objtrsf/exec/frame"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// buildAdapter builds the real adapter once per test binary. The point of
-// these tests is the WIRING -- runner ↔ adapter ↔ agent over a stream -- so
-// stubbing the adapter would test the half that is already covered in
-// runner/streamagent.
+// These drive the REAL adapter binary against a fake agent, over a pipe pair
+// standing in for the server-allocated stream. The transport under test is
+// agentexec with ptyEnabled=false, so the test speaks the same frame protocol a
+// client does — which is the point. The first version of this file tested a
+// hand-rolled framing that only it and the code under test understood, and
+// passed.
+
 var (
 	adapterOnce sync.Once
 	adapterPath string
@@ -48,19 +55,111 @@ func testAdapter(t *testing.T) string {
 	return adapterPath
 }
 
-// streamPair returns the two ends of a bidi stream: what the runner sees, and
-// what the server (and through it, a client) sees.
-type endpoint struct {
-	io.Reader
-	io.Writer
+// pipeStream is a trsf.BidirectionalStream over two pipes. Only the methods
+// agentexec actually uses carry behaviour: AppendData to send, Read to receive,
+// Cancel/CloseBoth to tear down.
+type pipeStream struct {
+	toClient   *io.PipeWriter
+	fromClient *io.PipeReader
+	closeOnce  sync.Once
+	torn       atomic.Bool
 }
 
-func streamPair() (runnerSide, clientSide endpoint, closeAll func()) {
-	aR, aW := io.Pipe() // runner → client
-	bR, bW := io.Pipe() // client → runner
-	return endpoint{Reader: bR, Writer: aW},
-		endpoint{Reader: aR, Writer: bW},
-		func() { _ = aW.Close(); _ = bW.Close(); _ = aR.Close(); _ = bR.Close() }
+func (s *pipeStream) AppendData(_ bool, data ...[]byte) error {
+	for _, d := range data {
+		if _, err := s.toClient.Write(d); err != nil {
+			// After teardown the session is over by definition; a real trsf
+			// stream does not turn "the session ended" into a write failure,
+			// and surfacing it here made a CLEAN finish report an error.
+			if s.torn.Load() {
+				return nil
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *pipeStream) AppendDataContext(_ context.Context, fin bool, data ...[]byte) error {
+	return s.AppendData(fin, data...)
+}
+func (s *pipeStream) Read(p []byte) (int, error) {
+	n, err := s.fromClient.Read(p)
+	if err != nil && s.torn.Load() {
+		// A torn-down stream reads as EOF, not as a pipe error. handleInput
+		// treats EOF as a clean end and anything else as a session failure, so
+		// getting this wrong made a CLEAN finish report an error.
+		return n, io.EOF
+	}
+	return n, err
+}
+func (s *pipeStream) ReadContext(_ context.Context, p []byte) (int, error) {
+	return s.fromClient.Read(p)
+}
+func (s *pipeStream) Write(p []byte) (int, error)                           { return len(p), s.AppendData(false, p) }
+func (s *pipeStream) WriteContext(_ context.Context, p []byte) (int, error) { return s.Write(p) }
+func (s *pipeStream) ID() trsf.StreamID                                     { return 1 }
+func (s *pipeStream) Close() error                                          { return nil }
+func (s *pipeStream) HasSendData() bool                                     { return false }
+func (s *pipeStream) Completed() bool                                       { return false }
+func (s *pipeStream) ReadDirect(uint64) ([]byte, bool, error)               { return nil, false, nil }
+func (s *pipeStream) ReadDirectContext(context.Context, uint64) ([]byte, bool, error) {
+	return nil, false, nil
+}
+func (s *pipeStream) HasRecvData() bool { return false }
+func (s *pipeStream) EOF() bool         { return false }
+func (s *pipeStream) Cancel()           { s.teardown() }
+func (s *pipeStream) CloseBoth() error  { s.teardown(); return nil }
+func (s *pipeStream) teardown() {
+	s.closeOnce.Do(func() {
+		s.torn.Store(true)
+		_ = s.toClient.CloseWithError(io.EOF)
+		_ = s.fromClient.CloseWithError(io.EOF)
+	})
+}
+
+// client is the other end: it unframes what the runner sends and frames what it
+// sends back, as CommandExecutionStream does.
+type client struct {
+	out io.Reader
+	in  *io.PipeWriter
+}
+
+func newStreamPair() (*pipeStream, *client) {
+	outR, outW := io.Pipe()
+	inR, inW := io.Pipe()
+	return &pipeStream{toClient: outW, fromClient: inR}, &client{out: outR, in: inW}
+}
+
+// nextStdout returns the payload of the next Stdout frame, skipping others.
+func (c *client) nextStdout() ([]byte, error) {
+	for {
+		f := &frame.Frame{}
+		if err := f.Read(c.out); err != nil {
+			return nil, err
+		}
+		if f.Header.Type == frame.FrameType_Stdout {
+			if d := f.Data(); d != nil {
+				return *d, nil
+			}
+		}
+	}
+}
+
+func (c *client) sendStdin(b []byte) error {
+	hdr := frame.FrameHeader{Type: frame.FrameType_Stdin, Len: uint32(len(b))}
+	_, err := c.in.Write(append(hdr.MustAppend(nil), b...))
+	return err
+}
+
+// finish closes the agent's stdin without killing it: a zero-length Stdin
+// frame, which is what CommandExecutionStream's stdin Close() sends. It is the
+// clean end of an event-stream session, as distinct from a cancel — the
+// mechanism the design had assumed did not exist.
+func (c *client) finish() error {
+	hdr := frame.FrameHeader{Type: frame.FrameType_Stdin, Len: 0}
+	_, err := c.in.Write(hdr.MustAppend(nil))
+	return err
 }
 
 func fakeStreamAgent(t *testing.T, body string) string {
@@ -72,10 +171,9 @@ func fakeStreamAgent(t *testing.T, body string) string {
 	return path
 }
 
-// The wiring question, end to end: a task's events reach the stream, an
-// approval raised by the agent reaches the stream, an answer sent back on the
-// stream reaches the agent, and the log gets the same rendered lines the
-// oneshot path would produce.
+// The wiring question end to end: events reach the stream as Stdout frames, an
+// approval reaches it, an answer sent as a Stdin frame reaches the agent, and
+// the session ends cleanly on a zero-length Stdin frame rather than a kill.
 func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 	agentStdin := filepath.Join(t.TempDir(), "agent-stdin")
 	agent := fakeStreamAgent(t,
@@ -83,14 +181,14 @@ func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 			`printf '%s\n' '{"type":"control_request","request_id":"v-1","request":{"subtype":"can_use_tool","tool_name":"Write","input":{"file_path":"/x"}}}'`+"\n"+
 			// head -n 1, not cat: cat holds the file open until its stdin
 			// closes, so "the answer arrived" would only be observable during
-			// teardown -- which is exactly when the test wants to stop.
+			// teardown — exactly when the test wants to stop.
 			"head -n 1 > "+agentStdin+"\n"+
-			`printf '%s\n' '{"type":"result","subtype":"success","duration_ms":5,"total_cost_usd":0}'`+"\n")
+			`printf '%s\n' '{"type":"result","subtype":"success","duration_ms":5,"total_cost_usd":0}'`+"\n"+
+			"cat > /dev/null\n")
 
-	runnerSide, clientSide, closeAll := streamPair()
-	defer closeAll()
+	stream, cl := newStreamPair()
 
-	var logMu sync.Mutex
+	var mu sync.Mutex
 	var logLines []string
 	var pendingSeen []int
 
@@ -99,13 +197,13 @@ func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 		AgentArgv:   []string{agent},
 		Dir:         t.TempDir(),
 		LogSink: func(b []byte) {
-			logMu.Lock()
-			defer logMu.Unlock()
+			mu.Lock()
+			defer mu.Unlock()
 			logLines = append(logLines, strings.TrimRight(string(b), "\n"))
 		},
 		OnPending: func(n int) {
-			logMu.Lock()
-			defer logMu.Unlock()
+			mu.Lock()
+			defer mu.Unlock()
 			pendingSeen = append(pendingSeen, n)
 		},
 	}
@@ -113,98 +211,82 @@ func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	done := make(chan struct{})
-	go func() { defer close(done); _, _ = task.Run(ctx, runnerSide) }()
+	done := make(chan error, 1)
+	go func() { done <- task.Run(ctx, stream) }()
 
-	// The client end: read until the approval arrives, then answer it.
-	rd := streamagent.NewReader(clientSide)
-	var sawHello, sawEvent bool
+	var sawHello, sawText, sawFinish bool
 	var req *streamagent.Request
-	for req == nil {
-		m, err := rd.Next()
+	deadline := time.Now().Add(45 * time.Second)
+	for !sawFinish && time.Now().Before(deadline) {
+		payload, err := cl.nextStdout()
 		if err != nil {
-			t.Fatalf("stream ended before the approval arrived (hello=%v event=%v): %v",
-				sawHello, sawEvent, err)
+			t.Fatalf("stream ended early (hello=%v text=%v req=%v): %v",
+				sawHello, sawText, req != nil, err)
 		}
-		switch m.Kind {
-		case streamagent.KindHello:
-			sawHello = true
-		case streamagent.KindEvent:
-			sawEvent = true
-		case streamagent.KindRequest:
-			req = m.Request
+		for _, line := range strings.Split(strings.TrimRight(string(payload), "\n"), "\n") {
+			if line == "" {
+				continue
+			}
+			m, err := streamagent.DecodeMsg([]byte(line))
+			if err != nil {
+				t.Fatalf("undecodable line on the stream: %q (%v)", line, err)
+			}
+			switch m.Kind {
+			case streamagent.KindHello:
+				sawHello = true
+			case streamagent.KindEvent:
+				if m.Event.Kind == streamagent.EventText && m.Event.Text == "working" {
+					sawText = true
+				}
+				if m.Event.Kind == streamagent.EventFinish {
+					sawFinish = true
+				}
+			case streamagent.KindRequest:
+				req = m.Request
+				if p := task.Pending(); len(p) != 1 || p[0].ID != m.Request.ID {
+					t.Errorf("Pending() = %+v, want the one request", p)
+				}
+				resp, _ := json.Marshal(streamagent.Msg{
+					V: streamagent.ProtocolVersion, Kind: streamagent.KindResponse,
+					Response: &streamagent.Response{ID: m.Request.ID, Behavior: streamagent.BehaviorAllow},
+				})
+				if err := cl.sendStdin(append(resp, '\n')); err != nil {
+					t.Fatalf("sending the answer: %v", err)
+				}
+			}
 		}
 	}
-	if !sawHello {
-		t.Error("the adapter's hello never reached the stream")
-	}
-	if !sawEvent {
-		t.Error("no event reached the stream before the approval")
+
+	if !sawHello || !sawText || req == nil || !sawFinish {
+		t.Fatalf("hello=%v text=%v request=%v finish=%v", sawHello, sawText, req != nil, sawFinish)
 	}
 	if req.Tool != "Write" {
 		t.Errorf("request tool = %q", req.Tool)
 	}
 
-	// pending=N must have moved before the answer.
-	logMu.Lock()
-	gotPending := append([]int(nil), pendingSeen...)
-	logMu.Unlock()
-	if len(gotPending) == 0 || gotPending[0] != 1 {
-		t.Errorf("pending counts = %v, want the first to be 1", gotPending)
+	// End it the CLEAN way: close the agent's stdin, not a cancel.
+	if err := cl.finish(); err != nil {
+		t.Fatalf("finish: %v", err)
 	}
-	if p := task.Pending(); len(p) != 1 || p[0].ID != req.ID {
-		t.Errorf("Pending() = %+v, want the one request", p)
-	}
-
-	// Answer on the stream, the way a client would.
-	resp, _ := json.Marshal(streamagent.Msg{
-		V: streamagent.ProtocolVersion, Kind: streamagent.KindResponse,
-		Response: &streamagent.Response{ID: req.ID, Behavior: streamagent.BehaviorAllow},
-	})
-	if _, err := clientSide.Write(append(resp, '\n')); err != nil {
-		t.Fatalf("writing the answer: %v", err)
-	}
-
-	// Wait for evidence the answer was actually consumed before ending the
-	// task. There is no acknowledgement in the protocol -- the runner drops a
-	// request from `pending` when it FORWARDS the answer, not when the agent
-	// acts on it -- so the only evidence available is a later event. See the
-	// wiring log: that gap is a finding, not a test inconvenience.
-	deadline := time.After(30 * time.Second)
-	for done := false; !done; {
-		type res struct {
-			m   streamagent.Msg
-			err error
-		}
-		ch := make(chan res, 1)
-		go func() { m, err := rd.Next(); ch <- res{m, err} }()
-		select {
-		case r := <-ch:
-			if r.err != nil {
-				done = true
-			} else if r.m.Kind == streamagent.KindEvent && r.m.Event.Kind == streamagent.EventFinish {
-				done = true
-			} else if r.m.Kind == streamagent.KindExit {
-				done = true
+	// Keep draining. The adapter still writes its `exit` line, and a reader
+	// that stops early blocks the writer — which looked exactly like a
+	// teardown deadlock the first time.
+	go func() {
+		for {
+			if _, err := cl.nextStdout(); err != nil {
+				return
 			}
-		case <-deadline:
-			t.Fatal("no finish event after the approval was answered")
 		}
-	}
-
-	// Nothing ends an event-stream task on its own -- see the wiring log: the
-	// agent waits for another turn forever and a detach must not end it. So
-	// the test ends it the way the system does, by cancelling.
-	cancel()
+	}()
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Errorf("a cleanly finished session reported an error: %v", err)
+		}
 	case <-time.After(30 * time.Second):
-		t.Fatal("StreamTask.Run did not return after cancel; the teardown is " +
-			"deadlocked again -- close the adapter stdin BEFORE waiting on it")
+		t.Fatal("Run did not return after a zero-length Stdin frame closed the agent's stdin")
 	}
-	closeAll()
 
-	// The answer reached the AGENT, as a vendor control_response.
 	got, err := os.ReadFile(agentStdin)
 	if err != nil {
 		t.Fatalf("the agent never read its stdin: %v", err)
@@ -214,8 +296,8 @@ func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 		t.Errorf("the answer did not reach the agent as a vendor response:\n%s", got)
 	}
 
-	logMu.Lock()
-	defer logMu.Unlock()
+	mu.Lock()
+	defer mu.Unlock()
 	joined := strings.Join(logLines, "\n")
 	if !strings.Contains(joined, "[out]working") {
 		t.Errorf("the agent's text was not rendered into the task log:\n%s", joined)
@@ -226,28 +308,72 @@ func TestStreamTaskCarriesEventsAndApprovalsOverTheStream(t *testing.T) {
 	if strings.Contains(joined, `"kind":"event"`) {
 		t.Errorf("neutral JSON leaked into the task log instead of a rendered line:\n%s", joined)
 	}
-	if pendingSeen[len(pendingSeen)-1] != 0 {
-		t.Errorf("pending never returned to 0: %v", pendingSeen)
+	if len(pendingSeen) == 0 || pendingSeen[0] != 1 || pendingSeen[len(pendingSeen)-1] != 0 {
+		t.Errorf("pending counts = %v, want 1 then back to 0", pendingSeen)
 	}
 }
 
-// An unresolvable adapter must fail the task at start, not warn: §2's failure
-// discipline, and the same shape as the vendor misconfiguration that otherwise
-// exits success.
+// A failing agent must not come back as silence. Until objtrsf was fixed today
+// this returned nil no matter what the child did, which is how every
+// interactive task in this repo reported Succeeded.
+func TestStreamTaskReportsAFailingAgent(t *testing.T) {
+	agent := fakeStreamAgent(t, "exit 3\n")
+	stream, cl := newStreamPair()
+	task := &StreamTask{
+		AdapterPath: testAdapter(t),
+		AgentArgv:   []string{agent},
+		Dir:         t.TempDir(),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- task.Run(ctx, stream) }()
+	go func() {
+		for {
+			if _, err := cl.nextStdout(); err != nil {
+				return
+			}
+		}
+	}()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a session whose agent exited 3 came back nil; the outcome " +
+				"is being dropped again")
+		}
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) {
+			t.Fatalf("err = %v (%T), want an *exec.ExitError", err, err)
+		}
+		if ee.ExitCode() == 0 {
+			t.Errorf("exit code = 0 for a failed session")
+		}
+	case <-time.After(45 * time.Second):
+		t.Fatal("Run did not return")
+	}
+
+	// The AGENT's own code (as opposed to the adapter's) is only visible
+	// because the adapter reports it in-band.
+	if ex := task.Exit(); ex == nil {
+		t.Error("the adapter reported no exit in-band")
+	} else if ex.Code != 3 {
+		t.Errorf("adapter reported exit %d, want the agent's 3", ex.Code)
+	}
+}
+
+// An unresolvable adapter must fail the task at start, not warn.
 func TestStreamTaskFailsLoudlyOnAMissingAdapter(t *testing.T) {
-	runnerSide, _, closeAll := streamPair()
-	defer closeAll()
+	stream, _ := newStreamPair()
 	task := &StreamTask{
 		AdapterPath: filepath.Join(t.TempDir(), "does-not-exist"),
 		AgentArgv:   []string{"true"},
 		Dir:         t.TempDir(),
 	}
-	code, err := task.Run(context.Background(), runnerSide)
+	err := task.Run(context.Background(), stream)
 	if err == nil {
 		t.Fatal("a missing adapter did not fail the task")
-	}
-	if code != -1 {
-		t.Errorf("exit = %d, want -1", code)
 	}
 	if !strings.Contains(err.Error(), "does-not-exist") {
 		t.Errorf("the error does not name the adapter: %v", err)
@@ -256,8 +382,8 @@ func TestStreamTaskFailsLoudlyOnAMissingAdapter(t *testing.T) {
 
 // The neutral Event must survive agentlog → neutral → agentlog, or this kind's
 // log lines silently say less than the oneshot kind's for the same agent
-// output. toNeutral and toAgentlog live in different packages and are the two
-// halves nothing else pins together.
+// output. The two mappers live in different packages and nothing else pins them
+// together.
 func TestEventRoundTripsThroughTheNeutralType(t *testing.T) {
 	code := 3
 	cases := []agentlog.Event{
@@ -274,28 +400,22 @@ func TestEventRoundTripsThroughTheNeutralType(t *testing.T) {
 		{Kind: agentlog.KindRaw, Text: "unparseable"},
 	}
 	for _, in := range cases {
-		// The neutral type is produced by the ADAPTER's mapper and consumed by
-		// the RUNNER's; going through JSON as well is what the wire does.
-		neutral := adapterToNeutral(t, in)
+		neutral := adapterToNeutral(in)
 		var back streamagent.Event
 		b, _ := json.Marshal(neutral)
 		if err := json.Unmarshal(b, &back); err != nil {
 			t.Fatalf("neutral event does not survive JSON: %v", err)
 		}
-		got := toAgentlog(back)
-		if agentlog.Render(got) != agentlog.Render(in) {
+		if got := toAgentlog(back); agentlog.Render(got) != agentlog.Render(in) {
 			t.Errorf("render drifted for %+v:\n  before %q\n  after  %q",
 				in, agentlog.Render(in), agentlog.Render(got))
 		}
 	}
 }
 
-// adapterToNeutral reaches the adapter package's mapper the only way an
-// external package can: by running a line through it. Rather than export
-// toNeutral for a test, this reconstructs the same mapping and the assertion
-// above catches a divergence between the two as a render drift.
-func adapterToNeutral(t *testing.T, e agentlog.Event) streamagent.Event {
-	t.Helper()
+// adapterToNeutral reconstructs the adapter package's unexported mapper. The
+// assertion above catches a divergence between the two as a render drift.
+func adapterToNeutral(e agentlog.Event) streamagent.Event {
 	out := streamagent.Event{
 		Text: e.Text, Tool: e.Tool, Args: e.Args, Result: e.Result,
 		ExitCode: e.ExitCode, IsError: e.IsError, Warning: e.Warning,

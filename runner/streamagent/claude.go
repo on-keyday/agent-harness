@@ -133,12 +133,29 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 		_ = a.sendUserTurn(o.Prompt)
 	}
 
-	// The neutral input pump runs on this goroutine; when it ends the agent's
-	// stdin closes, which is how a claude run is asked to finish.
-	inErr := a.pumpNeutralIn(o.In)
-	_ = stdin.Close()
+	// Both endings have to be watched, because either can come first and
+	// waiting for the wrong one hangs. Measured as a 45-second test hang when
+	// this pumped stdin on the calling goroutine: an agent that exits on its
+	// own leaves the adapter blocked on an input nobody will ever close.
+	//
+	//   - the neutral input ends  → close the agent's stdin, let it finish
+	//   - the AGENT exits first   → stop; there is nothing left to feed
+	inDone := make(chan error, 1)
+	go func() { inDone <- a.pumpNeutralIn(o.In) }()
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
 
-	waitErr := cmd.Wait()
+	var inErr, waitErr error
+	select {
+	case inErr = <-inDone:
+		_ = stdin.Close()
+		waitErr = <-waitCh
+	case waitErr = <-waitCh:
+		// The input pump is left blocked on a read that has no cancellable
+		// form. That is fine here and only here: this process is on its way
+		// out, so the goroutine dies with it.
+		_ = stdin.Close()
+	}
 	wg.Wait()
 
 	ex := Exit{Code: exitCode(waitErr)}
