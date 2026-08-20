@@ -106,6 +106,53 @@ Still unobserved: `mcp_message`. The probe configured no MCP server, so this
 says nothing about whether it rides the channel — it remains untested rather
 than answered.
 
+### Why `-p`, and what stdin actually carries
+
+`-p` reads as the wrong mode for a long-lived multi-turn agent, so this is
+recorded rather than left to look like a choice: **it is not one.**
+`--input-format <format>` is documented as *"only works with `--print`"*, and
+`stream-json` is *"realtime streaming input"*. The streaming input mode exists
+nowhere else. The CLI's `interactive` mode is the one that draws a TUI, which
+is precisely what the PTY kind already wraps — picking it would land back on
+the path this kind exists to avoid. `-p`'s own help ("Print response and exit")
+describes the `text` input default, not what it becomes with a framed stdin.
+
+The vendor's own programmatic spawn, verbatim in the binary, is that pairing:
+
+```
+"--print", "--sdk-url", …, "--session-id", …, "--input-format", "stream-json",
+"--output-format", "stream-json", "--replay-user-messages", "--resume=…"
+```
+
+**Stdin carries two kinds of message** — user turns and control responses — and
+that is what forces the framing, not a flag dependency. Measured:
+
+| stdin | result |
+|---|---|
+| plain text, no `--input-format` | read to EOF as **one prompt**; two lines written seconds apart became a single turn (`num_turns: 1`). This is today's oneshot. |
+| `--input-format stream-json` | multiple user turns under one `session_id`, and a control response and a further user turn interleave on the same pipe |
+
+**The misconfiguration fails silently, and loudly enough to matter.** Running
+`--permission-prompt-tool stdio` WITHOUT `--input-format stream-json` does not
+error. The CLI warns `no stdin data received in 3s, proceeding without it` and
+closes stdin; every subsequent tool permission request then fails with
+`Tool permission request failed: AbortError: Stream closed`. In the probe the
+agent retried Write, Write, Bash, gave up, wrote a paragraph blaming "a
+connectivity or session issue" — and the process exited
+`result: success, is_error: false`. **A run that accomplished nothing reported
+success.** So the adapter validates its own flag set at startup and fails the
+task loudly (§2's failure discipline), rather than trusting that a missing flag
+would surface.
+
+Two flags found while establishing the above are worth the plan's attention:
+
+- `--session-id <uuid>` lets the CALLER choose the session id, so a task id can
+  be correlated to a session without parsing it back out of `init`.
+- `--replay-user-messages` re-emits user messages from stdin back on stdout
+  "for acknowledgment". That is an ack for "the turn was accepted", and it also
+  gives a read-only observer (`exec_view`) the text a cowriter sent — which on
+  the PTY path is only visible because keystrokes echo.
+
 The channel is undocumented and version-coupled. `system/init.capabilities`
 advertises `interrupt_receipt_v1`, `interrupt_cancel_queued_v1` and
 `msg_lifecycle_v1` — **not** `can_use_tool` — so feature detection must be
