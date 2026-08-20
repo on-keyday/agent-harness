@@ -395,7 +395,7 @@ harness-cli agent subscribe   --topic build.events
 harness-cli agent unsubscribe --topic build.events
 harness-cli agent subscriptions   # JSON Lines: this agent's patterns
 harness-cli agent topics          # JSON Lines: every topic on the board
-                                  # (needs info_global; without it: an error,
+                                  # (needs board_observe; without it: an error,
                                   #  not an empty board)
 
 # Shorthand for "subscribe to my own inbound topic" — derives
@@ -411,7 +411,7 @@ assigns the task to a runner. You only need to **announce** it as
 
 **There is no board-wide rendezvous topic.** Peers reach you id-directed on
 `chat.<short-id>`: the spawner already knows your task id, and anyone with
-`info_global` finds it with `ls`. If you have no id for the peer you need, get
+a global visibility rank finds it with `ls`. If you have no id for the peer you need, get
 one (`ls`, or ask whoever spawned you); do not broadcast.
 
 **Non-Claude agents still need an inbox path.** The inbound subscription is
@@ -447,7 +447,7 @@ Two views, used together:
 # Server-side view: every runner and recent task. Each running task is an
 # agent; its 32-hex task id is what you address.
 harness-cli ls
-# RUNNERS                      (withheld entirely without info_global)
+# RUNNERS                      (withheld unless your visibility rank is global)
 #   Idle    host=<h>  tasks=N/M  agent=<names>[+skills]  roots=<paths>  id=<runner-cid>
 # TASKS
 #   <task-id>  <status>  <kind>  repo=<path>  from=<origin>  agent=<name>[+skills]
@@ -457,7 +457,7 @@ harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...
 
 # Agentboard view: every active topic (JSON Lines). Reveals who is listening —
 # e.g. chat.<short-id> inbound channels and any per-purpose topics in use.
-# Needs info_global; without it the server answers "denied" and you get an
+# Needs board_observe; without it the server answers "denied" and you get an
 # error, not an empty board.
 harness-cli agent topics
 ```
@@ -582,7 +582,8 @@ inbox` itself. So:
   without force-inject).
 
 The marker rides on the **task**, not on the RUNNERS section — which matters
-because `ls` withholds RUNNERS entirely from a caller without `info_global`. If
+because `ls` withholds RUNNERS entirely from a caller whose visibility rank is
+below `global`. If
 you are confined, you see zero runners and every task row still carries its own
 marker. `ls --json` splits it out as a per-task `skills_injected` bool beside
 the bare `agent` name, so a script never has to parse the suffix off a string.
@@ -708,11 +709,11 @@ out and leaves you with the first two. Re-send is not how you check: publish a
 throwaway to the same topic if you no longer have the original response.
 
 The `board` commands below answer the same question about topics you did not
-send to, and about the whole board at once. Both need `info_global`, so a task
+send to, and about the whole board at once. Both need `board_observe`, so a task
 spawned with a restricted `--caps` cannot run them — which is precisely when
 `delivered_to` is the only answer available.
 
-`harness-cli board subscribers <topic>` (needs `info_global`) lists the tasks
+`harness-cli board subscribers <topic>` (needs `board_observe`) lists the tasks
 that would receive a publish to that topic. An empty result means nothing is
 listening. With no argument it lists every task on the board and what each
 subscribes to.

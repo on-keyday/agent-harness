@@ -348,8 +348,8 @@ to the runner, so it is visible per task as the `+skills` suffix on the
 `agent=` column in `ls`, the TUI Agent column and its `d` detail popup,
 and the WebUI task rows — plus a per-task `skills_injected` bool in
 `ls --json` / `session ls`. It rides on the task rather than being
-joined from the RUNNERS section because a caller without `info_global`
-is served no runners at all, and a confined agent judging whether a peer
+joined from the RUNNERS section because a caller whose visibility rank
+is below `global` is served no runners at all, and a confined agent judging whether a peer
 follows the agentboard conventions is the main reader. Two limits worth
 knowing: it is a *declaration* of how the runner is configured (the
 injection write itself is warn-only), and a task with no runner yet
@@ -442,12 +442,33 @@ that spawns and drives workers therefore has to say so —
 `--caps spawn,exec_cowrite,notify` — and anything missed afterwards is
 `caps set <id> --caps …` on the live task, no restart. `NAMES`
 is comma-separated (e.g. `spawn,file_read`, subtractive `all,-spawn`);
-`SPEC` is `subtree | none | global | [subtree+]ids:<task-id>[,…]` —
-`ids:` naming specific tasks is the everyday form ("this worker may
-touch exactly that sibling"). Out-of-scope targets answer *no such
-task*; `info_global` widens only what may be SEEN, never what may be
-done. Both halves are visible per task in `ls`, `whoami`, the TUI
-detail popup, and the WebUI task rows.
+`SPEC` is `[<visibility>/]<action>` where each rank is
+`subtree | none | global`, the action side also accepting `descendants`
+(the subtree without self) or `<base>-self`, plus
+`[+ids:<task-id>[,…]]` and `[+vis-ids:<task-id>[,…]]`. `ids:` naming
+specific tasks is the everyday form ("this worker may touch exactly
+that sibling"); `vis-ids:` is the view-only version of it ("watch that
+sibling, touch nothing"). Out-of-scope targets answer *no such task*.
+
+A **visibility rank wider than the action rank** is how a task sees the
+whole server while acting on its own subtree — `--scope global/subtree`.
+The reverse is refused, and not as policy: every action discloses
+existence on success, so a task that could act past what `ls` shows
+would enumerate the server by attempting actions, and its narrow
+visibility would be decorative.
+
+`--scope-for CAPS=SCOPE` narrows ONE capability, or a comma-separated
+list of them, below the task's own scope — `--scope-for
+exec_cowrite,file_write=descendants` is "may drive its workers, may not
+drive itself". Repeatable; the capability lists must not overlap. It
+cannot carry a visibility half, which belongs to the task rather than
+to a verb, and it never GRANTS a verb: an override for a bit the task
+does not hold sits inert until `caps set` grants it.
+
+All of it is visible per task in `ls`, `whoami`, the TUI detail popup
+and the WebUI task rows; `ls --json` and `whoami --json` additionally
+carry `scope_by_cap`, the fully resolved capability→scope map, so a
+machine reader never redoes the override merge.
 
 Not everything an agent can destroy is a capability. `agent retract
 <seq>` withdraws a message the caller itself published — the server

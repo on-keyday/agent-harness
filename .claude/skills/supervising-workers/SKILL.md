@@ -334,12 +334,26 @@ and the scope forms (`--json` for the machine-readable form).
   (`none < subtree < global`), and every id you name must already be inside
   your own set at spawn time. An id that is not is an error, not a silent drop.
   You may name your own id, which is how you hand a child access to yourself.
-- **Visibility is a cap too.** Without `info_global`, a confined task's `ls` and
-  `agent topics` show only its own scope, not the whole board; `info_global`
-  (part of `all`) lifts that — but only for LOOKING. It does not widen what you
-  may DO: with `info_global` you can see a task and still be refused when you
-  try to cancel it. `info_global` also gates the operator board reads —
-  `board topics`, `board read` and `board subscribers`.
+- **Visibility is an axis of the scope, not a cap.** A scope is written
+  `[<visibility>/]<action>`; omitting the visibility half makes it follow the
+  action half. `--scope global/subtree` sees every task and acts on its own
+  subtree — that is the shape the old `info_global` capability produced. It
+  widens LOOKING only: you can see a task and still be refused when you try to
+  cancel it.
+  The reverse — acting wider than you can see — is refused, because a
+  successful action discloses existence anyway, so the narrow visibility would
+  be decorative.
+  `board topics`, `board read` and `board subscribers` are the one thing that
+  stayed a capability, now named `board_observe`: the board is keyed by topic,
+  which the task hierarchy does not contain, so no task scope can bound it. It
+  is NOT needed to send, to subscribe, or to read your own inbox.
+- **One capability can be narrowed below the others.** `--scope-for CAPS=SCOPE`
+  (repeatable, capability lists must not overlap) gives named bits their own
+  target set: `--scope-for exec_cowrite,file_write=descendants` is "may drive
+  its workers, may not drive itself". `descendants` is the subtree without
+  self. An override never GRANTS a verb — one naming a bit you do not hold sits
+  inert until something grants it. `whoami --json` and `ls --json` carry
+  `scope_by_cap`, the resolved map, so you never have to work the merge out.
 - **You also see your parent, redacted.** `ls` / `session ls` include one row
   for your direct creator so you can tell whether the task driving you is still
   running / idle. That row is deliberately sparse — `repo`, `prompt`,
@@ -362,7 +376,7 @@ and the scope forms (`--json` for the machine-readable form).
 
 Granular names: `spawn`, `cancel`, `exec_view`, `exec_cowrite`,
 `exec_control`, `file_read`, `file_write`, `forward_local`, `forward_remote`,
-`notify`, `prune`, `runner_admin`, `info_global`, `purge` — plus the aliases
+`notify`, `prune`, `runner_admin`, `board_observe`, `purge` — plus the aliases
 `none` / `all`. The three attach caps are ranked and checked with implication:
 `exec_view` reads a session, `exec_cowrite` also types into one, `exec_control`
 also takes it over from whoever is driving. Grant a worker you only want to
