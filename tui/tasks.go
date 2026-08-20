@@ -120,7 +120,11 @@ func treeCols() []table.Column {
 func (m *TasksModel) SetTree(on bool) bool {
 	m.tree = on
 	m.baseCols = colsFor(m.tree, m.width)
-	m.applyColumns(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Prompt")))
+	// Always rebuilds, unlike a resize: tree mode changes the row CONTENT (the
+	// ID cell carries the gutter), and flat and tree happen to have the SAME
+	// column count — so a count-based check would swap the headers and leave
+	// every row showing its flat id.
+	m.swapColumnsAndRebuild(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Prompt")))
 	return m.tree
 }
 
@@ -148,10 +152,24 @@ func (m *TasksModel) SetSize(w, h int) {
 	// Width decides the column SET, not only the widths.
 	m.width = w
 	m.baseCols = colsFor(m.tree, w)
-	m.applyColumns(fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Prompt")))
+	cols := fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Prompt"))
+	// A width-only change keeps the same column set, and must NOT disturb the
+	// rows: bubbles keeps the scroll position in the unexported
+	// viewport.YOffset, and SetCursor does not restore it (only MoveUp/MoveDown
+	// maintain it). Rebuilding on every resize left the selected row
+	// highlighted off-screen — which showed up as "the row I picked
+	// disappeared" after returning from an attach, since re-entering the alt
+	// screen fires a WindowSizeMsg.
+	if len(cols) == len(m.table.Columns()) {
+		m.table.SetColumns(cols)
+		return
+	}
+	m.swapColumnsAndRebuild(cols)
 }
 
-// applyColumns swaps the table's columns and rebuilds the rows to match.
+// swapColumnsAndRebuild swaps the table's columns and rebuilds the rows to
+// match. Call it only when the column set or the row content actually changes;
+// a width-only resize must go the cheap route (see SetSize).
 //
 // The order is load-bearing and cost a panic to learn: bubbles' SetRows and
 // SetColumns each re-render the viewport immediately, and renderRow indexes
@@ -164,13 +182,17 @@ func (m *TasksModel) SetSize(w, h int) {
 // last (Obs sits before Repo), so an extra cell rendered against a shorter
 // column set would put every following value under the wrong header — which is
 // worse than a panic, because nothing reports it.
-func (m *TasksModel) applyColumns(cols []table.Column) {
+func (m *TasksModel) swapColumnsAndRebuild(cols []table.Column) {
 	cursor := m.table.Cursor()
 	m.table.SetRows(nil)
 	m.table.SetColumns(cols)
 	m.rebuild()
-	if cursor >= 0 && cursor < len(m.rowIDs) {
-		m.table.SetCursor(cursor)
+	// Walk the cursor down rather than SetCursor'ing to it: MoveDown is the
+	// path that maintains YOffset, so this lands the selection on screen the
+	// same way the operator's own keypresses would.
+	if cursor > 0 && cursor < len(m.rowIDs) {
+		m.table.SetCursor(0)
+		m.table.MoveDown(cursor)
 	}
 }
 

@@ -241,3 +241,87 @@ func TestTasksTableCursorNeverStaysNegative(t *testing.T) {
 		t.Error("an empty table reported a selection")
 	}
 }
+
+// bubbles renders rows[cursor-Height : cursor+Height] into a viewport that
+// shows Height lines from viewport.YOffset. So once the cursor is at or past
+// Height, its line within that content is exactly Height — visible only while
+// YOffset >= 1. Normal keying gets there (MoveDown nudges YOffset to 1), but
+// anything that resets YOffset to 0 while leaving the cursor put drops the
+// highlighted row EXACTLY ONE LINE below the visible window.
+//
+// That is what emptying the rows to swap columns did on every resize, and what
+// the operator saw after returning from an attach: the program had the right
+// task selected — pressing r again re-entered the same session — while the
+// highlight sat just off the bottom.
+func TestResizeKeepsTheSelectionVisible(t *testing.T) {
+	rows := make([]protocol.TaskInfo, 0, 30)
+	for i := 0; i < 30; i++ {
+		rows = append(rows, liveTask(byte(i+1), 0, 0))
+	}
+	var m TasksModel = NewTasks()
+	m.SetSize(120, 10)
+	m.SetRows(rows, nil)
+
+	// Scroll the way an operator does — one step at a time, which is the only
+	// path that maintains YOffset. Past the viewport height, so the off-by-one
+	// window is reachable at all.
+	m.table.SetCursor(0)
+	for i := 0; i < 15; i++ {
+		m.table.MoveDown(1)
+	}
+	want := m.SelectedID()
+	if want == "" {
+		t.Fatal("no selection to preserve")
+	}
+	visible := func() bool { return strings.Contains(m.table.View(), want[:8]) }
+	if !visible() {
+		t.Fatal("the selected row is not on screen before the resize — test setup is wrong")
+	}
+
+	// Width-only resizes keep the same column set and must not disturb the
+	// rows at all. This is the assertion the operator's report maps to.
+	for _, w := range []int{118, 121, 119, 120} {
+		m.SetSize(w, 10)
+		if got := m.SelectedID(); got != want {
+			t.Fatalf("panel=%d selection moved: %s -> %s", w, want[:8], got[:8])
+		}
+		if !visible() {
+			t.Fatalf("panel=%d selected row fell outside the visible window", w)
+		}
+	}
+
+	// Crossing the Obs threshold DOES rebuild. Below it the ID column is
+	// squeezed past legibility, so only the selection is assertable there;
+	// coming back wide is where visibility is observable again.
+	m.SetSize(40, 10)
+	if got := m.SelectedID(); got != want {
+		t.Fatalf("crossing the threshold moved the selection: %s -> %s", want[:8], got[:8])
+	}
+	m.SetSize(120, 10)
+	if got := m.SelectedID(); got != want {
+		t.Fatalf("crossing back moved the selection: %s -> %s", want[:8], got[:8])
+	}
+	if !visible() {
+		t.Error("selected row fell outside the visible window after a column-set change")
+	}
+}
+
+// Flat and tree have the SAME column count, so a count-based shortcut would
+// swap the headers and leave every row rendering its flat id.
+func TestTreeToggleRebuildsRowContent(t *testing.T) {
+	rows := []protocol.TaskInfo{liveTask(1, 0, 0), liveTask(2, 0, 0)}
+	var m TasksModel = NewTasks()
+	m.SetSize(120, 10)
+	m.SetRows(rows, nil)
+
+	flatID := m.table.Rows()[0][1]
+	m.SetTree(true)
+	treeID := m.table.Rows()[0][1]
+	if treeID == flatID {
+		t.Errorf("tree mode left the ID cell unchanged (%q) — the rows were not rebuilt", treeID)
+	}
+	m.SetTree(false)
+	if got := m.table.Rows()[0][1]; got != flatID {
+		t.Errorf("returning to flat mode did not restore the ID cell: %q, want %q", got, flatID)
+	}
+}
