@@ -42,8 +42,21 @@ with `--host` worked. This is client-side snapshot staleness across a restart,
 unrelated to scope; recorded so it is not rediscovered as a symptom of the
 deploy.
 
-## Not covered
+## WebUI, in a browser
 
-The WebUI was not exercised in a browser during this run. Its wasm builds
-clean (`make wasm-check`) and its bridge is unit-covered, but the dialogs added
-in `32c2417` have not been looked at on a screen, at either width.
+Driven with Playwright against the same dummy instance, at 1440x900 and at
+390px. Screenshots kept at the worktree root:
+`webui-scopefor-{desktop,390}.png`, `webui-regrant-scopefor-{desktop,390}.png`.
+
+- The Compose form's new `個別 capability を絞る（--scope-for）` section
+  accepts input and the echo updates live:
+  `scope: subtree (default)  +exec_cowrite,file_write=descendants`.
+- A task row renders `scope=subtree +exec_cowrite:descendants cancel:none`.
+- **The re-grant dialog opens PREFILLED** with the target's existing rules —
+  `exec_cowrite=descendants\ncancel=none` in the box, and the same in its echo.
+  This is the check that matters: before the fix the box did not exist, so
+  applying the dialog would have silently erased those rules. Now clearing them
+  takes typing.
+- 390px: no horizontal overflow at either place (textarea 374px of 390 in the
+  form, dialog 367px with a 347px textarea). Colours are the existing dark
+  theme, `#1e1e1e` on `#d4d4d4`.
