@@ -62,12 +62,14 @@ visibility and the agentboard's enumeration surfaces. Those are not one power,
 and §8 separates them — the first two follow the axis, the third stays a verb
 permission because the board is keyed by topic rather than by task.
 
-### 4. Why the invariant stops holding by itself
+### 4. "visible ⊇ actionable" is an accident, not a requirement
 
-Today "visible ⊇ actionable" is structural: `visibleToCaller` *is* the action
-set, optionally replaced by everything. Split the action set per capability and
-that accident disappears — which is why this design carries an explicit check
-where the base spec needed none.
+Today it holds structurally: `visibleToCaller` *is* the action set, optionally
+replaced by everything. Splitting the action set per capability ends that, and
+the first draft of this design reimposed it with an explicit check — which
+turned out to forbid a grant the operator wanted. Design §4 records the
+reasoning; the property that survives is narrower: a granted id is a visible
+id.
 
 ### 5. The motivating case
 
@@ -175,71 +177,72 @@ Three consequences worth stating outright:
   every held bit to exclude it — where one forgotten bit reaches X. That form
   fails open; this one fails closed.
 
-### 3. The invariant, and the two checks that hold it
+### 3. What is checked, and what deliberately is not
 
 ```
-∀ cap:  effective(cap) ⊆ visible
+every id named anywhere in the grant is in `visible`
 ```
 
-Enforced at every write (spawn, `caps set`) by exactly two comparisons:
+That is the only cross-field property left, and §2 makes it hold by
+construction: action ids and every override's ids join the visible set without
+being repeated. A granted id is a disclosed id.
 
-- `base` ranks at or below `visRank` under `none < subtree < global`
-- every `override.base` ranks at or below `visRank`
+Validation at every write (spawn, `caps set`) is therefore about CONSISTENCY,
+never about how much authority the value grants:
 
-Nothing about ids is checked, because every id in any action set is in
-`visible` by construction (§2). Nothing about `exclude_self` is checked,
-because it only ever removes. A violating value is rejected with
-`scope_not_permitted` naming the offending bit — never silently clamped,
-matching how the base spec treats an out-of-reach id.
+- every override mask is non-empty and pairwise disjoint from the others, which
+  is what keeps `override(cap)` a lookup rather than a precedence walk;
+- `vis_base` is zero when `vis_base_present` is not set, so one authority has
+  exactly one encoding.
 
-The base spec's asymmetry survives intact: widening what may be **seen** never
-widens what may be **done**. It is now a property of two fields in one value
-rather than a fence between a bitmask and a scope.
+**Ranks are not compared.** An action base — or an override's base — may
+outrank the visibility rank. §4 records why the requirement that they not was
+dropped.
 
-### 4. Action never exceeds visibility, because `ls` must bound the reach
+Ids are not checked here either: their bound is the parent's effective set at
+grant time (§9), not the task's own base.
 
-The check above refuses "visibility local, action global".
+### 4. Why the action rank is NOT bounded by the visibility rank
 
-**An earlier draft of this section argued that from brute-force enumeration,
-and that argument was wrong.** It said a task with a wide action rank would
-"enumerate the server by attempting actions". Task ids are 128 random bits;
-nothing guesses `60542da97c1115173918e86fd7ade954`. Corrected on the
-observation that aiming at an unseen id is not something an attacker can
-actually do.
+The two ranks are independent powers. Visibility answers "what can I
+enumerate"; the action base answers "what can I reach when I have an id". An
+operator may want either without the other, and the case that matters is
+withholding the first while granting the second:
 
-The real reason is that **ids circulate outside the visibility set**, so a wide
-action rank is exploitable without any guessing at all:
+> An agent that acts only on ids handed to it over the agentboard — *snapshot
+> this session*, *look at that task* — and must not be able to enumerate the
+> server.
 
-- Every agentboard message carries `from_task_id`
-  (`agentboard/agentboard.bgn:149`) — a complete id, delivered to any task on
-  the topic. Board delivery is data plane: it appears in no `requiredCap` entry
-  and needs no capability.
-- `whoami` returns the caller's `creator_task_id` ungated, and `ls` shows one
-  redacted parent row under every base.
-- Peers name ids to each other in message payloads as a matter of course; that
-  is what the reply-topic convention is built on.
+Written `scope=none +exec_view:global`, that is exactly "cannot list anything,
+can look at whatever it is told about". Tasks were running in that shape before
+this section was written.
 
-So a confined task accumulates real ids it was never granted. If its action
-rank exceeded its visibility rank, it could act on every one of them, and the
-operator reading `ls` would see none of it. **What the rule protects is not
-secrecy of ids — it is that `ls` remains a complete statement of what a task
-can reach.** Once those two can disagree, the scope column stops describing
-the authority and starts describing a subset of it.
+**An earlier version of this design forbade it**, requiring every action rank
+to sit at or below the visibility rank so that `ls` would bound what a task can
+reach. Three things were wrong with that:
 
-The out-of-scope answer stays `no_such_task` rather than `permission_denied`
-for the base spec's own reason — a missing-capability answer about an unseen
-target still distinguishes "exists" from "does not" for an id the caller
-already holds — but that is a smaller property than this rule, not its
-justification.
+- It conflated the two properties this design elsewhere insists are different.
+  That draft said, in this very section, *"un-enumerable and invisible are
+  different properties, and it is almost always the first one that is wanted"*
+  — and then required the second in order to grant broad action.
+- It protected nothing measurable. Task ids are 128 random bits, so a wide
+  action rank buys no discovery; it only lets a task act on ids it already
+  holds, and ids circulate freely — every agentboard message carries
+  `from_task_id`, and board delivery needs no capability.
+- What it did protect was the TASK's own `ls` as a self-description. That is
+  introspection, not confinement, and `whoami --json` answers it exactly, with
+  `scope_by_cap`. The OPERATOR's view was never at risk: the scope column
+  states the authority in full either way.
 
-The neighbouring shape that **is** expressible, and is what such requests
-usually want: `vis_base = none` with `override{cancel, ids:X}`. The task can
-reach exactly `X` and itself, and `X` appears in its `ls` — so the reach is
-still fully described by what it can see. **Un-enumerable and invisible are
-different properties**, and it is almost always the first one that is wanted.
+The only workaround the rule left was granting `vis_base = global`, handing
+over the enumeration the operator was trying to withhold. **A rule whose
+workaround is "grant more" is worse than no rule.**
 
-The reverse direction, visibility global with narrow action, is the common case
-and is written `vis_base = global` with whatever `base` the task should act in.
+What remains true, and is worth stating because the stronger thing is easy to
+assume: **a task can reach targets its own `ls` does not list.** Read the scope
+column, or `scope_by_cap`, to know a task's reach — `ls` answers the different
+question of what it can find on its own.
+
 
 ### 5. `exclude_self` is a bit, not a fourth base
 
@@ -453,6 +456,12 @@ unresolvable at submit time — the child has no id yet — and is not proposed.
 
 ### 10. `caps set`, cascade, resume
 
+`set_caps` validates the scope for CONSISTENCY (§3) and answers
+`invalid_scope` when it fails. It still skips ATTENUATION on purpose — an
+operator may grant a task more than the operator's own reach — but that was
+once read as skipping validation entirely, and live tasks ended up carrying
+scopes the spawn path would have refused.
+
 `SetCapsRequest` carries the overrides list beside `caps` and `scope`, under
 the **existing** `scope_present` bit: overrides and the visibility axis are
 part of the scope half, written and cleared with it. A `scope_present = 1`
@@ -484,33 +493,32 @@ over `none < subtree < global` (§3).
 | subtree | subtree | ✅ | **the default**, and today's omitted scope |
 | subtree | global | ✅ | sees the server, acts on its subtree — today's `info_global` with `--scope subtree` |
 | global | global | ✅ | today's `--scope global` |
-| subtree | none | ❌ | action rank exceeds visibility (§4) |
-| global | none | ❌ | same |
-| global | subtree | ❌ | same |
+| subtree | none | ✅ | acts on its subtree, enumerates nothing |
+| global | none | ✅ | **the board-driven observer**: acts on any id it is handed, enumerates nothing |
+| global | subtree | ✅ | acts anywhere, enumerates only its subtree |
 
-**`vis_base_present = 0` pins the pair to the diagonal**, so the default value
-and every legacy record are legal by construction — an illegal pair can only be
-produced by explicitly asking for one.
+All nine are legal: the ranks are independent powers (§4). The lower-left half
+was refused by an earlier version of this design, and the case that made that
+wrong is the one now marked in bold.
+
+**`vis_base_present = 0` puts the pair on the diagonal**, which is what makes
+the default and every legacy record mean what they always did. It is no longer
+load-bearing for legality — every pair is legal — but it is still what keeps a
+zero value from silently acquiring a rank nobody wrote.
 
 **Override rank — `override.base` against `visRank`.** The same three-by-three,
 and note what it is *not* compared against:
 
-| `override.base` vs `base` | legal? |
+| `override.base` vs the other ranks | legal? |
 |---|---|
-| narrower | ✅ the ordinary case: `exec_cowrite` confined below the task's own base |
+| narrower than `base` | ✅ the ordinary case: `exec_cowrite` confined below the task's own base |
 | equal | ✅ (usually only to carry `exclude_self` or different ids) |
-| **wider** | ✅ **so long as it is ≤ `visRank`** — ❌ otherwise |
+| wider than `base` | ✅ one verb reaching further than the rest |
+| wider than `visRank` | ✅ the board-driven observer — see §4 |
 
-Both sides of that last row, concretely:
-
-| written | verdict |
-|---|---|
-| `base=none, visRank=none` + `override{exec_control: subtree}` | ❌ the override outranks visibility: it could attach to descendants `ls` denies exist, and a successful attach discloses them |
-| `base=none, visRank=subtree` + `override{exec_control: subtree}` | ✅ same reach, now stated as visible — sees its subtree and may attach within it, every other bit confined to self and named ids |
-
-The difference is one explicit `vis_base`. Because `vis_base_present = 0` pins
-the pair to the diagonal, writing `base=none` alone also makes `visRank` none,
-so widening visibility is always something the grant says out loud.
+An override's rank is bounded by neither. It is the target set for one verb,
+and the operator says what it is; the grant states it in full in the scope
+column either way.
 
 The last row is the one that changed when visibility became an axis. Under a
 single scope, `base=none` with `override{exec_view, base=global}` had to be
@@ -544,15 +552,17 @@ turn a redundant grant into a failed spawn:
 **Every rejection, in one list.** A write (spawn or `caps set`) is refused with
 `scope_not_permitted`, naming the offending bit where one applies, iff:
 
-1. `rank(base) > rank(visRank)`
-2. `rank(override.base) > rank(visRank)` for any override
-3. an override's mask is empty
-4. two overrides' masks intersect
-5. `vis_base ≠ 0` while `vis_base_present = 0` — see below
+1. an override's mask is empty
+2. two overrides' masks intersect
+3. `vis_base ≠ 0` while `vis_base_present = 0` — see below
+
+Every one of them is about the value being *coherent*, not about how much it
+grants. An operator writing `caps set` may hand a task more authority than the
+operator's own reach; it may not hand it a value whose meaning is undefined.
 6. an `ids` entry is outside the parent's effective set for that capability
 7. a `vis_ids` entry is outside the parent's visibility set
 
-**Rule 5 is new, and it is wire hygiene rather than authority.** With
+**Rule 3 is wire hygiene rather than authority.** With
 `vis_base_present = 0` the `vis_base` byte is ignored, so a non-zero value
 there gives two encodings of one authority — they would compare unequal,
 render differently in `--json`, and disagree across a round-trip through a

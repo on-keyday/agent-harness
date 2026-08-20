@@ -105,6 +105,11 @@ func setCapsStatusError(s protocol.SetCapsStatus) error {
 	case protocol.SetCapsStatus_NotOperator:
 		return fmt.Errorf("operator only: capabilities can be re-granted from an " +
 			"operator connection, not from inside a task")
+	case protocol.SetCapsStatus_InvalidScope:
+		return fmt.Errorf("the scope is inconsistent: override capability lists must " +
+			"not overlap and must name at least one capability. This is not about how " +
+			"WIDE the grant is — an operator may grant anything, including a scope " +
+			"wider than its own")
 	default:
 		return fmt.Errorf("set-caps failed: %v", s)
 	}

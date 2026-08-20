@@ -305,11 +305,21 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, o
 		})
 	}
 
-	// Self-consistency first, before anything is measured against the parent.
-	// A value that is illegal on its own terms is rejected as written rather
-	// than being clamped into something legal the caller never asked for.
+	// Consistency first, before anything is measured against the parent: an
+	// override mask that is empty or overlaps another describes nothing
+	// coherent, so it is rejected as written rather than clamped into
+	// something the caller never asked for.
+	//
+	// There is no second pass after clamping any more. One existed to catch an
+	// override left stranded above a lowered visibility rank; ranks are
+	// independent now, so nothing clamping does can make a consistent value
+	// inconsistent.
 	if err := validateScope(out); err != nil {
-		return Scope{}, err.Error(), false
+		// Prefixed so the caller can tell a consistency failure from an
+		// out-of-reach id without parsing: both arrive through `offender`, and
+		// the submit path used to wrap every one of them in "scope id … is
+		// outside your own scope", which turned a sentence into nonsense.
+		return Scope{}, "invalid scope: " + err.Error(), false
 	}
 
 	visAll, visAllowed := h.scopeSet(creatorCID, protocol.Capability_None)
@@ -355,12 +365,6 @@ func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, o
 		}
 	}
 
-	// Clamping can lower the visibility rank under an override that was legal
-	// against the rank the caller wrote. Re-validate rather than ship a value
-	// whose action set escapes its own visibility.
-	if err := validateScope(out); err != nil {
-		return Scope{}, err.Error(), false
-	}
 	return out, "", true
 }
 

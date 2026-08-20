@@ -59,15 +59,15 @@ type Scope struct {
 // "every write-ish bit gets the same narrowing" is the common case and would
 // otherwise cost one entry per bit.
 //
-// An override narrows on the BASE axis only. It may name ids outside the base
-// set — those were disclosed by the granter and join the visible set — while a
-// wider base would reach targets that never appear in the task's own ls.
+// An override may be wider OR narrower than the base, on any axis. In
+// particular its rank is not bounded by the visibility rank: `scope=none
+// +exec_view:global` is a task that can enumerate nothing and look at anything
+// it is handed an id for, which is the shape a board-driven observer wants.
+// See validateScope for why the bound that used to exist was dropped.
 //
-// The point is NOT that ids are secret: they are 128 random bits, but they
-// circulate freely (every agentboard message carries from_task_id, and board
-// delivery needs no capability), so a confined task accumulates real ids it
-// was never granted. The rank check is what keeps `ls` a COMPLETE statement of
-// what the task can reach, rather than a subset of it.
+// Ids named here join the VISIBLE set (see visibilitySet) even though the rank
+// does not: an id written into a grant was disclosed by the granter, so hiding
+// it from ls would protect nothing.
 type ScopeOverride struct {
 	Caps        protocol.Capability
 	Base        protocol.ScopeBase
@@ -129,29 +129,39 @@ func capsLabelForMask(m protocol.Capability) string {
 	return strings.Join(parts, ",")
 }
 
-// validateScope enforces the rules that make "no capability acts outside what
-// ls shows" hold by construction. Two of them are about authority and one is
-// about encoding:
+// validateScope checks a scope for internal CONSISTENCY. Nothing here is about
+// how much authority the value grants — that is the operator's call, bounded
+// at spawn by attenuateScope and not at all for an operator's own set_caps.
 //
-//   - The action base, and every override's base, must rank at or below the
-//     visibility rank. Only the BASE axis is restricted, because only the base
-//     reaches targets that never show up in the task's own ls — an override may
-//     carry ids outside the base, since a granted id was disclosed by the
-//     granter and joins the visible set. See ScopeOverride for why this is
-//     about ls staying complete rather than about ids being secret.
 //   - Override masks are non-empty and pairwise disjoint, which is what keeps
-//     ForCap a lookup.
-//   - VisBase must be zero when VisBasePresent is not set. That one is wire
-//     hygiene rather than authority: otherwise one authority has two
-//     encodings, which compare unequal and render differently.
+//     ForCap a lookup rather than a precedence walk.
+//   - VisBase must be zero when VisBasePresent is not set, so one authority
+//     has exactly one encoding.
 //
-// Ids are deliberately NOT checked here. Their bound is the parent's effective
-// set at grant time (attenuateScope), not the task's own base.
+// **The action rank is deliberately NOT compared against the visibility rank.**
+// An earlier version required base <= visRank on the reasoning that `ls` should
+// be a complete statement of what a task can reach. Dropped, because that rule
+// conflated two properties this design elsewhere insists are different:
+// un-enumerable and invisible.
+//
+// The shape it forbade is a real one and the operator wanted it: an agent that
+// acts only on ids handed to it over the agentboard — snapshot this session,
+// look at that task — and must NOT be able to enumerate the server. Written
+// `scope=none +exec_view:global`, that is exactly "cannot list anything, can
+// look at what it is told about". The old rule made the only way to get it a
+// global visibility rank, which grants the enumeration the operator was trying
+// to withhold.
+//
+// Nor did the rule protect much. Task ids are 128 random bits, so a wide action
+// rank buys no discovery; it only lets a task act on ids it already holds. And
+// the operator's view of the authority is the scope column, which states it in
+// full either way — it was the TASK's own ls that stopped bounding its reach,
+// which is introspection rather than confinement, and `whoami --json` answers
+// that precisely with scope_by_cap.
+//
+// Ids are not checked here either. Their bound is the parent's effective set at
+// grant time (attenuateScope), not the task's own base.
 func validateScope(s Scope) error {
-	vis := s.VisRank()
-	if scopeBaseRank(s.Base) > scopeBaseRank(vis) {
-		return fmt.Errorf("scope base %s outranks visibility %s", s.Base, vis)
-	}
 	if !s.VisBasePresent && s.VisBase != protocol.ScopeBase(0) {
 		return fmt.Errorf("vis_base %s set while vis_base_present is 0 (non-canonical encoding)", s.VisBase)
 	}
@@ -164,10 +174,6 @@ func validateScope(s Scope) error {
 			return fmt.Errorf("scope override masks intersect at %s", capsLabelForMask(overlap))
 		}
 		seen |= o.Caps
-		if scopeBaseRank(o.Base) > scopeBaseRank(vis) {
-			return fmt.Errorf("scope override for %s: base %s outranks visibility %s",
-				capsLabelForMask(o.Caps), o.Base, vis)
-		}
 	}
 	return nil
 }

@@ -57,6 +57,19 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 	}
 	if req.ScopePresent() {
 		newScope = scopeFromWire(req.Scope, req.Overrides)
+		// Operator identity is a licence to grant any AUTHORITY, not to store
+		// an incoherent value: an empty or overlapping override mask would
+		// make ForCap's "at most one entry matches" false, and a non-canonical
+		// vis_base gives one authority two encodings. Attenuation is still
+		// skipped here on purpose — an operator may widen past its own reach.
+		//
+		// This path had no validation at all, which is how live tasks ended up
+		// carrying scopes the spawn path would have refused.
+		if err := validateScope(newScope); err != nil {
+			slog.Warn("set_caps denied: inconsistent scope", "cid", cid, "err", err)
+			respond(protocol.SetCapsStatus_InvalidScope, nil, 0)
+			return
+		}
 	}
 
 	after, ok := h.Tasks.SetCaps(targetHex, req.CapsPresent(), newCaps, req.ScopePresent(), newScope)
@@ -175,14 +188,9 @@ func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntr
 		out.Overrides = append(out.Overrides, o)
 	}
 
-	// Lowering the visibility rank can leave an override that was legal against
-	// the child's old rank outranking its new one. Clamp rather than reject:
-	// this is a forced narrowing, and refusing would leave the descendant
-	// holding the WIDER authority the cascade exists to remove.
-	for i := range out.Overrides {
-		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, out.VisRank())
-	}
-	out.Base = minScopeBase(out.Base, out.VisRank())
+	// No final clamp against the visibility rank. One used to live here to keep
+	// every action set inside what ls shows; that rule is gone, and the two
+	// ranks clamp independently against the parent above.
 	return out
 }
 

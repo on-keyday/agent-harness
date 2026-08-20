@@ -1542,22 +1542,39 @@ func TestAttenuateScopePerCapability(t *testing.T) {
 	}
 }
 
-// A value that is illegal on its own terms is refused as written, not clamped
-// into something legal the caller never asked for.
-func TestAttenuateScopeRejectsSelfInconsistentValues(t *testing.T) {
+// An INCOHERENT value is refused as written, not clamped into something the
+// caller never asked for. A merely wide one is not incoherent: an action rank
+// above the visibility rank is a grant, and grants are the operator's call.
+func TestAttenuateScopeRejectsIncoherentValues(t *testing.T) {
 	h, _, c, _, _ := scopeFixture(t)
 	cid := bindPrincipal(t, h, c)
 	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree})
 
-	if _, off, ok := h.attenuateScope(cid, Scope{
-		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
-	}); ok {
-		t.Errorf("accepted a base outranking its own visibility (offender %q)", off)
-	}
 	if _, _, ok := h.attenuateScope(cid, Scope{Overrides: []ScopeOverride{
 		{Caps: protocol.Capability_Cancel}, {Caps: protocol.Capability_Cancel},
 	}}); ok {
 		t.Error("accepted intersecting override masks")
+	}
+	if _, _, ok := h.attenuateScope(cid, Scope{
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_None}},
+	}); ok {
+		t.Error("accepted an empty override mask")
+	}
+	if _, _, ok := h.attenuateScope(cid, Scope{VisBase: protocol.ScopeBase_Global}); ok {
+		t.Error("accepted a vis_base with its presence bit clear")
+	}
+
+	// The shape the dropped rule refused: enumerate nothing, act on what you
+	// are handed. Clamped against the parent, not rejected.
+	out, _, ok := h.attenuateScope(cid, Scope{
+		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
+	})
+	if !ok {
+		t.Fatal("refused an action rank above the visibility rank")
+	}
+	if out.VisRank() != protocol.ScopeBase_None {
+		t.Errorf("visibility rank = %v, want none — the grant said enumerate nothing", out.VisRank())
 	}
 }
 
@@ -1703,5 +1720,38 @@ func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
 	}
 	if !h.authorize(cid, protocol.Capability_ExecView, g) {
 		t.Error("exec_view lost the descendant it never had an override for")
+	}
+}
+
+// set_caps had NO validation at all: operator identity was read as a licence to
+// write anything, when it is only a licence to GRANT anything. That is how live
+// tasks ended up carrying scopes the spawn path would have refused. A client
+// cannot produce these — its own merge refuses them — so the gate has to be
+// exercised on the server's side of the wire.
+func TestSetCapsValidatesConsistencyNotWidth(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		scope Scope
+	}{
+		{"intersecting masks", Scope{Overrides: []ScopeOverride{
+			{Caps: protocol.Capability_Cancel | protocol.Capability_Purge},
+			{Caps: protocol.Capability_Purge},
+		}}},
+		{"empty mask", Scope{Overrides: []ScopeOverride{{Caps: protocol.Capability_None}}}},
+		{"non-canonical vis_base", Scope{VisBase: protocol.ScopeBase_Global}},
+	} {
+		if err := validateScope(tc.scope); err == nil {
+			t.Errorf("%s: accepted, so set_caps would store an undefined value", tc.name)
+		}
+	}
+
+	// Width is not incoherence. An operator may hand a task more than the
+	// operator's own reach, and may hand it action past what it can enumerate.
+	wide := Scope{
+		Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}},
+	}
+	if err := validateScope(wide); err != nil {
+		t.Errorf("refused the board-driven observer shape: %v", err)
 	}
 }

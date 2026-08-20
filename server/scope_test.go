@@ -190,18 +190,16 @@ func TestForCapPrefersTheOverride(t *testing.T) {
 	}
 }
 
-// validateScope is the design's rejection list. Ids are deliberately absent
-// from it: their bound is the parent's set at grant time, not the task's base.
+// validateScope is the CONSISTENCY list. Ranks are deliberately absent from
+// it — an action rank above the visibility rank is legal, because "cannot
+// enumerate" and "cannot act" are different powers and an operator may want
+// the first without the second. Ids are absent too: their bound is the
+// parent's set at grant time, not the task's base.
 func TestValidateScopeRejections(t *testing.T) {
 	cases := []struct {
 		name string
 		s    Scope
 	}{
-		{"base outranks visibility", Scope{
-			Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_None}},
-		{"override outranks visibility", Scope{
-			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
-			Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecControl, Base: protocol.ScopeBase_Subtree}}}},
 		{"empty mask", Scope{
 			Overrides: []ScopeOverride{{Caps: protocol.Capability_None}}}},
 		{"masks intersect", Scope{Overrides: []ScopeOverride{
@@ -229,6 +227,13 @@ func TestValidateScopeAccepts(t *testing.T) {
 		{"named reach out of a blind base", Scope{
 			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
 			Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{id}}}}},
+		// The board-driven observer: enumerates nothing, looks at whatever it
+		// is handed an id for. The rank rule used to forbid exactly this.
+		{"action rank above the visibility rank", Scope{
+			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
+			Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}}}},
+		{"a global action base under a none visibility rank", Scope{
+			Base: protocol.ScopeBase_Global, VisBasePresent: true, VisBase: protocol.ScopeBase_None}},
 		{"override wider than base, within visibility", Scope{
 			Base: protocol.ScopeBase_None, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
 			Overrides: []ScopeOverride{{Caps: protocol.Capability_ExecView, Base: protocol.ScopeBase_Global}}}},

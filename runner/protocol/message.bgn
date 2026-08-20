@@ -1082,6 +1082,12 @@ enum SetCapsStatus:
     not_found      = "not_found"
     not_operator   = "not_operator"
     internal_error = "internal_error"
+    # The scope is inconsistent: an override mask that is empty or overlaps
+    # another, or a vis_base set without its presence bit. NOT about how much
+    # authority it grants -- an operator may grant anything, including more
+    # than it holds itself. Appended, so an old client renders an unfamiliar
+    # status as its number rather than failing to decode.
+    invalid_scope  = "invalid_scope"
 
 # SetCapsRequest rewrites a live task's authority. Unlike a resume-time
 # re-grant it has no terminal-state precondition: the point is to change a task
@@ -1622,10 +1628,11 @@ format TaskScope:
 # would carry vis_* fields that must be validated as always-zero. An override
 # narrows on the base axis only -- it may name ids outside the base set,
 # because a granted id was disclosed by the granter and joins the visibility
-# set, while a wider BASE would reach targets that never appear in the task's
-# own ls. Not because ids are secret -- they are 128 random bits but they
-# circulate (every board message carries from_task_id, ungated) -- but so that
-# ls stays a COMPLETE statement of the reach rather than a subset of it.
+# set, and its base is bounded by NEITHER the action base nor the visibility
+# rank: `scope=none +exec_view:global` is a task that enumerates nothing and
+# looks at whatever id it is handed, which is what a board-driven observer
+# wants. A task can therefore reach targets its own ls does not list; the scope
+# column, not ls, is the statement of its reach.
 format ScopeOverride:
     caps         :Capability
     base         :ScopeBase

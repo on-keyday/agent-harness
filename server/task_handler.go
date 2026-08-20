@@ -689,7 +689,7 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	scope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
 	if !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
-		resp.SetErrorMsg([]byte("scope id " + offender + " is outside your own scope"))
+		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
 		return resp
 	}
 
@@ -742,6 +742,18 @@ func (h *TaskHandler) handleSubmit(cid string, req *protocol.SubmitRequest, orig
 	return protocol.SubmitResponse{Status: protocol.SubmitStatus_Ok, TaskId: tid}
 }
 
+// scopeRejectionMsg renders attenuateScope's `offender`. It carries two kinds
+// of failure — an id outside the caller's reach, or a scope that is
+// inconsistent on its own terms — and wrapping both in "scope id X is outside
+// your own scope" produced sentences like "scope id invalid scope: … is
+// outside your own scope".
+func scopeRejectionMsg(offender string) string {
+	if strings.HasPrefix(offender, "invalid scope: ") {
+		return offender
+	}
+	return "scope id " + offender + " is outside your own scope"
+}
+
 // handleSubmitResume implements the resume_task_id branch of handleSubmit.
 // Validation order (mirrors the fresh-submit path in handleSubmit exactly,
 // so the same "roots-matching runner set narrowed by profile before the
@@ -783,7 +795,7 @@ func (h *TaskHandler) handleSubmitResume(cid string, req *protocol.SubmitRequest
 	newScope, offender, scopeOK := h.attenuateScope(cid, scopeFromWire(req.Scope, req.Overrides))
 	if req.ScopePresent() && !scopeOK {
 		resp := protocol.SubmitResponse{Status: protocol.SubmitStatus_ScopeNotPermitted}
-		resp.SetErrorMsg([]byte("scope id " + offender + " is outside your own scope"))
+		resp.SetErrorMsg([]byte(scopeRejectionMsg(offender)))
 		return resp
 	}
 	// Mode (Kind) is per-open, latest-recorded (spec §4c) — a resume through
