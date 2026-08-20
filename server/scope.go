@@ -61,8 +61,13 @@ type Scope struct {
 //
 // An override narrows on the BASE axis only. It may name ids outside the base
 // set — those were disclosed by the granter and join the visible set — while a
-// wider base would reach targets nobody named, which is the enumeration leak
-// the rank check refuses.
+// wider base would reach targets that never appear in the task's own ls.
+//
+// The point is NOT that ids are secret: they are 128 random bits, but they
+// circulate freely (every agentboard message carries from_task_id, and board
+// delivery needs no capability), so a confined task accumulates real ids it
+// was never granted. The rank check is what keeps `ls` a COMPLETE statement of
+// what the task can reach, rather than a subset of it.
 type ScopeOverride struct {
 	Caps        protocol.Capability
 	Base        protocol.ScopeBase
@@ -130,9 +135,10 @@ func capsLabelForMask(m protocol.Capability) string {
 //
 //   - The action base, and every override's base, must rank at or below the
 //     visibility rank. Only the BASE axis is restricted, because only the base
-//     reaches targets nobody named — an override may carry ids outside the
-//     base, since a granted id was disclosed by the granter and joins the
-//     visible set.
+//     reaches targets that never show up in the task's own ls — an override may
+//     carry ids outside the base, since a granted id was disclosed by the
+//     granter and joins the visible set. See ScopeOverride for why this is
+//     about ls staying complete rather than about ids being secret.
 //   - Override masks are non-empty and pairwise disjoint, which is what keeps
 //     ForCap a lookup.
 //   - VisBase must be zero when VisBasePresent is not set. That one is wire

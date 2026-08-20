@@ -1622,7 +1622,10 @@ format TaskScope:
 # would carry vis_* fields that must be validated as always-zero. An override
 # narrows on the base axis only -- it may name ids outside the base set,
 # because a granted id was disclosed by the granter and joins the visibility
-# set, while a wider BASE would reach targets nobody named.
+# set, while a wider BASE would reach targets that never appear in the task's
+# own ls. Not because ids are secret -- they are 128 random bits but they
+# circulate (every board message carries from_task_id, ungated) -- but so that
+# ls stays a COMPLETE statement of the reach rather than a subset of it.
 format ScopeOverride:
     caps         :Capability
     base         :ScopeBase

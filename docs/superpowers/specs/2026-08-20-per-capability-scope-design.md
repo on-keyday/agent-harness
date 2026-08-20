@@ -196,29 +196,47 @@ The base spec's asymmetry survives intact: widening what may be **seen** never
 widens what may be **done**. It is now a property of two fields in one value
 rather than a fence between a bitmask and a scope.
 
-### 4. Action can never exceed visibility, because it cannot
+### 4. Action never exceeds visibility, because `ls` must bound the reach
 
-The check above refuses "visibility local, action global". That is not a policy
-preference; the state is unachievable, and admitting it would only make the
-model lie.
+The check above refuses "visibility local, action global".
 
-Every action capability discloses existence on success. A `cancel` that takes
-effect proves the target existed. A `file_read` or `exec_view` that returns
-proves it, and hands over the contents besides. A nonexistent id answers
-`no_such_task`. So a task holding a wider action rank than its visibility rank
-enumerates the server by *attempting actions* — destructively, in the `cancel`
-case. Its narrow visibility would be decorative.
+**An earlier draft of this section argued that from brute-force enumeration,
+and that argument was wrong.** It said a task with a wide action rank would
+"enumerate the server by attempting actions". Task ids are 128 random bits;
+nothing guesses `60542da97c1115173918e86fd7ade954`. Corrected on the
+observation that aiming at an unseen id is not something an attacker can
+actually do.
 
-This is the contrapositive of the rule the base spec already adopted: an
-out-of-scope target answers "no such task" rather than `permission_denied`,
-because *"a missing-capability answer for something the caller cannot see is an
-existence oracle."*
+The real reason is that **ids circulate outside the visibility set**, so a wide
+action rank is exploitable without any guessing at all:
+
+- Every agentboard message carries `from_task_id`
+  (`agentboard/agentboard.bgn:149`) — a complete id, delivered to any task on
+  the topic. Board delivery is data plane: it appears in no `requiredCap` entry
+  and needs no capability.
+- `whoami` returns the caller's `creator_task_id` ungated, and `ls` shows one
+  redacted parent row under every base.
+- Peers name ids to each other in message payloads as a matter of course; that
+  is what the reply-topic convention is built on.
+
+So a confined task accumulates real ids it was never granted. If its action
+rank exceeded its visibility rank, it could act on every one of them, and the
+operator reading `ls` would see none of it. **What the rule protects is not
+secrecy of ids — it is that `ls` remains a complete statement of what a task
+can reach.** Once those two can disagree, the scope column stops describing
+the authority and starts describing a subset of it.
+
+The out-of-scope answer stays `no_such_task` rather than `permission_denied`
+for the base spec's own reason — a missing-capability answer about an unseen
+target still distinguishes "exists" from "does not" for an id the caller
+already holds — but that is a smaller property than this rule, not its
+justification.
 
 The neighbouring shape that **is** expressible, and is what such requests
-usually want: `vis_base = none` with `override{cancel, ids:X}`. Enumeration
-stays local — nothing but `X` and self can be named — while `X` itself becomes
-visible. **Un-enumerable and invisible are different properties**, and it is
-almost always the first one that is wanted.
+usually want: `vis_base = none` with `override{cancel, ids:X}`. The task can
+reach exactly `X` and itself, and `X` appears in its `ls` — so the reach is
+still fully described by what it can see. **Un-enumerable and invisible are
+different properties**, and it is almost always the first one that is wanted.
 
 The reverse direction, visibility global with narrow action, is the common case
 and is written `vis_base = global` with whatever `base` the task should act in.
