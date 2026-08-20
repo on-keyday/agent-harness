@@ -171,7 +171,11 @@ format OpenExecRunnerRequest:
     extra_args :ClaudeArgs
     x11_enabled :u1   # relayed from OpenInteractiveRequest.x11_enabled
     resume_conversation :u1 # relayed from OpenInteractiveRequest.resume_conversation
-    reserved :u6
+    # relayed from OpenInteractiveRequest.event_stream: run the profile's
+    # stream adapter rather than the agent under a PTY. Mutually exclusive with
+    # x11_enabled, which is a terminal concept.
+    event_stream :u1
+    reserved :u5
     # agent_profile: relayed from OpenInteractiveRequest.agent_profile /
     # AssignTaskBody.agent_profile.
     agent_profile_len :u8
@@ -453,6 +457,14 @@ enum TaskKind:
     :u8
     oneshot
     interactive
+    # stream is the event-stream kind: multi-turn like interactive, but its
+    # data plane is structured events rather than PTY bytes. It rides the SAME
+    # open-exec machinery — one server-allocated bidi stream carrying
+    # exec/frame Stdout/Stdin frames — so the payload inside those frames is
+    # the adapter's neutral NDJSON instead of terminal output. Appending an
+    # enum VALUE is decode-safe (scope_wire_test pins that an unknown value
+    # decodes and renders numerically); nothing about the byte layout moves.
+    stream
 
 enum RunnerStatus:
     :u8
@@ -840,7 +852,13 @@ format OpenInteractiveRequest:
     resume_conversation :u1
     # resume only: same semantics as SubmitRequest.scope_present.
     scope_present :u1
-    reserved :u4
+    # 1 = open this session as TaskKind.stream: the runner spawns the profile's
+    # stream adapter instead of the agent under a PTY, and the frames carry
+    # neutral NDJSON. Takes a reserved bit rather than a new request type,
+    # because everything else about opening a session — caps, scope, the
+    # server-allocated stream, the session mux that owns it — is identical.
+    event_stream :u1
+    reserved :u3
     resume_task_id :TaskID
     # agent_profile: same semantics as SubmitRequest.agent_profile.
     agent_profile_len :u8

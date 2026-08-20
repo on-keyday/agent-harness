@@ -367,3 +367,39 @@ One thing left as it was: a CANCELLED task still reports 0 and lands on
 Succeeded, because `TaskStore.Finish` deliberately overwrites Cancelled. That
 is unchanged behaviour rather than something this touched, and whether
 "cancelled" should survive is a separate decision.
+
+## 12. Correction: the ring is already an event ring
+
+Entry 4 listed as an open problem that "`RingBuffer` replay for a byte stream
+is the last N bytes… reusing the ring verbatim would truncate mid-JSON-line",
+and entry 8 repeated it as a thing the server side would have to solve. Asked
+whether I had checked. I had not.
+
+`server/ring_buffer.go` stores `frames [][]byte` — **one entry per complete
+frame** — and its own doc says why:
+
+> Each Append() must receive exactly one complete wire-encoded frame (header +
+> payload). Truncation at arbitrary byte offsets would corrupt the consumer's
+> frame parser when the ring later wraps mid-frame; the API is shaped to make
+> that mistake impossible at the type level.
+
+Eviction drops whole frames. `appendCount` gives each a stable identity so
+`SnapshotFrom` can replay a suffix. And `outStreamWrapper` chunks at
+`math.MaxUint32`, so one Write is one frame in any real case, while the
+adapter's `Writer` does exactly one Write per neutral message.
+
+So **one neutral message = one frame = one ring entry**, and replay is already
+event-granular. The concern was not merely wrong, it was backwards: I wrote
+that an event stream needs a different container than the byte ring, and the
+ring had been that container the whole time.
+
+Sixth instance today of the same shape — a claim about code I had not opened,
+written in the same register as the ones I had. Every one of them was one grep
+away, and every one was caught by the operator asking rather than by anything
+in the process.
+
+**What this removes from the remaining work:** the server-side "SessionMux
+sibling that buffers events" from entry 8 is not needed. The mux is frame-aware
+but not PTY-aware — it moves complete frames, stamps activity on
+Stdout/Stderr, and special-cases only TerminalWindowSize, which an event-stream
+session simply never sends.
