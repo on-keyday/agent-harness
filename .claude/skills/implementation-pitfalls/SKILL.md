@@ -271,6 +271,60 @@ want.
 
 ---
 
+## Pitfall 11 — The scaffolding a rule demands is evidence against the rule
+
+**What went wrong (2026-08-20)**: the per-capability scope design carried an
+invariant I invented — *the action rank may not exceed the visibility rank*
+(`effective(cap) ⊆ visible`). It came from no line of code and no user
+sentence, only a story about task-id enumeration. Upholding it then cost, in
+order: a second `validateScope` call in the attenuation path (clamping toward
+the rule could itself break it), a dedicated tail loop in `clampScopeUnder`
+pushing every override down to the visibility rank, a rejection path in three
+operator surfaces, a spec section and a matrix row. **Each cost was written up
+in a comment as correct handling.** Removed in `c8965b3`.
+
+**Why it slipped**: I authored both the rule and its tests (`d57c3f5`, titled
+"an invariant that can fail" — it could fail, but only against premises I also
+wrote). Tests generated from a premise cannot falsify that premise. The rule
+passed spec review, implementation, the completeness tests and the deploy gate.
+What killed it was the user running `harness-cli ls` and seeing two live tasks
+in a shape the spawn path refuses, then naming the use case: a board-driven
+observer that acts on request but must not appear in `ls`.
+
+Two aggravating factors worth recognising by name:
+
+1. **The justification improved while the conclusion stayed wrong.** Challenged
+   on enumeration (correctly — task ids are 128 random bits), I replaced the
+   reason with a better and factually true one (`75714ec`: ids circulate via
+   `from_task_id` on every board message) and kept the rule. From outside, a
+   rule that recruits stronger arguments under pressure reads as strengthening.
+   When a challenge lands, re-examine the conclusion, not only the argument.
+2. **Incomplete enforcement was the escape valve.** `caps set` had no
+   `validateScope` at all until `c8965b3`. That gap is the only reason the
+   forbidden shape could exist on a live server and expose the rule. Had the
+   enforcement been complete first, the user would have hit a rejection, worked
+   around it, and the wrong rule would have survived.
+
+**Mitigation — when a rule needs upkeep, price it:**
+
+- Before writing the comment that justifies a second validation pass, a
+  dedicated clamp, or a per-call-site exemption, ask whether the rule is
+  earning it. Recurring upkeep at new call sites is a symptom, not a duty.
+- Ask of any invariant: **which file:line, schema field, or user sentence does
+  this come from?** If the answer is "it follows from X being complete", it is
+  a preference. Write it in the spec AS a preference, with the use cases it
+  forbids listed explicitly — that list is what the user can falsify cheaply.
+- Absolute modality demands a measurement. The spec section here was literally
+  titled *"Action can never exceed visibility, because it cannot"*, and nothing
+  had been measured. `cannot` / `unachievable` / `by construction` need an
+  observable failure to point at.
+- Separate registers in the same paragraph. "Read at `server/scope.go:NN`" and
+  "I reason that" must not be delivered in identical prose; the reader should
+  not have to out-argue the fluent claim to find the soft one. See
+  `feedback_verify_llm_framing` (addendum 2026-08-20).
+
+---
+
 ## Subagent dispatch checklist (controller-side)
 
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:
@@ -294,7 +348,8 @@ When dispatching an implementer or reviewer subagent in this project, include in
 
 ### Spec-writing checklist (controller-side, before commiting a spec)
 - [ ] Grep the draft for "implementer's choice", "could be deferred", "remove or", "TBD", "TODO". Decide each before committing.
-- [ ] Grep for "Wait —", "hmm", "let me think" — these are author-uncertainty markers that don't belong in a spec body. Verify the underlying logic and rewrite confidently or mark as an explicit open question.
+- [ ] Grep for "Wait —", "hmm", "let me think" — these are author-uncertainty markers that don't belong in a spec body. Verify the underlying logic and rewrite confidently or mark as an explicit open question. **"Rewrite confidently" is the half that gets taken without the "verify" half** (Pitfall 11): the rewritten sentence must be able to name its source — a file:line, a schema field, a user sentence, or a measurement. If it can't, it is a preference, and the spec must say so and list what it forbids.
+- [ ] Grep the draft for "cannot", "never", "unachievable", "by construction". For each, name the observable failure it predicts. An absolute with no measurement behind it is Pitfall 11's signature.
 - [ ] Problem statement and Implementation section must cover the same scope. If the Implementation section silently narrows scope, the rationale must be written in the spec body (not just left as a label change).
 
 ---
