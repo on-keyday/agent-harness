@@ -83,10 +83,7 @@ func (h *TaskHandler) handleSetCaps(conn ConnHandle, requestID uint32, cid strin
 				continue
 			}
 			clampedCaps := cBefore.Capabilities & after.Capabilities
-			clampedScope := Scope{
-				Base: minScopeBase(cBefore.Scope.Base, after.Scope.Base),
-				IDs:  filterIDs(cBefore.Scope.IDs, after),
-			}
+			clampedScope := clampScopeUnder(cBefore.Scope, clampedCaps, after)
 			cAfter, ok := h.Tasks.SetCaps(childHex, true, clampedCaps, true, clampedScope)
 			if !ok {
 				continue
@@ -140,6 +137,53 @@ func isNarrowing(before, after TaskEntry) bool {
 		}
 	}
 	return false
+}
+
+// clampScopeUnder re-imposes the monotonic invariant on ONE descendant after
+// its parent's authority changed. Every axis is clamped here, in one function,
+// because the inline struct literal this replaced carried Base and IDs only —
+// a cascade silently erased a child's visibility rank and its overrides, which
+// is a rewrite of authority nothing reported.
+//
+// childCaps is the descendant's ALREADY-clamped capability mask, so an
+// override for a bit it no longer holds is dropped rather than left to
+// reapply if the bit is granted again later.
+func clampScopeUnder(child Scope, childCaps protocol.Capability, parent TaskEntry) Scope {
+	out := Scope{
+		Base:        minScopeBase(child.Base, parent.Scope.Base),
+		IDs:         filterIDs(child.IDs, parent),
+		ExcludeSelf: child.ExcludeSelf, // only ever narrows; nothing to clamp
+		VisIDs:      filterIDs(child.VisIDs, parent),
+	}
+
+	// The visibility rank clamps against the parent's rank. Written explicitly
+	// rather than copied, so a child that inherited its rank from its base does
+	// not silently acquire a present bit it never had.
+	if clamped := minScopeBase(child.VisRank(), parent.Scope.VisRank()); clamped != out.Base {
+		out.VisBasePresent = true
+		out.VisBase = clamped
+	}
+
+	for _, o := range child.Overrides {
+		o.Caps &= childCaps
+		if o.Caps == protocol.Capability_None {
+			continue
+		}
+		parentBase, _, _ := parent.Scope.ForCap(o.Caps)
+		o.Base = minScopeBase(o.Base, parentBase)
+		o.IDs = filterIDs(o.IDs, parent)
+		out.Overrides = append(out.Overrides, o)
+	}
+
+	// Lowering the visibility rank can leave an override that was legal against
+	// the child's old rank outranking its new one. Clamp rather than reject:
+	// this is a forced narrowing, and refusing would leave the descendant
+	// holding the WIDER authority the cascade exists to remove.
+	for i := range out.Overrides {
+		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, out.VisRank())
+	}
+	out.Base = minScopeBase(out.Base, out.VisRank())
+	return out
 }
 
 // filterIDs keeps only the ids that are still inside the parent's post-change

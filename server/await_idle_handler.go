@@ -56,12 +56,14 @@ func (h *TaskHandler) handleAwaitIdle(conn ConnHandle, req *protocol.TaskControl
 	// Target gate. This is the ONLY gate for sink=reply/board; there is no
 	// capability half any more (see the doc comment), so this is the
 	// scope half, and an out-of-scope session is reported as absent.
-	// Resolved through exec_view: await_idle observes a session, and an
-	// operator who narrows exec_view means "this worker may not observe that".
-	// Resolving it through the visibility set instead would leave a hole where
-	// a narrowed worker could still probe liveness. There is no capability
-	// half to check (see the doc comment), so this is the whole gate.
-	if !h.inScope(conn.ConnectionID().String(), protocol.Capability_ExecView, hex.EncodeToString(ai.TaskId.Id[:])) {
+	// Resolved through the VISIBILITY set, not an action capability. The doc
+	// comment above is the reason: what this observes is last_output_at, which
+	// `ls` already returns to any caller that can see the task. Resolving it
+	// through exec_view would reintroduce exactly what dropping the capability
+	// removed — the edge-triggered route costing more authority than polling
+	// for the same answer, since a narrowed exec_view would refuse here while
+	// `ls` kept answering.
+	if !h.inScope(conn.ConnectionID().String(), protocol.Capability_None, hex.EncodeToString(ai.TaskId.Id[:])) {
 		respond(protocol.AwaitIdleStatus_NotFound, 0)
 		return
 	}

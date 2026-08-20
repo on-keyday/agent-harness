@@ -1560,3 +1560,104 @@ func TestAttenuateScopeRejectsSelfInconsistentValues(t *testing.T) {
 		t.Error("accepted intersecting override masks")
 	}
 }
+
+// ---- cascade (2026-08-20 design §10) --------------------------------------
+
+// A cascade must clamp EVERY axis. The inline literal this replaced carried
+// Base and IDs only, so a cascade silently erased a descendant's visibility
+// rank and its overrides — a rewrite of authority that nothing reported.
+func TestClampScopeUnderCarriesEveryAxis(t *testing.T) {
+	parent := TaskEntry{
+		ID:           "00112233445566778899aabbccddeeff",
+		Capabilities: protocol.Capability_All,
+		Scope:        Scope{Base: protocol.ScopeBase_None},
+	}
+	child := Scope{
+		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+		ExcludeSelf: true,
+		Overrides: []ScopeOverride{
+			{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_Subtree},
+			{Caps: protocol.Capability_Purge, Base: protocol.ScopeBase_Subtree},
+		},
+	}
+
+	// The descendant keeps cancel but loses purge.
+	out := clampScopeUnder(child, protocol.Capability_Cancel, parent)
+
+	if out.Base != protocol.ScopeBase_None {
+		t.Errorf("Base = %v, want clamped to none", out.Base)
+	}
+	if out.VisRank() != protocol.ScopeBase_None {
+		t.Errorf("VisRank = %v, want clamped to none — the rank must not survive a narrowing", out.VisRank())
+	}
+	if !out.ExcludeSelf {
+		t.Error("ExcludeSelf was dropped; it only ever narrows and must be kept")
+	}
+	if len(out.Overrides) != 1 || out.Overrides[0].Caps != protocol.Capability_Cancel {
+		t.Fatalf("overrides = %+v, want the cancel entry only", out.Overrides)
+	}
+	if out.Overrides[0].Base != protocol.ScopeBase_None {
+		t.Errorf("override base = %v, want clamped to none", out.Overrides[0].Base)
+	}
+	if err := validateScope(out); err != nil {
+		t.Errorf("a clamped scope must stay legal: %v", err)
+	}
+}
+
+// An override for a bit the descendant no longer holds is dropped, not left to
+// reapply if the bit is granted again later.
+func TestClampScopeUnderDropsOverridesForLostBits(t *testing.T) {
+	parent := TaskEntry{
+		ID: "00112233445566778899aabbccddeeff", Capabilities: protocol.Capability_All,
+		Scope: Scope{Base: protocol.ScopeBase_Subtree},
+	}
+	child := Scope{
+		Base:      protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel | protocol.Capability_Purge}},
+	}
+	out := clampScopeUnder(child, protocol.Capability_Cancel, parent)
+	if len(out.Overrides) != 1 {
+		t.Fatalf("overrides = %+v, want one surviving entry", out.Overrides)
+	}
+	if out.Overrides[0].Caps != protocol.Capability_Cancel {
+		t.Errorf("mask = %v, want purge masked out of it", out.Overrides[0].Caps)
+	}
+}
+
+// The scope half is ONE value gated by ONE bit, overrides included. This is
+// pinned because the 2026-08-13 amendment exists precisely because both halves
+// were once gated behind the caps bit, which silently reset a task's scope.
+func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
+	st := NewTaskStore()
+	withOverride := Scope{
+		Base:      protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
+	}
+	id := st.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
+		protocol.Capability_All, withOverride, "")
+	st.Finish(id, 0, nil)
+
+	// scopeOverride = false: the stored scope, overrides and all, is kept.
+	if _, err := st.Resume(id, "p2", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
+		false, protocol.Capability_None, false, Scope{}, protocol.TaskKind_Oneshot, ""); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	got, _ := st.Get(id)
+	if len(got.Scope.Overrides) != 1 {
+		t.Fatalf("overrides = %+v, want the stored entry kept", got.Scope.Overrides)
+	}
+
+	// scopeOverride = true with an empty list: the only way to clear them, the
+	// same shape as writing an empty ids list.
+	st.Finish(id, 0, nil)
+	if _, err := st.Resume(id, "p3", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Cli,
+		false, protocol.Capability_None, true, Scope{Base: protocol.ScopeBase_Subtree},
+		protocol.TaskKind_Oneshot, ""); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	got, _ = st.Get(id)
+	if len(got.Scope.Overrides) != 0 {
+		t.Errorf("overrides = %+v, want cleared by an explicit empty scope", got.Scope.Overrides)
+	}
+}
