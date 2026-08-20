@@ -120,11 +120,25 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
 30. Results go to the result surface, not the status indicator — WebUI:
     `appendCmdOutput` (like the ✕ Cancel handler); `setStatus` is the
     CONNECTION badge. TUI: `a.cmdresult`.
-31. Do not hide default values in detail-ish views — a hidden
-    `scope=subtree` reads as "this task has no scope". Documented
-    exception: CLI human `ls` rows and the TUI table elide the subtree
-    default for row width — the JSON forms always carry it. If that
-    exception draws complaints, drop it everywhere at once.
+31. Do not hide a value because of what it IS — not in detail views, and
+    **not in rows either**. A hidden `scope=subtree` reads as "this task
+    has no scope"; an elided `cowrite=0 viewer=0` reads as "this row does
+    not report watchers". **The row-width exception this item used to
+    grant is withdrawn** (2026-08-20, on operator complaint): `ls` rows
+    and `whoami` now print `scope=subtree` like the WebUI row, the TUI
+    detail popup and both JSON forms already did — only those two still
+    carried it — and `IsDefaultScope`, whose doc comment existed to
+    justify the eliding, is deleted.
+    Gate rendering on whether the subject EXISTS, never on its value: a
+    live session prints `cowrite=0 viewer=0`; a finished task prints
+    nothing, because it has no session to describe. **Zero is a
+    measurement, absence is not**, and collapsing them throws the
+    measurement away.
+    The trap: neighbouring fields (`act=`, `err=`, `exit=`, `by=`) DO
+    elide — on ABSENCE, a different axis. Copying their form without
+    checking their axis is how this recurs, and it did: the observer
+    counts shipped eliding-at-zero in the same change that added them to
+    fix exactly that ambiguity elsewhere.
 32. One serializer per grammar per runtime, pinned by tests —
     `scopeSpecFor` (Go) / `scopeSpecJS` (JS), both feeding
     `cli.ParseScope`; round-trip tests keep them honest. Fixed frames:

@@ -232,11 +232,12 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 		createdBy = "  by=" + hex.EncodeToString(t.CreatorTaskId.Id[:])[:8]
 	}
 	caps := "  caps=" + CapsLabel(t.Capabilities)
-	// Only a non-default scope earns row width: subtree is what almost
-	// every task has and repeating it would push the prompt off screen.
-	if !IsDefaultScope(t.Scope) {
-		caps += "  scope=" + ScopeLabel(t.Scope)
-	}
+	// Always printed, subtree included. This row used to elide the default to
+	// save width, which made "this task is scoped to its subtree" and "this row
+	// does not report scope" look the same — the WebUI row, the TUI detail popup
+	// and both JSON forms had already dropped that exception; only this line
+	// still carried it. Scope is half of a task's authority and is never absent.
+	caps += "  scope=" + ScopeLabel(t.Scope)
 	return fmt.Sprintf("%s  %s  %s  repo=%s  from=%s%s%s%s%s%s%s  prompt=%q%s",
 		taskIDStr(t.Id.Id[:]),
 		taskStatusStr(t.Status),

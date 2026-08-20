@@ -119,9 +119,3 @@ func ScopeLabel(s protocol.TaskScope) string {
 	}
 	return base + "+" + list
 }
-
-// IsDefaultScope reports whether s is the plain subtree default, so operator
-// surfaces can leave the common case out of a crowded row.
-func IsDefaultScope(s protocol.TaskScope) bool {
-	return s.Base == protocol.ScopeBase_Subtree && len(s.Ids) == 0
-}

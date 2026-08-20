@@ -77,16 +77,20 @@ func TestScopeLabelRoundTrips(t *testing.T) {
 	}
 }
 
+// Three separate things read a zero TaskScope and all three must mean subtree:
+// a client that sent no scope, a WAL record written before scopes existed (its
+// JSON fields are omitempty), and a zero-valued Go struct. That is why subtree
+// is ordinal 0 rather than none — see the ScopeBase comment in message.bgn.
 func TestZeroScopeIsTheSubtreeDefault(t *testing.T) {
 	var zero protocol.TaskScope
-	if !IsDefaultScope(zero) {
-		t.Fatal("the zero TaskScope must be the subtree default")
+	if zero.Base != protocol.ScopeBase_Subtree || len(zero.Ids) != 0 {
+		t.Fatalf("the zero TaskScope must be plain subtree, got base=%v ids=%d", zero.Base, len(zero.Ids))
 	}
 	if got := ScopeLabel(zero); got != "subtree" {
 		t.Fatalf("ScopeLabel(zero) = %q, want subtree", got)
 	}
-	if IsDefaultScope(protocol.TaskScope{Base: protocol.ScopeBase_None}) {
-		t.Fatal("none must not read as the default")
+	if got := ScopeLabel(protocol.TaskScope{Base: protocol.ScopeBase_None}); got == "subtree" {
+		t.Fatal("none must not render as the default")
 	}
 }
 

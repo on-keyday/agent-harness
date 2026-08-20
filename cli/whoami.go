@@ -77,11 +77,11 @@ func WriteWhoAmI(out io.Writer, resp protocol.WhoAmIResponse, asJSON bool) error
 		return err
 	}
 	caps := "caps=" + CapsLabel(resp.Capabilities)
-	// The default subtree scope is the common case and would be noise on every
-	// line; only a narrowed or widened one is worth the width.
-	if !IsDefaultScope(resp.Scope) {
-		caps += "  scope=" + ScopeLabel(resp.Scope)
-	}
+	// Always printed, subtree included. whoami answers "what am I allowed to
+	// do", and scope is half that answer — omitting it when it happens to be the
+	// default leaves a caller unable to tell a subtree scope from a whoami that
+	// does not report scope at all. The --json form always carried it.
+	caps += "  scope=" + ScopeLabel(resp.Scope)
 	if operator {
 		_, err := fmt.Fprintf(out, "operator  %s\n", caps)
 		return err
