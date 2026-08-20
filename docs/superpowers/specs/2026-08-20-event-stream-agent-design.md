@@ -130,8 +130,17 @@ documented as *"only works with `--print`"*. That is not enforced. Measured
 | the same **without `-p`** | 0 | 1 | correct |
 
 Identical. `--output-format stream-json` is what suppresses the TUI; `-p` adds
-nothing here. (Limit of the test: one prompt, one turn, stdout not a terminal.
-It says nothing about how the two diverge under a TTY, or across many turns.)
+nothing here.
+
+That first comparison was one turn, so it said nothing about the axis that
+actually matters for this kind. Re-run at three turns, also without `-p`:
+three `result` messages, one `session_id`, a codeword from turn 1 recalled in
+turn 3, `exit 0` on stdin close — the same numbers as the `-p` run, line for
+line.
+
+The one axis still untested is a TTY on stdout, and it is untested because it
+cannot arise: this kind runs the agent through `agentexec` with
+`ptyEnabled=false`, so its stdout is a pipe by construction.
 
 So the reason to pass `-p` is not necessity. It is that the vendor's own
 programmatic spawn does, verbatim in the binary (below), and that naming the

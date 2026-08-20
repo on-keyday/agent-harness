@@ -1,12 +1,14 @@
 """Three turns down one framed stdin: does each get a result, does the
 session_id hold, and does context carry across turns?"""
-import json, os, subprocess, threading, time, queue
+import json, os, subprocess, sys, threading, time, queue
 env = dict(os.environ)
 for k in list(env):
     if k.startswith(("CLAUDE_CODE_","HARNESS_")) or k in ("CLAUDECODE","AI_AGENT"): env.pop(k)
-p = subprocess.Popen(["claude","-p","--input-format","stream-json","--output-format","stream-json",
-                      "--verbose","--model","claude-haiku-4-5-20251001"],
-                     cwd="/tmp", env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+USE_P = "--no-p" not in sys.argv
+argv = ["claude"] + (["-p"] if USE_P else []) + ["--input-format","stream-json","--output-format","stream-json",
+                      "--verbose","--model","claude-haiku-4-5-20251001"]
+print("argv:", " ".join(argv))
+p = subprocess.Popen(argv, cwd="/tmp", env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                      stderr=subprocess.PIPE, text=True, bufsize=1)
 q=queue.Queue()
 threading.Thread(target=lambda:[q.put(l) for l in p.stdout],daemon=True).start()
