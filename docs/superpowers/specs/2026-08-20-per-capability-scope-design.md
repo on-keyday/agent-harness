@@ -1,0 +1,467 @@
+# Per-capability scope: visibility as an axis, one target set per verb, and a detachable `self`
+
+Date: 2026-08-20
+
+Supersedes the scope model of
+[`2026-08-13-task-scoped-caps-design.md`](2026-08-13-task-scoped-caps-design.md)
+(**the base spec** below). Its *enforcement* design — the `authorize` choke
+point, "no such task" as the out-of-scope answer, `caps set` gated on operator
+identity rather than a bit, the §8 wire-skew procedure — is unchanged and still
+authoritative. What changes is the shape of the value being enforced.
+
+## Problem
+
+### 1. One scope per task cannot separate reading from writing
+
+The base spec gives a task exactly one `TaskScope`, shared by every bit in its
+mask. The requirement it cannot express:
+
+> This worker may read its own session, but may not write to it.
+
+`exec_view` against self and `exec_cowrite` not against self are two target
+sets for one task, and there is one field to hold them. The same coarseness
+covers `file_read` versus `file_write`, and `git_query` versus `cancel`.
+
+### 2. `self` is unconditional, so no scope value can exclude it
+
+The base spec defines the effective set as `{self} ∪ baseSet(base) ∪ ids` and
+states that *"`self` is unconditional"*. `self` is joined **outside**
+`baseSet`, so a new `ScopeBase` value meaning "descendants without me" does not
+work — the union re-adds it after the base resolves. Excluding self requires
+touching the union, not the enum. This is worth recording because the obvious
+patch is the one the code silently defeats.
+
+### 3. `info_global` is a scope-shaped power wearing a capability bit
+
+`Capability_InfoGlobal` widens the set of tasks a caller may see. That is a
+target-set question, which is what scope is for. Because `TaskScope` has no
+visibility axis, the visibility widening was exiled into the capability mask,
+and `visibleToCaller` (`server/capabilities.go`) became a bit short-circuiting
+a scope resolution:
+
+```go
+func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool) {
+    if h.lookupPrincipal(connID).Id == ([16]byte{}) { return true, nil }
+    if hasCap(h.callerCaps(connID), protocol.Capability_InfoGlobal) { return true, nil }
+    return h.scopeSet(connID)
+}
+```
+
+The base spec then had to fence the two apart — *"It does NOT consult
+`Capability_InfoGlobal` — that bit widens what may be SEEN, and folding it in
+here would make it widen what may be DONE."* A fence is needed because the axes
+overlap.
+
+The two are **not** equivalent, and the difference is the shape of the problem:
+`--scope global` sets `all = true` inside `scopeSet`, widening action *and*
+visibility; `info_global` widens visibility alone. One axis lives in the scope
+type, the other in the bitmask.
+
+### 4. Why the invariant stops holding by itself
+
+Today "visible ⊇ actionable" is structural: `visibleToCaller` *is* the action
+set, optionally replaced by everything. Split the action set per capability and
+that accident disappears — which is why this design carries an explicit check
+where the base spec needed none.
+
+### 5. The motivating case
+
+An event-stream agent
+([`2026-08-20-event-stream-agent-design.md`](2026-08-20-event-stream-agent-design.md))
+answers its own tool-approval requests unless something stops it, because the
+default scope includes self. The alternative to this design is a hardcoded
+"responder id ≠ requester id" rejection inside one handler — a rule the
+permission model cannot see, state, or display.
+
+## Design
+
+### 1. Three axes in one value
+
+```
+# runner/protocol/message.bgn
+
+format TaskScope:
+    base             :ScopeBase   # unchanged: subtree = 0, none = 1, global = 2
+    vis_base         :ScopeBase   # visibility rank
+    exclude_self     :u1          # 0 = {self} is in the action set
+    vis_base_present :u1          # 0 = visibility rank is `base`
+    reserved         :u6
+    vis_ids_len      :u16
+    vis_ids          :[vis_ids_len]TaskID   # view-only extras; usually empty
+    ids_len          :u16
+    ids              :[ids_len]TaskID
+
+format ScopeOverride:
+    cap          :Capability      # exactly one bit; more is a decode-time reject
+    base         :ScopeBase
+    exclude_self :u1
+    reserved     :u7
+    ids_len      :u16
+    ids          :[ids_len]TaskID
+
+# Appended after the existing `scope` field in each format that carries one:
+    overrides_len :u8
+    overrides     :[overrides_len]ScopeOverride
+```
+
+**Every field's zero value is the pre-change behaviour.** `base = subtree`,
+`vis_base_present = 0` (visibility follows the action base, which is what
+`visibleToCaller` does today without `info_global`), `exclude_self = 0` (self
+included, as the base spec makes unconditional), empty lists. An all-zeros
+`TaskScope` is today's default exactly, which is the same discipline the base
+spec applied when it made `subtree` the zero value.
+
+`exclude_self` is phrased negatively for that reason alone: `include_self`
+would have had a zero value meaning "cannot touch my own worktree", and every
+legacy WAL record would replay into it.
+
+`ScopeOverride` is a separate, smaller format rather than a nested `TaskScope`:
+an override has no visibility of its own, so carrying `vis_*` fields there
+would create a state that must be validated as "always zero".
+
+### 2. Resolution
+
+```
+visRank        = vis_base_present ? vis_base : base
+
+visible        = {self} ∪ baseSet(visRank) ∪ vis_ids
+                        ∪ ids ∪ ⋃ override.ids          ← automatic
+
+effective(cap) = (s.exclude_self ? ∅ : {self}) ∪ baseSet(s.base) ∪ s.ids
+                 where s = override(cap) if present, else the base scope
+```
+
+Three consequences worth stating outright:
+
+- **Action ids are visible without being repeated.** An id written into a grant
+  was disclosed by the granter; hiding it from `ls` protects nothing. So
+  `vis_ids` holds only view-only *extras* and is empty in the common case.
+- **`self` is always visible**, even where `exclude_self` removes it from an
+  action set. Seeing your own row is orientation, not authority; a task denied
+  write access to itself still knows it exists.
+- **`vis_ids` exists so that "watch X, touch nothing" is one grant.** Without
+  it the only way to see X is to put X in an action `ids` and then override
+  every held bit to exclude it — where one forgotten bit reaches X. That form
+  fails open; this one fails closed.
+
+### 3. The invariant, and the two checks that hold it
+
+```
+∀ cap:  effective(cap) ⊆ visible
+```
+
+Enforced at every write (spawn, `caps set`) by exactly two comparisons:
+
+- `base` ranks at or below `visRank` under `none < subtree < global`
+- every `override.base` ranks at or below `visRank`
+
+Nothing about ids is checked, because every id in any action set is in
+`visible` by construction (§2). Nothing about `exclude_self` is checked,
+because it only ever removes. A violating value is rejected with
+`scope_not_permitted` naming the offending bit — never silently clamped,
+matching how the base spec treats an out-of-reach id.
+
+The base spec's asymmetry survives intact: widening what may be **seen** never
+widens what may be **done**. It is now a property of two fields in one value
+rather than a fence between a bitmask and a scope.
+
+### 4. Action can never exceed visibility, because it cannot
+
+The check above refuses "visibility local, action global". That is not a policy
+preference; the state is unachievable, and admitting it would only make the
+model lie.
+
+Every action capability discloses existence on success. A `cancel` that takes
+effect proves the target existed. A `file_read` or `exec_view` that returns
+proves it, and hands over the contents besides. A nonexistent id answers
+`no_such_task`. So a task holding a wider action rank than its visibility rank
+enumerates the server by *attempting actions* — destructively, in the `cancel`
+case. Its narrow visibility would be decorative.
+
+This is the contrapositive of the rule the base spec already adopted: an
+out-of-scope target answers "no such task" rather than `permission_denied`,
+because *"a missing-capability answer for something the caller cannot see is an
+existence oracle."*
+
+The neighbouring shape that **is** expressible, and is what such requests
+usually want: `vis_base = none` with `override{cancel, ids:X}`. Enumeration
+stays local — nothing but `X` and self can be named — while `X` itself becomes
+visible. **Un-enumerable and invisible are different properties**, and it is
+almost always the first one that is wanted.
+
+The reverse direction, visibility global with narrow action, is the common case
+and is written `vis_base = global` with whatever `base` the task should act in.
+
+### 5. `exclude_self` is a bit, not a fourth base
+
+A bit composes with every base and with `ids:` — `ids:X` without self is
+expressible, and so is `global` without self — whereas a fourth `ScopeBase`
+value needs a partner for each existing one (6 values to encode 3 ranks × 2
+self states). It also keeps the rank ordering one-dimensional, so the base
+spec's permissiveness comparison and its fail-closed treatment of an
+unrecognised byte are untouched.
+
+`exclude_self` with `base = none` and no ids is the empty set: holds the bit,
+can point it at nothing. That is a real state during a staged re-grant and is
+left expressible.
+
+### 6. The choke point gains an argument
+
+```go
+// scopeSet resolves the caller's effective TARGET set FOR ONE CAPABILITY.
+// want == Capability_None resolves the VISIBILITY set: visRank, vis_ids, and
+// every action id, per §2.
+func (h *TaskHandler) scopeSet(connID string, want protocol.Capability) (all bool, allowed map[string]bool)
+
+func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetHex string) bool {
+    if !hasCap(h.callerCaps(connID), want) {
+        return false
+    }
+    all, allowed := h.scopeSet(connID, want)
+    return all || allowed[targetHex]
+}
+
+func (h *TaskHandler) visibleToCaller(connID string) (all bool, allowed map[string]bool) {
+    if h.lookupPrincipal(connID).Id == ([16]byte{}) {
+        return true, nil
+    }
+    return h.scopeSet(connID, protocol.Capability_None)   // no capability bit consulted
+}
+```
+
+The signature change is the enforcement mechanism: every existing call site
+already holds the capability it is checking, so a kind that forgets to thread
+it does not compile. `visibleToCaller` loses its `info_global` branch entirely
+— visibility is now read from the value, like everything else.
+
+The four INFO callers the base spec names — `handleList`, `handleGetTaskLog`,
+`handleListPortForwards`, and the conns filter — keep their code verbatim and
+resolve through the visibility axis. `KillPortForward` keeps its two-step
+shape: `visibleToCaller` decides whether the server answers about the forward
+at all, then the override-aware `authorize` decides whether the caller may kill
+it, so a *visible* forward it may not act on still answers
+`permission_denied`.
+
+### 7. Worked examples
+
+**Read self, do not write self** — the motivating case. `scope: base=subtree`,
+override `{exec_cowrite, base=subtree, exclude_self=1}`:
+
+| request | resolves through | answer |
+|---|---|---|
+| `ls` | visibility (`visRank = subtree`) | self + descendants |
+| `session snapshot <self>` | `exec_view` → base | allowed |
+| `session send <self>` | `exec_cowrite` → override, self removed | `no_such_task` |
+| `session send <child>` | `exec_cowrite` → override | allowed |
+
+**Named reach out of a blind base.** `scope: base=none, vis_base=none`,
+override `{cancel, base=none, ids:X}`:
+
+| request | answer |
+|---|---|
+| `ls` | self, `X`, plus the redacted parent hop |
+| `cancel X` | cancelled |
+| `cancel Y` | `no_such_task` |
+| `session send X` | `no_such_task` — `exec_cowrite` resolves through `base=none` |
+
+**See everything, act on the subtree** — today's `info_global`.
+`scope: base=subtree, vis_base=global`. `ls` lists the server; `cancel` reaches
+descendants only. Under the base spec this required a capability bit; here it
+is two fields of one value.
+
+**Watch a sibling without touching it.** `scope: base=subtree, vis_ids:[X]`.
+`X` appears in `ls` and in nothing else — no override, no bit to forget.
+
+### 8. `info_global` is retired as a visibility power
+
+`visibleToCaller` no longer reads the bit. Translation happens once, at each
+boundary, never on an ongoing basis:
+
+- **Parsing.** `--caps info_global` sets `vis_base = global` (unless `--scope`
+  states a visibility rank explicitly) and emits a deprecation notice. The bit
+  is not stored. `--caps all` continues to yield global visibility, because it
+  contains `info_global` and the translation applies — preserving today's
+  behaviour rather than silently narrowing every `all` grant.
+- **WAL replay.** A legacy record whose caps contain the bit replays with
+  `vis_base_present = 1, vis_base = global`, and the bit cleared.
+
+**The agentboard surfaces gate on the visibility rank instead.**
+`server/capabilities.go` gates three kinds on the bit —
+`TaskControlKind_BoardTopics`, `BoardRead` and `BoardSubscribers` — and
+`server/board_handler.go` filters no rows: `handleBoardSubscribers` returns
+every subscriber of a topic with its task id, hostname and agent profile. That
+is a whole-server disclosure surface, so the bit is doing its visibility job
+there, all-or-nothing.
+
+The faithful translation is therefore `visRank == global`, checked where
+`requiredCap` checks the bit today. A task that had `info_global` migrates to
+`vis_base = global` (above) and keeps all three kinds; a task that did not,
+still cannot reach them. No behaviour moves.
+
+With that, the bit has no remaining meaning. Its ordinal is not reused and
+`Capability_All` keeps its value, so no wire byte changes on that account.
+
+### 9. Attenuation at spawn, per capability
+
+The base spec's rules apply per bit:
+
+- **base**: for each capability the child requests, `min` over
+  `none < subtree < global` against the parent's effective base *for that same
+  capability*.
+- **ids**: every requested id — action or `vis_ids` — must be in the parent's
+  effective set for that capability, `vis_ids` against the parent's visibility
+  set. An id permitted for `file_read` and not for `cancel` is rejected on the
+  `cancel` override alone, and `scope_not_permitted` names the bit.
+- **visibility**: `visRank` clamps against the parent's `visRank` the same way.
+
+All are checks, never silent adjustments. §3's two comparisons run beside them
+against the value being written.
+
+**`exclude_self` is granted as requested and is not clamped.** A task's access
+to itself is not reach outward: the child and its worktree exist because the
+parent caused them to. The base spec already exempts `self` from monotonicity
+by making it unconditional; this design only makes the exemption switchable.
+Clamping a child's self-reach against whether the parent can reach the child is
+unresolvable at submit time — the child has no id yet — and is not proposed.
+
+### 10. `caps set`, cascade, resume
+
+`SetCapsRequest` carries the overrides list beside `caps` and `scope`, under
+the **existing** `scope_present` bit: overrides and the visibility axis are
+part of the scope half, written and cleared with it. A `scope_present = 1`
+request with an empty override list clears every override — the only way to
+remove one, and the same shape as writing an empty `ids`.
+
+`--cascade` gains a third clamp beside its two: each descendant's override for
+a bit is `min`'d against the target's new effective scope for that bit, and an
+override naming a bit the descendant no longer holds is dropped. Visibility
+clamps alongside.
+
+Resume is unchanged in shape. The base spec's Amendment (2026-08-13) rule —
+scope re-grants iff `scope_present`, independently of `resume_caps_override` —
+covers the new fields for the same reason it covers `ids`.
+
+## Wire, persistence, upgrade
+
+`TaskScope` grows two enum bytes, a flags byte and a list; every format
+carrying a scope gains an override list. This is a hard field-addition skew in
+both directions, so **the base spec's §8 applies verbatim** — including the
+silent-hang failure mode (a skewed request gets no response and the client
+blocks on a deadline-less context) and the five-step upgrade order, whose gate
+is resuming an interactive session on the new build before restarting
+anything.
+
+Formats affected are exactly the ones the base spec lists as carrying scope:
+`SubmitRequest`, `OpenInteractiveRequest`, `SetCapsRequest`, `TaskInfo`,
+`WhoAmIResponse`. `SetCapsResponse` is unchanged. No `Runner*` format changes,
+so a runner built before this change still speaks correctly to a server built
+after it.
+
+WAL `task_created` / `task_caps_changed` gain `ScopeVisBase`,
+`ScopeVisBasePresent`, `ScopeExcludeSelf`, `ScopeVisIDs` and `ScopeOverrides`.
+Every one of them replays correctly from its JSON zero value, which is the
+payoff for phrasing the two flags negatively and by-presence: a legacy record
+yields `base` for visibility and `self` included, which is what it meant. The
+one non-zero migration is §8's: caps containing `info_global` set
+`vis_base_present = 1, vis_base = global`.
+
+Rollback is reverting the server binary. The WAL reader sets no
+`DisallowUnknownFields`, so records carrying the new keys replay cleanly on the
+old server, which ignores them — with the caveat that a task migrated off
+`info_global` loses global visibility until the bit is restored by hand.
+
+## Surfaces
+
+All three clients, per the repo rule that a feature spans CLI, TUI and WebUI.
+
+**Human output stays one line.** Visibility is printed only when it differs
+from the action base, overrides only when present:
+
+```
+caps=exec_view,exec_cowrite  scope=subtree +exec_cowrite:descendants
+caps=exec_view,cancel        scope=global/subtree +cancel:none
+```
+
+`global/subtree` reads *visibility / action*. `descendants` is the rendered
+name for `base=subtree, exclude_self=1` — a UI vocabulary item; **the wire has
+no such base value** and the parser expands it to the flag.
+
+**`--json` emits the fully resolved capability→scope map, always** — every held
+bit with the scope that actually applies after the merge, plus the visibility
+set as its own entry, so a machine reader never re-derives it. Empty lists and
+zero counts are emitted rather than elided.
+
+- **CLI**: `cli.ParseScope` accepts `descendants` wherever `subtree` is
+  accepted, a `vis/act` pair wherever a bare rank is accepted, and a
+  per-capability form — `--scope global/none --scope-for cancel=ids:X`
+  (repeatable). It also accepts its own rendered output as a single argument,
+  so a scope copied from `ls` round-trips into `caps set` without being
+  retyped. `harness-cli caps` documents the grammar and marks `info_global`
+  deprecated with its replacement.
+- **TUI**: the `caps`/`scope` cmdline commands and the `a` re-grant picker gain
+  a visibility row and a per-capability section, collapsed by default so the
+  single-scope case looks as it does today.
+- **WebUI**: the same, in the spawn dialog and the task sheet's re-grant
+  action.
+
+## Testing
+
+Extends, rather than replaces, the base spec's set.
+
+**Unit (`server/`)**
+- `scopeSet(cap)` with an override present, absent, and naming a bit the caller
+  does not hold — the last must be inert, never an escalation.
+- `scopeSet(Capability_None)` returning the union of §2, including action ids
+  the caller can no longer act on.
+- `authorize` for a caller whose base reaches a target while its override for
+  the requested bit does not, and the reverse.
+- `exclude_self` denying the caller's own id for the overridden bit while every
+  other bit still reaches it, and while `ls` still lists it.
+- The §3 checks in both directions: `base` outranking `visRank` rejected, an
+  override outranking `visRank` rejected, ids outside the base accepted.
+- Spawn attenuation rejecting an id per-bit, `scope_not_permitted` naming the
+  bit.
+- `info_global` migration: a legacy task replays with global visibility and no
+  bit, and reaches `board topics` / `board read` / `board subscribers` exactly
+  as before; a task without the bit still cannot.
+- The invariant as a property test over randomised grants:
+  `effective(cap) ⊆ visible` for every held bit. This is the assertion that
+  catches the axes being collapsed in either direction.
+
+**Completeness (`server/scope_completeness_test.go`)**
+- Extended so a `Capability` bit that no `authorize` call site passes fails the
+  build. Today's version catches an unwired *kind*; the gap this closes is a
+  new *bit* that silently resolves through the base scope.
+
+**Wire (`runner/protocol/scope_wire_test.go`)**
+- A pre-change `SubmitRequest` payload is rejected by the new decoder, and a
+  new-layout payload by a decoder truncated to the old field list — the skew is
+  asserted, not assumed.
+- An all-zeros `TaskScope` decodes to today's default in every field.
+- A `ScopeOverride` with two bits set is rejected at decode.
+
+**Integration (dummy harness)**
+- A child granted `exec_view` at `subtree` and `exec_cowrite` with
+  `exclude_self` can `session snapshot` itself, is refused `session send`
+  against itself, and both work against a child of its own.
+- `base=none, vis_base=none` + `override{cancel, ids:X}`: `ls` shows `X`,
+  `cancel X` works, `cancel Y` answers `no_such_task`.
+- `vis_ids:[X]`: `X` is listed and every action against it is refused.
+- `caps set` narrowing one bit's override takes effect on the next RPC with no
+  restart, and drops only the connections that narrowing affects.
+
+## Deferred
+
+- **Filtering the agentboard surfaces by the visibility set** instead of
+  gating them on `visRank == global`. `handleBoardSubscribers` returns every
+  subscriber of a topic unfiltered, so a `subtree`-scoped task sees all of them
+  or none. Filtering rows the way `ls` does is the better end state, but it
+  *changes who sees what* — a scoped task would newly see its own subtree's
+  subscribers — so it is a behaviour change, not a migration, and does not
+  belong in the same wire break. It is also the only place where this design
+  leaves an all-or-nothing gate standing.
+- **Per-capability scope defaults at grant time.** A table mapping bits to
+  default scopes adds a second site where authority is decided.
+- **A `descendants` base value.** Rejected in §5 and recorded so it is not
+  re-proposed: it cannot express the requirement, because `self` joins the
+  union outside the base.

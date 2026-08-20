@@ -611,3 +611,20 @@ re-point that link on a live task (`caps set-parent`, TaskControlKind
 never touches it. Consequently "caps_parent ⊇ caps_self" holds for links Create
 made but is not an invariant of the CURRENT parent, and subtree membership is
 whatever the (possibly re-pointed) links say at request time.
+
+## Amendment (2026-08-20): the scope model is superseded — pointer only
+
+§1's headline claim, that a scope value is **orthogonal to the capability
+bitmask**, no longer holds. Scope is now resolved *per capability*, and the
+unconditional `self` of §1 became a `TaskScope.include_self` bit — a task can
+be granted read access to itself while being denied write access to itself,
+which one shared scope cannot express and which no additional `ScopeBase` value
+can produce (`self` joins the union outside `baseSet`).
+
+The current definition lives in
+[`2026-08-20-per-capability-scope-design.md`](2026-08-20-per-capability-scope-design.md).
+Read §§1–2 of this spec for the axes and the vocabulary, then that file for the
+shape actually enforced. Everything else here — the `authorize` choke point,
+"no such task" as the out-of-scope answer, `caps set` gated on operator
+identity rather than a bit, the §8 wire-skew procedure and upgrade order — is
+unchanged and still authoritative.
