@@ -471,7 +471,18 @@ and note what it is *not* compared against:
 |---|---|
 | narrower | ✅ the ordinary case: `exec_cowrite` confined below the task's own base |
 | equal | ✅ (usually only to carry `exclude_self` or different ids) |
-| **wider** | ✅ **so long as it is ≤ `visRank`** |
+| **wider** | ✅ **so long as it is ≤ `visRank`** — ❌ otherwise |
+
+Both sides of that last row, concretely:
+
+| written | verdict |
+|---|---|
+| `base=none, visRank=none` + `override{exec_control: subtree}` | ❌ the override outranks visibility: it could attach to descendants `ls` denies exist, and a successful attach discloses them |
+| `base=none, visRank=subtree` + `override{exec_control: subtree}` | ✅ same reach, now stated as visible — sees its subtree and may attach within it, every other bit confined to self and named ids |
+
+The difference is one explicit `vis_base`. Because `vis_base_present = 0` pins
+the pair to the diagonal, writing `base=none` alone also makes `visRank` none,
+so widening visibility is always something the grant says out loud.
 
 The last row is the one that changed when visibility became an axis. Under a
 single scope, `base=none` with `override{exec_view, base=global}` had to be
