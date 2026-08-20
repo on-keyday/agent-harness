@@ -291,19 +291,75 @@ func (h *TaskHandler) authorize(connID string, want protocol.Capability, targetH
 // An operator creator (all=true) may request anything, including ids for tasks
 // it has never touched.
 func (h *TaskHandler) attenuateScope(creatorCID string, req Scope) (out Scope, offender string, ok bool) {
-	all, allowed := h.scopeSet(creatorCID, protocol.Capability_None)
 	out = Scope{
-		Base: req.Base,
-		IDs:  normalizeScopeIDs(req.IDs),
+		Base:           req.Base,
+		VisBase:        req.VisBase,
+		VisBasePresent: req.VisBasePresent,
+		ExcludeSelf:    req.ExcludeSelf,
+		IDs:            normalizeScopeIDs(req.IDs),
+		VisIDs:         normalizeScopeIDs(req.VisIDs),
 	}
-	if all {
+	for _, o := range req.Overrides {
+		out.Overrides = append(out.Overrides, ScopeOverride{
+			Caps: o.Caps, Base: o.Base, ExcludeSelf: o.ExcludeSelf, IDs: normalizeScopeIDs(o.IDs),
+		})
+	}
+
+	// Self-consistency first, before anything is measured against the parent.
+	// A value that is illegal on its own terms is rejected as written rather
+	// than being clamped into something legal the caller never asked for.
+	if err := validateScope(out); err != nil {
+		return Scope{}, err.Error(), false
+	}
+
+	visAll, visAllowed := h.scopeSet(creatorCID, protocol.Capability_None)
+	if visAll {
+		// Operator, or a creator with global visibility: anything it wrote is
+		// inside its own reach by definition.
 		return out, "", true
 	}
-	out.Base = minScopeBase(req.Base, h.callerScopeBase(creatorCID))
+
+	// Rank clamping, per axis and per capability. A child asking for more than
+	// its parent holds is lowered rather than refused -- the historical
+	// behaviour for the base, extended to the axes that did not exist then.
+	parentBase := h.callerScopeBase(creatorCID)
+	out.Base = minScopeBase(out.Base, parentBase)
+	if out.VisBasePresent {
+		out.VisBase = minScopeBase(out.VisBase, parentBase)
+	}
+	for i := range out.Overrides {
+		out.Overrides[i].Base = minScopeBase(out.Overrides[i].Base, parentBase)
+	}
+
+	// Ids are CHECKED, never clamped: a silently dropped target produces a task
+	// whose scope differs from the one the caller wrote with nothing saying so.
+	// Each override's ids are measured against the parent's set FOR THAT
+	// CAPABILITY, so an id the parent may read but not cancel is refused on the
+	// cancel override alone.
+	for _, o := range out.Overrides {
+		_, parentAllowed := h.scopeSet(creatorCID, o.Caps)
+		for _, id := range o.IDs {
+			if !parentAllowed[id] {
+				return Scope{}, id, false
+			}
+		}
+	}
 	for _, id := range out.IDs {
-		if !allowed[id] {
+		if !visAllowed[id] {
 			return Scope{}, id, false
 		}
+	}
+	for _, id := range out.VisIDs {
+		if !visAllowed[id] {
+			return Scope{}, id, false
+		}
+	}
+
+	// Clamping can lower the visibility rank under an override that was legal
+	// against the rank the caller wrote. Re-validate rather than ship a value
+	// whose action set escapes its own visibility.
+	if err := validateScope(out); err != nil {
+		return Scope{}, err.Error(), false
 	}
 	return out, "", true
 }

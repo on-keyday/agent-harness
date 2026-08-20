@@ -1495,3 +1495,68 @@ func TestVisBaseWidensSightNotAction(t *testing.T) {
 		t.Errorf("cancel reached an unrelated task: all=%v allowed[u]=%v", all, allowed[u])
 	}
 }
+
+// Attenuation applies per axis and per capability, and the clamp/refuse split
+// is deliberate: ranks lower silently (the historical behaviour), ids refuse
+// loudly (a dropped target is a scope the caller did not write).
+func TestAttenuateScopePerCapability(t *testing.T) {
+	h, _, c, g, u := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree})
+
+	// Rank: a child asking for global under a subtree parent is lowered.
+	out, _, ok := h.attenuateScope(cid, Scope{Base: protocol.ScopeBase_Global})
+	if !ok || out.Base != protocol.ScopeBase_Subtree {
+		t.Errorf("base = %v ok = %v, want clamped to subtree", out.Base, ok)
+	}
+
+	// Rank, on the visibility axis too.
+	out, _, ok = h.attenuateScope(cid, Scope{
+		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_Global,
+	})
+	if !ok || out.VisBase != protocol.ScopeBase_Subtree {
+		t.Errorf("vis_base = %v ok = %v, want clamped to subtree", out.VisBase, ok)
+	}
+
+	// Ids inside the parent's reach are kept.
+	if _, off, ok := h.attenuateScope(cid, Scope{
+		Base: protocol.ScopeBase_Subtree, IDs: []string{g},
+	}); !ok {
+		t.Errorf("a descendant id was refused: %s", off)
+	}
+
+	// Ids outside it are refused, naming the offender rather than dropping it.
+	if _, off, ok := h.attenuateScope(cid, Scope{
+		Base: protocol.ScopeBase_Subtree, IDs: []string{u},
+	}); ok || off != u {
+		t.Errorf("stranger id: ok = %v offender = %q, want refused naming %s", ok, off, u)
+	}
+
+	// An override naming a target the parent cannot reach FOR THAT BIT is
+	// refused on that override alone.
+	if _, _, ok := h.attenuateScope(cid, Scope{
+		Base:      protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None, IDs: []string{u}}},
+	}); ok {
+		t.Error("an override reached a stranger the parent cannot cancel")
+	}
+}
+
+// A value that is illegal on its own terms is refused as written, not clamped
+// into something legal the caller never asked for.
+func TestAttenuateScopeRejectsSelfInconsistentValues(t *testing.T) {
+	h, _, c, _, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+	setScope(t, h, c, Scope{Base: protocol.ScopeBase_Subtree})
+
+	if _, off, ok := h.attenuateScope(cid, Scope{
+		Base: protocol.ScopeBase_Subtree, VisBasePresent: true, VisBase: protocol.ScopeBase_None,
+	}); ok {
+		t.Errorf("accepted a base outranking its own visibility (offender %q)", off)
+	}
+	if _, _, ok := h.attenuateScope(cid, Scope{Overrides: []ScopeOverride{
+		{Caps: protocol.Capability_Cancel}, {Caps: protocol.Capability_Cancel},
+	}}); ok {
+		t.Error("accepted intersecting override masks")
+	}
+}
