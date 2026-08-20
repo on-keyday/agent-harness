@@ -22,8 +22,8 @@ func TestOnRemoveMarks_ActiveTasksMarkedFailed(t *testing.T) {
 	// Create two tasks and manually set them to Running (simulating dispatch).
 	taskA := tasks.Create("/repo", "a", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 	taskB := tasks.Create("/repo", "b", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskA, runnerID, "")
-	tasks.Assign(taskB, runnerID, "")
+	tasks.Assign(taskA, runnerID, "", false)
+	tasks.Assign(taskB, runnerID, "", false)
 
 	// Register runner with both tasks active.
 	reg.Add(&RunnerEntry{
@@ -80,7 +80,7 @@ func TestOnRemoveMarks_AlreadyTerminalIsIdempotent(t *testing.T) {
 
 	// Create a task and manually mark it Succeeded (terminal).
 	taskID := tasks.Create("/repo", "c", protocol.TaskKind_Oneshot, protocol.ClientKind_Unspecified, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(taskID, runnerID, "")
+	tasks.Assign(taskID, runnerID, "", false)
 	tasks.Finish(taskID, 0, nil) // exit 0 → Succeeded
 
 	// Register runner with the already-finished task still in ActiveTasks
@@ -166,7 +166,7 @@ func TestAfterMuxStopped_DetachedStaysBoundUntilOnRemove(t *testing.T) {
 	runnerID := fc.id.String()
 
 	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(id, runnerID, "")
+	tasks.Assign(id, runnerID, "", false)
 	if err := tasks.SetDetached(id); err != nil {
 		t.Fatalf("SetDetached: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestAfterMuxStopped_RunningIsCancelledAndUnbound(t *testing.T) {
 	runnerID := fc.id.String()
 
 	id := tasks.Create("/repo", "", protocol.TaskKind_Interactive, protocol.ClientKind_Cli, protocol.TaskID{}, runnerID, protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	tasks.Assign(id, runnerID, "")
+	tasks.Assign(id, runnerID, "", false)
 
 	reg.Add(&RunnerEntry{
 		ID:          runnerID,

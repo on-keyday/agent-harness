@@ -99,7 +99,7 @@ func TestSetCapsRewritesRunningTaskAndPersistsBoth(t *testing.T) {
 
 	id := s.Create("/repo", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
-	s.Assign(id, "runner-x", "/wt/x")
+	s.Assign(id, "runner-x", "/wt/x", false)
 	if got, _ := s.Get(id); got.Status != protocol.TaskStatus_Running {
 		t.Fatalf("status = %v, want Running (the precondition this method must NOT have)", got.Status)
 	}

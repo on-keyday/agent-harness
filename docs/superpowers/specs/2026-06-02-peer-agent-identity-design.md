@@ -124,3 +124,61 @@ case "skill":
 - **`skills_injected` は現状 claude 専用の意味**: 実体は `!NoWorktree || ForceInject` ＝「`.claude/{settings.json,skills}` 注入をしたか」。harness の注入は claude 形式のみで、codex（`.agent/`・`AGENTS.md`）/ gemini（`GEMINI.md`）等は置き場・形式が異なる。よって `--claude-bin codex` で worktree モードだと `skills_injected=true`（`agent=codex+skills`）になるが、codex は `.claude/` を読まないため**実際には skill 非追従**。`+skills` は `agent_bin==claude` のときのみ意味を持つ、と SKILL.md に明記済み。
 - **agent 別注入**（`agent_bin` で `.claude` / `.agent`・`AGENTS.md` / `GEMINI.md` を振り分け、`skills_injected` を agent 適合の意味へ拡張）は**別途設計する後続機能**。今回追加した `agent_bin` がその駆動信号になる。
 - 本件では行わない: `--claude-bin` フラグのリネーム、上記 agent 別注入、agent/shell 自動分類の wire 化、`TaskInfo` への denormalize。
+
+## Amendment (2026-08-20) — `skills_injected` を `TaskInfo` に載せる
+
+§10 最終行が見送った「`TaskInfo` への denormalize」を実施した。§5 / §6 の
+「タスク側は変更せず `assigned_to` で RUNNERS から join する」設計は破棄する。
+
+### 破棄の理由（2つ、どちらも join では直せない）
+
+1. **confined caller には RUNNERS が届かない。** `handleList`
+   （`server/task_handler.go`）は RUNNERS セクションを `info_global` で gate
+   しており、operator でも `info_global` 保持でもない caller は**runner を 0 件**
+   受け取る（runner のホスト名 / dial addr / AllowedRoots を列挙させないための
+   意図的な遮断）。join 元が空なので、§6 の TASKS 行ロジックは
+   **`+skills` を出す条件そのものに到達できない**。そしてこの marker の主な
+   読者は「peer が agentboard の convention に従うか」を判断したい confined
+   agent — つまり**設計が想定した読者に構造的に届いていなかった**。
+2. **runner が消えると答えも消える。** `Failed`（`runner_disconnected`）の行は
+   join 先の `RunnerEntry` が既に無いので、タスクが終わった後は永久に不明。
+
+加えて表示側の退行が同居していた: `ba6b8e9` が TASKS 行を
+`t.AgentProfile` 優先に変えた際、新しい分岐が `agentStr(bin, injected)` を
+通らず文字列連結になったため、**profile を持つ全タスク**（= 現行の全タスク）
+から `+skills` が消え、marker は誰も到達しない legacy 分岐にだけ残っていた。
+
+### 変更点
+
+- **schema**: `TaskInfo` に `skills_injected :u1` を追加。既存の
+  `is_attached :u1` + `reserved :u7` の**同一バイト**を割る（`reserved :u6`）
+  ので wire サイズは不変、bit7 = `is_attached` も不変。
+- **stamp するタイミングは assign**（create ではない）。`TaskStore.Assign` が
+  第4引数 `skillsInjected bool` を取り、`TaskEntry.SkillsInjected` に焼く。
+  create 時ではなく assign 時なのは、値が「実際に走らせる runner」の性質で
+  あり、resume で別 runner に載り替われば変わるため。Detached→Running の
+  re-attach でも再 stamp する。
+- **永続化**: `WALEvent.SkillsInjected`（`task_assigned` に載る）＋ replay。
+  キーの無い旧レコードは `false` = 「不明」に replay される。
+- **redaction**: `redactParentTaskInfo` は本 bit を落とす。親への 1 hop は
+  「creator が存在し、どう動いているか」を見せるためのもので、`AssignedTo`
+  同様 runner 由来の情報は落とす。scope 内のタスク行は無加工で届くので、
+  本来の用途は損なわれない。
+- **表示**: CLI `ls` 行 / `ls --json` の per-task `skills_injected` /
+  `session ls` / TUI Agent 列 + `d` detail + authority picker / WebUI タスク
+  行・グリッド・ツリー。WebUI の RUNNERS 行は `skillsInjected` を wasm が
+  渡していたのに JS が一度も読んでいなかった（= WebUI には最初から marker が
+  無かった）ので、ここで併せて表示する。
+
+### 意味論として据え置くもの
+
+`skills_injected` は依然 **declaration であって observation ではない**:
+runner の設定（`!NoWorktree || ForceInject`）を handshake で申告した値であり、
+実際の `WriteAgentSkills` は `runner/session.go` で warn-only。よって
+`+skills` かつ `.claude/skills/` が無い、は正常に到達しうる状態。SKILL.md は
+この点と「未割当タスクは marker 無し＝不明であって bare agent ではない」を
+明記するよう更新済み。
+
+§10 の1点目（`+skills` は `agent_bin==claude` のときのみ意味を持つ）は
+`2026-06-02-agent-aware-injection-design.md` のクロスツール注入で既に解消済み
+で、本 Amendment はそれを前提にしている。

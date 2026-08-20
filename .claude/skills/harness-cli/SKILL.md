@@ -447,10 +447,10 @@ Two views, used together:
 # Server-side view: every runner and recent task. Each running task is an
 # agent; its 32-hex task id is what you address.
 harness-cli ls
-# RUNNERS
-#   Idle    host=<h>  tasks=N/M  roots=<paths>  id=<runner-cid>
+# RUNNERS                      (withheld entirely without info_global)
+#   Idle    host=<h>  tasks=N/M  agent=<names>[+skills]  roots=<paths>  id=<runner-cid>
 # TASKS
-#   <task-id>  <status>  repo=<path>  from=<origin>  prompt="..."
+#   <task-id>  <status>  <kind>  repo=<path>  from=<origin>  agent=<name>[+skills]  caps=<...>  prompt="..."
 harness-cli ls --json   # same data as one object: {"runners":[...],"tasks":[...]}
                         # jq-friendly; e.g. `harness-cli ls --json | jq -r '.tasks[].id'`
 
@@ -548,14 +548,15 @@ agent-runner flags):
   has neither this skill nor the automatic inbox hook: it won't auto-receive
   your messages or follow these conventions.
 
-`ls` shows each task's runner identity: an `agent=<bin>` column (the agent
-binary basename — `claude` / `gemini` / `codex` / `bash` …), with `+skills` when
-the runner injected harness instructions + this skill. Injection is now
-**cross-tool** — `AGENTS.md`/`GEMINI.md`/`CLAUDE.md` pointers plus the skill under
-both `.claude/skills/` and `.agents/skills/` — so `+skills` means a skill-aware
-peer regardless of agent. The one claude-only piece is the **auto-inbox hook**
-(`.claude/settings.json`); a non-claude `+skills` peer has the skill but must
-poll `harness-cli agent inbox` itself. So:
+`ls` shows each task's agent identity: an `agent=<name>` column (the agent
+profile the task runs under — `claude` / `gemini` / `codex` / `bash` …), with
+`+skills` when the runner it was assigned to declares it injects harness
+instructions + this skill. Injection is **cross-tool** — `AGENTS.md`/`GEMINI.md`/
+`CLAUDE.md` pointers plus the skill under both `.claude/skills/` and
+`.agents/skills/` — so `+skills` means a skill-aware peer regardless of agent.
+The one claude-only piece is the **auto-inbox hook** (`.claude/settings.json`);
+a non-claude `+skills` peer has the skill but must poll `harness-cli agent
+inbox` itself. So:
 
 - `agent=claude+skills` — a conventional, skill-following peer with the
   auto-inbox hook (it auto-receives your messages).
@@ -563,11 +564,34 @@ poll `harness-cli agent inbox` itself. So:
   the cross-tool skill + instructions, so it can follow the conventions, but it
   has **no auto-inbox hook** (claude-only): it must poll `harness-cli agent
   inbox` itself, so replies to it may lag.
-- `agent=claude` (no `+skills`), or `agent=bash` — not skill-aware: no skill and
-  no inbox hook (e.g. a `--no-worktree` runner without force-inject).
+- `agent=claude` (no `+skills`), or `agent=bash` — the assigned runner declares
+  no injection: no skill and no inbox hook (e.g. a `--no-worktree` runner
+  without force-inject).
 
-Behavior is still the final word (does it complete the handshake?), but you no
-longer have to guess.
+The marker rides on the **task**, not on the RUNNERS section — which matters
+because `ls` withholds RUNNERS entirely from a caller without `info_global`. If
+you are confined, you see zero runners and every task row still carries its own
+marker. `ls --json` splits it out as a per-task `skills_injected` bool beside
+the bare `agent` name, so a script never has to parse the suffix off a string.
+
+**It is a declaration, and three things it does not tell you:**
+
+- **A missing marker is not proof of a bare agent.** A `Queued` task has no
+  runner yet, so it has nothing to declare and renders without one. The TUI `d`
+  detail popup separates the cases — `unknown (not assigned to a runner yet)`
+  vs `not declared by the assigned runner`; a compact row cannot.
+- **It reports configuration, not outcome.** The bit is
+  `!--no-worktree || --force-inject-harness-settings`, sent once at handshake.
+  The injection write itself is non-fatal, so `+skills` alongside a worktree
+  with no `.claude/skills/` is a reachable state. If you are asking about your
+  OWN worktree, look at the directory instead — that is an observation.
+- **It says nothing further about the auto-inbox hook** beyond the
+  claude/non-claude split above.
+
+Behaviour is still the final word (does it complete the handshake?). This
+narrows the guess; it does not remove it. In particular, never conclude "no
+reply is coming" from a missing marker — send, end the turn, and let the
+absence of a reply over time be the evidence.
 
 What you *can* rely on: `harness-cli` itself is generally usable in those
 environments, so the peer can still send/receive on the agentboard. Coordinate

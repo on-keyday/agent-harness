@@ -110,7 +110,7 @@ func TestResumeOfOutOfScopeTaskIsNotFound(t *testing.T) {
 	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, c)
 
 	// Make u terminal so a missing gate really would resume it.
-	h.Tasks.Assign(u, "runner-x", "/wt/u")
+	h.Tasks.Assign(u, "runner-x", "/wt/u", false)
 	h.Tasks.Finish(u, 0, nil)
 
 	sub := protocol.SubmitRequest{ResumeTaskId: hexToTaskID(t, u), RequestedCaps: protocol.Capability_All}

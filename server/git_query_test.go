@@ -18,7 +18,7 @@ func seedGitTask(t *testing.T, h *TaskHandler, finish bool) protocol.TaskID {
 	id := h.Tasks.Create("/srv/repo", "prompt", protocol.TaskKind_Oneshot,
 		protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{},
 		nil, protocol.Capability_All, Scope{}, "")
-	h.Tasks.Assign(id, "runner-that-is-gone", "/srv/repo/.harness-worktrees/"+id)
+	h.Tasks.Assign(id, "runner-that-is-gone", "/srv/repo/.harness-worktrees/"+id, false)
 	if finish {
 		h.Tasks.Finish(id, 0, nil)
 	}

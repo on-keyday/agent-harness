@@ -103,7 +103,7 @@ func (m *AuthorityPickerModel) OpenParent(target protocol.TaskInfo, tasks []prot
 		if idHex == m.targetHex {
 			continue
 		}
-		label := idHex[:8] + " " + taskStatusStr(t.Status) + " " + string(t.AgentProfile) +
+		label := idHex[:8] + " " + taskStatusStr(t.Status) + " " + taskAgentCell(t) +
 			" " + truncateLeft(string(t.RepoPath), 20)
 		if p := string(t.Prompt); p != "" {
 			label += " " + runewidth.Truncate(p, 24, "…")
@@ -164,7 +164,7 @@ func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
 		if idHex == m.targetHex {
 			continue
 		}
-		label := idHex[:8] + " " + taskStatusStr(t.Status) + " " + string(t.AgentProfile) +
+		label := idHex[:8] + " " + taskStatusStr(t.Status) + " " + taskAgentCell(t) +
 			" " + truncateLeft(string(t.RepoPath), 20)
 		if p := string(t.Prompt); p != "" {
 			label += " " + runewidth.Truncate(p, 24, "…")

@@ -629,7 +629,8 @@ func connRemoteAddr(cid string) string {
 //	harness.snapshot() -> Promise<{
 //	  runners:  [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
-//	              createdAt, startedAt, endedAt, agentProfile, errorMsg}],
+//	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
+//	              errorMsg}],
 //	  conns:    [{cid, role, remoteAddr, principalTask, connectedAt, identified}],
 //	  forwards: [{forward_id, dir, task, spec, origin}]
 //	}>
@@ -709,6 +710,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// (empty = runner default); the resume action sheet's agent
 					// dropdown defaults to this (multi-agent-profile design §4b).
 					"agentProfile": string(t.AgentProfile),
+					// skillsInjected says the runner this task was assigned to
+					// declares it injects the harness skill + inbox hook. It
+					// rides on the task, not on the runners array, because a
+					// confined caller is served zero runners — see handleList.
+					"skillsInjected": t.SkillsInjected(),
 					// Terminal-failure reason (e.g. "runner_disconnected"); empty
 					// for non-failed tasks. Rendered in red on the task card.
 					"errorMsg": string(t.ErrorMessage),

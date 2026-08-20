@@ -53,7 +53,7 @@ func NewScheduler(reg *Registry, store *TaskStore, assign AssignFunc) *Scheduler
 //  3. If none, skip this runner.
 //  4. Call s.assign(runner.ID, task.ID).
 //  5. On error: log via slog.Error and continue; no state change.
-//  6. On success: store.Assign(task.ID, runner.ID, "") and reg.BindTask(runner.ID, task.ID).
+//  6. On success: store.Assign(task.ID, runner.ID, "", runner.SkillsInjected) and reg.BindTask(runner.ID, task.ID).
 //
 // Tick serializes itself via s.mu so concurrent callers run one at a time.
 // No goroutines are spawned. The call returns as soon as all runners have
@@ -118,7 +118,7 @@ func (s *Scheduler) Tick() {
 
 		// WorktreeDir is left empty here; it will be filled in by TaskStarted
 		// when the runner reports back that it has started the task.
-		s.store.Assign(task.ID, runner.ID, "")
+		s.store.Assign(task.ID, runner.ID, "", runner.SkillsInjected)
 		s.reg.BindTask(runner.ID, task.ID)
 	}
 }

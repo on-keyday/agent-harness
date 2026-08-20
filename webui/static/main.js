@@ -2786,7 +2786,7 @@ const POLL_INTERVAL_MS = 5000;
       if (t.id === excludeId) continue;
       seen.add(t.id);
       const head = (t.prompt || "").slice(0, 30);
-      addRow(t.id, `${t.id.slice(0, 8)} ${t.status} ${t.agentProfile || ""} ${truncLeft(t.repoPath, 20)} ${head}`, true);
+      addRow(t.id, `${t.id.slice(0, 8)} ${t.status} ${agentLabel(t.agentProfile, t.skillsInjected)} ${truncLeft(t.repoPath, 20)} ${head}`, true);
     }
     for (const id of [...idsSet].sort()) {
       if (!seen.has(id) && id !== excludeId) addRow(id, `${id.slice(0, 8)} (不明なタスク)`, false);
@@ -2956,7 +2956,7 @@ const POLL_INTERVAL_MS = 5000;
     for (const row of (lastTasks || [])) {
       if (row.id === t.id) continue;
       const head = (row.prompt || "").slice(0, 30);
-      let text = `${row.id.slice(0, 8)} ${row.status} ${row.agentProfile || ""} ${truncLeft(row.repoPath, 20)} ${head}`;
+      let text = `${row.id.slice(0, 8)} ${row.status} ${agentLabel(row.agentProfile, row.skillsInjected)} ${truncLeft(row.repoPath, 20)} ${head}`;
       if (row.id === currentParent) text += " ← 現在の親";
       addRow(row.id, text, row.id === currentParent);
     }
@@ -3851,7 +3851,7 @@ const POLL_INTERVAL_MS = 5000;
       if (t.agentProfile) {
         const ag = document.createElement("span");
         ag.className = "task-agent";
-        ag.textContent = t.agentProfile;
+        ag.textContent = agentLabel(t.agentProfile, t.skillsInjected);
         line1.appendChild(ag);
       }
 
@@ -5045,7 +5045,9 @@ function renderRunners(runners) {
   if (!runners || runners.length === 0) return "(none)";
   return runners.map(r => {
     const roots = (r.roots && r.roots.length > 0) ? r.roots.join(", ") : "(any)";
-    const agents = (r.agentProfiles && r.agentProfiles.length > 0) ? r.agentProfiles.join(",") : (r.agentBin || "-");
+    let agents = (r.agentProfiles && r.agentProfiles.length > 0) ? r.agentProfiles.join(",") : (r.agentBin || "-");
+    // "-" means the runner advertised no bin at all; "-+skills" would be noise.
+    if (r.skillsInjected && agents !== "-") agents += "+skills";
     return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  tasks=${r.tasks}/${r.maxTasks}  agents=${agents}  roots=${roots}`;
   }).join("\n");
 }
@@ -5053,6 +5055,20 @@ function renderRunners(runners) {
 function pad(s, n) {
   s = String(s);
   return s.length >= n ? s : s + " ".repeat(n - s.length);
+}
+
+// agentLabel renders a TASK's agent identity the way `harness-cli ls` rows and
+// the TUI table do: the resolved profile name, plus a "+skills" marker when the
+// runner it was assigned to declares it injects the harness skill + inbox hook.
+// An empty profile yields "" so each caller keeps its own placeholder.
+//
+// Mirrors cli.agentStr (Go) and tui.agentDescriptor (Go) — one grammar, one
+// renderer per runtime. The marker reads off the TASK, never the runners array:
+// a confined caller is served zero runners, so a runner-side lookup is blank for
+// exactly the readers this marker exists for.
+function agentLabel(profile, skillsInjected) {
+  if (!profile) return "";
+  return skillsInjected ? profile + "+skills" : profile;
 }
 
 // tokenize is a tiny quote-aware splitter. Single and double quotes group
@@ -6090,7 +6106,7 @@ function renderTaskTreeGraph(nodes, tasks, statusColor, onSelect) {
     g.appendChild(label);
 
     const sub = svgEl("text", { class: "tt-sub", y: R + 14 });
-    sub.textContent = t ? `${t.status}${t.agentProfile ? " " + t.agentProfile : ""}` : "(gone)";
+    sub.textContent = t ? `${t.status}${t.agentProfile ? " " + agentLabel(t.agentProfile, t.skillsInjected) : ""}` : "(gone)";
     g.appendChild(sub);
 
     // Which repo the task belongs to. The fleet serves several, and without

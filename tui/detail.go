@@ -83,6 +83,12 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	if len(t.AgentProfile) > 0 {
 		fmt.Fprintf(&sb, "agent:         %s\n", string(t.AgentProfile))
 	}
+	// Spelled out rather than folded into the agent line's "+skills" suffix:
+	// the table has no room to distinguish "the runner declares no injection"
+	// from "no runner has been assigned yet", and a detail view is where that
+	// difference belongs. Always printed — a hidden default reads as "this
+	// task has no such property".
+	fmt.Fprintf(&sb, "skills:        %s\n", skillsInjectedDetail(t))
 	// Busy/idle badge + last-output timestamp for a live interactive session,
 	// mirroring the task table's Act column (blank there for tasks without a
 	// live session — the server leaves last_output_at at 0 for those).
@@ -119,6 +125,21 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 		fmt.Fprintf(&sb, "\nprompt:\n%s\n", string(t.Prompt))
 	}
 	return sb.String()
+}
+
+// skillsInjectedDetail words TaskInfo.skills_injected for the detail popup.
+// The bit says the ASSIGNED runner is configured to inject the harness skill
+// + inbox hook; it is not a check that the files landed (the runner's write is
+// non-fatal). A task with no assignment yet has no runner to describe, so it
+// reports that instead of the false-looking "not declared".
+func skillsInjectedDetail(t protocol.TaskInfo) string {
+	if t.SkillsInjected() {
+		return "injected (runner declares +skills)"
+	}
+	if t.StartedAt == 0 {
+		return "unknown (not assigned to a runner yet)"
+	}
+	return "not declared by the assigned runner"
 }
 
 func taskKindStr(k protocol.TaskKind) string {

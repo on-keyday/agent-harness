@@ -1123,7 +1123,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 	// Mark the task Running and bound to this runner immediately so the
 	// scheduler doesn't try to AssignTask it. The runner will fill in the
 	// real worktree dir via TaskStarted shortly after open_exec arrives.
-	h.Tasks.Assign(taskIDHex, runner.ID, "")
+	h.Tasks.Assign(taskIDHex, runner.ID, "", runner.SkillsInjected)
 	h.Registry.BindTask(runner.ID, taskIDHex)
 
 	finishWithError := func(reason string) {
@@ -1777,6 +1777,10 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 	}
 	// Detach/reattach fields.
 	info.SetIsAttached(t.IsAttached)
+	// Carried on the task, not derived from RunnerInfo by the client: a
+	// confined caller receives zero runners from handleList, so a
+	// runner-side lookup is unavailable to exactly the callers that need it.
+	info.SetSkillsInjected(t.SkillsInjected)
 	info.RingBufferBytes = t.RingBufferBytes
 	return info
 }
@@ -1791,6 +1795,10 @@ func toTaskInfo(t TaskEntry) protocol.TaskInfo {
 //     already withholds from this same caller
 //   - Prompt / ErrorMessage / AgentProfile — task content (ErrorMsg routinely
 //     embeds paths)
+//   - SkillsInjected — a property of the parent's RUNNER, dropped for the same
+//     reason as AssignedTo. A confined caller reads this bit off the tasks in
+//     its own scope, which arrive unredacted; the upward hop exists to show
+//     that a creator exists and how it is doing, not how it was launched.
 //
 // Capabilities, CreatorTaskId, the origin kinds and the timestamps stay.
 // Spawn-time attenuation guarantees caps_parent ⊇ caps_self for links Create
@@ -1809,6 +1817,7 @@ func redactParentTaskInfo(info *protocol.TaskInfo) {
 	info.SetPrompt(nil)
 	info.SetErrorMessage(nil)
 	info.SetAgentProfile(nil)
+	info.SetSkillsInjected(false)
 	info.AssignedTo = protocol.RunnerID{}
 }
 

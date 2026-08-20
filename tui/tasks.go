@@ -135,9 +135,14 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 		// process-level AgentBin on a multi-profile runner. Falls back to
 		// the runner-derived descriptor for tasks predating this field
 		// (WAL-replayed from before the feature landed).
+		// Both arms carry the "+skills" marker. The AgentProfile arm used to
+		// drop it — and since every live task carries a profile, the marker
+		// disappeared from the whole column. The task's own bit is the right
+		// source: runnerByID is empty for a confined caller (the server sends
+		// no runners without info_global), so the fallback cannot supply it.
 		agent := "-"
-		if len(t.AgentProfile) > 0 {
-			agent = string(t.AgentProfile)
+		if c := taskAgentCell(t); c != "" {
+			agent = c
 		} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
 			agent = agentDescriptor(string(r.AgentBin), r.SkillsInjected())
 		}

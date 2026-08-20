@@ -329,6 +329,20 @@ isolated checkout. Two flags adjust this:
   persist after task end (no auto-cleanup); manage them manually if
   desired.
 
+However these two resolve, the runner declares the outcome
+(`!--no-worktree || --force-inject-harness-settings`) in its
+`RunnerHello`. The server stamps that bit onto **every task it assigns**
+to the runner, so it is visible per task as the `+skills` suffix on the
+`agent=` column in `ls`, the TUI Agent column and its `d` detail popup,
+and the WebUI task rows — plus a per-task `skills_injected` bool in
+`ls --json` / `session ls`. It rides on the task rather than being
+joined from the RUNNERS section because a caller without `info_global`
+is served no runners at all, and a confined agent judging whether a peer
+follows the agentboard conventions is the main reader. Two limits worth
+knowing: it is a *declaration* of how the runner is configured (the
+injection write itself is warn-only), and a task with no runner yet
+carries no marker — absent is "unknown", not "bare agent".
+
 ### Where the injected skills come from
 
 By default the skills written into `.claude/skills/` and

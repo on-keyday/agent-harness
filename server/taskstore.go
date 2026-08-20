@@ -49,14 +49,22 @@ type TaskEntry struct {
 	// empty for legacy runners that advertised no profiles (the runner falls
 	// back to its AgentBin at exec time; see RunnerEntry.DefaultProfile).
 	AgentProfile string
-	Status       protocol.TaskStatus
-	AssignedTo   string
-	WorktreeDir  string
-	CreatedAt    time.Time
-	StartedAt    *time.Time
-	EndedAt      *time.Time
-	ExitCode     *int32
-	ErrorMsg     []byte
+	// SkillsInjected mirrors RunnerEntry.SkillsInjected for the runner this
+	// task was ASSIGNED to, snapshotted at Assign so the answer survives that
+	// runner disconnecting. It is a DECLARATION (the runner's
+	// !--no-worktree || --force-inject-harness-settings config, sent in
+	// RunnerHello), not a check that WriteAgentSkills actually succeeded —
+	// that write is non-fatal in runner/session.go. False on a Queued task,
+	// which means "no runner yet", not "bare agent".
+	SkillsInjected bool
+	Status         protocol.TaskStatus
+	AssignedTo     string
+	WorktreeDir    string
+	CreatedAt      time.Time
+	StartedAt      *time.Time
+	EndedAt        *time.Time
+	ExitCode       *int32
+	ErrorMsg       []byte
 
 	// Selector is the runner-selection constraint supplied at task submission.
 	// A zero value (Kind == RunnerSelectorKind_Any) means "any available runner".
@@ -484,7 +492,11 @@ func (s *TaskStore) Get(id string) (TaskEntry, bool) {
 // Allowed source states: Queued (initial dispatch) and Detached (re-attach).
 // For a Detached → Running transition, DetachedAt is cleared and IsAttached
 // is set to true (a new client has taken the session).
-func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
+// skillsInjected is the assigned runner's RunnerEntry.SkillsInjected. It is a
+// parameter rather than a registry lookup inside the store so the compiler
+// names every dispatch site when the value's meaning changes; all three
+// (scheduler, dispatcher, handleOpenInteractive) already hold the RunnerEntry.
+func (s *TaskStore) Assign(id, runnerID, worktreeDir string, skillsInjected bool) {
 	now := time.Now()
 	s.mu.Lock()
 	e, ok := s.tasks[id]
@@ -496,6 +508,10 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 	e.Status = protocol.TaskStatus_Running
 	e.AssignedTo = runnerID
 	e.WorktreeDir = worktreeDir
+	// Re-stamped on re-attach too: a Detached task can come back on a
+	// different runner, and the stale value would then describe a worktree
+	// nobody is running in.
+	e.SkillsInjected = skillsInjected
 	if !wasDetached {
 		// Initial dispatch: record StartedAt.
 		e.StartedAt = &now
@@ -511,7 +527,7 @@ func (s *TaskStore) Assign(id, runnerID, worktreeDir string) {
 		// task_assigned would overwrite StartedAt on WAL replay, and the
 		// OnAssign hook would publish a duplicate TaskAssigned pubsub event.
 		if s.wal != nil {
-			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runnerID, WorktreeDir: worktreeDir, Ts: now.UnixNano()}); err != nil {
+			if err := s.wal.Write(WALEvent{Type: "task_assigned", TaskID: id, RunnerID: runnerID, WorktreeDir: worktreeDir, SkillsInjected: skillsInjected, Ts: now.UnixNano()}); err != nil {
 				slog.Error("WAL write failed", "op", "task_assigned", "task_id", id, "err", err)
 			}
 		}
@@ -805,6 +821,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				t.Status = protocol.TaskStatus_Running
 				t.AssignedTo = ev.RunnerID
 				t.WorktreeDir = ev.WorktreeDir
+				t.SkillsInjected = ev.SkillsInjected
 				ts := time.Unix(0, ev.Ts)
 				t.StartedAt = &ts
 			}

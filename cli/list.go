@@ -180,9 +180,17 @@ func taskLine(t protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo) st
 	// its runner's default AgentBin on a multi-profile runner or after a
 	// cross-agent resume); fall back to the runner descriptor for tasks
 	// predating the field.
+	//
+	// Both arms go through agentStr so the "+skills" marker rides along. It
+	// once did not: the AgentProfile arm concatenated the name directly, and
+	// since every live task carries a profile, the marker vanished from every
+	// task row while surviving on the (now unreachable) runner-lookup arm.
+	// The task's own bit is the one to read here — a confined caller receives
+	// no runners at all, so runnerByID is empty for exactly the audience the
+	// marker is for.
 	agent := ""
 	if len(t.AgentProfile) > 0 {
-		agent = "  agent=" + string(t.AgentProfile)
+		agent = "  " + agentStr(string(t.AgentProfile), t.SkillsInjected())
 	} else if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
 		agent = "  " + agentStr(string(r.AgentBin), r.SkillsInjected())
 	}
@@ -314,25 +322,30 @@ type runnerJSON struct {
 // activity, created_by, error) are omitempty so a JSON row stays as small as
 // its text counterpart when they don't apply.
 type taskJSON struct {
-	Id           string `json:"id"`
-	Status       string `json:"status"`
-	Kind         string `json:"kind"`
-	Repo         string `json:"repo"`
-	From         string `json:"from"`
-	Agent        string `json:"agent,omitempty"`
-	ResumedBy    string `json:"resumed_by,omitempty"`
-	Activity     string `json:"activity,omitempty"`
-	Caps         string `json:"caps"`
-	Scope        string `json:"scope"`
-	CreatedBy    string `json:"created_by,omitempty"`
-	Prompt       string `json:"prompt"`
-	ExitCode     int32  `json:"exit_code"`
-	ErrorMessage string `json:"error_message,omitempty"`
-	CreatedAt    uint64 `json:"created_at"`
-	StartedAt    uint64 `json:"started_at"`
-	EndedAt      uint64 `json:"ended_at"`
-	LastOutputAt uint64 `json:"last_output_at"`
-	OutputIdleMs uint64 `json:"output_idle_ms"`
+	Id     string `json:"id"`
+	Status string `json:"status"`
+	Kind   string `json:"kind"`
+	Repo   string `json:"repo"`
+	From   string `json:"from"`
+	Agent  string `json:"agent,omitempty"`
+	// SkillsInjected is the display marker's scriptable form: the agent field
+	// stays the bare profile name (no "+skills" suffix to re-parse), exactly
+	// as runnerJSON splits Agents from SkillsInjected. Not omitempty — false
+	// is a real answer here, and an absent key would read as "unknown".
+	SkillsInjected bool   `json:"skills_injected"`
+	ResumedBy      string `json:"resumed_by,omitempty"`
+	Activity       string `json:"activity,omitempty"`
+	Caps           string `json:"caps"`
+	Scope          string `json:"scope"`
+	CreatedBy      string `json:"created_by,omitempty"`
+	Prompt         string `json:"prompt"`
+	ExitCode       int32  `json:"exit_code"`
+	ErrorMessage   string `json:"error_message,omitempty"`
+	CreatedAt      uint64 `json:"created_at"`
+	StartedAt      uint64 `json:"started_at"`
+	EndedAt        uint64 `json:"ended_at"`
+	LastOutputAt   uint64 `json:"last_output_at"`
+	OutputIdleMs   uint64 `json:"output_idle_ms"`
 }
 
 // listJSON is the top-level `ls --json` document.
@@ -385,9 +398,11 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 	// agent: prefer the task's own resolved profile, else its runner's default
 	// bin — the same precedence renderList uses for the text column.
 	agent := string(t.AgentProfile)
+	skills := t.SkillsInjected()
 	if agent == "" && runnerByID != nil {
 		if r, ok := runnerByID[protocol.RunnerIDToConnID(t.AssignedTo).String()]; ok {
 			agent = string(r.AgentBin)
+			skills = r.SkillsInjected()
 		}
 	}
 	resumedBy := ""
@@ -399,25 +414,26 @@ func newTaskJSON(t *protocol.TaskInfo, runnerByID map[string]protocol.RunnerInfo
 		activity = ActivityStr(t.OutputIdleMs)
 	}
 	return taskJSON{
-		Id:           taskIDHexOrEmpty(t.Id.Id[:]),
-		Status:       taskStatusJSON(t.Status),
-		Kind:         taskKindJSON(t.Kind),
-		Repo:         string(t.RepoPath),
-		From:         originStr(t.OriginKind),
-		Agent:        agent,
-		ResumedBy:    resumedBy,
-		Activity:     activity,
-		Caps:         CapsLabel(t.Capabilities),
-		Scope:        ScopeLabel(t.Scope),
-		CreatedBy:    taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
-		Prompt:       string(t.Prompt),
-		ExitCode:     t.ExitCode,
-		ErrorMessage: string(t.ErrorMessage),
-		CreatedAt:    t.CreatedAt,
-		StartedAt:    t.StartedAt,
-		EndedAt:      t.EndedAt,
-		LastOutputAt: t.LastOutputAt,
-		OutputIdleMs: t.OutputIdleMs,
+		Id:             taskIDHexOrEmpty(t.Id.Id[:]),
+		Status:         taskStatusJSON(t.Status),
+		Kind:           taskKindJSON(t.Kind),
+		Repo:           string(t.RepoPath),
+		From:           originStr(t.OriginKind),
+		Agent:          agent,
+		SkillsInjected: skills,
+		ResumedBy:      resumedBy,
+		Activity:       activity,
+		Caps:           CapsLabel(t.Capabilities),
+		Scope:          ScopeLabel(t.Scope),
+		CreatedBy:      taskIDHexOrEmpty(t.CreatorTaskId.Id[:]),
+		Prompt:         string(t.Prompt),
+		ExitCode:       t.ExitCode,
+		ErrorMessage:   string(t.ErrorMessage),
+		CreatedAt:      t.CreatedAt,
+		StartedAt:      t.StartedAt,
+		EndedAt:        t.EndedAt,
+		LastOutputAt:   t.LastOutputAt,
+		OutputIdleMs:   t.OutputIdleMs,
 	}
 }
 

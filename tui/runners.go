@@ -124,9 +124,13 @@ func runnerTasksCell(r protocol.RunnerInfo) string {
 	return fmt.Sprintf("%d/%d", r.ActiveTasksLen, r.MaxTasks)
 }
 
-// agentDescriptor renders a runner's agent identity (binary basename + a skill
-// marker) for tables / detail. "?" for an unknown binary. Note: "+skills" is
-// only meaningful for claude — the harness injection is claude-specific.
+// agentDescriptor renders an agent identity (a runner's binary basename, or a
+// task's resolved profile name) plus a skill marker, for tables / detail.
+// "?" for an unknown binary. Injection is cross-tool — CLAUDE.md/AGENTS.md/
+// GEMINI.md pointers plus the skill under both .claude/skills/ and
+// .agents/skills/ — so "+skills" means a skill-aware peer whatever the agent
+// is. The claude-only piece is the auto-inbox hook in .claude/settings.json,
+// which this marker does NOT report.
 func agentDescriptor(bin string, injected bool) string {
 	if bin == "" {
 		bin = "?"
@@ -135,6 +139,20 @@ func agentDescriptor(bin string, injected bool) string {
 		return bin + "+skills"
 	}
 	return bin
+}
+
+// taskAgentCell renders a TASK's agent identity — its resolved profile plus the
+// "+skills" marker read off the task itself. Returns "" when the task carries
+// no profile (legacy WAL rows), leaving the placeholder to the caller: the
+// table falls back to its runner and then to "-", the authority picker leaves
+// the slot blank. Shared so the table and the picker cannot drift into showing
+// the same task differently — which is how the marker got lost in the first
+// place, by one renderer building the string by hand.
+func taskAgentCell(t protocol.TaskInfo) string {
+	if len(t.AgentProfile) == 0 {
+		return ""
+	}
+	return agentDescriptor(string(t.AgentProfile), t.SkillsInjected())
 }
 
 // runnerAgentCell renders the Agent column for a runner row.

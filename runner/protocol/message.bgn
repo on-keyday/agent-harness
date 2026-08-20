@@ -515,7 +515,19 @@ format TaskInfo:
     error_len :u32
     error_message :[error_len]u8
     is_attached :u1       # client tuiStream is currently spliced
-    reserved :u7
+    # skills_injected mirrors RunnerInfo.skills_injected for the runner this task
+    # was ASSIGNED to, stamped at assign time so it survives that runner going
+    # offline. It is carried on the task rather than read off RunnerInfo because
+    # a confined caller (no info_global, not operator) receives ZERO runners by
+    # design — see handleList — and a confined agent deciding whether a peer
+    # follows the agentboard conventions is exactly who needs this bit.
+    #
+    # DECLARATION, not observation: it says the runner is configured to inject
+    # (!--no-worktree || --force-inject-harness-settings), while the write itself
+    # is non-fatal in runner/session.go. 0 on a Queued task — nothing has been
+    # assigned yet — which is why it must not be read as "this agent is bare".
+    skills_injected :u1
+    reserved :u6
     ring_buffer_bytes :u64    # current bytes buffered (0 for oneshot tasks —
                               # every interactive session has a ring)
     last_output_at :u64   # unix nanos (SERVER clock) of the last Stdout/Stderr

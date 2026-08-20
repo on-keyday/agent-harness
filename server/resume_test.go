@@ -15,7 +15,7 @@ func TestResumeFromTerminal(t *testing.T) {
 	tasks := NewTaskStore()
 	id := tasks.Create("/repo", "old prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "runnerA", protocol.RunnerSelector{}, []string{"--A"}, protocol.Capability_All, defaultScope(), "")
 	// Drive task through Assign + Finish to a terminal state.
-	tasks.Assign(id, "runnerA", "/wt")
+	tasks.Assign(id, "runnerA", "/wt", false)
 	tasks.Finish(id, 0, nil) // Succeeded
 
 	got, err := tasks.Resume(id, "new prompt", []string{"--B"}, protocol.RunnerSelector{Kind: protocol.RunnerSelectorKind_Any}, "runnerB", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, Scope{}, protocol.TaskKind_Oneshot, "")
@@ -62,7 +62,7 @@ func TestResumeRejectsNonTerminal(t *testing.T) {
 
 	t.Run("running", func(t *testing.T) {
 		id := tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "")
-		tasks.Assign(id, "r1", "/wt")
+		tasks.Assign(id, "r1", "/wt", false)
 		_, err := tasks.Resume(id, "x", nil, protocol.RunnerSelector{}, "", protocol.ClientKind_Unspecified, false, protocol.Capability_None, false, Scope{}, protocol.TaskKind_Oneshot, "")
 		if err != ResumeErrNotTerminal {
 			t.Errorf("got %v, want ResumeErrNotTerminal", err)
@@ -86,7 +86,7 @@ func TestResumeRejectsUnknown(t *testing.T) {
 func TestResumeConcurrentSingleWinner(t *testing.T) {
 	tasks := NewTaskStore()
 	id := tasks.Create("/r", "p", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "")
-	tasks.Assign(id, "r1", "/wt")
+	tasks.Assign(id, "r1", "/wt", false)
 	tasks.Finish(id, 0, nil)
 
 	const N = 16

@@ -26,7 +26,7 @@ func TestPruneIsScopedToTheCaller(t *testing.T) {
 	}
 	// Make the descendant and the stranger terminal so both are prunable.
 	for _, id := range []string{g, u} {
-		h.Tasks.Assign(id, "runner-x", "/wt")
+		h.Tasks.Assign(id, "runner-x", "/wt", false)
 		h.Tasks.Finish(id, 0, nil)
 	}
 

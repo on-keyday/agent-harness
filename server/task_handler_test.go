@@ -510,7 +510,7 @@ func TestSubmitResumeProfileUnavailableWhenRunnerLostProfile(t *testing.T) {
 	// Original task bound to profile "codex" on runner "A" (test-only shortcut
 	// via TaskStore.Create; equivalent to what handleSubmit would have stored).
 	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
-	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Assign(taskIDHex, "A", "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	// Runner "A" is (re)registered but now only advertises "claude" — the
@@ -535,7 +535,7 @@ func TestSubmitResumeEmptyProfileReusesOriginal(t *testing.T) {
 	now := time.Now()
 
 	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
-	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Assign(taskIDHex, "A", "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	// Runner still advertises "codex" — resume should succeed and stay bound
@@ -575,7 +575,7 @@ func TestSubmitResumeProfileFilterNarrowsAmbiguity(t *testing.T) {
 
 	// Original task recorded as bound to the "codex" profile.
 	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "B", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
-	h.Tasks.Assign(taskIDHex, "B", "/wt")
+	h.Tasks.Assign(taskIDHex, "B", "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	// Two runners now serve the same root; only B advertises "codex".
@@ -865,7 +865,7 @@ func TestOpenInteractiveUnpinnedResumeExpandsToPicker(t *testing.T) {
 
 	// Terminal interactive task, recorded profile "codex".
 	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
-	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Assign(taskIDHex, "A", "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	// The runner advertises both profiles the task could resume under.
@@ -905,7 +905,7 @@ func TestOpenInteractivePinnedResumeStillDefaultsProfile(t *testing.T) {
 	runnerIDHex := runnerCID.String()
 
 	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Interactive, protocol.ClientKind_Tui, protocol.TaskID{}, runnerIDHex, protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "codex")
-	h.Tasks.Assign(taskIDHex, runnerIDHex, "/wt")
+	h.Tasks.Assign(taskIDHex, runnerIDHex, "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	h.Registry.Add(&RunnerEntry{ID: runnerIDHex, Hostname: "h1", AllowedRoots: []string{"/shared"}, MaxTasks: 1, AgentProfiles: []string{"claude", "codex"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})
@@ -1015,7 +1015,7 @@ func TestOpenInteractiveResumeCrossModeNotRejected(t *testing.T) {
 
 	// Original task created (and finished) as Oneshot.
 	taskIDHex := h.Tasks.Create("/shared/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "")
-	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Assign(taskIDHex, "A", "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9210-1"), nextStreamID: 5}
@@ -1271,7 +1271,7 @@ func TestSubmitResumeProfileMatchesAcrossExeSuffix(t *testing.T) {
 	// bin and now advertises "claude". Same binary, two spellings — pinned
 	// resume must keep working.
 	taskIDHex := h.Tasks.Create("/repo", "orig", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli, protocol.TaskID{}, "A", protocol.RunnerSelector{}, nil, protocol.Capability_All, defaultScope(), "claude.exe")
-	h.Tasks.Assign(taskIDHex, "A", "/wt")
+	h.Tasks.Assign(taskIDHex, "A", "/wt", false)
 	h.Tasks.Finish(taskIDHex, 0, nil)
 
 	h.Registry.Add(&RunnerEntry{ID: "A", Hostname: "h1", AllowedRoots: []string{"/"}, MaxTasks: 1, AgentProfiles: []string{"claude"}, ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now, Conn: stubConn{}})

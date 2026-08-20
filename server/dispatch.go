@@ -252,7 +252,7 @@ func (d *Dispatcher) TryDispatch(task TaskEntry) bool {
 		}
 
 		// Send succeeded: transition task to Running.
-		d.Tasks.Assign(task.ID, runner.ID, "")
+		d.Tasks.Assign(task.ID, runner.ID, "", runner.SkillsInjected)
 		return true
 	}
 	return false

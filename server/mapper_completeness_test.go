@@ -68,6 +68,7 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		ExitCode:        &ec,
 		ErrorMsg:        []byte("boom"),
 		IsAttached:      true,
+		SkillsInjected:  true,
 		RingBufferBytes: 4096,
 	}
 	info := toTaskInfo(e)
@@ -77,6 +78,16 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		"LastOutputAt": "filled by the list handler from live session state, not from TaskEntry",
 		"OutputIdleMs": "filled by the list handler from live session state, not from TaskEntry",
 	})
+	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
+	// skills_injected share one unexported byte, so setting either makes the
+	// struct field non-zero and a forgotten mapping for the other passes
+	// unnoticed. Every u1 in TaskInfo therefore needs its own assertion here.
+	if !info.IsAttached() {
+		t.Error("TaskInfo.IsAttached is false after mapping IsAttached:true — the mapper forgot it")
+	}
+	if !info.SkillsInjected() {
+		t.Error("TaskInfo.SkillsInjected is false after mapping SkillsInjected:true — the mapper forgot it")
+	}
 }
 
 func TestToRunnerInfoMapsEveryField(t *testing.T) {

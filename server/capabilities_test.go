@@ -1077,7 +1077,7 @@ func TestTopicsGated(t *testing.T) {
 // assigning then finishing it. Mirrors the pattern used in resume_test.go.
 func markTerminalForTest(t *testing.T, h *TaskHandler, idHex string) {
 	t.Helper()
-	h.Tasks.Assign(idHex, "runner-x", "/wt/x")
+	h.Tasks.Assign(idHex, "runner-x", "/wt/x", false)
 	h.Tasks.Finish(idHex, 0, nil)
 	e, ok := h.Tasks.Get(idHex)
 	if !ok {
