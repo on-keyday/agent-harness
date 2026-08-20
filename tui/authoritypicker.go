@@ -25,8 +25,14 @@ type AuthorityPickerModel struct {
 	rows   []pickerRow
 	cursor int
 
-	caps      protocol.Capability
-	base      protocol.ScopeBase
+	caps protocol.Capability
+	base protocol.ScopeBase
+	// overrides is CARRIED, not edited. The picker edits the base scope and
+	// the id set; per-capability narrowings are typed on the cmdline. It has
+	// to be kept because overrides travel with the scope under one presence
+	// bit — a re-grant that returned an empty list would silently erase the
+	// target's per-capability rules, which is the same defect the cascade had.
+	overrides []protocol.ScopeOverride
 	selected  map[string]bool
 	cascade   bool
 	keepConns bool
@@ -72,13 +78,15 @@ type pickerRow struct {
 // omitted — {self} is unconditionally in scope, so listing it is noise.
 func (m *AuthorityPickerModel) OpenRegrant(target protocol.TaskInfo, tasks []protocol.TaskInfo) {
 	m.reset(PickerModeRegrant, target.Capabilities, target.Scope)
+	m.overrides = target.Overrides
 	m.targetHex = FormatTaskID(target.Id)
 	m.buildRows(tasks)
 }
 
 // OpenSession opens the picker prefilled with the session defaults.
-func (m *AuthorityPickerModel) OpenSession(caps protocol.Capability, scope protocol.TaskScope, tasks []protocol.TaskInfo) {
+func (m *AuthorityPickerModel) OpenSession(caps protocol.Capability, scope protocol.TaskScope, overrides []protocol.ScopeOverride, tasks []protocol.TaskInfo) {
 	m.reset(PickerModeSession, caps, scope)
+	m.overrides = overrides
 	m.buildRows(tasks)
 }
 
@@ -140,6 +148,7 @@ func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Cap
 	m.cursor = 0
 	m.caps = caps
 	m.base = scope.Base
+	m.overrides = nil
 	m.selected = map[string]bool{}
 	for _, id := range scope.Ids {
 		m.selected[FormatTaskID(id)] = true
@@ -260,6 +269,11 @@ func (m *AuthorityPickerModel) Toggle() {
 // string. Re-grant specs are always explicit (a re-grant apply sends both
 // fields); session mode returns "" for base-subtree-no-ids, the spawn
 // default. Selected ids are ignored under base == global.
+// Overrides returns the per-capability narrowings the picker is carrying
+// unchanged, so the caller can send them back with the scope rather than
+// clearing them.
+func (m *AuthorityPickerModel) Overrides() []protocol.ScopeOverride { return m.overrides }
+
 func (m *AuthorityPickerModel) Result() (caps protocol.Capability, scopeSpec string, cascade, keepConns bool) {
 	var ids []string
 	if m.base != protocol.ScopeBase_Global {

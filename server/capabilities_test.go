@@ -1661,3 +1661,47 @@ func TestResumeKeepsOverridesUnlessScopePresent(t *testing.T) {
 		t.Errorf("overrides = %+v, want cleared by an explicit empty scope", got.Scope.Overrides)
 	}
 }
+
+// An override may name a bit the task does not hold. It sits inert — authorize
+// denies on the missing capability before any scope is resolved — and becomes
+// live the moment caps set grants the bit. That is deliberate: a grant
+// template outlives the mask it was written for, and the direction is safe
+// because an override can only ever narrow.
+func TestOverrideForAnUnheldBitIsInertUntilGranted(t *testing.T) {
+	h, _, c, g, _ := scopeFixture(t)
+	cid := bindPrincipal(t, h, c)
+
+	// Hold exec_view only, but carry an override for cancel as well.
+	withOverride := Scope{
+		Base:      protocol.ScopeBase_Subtree,
+		Overrides: []ScopeOverride{{Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None}},
+	}
+	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView, true, withOverride); !ok {
+		t.Fatal("SetCaps: task not found")
+	}
+
+	// Inert: the denial is the missing capability, not the scope.
+	if h.authorize(cid, protocol.Capability_Cancel, g) {
+		t.Error("authorized cancel without the bit")
+	}
+	if _, allowed := h.scopeSet(cid, protocol.Capability_ExecView); !allowed[g] {
+		t.Error("the cancel override leaked onto exec_view")
+	}
+	// It is still STORED — an operator reading the task sees the standing rule.
+	after, _ := h.Tasks.Get(c)
+	if len(after.Scope.Overrides) != 1 {
+		t.Fatalf("overrides = %+v, want the inert entry retained", after.Scope.Overrides)
+	}
+
+	// Granting the bit makes the standing override apply immediately, without
+	// the operator having to restate it.
+	if _, ok := h.Tasks.SetCaps(c, true, protocol.Capability_ExecView|protocol.Capability_Cancel, false, Scope{}); !ok {
+		t.Fatal("SetCaps: task not found")
+	}
+	if h.authorize(cid, protocol.Capability_Cancel, g) {
+		t.Error("cancel reached a descendant; the standing override should have narrowed it to none")
+	}
+	if !h.authorize(cid, protocol.Capability_ExecView, g) {
+		t.Error("exec_view lost the descendant it never had an override for")
+	}
+}

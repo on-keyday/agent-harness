@@ -176,6 +176,12 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 	}
 	fmt.Fprintf(&sb, "caps:          %s\n", cli.CapsLabel(t.Capabilities))
 	fmt.Fprintf(&sb, "scope:         %s\n", cli.ScopeLabel(t.Scope))
+	// Printed only when present: the scope is half a task's authority and is
+	// never absent, while a per-capability narrowing that is not there has
+	// nothing to report.
+	if ov := cli.OverridesLabel(t.Overrides); ov != "" {
+		fmt.Fprintf(&sb, "scope-for:     %s\n", ov)
+	}
 	fmt.Fprintf(&sb, "repo:          %s\n", string(t.RepoPath))
 	if len(t.WorktreeDir) > 0 {
 		fmt.Fprintf(&sb, "worktree:      %s\n", string(t.WorktreeDir))

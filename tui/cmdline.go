@@ -21,6 +21,7 @@ type SubmitAction struct {
 	Repo               string
 	Caps               *protocol.Capability
 	Scope              *protocol.TaskScope
+	Overrides          []protocol.ScopeOverride
 	Prompt             string
 	ExtraArgs          []string
 	ResumeTaskID       string
@@ -69,6 +70,7 @@ type SessionNewAction struct {
 	Repo               string
 	Caps               *protocol.Capability
 	Scope              *protocol.TaskScope
+	Overrides          []protocol.ScopeOverride
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
@@ -221,6 +223,7 @@ type InteractiveAction struct {
 	Repo               string
 	Caps               *protocol.Capability
 	Scope              *protocol.TaskScope
+	Overrides          []protocol.ScopeOverride
 	ExtraArgs          []string
 	ResumeTaskID       string
 	ResumeConversation bool
@@ -266,8 +269,9 @@ type CapsAction struct {
 // a spawned task may use, scope says which tasks it may point them at. Same
 // show/set shape, same "does not apply on resume" rule.
 type ScopeAction struct {
-	Scope protocol.TaskScope
-	Show  bool
+	Scope     protocol.TaskScope
+	Overrides []protocol.ScopeOverride
+	Show      bool
 }
 
 // SetCapsAction re-grants a LIVE task's authority. Operator-only, enforced by
@@ -278,9 +282,13 @@ type ScopeAction struct {
 // neither has a spare value to mean "unset" (Capability(0) is "none",
 // TaskScope{} is "subtree").
 type SetCapsAction struct {
-	TaskID    string
-	Caps      *protocol.Capability
-	Scope     *protocol.TaskScope
+	TaskID string
+	Caps   *protocol.Capability
+	Scope  *protocol.TaskScope
+	// Overrides travels with Scope under the same presence, matching the CLI
+	// and the wire: they are one half of the authority, so writing the scope
+	// while keeping the old overrides would store something nobody described.
+	Overrides []protocol.ScopeOverride
 	Cascade   bool
 	KeepConns bool
 }
@@ -471,13 +479,15 @@ func parseInteractive(args []string, defaultRepo string) (Action, error) {
 	fs.Var(&caps, "caps", capsFlagUsage)
 	var scope scopeFlag
 	fs.Var(&scope, "scope", scopeFlagUsage)
+	var scopeFor scopeForFlag
+	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("interactive: %w", err)
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("interactive: unexpected positional argument %q", fs.Arg(0))
 	}
-	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value()}, nil
+	return InteractiveAction{Repo: *repo, ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value(), Overrides: scopeFor.out}, nil
 }
 
 func parseRepo(args []string) (Action, error) {
@@ -503,6 +513,8 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	fs.Var(&caps, "caps", capsFlagUsage)
 	var scope scopeFlag
 	fs.Var(&scope, "scope", scopeFlagUsage)
+	var scopeFor scopeForFlag
+	fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
 	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("submit: %w", err)
 	}
@@ -510,7 +522,7 @@ func parseSubmit(args []string, defaultRepo string) (Action, error) {
 	if len(rest) == 0 {
 		return nil, fmt.Errorf("submit: prompt is required")
 	}
-	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value()}, nil
+	return SubmitAction{Repo: *repo, Prompt: strings.Join(rest, " "), ExtraArgs: []string(extra), ResumeTaskID: *resume, ResumeConversation: *resumeConversation, AgentProfile: *agent, Caps: caps.Value(), Scope: scope.Value(), Overrides: scopeFor.out}, nil
 }
 
 // repeatableStrings is a flag.Value that accumulates one entry per occurrence,
@@ -567,6 +579,27 @@ func (c *capsFlag) Value() *protocol.Capability {
 
 const capsFlagUsage = "capability mask for this spawn (overrides the `caps` default); " +
 	"names are comma-separated and may be subtracted, e.g. all,-spawn"
+
+// scopeForFlag collects repeatable --scope-for values, parsing and merging on
+// each Set so an overlapping capability list is refused at the flag rather
+// than a round trip later. Mirrors cmd/harness-cli's, deliberately: the two
+// surfaces must reject the same input for the same reason.
+type scopeForFlag struct{ out []protocol.ScopeOverride }
+
+func (f *scopeForFlag) String() string { return cli.OverridesLabel(f.out) }
+
+func (f *scopeForFlag) Set(v string) error {
+	_, ov, err := cli.ParseScopeFor(v)
+	if err != nil {
+		return err
+	}
+	merged, err := cli.MergeScopeOverride(f.out, ov)
+	if err != nil {
+		return err
+	}
+	f.out = merged
+	return nil
+}
 
 // scopeFlag is the optional --scope flag on submit / interactive / session
 // new — the target-set half of capsFlag, with the same "not given" vs "given
@@ -653,6 +686,8 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		fs.Var(&caps, "caps", capsFlagUsage)
 		var scope scopeFlag
 		fs.Var(&scope, "scope", scopeFlagUsage)
+		var scopeFor scopeForFlag
+		fs.Var(&scopeFor, "scope-for", cli.ScopeForFlagUsage)
 		if err := fs.Parse(rest); err != nil {
 			return nil, fmt.Errorf("session new: %w", err)
 		}
@@ -679,6 +714,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			AgentProfile:       *agent,
 			Caps:               caps.Value(),
 			Scope:              scope.Value(),
+			Overrides:          scopeFor.out,
 		}, nil
 	case "attach":
 		if len(rest) == 0 {
@@ -1091,7 +1127,8 @@ func parseGit(args []string) (Action, error) {
 // parseSetCaps backs `caps set <task-id> [--caps NAMES] [--scope SPEC]
 // [--cascade] [--keep-conns]`, the TUI form of harness-cli caps set.
 func parseSetCaps(args []string) (Action, error) {
-	usage := "caps set: usage: caps set <task-id> [--caps NAMES] [--scope SPEC] [--cascade] [--keep-conns]"
+	usage := "caps set: usage: caps set <task-id> [--caps NAMES] [--scope SPEC] " +
+		"[--scope-for CAPS=SCOPE ...] [--cascade] [--keep-conns]"
 	act := SetCapsAction{}
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -1099,6 +1136,20 @@ func parseSetCaps(args []string) (Action, error) {
 			act.Cascade = true
 		case "--keep-conns":
 			act.KeepConns = true
+		case "--scope-for":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("caps set: --scope-for needs a value")
+			}
+			i++
+			_, ov, err := cli.ParseScopeFor(args[i])
+			if err != nil {
+				return nil, fmt.Errorf("caps set: %w", err)
+			}
+			merged, err := cli.MergeScopeOverride(act.Overrides, ov)
+			if err != nil {
+				return nil, fmt.Errorf("caps set: %w", err)
+			}
+			act.Overrides = merged
 		case "--caps":
 			if i+1 >= len(args) {
 				return nil, fmt.Errorf("caps set: --caps needs a value")

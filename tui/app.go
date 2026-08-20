@@ -165,6 +165,11 @@ type App struct {
 	// companion to sessionCaps: caps say which verbs, scope says which tasks
 	// they may be pointed at. Zero value is subtree (self + descendants).
 	sessionScope protocol.TaskScope
+	// sessionOverrides narrows individual capabilities below sessionScope. It
+	// travels with sessionScope as one half of the default authority: the
+	// `scope` command sets and clears both together, so a spawn never carries
+	// a scope from one command and overrides from another.
+	sessionOverrides []protocol.ScopeOverride
 }
 
 // resolveSpawnCaps picks the capability mask for one spawn and says whether the
@@ -187,10 +192,17 @@ func (a App) resolveSpawnCaps(explicit *protocol.Capability, resuming bool) (pro
 // Authority the Do* helpers carry: an explicit --scope wins over the session
 // default, and on a resume ONLY an explicit --scope re-grants (ScopePresent)
 // — the session default must never silently rewrite a resumed task's scope.
-func (a App) spawnAuthority(explicit *protocol.TaskScope, resumeTaskID string, caps protocol.Capability) Authority {
-	auth := Authority{Caps: caps, Scope: a.sessionScope}
-	if explicit != nil {
-		auth.Scope = *explicit
+func (a App) spawnAuthority(explicit *protocol.TaskScope, overrides []protocol.ScopeOverride, resumeTaskID string, caps protocol.Capability) Authority {
+	auth := Authority{Caps: caps, Scope: a.sessionScope, Overrides: a.sessionOverrides}
+	// The scope half is one unit: naming EITHER --scope or --scope-for makes
+	// the whole half explicit, so a resume re-grants both together. Letting
+	// --scope-for alone ride the session default's scope would write an
+	// authority that is half typed and half inherited.
+	if explicit != nil || len(overrides) > 0 {
+		if explicit != nil {
+			auth.Scope = *explicit
+		}
+		auth.Overrides = overrides
 		auth.ScopePresent = resumeTaskID != ""
 	}
 	return auth
@@ -202,7 +214,7 @@ func (a App) spawnAuthority(explicit *protocol.TaskScope, resumeTaskID string, c
 // authority is the session default a spawn carries when the command line did
 // not name its own: the caps mask paired with the target scope.
 func (a *App) authority() Authority {
-	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope}
+	return Authority{Caps: a.sessionCaps, Scope: a.sessionScope, Overrides: a.sessionOverrides}
 }
 
 type pendingInteractive struct {
@@ -1407,12 +1419,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					})
 				}
 				caps, spec, cascade, keep := a.authorityPicker.Result()
+				// Carried, not edited: the picker never clears the target's
+				// per-capability narrowings, because they travel with the scope
+				// under one presence bit and an empty list would erase them.
+				overrides := a.authorityPicker.Overrides()
 				mode, target := a.authorityPicker.Mode(), a.authorityPicker.TargetID()
 				a.authorityPicker.Close()
 				if mode == PickerModeSession {
 					a.sessionCaps = caps
 					if spec == "" {
 						a.sessionScope = protocol.TaskScope{Base: protocol.ScopeBase_Subtree}
+						a.sessionOverrides = nil
 					} else {
 						sc, err := cli.ParseScope(spec)
 						if err != nil {
@@ -1420,9 +1437,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return a, nil
 						}
 						a.sessionScope = sc
+						a.sessionOverrides = overrides
 					}
-					a.cmdresult.Append(OKStyle.Render("defaults set: ") + capsLabel(a.sessionCaps) +
-						"  scope=" + cli.ScopeLabel(a.sessionScope))
+					label := capsLabel(a.sessionCaps) + "  scope=" + cli.ScopeLabel(a.sessionScope)
+					if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
+						label += " +" + ov
+					}
+					a.cmdresult.Append(OKStyle.Render("defaults set: ") + label)
 					return a, nil
 				}
 				if a.client == nil {
@@ -1437,7 +1458,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				return a, DoSetCaps(a.client, cli.SetCapsOpts{
-					TaskID: target, Caps: &caps, Scope: &sc,
+					TaskID: target, Caps: &caps, Scope: &sc, Overrides: overrides,
 					Cascade: cascade, KeepConns: keep,
 				})
 			}
@@ -2567,7 +2588,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			// `caps` with no argument opens the session-default picker — it
 			// shows the current value AND lets it be edited by selection.
 			a.authorityPicker.SetSize(a.width, a.height)
-			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.tasks.Rows())
+			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.sessionOverrides, a.tasks.Rows())
 		} else {
 			a.sessionCaps = v.Caps
 			a.cmdresult.Append(OKStyle.Render("caps set: ") + capsLabel(a.sessionCaps))
@@ -2578,10 +2599,15 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			// Same picker as `caps` — the session default is one caps+scope
 			// pair, edited together.
 			a.authorityPicker.SetSize(a.width, a.height)
-			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.tasks.Rows())
+			a.authorityPicker.OpenSession(a.sessionCaps, a.sessionScope, a.sessionOverrides, a.tasks.Rows())
 		} else {
 			a.sessionScope = v.Scope
-			a.cmdresult.Append(OKStyle.Render("scope set: ") + cli.ScopeLabel(a.sessionScope))
+			a.sessionOverrides = v.Overrides
+			label := cli.ScopeLabel(a.sessionScope)
+			if ov := cli.OverridesLabel(a.sessionOverrides); ov != "" {
+				label += " +" + ov
+			}
+			a.cmdresult.Append(OKStyle.Render("scope set: ") + label)
 		}
 		return a, nil
 	case SetCapsAction:
@@ -2591,7 +2617,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoSetCaps(a.client, cli.SetCapsOpts{
-			TaskID: full, Caps: v.Caps, Scope: v.Scope,
+			TaskID: full, Caps: v.Caps, Scope: v.Scope, Overrides: v.Overrides,
 			Cascade: v.Cascade, KeepConns: v.KeepConns,
 		})
 	case SetParentAction:
@@ -2613,10 +2639,10 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		})
 	case InteractiveAction:
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoOpenInteractiveWithOpts(a.client, v.Repo, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SubmitAction:
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
+		return a, DoSubmitWithOpts(a.client, v.Repo, v.Prompt, "", v.ExtraArgs, v.ResumeTaskID, a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps), capsOverride, v.ResumeConversation, v.AgentProfile)
 	case CancelAction:
 		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
 		if errStr != "" {
@@ -2638,7 +2664,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		}
 		sel := cli.SelectorOpts{Host: v.Host, Runner: v.Runner, IP: v.IP}
 		caps, capsOverride := a.resolveSpawnCaps(v.Caps, v.ResumeTaskID != "")
-		auth := a.spawnAuthority(v.Scope, v.ResumeTaskID, caps)
+		auth := a.spawnAuthority(v.Scope, v.Overrides, v.ResumeTaskID, caps)
 		if v.X11 {
 			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 		}

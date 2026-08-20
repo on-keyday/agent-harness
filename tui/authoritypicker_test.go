@@ -82,7 +82,7 @@ func TestAuthorityPickerScopeSerialization(t *testing.T) {
 			var m AuthorityPickerModel
 			if tc.session {
 				m.OpenSession(protocol.Capability_All, protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
-					[]protocol.TaskInfo{target, sib, other})
+					nil, []protocol.TaskInfo{target, sib, other})
 			} else {
 				m.OpenRegrant(target, []protocol.TaskInfo{target, sib, other})
 			}
@@ -201,7 +201,7 @@ func TestAuthorityPickerStableWidth(t *testing.T) {
 // rows and Result reports both false even after toggling everything.
 func TestAuthorityPickerSessionModeRows(t *testing.T) {
 	var m AuthorityPickerModel
-	m.OpenSession(protocol.Capability_All, protocol.TaskScope{}, nil)
+	m.OpenSession(protocol.Capability_All, protocol.TaskScope{}, nil, nil)
 	for _, r := range m.rows {
 		if strings.Contains(r.label, "cascade") || strings.Contains(r.label, "keep-conns") {
 			t.Fatalf("session mode must not show %q", r.label)
@@ -274,5 +274,34 @@ func TestAuthorityPickerParentMode(t *testing.T) {
 		if r.kind == rowParentSwap {
 			t.Fatal("swap row offered for an operator-rooted target")
 		}
+	}
+}
+
+// The picker edits the base scope and the id set; per-capability narrowings
+// are typed on the cmdline. It must CARRY them regardless — they travel with
+// the scope under one presence bit, so a re-grant that returned an empty list
+// would erase the target's rules. That is the defect the cascade shipped with,
+// and this is the same shape.
+func TestPickerCarriesOverridesItDoesNotEdit(t *testing.T) {
+	ov := []protocol.ScopeOverride{{
+		Caps: protocol.Capability_Cancel, Base: protocol.ScopeBase_None,
+	}}
+	target := protocol.TaskInfo{
+		Id:           protocol.TaskID{Id: [16]byte{1}},
+		Capabilities: protocol.Capability_All,
+		Scope:        protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
+		Overrides:    ov,
+	}
+
+	var m AuthorityPickerModel
+	m.OpenRegrant(target, []protocol.TaskInfo{target})
+	if got := m.Overrides(); len(got) != 1 || got[0].Caps != protocol.Capability_Cancel {
+		t.Fatalf("Overrides() = %+v, want the target's entry carried through", got)
+	}
+
+	// A session open with no overrides must not inherit the previous target's.
+	m.OpenSession(protocol.Capability_All, protocol.TaskScope{}, nil, nil)
+	if got := m.Overrides(); len(got) != 0 {
+		t.Errorf("Overrides() = %+v after a fresh open, want empty", got)
 	}
 }

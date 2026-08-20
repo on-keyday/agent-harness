@@ -67,6 +67,11 @@ type LogHistoryMsg struct {
 type Authority struct {
 	Caps  protocol.Capability
 	Scope protocol.TaskScope
+	// Overrides narrows individual capabilities below Scope. It lives HERE
+	// rather than in each Do* helper's argument list for the same reason
+	// SessionOpts carries it: a field threaded through some callers and not
+	// others is the failure mode these routes have already had.
+	Overrides []protocol.ScopeOverride
 	// ScopePresent, on a resume, re-grants Scope onto the task instead of
 	// keeping its persisted one (SessionOpts.ScopePresent). Ignored on
 	// create. Set only when the command line named --scope explicitly —
@@ -105,7 +110,8 @@ func DoSubmitWithOpts(c *cli.Client, repo, prompt, host string, extraArgs []stri
 		}
 		id, err := c.Submit(ctx, repo, prompt, cli.SessionOpts{
 			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-			Caps: auth.Caps, Scope: auth.Scope, ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
+			Caps: auth.Caps, Scope: auth.Scope, Overrides: auth.Overrides,
+			ScopePresent: auth.ScopePresent, ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 		})
 		if err != nil {
