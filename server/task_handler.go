@@ -1360,15 +1360,21 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 	// Control reattach always gets the full ring; only observer attaches honor
 	// the client's replay cap (0 = full), so a monitoring grid pane isn't
 	// shipped ~1 MiB of scrollback it will never render.
+	// exec_resize is orthogonal to the mode: it says this observer's
+	// TerminalWindowSize frames are honoured rather than discarded. Resolved
+	// here because this is the only point the principal is known — the frames
+	// themselves carry no identity. A CONTROL attach needs no bit: owning the
+	// PTY size is what control means.
+	allowResize := hasCap(h.callerCaps(conn.ConnectionID().String()), protocol.Capability_ExecResize)
 	attach := mux.Attach
 	switch req.Mode {
 	case protocol.AttachMode_View:
 		attach = func(ctx context.Context, s trsf.BidirectionalStream) error {
-			return mux.AttachViewer(ctx, s, req.ReplayLimit)
+			return mux.AttachViewer(ctx, s, req.ReplayLimit, allowResize)
 		}
 	case protocol.AttachMode_Cowrite:
 		attach = func(ctx context.Context, s trsf.BidirectionalStream) error {
-			return mux.AttachCoWriter(ctx, s, req.ReplayLimit)
+			return mux.AttachCoWriter(ctx, s, req.ReplayLimit, allowResize)
 		}
 	}
 	if err := attach(parentCtx, tuiStream); err != nil {

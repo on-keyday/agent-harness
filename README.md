@@ -405,6 +405,16 @@ stronger one never needs the weaker one alongside it:
 | `exec_cowrite` | additionally type into a session someone else is driving, without evicting them — `session send`, `session exec`, the WebUI preview |
 | `exec_control` | additionally take the session over as sole writer, evicting whoever holds it, and own its size — `session attach`, TUI `r` |
 
+`exec_resize` sits beside those three rather than inside them: resizing is
+availability (a wrong size makes a full-screen program refuse to draw) while
+typing is integrity (it runs commands as that session), so "may drive this
+worker but must not resize it" and "may make it readable but must not type into
+it" are both grantable, and neither implies the other. It is honoured only
+while **no control client is attached** — the size belongs to the control seat
+whenever someone holds it, and this lets an observer stand in for an unattended
+session rather than fight the human whose terminal defines the size. A control
+attach needs no such bit; owning the size is what control means.
+
 `exec_control` is the former `exec_attach` under a name that says which of
 the three it is; it keeps the same bit, so every task already holding it
 kept exactly the power it had. Watching a worker no longer implies being

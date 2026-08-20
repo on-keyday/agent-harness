@@ -73,7 +73,7 @@ func TestSessionMux_Observer_ReplayCapped(t *testing.T) {
 
 	const limit = 128 * 1024
 	cw := newFakeStream(t)
-	if err := mux.AttachCoWriter(ctx, cw, limit); err != nil {
+	if err := mux.AttachCoWriter(ctx, cw, limit, false); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
 	}
 	waitFor(t, func() bool { return len(cw.Written()) > 0 })
@@ -83,7 +83,7 @@ func TestSessionMux_Observer_ReplayCapped(t *testing.T) {
 	}
 
 	full := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, full, 0); err != nil {
+	if err := mux.AttachViewer(ctx, full, 0, false); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	waitFor(t, func() bool { return len(full.Written()) >= 300*1024 })

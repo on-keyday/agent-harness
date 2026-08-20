@@ -135,12 +135,14 @@ before rendering — factor that beat into poll loops.
 spelling, different subject: on `snapshot` they size the offscreen renderer and
 never touch the PTY; on `session new` they size the PTY itself. To actually
 give a session a size, do it when you OPEN it — `session new -d --rows 40
---cols 150` — which is also the only route open to a spawner holding just
-`spawn`, since size authority belongs to the CONTROL attach alone and so every
-later resize path needs `exec_control`, the strongest of the three. For a
-session already running whose agent is a shell, `session exec <id> 'stty rows
-40 cols 140'` still works and needs only `exec_cowrite` — it types the resize
-rather than claiming it.
+--cols 150` — which is the route always open to the spawner. Afterwards the
+size belongs to the CONTROL attach whenever someone holds it, but **`exec_resize`**
+lets a viewer or cowriter set it while **no control client is attached** — the
+unattended `-d` session, which is the case that matters. That capability is
+orthogonal to the three modes and is not implied by being allowed to type.
+For a running session whose agent is a shell, `session exec <id> 'stty rows 40
+cols 140'` still works with only `exec_cowrite` — it types the resize rather
+than claiming it, and so is unaffected by who holds the seat.
 
 - The plain render **drops SGR**, so a *faint* placeholder / ghost-autocomplete
   / dim hint looks identical to real input. **`--style`** prints a

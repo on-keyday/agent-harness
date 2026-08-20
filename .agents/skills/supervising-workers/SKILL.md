@@ -88,11 +88,20 @@ where you have an explicit reason.
 harness-cli session new -d --repo /path/to/repo --rows 40 --cols 150
 ```
 
-A detached session has **no size at all** until a client attaches, and size
-authority belongs to the CONTROL attach alone — so every later resize path
-needs `exec_control`, the strongest of the three attach caps. If you spawned
-the worker holding only `spawn`, this is your ONLY chance to size it; there is
-no later fix. Both flags are required together (one alone is ignored).
+A detached session has **no size at all** until a client attaches, and the size
+belongs to the CONTROL attach whenever someone holds it. Two ways to give one a
+size without taking it over:
+
+- size it here, at open — always available to the spawner;
+- later, with **`exec_resize`**: a viewer or cowriter holding that capability
+  may resize a session while **no control client is attached**. That is the
+  unattended worker you spawned with `-d`, which is the case that used to have
+  no answer at all. It is orthogonal to `exec_view`/`exec_cowrite` — ask for it
+  explicitly; it is not implied by being allowed to type.
+
+Without either, `session exec <id> 'stty rows 40 cols 150'` still works when the
+foreground is a POSIX shell — but not when it is the full-screen TUI whose size
+you were trying to fix. Both flags are required together (one alone is ignored).
 
 It matters when the worker's agent draws a full-screen TUI: at 0x0 codex and
 agy paint literally nothing, so `snapshot` returns a blank screen and the

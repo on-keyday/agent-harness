@@ -36,6 +36,11 @@ type viewerConn struct {
 	// runner. They differ in what the operator can DO through them, so the
 	// counts are reported apart rather than as one "observers" total.
 	cowriter bool
+	// allowResize is ORTHOGONAL to cowriter: it says this observer's
+	// TerminalWindowSize frames are honoured. Recorded per attach from the
+	// caller's exec_resize capability, because that is the only moment the
+	// principal is known — the frames themselves carry no identity.
+	allowResize bool
 }
 
 // readOneFrame reads exactly one wire-encoded frame (header + payload)
@@ -192,9 +197,9 @@ type SessionMux struct {
 	// control frame seen on the tui→runner direction (the controlling client's
 	// PTY size). Replayed verbatim to a new viewer ahead of the ring so a
 	// read-only snapshot can size its terminal grid to match the size the
-	// absolute-positioned output was painted at. A viewer never sends its own
-	// size (viewerInputDrain discards its input), so without this it could not
-	// learn the size and would mis-render full-screen TUIs. Guarded by mu.
+	// absolute-positioned output was painted at. An observer's own size is
+	// discarded unless it holds exec_resize, so without this it could not learn
+	// the size and would mis-render full-screen TUIs. Guarded by mu.
 	lastWinSize []byte
 
 	onDetach    func(taskID string)
@@ -400,8 +405,8 @@ func (m *SessionMux) notifyObservers() {
 // AttachViewer adds a read-only observer (its input is discarded). Unlike
 // Attach it does NOT take the writer slot or fire onAttach. replayLimit caps the
 // replayed ring bytes (0 = full).
-func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.BidirectionalStream, replayLimit uint32) error {
-	return m.attachObserver(stream, false, replayLimit)
+func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.BidirectionalStream, replayLimit uint32, allowResize bool) error {
+	return m.attachObserver(stream, false, replayLimit, allowResize)
 }
 
 // AttachCoWriter adds a non-takeover writer: it observes output like a viewer
@@ -410,21 +415,21 @@ func (m *SessionMux) AttachViewer(ctx context.Context, stream trsf.Bidirectional
 // the PTY size). Lets an agent co-drive a session alongside a human controller
 // without kicking them; the human keeps size ownership so the PTY isn't resized
 // out from under them.
-func (m *SessionMux) AttachCoWriter(ctx context.Context, stream trsf.BidirectionalStream, replayLimit uint32) error {
-	return m.attachObserver(stream, true, replayLimit)
+func (m *SessionMux) AttachCoWriter(ctx context.Context, stream trsf.BidirectionalStream, replayLimit uint32, allowResize bool) error {
+	return m.attachObserver(stream, true, replayLimit, allowResize)
 }
 
 // attachObserver registers a viewer (forwardInput=false) or cowriter
 // (forwardInput=true): adds it to the output fan-out, replays size+modes+ring,
 // and starts its output pump plus either an input drain or an input forwarder.
-func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInput bool, replayLimit uint32) error {
+func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInput bool, replayLimit uint32, allowResize bool) error {
 	m.mu.Lock()
 	if m.ctx.Err() != nil {
 		m.mu.Unlock()
 		return errors.New("session_mux: stopped")
 	}
 	vctx, vcancel := context.WithCancel(m.ctx)
-	v := &viewerConn{stream: stream, ch: make(chan []byte, viewerQueueDepth), cancel: vcancel, cowriter: forwardInput}
+	v := &viewerConn{stream: stream, ch: make(chan []byte, viewerQueueDepth), cancel: vcancel, cowriter: forwardInput, allowResize: allowResize}
 	m.viewers[v] = struct{}{}
 	// Snapshot replay state under the SAME lock as the insert so runnerPump's
 	// fan-out cannot interleave between "added" and "snapshotted".
@@ -455,11 +460,7 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 		}
 	}
 	go m.viewerOutputPump(vctx, v)
-	if forwardInput {
-		go m.cowriterInputForward(vctx, v)
-	} else {
-		go m.viewerInputDrain(vctx, v)
-	}
+	go m.observerInputPump(vctx, v)
 	// Announce only once the observer is actually streaming, so a subscriber
 	// that refreshes on the event sees the count it is being told about.
 	m.notifyObservers()
@@ -477,22 +478,6 @@ func (m *SessionMux) viewerOutputPump(ctx context.Context, v *viewerConn) {
 				m.dropViewer(v)
 				return
 			}
-		}
-	}
-}
-
-// viewerInputDrain reads and DISCARDS the viewer's incoming direction. This is
-// the read-only enforcement point: unlike tuiPump it never forwards to the
-// runner. Draining prevents the bidi recv side from backpressuring/wedging and
-// gives prompt EOF when the client closes. ReadDirectContext (not ReadDirect)
-// so cancel()/Stop() unblock the read immediately.
-func (m *SessionMux) viewerInputDrain(ctx context.Context, v *viewerConn) {
-	const maxRead = 32 * 1024
-	for {
-		_, eof, err := v.stream.ReadDirectContext(ctx, maxRead)
-		if eof || err != nil {
-			m.dropViewer(v)
-			return
 		}
 	}
 }
@@ -598,11 +583,11 @@ func (m *SessionMux) forwardControlFrames(acc []byte) ([]byte, bool) {
 		}
 		fb := acc[:total]
 		if frameIsWinSize(fb) {
-			cp := append([]byte(nil), fb...)
-			m.mu.Lock()
-			m.lastWinSize = cp
-			m.fanoutToViewersLocked(cp)
-			m.mu.Unlock()
+			if err := m.applyWinSizeFrame(fb); err != nil {
+				return nil, false
+			}
+			acc = acc[total:]
+			continue
 		}
 		if err := m.writeFrameToRunner(fb); err != nil {
 			return nil, false
@@ -612,18 +597,22 @@ func (m *SessionMux) forwardControlFrames(acc []byte) ([]byte, bool) {
 	return carryTail(acc), true
 }
 
-// cowriterInputForward forwards a cowriter's input frames to the runner,
-// frame-atomically, but DROPS TerminalWindowSize frames — a cowriter has no size
-// authority (only the control client owns the PTY size). Drops the cowriter on
-// EOF/error; Stops the mux on runner write failure.
-func (m *SessionMux) cowriterInputForward(ctx context.Context, v *viewerConn) {
+// observerInputPump reads an observer's incoming direction and decides each
+// frame on TWO INDEPENDENT axes — whether this observer may type (cowriter) and
+// whether its resizes are honoured (allowResize). One pump for both kinds: a
+// viewer is simply an observer with neither, and reading is unconditional
+// either way, because leaving the bidi recv side undrained backpressures and
+// wedges the streams layer (project_trsf_accept_queue_wedge).
+//
+// Drops the observer on EOF/error; Stops the mux on runner write failure.
+func (m *SessionMux) observerInputPump(ctx context.Context, v *viewerConn) {
 	const maxRead = 32 * 1024
 	var acc []byte
 	for {
 		data, eof, err := v.stream.ReadDirectContext(ctx, maxRead)
 		if len(data) > 0 {
 			var ok bool
-			acc, ok = m.forwardCowriterFrames(append(acc, data...))
+			acc, ok = m.forwardObserverFrames(v, append(acc, data...))
 			if !ok {
 				m.Stop()
 				return
@@ -636,17 +625,28 @@ func (m *SessionMux) cowriterInputForward(ctx context.Context, v *viewerConn) {
 	}
 }
 
-// forwardCowriterFrames forwards each COMPLETE non-TerminalWindowSize frame to
-// the runner under runnerWriteMu; resize frames are silently dropped. Returns
-// the unconsumed tail and false on runner write failure.
-func (m *SessionMux) forwardCowriterFrames(acc []byte) ([]byte, bool) {
+// forwardObserverFrames applies the two axes per COMPLETE frame. Anything not
+// permitted is read and discarded, exactly as the whole stream used to be for a
+// viewer. Returns the unconsumed tail and false on runner write failure.
+func (m *SessionMux) forwardObserverFrames(v *viewerConn, acc []byte) ([]byte, bool) {
 	for len(acc) >= frameHeaderSize {
 		total := frameHeaderSize + int(binary.BigEndian.Uint32(acc[1:5]))
 		if len(acc) < total {
 			break
 		}
 		fb := acc[:total]
-		if !frameIsWinSize(fb) {
+		switch {
+		case frameIsWinSize(fb):
+			// Goes through the SAME helper as the control client's resize, so
+			// an observer resize cannot drift from it: the size has to be
+			// remembered for the replay preamble and fanned out to the other
+			// observers, not merely handed to the runner.
+			if v.allowResize {
+				if err := m.applyObserverWinSize(fb); err != nil {
+					return nil, false
+				}
+			}
+		case v.cowriter:
 			if err := m.writeFrameToRunner(fb); err != nil {
 				return nil, false
 			}
@@ -654,6 +654,43 @@ func (m *SessionMux) forwardCowriterFrames(acc []byte) ([]byte, bool) {
 		acc = acc[total:]
 	}
 	return carryTail(acc), true
+}
+
+// applyObserverWinSize honours an observer's resize only while the CONTROL seat
+// is EMPTY. The size belongs to the control attach — that is what "control"
+// means and it has always been true; exec_resize does not take it away, it lets
+// an observer stand in when nobody holds it.
+//
+// The alternative, last-writer-wins, was rejected after use: an observer resize
+// would redraw a human's terminal at a size they did not choose, and their next
+// SIGWINCH would silently undo it. Flapping neither party asked for. And the
+// case exec_resize exists for is precisely the empty seat — someone who only
+// wants to LOOK uses the grid view or the WebUI preview, which are view and
+// cowrite attaches that need no size of their own.
+//
+// The check-then-apply is not atomic with a concurrent control attach; that
+// race is benign, because a control client sends its own size as it attaches
+// and therefore wins by arriving second.
+func (m *SessionMux) applyObserverWinSize(fb []byte) error {
+	m.mu.Lock()
+	occupied := m.tui != nil
+	m.mu.Unlock()
+	if occupied {
+		return nil // silently ignored: control owns the size
+	}
+	return m.applyWinSizeFrame(fb)
+}
+
+// applyWinSizeFrame records a new PTY size, replays it to the other observers,
+// and hands it to the runner. The control client reaches this unconditionally;
+// an observer only through applyObserverWinSize.
+func (m *SessionMux) applyWinSizeFrame(fb []byte) error {
+	cp := append([]byte(nil), fb...)
+	m.mu.Lock()
+	m.lastWinSize = cp
+	m.fanoutToViewersLocked(cp)
+	m.mu.Unlock()
+	return m.writeFrameToRunner(fb)
 }
 
 // writeFrameToRunner writes one complete frame to the runner under

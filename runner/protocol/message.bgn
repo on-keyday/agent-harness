@@ -1527,7 +1527,26 @@ enum Capability:
     # human off", because one bit gated all three.
     exec_view      = 0x1000, "exec_view"
     exec_cowrite   = 0x2000, "exec_cowrite"
-    all            = 0x3fff, "all"
+    # exec_resize is ORTHOGONAL to the three attach modes, not a fourth rank in
+    # them. Resizing is availability (a wrong size makes a full-screen program
+    # refuse to draw at all) while typing is integrity (it runs commands as that
+    # session), so "may drive this worker but must not resize it" and "may make
+    # it readable but must not type into it" are both things one may want to
+    # grant, and neither implies the other.
+    #
+    # No new message carries it: TerminalWindowSize is already its own frame
+    # type and the observer input path already discriminates on it — the wire
+    # carried the distinction before the capability did, which is the second
+    # half of this file's own splitting rule. Default-off, so every existing
+    # grant keeps today's behaviour (observer resizes dropped).
+    #
+    # A CONTROL attach does not need it: owning the PTY size is what control
+    # means, and its frames were never filtered. And it does not LOSE it: an
+    # observer's resize is honoured only while the control seat is EMPTY, so
+    # this grants a stand-in for an unattended session rather than a second
+    # claimant fighting the human whose terminal defines the size.
+    exec_resize    = 0x4000, "exec_resize"
+    all            = 0x7fff, "all"
 
 # ScopeBase is the base target set a TaskScope starts from, before its explicit
 # id list is unioned in. Self is always in the effective set regardless of base.

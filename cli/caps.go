@@ -23,6 +23,7 @@ func GrantableCaps() []protocol.Capability {
 		protocol.Capability_ExecView,
 		protocol.Capability_ExecCowrite,
 		protocol.Capability_ExecControl,
+		protocol.Capability_ExecResize,
 		protocol.Capability_FileRead,
 		protocol.Capability_FileWrite,
 		protocol.Capability_ForwardLocal,
@@ -55,6 +56,8 @@ func CapDescription(c protocol.Capability) string {
 		return "type into a session someone else is driving, without evicting them (session send / exec); implies exec_view"
 	case protocol.Capability_ExecControl:
 		return "take a session's PTY over as sole writer, evicting the current one (session attach); implies exec_cowrite"
+	case protocol.Capability_ExecResize:
+		return "resize a session's PTY as a viewer or cowriter, while no control client is attached (orthogonal to the three above; control owns the size whenever it holds the seat)"
 	case protocol.Capability_FileRead:
 		return "read files from task worktrees (file pull / ls)"
 	case protocol.Capability_FileWrite:

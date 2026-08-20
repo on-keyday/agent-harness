@@ -480,6 +480,45 @@ at all. See the amendment in `2026-07-12-session-idle-detection-design.md`.
 
 ### Count
 
-"The capability set (11)" in the heading is now **14** (the 11 here, plus
-`purge` from the agentboard work, plus these two). The table above is
-authoritative for the three attach rows; the rest of the original table stands.
+"The capability set (11)" in the heading is now **15** (the 11 here, plus
+`purge` from the agentboard work, plus the three attach rows and `exec_resize`
+below). The table above is authoritative for the attach rows; the rest of the
+original table stands.
+
+### Addendum, same date — `exec_resize`, orthogonal rather than a fourth rank
+
+| cap | bit | what it allows | risk class |
+|---|---|---|---|
+| `exec_resize` | 0x4000 | set a session's PTY size as a viewer or cowriter, **while no control client is attached** | availability |
+
+It is NOT part of the view/cowrite/control ranking and is implied by none of
+them. Resizing is availability — a wrong size makes a full-screen program
+refuse to draw at all — while typing is integrity. Both "may drive this worker
+but must not resize it" and "may make it readable but must not type into it"
+are things one may want to grant, so a rank would express neither.
+
+Both bars of the split rule are met again, and (b) the same way as before: no
+schema was invented for it. `TerminalWindowSize` was already its own frame type
+and the observer input path already discriminated on it — it dropped every such
+frame unconditionally, with the comment "a cowriter has no size authority". The
+capability replaces that constant with a per-attach bit, resolved from the
+caller's caps at attach because the frames themselves carry no identity.
+
+**The control seat keeps the size.** An observer's resize applies only while no
+control client is attached. Last-writer-wins was implemented first and rejected
+on use: an observer resize would redraw a human's terminal at a size they did
+not choose and their next SIGWINCH would silently undo it — flapping neither
+party asked for. The case the capability exists for is the unattended `-d`
+session; someone who only wants to LOOK uses the grid view or the WebUI
+preview, which are view/cowrite attaches needing no size of their own. So the
+rule is not "behaviour depends on who else is present" but the pre-existing
+"the size belongs to the control attach", extended to say what happens when
+nobody holds it.
+
+Known gap, deliberately left: a client must SEND a `TerminalWindowSize` frame
+to exercise this, and only a real terminal does that (`RemoteShell` on
+SIGWINCH). `session send` / `exec` never emit one, so an AGENT still cannot
+size an unattended session — the capability is necessary and not yet
+sufficient for that case. Closing it means a `session resize` verb that
+attaches, sends one frame and detaches, which is a CLI surface decision, not a
+protocol one.

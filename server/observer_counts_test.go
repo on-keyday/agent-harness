@@ -1,10 +1,13 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
 // The whole point of splitting the two: they differ in what the operator can DO
@@ -16,11 +19,11 @@ func TestObserverCountsSplitsViewersFromCowriters(t *testing.T) {
 	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
 
 	for i := 0; i < 2; i++ {
-		if err := mux.AttachViewer(ctx, newFakeStream(t), 0); err != nil {
+		if err := mux.AttachViewer(ctx, newFakeStream(t), 0, false); err != nil {
 			t.Fatalf("AttachViewer: %v", err)
 		}
 	}
-	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0); err != nil {
+	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0, false); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
 	}
 
@@ -64,7 +67,7 @@ func TestViewerDoesNotOccupyControlSlot(t *testing.T) {
 	runner := newFakeStream(t)
 	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
 
-	if err := mux.AttachViewer(ctx, newFakeStream(t), 0); err != nil {
+	if err := mux.AttachViewer(ctx, newFakeStream(t), 0, false); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	if mux.IsAttached() {
@@ -83,7 +86,7 @@ func TestObserverCountsDropWithTheStream(t *testing.T) {
 	runner := newFakeStream(t)
 	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(256), SessionHooks{})
 
-	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0); err != nil {
+	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0, false); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
 	}
 	if _, cw := mux.ObserverCounts(); cw != 1 {
@@ -121,12 +124,12 @@ func TestObserverHookFiresOnAttachAndDetach(t *testing.T) {
 	}
 
 	v := newFakeStream(t)
-	if err := mux.AttachViewer(ctx, v, 0); err != nil {
+	if err := mux.AttachViewer(ctx, v, 0, false); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	waitFor(t, func() bool { return count() >= 1 })
 
-	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0); err != nil {
+	if err := mux.AttachCoWriter(ctx, newFakeStream(t), 0, false); err != nil {
 		t.Fatalf("AttachCoWriter: %v", err)
 	}
 	waitFor(t, func() bool { return count() >= 2 })
@@ -165,7 +168,7 @@ func TestObserverHookIsNotCalledUnderTheMuxLock(t *testing.T) {
 		},
 	})
 
-	if err := mux.AttachViewer(ctx, newFakeStream(t), 0); err != nil {
+	if err := mux.AttachViewer(ctx, newFakeStream(t), 0, false); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
 	select {
@@ -183,5 +186,83 @@ func TestObserverHookIsNotCalledUnderTheMuxLock(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the drop hook never completed — dropViewerLocked is calling it under the lock")
+	}
+}
+
+// --- exec_resize: orthogonal to the mode, deferential to the control seat ---
+
+// Without exec_resize an observer's size frames are discarded, exactly as every
+// observer's were before the capability existed — the default is unchanged.
+func TestObserverResizeIgnoredWithoutTheCapability(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "t", runner, NewRingBuffer(256), SessionHooks{})
+	defer mux.Stop()
+
+	s := newFakeStream(t)
+	if err := mux.AttachCoWriter(ctx, s, 0, false); err != nil {
+		t.Fatalf("AttachCoWriter: %v", err)
+	}
+	s.QueueRead(makeWinSizeFrame(40, 150))
+	// A plain keystroke after it, which a cowriter IS allowed to send: if the
+	// runner sees that and not the resize, the filter is per-frame and correct.
+	s.QueueRead(makeWireFrame(byte(frame.FrameType_Stdin), []byte("x")))
+	waitFor(t, func() bool { return len(runner.Written()) > 0 })
+	if got := runner.Written(); bytes.Contains(got, makeWinSizeFrame(40, 150)) {
+		t.Error("a cowriter without exec_resize had its resize forwarded")
+	}
+}
+
+// With exec_resize and an EMPTY control seat, the resize lands: it reaches the
+// runner and is remembered as the size a later observer replays.
+func TestObserverResizeAppliedWhenNoControlAttached(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "t", runner, NewRingBuffer(256), SessionHooks{})
+	defer mux.Stop()
+
+	s := newFakeStream(t)
+	if err := mux.AttachViewer(ctx, s, 0, true); err != nil {
+		t.Fatalf("AttachViewer: %v", err)
+	}
+	want := makeWinSizeFrame(40, 150)
+	s.QueueRead(want)
+	waitFor(t, func() bool { return bytes.Contains(runner.Written(), want) })
+
+	// A viewer with exec_resize but no cowrite must still not be able to TYPE —
+	// the two axes are independent, and this is the one that could be conflated.
+	s.QueueRead(makeWireFrame(byte(frame.FrameType_Stdin), []byte("rm -rf /")))
+	time.Sleep(150 * time.Millisecond)
+	if bytes.Contains(runner.Written(), []byte("rm -rf /")) {
+		t.Error("exec_resize let a VIEWER type into the session")
+	}
+}
+
+// The seat rule: while a control client holds it, the size is the control
+// client's and an observer resize is ignored however it is granted.
+func TestObserverResizeIgnoredWhileControlAttached(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "t", runner, NewRingBuffer(256), SessionHooks{})
+	defer mux.Stop()
+
+	if err := mux.Attach(ctx, newFakeStream(t)); err != nil {
+		t.Fatalf("Attach: %v", err)
+	}
+	s := newFakeStream(t)
+	if err := mux.AttachCoWriter(ctx, s, 0, true); err != nil {
+		t.Fatalf("AttachCoWriter: %v", err)
+	}
+	blocked := makeWinSizeFrame(40, 150)
+	s.QueueRead(blocked)
+	// Followed by a keystroke the cowriter IS allowed to send, so waiting on it
+	// proves the resize was seen and dropped rather than merely not yet read.
+	s.QueueRead(makeWireFrame(byte(frame.FrameType_Stdin), []byte("ok")))
+	waitFor(t, func() bool { return bytes.Contains(runner.Written(), []byte("ok")) })
+	if bytes.Contains(runner.Written(), blocked) {
+		t.Error("an observer resized the session out from under the attached control client")
 	}
 }
