@@ -108,14 +108,26 @@ than answered.
 
 ### Why `-p`, and what stdin actually carries
 
-`-p` reads as the wrong mode for a long-lived multi-turn agent, so this is
-recorded rather than left to look like a choice: **it is not one.**
-`--input-format <format>` is documented as *"only works with `--print`"*, and
-`stream-json` is *"realtime streaming input"*. The streaming input mode exists
-nowhere else. The CLI's `interactive` mode is the one that draws a TUI, which
-is precisely what the PTY kind already wraps — picking it would land back on
-the path this kind exists to avoid. `-p`'s own help ("Print response and exit")
-describes the `text` input default, not what it becomes with a framed stdin.
+`-p` reads as the wrong mode for a long-lived multi-turn agent. **It is a
+choice, and a corrected claim**: an earlier version of this section said it was
+not one, on the strength of the help text alone — `--input-format <format>` is
+documented as *"only works with `--print`"*. That is not enforced. Measured
+2026-08-21, same prompt, piped stdin, non-TTY stdout:
+
+| | exit | `result` lines | answer |
+|---|---|---|---|
+| `-p --input-format stream-json --output-format stream-json` | 0 | 1 | correct |
+| the same **without `-p`** | 0 | 1 | correct |
+
+Identical. `--output-format stream-json` is what suppresses the TUI; `-p` adds
+nothing here. (Limit of the test: one prompt, one turn, stdout not a terminal.
+It says nothing about how the two diverge under a TTY, or across many turns.)
+
+So the reason to pass `-p` is not necessity. It is that the vendor's own
+programmatic spawn does, verbatim in the binary (below), and that naming the
+non-interactive mode explicitly is worth more than the flag costs. `-p`'s own
+help ("Print response and exit") describes the `text` input default, not what
+it becomes with a framed stdin.
 
 The vendor's own programmatic spawn, verbatim in the binary, is that pairing:
 

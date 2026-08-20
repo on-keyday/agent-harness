@@ -455,3 +455,43 @@ exist:
 | a `SessionMux` sibling buffering events | not needed; the ring is frame-granular and the mux's PTY logic is inert |
 | client transport | not needed; `Stdout()`/`Stdin()` are already exposed |
 | `pending=N` on `TaskInfo`, and the verbs | still real work |
+
+## 15. Correction: `-p` is not required, and the docs do not cover the input side
+
+Two claims checked on a prompt, both mine, both from reading rather than
+running:
+
+**"`-p` is not a choice."** Wrong. `--input-format` is *documented* as "only
+works with `--print`", and I wrote the spec section on that sentence. It is not
+enforced: with and without `-p`, the same framed input produced the same
+answer, one `result` line and exit 0. `--output-format stream-json` is what
+suppresses the TUI. Corrected in the spec, with the limit of the test stated —
+one turn, piped stdin, non-TTY stdout.
+
+**"There is no session-end message."** This one held, and now has a better
+basis than my six guessed subtypes. The TypeScript SDK reference documents the
+control requests — `setPermissionMode`, `setModel`, `setMaxThinkingTokens`,
+`applyFlagSettings`, `interrupt`, `reconnectMcpServer`, `toggleMcpServer`,
+`setMcpServers`, `stopTask` — and none ends a session; the docs say closure is
+`close()` / abort on the Query object. The headless page documents the input
+side not at all.
+
+Two things that search turned up which change the design rather than confirm
+it:
+
+- **`setPermissionMode` is a documented control request.** So the
+  `permission_suggestions` entry `{"type":"setMode","mode":"acceptEdits",
+  "destination":"session"}` is not an opaque blob — accepting it means issuing
+  that control request. §3's decision to let `exec_cowrite` cover it now has a
+  concrete mechanism attached to it rather than a shape.
+- **SIGTERM is the documented way an SDK host closes a session**, and it runs
+  `SessionEnd` hooks (headless page: "aborts the in-progress turn, terminates
+  the process tree of any running Bash command, runs SessionEnd hooks, and
+  exits with code 143"). agentexec already carries `ControlType_Signal` and
+  `CommandExecutionStream.SendSignal`.
+
+That splits `finish` in a way entry 9 did not see: **stdin close is gentler**
+(the current turn completes) but **SIGTERM is what runs SessionEnd hooks**. The
+runner injects `.claude/settings.json`, so choosing stdin close means this kind
+is the one where a configured SessionEnd hook never fires. Left for the
+operator to decide rather than settled here.
