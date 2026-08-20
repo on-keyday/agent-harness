@@ -206,3 +206,38 @@ func TestObsCellDistinguishesEmptyFromNoSession(t *testing.T) {
 		t.Errorf("finished task = %q, want blank (it has no session to describe)", got)
 	}
 }
+
+// A negative cursor renders one row short — bubbles computes the viewport
+// window as cursor+height, so at -1 the last visible slot is blank until the
+// first keypress. Two routes get there and both must be neutralised.
+func TestTasksTableCursorNeverStaysNegative(t *testing.T) {
+	rows := []protocol.TaskInfo{liveTask(1, 0, 0), liveTask(2, 0, 0), liveTask(3, 0, 0)}
+
+	// Route 1 (certain): the first SetSize runs before any task arrives, and
+	// applyColumns empties the rows to swap the columns safely.
+	var m TasksModel = NewTasks()
+	m.SetSize(120, 10)
+	m.SetRows(rows, nil)
+	if got := m.table.Cursor(); got < 0 {
+		t.Errorf("cursor = %d after the startup resize-then-rows order; a negative cursor renders one row short", got)
+	}
+
+	// Route 2 (latent, predates applyColumns): the task list going empty at
+	// any point — a fresh server, everything pruned — and coming back.
+	var m2 TasksModel = NewTasks()
+	m2.SetSize(120, 10)
+	m2.SetRows(rows, nil)
+	m2.SetRows(nil, nil)
+	m2.SetRows(rows, nil)
+	if got := m2.table.Cursor(); got < 0 {
+		t.Errorf("cursor = %d after the list emptied and refilled", got)
+	}
+
+	// An empty table legitimately has no selection; do not invent one.
+	var m3 TasksModel = NewTasks()
+	m3.SetSize(120, 10)
+	m3.SetRows(nil, nil)
+	if m3.SelectedID() != "" {
+		t.Error("an empty table reported a selection")
+	}
+}

@@ -267,6 +267,22 @@ func (m *TasksModel) rebuild() {
 	}
 	m.rowIDs = ids
 	m.table.SetRows(rows)
+	// bubbles drives the cursor to -1 whenever SetRows is handed an empty
+	// slice (`cursor > len(rows)-1` with len 0), and never lifts it back when
+	// rows return. A negative cursor is not cosmetic: UpdateViewport computes
+	// `end = cursor + viewport.Height`, so at -1 it renders one row SHORT and
+	// the last visible slot sits blank until the first keypress moves the
+	// cursor to 0 — which looks like the list ending early, then "growing"
+	// when you touch it.
+	//
+	// Two routes reach it. The latent one: any moment with zero tasks (a fresh
+	// server, everything pruned) poisons the cursor for the rest of the
+	// session. The certain one: applyColumns empties the rows on every column
+	// swap, and the first SetSize runs before any task has arrived — so this
+	// was guaranteed at startup, not incidental.
+	if len(rows) > 0 && m.table.Cursor() < 0 {
+		m.table.SetCursor(0)
+	}
 }
 
 // observerCell renders the Obs column: who is on this task's live session,

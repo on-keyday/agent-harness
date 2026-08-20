@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // The three attach modes are ranked, not orthogonal: a holder of a stronger
@@ -85,5 +86,78 @@ func TestWatchingDoesNotGrantEviction(t *testing.T) {
 	}
 	if hasAnyCap(supervisor, attachModeCap(protocol.AttachMode_Cowrite)) {
 		t.Error("exec_view let the supervisor type into a session it should only watch")
+	}
+}
+
+// The unit tests above prove attachModeCap's table. This one proves it is
+// actually WIRED: the gate lives inline in the AttachSession dispatch case
+// (the requiredCap map cannot see AttachMode), so the table being right says
+// nothing about the dispatch reading it. A caller holding only exec_view must
+// pass the gate for mode=view and be denied for the two stronger modes.
+func TestAttachSessionGateIsWiredPerMode(t *testing.T) {
+	h := newTestHandler(t)
+
+	// A confined principal with exec_view and an explicit scope id for the
+	// target, so a denial can only come from the capability gate — without the
+	// scope id the target gate answers first and the gate under test is never
+	// reached.
+	const targetHex = "ee000000000000000000000000000000"
+	pidHex := h.Tasks.Create("repo", "p", protocol.TaskKind_Oneshot,
+		protocol.ClientKind_Agent, protocol.TaskID{}, "",
+		protocol.RunnerSelector{}, nil, protocol.Capability_ExecView,
+		Scope{Base: protocol.ScopeBase_Subtree, IDs: []string{targetHex}}, "")
+	conn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9702-1")}
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	h.principals[conn.ConnectionID().String()] = hexToTaskID(t, pidHex)
+
+	var target protocol.TaskID
+	target.Id[0] = 0xEE
+
+	send := func(t *testing.T, mode protocol.AttachMode, reqID uint32) protocol.TaskControlResponse {
+		t.Helper()
+		req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AttachSession, RequestId: reqID}
+		req.SetAttach(protocol.AttachSessionRequest{TaskId: target, Mode: mode})
+		h.Handle(conn, encodeTaskControlRequest(t, req))
+		return lastTaskControlResponse(t, conn)
+	}
+
+	// Denied: exec_view does not authorise typing into a session or taking it.
+	for _, c := range []struct {
+		mode protocol.AttachMode
+		name string
+	}{
+		{protocol.AttachMode_Cowrite, "cowrite"},
+		{protocol.AttachMode_Control, "control"},
+	} {
+		resp := send(t, c.mode, 1)
+		if resp.Kind != protocol.TaskControlKind_PermissionDenied {
+			t.Fatalf("mode=%s with only exec_view: kind = %v, want PermissionDenied — "+
+				"the mode-aware gate is not wired into the dispatch", c.name, resp.Kind)
+		}
+		pd := resp.PermissionDenied()
+		if pd == nil {
+			t.Fatalf("mode=%s: no PermissionDenied body", c.name)
+		}
+		// The reported requirement is the SET of bits that would have
+		// satisfied it, so an operator reading the denial learns which grant
+		// to ask for rather than only that one was missing.
+		if !hasAnyCap(pd.RequiredCap, protocol.Capability_ExecControl) {
+			t.Errorf("mode=%s: RequiredCap = %#x, want it to name exec_control among the alternatives",
+				c.name, uint32(pd.RequiredCap))
+		}
+	}
+
+	// Allowed past the gate: mode=view. The session does not exist in this
+	// fixture, so the handler's own not_found is the PASS signal — what matters
+	// is that it is not permission_denied.
+	resp := send(t, protocol.AttachMode_View, 2)
+	if resp.Kind == protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("mode=view with exec_view was denied (RequiredCap %#x) — the grant buys nothing",
+			uint32(resp.PermissionDenied().RequiredCap))
+	}
+	if resp.Attach() == nil {
+		t.Fatalf("mode=view: expected an AttachSession response, got kind %v", resp.Kind)
 	}
 }
