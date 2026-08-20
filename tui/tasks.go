@@ -430,8 +430,14 @@ func taskStatusStr(s protocol.TaskStatus) string {
 // from the very first event, so a freshly-stubbed row knows its kind
 // without needing the next List snapshot to disambiguate.
 func renderPromptCell(t protocol.TaskInfo) string {
-	if t.Kind == protocol.TaskKind_Interactive {
+	switch t.Kind {
+	case protocol.TaskKind_Interactive:
 		return "<interactive>"
+	case protocol.TaskKind_Stream:
+		// Distinct from <interactive>: same "no prompt" reason, different
+		// thing on the other end, and the row is where an operator first
+		// notices which one they are looking at.
+		return "<stream>"
 	}
 	return truncatePrompt(string(t.Prompt))
 }

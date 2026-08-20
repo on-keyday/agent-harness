@@ -37,7 +37,11 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	// refresh lands — and be spuriously refused here. The server is the
 	// authority anyway: attaching something truly non-attachable returns a
 	// clean AttachSession error (not_detachable / not_interactive).
-	if t.Kind == protocol.TaskKind_Interactive && taskSessionAlive(t.Status) {
+	// IsPTYKind, not IsSessionKind: reattach hands the terminal to a PTY
+	// splice, which would paint an event stream's NDJSON as terminal bytes.
+	// Intentionally omitted for the stream kind until the TUI has an event
+	// renderer; `session attach` from the CLI is the route meanwhile.
+	if protocol.IsPTYKind(t.Kind) && taskSessionAlive(t.Status) {
 		return taskAction{Kind: actionReattach}
 	}
 	switch t.Status {

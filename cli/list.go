@@ -496,7 +496,7 @@ func renderSessionsJSON(lr *protocol.ListResultBody, out io.Writer) {
 	enc := json.NewEncoder(out)
 	for i := range lr.Tasks {
 		t := &lr.Tasks[i]
-		if t.Kind != protocol.TaskKind_Interactive {
+		if !protocol.IsSessionKind(t.Kind) {
 			continue
 		}
 		_ = enc.Encode(sessionJSON{

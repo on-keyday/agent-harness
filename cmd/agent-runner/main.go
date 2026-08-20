@@ -56,6 +56,7 @@ type mainConfig struct {
 	AgentResumeInteractiveArgv string
 	AgentProfilesJSON          string
 	AgentLogFormat             string
+	StreamAdapter              string
 	WSPath                     string
 	Hostname                   string
 	PSK                        string
@@ -123,6 +124,10 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; token {args}; default \"{args} --continue\"")
 	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,interactiveArgv,resumeInteractiveArgv,agentArgs,logFormat}]")
 	fs.StringVar(&c.AgentLogFormat, "agent-log-format", c.AgentLogFormat, "stdout log decoder for the default agent profile: \"\" (raw), claude-stream-json, or codex-jsonl")
+	fs.StringVar(&c.StreamAdapter, "agent-stream-adapter", c.StreamAdapter,
+		"path to the event-stream adapter for the default agent profile (e.g. harness-stream-adapter). "+
+			"Empty means this profile cannot serve event-stream tasks, and a request for one is refused "+
+			"rather than falling back to a PTY. Read per task, so editing the adapter needs no restart")
 	fs.StringVar(&c.WSPath, "ws-path", c.WSPath, "WebSocket URL path (overrides cli.WebSocketPath)")
 	fs.StringVar(&c.Hostname, "hostname", c.Hostname, "hostname to report in Hello (default: os.Hostname())")
 	fs.StringVar(&c.PSK, "psk", c.PSK, "PSK passphrase (env: HARNESS_PSK)")
@@ -318,6 +323,7 @@ func main() {
 		InteractiveArgv:       interactiveArgv,
 		ResumeInteractiveArgv: resumeInteractiveArgv,
 		LogFormat:             cfg.AgentLogFormat,
+		StreamAdapter:         cfg.StreamAdapter,
 	}
 	extraProfiles, err := runner.ParseAgentProfilesJSON(cfg.AgentProfilesJSON)
 	if err != nil {

@@ -648,6 +648,28 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 		return
 	}
 
+	// Gate the KIND beside the profile gate, and for the same reason. A profile
+	// with no stream adapter cannot serve an event-stream task, and falling
+	// back to a PTY would hand a client a terminal where it expects events —
+	// the two are not substitutes. Refused here, with the stream closed, rather
+	// than failing obscurely once a client is already reading it.
+	var streamProfile AgentProfile
+	if oer.EventStream() {
+		p, perr := s.Profiles.Resolve(string(oer.AgentProfile))
+		if perr != nil {
+			_ = stream.CloseBoth()
+			finishWithError(-1, "agent_profile: "+perr.Error())
+			return
+		}
+		if !p.ServesStream() {
+			_ = stream.CloseBoth()
+			finishWithError(-1, "agent_profile "+p.Name+": no stream adapter configured; "+
+				"this profile cannot serve an event-stream task")
+			return
+		}
+		streamProfile = p
+	}
+
 	// Fallback if RepoPath not set.
 	if repoPath == "" && len(s.AllowedRoots) > 0 {
 		repoPath = s.AllowedRoots[0]
@@ -753,6 +775,64 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 	// for why the chdir alone leaves some agents pointed at the runner's
 	// directory instead of the task's.
 	env = append(env, AgentCwdEnv(dir)...)
+
+	// The event-stream kind: same stream, same lifecycle, a different thing on
+	// the far end of it. StreamTask runs the adapter through agentexec with
+	// ptyEnabled=false, so the frames carry neutral NDJSON rather than terminal
+	// bytes, and taps them for the pending table and the task log.
+	if oer.EventStream() {
+		st := &StreamTask{
+			AdapterPath: streamProfile.StreamAdapter,
+			AgentArgv:   append([]string{agentBin}, agentArgv...),
+			Dir:         dir,
+			Env:         env,
+			// No prompt: an event-stream session starts idle and the client
+			// sends the first user turn, the same shape `session new` has.
+			ResumeConversation: oer.ResumeConversation(),
+			Logger:             log,
+			LogSink:            func(b []byte) { _ = s.Sender.Publish(topics.TaskLog(taskIDHex), b) },
+		}
+		runErr := st.Run(taskCtx, stream)
+
+		// TaskFinished. The AGENT's own exit is what the adapter reported
+		// in-band; runErr is the adapter's. They differ: the adapter exits 1
+		// when its agent fails, and the agent's real code only exists in the
+		// neutral `exit` message.
+		{
+			m := &protocol.RunnerMessage{Kind: protocol.RunnerMessageType_TaskFinished}
+			tf := protocol.TaskFinished{TaskId: oer.TaskId}
+			ex := st.Exit()
+			switch {
+			case taskCtx.Err() != nil:
+				// We killed it — the ordinary end for this kind, since nothing
+				// else ends it. Not a crash; see the wiring log.
+				log.Info("event-stream task ended by cancellation", "task_id", taskIDHex)
+			case ex != nil && ex.Err != "":
+				tf.ExitCode = -1
+				tf.ErrorMessage = []byte("stream_adapter: " + ex.Err)
+			case ex != nil && ex.Code != 0:
+				tf.ExitCode = int32(ex.Code)
+				tf.ErrorMessage = []byte("agent exited " + strconv.Itoa(ex.Code))
+			case ex == nil && runErr != nil:
+				// The adapter died without reporting an exit at all.
+				tf.ExitCode = -1
+				tf.ErrorMessage = []byte("stream_adapter: " + runErr.Error())
+			}
+			m.SetTaskFinished(tf)
+			_ = s.Sender.Send(m.MustAppend([]byte{byte(appwire.AppKind_RunnerControl)}))
+		}
+
+		if !s.NoWorktree {
+			switch r := wm.RemoveIfClean(taskIDHex, HarnessInjectedPaths); {
+			case r.StatusErr != nil:
+				log.Warn("worktree cleanup skipped", "task_id", taskIDHex, "err", r.StatusErr)
+			case !r.Removed:
+				log.Info("worktree retained — uncommitted work present", "task_id", taskIDHex, "dirty", r.DirtyPaths)
+			}
+		}
+		return
+	}
+
 	// exitCode is the CHILD's own, read from its ProcessState rather than
 	// inferred from an error: the errgroup inside agentexec returns whichever
 	// goroutine failed first, and on Linux the pty's EIO at teardown beats the

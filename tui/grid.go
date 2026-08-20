@@ -82,7 +82,10 @@ func NewGridModel() GridModel { return GridModel{} }
 func gridLiveTasks(tasks []protocol.TaskInfo) []protocol.TaskInfo {
 	live := make([]protocol.TaskInfo, 0, len(tasks))
 	for _, t := range tasks {
-		if t.Kind == protocol.TaskKind_Interactive && taskSessionAlive(t.Status) {
+		// IsPTYKind, not IsSessionKind: the grid paints terminal panes, and an
+		// event-stream session has no terminal to paint. Intentionally omitted
+		// rather than overlooked.
+		if protocol.IsPTYKind(t.Kind) && taskSessionAlive(t.Status) {
 			live = append(live, t)
 		}
 	}

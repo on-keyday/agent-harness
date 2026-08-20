@@ -30,7 +30,22 @@ type AgentProfile struct {
 	// unrecognised value resolves to passthrough rather than failing, so a
 	// typo degrades to raw lines instead of stopping the runner.
 	LogFormat string
+
+	// StreamAdapter is the binary that runs this agent as an EVENT-STREAM
+	// task: the runner execs the adapter and hands it the resolved agent argv,
+	// and the adapter speaks the neutral protocol on its stdio
+	// (runner/streamagent). Empty means this profile cannot serve the kind,
+	// and a request for it is refused rather than silently falling back to a
+	// PTY — the two are not substitutes.
+	//
+	// Resolved per task rather than cached, so editing an adapter reaches the
+	// next task with no rebuild and no restart, the same trade
+	// --agentskills-dir makes.
+	StreamAdapter string
 }
+
+// ServesStream reports whether this profile can run an event-stream task.
+func (p AgentProfile) ServesStream() bool { return p.StreamAdapter != "" }
 
 // ProfileSet is the immutable set of agent profiles a runner was configured
 // with: exactly one default profile (index 0, built from the single-agent
@@ -169,6 +184,7 @@ type agentProfileJSON struct {
 	InteractiveArgv       []string `json:"interactiveArgv"`
 	ResumeInteractiveArgv []string `json:"resumeInteractiveArgv"`
 	LogFormat             string   `json:"logFormat"`
+	StreamAdapter         string   `json:"streamAdapter"`
 }
 
 // ParseAgentProfilesJSON parses the JSON array accepted by --agent-profiles
@@ -195,6 +211,7 @@ func ParseAgentProfilesJSON(s string) ([]AgentProfile, error) {
 			InteractiveArgv:       r.InteractiveArgv,
 			ResumeInteractiveArgv: r.ResumeInteractiveArgv,
 			LogFormat:             r.LogFormat,
+			StreamAdapter:         r.StreamAdapter,
 		})
 	}
 	return out, nil

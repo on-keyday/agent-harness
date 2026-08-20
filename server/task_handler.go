@@ -1132,7 +1132,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// persisting it here closes the Task 6 gap where handleOpenInteractive
 		// threaded `resolved` to OpenExec but never wrote it back through
 		// Tasks.Resume.
-		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, req.ScopePresent(), reqScope, protocol.TaskKind_Interactive, resolved); err != nil {
+		if _, err := h.Tasks.Resume(existingTaskIDHex, "", req.ExtraArgs.AsStrings(), req.Selector, runner.ID, origin, override, newCaps, req.ScopePresent(), reqScope, interactiveKind(req), resolved); err != nil {
 			switch err {
 			case ResumeErrNotFound:
 				return errResp(protocol.OpenInteractiveStatus_ResumeNotFound)
@@ -1151,7 +1151,7 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		// resolved is the (runner,profile) combo's profile — the server-chosen
 		// profile the runner must exec with (empty only when the sole candidate
 		// advertises no profile, i.e. a legacy runner → its AgentBin default).
-		taskIDHex = h.Tasks.Create(repo, "", protocol.TaskKind_Interactive, origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, reqScope, resolved)
+		taskIDHex = h.Tasks.Create(repo, "", interactiveKind(req), origin, creator, runner.ID, req.Selector, req.ExtraArgs.AsStrings(), caps, reqScope, resolved)
 		h.Tasks.SetResumeConversation(taskIDHex, req.ResumeConversation())
 	}
 	var tid protocol.TaskID
@@ -1211,8 +1211,18 @@ func (h *TaskHandler) handleOpenInteractive(cid string, tuiConn ConnHandle, req 
 		ExtraArgs:  req.ExtraArgs,
 	}
 	oer.SetResumeConversation(req.ResumeConversation())
+	// Relay the kind. The runner refuses it when the resolved profile has no
+	// stream adapter, so the check lives where the profiles are rather than
+	// being duplicated here from a stale copy of them.
+	oer.SetEventStream(req.EventStream())
 	oer.SetRepoPath([]byte(repo))
 	oer.SetAgentProfile([]byte(resolved)) // server-resolved profile the runner execs with (empty → runner default)
+	if req.X11Enabled() && req.EventStream() {
+		_ = tuiStream.CloseBoth()
+		_ = runnerStream.CloseBoth()
+		finishWithError("x11 forwarding is a terminal feature and an event-stream task has no terminal")
+		return errResp(protocol.OpenInteractiveStatus_InternalError)
+	}
 	if req.X11Enabled() {
 		oer.SetX11Enabled(true) // discriminator first
 		if f := req.X11(); f != nil {
@@ -1346,7 +1356,7 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 		slog.Warn("AttachSession: task_not_found", "task", idHex)
 		return errResp(protocol.AttachSessionStatus_NotFound)
 	}
-	if info.Kind != protocol.TaskKind_Interactive {
+	if !protocol.IsSessionKind(info.Kind) {
 		return errResp(protocol.AttachSessionStatus_NotInteractive)
 	}
 	switch info.Status {
@@ -1961,4 +1971,15 @@ func matchedRoot(roots []string, repo string) string {
 		}
 	}
 	return bestRoot
+}
+
+// interactiveKind is the TaskKind an open-interactive request creates. Both
+// kinds come through this one request and the same session machinery; the flag
+// is the only thing that differs, so the kind is derived here rather than
+// having each call site remember to look at it.
+func interactiveKind(req *protocol.OpenInteractiveRequest) protocol.TaskKind {
+	if req.EventStream() {
+		return protocol.TaskKind_Stream
+	}
+	return protocol.TaskKind_Interactive
 }
