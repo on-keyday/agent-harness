@@ -57,6 +57,11 @@ The two are **not** equivalent, and the difference is the shape of the problem:
 visibility; `info_global` widens visibility alone. One axis lives in the scope
 type, the other in the bitmask.
 
+The bit is also overloaded: besides task visibility it gates connection
+visibility and the agentboard's enumeration surfaces. Those are not one power,
+and §8 separates them — the first two follow the axis, the third stays a verb
+permission because the board is keyed by topic rather than by task.
+
 ### 4. Why the invariant stops holding by itself
 
 Today "visible ⊇ actionable" is structural: `visibleToCaller` *is* the action
@@ -285,21 +290,40 @@ boundary, never on an ongoing basis:
 - **WAL replay.** A legacy record whose caps contain the bit replays with
   `vis_base_present = 1, vis_base = global`, and the bit cleared.
 
-**The agentboard surfaces gate on the visibility rank instead.**
-`server/capabilities.go` gates three kinds on the bit —
-`TaskControlKind_BoardTopics`, `BoardRead` and `BoardSubscribers` — and
-`server/board_handler.go` filters no rows: `handleBoardSubscribers` returns
-every subscriber of a topic with its task id, hostname and agent profile. That
-is a whole-server disclosure surface, so the bit is doing its visibility job
-there, all-or-nothing.
+**The bit has three duties today, and they split two ways.** Enumerated from
+every non-test use:
 
-The faithful translation is therefore `visRank == global`, checked where
-`requiredCap` checks the bit today. A task that had `info_global` migrates to
-`vis_base = global` (above) and keeps all three kinds; a task that did not,
-still cannot reach them. No behaviour moves.
+| duty | sites | goes to |
+|---|---|---|
+| task visibility | `visibleToCaller` (`server/capabilities.go:265`) | `vis_base` |
+| connection visibility | `ListConns` (`server/task_handler.go:1610`) and the per-subscriber `conns_status` fanout (`server/server.go:363`) | `vis_base` |
+| agentboard enumeration and read | `TaskControlKind_BoardTopics` / `BoardRead` / `BoardSubscribers` (`server/capabilities.go:38-41`) and the agent-side `list_topics` (`server/agent_handler.go:584`) | **stays a bit, renamed** |
 
-With that, the bit has no remaining meaning. Its ordinal is not reused and
-`Capability_All` keeps its value, so no wire byte changes on that account.
+The first two are task-space visibility and follow the axis. The third is not:
+the agentboard is keyed by topic, not by task, and a topic is not something the
+task hierarchy contains. Gating it on `visRank == global` would mix the two
+namespaces the same way the row-filter idea in Deferred does — which is why
+the board keeps a verb permission rather than inheriting a target-set rank.
+
+**Rename, same ordinal (1024).** `info_global` becomes `board_read`: it is
+exactly the set of kinds whose names it now matches, and it sits beside
+`BoardPurge`'s `Capability_Purge`. (`board_observe` is the more precise name —
+the bit is not needed to send, subscribe or read your own inbox, only to
+observe *other* topics, messages and subscribers — and is the better choice if
+the narrower reading should be obvious from the name.)
+
+Nothing about the rename touches the wire: capabilities persist to the WAL as a
+bitmask, not by name, so no record migrates. What changes is the generated
+`String()`, the `--caps` catalogue and parser (which accepts `info_global` as a
+deprecated alias with a notice), `caps --json`, and the cap pickers on all
+three surfaces. `runner/agentskills/` is the `go:embed` source of truth for the
+skill text and must be edited there, then mirrored to `.claude/skills/` and
+`.agents/skills/`.
+
+**Migration.** A legacy task holding the bit gets `vis_base = global` *and*
+keeps the bit under its new name, so both duties survive intact. A task without
+it is unchanged on both axes. `--caps all` continues to mean what it means
+today.
 
 ### 9. Attenuation at spawn, per capability
 
@@ -421,9 +445,13 @@ Extends, rather than replaces, the base spec's set.
   override outranking `visRank` rejected, ids outside the base accepted.
 - Spawn attenuation rejecting an id per-bit, `scope_not_permitted` naming the
   bit.
-- `info_global` migration: a legacy task replays with global visibility and no
-  bit, and reaches `board topics` / `board read` / `board subscribers` exactly
-  as before; a task without the bit still cannot.
+- `info_global` migration: a legacy task replays with `vis_base = global` and
+  keeps the renamed bit, so `ls`, `conns` and the three board kinds all answer
+  exactly as before; a task without the bit is unchanged on both axes.
+- The conn surfaces specifically — `ListConns` and the `conns_status` fanout —
+  resolve through `vis_base` and no longer read a capability bit.
+- `--caps info_global` still parses, sets `vis_base = global`, grants the
+  renamed bit, and emits the deprecation notice exactly once.
 - The invariant as a property test over randomised grants:
   `effective(cap) ⊆ visible` for every held bit. This is the assertion that
   catches the axes being collapsed in either direction.
