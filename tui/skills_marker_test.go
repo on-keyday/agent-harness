@@ -108,7 +108,7 @@ func TestTaskDetailSpellsOutWhoIsAttached(t *testing.T) {
 	solo := taskWithSkills("claude", true)
 	solo.Status = protocol.TaskStatus_Running
 	solo.SetIsAttached(true)
-	if body := formatTaskDetail(solo); !strings.Contains(body, "attached:      control\n") {
+	if body := formatTaskDetail(solo); !strings.Contains(body, "attached:      control, 0 cowrite, 0 viewer\n") {
 		t.Errorf("detail popup mis-words a plain control attach:\n%s", body)
 	}
 
@@ -118,5 +118,91 @@ func TestTaskDetailSpellsOutWhoIsAttached(t *testing.T) {
 	done.Status = protocol.TaskStatus_Succeeded
 	if body := formatTaskDetail(done); strings.Contains(body, "attached:") {
 		t.Errorf("detail popup describes attachment on a finished task:\n%s", body)
+	}
+}
+
+// --- the Obs column and its width-conditional column set ---
+
+func liveTask(id byte, cowriters, viewers uint16) protocol.TaskInfo {
+	t := taskWithSkills("claude", true)
+	t.Id.Id[0] = id
+	t.Status = protocol.TaskStatus_Running
+	t.Cowriters = cowriters
+	t.Viewers = viewers
+	return t
+}
+
+// Resizing across the threshold changes the column COUNT, and bubbles renders
+// on every SetRows/SetColumns — so a moment with N columns and N-1-cell rows
+// panics inside renderRow. This walks both directions with rows present, which
+// is exactly the sequence that paniced before applyColumns existed.
+func TestTasksTableSurvivesResizeAcrossObsThreshold(t *testing.T) {
+	var m TasksModel = NewTasks()
+	m.SetRows([]protocol.TaskInfo{liveTask(1, 1, 2), liveTask(2, 0, 0)}, nil)
+	for _, w := range []int{40, 80, 40, 120, 59, 60, 200, 20} {
+		m.SetSize(w, 10)
+		for i, row := range m.table.Rows() {
+			if len(row) != len(m.baseCols) {
+				t.Fatalf("panel=%d row %d has %d cells for %d columns", w, i, len(row), len(m.baseCols))
+			}
+		}
+	}
+	// And with the tree toggled, which swaps the column set independently.
+	for _, w := range []int{200, 40} {
+		m.SetSize(w, 10)
+		for _, tree := range []bool{true, false, true} {
+			m.SetTree(tree)
+			for i, row := range m.table.Rows() {
+				if len(row) != len(m.baseCols) {
+					t.Fatalf("panel=%d tree=%v row %d has %d cells for %d columns", w, tree, i, len(row), len(m.baseCols))
+				}
+			}
+		}
+	}
+}
+
+// Above the threshold the column exists and carries the counts; below it the
+// column is gone entirely rather than squeezed to noise.
+func TestObsColumnAppearsOnlyWhenThePanelAffordsIt(t *testing.T) {
+	var m TasksModel = NewTasks()
+	m.SetRows([]protocol.TaskInfo{liveTask(1, 1, 2)}, nil)
+
+	m.SetSize(120, 10)
+	if !m.showsObs() {
+		t.Fatal("a 120-cell panel must afford the Obs column")
+	}
+	titles := make([]string, len(m.baseCols))
+	for i, c := range m.baseCols {
+		titles[i] = c.Title
+	}
+	if titles[5] != "Obs" {
+		t.Errorf("Obs must sit next to Act, before Repo; columns = %v", titles)
+	}
+	if got := m.table.Rows()[0][5]; got != "1c 2v" {
+		t.Errorf("Obs cell = %q, want %q", got, "1c 2v")
+	}
+
+	m.SetSize(40, 10)
+	if m.showsObs() {
+		t.Fatal("a 40-cell panel must drop the Obs column")
+	}
+	for _, c := range m.baseCols {
+		if c.Title == "Obs" {
+			t.Error("Obs column survived below the threshold — it must be dropped, not squeezed")
+		}
+	}
+}
+
+// A live session nobody is on renders 0c 0v, not a blank cell: blank is
+// reserved for "this task has no session", which the Status column names.
+func TestObsCellDistinguishesEmptyFromNoSession(t *testing.T) {
+	live := liveTask(1, 0, 0)
+	if got := observerCell(live); got != "0c 0v" {
+		t.Errorf("live session with nobody on it = %q, want %q", got, "0c 0v")
+	}
+	done := liveTask(2, 0, 0)
+	done.Status = protocol.TaskStatus_Succeeded
+	if got := observerCell(done); got != "" {
+		t.Errorf("finished task = %q, want blank (it has no session to describe)", got)
 	}
 }

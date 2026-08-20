@@ -140,17 +140,15 @@ func formatTaskDetail(t protocol.TaskInfo) string {
 // counts. "no control" is stated rather than left blank, because that IS what
 // Detached means and a reader looking for the difference should find it here.
 func attachDetail(t protocol.TaskInfo) string {
-	parts := []string{"no control"}
+	control := "no control"
 	if t.IsAttached() {
-		parts[0] = "control"
+		control = "control"
 	}
-	if t.Cowriters > 0 {
-		parts = append(parts, fmt.Sprintf("%d cowrite", t.Cowriters))
-	}
-	if t.Viewers > 0 {
-		parts = append(parts, fmt.Sprintf("%d viewer", t.Viewers))
-	}
-	return strings.Join(parts, ", ")
+	// Counts always printed, zeros included. They were elided at zero, which
+	// made "nobody is spectating" and "this popup does not report spectators"
+	// read the same — in a DETAIL view, which is precisely where a default must
+	// not hide (surface-parity item 31).
+	return fmt.Sprintf("%s, %d cowrite, %d viewer", control, t.Cowriters, t.Viewers)
 }
 
 // skillsInjectedDetail words TaskInfo.skills_injected for the detail popup.

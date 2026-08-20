@@ -1,6 +1,6 @@
 ---
 name: surface-parity-checklist
-description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, log format, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–36 for every input surface, display surface, per-path semantics axis and result/display convention across CLI/TUI/WebUI/wasm, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
+description: Use BEFORE adding, changing, or displaying any operator-visible task/runner field (caps, scope, status, agent, repo, …), adding an option to any verb family, or wiring a new operator action's result reporting — AND before adding/renaming an agent or changing its bin, argv templates, log format, credential mode, egress domains, or launch env. NUMBERED checklists that must be walked item by item with a verdict per number — never summarized: 1–37 for every input surface, display surface, per-path semantics axis and result/display convention across CLI/TUI/WebUI/wasm, plus S1–S6 for preset↔podman-sandbox agent-launch parity.
 ---
 
 # Surface-parity checklist
@@ -17,7 +17,7 @@ checklist.
 ## How to use — non-negotiable
 
 This is a CHECKLIST, not reference prose. When this skill applies, walk
-**every number from 1 to 36 in order** and record a verdict for each:
+**every number from 1 to 37 in order** and record a verdict for each:
 
 - `done` — implemented/verified, with the file touched
 - `n/a` — genuinely not applicable, WITH the reason stated
@@ -29,7 +29,7 @@ the summary sentence is exactly where discretionary omission hides. If an
 item is expensive, say so and mark it; do not silently drop it.
 
 Items S1–S6 (agent-launch parity) are a SEPARATE list with its own trigger,
-kept out of 1–36 on purpose: they are `n/a` for almost every field change,
+kept out of 1–37 on purpose: they are `n/a` for almost every field change,
 and a list that trains you to type `n/a` is how the walk decays. Walk them
 when their trigger fires, with the same three verdicts.
 
@@ -149,14 +149,29 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     `--scope` on resume was dropped, and `--caps` without `--scope` reset
     the task's scope. When the wire cannot express "keep", the fix is a
     presence bit, not documentation.
+34. A table whose column SET varies (by width, mode, capability) must
+    rebuild its rows through the same decision, and swap the two together.
+    bubbles' `SetRows` and `SetColumns` each re-render immediately and
+    `renderRow` indexes `row[i]` per COLUMN, so a moment holding N columns
+    against N-1-cell rows is an index-out-of-range panic — hit within
+    minutes of making the tasks table's Obs column width-conditional. The
+    fix shape is `applyColumns`: empty the rows, set the columns, rebuild,
+    restore the cursor (a resize must not move the selection).
+    Do NOT "just always emit the widest row": that only works if the
+    optional column is LAST. `Obs` sits before `Repo`, so a stale extra
+    cell would render every following value under the wrong header —
+    silently, which is worse than the panic.
+    Corollary: `tui/tasks.go` `SetRows` may no longer be the only place
+    cells are built. Grep for every caller of the rebuild path before
+    adding a cell.
 
 ## Documentation surfaces
 
-34. `README.md` — the feature's section (e.g. "Capabilities and scope"),
+35. `README.md` — the feature's section (e.g. "Capabilities and scope"),
     the per-binary summaries near the top, AND the TUI cmdline verb list.
     Incident: the README still recommended the REMOVED `caps --on-resume`
     command and described the caps-only era a full feature later.
-35. Agent-facing skill texts — `runner/agentskills/*/SKILL.md` is the
+36. Agent-facing skill texts — `runner/agentskills/*/SKILL.md` is the
     go:embed source of truth; mirror to `.claude/skills/` and
     `.agents/skills/` in the same commit. Repo-dev skills
     (`implementation-pitfalls`, `dummy-harness`, this file) live in
@@ -170,19 +185,19 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     repositories were reading instructions this repo had already replaced.
     Editing only the copy you happen to be reading is the way in — the
     embedded file is the one to edit, then copy it over both mirrors.
-36. The feature's spec under `docs/superpowers/specs/` — semantic changes
+37. The feature's spec under `docs/superpowers/specs/` — semantic changes
     land as an Amendment section there, so the spec never contradicts the
     shipped behaviour a later reader verifies against.
 
 ## Agent-launch parity — SEPARATE trigger, walk S1–S6
 
-Items 1–36 are one field across ~15 UI surfaces. This section is a
+Items 1–37 are one field across ~15 UI surfaces. This section is a
 different axis: an agent is launched by the operator through a preset, and
 the podman sandbox (`scripts/sandbox/`) re-runs that same agent through a
 wrapper that must be kept in lockstep by hand. Nothing in `cli/`, `tui/`
-or `webui/` mentions it, so a 1–36 walk cannot reach it.
+or `webui/` mentions it, so a 1–37 walk cannot reach it.
 
-**Trigger (walk S1–S6 instead of, or in addition to, 1–36):** adding,
+**Trigger (walk S1–S6 instead of, or in addition to, 1–37):** adding,
 renaming or removing an agent; changing an agent's bin path, argv
 templates, log format, config directory, credential mode, or endpoint
 domains; changing what env the runner hands an agent; changing the

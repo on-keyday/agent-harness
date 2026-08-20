@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/hex"
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
@@ -26,7 +27,57 @@ type TasksModel struct {
 	// column instead of listing tasks flat. A mode, not a filter: every task
 	// the flat view shows is still here, orphans re-rooted with a marker.
 	tree bool
+	// width is the last panel width SetSize was given. The column SET depends
+	// on it (see obsColumnMinWidth), not just the column widths, so the rows
+	// have to be rebuilt on a resize — a row carries one cell per column and a
+	// mismatch would silently shift every cell after the missing one.
+	width int
+	// gutter[i] is the tree prefix for ordered row i; empty in flat mode. Kept
+	// alongside rowTasks so rebuild() can redraw without re-deriving the tree.
+	gutter []string
+	// runners is the last snapshot's runner list, needed by rebuild() for the
+	// legacy agent fallback on tasks that predate TaskInfo.AgentProfile.
+	runners []protocol.RunnerInfo
 }
+
+// obsColumnMinWidth is the panel width at which the tasks table can afford the
+// Obs column. Below it the column is DROPPED rather than squeezed: fitColumns
+// floors every column at minColWidth, so an eighth column costs a whole floor
+// plus padding taken from the rest, and at an 80-cell terminal the tasks panel
+// gets about half — where eight columns overflow the frame and shred it
+// (TestViewFitsTerminalWidth). The counts stay reachable at ANY width in the
+// `d` detail popup, which is why dropping the column is a display choice and
+// not a loss of information.
+const obsColumnMinWidth = 60
+
+// colsFor is the ONE place the column set is decided, from the two things it
+// depends on: tree mode and whether the panel can afford the Obs column. Both
+// callers (SetTree, SetSize) go through it so they cannot drift on what a given
+// (mode, width) looks like — and so the row builder can ask the same question.
+func colsFor(tree bool, width int) []table.Column {
+	cols := flatCols()
+	if tree {
+		cols = treeCols()
+	}
+	if width >= obsColumnMinWidth {
+		// Inserted before Repo, so the live-session columns (Act, Obs) stay
+		// adjacent: one says whether the AGENT is working, the other whether a
+		// HUMAN is on it.
+		out := make([]table.Column, 0, len(cols)+1)
+		for _, c := range cols {
+			if c.Title == "Repo" {
+				out = append(out, table.Column{Title: "Obs", Width: 7})
+			}
+			out = append(out, c)
+		}
+		return out
+	}
+	return cols
+}
+
+// showsObs reports whether the current column set includes Obs, so SetRows
+// builds exactly as many cells as there are columns.
+func (m *TasksModel) showsObs() bool { return m.width >= obsColumnMinWidth }
 
 // flatCols is the default column set. Kept as a function so NewTasks and
 // SetTree cannot drift apart on what "not tree mode" looks like.
@@ -68,11 +119,8 @@ func treeCols() []table.Column {
 // new state so the caller can report it.
 func (m *TasksModel) SetTree(on bool) bool {
 	m.tree = on
-	if on {
-		m.baseCols = treeCols()
-	} else {
-		m.baseCols = flatCols()
-	}
+	m.baseCols = colsFor(m.tree, m.width)
+	m.applyColumns(fitColumns(m.baseCols, m.width, flexColumn(m.baseCols, "Prompt")))
 	return m.tree
 }
 
@@ -97,15 +145,39 @@ func (m *TasksModel) IsFocused() bool { return m.focused }
 func (m *TasksModel) SetSize(w, h int) {
 	m.table.SetWidth(w)
 	m.table.SetHeight(h)
-	m.table.SetColumns(fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Prompt")))
+	// Width decides the column SET, not only the widths.
+	m.width = w
+	m.baseCols = colsFor(m.tree, w)
+	m.applyColumns(fitColumns(m.baseCols, w, flexColumn(m.baseCols, "Prompt")))
 }
 
-func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerInfo) {
-	// Index runners by ConnID string so each task can show its runner's agent.
-	runnerByID := make(map[string]protocol.RunnerInfo, len(runners))
-	for _, r := range runners {
-		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
+// applyColumns swaps the table's columns and rebuilds the rows to match.
+//
+// The order is load-bearing and cost a panic to learn: bubbles' SetRows and
+// SetColumns each re-render the viewport immediately, and renderRow indexes
+// row[i] for every COLUMN i. So a moment where the table holds N columns and
+// N-1-cell rows is an index-out-of-range, not a cosmetic glitch. Emptying the
+// rows first makes the intermediate state unrenderable-but-valid, and the
+// cursor is carried across because a resize must not move the selection.
+//
+// "Just always emit the widest row" does not work: the optional column is not
+// last (Obs sits before Repo), so an extra cell rendered against a shorter
+// column set would put every following value under the wrong header — which is
+// worse than a panic, because nothing reports it.
+func (m *TasksModel) applyColumns(cols []table.Column) {
+	cursor := m.table.Cursor()
+	m.table.SetRows(nil)
+	m.table.SetColumns(cols)
+	m.rebuild()
+	if cursor >= 0 && cursor < len(m.rowIDs) {
+		m.table.SetCursor(cursor)
 	}
+}
+
+// SetRows takes a fresh snapshot: it decides the ORDER (which depends on tree
+// mode, not on width) and hands the cell-building to rebuild. A resize calls
+// rebuild alone — the order does not change, only how many columns there are.
+func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerInfo) {
 	// One ordering decision, applied to the row cells AND to the parallel
 	// rowIDs / rowTasks slices below. They index by table position, so a
 	// reordering applied to only one of them opens the detail popup on a
@@ -123,6 +195,23 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 				gutter[i] += "\u2020"
 			}
 		}
+	}
+	m.rowTasks = ordered
+	m.gutter = gutter
+	m.runners = runners
+	m.rebuild()
+}
+
+// rebuild renders m.rowTasks into table rows for the CURRENT column set. It is
+// the only place cells are produced, so the cell count cannot disagree with
+// colsFor's column count — a disagreement would not error, it would silently
+// shift every cell after the missing one into the wrong column.
+func (m *TasksModel) rebuild() {
+	ordered, gutter := m.rowTasks, m.gutter
+	// Index runners by ConnID string so each task can show its runner's agent.
+	runnerByID := make(map[string]protocol.RunnerInfo, len(m.runners))
+	for _, r := range m.runners {
+		runnerByID[protocol.RunnerIDToConnID(r.Id).String()] = r
 	}
 
 	rows := make([]table.Row, 0, len(ordered))
@@ -154,25 +243,41 @@ func (m *TasksModel) SetRows(ts []protocol.TaskInfo, runners []protocol.RunnerIn
 			act = cli.ActivityStr(t.OutputIdleMs)
 		}
 		idCell := idHex[:12]
-		if m.tree {
+		if m.tree && i < len(gutter) {
 			// 8 hex is what `by=` has always shown, so a reader comparing the
 			// tree against a log line sees the same prefix.
 			idCell = gutter[i] + idHex[:8]
 		}
-		rows = append(rows, table.Row{
+		row := table.Row{
 			taskStatusStr(t.Status),
 			idCell,
 			originCell(t.OriginKind),
 			agent,
 			act,
+		}
+		if m.showsObs() {
+			row = append(row, observerCell(t))
+		}
+		row = append(row,
 			truncateLeft(string(t.RepoPath), repoCellWidth(m.tree)),
 			renderPromptCell(t),
-		})
+		)
+		rows = append(rows, row)
 		ids = append(ids, idHex)
 	}
 	m.rowIDs = ids
-	m.rowTasks = ordered
 	m.table.SetRows(rows)
+}
+
+// observerCell renders the Obs column: who is on this task's live session,
+// cowriters first. Blank when the task has NO session — the Status column
+// already says which those are. A live session with nobody on it renders "0c
+// 0v" rather than blank, so an empty cell never has to mean two things.
+func observerCell(t protocol.TaskInfo) string {
+	if !taskSessionAlive(t.Status) {
+		return ""
+	}
+	return fmt.Sprintf("%dc %dv", t.Cowriters, t.Viewers)
 }
 
 // The observer counts (TaskInfo.viewers / .cowriters) deliberately have NO
