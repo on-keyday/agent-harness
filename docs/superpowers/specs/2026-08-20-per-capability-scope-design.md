@@ -97,7 +97,8 @@ format TaskScope:
     ids              :[ids_len]TaskID
 
 format ScopeOverride:
-    cap          :Capability      # exactly one bit; more is a decode-time reject
+    caps         :Capability      # a MASK: one or more bits, disjoint from every
+                                  # other override's mask in the same list
     base         :ScopeBase
     exclude_self :u1
     reserved     :u7
@@ -124,6 +125,28 @@ legacy WAL record would replay into it.
 an override has no visibility of its own, so carrying `vis_*` fields there
 would create a state that must be validated as "always zero".
 
+**An override carries a mask, and the masks are pairwise disjoint.** The
+grouped case is the common one — "every write-ish bit gets `descendants`" — and
+one bit per entry would spend six entries on it. A mask spends one.
+
+Disjointness is what keeps that free. It is validated where the value is
+written, by accumulating a union and rejecting the first intersection, and it
+means resolution never needs a precedence rule: a capability is covered by at
+most one override, so `override(cap)` stays a lookup. An empty mask is rejected
+as well — an override matching nothing is dead weight and more likely a typo
+than an intent.
+
+A mask may name bits the task does not hold. Those stay **inert but retained**,
+so a grant template can be reused across tasks holding different sets, and a
+bit granted later by `caps set` picks up the standing override from that
+moment. The direction is safe by construction: overrides only ever narrow, so a
+retained one can never widen a newly granted bit.
+
+**Overrides remain sparse.** Any bit may be covered; none is required to be. A
+per-capability *default* table is deliberately not introduced — a second place
+where authority is decided is a second place to get it wrong. `Capability_All`
+is 15 bits, so disjointness bounds the list at 15 entries and `u8` covers it.
+
 ### 2. Resolution
 
 ```
@@ -134,6 +157,9 @@ visible        = {self} ∪ baseSet(visRank) ∪ vis_ids
 
 effective(cap) = (s.exclude_self ? ∅ : {self}) ∪ baseSet(s.base) ∪ s.ids
                  where s = override(cap) if present, else the base scope
+                 and override(cap) = the unique entry whose caps mask
+                                     contains cap — unique because the
+                                     masks are validated disjoint
 ```
 
 Three consequences worth stating outright:
@@ -437,8 +463,9 @@ All three clients, per the repo rule that a feature spans CLI, TUI and WebUI.
 from the action base, overrides only when present:
 
 ```
-caps=exec_view,exec_cowrite  scope=subtree +exec_cowrite:descendants
-caps=exec_view,cancel        scope=global/subtree +cancel:none
+caps=exec_view,exec_cowrite            scope=subtree +exec_cowrite:descendants
+caps=exec_view,exec_cowrite,file_write scope=subtree +exec_cowrite,file_write:descendants
+caps=exec_view,cancel                  scope=global/subtree +cancel:none
 ```
 
 `global/subtree` reads *visibility / action*. `descendants` is the rendered
@@ -452,7 +479,8 @@ zero counts are emitted rather than elided.
 
 - **CLI**: `cli.ParseScope` accepts `descendants` wherever `subtree` is
   accepted, a `vis/act` pair wherever a bare rank is accepted, and a
-  per-capability form — `--scope global/none --scope-for cancel=ids:X`
+  per-capability form whose left side is a capability *list*, mirroring
+  `--caps` — `--scope global/none --scope-for exec_cowrite,file_write=descendants`
   (repeatable). It also accepts its own rendered output as a single argument,
   so a scope copied from `ls` round-trips into `caps set` without being
   retyped. `harness-cli caps` documents the grammar and marks `info_global`
@@ -501,7 +529,11 @@ Extends, rather than replaces, the base spec's set.
   new-layout payload by a decoder truncated to the old field list — the skew is
   asserted, not assumed.
 - An all-zeros `TaskScope` decodes to today's default in every field.
-- A `ScopeOverride` with two bits set is rejected at decode.
+- A `ScopeOverride` with an empty mask is rejected, and two overrides whose
+  masks intersect are rejected — at spawn and at `caps set`, not only at
+  decode, since the same list arrives on both paths.
+- A mask naming a bit the task does not hold round-trips unchanged and applies
+  the moment `caps set` grants that bit.
 
 **Integration (dummy harness)**
 - A child granted `exec_view` at `subtree` and `exec_cowrite` with
