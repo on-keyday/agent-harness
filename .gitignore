@@ -16,4 +16,10 @@ go.work.sum
 
 # Playwright MCP browser session output (local-only, not committed)
 .playwright-mcp/
-webui-baseline.png
+# Screenshots taken while verifying a UI change. They are deliverables — named
+# and reported, kept on disk, never deleted in cleanup — but they are not
+# repository content. webui-baseline.png used to be listed alone, which only
+# covered the one filename anybody had tripped over so far; three
+# webui-override-*.png slipped into a commit (3c8d789) because an explicit
+# `git add` path beats "untracked by habit" and nothing was stopping it.
+*.png
