@@ -1271,3 +1271,25 @@ func TestParseGrid_RejectsContradictions(t *testing.T) {
 		}
 	}
 }
+
+// The CLI registers -d as a shorthand for --detach (cmd/harness-cli/session.go);
+// typing the form learned there into the TUI answered "flag provided but not
+// defined: -d". Both spellings must produce the same action.
+func TestSessionNewDetachShorthand(t *testing.T) {
+	for _, spelling := range []string{"-d", "--detach"} {
+		got, err := ParseCommand("session new "+spelling+" --agent bash", "/cwd")
+		if err != nil {
+			t.Fatalf("%s: %v", spelling, err)
+		}
+		v, ok := got.(SessionNewAction)
+		if !ok {
+			t.Fatalf("%s: action = %T, want SessionNewAction", spelling, got)
+		}
+		if !v.Detach {
+			t.Errorf("%s: Detach = false", spelling)
+		}
+		if v.AgentProfile != "bash" {
+			t.Errorf("%s: AgentProfile = %q, want bash", spelling, v.AgentProfile)
+		}
+	}
+}
