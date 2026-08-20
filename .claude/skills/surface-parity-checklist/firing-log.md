@@ -104,6 +104,25 @@ per-SIGWINCH stream and wrong for a typed command. Noticing that is what
 produced the echo-wait acknowledgement and the exit-3, instead of a command
 that prints success and changes nothing.
 
+### 2026-08-20 `?` popup overflowed the terminal — DetailPopup gains a viewport
+
+done:    17 (the popup is the surface), 34 (a fixed frame whose content is
+         unbounded is the same class: the box must derive from the terminal,
+         never from what it holds)
+missed:  **17** — and it had been broken for as long as the key list has been
+         long. Nothing in the checklist asks "does this VIEW fit the screen",
+         only "is the field visible IN it". Operator found it by pressing `?`.
+
+The popup rendered at its content's full height: 45 rows on a 24-row terminal,
+so `?` pushed its own top border, title and first two groups off the top with
+no way to scroll back. The task detail (`d`) shares it, and this session added
+two lines to that body — so the sibling case got worse today even though `?`
+was already broken.
+
+Worth noting for item 32's "fixed frames" clause, which already says
+popup/dialog WIDTH must derive from the viewport, never content. Height was
+not covered, and that is exactly the axis that broke.
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -113,7 +132,8 @@ Update when adding an entry.
 | 31 (don't hide a value for what it IS) | 2 | **2** | Both misses were the same shape: an elision the item's own text licensed. The row-width exception is now withdrawn — if 31 misses again, the wording is still wrong. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
-| 34 (dynamic column sets) | 1 | 0 | New. |
+| 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
+| 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
 | 33 (take effect or error) | 1 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. |
 | 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |

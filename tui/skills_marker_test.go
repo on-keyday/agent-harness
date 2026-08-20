@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
@@ -323,5 +325,55 @@ func TestTreeToggleRebuildsRowContent(t *testing.T) {
 	m.SetTree(false)
 	if got := m.table.Rows()[0][1]; got != flatID {
 		t.Errorf("returning to flat mode did not restore the ID cell: %q, want %q", got, flatID)
+	}
+}
+
+// --- the detail / ? popup must fit the terminal ---
+
+// The popup rendered at its content's full height, so `?` (30 bindings across
+// five groups) pushed its own top border, title and first groups off a 24-row
+// terminal — the minimum the TUI itself enforces — with no way to scroll back.
+func TestDetailPopupFitsTheTerminal(t *testing.T) {
+	var d DetailPopup = NewDetailPopup()
+	d.Open("keys", keyHelpBody())
+
+	for _, h := range []int{24, 30, 50} {
+		d.SetSize(100, h)
+		if got := lipgloss.Height(d.View()); got > h {
+			t.Errorf("terminal height %d: popup rendered %d rows", h, got)
+		}
+	}
+}
+
+// Content that does not fit has to be reachable, and the footer has to say so —
+// otherwise the popup silently hides its own tail instead of its own top.
+func TestDetailPopupScrollsWhenItOverflows(t *testing.T) {
+	var d DetailPopup = NewDetailPopup()
+	d.Open("keys", keyHelpBody())
+	d.SetSize(100, 24)
+
+	top := d.View()
+	if !strings.Contains(top, "scroll") {
+		t.Error("an overflowing popup does not offer scrolling in its footer")
+	}
+	// The first group must be visible before anything is scrolled.
+	if !strings.Contains(top, "global") {
+		t.Fatalf("the top of the body is not shown at rest:\n%s", top)
+	}
+	for i := 0; i < 30; i++ {
+		d, _ = d.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	if bottom := d.View(); bottom == top {
+		t.Error("the popup did not scroll on ArrowDown")
+	}
+}
+
+// A short body must not advertise scrolling it does not have.
+func TestDetailPopupHidesTheScrollHintWhenItFits(t *testing.T) {
+	var d DetailPopup = NewDetailPopup()
+	d.Open("tiny", "one line")
+	d.SetSize(100, 40)
+	if v := d.View(); strings.Contains(v, "scroll") {
+		t.Errorf("a body that fits offered scrolling:\n%s", v)
 	}
 }

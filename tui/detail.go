@@ -6,20 +6,35 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // DetailPopup is a read-only popup that displays formatted details for a
-// selected runner or task row. Long fields (full repo path, worktree dir,
-// multi-line prompt) that the row table truncates are shown in full here.
-// The popup intercepts no keys other than Esc (close) — it has no editable
-// state.
+// selected runner or task row, and the `?` key list. Long fields (full repo
+// path, worktree dir, multi-line prompt) that the row table truncates are shown
+// in full here — so the body is routinely taller than the terminal and the
+// popup scrolls. It has no editable state: Esc closes, everything else scrolls.
 type DetailPopup struct {
 	open  bool
 	title string
 	body  string
+	// vp bounds the body to the terminal. Without it the box rendered at its
+	// content's full height and the terminal simply scrolled: `?` lists 30
+	// bindings across five groups, so on the 24-row minimum the TUI itself
+	// enforces, the top border, the title and the first groups were pushed off
+	// the top with no way to get them back. Mirrors NotifyModel / CmdResultModel.
+	vp viewport.Model
+	// overflow records whether the body did not fit, so the footer only offers
+	// scrolling when there is something to scroll to.
+	overflow bool
+}
+
+func NewDetailPopup() DetailPopup {
+	return DetailPopup{vp: viewport.New(80, 10)}
 }
 
 func (d *DetailPopup) IsOpen() bool { return d.open }
@@ -28,10 +43,44 @@ func (d *DetailPopup) Open(title, body string) {
 	d.open = true
 	d.title = title
 	d.body = body
+	d.vp.SetContent(body)
+	d.vp.GotoTop()
 }
 
 func (d *DetailPopup) Close() {
 	d.open = false
+}
+
+// SetSize fits the popup inside a w x h terminal. Called from View on every
+// render rather than from layout, so the popup tracks a resize even while it is
+// already open.
+//
+// The reserve accounts for what the box adds around the body: 2 border rows,
+// 2 padding rows, the title, the blank line under it, the blank line above the
+// footer, and the footer — 8 rows. Horizontally: 2 border + 4 padding.
+func (d *DetailPopup) SetSize(w, h int) {
+	const chromeRows, chromeCols = 8, 6
+	inner := h - chromeRows
+	if inner < 3 {
+		inner = 3
+	}
+	width := w - chromeCols
+	if width < 20 {
+		width = 20
+	}
+	d.vp.Width = width
+	d.vp.Height = inner
+	d.vp.SetContent(d.body)
+	d.overflow = lipgloss.Height(d.body) > inner
+}
+
+// Update handles scrolling while the popup is open. Esc is handled by the
+// caller (it closes); everything else goes to the viewport, so the arrow keys
+// and page keys behave the way they do in every other scrollable pane here.
+func (d *DetailPopup) Update(msg tea.Msg) (DetailPopup, tea.Cmd) {
+	var cmd tea.Cmd
+	d.vp, cmd = d.vp.Update(msg)
+	return *d, cmd
 }
 
 func (d *DetailPopup) View() string {
@@ -43,8 +92,12 @@ func (d *DetailPopup) View() string {
 		BorderForeground(colorFocused).
 		Padding(1, 2)
 	header := HeaderStyle.Render(d.title)
-	footer := FooterStyle.Render("Esc: close")
-	return box.Render(header + "\n\n" + d.body + "\n\n" + footer)
+	hint := "Esc: close"
+	if d.overflow {
+		hint = "↑/↓ PgUp/PgDn scroll · Esc: close"
+	}
+	footer := FooterStyle.Render(hint)
+	return box.Render(header + "\n\n" + d.vp.View() + "\n\n" + footer)
 }
 
 // formatRunnerDetail renders a multi-line, label:value description of a

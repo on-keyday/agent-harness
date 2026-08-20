@@ -251,6 +251,7 @@ func New(cfg Config) *App {
 		defaultRepo:     cfg.DefaultRepo,
 		runners:         NewRunners(),
 		tasks:           NewTasks(),
+		detail:          NewDetailPopup(),
 		logs:            NewLogs(),
 		notify:          NewNotify(),
 		cmdresult:       NewCmdResult(),
@@ -1082,8 +1083,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.detail.IsOpen() {
 			if msg.Type == tea.KeyEsc {
 				a.detail.Close()
+				return a, nil
 			}
-			return a, nil
+			// Everything else scrolls: the body can be taller than the screen
+			// (`?` is), and a popup you cannot scroll hides its own top.
+			var cmd tea.Cmd
+			a.detail, cmd = a.detail.Update(msg)
+			return a, cmd
 		}
 		// Connections modal: Esc closes; arrow keys scroll the table; all
 		// other keys (q, s, etc.) are swallowed so they don't leak through.
@@ -2226,6 +2232,7 @@ func (a *App) View() string {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.popup.View())
 	}
 	if a.detail.IsOpen() {
+		a.detail.SetSize(a.width, a.height)
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.detail.View())
 	}
 	if a.portForwardModal.IsOpen() {
