@@ -185,8 +185,7 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 		if creatorTaskID.Id != ([16]byte{}) {
 			creatorHex = hex.EncodeToString(creatorTaskID.Id[:])
 		}
-		scopeBase, scopeIDs := scope.walFields()
-		if err := s.wal.Write(WALEvent{
+		ev := WALEvent{
 			Type:          "task_created",
 			TaskID:        id,
 			RepoPath:      repo,
@@ -198,10 +197,10 @@ func (s *TaskStore) Create(repo, prompt string, kind protocol.TaskKind, origin p
 			Selector:      selector,
 			ExtraArgs:     extraArgs,
 			Capabilities:  uint32(caps),
-			ScopeBase:     scopeBase,
-			ScopeIDs:      scopeIDs,
 			AgentProfile:  agentProfile,
-		}); err != nil {
+		}
+		scope.applyToWAL(&ev)
+		if err := s.wal.Write(ev); err != nil {
 			slog.Error("WAL write failed", "op", "task_created", "task_id", id, "err", err)
 		}
 	}
@@ -223,11 +222,12 @@ func (s *TaskStore) writeCapsChangedLocked(id string, caps protocol.Capability, 
 	if s.wal == nil {
 		return
 	}
-	base, ids := scope.walFields()
-	if err := s.wal.Write(WALEvent{
+	ev := WALEvent{
 		Type: "task_caps_changed", TaskID: id,
-		Capabilities: uint32(caps), ScopeBase: base, ScopeIDs: ids,
-	}); err != nil {
+		Capabilities: uint32(caps),
+	}
+	scope.applyToWAL(&ev)
+	if err := s.wal.Write(ev); err != nil {
 		slog.Error("WAL write failed", "op", "task_caps_changed", "task_id", id, "err", err)
 	}
 }
@@ -807,7 +807,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 				OriginKind:    protocol.ClientKind(ev.OriginKind),
 				CreatorTaskID: creatorTaskID,
 				Capabilities:  protocol.Capability(ev.Capabilities),
-				Scope:         scopeFromWAL(ev.ScopeBase, ev.ScopeIDs),
+				Scope:         scopeFromWAL(ev),
 				AgentProfile:  ev.AgentProfile,
 				Status:        protocol.TaskStatus_Queued,
 				CreatedAt:     time.Unix(0, ev.Ts),
@@ -885,7 +885,7 @@ func (s *TaskStore) ReplayEvents(events []WALEvent) {
 		case "task_caps_changed":
 			if t, ok := s.tasks[ev.TaskID]; ok {
 				t.Capabilities = protocol.Capability(ev.Capabilities)
-				t.Scope = scopeFromWAL(ev.ScopeBase, ev.ScopeIDs)
+				t.Scope = scopeFromWAL(ev)
 			}
 		case "task_parent_changed":
 			// An absent creator_task_id key on THIS event type means "set to

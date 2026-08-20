@@ -146,18 +146,29 @@ func TestWALEventJSONRoundTripCopiesEveryField(t *testing.T) {
 	hn.SetName([]byte("gmkhost"))
 	sel.SetHostname(hn)
 	in := WALEvent{
-		Type:           "task_created",
-		TaskID:         "00112233445566778899aabbccddeeff",
-		RunnerID:       "ws:127.0.0.1:8539-1",
-		RepoPath:       "/repo",
-		Prompt:         "do it",
-		Kind:           uint8(protocol.TaskKind_Interactive),
-		OriginKind:     uint8(protocol.ClientKind_Tui),
-		ResumedByKind:  uint8(protocol.ClientKind_Cli),
-		CreatorTaskID:  "ffeeddccbbaa99887766554433221100",
-		Capabilities:   uint32(protocol.Capability_Spawn),
-		ScopeBase:      uint8(protocol.ScopeBase_None),
-		ScopeIDs:       []string{"00112233445566778899aabbccddeeff"},
+		Type:          "task_created",
+		TaskID:        "00112233445566778899aabbccddeeff",
+		RunnerID:      "ws:127.0.0.1:8539-1",
+		RepoPath:      "/repo",
+		Prompt:        "do it",
+		Kind:          uint8(protocol.TaskKind_Interactive),
+		OriginKind:    uint8(protocol.ClientKind_Tui),
+		ResumedByKind: uint8(protocol.ClientKind_Cli),
+		CreatorTaskID: "ffeeddccbbaa99887766554433221100",
+		Capabilities:  uint32(protocol.Capability_Spawn),
+		ScopeBase:     uint8(protocol.ScopeBase_None),
+		ScopeIDs:      []string{"00112233445566778899aabbccddeeff"},
+		// The axes added later. Non-zero on purpose: the pre-change reading is
+		// each one's ZERO value, so a codec that dropped one would still pass
+		// against a record that only set base and ids.
+		ScopeVisBase:        uint8(protocol.ScopeBase_Global),
+		ScopeVisBasePresent: true,
+		ScopeExcludeSelf:    true,
+		ScopeVisIDs:         []string{"ffeeddccbbaa99887766554433221100"},
+		ScopeOverrides: []WALScopeOverride{{
+			Caps: uint32(protocol.Capability_Cancel), Base: uint8(protocol.ScopeBase_None),
+			ExcludeSelf: true, IDs: []string{"00112233445566778899aabbccddeeff"},
+		}},
 		AgentProfile:   "codex",
 		SkillsInjected: true,
 		WorktreeDir:    "/wt",
@@ -200,8 +211,90 @@ func TestLegacyWALRecordReplaysAsSubtree(t *testing.T) {
 	if got.ScopeBase != 0 {
 		t.Fatalf("ScopeBase = %d, want 0", got.ScopeBase)
 	}
-	s := scopeFromWAL(got.ScopeBase, got.ScopeIDs)
+	s := scopeFromWAL(got)
 	if s.Base != protocol.ScopeBase_Subtree || len(s.IDs) != 0 {
 		t.Fatalf("legacy scope = %+v, want subtree with no ids", s)
+	}
+	// Every axis added later must read back as the pre-change behaviour from a
+	// record that carries none of its keys.
+	if s.VisBasePresent || s.ExcludeSelf || len(s.VisIDs) != 0 || len(s.Overrides) != 0 {
+		t.Fatalf("legacy record gained an axis it never had: %+v", s)
+	}
+}
+
+// The one non-zero migration: the legacy bit implied global task visibility,
+// so a record carrying it replays with the rank that reproduces that reach --
+// and keeps the bit, because replay may add what a record implies and must
+// remove nothing.
+func TestLegacyBoardObserveRecordGainsGlobalVisibility(t *testing.T) {
+	ev := WALEvent{
+		Type:         "task_created",
+		TaskID:       "aa112233445566778899aabbccddeeff",
+		Capabilities: uint32(protocol.Capability_BoardObserve | protocol.Capability_Cancel),
+		ScopeBase:    uint8(protocol.ScopeBase_None),
+	}
+	s := scopeFromWAL(ev)
+	if s.VisRank() != protocol.ScopeBase_Global {
+		t.Errorf("VisRank = %v, want global", s.VisRank())
+	}
+	if s.Base != protocol.ScopeBase_None {
+		t.Errorf("Base = %v, want none — the migration widens sight, never action", s.Base)
+	}
+	if protocol.Capability(ev.Capabilities)&protocol.Capability_BoardObserve == 0 {
+		t.Error("the record's own mask was mutated; migration must not clear a bit")
+	}
+}
+
+// A task explicitly granted a visibility rank keeps the one it was given: the
+// migration fires on !VisBasePresent, so it cannot overwrite a deliberate
+// narrowing made after the axis existed.
+func TestMigrationDoesNotOverwriteAnExplicitRank(t *testing.T) {
+	ev := WALEvent{
+		Type:                "task_caps_changed",
+		Capabilities:        uint32(protocol.Capability_BoardObserve),
+		ScopeBase:           uint8(protocol.ScopeBase_Subtree),
+		ScopeVisBasePresent: true,
+		ScopeVisBase:        uint8(protocol.ScopeBase_Subtree),
+	}
+	if got := scopeFromWAL(ev).VisRank(); got != protocol.ScopeBase_Subtree {
+		t.Errorf("VisRank = %v, want subtree — an explicit rank must survive", got)
+	}
+}
+
+// applyToWAL and scopeFromWAL are one projection in two directions; a field
+// carried by one and dropped by the other replays as a different authority.
+func TestScopeWALRoundTripCarriesEveryAxis(t *testing.T) {
+	id := "00112233445566778899aabbccddeeff"
+	in := Scope{
+		Base: protocol.ScopeBase_None, IDs: []string{id},
+		VisBase: protocol.ScopeBase_Subtree, VisBasePresent: true,
+		ExcludeSelf: true, VisIDs: []string{"aabbccddeeff00112233445566778899"},
+		Overrides: []ScopeOverride{{
+			Caps: protocol.Capability_Cancel | protocol.Capability_FileWrite,
+			Base: protocol.ScopeBase_None, ExcludeSelf: true, IDs: []string{id},
+		}},
+	}
+	var ev WALEvent
+	in.applyToWAL(&ev)
+
+	raw, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var back WALEvent
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := scopeFromWAL(back)
+
+	if got.Base != in.Base || got.VisBase != in.VisBase || !got.VisBasePresent || !got.ExcludeSelf {
+		t.Errorf("axes lost: %+v", got)
+	}
+	if len(got.VisIDs) != 1 || len(got.IDs) != 1 {
+		t.Errorf("id lists lost: ids=%v vis_ids=%v", got.IDs, got.VisIDs)
+	}
+	if len(got.Overrides) != 1 || got.Overrides[0].Caps != in.Overrides[0].Caps ||
+		!got.Overrides[0].ExcludeSelf || len(got.Overrides[0].IDs) != 1 {
+		t.Errorf("override lost: %+v", got.Overrides)
 	}
 }

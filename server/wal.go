@@ -21,6 +21,16 @@ import (
 // round-trips perfectly. The JSON key is "selector_b64". Legacy WAL entries that
 // pre-date this field decode as a zero RunnerSelector (Kind == RunnerSelectorKind_Any),
 // which is the correct "any runner" default.
+// WALScopeOverride is one Scope.Overrides entry in JSON. Caps is the numeric
+// mask so a capability RENAME never invalidates a record — the same reason
+// Kind and OriginKind are numbers rather than names.
+type WALScopeOverride struct {
+	Caps        uint32   `json:"caps"`
+	Base        uint8    `json:"base,omitempty"`
+	ExcludeSelf bool     `json:"exclude_self,omitempty"`
+	IDs         []string `json:"ids,omitempty"`
+}
+
 type WALEvent struct {
 	Type     string `json:"type"` // "task_created" | "task_assigned" | "task_finished" | "task_cancelled" | "task_failed"
 	TaskID   string `json:"task_id,omitempty"`
@@ -53,6 +63,15 @@ type WALEvent struct {
 	// the pre-scope behaviour. That is why subtree is the zero value.
 	ScopeBase uint8    `json:"scope_base,omitempty"`
 	ScopeIDs  []string `json:"scope_ids,omitempty"`
+	// The axes added by the per-capability change. Every one of them replays
+	// correctly from its JSON zero value, which is why the two flags are
+	// phrased by-presence and negatively: a legacy record carries none of these
+	// keys and must mean "visibility follows the base, self included".
+	ScopeVisBase        uint8              `json:"scope_vis_base,omitempty"`
+	ScopeVisBasePresent bool               `json:"scope_vis_base_present,omitempty"`
+	ScopeExcludeSelf    bool               `json:"scope_exclude_self,omitempty"`
+	ScopeVisIDs         []string           `json:"scope_vis_ids,omitempty"`
+	ScopeOverrides      []WALScopeOverride `json:"scope_overrides,omitempty"`
 	// AgentProfile is the resolved agent profile name for this task (see
 	// TaskEntry.AgentProfile). Written on task_created events; legacy
 	// entries default to "" (zero). Also reused by task_resumed events.
@@ -85,27 +104,35 @@ type WALEvent struct {
 // MarshalJSON / UnmarshalJSON to add the base64 selector field alongside
 // the other plain JSON fields.
 type walEventJSON struct {
-	Type           string   `json:"type"`
-	TaskID         string   `json:"task_id,omitempty"`
-	RunnerID       string   `json:"runner_id,omitempty"`
-	RepoPath       string   `json:"repo_path,omitempty"`
-	Prompt         string   `json:"prompt,omitempty"`
-	Kind           uint8    `json:"kind,omitempty"`
-	OriginKind     uint8    `json:"origin_kind,omitempty"`
-	ResumedByKind  uint8    `json:"resumed_by_kind,omitempty"`
-	CreatorTaskID  string   `json:"creator_task_id,omitempty"`
-	Capabilities   uint32   `json:"capabilities,omitempty"`
-	ScopeBase      uint8    `json:"scope_base,omitempty"`
-	ScopeIDs       []string `json:"scope_ids,omitempty"`
-	AgentProfile   string   `json:"agent_profile,omitempty"`
-	SkillsInjected bool     `json:"skills_injected,omitempty"`
-	WorktreeDir    string   `json:"worktree_dir,omitempty"`
-	ExitCode       *int32   `json:"exit_code,omitempty"`
-	DiffInfo       []byte   `json:"diff_info,omitempty"`
-	BoundRunnerID  string   `json:"bound_runner_id,omitempty"`
-	Reason         string   `json:"reason,omitempty"`
-	ExtraArgs      []string `json:"extra_args,omitempty"`
-	Ts             int64    `json:"ts"`
+	Type          string   `json:"type"`
+	TaskID        string   `json:"task_id,omitempty"`
+	RunnerID      string   `json:"runner_id,omitempty"`
+	RepoPath      string   `json:"repo_path,omitempty"`
+	Prompt        string   `json:"prompt,omitempty"`
+	Kind          uint8    `json:"kind,omitempty"`
+	OriginKind    uint8    `json:"origin_kind,omitempty"`
+	ResumedByKind uint8    `json:"resumed_by_kind,omitempty"`
+	CreatorTaskID string   `json:"creator_task_id,omitempty"`
+	Capabilities  uint32   `json:"capabilities,omitempty"`
+	ScopeBase     uint8    `json:"scope_base,omitempty"`
+	ScopeIDs      []string `json:"scope_ids,omitempty"`
+	// Mirrors of the axes on WALEvent. This shadow struct is the reason
+	// TestWALEventJSONRoundTripCopiesEveryField exists: a field added to
+	// WALEvent and forgotten here is dropped on persistence, silently.
+	ScopeVisBase        uint8              `json:"scope_vis_base,omitempty"`
+	ScopeVisBasePresent bool               `json:"scope_vis_base_present,omitempty"`
+	ScopeExcludeSelf    bool               `json:"scope_exclude_self,omitempty"`
+	ScopeVisIDs         []string           `json:"scope_vis_ids,omitempty"`
+	ScopeOverrides      []WALScopeOverride `json:"scope_overrides,omitempty"`
+	AgentProfile        string             `json:"agent_profile,omitempty"`
+	SkillsInjected      bool               `json:"skills_injected,omitempty"`
+	WorktreeDir         string             `json:"worktree_dir,omitempty"`
+	ExitCode            *int32             `json:"exit_code,omitempty"`
+	DiffInfo            []byte             `json:"diff_info,omitempty"`
+	BoundRunnerID       string             `json:"bound_runner_id,omitempty"`
+	Reason              string             `json:"reason,omitempty"`
+	ExtraArgs           []string           `json:"extra_args,omitempty"`
+	Ts                  int64              `json:"ts"`
 	// SelectorB64 holds the base64-encoded wire bytes of the RunnerSelector.
 	// Empty / absent means Kind == RunnerSelectorKind_Any (zero value).
 	SelectorB64 string `json:"selector_b64,omitempty"`
@@ -115,27 +142,33 @@ type walEventJSON struct {
 // of the fields to the plain walEventJSON struct.
 func (e WALEvent) MarshalJSON() ([]byte, error) {
 	j := walEventJSON{
-		Type:           e.Type,
-		TaskID:         e.TaskID,
-		RunnerID:       e.RunnerID,
-		RepoPath:       e.RepoPath,
-		Prompt:         e.Prompt,
-		Kind:           e.Kind,
-		OriginKind:     e.OriginKind,
-		ResumedByKind:  e.ResumedByKind,
-		CreatorTaskID:  e.CreatorTaskID,
-		Capabilities:   e.Capabilities,
-		ScopeBase:      e.ScopeBase,
-		ScopeIDs:       e.ScopeIDs,
-		AgentProfile:   e.AgentProfile,
-		SkillsInjected: e.SkillsInjected,
-		WorktreeDir:    e.WorktreeDir,
-		ExitCode:       e.ExitCode,
-		DiffInfo:       e.DiffInfo,
-		BoundRunnerID:  e.BoundRunnerID,
-		Reason:         e.Reason,
-		ExtraArgs:      e.ExtraArgs,
-		Ts:             e.Ts,
+		Type:          e.Type,
+		TaskID:        e.TaskID,
+		RunnerID:      e.RunnerID,
+		RepoPath:      e.RepoPath,
+		Prompt:        e.Prompt,
+		Kind:          e.Kind,
+		OriginKind:    e.OriginKind,
+		ResumedByKind: e.ResumedByKind,
+		CreatorTaskID: e.CreatorTaskID,
+		Capabilities:  e.Capabilities,
+		ScopeBase:     e.ScopeBase,
+		ScopeIDs:      e.ScopeIDs,
+
+		ScopeVisBase:        e.ScopeVisBase,
+		ScopeVisBasePresent: e.ScopeVisBasePresent,
+		ScopeExcludeSelf:    e.ScopeExcludeSelf,
+		ScopeVisIDs:         e.ScopeVisIDs,
+		ScopeOverrides:      e.ScopeOverrides,
+		AgentProfile:        e.AgentProfile,
+		SkillsInjected:      e.SkillsInjected,
+		WorktreeDir:         e.WorktreeDir,
+		ExitCode:            e.ExitCode,
+		DiffInfo:            e.DiffInfo,
+		BoundRunnerID:       e.BoundRunnerID,
+		Reason:              e.Reason,
+		ExtraArgs:           e.ExtraArgs,
+		Ts:                  e.Ts,
 	}
 	// Only encode the selector if it carries a non-Any kind (i.e. it has payload).
 	if e.Selector.Kind != protocol.RunnerSelectorKind_Any {
@@ -164,6 +197,11 @@ func (e *WALEvent) UnmarshalJSON(b []byte) error {
 	e.Capabilities = j.Capabilities
 	e.ScopeBase = j.ScopeBase
 	e.ScopeIDs = j.ScopeIDs
+	e.ScopeVisBase = j.ScopeVisBase
+	e.ScopeVisBasePresent = j.ScopeVisBasePresent
+	e.ScopeExcludeSelf = j.ScopeExcludeSelf
+	e.ScopeVisIDs = j.ScopeVisIDs
+	e.ScopeOverrides = j.ScopeOverrides
 	e.AgentProfile = j.AgentProfile
 	e.SkillsInjected = j.SkillsInjected
 	e.WorktreeDir = j.WorktreeDir
