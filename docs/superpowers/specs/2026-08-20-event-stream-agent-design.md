@@ -165,6 +165,43 @@ Two flags found while establishing the above are worth the plan's attention:
 - `--session-id <uuid>` lets the CALLER choose the session id. **Create only** —
   see the next section before building anything on it.
 
+### How a session ENDS, measured
+
+There is no session-end message in the protocol (the documented control
+requests are `setPermissionMode`, `setModel`, `setMaxThinkingTokens`,
+`applyFlagSettings`, `interrupt`, `reconnectMcpServer`, `toggleMcpServer`,
+`setMcpServers`, `stopTask`; none ends anything, and the SDK closes a session
+with `close()`/abort). So the two candidates are transport-level, and both were
+taken on faith until measured. A `SessionEnd` hook was configured to see which
+one fires it, because that was the supposed tradeoff:
+
+| ending, sent MID-TURN | exit | the turn | `SessionEnd` hook | time to exit |
+|---|---|---|---|---|
+| close stdin | 0 | **completes** — `result/success`, full answer | **fires** | 4.7 s |
+| SIGTERM | 143 | **aborted** — no `result` at all | **fires** | 1.1 s |
+
+**Both run SessionEnd.** An earlier draft of this section claimed stdin close
+would skip the hooks the runner's injected `.claude/settings.json` configures,
+and made that the reason to prefer SIGTERM. It was wrong, and it was written
+without running either.
+
+With the hooks equal, the remaining difference is the only one that matters and
+it is clean:
+
+- **`finish` = close the agent's stdin** — a zero-length Stdin frame, which
+  `agentexec.handleInput` already implements and `CommandExecutionStream`
+  already exposes as `Stdin().Close()`. The in-flight turn completes and the
+  agent exits 0.
+- **`kill` = SIGTERM** — reachable today via `ControlType_Signal` /
+  `SendSignal`. Immediate, exit 143, work in progress discarded.
+
+That is the distinction §3 wanted and could not name. It needs no new
+mechanism on either side.
+
+(Not measured: closing stdin with NO turn in flight. A mid-turn close
+completing the turn and exiting 0 makes the idle case the easier one, but that
+is an inference, not an observation.)
+
 ### Resume: `--continue` works, and `--session-id` is not the resume mechanism
 
 Measured, because the harness's resume path is the one that would have broken.
