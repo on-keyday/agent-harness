@@ -911,7 +911,7 @@ git commit -m "feat(server): caps set and resume carry the override list"
 - Modify: `server/capabilities.go:38-41` (`requiredCap` board rows — comment only, the value is unchanged)
 - Modify: `server/task_handler.go:1610` (`ListConns`), `server/server.go:363` (conns_status fanout)
 - Modify: `server/agent_handler.go:584` (agent-side `list_topics`)
-- Modify: `cli/caps.go:34` (catalogue), `:75` (`CapsLabel` case), `:231` (`ParseCaps` — deprecated alias)
+- Modify: `cli/caps.go:34` (catalogue), `:75` (`CapsLabel` case), `:231` (`ParseCaps` — rename, no alias)
 - Test: `server/capabilities_test.go`, `cli/caps_test.go`
 
 **Interfaces:**
@@ -934,20 +934,23 @@ func TestListConnsFollowsVisibilityAxis(t *testing.T) {
 
 ```go
 // cli/caps_test.go — the old name still parses, and grants the same bit.
-func TestParseCapsAcceptsDeprecatedInfoGlobal(t *testing.T) {
-	got, err := ParseCaps("info_global")
+func TestParseCapsRejectsTheOldName(t *testing.T) {
+	if _, err := ParseCaps("info_global"); err == nil {
+		t.Error("ParseCaps(info_global) = nil error; the old name is gone, not aliased")
+	}
+	got, err := ParseCaps("board_observe")
 	if err != nil {
-		t.Fatalf("ParseCaps(info_global): %v", err)
+		t.Fatalf("ParseCaps(board_observe): %v", err)
 	}
 	if got != protocol.Capability_BoardObserve {
-		t.Errorf("= %v, want board_observe (same bit, old name)", got)
+		t.Errorf("= %v, want board_observe", got)
 	}
 }
 ```
 
 - [ ] **Step 2: Run to confirm failure**
 
-Run: `go test ./server/ ./cli/ -run 'TestListConnsFollows|TestParseCapsAcceptsDeprecated' -v`
+Run: `go test ./server/ ./cli/ -run 'TestListConnsFollows|TestParseCapsRejectsTheOldName' -v`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
@@ -963,7 +966,9 @@ Expected: FAIL.
 			"Not required to send, subscribe, or read your own inbox"
 ```
 
-- `ParseCaps` — accept `info_global` as a deprecated alias mapping to the same bit, and print a one-line notice to stderr the first time it is seen in a process.
+- `ParseCaps` — **rename only; do not add a deprecated alias.** This project is single-developer dogfood with no external users, and the standing rule is that renames are quality fixes rather than migrations: no shims, no deprecation periods, no back-compat layers for users who do not exist. `--caps info_global` becomes an unknown-capability error, which is the correct and immediate signal.
+
+  The WAL migration in Task 5 is a different thing and stays: it reads records that already exist on disk, so it is data handling, not a compatibility shim for a caller.
 
 - [ ] **Step 4: Run**
 
@@ -1356,7 +1361,28 @@ A hand-built pre-change `SubmitRequest` payload must be rejected by the new deco
 
 Also assert: a `ScopeOverride` with an empty mask and two intersecting masks are rejected by `validateScope` — at spawn and at `caps set`, not only at decode.
 
-- [ ] **Step 2: Run and commit**
+- [ ] **Step 2: Run the project's wire-skew guard**
+
+```bash
+scripts/wire-skew-check.sh
+```
+
+`OLD_REF` defaults to the merge-base with `origin/main` — what is actually
+deployed. The script builds both sides and runs NEW runner × OLD server, and it
+asserts the failure is **recoverable** (rejected → retries → self-heals once the
+server is upgraded), not that skew works; this project has no compat shims by
+design. It exits 2 on a setup error rather than passing.
+
+This is not optional diligence. A `.bgn` change landed against an old server
+once killed all 12 runner slots in about a second, and none came back
+(`d4f7a5a`). The runner has its **own** handshake in `runner/connect.go`, which
+is how the previous fix was missed by a `cli/`-scoped grep.
+
+Run the negative control before trusting a PASS: a guard that cannot fail is
+worse than none. The first version of this script passed on everything because a
+fresh worktree has no `webui/static/main.wasm` and the old server never started.
+
+- [ ] **Step 3: Run the unit tests and commit**
 
 ```bash
 go test ./runner/protocol/ -v
