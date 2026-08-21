@@ -441,6 +441,46 @@ must enumerate rather than summarise:
 - **new**: `session requests <id>`, and
   `session approve <id> <request-id> --allow|--deny|--modify <json>`
 
+**What an answer can be, from the SDK reference rather than from the two shapes
+I happened to probe.** `canUseTool` returns two variants with three fields, and
+they compose into five operator actions:
+
+```
+{ behavior: "allow", updatedInput, updatedPermissions? }
+{ behavior: "deny",  message }
+```
+
+| action | shape |
+|---|---|
+| approve | allow, `updatedInput` unchanged |
+| approve with changes | allow, `updatedInput` rewritten (`--modify`) |
+| approve and remember | allow + `updatedPermissions`, echoing the request's own `suggestions` |
+| reject | deny + `message` |
+| reject with a suggested alternative | deny + a `message` that guides |
+
+Three things there change decisions taken earlier in this document.
+
+**`updatedPermissions` is not necessarily session-scoped.** §3 records the
+suggestion as a session-wide mode change, because that is what the probe
+observed: `{"type":"setMode","mode":"acceptEdits","destination":"session"}`.
+The documented mechanism also has a `localSettings` destination, which **writes
+the rule into `.claude/settings.local.json`** — a file in the task's worktree,
+surviving the session. Accepting a suggestion is therefore, in that form, a
+file write and a durable policy change, which is a heavier act than the one §3
+weighed when it let `exec_cowrite` cover it.
+
+**`--modify` is invisible to the agent.** The reference is explicit: "Claude
+sees the result but isn't told you changed anything." So an audit trail that
+records only the request lies about what ran. The event stream must carry that
+the input was rewritten, and by whom.
+
+**There is a `defer`.** §4 fixes the unattended default as "block indefinitely
+and notify" on the reasoning that a stalled agent costs nothing. The docs note
+that a callback may stay pending indefinitely, and that a host expecting a slow
+human should instead return the `defer` hook decision, which "lets the process
+exit and resume later from the persisted session". That is a third option
+between blocking and auto-answering, and §4 was decided without it.
+
 **Approvals are serialised by the CLI, so `pending` is 0 or 1.** Measured: a
 turn that emitted **three** parallel `tool_use` blocks produced exactly **one**
 `can_use_tool` request, and no second one arrived in two minutes of answering
