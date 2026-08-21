@@ -696,6 +696,57 @@ was concrete and looked like a constraint. That is the shape memory already
 records for invented labels becoming implicit constraints, one layer down: here
 the label was not invented, it was the schema's own padding, read as a budget
 with a balance.
+
+## 20. The skew I "tested" was the wrong axis, my failure model was backwards, and the real failure was a hang
+
+Asked whether the wire skew was tested. It had been "tested" — and the answer
+fell apart in three layers, each found only by going one level more concrete.
+
+**Layer 1: the check that PASSED tests a different skew.** `wire-skew-check`
+runs NEW runner × OLD server and asserts the hello rejection is recoverable.
+The kind field lives in `TaskControlResponse`, which the RUNNER NEVER DECODES.
+For this change the PASS was true and nearly vacuous — the second vacuous
+wire-skew run in two days (the first ran with an uncommitted `.bgn`, diffing a
+ref against itself). A green check for axis A reads as coverage for axis B
+until someone asks which axis it measures.
+
+**Layer 2: the failure model in the record was backwards.** Entry 19, the
+spec, the `.bgn` comment and the landed commit message all said "old clients
+break the moment the server is new — `DecodeExactCopy` rejects trailing
+bytes". `DecodeExactCopy` exists and does that; **nothing on this path calls
+it**. `dispatchControl` uses the tolerant `Decode`, which returns trailing
+bytes unread, so an OLD client on a NEW server ignores the field and works.
+The claim was written from the generated API's strictest member, not from the
+call site — the same class as entry 9 (agentexec "is PTY-only") and entry 12
+(the ring "truncates mid-line"): a property of the artifact asserted without
+reading which part of the artifact is actually used.
+
+**Layer 3: the direction that DOES break was a silent hang, measured.** NEW
+client × OLD server (built `61f5a4a`'s server, drove it with the new CLI):
+`session snapshot` printed one slog line — `not enough data to read for field
+"AttachSessionResponse::Kind"` — and then sat forever; `timeout` killed it at
+10s. The mechanism: `dispatchControl` logged the decode error and DROPPED the
+response, and `RoundTripTaskControl`'s only other exit is its context, which
+most CLI paths pass as `context.Background()`. And this is not a lab shape:
+`make build` had already put the new CLI on the live host while the LIVE
+server stays old until the operator restarts it — the hang was the deployed
+state of every attach-family verb at the moment the question was asked.
+
+Fixed at the correlator, not the caller: a response that fails to decode is
+now ROUTED to the waiting request as `ErrResponseUndecodable` (RequestId is
+the second field, parsed before any arm can fail), with a guard for payloads
+too short to carry an id — request 0 is real, `nextReq` starts there, and
+failing it on unroutable garbage would break an unrelated caller. Measured
+after: the same command errors immediately, naming the version-skewed server
+and the fix. Pinned by tests, negative-controlled (restoring the drop reddens
+the strand test) — and the negative control cost a lesson of its own:
+`git checkout -- cli/client.go` to undo it also destroyed the uncommitted fix,
+which had to be reapplied. Revert a negative control by reapplying the edit,
+never by checking out a file that holds other uncommitted work.
+
+Deploy order comes out where the fleet rule already was — server first — but
+for the measured reason (new client × old server is the failing direction),
+not the recorded one.
 - **It did not price the hello route's real defect.** The server already holds
   the kind in the task record. Replaying a `hello` so the client can infer it
   means the server declines to state what it knows and the client re-derives it

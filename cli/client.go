@@ -30,8 +30,26 @@ type Client struct {
 
 	mu      sync.Mutex
 	nextReq uint32
-	pending map[uint32]chan *protocol.TaskControlResponse
+	pending map[uint32]chan taskControlResult
 }
+
+// taskControlResult is what dispatchControl delivers to a waiting
+// RoundTripTaskControl: the decoded response, or the reason there will never
+// be one. The err arm exists for version skew — a response this build cannot
+// decode (an older server answering a newer client) must FAIL the waiting
+// call, not strand it: most CLI paths wait on context.Background(), so a
+// dropped response was measured as a silent hang, with the decode error only
+// on a log line nobody is reading mid-hang.
+type taskControlResult struct {
+	resp *protocol.TaskControlResponse
+	err  error
+}
+
+// ErrResponseUndecodable marks a TaskControl response the local build could
+// not decode — in practice a version-skewed server (its response is missing a
+// field this build reads, or carries an arm it cannot parse). Retrying on the
+// same connection cannot help; the fix is upgrading/restarting the SERVER.
+var ErrResponseUndecodable = errors.New("task control response undecodable (version-skewed server? restart/upgrade the server)")
 
 // Dial establishes the underlying peer.Conn and starts the receive loop
 // with this Client's TaskControl-aware handler. The peerCID identifies
@@ -59,7 +77,7 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 	}
 	c := &Client{
 		conn:    pc,
-		pending: map[uint32]chan *protocol.TaskControlResponse{},
+		pending: map[uint32]chan taskControlResult{},
 	}
 
 	// Pick the binder secret by role: operator surfaces prove the operator psk
@@ -120,6 +138,13 @@ func Dial(ctx context.Context, peerCID objproto.ConnectionID, kind protocol.Clie
 
 // dispatchControl is the peer ControlHandler. We only care about TaskControl
 // kind — everything else (RunnerControl is server-side only here) is dropped.
+//
+// A response that does not DECODE is still routed, as an error: RequestId is
+// the second field, parsed before whichever arm failed, so the partially
+// decoded struct almost always knows which caller is waiting. Dropping the
+// response instead was measured (2026-08-21, new client × pre-kind-field
+// server) as a silent hang — RoundTripTaskControl's only other exit is its
+// context, and most CLI paths pass context.Background().
 func (c *Client) dispatchControl(kind appwire.AppKind, payload []byte) {
 	if kind != appwire.AppKind_TaskControl {
 		return
@@ -127,16 +152,28 @@ func (c *Client) dispatchControl(kind appwire.AppKind, payload []byte) {
 	resp := &protocol.TaskControlResponse{}
 	if _, derr := resp.Decode(payload); derr != nil {
 		slog.Error("cli.Client: decode TaskControlResponse", "err", derr)
+		// Route the failure only when RequestId (kind u8 + request_id u32 =
+		// the first 5 bytes) was actually parsed. On a shorter payload the
+		// zero-valued field would name request 0 — a real id (nextReq starts
+		// at 0), so delivering would fail an unrelated caller.
+		if len(payload) >= 5 {
+			c.deliver(resp.RequestId, taskControlResult{err: fmt.Errorf("%w: %w", ErrResponseUndecodable, derr)})
+		}
 		return
 	}
+	c.deliver(resp.RequestId, taskControlResult{resp: resp})
+}
+
+// deliver hands a result to the caller waiting on requestID, if any.
+func (c *Client) deliver(requestID uint32, r taskControlResult) {
 	c.mu.Lock()
-	ch, ok := c.pending[resp.RequestId]
+	ch, ok := c.pending[requestID]
 	if ok {
-		delete(c.pending, resp.RequestId)
+		delete(c.pending, requestID)
 	}
 	c.mu.Unlock()
 	if ok {
-		ch <- resp
+		ch <- r
 	}
 }
 
@@ -164,7 +201,7 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 	c.mu.Lock()
 	id := c.nextReq
 	c.nextReq++
-	ch := make(chan *protocol.TaskControlResponse, 1)
+	ch := make(chan taskControlResult, 1)
 	c.pending[id] = ch
 	c.mu.Unlock()
 
@@ -183,7 +220,11 @@ func (c *Client) RoundTripTaskControl(ctx context.Context, req *protocol.TaskCon
 		delete(c.pending, id)
 		c.mu.Unlock()
 		return nil, ctx.Err()
-	case resp := <-ch:
+	case r := <-ch:
+		if r.err != nil {
+			return nil, r.err
+		}
+		resp := r.resp
 		// Single-point PermissionDenied recognition: if the server rejects an
 		// operation due to missing capability, surface a typed error rather than
 		// returning the raw response. All native and wasm callers funnel through

@@ -504,12 +504,23 @@ it already holds (`TaskKind` is in the task record) so the client can re-derive
 it from payload bytes, and the mux would consult that same field anyway to
 decide which tasks get a pinned first frame.
 
-The field's real cost is a layout change, and for a RESPONSE that is a
-**coordinated restart, not a staged one**: `DecodeExactCopy` rejects trailing
-bytes, so an old client breaks the moment the server is new and "server-first"
-stages nothing. On this deployment that is `build_and_restart_all.py` plus a
-WebUI hard reload, with no third-party clients — cheaper than the new mux state
-the alternative needs.
+The field's real cost is a layout change, and the skew turned out to be
+**asymmetric — measured on 2026-08-21, after this paragraph first claimed the
+opposite**. The claim was "`DecodeExactCopy` rejects trailing bytes, so an old
+client breaks the moment the server is new"; but the client's live decode path
+is the tolerant `Decode` (`cli/client.go dispatchControl`), which leaves
+trailing bytes unread, so an OLD client against a NEW server simply ignores
+the field and works. The direction that breaks is a NEW client against an OLD
+server — the shorter arm fails decoding — and before 2026-08-21 that failure
+was a **silent hang**: the response was dropped after a log line, and
+`RoundTripTaskControl`'s only other exit is a context most CLI paths pass as
+`Background()`. It now routes to the waiting caller as
+`cli.ErrResponseUndecodable`, naming the server restart as the fix. Deploy
+server-first — the fleet rule already said so, and this is the direction it
+actually protects here. On this deployment that is one script plus a WebUI
+hard reload, with no third-party clients — cheaper than the new mux state the
+alternative needs. (`wire-skew-check` proved none of this: it exercises the
+runner↔server HELLO axis, and the runner never decodes this response.)
 
 An earlier version of this list said `send` was "the same verb, different
 meaning". That was written before looking at its flags: `-enter` (a carriage

@@ -969,9 +969,14 @@ format AttachSessionResponse:
     # task record either way. Meaningful only when status == ok; zero
     # otherwise (zero decodes as oneshot, which no attachable task is).
     #
-    # Appending this field is a LAYOUT change on a RESPONSE: old clients
-    # reject the trailing bytes the moment the server is new, so this is a
-    # coordinated fleet restart, not a staged server-first migration.
+    # Appending this field is a LAYOUT change on a RESPONSE, and the skew is
+    # asymmetric — MEASURED 2026-08-21, after first writing the opposite:
+    # an OLD client against a NEW server works (the client decode path is the
+    # tolerant Decode, which leaves trailing bytes unread), while a NEW
+    # client against an OLD server cannot decode the shorter arm. That
+    # failure is routed to the waiting caller as cli.ErrResponseUndecodable;
+    # before that routing it was a silent hang. Deploy server-first, as the
+    # fleet rule already says.
     kind :TaskKind
 
 # WhoAmIRequest carries no fields: the server resolves the caller's identity
