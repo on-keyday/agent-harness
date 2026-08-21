@@ -1854,3 +1854,78 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
   font-size: 10px;
   text-anchor: middle;
 }
+
+/* --- event-stream chat -----------------------------------------------------
+   Lives in the terminal tab beside #terminal; exactly one of the two is shown,
+   chosen by the attached task's kind. Colours follow the same palette the rest
+   of this file uses (#1e1e1e ground, #d4d4d4 text) rather than introducing a
+   second one. */
+.chat-log {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #333;
+  padding: 8px;
+  height: 55vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* Painted by MEANING, the same split the TUI uses: the agent's answer is the
+   only unmuted thing, and the machinery around it recedes. */
+.chat-log .c-text { color: #d4d4d4; }
+.chat-log .c-muted { color: #8a8a8a; }
+.chat-log .c-you { color: #2d5; }
+.chat-log .c-warn { color: #e5c07b; }
+.chat-log .c-err { color: #f14c4c; }
+.chat-log .c-raw { color: #e5c07b; font-style: italic; }
+
+.chat-approval {
+  border: 1px solid #e5c07b;
+  background: #2a2418;
+  padding: 8px;
+  margin-top: 6px;
+}
+.chat-approval h3 { margin: 0 0 4px; font-size: 14px; color: #e5c07b; }
+.chat-approval pre {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  padding: 6px;
+  margin: 4px 0;
+  max-height: 30vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+}
+.chat-approval .chat-approval-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.chat-input-row { display: flex; gap: 6px; margin-top: 6px; align-items: flex-start; }
+.chat-input-row textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* Measured at 390px: without these the padding rides on top of the flex
+     basis and the textarea reaches 396px in a 390px viewport, so the whole
+     page scrolls sideways. The body must never scroll horizontally — wide
+     content scrolls inside its own box (.chat-log, .chat-approval pre). */
+  box-sizing: border-box;
+  max-width: 100%;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border: 1px solid #333;
+  padding: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+.chat-status { color: #8a8a8a; font-size: 12px; margin-top: 4px; min-height: 1.2em; }
+
+@media (max-width: 600px) {
+  .chat-log { height: 45vh; font-size: 12px; }
+  /* Stack: at 390px a row of four controls beside a textarea leaves the
+     textarea unusably narrow. */
+  .chat-input-row { flex-wrap: wrap; }
+  .chat-input-row textarea { flex: 1 0 100%; }
+}

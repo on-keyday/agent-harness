@@ -277,6 +277,9 @@ const POLL_INTERVAL_MS = 5000;
   // The IsSessionKind half has no caller here yet, so it is not defined: an
   // unused predicate is one more thing to keep in step with Go for nothing.
   const isPTYKind = (t) => !!t && t.kind === "Interactive";
+  // The other session kind. Spelled out for the same reason isPTYKind is: a
+  // bare kind === "Stream" reads as an oversight the next reader will "fix".
+  const isStreamKind = (t) => !!t && t.kind === "Stream";
 
   let spawnBase = "subtree"; // scope base radio state (spawn picker)
   // The base's other half. Declared beside spawnBase rather than near its
@@ -303,12 +306,16 @@ const POLL_INTERVAL_MS = 5000;
   //   override re-grants caps on RESUME and is a no-op / misleading otherwise.
   // Keys here MUST match cmd/harness-webui-wasm/main.go's opts.Get("…") names.
   function sessionReq({ repo = "", task = "", host = "", runner = "", agent = "",
-                        claudeArgs = [], resumeTaskId = "", resumeConversation = false }) {
+                        claudeArgs = [], resumeTaskId = "", resumeConversation = false,
+                        eventStream = false }) {
     const req = {
       repo, task, host, agent,
       claudeArgs,
       resumeTaskId,
       resumeConversation,
+      // TaskKind_Stream: structured events instead of a PTY. The wasm side
+      // declines to mount the xterm for it; the chat panel attaches instead.
+      eventStream,
       caps: spawnCaps,
       scope: spawnScope,
       scopeFor: overrideSpecsFrom("spawn"),
@@ -1982,11 +1989,15 @@ const POLL_INTERVAL_MS = 5000;
           // isPTYKind: the buttons below are a preview (an xterm) and a
           // reattach (a PTY splice), neither of which an event stream has.
           const live = isPTYKind(t) && (t.status === "Running" || t.status === "Detached");
+          // The event-stream kind's equivalent of Reattach: no terminal to take
+          // over, but it is driven from the chat — turns and approvals.
+          const liveStream = isStreamKind(t) && (t.status === "Running" || t.status === "Detached");
           const terminal = t && TERMINAL_STATES.has(t.status);
           if (live) {
             mkBtn("🔍 プレビュー", openSessionPreview);
             mkBtn("↪ Reattach", (id) => reattachTo(id));
           }
+          if (liveStream) mkBtn("💬 チャット", (id) => openChatFor(id));
           if (terminal) mkBtn("▶ Resume", resumeTaskById);
           if (!t) { // not in the snapshot (pruned/unknown) — offer both as a fallback
             mkBtn("🔍 プレビュー", openSessionPreview);
@@ -2327,12 +2338,77 @@ const POLL_INTERVAL_MS = 5000;
           }
           break;
         }
+        // The `session` family reaches this surface for the first time here,
+        // and only its `stream` namespace: the lifecycle verbs (new/ls/kill)
+        // have buttons, while these four had no route at all. Recorded as a
+        // partial family rather than pretending the rest exists.
+        case "session": {
+          if (args[0] !== "stream") {
+            appendCmdOutput("session: only the `stream` namespace is available here — new/ls/kill are the buttons above");
+            break;
+          }
+          const verb = args[1] || "";
+          const id = args[2] || chatTaskId;
+          if (!id) { appendCmdOutput("session stream: a task id is required (or open a chat first)"); break; }
+          try {
+            switch (verb) {
+              case "turn": {
+                const text = args.slice(3).join(" ");
+                if (!text) { appendCmdOutput("session stream turn: <id> <text...>"); break; }
+                await window.harness.streamTurn(id, text);
+                appendCmdOutput(`stream turn ${id.slice(0, 8)}: sent`);
+                break;
+              }
+              case "approve": {
+                // The verdict is a bare word, as in the TUI's command line and
+                // for the same reason: this input is whitespace-split with no
+                // flag parser, so a word cannot be silently dropped the way a
+                // misplaced --allow can — and this is the verb where that would
+                // be worst, since it decides the answer.
+                const reqID = args[3] || "";
+                const verdict = args[4] || "";
+                if (!reqID || (verdict !== "allow" && verdict !== "deny")) {
+                  appendCmdOutput("session stream approve: <id> <request-id> allow|deny [reason...]");
+                  break;
+                }
+                await window.harness.streamApprove(id, reqID, verdict, args.slice(5).join(" "), -1);
+                appendCmdOutput(`stream approve ${id.slice(0, 8)} ${reqID}: ${verdict}`);
+                break;
+              }
+              case "interrupt":
+                await window.harness.streamInterrupt(id);
+                appendCmdOutput(`stream interrupt ${id.slice(0, 8)}: sent`);
+                break;
+              case "finish":
+                await window.harness.streamFinish(id);
+                appendCmdOutput(`stream finish ${id.slice(0, 8)}: sent`);
+                break;
+              case "attach":
+                await openChatFor(id);
+                appendCmdOutput(`stream attach ${id.slice(0, 8)}: chat opened`);
+                break;
+              case "requests":
+              case "snapshot":
+                appendCmdOutput(`session stream ${verb}: specified (design §3) but not built yet`);
+                break;
+              default:
+                appendCmdOutput(`unknown session stream verb ${JSON.stringify(verb)}`);
+            }
+          } catch (err) {
+            appendCmdOutput(`session stream ${verb}: ${err.message}`);
+          }
+          break;
+        }
+
         case "help":
           out = [
             "commands:",
             "  submit [--resume-conversation] [--agent <name>] <prompt...>",
             "                            submit task (use repo dropdown / Resume task id; --agent overrides the Agent dropdown)",
             "  list                      refresh the snapshot and echo task rows",
+            "  session stream turn [<id>] <text...>       send a user turn (id defaults to the open chat)",
+            "  session stream approve [<id>] <req-id> allow|deny [reason...]",
+            "  session stream interrupt|finish|attach [<id>]",
             "  refresh (alias: sync)     force a snapshot re-sync",
             "  await-idle <task-id> [--notify | --topic T] [--threshold-ms N]",
             "                            fire when the session's output goes idle (default: prints here on fire; --notify: notification feed + hook)",
@@ -2665,6 +2741,258 @@ const POLL_INTERVAL_MS = 5000;
   });
   ro.observe(document.getElementById("terminal"));
 
+  // --- event-stream chat ---------------------------------------------------
+  //
+  // The driving surface for TaskKind_Stream, living in the terminal tab beside
+  // the xterm: the tab means "the session I am driving", and which renderer it
+  // uses follows the kind. Exactly one of #terminal / #chat is shown.
+  //
+  // It reads the STREAM, not the task log. RenderText drops a request's Input
+  // and agentlog truncates a tool's args at 200 bytes — right for a progress
+  // feed, useless for deciding whether to allow a Write whose content is the
+  // thing at stake. The Input rides the stream verbatim, so this decodes NDJSON
+  // off a cowrite attach (harness.streamStart) and renders it here.
+  //
+  // WRITING never builds a protocol line in JS: harness.streamTurn/Approve/
+  // Interrupt/Finish go through cli.EncodeStreamMsg, the same builder the CLI
+  // and the TUI use, so the three surfaces cannot drift.
+  const chatPanel    = document.getElementById("chat");
+  const chatLog      = document.getElementById("chat-log");
+  const chatApproval = document.getElementById("chat-approval");
+  const chatInput    = document.getElementById("chat-input");
+  const chatStatus   = document.getElementById("chat-status");
+  const terminalEl   = document.getElementById("terminal");
+  const touchKeys    = document.getElementById("touch-keys");
+
+  const CHAT_LINE_LIMIT = 400;   // bounded transcript, like the TUI's
+  let chatTaskId = "";           // "" = no chat attached
+  let chatPending = null;        // the request awaiting an answer, with its Input
+  let chatBusy = false;
+
+  const chatSetStatus = (t) => { if (chatStatus) chatStatus.textContent = t || ""; };
+
+  // showChat swaps the terminal tab between the xterm and the chat. The touch
+  // keys go with the xterm: they send terminal control bytes, which mean
+  // nothing to a session whose input is JSON.
+  const showChat = (on) => {
+    if (chatPanel) chatPanel.hidden = !on;
+    if (terminalEl) terminalEl.style.display = on ? "none" : "";
+    if (touchKeys) touchKeys.style.display = on ? "none" : "";
+  };
+
+  const chatAppend = (text, cls) => {
+    if (!chatLog) return;
+    const atBottom = chatLog.scrollTop + chatLog.clientHeight >= chatLog.scrollHeight - 8;
+    const div = document.createElement("div");
+    div.className = cls || "c-text";
+    div.textContent = text;
+    chatLog.appendChild(div);
+    while (chatLog.childElementCount > CHAT_LINE_LIMIT) chatLog.removeChild(chatLog.firstChild);
+    // Only follow the tail if the reader was already there — scrolling up to
+    // read something must not be yanked back by the next event.
+    if (atBottom) chatLog.scrollTop = chatLog.scrollHeight;
+  };
+
+  // chatRenderEvent is the JS side of streamagent.RenderText. It is a RENDERER,
+  // not a second parser: the shapes come from the adapter protocol's own JSON.
+  // Kept deliberately close to the Go one so the three surfaces read alike.
+  const chatRenderEvent = (ev) => {
+    if (!ev) return;
+    const trunc = (v, n) => {
+      const t = (v === undefined || v === null) ? "" : String(v);
+      return t.length > n ? t.slice(0, n) + "…" : t;
+    };
+    switch (ev.kind) {
+      case "session_start": chatAppend("▶ session " + (ev.text || ""), "c-muted"); break;
+      case "thinking":      chatAppend("· thinking", "c-muted"); chatSetStatus("thinking…"); break;
+      case "tool_start":
+        chatAppend("→ " + (ev.tool || "") + ": " + trunc(ev.args, 200), "c-muted");
+        chatSetStatus("running " + (ev.tool || "") + "…");
+        break;
+      case "tool_end":      chatAppend("← " + trunc(ev.result, 200), "c-muted"); break;
+      case "text":          chatAppend(ev.text || "", "c-text"); break;
+      case "finish":        chatAppend("✓ done", "c-muted"); chatBusy = false; chatSetStatus(""); break;
+      case "error":         chatAppend((ev.warning ? "⚠ " : "✗ ") + (ev.text || ""), ev.warning ? "c-warn" : "c-err"); break;
+      default:              chatAppend(JSON.stringify(ev), "c-muted"); break;
+    }
+  };
+
+  // chatShowApproval renders the pending request: the tool, its input WHOLE
+  // (this is the payload the log drops), and the choices as a button row —
+  // buttons because that is this surface's native control, where the TUI uses
+  // keys.
+  const chatShowApproval = () => {
+    if (!chatApproval) return;
+    if (!chatPending) { chatApproval.hidden = true; chatApproval.replaceChildren(); return; }
+    const req = chatPending;
+    chatApproval.replaceChildren();
+    const h = document.createElement("h3");
+    h.textContent = "⚑ " + (req.tool || "?") + " を実行してよいか  (" + (req.id || "") + ")";
+    chatApproval.appendChild(h);
+    if (req.description) {
+      const d = document.createElement("div");
+      d.className = "notify-meta";
+      d.textContent = req.description;
+      chatApproval.appendChild(d);
+    }
+    if (req.input !== undefined) {
+      const pre = document.createElement("pre");
+      try { pre.textContent = JSON.stringify(req.input, null, 2); }
+      catch (_) { pre.textContent = String(req.input); }
+      chatApproval.appendChild(pre);
+    }
+    const row = document.createElement("div");
+    row.className = "chat-approval-btns";
+    const mk = (label, title, fn) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.textContent = label;
+      if (title) b.title = title;
+      b.addEventListener("click", fn);
+      row.appendChild(b);
+    };
+    mk("✔ 許可", "このツール呼び出しを実行させる", () => chatAnswer("allow", "", -1));
+    mk("✘ 拒否", "実行させない。理由はエージェントに verbatim で届く", () => {
+      const reason = window.prompt("拒否の理由（エージェントがそのまま読みます。空でも可）") ;
+      if (reason === null) return; // cancelled — the request stays pending
+      chatAnswer("deny", reason, -1);
+    });
+    (req.suggestions || []).forEach((sg, i) => {
+      const label = [sg.type, sg.mode, sg.destination ? "(" + sg.destination + ")" : ""].filter(Boolean).join(" ");
+      mk("＋ " + label, "許可した上で、この提案も受け入れる（以後の挙動が変わる標準の変更）",
+         () => chatAnswer("allow", "", i));
+    });
+    chatApproval.appendChild(row);
+    chatApproval.hidden = false;
+  };
+
+  const chatAnswer = async (behavior, message, suggestion) => {
+    if (!chatPending || !chatTaskId) return;
+    const req = chatPending;
+    chatPending = null;
+    chatShowApproval();
+    chatAppend((behavior === "deny" ? "▶ 拒否 " : "▶ 許可 ") + (req.tool || "") +
+               (message ? ": " + message : ""), behavior === "deny" ? "c-err" : "c-you");
+    chatBusy = true;
+    chatSetStatus("resuming…");
+    try {
+      await window.harness.streamApprove(chatTaskId, req.id, behavior, message, suggestion);
+    } catch (err) {
+      chatAppend("✗ 応答を送れませんでした: " + err.message, "c-err");
+    }
+  };
+
+  // The three JS hooks cli/streamchat_wasm.go calls. Globals, matching the
+  // harness_preview* pattern the xterm panes already use.
+  window.harness_streamOpen = (taskID) => {
+    if (taskID !== chatTaskId) return;
+    chatSetStatus("attached");
+  };
+  window.harness_streamLine = (taskID, line) => {
+    if (taskID !== chatTaskId) return;
+    let msg = null;
+    try { msg = JSON.parse(line); } catch (_) {
+      // `session send` can lawfully put a non-protocol line on this stream. A
+      // follower that hides it cannot explain what the adapter does next.
+      chatAppend("(not the protocol) " + line, "c-raw");
+      return;
+    }
+    switch (msg.kind) {
+      case "hello":
+        chatSetStatus("attached · " + (msg.hello && msg.hello.vendor) + " protocol " + (msg.hello && msg.hello.protocol));
+        break;
+      case "event":
+        chatRenderEvent(msg.event);
+        break;
+      case "request":
+        chatPending = msg.request || null;
+        chatBusy = false;
+        chatAppend("⚑ 承認待ち: " + ((msg.request && msg.request.tool) || "?"), "c-warn");
+        chatShowApproval();
+        break;
+      case "exit": {
+        const ex = msg.exit || {};
+        chatAppend("agent exited: code=" + ex.code + (ex.err ? " err=" + ex.err : ""), ex.err ? "c-err" : "c-muted");
+        chatBusy = false;
+        chatSetStatus("session ended");
+        break;
+      }
+      default: break; // client→adapter kinds do not appear on this direction
+    }
+  };
+  window.harness_streamClosed = (taskID, err) => {
+    if (taskID !== chatTaskId) return;
+    chatBusy = false;
+    chatSetStatus(err ? ("stream ended: " + err) : "stream ended");
+  };
+
+  // openChatFor attaches the chat to a stream task and shows it.
+  const openChatFor = async (taskID) => {
+    if (!taskID) return;
+    try { window.harness.streamStop(); } catch (_) { /* nothing attached */ }
+    chatTaskId = taskID;
+    chatPending = null;
+    chatBusy = false;
+    if (chatLog) chatLog.replaceChildren();
+    chatShowApproval();
+    showChat(true);
+    setActiveTab("terminal");
+    if (attachedTask) attachedTask.textContent = `chat: ${taskID}`;
+    // Said explicitly: a chat opened on a freshly RESUMED task shows nothing
+    // for a while — the replay comes from the mux ring and a resume starts a
+    // new one, while the agent reads its own history first. A blank panel there
+    // reads as broken.
+    chatSetStatus("attaching… (resume 直後はエージェントが履歴を読み終えるまで無言のことがあります)");
+    try {
+      await window.harness.streamStart(taskID);
+    } catch (err) {
+      chatSetStatus("attach failed: " + err.message);
+      showError(err);
+    }
+  };
+
+  const closeChat = () => {
+    try { window.harness.streamStop(); } catch (_) { /* already closed */ }
+    chatTaskId = "";
+    chatPending = null;
+    chatShowApproval();
+    showChat(false);
+  };
+
+  const chatSend = async () => {
+    if (!chatTaskId || !chatInput) return;
+    const text = chatInput.value.trim();
+    if (!text) return;
+    chatInput.value = "";
+    chatAppend("you ▶ " + text, "c-you");
+    chatBusy = true;
+    chatSetStatus("");
+    try {
+      await window.harness.streamTurn(chatTaskId, text);
+    } catch (err) {
+      chatAppend("✗ 送信できませんでした: " + err.message, "c-err");
+    }
+  };
+
+  document.getElementById("chat-send")?.addEventListener("click", chatSend);
+  // Enter sends; Shift+Enter is a newline. A textarea is the right control for
+  // free text — and it is the thing the TUI's one-line input cannot do.
+  chatInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); chatSend(); }
+  });
+  document.getElementById("chat-interrupt")?.addEventListener("click", async () => {
+    if (!chatTaskId) return;
+    chatAppend("▶ 中断", "c-you");
+    try { await window.harness.streamInterrupt(chatTaskId); }
+    catch (err) { chatAppend("✗ " + err.message, "c-err"); }
+  });
+  document.getElementById("chat-finish")?.addEventListener("click", async () => {
+    if (!chatTaskId) return;
+    chatAppend("▶ finish（このターンを完走して終了します）", "c-you");
+    try { await window.harness.streamFinish(chatTaskId); }
+    catch (err) { chatAppend("✗ " + err.message, "c-err"); }
+  });
+
   const attachedTask = document.getElementById("attached-task");
   // currentSessionTaskId mirrors the task id of the session the terminal is
   // attached to ("" when none). Kept in lockstep with attachedTask's text by
@@ -2677,12 +3005,16 @@ const POLL_INTERVAL_MS = 5000;
   };
 
   // composeRequest assembles the shared fields from the Compose section.
+  const spawnStreamBox = document.getElementById("spawn-stream");
   const composeRequest = () => sessionReq({
     repo: runnerSelect.value || "",
     host: hostSelect ? (hostSelect.value || "") : "",
     agent: agentSelect ? (agentSelect.value || "") : "",
     claudeArgs: currentClaudeArgs(),
     resumeTaskId: currentResumeTaskID(),
+    // A checkbox, not a typed flag: this decomposes into a control the form
+    // already has a kind for, which is what checklist 34a asks.
+    eventStream: !!(spawnStreamBox && spawnStreamBox.checked),
   });
 
   // --- Cap chips (session-default capability set for new-session spawns) ---
@@ -3317,6 +3649,7 @@ const POLL_INTERVAL_MS = 5000;
   // viewer has no size authority, so it mis-rendered whenever the grids
   // differed, and it cost the browser its own control attach to boot.
   const reattachTo = async (id) => {
+    closeChat();              // a PTY attach takes the terminal tab back
     if (!id) { attachedTask.textContent = "(session id required)"; return; }
     attachEpoch++;            // invalidate any in-flight close handler
     hideQuickReattach();
@@ -3439,9 +3772,18 @@ const POLL_INTERVAL_MS = 5000;
           // the selector is unambiguous.
           // baseReq came from sessionReq, so caps/resumeCapsOverride are already
           // correct; only the picked (runner, profile) overrides differ.
-          const taskID = await window.harness.startInteractive({
-            ...baseReq, host: "", runner: c.cid, agent: c.profile || "",
-          });
+          const retryReq = { ...baseReq, host: "", runner: c.cid, agent: c.profile || "" };
+          const taskID = await window.harness.startInteractive(retryReq);
+          if (retryReq.eventStream) {
+            // The picker is a SECOND request build for the same intent, and it
+            // has to end where the first one would have. Without this an
+            // ambiguous --stream spawn silently became a PTY session: the flag
+            // rode the request correctly and the success path did not know
+            // about it. Exactly checklist 28a's shape — one input surface, two
+            // builds, one of them older than the field.
+            await openChatFor(taskID);
+            return;
+          }
           setActiveTab("terminal");
           term.reset();
           // mirrors the success path used by openInteractive; every
@@ -3488,6 +3830,19 @@ const POLL_INTERVAL_MS = 5000;
     attachEpoch++;            // invalidate any in-flight close handler
     hideQuickReattach();
     term.reset();
+    if (req.eventStream) {
+      // This kind has no PTY: the wasm side opens and detaches rather than
+      // mounting the xterm, and the chat attaches to the stream instead.
+      try {
+        const taskID = await window.harness.startInteractive(req);
+        await openChatFor(taskID);
+      } catch (e) {
+        if (routeAmbiguous(e, req)) return;
+        alert(`startInteractive --stream: ${e.message}`);
+      }
+      return;
+    }
+    closeChat();              // a PTY session takes the tab back from the chat
     try {
       const taskID = await window.harness.startInteractive(req);
       setActiveTab("terminal");

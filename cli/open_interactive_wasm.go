@@ -182,6 +182,17 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 		return taskIDHex, fmt.Errorf("stream %d not visible after OpenInteractive", streamID)
 	}
 
+	if opts.EventStream {
+		// An event-stream session has no PTY to mount, and the browser holds
+		// exactly one xterm: installing this would splice raw NDJSON into the
+		// terminal the operator uses for real PTY sessions. Open, drop the
+		// stream, and let the chat attach on its own — the same open-then-follow
+		// shape the CLI's `session new --stream` uses, and the reason the TUI
+		// refuses the non-detach combination outright.
+		_ = stream.Close()
+		return taskIDHex, nil
+	}
+
 	sessCtx, cancel := context.WithCancel(ctx)
 	session := &InteractiveSession{
 		stream:    stream,

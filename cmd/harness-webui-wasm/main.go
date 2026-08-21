@@ -27,6 +27,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -90,6 +91,12 @@ func main() {
 		"snapshot":           js.FuncOf(harnessSnapshot),
 		"gridSet":            js.FuncOf(harnessGridSet),
 		"previewStart":       js.FuncOf(harnessPreviewStart),
+		"streamStart":        js.FuncOf(harnessStreamStart),
+		"streamStop":         js.FuncOf(harnessStreamStop),
+		"streamTurn":         js.FuncOf(harnessStreamTurn),
+		"streamApprove":      js.FuncOf(harnessStreamApprove),
+		"streamInterrupt":    js.FuncOf(harnessStreamInterrupt),
+		"streamFinish":       js.FuncOf(harnessStreamFinish),
 		"previewStop":        js.FuncOf(harnessPreviewStop),
 		"previewInput":       js.FuncOf(harnessPreviewInput),
 		"cancel":             js.FuncOf(harnessCancel),
@@ -1721,13 +1728,23 @@ func harnessStartInteractive(this js.Value, args []js.Value) any {
 			if cv := opts.Get("cols"); cv.Type() == js.TypeNumber {
 				initCols = uint16(cv.Int())
 			}
-			taskID, err := c.Interactive(rootCtx, repo, cli.SessionOpts{
+			var eventStream bool
+			if ev := opts.Get("eventStream"); ev.Type() == js.TypeBoolean {
+				eventStream = ev.Bool()
+			}
+			sopts := cli.SessionOpts{
 				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 				Caps: caps, Scope: scope, Overrides: overrides,
 				ScopePresent: scopePresent, ResumeCapsOverride: resumeCapsOverride,
 				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
 				InitialRows: initRows, InitialCols: initCols,
-			})
+				EventStream: eventStream,
+			}
+			// c.Interactive itself declines to mount the xterm when
+			// EventStream is set (cli/open_interactive_wasm.go): this kind has
+			// no PTY, and splicing NDJSON into a terminal is what that guard
+			// exists to prevent. JS attaches the chat afterwards.
+			taskID, err := c.Interactive(rootCtx, repo, sopts)
 			if err != nil {
 				var are *cli.AmbiguousRunnerError
 				if errors.As(err, &are) {
@@ -2916,4 +2933,147 @@ func harnessGitQuery(this js.Value, args []js.Value) any {
 	})
 	defer executor.Release()
 	return js.Global().Get("Promise").New(executor)
+}
+
+// --- event-stream chat -----------------------------------------------------
+//
+// The WebUI's driving surface for TaskKind_Stream. Reading is a pump into JS
+// hooks (cli/streamchat_wasm.go); WRITING goes through cli's message builders
+// so the browser never assembles an adapter-protocol line itself — the same
+// rule the CLI and the TUI follow, and the reason all three cannot drift.
+
+// harnessStreamStart cowrite-attaches a stream task and starts the pump.
+//
+//	await harness.streamStart(taskIDHex)
+func harnessStreamStart(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve, reject := promiseArgs[0], promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("streamStart: missing taskIDHex arg"))
+				return
+			}
+			taskID := args[0].String()
+			if err := c.StartStreamChat(rootCtx, taskID); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(taskID)
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessStreamStop closes the chat attach. Synchronous and idempotent, like
+// harnessPreviewStop — a teardown that returns a promise invites a close that
+// has not finished when the next open starts.
+//
+//	harness.streamStop()
+func harnessStreamStop(this js.Value, args []js.Value) any {
+	cli.StopStreamChat()
+	return js.Undefined()
+}
+
+// streamWrite is the shared body of the four write verbs: build the message in
+// cli, hand it to the held attach, and settle the promise.
+func streamWrite(args []js.Value, build func(args []js.Value) (string, streamagent.Msg, error)) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve, reject := promiseArgs[0], promiseArgs[1]
+		go func() {
+			taskID, msg, err := build(args)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if err := cli.SendStreamChat(taskID, msg); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.Undefined())
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// await harness.streamTurn(taskIDHex, text)
+func harnessStreamTurn(this js.Value, args []js.Value) any {
+	return streamWrite(args, func(a []js.Value) (string, streamagent.Msg, error) {
+		if len(a) < 2 {
+			return "", streamagent.Msg{}, errors.New("streamTurn: want (taskIDHex, text)")
+		}
+		return a[0].String(), streamagent.Msg{
+			Kind: streamagent.KindUser,
+			User: &streamagent.UserTurn{Text: a[1].String()},
+		}, nil
+	})
+}
+
+// harnessStreamApprove answers a pending request.
+//
+// suggestion is -1 for "no suggestion"; JS passes a number, and a missing or
+// negative one means the operator answered only this call. The deny message
+// reaches the AGENT verbatim as a failed tool result.
+//
+//	await harness.streamApprove(taskIDHex, requestID, "allow"|"deny", message, suggestionIndex)
+func harnessStreamApprove(this js.Value, args []js.Value) any {
+	return streamWrite(args, func(a []js.Value) (string, streamagent.Msg, error) {
+		if len(a) < 3 {
+			return "", streamagent.Msg{}, errors.New("streamApprove: want (taskIDHex, requestID, behavior[, message, suggestion])")
+		}
+		reqID := a[1].String()
+		if reqID == "" {
+			return "", streamagent.Msg{}, errors.New("approve: a request id is required — it is what makes a stale answer a refusal rather than a misapplied one")
+		}
+		resp := streamagent.Response{ID: reqID}
+		switch a[2].String() {
+		case "allow":
+			resp.Behavior = streamagent.BehaviorAllow
+		case "deny":
+			resp.Behavior = streamagent.BehaviorDeny
+			if len(a) > 3 && a[3].Truthy() {
+				resp.Message = a[3].String()
+			}
+		default:
+			return "", streamagent.Msg{}, fmt.Errorf("approve: behavior must be allow or deny, got %q", a[2].String())
+		}
+		if len(a) > 4 && a[4].Type() == js.TypeNumber {
+			if n := a[4].Int(); n >= 0 {
+				resp.AcceptSuggestion = &n
+			}
+		}
+		return a[0].String(), streamagent.Msg{Kind: streamagent.KindResponse, Response: &resp}, nil
+	})
+}
+
+// await harness.streamInterrupt(taskIDHex)
+func harnessStreamInterrupt(this js.Value, args []js.Value) any {
+	return streamWrite(args, func(a []js.Value) (string, streamagent.Msg, error) {
+		if len(a) < 1 {
+			return "", streamagent.Msg{}, errors.New("streamInterrupt: want (taskIDHex)")
+		}
+		return a[0].String(), streamagent.Msg{
+			Kind: streamagent.KindInterrupt, Interrupt: &streamagent.Interrupt{},
+		}, nil
+	})
+}
+
+// await harness.streamFinish(taskIDHex)
+func harnessStreamFinish(this js.Value, args []js.Value) any {
+	return streamWrite(args, func(a []js.Value) (string, streamagent.Msg, error) {
+		if len(a) < 1 {
+			return "", streamagent.Msg{}, errors.New("streamFinish: want (taskIDHex)")
+		}
+		return a[0].String(), streamagent.Msg{
+			Kind: streamagent.KindFinish, Finish: &streamagent.Finish{},
+		}, nil
+	})
 }

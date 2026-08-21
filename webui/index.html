@@ -74,6 +74,7 @@
       <input id="claude-args-input" type="text" size="60" placeholder='e.g. --add-dir "C:/path"'>
       <div id="caps-row" class="caps-row" aria-label="Capability chips"></div>
       <label class="caps-on-resume-toggle"><input type="checkbox" id="caps-on-resume"> apply caps/scope on resume</label>
+      <label class="caps-on-resume-toggle" title="PTY ではなく構造化イベントのセッションを開く。承認は端末のキー入力ではなくボタンで答える"><input type="checkbox" id="spawn-stream"> event-stream で開く (チャット)</label>
       <div class="scope-block">
         <label>Scope (which tasks those caps may target):</label>
         <div class="scope-base-row" id="spawn-base-row" aria-label="Scope base">
@@ -257,6 +258,22 @@
       <div id="attached-task"></div>
       <button id="reattach-quick" hidden>↪ このセッションに再アタッチ</button>
       <div id="terminal"></div>
+      <!-- The event-stream kind's driving surface. It lives in THIS tab rather
+           than a new one: the tab means "the session I am driving", and which
+           renderer it uses follows the task's kind — the same choice the TUI
+           makes when `r` opens a chat instead of splicing a PTY. An eighth tab
+           would also crowd the mobile tabbar for a kind-specific view. -->
+      <div id="chat" hidden>
+        <div id="chat-log" class="chat-log" aria-live="polite"></div>
+        <div id="chat-approval" class="chat-approval" hidden></div>
+        <div class="chat-input-row">
+          <textarea id="chat-input" rows="2" placeholder="message the agent…"></textarea>
+          <button type="button" id="chat-send">送信</button>
+          <button type="button" id="chat-interrupt" title="走っているターンを中断する（セッションは生きたまま）">⏹ 中断</button>
+          <button type="button" id="chat-finish" title="agent の stdin を閉じる: 実行中のターンは完走して終了する（kill ではない）">⏏ finish</button>
+        </div>
+        <div id="chat-status" class="chat-status"></div>
+      </div>
       <div class="touch-keys" id="touch-keys">
         <button type="button" data-mod="ctrl" id="tk-ctrl">Ctrl</button>
         <button type="button" data-mod="shift" id="tk-shift">Shift</button>
