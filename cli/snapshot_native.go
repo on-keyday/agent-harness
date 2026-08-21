@@ -24,10 +24,10 @@ import (
 // the ring (the controlling client's PTY size); defRows/defCols are the
 // fallback when the session reports no size, in which case a full-screen TUI
 // may mis-render.
-func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vt.Emulator, int, int, error) {
+func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vt.Emulator, string, int, int, error) {
 	captured, rows, cols, ok, err := c.CollectRaw(ctx, taskIDHex, settle)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, "", 0, 0, err
 	}
 	if !ok || rows == 0 || cols == 0 {
 		rows, cols = defRows, defCols
@@ -37,6 +37,21 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 	}
 
 	emu := vt.NewEmulator(int(cols), int(rows))
+	// The OSC 0/2 window title is NOT part of the cell grid, so emu.String()
+	// throws it away — and for an agent it is the single most informative byte
+	// on the wire: Claude Code re-emits it on every spinner tick, which makes it
+	// the one continuously-reasserted signal that a turn is running. x/vt tracks
+	// it internally but exposes no accessor, so the callback is the only route.
+	//
+	// Registered BEFORE the write, or the titles in the replay burst are parsed
+	// with no callback attached and lost. It fires from Write's own goroutine
+	// (the parser calls it inline), so the plain capture below needs no lock —
+	// the drain goroutine reads the emulator's OUTPUT side and never touches it.
+	//
+	// Last one wins: a burst replays every title the session ever set, and only
+	// the newest describes the screen we are about to render.
+	var title string
+	emu.SetCallbacks(vt.Callbacks{Title: func(s string) { title = s }})
 	// Full-screen apps (claude, vim, …) emit terminal QUERIES early in their
 	// output — DA1 (ESC[c), DA2 (ESC[>c), DSR (ESC[5n). x/vt answers these by
 	// WRITING a response to its own output side (readable via emu.Read). If
@@ -46,7 +61,7 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 	// full-screen sessions hit this.) The drain goroutine exits on emu.Close.
 	go io.Copy(io.Discard, emu)
 	emu.Write(captured)
-	return emu, int(cols), int(rows), nil
+	return emu, title, int(cols), int(rows), nil
 }
 
 // SessionSnapshot view-attaches to a detachable interactive session, feeds the
@@ -58,7 +73,7 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 // the replay arrives in a burst, so a short window (e.g. 1.5s) is enough for a
 // static screen.
 func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (string, error) {
-	emu, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	emu, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
 	if err != nil {
 		return taskIDHex, err
 	}
@@ -87,7 +102,7 @@ func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settl
 // flattened text throws away — without re-emitting raw escapes (which an LLM
 // reader can't use). Returns (plainText, styleReport).
 func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (string, string, error) {
-	emu, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	emu, _, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
 	if err != nil {
 		return taskIDHex, "", err
 	}
@@ -139,13 +154,27 @@ func (s ScreenSpan) label() string {
 // Attrs=true it means "asked for, none present". Lines is always exactly Rows
 // long so a span's Row indexes it directly.
 type ScreenSnapshot struct {
-	Task  string       `json:"task"`
-	Rows  int          `json:"rows"`
-	Cols  int          `json:"cols"`
+	Task string `json:"task"`
+	Rows int    `json:"rows"`
+	Cols int    `json:"cols"`
+	// Title is the last OSC 0/2 window title seen in the replayed burst, "" when
+	// the session set none within the captured window. It is reported beside the
+	// grid rather than folded into it because it is not ON the grid, and because
+	// it is the input to the detection rules that read `region: "title"`.
+	//
+	// Empty is a measurement, not a gap: a long-idle session may have set its
+	// title once, long enough ago that the ring dropped it.
+	Title string       `json:"title"`
 	Attrs bool         `json:"attrs"`
 	Color bool         `json:"color"`
 	Lines []string     `json:"lines"`
 	Spans []ScreenSpan `json:"spans"`
+}
+
+// Detect judges this screen with the rules for the named agent, so a caller
+// that already holds a snapshot does not re-capture to ask what state it shows.
+func (s *ScreenSnapshot) Detect(set DetectRuleSet) DetectExplain {
+	return Detect(set, DetectInput{Lines: s.Lines, Title: s.Title})
 }
 
 // SessionSnapshotStructured is SessionSnapshotStyled's data form: same capture,
@@ -156,7 +185,7 @@ type ScreenSnapshot struct {
 // line is still split across rows. Use SessionSnapshotRaw or `session exec` when
 // logical lines matter; this shape trades that for row/column addressability.
 func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (*ScreenSnapshot, error) {
-	emu, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	emu, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +193,7 @@ func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string
 		Task:  taskIDHex,
 		Rows:  rows,
 		Cols:  cols,
+		Title: title,
 		Attrs: withAttrs,
 		Color: withColor,
 		Lines: screenLines(emu.String(), rows),
@@ -290,6 +320,12 @@ func collectSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) [
 	}
 	return spans
 }
+
+// FormatScreenSpans is formatSpans for callers outside this package: the
+// structured path hands back spans, and a caller printing the text form must
+// render them through the SAME projection the text path uses rather than
+// growing a second spelling of the report.
+func FormatScreenSpans(spans []ScreenSpan) string { return formatSpans(spans) }
 
 // formatSpans renders collected spans as the human report, one per line:
 //

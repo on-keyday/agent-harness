@@ -447,25 +447,76 @@ to `none` and unticking the see-only task applied, and the server then reported
 with no sideways scroll — the container-selector CSS from 34a's own fix covers
 the new row without touching it.
 
+### 2026-08-22 (pre-landing) — `session snapshot --detect`: screen → agent state
+
+Follows the herdr read ([[reference_herdr_for_harness_design]]): a rendered
+screen plus the OSC title, judged by priority-ordered rules held as DATA, with
+the evidence for the verdict. The point is `blocked` — waiting on a HUMAN —
+which PTY byte-quiescence cannot tell from thinking, because both are silent.
+
+done:    1 (`--detect` / `--detect-agent` on both snapshot-rendering commands,
+         both usage strings, the `main.go` help block), 2 (one rule format, one
+         loader, one evaluator; the rules are validated AT LOAD so a rule with
+         no condition or an unknown region is a named error rather than a
+         detection bug months later), 10, 24, 29 (the report names the state,
+         the rule, its region and priority, AND the text that rule read — a
+         bare "blocked" would be the count-without-a-target this item exists
+         for), 31, 32, 33 (three refusals: `--raw`+`--detect`, `--detect-agent`
+         without `--detect`, and an unknown agent that NAMES what is
+         available), 36
+omitted: 3, 6, 7 — standing omission, unchanged: the TUI cmdline and the WebUI
+         `runCmd` parse no `session snapshot` at all.
+         8 — the evaluator itself builds for wasm (no build tag), but the
+         browser has no screen to feed it: `cli/snapshot_native.go` is
+         `//go:build !js` and the WebUI renders through xterm.js. Available,
+         unreachable — worth separating from "not built".
+         35 — the README has no `session snapshot` flag reference to extend.
+missed:  —
+
+Item **31 decided two fields.** `unknown` is a first-class state with a
+`fallback_reason`, so "no rule claimed this screen" and "the agent is free"
+cannot be the same answer — the collapse that makes a silent misdetection read
+as a confident verdict. And `title` is reported even when empty, because an
+empty title is a measurement (a long-quiet session's title can age out of the
+replay ring) rather than a missing field.
+
+Item **29 is the whole feature, not a formatting note.** A verdict that says
+only `blocked` is unfalsifiable; one that says which rule fired, on which
+region, at which priority, and prints the text that rule read, can be argued
+with. That is the property worth copying from herdr — not their regexes, which
+we did not take.
+
+**A live run contradicted the fixtures and improved the rules.** Pointing
+`--detect` at THIS session mid-turn returned `working`, and the `--json` explain
+showed THREE rules matching at once: the title spinner (1100), the interrupt
+hint (960) and — the surprise — `prompt_box_idle` (950). Claude keeps its input
+box on screen for the entire turn, so a screen-only idle rule reads a working
+agent as free, and only the priority ordering saves it. The same run surfaced
+`· esc to interrupt` in the footer, which became a second working rule: it does
+not depend on the title, which a replay ring can drop. Both are now fixtures.
+Negative control: the same command against a plain bash pane returns `unknown`
+with `no_rule_matched`, not `idle`.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 6 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. Not-shown, not-kept, not-measured. |
+| 31 (don't hide a value for what it IS) | 8 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. Not-shown, not-kept, not-measured. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 6 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. |
+| 33 (take effect or error) | 9 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
-| 10 (other verb families) | 3 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
+| 10 (other verb families) | 4 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 2 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 5 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
+| 32 (one serializer, round-trip tested) | 6 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
 | 28a (follow the value to the request build) | 4 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
 | 34a (same KIND of control as its neighbours) | 2 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
+| 29 (result messages name the target and the change) | 1 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. |
 
 **Never fired yet:** 21, 26. Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30

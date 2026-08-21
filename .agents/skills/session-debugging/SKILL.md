@@ -77,9 +77,9 @@ harness-cli session send -e --snapshot --style "$ID" '\x1b[B'   # ↓, then look
 ```
 
 `--settle-ms` (default 1500) is the window the program gets to react before the
-render; `--rows/--cols/--style/--color/--json` mean what they mean on
-`session snapshot`, and all six are refused without `--snapshot` rather than
-silently ignored.
+render; `--rows/--cols/--style/--color/--json/--detect` mean what they mean on
+`session snapshot`, and all of them are refused without `--snapshot` rather
+than silently ignored.
 
 When you are waiting for something rather than reading one result, poll for the
 expected render instead of guessing a sleep:
@@ -123,7 +123,7 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
 
 ## Command reference
 
-### `session snapshot [--style] [--color] [--json|--raw] [--rows N --cols N] <id>`
+### `session snapshot [--style] [--color] [--detect] [--json|--raw] [--rows N --cols N] <id>`
 
 Renders the session's current screen to plain text via a headless VT emulator
 (`--rows/--cols` are a fallback if the session reports no size). Note they only
@@ -193,9 +193,34 @@ when the foreground IS a shell.
   actual bytes when the rendered text looks wrong. Not combinable with
   `--style`/`--color`/`--json` (those describe the VT render; this is a
   different artifact); `--rows/--cols` are ignored.
+- **`--detect`** judges what STATE the screen shows instead of leaving you to
+  read it: `working` / `blocked` / `idle` / `unknown`, plus the rule that
+  decided and the text that rule read. **`blocked` means waiting on a HUMAN** —
+  an approval, a menu, a question — which is the case PTY quiescence cannot
+  tell from thinking, since both are silent. `--detect-agent NAME` picks the
+  rule set (default `claude`); with `--json` the full per-rule explain rides
+  along under `detect`.
+
+  Two things about the verdict are worth knowing before you act on one:
+
+  - **`unknown` is not `idle`.** It means no rule claimed the screen (a plain
+    shell, an agent with no rules, a screen nobody has met yet) and it comes
+    with a `fallback_reason` saying so. Treating it as "free" is the mistake
+    the state exists to prevent.
+  - **Several rules can match at once, and the highest priority wins.** That is
+    not tie-breaking, it is the design: Claude keeps its input box on screen
+    for the WHOLE turn, so the idle rule fires on a working session and has to
+    lose. If a verdict looks wrong, read the `--json` rule list — every rule
+    reports whether it matched and what region text it read, so you can see
+    which one took it and why the others did not.
 - The grid is **width-wrapped**: a long line (a SID, a URL) is split across
   rows, so a grep can miss it. `--json` does NOT fix this — `lines` is the same
   wrapped grid. For greppable logical lines use `exec` (below) or `--raw`.
+- `--json` also carries **`title`**: the session's last OSC window title, which
+  is NOT on the grid. Agents put their turn state there (Claude a spinner glyph
+  while working), which is why it is the highest-priority detection signal —
+  and why an empty `title` is a measurement rather than a gap, since a
+  long-quiet session's title may have aged out of the replay ring.
 
 ### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--json]] <id> <text>...`
 
@@ -266,7 +291,10 @@ stay before `<id>`.
 
 ## Diagnosing a stuck claude worker
 
-`snapshot` first — the screen tells you which case you're in:
+`snapshot --detect` first: it names the case and the screen shows the detail.
+`blocked` is the first two cases below, `working` the third. A verdict of
+`unknown` means the rules did not recognise the screen — NOT that the worker
+is free.
 
 - **Permission prompt** (worker spawned without auto mode) → answer it:
   `send "$ID" 1` (menu digits usually act alone; if it still sits there,

@@ -1,0 +1,73 @@
+[
+  {
+    "agent": "claude",
+    "version": "2026.08.22.1",
+    "rules": [
+      {
+        "id": "title_spinner_working",
+        "state": "working",
+        "region": "title",
+        "priority": 1100,
+        "note": "Claude Code re-emits its window title on every spinner tick, so a spinner glyph there is POSITIVE evidence of a running turn and is re-asserted continuously — the one signal that survives a replay ring dropping older output. Half-circles are the current spinner; braille covers older builds. Verified live 2026-08-22: the title read '◐ Reply with pong' / '◑ Reply with pong' across a turn.",
+        "regex": ["^[\\x{25D0}-\\x{25D3}\\x{2800}-\\x{28FF}] "]
+      },
+      {
+        "id": "interrupt_hint_working",
+        "state": "working",
+        "region": "bottom_non_empty(2)",
+        "priority": 960,
+        "note": "The footer offers a way to ABANDON the turn only while one is running. It matters because it does not depend on the title, which a replay ring can drop — and because it must outrank prompt_box_idle: Claude keeps its input box on screen THROUGHOUT a turn, so a screen-only idle rule reads a working session as free. Observed live 2026-08-22 on a mid-turn session whose footer read '⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt'.",
+        "contains": ["esc to interrupt"]
+      },
+      {
+        "id": "permission_prompt_blocked",
+        "state": "blocked",
+        "region": "after_last_rule",
+        "priority": 980,
+        "note": "A tool-permission prompt. Outranks the idle prompt-box rule deliberately: the dialog draws its own option list with the same '❯' the input box uses, so if it is ever framed by two dividers the idle rule would fire on it. Priority makes that harmless instead of relying on the not-guards alone. Verified live 2026-08-22 against a Bash approval.",
+        "contains": ["do you want to proceed?", "esc to cancel"],
+        "any": [
+          { "line_regex": ["(?i)^\\s*❯?\\s*[0-9]+\\.\\s*yes\\b"] },
+          { "line_regex": ["(?i)^\\s*❯?\\s*[0-9]+\\.\\s*no\\b"] }
+        ]
+      },
+      {
+        "id": "choice_dialog_blocked",
+        "state": "blocked",
+        "region": "after_last_rule",
+        "priority": 970,
+        "note": "A numbered choice dialog that is not a tool permission — the trust prompt at startup is the one verified live 2026-08-22 ('Quick safety check … ❯ 1. Yes, I trust this folder / 2. No, exit / Enter to confirm · Esc to cancel'). Kept separate from the permission rule so a verdict names which kind of question is waiting.",
+        "contains": ["esc to cancel"],
+        "any": [
+          { "contains": ["enter to confirm"] },
+          { "contains": ["enter to select"] }
+        ],
+        "all": [
+          { "line_regex": ["(?i)^\\s*❯?\\s*[0-9]+\\.\\s+\\S"] }
+        ]
+      },
+      {
+        "id": "prompt_box_idle",
+        "state": "idle",
+        "region": "prompt_box_body",
+        "priority": 950,
+        "note": "An input box whose interior is just the prompt marker. The box is found as the second divider from the bottom, so a screen showing a dialog instead of an input box yields an empty region and this cannot fire. The not-guards are the second line of defence for the case where a dialog IS framed like a box; the blocked rules outrank this one for the same reason. Verified live 2026-08-22.",
+        "line_regex": ["^\\s*❯"],
+        "not": [
+          { "contains": ["esc to cancel"] },
+          { "contains": ["enter to confirm"] },
+          { "contains": ["enter to select"] }
+        ]
+      },
+      {
+        "id": "title_idle_weak",
+        "state": "idle",
+        "region": "title",
+        "priority": 250,
+        "note": "DELIBERATELY the lowest priority in this file, and the reason the priorities are not just 'more specific wins'. Claude shows this same glyph while BLOCKED on a human — measured 2026-08-22: the title read '✳ Reply with pong' throughout a permission prompt. It is the absence of a spinner, not the presence of readiness, so every screen-based rule must be able to outrank it. Never raise this number."
+        ,
+        "regex": ["^\\x{2733} "]
+      }
+    ]
+  }
+]
