@@ -305,6 +305,15 @@ func (a *claudeAdapter) pumpNeutralIn(r io.Reader) error {
 	rd := NewReader(r)
 	for {
 		m, err := rd.Next()
+		if errors.Is(err, ErrBadLine) {
+			// One bad line is one bad line. Reported so a client is not left
+			// wondering, and then we keep reading: `session send` puts raw
+			// bytes on this stream, so anything at all can arrive, and ending
+			// the task for it would make that verb destructive.
+			_ = a.w.Event(Event{Kind: EventError, Warning: true,
+				Text: "ignored a line that is " + err.Error()})
+			continue
+		}
 		if err != nil {
 			return err
 		}

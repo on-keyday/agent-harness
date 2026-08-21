@@ -3,6 +3,7 @@ package streamagent
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -23,6 +24,16 @@ type Writer struct {
 }
 
 func NewWriter(w io.Writer) *Writer { return &Writer{w: w} }
+
+// WriteRaw writes bytes that are NOT a Msg. It exists for the one caller that
+// needs to reproduce what a client can actually put on this stream:
+// `session send` writes raw bytes, so anything at all can arrive here.
+func (w *Writer) WriteRaw(b []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, err := w.w.Write(b)
+	return err
+}
 
 func (w *Writer) Write(m Msg) error {
 	m.V = ProtocolVersion
@@ -47,16 +58,22 @@ func (w *Writer) User(t UserTurn) error     { return w.Write(Msg{Kind: KindUser,
 func (w *Writer) Hello(h Hello) error       { return w.Write(Msg{Kind: KindHello, Hello: &h}) }
 func (w *Writer) Exit(e Exit) error         { return w.Write(Msg{Kind: KindExit, Exit: &e}) }
 
+// ErrBadLine wraps a line that is not this protocol. A caller that keeps
+// reading past it treats one bad line as one bad line; a caller that stops is
+// choosing to end the stream for it.
+var ErrBadLine = errors.New("not the protocol")
+
 // DecodeMsg parses one NDJSON line. It exists so a consumer that already has
 // line boundaries -- the runner's Auditor tap, which is handed raw payload
 // chunks rather than a stream -- can decode without standing up a Reader.
 func DecodeMsg(line []byte) (Msg, error) {
 	var m Msg
 	if err := json.Unmarshal(line, &m); err != nil {
-		return Msg{}, fmt.Errorf("malformed line: %w", err)
+		return Msg{}, fmt.Errorf("%w: %v", ErrBadLine, err)
 	}
 	if m.V != 0 && m.V != ProtocolVersion {
-		return Msg{}, fmt.Errorf("protocol version %d, this build speaks %d", m.V, ProtocolVersion)
+		return Msg{}, fmt.Errorf("%w: protocol version %d, this build speaks %d",
+			ErrBadLine, m.V, ProtocolVersion)
 	}
 	return m, nil
 }
@@ -70,11 +87,16 @@ func NewReader(r io.Reader) *Reader {
 	return &Reader{sc: sc}
 }
 
-// Next returns the next message. io.EOF marks a clean end of stream. A line
-// that does not parse is an error the CALLER decides about: on the adapter's
-// own input a malformed line is a protocol violation worth failing on, while
-// the agent's output gets the opposite treatment (see decodeAgentLine), and
-// this type should not make that choice for both.
+// Next returns the next message. io.EOF marks a clean end of stream, and a read
+// failure is returned as-is. A line that does not PARSE is reported through
+// ErrBadLine, which the caller can recognise and continue past — it is not a
+// reason to stop reading the stream.
+//
+// An earlier version made a malformed line end the stream, on the reasoning
+// that the adapter's own input is a protocol the far side controls. It is not:
+// `session send` writes RAW BYTES, so an operator typing text — the thing that
+// verb means for the PTY kind — arrives here as a malformed line and used to
+// kill the task. The far side of this stream is a person as often as a program.
 func (r *Reader) Next() (Msg, error) {
 	for {
 		if !r.sc.Scan() {

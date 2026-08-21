@@ -452,3 +452,55 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// A client writing something that is not the protocol must not END the
+// session. `session send` writes RAW BYTES to the stream, so the natural
+// operator action for the PTY kind -- typing text -- arrives here as a
+// malformed line. Killing the task for it makes the same verb quietly
+// destructive in one of the two kinds.
+//
+// The first version of this test deadlocked instead of failing, which is the
+// defect showing itself: the follow-up write blocked forever because the
+// adapter had stopped reading its input entirely. The writes happen off the
+// read loop now so the failure is an assertion rather than a hang.
+func TestAMalformedClientLineDoesNotEndTheSession(t *testing.T) {
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	// Echoes one event per line it reads, so a turn that gets through is
+	// visible ON THE STREAM rather than in a file written at teardown.
+	agent := fakeAgent(t, argvFile,
+		"while IFS= read -r line; do "+
+			`printf '{"type":"assistant","message":{"content":[{"type":"text","text":"echoed"}]}}\n'`+
+			"; done\n")
+
+	var sawComplaint, sawEchoAfter bool
+	var wrote sync.Once
+	_, _ = driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
+		if m.Kind == KindHello {
+			// Off the read loop: a blocked write here would stop the loop that
+			// observes the result.
+			wrote.Do(func() {
+				go func() {
+					_ = in.WriteRaw([]byte("hello there\n")) // what an operator types
+					_ = in.User(UserTurn{Text: "after the garbage"})
+				}()
+			})
+			return false
+		}
+		if m.Kind == KindEvent && m.Event.Kind == EventError {
+			sawComplaint = true
+		}
+		if m.Kind == KindEvent && m.Event.Kind == EventText && m.Event.Text == "echoed" {
+			sawEchoAfter = true
+			return true // done: the session survived the garbage
+		}
+		return false
+	})
+
+	if !sawEchoAfter {
+		t.Error("a user turn sent AFTER a malformed line never reached the agent: " +
+			"one line of non-protocol input ended the session")
+	}
+	if !sawComplaint {
+		t.Error("the malformed line was swallowed without a word")
+	}
+}

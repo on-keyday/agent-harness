@@ -495,3 +495,51 @@ That splits `finish` in a way entry 9 did not see: **stdin close is gentler**
 runner injects `.claude/settings.json`, so choosing stdin close means this kind
 is the one where a configured SessionEnd hook never fires. Left for the
 operator to decide rather than settled here.
+
+## 16. `session send` writes RAW BYTES, and that broke two of my claims
+
+Asked whether `approve` is special, then whether `send` could forge one by
+writing NDJSON, then whether `send` can put non-NDJSON on the stream. Each
+answer was worse than the last.
+
+**`approve` is not a separate channel.** `KindResponse` and `KindUser` are two
+arms of one `switch` in the adapter's input pump — same stream, same direction.
+The "damming" is the AGENT, which blocks synchronously until its
+`control_response` arrives; the transport keeps flowing. So the case for giving
+`approve` its own verb is not the transport. It is that a pending request is
+STATE (a user turn leaves none), and that §4's notify-when-unattended default
+means someone must be able to answer without attaching.
+
+**And `send` can forge one.** `Client.SessionSend` does
+`stream.Stdin().Write(data)` — raw bytes. So
+`session send <id> '{"kind":"response",...}'` is a valid approval. That is not
+a privilege hole: `send` and `approve` are the same capability under the same
+scope, deliberately (§3). What it does mean is that `approve`'s id check is
+ADVISORY, and that "may send turns but may not approve" cannot be built by
+splitting verbs — it would need the capability bit §3 declined.
+
+One thing survives that unharmed: the runner's tap reads the STREAM, not the
+verb, so a forged response still clears `pending` correctly. State derived from
+the wire rather than from the caller is why.
+
+**Then the real defect.** Raw bytes mean an operator can write anything, and
+the adapter's reader treated a malformed line as fatal — I had written a comment
+justifying it ("on the adapter's own input a malformed line is a protocol
+violation worth failing on"). But the far side of this stream is a person as
+often as a program: `session send <id> "hello"`, which is exactly what that verb
+MEANS for the PTY kind, would have killed an event-stream task.
+
+The test for it deadlocked before it failed, which is the defect showing itself
+from the other side: the follow-up write blocked forever because the adapter had
+stopped reading its input entirely. Rewritten so the writes happen off the read
+loop, it fails as an assertion.
+
+Fixed: `ErrBadLine` is a sentinel the pump recognises and continues past, after
+reporting it as a warning event. Negative-controlled by restoring the fatal
+path, which reproduces "one line of non-protocol input ended the session".
+
+**Still to decide, and now clearly a decision rather than a detail:** §3 says
+`send` for this kind means "a user turn", which implies the CLIENT wraps the
+text rather than writing raw bytes. If it does, the forging path above closes
+on its own and this becomes moot; if it does not, `send` stays a raw pipe into
+the adapter and `approve` stays a convenience over it.
