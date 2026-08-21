@@ -3,6 +3,8 @@ package streamagent
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -119,6 +121,7 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 	var closeOnce sync.Once
 	closeAgentIn := func() { closeOnce.Do(func() { _ = stdin.Close() }) }
 	a := &claudeAdapter{w: w, agentIn: stdin, agentInClose: closeAgentIn,
+		nonce:   newRunNonce(),
 		pending: map[string]string{}, interrupts: map[string]struct{}{}}
 
 	_ = w.Hello(Hello{
@@ -207,7 +210,36 @@ type claudeAdapter struct {
 	// against for the other direction.
 	interrupts map[string]struct{}
 	seq        int
-	finished   bool
+	// nonce makes a request id unique across RUNS, not just within one. seq is
+	// per-process, so a resumed task restarts at 1 — and the id is precisely
+	// the staleness guard (design §3): without this, an `approve req-1` an
+	// operator was holding from before a resume answers a DIFFERENT request.
+	// Observed live on 2026-08-21: a fresh session's first approval really is
+	// `req-1`, so the collision needs no imagination.
+	nonce    string
+	finished bool
+}
+
+// newRunNonce is the per-run half of a request id. Random rather than a
+// timestamp: two adapters can start inside one clock tick.
+func newRunNonce() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// A degenerate nonce is worse than a random one and better than none:
+		// it still separates this run from every run that got randomness, and
+		// it says in the id itself that this one did not.
+		return "norand"
+	}
+	return hex.EncodeToString(b[:])
+}
+
+// mintRequestID returns the next approval id for this run. It takes a.mu
+// itself; callers must not hold it.
+func (a *claudeAdapter) mintRequestID() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.seq++
+	return "req-" + a.nonce + "-" + strconv.Itoa(a.seq)
 }
 
 func (a *claudeAdapter) decoder() agentlog.Decoder {
@@ -294,9 +326,8 @@ func (a *claudeAdapter) handleControlRequest(v vendorLine) bool {
 		return true
 	}
 
+	id := a.mintRequestID()
 	a.mu.Lock()
-	a.seq++
-	id := "req-" + strconv.Itoa(a.seq)
 	a.pending[id] = v.RequestID
 	a.mu.Unlock()
 

@@ -626,3 +626,25 @@ func TestATurnAfterFinishIsReported(t *testing.T) {
 		t.Errorf("a turn written after finish vanished silently; kinds %v", kinds(msgs))
 	}
 }
+
+func TestRequestIDsCarryAPerRunNonce(t *testing.T) {
+	// Two adapters standing for a task and its resume. Ids must not collide,
+	// or a stale `approve req-1` answers a different request (design §3: the
+	// id IS the staleness guard, and a per-process counter restarts at 1).
+	a := &claudeAdapter{nonce: newRunNonce()}
+	b := &claudeAdapter{nonce: newRunNonce()}
+	if a.nonce == b.nonce {
+		t.Fatal("two runs minted the same nonce")
+	}
+	first := a.mintRequestID()
+	second := a.mintRequestID()
+	if first == second {
+		t.Fatalf("ids repeat within one run: %q", first)
+	}
+	if !strings.HasPrefix(first, "req-"+a.nonce+"-") {
+		t.Errorf("id %q does not carry the run nonce", first)
+	}
+	if b.mintRequestID() == first {
+		t.Error("the second run's first id collides with the first run's")
+	}
+}
