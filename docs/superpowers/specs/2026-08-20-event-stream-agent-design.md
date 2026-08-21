@@ -793,6 +793,85 @@ One observation from the smoke run that the plan should not rediscover:
 surface shows "Write starting" and then blocks. Count `pending` from requests,
 never from tool events.
 
+## Amendment 2026-08-21b: the write verbs, and a TUI chat screen for the kind
+
+**Scope DECIDED (operator, 2026-08-21):** `turn` + `approve` (allow / deny with
+a reason / accept a suggestion) + `interrupt` + `finish`, landing together with
+a TUI chat screen. `--modify` is DEFERRED — the wire already carries
+`UpdatedInput`, so it is additive, and §3's audit consequence ("Claude sees the
+result but isn't told you changed anything") is owed when it lands, not now.
+`requests` and `snapshot` stay unbuilt. **WebUI is DEFERRED to the increment
+after the TUI**, at the operator's direction — a follow-up, not the omission the
+previous amendment recorded.
+
+Why `--modify` is not in the first cut, stated so it is not re-litigated as an
+oversight: kscale's chat screen (below) has an edit step because its tool
+arguments are `{"host":"…"}`-sized. Claude's `input` routinely carries a
+`Write`'s whole content, and editing that in a one-line text input is not a
+feature, it is a trap.
+
+**The chat screen reads the STREAM, not the task log — and that is forced, not
+stylistic.** §3 already says the log is a rendered progress feed. Concretely:
+`streamagent.RenderText` renders a request as `⏸ approval needed: <tool>
+(<id>)` and **drops `Input` entirely**, and `agentlog.Render` truncates tool
+args and results at `maxFieldBytes = 200`. So every surface that reads the log
+— `logs`, the TUI logs pane, the WebUI log view, and `session stream attach`
+itself — shows an operator a decision they cannot see the subject of. The
+`Input` exists verbatim on the stream (`Request.Input`, kept as
+`json.RawMessage` for exactly this), so the chat holds its own **cowrite**
+attach and decodes the NDJSON, the way `tui/pane_streamer.go` already reads a
+grid pane. Cowrite is read AND write, so one attach serves both directions.
+
+Two things follow that change the handoff's dependency order:
+
+- **`stream requests` is NOT a prerequisite for `approve`.** It was listed as
+  one because the pending table lives runner-side and reaching it needs
+  `pending=N`'s new runner→server message. A surface reading the stream needs
+  none of that.
+- **Do not "fix" the 200-byte cap.** It is correct for the log, whose payloads
+  are unbounded, and the chat is exempt by reading the stream instead. Raising
+  it makes the log heavier without making it a transcript, and still cuts the
+  case that matters.
+
+**Request-id nonce (was handoff #3, now a prerequisite of `approve`).** The
+adapter mints `"req-" + strconv.Itoa(a.seq)` from a per-process counter
+(`runner/streamagent/claude.go`), so a resume restarts at `req-1` and a stale
+`approve req-1` answers a different request — §3 says the id IS the staleness
+guard. Fix inside the adapter: one nonce per run, ids `req-<nonce>-<n>`. No
+wire change.
+
+**Measured 2026-08-21, on a live preset-launched runner** (both were assumed
+before they were run):
+
+- `session send -e '<json>\n'` drives a real user turn end to end. It is the
+  stopgap the write verbs replace, and it confirms the one-NDJSON-line-per-write
+  shape works over the existing cowrite path. The `\n` is the operator's to
+  supply; `--enter` appends a CARRIAGE RETURN, which is the PTY semantic and
+  does not flush the adapter's line buffer.
+- **A pending request cannot be evicted from the ring while it is pending.**
+  This retracts a concern raised against §4's block-indefinitely default.
+  `RingBuffer.Append` evicts from the FRONT (oldest) under a 1 MiB budget and
+  always keeps one frame; a pending request is the newest, and the agent is
+  blocked, so nothing is producing the 1 MiB that would push it out. An
+  operator who returns hours later still reads it with `session snapshot --raw`.
+
+**The TUI screen.** A full-screen overlay beside `GridModel` (same
+`IsOpen`/`Update`/`View`/`SetSize` wiring), entered with `r` on a live stream
+task — which today falls through to a hint. Borrowed from kscale's
+`cmd/katui/chat.go`, which solved this shape already: a `you ▶` text input, a
+bounded transcript ring, an elapsed-seconds ticker so a minutes-long turn
+visibly advances, activity lines rendered muted against a primary answer line,
+and an approval that freezes the transcript and offers its choices as keys.
+Two of its hard-won details carry over verbatim — every exit path from a
+sub-mode must restore the normal prompt (a leftover editor otherwise sticks as
+the prompt forever), and in-progress text is committed to the transcript at
+step boundaries rather than only on a finalizing event, or a cancelled turn
+loses what was streamed.
+
+Not borrowed: its `edit` step (see above), and its client-side tool execution —
+kscale runs probes on the frontend, while every tool here runs in the agent's
+own worktree.
+
 ## Not in this design
 
 - Replacing the PTY kind. It stays exactly as it is; this is a third kind
