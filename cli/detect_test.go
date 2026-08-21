@@ -70,6 +70,18 @@ const fxWorkingWithInputBox = `
 ──────────────────────────────────────────────────────────
   ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt`
 
+// Shell mode. Typing '!' REPLACES the '❯' marker, so a rule that knows only
+// '❯' reports unknown for a session that is plainly waiting for input. Rebuilt
+// from an operator's own --detect --json output, whose prompt_box_body read
+// "! " and whose after_last_rule read "  ! for shell mode".
+const fxShellModePromptBox = `
+● AGENTS.md    THIRD-PARTY-NOTICES.md  docs
+
+──────────────────────────────────────────────────────────
+!
+──────────────────────────────────────────────────────────
+  ! for shell mode`
+
 // A plain shell — no agent UI at all.
 const fxBashPrompt = `[kforfk@host workspace]$ echo hi
 hi
@@ -139,6 +151,14 @@ func TestDetectRealScreens(t *testing.T) {
 			in:    DetectInput{Lines: lines(fxIdlePromptBox), Title: "◐ Reply with pong"},
 			state: DetectWorking,
 			rule:  "title_spinner_working",
+		},
+		{
+			// Operator-reported: this screen returned unknown, because the
+			// shell-mode marker replaces the one the rule knew.
+			name:  "shell mode is still an input box",
+			in:    DetectInput{Lines: lines(fxShellModePromptBox)},
+			state: DetectIdle,
+			rule:  "prompt_box_idle",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

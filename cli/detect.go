@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Agent-state detection: a pure function from a rendered screen to a lifecycle
@@ -340,6 +341,18 @@ func region(in DetectInput, spec string) string {
 	switch kind {
 	case regionTitle:
 		// NOT part of the grid: it arrives from OSC 0/2 on the byte stream.
+		//
+		// A title that is not valid UTF-8 is a PARTIAL capture, not a title.
+		// CollectRaw cuts the stream when its settle timer expires, wherever the
+		// reader happens to be, so a title can be captured mid-character — an
+		// operator report showed a one-byte title of "\xe2", the lead byte of
+		// the spinner glyph. Matching a rule against that fragment could only
+		// ever produce a wrong answer with a straight face, so it reads as
+		// absent instead. Rules that need the title then simply do not fire, and
+		// the screen-side rules decide.
+		if !utf8.ValidString(in.Title) {
+			return ""
+		}
 		return in.Title
 	case regionWholeScreen:
 		return strings.Join(in.Lines, "\n")

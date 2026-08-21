@@ -113,6 +113,63 @@ func TestCollectSpansIsEmptyNotNilOnACleanScreen(t *testing.T) {
 	}
 }
 
+// The title is read by scanning the captured bytes because x/vt's Title
+// callback truncates at the first multi-byte character. This is the byte
+// sequence that exposed it, lifted from a live capture: the full 36-byte title
+// is present and BEL-terminated, and the callback still reports one byte.
+const realTitleOSC = "\x1b]0;✳ herdr agent harness 参考要素\x07"
+
+func TestLastOSCTitleReadsWhatTheCallbackTruncates(t *testing.T) {
+	got := lastOSCTitle([]byte("\x1b[?25h" + realTitleOSC + "\x1b[?25l\x1b[2D"))
+	want := "✳ herdr agent harness 参考要素"
+	if got != want {
+		t.Fatalf("lastOSCTitle = %q, want %q", got, want)
+	}
+
+	// The negative control, so this test keeps meaning something: the library
+	// path it replaced still gets it wrong. If this ever starts passing, x/vt
+	// was fixed and the scan could in principle go — check before removing it.
+	emu := vt.NewEmulator(80, 24)
+	var viaCallback string
+	emu.SetCallbacks(vt.Callbacks{Title: func(s string) { viaCallback = s }})
+	emu.Write([]byte(realTitleOSC))
+	_ = emu.Close()
+	if viaCallback == want {
+		t.Logf("x/vt's Title callback now returns the whole title (%q); the byte scan is no longer compensating for it", viaCallback)
+	} else if len(viaCallback) >= len(want) {
+		t.Errorf("callback returned %q — neither the old truncation nor the right answer; re-check the assumption", viaCallback)
+	}
+}
+
+func TestLastOSCTitle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"none", "plain text\r\n", ""},
+		{"osc 2 as well as 0", "\x1b]2;from two\x07", "from two"},
+		{"ST terminator", "\x1b]0;via st\x1b\\", "via st"},
+		{"last one wins", "\x1b]0;first\x07junk\x1b]0;second\x07", "second"},
+		// A capture is cut on a timer, so the tail can be half a sequence. Half
+		// a title is worse than none: a rule would match half a glyph.
+		{"unterminated tail is ignored", "\x1b]0;good\x07\x1b]0;cut off", "good"},
+		{"an ESC ends the scan of an unterminated one", "\x1b]0;good\x07\x1b]0;cut\x1b[0m", "good"},
+		// OSC 1 sets the ICON name, not the window title.
+		{"osc 1 is not a title", "\x1b]0;title\x07\x1b]1;icon\x07", "title"},
+		{"other osc kinds ignored", "\x1b]0;title\x07\x1b]52;c;Zm9v\x07", "title"},
+		{"invalid utf-8 payload is dropped", "\x1b]0;ok\x07\x1b]0;\xe2\x07", "ok"},
+		{"empty title is a title", "\x1b]0;x\x07\x1b]0;\x07", ""},
+		{"no command digits", "\x1b];nope\x07", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := lastOSCTitle([]byte(tc.in)); got != tc.want {
+				t.Errorf("lastOSCTitle(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // Spans carry absolute grid rows, so Lines must be exactly Rows long or
 // Lines[span.Row] is a bounds error on the reader's side. The emulator trims
 // trailing blank rows, which is the case that would otherwise break it.

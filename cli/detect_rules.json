@@ -51,8 +51,8 @@
         "state": "idle",
         "region": "prompt_box_body",
         "priority": 950,
-        "note": "An input box whose interior is just the prompt marker. The box is found as the second divider from the bottom, so a screen showing a dialog instead of an input box yields an empty region and this cannot fire. The not-guards are the second line of defence for the case where a dialog IS framed like a box; the blocked rules outrank this one for the same reason. Verified live 2026-08-22.",
-        "line_regex": ["^\\s*❯"],
+        "note": "An input box, identified by its prompt marker. The box is found as the second divider from the bottom, so a screen showing a dialog instead of an input box yields an empty region and this cannot fire. The not-guards are the second line of defence for the case where a dialog IS framed like a box; the blocked rules outrank this one for the same reason. Verified live 2026-08-22. '!' is the SHELL-MODE marker: typing '!' replaces the '❯' with it, and the operator hit exactly that — a box reading '! ' with '! for shell mode' below reported unknown, because only '❯' was listed. Typed text alone does not need a case ('❯ hello' still starts with the marker); only a mode prefix replaces it. '/' (commands) and '@' (file paths) are NOT listed because their rendering has not been observed — adding them on the assumption that they behave like '!' is how a rule set starts matching screens nobody has seen.",
+        "line_regex": ["^\\s*[❯!]"],
         "not": [
           { "contains": ["esc to cancel"] },
           { "contains": ["enter to confirm"] },

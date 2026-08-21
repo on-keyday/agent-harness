@@ -497,6 +497,41 @@ not depend on the title, which a replay ring can drop. Both are now fixtures.
 Negative control: the same command against a plain bash pane returns `unknown`
 with `no_rule_matched`, not `idle`.
 
+### 2026-08-22 (pre-landing, follow-up) — the detection defects the operator found within the hour
+
+Two, from one pasted `--detect --json`. Both were caught by the explain output
+itself, which is the case FOR that output: the verdict said `unknown`, and the
+per-rule evidence said which region each rule had read, so the diagnosis started
+from data rather than from a re-run.
+
+done:    2, 29, 31, 32, 33 — unchanged shapes, re-exercised.
+missed:  — but recorded because the FEATURE shipped two defects a live operator
+         hit immediately, on a change whose own walk was clean.
+
+**1. The window title came back as one byte.** Chased the wrong way first: the
+capture is cut on a settle timer, so a mid-sequence tail looked like the answer.
+A probe killed it — x/vt only fires its Title callback on a TERMINATED sequence,
+and the raw capture held the full 36-byte title, BEL-terminated, a kilobyte from
+the end. Isolating the sequence found the real cause: **x/vt's Title callback
+truncates at the first multi-byte character**, unconditionally (tried with no
+prefix, ASCII text, UTF-8 text, an earlier ASCII title, an earlier UTF-8 title).
+Now the title is scanned out of the captured bytes instead, with a test that
+asserts the library path is STILL wrong — so if x/vt is fixed, the scan's reason
+for existing is visible rather than folklore.
+
+**2. `!` is a prompt marker.** Typing `!` replaces Claude's `❯` with it (shell
+mode), so the idle rule missed a session plainly waiting for input. The
+operator's one-line correction — "`!` does not appear unless I type it" —
+converted this from "a hint row cycles" (my guess, wrong) into a marker-set gap.
+`/` and `@` are deliberately NOT added: their rendering has not been observed,
+and guessing them is how a rule set starts matching screens nobody has seen.
+
+**The lesson is about the fixtures, not the rules.** Every fixture came from a
+screen I had captured, which felt like the disciplined choice and still only
+covered the states I happened to drive: I never typed `!`, so shell mode did not
+exist for me. Screens an OPERATOR produces are a different distribution from
+screens an agent produces, and only one of those was in the test set.
+
 ## Standing tallies
 
 Update when adding an entry.

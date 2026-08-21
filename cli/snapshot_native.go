@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/vt"
@@ -36,22 +37,22 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 			taskIDHex, cols, rows)
 	}
 
-	emu := vt.NewEmulator(int(cols), int(rows))
 	// The OSC 0/2 window title is NOT part of the cell grid, so emu.String()
 	// throws it away — and for an agent it is the single most informative byte
 	// on the wire: Claude Code re-emits it on every spinner tick, which makes it
-	// the one continuously-reasserted signal that a turn is running. x/vt tracks
-	// it internally but exposes no accessor, so the callback is the only route.
+	// the one continuously-reasserted signal that a turn is running.
 	//
-	// Registered BEFORE the write, or the titles in the replay burst are parsed
-	// with no callback attached and lost. It fires from Write's own goroutine
-	// (the parser calls it inline), so the plain capture below needs no lock —
-	// the drain goroutine reads the emulator's OUTPUT side and never touches it.
-	//
-	// Last one wins: a burst replays every title the session ever set, and only
-	// the newest describes the screen we are about to render.
-	var title string
-	emu.SetCallbacks(vt.Callbacks{Title: func(s string) { title = s }})
+	// Read from the CAPTURED BYTES rather than from the emulator. x/vt offers a
+	// Title callback, but it truncates a title at its first multi-byte
+	// character: `ESC ] 0 ; ✳ herdr BEL` arrives as "\xe2", one byte, the lead
+	// byte of the glyph. Reproduced in isolation with every prefix tried
+	// (nothing, ASCII text, UTF-8 text, an earlier ASCII title, an earlier
+	// UTF-8 title) against a stream where the full title is present and
+	// correctly BEL-terminated. Scanning the bytes is a few lines, has no such
+	// failure mode, and can be tested against a captured stream.
+	title := lastOSCTitle(captured)
+
+	emu := vt.NewEmulator(int(cols), int(rows))
 	// Full-screen apps (claude, vim, …) emit terminal QUERIES early in their
 	// output — DA1 (ESC[c), DA2 (ESC[>c), DSR (ESC[5n). x/vt answers these by
 	// WRITING a response to its own output side (readable via emu.Read). If
@@ -341,6 +342,73 @@ func formatSpans(spans []ScreenSpan) string {
 		fmt.Fprintf(&b, "r%d c%d-%d %s: %q\n", s.Row, s.Start, s.End, s.label(), s.Text)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// lastOSCTitle returns the payload of the last COMPLETE `ESC ] 0|2 ; … BEL|ST`
+// in b, or "" when there is none.
+//
+// Last one wins: a replay burst carries every title the session ever set, and
+// only the newest describes the screen being rendered alongside it.
+//
+// Only complete sequences count. A capture is cut when its settle timer expires,
+// wherever the reader happened to be, so the tail can be a partial escape — and
+// a partial title is worse than no title, because a rule would match half a
+// glyph with a straight face.
+//
+// A payload that is not valid UTF-8 is discarded for the same reason. OSC 1 (set
+// icon name) is skipped: it is not the window title, and agents that set both
+// set them to the same text anyway.
+func lastOSCTitle(b []byte) string {
+	out := ""
+	for i := 0; i+3 < len(b); {
+		if b[i] != 0x1b || b[i+1] != ']' {
+			i++
+			continue
+		}
+		// Command number, then ';'.
+		j := i + 2
+		cmd := 0
+		digits := 0
+		for j < len(b) && b[j] >= '0' && b[j] <= '9' {
+			cmd = cmd*10 + int(b[j]-'0')
+			digits++
+			j++
+		}
+		if digits == 0 || j >= len(b) || b[j] != ';' {
+			i += 2
+			continue
+		}
+		j++
+		start := j
+		// Terminator: BEL, or ST spelled as ESC \.
+		end, next := -1, -1
+		for k := j; k < len(b); k++ {
+			if b[k] == 0x07 {
+				end, next = k, k+1
+				break
+			}
+			if b[k] == 0x1b && k+1 < len(b) && b[k+1] == '\\' {
+				end, next = k, k+2
+				break
+			}
+			// An ESC that is not ST means the sequence was cut and another
+			// began; abandon this one rather than swallowing what follows.
+			if b[k] == 0x1b {
+				break
+			}
+		}
+		if end < 0 {
+			i += 2
+			continue
+		}
+		if cmd == 0 || cmd == 2 {
+			if s := string(b[start:end]); utf8.ValidString(s) {
+				out = s
+			}
+		}
+		i = next
+	}
+	return out
 }
 
 // attrNames is attrList's report form: the same names joined with "+", which is
