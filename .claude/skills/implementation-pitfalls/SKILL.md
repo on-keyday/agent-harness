@@ -325,6 +325,76 @@ Two aggravating factors worth recognising by name:
 
 ---
 
+## Pitfall 12 — A preference recorded next to a cost table becomes a decision, and a fact with no information content reverses one
+
+**What went wrong (2026-08-21)**: deciding how an attaching client learns a
+task's kind. The answer was reached — put a `kind` field on
+`AttachSessionResponse`, because a client cannot interpret the stream without
+knowing whether to expect terminal bytes or NDJSON — and then abandoned one
+tool call later. The grep that abandoned it found that `AttachSessionResponse`
+has no `reserved` bits.
+
+**That fact is not an input.** `reserved` in this schema is **alignment
+padding, not an extension budget**: `OpenInteractiveRequest` carries five `u1`
+flags and `reserved :u3`, and 5 + 3 = 8. A format holding no bit flags has no
+`reserved` *by construction* — `AttachSessionResponse` is a `u8` enum and two
+`u64`s, so there is nothing to pad. Its lack of spare bits reports that it
+contains no flags, and says nothing about whether a field belongs in it. (Had
+the flags in `OpenInteractiveRequest` already filled their byte, the new one
+would have cost a whole byte and would still have been right.)
+
+Recorded in the working log (`851f647`, `a946258`) and the spec's §3.
+
+**Why it slipped** — four mechanisms, each of which would have been survivable
+alone:
+
+1. **A concrete-looking result acquires constraint force it never had.** The
+   grep returned something specific, so it read as a wall. What decides a field
+   is whether it belongs there semantically and what the rollout costs; neither
+   is answered by a neighbouring format's bit alignment.
+2. **The record kept the reasoning and dropped the conclusion.** The strongest
+   justification had been produced FOR the field route; the log entry written
+   after the reversal presents that same justification under the OTHER route.
+   The result is a document that is wrong and reads as coherent — far more
+   dangerous than one that reads as confused.
+3. **Epistemic status only ever ratchets up across summarization.** The log
+   said *"two sound routes"* and *"not built here"*; the compaction summary said
+   *"decided route: mux replays the hello"*; I then told the user 「決定済み」.
+   No hop invented anything. Each discarded the hedge and kept the prose.
+4. **Verification inherited the artifact's vocabulary.** Challenged, I searched
+   the session transcript for `AttachSessionResponse` and reported that no such
+   conclusion existed. The message that held it says 「attach 応答」. Searching
+   for the identifier the RECORD uses can only ever confirm the record.
+
+**Mitigation — when a newly found fact reverses a decision:**
+
+Say what the fact constrains before acting on it. The test: *if this fact were
+absent, or the opposite, would the other option become right?* If the fact
+cannot change where the thing belongs semantically, it is not an input, and a
+reversal running on it is a reversal running on nothing.
+
+**Mitigation — recording decisions:**
+
+- **Decision status is a field, not emphasis.** Write `DECIDED (operator,
+  2026-08-21)` or `NOT DECIDED — routes open` as a marker. A preference written
+  in prose under a neutral table survives one reading and is promoted the next.
+- **A reversal must be recorded AS a reversal**, naming the position it
+  replaces and the fact that moved it. A record showing only the destination
+  cannot be audited, and hides exactly the case where the moving fact was junk.
+- Prose hedges do not survive compaction. Assume every "recommended",
+  "probably", "not built here" is read later as settled unless it is structural.
+
+**Mitigation — searching a record for whether something was decided:**
+
+Search the vocabulary the CONVERSATION used, not the identifier the artifact
+uses — this project's discussion is Japanese and the schema is English, so
+`AttachSessionResponse` and 「attach 応答」 are the same claim to a reader and
+disjoint to `grep`. Do not truncate the dump. A locator miss is not absence
+(`feedback_partial_observation_stated_as_absolute`,
+`feedback_sibling_pattern_must_be_named_and_evidenced`).
+
+---
+
 ## Subagent dispatch checklist (controller-side)
 
 When dispatching an implementer or reviewer subagent in this project, include in the prompt:
