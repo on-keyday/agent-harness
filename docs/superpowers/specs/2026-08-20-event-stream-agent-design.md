@@ -441,6 +441,28 @@ must enumerate rather than summarise:
 - **new**: `session requests <id>`, and
   `session approve <id> <request-id> --allow|--deny|--modify <json>`
 
+**Approvals are serialised by the CLI, so `pending` is 0 or 1.** Measured: a
+turn that emitted **three** parallel `tool_use` blocks produced exactly **one**
+`can_use_tool` request, and no second one arrived in two minutes of answering
+nothing. The rest wait behind it.
+
+That changes what the `<request-id>` argument is FOR. It is not there to
+disambiguate between several — there is only ever one to answer. It is there so
+a STALE answer is refused: without it, `approve --allow` answers whatever is
+pending at the moment it runs, which need not be the thing the operator read in
+`requests`. With it, a mismatch is a refusal.
+
+Two consequences follow:
+
+- The id must not be reusable, or it stops being that guard. The adapter mints
+  it (the vendor's own id stops at the seam), and a per-process counter —
+  `req-1`, `req-2` — repeats after a resume, so a stale `approve req-1` would
+  answer a DIFFERENT request. It needs a per-run nonce or a random id.
+- `pending` stays a count rather than a flag. One model, one shape of batch was
+  measured; a subagent's tools requesting approval alongside the main thread's
+  is a different path and is untested, and a count does not lie if that turns
+  out to produce two.
+
 **A blocked task must not read as idle.** Rather than adding a `TaskStatus`
 value — a wire enum change rippling through three surfaces — tasks carry
 `pending=N`. `ls` already prints `cowrite=N viewer=N` with zeros included, so
