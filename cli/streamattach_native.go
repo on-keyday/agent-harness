@@ -35,7 +35,7 @@ func (c *Client) SessionStreamAttach(ctx context.Context, taskIDHex string, out,
 	defer stream.Close()
 
 	if kind != protocol.TaskKind_Stream {
-		return fmt.Errorf("task %s is a %s session, not an event-stream one: use `session attach %s`: %w",
+		return fmt.Errorf("task %s is not an event-stream session (kind %s): use `session attach %s`: %w",
 			taskIDHex, kind, taskIDHex, ErrAttachWrongKind)
 	}
 

@@ -187,6 +187,44 @@ controls, and applying the dialog unchanged on a `global/descendants` task
 leaves it `global/descendants`.
 
 
+### 2026-08-21 `87c10a2` — AttachSessionResponse.kind + `session stream attach`
+
+done:    1 (stream namespace, --stream open-then-follow, conflicts), 3, 8 (the
+         wasm attach gate), 10 (the kind decision carried to EVERY attach-based
+         verb: exec and resize refuse — resize would otherwise time out into
+         the misleading exec_resize hint — send and raw snapshot deliberately
+         agnostic with the reason in a comment, grid panes defensively stop,
+         TUI `session attach` refuses and redirects), 24 (--stream on resume:
+         kind is a per-open latest-recorded attribute, TaskStore.Resume §4c —
+         the existing oneshot↔interactive conversion already answers it; read,
+         not changed), 25 (event_stream=0 legitimately means PTY under that
+         semantic, so no presence bit is owed), 27, 28a, 29, 30, 32
+         (RenderText is THE renderer for event/request lines, used by the
+         runner tap and the follow view, pinned from both sides), 33, 35, 37
+omitted: 5 (the S session popup gains no stream toggle — TUI spawn of a stream
+         session is the cmdline route until the stream write verbs land),
+         6, 7 (the WebUI has no `session` command family at all and no spawn
+         control for the kind; its attach paths refuse with guidance to the
+         logs view, which is this kind's follower), 36 (session-debugging
+         SKILL.md does not describe the stream verbs yet; the refusals
+         self-describe, and the write verbs are the moment that text earns
+         updating)
+missed:  —
+
+Item **28a caught a real defect before landing** for the first time: counting
+the request builds surfaced that the CLI's own non-detach `session new
+--stream` route ran `c.Interactive`, which splices NDJSON into a raw-mode
+terminal. It became open-then-follow. The TUI's six builds are unreachable for
+the kind by parse-time refusal (--stream needs -d there), which is a smaller
+surface than wiring six literals.
+
+The dummy-harness E2E also exercised `ErrBadLine` live: two raw `session send`
+lines rendered as ⚠ warnings in both the follow view and the task log, and the
+session survived — plus one send-without-newline sitting invisibly in the
+adapter's line buffer until the next newline flushed it, which is the PTY
+"text sits on the prompt" semantic and worth remembering when `stream turn`
+is built (it must append the newline itself).
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -198,17 +236,17 @@ Update when adding an entry.
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 1 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. |
+| 33 (take effect or error) | 2 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. |
 | 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 1 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
 | 32 (one serializer, round-trip tested) | 2 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. |
-| 28a (follow the value to the request build) | 1 | 0 | New, born from 27's miss. |
+| 28a (follow the value to the request build) | 2 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
 | 34a (same KIND of control as its neighbours) | 1 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 
-**Never fired yet:** 21, 26, 29, 30. Too few walks to call any of them dead —
-revisit after another change that adds a spawn OPTION rather than a display
-field, which is what most of them are for.
+**Never fired yet:** 21, 26. Too few walks to call either dead — revisit after
+another change that adds a spawn OPTION rather than a display field. (29, 30
+and 24 came off this list with the `87c10a2` entry.)
 
 (8, 9, 22 and 25 came off this list with the `--scope-for` entry above; 27
 came off it by MISSING, which is still a firing.)
