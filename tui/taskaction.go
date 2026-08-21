@@ -39,8 +39,11 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	// clean AttachSession error (not_detachable / not_interactive).
 	// IsPTYKind, not IsSessionKind: reattach hands the terminal to a PTY
 	// splice, which would paint an event stream's NDJSON as terminal bytes.
-	// Intentionally omitted for the stream kind until the TUI has an event
-	// renderer; `session attach` from the CLI is the route meanwhile.
+	// The stream kind is not waiting on a renderer — it has one, and the TUI
+	// already shows it: the runner renders this kind's events into the task
+	// log, so the logs pane IS the follower. What it lacks is a TAKEOVER,
+	// which is a PTY concept: there is no seat to take. See the live-stream
+	// case below for what r says instead.
 	if protocol.IsPTYKind(t.Kind) && taskSessionAlive(t.Status) {
 		return taskAction{Kind: actionReattach}
 	}
@@ -51,6 +54,14 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	// Nothing applies — say WHY for this specific task, not just what r/R
 	// could have done on some other one.
 	switch {
+	case t.Kind == protocol.TaskKind_Stream && taskSessionAlive(t.Status):
+		// The generic fallback below reads as "this task is not followable",
+		// which is false and is the reading an operator actually reached: it
+		// names take-over and resume, and this kind supports neither while
+		// live. Following it is one keystroke away and the hint has to say so
+		// — the same "say WHY for THIS task" rule the one-shot case follows.
+		return taskAction{Kind: actionNone,
+			Hint: "event-stream session: no terminal to take over — enter follows its events in the logs pane (r resumes it once it ends)"}
 	case t.Status == protocol.TaskStatus_Running && t.Kind == protocol.TaskKind_Oneshot:
 		// A prompt-driven one-shot (claude -p) has no PTY, so there is
 		// nothing to attach while it runs. The takeover path is manual and
