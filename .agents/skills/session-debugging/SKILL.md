@@ -77,8 +77,9 @@ harness-cli session send -e --snapshot --style "$ID" '\x1b[B'   # ↓, then look
 ```
 
 `--settle-ms` (default 1500) is the window the program gets to react before the
-render; `--rows/--cols/--style` mean what they mean on `session snapshot`, and
-all four are refused without `--snapshot` rather than silently ignored.
+render; `--rows/--cols/--style/--color/--json` mean what they mean on
+`session snapshot`, and all six are refused without `--snapshot` rather than
+silently ignored.
 
 When you are waiting for something rather than reading one result, poll for the
 expected render instead of guessing a sleep:
@@ -122,7 +123,7 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
 
 ## Command reference
 
-### `session snapshot [--style|--color|--raw] [--rows N --cols N] <id>`
+### `session snapshot [--style] [--color] [--json|--raw] [--rows N --cols N] <id>`
 
 Renders the session's current screen to plain text via a headless VT emulator
 (`--rows/--cols` are a fallback if the session reports no size). Note they only
@@ -175,15 +176,28 @@ when the foreground IS a shell.
 - **`--color`** additionally reports fg/bg as hex (`fg#ff87af: "Error: ..."` —
   error-red, status colors). Verbose (most cells carry a color), separate
   opt-in. CJK/wide runs are coalesced, not split per character.
+- **`--json`** emits one object instead of text — same screen, different
+  encoding: `{task, rows, cols, attrs, color, lines[], spans[]}`. `lines` is the
+  grid one row per entry and is always exactly `rows` long, and each span is
+  `{row, start, end, attrs[], fg, bg, text}`, so `lines[span.row]` gives you the
+  row a span sits on and you never parse the `--- styles ---` text. `attrs` and
+  `color` report which style dimensions were COLLECTED, which is what separates
+  "`spans` is empty because I did not ask" from "asked, and the screen has
+  none" — spans stay empty unless you also pass `--style`/`--color`.
+  `start`/`end` are grid COLUMNS, not offsets into that string: they coincide
+  with character positions only while every earlier cell on the row is
+  single-width, so slice by them at your own risk on a line holding CJK or
+  emoji, and use the span's own `text` instead.
 - **`--raw`** instead writes the verbatim PTY replay bytes (escapes intact) —
   `cat` it into a real terminal to reproduce the screen exactly, or inspect the
   actual bytes when the rendered text looks wrong. Not combinable with
-  `--style`/`--color`; `--rows/--cols` are ignored.
+  `--style`/`--color`/`--json` (those describe the VT render; this is a
+  different artifact); `--rows/--cols` are ignored.
 - The grid is **width-wrapped**: a long line (a SID, a URL) is split across
-  rows, so a grep can miss it. For greppable logical lines use `exec` (below)
-  or `--raw`.
+  rows, so a grep can miss it. `--json` does NOT fix this — `lines` is the same
+  wrapped grid. For greppable logical lines use `exec` (below) or `--raw`.
 
-### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style]] <id> <text>...`
+### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--json]] <id> <text>...`
 
 Injects keystrokes via a `cowrite` attach. **Flags go BEFORE `<id>`;
 everything after `<id>` is the text**, joined ssh-style
@@ -195,8 +209,10 @@ snapshot instead of submitting.
 `--snapshot` renders the screen after sending, on the same connection: one call
 instead of send + snapshot + a guessed sleep. The screen goes to **stdout** and
 the "N bytes sent" summary to **stderr**, so a pipe gets only the screen, and
-`-quiet` (which drops that summary) composes with it. The four snapshot-only
-flags are refused without `--snapshot` instead of being ignored.
+`-quiet` (which drops that summary) composes with it. The six snapshot-only
+flags are refused without `--snapshot` instead of being ignored. They carry
+`session snapshot`'s meanings unchanged, `--json` included, so one drive step
+can return structured screen data without a second dial.
 
 ### `session resize --size ROWSxCOLS [--wait-ms MS] [-quiet] <id>`
 
@@ -289,6 +305,7 @@ as line boundaries — matching on `\n`-terminated lines alone misses markers.
 | `exec` times out on a REPL/TUI/claude | Foreground isn't a POSIX shell → send + snapshot |
 | Session died after an `exec` | Bare `exit`/`exec` killed the shell → `(exit N)` |
 | Snapshot shows "input" nobody sent | Faint placeholder/ghost text → confirm with `--style` |
+| Regex-parsing the `--- styles ---` report | It is a projection, not the source → `--json --style` and read `spans[]` |
 | grep misses a long line in snapshot | Width-wrapped grid → `exec` (logical lines) or `--raw` |
 | Text sits in the input box, never submits | THIS agent/version ignores a same-burst CR (they differ, and change) → send text, then `send -e <id> '\r'` separately |
 | Screen unchanged after `send` | Render lag (poll longer) or input plumbing broken → nonce echo round-trip |

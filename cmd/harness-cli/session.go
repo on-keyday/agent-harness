@@ -319,15 +319,22 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	style := fs.Bool("style", false, "also print attribute spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
 	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
 	raw := fs.Bool("raw", false, "write the verbatim PTY replay bytes (escape sequences intact) to stdout instead of the VT-rendered screen — cat into a real terminal to reproduce it exactly; --rows/--cols are ignored and --style/--color are not allowed")
+	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report")
 	pos, err := parsePermuted(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--raw] <id>")
+		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--json] [--raw] <id>")
 	}
 	if *raw && (*style || *colorOut) {
 		return fmt.Errorf("--raw cannot be combined with --style/--color (those report the VT render, which --raw bypasses)")
+	}
+	// Same axis as the check above: --json is an ENCODING of the VT render,
+	// --raw is a different artifact (replay bytes). Base64-wrapping them into
+	// the object would invent a third thing rather than format an existing one.
+	if *raw && *asJSON {
+		return fmt.Errorf("--raw cannot be combined with --json (--json encodes the VT render; --raw emits replay bytes — redirect --raw to a file instead)")
 	}
 	taskIDHex := pos[0]
 
@@ -348,17 +355,31 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	}
 
 	return printSessionScreen(ctx, c, taskIDHex, uint16(*rows), uint16(*cols),
-		time.Duration(*settleMs)*time.Millisecond, *style, *colorOut)
+		time.Duration(*settleMs)*time.Millisecond, *style, *colorOut, *asJSON)
 }
 
 // printSessionScreen renders taskIDHex's current screen to stdout — plain, or
-// followed by the attribute/color span report when asked.
+// followed by the attribute/color span report when asked, or as one JSON object
+// when asJSON.
 //
 // Shared by `session snapshot` and `session send --snapshot` so the two cannot
 // drift into two renderings of the same screen. `--raw` deliberately stays with
 // snapshot alone: it bypasses the VT render entirely and emits replay BYTES,
 // which is a different artifact, not a formatting option.
-func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, rows, cols uint16, settle time.Duration, withAttrs, withColor bool) error {
+//
+// asJSON changes only the ENCODING, never the content: withAttrs/withColor keep
+// selecting which style dimensions are collected, and the object reports both
+// back so a reader can tell "no spans because none were asked for" from "asked
+// for and none present".
+func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, rows, cols uint16, settle time.Duration, withAttrs, withColor, asJSON bool) error {
+	if asJSON {
+		snap, err := c.SessionSnapshotStructured(ctx, taskIDHex, rows, cols, settle, withAttrs, withColor)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(snap)
+	}
+
 	if withAttrs || withColor {
 		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, rows, cols, settle, withAttrs, withColor)
 		if err != nil {
@@ -590,6 +611,13 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	// command already mean the offscreen RENDER size for --snapshot.
 	resize := fs.String("resize", "", "before sending, set the session's PTY size to ROWSxCOLS (e.g. 40x150) — needs exec_resize and an unattached control seat; fails the command if it does not take")
 	style := fs.Bool("style", false, "with --snapshot: also print attribute spans (faint/bold/reverse/...) — the plain render drops SGR, so a faint placeholder reads like real typed text and WHICH ROW IS SELECTED is invisible without this")
+	// --color and --json exist here for the same reason --style does: this
+	// command renders through the very same printSessionScreen, so a flag it
+	// understands that this command does not accept is a hole an agent finds by
+	// having its drive loop fall back to a second dial. They carry `session
+	// snapshot`'s meanings unchanged.
+	colorOut := fs.Bool("color", false, "with --snapshot: also print fg/bg colour spans (hex) — verbose (most cells carry a colour); same flag as on `session snapshot`")
+	asJSON := fs.Bool("json", false, "with --snapshot: emit the screen as one JSON object instead of text — same shape as `session snapshot --json`")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -602,7 +630,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		var stray []string
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "rows", "cols", "settle-ms", "style":
+			case "rows", "cols", "settle-ms", "style", "color", "json":
 				stray = append(stray, "--"+f.Name)
 			}
 		})
@@ -611,15 +639,16 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		}
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style]] <id> <text>...
+		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--json]] <id> <text>...
   -enter     append a carriage return, i.e. actually SUBMIT the line
   -e         interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
              -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
              without -enter the text is typed onto the prompt and just sits there.
   -quiet     suppress the one-line summary of what was sent (stderr)
   --snapshot after sending, render the screen to stdout (send + session snapshot
-             in one call, one dial). --rows/--cols/--settle-ms/--style mean what
-             they mean on ` + "`session snapshot`" + ` and require --snapshot.
+             in one call, one dial). --rows/--cols/--settle-ms/--style/--color/
+             --json mean what they mean on ` + "`session snapshot`" + ` and require
+             --snapshot.
   --resize   ROWSxCOLS: set the PTY size BEFORE sending, so a full-screen
              program is the right size when the keys land. NOT --rows/--cols,
              which on this command size the --snapshot render instead.
@@ -694,11 +723,11 @@ argument to preserve exact whitespace.`)
 	// one without the other — and --quiet composes with --snapshot rather than
 	// suppressing it.
 	if *snapshot {
-		// withColor stays false: `session snapshot --color` remains the route
-		// for the verbose per-cell colour report, which is not what a
-		// did-my-keystroke-land check wants.
+		// Both style dimensions and the encoding pass through unchanged. They
+		// default off, so the did-my-keystroke-land check stays terse; what
+		// changed is that asking for one here works instead of being dropped.
 		if err := printSessionScreen(ctx, c, taskIDHex, uint16(*rows), uint16(*cols),
-			time.Duration(*settleMs)*time.Millisecond, *style, false); err != nil {
+			time.Duration(*settleMs)*time.Millisecond, *style, *colorOut, *asJSON); err != nil {
 			return err
 		}
 	}

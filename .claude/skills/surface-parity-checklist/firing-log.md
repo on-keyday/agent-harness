@@ -321,23 +321,79 @@ Not proposing a new number for one instance: the general form ("a constant
 copied from a sibling carries that sibling's reason, which may not hold") is
 too broad to walk. Recorded so a second instance can be counted against it.
 
+### 2026-08-22 (pre-landing) — `--json` on `session snapshot` / `session send --snapshot`
+
+done:    1 (both usage strings + the `main.go` help block), 10 (the option went
+         onto BOTH members that share the render path, and the walk closed the
+         pre-existing asymmetry it found rather than matching it: `send
+         --snapshot` accepted `--style` but not `--color`, so `--json` would
+         have shipped a `spans[]` that can carry colour on one verb and never on
+         the other), 24 (`--json` means the same thing on both paths, and the
+         snapshot-only flags stay refused without `--snapshot`), 31, 32, 33
+         (`--raw` + `--json` refused instead of one silently winning; `--json`
+         / `--color` without `--snapshot` join the existing stray-flag guard),
+         36
+omitted: 3, 6, 7 — the TUI cmdline's `parseSession` and the WebUI `runCmd` do
+         not parse `session snapshot`/`send`/`exec` at ALL, same standing
+         omission as the `06c534e` entry: the non-TTY trio is agent-facing.
+         **8 is stronger than an omission and worth separating**: `--json`
+         cannot exist in wasm, because the whole VT render does not — 
+         `cli/snapshot_native.go` is `//go:build !js` and the browser renders
+         through xterm.js instead. Structurally impossible, not unbuilt.
+         35 — the README has no `session snapshot` flag reference to update; its
+         session block lists commands, and the only two mentions are a `--raw`
+         line in the stream section and the `exec_view` caps row.
+         37 — no spec under `docs/superpowers/specs/` states snapshot's output
+         format, so there is no shipped behaviour for this to contradict.
+missed:  —
+
+**27/28a are `n/a` for an unusual reason worth recording**: the count of request
+builds this option reaches is ZERO. `--json` never becomes a wire field — it
+selects an encoding of a response the client already has. That is the first
+entry where 28a's counting question has a legitimate answer of none, as opposed
+to "I did not count".
+
+Item **32 shaped the diff rather than being satisfied by it.** The obvious
+implementation is a second walk of the VT grid that emits JSON, next to
+`scanSpans` which emits the `--- styles ---` text — two descriptions of one
+screen, which is the drift 32 exists to forbid. Instead `collectSpans` became
+the only scan and the text report is now RENDERED FROM its result through
+`ScreenSpan.label()`, so the human form is a projection of the structured one.
+Pinned two ways: `TestFormatSpansIsAProjectionOfCollectSpans`, and a live
+byte-for-byte diff of `--style --color` output between the pre- and post-change
+binaries against the same session (2664 bytes, identical).
+
+Item **31 decided a field that would otherwise not exist.** `spans: []` alone
+cannot separate "no style dimension was requested" from "requested, and the
+screen has none" — the same not-shown/not-measured collapse the item keeps
+catching, one level up: here the ambiguity is about whether the MEASUREMENT was
+taken. So the object carries `attrs` and `color` booleans reporting what was
+COLLECTED, and `collectSpans` returns `[]` rather than nil so the field is never
+JSON `null`. Gate on existence, not on value.
+
+Item **36 caught a real drift inside this walk**: the embedded SKILL.md was
+edited again after being mirrored (a correction that `start`/`end` are grid
+COLUMNS, not offsets into `lines[row]` — they coincide only while every earlier
+cell is single-width). `TestMirrorsMatchEmbeddedSkills` failed on the byte
+difference. The item is a reminder; the test is what actually held.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 3 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. |
+| 31 (don't hide a value for what it IS) | 4 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. Not-shown, not-kept, not-measured. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 4 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. |
+| 33 (take effect or error) | 5 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
-| 10 (other verb families) | 1 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
+| 10 (other verb families) | 3 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 2 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 3 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. |
+| 32 (one serializer, round-trip tested) | 4 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
 | 28a (follow the value to the request build) | 3 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
 | 34a (same KIND of control as its neighbours) | 1 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 

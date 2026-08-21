@@ -92,9 +92,98 @@ func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, de
 		return taskIDHex, "", err
 	}
 	text := emu.String()
-	report := scanSpans(emu, cols, rows, withAttrs, withColor)
+	report := formatSpans(collectSpans(emu, cols, rows, withAttrs, withColor))
 	_ = emu.Close() // unblocks the drain goroutine
 	return text, report, nil
+}
+
+// ScreenSpan is one maximal horizontal run of grid cells sharing the same
+// styling — the structured form of a `--- styles ---` report line. Attrs is nil
+// when attributes were not collected AND when the run carries none; Fg/Bg are ""
+// for the terminal default AND when colors were not collected. Neither absence
+// is self-describing, which is why the collection flags travel on the enclosing
+// ScreenSnapshot rather than being inferred per span.
+type ScreenSpan struct {
+	Row   int      `json:"row"`
+	Start int      `json:"start"`
+	End   int      `json:"end"`
+	Attrs []string `json:"attrs,omitempty"`
+	Fg    string   `json:"fg,omitempty"`
+	Bg    string   `json:"bg,omitempty"`
+	Text  string   `json:"text"`
+}
+
+// label rebuilds the run-merge key this span was collected under. It is what
+// makes the human report a projection of the structured form rather than a
+// second scan: formatSpans renders through it, so the two can never disagree
+// about what a span says.
+func (s ScreenSpan) label() string {
+	var parts []string
+	if len(s.Attrs) > 0 {
+		parts = append(parts, strings.Join(s.Attrs, "+"))
+	}
+	if s.Fg != "" {
+		parts = append(parts, "fg"+s.Fg)
+	}
+	if s.Bg != "" {
+		parts = append(parts, "bg"+s.Bg)
+	}
+	return strings.Join(parts, " ")
+}
+
+// ScreenSnapshot is a session screen as data: the VT grid as one string per
+// row, plus the styled spans indexed by those same row numbers.
+//
+// Attrs/Color report whether each style dimension was COLLECTED, not whether
+// any was found — an empty Spans with Attrs=false means "not asked for", with
+// Attrs=true it means "asked for, none present". Lines is always exactly Rows
+// long so a span's Row indexes it directly.
+type ScreenSnapshot struct {
+	Task  string       `json:"task"`
+	Rows  int          `json:"rows"`
+	Cols  int          `json:"cols"`
+	Attrs bool         `json:"attrs"`
+	Color bool         `json:"color"`
+	Lines []string     `json:"lines"`
+	Spans []ScreenSpan `json:"spans"`
+}
+
+// SessionSnapshotStructured is SessionSnapshotStyled's data form: same capture,
+// same single span scan, returned as a struct instead of two strings. The CLI's
+// --json path renders this; the text paths render projections of it.
+//
+// The grid stays width-WRAPPED here exactly as it is on screen — a long logical
+// line is still split across rows. Use SessionSnapshotRaw or `session exec` when
+// logical lines matter; this shape trades that for row/column addressability.
+func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (*ScreenSnapshot, error) {
+	emu, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	if err != nil {
+		return nil, err
+	}
+	snap := &ScreenSnapshot{
+		Task:  taskIDHex,
+		Rows:  rows,
+		Cols:  cols,
+		Attrs: withAttrs,
+		Color: withColor,
+		Lines: screenLines(emu.String(), rows),
+		Spans: collectSpans(emu, cols, rows, withAttrs, withColor),
+	}
+	_ = emu.Close() // unblocks the drain goroutine
+	return snap, nil
+}
+
+// screenLines splits a rendered screen into exactly rows entries. The emulator
+// may hand back fewer (trailing blank rows collapsed) or, defensively, more;
+// spans carry absolute grid rows, so the slice is padded/truncated to keep
+// Lines[span.Row] valid rather than leaving the caller to bounds-check.
+func screenLines(text string, rows int) []string {
+	text = strings.TrimSuffix(text, "\n")
+	lines := strings.Split(text, "\n")
+	for len(lines) < rows {
+		lines = append(lines, "")
+	}
+	return lines[:rows]
 }
 
 // notableAttrs are the cell text attributes worth reporting; layout/color is
@@ -152,15 +241,16 @@ func cellWidth(cell *uv.Cell) int {
 	return cell.Width
 }
 
-// scanSpans walks the VT grid and reports maximal horizontal runs that share
-// the same non-empty style label, one per line:
+// collectSpans walks the VT grid and returns maximal horizontal runs that share
+// the same non-empty style label. withAttrs includes faint/bold/etc; withColor
+// includes fg/bg hex. Cells with nothing notable are skipped.
 //
-//	r<row> c<start>-<end> <label>: "<text>"
-//
-// withAttrs includes faint/bold/etc; withColor includes fg/bg hex. Cells with
-// nothing notable are skipped, so a clean screen yields "(no styled spans)".
-func scanSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) string {
-	var b strings.Builder
+// This is the ONLY scan of the grid: both the human `--- styles ---` report
+// (via formatSpans) and the --json output are rendered from its result, so the
+// two cannot drift into two descriptions of the same screen. Always returns a
+// non-nil slice — an empty one marshals as [] rather than null.
+func collectSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) []ScreenSpan {
+	spans := []ScreenSpan{}
 	for y := 0; y < rows; y++ {
 		x := 0
 		for x < cols {
@@ -170,6 +260,9 @@ func scanSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) stri
 				x += cellWidth(cell)
 				continue
 			}
+			// Every cell in the run shares the label by construction, so the
+			// run's first cell is representative for the structured fields.
+			head := cell
 			start := x
 			var run strings.Builder
 			for x < cols {
@@ -184,16 +277,43 @@ func scanSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) stri
 			if txt == "" {
 				continue
 			}
-			fmt.Fprintf(&b, "r%d c%d-%d %s: %q\n", y, start, x-1, key, txt)
+			span := ScreenSpan{Row: y, Start: start, End: x - 1, Text: txt}
+			if withAttrs {
+				span.Attrs = attrList(head.Style.Attrs & notableAttrs)
+			}
+			if withColor {
+				span.Fg = colorHex(head.Style.Fg)
+				span.Bg = colorHex(head.Style.Bg)
+			}
+			spans = append(spans, span)
 		}
 	}
-	if b.Len() == 0 {
+	return spans
+}
+
+// formatSpans renders collected spans as the human report, one per line:
+//
+//	r<row> c<start>-<end> <label>: "<text>"
+//
+// A clean screen yields "(no styled spans)".
+func formatSpans(spans []ScreenSpan) string {
+	if len(spans) == 0 {
 		return "(no styled spans)"
+	}
+	var b strings.Builder
+	for _, s := range spans {
+		fmt.Fprintf(&b, "r%d c%d-%d %s: %q\n", s.Row, s.Start, s.End, s.label(), s.Text)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// attrNames is attrList's report form: the same names joined with "+", which is
+// how a style label spells a multi-attribute run ("bold+faint").
 func attrNames(a uint8) string {
+	return strings.Join(attrList(a), "+")
+}
+
+func attrList(a uint8) []string {
 	var names []string
 	if a&uv.AttrBold != 0 {
 		names = append(names, "bold")
@@ -216,5 +336,5 @@ func attrNames(a uint8) string {
 	if a&uv.AttrStrikethrough != 0 {
 		names = append(names, "strike")
 	}
-	return strings.Join(names, "+")
+	return names
 }
