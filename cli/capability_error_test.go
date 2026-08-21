@@ -109,6 +109,56 @@ func TestCapabilityDeniedErrorMessage(t *testing.T) {
 	}
 }
 
+// The test above covers a SINGLE-bit requirement, which is the only shape the
+// generated enum String() can render — so it passed while the mask shape was
+// broken in production. An attach is gated by a mask of ALTERNATIVES
+// (server/capabilities.go attachModeCap, checked with hasAnyCap), and a view
+// attach denial printed `requires capability Capability(12292)`: the raw mask,
+// because String() names single values only. Operator-reported. 12292 is that
+// exact mask, kept here as the literal that reproduced it.
+func TestCapabilityDeniedNamesEveryAlternativeInAMask(t *testing.T) {
+	err := &CapabilityDeniedError{
+		RequestedKind: protocol.TaskControlKind_AttachSession,
+		RequiredCap: protocol.Capability_ExecView |
+			protocol.Capability_ExecCowrite |
+			protocol.Capability_ExecControl,
+	}
+	if got := uint32(err.RequiredCap); got != 12292 {
+		t.Fatalf("fixture mask = %d, want the 12292 the operator saw", got)
+	}
+	msg := err.Error()
+
+	if containsSubstring(msg, "Capability(") || containsSubstring(msg, "12292") {
+		t.Fatalf("Error() = %q; the raw mask leaked instead of the names", msg)
+	}
+	for _, want := range []string{"exec_view", "exec_cowrite", "exec_control", "AttachSession"} {
+		if !containsSubstring(msg, want) {
+			t.Errorf("Error() = %q, missing %q — every alternative must be named", msg, want)
+		}
+	}
+	// "any of", not "capability": holding ONE of them satisfies the request, so
+	// the singular claimed a conjunction the server never asked for.
+	if !containsSubstring(msg, "any of") {
+		t.Errorf("Error() = %q, want it to say the alternatives ARE alternatives", msg)
+	}
+}
+
+// A single-bit requirement keeps the singular wording — "any of spawn" would
+// read as though something were being withheld.
+func TestCapabilityDeniedKeepsTheSingularForOneBit(t *testing.T) {
+	err := &CapabilityDeniedError{
+		RequestedKind: protocol.TaskControlKind_Submit,
+		RequiredCap:   protocol.Capability_Spawn,
+	}
+	msg := err.Error()
+	if !containsSubstring(msg, "requires capability spawn") {
+		t.Errorf("Error() = %q, want the singular form naming spawn", msg)
+	}
+	if containsSubstring(msg, "any of") {
+		t.Errorf("Error() = %q, want no alternatives wording for a single bit", msg)
+	}
+}
+
 // The builders' capability default is pinned in session_opts_test.go
 // (TestSessionOptsCapsResolution), which runs the real
 // buildSubmitRequest / buildOpenInteractiveRequest. A
