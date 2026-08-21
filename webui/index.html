@@ -74,6 +74,13 @@
       <input id="claude-args-input" type="text" size="60" placeholder='e.g. --add-dir "C:/path"'>
       <div id="caps-row" class="caps-row" aria-label="Capability chips"></div>
       <label class="caps-on-resume-toggle"><input type="checkbox" id="caps-on-resume"> apply caps/scope on resume</label>
+      <!-- Only meaningful with a Resume task id, exactly like the checkbox
+           above, and shown unconditionally for the same reason: a control that
+           appears and disappears is harder to find than one that is simply
+           inert. Default OFF so this form agrees with `session new --resume`,
+           whose default is also off — the WebUI disagreeing with the CLI about
+           what "resume" means is worse than an extra click. -->
+      <label class="caps-on-resume-toggle" title="Resume task id を指定したときのみ有効。エージェントの会話も引き継ぐ（--resume-conversation 相当）。オフだと worktree とブランチだけ引き継いで会話は捨てる"><input type="checkbox" id="resume-conversation"> resume the agent's conversation too</label>
       <label class="caps-on-resume-toggle" title="PTY ではなく構造化イベントのセッションを開く。承認は端末のキー入力ではなくボタンで答える"><input type="checkbox" id="spawn-stream"> event-stream で開く (チャット)</label>
       <div class="scope-block">
         <label>Scope (which tasks those caps may target):</label>

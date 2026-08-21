@@ -3006,12 +3006,18 @@ const POLL_INTERVAL_MS = 5000;
 
   // composeRequest assembles the shared fields from the Compose section.
   const spawnStreamBox = document.getElementById("spawn-stream");
+  const resumeConvBox  = document.getElementById("resume-conversation");
   const composeRequest = () => sessionReq({
     repo: runnerSelect.value || "",
     host: hostSelect ? (hostSelect.value || "") : "",
     agent: agentSelect ? (agentSelect.value || "") : "",
     claudeArgs: currentClaudeArgs(),
     resumeTaskId: currentResumeTaskID(),
+    // Compose was the one surface with no way to say this. The task sheet
+    // offers all four combinations as buttons and the command input takes
+    // --resume-conversation, so a Compose resume silently meant "keep the
+    // worktree, drop the conversation" with nothing on screen saying so.
+    resumeConversation: !!(resumeConvBox && resumeConvBox.checked),
     // A checkbox, not a typed flag: this decomposes into a control the form
     // already has a kind for, which is what checklist 34a asks.
     eventStream: !!(spawnStreamBox && spawnStreamBox.checked),
