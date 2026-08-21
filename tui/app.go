@@ -2339,8 +2339,12 @@ func (a *App) View() string {
 		// letting the overflow clip the bottom would take the prompt with it.
 		// ChatModel.View sizes its transcript from a.height, so the clamp here
 		// is a backstop rather than the mechanism.
+		// LEFT, unlike the grid's Center: the grid places fixed-width panes and
+		// centring the block reads as deliberate, while this view is full-width
+		// prose. Centred, every transcript line floated to its own indent —
+		// caught by driving it, not by reading it.
 		return lipgloss.NewStyle().MaxHeight(a.height).Render(
-			lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Top, a.chat.View()))
+			lipgloss.Place(a.width, a.height, lipgloss.Left, lipgloss.Top, a.chat.View()))
 	}
 	return view
 }
