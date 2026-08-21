@@ -241,6 +241,8 @@ func taskKindStr(k protocol.TaskKind) string {
 		return "oneshot"
 	case protocol.TaskKind_Interactive:
 		return "interactive"
+	case protocol.TaskKind_Stream:
+		return "stream"
 	default:
 		return fmt.Sprintf("unknown(%d)", k)
 	}

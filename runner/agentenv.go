@@ -6,8 +6,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // AgentEnvSpec is the input bundle for BuildAgentEnv.
@@ -177,8 +177,8 @@ func rewriteProxyViaForLocalDial(via string) string {
 		if end < 0 {
 			return via // malformed; leave as-is
 		}
-		host = addrPort[1:end]    // inside brackets
-		port = addrPort[end+1:]   // includes leading ':'
+		host = addrPort[1:end]  // inside brackets
+		port = addrPort[end+1:] // includes leading ':'
 	} else {
 		i := strings.LastIndexByte(addrPort, ':')
 		if i < 0 {

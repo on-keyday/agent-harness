@@ -541,9 +541,35 @@ value — a wire enum change rippling through three surfaces — tasks carry
 `pending=N`. `ls` already prints `cowrite=N viewer=N` with zeros included, so
 the column convention exists; zeros are printed here too.
 
-**Notification.** A pending request with no control client attached raises
-`notify --level warn`. This is the decision-point-while-autonomous case the
-operator already expects to be told about.
+**Notification.** The original text here — "a pending request with no control
+client attached raises `notify --level warn`" — never said WHO raises it, and
+the answer is not free. `server/await_idle_handler.go` already settled the
+principle for the same egress:
+
+> an egress gate that depends on which RPC you arrive by is not a gate
+
+`await-idle --notify` therefore requires `Capability_Notify` of its caller,
+even though the fire text is server-synthesized, because otherwise a confined
+task could push operator notifications through a path that happens not to check.
+A pending-approval notification reaches the same notify-hook, so it cannot be
+raised unconditionally without reopening that.
+
+Decided: **the notification is gated, and it degrades honestly.**
+
+- If the blocked task holds `notify`, the harness raises it. Causing an
+  operator notification is inside what that task was granted, and the text is
+  server-synthesized, so this is a noise vector at worst — the same standing
+  `await-idle` has.
+- If it does not, nothing is pushed. An operator who wants to be told arms a
+  watch themselves, gated by their OWN `notify`, exactly as `await-idle` is.
+
+So §4's default is **block indefinitely**, and notification is a property of
+the grant rather than of the kind. The earlier phrasing read as though every
+blocked task would announce itself.
+
+That puts weight on `pending=N` being visible without any capability: it is a
+`TaskInfo` field, so a task blocked with no `notify` and nobody watching is
+still discoverable by looking, which is the floor this degradation rests on.
 
 **WebUI.** The approval modal renders `tool_name` and the structured `input`
 — a diff for `Write`/`Edit` — which is strictly better than the PTY equivalent,

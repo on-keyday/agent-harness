@@ -59,6 +59,11 @@ type SessionOpts struct {
 	// resize loop overwrites it with the real terminal size moments later.
 	InitialRows uint16
 	InitialCols uint16
+	// EventStream opens the session as TaskKind_Stream: the runner spawns the
+	// profile's stream adapter instead of the agent under a PTY, and the
+	// frames carry neutral NDJSON. A profile with no adapter refuses the
+	// request rather than falling back to a terminal.
+	EventStream bool
 	// ScopePresent, on a resume, writes Scope onto the task (attenuated);
 	// false keeps the task's persisted scope. Independent of
 	// ResumeCapsOverride — the two halves of authority re-grant separately.
@@ -84,5 +89,6 @@ func buildOpenInteractiveRequest(repoPath string, opts SessionOpts) protocol.Ope
 	oi.Overrides = opts.Overrides
 	oi.OverridesLen = uint8(len(opts.Overrides))
 	oi.SetScopePresent(opts.ScopePresent)
+	oi.SetEventStream(opts.EventStream)
 	return oi
 }

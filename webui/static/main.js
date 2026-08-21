@@ -269,6 +269,15 @@ const POLL_INTERVAL_MS = 5000;
   let spawnCaps = 0;         // bitmask; read by openInteractive / submit on spawn
   let applyCapsOnResume = false; // mirrors #caps-on-resume checkbox; default OFF
   let spawnScope = "";       // serialized scope grammar for spawns; "" = the subtree default
+  // Mirrors protocol.IsPTYKind (runner/protocol/task_kind.go). Two kinds are
+  // sessions; only one drives a TERMINAL, so every site has to say which
+  // question it is asking — a bare `kind === "Interactive"` reads as an
+  // oversight the next reader will "fix" by adding "Stream" to it.
+  //
+  // The IsSessionKind half has no caller here yet, so it is not defined: an
+  // unused predicate is one more thing to keep in step with Go for nothing.
+  const isPTYKind = (t) => !!t && t.kind === "Interactive";
+
   let spawnBase = "subtree"; // scope base radio state (spawn picker)
   // The base's other half. Declared beside spawnBase rather than near its
   // checkbox: the echo updater runs during init, before the control is wired.
@@ -417,7 +426,8 @@ const POLL_INTERVAL_MS = 5000;
   const gridAllOff  = document.getElementById("grid-all-off");
   const liveInteractiveTasks = () =>
     (lastTasks || []).filter(
-      (t) => t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached"));
+      // isPTYKind: the grid paints terminal panes.
+      (t) => isPTYKind(t) && (t.status === "Running" || t.status === "Detached"));
   gridShowBtn.addEventListener("click", () => {
     const ids = liveInteractiveTasks()
       .filter((t) => !gridExcluded.has(t.id))
@@ -1969,7 +1979,9 @@ const POLL_INTERVAL_MS = 5000;
             b.addEventListener("click", (ev) => { ev.stopPropagation(); actions.hidden = true; fn(taskID); });
             actions.appendChild(b);
           };
-          const live = t && t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached");
+          // isPTYKind: the buttons below are a preview (an xterm) and a
+          // reattach (a PTY splice), neither of which an event stream has.
+          const live = isPTYKind(t) && (t.status === "Running" || t.status === "Detached");
           const terminal = t && TERMINAL_STATES.has(t.status);
           if (live) {
             mkBtn("🔍 プレビュー", openSessionPreview);
@@ -3867,7 +3879,8 @@ const POLL_INTERVAL_MS = 5000;
   async function liveInteractiveIds() {
     const snap = await window.harness.snapshot();
     return (snap.tasks || [])
-      .filter((t) => t.kind === "Interactive" && (t.status === "Running" || t.status === "Detached"))
+      // isPTYKind: feeds the same grid as above.
+      .filter((t) => isPTYKind(t) && (t.status === "Running" || t.status === "Detached"))
       .sort((a, b) => taskActivityMs(b) - taskActivityMs(a))
       .map((t) => t.id);
   }

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/cli"
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/peer"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 // TestListenAcceptsIncomingDial drives a Listen() runner with a client

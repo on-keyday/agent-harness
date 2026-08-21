@@ -670,6 +670,10 @@ func taskKindStr(k protocol.TaskKind) string {
 		return "oneshot    "
 	case protocol.TaskKind_Interactive:
 		return "interactive"
+	case protocol.TaskKind_Stream:
+		// Padded to the same width as its neighbours: this column is
+		// fixed-width and a short value shifts every field after it.
+		return "stream     "
 	}
 	return "?          "
 }

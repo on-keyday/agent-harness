@@ -790,7 +790,16 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// sends the first user turn, the same shape `session new` has.
 			ResumeConversation: oer.ResumeConversation(),
 			Logger:             log,
-			LogSink:            func(b []byte) { _ = s.Sender.Publish(topics.TaskLog(taskIDHex), b) },
+			// No LogSink. The oneshot path publishes rendered lines to the task
+			// log topic because that is its ONLY output; this kind's output is
+			// the stream, and its sibling handleOpenExec publishes nothing.
+			//
+			// It was here from the spike, carried over from handleAssign along
+			// with the detour that started there, and it opened a hole:
+			// GetTaskLog is INFO-scoped (visibleToCaller), while reading the
+			// stream needs exec_view. Publishing the same events as text made
+			// them readable without the capability §3 says is required to read
+			// them.
 		}
 		runErr := st.Run(taskCtx, stream)
 

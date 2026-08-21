@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func mustParseCID(t *testing.T, s string) objproto.ConnectionID {

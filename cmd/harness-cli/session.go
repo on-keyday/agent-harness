@@ -223,6 +223,11 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	detach := false
 	fs.BoolVar(&detach, "detach", false, "start the session and immediately detach (run in background, print task id, exit)")
 	fs.BoolVar(&detach, "d", false, "shorthand for --detach")
+	stream := fs.Bool("stream", false,
+		"open an EVENT-STREAM session instead of a PTY one: the runner runs the "+
+			"profile's stream adapter and the session carries structured events "+
+			"rather than terminal bytes. Requires a profile with a stream adapter "+
+			"configured; the runner refuses rather than falling back to a terminal")
 	x11 := false
 	fs.BoolVar(&x11, "x11", false, "forward X11: inject DISPLAY/XAUTHORITY so GUI apps in the session render on your local X server (requires xauth + a running local X server)")
 	x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N; default 10)")
@@ -283,6 +288,7 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		Selector: sel, ExtraArgs: []string(extraArgs), ResumeTaskID: *resume,
 		Caps: caps, Scope: scope, ResumeCapsOverride: resumeCapsOverride,
 		Overrides:          scopeFor.out,
+		EventStream:        *stream,
 		ScopePresent:       *resume != "" && flagExplicitlySet(fs, "scope"),
 		ResumeConversation: *resumeConversation, AgentProfile: *agent,
 		InitialRows: uint16(*rows), InitialCols: uint16(*cols),

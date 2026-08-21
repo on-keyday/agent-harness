@@ -446,3 +446,67 @@ func adapterToNeutral(e agentlog.Event) streamagent.Event {
 	}
 	return out
 }
+
+// The stream is the only place this kind's output goes. An earlier version
+// also published rendered lines to the task LOG topic, carried over from the
+// oneshot path where the log is the only output — and that made the same
+// events readable through GetTaskLog, which is INFO-scoped, while reading the
+// stream needs exec_view. A capability the design requires must not have a
+// text-shaped way around it.
+func TestStreamTaskPublishesNothingToTheTaskLogByDefault(t *testing.T) {
+	agent := fakeStreamAgent(t,
+		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"secret"}]}}'`+"\n"+
+			"cat > /dev/null\n")
+	stream, cl := newStreamPair()
+
+	var logged []string
+	var mu sync.Mutex
+	task := &StreamTask{
+		AdapterPath: testAdapter(t),
+		AgentArgv:   []string{agent},
+		Dir:         t.TempDir(),
+		// A sink IS wired here so the test can see anything the task decides to
+		// emit. handleOpenExec passes none; this proves the task does not
+		// manufacture log lines on its own behalf.
+		LogSink: func(b []byte) {
+			mu.Lock()
+			defer mu.Unlock()
+			logged = append(logged, strings.TrimRight(string(b), "\n"))
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- task.Run(ctx, stream) }()
+
+	var sawOnStream bool
+	deadline := time.Now().Add(30 * time.Second)
+	for !sawOnStream && time.Now().Before(deadline) {
+		payload, err := cl.nextStdout()
+		if err != nil {
+			break
+		}
+		if strings.Contains(string(payload), "secret") {
+			sawOnStream = true
+		}
+	}
+	_ = cl.finish()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Run did not return")
+	}
+
+	if !sawOnStream {
+		t.Fatal("the event never reached the STREAM, which is where it belongs")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, l := range logged {
+		if strings.Contains(l, "secret") {
+			t.Errorf("agent output was rendered into a task-log line as well: %q\n"+
+				"GetTaskLog is INFO-scoped; the stream needs exec_view. Two gates "+
+				"on one payload is the hole this removes.", l)
+		}
+	}
+}
