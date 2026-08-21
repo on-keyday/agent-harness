@@ -482,6 +482,35 @@ terminal to a PTY splice. And filing `snapshot` there deleted a feature: §3's
 verdict for it was always "last N events rendered, not a VT screen", i.e. it
 works with a different meaning, exactly like `attach`.
 
+**A client cannot interpret either kind until it knows which one it attached
+to, so the attach response says which.** `AttachSessionResponse` gains a `kind`
+field. The reason is not that a verb wants to decline politely — that framing
+produced "fetch a snapshot first", which breaks a caller whose action scope is
+wider than its visibility (`exec_view: global` with visibility `none` sees
+nothing in `ls` and would be refused an attach it holds the authority for).
+The reason is that terminal bytes and NDJSON are not distinguishable from the
+stream itself, and that holds no matter who is asking.
+
+Two alternatives were rejected. Appending an `ok_event_stream` value to
+`AttachSessionStatus` is layout-neutral and decode-safe — the generated decoder
+casts the byte without validating it, so an old client falls out of its `ok`
+branch and declines, which is correct for a client that cannot render NDJSON —
+but it overloads a RESULT enum with a task PROPERTY, and the third kind turns
+it into `ok_×N`. Letting the STREAM identify itself — the adapter's `hello` is
+its first line, retained and replayed on reattach the way the mux already
+replays `lastWinSize` — needs no wire change at all, and was recommended here
+before the field's cost was priced honestly. It makes the server withhold what
+it already holds (`TaskKind` is in the task record) so the client can re-derive
+it from payload bytes, and the mux would consult that same field anyway to
+decide which tasks get a pinned first frame.
+
+The field's real cost is a layout change, and for a RESPONSE that is a
+**coordinated restart, not a staged one**: `DecodeExactCopy` rejects trailing
+bytes, so an old client breaks the moment the server is new and "server-first"
+stages nothing. On this deployment that is `build_and_restart_all.py` plus a
+WebUI hard reload, with no third-party clients — cheaper than the new mux state
+the alternative needs.
+
 An earlier version of this list said `send` was "the same verb, different
 meaning". That was written before looking at its flags: `-enter` (a carriage
 return), `-e` (escape sequences like `\x03`), `--snapshot` (render a VT
@@ -714,8 +743,8 @@ structs are deleted in the same change rather than kept "for the adapter".
 
 Not started, and what the implementation plan has to cover: the runner side
 (framer, pending table, `pending=N` on the task, capability declaration on
-`RunnerHello`), the `TaskKind`, the verbs of §3 with their per-kind verdicts,
-and the three UIs.
+`RunnerHello`), the `TaskKind`, the `kind` field on `AttachSessionResponse`,
+the verbs of §3 with their per-kind verdicts, and the three UIs.
 
 One observation from the smoke run that the plan should not rediscover:
 `tool_start` is emitted BEFORE the approval request for that tool, so a

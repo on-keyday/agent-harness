@@ -621,3 +621,69 @@ terminal bytes or NDJSON. That reason holds no matter who is asking.
 
 Not built here — it is the work `session stream attach` needs, not what
 starting a task needs.
+
+## 19. Decision: the kind is a FIELD on the attach response — and entry 18 priced the alternative wrong
+
+Entry 18 left two routes open. Across a compaction I then reported it as
+"decided: mux replays the hello, no wire change", and when the operator
+challenged that, I searched the session record and reported that no conclusion
+existed at all. **Both answers were wrong, and entry 18 is why.**
+
+What the record actually holds, in order:
+
+1. The operator makes the visibility point. My reply names the field route
+   FIRST — "attach 応答に kind を載せる: サーバは知っていて、呼び出し側は
+   attach を許されている以上それを知る権利がある" — and then adds the
+   justification entry 18 presents as its own late improvement: the kind is
+   needed because a client cannot decide whether to expect terminal bytes or
+   NDJSON, not so a verb can decline politely.
+2. One tool call later I grep the schema, find no spare bits, and **switch to
+   the hello route on that cost alone**.
+3. Entry 18 records the state after the switch. The reasoning that produced the
+   field route survives in it; the fact that the field route had been the
+   answer does not.
+
+So the conclusion was reached and then overturned by a cost estimate — the
+same estimate this entry corrects below. Entry 18 recorded a reversal as if it
+were an opening.
+
+**Two process failures, both mine, both already named in this log:**
+
+- **A preference written under a neutral cost table becomes a decision one
+  reader later.** Nothing between the table and the paragraph said which was
+  binding.
+- **I claimed absence from a filtered view.** I grepped the transcript for
+  `AttachSessionResponse`; the message that mattered says `attach 応答`, and my
+  dump truncated at 1500 characters besides. Entry 12's shape exactly: grep is
+  a locator, and a miss in a locator is not evidence of absence.
+
+The decision, restored: **`AttachSessionResponse` gets a `kind` field.** Entry
+18's cost column was wrong twice, both times in the direction that made the
+schema route look unaffordable:
+
+- **"a real skew, server-first" overstates it and misstates it.** There are no
+  third-party clients on this deployment; the fleet restarts with one script
+  and the WebUI is a hard reload. More precisely, *server-first stages
+  nothing here*: a field appended to a RESPONSE breaks old clients the moment
+  the server is new, because `DecodeExactCopy` rejects trailing bytes. It is a
+  coordinated restart, not a staged migration — a different, smaller thing than
+  the request-side skews that made "server-first" a rule on this project.
+- **It did not price the hello route's real defect.** The server already holds
+  the kind in the task record. Replaying a `hello` so the client can infer it
+  means the server declines to state what it knows and the client re-derives it
+  from payload bytes — and the mux would consult that same `TaskKind` anyway,
+  to decide which tasks get a pinned frame 0. It is a convention standing in
+  for a protocol field, which is the thing this project keeps saying not to do.
+
+**Considered and rejected on the way:** appending `ok_event_stream` to
+`AttachSessionStatus`. It is layout-neutral and decode-safe — the generated
+decoder is a raw cast, `a.Status = AttachSessionStatus(tmp8760)`
+(`runner/protocol/message.go:20510`), so an old client sees an unknown value,
+falls out of its `ok` branch and declines to attach, which is the correct
+behaviour for a client that cannot render NDJSON. Rejected because it overloads
+a RESULT enum with a task PROPERTY: the third kind turns it into `ok_×N`.
+
+**What the field also removes:** the hello route needed the mux to retain and
+replay a stream task's first frame — new mux state, a new eviction exception,
+and a rule keyed off the kind it was trying to avoid asking for. The field
+deletes that work rather than deferring it.
