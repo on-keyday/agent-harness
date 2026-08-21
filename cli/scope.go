@@ -241,21 +241,29 @@ func joinTaskIDs(in []protocol.TaskID) string {
 	return strings.Join(ids, ",")
 }
 
-// ScopeSpec builds a `--scope` string from the pieces a graphical control can
-// edit, carrying forward the halves it cannot.
+// ScopeSpec builds a `--scope` string from the pieces a graphical control edits.
 //
-// base is a rank word ("subtree"/"none"/"global"), excludeSelf is the flag that
-// turns each into its without-self twin, and ids is the target list. carry is
-// an existing scope string — a task's current scope on a re-grant, "" on a
-// fresh spawn — and ONLY its visibility half (the `vis/` rank and `+vis-ids:`)
-// is taken from it.
+// base is an action rank word ("subtree"/"none"/"global"), excludeSelf is the
+// flag that turns each into its without-self twin, and ids is the action target
+// list. visBase and visIds are the visibility half: an EMPTY visBase means the
+// rank was not stated, which is the default and means visibility follows the
+// action base — the distinction the wire keeps in `vis_base_present`.
+//
+// visBase never carries exclude_self, for the same reason ParseScope refuses it:
+// self is always visible.
 //
 // It exists so a browser never re-implements this grammar. The WebUI used to
 // serialize with a JS copy that knew three of the six bases and neither half of
 // the visibility pair, so opening the re-grant dialog on a `descendants` task
 // and pressing apply handed self back, and a `global/subtree` task lost its
 // visibility rank — silently, in both cases.
-func ScopeSpec(base string, excludeSelf bool, ids []string, carry string) (string, error) {
+//
+// It used to take a `carry` string instead of these two arguments and read only
+// the visibility half back out of it, because no graphical control could edit
+// that half. Carrying was never the goal — not erasing was — so once the WebUI
+// and the TUI picker grew visibility controls, keeping a second way to set the
+// same field would have been the ambiguity, not the safety.
+func ScopeSpec(base string, excludeSelf bool, ids []string, visBase string, visIds []string) (string, error) {
 	rank, rankExcludes, err := parseScopeBaseWord(strings.TrimSpace(base))
 	if err != nil {
 		return "", err
@@ -274,15 +282,25 @@ func ScopeSpec(base string, excludeSelf bool, ids []string, carry string) (strin
 		out.IdsLen = uint16(len(parsed))
 	}
 
-	if strings.TrimSpace(carry) != "" {
-		prev, err := ParseScope(carry)
+	if v := strings.TrimSpace(visBase); v != "" {
+		vrank, vExcludes, err := parseScopeBaseWord(v)
 		if err != nil {
-			return "", fmt.Errorf("carrying the visibility half of %q: %w", carry, err)
+			return "", fmt.Errorf("visibility rank: %w", err)
 		}
-		out.VisBase = prev.VisBase
-		out.SetVisBasePresent(prev.VisBasePresent())
-		out.VisIds = prev.VisIds
-		out.VisIdsLen = prev.VisIdsLen
+		if vExcludes {
+			return "", fmt.Errorf(
+				"visibility rank %q: self is always visible, so the visibility half cannot exclude it", visBase)
+		}
+		out.VisBase = vrank
+		out.SetVisBasePresent(true)
+	}
+	if len(visIds) > 0 {
+		parsed, err := parseScopeIDs(strings.Join(visIds, ","), strings.Join(visIds, ","))
+		if err != nil {
+			return "", fmt.Errorf("visibility ids: %w", err)
+		}
+		out.VisIds = parsed
+		out.VisIdsLen = uint16(len(parsed))
 	}
 	return ScopeLabel(out), nil
 }

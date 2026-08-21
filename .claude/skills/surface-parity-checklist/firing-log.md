@@ -377,25 +377,95 @@ COLUMNS, not offsets into `lines[row]` — they coincide only while every earlie
 cell is single-width). `TestMirrorsMatchEmbeddedSkills` failed on the byte
 difference. The item is a reminder; the test is what actually held.
 
+### 2026-08-22 (pre-landing) — the visibility half becomes editable (WebUI + TUI picker)
+
+Operator question, not a bug report: 「webui って visibility の scope いじれないん
+か?」. It could not: the two graphical surfaces CARRIED that half and edited only
+the action one, so three of its states were reachable from typed grammar alone.
+
+done:    2 (`cli.ScopeSpec` stays the one serializer; its `carry` parameter is
+         GONE — see 32), 4 (picker key `v`; picker-local rune switch, so
+         `tui/keys.go`'s mainKeyMap is untouched — the `A`/`N` precedent),
+         5 (picker gains a `see:` row and a second checkbox per task row),
+         6 (spawn form + re-grant dialog: rank radios + a `+vis-ids:`
+         checklist), 8 + 22 + 23 (`visBase`/`visIds` across the bridge;
+         `scopeVisBase`/`scopeVisIds` raw on the snapshot — `""` for NOT
+         STATED, which no label form can express), 9, 24 (identical meaning on
+         the spawn and re-grant paths), 25, 27 + 28a (both JS request builds
+         and the picker's single `Result()`), 31, 32, 33 (an exclude-self
+         visibility rank is REFUSED, not silently dropped — self is always
+         visible), 34a, 35
+n/a:     1, 3 (the CLI and the TUI cmdline already took the whole grammar
+         through `cli.ParseScope`; this walk adds no flag), 11–21 (the scope
+         label already printed both halves everywhere), 28 (`VisBase`/`VisIds`
+         were already persisted), 36, 37 (no skill or spec states the UI's
+         control set; `server/scope.go` is the semantic authority and already
+         does)
+missed:  —
+
+Item **31 fired twice, and the second one changed the design.** First as the
+three-state radio: an unstated rank is its own value ("follows the action
+rank"), so `base に従う` is a radio option rather than the absence of one —
+without it, opening either surface would have promoted every default to an
+explicit rank. Then, harder: I wrote a rule that vis-ids are dropped at a global
+visibility rank, mirroring the action set. The picker test caught it
+immediately — seeding a `global/subtree+vis-ids:X` task and applying it
+UNCHANGED erased the clause. The mirror was false: `global+ids:` does not parse,
+so dropping the action set is the grammar's rule, while `global/…+vis-ids:`
+parses and is merely redundant. **The invented rule was deleted rather than
+scaffolded** (Pitfall 11), in the Go picker and in the JS, along with the
+`disabled` styling that would have hidden a value still being sent.
+
+Item **32 got to delete a parameter instead of adding one.** `ScopeSpec(base,
+excludeSelf, ids, carry)` took the target's whole scope string and read only the
+visibility half back out of it, purely because no graphical control could edit
+that half. Carrying was never the goal — not erasing was — so the honest fix
+once controls exist is `ScopeSpec(base, excludeSelf, ids, visBase, visIds)` and
+no second way to set the same field. Scaffolding a rule outlives the rule unless
+someone goes back for it.
+
+Item **34a is the reason the TUI picker is in this diff at all.** Its recorded
+miss was a control added to one row and not carried to its sibling in the same
+dialog; the sibling here is a whole surface. Both were built from controls each
+already had — a radio row and a task checklist — so neither grew a text box, and
+the parser stayed in Go.
+
+Item **35 turned up a stale paragraph, on exactly this axis.** The README still
+said a visibility rank narrower than the action rank "is refused, and not as
+policy", describing an invariant deleted in `c8965b3` — `server/scope.go` says
+in bold that the two ranks are deliberately NOT compared. The new controls can
+build that combination and the server accepts it, so the doc would have taught
+the opposite of what the UI does. Rewritten from the code comment, which is the
+authority.
+
+Verified live against a throwaway instance, both viewports: the spawn form
+serialized `global/subtree+ids:…+vis-ids:…` end to end through the bridge; the
+re-grant dialog seeded `global` + one vis-id from a task set that way and echoed
+its stored scope byte-for-byte (an untouched apply is a no-op); editing the rank
+to `none` and unticking the see-only task applied, and the server then reported
+`none/subtree`. At 390px every radio stayed `inline-block` beside its own label
+with no sideways scroll — the container-selector CSS from 34a's own fix covers
+the new row without touching it.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 4 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. Not-shown, not-kept, not-measured. |
+| 31 (don't hide a value for what it IS) | 6 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. Not-shown, not-kept, not-measured. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 5 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. |
+| 33 (take effect or error) | 6 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
 | 10 (other verb families) | 3 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 2 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 4 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
-| 28a (follow the value to the request build) | 3 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
-| 34a (same KIND of control as its neighbours) | 1 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
+| 32 (one serializer, round-trip tested) | 5 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
+| 28a (follow the value to the request build) | 4 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
+| 34a (same KIND of control as its neighbours) | 2 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 
 **Never fired yet:** 21, 26. Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30

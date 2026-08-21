@@ -488,6 +488,16 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .scope-block label { display: block; margin-bottom: 0.2rem; }
 .scope-base-row { margin: 0.15rem 0; }
+/* The row's own caption. .scope-block label is display:block, so this cannot be
+   a <label> without breaking the inline run of radios beside it -- and it names
+   a radio GROUP, which has no single control to point at anyway (the group is
+   named by aria-label on the row). */
+.scope-row-label {
+  font-family: monospace;
+  font-size: 0.85rem;
+  margin-right: 0.6rem;
+  color: #9a9a9a;
+}
 .scope-base-row label {
   display: inline-block;
   margin: 0 0.8rem 0 0;

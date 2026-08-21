@@ -1424,6 +1424,12 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						a.authorityPicker.Move(-1)
 					case ' ':
 						a.authorityPicker.Toggle()
+					case 'v':
+						// The task rows' second checkbox: +vis-ids:, the
+						// see-only set. Space stays the action set because
+						// that is the common edit; a plain second key keeps
+						// both reachable without introducing a mode.
+						a.authorityPicker.ToggleVisID()
 					case 'A':
 						// WebUI chip row's [all] / [none] quick-set, as keys.
 						a.authorityPicker.SetAllCaps(true)

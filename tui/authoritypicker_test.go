@@ -356,21 +356,125 @@ func TestPickerPreservesExcludeSelf(t *testing.T) {
 	}
 }
 
-// The visibility pair has no control in the picker, so it must survive an
-// apply untouched — the same rule the carried overrides already follow.
-func TestPickerCarriesTheVisibilityHalf(t *testing.T) {
+// The visibility pair is seeded from the target and must survive an apply that
+// does not touch it. It used to be CARRIED because the picker had no control
+// for it; now it has one, and "opened it and pressed enter" must still be a
+// no-op — which is the property that actually mattered.
+func TestPickerSeedsAndPreservesTheVisibilityHalf(t *testing.T) {
+	sib := pickerTask(0xbb, "sibling")
+	sibHex := FormatTaskID(sib.Id)
 	var m AuthorityPickerModel
 	m.OpenRegrant(protocol.TaskInfo{
 		Id:           protocol.TaskID{Id: [16]byte{2}},
 		Capabilities: protocol.Capability_ExecView,
-		Scope:        mkScope(t, "global/subtree"),
-	}, nil)
+		Scope:        mkScope(t, "global/subtree+vis-ids:"+sibHex),
+	}, []protocol.TaskInfo{sib})
 
 	_, spec, _, _ := m.Result()
 	sc := mkScope(t, spec)
 	if !sc.VisBasePresent() || sc.VisBase != protocol.ScopeBase_Global {
-		t.Fatalf("spec %q lost the visibility rank; a picker with no control for "+
-			"it must not clear it", spec)
+		t.Fatalf("spec %q lost the visibility rank on an untouched apply", spec)
+	}
+	if len(sc.VisIds) != 1 {
+		t.Fatalf("spec %q lost the seeded vis-ids", spec)
+	}
+}
+
+// The visibility row cycles through FOUR states, because "not stated" is one of
+// them and is the default: an unstated rank follows the action base, and the
+// zero ScopeBase is itself a legal rank. A three-state control would promote
+// every default to an explicit rank the first time the picker was opened.
+func TestPickerVisibilityRowCyclesThroughUnstated(t *testing.T) {
+	var m AuthorityPickerModel
+	m.OpenRegrant(protocol.TaskInfo{
+		Id:    protocol.TaskID{Id: [16]byte{4}},
+		Scope: mkScope(t, "subtree"),
+	}, nil)
+
+	want := []string{"subtree/subtree", "none/subtree", "global/subtree", "subtree"}
+	for i, w := range want {
+		pickerToggleRow(t, &m, rowVisBase)
+		_, spec, _, _ := m.Result()
+		if spec != w {
+			t.Fatalf("cycle[%d] spec = %q, want %q", i, spec, w)
+		}
+		if _, err := cli.ParseScope(spec); err != nil {
+			t.Fatalf("spec %q does not round-trip: %v", spec, err)
+		}
+	}
+}
+
+// vis-ids are a SECOND id set on the same task rows, reached by their own key.
+// Space must keep meaning the action set: a row in one set and not the other is
+// the whole point of "+vis-ids:" (see it, cannot act on it).
+func TestPickerVisIDsAreASeparateSetFromTheActionIDs(t *testing.T) {
+	target := pickerTask(0xaa, "target")
+	sib := pickerTask(0xbb, "sibling")
+	other := pickerTask(0xcc, "other")
+	sibHex, otherHex := FormatTaskID(sib.Id), FormatTaskID(other.Id)
+
+	var m AuthorityPickerModel
+	m.OpenRegrant(target, []protocol.TaskInfo{target, sib, other})
+
+	moveTo(t, &m, sibHex[:8])
+	m.Toggle() // action set
+	moveTo(t, &m, otherHex[:8])
+	m.ToggleVisID() // see-only set
+
+	_, spec, _, _ := m.Result()
+	want := "subtree+ids:" + sibHex + "+vis-ids:" + otherHex
+	if spec != want {
+		t.Fatalf("spec = %q, want %q", spec, want)
+	}
+	if _, err := cli.ParseScope(spec); err != nil {
+		t.Fatalf("spec %q does not round-trip: %v", spec, err)
+	}
+}
+
+// The action id set dies at the global rank because `global+ids:` does not
+// parse. vis-ids have no such rule — `global/…+vis-ids:` parses, redundantly —
+// so raising the visibility rank must NOT quietly drop the clause. Dropping it
+// would mean opening such a task and pressing apply narrowed its scope, which
+// is exactly the erase this dialog was fixed for once already.
+func TestPickerVisIDsSurviveAGlobalVisibilityRank(t *testing.T) {
+	target := pickerTask(0xaa, "target")
+	sib := pickerTask(0xbb, "sibling")
+	sibHex := FormatTaskID(sib.Id)
+
+	var m AuthorityPickerModel
+	m.OpenRegrant(target, []protocol.TaskInfo{target, sib})
+	moveTo(t, &m, sibHex[:8])
+	m.ToggleVisID()
+	if _, spec, _, _ := m.Result(); spec != "subtree+vis-ids:"+sibHex {
+		t.Fatalf("spec = %q, want the vis-id set", spec)
+	}
+
+	// Raise visibility to global; the clause stays and the string still parses.
+	for i := 0; i < 3; i++ {
+		pickerToggleRow(t, &m, rowVisBase)
+	}
+	_, spec, _, _ := m.Result()
+	if !strings.Contains(spec, "vis-ids:"+sibHex) {
+		t.Fatalf("spec = %q dropped vis-ids when the rank went global", spec)
+	}
+	if _, err := cli.ParseScope(spec); err != nil {
+		t.Fatalf("spec %q does not round-trip: %v", spec, err)
+	}
+
+	// The action set, by contrast, MUST die at global — the grammar has no
+	// global+ids form, so keeping it would emit an unparseable string. Select
+	// it BEFORE raising the base: once both ranks are global the row is dead
+	// and the cursor will not land on it.
+	moveTo(t, &m, sibHex[:8])
+	m.Toggle()
+	pickerToggleRow(t, &m, rowBase)
+	pickerToggleRow(t, &m, rowBase) // subtree -> none -> global
+	_, actSpec, _, _ := m.Result()
+	if strings.Contains(actSpec, "+ids:") {
+		t.Fatalf("spec = %q kept action ids under a global action base", actSpec)
+	}
+	if _, err := cli.ParseScope(actSpec); err != nil {
+		t.Fatalf("spec %q does not round-trip: %v", actSpec, err)
 	}
 }
 

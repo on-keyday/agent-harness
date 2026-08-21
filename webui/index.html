@@ -93,9 +93,28 @@
                could only ever have said "subtree without self". -->
           <label title="subtree なら descendants、none なら空集合（ビットは持つが何にも向かない）"><input type="checkbox" id="spawn-exclude-self"> 自分自身を除く</label>
         </div>
+        <!-- The visibility rank, directly under its sibling: same three words,
+             minus the exclude-self twin (self is always visible). "base に従う"
+             is a real value and the DEFAULT — an unstated rank follows the
+             action base — so it is a radio here rather than an absence, which
+             is what keeps opening this form from promoting every default to an
+             explicit rank. -->
+        <div class="scope-base-row" id="spawn-vis-row" aria-label="Visibility rank">
+          <span class="scope-row-label">見える範囲:</span>
+          <label><input type="radio" name="spawn-vis" value="" checked> base に従う</label>
+          <label><input type="radio" name="spawn-vis" value="subtree"> subtree</label>
+          <label><input type="radio" name="spawn-vis" value="none"> none</label>
+          <label><input type="radio" name="spawn-vis" value="global"> global</label>
+        </div>
         <details id="spawn-scope-details">
           <summary id="spawn-scope-summary">対象タスクを選択 (0)</summary>
           <div id="spawn-scope-tasks" class="task-checklist"></div>
+        </details>
+        <details id="spawn-vis-details">
+          <summary id="spawn-vis-summary">追加で見えるだけのタスク (0)</summary>
+          <div id="spawn-vis-tasks" class="task-checklist"></div>
+          <p class="hint">操作はできないが ls には出る、という対象（--scope の
+            +vis-ids:）。上の「対象タスク」に入れたものは元から見えます。</p>
         </details>
         <details id="spawn-scope-for-details">
           <summary>個別 capability を絞る（--scope-for）</summary>
@@ -372,7 +391,24 @@
       <label><input type="radio" name="regrant-base" value="global"> global</label>
       <label title="subtree なら descendants、none なら空集合（ビットは持つが何にも向かない）"><input type="checkbox" id="regrant-exclude-self"> 自分自身を除く</label>
     </div>
+    <!-- Same pair as the spawn form. This dialog used to CARRY the visibility
+         half untouched because it had no control for it, which is why applying
+         it unchanged on a `global/descendants` task once wrote `subtree`. -->
+    <div class="scope-base-row" id="regrant-vis-row" aria-label="Visibility rank">
+      <span class="scope-row-label">見える範囲:</span>
+      <label><input type="radio" name="regrant-vis" value=""> base に従う</label>
+      <label><input type="radio" name="regrant-vis" value="subtree"> subtree</label>
+      <label><input type="radio" name="regrant-vis" value="none"> none</label>
+      <label><input type="radio" name="regrant-vis" value="global"> global</label>
+    </div>
     <div id="regrant-tasks" class="task-checklist"></div>
+    <!-- A <details> rather than a second bare checklist: this modal is already
+         tall and is opened from a phone, where two stacked 10rem lists push the
+         apply button off-screen. -->
+    <details id="regrant-vis-details">
+      <summary id="regrant-vis-summary">追加で見えるだけのタスク (0)</summary>
+      <div id="regrant-vis-tasks" class="task-checklist"></div>
+    </details>
     <label class="regrant-flag"><input type="checkbox" id="regrant-cascade"> --cascade（子孫の caps/scope も締める）</label>
     <label class="regrant-flag"><input type="checkbox" id="regrant-keep-conns"> --keep-conns（対象の既存接続を切らない）</label>
     <details id="regrant-scope-for-details">

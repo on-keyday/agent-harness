@@ -286,6 +286,10 @@ const POLL_INTERVAL_MS = 5000;
   // checkbox: the echo updater runs during init, before the control is wired.
   let spawnExcludeSelf = false;
   const spawnScopeIds = new Set(); // checked task ids (spawn picker)
+  // The visibility half. "" is the third radio state, "follows the action
+  // base", and is the default — not an absent value.
+  let spawnVisBase = "";
+  const spawnVisIds = new Set(); // +vis-ids: see-only task ids (spawn picker)
   // Per-capability override rows, one list per dialog. Declared HERE with the
   // other spawn state rather than beside the builder, because initCaps ->
   // initScope runs before that point in the file and a const in the temporal
@@ -3333,14 +3337,23 @@ const POLL_INTERVAL_MS = 5000;
   // neither half of the visibility pair, which is why a re-grant on a
   // `descendants` task silently handed self back.
   //
-  // carry is the task's current scope string on a re-grant ("" on a spawn):
-  // only its visibility half is kept, the half no control here can edit.
+  // visBase is the visibility rank, "" meaning NOT STATED — its own value, and
+  // the default: an unstated rank follows the action base. It used to be a
+  // `carry` argument holding the task's whole current scope, which ScopeSpec
+  // read the visibility half back out of, because no control here could edit
+  // it. Carrying was never the goal; not erasing was.
+  //
   // sessionMode collapses the plain default to "", which is what "--scope not
   // named" means on a spawn.
-  function scopeSpec(base, excludeSelf, idsSet, sessionMode, carry) {
+  function scopeSpec(base, excludeSelf, idsSet, sessionMode, visBase, visIdsSet) {
+    // The ACTION set dies at global because `global+ids:` does not parse. The
+    // see-only set does not: `global/…+vis-ids:` parses, redundantly but
+    // legally, so dropping it would make an untouched apply narrow the scope.
     const ids = base === "global" ? [] : [...idsSet].sort();
-    if (sessionMode && base === "subtree" && !excludeSelf && ids.length === 0 && !carry) return "";
-    return window.harness.scopeSpec({ base, excludeSelf, ids, carry: carry || "" });
+    const visIds = [...(visIdsSet || [])].sort();
+    if (sessionMode && base === "subtree" && !excludeSelf && ids.length === 0 &&
+        !visBase && visIds.length === 0) return "";
+    return window.harness.scopeSpec({ base, excludeSelf, ids, visBase: visBase || "", visIds });
   }
 
   // buildTaskChecklist renders one checkbox row per snapshot task (terminal
@@ -3389,7 +3402,8 @@ const POLL_INTERVAL_MS = 5000;
   // Spawn scope picker: base radios + task checklist, serialized into
   // spawnScope exactly where the old free-text field's value went.
   function updateSpawnScope() {
-    spawnScope = scopeSpec(spawnBase, spawnExcludeSelf, spawnScopeIds, true, "");
+    spawnScope = scopeSpec(spawnBase, spawnExcludeSelf, spawnScopeIds, true,
+      spawnVisBase, spawnVisIds);
     const list = document.getElementById("spawn-scope-tasks");
     if (list) list.classList.toggle("disabled", spawnBase === "global");
     const sum = document.getElementById("spawn-scope-summary");
@@ -3397,6 +3411,12 @@ const POLL_INTERVAL_MS = 5000;
       const n = spawnBase === "global" ? 0 : spawnScopeIds.size;
       sum.textContent = `対象タスクを選択 (${n})`;
     }
+    // Never disabled: unlike the action list, a global visibility rank makes
+    // this clause redundant rather than illegal, and it is still serialized —
+    // greying out a control whose value keeps being sent is the not-shown /
+    // still-kept split this dialog already got wrong once.
+    const visSum = document.getElementById("spawn-vis-summary");
+    if (visSum) visSum.textContent = `追加で見えるだけのタスク (${spawnVisIds.size})`;
     const echo = document.getElementById("spawn-scope-echo");
     if (echo) {
       let line = "scope: " + (spawnScope || "subtree (default)");
@@ -3409,6 +3429,8 @@ const POLL_INTERVAL_MS = 5000;
   function refreshSpawnScopeChecklist() {
     buildTaskChecklist(document.getElementById("spawn-scope-tasks"),
       spawnScopeIds, "", updateSpawnScope);
+    buildTaskChecklist(document.getElementById("spawn-vis-tasks"),
+      spawnVisIds, "", updateSpawnScope);
     // Override rows carry their own checklists, so they need the same refresh:
     // a row opened before the first snapshot would otherwise offer no tasks.
     buildOverrideRows("spawn", "spawn-scope-for-rows", updateSpawnScope);
@@ -3428,6 +3450,25 @@ const POLL_INTERVAL_MS = 5000;
       selfCb.addEventListener("change", () => {
         spawnExcludeSelf = selfCb.checked;
         updateSpawnScope();
+      });
+    }
+    const visRow = document.getElementById("spawn-vis-row");
+    if (visRow) {
+      for (const r of visRow.querySelectorAll('input[type="radio"]')) {
+        r.addEventListener("change", () => {
+          if (r.checked) { spawnVisBase = r.value; updateSpawnScope(); }
+        });
+      }
+    }
+    // Built on open as well as on snapshot, for the same reason the override
+    // rows are: expanding this before the first snapshot would find it empty.
+    const visDetails = document.getElementById("spawn-vis-details");
+    if (visDetails) {
+      visDetails.addEventListener("toggle", () => {
+        if (visDetails.open) {
+          buildTaskChecklist(document.getElementById("spawn-vis-tasks"),
+            spawnVisIds, "", updateSpawnScope);
+        }
       });
     }
     buildOverrideRows("spawn", "spawn-scope-for-rows", updateSpawnScope);
@@ -3453,18 +3494,25 @@ const POLL_INTERVAL_MS = 5000;
   let regrantBits = 0;
   let regrantBase = "subtree";
   let regrantExcludeSelf = false;
-  // The target's scope string as it stood when the dialog opened; ScopeSpec
-  // reads only its visibility half back out.
-  let regrantCarry = "";
   const regrantIds = new Set();
+  // The visibility half, seeded from the target and then EDITED. It used to be
+  // a `regrantCarry` holding the whole scope string, which ScopeSpec read the
+  // visibility half back out of — the dialog could not erase what it showed no
+  // control for, but it could not change it either.
+  let regrantVisBase = "";
+  const regrantVisIds = new Set();
 
   function updateRegrantEcho() {
     const list = document.getElementById("regrant-tasks");
     if (list) list.classList.toggle("disabled", regrantBase === "global");
+    // Never disabled — see updateSpawnScope.
+    const visSum = document.getElementById("regrant-vis-summary");
+    if (visSum) visSum.textContent = `追加で見えるだけのタスク (${regrantVisIds.size})`;
     const echo = document.getElementById("regrant-echo");
     if (echo) {
       let line = "→ caps=" + capsLabelFor(regrantBits) +
-        "  scope=" + scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false, regrantCarry);
+        "  scope=" + scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false,
+          regrantVisBase, regrantVisIds);
       const sf = overrideSpecsFrom("regrant");
       if (sf.length > 0) line += "  +" + sf.join(" ");
       echo.textContent = line;
@@ -3477,12 +3525,15 @@ const POLL_INTERVAL_MS = 5000;
     regrantBits = typeof t.capsBits === "number" ? t.capsBits : 0;
     regrantBase = t.scopeBase || "subtree";
     regrantExcludeSelf = !!t.scopeExcludeSelf;
-    // The whole scope string, handed back to ScopeSpec as carry so the
-    // visibility half survives an apply. Same reason the override rows are
-    // seeded: this dialog must not erase what it shows no control for.
-    regrantCarry = t.scope || "";
     regrantIds.clear();
     for (const id of (t.scopeIds || [])) regrantIds.add(id);
+    // The visibility half from its own RAW snapshot fields. scopeVisBase is ""
+    // when the rank is unstated, which is a value the radio row has to be able
+    // to show and to return to — reading it off the label would collapse it
+    // into the action rank.
+    regrantVisBase = t.scopeVisBase || "";
+    regrantVisIds.clear();
+    for (const id of (t.scopeVisIds || [])) regrantVisIds.add(id);
     // Seeded, not blank: overrides travel with the scope under one presence
     // bit, so applying with no rows CLEARS them. Showing them as rows is what
     // makes that an operator's choice rather than a silent erase.
@@ -3498,8 +3549,15 @@ const POLL_INTERVAL_MS = 5000;
     }
     const rSelf = document.getElementById("regrant-exclude-self");
     if (rSelf) rSelf.checked = regrantExcludeSelf;
+    for (const r of document.querySelectorAll('#regrant-vis-row input[type="radio"]')) {
+      r.checked = (r.value === regrantVisBase);
+    }
     buildTaskChecklist(document.getElementById("regrant-tasks"),
       regrantIds, t.id, updateRegrantEcho);
+    // Self is always visible, so the target is excluded from its own see-list
+    // for the same reason it is excluded from its own target list.
+    buildTaskChecklist(document.getElementById("regrant-vis-tasks"),
+      regrantVisIds, t.id, updateRegrantEcho);
     buildOverrideRows("regrant", "regrant-scope-for-rows", updateRegrantEcho);
     document.getElementById("regrant-cascade").checked = false;
     document.getElementById("regrant-keep-conns").checked = false;
@@ -3520,12 +3578,18 @@ const POLL_INTERVAL_MS = 5000;
         updateRegrantEcho();
       });
     }
+    for (const r of document.querySelectorAll('#regrant-vis-row input[type="radio"]')) {
+      r.addEventListener("change", () => {
+        if (r.checked) { regrantVisBase = r.value; updateRegrantEcho(); }
+      });
+    }
     document.getElementById("regrant-cancel").addEventListener("click", () => regrantModal.close());
     document.getElementById("regrant-apply").addEventListener("click", async () => {
       const req = {
         taskId: regrantTaskId,
         caps: regrantBits,
-        scope: scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false, regrantCarry),
+        scope: scopeSpec(regrantBase, regrantExcludeSelf, regrantIds, false,
+          regrantVisBase, regrantVisIds),
         scopeFor: overrideSpecsFrom("regrant"),
         cascade: document.getElementById("regrant-cascade").checked,
         keepConns: document.getElementById("regrant-keep-conns").checked,

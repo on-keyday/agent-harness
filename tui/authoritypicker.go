@@ -32,12 +32,21 @@ type AuthorityPickerModel struct {
 	// so as a fourth base value it could only ever have meant "subtree without
 	// self" and the other two ranks could not say it at all.
 	excludeSelf bool
-	// visHalf is CARRIED, not edited, for the same reason as overrides below:
-	// the visibility rank and vis-ids travel with the scope under one presence
-	// bit, so re-serializing without them would silently collapse a
-	// `global/subtree` task to `subtree` on any re-grant. They are typed on the
-	// cmdline; this keeps them alive across a picker apply.
-	visHalf protocol.TaskScope
+	// The visibility half, EDITED — it used to be carried untouched because the
+	// picker had no control for it, which kept a `global/subtree` task from
+	// collapsing to `subtree` on apply but also meant three of the ranks could
+	// only ever be typed on the cmdline.
+	//
+	// visBasePresent is a real third state, not a nil-check: an unstated rank
+	// means "visibility follows the action base", and the zero ScopeBase is
+	// itself a legal rank (subtree), so dropping the bit would promote every
+	// default to an explicit rank the first time anyone opened the picker.
+	visBase        protocol.ScopeBase
+	visBasePresent bool
+	// visSelected is the +vis-ids: set — tasks this one may SEE without being
+	// able to act on them. Separate from `selected` because they are separate
+	// clauses of the grammar; a task can be in either, both, or neither.
+	visSelected map[string]bool
 	// overrides is CARRIED, not edited. The picker edits the base scope and
 	// the id set; per-capability narrowings are typed on the cmdline. It has
 	// to be kept because overrides travel with the scope under one presence
@@ -71,6 +80,7 @@ const (
 	rowCap pickerRowKind = iota
 	rowBase
 	rowExcludeSelf
+	rowVisBase
 	rowTask
 	rowCascade
 	rowKeepConns
@@ -161,12 +171,16 @@ func (m *AuthorityPickerModel) reset(mode AuthorityPickerMode, caps protocol.Cap
 	m.caps = caps
 	m.base = scope.Base
 	m.excludeSelf = scope.ExcludeSelf()
-	m.visHalf = protocol.TaskScope{VisBase: scope.VisBase, VisIds: scope.VisIds, VisIdsLen: scope.VisIdsLen}
-	m.visHalf.SetVisBasePresent(scope.VisBasePresent())
+	m.visBase = scope.VisBase
+	m.visBasePresent = scope.VisBasePresent()
 	m.overrides = nil
 	m.selected = map[string]bool{}
 	for _, id := range scope.Ids {
 		m.selected[FormatTaskID(id)] = true
+	}
+	m.visSelected = map[string]bool{}
+	for _, id := range scope.VisIds {
+		m.visSelected[FormatTaskID(id)] = true
 	}
 	m.cascade = false
 	m.keepConns = false
@@ -185,6 +199,11 @@ func (m *AuthorityPickerModel) buildRows(tasks []protocol.TaskInfo) {
 	m.rows = append(m.rows, pickerRow{kind: rowBase, label: "base:"})
 	m.rows = append(m.rows, pickerRow{kind: rowExcludeSelf,
 		label: "exclude self (subtree→descendants; none→the empty set)"})
+	// Directly under its sibling: the visibility rank is the same three words
+	// with one fewer state (self is always visible, so no exclude-self twin).
+	// Putting it anywhere else is how the WebUI ended up with the control on
+	// the override rows and not on the row above them.
+	m.rows = append(m.rows, pickerRow{kind: rowVisBase, label: "see:"})
 	for _, t := range tasks {
 		idHex := FormatTaskID(t.Id)
 		if idHex == m.targetHex {
@@ -233,8 +252,38 @@ func (m *AuthorityPickerModel) Move(delta int) {
 	}
 }
 
+// effectiveVisBase is the rank visibility actually runs at: the stated one, or
+// the action base when it is unstated (the grammar's "omitting it means
+// visibility follows the action base").
+func (m *AuthorityPickerModel) effectiveVisBase() protocol.ScopeBase {
+	if m.visBasePresent {
+		return m.visBase
+	}
+	return m.base
+}
+
+// A task row carries two checkboxes now, so it is only dead when NEITHER can
+// use it: global already covers every task on both axes.
 func (m *AuthorityPickerModel) rowDisabled(r pickerRow) bool {
-	return r.kind == rowTask && m.base == protocol.ScopeBase_Global
+	return r.kind == rowTask &&
+		m.base == protocol.ScopeBase_Global &&
+		m.effectiveVisBase() == protocol.ScopeBase_Global
+}
+
+// ToggleVisID flips the cursor task row's +vis-ids: membership — the second
+// checkbox on the same row, on its own key so the common case (space) still
+// means the action set. A no-op off a task row and in parent mode.
+//
+// It is NOT gated on the visibility rank: a global rank makes the clause
+// redundant, not illegal, and a key that silently does nothing under a state
+// the operator cannot see is worse than a redundant selection they can.
+func (m *AuthorityPickerModel) ToggleVisID() {
+	if len(m.rows) == 0 || m.mode == PickerModeParent {
+		return
+	}
+	if r := m.rows[m.cursor]; r.kind == rowTask {
+		m.visSelected[r.idHex] = !m.visSelected[r.idHex]
+	}
 }
 
 // SetAllCaps sets every granular capability bit on (all=true) or off
@@ -275,6 +324,20 @@ func (m *AuthorityPickerModel) Toggle() {
 		}
 	case rowExcludeSelf:
 		m.excludeSelf = !m.excludeSelf
+	case rowVisBase:
+		// Four states, because "not stated" is one of them and is the default.
+		// Cycling back to it is the only way to UNSET a rank once set, so it
+		// stays in the ring rather than being an initial value you fall out of.
+		switch {
+		case !m.visBasePresent:
+			m.visBase, m.visBasePresent = protocol.ScopeBase_Subtree, true
+		case m.visBase == protocol.ScopeBase_Subtree:
+			m.visBase = protocol.ScopeBase_None
+		case m.visBase == protocol.ScopeBase_None:
+			m.visBase = protocol.ScopeBase_Global
+		default:
+			m.visBasePresent = false
+		}
 	case rowTask:
 		m.selected[r.idHex] = !m.selected[r.idHex]
 	case rowCascade:
@@ -294,37 +357,60 @@ func (m *AuthorityPickerModel) Toggle() {
 func (m *AuthorityPickerModel) Overrides() []protocol.ScopeOverride { return m.overrides }
 
 func (m *AuthorityPickerModel) Result() (caps protocol.Capability, scopeSpec string, cascade, keepConns bool) {
-	var ids []string
-	if m.base != protocol.ScopeBase_Global {
-		for id, on := range m.selected {
-			if on {
-				ids = append(ids, id)
-			}
-		}
-	}
-	spec := m.scopeSpec(ids)
+	spec := m.scopeSpec()
 	if m.mode == PickerModeSession {
 		return m.caps, spec, false, false
 	}
 	return m.caps, spec, m.cascade, m.keepConns
 }
 
-// scope assembles the picker's selection into a wire TaskScope: the edited
-// base + exclude-self + id set, plus the visibility half it is carrying
-// untouched.
-func (m *AuthorityPickerModel) scope(ids []string) protocol.TaskScope {
-	sc := m.visHalf
+// selectedIDs reads one of the two id sets back as sorted hex.
+//
+// dropAtGlobal applies to the ACTION set only, and is the grammar's rule rather
+// than a tidiness one: `global+ids:` does not parse, so serializing it would
+// produce a string nothing accepts. `global/…+vis-ids:` DOES parse — redundant,
+// since a global rank already sees everything, but legal — so the see-only set
+// is never dropped. Dropping it would make opening a `global/subtree+vis-ids:X`
+// task and pressing apply erase the clause, which is the silent narrowing this
+// dialog exists to have stopped doing.
+func (m *AuthorityPickerModel) selectedIDs(set map[string]bool, dropAtGlobal protocol.ScopeBase) []string {
+	if dropAtGlobal == protocol.ScopeBase_Global {
+		return nil
+	}
+	var ids []string
+	for id, on := range set {
+		if on {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// scope assembles the picker's selection into a wire TaskScope: both halves,
+// each from its own controls.
+func (m *AuthorityPickerModel) scope() protocol.TaskScope {
+	var sc protocol.TaskScope
 	sc.Base = m.base
 	sc.SetExcludeSelf(m.excludeSelf)
-	sort.Strings(ids)
-	for _, id := range ids {
-		tid, err := ParseTaskID(id)
-		if err != nil {
-			continue // rows are built from formatted ids; a bad one cannot select
+	sc.VisBase = m.visBase
+	sc.SetVisBasePresent(m.visBasePresent)
+
+	appendIDs := func(dst *[]protocol.TaskID, ids []string) {
+		for _, id := range ids {
+			tid, err := ParseTaskID(id)
+			if err != nil {
+				continue // rows are built from formatted ids; a bad one cannot select
+			}
+			*dst = append(*dst, tid)
 		}
-		sc.Ids = append(sc.Ids, tid)
 	}
+	appendIDs(&sc.Ids, m.selectedIDs(m.selected, m.base))
 	sc.IdsLen = uint16(len(sc.Ids))
+	// Never dropped: see selectedIDs. The zero rank passed here is "no rank
+	// suppresses this set", not a claim about the visibility base.
+	appendIDs(&sc.VisIds, m.selectedIDs(m.visSelected, protocol.ScopeBase_Subtree))
+	sc.VisIdsLen = uint16(len(sc.VisIds))
 	return sc
 }
 
@@ -336,8 +422,8 @@ func (m *AuthorityPickerModel) scope(ids []string) protocol.TaskScope {
 //
 // Session mode returns "" for the plain default, which is what "--scope not
 // named" means on a spawn; a re-grant is always explicit.
-func (m *AuthorityPickerModel) scopeSpec(ids []string) string {
-	sc := m.scope(ids)
+func (m *AuthorityPickerModel) scopeSpec() string {
+	sc := m.scope()
 	if m.mode == PickerModeSession && len(sc.Ids) == 0 && !m.excludeSelf &&
 		!sc.VisBasePresent() && len(sc.VisIds) == 0 && m.base == protocol.ScopeBase_Subtree {
 		return ""
@@ -415,12 +501,24 @@ func (m *AuthorityPickerModel) View() string {
 			if m.caps&r.bit == r.bit {
 				line = "[x] "
 			}
-		case rowBase:
+		case rowBase, rowVisBase:
 			line = "    "
 		case rowTask:
-			if m.mode != PickerModeParent && m.selected[r.idHex] {
-				line = "[x] "
+			if m.mode == PickerModeParent {
+				break
 			}
+			// Two boxes on one row: the action set (space) and the see-only
+			// set (v). Rendering them side by side is what makes the second
+			// key discoverable — a row that looked identical either way would
+			// leave `v` as folklore in the footer.
+			act, see := "[ ]", "[ ]"
+			if m.selected[r.idHex] {
+				act = "[x]"
+			}
+			if m.visSelected[r.idHex] {
+				see = "[v]"
+			}
+			line = act + see + " "
 		case rowExcludeSelf:
 			if m.excludeSelf {
 				line = "[x] "
@@ -435,8 +533,25 @@ func (m *AuthorityPickerModel) View() string {
 			}
 		}
 		label := r.label
-		if r.kind == rowBase {
-			label = "base: " + cli.ScopeLabel(m.scope(nil))
+		switch r.kind {
+		case rowBase:
+			// A bare action scope through the SAME serializer, so this row
+			// spells `descendants` exactly the way ls does rather than growing
+			// a picker-local word list. The vis prefix and the ids belong to
+			// their own rows and the footer echo.
+			bare := protocol.TaskScope{Base: m.base}
+			bare.SetExcludeSelf(m.excludeSelf)
+			label = "base: " + cli.ScopeLabel(bare)
+		case rowVisBase:
+			// "(follows base)" rather than the resolved word: showing the
+			// action rank here would make the unstated default look like an
+			// explicit choice, which is the one distinction this row exists
+			// to expose.
+			see := "(follows base)"
+			if m.visBasePresent {
+				see = m.visBase.String()
+			}
+			label = "see:  " + see
 		}
 		line = fit(line + label)
 		switch {
@@ -456,6 +571,6 @@ func (m *AuthorityPickerModel) View() string {
 	if spec == "" {
 		spec = "(default subtree)"
 	}
-	b.WriteString(fit("space toggle · A/N all/none caps · enter apply · esc cancel · scope=" + spec))
+	b.WriteString(fit("space toggle · v see-only · A/N all/none caps · enter apply · esc cancel · scope=" + spec))
 	return pickerBorderStyle.Render(b.String())
 }

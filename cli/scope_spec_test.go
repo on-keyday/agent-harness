@@ -111,7 +111,7 @@ func TestScopeSpecReachesAllSixBases(t *testing.T) {
 	for _, base := range []string{"subtree", "none", "global"} {
 		for _, excl := range []bool{false, true} {
 			key := base + "|" + map[bool]string{true: "true", false: "false"}[excl]
-			got, err := ScopeSpec(base, excl, nil, "")
+			got, err := ScopeSpec(base, excl, nil, "", nil)
 			if err != nil {
 				t.Fatalf("%s: %v", key, err)
 			}
@@ -133,12 +133,13 @@ func TestScopeSpecReachesAllSixBases(t *testing.T) {
 	}
 }
 
-// TestScopeSpecCarriesTheVisibilityHalf is the erasure half: the re-grant
-// dialog shows no control for the visibility pair, so an apply must leave it
-// exactly as it found it rather than collapsing it.
-func TestScopeSpecCarriesTheVisibilityHalf(t *testing.T) {
-	const carry = "global/subtree+vis-ids:" + idB
-	got, err := ScopeSpec("none", true, []string{idA}, carry)
+// TestScopeSpecSetsBothHalvesIndependently — the two halves are edited by
+// separate controls now, so neither may leak into the other. This replaces the
+// carry test: ScopeSpec used to take the target's whole scope string and read
+// only the visibility half back out, because no graphical control could edit
+// it.
+func TestScopeSpecSetsBothHalvesIndependently(t *testing.T) {
+	got, err := ScopeSpec("none", true, []string{idA}, "global", []string{idB})
 	if err != nil {
 		t.Fatalf("ScopeSpec: %v", err)
 	}
@@ -146,30 +147,62 @@ func TestScopeSpecCarriesTheVisibilityHalf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseScope(%q): %v", got, err)
 	}
-	// The edited half is what the controls said.
 	if sc.Base != protocol.ScopeBase_None || !sc.ExcludeSelf() {
-		t.Errorf("edited half = %v/%v, want none/true", sc.Base, sc.ExcludeSelf())
+		t.Errorf("action half = %v/%v, want none/true", sc.Base, sc.ExcludeSelf())
 	}
 	if len(sc.Ids) != 1 {
 		t.Errorf("ids = %d, want 1", len(sc.Ids))
 	}
-	// The carried half is untouched.
 	if !sc.VisBasePresent() || sc.VisBase != protocol.ScopeBase_Global {
-		t.Errorf("visibility rank = %v/%v, want present/global — a dialog with no "+
-			"control for it must not clear it", sc.VisBasePresent(), sc.VisBase)
+		t.Errorf("visibility rank = %v/%v, want present/global", sc.VisBasePresent(), sc.VisBase)
 	}
 	if len(sc.VisIds) != 1 {
-		t.Errorf("vis-ids = %d, want the carried one", len(sc.VisIds))
+		t.Errorf("vis-ids = %d, want 1", len(sc.VisIds))
 	}
+}
 
-	// And an empty carry must NOT invent one — a fresh spawn has no visibility
-	// half, and defaulting to the action rank is the wire's own zero meaning.
-	fresh, err := ScopeSpec("subtree", false, nil, "")
+// TestScopeSpecEmptyVisBaseMeansNotStated pins the three-state control: the
+// visibility rank is present, absent, or a value — and absent is the DEFAULT,
+// meaning "follows the action base". A control that could only say
+// subtree/none/global would silently promote every default to an explicit rank.
+func TestScopeSpecEmptyVisBaseMeansNotStated(t *testing.T) {
+	fresh, err := ScopeSpec("subtree", false, nil, "", nil)
 	if err != nil {
 		t.Fatalf("ScopeSpec: %v", err)
 	}
 	if fs, _ := ParseScope(fresh); fs.VisBasePresent() {
-		t.Errorf("a spawn with no carry got a visibility rank: %q", fresh)
+		t.Errorf("an unstated visibility rank became present: %q", fresh)
+	}
+	if fresh != "subtree" {
+		t.Errorf("= %q, want a bare action rank", fresh)
+	}
+
+	// vis-ids without a stated rank is legal and must survive on its own: it is
+	// "act on the subtree, additionally SEE that task".
+	withIDs, err := ScopeSpec("subtree", false, nil, "", []string{idB})
+	if err != nil {
+		t.Fatalf("ScopeSpec: %v", err)
+	}
+	sc, err := ParseScope(withIDs)
+	if err != nil {
+		t.Fatalf("ParseScope(%q): %v", withIDs, err)
+	}
+	if sc.VisBasePresent() {
+		t.Errorf("vis-ids alone stated a rank: %q", withIDs)
+	}
+	if len(sc.VisIds) != 1 {
+		t.Errorf("vis-ids = %d, want 1 (%q)", len(sc.VisIds), withIDs)
+	}
+}
+
+// TestScopeSpecRefusesExcludeSelfOnTheVisibilityHalf — self is always visible,
+// so `descendants` and the `-self` twins are action-only spellings. The control
+// must not be able to build one; ParseScope refuses the same string.
+func TestScopeSpecRefusesExcludeSelfOnTheVisibilityHalf(t *testing.T) {
+	for _, v := range []string{"descendants", "subtree-self", "none-self", "global-self"} {
+		if _, err := ScopeSpec("subtree", false, nil, v, nil); err == nil {
+			t.Errorf("visibility rank %q was accepted; self is always visible", v)
+		}
 	}
 }
 
@@ -177,19 +210,22 @@ func TestScopeSpecCarriesTheVisibilityHalf(t *testing.T) {
 // bridge call on error, which is the intended shape: a silently-wrong scope is
 // the failure this replaced.
 func TestScopeSpecRejectsBadInput(t *testing.T) {
-	if _, err := ScopeSpec("subtre", false, nil, ""); err == nil {
+	if _, err := ScopeSpec("subtre", false, nil, "", nil); err == nil {
 		t.Error("a misspelled base was accepted")
 	}
-	if _, err := ScopeSpec("subtree", false, []string{"nothex"}, ""); err == nil {
+	if _, err := ScopeSpec("subtree", false, []string{"nothex"}, "", nil); err == nil {
 		t.Error("a non-hex id was accepted")
 	}
-	if _, err := ScopeSpec("subtree", false, nil, "not a scope"); err == nil {
-		t.Error("an unparseable carry was accepted")
+	if _, err := ScopeSpec("subtree", false, nil, "subtre", nil); err == nil {
+		t.Error("a misspelled visibility rank was accepted")
+	}
+	if _, err := ScopeSpec("subtree", false, nil, "", []string{"nothex"}); err == nil {
+		t.Error("a non-hex vis-id was accepted")
 	}
 	// A base word that already carries the flag agrees with the checkbox
 	// rather than fighting it: either source setting it is enough.
 	for _, excl := range []bool{false, true} {
-		got, err := ScopeSpec("descendants", excl, nil, "")
+		got, err := ScopeSpec("descendants", excl, nil, "", nil)
 		if err != nil {
 			t.Fatalf("descendants/%v: %v", excl, err)
 		}

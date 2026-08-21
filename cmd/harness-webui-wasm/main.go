@@ -336,6 +336,26 @@ func scopeIDStrings(s protocol.TaskScope) []any {
 	return out
 }
 
+func scopeVisIDStrings(s protocol.TaskScope) []any {
+	out := make([]any, 0, len(s.VisIds))
+	for _, id := range s.VisIds {
+		out = append(out, hex.EncodeToString(id.Id[:]))
+	}
+	return out
+}
+
+// visBaseString renders the visibility rank for the dialog's radio row, with ""
+// meaning NOT STATED. The zero ScopeBase is a legal rank (subtree), so the
+// presence bit is the only thing that separates "follows the action base" from
+// "explicitly subtree" — reading VisBase without it would turn every default
+// into an explicit rank the moment a dialog applied.
+func visBaseString(s protocol.TaskScope) string {
+	if !s.VisBasePresent() {
+		return ""
+	}
+	return s.VisBase.String()
+}
+
 // overridesFromOpts reads the optional `scopeFor` array off a JS options
 // object: each entry is a "CAPS=SCOPE" string in the --scope-for spelling, so
 // the browser sends what the CLI accepts and the parse/merge rules — including
@@ -418,17 +438,22 @@ func harnessScopeSpec(this js.Value, args []js.Value) any {
 		base = v.String()
 	}
 	excludeSelf := opts.Get("excludeSelf").Truthy()
-	carry := ""
-	if v := opts.Get("carry"); v.Type() == js.TypeString {
-		carry = v.String()
+	// "" is the third state of the visibility radio, not a missing argument:
+	// the rank is unstated and follows the action base.
+	visBase := ""
+	if v := opts.Get("visBase"); v.Type() == js.TypeString {
+		visBase = v.String()
 	}
-	var ids []string
-	if v := opts.Get("ids"); v.Type() == js.TypeObject {
-		for i := 0; i < v.Length(); i++ {
-			ids = append(ids, v.Index(i).String())
+	strList := func(key string) []string {
+		var out []string
+		if v := opts.Get(key); v.Type() == js.TypeObject {
+			for i := 0; i < v.Length(); i++ {
+				out = append(out, v.Index(i).String())
+			}
 		}
+		return out
 	}
-	spec, err := cli.ScopeSpec(base, excludeSelf, ids, carry)
+	spec, err := cli.ScopeSpec(base, excludeSelf, strList("ids"), visBase, strList("visIds"))
 	if err != nil {
 		panic(js.Error{Value: js.ValueOf(err.Error())})
 	}
@@ -812,12 +837,17 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					"capsBits":  float64(uint32(t.Capabilities)),
 					"scopeBase": t.Scope.Base.String(),
 					"scopeIds":  scopeIDStrings(t.Scope),
-					// exclude_self is the base's other half, and `scope` above
-					// is the WHOLE scope in grammar form — the dialog seeds its
-					// checkbox from the first and hands the second back as
-					// ScopeSpec's carry, so the visibility pair survives a UI
-					// round trip that shows no control for it.
+					// exclude_self is the action base's other half.
 					"scopeExcludeSelf": t.Scope.ExcludeSelf(),
+					// The visibility half, raw and in the same shape, because
+					// the dialog now edits it rather than carrying it blind.
+					// scopeVisBase is "" when the rank is NOT STATED, which is
+					// its own value ("visibility follows the action base") and
+					// not a synonym for subtree — the radio row needs the
+					// three-state distinction the wire keeps in
+					// vis_base_present.
+					"scopeVisBase": visBaseString(t.Scope),
+					"scopeVisIds":  scopeVisIDStrings(t.Scope),
 					// scopeFor is the label; scopeForSpecs is the raw
 					// "CAPS=SCOPE" list the re-grant dialog sends straight
 					// back, so a round trip through the UI cannot lose a

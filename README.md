@@ -493,10 +493,28 @@ sibling, touch nothing"). Out-of-scope targets answer *no such task*.
 
 A **visibility rank wider than the action rank** is how a task sees the
 whole server while acting on its own subtree — `--scope global/subtree`.
-The reverse is refused, and not as policy: every action discloses
-existence on success, so a task that could act past what `ls` shows
-would enumerate the server by attempting actions, and its narrow
-visibility would be decorative.
+
+The reverse is allowed too, and deliberately. An earlier version required
+`action <= visibility` so that `ls` would be a complete statement of what
+a task can reach; it was dropped because it conflated two things this
+design keeps apart — *un-enumerable* and *invisible* — and because it
+forbade a shape that is actually wanted: an agent that acts only on ids
+handed to it over the agentboard and must NOT be able to list the server.
+That is `--scope none --scope-for exec_view=global`: cannot enumerate
+anything, can look at what it is told about. Under the old rule the only
+way to get it was a global visibility rank, which grants exactly the
+enumeration the operator was withholding. Task ids are 128 random bits,
+so a wide action rank buys no discovery on its own —
+`server/scope.go`'s `validateScope` carries the full reasoning, and it
+compares the two ranks nowhere.
+
+Both halves are editable from every surface: `--scope` on the CLI and the
+TUI cmdline take the whole grammar, and the **WebUI spawn form / re-grant
+dialog** and the **TUI `a` picker** each carry a visibility rank row
+(`base に従う` / `subtree` / `none` / `global`, the first meaning "not
+stated — follows the action rank") beside the action one, plus a second
+task checklist for `+vis-ids:`. In the TUI picker that second set is the
+`v` key on a task row, which is why its rows show two boxes.
 
 `--scope-for CAPS=SCOPE` narrows ONE capability, or a comma-separated
 list of them, below the task's own scope — `--scope-for
