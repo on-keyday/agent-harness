@@ -6,7 +6,8 @@ this module directly rather than going through ``runner.py``'s
 ``bootstrap.ensure_venv()`` / ``psutil`` import chain).
 
 ``KNOWN_AGENT_PRESETS`` below is the SINGLE SOURCE OF TRUTH for the
-built-in agent presets' bin + argv-template + logFormat shapes.
+built-in agent presets' bin + argv-template + logFormat + streamAdapter
+shapes.
 ``.claude/commands/runner-up.md`` ("Codex preset details" / shell-sandbox
 presets table) references this table by name and MUST NOT restate the
 literal argv strings, so the doc and the code cannot diverge. This module
@@ -27,10 +28,27 @@ JSON directly instead.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+# The event-stream adapter (TaskKind stream), for the presets whose agent it
+# speaks. It is a harness binary, so it is taken from the checkout this module
+# ships in — beside the agent-runner daemon.py will launch (scripts/daemon.py
+# BIN_DIR/bin_basename, which this cannot import: that module pulls in psutil
+# and this one is deliberately stdlib-only). Pinning it to the sibling build
+# also pins the adapter's protocol_version to the runner that reads it.
+#
+# It is a BUILD ARTIFACT, unlike the checked-in sandbox wrappers below: a fresh
+# checkout has no bin/ until `make build`. Nothing here checks for it — the
+# runner LookPaths it per task and fails that task loudly
+# (runner/streamtask.go), which is the right place for a missing-binary error.
+_BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
+_STREAM_ADAPTER = str(
+    _BIN_DIR / ("harness-stream-adapter.exe" if os.name == "nt" else "harness-stream-adapter")
+)
+
 # name -> {bin, oneshotArgv, resumeOneshotArgv, resumeInteractiveArgv,
-# logFormat}. The argv values are the flag-STRING template form
+# logFormat, streamAdapter}. The argv values are the flag-STRING template form
 # ({args}/{prompt} tokens, shlex-split by agent-runner itself for the
 # default profile — see cmd/agent-runner/main.go parseAgentArgsFlag). For
 # extra profiles (carried via --agent-profiles JSON) expand_agents_preset()
@@ -41,6 +59,17 @@ from pathlib import Path
 # runner/agentlog.NewDecoder recognises ("", "claude-stream-json",
 # "codex-jsonl") — see the module docstring above for the source-of-truth
 # policy.
+#
+# streamAdapter is empty for every agent but claude, and that is a statement
+# about the ADAPTER, not about the agent: harness-stream-adapter speaks claude's
+# protocol specifically (runner/streamagent RunClaude appends --input-format
+# stream-json / --permission-prompt-tool stdio and refuses an argv that already
+# names one). Handing it codex or agy would append claude's flags to a CLI that
+# does not have them. A second agent gets event-stream support by getting its
+# own adapter, which the design deliberately does not speculate about
+# (docs/superpowers/specs/2026-08-20-event-stream-agent-design.md, "Not in this
+# design"). An empty value means the profile REFUSES an event-stream task
+# rather than silently serving it a PTY.
 KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
     "claude": {
         "bin": "claude",
@@ -52,6 +81,11 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "--output-format stream-json --verbose {args} --continue -p {prompt}",
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "claude-stream-json",
+        # The one preset the adapter speaks for. Its own flags are NOT listed
+        # in the argv templates above: the adapter appends them itself and
+        # refuses an argv that already names one, so the oneshot templates and
+        # the event-stream launch stay independent.
+        "streamAdapter": _STREAM_ADAPTER,
     },
     "codex": {
         "bin": "codex",
@@ -62,6 +96,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "exec --json resume --last {args} {prompt}",
         "resumeInteractiveArgv": "resume --last {args}",
         "logFormat": "codex-jsonl",
+        "streamAdapter": "",
     },
     "agy": {
         "bin": "agy",
@@ -88,6 +123,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "{args} --continue --print {prompt}",
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
+        "streamAdapter": "",
     },
     "opencode": {
         "bin": "opencode",
@@ -123,6 +159,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "run --continue {args} {prompt}",
         "resumeInteractiveArgv": "{args} --continue",
         "logFormat": "",
+        "streamAdapter": "",
     },
     # Shell-sandbox preset, not a conversational agent — included because
     # it's a trivial copy of the runner-up.md "bash" preset row. --agents
@@ -136,6 +173,7 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
         "resumeOneshotArgv": "{args} -c {prompt}",
         "resumeInteractiveArgv": "{args}",
         "logFormat": "",
+        "streamAdapter": "",
     },
 }
 
@@ -163,6 +201,14 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
 # --agent-args is NOT part of a preset: the sandbox slot's
 # --dangerously-skip-permissions is the caller's choice and --agent-args does
 # not collide with --agents (see _CONFLICTING_FLAGS).
+#
+# `streamAdapter` rides the derivation unchanged, and must: the adapter is a
+# HOST process that execs the wrapper as its agent argv, so the container never
+# sees that path. The wrapper's `podman run -i` carries the adapter's stdio to
+# the agent inside, and the flags the adapter appends pass through it like any
+# other argv. What that inherits is the launch WIRING; whether an approval
+# round-trips through the container has not been measured — the plain claude
+# path is what was E2E-verified.
 _SANDBOX_DIR = Path(__file__).resolve().parent / "sandbox"
 
 for _base in ("claude", "codex", "agy", "bash", "opencode"):
@@ -185,6 +231,7 @@ _CONFLICTING_FLAGS = (
     "--agent-resume-oneshot-argv",
     "--agent-resume-interactive-argv",
     "--agent-log-format",
+    "--agent-stream-adapter",
     "--agent-profiles",
 )
 
@@ -203,26 +250,30 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
 
     The FIRST name in *agents_csv* becomes the default profile: emitted as
     ``--agent-bin``, ``--agent-oneshot-argv``, ``--agent-resume-oneshot-argv``,
-    ``--agent-resume-interactive-argv`` and ``--agent-log-format``. All five
-    are always emitted together for the default profile — agent-runner's
-    startup validation requires --agent-resume-oneshot-argv whenever
-    --agent-oneshot-argv is customized (cmd/agent-runner/main.go validate()),
-    and a Claude-shaped resume default would silently misfire on a
-    non-Claude default bin.
+    ``--agent-resume-interactive-argv``, ``--agent-log-format`` and
+    ``--agent-stream-adapter``. All six are always emitted together for the
+    default profile — agent-runner's startup validation requires
+    --agent-resume-oneshot-argv whenever --agent-oneshot-argv is customized
+    (cmd/agent-runner/main.go validate()), and a Claude-shaped resume default
+    would silently misfire on a non-Claude default bin. The last two are
+    emitted even when the preset's value is empty, so ``--dry-run`` states
+    that the agent has no decoder / no event-stream adapter rather than
+    leaving the reader to infer it from an absent flag.
 
     Any REMAINING names are serialized into a single ``--agent-profiles``
     JSON array flag, matching the wire shape
     runner.ParseAgentProfilesJSON expects: objects with
-    name/bin/oneshotArgv/resumeOneshotArgv/resumeInteractiveArgv/logFormat,
-    argv fields as JSON string arrays (runner/agent_profile.go).
+    name/bin/oneshotArgv/resumeOneshotArgv/resumeInteractiveArgv/logFormat/
+    streamAdapter, argv fields as JSON string arrays
+    (runner/agent_profile.go).
 
     Conflict policy: if *existing_args* already contains any of
     --agent-bin/--claude-bin/--agent-oneshot-argv/
     --agent-resume-oneshot-argv/--agent-resume-interactive-argv/
-    --agent-log-format/--agent-profiles, this raises AgentsPresetError
-    instead of silently overriding or merging. --agents is an all-or-nothing
-    shortcut for the known presets; use the explicit per-flag form instead
-    of mixing it with --agents in the same invocation.
+    --agent-log-format/--agent-stream-adapter/--agent-profiles, this raises
+    AgentsPresetError instead of silently overriding or merging. --agents is
+    an all-or-nothing shortcut for the known presets; use the explicit
+    per-flag form instead of mixing it with --agents in the same invocation.
 
     Raises AgentsPresetError for any name not in KNOWN_AGENT_PRESETS (e.g.
     "gemini" — no authoritative built-in argv exists in this repo for it;
@@ -253,6 +304,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
         "--agent-resume-oneshot-argv", default["resumeOneshotArgv"],
         "--agent-resume-interactive-argv", default["resumeInteractiveArgv"],
         "--agent-log-format", default["logFormat"],
+        "--agent-stream-adapter", default["streamAdapter"],
     ]
 
     extra_names = names[1:]
@@ -268,6 +320,7 @@ def expand_agents_preset(agents_csv: str, existing_args: list[str]) -> list[str]
                     "resumeOneshotArgv": p["resumeOneshotArgv"].split(),
                     "resumeInteractiveArgv": p["resumeInteractiveArgv"].split(),
                     "logFormat": p["logFormat"],
+                    "streamAdapter": p["streamAdapter"],
                 }
             )
         out += ["--agent-profiles", json.dumps(profiles)]

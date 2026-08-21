@@ -141,6 +141,34 @@ func (ps ProfileSet) UnrecognisedLogFormats() []string {
 	return out
 }
 
+// UnresolvableStreamAdapters returns `<name>: "<path>": <err>` for every
+// profile whose StreamAdapter is non-empty and does not currently resolve.
+//
+// WARN, not error, and the adapter is NOT rewritten to the resolved path —
+// this only reports. StreamAdapter is deliberately read per task so an adapter
+// can be replaced under a live runner, and the runner fails the individual task
+// when it cannot be found (Run in streamtask.go). The startup line exists
+// because a preset now supplies this path for the claude profile
+// (scripts/agent_presets.py), and `bin/harness-stream-adapter` is a build
+// artifact: a checkout that has not run `make build` would otherwise look
+// healthy until the first event-stream task failed.
+//
+// Same shape and same reason as UnrecognisedLogFormats above: a config value
+// consumed later in the task path, reported once where the operator is still
+// watching.
+func (ps ProfileSet) UnresolvableStreamAdapters() []string {
+	var out []string
+	for _, p := range ps.profiles {
+		if p.StreamAdapter == "" {
+			continue
+		}
+		if _, err := exec.LookPath(p.StreamAdapter); err != nil {
+			out = append(out, fmt.Sprintf("%s: %q: %v", p.Name, p.StreamAdapter, err))
+		}
+	}
+	return out
+}
+
 // ResolveBinPaths replaces each profile's Bin with its exec.LookPath +
 // filepath.Abs resolution, in place, and returns a warning line per profile
 // whose Bin could not be resolved (that Bin is kept verbatim, so the spawn

@@ -99,6 +99,55 @@ func TestUnrecognisedLogFormats(t *testing.T) {
 	}
 }
 
+func TestParseAgentProfilesJSONCarriesStreamAdapter(t *testing.T) {
+	// The key is accepted by the parser AND named in --agent-profiles' help
+	// text; it shipped in the parser first and the help text listed every
+	// other key, so a caller reading the flag had no way to learn it exists.
+	got, err := ParseAgentProfilesJSON(`[{"name":"claude","bin":"claude","streamAdapter":"/opt/harness-stream-adapter"}]`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(got) != 1 || got[0].StreamAdapter != "/opt/harness-stream-adapter" {
+		t.Fatalf("got %+v, want one profile carrying the adapter path", got)
+	}
+	if !got[0].ServesStream() {
+		t.Error("ServesStream() = false for a profile with an adapter")
+	}
+}
+
+func TestUnresolvableStreamAdapters(t *testing.T) {
+	binDir := t.TempDir()
+	adapter := filepath.Join(binDir, "fake-stream-adapter")
+	if err := os.WriteFile(adapter, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ps, err := NewProfileSet(
+		AgentProfile{Name: "claude", Bin: "claude", StreamAdapter: adapter},
+		[]AgentProfile{
+			// No adapter at all: this profile refuses event-stream tasks by
+			// design, which is not a misconfiguration and must not warn.
+			{Name: "codex", Bin: "codex"},
+			{Name: "stale", Bin: "stale", StreamAdapter: filepath.Join(binDir, "not-built-yet")},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewProfileSet: %v", err)
+	}
+
+	got := ps.UnresolvableStreamAdapters()
+	if len(got) != 1 || !strings.Contains(got[0], "stale") {
+		t.Fatalf("got %v, want exactly one warning, for the \"stale\" profile", got)
+	}
+
+	// Reporting only: the path is not rewritten, because it is re-read per
+	// task so an adapter built after startup still works.
+	p, _ := ps.Resolve("stale")
+	if p.StreamAdapter != filepath.Join(binDir, "not-built-yet") {
+		t.Errorf("StreamAdapter = %q, want kept verbatim", p.StreamAdapter)
+	}
+}
+
 func TestResolveBinPaths(t *testing.T) {
 	binDir := t.TempDir()
 	fake := filepath.Join(binDir, "fakeagent")

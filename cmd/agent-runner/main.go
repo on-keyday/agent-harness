@@ -122,7 +122,7 @@ func (c *mainConfig) bindFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.AgentResumeOneshotArgv, "agent-resume-oneshot-argv", c.AgentResumeOneshotArgv, "argv template for --resume-conversation oneshot tasks; tokens {args} and {prompt}; default \"{args} --continue -p {prompt}\"")
 	fs.StringVar(&c.AgentInteractiveArgv, "agent-interactive-argv", c.AgentInteractiveArgv, "argv template for FRESH interactive opens; token {args}; default \"{args}\" (the bare binary, which is right for claude/codex/agy/a shell) — set it for an agent whose interactive entry point needs a subcommand, e.g. \"chat {args}\"")
 	fs.StringVar(&c.AgentResumeInteractiveArgv, "agent-resume-interactive-argv", c.AgentResumeInteractiveArgv, "argv template for --resume-conversation interactive opens; token {args}; default \"{args} --continue\"")
-	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,interactiveArgv,resumeInteractiveArgv,agentArgs,logFormat}]")
+	fs.StringVar(&c.AgentProfilesJSON, "agent-profiles", c.AgentProfilesJSON, "JSON array of extra agent profiles: [{name,bin,oneshotArgv,resumeOneshotArgv,interactiveArgv,resumeInteractiveArgv,agentArgs,logFormat,streamAdapter}]")
 	fs.StringVar(&c.AgentLogFormat, "agent-log-format", c.AgentLogFormat, "stdout log decoder for the default agent profile: \"\" (raw), claude-stream-json, or codex-jsonl")
 	fs.StringVar(&c.StreamAdapter, "agent-stream-adapter", c.StreamAdapter,
 		"path to the event-stream adapter for the default agent profile (e.g. harness-stream-adapter). "+
@@ -338,6 +338,9 @@ func main() {
 	if bad := profiles.UnrecognisedLogFormats(); len(bad) > 0 {
 		fmt.Fprintf(os.Stderr, "agent-runner: unrecognised --agent-log-format/logFormat (falling back to raw output) for %v; recognised: %s\n",
 			bad, strings.Join(agentlog.KnownFormats(), ", "))
+	}
+	if bad := profiles.UnresolvableStreamAdapters(); len(bad) > 0 {
+		fmt.Fprintf(os.Stderr, "agent-runner: event-stream adapter not resolvable now (event-stream tasks on these profiles will fail until it appears; `make build` writes it) for %v\n", bad)
 	}
 	if bad := profiles.ResolveBinPaths(); len(bad) > 0 {
 		fmt.Fprintf(os.Stderr, "agent-runner: agent bin not resolvable now (kept verbatim; spawn will fail unless it appears on PATH) for %v\n", bad)

@@ -171,6 +171,52 @@ class ExpandAgentsPresetTest(unittest.TestCase):
         self.assertEqual(out[out.index("--agent-log-format") + 1], "")
         self.assertNotIn("--agent-profiles", out)
 
+    def test_claude_preset_supplies_the_event_stream_adapter(self) -> None:
+        out = expand_agents_preset("claude", [])
+        adapter = Path(out[out.index("--agent-stream-adapter") + 1])
+        # Absolute and beside the agent-runner daemon.py launches, so the
+        # adapter's protocol_version matches the runner that reads it.
+        self.assertTrue(adapter.is_absolute())
+        self.assertEqual(adapter.parent.name, "bin")
+        self.assertEqual(adapter.stem, "harness-stream-adapter")
+        # NOT asserted: that it exists. bin/ is a build artifact, unlike the
+        # checked-in sandbox wrappers, so a fresh checkout has none until
+        # `make build` — the runner LookPaths it per task and fails that task.
+
+    def test_non_claude_presets_declare_no_stream_adapter(self) -> None:
+        # An empty value makes the profile REFUSE an event-stream task. That
+        # is a fact about the adapter, which speaks claude's protocol
+        # specifically: handing it to codex would append claude's
+        # --input-format/--permission-prompt-tool flags to a CLI without them.
+        for name in ("codex", "agy", "opencode", "bash"):
+            with self.subTest(agent=name):
+                out = expand_agents_preset(name, [])
+                self.assertEqual(out[out.index("--agent-stream-adapter") + 1], "")
+
+    def test_stream_adapter_flag_always_emitted(self) -> None:
+        # Emitted even when empty, so `--dry-run` states that the agent has no
+        # adapter instead of leaving it to be inferred from an absent flag.
+        for name in ("claude", "codex", "bash"):
+            with self.subTest(agent=name):
+                self.assertIn("--agent-stream-adapter", expand_agents_preset(name, []))
+
+    def test_extra_profile_carries_stream_adapter(self) -> None:
+        # The default profile takes the flag; every OTHER name rides the
+        # --agent-profiles JSON, which needs the key or the second claude slot
+        # in `--agents codex,claude` would silently lose event-stream support.
+        out = expand_agents_preset("codex,claude", [])
+        profiles = json.loads(out[out.index("--agent-profiles") + 1])
+        claude = next(p for p in profiles if p["name"] == "claude")
+        self.assertTrue(claude["streamAdapter"].endswith("harness-stream-adapter"))
+        self.assertEqual(out[out.index("--agent-stream-adapter") + 1], "")
+
+    def test_conflict_with_explicit_stream_adapter_rejected(self) -> None:
+        # --agents now sets this flag, so it joins the conflict list: the
+        # policy is that every flag --agents emits is refused rather than
+        # silently overridden or merged.
+        with self.assertRaises(AgentsPresetError):
+            expand_agents_preset("claude", ["--agent-stream-adapter", "/opt/mine"])
+
     def test_sandbox_presets_derive_their_base_agent(self) -> None:
         # Each sandbox-* preset runs its BASE agent through a pass-through
         # wrapper, so its argv must be the base's with only the wrapper's own
@@ -195,6 +241,13 @@ class ExpandAgentsPresetTest(unittest.TestCase):
                 self.assertEqual(
                     sb[sb.index("--agent-log-format") + 1],
                     plain[plain.index("--agent-log-format") + 1],
+                )
+                # The adapter is a HOST process that execs the wrapper as its
+                # agent argv, so the path must be the base's unchanged — a
+                # container path here would name a binary the host cannot run.
+                self.assertEqual(
+                    sb[sb.index("--agent-stream-adapter") + 1],
+                    plain[plain.index("--agent-stream-adapter") + 1],
                 )
                 # A preset bin may be a path, not only a bare command name.
                 # The agent is carried by the BIN, because a fresh interactive
