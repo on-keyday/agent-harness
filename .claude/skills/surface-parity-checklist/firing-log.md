@@ -225,18 +225,73 @@ adapter's line buffer until the next newline flushed it, which is the PTY
 "text sits on the prompt" semantic and worth remembering when `stream turn`
 is built (it must append the newline itself).
 
+### 2026-08-21 — the claude preset supplies the event-stream adapter
+
+Operator question, not a bug report: 「アダプターバイナリはどう指定するんだ…?」.
+Reading the config path turned up that the answer was "not through any
+documented route": `--agents claude` — the way
+`feedback_use_runner_scripts` says to spawn a runner — produced a slot that
+refused every event-stream task, because `KNOWN_AGENT_PRESETS` had no
+`streamAdapter` key. `87c10a2`'s E2E passed the flag by hand and so never met
+it.
+
+done:    **S1** (the key goes in the preset map; the `sandbox-*` twins inherit
+         it through the existing derivation, asserted equal to the base), 24
+         (the value must ride BOTH expansion paths — `--agent-stream-adapter`
+         for the default profile, the `streamAdapter` JSON key for every other
+         name; a second claude slot in `--agents codex,claude` would otherwise
+         lose the kind silently), 31 (the flag is emitted even when the value
+         is EMPTY, so `--dry-run` states "this agent has no adapter" instead of
+         leaving it inferred from an absent flag — gate on existence, not on
+         value), 33 (`--agent-stream-adapter` joins `_CONFLICTING_FLAGS`: the
+         list's invariant is "every flag `--agents` sets", so an explicit one
+         alongside is refused rather than silently last-wins overridden), 35
+         (README: the 5b block says which profiles serve the kind; also fixed
+         two stale facts the event-stream work left — "all four binaries" and a
+         Layout tree missing `cmd/harness-stream-adapter/`)
+omitted: **S6 sandbox half** — `scripts/sandbox/README.md` and `probe.sh` gain
+         nothing. The wrapper, its agent table and the container's security
+         model are untouched: the adapter is a HOST process and the container
+         only ever sees the agent argv it already got. Adding a "sandbox-claude
+         serves event-stream tasks" line there would be exactly the unmeasured
+         claim S6 warns about, since nothing has driven an approval through
+         `podman run -i` yet. `.claude/commands/runner-up.md` (the other S6
+         half) IS updated.
+         **37** — the spec is not amended. It never said where the adapter path
+         comes from (§2 places the adapter; `--agent-stream-adapter` names it),
+         so there is no shipped behaviour for it to contradict. Recorded as
+         entry 22 of the wiring log instead, which is where entry 21's handoff
+         lives and where a next session would look.
+missed:  —
+
+**S1–S6's first firing in this log**, and it fired on the axis the section was
+split out for: a 1–37 walk cannot reach `scripts/agent_presets.py`, and nothing
+in `cli/`, `tui/` or `webui/` mentions it. The defect was not a missing pixel
+or a dropped field — every UI surface for the kind was correct and complete
+(`87c10a2`'s walk was thorough) — it was that no documented way existed to
+LAUNCH a runner that serves the kind. Worth naming as a class: a feature can
+pass a full 1–37 walk and still be unreachable, when what is missing is the
+agent-launch config rather than an operator surface.
+
+One thing S1's own wording got right in advance: "the twin must stay DERIVED
+(only `bin` changes)". That rule produces the correct answer here for a reason
+it does not state — the adapter runs on the host, so a hand-copied twin that
+"helpfully" rewrote the path into the container would have been wrong. Added
+the reason to the derivation comment and pinned it with the equality assertion.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 2 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. |
+| 31 (don't hide a value for what it IS) | 3 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 2 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. |
+| 33 (take effect or error) | 3 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. |
+| S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
 | 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 1 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |

@@ -1,6 +1,6 @@
 ---
 description: Spawn an agent-runner slot via scripts/runner.sh up (auto-resolves server-cid from env). `persist` keyword routes via runner-autostart.py register for boot/login persistence.
-argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [server-cid=CID]"
+argument-hint: "<tag> [persist] [roots=PATH,PATH] [no-worktree] [claude-bin=PATH] [max-tasks=N] [hostname=LABEL] [psk-file=PATH] [claude-args=\"...\"] [agent-oneshot-argv=\"...\"] [agent-resume-oneshot-argv=\"...\"] [agent-interactive-argv=\"...\"] [agent-resume-interactive-argv=\"...\"] [agent-log-format=NAME] [agent-stream-adapter=PATH] [server-cid=CID]"
 allowed-tools: Bash
 ---
 
@@ -44,9 +44,11 @@ Arguments: $ARGUMENTS
    defaults `--agent-args "--dangerously-skip-permissions"` — safe here because
    the container is the boundary and keep-id runs claude non-root (so the flag is
    accepted); the wrapper itself stays a pure pass-through. Because it IS a
-   pass-through, each preset carries its BASE agent's argv templates and log
-   format (`sandbox` = `sandbox-claude` = claude's `claude-stream-json`,
-   `sandbox-codex` = `codex-jsonl`, and so on), so a one-shot streams its steps
+   pass-through, each preset carries its BASE agent's argv templates, log
+   format and event-stream adapter (`sandbox` = `sandbox-claude` = claude's
+   `claude-stream-json`, `sandbox-codex` = `codex-jsonl`, and so on — the
+   adapter path stays the HOST one, since the adapter runs outside the
+   container and execs the wrapper as its agent), so a one-shot streams its steps
    into `logs` exactly like the corresponding host slot — spawn it with bare
    `--agent-bin` instead and you silently get the runner's raw defaults, i.e. no
    progress until the task ends. `sandbox` remains an alias of `sandbox-claude`.
@@ -93,6 +95,20 @@ Arguments: $ARGUMENTS
    flags and the rest into a generated `--agent-profiles` JSON flag. The
    per-agent bin+argv shapes are defined once in `scripts/agent_presets.py`
    (`KNOWN_AGENT_PRESETS`) — the single source of truth this doc references.
+
+   **Event-stream tasks** (`session new --stream`, TaskKind `stream`) need the
+   profile to name an adapter, and the presets supply it: `--agents` emits
+   `--agent-stream-adapter` pointing at `bin/harness-stream-adapter` beside the
+   `agent-runner` it just launched, for `claude` / `sandbox-claude` / `sandbox`
+   and for nothing else. The other agents get an empty value, which makes the
+   profile REFUSE an event-stream task rather than serve it a PTY — the adapter
+   speaks claude's protocol specifically, so it is not a gap to fill by pointing
+   the flag at codex. Two consequences worth knowing before spawning:
+   `bin/harness-stream-adapter` is a build artifact, so a checkout that has not
+   run `make build` starts fine and fails every stream task (the runner says so
+   on startup and again per task); and because `--agents` now sets this flag,
+   passing `--agent-stream-adapter` explicitly alongside `--agents` is refused
+   as a conflict, like every other flag the preset owns.
 
    A Codex slot usually needs explicit `--hostname $HARNESS_HOSTNAME-codex`
    when its roots overlap an existing Claude slot, for the same dispatch
@@ -180,7 +196,8 @@ Arguments: $ARGUMENTS
          [--agent-resume-oneshot-argv "<...>"] \
          [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
-         [--agent-log-format "<claude-stream-json|codex-jsonl>"]
+         [--agent-log-format "<claude-stream-json|codex-jsonl>"] \
+         [--agent-stream-adapter <path to bin/harness-stream-adapter>]
      ```
 
    - **`persist` in `$ARGUMENTS`** — runner is also registered with the OS login-autostart (Linux systemd user unit / Windows Task Scheduler) so it comes back after reboot / sign-out. Build instead:
@@ -199,7 +216,8 @@ Arguments: $ARGUMENTS
          [--agent-resume-oneshot-argv "<...>"] \
          [--agent-interactive-argv "<...>"] \
          [--agent-resume-interactive-argv "<...>"] \
-         [--agent-log-format "<claude-stream-json|codex-jsonl>"]
+         [--agent-log-format "<claude-stream-json|codex-jsonl>"] \
+         [--agent-stream-adapter <path to bin/harness-stream-adapter>]
      ```
 
      `runner-autostart.py register` writes the autostart entry, then starts the slot immediately by default (same as `--now` semantics), so a single invocation registers + brings it up.

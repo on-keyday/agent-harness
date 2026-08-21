@@ -123,7 +123,7 @@ runner / clients dial; the transport prefix selects the underlay.
 
 ## Quick start
 
-Run each command in its own terminal. `make build` produces all four
+Run each command in its own terminal. `make build` produces all five
 binaries under `bin/`; the examples below assume that.
 
 ```bash
@@ -197,6 +197,12 @@ bin/harness-cli interactive --repo /abs/path/to/repo
 # kinds. The remaining `session stream` verbs
 # (turn/approve/interrupt/finish/requests/snapshot) are specified in the
 # event-stream design spec and not built yet.
+# Only a profile that NAMES an adapter serves this kind; the rest refuse the
+# task rather than handing it a PTY. `scripts/runner.sh up --agents claude`
+# (also sandbox-claude) supplies bin/harness-stream-adapter, which `make build`
+# writes; a runner configured by hand passes --agent-stream-adapter itself.
+# The adapter speaks claude's protocol specifically, so pointing that flag at
+# another agent's binary is not how that agent gains the kind.
 bin/harness-cli session new --stream --repo /abs/path/to/repo   # open + follow
 bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
 bin/harness-cli session stream attach <task-id>  # follow events (read-only,
@@ -766,6 +772,9 @@ cmd/
   harness-cli/          CLI binary (user + agent)
   harness-tui/          TUI binary
   harness-webui-wasm/   WASM build target served by harness-server
+  harness-stream-adapter/ event-stream adapter: runs an agent behind the neutral
+                      NDJSON protocol (runner/streamagent); named per profile via
+                      --agent-stream-adapter
 scripts/              {runner,server,restart}.{py,sh} daemon lifecycle helpers (sh
                       is a thin shim over py); daemon.py + bootstrap.py provide
                       the cross-platform up/down/respawn primitives via psutil.

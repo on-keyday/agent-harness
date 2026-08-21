@@ -822,3 +822,63 @@ a RESULT enum with a task PROPERTY: the third kind turns it into `ok_×N`.
 replay a stream task's first frame — new mux state, a new eviction exception,
 and a rule keyed off the kind it was trying to avoid asking for. The field
 deletes that work rather than deferring it.
+
+## 22. The kind shipped with no way to launch a runner that serves it
+
+Asked how the adapter binary is actually specified. Reading the config path
+turned up that everything wired in entries 1–21 was reachable only by hand.
+
+`--agent-stream-adapter` exists (`cmd/agent-runner/main.go`) and defaults to
+empty; `--agent-profiles` accepts a `streamAdapter` key
+(`runner/agent_profile.go`) — but the flag's own help text listed every OTHER
+key of that JSON, so a caller reading `-h` had no way to learn it exists. And
+`KNOWN_AGENT_PRESETS` (`scripts/agent_presets.py`) had no such key at all,
+which means **every runner spawned the documented way** —
+`scripts/runner.sh up --as <tag> --agents claude`, the route
+`feedback_use_runner_scripts` says to use — refused every event-stream task.
+The E2E runs in entry 21 passed the flag by hand and so never met this.
+
+Fixed: the claude preset supplies `bin/harness-stream-adapter` (derived from
+the module's own checkout, so the adapter's `protocol_version` matches the
+`agent-runner` beside it), `--agents` emits `--agent-stream-adapter` for the
+default profile and the `streamAdapter` key for the rest, and the flag joins
+`_CONFLICTING_FLAGS` — the list's invariant is "every flag `--agents` sets",
+so an explicit one alongside is refused rather than silently overridden.
+
+Three things worth not rediscovering:
+
+- **The other presets get `""`, and that is a fact about the ADAPTER.**
+  `harness-stream-adapter` speaks claude's protocol specifically — it appends
+  `--input-format stream-json` / `--permission-prompt-tool stdio` and refuses
+  an argv that already names one. Pointing it at codex would append claude's
+  flags to a CLI without them. An empty value makes the profile REFUSE the
+  kind, which is the honest outcome, not a gap to fill by aiming the flag
+  somewhere.
+- **The sandbox twins inherit the HOST path, unchanged, and must.** The
+  adapter is a host process that execs the wrapper as its agent argv; the
+  container never sees that path, and the wrapper's `podman run -i` carries
+  the adapter's stdio through. The derivation rule (only `bin` changes) gets
+  this right by construction — a hand-written container path would have been
+  the drift S1 warns about.
+- **`bin/harness-stream-adapter` is a BUILD ARTIFACT**, unlike the checked-in
+  sandbox wrappers, so a checkout that has not run `make build` now has a
+  preset naming a path that does not exist. The runner LookPaths it per task
+  by design (an adapter can be replaced under a live runner), so the task-level
+  failure was already loud; added `ProfileSet.UnresolvableStreamAdapters()`
+  warned once at startup, the same shape and the same reason as
+  `UnrecognisedLogFormats` — a config value consumed later in the task path,
+  reported where the operator is still watching. WARN not error, matching
+  `ResolveBinPaths`: a binary built after startup still works.
+
+**Status:** shipped. Verified by unit tests on both sides (negative-controlled
+— blanking the preset value reddens them), and by `runner.sh up --dry-run`
+showing the concrete argv. NOT verified: an event-stream task running inside
+the podman sandbox. The launch wiring is inherited correctly; whether an
+approval round-trips through the container is unmeasured, and the plain claude
+path is what entry 21's E2E covered.
+
+**Unrelated, noticed while reading:** the three paragraphs above this entry
+(`It did not price the hello route's real defect` onward) belong to entry 19's
+argument, not to entry 21's handoff list — they read as part of the "NOT
+DECIDED" section they follow. Left as-is: this log appends and does not edit
+away, and moving them is an edit.
