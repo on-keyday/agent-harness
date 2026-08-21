@@ -1,12 +1,27 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 )
+
+// transcript is the plain text of every line, which is what assertions want:
+// the model keeps text and style apart so wrapping never measures an escape.
+func transcript(m ChatModel) string {
+	var b strings.Builder
+	for _, l := range m.lines {
+		b.WriteString(l.text)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
 
 func streamLineOf(t *testing.T, s string) cli.StreamLine {
 	t.Helper()
@@ -32,7 +47,7 @@ func TestChatFoldsEventsIntoTheTranscript(t *testing.T) {
 	m.applyLine(streamLineOf(t, `{"v":1,"kind":"event","event":{"kind":"tool_start","tool":"Bash","args":"ls"}}`))
 	m.applyLine(streamLineOf(t, `{"v":1,"kind":"event","event":{"kind":"text","text":"done"}}`))
 
-	body := strings.Join(m.lines, "\n")
+	body := transcript(m)
 	if !strings.Contains(body, "Bash") {
 		t.Errorf("tool line missing from the transcript: %q", body)
 	}
@@ -46,7 +61,7 @@ func TestChatShowsANonProtocolLineRatherThanDroppingIt(t *testing.T) {
 	// cannot explain what the adapter does next.
 	m := openChat(t)
 	m.applyLine(cli.StreamLine{Raw: []byte("hello, not json"), Decoded: false})
-	body := strings.Join(m.lines, "\n")
+	body := transcript(m)
 	if !strings.Contains(body, "hello, not json") {
 		t.Errorf("raw line dropped: %q", body)
 	}
@@ -176,6 +191,99 @@ func TestChatIgnoresLinesFromAnotherTask(t *testing.T) {
 	m.Update(ChatLineMsg{TaskID: "0000000000000000000000000000ffff",
 		Line: streamLineOf(t, `{"v":1,"kind":"event","event":{"kind":"text","text":"stale"}}`)})
 	if len(m.lines) != before {
-		t.Errorf("a line for another task was folded in: %q", m.lines)
+		t.Errorf("a line for another task was folded in: %q", transcript(m))
+	}
+}
+
+// A transcript line is a LOGICAL line: it can hold embedded newlines (an
+// agent's multi-paragraph answer) and can be far wider than the terminal. The
+// view must clip by the rows a terminal will actually show, or it overflows
+// the frame — which is what it did until the wrap step was added.
+func TestChatViewFitsTheTerminal(t *testing.T) {
+	m := openChat(t)
+	m.width, m.height = 60, 20
+	m.appendLine(strings.Repeat("x", 500))
+	m.appendLine("para one\npara two\npara three\npara four\npara five")
+	for i := 0; i < 40; i++ {
+		m.appendLine("short")
+	}
+	if got := renderedRows(m.View(), m.width); got > m.height {
+		t.Errorf("view occupies %d terminal rows in a %d-row terminal", got, m.height)
+	}
+}
+
+// renderedRows counts the rows a TERMINAL will occupy, which is not the number
+// of newlines the view wrote: a line wider than the frame wraps. Measured with
+// ceil-division on display width rather than through chatRows, so a view that
+// clips with chatRows cannot agree with this by construction — the first
+// version of this check counted newlines, passed with the defect restored, and
+// proved nothing.
+func renderedRows(view string, width int) int {
+	if width < 1 {
+		width = 1
+	}
+	n := 0
+	for _, l := range strings.Split(strings.TrimSuffix(view, "\n"), "\n") {
+		w := lipgloss.Width(l)
+		if w == 0 {
+			n++
+			continue
+		}
+		n += (w + width - 1) / width
+	}
+	return n
+}
+
+func TestChatViewFitsWithAPendingApproval(t *testing.T) {
+	// The approval block is appended to the same rows, so it has to be counted
+	// in the same budget — a big tool input must not push the prompt off.
+	m := openChat(t)
+	m.width, m.height = 60, 20
+	big := strings.Repeat("y", 400)
+	m.applyLine(streamLineOf(t, `{"v":1,"kind":"request","request":{"id":"req-a-1","tool":"Write","input":{"content":"`+big+`"}}}`))
+	if got := renderedRows(m.View(), m.width); got > m.height {
+		t.Errorf("view with a pending approval occupies %d rows in %d", got, m.height)
+	}
+}
+
+func TestChatScrollKeysMoveTheWindow(t *testing.T) {
+	// m.scroll existed and was applied by the view, but no key ever changed it,
+	// so the scrollback was unreachable.
+	m := openChat(t)
+	m.width, m.height = 60, 20
+	for i := 0; i < 100; i++ {
+		m.appendLine(fmt.Sprintf("line %d", i))
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	if m.scroll == 0 {
+		t.Fatal("PgUp did not scroll")
+	}
+	up := m.scroll
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgDown})
+	if m.scroll >= up {
+		t.Errorf("PgDown did not come back: %d -> %d", up, m.scroll)
+	}
+	// And it must not run off the top of a short transcript.
+	for i := 0; i < 50; i++ {
+		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	}
+	if m.scroll >= len(chatRows(m.lines, 56)) {
+		t.Errorf("scroll ran past the transcript: %d", m.scroll)
+	}
+}
+
+func TestChatScrollStaysAnchoredWhileStreaming(t *testing.T) {
+	// Scrolled up, arriving lines must not yank the view down — and the
+	// adjustment is in PHYSICAL rows, since that is what scroll counts.
+	m := openChat(t)
+	m.width, m.height = 60, 20
+	for i := 0; i < 60; i++ {
+		m.appendLine("short")
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyPgUp})
+	before := m.scroll
+	m.appendLine(strings.Repeat("z", 200)) // wraps to several rows
+	if m.scroll <= before {
+		t.Errorf("a wrapped arrival moved the window: %d -> %d", before, m.scroll)
 	}
 }
