@@ -364,6 +364,57 @@ func TestParseSessionNewDetachAndHost(t *testing.T) {
 	}
 }
 
+func TestParseSessionNewStream(t *testing.T) {
+	got, err := ParseCommand(`session new --stream -d`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionNewAction)
+	if !a.Stream || !a.Detach {
+		t.Errorf("Stream=%v Detach=%v want true/true", a.Stream, a.Detach)
+	}
+}
+
+// --stream without -d must refuse: the TUI's non-detach path hands the
+// terminal to the session, and an event-stream session has no terminal. And
+// --stream with --x11 is a terminal-concept conflict. Both are errors, not
+// silent drops — a typed option either takes effect or errors.
+func TestParseSessionNewStreamRequiresDetach(t *testing.T) {
+	for _, in := range []string{
+		`session new --stream`,
+		`session new --stream --x11 -d`,
+	} {
+		if _, err := ParseCommand(in, "/cwd"); err == nil {
+			t.Errorf("input %q: expected an error", in)
+		}
+	}
+}
+
+func TestParseSessionStreamAttach(t *testing.T) {
+	got, err := ParseCommand(`session stream attach deadbeef`, "/cwd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := got.(SessionStreamAttachAction)
+	if a.IDPrefix != "deadbeef" {
+		t.Errorf("IDPrefix=%q want deadbeef", a.IDPrefix)
+	}
+}
+
+// A specified-but-unbuilt stream verb must say THAT, not "unknown": the
+// namespace is one-to-one with the protocol's inbound kinds, and a verb that
+// exists in the design but not the build is a different fact from a typo.
+func TestParseSessionStreamUnbuiltVerbNamesItself(t *testing.T) {
+	_, err := ParseCommand(`session stream turn deadbeef hello`, "/cwd")
+	if err == nil || !strings.Contains(err.Error(), "not built") {
+		t.Errorf("err=%v want a not-built-yet error", err)
+	}
+	_, err = ParseCommand(`session stream frobnicate x`, "/cwd")
+	if err == nil || !strings.Contains(err.Error(), "unknown") {
+		t.Errorf("err=%v want unknown-verb", err)
+	}
+}
+
 func TestParseSessionNewSelectorMutualExclusion(t *testing.T) {
 	cases := []string{
 		`session new --host A --runner deadbeef`,

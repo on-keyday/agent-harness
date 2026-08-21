@@ -19,7 +19,11 @@ import (
 // stream Close cancels the underlying transport, so closing immediately after
 // the write can drop the in-flight frame.
 func (c *Client) SessionSend(ctx context.Context, taskIDHex string, data []byte, flush time.Duration) error {
-	stream, _, err := c.AttachSession(ctx, taskIDHex, protocol.AttachMode_Cowrite)
+	// The kind is deliberately ignored: `send` is the low-level raw-bytes
+	// verb for BOTH kinds (§3 of the event-stream design). On a stream task
+	// the bytes reach the adapter's stdin, where a non-protocol line is
+	// reported and skipped (ErrBadLine) rather than being fatal.
+	stream, _, _, err := c.AttachSession(ctx, taskIDHex, protocol.AttachMode_Cowrite)
 	if err != nil {
 		return err
 	}

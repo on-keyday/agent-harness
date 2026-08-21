@@ -98,6 +98,11 @@ type sessionRequest struct {
 	// both must be non-zero to take effect (cli.SessionOpts.InitialRows).
 	InitialRows uint16
 	InitialCols uint16
+	// EventStream opens the session as TaskKind_Stream (`session new --stream`):
+	// structured events instead of a PTY. In the TUI this only rides the
+	// detached open — the interactive handover splices a terminal, which this
+	// kind does not have.
+	EventStream bool
 }
 
 // opts folds an Authority and a sessionRequest into the cli.SessionOpts the
@@ -122,6 +127,7 @@ func (a Authority) opts(r sessionRequest) cli.SessionOpts {
 		AgentProfile:       r.AgentProfile,
 		InitialRows:        r.InitialRows,
 		InitialCols:        r.InitialCols,
+		EventStream:        r.EventStream,
 		Caps:               a.Caps,
 		Scope:              a.Scope,
 		Overrides:          a.Overrides,

@@ -81,11 +81,22 @@ type SessionNewAction struct {
 	X11                bool
 	X11Display         int
 	AgentProfile       string
+	// Stream opens the session as an event-stream one (`--stream`). TUI-side
+	// it requires Detach: the interactive handover is a terminal splice, and
+	// this kind has no terminal — its events are followed in the logs pane.
+	Stream bool
 }
 
 // SessionAttachAction re-attaches to an existing detachable session by ID.
 type SessionAttachAction struct {
 	TaskID string
+}
+
+// SessionStreamAttachAction follows an event-stream task's events. In the TUI
+// that is the logs pane — the runner renders this kind's events into the task
+// log, so following the log IS following the stream; no second renderer.
+type SessionStreamAttachAction struct {
+	IDPrefix string
 }
 
 // SessionLsAction lists interactive+detachable tasks in the cmdresult area.
@@ -303,38 +314,39 @@ type SetParentAction struct {
 	Swap     bool
 }
 
-func (SubmitAction) isAction()           {}
-func (ScopeAction) isAction()            {}
-func (SetCapsAction) isAction()          {}
-func (SetParentAction) isAction()        {}
-func (CancelAction) isAction()           {}
-func (PruneAction) isAction()            {}
-func (ClearAction) isAction()            {}
-func (QuitAction) isAction()             {}
-func (HelpAction) isAction()             {}
-func (RefreshAction) isAction()          {}
-func (TrsfDebugAction) isAction()        {}
-func (RepoAction) isAction()             {}
-func (InteractiveAction) isAction()      {}
-func (SessionNewAction) isAction()       {}
-func (SessionAttachAction) isAction()    {}
-func (SessionLsAction) isAction()        {}
-func (SessionKillAction) isAction()      {}
-func (SessionAwaitIdleAction) isAction() {}
-func (GitAction) isAction()              {}
-func (GridAction) isAction()             {}
-func (FileLsAction) isAction()           {}
-func (FilePushAction) isAction()         {}
-func (FileMkdirAction) isAction()        {}
-func (FilePullAction) isAction()         {}
-func (FileDeleteAction) isAction()       {}
-func (FileEditAction) isAction()         {}
-func (FileNewAction) isAction()          {}
-func (ForwardLsAction) isAction()        {}
-func (ForwardKillAction) isAction()      {}
-func (ServerDialRunnerAction) isAction() {}
-func (NotifyAction) isAction()           {}
-func (CapsAction) isAction()             {}
+func (SubmitAction) isAction()              {}
+func (ScopeAction) isAction()               {}
+func (SetCapsAction) isAction()             {}
+func (SetParentAction) isAction()           {}
+func (CancelAction) isAction()              {}
+func (PruneAction) isAction()               {}
+func (ClearAction) isAction()               {}
+func (QuitAction) isAction()                {}
+func (HelpAction) isAction()                {}
+func (RefreshAction) isAction()             {}
+func (TrsfDebugAction) isAction()           {}
+func (RepoAction) isAction()                {}
+func (InteractiveAction) isAction()         {}
+func (SessionNewAction) isAction()          {}
+func (SessionAttachAction) isAction()       {}
+func (SessionStreamAttachAction) isAction() {}
+func (SessionLsAction) isAction()           {}
+func (SessionKillAction) isAction()         {}
+func (SessionAwaitIdleAction) isAction()    {}
+func (GitAction) isAction()                 {}
+func (GridAction) isAction()                {}
+func (FileLsAction) isAction()              {}
+func (FilePushAction) isAction()            {}
+func (FileMkdirAction) isAction()           {}
+func (FilePullAction) isAction()            {}
+func (FileDeleteAction) isAction()          {}
+func (FileEditAction) isAction()            {}
+func (FileNewAction) isAction()             {}
+func (ForwardLsAction) isAction()           {}
+func (ForwardKillAction) isAction()         {}
+func (ServerDialRunnerAction) isAction()    {}
+func (NotifyAction) isAction()              {}
+func (CapsAction) isAction()                {}
 
 // ParseCommand tokenizes and parses one input line. defaultRepo is used when
 // `submit` is invoked without --repo (typically the cwd).
@@ -682,6 +694,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		runner := fs.String("runner", "", "pin to a runner by 32-hex RunnerID (mutually exclusive with --host / --ip)")
 		ip := fs.String("ip", "", "pin to a runner by IP address (mutually exclusive with --host / --runner)")
 		x11 := fs.Bool("x11", false, "X11-forward GUI apps to your local X server")
+		stream := fs.Bool("stream", false, "open an event-stream session (structured events, no PTY); requires --detach here — follow it in the logs pane")
 		x11Display := fs.Int("x11-display", 10, "X11 display number N (runner binds 127.0.0.1:6000+N)")
 		agent := fs.String("agent", "", "agent profile name (empty = runner default; on --resume, the resumed task's own profile)")
 		var extra repeatableStrings
@@ -704,6 +717,16 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		if *x11 && *detach {
 			return nil, fmt.Errorf("session new: --x11 is incompatible with --detach")
 		}
+		if *stream && *x11 {
+			return nil, fmt.Errorf("session new: --stream is incompatible with --x11 (X11 is a terminal-session concept)")
+		}
+		if *stream && !*detach {
+			// The non-detach path hands the TERMINAL to the new session, and an
+			// event-stream session has no terminal to hand it to. The CLI's
+			// non-detach form follows events instead; the TUI's follower is the
+			// logs pane, which needs no live handover.
+			return nil, fmt.Errorf("session new: --stream needs -d in the TUI (then select the task; its events render in the logs pane)")
+		}
 		return SessionNewAction{
 			Repo:               defaultRepo,
 			ExtraArgs:          []string(extra),
@@ -719,6 +742,7 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			Caps:               caps.Value(),
 			Scope:              scope.Value(),
 			Overrides:          scopeFor.out,
+			Stream:             *stream,
 		}, nil
 	case "attach":
 		if len(rest) == 0 {
@@ -728,6 +752,24 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 			return nil, fmt.Errorf("session attach: too many arguments (got %d, want 1)", len(rest))
 		}
 		return SessionAttachAction{TaskID: rest[0]}, nil
+	case "stream":
+		// The event-stream namespace (design §3): one verb per inbound kind.
+		// Only attach exists yet; naming a specified-but-unbuilt verb reports
+		// that instead of "unknown".
+		if len(rest) == 0 {
+			return nil, fmt.Errorf("session stream: sub-verb required (attach <id>)")
+		}
+		switch rest[0] {
+		case "attach":
+			if len(rest) != 2 {
+				return nil, fmt.Errorf("session stream attach: exactly one task id required")
+			}
+			return SessionStreamAttachAction{IDPrefix: rest[1]}, nil
+		case "turn", "approve", "interrupt", "finish", "requests", "snapshot":
+			return nil, fmt.Errorf("session stream %s: specified (design §3) but not built yet", rest[0])
+		default:
+			return nil, fmt.Errorf("unknown session stream verb %q", rest[0])
+		}
 	case "ls":
 		return SessionLsAction{}, nil
 	case "kill":

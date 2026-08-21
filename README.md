@@ -185,6 +185,22 @@ bin/harness-cli session ls                       # interactive sessions
 bin/harness-cli session attach <task-id>
 bin/harness-cli session kill   <task-id>
 bin/harness-cli interactive --repo /abs/path/to/repo
+
+# 5b. Event-stream sessions (TaskKind stream): same lifecycle as a PTY session,
+# but the data plane is structured agent events (NDJSON from the profile's
+# stream adapter, --agent-stream-adapter) instead of terminal bytes. The
+# events also render into the task log, so `logs` / the TUI logs pane / the
+# WebUI log view follow one without attaching. The attach response carries the
+# task's kind, so a PTY verb pointed at a stream task refuses and names the
+# right one (and vice versa); `session resize` / `session exec` refuse (no
+# PTY, no shell), `session send` stays the raw low-level escape hatch for both
+# kinds. The remaining `session stream` verbs
+# (turn/approve/interrupt/finish/requests/snapshot) are specified in the
+# event-stream design spec and not built yet.
+bin/harness-cli session new --stream --repo /abs/path/to/repo   # open + follow
+bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
+bin/harness-cli session stream attach <task-id>  # follow events (read-only,
+                                                 #  Ctrl+C detaches)
 # Running vs Detached tracks ONLY the control attach (the sole writer). A
 # read-only viewer or an input-forwarding cowriter — the WebUI preview, a TUI
 # grid pane — takes no writer slot, so a session several people are watching
@@ -405,7 +421,7 @@ stronger one never needs the weaker one alongside it:
 
 | cap | what it allows |
 | --- | --- |
-| `exec_view` | read a session's PTY stream — `session snapshot`, TUI grid panes, `session attach --view` |
+| `exec_view` | observe an agent's output, live or recorded — `session snapshot`, TUI grid panes, `session attach --view`, `session stream attach`, `logs` |
 | `exec_cowrite` | additionally type into a session someone else is driving, without evicting them — `session send`, `session exec`, the WebUI preview |
 | `exec_control` | additionally take the session over as sole writer, evicting whoever holds it, and own its size — `session attach`, TUI `r` |
 
@@ -613,8 +629,13 @@ everything — both render from the same table the dispatcher uses
 stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
-/ file {ls,push,pull,delete} / grid / caps / scope / caps set / caps set-parent
-/ server dial-runner / cancel / prune / repo / clear / help / quit`. `caps NAMES`
+/ session stream attach / file {ls,push,pull,delete} / grid / caps / scope
+/ caps set / caps set-parent
+/ server dial-runner / cancel / prune / repo / clear / help / quit`.
+`session new --stream -d` opens an event-stream session (detached only in
+the TUI — there is no terminal to splice); `session stream attach <id>`
+follows its events in the logs pane, which is where this kind's events
+render anyway. `caps NAMES`
 / `scope SPEC` set the session-default authority for subsequent spawns
 (no argument opens the selection picker); per-spawn `--caps` / `--scope`
 override it, and on a resume re-grant only what was literally typed.

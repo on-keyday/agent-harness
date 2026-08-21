@@ -194,7 +194,7 @@ var mainKeyBindings = []keyBinding{
 	{Keys: []string{mainKeys.AwaitIdle, mainKeys.AwaitIdleNotify}, Scope: scopeTasks,
 		Short: "w/W await-idle", Long: "arm a one-shot idle watcher (W also notifies the operator)"},
 	{Keys: []string{mainKeys.FilePicker}, Scope: scopeTasks, Short: "F files", Long: "open the file picker on the selected task's worktree"},
-	{Keys: []string{mainKeys.Git}, Scope: scopeTasks, Short: "G git", Long: "read the selected task's log and diff without touching its shell"},
+	{Keys: []string{mainKeys.Git}, Scope: scopeTasks, Short: "G git", Long: "browse the selected task's git state — commit log, diff, status — read-only, without touching its shell"},
 	{Keys: []string{mainKeys.ForwardLocal, mainKeys.ForwardLocalStop}, Scope: scopeTasks,
 		Short: "p/P L-forward", Long: "start / stop a local port forward for the selected task"},
 	{Keys: []string{mainKeys.ForwardRemote, mainKeys.ForwardRemoteStop}, Scope: scopeTasks,

@@ -26,6 +26,11 @@ import (
 // builds define AttachSession with different signatures (the js variant
 // installs the browser xterm singleton — the wrong tool for a peek).
 func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.Duration) (captured []byte, rows, cols uint16, hasSize bool, err error) {
+	// Deliberately kind-agnostic: this is the low-level "give me the replay
+	// bytes" read, and for an event-stream task those bytes are raw NDJSON —
+	// which is exactly what `session snapshot --raw` means there. The VT-render
+	// callers above this sit on the PTY side; the stream kind's formatted view
+	// is `session stream snapshot` (not built yet), not a VT screen.
 	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View, 0)
 	if err != nil {
 		return nil, 0, 0, false, err

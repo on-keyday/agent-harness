@@ -128,7 +128,7 @@ func TestSessionDetachReattach(t *testing.T) {
 
 	// Client 2: re-attach.
 	c2 := dialClient(t, serverCID)
-	stream2, replayBytes, err := c2.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
+	stream2, replayBytes, _, err := c2.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
 	if err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestSessionDetach_RingBufferWrap(t *testing.T) {
 	t.Logf("task %s is Detached; attaching to verify replay cap", taskIDHex[:12])
 
 	c2 := dialClient(t, serverCID)
-	stream2, replayBytes, err := c2.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
+	stream2, replayBytes, _, err := c2.AttachSession(context.Background(), taskIDHex, protocol.AttachMode_Control)
 	if err != nil {
 		t.Fatalf("AttachSession: %v", err)
 	}

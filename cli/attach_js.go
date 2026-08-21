@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
@@ -31,9 +32,16 @@ func (c *Client) AttachSession(ctx context.Context, taskIDHex string, mode proto
 	setPendingAttach(taskIDHex)
 	defer clearPendingAttach()
 
-	stream, _, err := c.attachSessionRPC(ctx, taskIDHex, mode, 0)
+	stream, ar, err := c.attachSessionRPC(ctx, taskIDHex, mode, 0)
 	if err != nil {
 		return "", err
+	}
+	// The singleton this installs feeds the browser XTERM, which would paint
+	// an event-stream task's frames as raw NDJSON. Refuse with the kind the
+	// server just reported; the logs pane already renders that task's events.
+	if ar.Kind == protocol.TaskKind_Stream {
+		stream.CloseBoth()
+		return "", fmt.Errorf("task %s is an event-stream session (structured events, no terminal): follow it in the logs pane, or `session stream attach` from the CLI: %w", taskIDHex, ErrAttachWrongKind)
 	}
 
 	sessCtx, cancel := context.WithCancel(ctx)

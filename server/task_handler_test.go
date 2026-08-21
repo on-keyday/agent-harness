@@ -1205,9 +1205,59 @@ func TestHandleAttachSession_Ok_FromDetached(t *testing.T) {
 		t.Errorf("ReplayBytes=0, want >0 (ring had data before Attach)")
 	}
 
+	// The response must state the task's kind: the client cannot interpret the
+	// stream (terminal bytes vs neutral NDJSON) without it, and deriving it
+	// from ls/snapshot breaks a caller whose action scope is wider than its
+	// visibility.
+	if resp.Kind != protocol.TaskKind_Interactive {
+		t.Errorf("Kind=%v want Interactive", resp.Kind)
+	}
+
 	// tuiConn should have had its stream consumed (nextStreamID reset to 0).
 	if tuiConn.nextStreamID != 0 {
 		t.Errorf("nextStreamID=%d want 0 (stream was allocated)", tuiConn.nextStreamID)
+	}
+}
+
+// An event-stream task's attach must report Kind=Stream — that field is how a
+// client decides whether to splice a terminal or decode NDJSON, and it must
+// work for a caller who cannot see the task in ls at all.
+func TestHandleAttachSession_ReportsStreamKind(t *testing.T) {
+	h := newTestHandler(t)
+	h.Sessions = NewSessionRegistry()
+
+	var rawID [16]byte
+	rawID[0] = 0x57
+	id := hex.EncodeToString(rawID[:])
+	h.Tasks.mu.Lock()
+	h.Tasks.tasks[id] = &TaskEntry{
+		ID:       id,
+		RepoPath: "/repo",
+		Status:   protocol.TaskStatus_Detached,
+		Kind:     protocol.TaskKind_Stream,
+	}
+	h.Tasks.order = append(h.Tasks.order, id)
+	h.Tasks.mu.Unlock()
+
+	runnerStream := newFakeStream(t)
+	mux := NewSessionMux(context.Background(), id, runnerStream, NewRingBuffer(4096), SessionHooks{})
+	h.Sessions.Add(id, mux)
+	defer func() {
+		runnerStream.CloseRead()
+		mux.Stop()
+	}()
+
+	tuiConn := &fakeConn{
+		id:           objproto.MustParseConnectionID("ws:127.0.0.1:9400-1"),
+		nextStreamID: trsf.StreamID(41),
+	}
+	req := &protocol.AttachSessionRequest{TaskId: taskIDFromHexStr(t, id), Mode: protocol.AttachMode_View}
+	resp := h.handleAttachSession(tuiConn, req)
+	if resp.Status != protocol.AttachSessionStatus_Ok {
+		t.Fatalf("status=%v want Ok (the attach RPC is deliberately open to the stream kind)", resp.Status)
+	}
+	if resp.Kind != protocol.TaskKind_Stream {
+		t.Fatalf("Kind=%v want Stream", resp.Kind)
 	}
 }
 

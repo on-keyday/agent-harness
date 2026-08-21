@@ -406,7 +406,7 @@ func TestEventRoundTripsThroughTheNeutralType(t *testing.T) {
 		if err := json.Unmarshal(b, &back); err != nil {
 			t.Fatalf("neutral event does not survive JSON: %v", err)
 		}
-		if got := toAgentlog(back); agentlog.Render(got) != agentlog.Render(in) {
+		if got := back.ToAgentlog(); agentlog.Render(got) != agentlog.Render(in) {
 			t.Errorf("render drifted for %+v:\n  before %q\n  after  %q",
 				in, agentlog.Render(in), agentlog.Render(got))
 		}

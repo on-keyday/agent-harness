@@ -29,17 +29,19 @@ func IsAttachPermanent(err error) bool {
 }
 
 // attachSessionRPC performs the AttachSession RPC round-trip and returns the
-// raw bidirectional stream plus the server-reported replayBytes count.
+// raw bidirectional stream plus the server's full response — replayBytes and,
+// since the kind field landed, the task's TaskKind, which is what tells a
+// caller whether the stream carries terminal bytes or neutral NDJSON.
 // It is shared between native (cli/attach_native.go) and WASM
 // (cli/attach_js.go) callers; neither syscall nor exec dependencies are
 // introduced here.
 // replayLimit caps the replay the server sends back (0 = full ring); only
 // observer attaches (view/cowrite) honor it. A monitoring grid pane passes a
 // small limit so it isn't shipped ~1 MiB of scrollback it will never show.
-func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string, mode protocol.AttachMode, replayLimit uint32) (trsf.BidirectionalStream, uint64, error) {
+func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string, mode protocol.AttachMode, replayLimit uint32) (trsf.BidirectionalStream, *protocol.AttachSessionResponse, error) {
 	tid, err := parseTaskIDHex(taskIDHex)
 	if err != nil {
-		return nil, 0, fmt.Errorf("AttachSession: parse task id: %w", err)
+		return nil, nil, fmt.Errorf("AttachSession: parse task id: %w", err)
 	}
 
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_AttachSession}
@@ -47,25 +49,31 @@ func (c *Client) attachSessionRPC(ctx context.Context, taskIDHex string, mode pr
 
 	resp, err := c.RoundTripTaskControl(ctx, req)
 	if err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 	if resp.Kind != protocol.TaskControlKind_AttachSession {
-		return nil, 0, fmt.Errorf("expected AttachSession response, got kind=%v", resp.Kind)
+		return nil, nil, fmt.Errorf("expected AttachSession response, got kind=%v", resp.Kind)
 	}
 	ar := resp.Attach()
 	if ar == nil {
-		return nil, 0, fmt.Errorf("AttachSession response variant missing")
+		return nil, nil, fmt.Errorf("AttachSession response variant missing")
 	}
 	if err := attachStatusError(taskIDHex, ar.Status); err != nil {
-		return nil, 0, err
+		return nil, nil, err
 	}
 
 	st := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(ar.StreamId))
 	if st == nil {
-		return nil, ar.ReplayBytes, fmt.Errorf("exec stream %d not visible after AttachSession", ar.StreamId)
+		return nil, ar, fmt.Errorf("exec stream %d not visible after AttachSession", ar.StreamId)
 	}
-	return st, ar.ReplayBytes, nil
+	return st, ar, nil
 }
+
+// ErrAttachWrongKind marks an attach that succeeded at the RPC level but
+// targets a task whose data plane the caller cannot interpret — a PTY verb
+// pointed at an event-stream task or vice versa. The stream is already closed
+// when this is returned; the caller only reports it.
+var ErrAttachWrongKind = errors.New("attach: wrong session kind for this verb")
 
 // attachStatusError converts a non-Ok AttachSessionStatus into a Go error.
 // Returns nil for AttachSessionStatus_Ok.

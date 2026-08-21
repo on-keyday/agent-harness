@@ -66,11 +66,19 @@ func (c *Client) SessionExec(ctx context.Context, taskIDHex, cmd string, opts Ex
 	nonce := hex.EncodeToString(nb[:])
 	s := execSentinels{start: "__HEXEC_" + nonce + "_S__", end: "__HEXEC_" + nonce + "_E__"}
 
-	stream, _, err := c.AttachSession(ctx, taskIDHex, protocol.AttachMode_Cowrite)
+	stream, _, kind, err := c.AttachSession(ctx, taskIDHex, protocol.AttachMode_Cowrite)
 	if err != nil {
 		return ExecResult{}, err
 	}
 	defer stream.Close()
+	// exec means "type into the foreground SHELL and scrape the PTY echo for
+	// the sentinel". An event-stream task has neither: the injected line would
+	// reach the adapter as one non-protocol line (reported, skipped) and this
+	// call would sit until timeout. Refuse with the reason instead — §3 of the
+	// event-stream design files exec under the terminal concepts.
+	if kind == protocol.TaskKind_Stream {
+		return ExecResult{}, fmt.Errorf("task %s is an event-stream session: it has no foreground shell for `session exec` to drive: %w", taskIDHex, ErrAttachWrongKind)
+	}
 
 	// One physical line (submitted with a CR). The trailing printf runs as the
 	// next element of the list, so "$?" is <cmd>'s exit status.

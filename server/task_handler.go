@@ -1420,6 +1420,12 @@ func (h *TaskHandler) handleAttachSession(conn ConnHandle, req *protocol.AttachS
 		Status:      protocol.AttachSessionStatus_Ok,
 		StreamId:    uint64(tuiStream.ID()),
 		ReplayBytes: replayBytes,
+		// The client cannot interpret the stream without the kind (terminal
+		// bytes vs neutral NDJSON), and it must come from here rather than
+		// from ls/snapshot: an attach may be authorized for a caller whose
+		// visibility shows nothing. Set only on Ok — the error responses
+		// leave it zero, which decodes as oneshot (no attachable task is).
+		Kind: info.Kind,
 	}
 }
 

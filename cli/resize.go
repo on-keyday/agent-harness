@@ -42,12 +42,20 @@ func (c *Client) SessionResize(ctx context.Context, taskIDHex string, rows, cols
 	// A VIEW attach is enough: resizing is orthogonal to the mode, so asking
 	// for cowrite here would demand a strictly larger grant than the operation
 	// needs. exec_view + exec_resize is the whole requirement.
-	st, _, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View, 0)
+	st, ar, err := c.attachSessionRPC(ctx, taskIDHex, protocol.AttachMode_View, 0)
 	if err != nil {
 		return false, err
 	}
 	stream := agentexec.NewCommandExecutionStream(st)
 	defer stream.Close()
+
+	// §3 of the event-stream design: resize is REFUSED for that kind, never a
+	// silent no-op. Without this check the window-size frame would be sent,
+	// never echoed (a stream session emits none), and the caller would get the
+	// misleading "needs exec_resize" hint after the full wait.
+	if ar.Kind == protocol.TaskKind_Stream {
+		return false, fmt.Errorf("task %s is an event-stream session: it has no PTY to resize: %w", taskIDHex, ErrAttachWrongKind)
+	}
 
 	// Drain in the background: the replay burst has to be consumed for the
 	// frame demux to reach our echo, and leaving the recv side undrained

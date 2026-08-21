@@ -746,6 +746,37 @@ Not started, and what the implementation plan has to cover: the runner side
 `RunnerHello`), the `TaskKind`, the `kind` field on `AttachSessionResponse`,
 the verbs of §3 with their per-kind verdicts, and the three UIs.
 
+## Amendment 2026-08-21: the kind field and the first stream verb shipped
+
+Built, beyond the runner wiring the earlier amendments cover:
+
+- **`AttachSessionResponse.kind`** — set on Ok from the task record; zero on
+  errors. The layout changed (a coordinated restart; `wire-skew-check` run
+  against the pre-change ref).
+- **Every attach caller decides on the kind**, per the enumerate-all-call-sites
+  rule: `session attach` (CLI and TUI cmdline) and the WebUI/wasm attach
+  refuse a stream task and name the replacement; `session exec` and
+  `session resize` refuse (no shell, no PTY — resize would otherwise time out
+  into the misleading exec_resize hint); TUI grid panes refuse defensively;
+  `session send` and the raw snapshot path stay deliberately kind-agnostic
+  (the low-level byte routes of §3).
+- **`session stream attach <id>`** — CLI: view-attach, decode the NDJSON,
+  render through `streamagent.RenderText`, the SAME renderer the runner's
+  task-log tap uses (one renderer, pinned by tests, so the follow view and
+  `logs` cannot drift). A non-protocol line on the stream — `session send`
+  can lawfully put one there — is shown marked, never dropped. TUI: the verb
+  focuses the logs pane on the task, which is already this kind's follower;
+  the WebUI follows through its log view (its command input has no `session`
+  family at all yet, so the namespace lands there when that family does).
+- **`session new --stream` without `-d`** now means open-then-follow on the
+  CLI (it previously spliced NDJSON into the raw-mode terminal); the TUI
+  refuses the combination and says why. `--stream` rides the TUI cmdline's
+  session-new too (it was CLI-only).
+- The other `session stream` verbs (`turn` / `approve` / `interrupt` /
+  `finish` / `requests` / `snapshot`) are dispatched and answer "specified,
+  not built yet" — a namespace that exists with one verb, rather than an
+  unknown-verb error that hides the design.
+
 One observation from the smoke run that the plan should not rediscover:
 `tool_start` is emitted BEFORE the approval request for that tool, so a
 surface shows "Write starting" and then blocks. Count `pending` from requests,

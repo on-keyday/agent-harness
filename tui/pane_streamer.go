@@ -165,8 +165,17 @@ func (p *PaneStreamer) pump(ctx context.Context, c *cli.Client) {
 		// permanent rx=0 black pane. The returned stream outlives attachCtx (it
 		// only scopes the RPC + stream-visibility wait), so cancelling here is safe.
 		attachCtx, cancelAttach := context.WithTimeout(ctx, paneAttachTimeout)
-		stream, _, err := c.AttachSessionWithReplayLimit(attachCtx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
+		stream, _, kind, err := c.AttachSessionWithReplayLimit(attachCtx, p.taskID, protocol.AttachMode_Cowrite, gridReplayLimit)
 		cancelAttach()
+		if err == nil && kind == protocol.TaskKind_Stream {
+			// Grid rows are IsPTYKind-filtered, so a pane should never point at
+			// a stream task — but this pane renders a VT screen, and painting
+			// NDJSON into it would be worse than an error line. Permanent: a
+			// task's kind never changes, so reattaching cannot fix it.
+			_ = stream.Close()
+			p.setErr(fmt.Errorf("event-stream session: no terminal to render"))
+			return
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return // Stop()/Close() cancelled us — not a failure to surface.

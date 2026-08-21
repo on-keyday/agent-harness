@@ -959,6 +959,20 @@ format AttachSessionResponse:
     status :AttachSessionStatus
     stream_id :u64
     replay_bytes :u64
+    # kind: the attached task's TaskKind, stated by the server because the
+    # client cannot interpret the stream without it — terminal bytes
+    # (interactive) and neutral NDJSON (stream) are indistinguishable from the
+    # frames alone until it is too late to have asked. It must come from the
+    # RESPONSE rather than from `ls`/snapshot because an attach may be
+    # authorized for a caller whose visibility scope shows nothing
+    # (`scope=none +exec_view:global`); the server knows the kind from the
+    # task record either way. Meaningful only when status == ok; zero
+    # otherwise (zero decodes as oneshot, which no attachable task is).
+    #
+    # Appending this field is a LAYOUT change on a RESPONSE: old clients
+    # reject the trailing bytes the moment the server is new, so this is a
+    # coordinated fleet restart, not a staged server-first migration.
+    kind :TaskKind
 
 # WhoAmIRequest carries no fields: the server resolves the caller's identity
 # from the connection principal (the agent ticket recorded at hello), never

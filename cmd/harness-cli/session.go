@@ -70,11 +70,12 @@ func exitOnAmbiguous(err error) error {
 }
 
 // runSession dispatches session sub-verbs: new / attach / snapshot / send /
-// exec / ls / kill / await-idle / resize. cid is the already-resolved server
-// ConnectionID from main()'s parseCID().
+// exec / ls / kill / await-idle / resize, plus the `stream` NAMESPACE (a third
+// level, one verb per inbound kind of the adapter protocol). cid is the
+// already-resolved server ConnectionID from main()'s parseCID().
 func runSession(cid objproto.ConnectionID, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill|await-idle|resize> [args]")
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session <new|attach|snapshot|send|exec|ls|kill|await-idle|resize|stream> [args]")
 		os.Exit(2)
 	}
 	verb := args[0]
@@ -98,9 +99,62 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 		return runSessionAwaitIdle(cid, rest)
 	case "resize":
 		return runSessionResize(cid, rest)
+	case "stream":
+		return runSessionStream(cid, rest)
 	default:
 		return fmt.Errorf("unknown session verb %q", verb)
 	}
+}
+
+// runSessionStream dispatches the `session stream <verb>` namespace — the
+// event-stream kind's data-plane verbs, one per inbound kind of the adapter
+// protocol (design §3). Lifecycle verbs (new/ls/kill) stay on `session`
+// because their meaning is kind-independent; these exist because their PTY
+// namesakes mean something else (attach splices a terminal) or nothing at all.
+//
+// Only `attach` exists yet. The rest of the namespace
+// (turn/approve/interrupt/finish/requests/snapshot) is specified in
+// docs/superpowers/specs/2026-08-20-event-stream-agent-design.md §3 and not
+// built; naming an unbuilt verb reports exactly that instead of "unknown".
+func runSessionStream(cid objproto.ConnectionID, args []string) error {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session stream <attach> <id>  (turn/approve/interrupt/finish/requests/snapshot: specified, not built yet)")
+		os.Exit(2)
+	}
+	verb := args[0]
+	rest := args[1:]
+	switch verb {
+	case "attach":
+		return runSessionStreamAttach(cid, rest)
+	case "turn", "approve", "interrupt", "finish", "requests", "snapshot":
+		return fmt.Errorf("session stream %s: specified (design §3) but not built yet; `session send` is the raw low-level route in the meantime", verb)
+	default:
+		return fmt.Errorf("unknown session stream verb %q", verb)
+	}
+}
+
+// runSessionStreamAttach follows an event-stream task's events, rendered as
+// text — the live counterpart of reading its task log, plus the ring replay.
+// Read-only; Ctrl+C detaches and the task keeps running.
+func runSessionStreamAttach(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session stream attach", flag.ExitOnError)
+	pos, err := parsePermuted(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: session stream attach <id>")
+	}
+	taskIDHex := pos[0]
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	return c.SessionStreamAttach(ctx, taskIDHex, os.Stdout, os.Stderr)
 }
 
 // parsePermuted parses fs but tolerates flags appearing after positional args.
@@ -256,6 +310,9 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	if x11 && (*x11Display < 0 || *x11Display > 99) {
 		return fmt.Errorf("session new: --x11-display must be 0..99")
 	}
+	if *stream && x11 {
+		return fmt.Errorf("session new: --stream is incompatible with --x11 (X11 is a terminal-session concept; the server refuses the pair too)")
+	}
 
 	scope, err := cli.ParseScope(*scopeFlag)
 	if err != nil {
@@ -320,6 +377,22 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 		}
 		fmt.Printf("session %s ended\n", id)
 		return nil
+	}
+
+	if *stream {
+		// The non-detach interactive path hands the local TERMINAL to the new
+		// session (raw mode + byte splice), which for this kind would paint
+		// raw NDJSON. "Open and stay" for an event-stream session means open
+		// detached, then FOLLOW the events — same rendering as
+		// `session stream attach`, which is also the command to come back with.
+		st, taskIDHex, err := c.OpenInteractive(ctx, repoVal, sopts)
+		if err != nil {
+			return exitOnAmbiguous(err)
+		}
+		_ = st.Close()
+		waitStreamCompleted(st, 2*time.Second)
+		fmt.Fprintf(os.Stderr, "harness-cli: stream session %s started\n", taskIDHex)
+		return c.SessionStreamAttach(ctx, taskIDHex, os.Stdout, os.Stderr)
 	}
 
 	id, err := c.Interactive(ctx, repoVal, sopts)

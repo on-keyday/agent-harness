@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"sync"
 
-	"github.com/on-keyday/agent-harness/runner/agentlog"
 	"github.com/on-keyday/agent-harness/runner/streamagent"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 	"github.com/on-keyday/objtrsf/trsf"
@@ -209,6 +208,12 @@ func (s *streamTap) onAdapterLine(line []byte) {
 		s.task.log("[err]adapter line not understood: " + err.Error())
 		return
 	}
+	// The display line comes from the SHARED renderer (events and requests),
+	// so this log and the CLI's `session stream attach` cannot drift into two
+	// renderings of one message.
+	if line, ok := streamagent.RenderText(m); ok {
+		s.task.log("[out]" + line)
+	}
 	switch m.Kind {
 	case streamagent.KindRequest:
 		if m.Request == nil {
@@ -220,11 +225,6 @@ func (s *streamTap) onAdapterLine(line []byte) {
 		n := len(s.task.pending)
 		s.task.mu.Unlock()
 		s.task.notifyPending(n)
-		s.task.log(fmt.Sprintf("[out]⏸ approval needed: %s (%s)", req.Tool, req.ID))
-	case streamagent.KindEvent:
-		if m.Event != nil {
-			s.task.log("[out]" + agentlog.Render(toAgentlog(*m.Event)))
-		}
 	case streamagent.KindExit:
 		if m.Exit != nil {
 			ex := *m.Exit
@@ -310,38 +310,6 @@ func splitLines(data []byte) []string {
 	return out
 }
 
-// toAgentlog is the adapter's toNeutral inverted, so a neutral event renders
-// through the SAME Render the oneshot path uses and the two kinds' log lines
-// cannot drift. The round trip is asserted in the tests: if it were lossy, this
-// kind's logs would quietly say less.
-func toAgentlog(e streamagent.Event) agentlog.Event {
-	out := agentlog.Event{
-		Text: e.Text, Tool: e.Tool, Args: e.Args, Result: e.Result,
-		ExitCode: e.ExitCode, IsError: e.IsError, Warning: e.Warning,
-	}
-	switch e.Kind {
-	case streamagent.EventSessionStart:
-		out.Kind = agentlog.KindSessionStart
-	case streamagent.EventThinking:
-		out.Kind = agentlog.KindThinking
-	case streamagent.EventToolStart:
-		out.Kind = agentlog.KindToolStart
-	case streamagent.EventToolEnd:
-		out.Kind = agentlog.KindToolEnd
-	case streamagent.EventText:
-		out.Kind = agentlog.KindText
-	case streamagent.EventFinish:
-		out.Kind = agentlog.KindFinish
-	case streamagent.EventError:
-		out.Kind = agentlog.KindError
-	default:
-		out.Kind = agentlog.KindRaw
-	}
-	if e.Stats != nil {
-		out.Stats = agentlog.Stats{
-			DurationMS: e.Stats.DurationMS, CostUSD: e.Stats.CostUSD,
-			InputTokens: e.Stats.InputTokens, OutputTokens: e.Stats.OutputTokens,
-		}
-	}
-	return out
-}
+// The neutral→agentlog conversion and the shared display line both live in
+// streamagent (Event.ToAgentlog / RenderText), so the CLI's stream attach and
+// this tap render one message identically by construction.

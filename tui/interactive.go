@@ -221,9 +221,18 @@ func DoOpenInteractiveWithOpts(c *cli.Client, repo, host string, extraArgs []str
 // protocol.AttachMode_View for a read-only observer attach.
 func DoAttachSession(c *cli.Client, taskIDHex string, mode protocol.AttachMode) tea.Cmd {
 	return func() tea.Msg {
-		stream, _, err := c.AttachSession(context.Background(), taskIDHex, mode)
+		stream, _, kind, err := c.AttachSession(context.Background(), taskIDHex, mode)
 		if err != nil {
 			return InteractiveReadyMsg{Err: fmt.Errorf("attach session: %w", err)}
+		}
+		// The handover path splices the TERMINAL to this stream, which for an
+		// event-stream task would paint raw NDJSON. The keybinding routes are
+		// already IsPTYKind-gated at the row; this catches the cmdline route
+		// (`session attach <id>`), where the kind is only known from the
+		// response. The events are followable in the logs pane (enter).
+		if kind == protocol.TaskKind_Stream {
+			_ = stream.Close()
+			return InteractiveReadyMsg{Err: fmt.Errorf("attach session: task %s is an event-stream session (no terminal): follow its events in the logs pane (enter on the task), or `session stream attach` from the CLI", taskIDHex)}
 		}
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskIDHex}
 	}
@@ -251,7 +260,12 @@ type SessionStartedMsg struct {
 // that a silent swap would survive review.
 type TermSize struct{ Rows, Cols uint16 }
 
-func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string, size TermSize) tea.Cmd {
+// eventStream opens the session as TaskKind_Stream (`session new --stream -d`):
+// the runner spawns the profile's stream adapter and the task's events render
+// into its log, so the TUI follows it through the logs pane rather than a
+// terminal splice. The initial size is still sent — the runner ignores it for
+// this kind (no PTY exists to size).
+func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string, size TermSize, eventStream bool) tea.Cmd {
 	return func() tea.Msg {
 		sel, err := cli.BuildSelector(selOpts)
 		if err != nil {
@@ -266,6 +280,7 @@ func DoStartDetachedSession(c *cli.Client, repo string, selOpts cli.SelectorOpts
 			// available. Without it the session sits at 0x0 and a full-screen
 			// TUI inside it paints nothing.
 			InitialRows: size.Rows, InitialCols: size.Cols,
+			EventStream: eventStream,
 		}))
 		if err != nil {
 			return SessionStartedMsg{Err: err}

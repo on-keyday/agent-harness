@@ -2669,11 +2669,25 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, DoOpenX11Session(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, v.X11Display, a.program, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 		}
 		if v.Detach {
-			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)})
+			return a, DoStartDetachedSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile, TermSize{Rows: uint16(a.height), Cols: uint16(a.width)}, v.Stream)
 		}
+		// v.Stream without Detach cannot reach here: parseSession refuses it.
 		return a, DoOpenDetachableSession(a.client, repo, sel, v.ExtraArgs, v.ResumeTaskID, auth, capsOverride, v.ResumeConversation, v.AgentProfile)
 	case SessionAttachAction:
 		return a, DoAttachSession(a.client, v.TaskID, protocol.AttachMode_Control)
+	case SessionStreamAttachAction:
+		// Following an event-stream task in the TUI IS following its log: the
+		// runner renders this kind's events into the task log, so the logs
+		// pane is the follower — same content as the CLI's
+		// `session stream attach`, already live via the topic subscription.
+		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		a.cmdresult.Append(fmt.Sprintf("stream attach %s: following its events in the logs pane", shortTaskID(full)))
+		a.setFocus(focusLogs)
+		return a, a.followTask(full)
 	case SessionLsAction:
 		return a, DoSessionList(a.client)
 	case SessionKillAction:
