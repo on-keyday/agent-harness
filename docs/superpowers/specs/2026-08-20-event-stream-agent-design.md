@@ -429,17 +429,40 @@ keystroke class, so `exec_cowrite` can do both and no gate can tell them apart.
 A byte stream carries no intent. This is a structural limit of the PTY kind,
 not a defect introduced here.
 
-**Verbs stay under `session`** — lifecycle is identical, so a second noun buys
-nothing — with a per-kind verdict for every verb, which the implementation plan
-must enumerate rather than summarise:
+**Lifecycle verbs stay shared; the data plane gets a namespace.** The rule:
+a verb stays under `session` if its MEANING does not change, and moves under
+`session stream` if it does.
 
-- `session new --kind stream`, `ls`, `kill` — unchanged
-- `send` — same verb, different meaning (keystrokes → a user turn)
-- `attach` — follow events and take the seat, not a terminal splice
-- `snapshot` — last N events rendered, not a VT screen
-- `resize`, `exec` — refused as not applicable
-- **new**: `session requests <id>`, and
-  `session approve <id> <request-id> --allow|--deny|--modify <json>`
+| verb | verdict |
+|---|---|
+| `session new --stream`, `ls`, `kill` | **shared** — lifecycle is identical, which is what "a second noun buys nothing" was about |
+| `session send` | **shared, and stays the low-level one** — raw bytes at a stream, the escape hatch for both kinds |
+| `session attach`, `snapshot`, `resize`, `exec` | **refused** for this kind: each hands over or renders a TERMINAL |
+| `session stream turn <id> "text"` | one user turn → `user` |
+| `session stream approve <id> <req> --allow\|--deny\|--modify` | → `response` |
+| `session stream interrupt <id>` | abandon the running turn → `interrupt` |
+| `session stream finish <id>` | close the agent's stdin → `finish` |
+| `session stream requests <id>` | read the pending state |
+| `session stream attach <id>` | follow events; NOT the terminal splice `session attach` performs |
+
+An earlier version of this list said `send` was "the same verb, different
+meaning". That was written before looking at its flags: `-enter` (a carriage
+return), `-e` (escape sequences like `\x03`), `--snapshot` (render a VT
+screen) are all terminal concepts, and none applies here. A verb whose options
+are mostly "not applicable" for one kind is doing two jobs, and the
+`--allow|--deny|--modify` grammar does not sit next to a free-text argument
+either.
+
+**The verbs under `stream` are one-to-one with the protocol's inbound kinds.**
+That is the point of the namespace and the check on it: if a verb has no kind,
+it is reaching past the protocol; if a kind has no verb, something is
+unreachable. `interrupt` and `finish` are both here because that check found
+them missing — `interrupt` was advertised in the adapter's hello with nothing
+able to invoke it.
+
+Cost, stated because every surface pays it: `session stream` is a third level,
+so the TUI command line and the WebUI's `runCmd` dispatch a namespace rather
+than a verb.
 
 **What an answer can be, from the SDK reference rather than from the two shapes
 I happened to probe.** `canUseTool` returns two variants with three fields, and

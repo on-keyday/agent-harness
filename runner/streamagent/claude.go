@@ -116,7 +116,9 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 		return err
 	}
 
-	a := &claudeAdapter{w: w, agentIn: stdin,
+	var closeOnce sync.Once
+	closeAgentIn := func() { closeOnce.Do(func() { _ = stdin.Close() }) }
+	a := &claudeAdapter{w: w, agentIn: stdin, agentInClose: closeAgentIn,
 		pending: map[string]string{}, interrupts: map[string]struct{}{}}
 
 	_ = w.Hello(Hello{
@@ -149,13 +151,13 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 	var inErr, waitErr error
 	select {
 	case inErr = <-inDone:
-		_ = stdin.Close()
+		closeAgentIn()
 		waitErr = <-waitCh
 	case waitErr = <-waitCh:
 		// The input pump is left blocked on a read that has no cancellable
 		// form. That is fine here and only here: this process is on its way
 		// out, so the goroutine dies with it.
-		_ = stdin.Close()
+		closeAgentIn()
 	}
 	wg.Wait()
 
@@ -187,7 +189,11 @@ func refuseConflicts(argv []string) error {
 type claudeAdapter struct {
 	w       *Writer
 	agentIn io.Writer
-	dec     agentlog.Decoder
+	// agentInClose ends the session: closing the agent's stdin lets it finish
+	// the turn in flight and exit 0. Guarded because the run loop closes it too
+	// on its own teardown paths.
+	agentInClose func()
+	dec          agentlog.Decoder
 
 	mu sync.Mutex
 	// pending maps OUR request id to the vendor's. The runner never sees the
@@ -201,6 +207,7 @@ type claudeAdapter struct {
 	// against for the other direction.
 	interrupts map[string]struct{}
 	seq        int
+	finished   bool
 }
 
 func (a *claudeAdapter) decoder() agentlog.Decoder {
@@ -374,7 +381,24 @@ func (a *claudeAdapter) pumpNeutralIn(r io.Reader) error {
 			if m.User == nil {
 				continue
 			}
-			_ = a.sendUserTurn(m.User.Text)
+			// Reported, not discarded. The `_ =` this replaced swallowed the
+			// one error that matters here: a turn written after a finish goes
+			// to a closed pipe, and the client would never learn its message
+			// went nowhere.
+			if err := a.sendUserTurn(m.User.Text); err != nil {
+				_ = a.w.Event(Event{Kind: EventError, Warning: true,
+					Text: "user turn not delivered: " + err.Error()})
+			}
+		case KindFinish:
+			// The clean end: the agent completes its turn and exits. Nothing
+			// can follow, and the pump keeps reading only so that a client
+			// writing after it gets told rather than ignored.
+			if a.agentInClose != nil {
+				a.agentInClose()
+			}
+			a.mu.Lock()
+			a.finished = true
+			a.mu.Unlock()
 		case KindInterrupt:
 			if err := a.sendInterrupt(); err != nil {
 				_ = a.w.Event(Event{Kind: EventError, Text: err.Error(), Warning: true})
@@ -469,6 +493,9 @@ func (a *claudeAdapter) writeVendor(v any) error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.finished {
+		return fmt.Errorf("the session was finished; the agent's input is closed")
+	}
 	_, err = a.agentIn.Write(append(b, '\n'))
 	return err
 }

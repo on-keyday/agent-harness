@@ -562,3 +562,67 @@ func TestInterruptReachesTheAgentAndItsReceiptDoesNotLeak(t *testing.T) {
 		t.Errorf("the receipt produced no neutral event; kinds %v", kinds(msgs))
 	}
 }
+
+// finish is the clean end: the agent's stdin closes, it finishes what it is
+// doing and exits 0. A kind rather than a transport act so it sits beside
+// interrupt — abandoning a turn and ending a session are one step apart.
+func TestFinishClosesTheAgentStdinAndEndsTheRun(t *testing.T) {
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	outFile := filepath.Join(t.TempDir(), "agent-saw")
+	// Exits only when its stdin closes, and records that it got there.
+	agent := fakeAgent(t, argvFile,
+		"cat > /dev/null; printf 'stdin-closed\\n' > "+outFile+"\n")
+
+	var exit *Exit
+	msgs, _ := driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
+		if m.Kind == KindHello {
+			go func() { _ = in.Finish(Finish{Reason: "operator"}) }()
+			return false
+		}
+		if m.Kind == KindExit {
+			exit = m.Exit
+			return true
+		}
+		return false
+	})
+
+	if _, err := os.Stat(outFile); err != nil {
+		t.Fatalf("the agent's stdin never closed, so it never exited: %v (kinds %v)",
+			err, kinds(msgs))
+	}
+	if exit == nil {
+		t.Fatalf("no exit reported; kinds %v", kinds(msgs))
+	}
+	if exit.Code != 0 {
+		t.Errorf("exit = %d, want 0: a finish is not a failure", exit.Code)
+	}
+}
+
+// After a finish there is nothing to write to. A turn sent anyway must be
+// reported, not dropped into a closed pipe unnoticed.
+func TestATurnAfterFinishIsReported(t *testing.T) {
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	agent := fakeAgent(t, argvFile, "cat > /dev/null\n")
+
+	var complained bool
+	msgs, _ := driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
+		if m.Kind == KindHello {
+			go func() {
+				_ = in.Finish(Finish{})
+				_ = in.User(UserTurn{Text: "too late"})
+			}()
+			return false
+		}
+		if m.Kind == KindEvent && m.Event.Kind == EventError &&
+			strings.Contains(m.Event.Text, "finished") {
+			complained = true
+		}
+		if m.Kind == KindExit {
+			return true
+		}
+		return false
+	})
+	if !complained {
+		t.Errorf("a turn written after finish vanished silently; kinds %v", kinds(msgs))
+	}
+}

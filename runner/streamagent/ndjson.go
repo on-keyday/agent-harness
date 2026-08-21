@@ -55,6 +55,7 @@ func (w *Writer) Event(e Event) error       { return w.Write(Msg{Kind: KindEvent
 func (w *Writer) Request(r Request) error   { return w.Write(Msg{Kind: KindRequest, Request: &r}) }
 func (w *Writer) Response(r Response) error { return w.Write(Msg{Kind: KindResponse, Response: &r}) }
 func (w *Writer) User(t UserTurn) error     { return w.Write(Msg{Kind: KindUser, User: &t}) }
+func (w *Writer) Finish(f Finish) error     { return w.Write(Msg{Kind: KindFinish, Finish: &f}) }
 func (w *Writer) Interrupt(i Interrupt) error {
 	return w.Write(Msg{Kind: KindInterrupt, Interrupt: &i})
 }

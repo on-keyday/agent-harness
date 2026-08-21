@@ -75,6 +75,15 @@ const (
 	// capability the protocol cannot reach is a lie the far side has no way to
 	// detect.
 	KindInterrupt MsgKind = "interrupt"
+	// KindFinish ends the session cleanly: the agent's stdin closes, so it
+	// completes the turn it is running and exits. Runner → adapter.
+	//
+	// It is a kind rather than a transport-level act so that it sits at the
+	// same level as its neighbours — abandoning a turn and ending a session are
+	// one step apart, and a client that can express one should not have to
+	// reach past the protocol for the other. The transport's zero-length Stdin
+	// frame still works and is what this is implemented WITH.
+	KindFinish MsgKind = "finish"
 	// KindExit reports the agent process exiting. Adapter → runner, last line.
 	KindExit MsgKind = "exit"
 )
@@ -90,6 +99,7 @@ type Msg struct {
 	Response  *Response  `json:"response,omitempty"`
 	User      *UserTurn  `json:"user,omitempty"`
 	Interrupt *Interrupt `json:"interrupt,omitempty"`
+	Finish    *Finish    `json:"finish,omitempty"`
 	Exit      *Exit      `json:"exit,omitempty"`
 }
 
@@ -231,6 +241,18 @@ type Response struct {
 type Interrupt struct {
 	// Reason is for the harness's own log. The vendor's interrupt carries no
 	// message, so nothing here reaches the agent.
+	Reason string `json:"reason,omitempty"`
+}
+
+// Finish ends the session by closing the agent's stdin. Measured: the turn in
+// flight COMPLETES, the agent exits 0, and its SessionEnd hooks run. That is
+// the difference from a kill, which aborts the turn and exits 143 — both fire
+// the hooks, so the turn is the whole distinction.
+//
+// Nothing can be sent afterwards; a turn written after a finish is reported
+// rather than silently dropped.
+type Finish struct {
+	// Reason is for the harness's own log; the agent is told nothing.
 	Reason string `json:"reason,omitempty"`
 }
 
