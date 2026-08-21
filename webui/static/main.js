@@ -2959,6 +2959,21 @@ const POLL_INTERVAL_MS = 5000;
     showChat(false);
   };
 
+  // showTerminalView is THE way the xterm becomes the visible view. Every PTY
+  // path goes through it, because the chat has to be torn down when one does
+  // and "remember to call closeChat" is not a mechanism: it was wired at two of
+  // five call sites and the operator found the other three by resuming into a
+  // chat that never went away.
+  //
+  // The pair it replaces (setActiveTab + term.reset) is exactly the moment "the
+  // terminal is now what you are looking at", which is why that pair is the
+  // right place for the teardown rather than each caller's tail.
+  const showTerminalView = () => {
+    closeChat();
+    setActiveTab("terminal");
+    term.reset();
+  };
+
   const chatSend = async () => {
     if (!chatTaskId || !chatInput) return;
     const text = chatInput.value.trim();
@@ -3655,12 +3670,10 @@ const POLL_INTERVAL_MS = 5000;
   // viewer has no size authority, so it mis-rendered whenever the grids
   // differed, and it cost the browser its own control attach to boot.
   const reattachTo = async (id) => {
-    closeChat();              // a PTY attach takes the terminal tab back
     if (!id) { attachedTask.textContent = "(session id required)"; return; }
     attachEpoch++;            // invalidate any in-flight close handler
     hideQuickReattach();
-    setActiveTab("terminal");
-    term.reset();
+    showTerminalView();
     try {
       const taskID = await window.harness.attachSession(id, "control");
       attachedTask.textContent = `attached: ${taskID} (reattached)`;
@@ -3688,8 +3701,7 @@ const POLL_INTERVAL_MS = 5000;
     const req = sessionReq({ agent, claudeArgs: args, resumeTaskId: id, resumeConversation: true });
     try {
       const taskID = await window.harness.startInteractive(req);
-      setActiveTab("terminal");
-      term.reset();
+      showTerminalView();
       attachedTask.textContent = `attached: ${taskID} (resumed conversation)`;
       currentSessionTaskId = taskID;
       scrollTermToBottom();
@@ -3790,8 +3802,7 @@ const POLL_INTERVAL_MS = 5000;
             await openChatFor(taskID);
             return;
           }
-          setActiveTab("terminal");
-          term.reset();
+          showTerminalView();
           // mirrors the success path used by openInteractive; every
           // interactive open is a detachable session now.
           onInteractiveOpened(taskID, "session");
@@ -3848,10 +3859,9 @@ const POLL_INTERVAL_MS = 5000;
       }
       return;
     }
-    closeChat();              // a PTY session takes the tab back from the chat
     try {
       const taskID = await window.harness.startInteractive(req);
-      setActiveTab("terminal");
+      showTerminalView();
       onInteractiveOpened(taskID, label);
     } catch (e) {
       attachedTask.textContent = "";
@@ -4709,8 +4719,7 @@ const POLL_INTERVAL_MS = 5000;
         const req = sessionReq({ agent: agentSel.value || "", claudeArgs, resumeTaskId: t.id, resumeConversation, runner });
         try {
           const id = await window.harness.startInteractive(req);
-          setActiveTab("terminal");
-          term.reset();
+          showTerminalView();
           attachedTask.textContent = `attached: ${id} (${note})`;
           currentSessionTaskId = id;
         } catch (err) {
