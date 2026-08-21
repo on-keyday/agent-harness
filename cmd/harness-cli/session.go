@@ -15,6 +15,7 @@ import (
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/runner/streamagent"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
@@ -112,13 +113,11 @@ func runSession(cid objproto.ConnectionID, args []string) error {
 // because their meaning is kind-independent; these exist because their PTY
 // namesakes mean something else (attach splices a terminal) or nothing at all.
 //
-// Only `attach` exists yet. The rest of the namespace
-// (turn/approve/interrupt/finish/requests/snapshot) is specified in
-// docs/superpowers/specs/2026-08-20-event-stream-agent-design.md §3 and not
-// built; naming an unbuilt verb reports exactly that instead of "unknown".
+// `requests` and `snapshot` are the two still unbuilt; naming one reports
+// exactly that instead of "unknown", so the design stays discoverable.
 func runSessionStream(cid objproto.ConnectionID, args []string) error {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: harness-cli session stream <attach> <id>  (turn/approve/interrupt/finish/requests/snapshot: specified, not built yet)")
+		fmt.Fprintln(os.Stderr, "usage: harness-cli session stream <attach|turn|approve|interrupt|finish> <id> [args]  (requests/snapshot: specified, not built yet)")
 		os.Exit(2)
 	}
 	verb := args[0]
@@ -126,11 +125,136 @@ func runSessionStream(cid objproto.ConnectionID, args []string) error {
 	switch verb {
 	case "attach":
 		return runSessionStreamAttach(cid, rest)
-	case "turn", "approve", "interrupt", "finish", "requests", "snapshot":
-		return fmt.Errorf("session stream %s: specified (design §3) but not built yet; `session send` is the raw low-level route in the meantime", verb)
+	case "turn":
+		return runSessionStreamTurn(cid, rest)
+	case "approve":
+		return runSessionStreamApprove(cid, rest)
+	case "interrupt", "finish":
+		return runSessionStreamSimple(cid, rest, verb)
+	case "requests", "snapshot":
+		return fmt.Errorf("session stream %s: specified (design §3) but not built yet; "+
+			"`session snapshot --raw` reads this kind's stream verbatim in the meantime", verb)
 	default:
 		return fmt.Errorf("unknown session stream verb %q", verb)
 	}
+}
+
+// runSessionStreamTurn appends one user turn.
+//
+// Flags strictly BEFORE <id>, and everything after it joined ssh-style — the
+// same shape `session send` and `session exec` use, for the reason
+// parsePermuted's own doc gives: a free-form text positional can begin with
+// '-', which is indistinguishable from a flag, so the permuted parse must not
+// be used here.
+func runSessionStreamTurn(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session stream turn", flag.ExitOnError)
+	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() < 2 {
+		return fmt.Errorf(`usage: session stream turn [--flush-ms MS] <id> <text>...
+flags must precede <id>; everything after <id> is joined with spaces and sent as
+one user turn (ssh-style), so multi-word text needs no quoting.
+
+This is the structured counterpart of ` + "`session send`" + `: it builds the
+adapter-protocol line and appends the newline that frames it. ` + "`session send`" + `
+stays the raw route and appends nothing — a line without a newline sits in the
+adapter's buffer, invisible, until something else flushes it.`)
+	}
+	taskIDHex := fs.Arg(0)
+	text := strings.Join(fs.Args()[1:], " ")
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.StreamTurn(ctx, taskIDHex, text, time.Duration(*flushMs)*time.Millisecond)
+}
+
+// runSessionStreamApprove answers one pending request.
+//
+// The deny reason is a FLAG rather than a trailing positional, which keeps both
+// positionals hex-shaped and so lets parsePermuted give this verb order-free
+// flags — `approve <id> <req> --deny --message "…"` and `approve --deny <id>
+// <req>` both work. A trailing free-form positional would have forced
+// flags-first, and this is the verb where a misplaced --allow/--deny would be
+// worst: it decides the answer.
+func runSessionStreamApprove(cid objproto.ConnectionID, args []string) error {
+	fs := flag.NewFlagSet("session stream approve", flag.ExitOnError)
+	allow := fs.Bool("allow", false, "run the tool as requested")
+	deny := fs.Bool("deny", false, "refuse it")
+	message := fs.String("message", "", "with --deny, the reason. It reaches the AGENT verbatim as a failed tool result — operator-authored text entering a model's context, not a private note")
+	suggestion := fs.Int("suggestion", -1, "accept the request's Nth suggestion (0-based) as well; a suggestion is a STANDING change (e.g. stop asking for this tool), not an answer to this one call")
+	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
+	pos, err := parsePermuted(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 2 {
+		return fmt.Errorf(`usage: session stream approve <id> <request-id> --allow | --deny [--message "reason"]
+The request id is the staleness guard: the adapter refuses an id it is not
+holding, so an answer aimed at a request that has gone is REFUSED rather than
+applied to whatever happens to be pending now. Read the pending request with
+` + "`session snapshot --raw <id>`" + ` (its input rides the stream verbatim; the
+task log's rendering drops it).`)
+	}
+	if *allow == *deny {
+		return fmt.Errorf("session stream approve: give exactly one of --allow or --deny")
+	}
+	if *allow && *message != "" {
+		return fmt.Errorf("session stream approve: --message is the DENY reason; an allow carries no message")
+	}
+	resp := streamagent.Response{ID: pos[1]}
+	if *allow {
+		resp.Behavior = streamagent.BehaviorAllow
+	} else {
+		resp.Behavior = streamagent.BehaviorDeny
+		resp.Message = *message
+	}
+	if *suggestion >= 0 {
+		s := *suggestion
+		resp.AcceptSuggestion = &s
+	}
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	return c.StreamApprove(ctx, pos[0], resp, time.Duration(*flushMs)*time.Millisecond)
+}
+
+// runSessionStreamSimple serves the two verbs that carry no payload.
+//
+// interrupt abandons the running TURN and the agent survives to take the next
+// one; finish closes the agent's stdin so it completes the turn in flight and
+// exits 0. Neither is `session kill`, which is a signal and discards the work.
+func runSessionStreamSimple(cid objproto.ConnectionID, args []string, verb string) error {
+	fs := flag.NewFlagSet("session stream "+verb, flag.ExitOnError)
+	flushMs := fs.Uint("flush-ms", 400, "ms to let the line drain to the runner before detaching")
+	pos, err := parsePermuted(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("usage: session stream %s <id>", verb)
+	}
+
+	ctx := context.Background()
+	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	flush := time.Duration(*flushMs) * time.Millisecond
+	if verb == "interrupt" {
+		return c.StreamInterrupt(ctx, pos[0], flush)
+	}
+	return c.StreamFinish(ctx, pos[0], flush)
 }
 
 // runSessionStreamAttach follows an event-stream task's events, rendered as
