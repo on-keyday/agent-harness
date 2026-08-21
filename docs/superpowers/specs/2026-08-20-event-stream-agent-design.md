@@ -437,13 +437,23 @@ a verb stays under `session` if its MEANING does not change, and moves under
 |---|---|
 | `session new --stream`, `ls`, `kill` | **shared** — lifecycle is identical, which is what "a second noun buys nothing" was about |
 | `session send` | **shared, and stays the low-level one** — raw bytes at a stream, the escape hatch for both kinds |
-| `session attach`, `snapshot`, `resize`, `exec` | **refused** for this kind: each hands over or renders a TERMINAL |
+| `session resize`, `session exec` | **refused** — a window size and a command run inside a PTY; there is no terminal for either to mean anything |
+| `session attach`, `session snapshot` | **the CLI verbs refuse and name their replacement**; the ATTACH RPC itself must work, since it is how a client reads the stream at all |
 | `session stream turn <id> "text"` | one user turn → `user` |
 | `session stream approve <id> <req> --allow\|--deny\|--modify` | → `response` |
 | `session stream interrupt <id>` | abandon the running turn → `interrupt` |
 | `session stream finish <id>` | close the agent's stdin → `finish` |
 | `session stream requests <id>` | read the pending state |
 | `session stream attach <id>` | follow events; NOT the terminal splice `session attach` performs |
+| `session stream snapshot <id>` | the last N EVENTS rendered — the answer §3 always gave for `snapshot`, which an earlier draft of this table dropped by filing the verb under "refused" and giving it no replacement |
+
+Two things that table gets right only after being wrong. Filing `attach` under
+"refused" conflated the CLI verb with the RPC: `AttachSession` is deliberately
+open to this kind — the gate reads `IsSessionKind` — because attaching IS how a
+client reads events. What must refuse is the local command that hands the
+terminal to a PTY splice. And filing `snapshot` there deleted a feature: §3's
+verdict for it was always "last N events rendered, not a VT screen", i.e. it
+works with a different meaning, exactly like `attach`.
 
 An earlier version of this list said `send` was "the same verb, different
 meaning". That was written before looking at its flags: `-enter` (a carriage
