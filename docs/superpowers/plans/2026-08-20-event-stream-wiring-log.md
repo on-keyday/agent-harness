@@ -582,3 +582,42 @@ and the inbound side was incomplete:
 So two gaps remain before the verb list can be settled rather than guessed:
 whether `finish` becomes a kind or stays transport-level, and whether a
 standing permission-mode change is reachable at all outside an approval.
+
+## 18. "Fetch a snapshot to learn the kind" reinstates the rule we deleted
+
+I proposed that the CLI learn a task's kind by pulling a snapshot, so
+`session attach` could refuse a stream task politely. The operator pointed out
+what that breaks: **a caller whose action scope is wider than its visibility.**
+
+`exec_view: global` with visibility `none` — the agentboard-driven observer
+that may attach to ids handed to it and must not enumerate the server — sees
+NOTHING in `ls`. A snapshot-based check would either refuse a caller that is
+allowed to attach, or fall through and attach blind.
+
+That is the rank rule again, in a new place. It was dropped from the
+per-capability scope design **today** for exactly this use case, and I designed
+the check on the assumption it deleted: that `ls` bounds what a caller can
+reach. Building the counterexample does not stop you re-deriving the rule
+somewhere else.
+
+Two sound routes, neither depending on visibility:
+
+| route | cost |
+|---|---|
+| put the kind in the attach RESPONSE | `AttachSessionResponse` has no spare bits — appending a field is a layout change, so a real skew, server-first |
+| let the STREAM identify itself | the first line on a stream task is the adapter's `hello`; no wire change at all |
+
+The second has one hole: a REATTACH replays from the ring, and a long-running
+task will have evicted the hello. The existing machinery already answers that
+— the mux replays `lastWinSize` and a mode preamble to every new viewer,
+because a late joiner needs the preamble it missed. Keeping the `hello` and
+replaying it is the same mechanism on the same problem: winsize for terminals,
+hello for streams.
+
+**And the justification improves once visibility is out of it.** The kind does
+not belong in the attach path so a verb can decline politely; it belongs there
+because a client cannot interpret the stream without knowing whether to expect
+terminal bytes or NDJSON. That reason holds no matter who is asking.
+
+Not built here — it is the work `session stream attach` needs, not what
+starting a task needs.
