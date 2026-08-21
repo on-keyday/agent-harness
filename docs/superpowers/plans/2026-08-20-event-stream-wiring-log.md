@@ -668,6 +668,34 @@ schema route look unaffordable:
   the server is new, because `DecodeExactCopy` rejects trailing bytes. It is a
   coordinated restart, not a staged migration — a different, smaller thing than
   the request-side skews that made "server-first" a rule on this project.
+
+**And "no spare bits" was never a criterion — it is not even an input.** This
+is the sharper correction, because the sentence above still argues about a
+price, and the thing that actually flipped the decision was not a price at all.
+
+`reserved` in this schema is **alignment padding, not an extension budget**.
+`OpenInteractiveRequest` carries five `u1` flags and `reserved :u3`; 5 + 3 = 8.
+The field exists because a bit run has to reach a byte boundary — it is not a
+balance somebody deposited for later use. It follows that a format holding no
+bit flags has no `reserved` **by construction**: `AttachSessionResponse` is a
+`u8` enum and two `u64`s, so there is nothing to pad. Its lack of spare bits
+reports that it contains no flags. It says nothing whatever about whether a
+field belongs in it.
+
+The converse makes it plain: had `OpenInteractiveRequest`'s flags already
+filled their byte, `event_stream` would have cost one more byte — a layout
+change — and would still have been the right place to put it.
+
+What decides a field is whether it belongs there semantically and what the
+rollout costs. Neither question is answered by how a neighbouring format's bit
+run happens to align.
+
+So the reversal in entry 18 did not run on a bad estimate. It ran on a grep
+result with **zero information content**, which flipped a decision because it
+was concrete and looked like a constraint. That is the shape memory already
+records for invented labels becoming implicit constraints, one layer down: here
+the label was not invented, it was the schema's own padding, read as a budget
+with a balance.
 - **It did not price the hello route's real defect.** The server already holds
   the kind in the task record. Replaying a `hello` so the client can infer it
   means the server declines to state what it knows and the client re-derives it
