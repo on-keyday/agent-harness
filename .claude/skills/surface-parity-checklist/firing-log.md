@@ -279,6 +279,48 @@ it does not state — the adapter runs on the host, so a hand-copied twin that
 "helpfully" rewrote the path into the container would have been wrong. Added
 the reason to the derivation comment and pinned it with the equality assertion.
 
+### 2026-08-21 `9fef2b1` — the event-stream write verbs and the TUI chat
+
+done:    1 (four CLI verbs + their flags), 3 (TUI cmdline parses all four), 4
+         (`r` gains a third meaning; keys_test forced the help row with it), 10
+         (the `session stream` family: every member that exists is on BOTH the
+         CLI and the TUI cmdline — the deciding argument was that a family with
+         one member parsed and its companions dropped is this item's own
+         failure shape), 24 (the same option on the two write paths: the
+         short-lived per-call attach and the chat's held one, which is why both
+         route through cli rather than each building a message), 27 + 28a (both
+         writers go through `cli.EncodeStreamMsg`; the TUI assembles no
+         `streamagent.Msg` of its own, so the "reaching the funnel is not
+         reaching the wire" gap cannot open here), 29 (`stream <verb> <id8>:
+         sent`, never a bare ok), 30 (results to `a.cmdresult`), 32 (ONE builder
+         for the grammar, newline included, pinned by a round-trip through the
+         ADAPTER's decoder rather than through encoding/json), 33 (approve
+         refuses neither-or-both of --allow/--deny, and refuses --message on an
+         allow, instead of picking), 35, 37
+omitted: 6, 7, 8 (WebUI) — **deferred to the next increment at the operator's
+         direction**, which is a different verdict from the `87c10a2` walk's
+         omission. It has no `session` command family in `runCmd` at all, so
+         this is a family to add rather than a flag to thread.
+         36 — no agent-facing skill describes the stream verbs yet; the CLI's
+         own usage text carries them, and session-debugging's text earns
+         updating when an agent is expected to drive this kind.
+missed:  —
+
+Item **4 is worth a note for its own sake**: `r` now means three things by
+kind (take over a PTY, resume a finished task, open the chat), and the binding
+table forced the help to say so because keys_test pairs every dispatched key
+with a row. That guard did the work here without anyone remembering it.
+
+**What the walk did NOT catch, and no item covers.** The chat rendered CENTRED
+— its View branch was copied from the grid's, which centres fixed-width panes
+deliberately, and full-width prose centred puts every line at its own indent.
+Items 34/34a are the nearest neighbours and both are about a control's KIND or
+a column set's arity, not about a layout constant copied from a sibling whose
+reason did not travel with it. Found by driving a real turn through the view.
+Not proposing a new number for one instance: the general form ("a constant
+copied from a sibling carries that sibling's reason, which may not hold") is
+too broad to walk. Recorded so a second instance can be counted against it.
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -290,13 +332,13 @@ Update when adding an entry.
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 3 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. |
+| 33 (take effect or error) | 4 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
-| 10 (other verb families) | 0 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
+| 10 (other verb families) | 1 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. |
 | 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
-| 27 (shared funnel) | 1 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 2 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. |
-| 28a (follow the value to the request build) | 2 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
+| 27 (shared funnel) | 2 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
+| 32 (one serializer, round-trip tested) | 3 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. |
+| 28a (follow the value to the request build) | 3 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
 | 34a (same KIND of control as its neighbours) | 1 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 
 **Never fired yet:** 21, 26. Too few walks to call either dead — revisit after

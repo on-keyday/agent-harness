@@ -194,9 +194,11 @@ bin/harness-cli interactive --repo /abs/path/to/repo
 # task's kind, so a PTY verb pointed at a stream task refuses and names the
 # right one (and vice versa); `session resize` / `session exec` refuse (no
 # PTY, no shell), `session send` stays the raw low-level escape hatch for both
-# kinds. The remaining `session stream` verbs
-# (turn/approve/interrupt/finish/requests/snapshot) are specified in the
-# event-stream design spec and not built yet.
+# kinds. `session stream requests` / `snapshot` are specified in the
+# event-stream design spec and not built yet; until they are,
+# `session snapshot --raw` reads this kind's stream verbatim, which is where a
+# pending approval's tool input can be read whole (the task log renders a
+# request as a one-liner and truncates a tool's arguments at 200 bytes).
 # Only a profile that NAMES an adapter serves this kind; the rest refuse the
 # task rather than handing it a PTY. `scripts/runner.sh up --agents claude`
 # (also sandbox-claude) supplies bin/harness-stream-adapter, which `make build`
@@ -207,6 +209,23 @@ bin/harness-cli session new --stream --repo /abs/path/to/repo   # open + follow
 bin/harness-cli session new --stream -d --repo /abs/path/to/repo # open detached
 bin/harness-cli session stream attach <task-id>  # follow events (read-only,
                                                  #  Ctrl+C detaches)
+# Driving one. Each verb writes ONE line of the adapter protocol and appends the
+# newline that frames it; `session send` stays the raw route and appends nothing.
+bin/harness-cli session stream turn <task-id> what changed in this repo?
+bin/harness-cli session stream approve <task-id> <request-id> --allow
+bin/harness-cli session stream approve <task-id> <request-id> --deny \
+    --message "use the Makefile instead"      # the reason reaches the AGENT
+bin/harness-cli session stream interrupt <task-id>   # abandon the running TURN
+bin/harness-cli session stream finish    <task-id>   # close its stdin: the turn
+                                                 #  completes and the agent
+                                                 #  exits 0 (not a kill)
+# In the TUI, `r` on a live stream task opens a chat screen that does all of the
+# above with keys: enter sends, a/d answer a pending approval (with the tool's
+# input shown whole), ctrl+x interrupts, ctrl+d finishes, esc leaves. Whether an
+# approval is ever RAISED depends on the agent's own permission mode — a
+# ~/.claude/settings.json with defaultMode "auto" pre-approves ordinary tools, so
+# pass `--agent-arg --permission-mode --agent-arg default` to a session you want
+# the gate armed on.
 # Running vs Detached tracks ONLY the control attach (the sole writer). A
 # read-only viewer or an input-forwarding cowriter — the WebUI preview, a TUI
 # grid pane — takes no writer slot, so a session several people are watching

@@ -882,3 +882,70 @@ path is what entry 21's E2E covered.
 argument, not to entry 21's handoff list — they read as part of the "NOT
 DECIDED" section they follow. Left as-is: this log appends and does not edit
 away, and moving them is an edit.
+
+## 23. The write verbs and the TUI chat, and the gate that is disarmed anyway
+
+Built to Amendment 2026-08-21b: the request-id nonce, `cli.EncodeStreamMsg`
+plus the four write helpers, `session stream turn/approve/interrupt/finish`,
+`cli.StreamSession`, and a TUI chat screen on `r`. `requests`, `snapshot`,
+`--modify` and the WebUI are the remainder.
+
+**The finding that changes what this feature IS, on this deployment.** Driving
+a real stream session, a `Write` ran with no approval request at all — the
+whole §4 gate silent. The cause is not in the harness: the operator's own
+`~/.claude/settings.json` sets `defaultMode: auto`, and the agent runs as that
+user, so ordinary tools are pre-approved before the permission channel is ever
+consulted. The harness's injected settings allow exactly one thing
+(`Bash(harness-cli *)`) and are not involved. Re-run with `--agent-arg
+--permission-mode --agent-arg default` and the request fires immediately,
+carrying its full input.
+
+So an approval UI is real code for a path that, as this fleet is configured, is
+dormant. Operator's call, recorded as a decision rather than a discovery:
+**build it anyway** — the mode is per-task and one flag away, and a gate that
+exists only once someone needs it is not a gate.
+
+**Two things measured that correct earlier claims in this log and its spec:**
+
+- **`updatedInput: {}` does NOT break an allow.** `originalInput` has returned
+  `{}` since the first adapter commit, and the code comment beside it says the
+  vendor reads a missing input as an empty one — which reads as "a plain allow
+  runs the tool with no arguments". Measured: the Write ran with its ORIGINAL
+  arguments and wrote the right file. The placeholder is still a placeholder,
+  but it is not a blocker, and `--modify` is where it starts to matter.
+- **The task log is not as blind as Amendment 2026-08-21b says.** `RenderText`
+  does drop a request's `Input` entirely — that part holds — but `tool_start`
+  is emitted BEFORE the request and renders `truncate(Args)`, so a SMALL tool
+  call's arguments do appear in `logs`. The honest claim is narrower and worse:
+  the operator sees the payload right up until it exceeds 200 bytes, which is
+  exactly the case where reviewing it matters. The chat still has to read the
+  stream; the reason is the large input, not every input.
+
+**Three defects this increment made and caught, all by writing the thing down
+or driving it rather than by review:**
+
+1. The plan's own correction was half wrong. It said every new CLI verb must
+   use `parsePermuted` for order-free flags — but that helper's doc says it is
+   only for positionals that can never begin with `-`, and `turn`'s tail is
+   free-form text. `turn` follows `session send`'s flags-first shape instead;
+   `approve` keeps the permuted parse by making the deny reason a `--message`
+   flag rather than a trailing positional, which is what buys the freedom.
+2. A late `chatAttachedMsg` could assign a session to a CLOSED chat, leaking
+   it with nothing left to close it. The id check alone was not enough; the
+   guard is `!m.open || id mismatch`.
+3. The chat rendered CENTRED, because its View branch was copied from the
+   grid's, which centres fixed-width panes deliberately. Full-width prose
+   centred puts every transcript line at its own indent. Only visible by
+   driving a real turn through it — the code read fine.
+
+**Verified live**, on a preset-launched runner with the real fleet: `turn`
+reached the agent; an approval fired with its input; `approve --allow` ran the
+tool and the file appeared; in the TUI, `r` opened the chat, a typed turn was
+sent, the approval block showed the input pretty-printed, `a` allowed it, and
+reopening the chat replayed the whole exchange from the mux ring.
+
+**For the next increment:** `pending=N` still needs its runner→server message,
+and `stream requests` still wants it for the count even though the chat no
+longer needs `requests` to see a payload. `--modify` needs `originalInput` to
+actually retain the input. The WebUI has no `session` command family at all,
+which is where its half of this starts.
