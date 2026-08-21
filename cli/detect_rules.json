@@ -24,7 +24,7 @@
         "state": "blocked",
         "region": "after_last_rule",
         "priority": 980,
-        "note": "A tool-permission prompt. Outranks the idle prompt-box rule deliberately: the dialog draws its own option list with the same '❯' the input box uses, so if it is ever framed by two dividers the idle rule would fire on it. Priority makes that harmless instead of relying on the not-guards alone. Verified live 2026-08-22 against a Bash approval.",
+        "note": "A tool-permission prompt. Outranks the idle prompt-box rule deliberately: the dialog draws its own option list with the same '❯' the input box uses, so if it is ever framed by two dividers the idle rule would fire on it. Priority makes that harmless instead of relying on the not-guards alone. Verified live 2026-08-22 against a Bash approval on the operator's own session, where the belt held on its own: prompt_box_body resolved to ZERO bytes on the dialog screen, so the idle rule could not read the dialog's '❯ 1. Yes' as an input line and the priority never had to arbitrate. Both defences measured, not assumed.",
         "contains": ["do you want to proceed?", "esc to cancel"],
         "any": [
           { "line_regex": ["(?i)^\\s*❯?\\s*[0-9]+\\.\\s*yes\\b"] },
