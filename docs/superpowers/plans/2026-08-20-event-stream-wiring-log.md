@@ -747,6 +747,62 @@ never by checking out a file that holds other uncommitted work.
 Deploy order comes out where the fleet rule already was — server first — but
 for the measured reason (new client × old server is the failing direction),
 not the recorded one.
+
+## 21. Handoff (2026-08-21): where this stands, and the next increment
+
+Written for the session that picks this up. Decision status is a FIELD here,
+not emphasis — that rule is what entry 19 cost.
+
+**Shipped and E2E-verified on a dummy harness** (through `758f62a`, landed,
+fleet restarted — server AND runners, so no version-mix exists):
+the adapter + runner wiring, `TaskKind.stream`, `AttachSessionResponse.kind`,
+kind gates on every attach-based verb, `session stream attach` (CLI renders
+via the shared `streamagent.RenderText`; TUI maps it to the logs pane),
+`session new --stream` open-then-follow, and the correlator fix
+(`ErrResponseUndecodable` instead of a silent hang on a version-skewed
+server).
+
+**Next increments, in dependency order:**
+
+1. **The `session stream` write verbs** — `turn`, `approve
+   --allow|--deny|--modify`, `interrupt`, `finish`. Each is a cowrite attach
+   writing ONE NDJSON line, and it must APPEND THE NEWLINE itself: measured,
+   a line without `\n` sits invisibly in the adapter's line buffer until the
+   next newline flushes it (the PTY "text sits on the prompt" semantic).
+   `session send` stays the raw escape hatch and appends nothing. A deny
+   message reaches the agent verbatim (operator-authored text entering a
+   model's context). The verbs are 1:1 with inbound kinds; the CLI dispatch
+   already exists and answers "not built yet".
+2. **`pending=N` on `TaskInfo`** — needs a NEW runner→server message (only
+   accepted/started/finished/heartbeat exist); then the display walk (`ls`
+   zeros printed, TUI, WebUI, checklist 11–23). `session stream requests`
+   reads this state, so it depends on this, not just on verb plumbing:
+   the pending table currently lives runner-side only (`StreamTask.Pending`).
+3. **Request-id nonce** — `req-N` repeats after a resume; the id is the
+   staleness guard (spec §3), so it needs a per-run nonce before `approve`
+   ships, or a stale `approve req-1` answers a different request.
+4. **`session stream snapshot`** — the FORMATTED last-N-events read
+   (`session snapshot --raw` already yields the raw NDJSON, kind-agnostic
+   by design).
+5. **WebUI** — the `session` command family does not exist in `runCmd` at
+   all; the stream verbs land with it. The approval modal (§3: `tool_name` +
+   structured input diff + suggestions as the button row) and a `--stream`
+   spawn control (checklist 34a: build from existing controls, not a
+   textarea) come with the write verbs. TUI session popup stream toggle:
+   same batch (recorded omission in the firing log).
+
+**DECIDED — NOT BUILT (2026-08-21, operator):** the `RunnerHello`
+per-profile stream declaration stays unbuilt. The motivating case (a
+version-mixed fleet silently PTY-ing a stream task via the ignored reserved
+bit) does not occur under wholesale-restart operation, and this deployment
+restarts wholesale. The spec records the mechanism for the day mixed
+operation is real.
+
+**NOT DECIDED / untested:** `mcp_message` (no MCP server was probed),
+subagent-concurrent approvals (pending stays a count for this reason), the
+`defer` hook decision (§3), and how the pending-approval notification arms
+(§4 amendment decides the GATE — notify cap, degrade honestly — but nothing
+is wired).
 - **It did not price the hello route's real defect.** The server already holds
   the kind in the task record. Replaying a `hello` so the client can infer it
   means the server declines to state what it knows and the client re-derives it
