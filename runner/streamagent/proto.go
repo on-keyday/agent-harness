@@ -66,6 +66,15 @@ const (
 	KindResponse MsgKind = "response"
 	// KindUser is a user turn to feed the agent. Runner → adapter.
 	KindUser MsgKind = "user"
+	// KindInterrupt abandons the turn the agent is running WITHOUT ending the
+	// session. Runner → adapter.
+	//
+	// It exists because the hello advertised CapInterrupt with nothing able to
+	// invoke it: the capability was declared, the mechanism was measured to
+	// work, and there was no inbound kind for it. A hello that names a
+	// capability the protocol cannot reach is a lie the far side has no way to
+	// detect.
+	KindInterrupt MsgKind = "interrupt"
 	// KindExit reports the agent process exiting. Adapter → runner, last line.
 	KindExit MsgKind = "exit"
 )
@@ -75,12 +84,13 @@ type Msg struct {
 	V    int     `json:"v"`
 	Kind MsgKind `json:"kind"`
 
-	Hello    *Hello    `json:"hello,omitempty"`
-	Event    *Event    `json:"event,omitempty"`
-	Request  *Request  `json:"request,omitempty"`
-	Response *Response `json:"response,omitempty"`
-	User     *UserTurn `json:"user,omitempty"`
-	Exit     *Exit     `json:"exit,omitempty"`
+	Hello     *Hello     `json:"hello,omitempty"`
+	Event     *Event     `json:"event,omitempty"`
+	Request   *Request   `json:"request,omitempty"`
+	Response  *Response  `json:"response,omitempty"`
+	User      *UserTurn  `json:"user,omitempty"`
+	Interrupt *Interrupt `json:"interrupt,omitempty"`
+	Exit      *Exit      `json:"exit,omitempty"`
 }
 
 // Hello opens the stream. Vendor and AgentVersion are descriptive; Protocol is
@@ -208,6 +218,20 @@ type Response struct {
 	// one" and "stop asking" are different acts, and §3 wants them
 	// distinguishable even while one capability covers both.
 	AcceptSuggestion *int `json:"accept_suggestion,omitempty"`
+}
+
+// Interrupt abandons the running turn. The agent survives and takes the next
+// turn normally; measured, the abandoned turn ends as a `finish` event whose
+// vendor result was `error_during_execution`, and the agent emits a fresh
+// session-start afterwards — a reader that counts session starts must expect
+// more than one.
+//
+// It is NOT a kill. Ending the session is closing the agent's stdin (the
+// transport's zero-length frame), and killing it is a signal.
+type Interrupt struct {
+	// Reason is for the harness's own log. The vendor's interrupt carries no
+	// message, so nothing here reaches the agent.
+	Reason string `json:"reason,omitempty"`
 }
 
 // UserTurn is text to feed the agent as a new turn.

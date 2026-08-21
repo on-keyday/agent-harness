@@ -116,7 +116,8 @@ func RunClaude(ctx context.Context, o ClaudeOpts) error {
 		return err
 	}
 
-	a := &claudeAdapter{w: w, agentIn: stdin, pending: map[string]string{}}
+	a := &claudeAdapter{w: w, agentIn: stdin,
+		pending: map[string]string{}, interrupts: map[string]struct{}{}}
 
 	_ = w.Hello(Hello{
 		Protocol:     ProtocolVersion,
@@ -193,7 +194,13 @@ type claudeAdapter struct {
 	// vendor id, so a vendor that changes its correlation scheme stops at this
 	// map rather than reaching the runner.
 	pending map[string]string
-	seq     int
+	// interrupts are the ids of control_requests WE sent, so their receipts can
+	// be recognised. Without this the receipt falls through to the agentlog
+	// decoder and surfaces as a raw event carrying vendor JSON — which is
+	// exactly the leak the seam exists to prevent, and which a test asserts
+	// against for the other direction.
+	interrupts map[string]struct{}
+	seq        int
 }
 
 func (a *claudeAdapter) decoder() agentlog.Decoder {
@@ -230,6 +237,9 @@ func (a *claudeAdapter) handleAgentLine(line []byte) {
 	var v vendorLine
 	if err := json.Unmarshal(line, &v); err == nil {
 		if v.Type == "control_request" && a.handleControlRequest(v) {
+			return
+		}
+		if v.Type == "control_response" && a.handleControlResponse(line) {
 			return
 		}
 	}
@@ -300,6 +310,41 @@ func (a *claudeAdapter) handleControlRequest(v vendorLine) bool {
 	return true
 }
 
+// handleControlResponse consumes a receipt for a control_request WE sent, so it
+// does not fall through to the log decoder as raw vendor JSON. Reports whether
+// the line was consumed.
+func (a *claudeAdapter) handleControlResponse(line []byte) bool {
+	var r struct {
+		Response struct {
+			Subtype   string `json:"subtype"`
+			RequestID string `json:"request_id"`
+			Error     string `json:"error"`
+			Response  struct {
+				StillQueued []any `json:"still_queued"`
+			} `json:"response"`
+		} `json:"response"`
+	}
+	if err := json.Unmarshal(line, &r); err != nil {
+		return false
+	}
+	id := r.Response.RequestID
+	a.mu.Lock()
+	_, mine := a.interrupts[id]
+	delete(a.interrupts, id)
+	a.mu.Unlock()
+	if !mine {
+		return false // not ours; let the decoder have it
+	}
+	ev := Event{Kind: EventError, Warning: true, Text: "interrupt acknowledged"}
+	if r.Response.Subtype != "success" {
+		ev.Text = "interrupt refused: " + r.Response.Error
+	} else if n := len(r.Response.Response.StillQueued); n > 0 {
+		ev.Extras = map[string]string{"claude.still_queued": strconv.Itoa(n)}
+	}
+	_ = a.w.Event(ev)
+	return true
+}
+
 // pumpNeutralIn is the neutral→vendor direction.
 func (a *claudeAdapter) pumpNeutralIn(r io.Reader) error {
 	rd := NewReader(r)
@@ -330,6 +375,10 @@ func (a *claudeAdapter) pumpNeutralIn(r io.Reader) error {
 				continue
 			}
 			_ = a.sendUserTurn(m.User.Text)
+		case KindInterrupt:
+			if err := a.sendInterrupt(); err != nil {
+				_ = a.w.Event(Event{Kind: EventError, Text: err.Error(), Warning: true})
+			}
 		default:
 			// Unknown kinds are reported, not dropped: the runner believing it
 			// sent something the adapter ignored is the failure this seam is
@@ -388,6 +437,23 @@ func (a *claudeAdapter) answer(r Response) error {
 // Storing the original input alongside the id is the next step and is left
 // visible rather than hidden behind a nil.
 func (a *claudeAdapter) originalInput(string) []byte { return []byte(`{}`) }
+
+// sendInterrupt asks the agent to abandon its running turn. Measured shape:
+// a control_request of subtype "interrupt", answered with a receipt carrying
+// still_queued. The id is minted here for the same reason approval ids are —
+// the vendor's correlation scheme stops at this seam.
+func (a *claudeAdapter) sendInterrupt() error {
+	a.mu.Lock()
+	a.seq++
+	id := "int-" + strconv.Itoa(a.seq)
+	a.interrupts[id] = struct{}{}
+	a.mu.Unlock()
+	return a.writeVendor(map[string]any{
+		"type":       "control_request",
+		"request_id": id,
+		"request":    map[string]any{"subtype": "interrupt"},
+	})
+}
 
 func (a *claudeAdapter) sendUserTurn(text string) error {
 	return a.writeVendor(map[string]any{

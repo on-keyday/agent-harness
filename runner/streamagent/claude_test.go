@@ -504,3 +504,61 @@ func TestAMalformedClientLineDoesNotEndTheSession(t *testing.T) {
 		t.Error("the malformed line was swallowed without a word")
 	}
 }
+
+// The hello advertised CapInterrupt with no inbound kind able to invoke it —
+// a capability the far side could see and never reach. This pins both halves:
+// the request reaches the agent in the vendor's shape, and the receipt is
+// consumed here rather than leaking vendor JSON into the neutral stream.
+func TestInterruptReachesTheAgentAndItsReceiptDoesNotLeak(t *testing.T) {
+	argvFile := filepath.Join(t.TempDir(), "argv")
+	inFile := filepath.Join(t.TempDir(), "agent-stdin")
+	agent := fakeAgent(t, argvFile,
+		// Answer any control_request with a receipt, the way the real CLI does.
+		"while IFS= read -r line; do "+
+			"printf '%s\\n' \"$line\" >> "+inFile+"; "+
+			`printf '{"type":"control_response","response":{"subtype":"success","request_id":"int-1","response":{"still_queued":[]}}}\n'`+
+			"; done\n")
+
+	var sawAck, sawRawLeak bool
+	msgs, _ := driveAdapter(t, agent, ClaudeOpts{}, func(m Msg, in *Writer) bool {
+		if m.Kind == KindHello {
+			// The capability must be advertised AND reachable.
+			var has bool
+			for _, c := range m.Hello.Capabilities {
+				if c == CapInterrupt {
+					has = true
+				}
+			}
+			if !has {
+				t.Error("the hello no longer advertises interrupt")
+			}
+			go func() { _ = in.Interrupt(Interrupt{Reason: "operator"}) }()
+			return false
+		}
+		if m.Kind == KindEvent {
+			if strings.Contains(m.Event.Text, "interrupt acknowledged") {
+				sawAck = true
+				return true
+			}
+			if strings.Contains(m.Event.Text, `"type":"control_response"`) {
+				sawRawLeak = true
+				return true
+			}
+		}
+		return false
+	})
+
+	wrote := readFile(t, inFile)
+	if !strings.Contains(wrote, `"subtype":"interrupt"`) {
+		t.Errorf("no interrupt reached the agent; its stdin was:\n%s", wrote)
+	}
+	if !strings.Contains(wrote, `"type":"control_request"`) {
+		t.Errorf("the interrupt was not sent as a control_request:\n%s", wrote)
+	}
+	if sawRawLeak {
+		t.Error("the receipt leaked onto the neutral stream as raw vendor JSON")
+	}
+	if !sawAck {
+		t.Errorf("the receipt produced no neutral event; kinds %v", kinds(msgs))
+	}
+}

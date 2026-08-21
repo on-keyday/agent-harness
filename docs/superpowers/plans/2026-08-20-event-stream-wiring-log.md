@@ -543,3 +543,42 @@ path, which reproduces "one line of non-protocol input ended the session".
 text rather than writing raw bytes. If it does, the forging path above closes
 on its own and this becomes moot; if it does not, `send` stays a raw pipe into
 the adapter and `approve` stays a convenience over it.
+
+
+## 17. The hello advertised a capability the protocol could not reach
+
+Asked what inbound kinds exist besides the two. There were exactly two —
+`response` and `user` — and the adapter's hello advertises three capabilities:
+`approvals`, `user_turns`, **`interrupt`**.
+
+`CapInterrupt` appeared in exactly two places: the constant, and the hello that
+names it. No inbound kind invoked it, and the input pump had no arm for it. The
+mechanism had been MEASURED to work (a turn abandoned, the process alive, a
+fresh session-start after) and then not connected. A hello that names a
+capability the far side cannot reach is a lie the far side has no way to
+detect.
+
+Added `KindInterrupt`, and with it the half I would otherwise have missed: the
+receipt. The vendor answers an interrupt with a `control_response`, and without
+somewhere to consume it that line falls through to the log decoder and surfaces
+as a raw event **carrying vendor JSON** — the exact leak the seam exists to
+prevent, and the one a test already asserts against in the other direction.
+Both halves are pinned and both negative-controlled.
+
+### What this says about the verbs
+
+The verb question ("`turn` and `approve`, or a polymorphic `send`?") was being
+argued a level above the thing that decides it. Verbs map onto inbound kinds,
+and the inbound side was incomplete:
+
+| operation | measured | neutral kind |
+|---|---|---|
+| user turn | yes | `user` |
+| answer an approval | yes | `response` |
+| abandon a turn | yes | `interrupt` — added here |
+| finish (close stdin) | yes | none; transport-level zero-length frame |
+| `setPermissionMode` | documented | none; only reachable inside a `response` |
+
+So two gaps remain before the verb list can be settled rather than guessed:
+whether `finish` becomes a kind or stays transport-level, and whether a
+standing permission-mode change is reachable at all outside an approval.
