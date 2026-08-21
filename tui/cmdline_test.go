@@ -405,7 +405,9 @@ func TestParseSessionStreamAttach(t *testing.T) {
 // namespace is one-to-one with the protocol's inbound kinds, and a verb that
 // exists in the design but not the build is a different fact from a typo.
 func TestParseSessionStreamUnbuiltVerbNamesItself(t *testing.T) {
-	_, err := ParseCommand(`session stream turn deadbeef hello`, "/cwd")
+	// turn/approve/interrupt/finish shipped; requests and snapshot are what is
+	// left, and this asserts the DISTINCTION rather than any one verb's state.
+	_, err := ParseCommand(`session stream requests deadbeef`, "/cwd")
 	if err == nil || !strings.Contains(err.Error(), "not built") {
 		t.Errorf("err=%v want a not-built-yet error", err)
 	}
@@ -1341,6 +1343,56 @@ func TestSessionNewDetachShorthand(t *testing.T) {
 		}
 		if v.AgentProfile != "bash" {
 			t.Errorf("%s: AgentProfile = %q, want bash", spelling, v.AgentProfile)
+		}
+	}
+}
+
+// The four stream write verbs parse from the TUI command line, so an operator
+// can drive a stream task without opening the chat view.
+func TestParseSessionStreamWriteVerbs(t *testing.T) {
+	got, err := ParseCommand(`session stream turn deadbeef hello there`, "/cwd")
+	if err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	turn, ok := got.(SessionStreamWriteAction)
+	if !ok || turn.Verb != "turn" || turn.IDPrefix != "deadbeef" {
+		t.Fatalf("turn: got %#v", got)
+	}
+	if turn.Text != "hello there" {
+		t.Errorf("turn text = %q, want the words joined", turn.Text)
+	}
+
+	got, err = ParseCommand(`session stream approve deadbeef req-ab-1 deny use the Makefile`, "/cwd")
+	if err != nil {
+		t.Fatalf("approve: %v", err)
+	}
+	ap := got.(SessionStreamWriteAction)
+	if ap.RequestID != "req-ab-1" || ap.Verdict != "deny" || ap.Text != "use the Makefile" {
+		t.Fatalf("approve: got %#v", ap)
+	}
+
+	for _, verb := range []string{"interrupt", "finish"} {
+		got, err := ParseCommand("session stream "+verb+" deadbeef", "/cwd")
+		if err != nil {
+			t.Fatalf("%s: %v", verb, err)
+		}
+		if w := got.(SessionStreamWriteAction); w.Verb != verb || w.IDPrefix != "deadbeef" {
+			t.Errorf("%s: got %#v", verb, w)
+		}
+	}
+}
+
+// The verdict is a bare word here, so a typo must be refused rather than read
+// as a reason — and an allow must not silently swallow trailing text meant as
+// one, since an allow carries no message.
+func TestParseSessionStreamApproveRejectsBadShapes(t *testing.T) {
+	for _, line := range []string{
+		`session stream approve deadbeef req-ab-1`,
+		`session stream approve deadbeef req-ab-1 maybe`,
+		`session stream approve deadbeef req-ab-1 allow because I said so`,
+	} {
+		if _, err := ParseCommand(line, "/cwd"); err == nil {
+			t.Errorf("%q parsed, want an error", line)
 		}
 	}
 }

@@ -337,7 +337,10 @@ func (m *ChatModel) send(msg *streamagent.Msg) {
 func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	switch v := msg.(type) {
 	case chatAttachedMsg:
-		if v.TaskID != m.taskID {
+		// !m.open matters as much as the id: the attach can land AFTER the
+		// operator pressed esc, and assigning it to a closed model would leak
+		// the session with nothing left to close it.
+		if !m.open || v.TaskID != m.taskID {
 			_ = v.Sess.Close()
 			return m, nil
 		}
@@ -346,15 +349,15 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 
 	case ChatLineMsg:
 		// A pump from a PREVIOUS chat can still be delivering; its lines must
-		// not land in this transcript.
-		if v.TaskID != m.taskID {
+		// not land in this transcript, and none of them belong in a closed one.
+		if !m.open || v.TaskID != m.taskID {
 			return m, nil
 		}
 		m.applyLine(v.Line)
 		return m, nil
 
 	case ChatEndedMsg:
-		if v.TaskID != m.taskID {
+		if !m.open || v.TaskID != m.taskID {
 			return m, nil
 		}
 		m.busy = false

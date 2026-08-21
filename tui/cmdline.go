@@ -92,6 +92,18 @@ type SessionAttachAction struct {
 	TaskID string
 }
 
+// SessionStreamWriteAction is one write on an event-stream task's data plane —
+// the cmdline route to what the chat view (r) does with keys. One action for
+// all four verbs rather than four near-identical ones: they differ only in
+// which message gets built, and that choice already lives in cli.
+type SessionStreamWriteAction struct {
+	Verb      string // turn | approve | interrupt | finish
+	IDPrefix  string
+	RequestID string // approve only
+	Verdict   string // approve only: allow | deny
+	Text      string // turn: the message; approve --deny: the reason
+}
+
 // SessionStreamAttachAction follows an event-stream task's events. In the TUI
 // that is the logs pane — the runner renders this kind's events into the task
 // log, so following the log IS following the stream; no second renderer.
@@ -329,6 +341,7 @@ func (RepoAction) isAction()                {}
 func (InteractiveAction) isAction()         {}
 func (SessionNewAction) isAction()          {}
 func (SessionAttachAction) isAction()       {}
+func (SessionStreamWriteAction) isAction()  {}
 func (SessionStreamAttachAction) isAction() {}
 func (SessionLsAction) isAction()           {}
 func (SessionKillAction) isAction()         {}
@@ -754,10 +767,10 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 		return SessionAttachAction{TaskID: rest[0]}, nil
 	case "stream":
 		// The event-stream namespace (design §3): one verb per inbound kind.
-		// Only attach exists yet; naming a specified-but-unbuilt verb reports
-		// that instead of "unknown".
+		// requests/snapshot are the two still unbuilt; naming one reports that
+		// instead of "unknown".
 		if len(rest) == 0 {
-			return nil, fmt.Errorf("session stream: sub-verb required (attach <id>)")
+			return nil, fmt.Errorf("session stream: sub-verb required (attach|turn|approve|interrupt|finish <id>)")
 		}
 		switch rest[0] {
 		case "attach":
@@ -765,7 +778,37 @@ func parseSession(args []string, defaultRepo string) (Action, error) {
 				return nil, fmt.Errorf("session stream attach: exactly one task id required")
 			}
 			return SessionStreamAttachAction{IDPrefix: rest[1]}, nil
-		case "turn", "approve", "interrupt", "finish", "requests", "snapshot":
+		case "turn":
+			if len(rest) < 3 {
+				return nil, fmt.Errorf("session stream turn: <id> and the text (`session stream turn <id> hello there`)")
+			}
+			return SessionStreamWriteAction{Verb: "turn", IDPrefix: rest[1],
+				Text: strings.Join(rest[2:], " ")}, nil
+		case "approve":
+			// <id> <request-id> allow|deny [reason...]. The verdict is a WORD
+			// here rather than the CLI's --allow/--deny: this line is
+			// whitespace-split with no flag parser, so a bare word cannot be
+			// mistaken for one and cannot be silently dropped.
+			if len(rest) < 4 {
+				return nil, fmt.Errorf("session stream approve: <id> <request-id> allow|deny [reason...]")
+			}
+			verdict := rest[3]
+			if verdict != "allow" && verdict != "deny" {
+				return nil, fmt.Errorf("session stream approve: want allow or deny, got %q", verdict)
+			}
+			act := SessionStreamWriteAction{Verb: "approve", IDPrefix: rest[1], RequestID: rest[2], Verdict: verdict}
+			if verdict == "deny" {
+				act.Text = strings.Join(rest[4:], " ")
+			} else if len(rest) > 4 {
+				return nil, fmt.Errorf("session stream approve: an allow carries no message (the reason is a deny's)")
+			}
+			return act, nil
+		case "interrupt", "finish":
+			if len(rest) != 2 {
+				return nil, fmt.Errorf("session stream %s: exactly one task id required", rest[0])
+			}
+			return SessionStreamWriteAction{Verb: rest[0], IDPrefix: rest[1]}, nil
+		case "requests", "snapshot":
 			return nil, fmt.Errorf("session stream %s: specified (design §3) but not built yet", rest[0])
 		default:
 			return nil, fmt.Errorf("unknown session stream verb %q", rest[0])

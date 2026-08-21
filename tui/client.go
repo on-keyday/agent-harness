@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/runner/streamagent"
 )
 
 // --- tea.Cmd factories using the persistent cli.Client ---
@@ -259,6 +260,49 @@ func DoSetParent(c *cli.Client, opts cli.SetParentOpts) tea.Cmd {
 		defer cancel()
 		res, err := cli.SetParentWith(ctx, c, opts)
 		return SetParentResultMsg{Opts: opts, Res: res, Err: err}
+	}
+}
+
+// StreamWriteResultMsg reports one `session stream <verb>` write.
+type StreamWriteResultMsg struct {
+	Verb     string
+	Resolved string
+	Err      error
+}
+
+// DoStreamWrite performs one write on an event-stream task's data plane.
+//
+// It threads the TUI's long-lived client rather than dialing (the pattern every
+// other Do* here follows), and each verb routes to the cli helper that builds
+// its message — the TUI never assembles a streamagent.Msg itself, so it cannot
+// drift from what the CLI sends.
+func DoStreamWrite(c *cli.Client, v SessionStreamWriteAction, resolved string) tea.Cmd {
+	return func() tea.Msg {
+		out := StreamWriteResultMsg{Verb: v.Verb, Resolved: resolved}
+		if resolved == "" {
+			out.Err = fmt.Errorf("no task matching prefix %q", v.IDPrefix)
+			return out
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		const flush = 400 * time.Millisecond
+		switch v.Verb {
+		case "turn":
+			out.Err = c.StreamTurn(ctx, resolved, v.Text, flush)
+		case "approve":
+			resp := streamagent.Response{ID: v.RequestID, Behavior: streamagent.BehaviorAllow}
+			if v.Verdict == "deny" {
+				resp.Behavior, resp.Message = streamagent.BehaviorDeny, v.Text
+			}
+			out.Err = c.StreamApprove(ctx, resolved, resp, flush)
+		case "interrupt":
+			out.Err = c.StreamInterrupt(ctx, resolved, flush)
+		case "finish":
+			out.Err = c.StreamFinish(ctx, resolved, flush)
+		default:
+			out.Err = fmt.Errorf("unknown stream verb %q", v.Verb)
+		}
+		return out
 	}
 }
 

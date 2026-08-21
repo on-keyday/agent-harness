@@ -85,6 +85,7 @@ type App struct {
 
 	// live session viewer grid (full-screen overlay, `g` key)
 	grid GridModel
+	chat ChatModel
 
 	// agentboard view
 	boardModal BoardModal
@@ -355,6 +356,27 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		}
 		return a, nil
+
+	case StreamWriteResultMsg:
+		// Names the target and what changed, never a bare "ok" — the result
+		// convention this repo keeps re-learning.
+		if msg.Err != nil {
+			a.cmdresult.Append(ErrorStyle.Render(fmt.Sprintf("stream %s %s: %v", msg.Verb, shortTaskID(msg.Resolved), msg.Err)))
+		} else {
+			a.cmdresult.Append(fmt.Sprintf("stream %s %s: sent", msg.Verb, shortTaskID(msg.Resolved)))
+		}
+		return a, nil
+
+	case chatTickMsg, ChatLineMsg, ChatEndedMsg, chatAttachedMsg:
+		// The chat's own traffic: stream lines from its pump goroutine, the
+		// attach handoff, and the elapsed-seconds tick. Delivered whether or
+		// not the overlay is still open — a pump that has not noticed its
+		// cancellation yet keeps sending — so ChatModel drops what is not for
+		// the task it currently holds, and a closed chat's Update is a no-op
+		// beyond releasing the session.
+		var cmd tea.Cmd
+		a.chat, cmd = a.chat.Update(msg)
+		return a, cmd
 
 	case SnapshotMsg:
 		if msg.Err != nil {
@@ -1085,6 +1107,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.boardModal.SetSize(a.width, a.height)
 		a.gitModal.SetSize(a.width, a.height)
 		a.grid.SetSize(a.width, a.height)
+		a.chat.SetSize(a.width, a.height)
 		a.rawModal.SetSize(a.width, a.height)
 		a.authorityPicker.SetSize(a.width, a.height)
 		return a, nil
@@ -1160,6 +1183,14 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.grid.IsOpen() {
 			var cmd tea.Cmd
 			a.grid, cmd = a.grid.Update(msg)
+			return a, cmd
+		}
+		// Chat: the event-stream kind's full-screen driving surface. Like the
+		// grid it intercepts ALL keys — the text input is focused, so anything
+		// not claimed by ChatModel.Update is a character being typed.
+		if a.chat.IsOpen() {
+			var cmd tea.Cmd
+			a.chat, cmd = a.chat.Update(msg)
 			return a, cmd
 		}
 		// Board modal: two-mode overlay (topics / messages).
@@ -1931,6 +1962,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return a, nil
 				}
 				return a, DoAttachSession(a.client, a.tasks.SelectedID(), protocol.AttachMode_Control)
+			case actionChat:
+				// The event-stream kind's take-over-equivalent. Pinning is
+				// meaningless here: the task is already RUNNING on a runner and
+				// this attaches to it, so u/U (whose whole point is to leave the
+				// runner unpinned for a fresh spawn) has nothing to offer.
+				if unpinnedResume {
+					a.cmdresult.Append(WarnStyle.Render("u/U: pick a finished task to resume without assigned runner"))
+					return a, nil
+				}
+				a.chat.Open(a.appCtx, a.client, a.program, a.tasks.SelectedID())
+				a.chat.SetSize(a.width, a.height)
+				return a, chatTickCmd()
 			case actionResume:
 				// repo is irrelevant on resume — the server reuses the task's
 				// RepoPath and worktree branch. Prefer the runner the task last
@@ -2289,6 +2332,15 @@ func (a *App) View() string {
 		// top — the top row carries the pane headers. MaxHeight clamps it too.
 		return lipgloss.NewStyle().MaxHeight(a.height).Render(
 			lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Top, a.grid.View()))
+	}
+	if a.chat.IsOpen() {
+		// Top-aligned and height-clamped for the grid's reason, plus one of its
+		// own: this view pins the input line to the BOTTOM of its own body, so
+		// letting the overflow clip the bottom would take the prompt with it.
+		// ChatModel.View sizes its transcript from a.height, so the clamp here
+		// is a backstop rather than the mechanism.
+		return lipgloss.NewStyle().MaxHeight(a.height).Render(
+			lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Top, a.chat.View()))
 	}
 	return view
 }
@@ -2688,6 +2740,13 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append(fmt.Sprintf("stream attach %s: following its events in the logs pane", shortTaskID(full)))
 		a.setFocus(focusLogs)
 		return a, a.followTask(full)
+	case SessionStreamWriteAction:
+		full, errStr := a.resolveTaskIDPrefix(v.IDPrefix)
+		if errStr != "" {
+			a.cmdresult.Append(ErrorStyle.Render(errStr))
+			return a, nil
+		}
+		return a, DoStreamWrite(a.client, v, full)
 	case SessionLsAction:
 		return a, DoSessionList(a.client)
 	case SessionKillAction:

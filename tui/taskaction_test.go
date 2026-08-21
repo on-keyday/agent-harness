@@ -58,21 +58,16 @@ func TestResumeReattachAction(t *testing.T) {
 		!strings.Contains(got.Hint, "queued") {
 		t.Errorf("queued: want actionNone with queued hint, got %v %q", got.Kind, got.Hint)
 	}
-	// A LIVE event-stream session has no seat to take, but it IS followable —
-	// the runner renders its events into the task log, which the logs pane
-	// shows. The generic fallback names only take-over and resume, so it reads
-	// as "not followable", which is how an operator concluded the TUI could not
-	// see this kind at all.
+	// A LIVE event-stream session has no seat to take, but r still DRIVES it:
+	// the chat view sends turns and answers approvals. The generic fallback
+	// names only take-over and resume, which reads as "nothing to do here" —
+	// how an operator concluded the TUI could not reach this kind at all.
 	for _, st := range []protocol.TaskStatus{
 		protocol.TaskStatus_Running, protocol.TaskStatus_Detached,
 	} {
 		stream := &protocol.TaskInfo{Status: st, Kind: protocol.TaskKind_Stream}
-		got := resumeReattachAction(stream, true)
-		if got.Kind != actionNone {
-			t.Errorf("stream status=%v: want actionNone (no PTY seat), got %v", st, got.Kind)
-		}
-		if !strings.Contains(got.Hint, "logs pane") {
-			t.Errorf("stream status=%v: hint must point at the follower, got %q", st, got.Hint)
+		if got := resumeReattachAction(stream, true); got.Kind != actionChat {
+			t.Errorf("stream status=%v: want actionChat, got %v %q", st, got.Kind, got.Hint)
 		}
 	}
 	// Once it ENDS, the kind stops mattering: a finished stream task resumes

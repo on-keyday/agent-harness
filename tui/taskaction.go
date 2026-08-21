@@ -9,6 +9,11 @@ const (
 	actionNone taskActionKind = iota
 	actionReattach
 	actionResume
+	// actionChat opens the event-stream kind's conversation view. It is what
+	// reattach means for a kind with no terminal to hand over: the operator
+	// still drives the agent, through turns and approvals rather than through
+	// keystrokes.
+	actionChat
 )
 
 // taskAction is what the r/R keys should do for the selected task.
@@ -55,13 +60,12 @@ func resumeReattachAction(t *protocol.TaskInfo, withContinue bool) taskAction {
 	// could have done on some other one.
 	switch {
 	case t.Kind == protocol.TaskKind_Stream && taskSessionAlive(t.Status):
-		// The generic fallback below reads as "this task is not followable",
-		// which is false and is the reading an operator actually reached: it
-		// names take-over and resume, and this kind supports neither while
-		// live. Following it is one keystroke away and the hint has to say so
-		// — the same "say WHY for THIS task" rule the one-shot case follows.
-		return taskAction{Kind: actionNone,
-			Hint: "event-stream session: no terminal to take over — enter follows its events in the logs pane (r resumes it once it ends)"}
+		// Not a take-over — there is no seat — but not "nothing" either: the
+		// chat view drives this kind, sending turns and answering approvals.
+		// It briefly returned a hint pointing at the logs pane, which was true
+		// and half the story: following is read-only, and r is where an
+		// operator reaches to DRIVE something.
+		return taskAction{Kind: actionChat}
 	case t.Status == protocol.TaskStatus_Running && t.Kind == protocol.TaskKind_Oneshot:
 		// A prompt-driven one-shot (claude -p) has no PTY, so there is
 		// nothing to attach while it runs. The takeover path is manual and

@@ -184,7 +184,7 @@ var mainKeyBindings = []keyBinding{
 	// --- tasks pane ---
 	{Keys: []string{"enter"}, Scope: scopeTasks, Short: "enter follow", Long: "follow the selected task's log"},
 	{Keys: []string{mainKeys.ResumeAssignedContinue, mainKeys.ResumeAssignedFresh}, Scope: scopeTasks,
-		Short: "r/R assigned resume", Long: "reattach / resume on the assigned runner (r keeps the agent's conversation, R starts fresh)"},
+		Short: "r/R assigned resume", Long: "reattach / resume on the assigned runner (r keeps the agent's conversation, R starts fresh). On a live EVENT-STREAM task it opens the chat view instead — that kind has no terminal to take over, but it is driven from there"},
 	{Keys: []string{mainKeys.ResumeAnyContinue, mainKeys.ResumeAnyFresh}, Scope: scopeTasks,
 		Short: "u/U any resume", Long: "same as r/R but unpinned — any runner may take it"},
 	{Keys: []string{mainKeys.ViewOnly}, Scope: scopeTasks, Short: "v view-only", Long: "attach read-only (no input forwarded)"},
