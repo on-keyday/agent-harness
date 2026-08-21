@@ -447,15 +447,18 @@ func adapterToNeutral(e agentlog.Event) streamagent.Event {
 	return out
 }
 
-// The stream is the only place this kind's output goes. An earlier version
-// also published rendered lines to the task LOG topic, carried over from the
-// oneshot path where the log is the only output — and that made the same
-// events readable through GetTaskLog, which is INFO-scoped, while reading the
-// stream needs exec_view. A capability the design requires must not have a
-// text-shaped way around it.
-func TestStreamTaskPublishesNothingToTheTaskLogByDefault(t *testing.T) {
+// Events reach BOTH the stream and the task log, and that is deliberate.
+// `Detached` is a normal state for this kind, so the stream alone loses what
+// happened while nobody was attached.
+//
+// An earlier version of this test asserted the opposite — that nothing reaches
+// the log — because publishing opened a capability hole: reading the stream
+// needs exec_view while GetTaskLog was gated on visibility alone. The hole was
+// real and is fixed at its source instead; GetTaskLog now requires exec_view
+// for every kind, so the two paths carry the same payload under the same gate.
+func TestStreamTaskRendersEventsIntoTheTaskLog(t *testing.T) {
 	agent := fakeStreamAgent(t,
-		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"secret"}]}}'`+"\n"+
+		`printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"recorded"}]}}'`+"\n"+
 			"cat > /dev/null\n")
 	stream, cl := newStreamPair()
 
@@ -465,9 +468,6 @@ func TestStreamTaskPublishesNothingToTheTaskLogByDefault(t *testing.T) {
 		AdapterPath: testAdapter(t),
 		AgentArgv:   []string{agent},
 		Dir:         t.TempDir(),
-		// A sink IS wired here so the test can see anything the task decides to
-		// emit. handleOpenExec passes none; this proves the task does not
-		// manufacture log lines on its own behalf.
 		LogSink: func(b []byte) {
 			mu.Lock()
 			defer mu.Unlock()
@@ -486,11 +486,21 @@ func TestStreamTaskPublishesNothingToTheTaskLogByDefault(t *testing.T) {
 		if err != nil {
 			break
 		}
-		if strings.Contains(string(payload), "secret") {
+		if strings.Contains(string(payload), "recorded") {
 			sawOnStream = true
 		}
 	}
 	_ = cl.finish()
+	// Keep reading. The adapter still writes its exit line, and a reader that
+	// stops early blocks the writer — which looks exactly like a teardown
+	// deadlock, as it did the first two times.
+	go func() {
+		for {
+			if _, err := cl.nextStdout(); err != nil {
+				return
+			}
+		}
+	}()
 	select {
 	case <-done:
 	case <-time.After(30 * time.Second):
@@ -498,15 +508,15 @@ func TestStreamTaskPublishesNothingToTheTaskLogByDefault(t *testing.T) {
 	}
 
 	if !sawOnStream {
-		t.Fatal("the event never reached the STREAM, which is where it belongs")
+		t.Error("the event never reached the stream")
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	for _, l := range logged {
-		if strings.Contains(l, "secret") {
-			t.Errorf("agent output was rendered into a task-log line as well: %q\n"+
-				"GetTaskLog is INFO-scoped; the stream needs exec_view. Two gates "+
-				"on one payload is the hole this removes.", l)
-		}
+	joined := strings.Join(logged, "\n")
+	if !strings.Contains(joined, "recorded") {
+		t.Errorf("the event was not rendered into the task log:\n%s", joined)
+	}
+	if strings.Contains(joined, `"kind":"event"`) {
+		t.Errorf("neutral JSON reached the log instead of a rendered line:\n%s", joined)
 	}
 }

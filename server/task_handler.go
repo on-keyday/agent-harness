@@ -1699,9 +1699,26 @@ func (h *TaskHandler) handleGetTaskLog(conn ConnHandle, requestID uint32, taskID
 		conn.SendMessage(out) //nolint:errcheck
 	}
 
-	// Visibility gate: out-of-subtree tasks are indistinguishable from absent.
-	visAll, allowed := h.visibleToCaller(connID)
-	if !visAll && !allowed[taskID] {
+	// A task log is the AGENT'S OUTPUT, recorded — the same thing exec_view
+	// gates live. It used to be gated by visibility alone, which put a
+	// transcript (tool inputs, command output, a Write's whole content) in the
+	// same tier as an `ls` row, and left it readable by a caller holding no
+	// capability at all.
+	//
+	// Visibility is NOT also required. An action scope may be wider than the
+	// visibility scope on purpose — `scope=none +exec_view:global` is the
+	// agentboard-driven observer that acts on ids it is handed and must not
+	// enumerate — and refusing it the record of a stream it may watch live
+	// would be incoherent.
+	//
+	// The two failures answer differently, as authorize documents: a missing
+	// cap says nothing about any task, while an out-of-scope target must look
+	// like absence or it is an existence oracle.
+	if !hasCap(h.callerCaps(connID), protocol.Capability_ExecView) {
+		h.denyTaskControl(conn, protocol.TaskControlKind_GetTaskLog, requestID, protocol.Capability_ExecView)
+		return
+	}
+	if !h.inScope(connID, protocol.Capability_ExecView, taskID) {
 		respond(0, 0)
 		return
 	}

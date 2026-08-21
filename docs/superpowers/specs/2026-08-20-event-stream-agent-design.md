@@ -384,6 +384,33 @@ failing obscurely later.
 | `exec_control` | sole writer, owns size | the bookkeeping seat only (`Running` vs `Detached`) |
 | `exec_resize` | resize | **not applicable — refused explicitly**, never a silent no-op |
 
+**`exec_view` generalises, and the task log moves under it.** Its catalog text
+said "watch a session's **PTY** read-only", which this kind already outgrew.
+Extending it to the event stream exposed a gap next to it: a task log is the
+agent's output RECORDED — tool inputs, command output, a `Write`'s whole
+content — and it was gated by visibility alone, in the same tier as an `ls`
+row. So the payload `exec_view` guards live was readable by a caller holding no
+capability at all.
+
+Fixed at the source rather than around it: `GetTaskLog` requires `exec_view`
+for every kind, oneshot included. The bit now means **observe an agent's
+output, live or recorded**; visibility keeps meaning "this task exists and here
+is its row".
+
+Visibility is NOT also required for the log. An action scope may deliberately
+be wider than the visibility one — `scope=none +exec_view:global` is the
+observer that acts on ids it is handed and must not enumerate — and refusing it
+the record of a stream it may watch live would be incoherent. The two failures
+answer differently, as `authorize` documents: a missing cap is
+`permission_denied` (it says nothing about any task), an out-of-scope target
+looks absent (or it is an existence oracle).
+
+That is what makes it safe for this kind to render its events into the task log
+the way oneshot does — which it needs, because §4's default is to BLOCK, so
+nobody being attached is the expected state and the ring evicts. The PTY kind
+has no equivalent and cannot: terminal bytes replay wrong without VT state, so
+a text log of them would be worse than none.
+
 Approval answering sits on `exec_cowrite` because that is where it already sits
 on the PTY path: a permission prompt is answered by keystrokes, and `session
 send` is `exec_cowrite`. Putting it on `exec_control` would have invented a

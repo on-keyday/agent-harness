@@ -790,16 +790,22 @@ func (s *Session) handleOpenExec(ctx context.Context, oer *protocol.OpenExecRunn
 			// sends the first user turn, the same shape `session new` has.
 			ResumeConversation: oer.ResumeConversation(),
 			Logger:             log,
-			// No LogSink. The oneshot path publishes rendered lines to the task
-			// log topic because that is its ONLY output; this kind's output is
-			// the stream, and its sibling handleOpenExec publishes nothing.
+			// Events are ALSO rendered into the task log, as the oneshot path
+			// does. `Detached` is a normal state for this kind — §4's default
+			// is to block, so nobody being attached is the expected case — and
+			// the ring evicts, so the stream alone loses what happened while
+			// no one was watching.
 			//
-			// It was here from the spike, carried over from handleAssign along
-			// with the detour that started there, and it opened a hole:
-			// GetTaskLog is INFO-scoped (visibleToCaller), while reading the
-			// stream needs exec_view. Publishing the same events as text made
-			// them readable without the capability §3 says is required to read
-			// them.
+			// The PTY kind has no equivalent, and not for want of needing one:
+			// terminal bytes replay wrong without VT state, so a text log of
+			// them would be worse than none. Structured events render
+			// losslessly, which is what makes this possible here at all.
+			//
+			// This was briefly removed for opening a capability hole — reading
+			// the stream needs exec_view, while GetTaskLog was gated on
+			// visibility alone. The hole was real; it is fixed at its source
+			// instead, and GetTaskLog now requires exec_view for every kind.
+			LogSink: func(b []byte) { _ = s.Sender.Publish(topics.TaskLog(taskIDHex), b) },
 		}
 		runErr := st.Run(taskCtx, stream)
 

@@ -11,8 +11,10 @@ import (
 // Kinds absent from the map are gated elsewhere: OpenFileTransfer / ListFiles are
 // direction-dependent, RegisterPortForward is direction-dependent (its gate
 // moved off OpenPortForward, which is now unconditionally ForwardLocal); List /
-// GetTaskLog / ListPortForwards are INFO-scoped (visibleToCaller, not a single
-// cap); KillPortForward is direction-dependent AND the direction is only known
+// ListPortForwards is INFO-scoped (visibleToCaller, not a single cap);
+// GetTaskLog was too until 2026-08-21 and is now an ordinary targeted op under
+// Capability_ExecView — a task log is the agent's output recorded, which is
+// what that bit gates live; KillPortForward is direction-dependent AND the direction is only known
 // after the registry lookup, so its gate lives inline in the dispatch case,
 // after h.pforwards().get.
 //

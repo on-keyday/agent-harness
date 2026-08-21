@@ -2,6 +2,8 @@ package server
 
 import (
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -674,8 +676,12 @@ func TestListIncludesRedactedParent(t *testing.T) {
 	bHex := h.Tasks.Create("/repo/b", "parent prompt", protocol.TaskKind_Interactive, protocol.ClientKind_Agent,
 		hexToTaskID(t, aHex), "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "claude")
 	bTID := hexToTaskID(t, bHex)
+	// exec_view so the log assertion below tests SCOPE rather than the cap: a
+	// task log has been gated on that bit since 2026-08-21, and a caller
+	// without it is refused before scope is consulted.
 	cHex := h.Tasks.Create("/repo/c", "child prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		bTID, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "claude")
+		bTID, "", protocol.RunnerSelector{}, nil,
+		protocol.Capability_Spawn|protocol.Capability_ExecView, Scope{}, "claude")
 	sHex := h.Tasks.Create("/repo/s", "stranger prompt", protocol.TaskKind_Oneshot, protocol.ClientKind_Cli,
 		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_All, Scope{}, "")
 
@@ -778,7 +784,9 @@ func TestListIncludesRedactedParent(t *testing.T) {
 		t.Errorf("caller's own row must not be redacted; repo=%q", string(self.RepoPath))
 	}
 
-	// ACCESS scope unchanged: the parent's logs are still out of reach.
+	// ACCESS scope unchanged: the parent's logs are still out of reach — the
+	// caller holds exec_view, so this is the SCOPE refusing, and it refuses by
+	// looking absent rather than by naming a capability.
 	logReq := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 77}
 	logReq.SetGetLog(protocol.GetTaskLogRequest{TaskId: bTID})
 	h.Handle(callerConn, encodeTaskControlRequest(t, logReq))
@@ -894,12 +902,18 @@ func taskIDsFromBody(t *testing.T, body protocol.ListResultBody) map[string]bool
 
 // TestGetTaskLogOutOfSubtreeDenied: a confined caller requesting logs of an
 // out-of-subtree task receives the not-found response (found=0, streamId=0).
+//
+// The caller holds exec_view on purpose. Since 2026-08-21 a task log is gated
+// on that bit, and a caller without it is refused BEFORE the scope check — so
+// without the grant this would pass for the wrong reason and stop testing the
+// existence-oracle property it is named for.
 func TestGetTaskLogOutOfSubtreeDenied(t *testing.T) {
 	h := newTestHandler(t)
 	h.LogsDir = t.TempDir() // enable log path so the gate runs before the open
 
 	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
-		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil,
+		protocol.Capability_Spawn|protocol.Capability_ExecView, Scope{}, "")
 	aTID := hexToTaskID(t, aHex)
 
 	// D is an unrelated task (operator-created).
@@ -910,8 +924,18 @@ func TestGetTaskLogOutOfSubtreeDenied(t *testing.T) {
 	if h.principals == nil {
 		h.principals = make(map[string]protocol.TaskID)
 	}
-	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9811-1")}
+	// nextSendStreamID so the handler CAN answer found=1: without it
+	// CreateSendStream returns nil and the response is found=0 whatever the
+	// gate decides, which is why this assertion could not fail.
+	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9811-1"), nextSendStreamID: 7}
 	h.principals[callerConn.ConnectionID().String()] = aTID
+
+	// A real log file for D. Without it the assertion below cannot fail: the
+	// handler answers found=0 for a missing file too, so the test would pass
+	// with the scope gate deleted — measured, by deleting it.
+	if err := os.WriteFile(filepath.Join(h.LogsDir, dHex+".log"), []byte("D's transcript\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Request logs for task D (out of A's subtree).
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 42}
@@ -1753,5 +1777,39 @@ func TestSetCapsValidatesConsistencyNotWidth(t *testing.T) {
 	}
 	if err := validateScope(wide); err != nil {
 		t.Errorf("refused the board-driven observer shape: %v", err)
+	}
+}
+
+// The other half of that gate: a caller with no exec_view is refused, and the
+// refusal is permission_denied rather than not-found. The two answers are not
+// interchangeable — a missing cap says nothing about any particular task,
+// while an out-of-scope target must look like absence or it becomes an
+// existence oracle (see authorize).
+func TestGetTaskLogWithoutExecViewIsDenied(t *testing.T) {
+	h := newTestHandler(t)
+	h.LogsDir = t.TempDir()
+
+	// The caller asks for its OWN log, so scope cannot be what refuses it.
+	aHex := h.Tasks.Create("r", "A", protocol.TaskKind_Oneshot, protocol.ClientKind_Agent,
+		protocol.TaskID{}, "", protocol.RunnerSelector{}, nil, protocol.Capability_Spawn, Scope{}, "")
+	aTID := hexToTaskID(t, aHex)
+
+	if h.principals == nil {
+		h.principals = make(map[string]protocol.TaskID)
+	}
+	callerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9812-1")}
+	h.principals[callerConn.ConnectionID().String()] = aTID
+
+	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_GetTaskLog, RequestId: 43}
+	req.SetGetLog(protocol.GetTaskLogRequest{TaskId: aTID})
+	h.Handle(callerConn, encodeTaskControlRequest(t, req))
+
+	resp := lastTaskControlResponse(t, callerConn)
+	if resp.Kind != protocol.TaskControlKind_PermissionDenied {
+		t.Fatalf("kind = %v, want PermissionDenied: a task log is the agent's "+
+			"output recorded, which exec_view gates live", resp.Kind)
+	}
+	if pd := resp.PermissionDenied(); pd == nil || pd.RequiredCap != protocol.Capability_ExecView {
+		t.Errorf("the denial does not name exec_view: %+v", pd)
 	}
 }
