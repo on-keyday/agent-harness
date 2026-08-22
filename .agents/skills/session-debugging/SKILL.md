@@ -45,6 +45,7 @@ Get `<id>` from `harness-cli session ls` (interactive sessions) or `ls`
 
 - Foreground is a **POSIX shell** (bash/zsh/sh — incl. one reached over ssh or
   inside a netns) → **`exec`**: synchronous, greppable output, real exit code.
+  A shell *inside a multiplexer* does not count — see exec footgun 5.
 - Foreground is **anything else** (TUI, REPL, claude, full-screen app) →
   **`send` + `snapshot` loop**. `exec` on a non-shell foreground finds no
   completion marker and times out with a diagnostic — that timeout is your
@@ -282,6 +283,19 @@ Footguns:
    bytes are NOT rolled back — the command text has already landed in the
    foreground program as input (a REPL will show it as a syntax error);
    clear the line (`send -e <id> '\x03'`) before driving on.
+5. **A terminal multiplexer is not a shell either, even though the pane inside
+   it is one.** herdr / tmux / screen own the outer PTY and repaint their own
+   grid onto it, so the command runs in the pane and its output — completion
+   marker included — appears ON SCREEN, while the outer PTY carries only
+   redrawn cells. The marker never crosses as the byte sequence `exec` scans
+   for, so the call times out (exit 124) on a command that already ran to
+   completion. Verified against herdr 0.8.2: `echo pong-$$; tty; stty size`
+   printed `/dev/pts/3` and `35 146` in the pane and its
+   `__HEXEC_…_E__0` line was plainly visible in `snapshot`, while `exec`
+   reported no completion within 30s. This is the case where the timeout
+   diagnostic's "or the session foreground is not a POSIX shell" reads as
+   wrong and is not. Drive the multiplexer with send/snapshot, or address the
+   inner pane through the multiplexer's own API.
 
 ### Flag ordering
 
@@ -331,6 +345,7 @@ as line boundaries — matching on `\n`-terminated lines alone misses markers.
 |---------|-------------|
 | `-enter` shows up typed on screen | Flag placed after `<id>` → flags before `<id>` |
 | `exec` times out on a REPL/TUI/claude | Foreground isn't a POSIX shell → send + snapshot |
+| `exec` timed out but the command demonstrably ran | Foreground is a multiplexer (herdr/tmux/screen): it repaints the grid, so the completion marker never crosses the outer PTY → send + snapshot |
 | Session died after an `exec` | Bare `exit`/`exec` killed the shell → `(exit N)` |
 | Snapshot shows "input" nobody sent | Faint placeholder/ghost text → confirm with `--style` |
 | Regex-parsing the `--- styles ---` report | It is a projection, not the source → `--json --style` and read `spans[]` |
