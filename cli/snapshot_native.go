@@ -5,27 +5,36 @@ package cli
 import (
 	"context"
 	"fmt"
-	"image/color"
-	"io"
 	"os"
 	"strings"
 	"time"
-	"unicode/utf8"
 
-	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/vt"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 // collectScreen view-attaches via CollectRaw and feeds the captured byte burst
-// through a headless VT emulator. It returns the built emulator (the CALLER
-// must Close it) plus the resolved grid size. Shared by SessionSnapshot (plain
-// text) and SessionSnapshotStyled (text + style spans).
+// through a headless screen model. It returns the built terminal plus the
+// resolved grid size. Shared by SessionSnapshot (plain text) and
+// SessionSnapshotStyled (text + style spans).
 //
-// The emulator is sized from the TerminalWindowSize the server replays ahead of
+// The model is sized from the TerminalWindowSize the server replays ahead of
 // the ring (the controlling client's PTY size); defRows/defCols are the
 // fallback when the session reports no size, in which case a full-screen TUI
 // may mis-render.
-func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vt.Emulator, string, int, int, error) {
+//
+// It renders through vtgrid rather than a general-purpose emulator, for two
+// reasons that are both measured rather than assumed (vtgrid/bench_test.go, and
+// the parity suite over vtgrid/testdata/vtcorpus):
+//
+//   - Cost. This path re-renders the WHOLE replay ring on every call, and the
+//     ring is a megabyte. Through x/vt a ring of scrolled shell output took
+//     6.9 s of CPU per snapshot; the same bytes here take about 37 ms, because
+//     scrolling rotates row headers instead of copying cells.
+//   - No response channel. x/vt answers DA1/DA2/DSR by writing to its own
+//     output side, so a caller that does not drain it blocks forever — this
+//     function used to run a discard goroutine for exactly that. vtgrid never
+//     emits a byte, so there is nothing to drain and nothing to close.
+func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vtgrid.Terminal, string, int, int, error) {
 	captured, rows, cols, ok, err := c.CollectRaw(ctx, taskIDHex, settle)
 	if err != nil {
 		return nil, "", 0, 0, err
@@ -37,36 +46,44 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 			taskIDHex, cols, rows)
 	}
 
-	// The OSC 0/2 window title is NOT part of the cell grid, so emu.String()
-	// throws it away — and for an agent it is the single most informative byte
-	// on the wire: Claude Code re-emits it on every spinner tick, which makes it
-	// the one continuously-reasserted signal that a turn is running.
-	//
-	// Read from the CAPTURED BYTES rather than from the emulator. x/vt offers a
-	// Title callback, but it truncates a title at its first multi-byte
-	// character: `ESC ] 0 ; ✳ herdr BEL` arrives as "\xe2", one byte, the lead
-	// byte of the glyph. Reproduced in isolation with every prefix tried
-	// (nothing, ASCII text, UTF-8 text, an earlier ASCII title, an earlier
-	// UTF-8 title) against a stream where the full title is present and
-	// correctly BEL-terminated. Scanning the bytes is a few lines, has no such
-	// failure mode, and can be tested against a captured stream.
-	title := lastOSCTitle(captured)
+	term := vtgrid.New(int(cols), int(rows))
+	_, _ = term.Write(captured)
 
-	emu := vt.NewEmulator(int(cols), int(rows))
-	// Full-screen apps (claude, vim, …) emit terminal QUERIES early in their
-	// output — DA1 (ESC[c), DA2 (ESC[>c), DSR (ESC[5n). x/vt answers these by
-	// WRITING a response to its own output side (readable via emu.Read). If
-	// nobody drains that, emu.Write blocks forever on the response and the
-	// snapshot hangs. A headless render has no app to send the answers to, so
-	// drain and discard them. (Bash never sends queries, which is why only
-	// full-screen sessions hit this.) The drain goroutine exits on emu.Close.
-	go io.Copy(io.Discard, emu)
-	emu.Write(captured)
-	return emu, title, int(cols), int(rows), nil
+	// The OSC 0/2 window title is NOT part of the cell grid, and for an agent it
+	// is the single most informative byte on the wire: Claude Code re-emits it on
+	// every spinner tick, which makes it the one continuously-reasserted signal
+	// that a turn is running. vtgrid parses it out of the same pass that built
+	// the grid.
+	//
+	// This used to be a separate byte scan, because x/vt's Title callback
+	// truncates a title at its first multi-byte character. That was never a
+	// quirk of the callback: x/vt honours the eight-bit ST (0x9C) inside an OSC,
+	// and 0x9C is the second byte of U+2733 ✳ — the glyph Claude Code puts in
+	// its title — so the sequence ends one byte in and the rest of the title
+	// prints onto the grid. vtgrid does not accept 0x9C as a terminator in a
+	// UTF-8 stream, which fixes the title and the stray text together.
+	return term, term.Title(), int(cols), int(rows), nil
+}
+
+// renderScreen flattens the grid to text with trailing blanks removed from each
+// row.
+//
+// vtgrid keeps them — its Lines() pads every row to the full width, on the
+// grounds that whether they matter is the caller's business. Here they do not:
+// a snapshot is read by people and by detection rules, neither of which has any
+// use for 140 spaces after a prompt, and the --json form would carry them in
+// every one of its lines. Trimming here rather than in the model keeps the
+// model's grid addressable by column.
+func renderScreen(term *vtgrid.Terminal) string {
+	lines := term.Lines()
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " ")
+	}
+	return strings.Join(lines, "\n")
 }
 
 // SessionSnapshot view-attaches to a detachable interactive session, feeds the
-// replayed PTY byte stream through a headless VT emulator, and returns the
+// replayed PTY byte stream through a headless screen model, and returns the
 // current screen as plain text — a non-intrusive, terminal-free alternative to
 // `session attach` for reading what a session currently shows.
 //
@@ -74,20 +91,18 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 // the replay arrives in a burst, so a short window (e.g. 1.5s) is enough for a
 // static screen.
 func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (string, error) {
-	emu, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	term, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
 	if err != nil {
 		return taskIDHex, err
 	}
-	s := emu.String()
-	_ = emu.Close() // unblocks the drain goroutine
-	return s, nil
+	return renderScreen(term), nil
 }
 
 // SessionSnapshotRaw view-attaches to a detachable interactive session and
 // returns the verbatim PTY replay burst — escape sequences intact — without
-// running it through the VT emulator. Unlike SessionSnapshot's flattened text,
-// the result can be written straight to a real terminal to reproduce the screen
-// exactly, or diffed byte-for-byte when the rendered text looks wrong.
+// rendering it. Unlike SessionSnapshot's flattened text, the result can be
+// written straight to a real terminal to reproduce the screen exactly, or
+// diffed byte-for-byte when the rendered text looks wrong.
 func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settle time.Duration) ([]byte, error) {
 	captured, _, _, _, err := c.CollectRaw(ctx, taskIDHex, settle)
 	if err != nil {
@@ -97,20 +112,17 @@ func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settl
 }
 
 // SessionSnapshotStyled is SessionSnapshot plus a textual report of styled
-// spans (faint/bold/italic/reverse/...) scanned from the VT cell grid. The
-// plain render drops SGR attributes, so e.g. a faint placeholder/ghost line
-// looks identical to real input; this side-channel surfaces the attribute the
+// spans (faint/bold/italic/reverse/...) scanned from the cell grid. The plain
+// render drops SGR attributes, so e.g. a faint placeholder/ghost line looks
+// identical to real input; this side-channel surfaces the attribute the
 // flattened text throws away — without re-emitting raw escapes (which an LLM
 // reader can't use). Returns (plainText, styleReport).
 func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (string, string, error) {
-	emu, _, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	term, _, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
 	if err != nil {
 		return taskIDHex, "", err
 	}
-	text := emu.String()
-	report := formatSpans(collectSpans(emu, cols, rows, withAttrs, withColor))
-	_ = emu.Close() // unblocks the drain goroutine
-	return text, report, nil
+	return renderScreen(term), formatSpans(collectSpans(term, cols, rows, withAttrs, withColor)), nil
 }
 
 // ScreenSpan is one maximal horizontal run of grid cells sharing the same
@@ -147,8 +159,8 @@ func (s ScreenSpan) label() string {
 	return strings.Join(parts, " ")
 }
 
-// ScreenSnapshot is a session screen as data: the VT grid as one string per
-// row, plus the styled spans indexed by those same row numbers.
+// ScreenSnapshot is a session screen as data: the grid as one string per row,
+// plus the styled spans indexed by those same row numbers.
 //
 // Attrs/Color report whether each style dimension was COLLECTED, not whether
 // any was found — an empty Spans with Attrs=false means "not asked for", with
@@ -186,28 +198,26 @@ func (s *ScreenSnapshot) Detect(set DetectRuleSet) DetectExplain {
 // line is still split across rows. Use SessionSnapshotRaw or `session exec` when
 // logical lines matter; this shape trades that for row/column addressability.
 func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (*ScreenSnapshot, error) {
-	emu, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
 	if err != nil {
 		return nil, err
 	}
-	snap := &ScreenSnapshot{
+	return &ScreenSnapshot{
 		Task:  taskIDHex,
 		Rows:  rows,
 		Cols:  cols,
 		Title: title,
 		Attrs: withAttrs,
 		Color: withColor,
-		Lines: screenLines(emu.String(), rows),
-		Spans: collectSpans(emu, cols, rows, withAttrs, withColor),
-	}
-	_ = emu.Close() // unblocks the drain goroutine
-	return snap, nil
+		Lines: screenLines(renderScreen(term), rows),
+		Spans: collectSpans(term, cols, rows, withAttrs, withColor),
+	}, nil
 }
 
-// screenLines splits a rendered screen into exactly rows entries. The emulator
-// may hand back fewer (trailing blank rows collapsed) or, defensively, more;
-// spans carry absolute grid rows, so the slice is padded/truncated to keep
-// Lines[span.Row] valid rather than leaving the caller to bounds-check.
+// screenLines splits a rendered screen into exactly rows entries. The renderer
+// hands back one line per row already; spans carry absolute grid rows, so the
+// slice is padded/truncated defensively to keep Lines[span.Row] valid rather
+// than leaving the caller to bounds-check.
 func screenLines(text string, rows int) []string {
 	text = strings.TrimSuffix(text, "\n")
 	lines := strings.Split(text, "\n")
@@ -219,60 +229,45 @@ func screenLines(text string, rows int) []string {
 
 // notableAttrs are the cell text attributes worth reporting; layout/color is
 // intentionally omitted to keep the report lean and parseable.
-const notableAttrs = uv.AttrBold | uv.AttrFaint | uv.AttrItalic | uv.AttrBlink |
-	uv.AttrReverse | uv.AttrConceal | uv.AttrStrikethrough
+const notableAttrs = vtgrid.AttrBold | vtgrid.AttrFaint | vtgrid.AttrItalic |
+	vtgrid.AttrBlink | vtgrid.AttrReverse | vtgrid.AttrConceal | vtgrid.AttrStrike
 
 // cellStyleLabel returns a label for the cell's notable styling, limited to the
 // requested dimensions; "" = nothing notable (the cell is skipped). The label
 // doubles as the run-merge key: adjacent cells with the same label coalesce into
 // one span.
-func cellStyleLabel(cell *uv.Cell, withAttrs, withColor bool) string {
-	if cell == nil {
-		return ""
-	}
+func cellStyleLabel(cell vtgrid.Cell, withAttrs, withColor bool) string {
 	var parts []string
 	if withAttrs {
-		if a := cell.Style.Attrs & notableAttrs; a != 0 {
+		if a := cell.Attr & notableAttrs; a != 0 {
 			parts = append(parts, attrNames(a))
 		}
 	}
 	if withColor {
-		if fg := colorHex(cell.Style.Fg); fg != "" {
+		if fg := cell.FG.Hex(); fg != "" {
 			parts = append(parts, "fg"+fg)
 		}
-		if bg := colorHex(cell.Style.Bg); bg != "" {
+		if bg := cell.BG.Hex(); bg != "" {
 			parts = append(parts, "bg"+bg)
 		}
 	}
 	return strings.Join(parts, " ")
 }
 
-// colorHex renders a cell color as #rrggbb, or "" for the terminal default
-// (nil Fg/Bg). Every color.Color answers RGBA(), so this handles 16-color,
-// 256-color, and truecolor cells uniformly — color is cheap to render; the
-// reason it is opt-in (--color) is volume: most cells carry a color, so the
-// report balloons, unlike the rare faint/bold attribute spans.
-func colorHex(c color.Color) string {
-	if c == nil {
-		return ""
-	}
-	r, g, b, _ := c.RGBA()
-	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(b>>8))
-}
-
-// cellWidth is the column span of a cell's grapheme (2 for CJK/wide, 1 for
+// cellWidth is the column span of a cell's glyph (2 for CJK/wide, 1 for
 // normal). Advancing the scan cursor by this — rather than always +1 — skips the
 // blank continuation cell that follows a wide char, so a CJK run isn't split
 // into one span per character (the continuation cell carries no/other style and
-// would otherwise break the run). Guards 0/negative to never stall the loop.
-func cellWidth(cell *uv.Cell) int {
-	if cell == nil || cell.Width < 1 {
+// would otherwise break the run). A continuation cell reports width 0; guarding
+// to 1 keeps the loop moving if the scan ever lands on one directly.
+func cellWidth(cell vtgrid.Cell) int {
+	if cell.Width < 1 {
 		return 1
 	}
-	return cell.Width
+	return int(cell.Width)
 }
 
-// collectSpans walks the VT grid and returns maximal horizontal runs that share
+// collectSpans walks the grid and returns maximal horizontal runs that share
 // the same non-empty style label. withAttrs includes faint/bold/etc; withColor
 // includes fg/bg hex. Cells with nothing notable are skipped.
 //
@@ -280,12 +275,12 @@ func cellWidth(cell *uv.Cell) int {
 // (via formatSpans) and the --json output are rendered from its result, so the
 // two cannot drift into two descriptions of the same screen. Always returns a
 // non-nil slice — an empty one marshals as [] rather than null.
-func collectSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) []ScreenSpan {
+func collectSpans(term *vtgrid.Terminal, cols, rows int, withAttrs, withColor bool) []ScreenSpan {
 	spans := []ScreenSpan{}
 	for y := 0; y < rows; y++ {
 		x := 0
 		for x < cols {
-			cell := emu.CellAt(x, y)
+			cell := term.CellAt(x, y)
 			key := cellStyleLabel(cell, withAttrs, withColor)
 			if key == "" {
 				x += cellWidth(cell)
@@ -297,11 +292,13 @@ func collectSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) [
 			start := x
 			var run strings.Builder
 			for x < cols {
-				cur := emu.CellAt(x, y)
+				cur := term.CellAt(x, y)
 				if cellStyleLabel(cur, withAttrs, withColor) != key {
 					break
 				}
-				run.WriteString(cur.Content)
+				if cur.Rune != 0 {
+					run.WriteRune(cur.Rune)
+				}
 				x += cellWidth(cur)
 			}
 			txt := strings.TrimRight(run.String(), " ")
@@ -310,11 +307,11 @@ func collectSpans(emu *vt.Emulator, cols, rows int, withAttrs, withColor bool) [
 			}
 			span := ScreenSpan{Row: y, Start: start, End: x - 1, Text: txt}
 			if withAttrs {
-				span.Attrs = attrList(head.Style.Attrs & notableAttrs)
+				span.Attrs = attrList(head.Attr & notableAttrs)
 			}
 			if withColor {
-				span.Fg = colorHex(head.Style.Fg)
-				span.Bg = colorHex(head.Style.Bg)
+				span.Fg = head.FG.Hex()
+				span.Bg = head.BG.Hex()
 			}
 			spans = append(spans, span)
 		}
@@ -344,100 +341,33 @@ func formatSpans(spans []ScreenSpan) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// lastOSCTitle returns the payload of the last COMPLETE `ESC ] 0|2 ; … BEL|ST`
-// in b, or "" when there is none.
-//
-// Last one wins: a replay burst carries every title the session ever set, and
-// only the newest describes the screen being rendered alongside it.
-//
-// Only complete sequences count. A capture is cut when its settle timer expires,
-// wherever the reader happened to be, so the tail can be a partial escape — and
-// a partial title is worse than no title, because a rule would match half a
-// glyph with a straight face.
-//
-// A payload that is not valid UTF-8 is discarded for the same reason. OSC 1 (set
-// icon name) is skipped: it is not the window title, and agents that set both
-// set them to the same text anyway.
-func lastOSCTitle(b []byte) string {
-	out := ""
-	for i := 0; i+3 < len(b); {
-		if b[i] != 0x1b || b[i+1] != ']' {
-			i++
-			continue
-		}
-		// Command number, then ';'.
-		j := i + 2
-		cmd := 0
-		digits := 0
-		for j < len(b) && b[j] >= '0' && b[j] <= '9' {
-			cmd = cmd*10 + int(b[j]-'0')
-			digits++
-			j++
-		}
-		if digits == 0 || j >= len(b) || b[j] != ';' {
-			i += 2
-			continue
-		}
-		j++
-		start := j
-		// Terminator: BEL, or ST spelled as ESC \.
-		end, next := -1, -1
-		for k := j; k < len(b); k++ {
-			if b[k] == 0x07 {
-				end, next = k, k+1
-				break
-			}
-			if b[k] == 0x1b && k+1 < len(b) && b[k+1] == '\\' {
-				end, next = k, k+2
-				break
-			}
-			// An ESC that is not ST means the sequence was cut and another
-			// began; abandon this one rather than swallowing what follows.
-			if b[k] == 0x1b {
-				break
-			}
-		}
-		if end < 0 {
-			i += 2
-			continue
-		}
-		if cmd == 0 || cmd == 2 {
-			if s := string(b[start:end]); utf8.ValidString(s) {
-				out = s
-			}
-		}
-		i = next
-	}
-	return out
-}
-
 // attrNames is attrList's report form: the same names joined with "+", which is
 // how a style label spells a multi-attribute run ("bold+faint").
-func attrNames(a uint8) string {
+func attrNames(a vtgrid.Attr) string {
 	return strings.Join(attrList(a), "+")
 }
 
-func attrList(a uint8) []string {
+func attrList(a vtgrid.Attr) []string {
 	var names []string
-	if a&uv.AttrBold != 0 {
+	if a&vtgrid.AttrBold != 0 {
 		names = append(names, "bold")
 	}
-	if a&uv.AttrFaint != 0 {
+	if a&vtgrid.AttrFaint != 0 {
 		names = append(names, "faint")
 	}
-	if a&uv.AttrItalic != 0 {
+	if a&vtgrid.AttrItalic != 0 {
 		names = append(names, "italic")
 	}
-	if a&uv.AttrBlink != 0 {
+	if a&vtgrid.AttrBlink != 0 {
 		names = append(names, "blink")
 	}
-	if a&uv.AttrReverse != 0 {
+	if a&vtgrid.AttrReverse != 0 {
 		names = append(names, "reverse")
 	}
-	if a&uv.AttrConceal != 0 {
+	if a&vtgrid.AttrConceal != 0 {
 		names = append(names, "conceal")
 	}
-	if a&uv.AttrStrikethrough != 0 {
+	if a&vtgrid.AttrStrike != 0 {
 		names = append(names, "strike")
 	}
 	return names

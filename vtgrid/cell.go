@@ -79,3 +79,62 @@ type pen struct {
 }
 
 func (p *pen) reset() { *p = pen{} }
+
+// cubeLevels are the six component values of the 6x6x6 colour cube that
+// occupies palette entries 16-231.
+var cubeLevels = [6]uint8{0x00, 0x5f, 0x87, 0xaf, 0xd7, 0xff}
+
+// systemColors are palette entries 0-15. Unlike the cube and the greys these
+// are not computed from a rule — they are the VGA/xterm values, and a terminal
+// with a theme will show its own instead. They are here so that a hex render of
+// an indexed colour matches what x/vt produces for the same cell, which is what
+// keeps `session snapshot --color` output stable across the switch.
+var systemColors = [16][3]uint8{
+	{0x00, 0x00, 0x00}, {0x80, 0x00, 0x00}, {0x00, 0x80, 0x00}, {0x80, 0x80, 0x00},
+	{0x00, 0x00, 0x80}, {0x80, 0x00, 0x80}, {0x00, 0x80, 0x80}, {0xc0, 0xc0, 0xc0},
+	{0x80, 0x80, 0x80}, {0xff, 0x00, 0x00}, {0x00, 0xff, 0x00}, {0xff, 0xff, 0x00},
+	{0x00, 0x00, 0xff}, {0xff, 0x00, 0xff}, {0x00, 0xff, 0xff}, {0xff, 0xff, 0xff},
+}
+
+// RGB resolves a colour to components. ok is false for the terminal default,
+// which is not a colour and must stay distinguishable from black.
+//
+// An indexed colour is resolved through the standard 256-entry palette. That is
+// a DISPLAY decision being made on the caller's behalf: a terminal with a theme
+// paints index 1 as whatever its theme says, and a caller that cares should read
+// Kind and N instead. It is offered because the alternative — every consumer
+// carrying its own copy of the same table — is worse.
+func (c Color) RGB() (r, g, b uint8, ok bool) {
+	switch c.Kind {
+	case ColorRGB:
+		return c.R, c.G, c.B, true
+	case ColorIndexed:
+		switch n := int(c.N); {
+		case n < 16:
+			s := systemColors[n]
+			return s[0], s[1], s[2], true
+		case n < 232:
+			n -= 16
+			return cubeLevels[(n/36)%6], cubeLevels[(n/6)%6], cubeLevels[n%6], true
+		default:
+			g := uint8(8 + 10*(n-232))
+			return g, g, g, true
+		}
+	}
+	return 0, 0, 0, false
+}
+
+// Hex renders a colour as "#rrggbb", or "" for the terminal default.
+func (c Color) Hex() string {
+	r, g, b, ok := c.RGB()
+	if !ok {
+		return ""
+	}
+	const digits = "0123456789abcdef"
+	out := []byte("#000000")
+	for i, v := range [3]uint8{r, g, b} {
+		out[1+i*2] = digits[v>>4]
+		out[2+i*2] = digits[v&0xf]
+	}
+	return string(out)
+}
