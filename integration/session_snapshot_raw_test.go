@@ -70,9 +70,21 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 
 	settle := 1500 * time.Millisecond
 
-	raw, err := c1.SessionSnapshotRaw(context.Background(), taskIDHex, settle)
+	raw, synth, err := c1.SessionSnapshotRaw(context.Background(), taskIDHex, settle)
 	if err != nil {
 		t.Fatalf("SessionSnapshotRaw: %v", err)
+	}
+	// A real server replays a mode preamble and a screen repaint alongside the
+	// PTY bytes, and --raw withholds both. Asserting the count is non-zero is
+	// what keeps this an END-TO-END check that the separation happens on the
+	// wire: against a server that still sent them as Stdout frames, they would
+	// be counted as PTY output and this would read zero.
+	if synth == 0 {
+		t.Fatalf("no synthesised replay bytes were reported; the server is not framing " +
+			"its own replay additions as Synth, so --raw cannot tell them from PTY output")
+	}
+	if bytes.Contains(raw, []byte("\x1b[?25")) {
+		t.Fatalf("raw output carries a mode preamble the PTY never emitted; got %q", raw)
 	}
 	if !bytes.Contains(raw, []byte("\x1b[31m")) {
 		t.Fatalf("raw snapshot missing ESC[31m sequence; got %q", raw)

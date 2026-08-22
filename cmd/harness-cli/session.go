@@ -319,7 +319,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
 	style := fs.Bool("style", false, "also print attribute spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
 	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
-	raw := fs.Bool("raw", false, "write the verbatim PTY replay bytes (escape sequences intact) to stdout instead of the VT-rendered screen — cat into a real terminal to reproduce it exactly; --rows/--cols are ignored and --style/--color are not allowed")
+	raw := fs.Bool("raw", false, "write the verbatim PTY replay bytes to stdout instead of the VT-rendered screen — ONLY bytes the PTY emitted: the server's own replay additions (mode preamble, screen repaint) are withheld and their size reported on stderr — cat into a real terminal to reproduce it exactly; --rows/--cols are ignored and --style/--color are not allowed")
 	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,title,cursor{x,y,visible},alt_screen,attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report. cursor and alt_screen are terminal state rather than cells and appear only here: the text forms print the screen, which cannot show where the cursor is or which buffer it is on")
 	ansi := fs.Bool("ansi", false, "re-emit the screen WITH its colours and attributes instead of as plain text — for a person looking at it, where --style/--color describe the styling in a list beside a colourless screen. Unlike --raw this is the final screen, not the whole replay: one screenful, not a megabyte of scrollback")
 	detect := fs.Bool("detect", false, "also judge what STATE the screen shows (working / blocked / idle / unknown) and print the rule and the text it read. blocked means waiting on a HUMAN, which byte-quiescence cannot tell from thinking; with --json the full per-rule explain rides along")
@@ -373,9 +373,18 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	defer c.Close()
 
 	if *raw {
-		b, err := c.SessionSnapshotRaw(ctx, taskIDHex, time.Duration(*settleMs)*time.Millisecond)
+		b, synth, err := c.SessionSnapshotRaw(ctx, taskIDHex, time.Duration(*settleMs)*time.Millisecond)
 		if err != nil {
 			return err
+		}
+		// The count goes to stderr, so a pipe still receives exactly the PTY
+		// bytes. Reporting it rather than dropping it silently is the point:
+		// what was withheld is server-invented replay, and a reader looking at
+		// raw bytes because the render looked wrong should know some were held
+		// back and how many.
+		if synth > 0 {
+			fmt.Fprintf(os.Stderr, "harness-cli: withheld %d bytes of server-synthesised replay "+
+				"(mode preamble and screen repaint); these were never emitted by the PTY\n", synth)
 		}
 		_, err = os.Stdout.Write(b)
 		return err
