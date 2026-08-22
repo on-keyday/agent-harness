@@ -15,11 +15,13 @@ package vtgrid
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/base64"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -44,6 +46,7 @@ var vtCorpora = []vtCorpus{
 	{"codex-start", 40, 150, "the richest startup handshake here: DSR cursor query, OSC 10/11 colour queries, DA1, Kitty keyboard query, and 12 synchronized-output brackets"},
 	{"codex-tui", 40, 150, "OpenAI Codex answering arithmetic: boxed panels and a bordered composer"},
 	{"conpty-ssh", 36, 173, "bash reached over ssh from Windows cmd.exe — the bytes pass through ConPTY"},
+	{"herdr-mouse", 36, 173, "herdr with a mouse drag-selection: the full mouse-tracking mode set (1000/1002/1003/1006/1015) and an OSC 52 clipboard write, which is how copy_on_select reaches the operator's machine"},
 	{"herdr-tui", 36, 173, "the herdr multiplexer repainting a pane that scrolls colored text"},
 	{"htop", 40, 150, "htop filtered to root processes, captured while still inside the alternate screen: colour meters, tree view, 0.3s repaint"},
 	{"opencode-tui", 40, 150, "opencode driven by keystrokes only (no provider configured): command palette, tab switching, input editing"},
@@ -258,17 +261,55 @@ func TestVTCorpusLoads(t *testing.T) {
 func TestVTCorpusNoLocalIdentifiers(t *testing.T) {
 	for _, c := range vtCorpora {
 		b := loadVTCorpus(t, c.Name)
+		// Scan the decoded clipboard payloads as well as the raw bytes. An
+		// OSC 52 carries arbitrary selected text in base64, so a prompt that
+		// reads `user@host` on screen reaches the file as `dXNlckBob3N0` and
+		// walks straight past a pattern that only sees bytes. This is the
+		// same shape of miss as the base64 server-log fields that forced a
+		// re-capture earlier; a guard has to decode what it can decode.
+		haystacks := append([][]byte{b}, osc52Payloads(b)...)
 		for _, id := range localIdentifiers {
-			if m := id.Re.Find(b); m != nil {
-				t.Errorf("%s: holds %s (%q) — re-capture it from neutral content, or "+
-					"substitute a SAME-LENGTH placeholder that does not match this shape "+
-					"(a shorter one would move every cell after it; an exemption list "+
-					"would be a hole)",
-					c.Name, id.What, m)
+			for _, h := range haystacks {
+				if m := id.Re.Find(h); m != nil {
+					t.Errorf("%s: holds %s (%q) — re-capture it from neutral content, or "+
+						"substitute a SAME-LENGTH placeholder that does not match this shape "+
+						"(a shorter one would move every cell after it; an exemption list "+
+						"would be a hole)",
+						c.Name, id.What, m)
+				}
 			}
 		}
 	}
 }
+
+// osc52Payloads returns the decoded text of every complete OSC 52 clipboard
+// write in b. OSC 52 is how a terminal is asked to put text on the system
+// clipboard — herdr emits one per mouse selection when `copy_on_select` is on,
+// which is the default — so a capture taken while someone was selecting text
+// carries whatever they highlighted, base64-encoded.
+//
+// Malformed or undecodable payloads are skipped rather than reported: this
+// feeds a privacy scan, and a payload that does not decode is not text anyone
+// can read out of the file either.
+func osc52Payloads(b []byte) [][]byte {
+	var out [][]byte
+	for _, m := range osc52Re.FindAllSubmatch(b, -1) {
+		raw := m[2]
+		if len(raw) == 0 || raw[0] == '?' {
+			continue // a READ request carries no payload
+		}
+		dec, err := base64.StdEncoding.WithPadding(base64.StdPadding).DecodeString(
+			string(raw) + strings.Repeat("=", (4-len(raw)%4)%4))
+		if err != nil {
+			continue
+		}
+		out = append(out, dec)
+	}
+	return out
+}
+
+// osc52Re matches `ESC ] 52 ; <targets> ; <base64> (BEL | ESC \)`.
+var osc52Re = regexp.MustCompile("\x1b\\]52;([^;]*);([^\x07\x1b]*)(?:\x07|\x1b\\\\)")
 
 // TestVTCorpusCoverage prints what each corpus exercises. It asserts nothing:
 // the point is to be able to answer "does anything we have actually emit
@@ -396,5 +437,47 @@ func TestLocalIdentifierPatterns(t *testing.T) {
 		if what, ok := flags(s); ok {
 			t.Errorf("guard false-positive on %q: matched %s", s, what)
 		}
+	}
+}
+
+// TestGuardSeesThroughOSC52 is the regression test for a miss the guard
+// actually had. A capture taken while someone drag-selected text in herdr
+// carried their shell prompt inside an OSC 52 clipboard write, base64-encoded,
+// where a byte-level pattern cannot see it — the same shape of blind spot as
+// the base64 server-log fields that forced a re-capture earlier.
+func TestGuardSeesThroughOSC52(t *testing.T) {
+	secret := "someuser@somebox"
+	enc := base64.StdEncoding.EncodeToString([]byte("[" + secret + " ~]"))
+	stream := []byte("harmless text \x1b]52;c;" + enc + "\x07 more text")
+	stream = []byte(strings.ReplaceAll(string(stream), "\\x1b", "\x1b"))
+	stream = []byte(strings.ReplaceAll(string(stream), "\\x07", "\x07"))
+
+	if bytes.Contains(stream, []byte(secret)) {
+		t.Fatalf("test is not testing anything: %q appears in the raw bytes", secret)
+	}
+	payloads := osc52Payloads(stream)
+	if len(payloads) != 1 {
+		t.Fatalf("osc52Payloads returned %d payloads, want 1", len(payloads))
+	}
+	if !bytes.Contains(payloads[0], []byte(secret)) {
+		t.Fatalf("decoded payload = %q, want it to contain %q", payloads[0], secret)
+	}
+	found := false
+	for _, id := range localIdentifiers {
+		if id.Re.Find(payloads[0]) != nil {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no identifier pattern matched the decoded clipboard payload %q", payloads[0])
+	}
+
+	// A read request (`ESC ] 52 ; c ; ?`) carries no payload and must not be
+	// mistaken for one.
+	read := []byte("\x1b]52;c;?\x07")
+	read = []byte(strings.ReplaceAll(string(read), "\\x1b", "\x1b"))
+	read = []byte(strings.ReplaceAll(string(read), "\\x07", "\x07"))
+	if got := osc52Payloads(read); len(got) != 0 {
+		t.Errorf("a read request produced %d payloads, want 0", len(got))
 	}
 }

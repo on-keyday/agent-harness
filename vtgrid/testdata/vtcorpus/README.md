@@ -61,6 +61,7 @@ Three things to know before using them:
 | `codex-start` | 40x150 | OpenAI Codex's first bytes | the richest handshake here: DSR cursor query, `OSC 10;?`/`11;?` colour queries, DA1, Kitty keyboard query, and 12 synchronized-output brackets in 4.8 KB |
 | `codex-tui` | 40x150 | OpenAI Codex answering arithmetic | boxed panels and a bordered composer; the densest CSI stream here (19k in 256 KB) |
 | `conpty-ssh` | 36x173 | bash over ssh, hosted by Windows `cmd.exe` | a third emitter: everything arrives as SGR runs over printable text, no OSC at all |
+| `herdr-mouse` | 36x173 | herdr with a mouse drag-selection | the full mouse-tracking set (1000/1002/1003/1006/1015) and an **OSC 52 clipboard write** — how `copy_on_select` reaches the operator's machine |
 | `herdr-tui` | 36x173 | the herdr multiplexer repainting a pane | **absolute** cursor motion (CUP ×5127), and the only source of **OSC 8 hyperlinks** |
 | `htop` | 40x150 | htop filtered to root processes, captured **while still inside** the alternate screen | colour meters, tree view, 0.3 s repaint; VPA, and 2238 charset designations |
 | `opencode-tui` | 40x150 | opencode driven by keystrokes only, no provider configured | command palette, tab switching, input editing — the Kitty keyboard protocol (`CSI = u` / `? u` / `< u`) and OSC 1337/99 live here |
@@ -74,17 +75,25 @@ Three things to know before using them:
 why both are here: a renderer that only ever meets one of them will look
 correct and be wrong on the other.
 
-Across all seventeen there are **37 distinct CSI final bytes**, ten OSC
+Across all eighteen there are **37 distinct CSI final bytes**, eleven OSC
 commands and seven ESC finals. That number is the useful one — it says the
 surface a renderer has to cover is enumerable, and it is a measurement rather
 than an estimate.
 
-It also appears to be saturating. The first seven captures reached 25; the next
-three took it to 35; htop added two; and **`win-cmd`, `pwsh` and all four
-startup corpora added none at all**. That is weak evidence, not proof — every
-corpus here is a terminal someone drove on purpose, and none is a survey — but
+It also appears to be saturating. The first seven captures reached 25; adding
+codex, agy and opencode took it to 35 — they brought the Kitty keyboard
+protocol (`CSI = u`, `? u`, `< u`, `> u`), `CSI q` cursor-shape and version
+queries, ECH, and OSC 4/12/66/99/1337 — and htop added two more with VPA and a
+non-private RM. Then **`win-cmd`, `pwsh`, all four startup corpora and
+`herdr-mouse` added none at all**. That is weak evidence, not proof: every
+corpus here is a terminal someone drove on purpose, and none is a survey. But
 it is the difference between "we implemented what we happened to see" and
 "what we see stopped growing".
+
+**`vtgrid` implements almost none of the sequences those newcomers brought, and
+rendered every one of them at 100% parity on first contact.** That is the
+useful evidence, and it is separable from implementing them: what a screen
+model must do with an unknown sequence is recognise its extent and skip it.
 
 One caveat on that metric, which the startup corpora exposed: **a final byte is
 not the only axis**. They introduced three private modes nobody had emitted
@@ -93,16 +102,7 @@ before (`2026`, `2027`, `2031`), and every one of those arrives as an ordinary
 many *shapes* a parser must recognise, not how many *behaviours* a terminal is
 being asked for.
 
-The growth is the story. The first seven captures came to 25 CSI finals; adding
-codex, agy and opencode took it to 35, and htop to 37. The newcomers brought
-the Kitty keyboard protocol (`CSI = u`, `? u`, `< u`, `> u`), `CSI q`
-cursor-shape and version queries, ECH, VPA, and OSC 4/12/66/99/1337.
-**`vtgrid` implements almost none of those and rendered every one of them at
-100% parity on first contact**, which is the useful evidence: what a screen
-model must do with an unknown sequence is recognise its extent and skip it, and
-that is testable separately from implementing it.
-
-`win-cmd` then added **no new sequence at all**, which is worth saying out
+`win-cmd` adding **no new sequence at all** is worth saying out
 loud: native Windows console programs do not speak VT: they call the Console
 API, and ConPTY renders their screen changes back out as escape sequences. What
 arrives is therefore ConPTY's vocabulary rather than the program's, and it is a
@@ -121,9 +121,9 @@ It is not reachable in this corpus set, by either route:
 
 - every designation across every corpus is `ESC ( B`, select US-ASCII — the
   default. `ESC ( 0` never appears, and neither does any G1 designation.
-- **SO (0x0E) count is zero** in all eleven, so nothing ever shifts to G1
-  either. The ten SI (0x0F) bytes shift *in* to G0, which is where the cursor
-  already is.
+- **SO (0x0E) count is zero** in every corpus, so nothing ever shifts to G1
+  either. The handful of SI (0x0F) bytes shift *in* to G0, which is where the
+  cursor already is.
 
 Every box in these captures is drawn with UTF-8 box-drawing characters. That is
 checked, not assumed — and a future corpus that does designate `ESC ( 0` would
@@ -137,7 +137,8 @@ home-directory path, a runner connection id, or a field whose value encodes an
 address.
 
 That test exists because the first attempt at this directory would have shipped
-all of those. Three lessons are baked into how it is written:
+all of those, and it has been wrong twice more since. Five lessons are baked
+into how it is written:
 
 - **Match shapes, not names.** The obvious deny-list — the actual hostnames and
   usernames — cannot be used, because in a public repository *the deny-list is
@@ -153,6 +154,15 @@ all of those. Three lessons are baked into how it is written:
 - **Prefer re-capturing over scrubbing.** One capture held server log lines
   whose base64 fields *encode* addresses; a text substitution does not reach
   those. Content you chose is safe in a way content you filtered is not.
+- **Decode what you can decode.** The same blind spot came back in a different
+  costume: `herdr-mouse` was captured while text was drag-selected, and
+  `copy_on_select` turned that selection into an **OSC 52** clipboard write —
+  so a shell prompt reading `user@host` on screen reached the file as
+  `dXNlckBob3N0` and walked straight past a byte-level pattern. The guard now
+  base64-decodes OSC 52 payloads and scans those too, pinned by
+  `TestGuardSeesThroughOSC52`. Anything a capture carries in an encoding the
+  guard understands has to be looked at in cleartext, or the guard is
+  measuring the encoding rather than the content.
 - **If you do substitute, keep the byte length identical and pick a replacement
   that does not match the shapes.** A VT stream carries column positions, so a
   shorter placeholder moves every cell after it and quietly invalidates the
@@ -196,10 +206,12 @@ output after it exits.
   mid-draw fragment rather than a preamble, for the same replay-window reason,
   and a fragment that is neither a startup nor representative is worse than an
   acknowledged hole.
-- No sixel or kitty graphics **payloads**, and no mouse reporting — nothing
-  captured emitted either, though OSC 1337 and OSC 99 (the iTerm2 and kitty
-  side-channels those features also travel on) do appear. That is a fact about
-  these captures, not about the agents.
+- No sixel or kitty graphics **payloads** — nothing captured emitted one,
+  though OSC 1337 and OSC 99 (the iTerm2 and kitty side-channels those features
+  also travel on) do appear. Mouse *reporting* is covered by `herdr-mouse`
+  (modes 1000/1002/1003/1006/1015 enabled), but no corpus contains the mouse
+  EVENT reports themselves: those travel from the client toward the program, and
+  a capture only ever holds the other direction.
 - `bash-scroll` is the only corpus with essentially no escape sequences. It is
   here for the cost profile — scrolling dominates rendering time — not for
   sequence coverage.
