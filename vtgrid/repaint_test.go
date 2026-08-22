@@ -139,7 +139,9 @@ func loadExtCorpus(tb testing.TB, name string) []byte {
 //     a real buffer switch — a flash of the main screen — on every attach to
 //     an alt-screen session. That trade is not worth taking on a sequence
 //     nobody has yet watched land on a live attach, so it is recorded rather
-//     than applied. Weigh it when this is wired into SessionMux.
+//     than applied. Weigh it when this is wired into SessionMux, and see
+//     TestRepaintAltObserverCoverageGap for why no test currently exercises it
+//     from a ring replay.
 //
 // Not carried here, on purpose: the input-affecting private modes (bracketed
 // paste, mouse, application cursor keys). vtgrid neither tracks nor exposes
@@ -362,6 +364,52 @@ func TestRepaintReconstructsScreen(t *testing.T) {
 	t.Logf("CELLS total=%d fresh=%d (%.3f%%) after-ring=%d (%.3f%%) poisoned=%d (%.3f%%)",
 		totCells, okCellFresh, pct(okCellFresh, totCells),
 		okCellDirty, pct(okCellDirty, totCells), okCellPoison, pct(okCellPoison, totCells))
+}
+
+// TestRepaintAltObserverCoverageGap names the one case the corpus set cannot
+// reach, and fails when a new capture reaches it.
+//
+// buildRepaint's DECTCEM ordering fixes an observer that still has a screen
+// switch to make. An observer ALREADY on the alternate buffer is not fixed: the
+// ESC[?1049h is a no-op, so on Windows the hidden cursor stays visible. Whether
+// that is reachable from a ring replay depends on where the tail LEAVES the
+// observer — the last switch in it — not on whether ESC[?1049h appears anywhere
+// in it, which is a weaker condition that happens to be satisfied more often.
+//
+// Measured here every run. Today exactly one capture (altscreen) already leaves
+// the observer on the alternate buffer from the ring replay alone, so the
+// precondition is in the tree rather than hypothetical; it simply targets a
+// VISIBLE cursor, so it never exposes the bit. htop is the one hidden-cursor
+// alt-screen capture and its tail leaves the observer on main. The two halves
+// exist separately and never together, which is the only reason the Windows
+// after-ring leg expects wantVis with no exception.
+//
+// Like knownOracleDefects in diff_test.go, this is not a suppression: it
+// asserts the gap is STILL THERE. A capture with both halves would make the
+// Windows leg start failing with a bare "cursor visible = true, want false" and
+// no hint why, so the gap is better found here, on every platform, by the test
+// that knows what it means.
+func TestRepaintAltObserverCoverageGap(t *testing.T) {
+	for _, c := range extCorpora {
+		data := loadExtCorpus(t, c.Name)
+		server := vtgrid.New(c.Cols, c.Rows)
+		_, _ = server.Write(data)
+		observer := vtgrid.New(c.Cols, c.Rows)
+		_, _ = observer.Write(ringTail(data, replayTailBytes))
+		_, _, wantVis := server.Cursor()
+
+		if !server.AltScreen() || !observer.AltScreen() {
+			continue
+		}
+		t.Logf("%s: the ring tail alone leaves the observer on the alternate buffer "+
+			"(target cursor visible=%v)", c.Name, wantVis)
+		if !wantVis {
+			t.Errorf("%s now reaches the already-on-alt + hidden-cursor case from its ring "+
+				"tail alone. The gap this test guarded is closed: the Windows after-ring leg "+
+				"will exercise it and fail. Decide the leave-and-re-enter trade in "+
+				"buildRepaint's doc comment, then delete this test.", c.Name)
+		}
+	}
 }
 
 // TestRepaintExportForBrowser writes the same inputs and expected screens to a
