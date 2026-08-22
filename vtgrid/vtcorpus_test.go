@@ -35,10 +35,13 @@ type vtCorpus struct {
 }
 
 var vtCorpora = []vtCorpus{
+	{"agy-start", 40, 150, "Antigravity's first bytes: a full private-mode reset sweep, Kitty keyboard push/pop (CSI = u), DECSCUSR, and the alt-screen exit that truncates its own replay"},
 	{"agy-tui", 40, 150, "Antigravity CLI (Gemini): banner, a permission prompt, and an interrupt"},
 	{"altscreen", 40, 150, "shell inside the alternate screen, captured before it exited"},
 	{"bash-scroll", 40, 150, "`seq 1 200000` — scrolled short lines, no escapes"},
+	{"claude-start", 40, 150, "Claude Code's first bytes, ending on the trust dialog: DECSTBM reset (ESC 7 / ESC [ r / ESC 8), bracketed paste, focus and colour-scheme notification modes"},
 	{"claude-tui", 40, 150, "a live Claude Code session answering arithmetic: prompt box, spinner, relative cursor motion"},
+	{"codex-start", 40, 150, "the richest startup handshake here: DSR cursor query, OSC 10/11 colour queries, DA1, Kitty keyboard query, and 12 synchronized-output brackets"},
 	{"codex-tui", 40, 150, "OpenAI Codex answering arithmetic: boxed panels and a bordered composer"},
 	{"conpty-ssh", 36, 173, "bash reached over ssh from Windows cmd.exe — the bytes pass through ConPTY"},
 	{"herdr-tui", 36, 173, "the herdr multiplexer repainting a pane that scrolls colored text"},
@@ -46,6 +49,7 @@ var vtCorpora = []vtCorpus{
 	{"opencode-tui", 40, 150, "opencode driven by keystrokes only (no provider configured): command palette, tab switching, input editing"},
 	{"pwsh", 40, 150, "PowerShell 7 as the interactive shell: PSReadLine syntax highlighting keystroke by keystroke, tab-completion cycling, Write-Progress"},
 	{"torture", 40, 150, "deliberate coverage: SGR, CJK, DECSTBM, IL/DL/ICH/DCH, tabs, autowrap"},
+	{"win-start", 40, 150, "the first 296 bytes a fresh Windows session ever emits: ConPTY's attach preamble, Win32 Input Mode, and the cmd banner"},
 	{"win-cmd", 40, 150, "native cmd.exe on Windows: dir/tree/ver, console colour changes and a PowerShell progress bar, all translated to VT by ConPTY"},
 	{"vim-split", 40, 150, "vim with a vertical split, scrolled with ^F/^B and j"},
 }
@@ -235,7 +239,10 @@ func (c *vtSeqCounts) recordString(intro byte, params []byte) {
 func TestVTCorpusLoads(t *testing.T) {
 	for _, c := range vtCorpora {
 		b := loadVTCorpus(t, c.Name)
-		if len(b) < 1024 {
+		// The floor is low because one corpus legitimately is: a session's
+		// startup preamble is a few hundred bytes and complete at that size.
+		// Everything else here is a 256 KiB tail.
+		if len(b) < 256 {
 			t.Errorf("%s: only %d bytes — corpus looks truncated", c.Name, len(b))
 		}
 		if !bytes.Contains(b, []byte{0x1b}) && c.Name != "bash-scroll" {
