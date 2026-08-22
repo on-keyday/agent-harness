@@ -32,11 +32,14 @@ Three things to know before using them:
 
 | corpus | size | source | what it exercises |
 |---|---|---|---|
+| `agy-tui` | 40x150 | Antigravity CLI (Gemini) | banner, a permission prompt, an interrupt; 3.2k non-ASCII runes in only 22 KB |
 | `altscreen` | 40x150 | bash, captured **while inside** the alternate screen | alt-screen content that must not survive the exit; SU/SD; DECSC/DECRC; RI |
 | `bash-scroll` | 40x150 | `seq 1 200000` | pure scrolling — 196k printable runes and **one CSI in the whole file** |
 | `claude-tui` | 40x150 | a live Claude Code session answering arithmetic | **relative** cursor motion (CHA/CUU/CUD/CUF/CUB), 5.8k non-ASCII runes, an OSC 0 title per spinner tick, charset select, XTVERSION and DA1 queries |
+| `codex-tui` | 40x150 | OpenAI Codex answering arithmetic | boxed panels and a bordered composer; the densest CSI stream here (19k in 256 KB) |
 | `conpty-ssh` | 36x173 | bash over ssh, hosted by Windows `cmd.exe` | a third emitter: everything arrives as SGR runs over printable text, no OSC at all |
 | `herdr-tui` | 36x173 | the herdr multiplexer repainting a pane | **absolute** cursor motion (CUP ×5127), and the only source of **OSC 8 hyperlinks** |
+| `opencode-tui` | 40x150 | opencode driven by keystrokes only, no provider configured | command palette, tab switching, input editing — the Kitty keyboard protocol (`CSI = u` / `? u` / `< u`) and OSC 1337/99 live here |
 | `torture` | 40x150 | a script written for this purpose | SGR attrs + 16/256/truecolor, CJK/combining/emoji, DECSTBM, IL/DL/ICH/DCH, TBC/HTS, autowrap off/on, EL/ED |
 | `vim-split` | 40x150 | vim with a vertical split, scrolled ^F/^B/j | DECSTBM in anger, DA2/DSR queries, window ops (CSI t), DCS |
 
@@ -44,10 +47,19 @@ Three things to know before using them:
 why both are here: a renderer that only ever meets one of them will look
 correct and be wrong on the other.
 
-Across all seven there are **25 distinct CSI final bytes**, five OSC commands
-and seven ESC finals. That number is the useful one — it says the surface a
+Across all ten there are **35 distinct CSI final bytes**, ten OSC commands and
+seven ESC finals. That number is the useful one — it says the surface a
 renderer has to cover is enumerable, and it is a measurement rather than an
 estimate.
+
+The four agent corpora were captured in that order, and the count is the story:
+the first seven came to 25 CSI finals, and adding codex, agy and opencode took
+it to 35 — the newcomers brought the Kitty keyboard protocol (`CSI = u`,
+`? u`, `< u`, `> u`), `CSI q` cursor-shape and version queries, ECH, and OSC
+4/12/66/99/1337. **`vtgrid` implements none of those and rendered all three at
+100% parity on first contact**, which is the useful evidence: what a screen
+model must do with an unknown sequence is recognise its extent and skip it, and
+that is testable separately from implementing it.
 
 ## Keeping them publishable
 
@@ -93,10 +105,17 @@ output after it exits.
 
 ## Known gaps
 
-- **codex** and **agy** are not represented. Both are installed on the machine
-  these came from but were not running.
-- No sixel or kitty graphics, and no mouse reporting — nothing captured emitted
-  either. That is a fact about these captures, not about the agents.
+- **`opencode-tui` has no model output in it.** That capture came from an
+  install with no AI provider configured, so it is the TUI's chrome — palette,
+  tabs, input editing — driven by keystrokes alone. Its drawing style is real;
+  a streaming answer's would be a different shape and is not represented.
+- **`agy-tui` is 22 KB, not 256 KB.** Antigravity leaves the alternate screen
+  during startup, and the server replays only from that exit onward (the
+  alt-screen trap above), so the whole capture is what it drew afterwards.
+- No sixel or kitty graphics **payloads**, and no mouse reporting — nothing
+  captured emitted either, though OSC 1337 and OSC 99 (the iTerm2 and kitty
+  side-channels those features also travel on) do appear. That is a fact about
+  these captures, not about the agents.
 - `bash-scroll` is the only corpus with essentially no escape sequences. It is
   here for the cost profile — scrolling dominates rendering time — not for
   sequence coverage.

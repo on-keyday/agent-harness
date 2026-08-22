@@ -35,11 +35,14 @@ type vtCorpus struct {
 }
 
 var vtCorpora = []vtCorpus{
+	{"agy-tui", 40, 150, "Antigravity CLI (Gemini): banner, a permission prompt, and an interrupt"},
 	{"altscreen", 40, 150, "shell inside the alternate screen, captured before it exited"},
 	{"bash-scroll", 40, 150, "`seq 1 200000` — scrolled short lines, no escapes"},
 	{"claude-tui", 40, 150, "a live Claude Code session answering arithmetic: prompt box, spinner, relative cursor motion"},
+	{"codex-tui", 40, 150, "OpenAI Codex answering arithmetic: boxed panels and a bordered composer"},
 	{"conpty-ssh", 36, 173, "bash reached over ssh from Windows cmd.exe — the bytes pass through ConPTY"},
 	{"herdr-tui", 36, 173, "the herdr multiplexer repainting a pane that scrolls colored text"},
+	{"opencode-tui", 40, 150, "opencode driven by keystrokes only (no provider configured): command palette, tab switching, input editing"},
 	{"torture", 40, 150, "deliberate coverage: SGR, CJK, DECSTBM, IL/DL/ICH/DCH, tabs, autowrap"},
 	{"vim-split", 40, 150, "vim with a vertical split, scrolled with ^F/^B and j"},
 }
