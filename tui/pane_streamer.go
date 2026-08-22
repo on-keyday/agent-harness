@@ -3,18 +3,15 @@ package tui
 import (
 	"context"
 	"fmt"
-	"image/color"
-	"io"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
-	uv "github.com/charmbracelet/ultraviolet"
-	"github.com/charmbracelet/x/vt"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/vtgrid"
 	agentexec "github.com/on-keyday/objtrsf/exec"
 )
 
@@ -26,7 +23,7 @@ type PaneStreamer struct {
 	taskID string
 
 	mu      sync.Mutex
-	emu     *vt.Emulator
+	emu     *vtgrid.Terminal
 	cols    int
 	rows    int
 	err     error
@@ -56,8 +53,7 @@ func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
 	if defCols <= 0 {
 		defCols = 80
 	}
-	emu := vt.NewEmulator(defCols, defRows)
-	return &PaneStreamer{taskID: taskID, emu: emu, cols: defCols, rows: defRows}
+	return &PaneStreamer{taskID: taskID, emu: vtgrid.New(defCols, defRows), cols: defCols, rows: defRows}
 }
 
 func (p *PaneStreamer) TaskID() string { return p.taskID }
@@ -74,7 +70,7 @@ func (p *PaneStreamer) DiagLine() string {
 		return "diag: emu=nil (stopped)"
 	}
 	lc := lastContentRow(p.emu, p.cols, p.rows)
-	cur := p.emu.CursorPosition()
+	_, cy, _ := p.emu.Cursor()
 	errS := "-"
 	if p.err != nil {
 		errS = p.err.Error()
@@ -83,7 +79,7 @@ func (p *PaneStreamer) DiagLine() string {
 		}
 	}
 	return fmt.Sprintf("rx=%d rd=%d at=%d vtp=%d sz=%dx%d lc=%d cy=%d err=%s",
-		p.rxBytes, p.reads, p.attaches, p.vtPanics, p.cols, p.rows, lc, cur.Y, errS)
+		p.rxBytes, p.reads, p.attaches, p.vtPanics, p.cols, p.rows, lc, cy, errS)
 }
 
 func (p *PaneStreamer) Err() error {
@@ -96,20 +92,12 @@ func (p *PaneStreamer) Start(ctx context.Context, c *cli.Client) {
 	cctx, cancel := context.WithCancel(ctx)
 	p.mu.Lock()
 	p.cancel = cancel
-	emu := p.emu
 	p.mu.Unlock()
 
-	// x/vt answers DA1/DA2/DSR queries by writing to its own output side; drain
-	// and discard or emu.Write blocks forever (cli/snapshot_native.go pattern).
-	// This goroutine exits when emu.Close() (in Stop) makes emu.Read return an
-	// error — same lifecycle as the sibling in cli/snapshot_native.go, no
-	// separate stop channel to manage. Recover so a VT-layer panic can never
-	// take down the whole TUI.
-	go func() {
-		defer func() { _ = recover() }()
-		_, _ = io.Copy(io.Discard, emu)
-	}()
-
+	// No drain goroutine: the screen model answers no device queries, so it
+	// never writes anything back and there is nothing that could block a Write.
+	// x/vt did answer DA1/DA2/DSR on its own output side, which is why this
+	// used to run an io.Copy(io.Discard) beside every pane.
 	go p.pump(cctx, c)
 }
 
@@ -283,14 +271,16 @@ func sleepCtx(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// feed applies one chunk of PTY bytes to the emulator under the lock, resizing
-// first when the session's window size changed. It RECOVERS from panics inside
-// the VT emulator: x/vt can index out of range on some escape sequences — e.g. a
-// reverseIndex (ESC M) against a scroll region left stale by a resize panics in
-// ScrollDown/InsertLineArea (index N into a shorter buffer). A read-only
-// monitoring pane must never crash the whole TUI, so a bad sequence is swallowed
-// and the pump keeps going; the session's next full repaint recovers the view.
-// Returns false only if the emulator was already torn down (Stop raced).
+// feed applies one chunk of PTY bytes to the screen model under the lock,
+// resizing first when the session's window size changed. Returns false only if
+// the model was already torn down (Stop raced).
+//
+// The recover stays even though the panic it was written for is gone. It was
+// added for x/vt indexing out of range on a scroll against a region left stale
+// by a resize — vtgrid resets the region as part of resizing, and
+// TestResizeClampsScrollRegion holds it there. But a read-only monitoring pane
+// must never be able to take down the whole TUI, and that is worth a deferred
+// function whether or not a specific way in is known.
 func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -307,21 +297,14 @@ func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive boo
 	// panicking on every later scroll and the pane goes PERMANENTLY BLACK.
 	// Resetting the region lets the rest of the replay and live output render.
 	defer func() {
-		if r := recover(); r != nil && p.emu != nil {
+		if r := recover(); r != nil {
 			p.vtPanics++
-			func() {
-				defer func() { _ = recover() }() // the reset write must not re-panic out
-				p.emu.Write([]byte("\x1b[r"))
-			}()
 		}
 	}()
 	if resize {
+		// Resize clamps the scroll region itself, so the `ESC[r` that used to
+		// follow this call is gone with the emulator that needed it.
 		p.emu.Resize(cols, rows)
-		// Reset the scroll region (DECSTBM) to the new full screen. x/vt does
-		// not clamp a stale region on resize, which later panics in
-		// ScrollDown/reverseIndex when the old bottom margin exceeds the new
-		// height. The session re-establishes its own region on its next redraw.
-		p.emu.Write([]byte("\x1b[r"))
 		p.cols, p.rows = cols, rows
 	}
 	p.rxBytes += len(data)
@@ -360,10 +343,9 @@ func (p *PaneStreamer) Stop() {
 	p.mu.Lock()
 	cancel := p.cancel
 	stream := p.stream
-	emu := p.emu
 	p.cancel = nil
 	p.stream = nil
-	p.emu = nil
+	p.emu = nil      // nothing to close: the model owns no goroutine and no pipe
 	p.stopped = true // a pump still inside AttachSession will close its stream itself
 	p.mu.Unlock()
 	if cancel != nil {
@@ -371,9 +353,6 @@ func (p *PaneStreamer) Stop() {
 	}
 	if stream != nil {
 		_ = stream.Close()
-	}
-	if emu != nil {
-		_ = emu.Close()
 	}
 }
 
@@ -403,8 +382,8 @@ func (p *PaneStreamer) Render(width, height int) string {
 	// The last non-blank row handles both; max with the cursor keeps the live
 	// line visible if it sits below the last painted content.
 	bottom := lastContentRow(emu, cols, rows) + 1
-	if c := emu.CursorPosition().Y + 1; c > bottom {
-		bottom = c
+	if _, cy, _ := emu.Cursor(); cy+1 > bottom {
+		bottom = cy + 1
 	}
 	if bottom < 1 {
 		bottom = 1
@@ -460,13 +439,15 @@ func (p *PaneStreamer) Render(width, height int) string {
 				runKey = key
 				runStyle = cellLipgloss(cell)
 			}
-			if cell == nil || cell.Content == "" {
-				run.WriteByte(' ')
-				painted++
+			txt := emu.Text(cell)
+			if txt == "" {
+				// The continuation half of a wide glyph. The scan advances by
+				// the glyph's width so it is normally stepped over; guard
+				// anyway so a stray one cannot stall the loop.
 				x++
 				continue
 			}
-			run.WriteString(cell.Content)
+			run.WriteString(txt)
 			painted += w
 			x += w
 		}
@@ -477,73 +458,64 @@ func (p *PaneStreamer) Render(width, height int) string {
 
 // cellStyleKey is a cheap comparable identity for a cell's style, used to
 // coalesce equal-styled runs. "" is the default (unstyled) cell.
-func cellStyleKey(cell *uv.Cell) string {
-	if cell == nil {
-		return ""
-	}
-	s := cell.Style
-	fg, bg := paneColorHex(s.Fg), paneColorHex(s.Bg)
-	if fg == "" && bg == "" && s.Attrs == 0 && s.Underline == uv.UnderlineNone {
+//
+// The underline COLOUR is deliberately not in the key: lipgloss cannot express
+// one, so two cells differing only there render identically and splitting the
+// run would cost escapes for nothing.
+func cellStyleKey(cell vtgrid.Cell) string {
+	fg, bg := cell.FG.Hex(), cell.BG.Hex()
+	if fg == "" && bg == "" && cell.Attr == 0 && cell.Under == vtgrid.UnderlineNone {
 		return "" // unstyled: coalesce with default runs
 	}
-	return fmt.Sprintf("%s|%s|%d|%d", fg, bg, s.Attrs, s.Underline)
+	return fmt.Sprintf("%s|%s|%d|%d", fg, bg, cell.Attr, cell.Under)
 }
 
 // cellLipgloss builds the lipgloss style for a cell (fg/bg + notable attrs), so
 // a run rendered through it reproduces the session's colors and emphasis.
-func cellLipgloss(cell *uv.Cell) lipgloss.Style {
+//
+// Colours go through Hex(), which resolves a palette index for us; lipgloss
+// then downsamples to whatever the terminal actually supports. That resolution
+// is why a pane loses the distinction between `ESC[31m` and `ESC[38;5;1m` that
+// the model keeps — lipgloss re-encodes from a hex string and there is nowhere
+// to put the original spelling.
+func cellLipgloss(cell vtgrid.Cell) lipgloss.Style {
 	st := lipgloss.NewStyle()
-	if cell == nil {
-		return st
-	}
-	s := cell.Style
-	if h := paneColorHex(s.Fg); h != "" {
+	if h := cell.FG.Hex(); h != "" {
 		st = st.Foreground(lipgloss.Color(h))
 	}
-	if h := paneColorHex(s.Bg); h != "" {
+	if h := cell.BG.Hex(); h != "" {
 		st = st.Background(lipgloss.Color(h))
 	}
-	a := s.Attrs
-	if a&uv.AttrBold != 0 {
+	if cell.Attr&vtgrid.AttrBold != 0 {
 		st = st.Bold(true)
 	}
-	if a&uv.AttrFaint != 0 {
+	if cell.Attr&vtgrid.AttrFaint != 0 {
 		st = st.Faint(true)
 	}
-	if a&uv.AttrItalic != 0 {
+	if cell.Attr&vtgrid.AttrItalic != 0 {
 		st = st.Italic(true)
 	}
-	if a&uv.AttrReverse != 0 {
+	if cell.Attr&vtgrid.AttrReverse != 0 {
 		st = st.Reverse(true)
 	}
-	if a&uv.AttrStrikethrough != 0 {
+	if cell.Attr&vtgrid.AttrStrike != 0 {
 		st = st.Strikethrough(true)
 	}
-	if s.Underline != uv.UnderlineNone {
+	if cell.Under != vtgrid.UnderlineNone {
+		// lipgloss has one underline, so curly/dotted/dashed all render as a
+		// plain one. The model keeps which it was; this surface cannot show it.
 		st = st.Underline(true)
 	}
 	return st
 }
 
-// paneColorHex renders a cell color as #rrggbb, or "" for the terminal default
-// (nil). Every color.Color answers RGBA(), so 16/256/truecolor are uniform;
-// lipgloss downsamples #rrggbb to the terminal's real profile at render time.
-func paneColorHex(c color.Color) string {
-	if c == nil {
-		return ""
-	}
-	r, g, bl, _ := c.RGBA()
-	return fmt.Sprintf("#%02x%02x%02x", uint8(r>>8), uint8(g>>8), uint8(bl>>8))
-}
-
 // lastContentRow returns the highest row index that has any non-blank cell, or
 // -1 if the whole grid is blank. Scans from the bottom up and stops at the
 // first non-blank row, so it is cheap for the common full-screen case.
-func lastContentRow(emu *vt.Emulator, cols, rows int) int {
+func lastContentRow(term *vtgrid.Terminal, cols, rows int) int {
 	for y := rows - 1; y >= 0; y-- {
 		for x := 0; x < cols; x++ {
-			c := emu.CellAt(x, y)
-			if c != nil && c.Content != "" && c.Content != " " {
+			if c := term.CellAt(x, y); c.Rune != 0 && c.Rune != ' ' {
 				return y
 			}
 		}
@@ -551,9 +523,9 @@ func lastContentRow(emu *vt.Emulator, cols, rows int) int {
 	return -1
 }
 
-func cellPaneWidth(cell *uv.Cell) int {
-	if cell == nil || cell.Width < 1 {
+func cellPaneWidth(cell vtgrid.Cell) int {
+	if cell.Width < 1 {
 		return 1
 	}
-	return cell.Width
+	return int(cell.Width)
 }

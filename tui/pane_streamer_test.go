@@ -5,14 +5,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/charmbracelet/x/vt"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 // bottomLeftCrop renders the bottom-left region: given a 3-row emulator with
 // text on the last line, a 1-row crop must show that last line.
 func TestPaneStreamer_RenderBottomLeftCrop(t *testing.T) {
-	p := &PaneStreamer{emu: vt.NewEmulator(20, 3), cols: 20, rows: 3}
-	go drainEmu(p.emu) // mirror the production io.Copy(io.Discard, emu) drain
+	p := &PaneStreamer{emu: vtgrid.New(20, 3), cols: 20, rows: 3}
 	p.emu.Write([]byte("top\r\nmid\r\nbottom"))
 
 	out := p.Render(20, 1)
@@ -27,8 +26,7 @@ func TestPaneStreamer_RenderBottomLeftCrop(t *testing.T) {
 // A crop wider/taller than the grid renders the whole grid without panicking on
 // out-of-range CellAt (nil cells render as blanks).
 func TestPaneStreamer_RenderLargerThanGrid(t *testing.T) {
-	p := &PaneStreamer{emu: vt.NewEmulator(5, 2), cols: 5, rows: 2}
-	go drainEmu(p.emu)
+	p := &PaneStreamer{emu: vtgrid.New(5, 2), cols: 5, rows: 2}
 	p.emu.Write([]byte("ab\r\ncd"))
 	out := p.Render(10, 5) // larger than 5x2
 	if !strings.Contains(out, "ab") || !strings.Contains(out, "cd") {
@@ -48,13 +46,12 @@ func TestPaneStreamer_StopIdempotent(t *testing.T) {
 }
 
 // Render must hold p.mu across the whole CellAt scan, not just the
-// emu/cols/rows snapshot, because vt.Emulator has no internal locking of its
+// emu/cols/rows snapshot, because the screen model has no internal locking of its
 // own. The pump path writes to the emulator while holding p.mu (mirrored here
 // by the writer goroutine); an unlocked Render loop racing that Write is only
 // visible under -race. This test is meaningful ONLY with `go test -race`.
 func TestPaneStreamer_RenderRaceWithWrite(t *testing.T) {
-	p := &PaneStreamer{emu: vt.NewEmulator(20, 3), cols: 20, rows: 3}
-	go drainEmu(p.emu)
+	p := &PaneStreamer{emu: vtgrid.New(20, 3), cols: 20, rows: 3}
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -73,13 +70,4 @@ func TestPaneStreamer_RenderRaceWithWrite(t *testing.T) {
 		}
 	}()
 	wg.Wait()
-}
-
-func drainEmu(emu *vt.Emulator) {
-	buf := make([]byte, 4096)
-	for {
-		if _, err := emu.Read(buf); err != nil {
-			return
-		}
-	}
 }

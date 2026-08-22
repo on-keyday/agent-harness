@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/x/vt"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 // A VT panic during one feed (stale scroll region taller than the buffer) must
@@ -12,8 +12,7 @@ import (
 // recover, so the NEXT chunk of output renders. Regression for the reported
 // "reopen shows black panes that never recover".
 func TestPaneStreamer_NotStuckBlackAfterPanic(t *testing.T) {
-	p := &PaneStreamer{emu: vt.NewEmulator(80, 24), cols: 80, rows: 24}
-	defer p.emu.Close()
+	p := &PaneStreamer{emu: vtgrid.New(80, 24), cols: 80, rows: 24}
 
 	// Trigger the panic (region 1..58 on a 24-row buffer, then reverseIndex).
 	nasty := []byte("\x1b[1;58r\x1b[1;1H")

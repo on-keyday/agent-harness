@@ -6,17 +6,15 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/vt"
+	"github.com/on-keyday/agent-harness/vtgrid"
 )
 
 // widePaneStatic fills every emulator row with full-width CJK glyphs — the
 // content that used to make each crop line overshoot the cell width, wrap, and
 // inflate the pane past its budgeted height until the whole grid overflowed the
-// terminal (top rows clipped by lipgloss.Place). Static text triggers no VT
-// query responses, so no drain goroutine is needed; the emulator is Closed by
-// the caller to avoid leaks.
+// terminal (top rows clipped by lipgloss.Place).
 func widePaneStatic(cols, rows int) *PaneStreamer {
-	p := &PaneStreamer{emu: vt.NewEmulator(cols, rows), cols: cols, rows: rows}
+	p := &PaneStreamer{emu: vtgrid.New(cols, rows), cols: cols, rows: rows}
 	var ls []string
 	for i := 0; i < rows; i++ {
 		ls = append(ls, strings.Repeat("あ", cols/2))
@@ -40,9 +38,6 @@ func TestGridView_NeverExceedsTerminal(t *testing.T) {
 				if gh, gw := lipgloss.Height(v), lipgloss.Width(v); gh > H || gw > W {
 					fails = append(fails, fmt.Sprintf("W=%d H=%d n=%d -> view %dx%d (over h+%d w+%d)", W, H, n, gw, gh, gh-H, gw-W))
 				}
-				for _, p := range panes {
-					_ = p.emu.Close()
-				}
 			}
 		}
 	}
@@ -52,8 +47,7 @@ func TestGridView_NeverExceedsTerminal(t *testing.T) {
 }
 
 func TestPaneStreamer_RenderWidthGuaranteeAscii(t *testing.T) {
-	p := &PaneStreamer{emu: vt.NewEmulator(20, 1), cols: 20, rows: 1}
-	defer p.emu.Close()
+	p := &PaneStreamer{emu: vtgrid.New(20, 1), cols: 20, rows: 1}
 	p.emu.Write([]byte("hello world"))
 	out := p.Render(20, 1)
 	if !strings.Contains(out, "hello world") {

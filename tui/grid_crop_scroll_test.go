@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"github.com/charmbracelet/x/vt"
+	"github.com/on-keyday/agent-harness/vtgrid"
 	"strings"
 	"testing"
 )
@@ -10,8 +10,7 @@ import (
 // was moved UP (common in full-screen TUIs / claude) must still show the recent
 // BOTTOM content, not the old top. Cursor-only anchoring regresses this.
 func TestPaneStreamer_ScrolledCursorMovedUp(t *testing.T) {
-	p := &PaneStreamer{emu: vt.NewEmulator(80, 40), cols: 80, rows: 40}
-	defer p.emu.Close()
+	p := &PaneStreamer{emu: vtgrid.New(80, 40), cols: 80, rows: 40}
 	var lines []string
 	for i := 1; i <= 100; i++ {
 		lines = append(lines, "LINE_"+itoa(i))
