@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
+	"github.com/on-keyday/agent-harness/vtgrid"
 	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
 )
@@ -162,6 +163,18 @@ type SessionMux struct {
 	ring   *RingBuffer
 	modes  *modeTracker
 
+	// screen is the session's terminal state as a grid, fed from the same
+	// frames the ring gets. It exists from the mux's first byte rather than
+	// from the first attach, and that is the point: its whole value is having
+	// seen output the ring has since evicted, so one created later could only
+	// be seeded from the ring — which is the ring with extra steps.
+	//
+	// Its own mutex rather than m.mu, for the reason modeTracker has one: the
+	// feed sits on runnerPump's hot path, and m.mu is held by fan-out and by
+	// attach. vtgrid.Terminal has no internal locking of its own.
+	screenMu sync.Mutex
+	screen   *vtgrid.Terminal
+
 	// runnerWriteMu serializes writes to the runner stream and keeps them
 	// frame-atomic. With multi-writer (one control tui + N cowriters all
 	// forwarding input), an unsynchronised write could interleave a cowriter
@@ -217,12 +230,20 @@ type SessionMux struct {
 func NewSessionMux(parentCtx context.Context, taskID string, runner trsf.BidirectionalStream, ring *RingBuffer, hooks SessionHooks) *SessionMux {
 	ctx, cancel := context.WithCancel(parentCtx)
 	m := &SessionMux{
-		ctx:         ctx,
-		cancel:      cancel,
-		taskID:      taskID,
-		runner:      runner,
-		ring:        ring,
-		modes:       newModeTracker(),
+		ctx:    ctx,
+		cancel: cancel,
+		taskID: taskID,
+		runner: runner,
+		ring:   ring,
+		modes:  newModeTracker(),
+		// 80x24 because the server has no size to use: the PTY's size reaches
+		// it only as a TerminalWindowSize frame — from the opener's
+		// applyInitialWindowSize, or from a client as it attaches — and the
+		// first of those arrives right after the stream opens. So the default
+		// is what the grid renders for the handful of bytes before anyone has
+		// said, and the conventional terminal size is the honest answer to
+		// "what does this session believe it is" in that window.
+		screen:      vtgrid.New(80, 24),
 		stopped:     make(chan struct{}),
 		viewers:     make(map[*viewerConn]struct{}),
 		onAttach:    hooks.OnAttach,
@@ -288,6 +309,9 @@ func (m *SessionMux) runnerPump() {
 			switch frame.FrameType(frameBytes[0]) {
 			case frame.FrameType_Stdout, frame.FrameType_Stderr:
 				m.modes.feed(frameBytes[frameHeaderSize:])
+				m.screenMu.Lock()
+				_, _ = m.screen.Write(frameBytes[frameHeaderSize:])
+				m.screenMu.Unlock()
 				m.lastOutput.Store(time.Now().UnixNano())
 			}
 		}
@@ -690,7 +714,31 @@ func (m *SessionMux) applyWinSizeFrame(fb []byte) error {
 	m.lastWinSize = cp
 	m.fanoutToViewersLocked(cp)
 	m.mu.Unlock()
+	// The grid resizes here rather than at either caller, because this is where
+	// the two entry points meet: a control client's frame and — while the
+	// control seat is empty — an exec_resize observer's. A resize landing
+	// between two feeds is what a real terminal does.
+	if cols, rows, ok := winSizeOf(fb); ok && cols > 0 && rows > 0 {
+		m.screenMu.Lock()
+		m.screen.Resize(cols, rows)
+		m.screenMu.Unlock()
+	}
 	return m.writeFrameToRunner(fb)
+}
+
+// screenRepaint returns the bytes that reconstruct the session's current screen
+// on an observer, whatever state that observer is in.
+func (m *SessionMux) screenRepaint() []byte {
+	m.screenMu.Lock()
+	defer m.screenMu.Unlock()
+	return m.screen.Repaint()
+}
+
+// screenSize reports the grid's current dimensions.
+func (m *SessionMux) screenSize() (cols, rows int) {
+	m.screenMu.Lock()
+	defer m.screenMu.Unlock()
+	return m.screen.Size()
 }
 
 // writeFrameToRunner writes one complete frame to the runner under
@@ -701,17 +749,32 @@ func (m *SessionMux) writeFrameToRunner(fb []byte) error {
 	return m.runner.AppendData(false, fb)
 }
 
-// frameIsWinSize reports whether fb is a complete TerminalWindowSize control frame.
-func frameIsWinSize(fb []byte) bool {
+// winSizeOf decodes fb as a TerminalWindowSize control frame, reporting false
+// for anything else. Both callers need the same decode — one to route the
+// frame, one to resize the grid — so it happens once.
+func winSizeOf(fb []byte) (cols, rows int, ok bool) {
 	if len(fb) < frameHeaderSize || frame.FrameType(fb[0]) != frame.FrameType_Control {
-		return false
+		return 0, 0, false
 	}
 	f := &frame.Frame{}
 	if err := f.Read(bytes.NewReader(fb)); err != nil {
-		return false
+		return 0, 0, false
 	}
 	ctrl := f.Control()
-	return ctrl != nil && ctrl.Type == frame.ControlType_TerminalWindowSize
+	if ctrl == nil || ctrl.Type != frame.ControlType_TerminalWindowSize {
+		return 0, 0, false
+	}
+	ws := ctrl.TerminalWindowSize()
+	if ws == nil {
+		return 0, 0, false
+	}
+	return int(ws.Columns), int(ws.Rows), true
+}
+
+// frameIsWinSize reports whether fb is a complete TerminalWindowSize control frame.
+func frameIsWinSize(fb []byte) bool {
+	_, _, ok := winSizeOf(fb)
+	return ok
 }
 
 // carryTail copies a partial-frame remainder off the read buffer so a later
