@@ -70,7 +70,7 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 
 	settle := 1500 * time.Millisecond
 
-	raw, synth, err := c1.SessionSnapshotRaw(context.Background(), taskIDHex, settle)
+	raw, synth, err := c1.SessionSnapshotRaw(context.Background(), taskIDHex, settle, false)
 	if err != nil {
 		t.Fatalf("SessionSnapshotRaw: %v", err)
 	}

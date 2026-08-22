@@ -203,6 +203,13 @@ when the foreground IS a shell.
   actual bytes when the rendered text looks wrong. Not combinable with
   `--style`/`--color`/`--json` (those describe the VT render; this is a
   different artifact); `--rows/--cols` are ignored.
+  It shows **only what the PTY produced**. The server also replays bytes it
+  synthesised — a terminal-mode preamble and a screen repaint built from its own
+  model of the screen — and those are withheld, with their size reported on
+  stderr so the omission is visible. **`--with-synth`** includes them, in the
+  position they arrived. Reach for it when the synthesised bytes ARE the
+  subject: debugging why a reattached screen looks wrong is exactly the case
+  where the bytes `--raw` normally omits are the ones you came to read.
 - **`--detect`** judges what STATE the screen shows instead of leaving you to
   read it: `working` / `blocked` / `idle` / `unknown`, plus the rule that
   decided and the text that rule read. **`blocked` means waiting on a HUMAN** —

@@ -35,7 +35,7 @@ import (
 //     function used to run a discard goroutine for exactly that. vtgrid never
 //     emits a byte, so there is nothing to drain and nothing to close.
 func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vtgrid.Terminal, string, int, int, error) {
-	captured, rows, cols, ok, _, err := c.CollectRaw(ctx, taskIDHex, settle)
+	captured, rows, cols, ok, _, err := c.CollectRaw(ctx, taskIDHex, settle, false)
 	if err != nil {
 		return nil, "", 0, 0, err
 	}
@@ -103,8 +103,8 @@ func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows,
 // rendering it. Unlike SessionSnapshot's flattened text, the result can be
 // written straight to a real terminal to reproduce the screen exactly, or
 // diffed byte-for-byte when the rendered text looks wrong.
-func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settle time.Duration) ([]byte, int, error) {
-	captured, _, _, _, synthesised, err := c.CollectRaw(ctx, taskIDHex, settle)
+func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settle time.Duration, includeSynth bool) ([]byte, int, error) {
+	captured, _, _, _, synthesised, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
 	if err != nil {
 		return nil, 0, err
 	}

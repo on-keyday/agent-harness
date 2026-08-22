@@ -20,16 +20,17 @@ import (
 // WebUI preview (which renders them in the browser's xterm instead — the VT
 // emulator stays native-only).
 //
-// synthesised reports how many bytes of SERVER-invented replay were seen and
-// withheld from captured — the mode preamble and the screen repaint. They are
-// counted rather than dropped silently so a caller can say what it did not show.
+// synthesised reports how many bytes of SERVER-invented replay were seen — the
+// mode preamble and the screen repaint. They are counted whether or not they
+// are kept, so a caller can always say what was there; includeSynth decides
+// whether they also appear IN captured, interleaved where they arrived.
 //
 // This file is untagged: exec/frame is untagged too, so the same frame reader
 // serves native and js builds.
 // It wraps attachSessionRPC directly instead of AttachSession because the two
 // builds define AttachSession with different signatures (the js variant
 // installs the browser xterm singleton — the wrong tool for a peek).
-func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.Duration) (captured []byte, rows, cols uint16, hasSize bool, synthesised int, err error) {
+func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.Duration, includeSynth bool) (captured []byte, rows, cols uint16, hasSize bool, synthesised int, err error) {
 	// Deliberately kind-agnostic: this is the low-level "give me the replay
 	// bytes" read, and for an event-stream task those bytes are raw NDJSON —
 	// which is exactly what `session snapshot --raw` means there. The VT-render
@@ -73,6 +74,16 @@ func (c *Client) CollectRaw(ctx context.Context, taskIDHex string, settle time.D
 				if d := f.Data(); d != nil {
 					mu.Lock()
 					synth += len(*d)
+					// includeSynth keeps them IN, in place. Excluding them is
+					// the right default for "show me what the PTY produced",
+					// but it is the wrong answer for the one debugging session
+					// that is about the synthesised bytes themselves — which is
+					// exactly when someone reaches for raw output. Dropping
+					// them unconditionally would force that person off this
+					// tool and onto a live attach to see what the server sent.
+					if includeSynth {
+						data = append(data, (*d)...)
+					}
 					mu.Unlock()
 				}
 			case frame.FrameType_Control:

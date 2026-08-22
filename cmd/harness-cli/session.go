@@ -319,6 +319,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
 	style := fs.Bool("style", false, "also print attribute spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
 	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
+	withSynth := fs.Bool("with-synth", false, "with --raw: ALSO emit the server-synthesised replay bytes (mode preamble, screen repaint), interleaved where they arrived, instead of withholding them. For debugging the replay itself — which is the one case where the bytes --raw normally omits are the bytes you came to look at")
 	raw := fs.Bool("raw", false, "write the verbatim PTY replay bytes to stdout instead of the VT-rendered screen — ONLY bytes the PTY emitted: the server's own replay additions (mode preamble, screen repaint) are withheld and their size reported on stderr — cat into a real terminal to reproduce it exactly; --rows/--cols are ignored and --style/--color are not allowed")
 	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,title,cursor{x,y,visible},alt_screen,attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report. cursor and alt_screen are terminal state rather than cells and appear only here: the text forms print the screen, which cannot show where the cursor is or which buffer it is on")
 	ansi := fs.Bool("ansi", false, "re-emit the screen WITH its colours and attributes instead of as plain text — for a person looking at it, where --style/--color describe the styling in a list beside a colourless screen. Unlike --raw this is the final screen, not the whole replay: one screenful, not a megabyte of scrollback")
@@ -336,6 +337,11 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	// rather than a no-op.
 	if !*detect && flagExplicitlySet(fs, "detect-agent") {
 		return fmt.Errorf("--detect-agent takes effect only with --detect")
+	}
+	// Same rule as --detect-agent below: an option that silently does nothing is
+	// the failure this repo keeps re-fixing.
+	if *withSynth && !*raw {
+		return fmt.Errorf("--with-synth takes effect only with --raw")
 	}
 	if *raw && (*style || *colorOut) {
 		return fmt.Errorf("--raw cannot be combined with --style/--color (those report the VT render, which --raw bypasses)")
@@ -373,18 +379,23 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	defer c.Close()
 
 	if *raw {
-		b, synth, err := c.SessionSnapshotRaw(ctx, taskIDHex, time.Duration(*settleMs)*time.Millisecond)
+		b, synth, err := c.SessionSnapshotRaw(ctx, taskIDHex,
+			time.Duration(*settleMs)*time.Millisecond, *withSynth)
 		if err != nil {
 			return err
 		}
-		// The count goes to stderr, so a pipe still receives exactly the PTY
-		// bytes. Reporting it rather than dropping it silently is the point:
-		// what was withheld is server-invented replay, and a reader looking at
-		// raw bytes because the render looked wrong should know some were held
-		// back and how many.
-		if synth > 0 {
+		// The note goes to stderr, so a pipe still receives exactly the bytes
+		// asked for. Saying it rather than staying silent is the point: a reader
+		// who reached for raw output because the render looked wrong needs to
+		// know whether what they are holding is only the PTY's bytes, and that
+		// --with-synth exists when the server's own are the subject.
+		switch {
+		case synth > 0 && *withSynth:
+			fmt.Fprintf(os.Stderr, "harness-cli: %d of these bytes are server-synthesised replay "+
+				"(mode preamble and screen repaint), not PTY output\n", synth)
+		case synth > 0:
 			fmt.Fprintf(os.Stderr, "harness-cli: withheld %d bytes of server-synthesised replay "+
-				"(mode preamble and screen repaint); these were never emitted by the PTY\n", synth)
+				"(mode preamble and screen repaint); pass --with-synth to include them\n", synth)
 		}
 		_, err = os.Stdout.Write(b)
 		return err
