@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/objtrsf/exec/frame"
 )
 
 func TestModeTracker_BasicAndLastValueWins(t *testing.T) {
@@ -143,12 +145,18 @@ func TestSessionMux_AttachRestoresEvictedCursorMode(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	// Replay must be: a synthesised stdout frame re-hiding the cursor, then the
-	// surviving bulk frame.
-	wantPreamble := makeWireFrame(1, []byte("\x1b[?25l"))
-	want := append(append([]byte{}, wantPreamble...), bulk...)
-	got := tui.WaitWritten(t, len(want))
-	if !bytes.Equal(got, want) {
-		t.Fatalf("replay\n got=%q\nwant=%q", got, want)
+	// Replay must re-hide the cursor and then deliver the surviving bulk frame.
+	//
+	// The preamble is a SYNTH frame, not a Stdout one, and that is the point of
+	// asserting its type here rather than filtering it out: it is a byte
+	// sequence this server invented, and `session snapshot --raw` promises to
+	// show only what the PTY produced.
+	wantPreamble := makeWireFrame(byte(frame.FrameType_Synth), []byte("\x1b[?25l"))
+	got := tui.WaitWritten(t, len(wantPreamble)+len(bulk))
+	if !bytes.HasPrefix(got, wantPreamble) {
+		t.Fatalf("replay does not start with a synth-framed cursor preamble\n got=%q\nwant prefix=%q", got, wantPreamble)
+	}
+	if pty := stripSynth(t, got); !bytes.Equal(pty, bulk) {
+		t.Fatalf("PTY bytes in the replay\n got=%q\nwant=%q", pty, bulk)
 	}
 }

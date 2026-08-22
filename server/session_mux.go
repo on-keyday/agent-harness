@@ -119,8 +119,25 @@ func capReplayTail(data []byte, limit uint32) []byte {
 // forwards and the ring stores, so a synthesised frame is indistinguishable
 // from a live one to the client's parser.
 func encodeStdoutFrame(payload []byte) []byte {
+	return encodeFrame(frame.FrameType_Stdout, payload)
+}
+
+// encodeSynthFrame wraps payload as a Synth frame: bytes this SERVER invented —
+// a terminal-mode preamble, a screen repaint — rather than bytes the PTY
+// emitted.
+//
+// They reach the terminal exactly like output and at exactly this position in
+// the stream, so the type changes nothing about where they go. It exists so a
+// reader that cares which is which can tell — `session snapshot --raw` promises
+// the bytes the process actually produced, and cannot keep that promise if
+// invented ones wear the same label.
+func encodeSynthFrame(payload []byte) []byte {
+	return encodeFrame(frame.FrameType_Synth, payload)
+}
+
+func encodeFrame(typ frame.FrameType, payload []byte) []byte {
 	out := make([]byte, frameHeaderSize+len(payload))
-	out[0] = byte(frame.FrameType_Stdout)
+	out[0] = byte(typ)
 	binary.BigEndian.PutUint32(out[1:5], uint32(len(payload)))
 	copy(out[frameHeaderSize:], payload)
 	return out
@@ -393,9 +410,15 @@ func (m *SessionMux) Attach(ctx context.Context, tui trsf.BidirectionalStream) e
 	// exactly like live ones, so the new emulator starts from the right state.
 	var replay []byte
 	if pre := m.modes.preamble(); len(pre) > 0 {
-		replay = append(replay, encodeStdoutFrame(pre)...)
+		replay = append(replay, encodeSynthFrame(pre)...)
 	}
 	replay = append(replay, m.replaySnapshot()...)
+	// The screen last, so it overwrites whatever the replayed history left on
+	// it. Never capped: a replay limit bounds HISTORY, and the screen is not
+	// history.
+	if rp := m.screenRepaint(); len(rp) > 0 {
+		replay = append(replay, encodeSynthFrame(rp)...)
+	}
 	if len(replay) > 0 {
 		if err := tui.AppendData(false, replay); err != nil {
 			m.mu.Lock()
@@ -465,7 +488,7 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 		replay = append(replay, m.lastWinSize...)
 	}
 	if pre := m.modes.preamble(); len(pre) > 0 {
-		replay = append(replay, encodeStdoutFrame(pre)...)
+		replay = append(replay, encodeSynthFrame(pre)...)
 	}
 	// The winsize + mode preamble above are always sent in full (small, and the
 	// preamble carries the alt-screen/DEC-mode state). Only the ring SNAPSHOT is
@@ -473,16 +496,35 @@ func (m *SessionMux) attachObserver(stream trsf.BidirectionalStream, forwardInpu
 	// just the last replayLimit bytes, frame-aligned, instead of the whole ~1 MiB
 	// ring it would never render.
 	replay = append(replay, capReplayTail(m.replaySnapshot(), replayLimit)...)
+	// Outside the cap, for the same reason as the control path: replayLimit is
+	// how much history this observer wants, and the screen is not history. A
+	// monitoring pane that asks for none still gets a correct screen.
+	if rp := m.screenRepaint(); len(rp) > 0 {
+		replay = append(replay, encodeSynthFrame(rp)...)
+	}
+	// The replay is QUEUED, not written here, and it goes in while m.mu is
+	// still held. That is what keeps it ahead of live frames: runnerPump's
+	// fan-out needs the same lock to enqueue anything, so nothing can slip in
+	// front of an entry made under it. Ordering comes from the lock rather than
+	// from writing first.
+	//
+	// It used to be a synchronous AppendData, which was survivable only while
+	// the replay could be empty — an attach to a session with nothing buffered
+	// wrote nothing and could not block. The screen repaint is never empty (a
+	// blank 80x24 screen still costs ~380 bytes), so that write would now
+	// happen on EVERY attach and an observer that cannot take it would wedge
+	// the attach call itself. This file's policy is that an observer which
+	// cannot keep up is dropped and never blocks anyone, and the queue is where
+	// that policy lives.
+	//
+	// The cost is that a doomed observer now fails asynchronously, by being
+	// dropped, instead of returning an error from the attach. v.ch is fresh
+	// here, so the send below cannot fail for want of room.
+	if len(replay) > 0 {
+		v.ch <- replay
+	}
 	m.mu.Unlock()
 
-	// Replay BEFORE starting the output pump, so replayed bytes always precede
-	// live frames (live frames buffer in v.ch meanwhile).
-	if len(replay) > 0 {
-		if err := stream.AppendData(false, replay); err != nil {
-			m.dropViewer(v)
-			return err
-		}
-	}
 	go m.viewerOutputPump(vctx, v)
 	go m.observerInputPump(vctx, v)
 	// Announce only once the observer is actually streaming, so a subscriber

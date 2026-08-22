@@ -51,7 +51,7 @@ func TestSessionMux_DetachReattach_ForwardsOutput(t *testing.T) {
 
 	// Replay should land first: frameAlpha ++ frameBeta.
 	expectedReplay := append(append([]byte{}, frameAlpha...), frameBeta...)
-	got := tui2.WaitWritten(t, len(expectedReplay))
+	got := waitPTY(t, tui2, len(expectedReplay))
 	if !bytes.Equal(got, expectedReplay) {
 		t.Fatalf("replay got %q want %q", got, expectedReplay)
 	}
@@ -59,7 +59,7 @@ func TestSessionMux_DetachReattach_ForwardsOutput(t *testing.T) {
 	// Post-reattach LIVE frame must reach tui2.
 	runnerStream.QueueRead(frameGamma)
 	expectedAll := append(append([]byte{}, expectedReplay...), frameGamma...)
-	got2 := tui2.WaitWritten(t, len(expectedAll))
+	got2 := waitPTY(t, tui2, len(expectedAll))
 	if !bytes.Equal(got2, expectedAll) {
 		t.Fatalf("post-reattach forward: got %q want %q", got2, expectedAll)
 	}

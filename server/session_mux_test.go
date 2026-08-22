@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/on-keyday/objtrsf/exec/frame"
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
@@ -229,6 +230,47 @@ func waitFor(t *testing.T, cond func() bool) {
 // makeWireFrame builds a wire-encoded exec/frame frame: 1 byte Type + 4
 // byte big-endian Len + payload. Type value is opaque from the server's
 // perspective; SessionMux only cares about boundaries.
+// stripSynth removes every server-synthesised frame — the mode preamble and the
+// screen repaint an attach replay carries — leaving the bytes the PTY actually
+// produced.
+//
+// The tests below assert on PTY output and always did; filtering by frame TYPE
+// is how they keep doing so without either padding every expectation with a
+// screen they are not about, or matching on lengths that would drift the next
+// time the repaint changes shape.
+func stripSynth(t *testing.T, b []byte) []byte {
+	t.Helper()
+	var out []byte
+	for off := 0; off+5 <= len(b); {
+		total := 5 + int(binary.BigEndian.Uint32(b[off+1:off+5]))
+		if off+total > len(b) {
+			break // partial trailing frame; the caller is still waiting for it
+		}
+		if b[off] != byte(frame.FrameType_Synth) {
+			out = append(out, b[off:off+total]...)
+		}
+		off += total
+	}
+	return out
+}
+
+// waitPTY blocks until at least n bytes of PTY output have been written,
+// ignoring synthesised frames, and returns them.
+func waitPTY(t *testing.T, f *fakeBidiStream, n int) []byte {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		got := stripSynth(t, f.Written())
+		if len(got) >= n {
+			return got
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waitPTY: timeout waiting for %d PTY bytes, got %d (%q)", n, len(got), got)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
 func makeWireFrame(typ byte, payload []byte) []byte {
 	out := make([]byte, frameHeaderSize+len(payload))
 	out[0] = typ
@@ -253,7 +295,7 @@ func TestSessionMux_AttachReplaysRingBuffer(t *testing.T) {
 		t.Fatalf("Attach: %v", err)
 	}
 
-	got := tui.WaitWritten(t, len(wire))
+	got := waitPTY(t, tui, len(wire))
 	if !bytes.Equal(got, wire) {
 		t.Fatalf("replay got %q want %q", got, wire)
 	}
@@ -322,7 +364,7 @@ func TestSessionMux_AttachViewer_ReplaysThenStreams(t *testing.T) {
 	if err := mux.AttachViewer(ctx, viewer, 0, false); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
-	if got := viewer.WaitWritten(t, len(pre)); !bytes.Equal(got, pre) {
+	if got := waitPTY(t, viewer, len(pre)); !bytes.Equal(got, pre) {
 		t.Fatalf("viewer replay got %q want %q", got, pre)
 	}
 	if mux.IsAttached() {
@@ -332,7 +374,7 @@ func TestSessionMux_AttachViewer_ReplaysThenStreams(t *testing.T) {
 	live := makeWireFrame(1, []byte("live"))
 	runner.QueueRead(live)
 	want := append(append([]byte{}, pre...), live...)
-	if got := viewer.WaitWritten(t, len(want)); !bytes.Equal(got, want) {
+	if got := waitPTY(t, viewer, len(want)); !bytes.Equal(got, want) {
 		t.Fatalf("viewer live got %q want %q", got, want)
 	}
 }
@@ -359,7 +401,7 @@ func TestSessionMux_FanOutWriterAndViewers(t *testing.T) {
 	fr := makeWireFrame(1, []byte("broadcast"))
 	runner.QueueRead(fr)
 	for name, s := range map[string]*fakeBidiStream{"writer": writer, "v1": v1, "v2": v2} {
-		if got := s.WaitWritten(t, len(fr)); !bytes.Equal(got, fr) {
+		if got := waitPTY(t, s, len(fr)); !bytes.Equal(got, fr) {
 			t.Fatalf("%s got %q want %q", name, got, fr)
 		}
 	}
@@ -388,7 +430,7 @@ func TestSessionMux_SlowViewerDroppedWithoutWedge(t *testing.T) {
 		want = append(want, fr...)
 		runner.QueueRead(fr)
 	}
-	if got := writer.WaitWritten(t, len(want)); !bytes.Equal(got, want) {
+	if got := waitPTY(t, writer, len(want)); !bytes.Equal(got, want) {
 		t.Fatalf("writer missing frames — pump wedged on slow viewer?")
 	}
 	waitFor(t, func() bool { return mux.ViewerCount() == 0 })
@@ -485,7 +527,7 @@ func TestSessionMux_TakeoverLeavesViewersStreaming(t *testing.T) {
 	// A live frame after the takeover still reaches the viewer.
 	fr := makeWireFrame(1, []byte("after-takeover"))
 	runner.QueueRead(fr)
-	if got := viewer.WaitWritten(t, len(fr)); !bytes.Equal(got, fr) {
+	if got := waitPTY(t, viewer, len(fr)); !bytes.Equal(got, fr) {
 		t.Fatalf("viewer stopped streaming after writer takeover: got %q want %q", got, fr)
 	}
 }

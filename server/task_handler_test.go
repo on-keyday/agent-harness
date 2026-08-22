@@ -943,6 +943,14 @@ func TestHandleOpenInteractive_RegistersSessionMux(t *testing.T) {
 	now := time.Now()
 
 	runnerConn := &fakeConn{id: objproto.MustParseConnectionID("ws:127.0.0.1:9200-1"), nextStreamID: 55}
+	// A runner stream that BLOCKS on read rather than the default noop one,
+	// which returns io.EOF immediately. With an instant EOF the mux's pump
+	// exits the moment it starts, Stop fires, and the session is unregistered
+	// while this test is still asserting it was registered — so the assertion
+	// below was only ever winning a race against a teardown the fixture itself
+	// triggered. A live stream is also what handleOpenInteractive is given in
+	// production, which is the situation this test means to describe.
+	runnerConn.nextBidi = newFakeStream(t)
 	h.Registry.Add(&RunnerEntry{
 		ID: "A", Hostname: "h", AllowedRoots: []string{"/repo"}, MaxTasks: 1,
 		ActiveTasks: map[string]struct{}{}, ConnectedAt: now, LastSeen: now,

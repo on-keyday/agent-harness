@@ -71,8 +71,10 @@ func TestSessionMux_AttachViewer_NoSizeWhenNoneSeen(t *testing.T) {
 	if err := mux.AttachViewer(ctx, viewer, 0, false); err != nil {
 		t.Fatalf("AttachViewer: %v", err)
 	}
-	// Replay should be exactly the ring content, no leading size frame.
-	if got := viewer.WaitWritten(t, len(pre)); !bytes.Equal(got, pre) {
+	// Replay should be exactly the ring content, no leading size frame. The
+	// screen repaint that now trails it is synthesised, and this test is about
+	// what the SESSION reported, so it is filtered rather than expected.
+	if got := waitPTY(t, viewer, len(pre)); !bytes.Equal(got, pre) {
 		t.Fatalf("replay got %q want %q (no size frame expected)", got, pre)
 	}
 }

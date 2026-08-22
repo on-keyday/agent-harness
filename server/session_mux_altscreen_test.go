@@ -40,7 +40,7 @@ func TestSessionMux_AttachAfterAltScreenExitSkipsEpisode(t *testing.T) {
 
 	// Session is on the primary screen (last 1049 was reset). modeTracker
 	// excludes alt-screen from the preamble, so replay is just the exit frame.
-	got := tui.WaitWritten(t, len(exit))
+	got := waitPTY(t, tui, len(exit))
 	if bytes.Contains(got, []byte("HTOP-EPISODE-CONTENT")) || bytes.Contains(got, []byte("MORE-HTOP-FRAME-FRAGMENTS")) {
 		t.Fatalf("replay leaked the dead alt-screen episode:\n got=%q", got)
 	}
@@ -75,10 +75,12 @@ func TestSessionMux_AttachWhileAltScreenLiveReplaysFull(t *testing.T) {
 	// Live alt-screen: the preamble re-enters the alt screen (ESC[?1049h) as its
 	// own stdout frame, then the full ring snapshot replays — no trimming while
 	// the app is live.
-	want := append([]byte{}, makeWireFrame(1, []byte("\x1b[?1049h"))...)
-	want = append(want, pre...)
+	// The preamble rides as a Synth frame now and waitPTY filters it out, so
+	// what remains to assert is the ring: the alt-screen entry the preamble
+	// re-establishes is checked by TestModeTracker_AltScreenLiveReentered.
+	want := append([]byte{}, pre...)
 	want = append(want, enter...)
-	got := tui.WaitWritten(t, len(want))
+	got := waitPTY(t, tui, len(want))
 	if !bytes.Equal(got, want) {
 		t.Fatalf("live alt-screen replay\n got=%q\nwant=%q (ESC[?1049h + full ring)", got, want)
 	}
