@@ -1,6 +1,4 @@
-//go:build !js
-
-package cli
+package vtgrid
 
 // Captured PTY byte streams and a measurement of what they exercise.
 //

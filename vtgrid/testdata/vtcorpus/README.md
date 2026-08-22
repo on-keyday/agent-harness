@@ -3,7 +3,7 @@
 Captured PTY byte streams, so that anything which renders a session screen can
 be checked against real terminal output instead of hand-written escapes: a
 replay-trimming heuristic, a different emulator, a purpose-built grid model.
-`cli/vtcorpus_test.go` loads them; `go test -run TestVTCorpusCoverage -v ./cli/`
+`vtgrid/vtcorpus_test.go` loads them; `go test -run TestVTCorpusCoverage -v ./vtgrid/`
 prints what each one exercises.
 
 ## How they were made
@@ -22,7 +22,7 @@ Three things to know before using them:
   which is exactly the situation the preamble exists to paper over.
 - **The size is not in the bytes.** `--raw` carries PTY output only; the size
   travels beside it. It is recorded per corpus in `vtCorpora`
-  (`cli/vtcorpus_test.go`) and repeated below. Render at a different size and
+  (`vtgrid/vtcorpus_test.go`) and repeated below. Render at a different size and
   the wrapping will not match what the app drew for.
 - **They were produced from neutral content on purpose.** A capture is a
   photograph of a terminal, and whatever was on that terminal came with it.
@@ -77,13 +77,13 @@ all of those. Three lessons are baked into how it is written:
 
 ```bash
 harness-cli session snapshot --raw --settle-ms 2500 <task-id> > /tmp/new.raw
-tail -c 262144 /tmp/new.raw | gzip -9 > cli/testdata/vtcorpus/<name>.raw.gz
+tail -c 262144 /tmp/new.raw | gzip -9 > vtgrid/testdata/vtcorpus/<name>.raw.gz
 ```
 
 Then add it to `vtCorpora` with the size the session reported
 (`session snapshot --json` prints `rows`/`cols`) and a line in the table above.
 A corpus with no recorded size is not usable for a differential check. Run
-`go test -run TestVTCorpus ./cli/` before committing.
+`go test -run TestVTCorpus ./vtgrid/` before committing.
 
 **Beware the alt-screen trap.** If the captured session ends by *leaving* the
 alternate screen, the server replays only from that exit onward
