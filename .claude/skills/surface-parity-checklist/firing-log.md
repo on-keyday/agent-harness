@@ -30,7 +30,7 @@ so: skipping the walk is itself a datum about when the trigger fails to fire.
 
 ## Entries
 
-### 2026-08-22 `0b59eb5` — cursor + alt_screen on the session snapshot object
+### 2026-08-22 `fe894b4` — cursor + alt_screen on the session snapshot object
 
 done:    10 (`session send --snapshot` shares `printSessionScreen`, so the two
          paths cannot render different objects — verified it is the only path,
