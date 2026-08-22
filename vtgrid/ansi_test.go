@@ -7,6 +7,7 @@ package vtgrid
 // of an agent's actual output is where they stop being.
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -53,13 +54,17 @@ func TestANSIRoundTrip(t *testing.T) {
 			for y := 0; y < rows; y++ {
 				for x := 0; x < cols; x++ {
 					a, b := src.CellAt(x, y), again.CellAt(x, y)
-					if a == b {
-						continue
+					// link and combining are indexes into each terminal's own
+					// side table, so they are meaningful only relative to it.
+					// Compare what they RESOLVE to; comparing the numbers would
+					// fail whenever two terminals interned in a different order,
+					// which is a difference in bookkeeping, not in the screen.
+					if describeCell(src, a) != describeCell(again, b) {
+						t.Errorf("cell (%d,%d) does not survive the round trip\n"+
+							"  before: %s\n  after : %s\n  row: %s",
+							x, y, describeCell(src, a), describeCell(again, b), clip(src.Lines()[y]))
+						return
 					}
-					t.Errorf("cell (%d,%d) does not survive the round trip\n"+
-						"  before: %+v\n  after : %+v\n  row: %s",
-						x, y, a, b, clip(src.Lines()[y]))
-					return
 				}
 			}
 		})
@@ -140,4 +145,12 @@ func TestANSIRowsDoNotDriftOnAFullWidthRow(t *testing.T) {
 	if got := again.Lines()[1]; !strings.HasPrefix(got, "xy") {
 		t.Errorf("row 1 = %q, want it to start at column 0 with \"xy\"", got)
 	}
+}
+
+// describeCell renders everything a cell means, with the side-table indexes
+// resolved so two terminals can be compared.
+func describeCell(t *Terminal, c Cell) string {
+	link, _ := t.Link(c)
+	return fmt.Sprintf("text=%q w=%d attr=%08b under=%d fg=%+v bg=%+v ulfg=%+v link=%q params=%q",
+		t.Text(c), c.Width, c.Attr, c.Under, c.FG, c.BG, c.UnderFG, link.URL, link.Params)
 }

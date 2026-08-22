@@ -378,15 +378,19 @@ func (t *Terminal) sgr(p csiParams) {
 		case c == 3:
 			t.pen.Attr |= AttrItalic
 		case c == 4:
-			// `4:0` turns underline off; `4:1`..`4:5` select a style this model
-			// does not distinguish, so any of them is simply "underlined".
-			if i+1 < len(p.n) && p.sub[i+1] && p.n[i+1] == 0 {
-				t.pen.Attr &^= AttrUnderline
-			} else {
-				t.pen.Attr |= AttrUnderline
+			// A sub-parameter selects the style: `4:0` off, `4:1` single,
+			// `4:2` double, `4:3` curly, `4:4` dotted, `4:5` dashed. Bare `4`
+			// is single.
+			t.pen.Under = UnderlineSingle
+			if i+1 < len(p.n) && p.sub[i+1] {
+				if u := p.n[i+1]; u <= int(UnderlineDashed) {
+					t.pen.Under = Underline(u)
+				}
 			}
-		case c == 5 || c == 6:
+		case c == 5:
 			t.pen.Attr |= AttrBlink
+		case c == 6:
+			t.pen.Attr |= AttrRapidBlink
 		case c == 7:
 			t.pen.Attr |= AttrReverse
 		case c == 8:
@@ -398,9 +402,10 @@ func (t *Terminal) sgr(p csiParams) {
 		case c == 23:
 			t.pen.Attr &^= AttrItalic
 		case c == 24:
-			t.pen.Attr &^= AttrUnderline
+			t.pen.Under = UnderlineNone
+			t.pen.UnderFG = Color{}
 		case c == 25:
-			t.pen.Attr &^= AttrBlink
+			t.pen.Attr &^= AttrBlink | AttrRapidBlink
 		case c == 27:
 			t.pen.Attr &^= AttrReverse
 		case c == 28:
@@ -420,12 +425,9 @@ func (t *Terminal) sgr(p csiParams) {
 		case c == 49:
 			t.pen.BG = Color{}
 		case c == 58:
-			// Underline colour. Not modelled, but it carries the same argument
-			// shapes as 38/48 and skipping the code alone would leave its
-			// arguments to be read as attributes — `58;5;1` became blink+bold.
-			i = t.extendedColor(p, i, nil)
+			i = t.extendedColor(p, i, &t.pen.UnderFG)
 		case c == 59:
-			// Default underline colour: no arguments.
+			t.pen.UnderFG = Color{}
 		case c >= 90 && c <= 97:
 			t.pen.FG = Basic(uint8(c - 90 + 8))
 		case c >= 100 && c <= 107:

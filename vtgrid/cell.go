@@ -12,11 +12,30 @@ const (
 	AttrBold Attr = 1 << iota
 	AttrFaint
 	AttrItalic
-	AttrUnderline
 	AttrBlink
+	// AttrRapidBlink is SGR 6, which is a different attribute from SGR 5 even
+	// though almost nothing distinguishes them visually. Folding the two loses
+	// which one the app asked for, and the point of this model is to hand back
+	// what arrived.
+	AttrRapidBlink
 	AttrReverse
 	AttrConceal
 	AttrStrike
+)
+
+// Underline is the style of a cell's underline. It is a small enum rather than
+// a bit in Attr because SGR 4 takes a sub-parameter selecting the style
+// (`4:3` is curly), and a bit cannot carry which one — the distinction spell
+// checkers and diagnostics use.
+type Underline uint8
+
+const (
+	UnderlineNone Underline = iota
+	UnderlineSingle
+	UnderlineDouble
+	UnderlineCurly
+	UnderlineDotted
+	UnderlineDashed
 )
 
 // ColorKind says how to read a Color's remaining fields. Default is not black:
@@ -68,12 +87,22 @@ func (c Color) IsDefault() bool { return c.Kind == ColorDefault }
 // rather than emit a second character, and a writer landing on one must clear
 // the pair. Modelling it as a cell (rather than leaving the grid ragged) keeps
 // column arithmetic exact, which is the whole reason a grid exists.
+// Two fields are INDEXES into side tables on the Terminal rather than values:
+// a hyperlink is a URL and a grapheme cluster is a run of runes, and putting
+// either in the cell means a string header — 16 bytes and a heap object — on
+// every one of the ~5,000 cells of a screen, whether or not it has one. Both
+// are rare and both repeat, so the Terminal interns them and the cell carries
+// a uint16; zero means none. Read them with Terminal.Link and Terminal.Text.
 type Cell struct {
-	Rune  rune
-	Width int8
-	Attr  Attr
-	FG    Color
-	BG    Color
+	Rune      rune
+	Width     int8
+	Attr      Attr
+	Under     Underline
+	FG        Color
+	BG        Color
+	UnderFG   Color
+	link      uint16
+	combining uint16
 }
 
 // blank is the cell an erase leaves behind. Erasing keeps the *background*
@@ -86,12 +115,20 @@ func (c Cell) IsBlank() bool { return c.Rune == ' ' || c.Rune == 0 }
 
 // pen is the current drawing state: what a newly written cell inherits.
 type pen struct {
-	Attr Attr
-	FG   Color
-	BG   Color
+	Attr    Attr
+	Under   Underline
+	FG      Color
+	BG      Color
+	UnderFG Color
+	link    uint16
 }
 
-func (p *pen) reset() { *p = pen{} }
+// reset clears what SGR controls — and only that. A hyperlink is NOT an SGR:
+// OSC 8 opens a scope that runs until the next OSC 8, and `ESC[0m` in the
+// middle of a link does not end it. Clearing it here dropped the link from
+// every cell that followed a reset, which is most of them, because an app
+// commonly writes `OSC 8` and then `ESC[0;…m` for the link's own styling.
+func (p *pen) reset() { *p = pen{link: p.link} }
 
 // cubeLevels are the six component values of the 6x6x6 colour cube that
 // occupies palette entries 16-231.

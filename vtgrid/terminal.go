@@ -22,16 +22,24 @@
 // already is the scrollback, and holding a second copy as cells is what makes
 // a general emulator expensive.
 //
+// A cell carries what a terminal cell carries: a rune and any combining marks,
+// its width, the SGR attributes, an underline STYLE (curly is not single),
+// foreground, background and underline colours, and the hyperlink it belongs
+// to. The two variable-length parts — the link's URL and the combining marks —
+// live in interned side tables so a cell stays a fixed 28 bytes; read them
+// through Terminal.Link and Terminal.Text.
+//
 // What it does not model, and why:
 //
-//   - Combining marks. A Cell holds one rune, not a grapheme cluster, so a
-//     zero-width mark is dropped rather than attached. Storing clusters costs a
-//     string header per cell.
 //   - Reflow on resize. Rewrapping needs to know which line breaks were soft;
 //     this model does not record that, so a resize keeps the top-left anchor
 //     and is approximate.
 //   - Sixel, kitty graphics, mouse reporting, and most DCS. Nothing in the
 //     corpora emits them; they are consumed as opaque strings.
+//   - Grapheme clustering beyond combining marks. A zero-width rune attaches
+//     to the glyph before it, which covers accents and voiced marks; ZWJ emoji
+//     sequences are not joined. Nothing in the corpora emits either, so this
+//     boundary is documented rather than measured.
 package vtgrid
 
 import (
@@ -75,6 +83,15 @@ type Terminal struct {
 	// one row, so it is the first thing to check when a render is off by a
 	// line.
 	pendingWrap bool
+
+	// links and combining are interned side tables; see sidetable.go.
+	links     []Link
+	linkIndex map[string]uint16
+	combining []string
+	combIndex map[string]uint16
+	// lastX/lastY is where the most recent glyph landed, so a combining mark
+	// can find the cell it belongs to.
+	lastX, lastY int
 
 	saved     savedCursor
 	savedAlt  savedCursor
@@ -125,7 +142,7 @@ func New(cols, rows int) *Terminal {
 	if rows < 1 {
 		rows = 1
 	}
-	t := &Terminal{cols: cols, rows: rows, autowrap: true, cursorVis: true}
+	t := &Terminal{cols: cols, rows: rows, autowrap: true, cursorVis: true, lastX: -1, lastY: -1}
 	t.pri = newScreen(cols, rows, Color{})
 	t.alt = newScreen(cols, rows, Color{})
 	t.scr = t.pri
@@ -182,11 +199,7 @@ func (t *Terminal) Lines() []string {
 			if c.Width == 0 {
 				continue // continuation of the wide glyph to the left
 			}
-			if c.Rune == 0 {
-				b.WriteByte(' ')
-				continue
-			}
-			b.WriteRune(c.Rune)
+			b.WriteString(t.Text(c))
 		}
 		out[y] = b.String()
 	}
@@ -390,9 +403,9 @@ func (t *Terminal) reverseIndex() {
 func (t *Terminal) print(r rune) {
 	w := runeWidth(r)
 	if w == 0 {
-		// Combining mark. A Cell holds one rune, so there is nowhere to attach
-		// it; dropping it is a known, documented divergence rather than a
-		// silent one.
+		// A combining mark belongs to the glyph before it, not to a cell of
+		// its own.
+		t.addCombining(r)
 		return
 	}
 	if t.pendingWrap {
@@ -418,9 +431,11 @@ func (t *Terminal) print(r rune) {
 	if t.x+1 < t.cols && row[t.x].Width == 2 {
 		row[t.x+1] = blank(t.pen.BG)
 	}
-	row[t.x] = Cell{Rune: r, Width: int8(w), Attr: t.pen.Attr, FG: t.pen.FG, BG: t.pen.BG}
+	row[t.x] = t.penCell(r, w)
+	t.lastX, t.lastY = t.x, t.y
 	if w == 2 && t.x+1 < t.cols {
-		row[t.x+1] = Cell{Width: 0, Attr: t.pen.Attr, FG: t.pen.FG, BG: t.pen.BG}
+		c := t.penCell(0, 0)
+		row[t.x+1] = c
 	}
 	t.x += w
 	if t.x >= t.cols {
@@ -545,8 +560,21 @@ func (t *Terminal) strAppend(b byte) {
 	}
 }
 
-// endString handles a completed OSC/DCS/APC/PM/SOS. Only OSC 0 and OSC 2 have
-// a grid-visible effect; the rest are consumed so their payload does not print.
+// penCell builds a cell from the current pen. Keeping it in one place is what
+// stops a new pen field from being carried by the glyph half of a wide pair and
+// not the continuation half.
+func (t *Terminal) penCell(r rune, w int) Cell {
+	return Cell{
+		Rune: r, Width: int8(w),
+		Attr: t.pen.Attr, Under: t.pen.Under,
+		FG: t.pen.FG, BG: t.pen.BG, UnderFG: t.pen.UnderFG,
+		link: t.pen.link,
+	}
+}
+
+// endString handles a completed OSC/DCS/APC/PM/SOS. Only OSC 0/2 (title) and
+// OSC 8 (hyperlink) have an effect; the rest are consumed so their payload does
+// not print.
 func (t *Terminal) endString() {
 	if t.strIntro != ']' {
 		return
@@ -562,5 +590,20 @@ func (t *Terminal) endString() {
 		if utf8.ValidString(title) {
 			t.title = title
 		}
+	case "8":
+		// `OSC 8 ; params ; URI ST` opens a hyperlink that every cell written
+		// afterwards belongs to; an EMPTY URI closes it. The params matter —
+		// `id=` is what lets a terminal treat two separated runs as one link —
+		// so they are kept rather than skipped past.
+		rest := s[i+1:]
+		j := strings.IndexByte(rest, ';')
+		if j < 0 {
+			return
+		}
+		params, uri := rest[:j], rest[j+1:]
+		if !utf8.ValidString(uri) || !utf8.ValidString(params) {
+			return
+		}
+		t.pen.link = t.internLink(Link{URL: uri, Params: params})
 	}
 }

@@ -54,26 +54,55 @@ func (t *Terminal) appendANSIRow(b *strings.Builder, y int) {
 	}
 	var cur pen
 	styled := false
+	var link uint16
 	for x := 0; x <= end; x++ {
 		c := row[x]
 		if c.Width == 0 {
 			continue // continuation of the wide glyph to the left
 		}
-		want := pen{Attr: c.Attr, FG: c.FG, BG: c.BG}
-		if want != cur {
-			b.WriteString(sgr(want))
+		want := pen{
+			Attr: c.Attr, Under: c.Under,
+			FG: c.FG, BG: c.BG, UnderFG: c.UnderFG,
+			link: c.link,
+		}
+		if want.link != link {
+			t.writeLinkSGR(b, want.link)
+			link = want.link
+		}
+		styleOnly := want
+		styleOnly.link = 0
+		curStyle := cur
+		curStyle.link = 0
+		if styleOnly != curStyle {
+			b.WriteString(sgr(styleOnly))
 			cur = want
-			styled = want != pen{}
+			styled = styleOnly != pen{}
 		}
-		if c.Rune == 0 {
-			b.WriteByte(' ')
-			continue
-		}
-		b.WriteRune(c.Rune)
+		b.WriteString(t.Text(c))
+	}
+	if link != 0 {
+		t.writeLinkSGR(b, 0)
 	}
 	if styled {
 		b.WriteString("\x1b[0m")
 	}
+}
+
+// writeLinkSGR opens or closes a hyperlink. OSC 8 is not an SGR at all — it is
+// a string sequence whose scope runs until the next one — so it is emitted
+// beside the style rather than folded into it, and a row that ends inside a
+// link closes it so the next row does not inherit one.
+func (t *Terminal) writeLinkSGR(b *strings.Builder, id uint16) {
+	b.WriteString("\x1b]8;")
+	if id != 0 && int(id) < len(t.links) {
+		l := t.links[id]
+		b.WriteString(l.Params)
+		b.WriteByte(';')
+		b.WriteString(l.URL)
+	} else {
+		b.WriteByte(';')
+	}
+	b.WriteString("\x1b\\")
 }
 
 // lastVisibleCell returns the index of the rightmost cell worth emitting, or -1
@@ -92,9 +121,19 @@ func lastVisibleCell(row []Cell) int {
 
 // isDefaultBlank reports whether a cell is indistinguishable from one that was
 // never written to.
+//
+// It compares against a blank cell WHOLE rather than listing the fields that
+// matter. The list form was here first and it was wrong twice: once when the
+// rule was "invisible" instead of "unstyled", and again when Under/UnderFG/link
+// were added and it kept checking only Attr/FG/BG, silently dropping an
+// underlined trailing space. A field added to Cell must not need this function
+// edited to stay correct.
 func isDefaultBlank(c Cell) bool {
-	return (c.Rune == 0 || c.Rune == ' ') && c.Width == 1 &&
-		c.Attr == 0 && c.FG.IsDefault() && c.BG.IsDefault()
+	if c.Rune != 0 && c.Rune != ' ' {
+		return false
+	}
+	c.Rune = ' '
+	return c == blank(Color{})
 }
 
 // sgr renders a complete pen state, always starting from a reset so the result
@@ -107,13 +146,24 @@ func sgr(p pen) string {
 		code string
 	}{
 		{AttrBold, ";1"}, {AttrFaint, ";2"}, {AttrItalic, ";3"},
-		{AttrUnderline, ";4"}, {AttrBlink, ";5"}, {AttrReverse, ";7"},
+		{AttrBlink, ";5"}, {AttrRapidBlink, ";6"}, {AttrReverse, ";7"},
 		{AttrConceal, ";8"}, {AttrStrike, ";9"},
 	} {
 		if p.Attr&m.a != 0 {
 			b.WriteString(m.code)
 		}
 	}
+	// Underline carries a style, so it is re-emitted in the sub-parameter form
+	// that can express one. A plain `4` would flatten curly to single.
+	switch p.Under {
+	case UnderlineNone:
+	case UnderlineSingle:
+		b.WriteString(";4")
+	default:
+		b.WriteString(";4:")
+		b.WriteString(strconv.Itoa(int(p.Under)))
+	}
+	appendColorSGR(&b, p.UnderFG, 0, 58, 0)
 	appendColorSGR(&b, p.FG, 30, 38, 90)
 	appendColorSGR(&b, p.BG, 40, 48, 100)
 	b.WriteByte('m')
@@ -129,6 +179,15 @@ func appendColorSGR(b *strings.Builder, c Color, base, ext, bright int) {
 	case ColorDefault:
 		return
 	case ColorBasic:
+		if base == 0 {
+			// No basic spelling exists for this slot (underline colour), so the
+			// extended form is the only way to say it.
+			b.WriteByte(';')
+			b.WriteString(strconv.Itoa(ext))
+			b.WriteString(";5;")
+			b.WriteString(strconv.Itoa(int(c.N)))
+			return
+		}
 		if n := int(c.N); n < 8 {
 			b.WriteByte(';')
 			b.WriteString(strconv.Itoa(base + n))

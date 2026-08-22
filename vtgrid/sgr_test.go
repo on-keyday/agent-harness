@@ -22,20 +22,30 @@ func penAt(t *testing.T, in string) Cell {
 
 func TestSGRSubParameters(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		in   string
-		want Attr
+		name  string
+		in    string
+		attr  Attr
+		under Underline
 	}{
-		{"plain underline", "\x1b[4mX", AttrUnderline},
-		{"semicolon really is two codes", "\x1b[4;3mX", AttrUnderline | AttrItalic},
-		{"styled underline is ONE attribute", "\x1b[4:3mX", AttrUnderline},
-		{"single styled underline", "\x1b[4:1mX", AttrUnderline},
-		{"4:0 turns underline off", "\x1b[4m\x1b[4:0mX", 0},
-		{"bold survives beside a styled underline", "\x1b[1;4:3mX", AttrBold | AttrUnderline},
+		{"plain underline", "\x1b[4mX", 0, UnderlineSingle},
+		{"semicolon really is two codes", "\x1b[4;3mX", AttrItalic, UnderlineSingle},
+		{"styled underline is ONE attribute", "\x1b[4:3mX", 0, UnderlineCurly},
+		{"single styled underline", "\x1b[4:1mX", 0, UnderlineSingle},
+		{"double via 4:2", "\x1b[4:2mX", 0, UnderlineDouble},
+		{"dotted and dashed", "\x1b[4:4mX", 0, UnderlineDotted},
+		{"4:0 turns underline off", "\x1b[4m\x1b[4:0mX", 0, UnderlineNone},
+		{"24 turns underline off", "\x1b[4:3m\x1b[24mX", 0, UnderlineNone},
+		{"bold survives beside a styled underline", "\x1b[1;4:3mX", AttrBold, UnderlineCurly},
+		{"blink and rapid blink are different", "\x1b[5;6mX", AttrBlink | AttrRapidBlink, UnderlineNone},
+		{"25 clears both blinks", "\x1b[5;6m\x1b[25mX", 0, UnderlineNone},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := penAt(t, tc.in).Attr; got != tc.want {
-				t.Errorf("Attr = %08b, want %08b", got, tc.want)
+			c := penAt(t, tc.in)
+			if c.Attr != tc.attr {
+				t.Errorf("Attr = %08b, want %08b", c.Attr, tc.attr)
+			}
+			if c.Under != tc.under {
+				t.Errorf("Underline = %d, want %d", c.Under, tc.under)
 			}
 		})
 	}
@@ -46,14 +56,22 @@ func TestSGRSubParameters(t *testing.T) {
 // takes arguments and does not consume them leaves them to be read as
 // attributes, which is the actual defect.
 func TestSGRUnderlineColourIsConsumed(t *testing.T) {
-	for _, in := range []string{
-		"\x1b[58;5;1mX",
-		"\x1b[58;2;10;20;30mX",
-		"\x1b[58:2::10:20:30mX",
-		"\x1b[59mX",
+	for _, tc := range []struct {
+		in   string
+		want Color
+	}{
+		{"\x1b[58;5;1mX", Indexed(1)},
+		{"\x1b[58;2;10;20;30mX", RGB(10, 20, 30)},
+		{"\x1b[58:2::10:20:30mX", RGB(10, 20, 30)},
+		{"\x1b[59mX", Color{}},
+		{"\x1b[58;5;1m\x1b[24mX", Color{}}, // 24 resets the colour with the underline
 	} {
-		if got := penAt(t, in).Attr; got != 0 {
-			t.Errorf("%q left Attr = %08b, want 0", in, got)
+		c := penAt(t, tc.in)
+		if c.Attr != 0 {
+			t.Errorf("%q left Attr = %08b, want 0", tc.in, c.Attr)
+		}
+		if c.UnderFG != tc.want {
+			t.Errorf("%q underline colour = %+v, want %+v", tc.in, c.UnderFG, tc.want)
 		}
 	}
 	// …and it must not disturb a colour set beside it.
