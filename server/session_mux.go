@@ -217,6 +217,23 @@ type SessionMux struct {
 	// runner pump can publish it without coordinating with the attach path.
 	mainMark atomic.Int64
 
+	// altTransitions records, in ring append-index order, every alternate-screen
+	// switch the session has made, so replaySnapshot can ask the one question
+	// that decides whether a finished episode has to be trimmed: was the session
+	// on the alternate screen at the ring's OLDEST surviving frame?
+	//
+	// "Is the most recent entry still in the ring" is the tempting predicate and
+	// is unsound. With two episodes E1(a1..x1) and E2(a2..x2), a ring starting
+	// between a1 and x1 leaves a2 present while E1 straddles the start — and it
+	// is E1's fragments that would paint the primary screen.
+	//
+	// Pruned lazily, when read, so the per-frame hot path never touches it;
+	// altBeforeOldest carries the direction of the most recently pruned entry,
+	// which IS the state at the oldest surviving frame.
+	altMu           sync.Mutex
+	altTransitions  []altTransition
+	altBeforeOldest bool
+
 	mu        sync.Mutex
 	tui       trsf.BidirectionalStream
 	tuiCancel context.CancelFunc
@@ -338,8 +355,14 @@ func (m *SessionMux) runnerPump() {
 		// full-screen episode that must not be replayed verbatim. The mark is
 		// the just-appended frame's index, so replay includes the ESC[?1049l
 		// itself (ensuring a reattaching client also leaves the alt buffer).
-		if wasAlt && !m.modes.onAltScreen() {
-			m.mainMark.Store(int64(m.ring.AppendCount() - 1))
+		if nowAlt := m.modes.onAltScreen(); nowAlt != wasAlt {
+			idx := m.ring.AppendCount() - 1
+			if wasAlt && !nowAlt {
+				m.mainMark.Store(int64(idx))
+			}
+			m.altMu.Lock()
+			m.altTransitions = append(m.altTransitions, altTransition{index: idx, entered: nowAlt})
+			m.altMu.Unlock()
 		}
 		m.mu.Lock()
 		tui := m.tui
@@ -870,8 +893,45 @@ func (m *SessionMux) replaySnapshot() []byte {
 	if m.modes.onAltScreen() {
 		return m.ring.Snapshot()
 	}
+	if !m.altAtOldestSurviving() {
+		// The ring begins on the primary screen, so any finished episode inside
+		// it enters and leaves the alternate buffer on its own: its frames paint
+		// THAT buffer and touch neither the primary screen nor the scrollback.
+		// Trimming here would throw away the history from before the episode for
+		// no benefit.
+		return m.ring.Snapshot()
+	}
+	// The ring begins INSIDE an episode, so its opening frames are
+	// absolute-cursor fragments with no ESC[?1049h ahead of them. Replayed as
+	// they are, they paint the primary screen and scroll into the scrollback,
+	// where the repaint that fixes the screen cannot reach them.
 	return m.ring.SnapshotFrom(int(m.mainMark.Load()))
 }
+
+// altTransition is one alternate-screen switch and where it sits in the ring.
+type altTransition struct {
+	index   int
+	entered bool
+}
+
+// altAtOldestSurviving reports whether the session was on the alternate screen
+// at the ring's oldest surviving frame, pruning transitions that have fallen
+// out of the window as it goes.
+func (m *SessionMux) altAtOldestSurviving() bool {
+	oldest := m.ring.OldestIndex()
+	m.altMu.Lock()
+	defer m.altMu.Unlock()
+	for len(m.altTransitions) > 0 && m.altTransitions[0].index < oldest {
+		m.altBeforeOldest = m.altTransitions[0].entered
+		m.altTransitions = m.altTransitions[1:]
+	}
+	return m.altBeforeOldest
+}
+
+// RingAppendCount returns how many frames the ring has ever been given, which
+// lets a test wait for a specific frame to have landed rather than for a byte
+// count that eviction makes unstable.
+func (m *SessionMux) RingAppendCount() int { return m.ring.AppendCount() }
 
 // RingBufferLen returns the number of bytes currently stored in the ring buffer.
 func (m *SessionMux) RingBufferLen() int { return m.ring.Len() }

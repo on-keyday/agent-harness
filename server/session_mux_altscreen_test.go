@@ -10,28 +10,36 @@ import (
 // TestSessionMux_AttachAfterAltScreenExitSkipsEpisode is the regression for the
 // view/reattach corruption: a full-screen app (htop) ran and exited, but its
 // alt-screen episode still sits in the ring as absolute-cursor frame fragments.
-// Replaying it verbatim paints garbage onto the primary screen. After the app
-// has left the alt screen, reattach must replay only from the ESC[?1049l exit
-// onward, dropping the dead episode.
+// Replaying those verbatim paints garbage onto the primary screen.
+//
+// The condition is that the episode's OPENING ESC[?1049h has been evicted, and
+// this fixture arranges it. That was implicit while the trim was unconditional:
+// with the entry still in the ring a replaying client enters the alternate
+// buffer, the fragments paint THAT buffer, and nothing reaches the primary
+// screen — so the trim buys nothing there and costs the history from before the
+// episode. TestReplayKeepsHistoryWhenTheEntrySurvives is that other half.
 func TestSessionMux_AttachAfterAltScreenExitSkipsEpisode(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	runner := newFakeStream(t)
-	// Ring large enough that nothing is evicted: we are testing the trim, not
-	// eviction.
-	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(1<<16), SessionHooks{})
+	// Small enough that the frame carrying ESC[?1049h is evicted, which is the
+	// precondition for the fragments to be dangerous at all.
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(64), SessionHooks{})
 
 	enter := makeWireFrame(1, []byte("\x1b[?1049hHTOP-EPISODE-CONTENT"))
 	mid := makeWireFrame(1, []byte("MORE-HTOP-FRAME-FRAGMENTS"))
 	exit := makeWireFrame(1, []byte("\x1b[?1049l[prompt]$ "))
 
-	total := 0
 	for _, f := range [][]byte{enter, mid, exit} {
+		want := mux.RingAppendCount() + 1
 		runner.QueueRead(f)
-		total += len(f)
+		waitFor(t, func() bool { return mux.RingAppendCount() >= want })
 	}
-	waitFor(t, func() bool { return mux.RingBufferLen() == total })
+	if bytes.Contains(mux.ring.Snapshot(), []byte("\x1b[?1049h")) {
+		t.Fatalf("fixture broken: the episode's entry survived eviction, so this test "+
+			"is not exercising the case it describes; ring = %q", mux.ring.Snapshot())
+	}
 
 	tui := newFakeStream(t)
 	if err := mux.Attach(ctx, tui); err != nil {

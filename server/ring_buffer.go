@@ -54,6 +54,16 @@ func (r *RingBuffer) Append(p []byte) {
 	}
 }
 
+// OldestIndex returns the append-index of the oldest frame still stored, which
+// is the value SnapshotFrom computes internally to decide where a mark lands.
+// A caller holding a recorded index compares against this to ask whether that
+// index is still inside the window.
+func (r *RingBuffer) OldestIndex() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.appendCount - len(r.frames)
+}
+
 // AppendCount returns the total number of frames ever Appended. The most
 // recently appended frame has append-index AppendCount()-1; callers use this
 // to record a stable replay mark (see SnapshotFrom).
