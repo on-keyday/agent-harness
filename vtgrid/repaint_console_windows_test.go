@@ -11,7 +11,7 @@
 // cells come back out with ReadConsoleOutputW. Nothing in this file models a
 // terminal.
 //
-// It deliberately reuses buildRepaint, extCorpora, loadExtCorpus, ringTail,
+// It deliberately reuses Terminal.Repaint, extCorpora, loadExtCorpus, ringTail,
 // trimRows, countMatch, poison and replayTailBytes from repaint_test.go rather
 // than restating any of them. A copied repaint sequence would drift from the
 // real one and leave this leg gating a fossil, which is the whole reason this
@@ -49,7 +49,7 @@ func TestConsoleRepaintReconstructsScreen(t *testing.T) {
 		}
 		want := trimRows(server.Lines())
 		wantX, wantY, wantVis := server.Cursor()
-		repaint := buildRepaint(server)
+		repaint := server.Repaint()
 
 		// The two observer states the repaint has to overcome: a byte-ring replay
 		// at replayTailBytes — the whole ring, which is what `session attach`
@@ -97,7 +97,7 @@ func TestConsoleRepaintReconstructsScreen(t *testing.T) {
 				// observer states here can arrive already on that buffer — the
 				// poisoned one always, the ring one whenever the replay window
 				// contains the app's own ESC[?1049h, which at a real attach
-				// size it does. buildRepaint now LEAVES the alternate buffer
+				// size it does. Repaint now LEAVES the alternate buffer
 				// before entering it, so the entry is a real switch and the
 				// pre-switch DECTCEM rides across it in either direction.
 				if gotVis := conCursorVisible(t, h); gotVis != wantVis {
@@ -142,7 +142,7 @@ func TestConsoleRepaintLandsOnTheAlternateBuffer(t *testing.T) {
 		}
 		h := newConsoleScreen(t, c.Cols, c.Rows)
 		conWrite(t, h, ringTail(data, replayTailBytes))
-		conWrite(t, h, buildRepaint(server))
+		conWrite(t, h, server.Repaint())
 
 		before := conReadScreen(t, h, c.Cols, c.Rows)
 		conWrite(t, h, []byte("\x1b[?1049l"))
@@ -168,7 +168,7 @@ func TestConsoleRepaintLandsOnTheAlternateBuffer(t *testing.T) {
 }
 
 // TestConsoleHonoursAlternateScreen gates ESC[?1049h / ESC[?1049l mid-stream.
-// buildRepaint opens with one or the other, so if conhost ignored them every
+// Repaint opens with one or the other, so if conhost ignored them every
 // alt-screen corpus would paint onto the wrong buffer.
 func TestConsoleHonoursAlternateScreen(t *testing.T) {
 	requireConsole(t)
@@ -214,7 +214,7 @@ func TestConsoleScrollRegionIsHonoured(t *testing.T) {
 	}
 }
 
-// TestConsoleHonoursScrollRegionReset gates ESC[r. buildRepaint emits it right
+// TestConsoleHonoursScrollRegionReset gates ESC[r. Repaint emits it right
 // after the screen selection to clear any margins a torn-off app left behind;
 // if the reset did not take, painting row-by-row would scroll inside a stale
 // region. Read together with TestConsoleScrollRegionIsHonoured.
@@ -257,7 +257,7 @@ func scrollRegionCase(t *testing.T, reset bool) string {
 }
 
 // TestConsoleHonoursEraseInLineAfterAbsoluteCUP gates the ESC[K that
-// buildRepaint issues before painting each row. Erasing BEFORE the paint (not
+// Repaint issues before painting each row. Erasing BEFORE the paint (not
 // after) is what keeps a full-width TUI row intact, so the erase has to mean
 // "to the end of the line" from an absolutely-addressed column.
 func TestConsoleHonoursEraseInLineAfterAbsoluteCUP(t *testing.T) {
@@ -265,7 +265,7 @@ func TestConsoleHonoursEraseInLineAfterAbsoluteCUP(t *testing.T) {
 	defer restoreOutputCP(t)()
 
 	h := newConsoleScreen(t, 20, 3)
-	// Autowrap off, exactly as buildRepaint leaves it while painting.
+	// Autowrap off, exactly as Repaint leaves it while painting.
 	conWrite(t, h, []byte("\x1b[?7l\x1b[2J\x1b[1;1H"+strings.Repeat("X", 20)))
 	if got, want := conRow(t, h, 0, 20), strings.Repeat("X", 20); got != want {
 		t.Fatalf("row filled to width = %q, want %q", got, want)
@@ -277,7 +277,7 @@ func TestConsoleHonoursEraseInLineAfterAbsoluteCUP(t *testing.T) {
 }
 
 // TestConsoleDECTCEMDoesNotReachAlternateBuffer pins the conhost quirk that
-// decides where DECTCEM sits in buildRepaint.
+// decides where DECTCEM sits in Repaint.
 //
 // On a real Windows console, ESC[?25h / ESC[?25l issued while the ALTERNATE
 // buffer is active does not change the alternate buffer's cursor — it changes
@@ -304,7 +304,7 @@ func TestConsoleDECTCEMDoesNotReachAlternateBuffer(t *testing.T) {
 		conWrite(t, h, []byte("\x1b[?25l"))
 		if !conCursorVisible(t, h) {
 			t.Error("ESC[?25l reached the alternate buffer; conhost behaviour changed " +
-				"and the DECTCEM ordering in buildRepaint can be revisited")
+				"and the DECTCEM ordering in Repaint can be revisited")
 		}
 		conWrite(t, h, []byte("\x1b[?1049l"))
 		if conCursorVisible(t, h) {
@@ -333,7 +333,7 @@ func TestConsoleDECTCEMDoesNotReachAlternateBuffer(t *testing.T) {
 }
 
 // TestConsoleDECTCEMSurvivesEnteringAlternateBuffer gates the property
-// buildRepaint's ordering actually relies on: visibility set BEFORE
+// Repaint's ordering actually relies on: visibility set BEFORE
 // ESC[?1049h does carry across the switch. Without this, moving DECTCEM ahead
 // of the screen selection would fix nothing.
 func TestConsoleDECTCEMSurvivesEnteringAlternateBuffer(t *testing.T) {
@@ -344,7 +344,7 @@ func TestConsoleDECTCEMSurvivesEnteringAlternateBuffer(t *testing.T) {
 	conWrite(t, h, []byte("\x1b[?25l\x1b[?1049h"))
 	if conCursorVisible(t, h) {
 		t.Error("cursor visible on the alternate buffer: ESC[?25l issued before " +
-			"ESC[?1049h did not survive the switch, so buildRepaint's ordering " +
+			"ESC[?1049h did not survive the switch, so Repaint's ordering " +
 			"no longer buys anything on Windows")
 	}
 }
@@ -358,7 +358,7 @@ func TestConsoleDECTCEMSurvivesEnteringAlternateBuffer(t *testing.T) {
 // and the alternate buffer keeps the visible cursor it was created with. This
 // is exactly the poisoned observer state. Leaving and re-entering would fix it
 // (asserted below) at the cost of a flash of the main buffer, which is why
-// buildRepaint does not currently do it.
+// Repaint does not currently do it.
 func TestConsoleDECTCEMCannotReachAnAlreadyActiveAlternateBuffer(t *testing.T) {
 	requireConsole(t)
 	defer restoreOutputCP(t)()
@@ -366,7 +366,7 @@ func TestConsoleDECTCEMCannotReachAnAlreadyActiveAlternateBuffer(t *testing.T) {
 	t.Run("no-op-switch-cannot-carry-it", func(t *testing.T) {
 		h := newConsoleScreen(t, 20, 4)
 		conWrite(t, h, []byte("\x1b[?1049h"))          // the observer is already here
-		conWrite(t, h, []byte("\x1b[?25l\x1b[?1049h")) // what buildRepaint emits
+		conWrite(t, h, []byte("\x1b[?25l\x1b[?1049h")) // what Repaint emits
 		if !conCursorVisible(t, h) {
 			t.Error("the cursor was hidden on an already-active alternate buffer; " +
 				"conhost behaviour changed and the poisoned-state exception in " +
