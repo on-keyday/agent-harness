@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
@@ -304,5 +305,11 @@ func (e *interactiveExec) SetStderr(io.Writer) {}
 
 func (e *interactiveExec) Run() error {
 	defer e.stream.Close()
-	return e.stream.RemoteShell()
+	err := e.stream.RemoteShell()
+	// Before the TUI resumes: the attach may have turned mouse reporting or
+	// bracketed paste on in this terminal, and bubbletea re-establishes its own
+	// modes on resume — so clearing here cannot fight it, while leaving them set
+	// would feed the resumed UI events it never asked for.
+	cli.RestoreLocalInputModes(os.Stdout)
+	return err
 }

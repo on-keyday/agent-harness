@@ -137,7 +137,13 @@ func (c *Client) Interactive(ctx context.Context, repo string, opts SessionOpts)
 	// cooked mode so the trailing newline behaves.
 	fmt.Fprintf(os.Stderr, "harness-cli: attached to task %s (Ctrl+] to detach client; Ctrl+D / `exit` ends the session)\n", taskIDHex)
 
-	if err := stream.RemoteShell(); err != nil {
+	// RemoteShell returns with the local terminal already back in cooked mode,
+	// which is the last moment the modes this attach turned on can be taken
+	// back off. Unconditional, and before the error check: a failed RemoteShell
+	// hands the terminal back in the same state a clean one does.
+	err = stream.RemoteShell()
+	RestoreLocalInputModes(os.Stdout)
+	if err != nil {
 		return taskIDHex, err
 	}
 	return taskIDHex, nil

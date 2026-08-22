@@ -166,7 +166,13 @@ func (c *Client) RunInteractiveX11(ctx context.Context, repo string, opts Sessio
 		rawSafeStderr("x11: ")("forward stopped")
 	}()
 	fmt.Fprintf(os.Stderr, "harness-cli: X11 session %s (remote DISPLAY=127.0.0.1:%d -> local %s; Ctrl+] detach, Ctrl+D/exit ends)\n", taskIDHex, displayN, os.Getenv("DISPLAY"))
-	if err := stream.RemoteShell(); err != nil {
+	// RemoteShell returns with the local terminal already back in cooked mode,
+	// which is the last moment the modes this attach turned on can be taken
+	// back off. Unconditional, and before the error check: a failed RemoteShell
+	// hands the terminal back in the same state a clean one does.
+	err = stream.RemoteShell()
+	RestoreLocalInputModes(os.Stdout)
+	if err != nil {
 		return taskIDHex, err
 	}
 	return taskIDHex, nil

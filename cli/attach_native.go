@@ -64,7 +64,15 @@ func (c *Client) SessionAttach(ctx context.Context, taskIDHex string, mode proto
 		fmt.Fprintf(os.Stderr, "harness-cli: attached to task %s (replay %d bytes; Ctrl+] to detach client; Ctrl+D / `exit` ends the session)\n", taskIDHex, replayBytes)
 	}
 
-	if err := stream.RemoteShell(); err != nil {
+	// RemoteShell returns when the operator detaches (Ctrl+]) or the session
+	// ends, with the local terminal already back in cooked mode — so this is
+	// the moment we own the terminal again and the last one at which the modes
+	// the attach turned on can be taken back off. Before the error check: a
+	// failed RemoteShell hands the terminal back in the same state a clean one
+	// does, and leaving mouse reports on is the worse outcome either way.
+	err = stream.RemoteShell()
+	RestoreLocalInputModes(os.Stdout)
+	if err != nil {
 		return taskIDHex, err
 	}
 	return taskIDHex, nil

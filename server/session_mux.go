@@ -883,13 +883,26 @@ func (m *SessionMux) IsAttached() bool {
 	return m.tui != nil
 }
 
-// replaySnapshot returns the ring bytes to replay to a (re)attaching client.
+// replaySnapshot returns the ring bytes to replay to a (re)attaching client,
+// with every reply-soliciting sequence removed on the way out.
+//
+// The stripping is here rather than at either call site because BOTH of them
+// want it and neither is the natural owner: a replay re-asks every question
+// the session ever asked, of a terminal that answers all of them, at a moment
+// when the asker is usually gone — so the answers arrive as INPUT to whatever
+// reads the pty now. The live fan-out in runnerPump is deliberately NOT
+// filtered; see stripReplyQueries for why that asymmetry is the whole point.
+func (m *SessionMux) replaySnapshot() []byte {
+	return stripReplyQueriesFrames(m.replayRing())
+}
+
+// replayRing chooses WHICH ring bytes replaySnapshot should hand out.
 // On the primary screen it starts from the last alt-screen exit (mainMark),
 // skipping a finished full-screen episode whose verbatim replay — absolute-
 // cursor frame fragments with no enclosing alt-screen — corrupts the display.
 // While a full-screen app is still live (in the alt screen) it replays the
 // whole ring, since the app repaints over any partial frame on the next tick.
-func (m *SessionMux) replaySnapshot() []byte {
+func (m *SessionMux) replayRing() []byte {
 	if m.modes.onAltScreen() {
 		return m.ring.Snapshot()
 	}
