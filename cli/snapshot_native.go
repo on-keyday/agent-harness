@@ -202,6 +202,31 @@ func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string
 	if err != nil {
 		return nil, err
 	}
+	return buildSnapshot(term, taskIDHex, title, cols, rows, withAttrs, withColor), nil
+}
+
+// SessionSnapshotANSI is SessionSnapshotStructured plus the screen re-emitted
+// with SGR escapes — the form a person writes to a terminal to see the screen
+// as it looked, colours and all.
+//
+// It returns both from ONE capture. The structured form comes along because
+// state detection reads it, and asking for a coloured picture is not a reason
+// to give up the verdict that goes with it; capturing twice would be two
+// different screens.
+//
+// Attribute and colour spans are always collected here: the ANSI render needs
+// the same per-cell styling, so declining to collect it would save nothing.
+func (c *Client) SessionSnapshotANSI(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (string, *ScreenSnapshot, error) {
+	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+	if err != nil {
+		return "", nil, err
+	}
+	return term.ANSI(), buildSnapshot(term, taskIDHex, title, cols, rows, true, true), nil
+}
+
+// buildSnapshot is the single place a ScreenSnapshot is assembled, so the two
+// capture entry points cannot drift into two shapes of the same thing.
+func buildSnapshot(term *vtgrid.Terminal, taskIDHex, title string, cols, rows int, withAttrs, withColor bool) *ScreenSnapshot {
 	return &ScreenSnapshot{
 		Task:  taskIDHex,
 		Rows:  rows,
@@ -211,7 +236,7 @@ func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string
 		Color: withColor,
 		Lines: screenLines(renderScreen(term), rows),
 		Spans: collectSpans(term, cols, rows, withAttrs, withColor),
-	}, nil
+	}
 }
 
 // screenLines splits a rendered screen into exactly rows entries. The renderer

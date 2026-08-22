@@ -321,6 +321,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
 	raw := fs.Bool("raw", false, "write the verbatim PTY replay bytes (escape sequences intact) to stdout instead of the VT-rendered screen — cat into a real terminal to reproduce it exactly; --rows/--cols are ignored and --style/--color are not allowed")
 	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,title,attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report")
+	ansi := fs.Bool("ansi", false, "re-emit the screen WITH its colours and attributes instead of as plain text — for a person looking at it, where --style/--color describe the styling in a list beside a colourless screen. Unlike --raw this is the final screen, not the whole replay: one screenful, not a megabyte of scrollback")
 	detect := fs.Bool("detect", false, "also judge what STATE the screen shows (working / blocked / idle / unknown) and print the rule and the text it read. blocked means waiting on a HUMAN, which byte-quiescence cannot tell from thinking; with --json the full per-rule explain rides along")
 	detectAgent := fs.String("detect-agent", "claude", "with --detect: which agent's rule set to judge by")
 	pos, err := parsePermuted(fs, args)
@@ -328,7 +329,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--detect [--detect-agent NAME]] [--json] [--raw] <id>")
+		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--ansi] [--detect [--detect-agent NAME]] [--json] [--raw] <id>")
 	}
 	// A typed option that silently does nothing is the failure this repo keeps
 	// re-fixing, so naming an agent without asking for detection is an error
@@ -349,6 +350,18 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	// rendering), which --raw never produces.
 	if *raw && *detect {
 		return fmt.Errorf("--raw cannot be combined with --detect (detection judges the VT render; --raw emits replay bytes)")
+	}
+	// --ansi and --raw are both "escape sequences to stdout" and are still
+	// different artifacts: --ansi is the FINAL SCREEN re-emitted, --raw is the
+	// whole replay verbatim. Silently picking one would make the other's flag a
+	// no-op.
+	if *ansi && *raw {
+		return fmt.Errorf("--ansi cannot be combined with --raw (--ansi re-emits the final screen; --raw emits the whole replay verbatim)")
+	}
+	// --json is an encoding of the render for a machine; --ansi is the render
+	// for an eye. Embedding one in the other would invent a third thing.
+	if *ansi && *asJSON {
+		return fmt.Errorf("--ansi cannot be combined with --json (--json encodes the render for a reader that parses; --ansi paints it for one that looks)")
 	}
 	taskIDHex := pos[0]
 
@@ -371,7 +384,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	opts := screenOpts{
 		rows: uint16(*rows), cols: uint16(*cols),
 		settle:    time.Duration(*settleMs) * time.Millisecond,
-		withAttrs: *style, withColor: *colorOut, asJSON: *asJSON,
+		withAttrs: *style, withColor: *colorOut, asJSON: *asJSON, ansi: *ansi,
 	}
 	if *detect {
 		opts.detectAgent = *detectAgent
@@ -389,6 +402,9 @@ type screenOpts struct {
 	withAttrs  bool
 	withColor  bool
 	asJSON     bool
+	// ansi paints the screen instead of flattening it: the same render, emitted
+	// with the SGR escapes that produced it.
+	ansi bool
 	// detectAgent selects the state-detection rule set; "" leaves detection off.
 	detectAgent string
 }
@@ -407,6 +423,31 @@ type screenOpts struct {
 // back so a reader can tell "no spans because none were asked for" from "asked
 // for and none present".
 func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o screenOpts) error {
+	// --ansi carries its own capture because it needs the cells, not the
+	// flattened rows — and it still yields the structured form, so a detection
+	// verdict can accompany the picture rather than costing a second capture of
+	// a screen that has moved on since.
+	if o.ansi {
+		painted, snap, err := c.SessionSnapshotANSI(ctx, taskIDHex, o.rows, o.cols, o.settle)
+		if err != nil {
+			return err
+		}
+		fmt.Println(painted)
+		if o.withAttrs || o.withColor {
+			fmt.Println("\n--- styles ---")
+			fmt.Println(formatSpanReport(snap))
+		}
+		if o.detectAgent != "" {
+			set, err := detectRuleSet(o.detectAgent)
+			if err != nil {
+				return err
+			}
+			v := snap.Detect(set)
+			printDetectReport(&v)
+		}
+		return nil
+	}
+
 	// Detection needs the title, which only the structured capture keeps, so
 	// asking for it selects that path regardless of the output encoding.
 	if o.asJSON || o.detectAgent != "" {
@@ -729,6 +770,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	// snapshot`'s meanings unchanged.
 	colorOut := fs.Bool("color", false, "with --snapshot: also print fg/bg colour spans (hex) — verbose (most cells carry a colour); same flag as on `session snapshot`")
 	asJSON := fs.Bool("json", false, "with --snapshot: emit the screen as one JSON object instead of text — same shape as `session snapshot --json`")
+	ansi := fs.Bool("ansi", false, "with --snapshot: re-emit the screen WITH its colours and attributes rather than as plain text — same flag as on `session snapshot`")
 	detect := fs.Bool("detect", false, "with --snapshot: also judge the resulting state (working / blocked / idle / unknown) — the drive loop's real question after sending a key")
 	detectAgent := fs.String("detect-agent", "claude", "with --detect: which agent's rule set to judge by")
 	if err := fs.Parse(args); err != nil {
@@ -743,7 +785,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		var stray []string
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "rows", "cols", "settle-ms", "style", "color", "json", "detect", "detect-agent":
+			case "rows", "cols", "settle-ms", "style", "color", "json", "ansi", "detect", "detect-agent":
 				stray = append(stray, "--"+f.Name)
 			}
 		})
@@ -752,7 +794,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		}
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--json]] <id> <text>...
+		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json]] <id> <text>...
   -enter     append a carriage return, i.e. actually SUBMIT the line
   -e         interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
              -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
@@ -839,10 +881,13 @@ argument to preserve exact whitespace.`)
 		// Both style dimensions and the encoding pass through unchanged. They
 		// default off, so the did-my-keystroke-land check stays terse; what
 		// changed is that asking for one here works instead of being dropped.
+		if *ansi && *asJSON {
+			return fmt.Errorf("--ansi cannot be combined with --json (--json encodes the render for a reader that parses; --ansi paints it for one that looks)")
+		}
 		opts := screenOpts{
 			rows: uint16(*rows), cols: uint16(*cols),
 			settle:    time.Duration(*settleMs) * time.Millisecond,
-			withAttrs: *style, withColor: *colorOut, asJSON: *asJSON,
+			withAttrs: *style, withColor: *colorOut, asJSON: *asJSON, ansi: *ansi,
 		}
 		if *detect {
 			opts.detectAgent = *detectAgent

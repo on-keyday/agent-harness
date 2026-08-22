@@ -78,9 +78,9 @@ harness-cli session send -e --snapshot --style "$ID" '\x1b[B'   # ↓, then look
 ```
 
 `--settle-ms` (default 1500) is the window the program gets to react before the
-render; `--rows/--cols/--style/--color/--json/--detect` mean what they mean on
-`session snapshot`, and all of them are refused without `--snapshot` rather
-than silently ignored.
+render; `--rows/--cols/--style/--color/--ansi/--json/--detect` mean what they
+mean on `session snapshot`, and all of them are refused without `--snapshot`
+rather than silently ignored.
 
 When you are waiting for something rather than reading one result, poll for the
 expected render instead of guessing a sleep:
@@ -124,7 +124,7 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
 
 ## Command reference
 
-### `session snapshot [--style] [--color] [--detect] [--json|--raw] [--rows N --cols N] <id>`
+### `session snapshot [--style] [--color] [--ansi] [--detect] [--json|--raw] [--rows N --cols N] <id>`
 
 Renders the session's current screen to plain text via a headless VT emulator
 (`--rows/--cols` are a fallback if the session reports no size). Note they only
@@ -177,6 +177,14 @@ when the foreground IS a shell.
 - **`--color`** additionally reports fg/bg as hex (`fg#ff87af: "Error: ..."` —
   error-red, status colors). Verbose (most cells carry a color), separate
   opt-in. CJK/wide runs are coalesced, not split per character.
+- **`--ansi`** re-emits the screen WITH its colours and attributes instead of
+  describing them beside a colourless one. It is for a person looking at the
+  output, not for you: you cannot read an escape sequence any better than you
+  can read a colour, which is why `--style`/`--color` exist. Reach for it when
+  reporting to the operator, or when a screen only makes sense in colour.
+  It is the final screen, so it is one screenful — a live pane measured 1,196 B
+  plain, 2,537 B with `--ansi`, and 1,045,629 B with `--raw`. Refused with
+  `--json` and with `--raw`; composes with `--style`/`--color`/`--detect`.
 - **`--json`** emits one object instead of text — same screen, different
   encoding: `{task, rows, cols, attrs, color, lines[], spans[]}`. `lines` is the
   grid one row per entry and is always exactly `rows` long, and each span is
@@ -223,7 +231,7 @@ when the foreground IS a shell.
   and why an empty `title` is a measurement rather than a gap, since a
   long-quiet session's title may have aged out of the replay ring.
 
-### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--json]] <id> <text>...`
+### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json]] <id> <text>...`
 
 Injects keystrokes via a `cowrite` attach. **Flags go BEFORE `<id>`;
 everything after `<id>` is the text**, joined ssh-style
@@ -235,7 +243,7 @@ snapshot instead of submitting.
 `--snapshot` renders the screen after sending, on the same connection: one call
 instead of send + snapshot + a guessed sleep. The screen goes to **stdout** and
 the "N bytes sent" summary to **stderr**, so a pipe gets only the screen, and
-`-quiet` (which drops that summary) composes with it. The six snapshot-only
+`-quiet` (which drops that summary) composes with it. The seven snapshot-only
 flags are refused without `--snapshot` instead of being ignored. They carry
 `session snapshot`'s meanings unchanged, `--json` included, so one drive step
 can return structured screen data without a second dial.
