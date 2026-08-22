@@ -9,6 +9,13 @@ import "strconv"
 type csiParams struct {
 	prefix byte // '?', '>', '<', '=' — 0 when the sequence had none
 	n      []int
+	// sub[i] reports that parameter i was separated from i-1 by a COLON, which
+	// makes it a sub-parameter of that one rather than a parameter in its own
+	// right. Folding the two separators together is the obvious simplification
+	// and it is wrong: `ESC[4;3m` is underline AND italic, while `ESC[4:3m` is
+	// one attribute — a curly underline — and reading its `3` as a separate
+	// code invents an italic nobody asked for.
+	sub []bool
 }
 
 func (p csiParams) at(i, def int) int {
@@ -27,10 +34,9 @@ func (p csiParams) atRaw(i int) int {
 	return p.n[i]
 }
 
-// parseCSIParams splits the bytes between the CSI intro and its final byte.
-// Colons are folded to semicolons: they separate sub-parameters (the
-// `38:2::r:g:b` colour form) and treating them as ordinary separators is what
-// lets one SGR loop read both spellings.
+// parseCSIParams splits the bytes between the CSI intro and its final byte,
+// recording which separator preceded each value so a sub-parameter stays
+// attached to its parent (see csiParams.sub).
 func parseCSIParams(b []byte) csiParams {
 	var p csiParams
 	if len(b) > 0 && (b[0] == '?' || b[0] == '>' || b[0] == '<' || b[0] == '=') {
@@ -40,7 +46,7 @@ func parseCSIParams(b []byte) csiParams {
 	if len(b) == 0 {
 		return p
 	}
-	start := 0
+	start, colon := 0, false
 	for i := 0; i <= len(b); i++ {
 		if i == len(b) || b[i] == ';' || b[i] == ':' {
 			if i == start {
@@ -52,6 +58,8 @@ func parseCSIParams(b []byte) csiParams {
 				}
 				p.n = append(p.n, v)
 			}
+			p.sub = append(p.sub, colon)
+			colon = i < len(b) && b[i] == ':'
 			start = i + 1
 		}
 	}
@@ -354,6 +362,12 @@ func (t *Terminal) sgr(p csiParams) {
 		return
 	}
 	for i := 0; i < len(p.n); i++ {
+		// A sub-parameter belongs to the code before it and was consumed there
+		// (or belongs to a code this does not model). Either way it is not a
+		// code of its own.
+		if p.sub[i] {
+			continue
+		}
 		switch c := p.n[i]; {
 		case c == 0:
 			t.pen.reset()
@@ -364,7 +378,13 @@ func (t *Terminal) sgr(p csiParams) {
 		case c == 3:
 			t.pen.Attr |= AttrItalic
 		case c == 4:
-			t.pen.Attr |= AttrUnderline
+			// `4:0` turns underline off; `4:1`..`4:5` select a style this model
+			// does not distinguish, so any of them is simply "underlined".
+			if i+1 < len(p.n) && p.sub[i+1] && p.n[i+1] == 0 {
+				t.pen.Attr &^= AttrUnderline
+			} else {
+				t.pen.Attr |= AttrUnderline
+			}
 		case c == 5 || c == 6:
 			t.pen.Attr |= AttrBlink
 		case c == 7:
@@ -399,6 +419,13 @@ func (t *Terminal) sgr(p csiParams) {
 			i = t.extendedColor(p, i, &t.pen.BG)
 		case c == 49:
 			t.pen.BG = Color{}
+		case c == 58:
+			// Underline colour. Not modelled, but it carries the same argument
+			// shapes as 38/48 and skipping the code alone would leave its
+			// arguments to be read as attributes — `58;5;1` became blink+bold.
+			i = t.extendedColor(p, i, nil)
+		case c == 59:
+			// Default underline colour: no arguments.
 		case c >= 90 && c <= 97:
 			t.pen.FG = Basic(uint8(c - 90 + 8))
 		case c >= 100 && c <= 107:
@@ -419,20 +446,30 @@ func (t *Terminal) extendedColor(p csiParams, i int, dst *Color) int {
 	if i+1 >= len(p.n) {
 		return i
 	}
+	set := func(c Color) {
+		if dst != nil {
+			*dst = c
+		}
+	}
+	// The colon form carries an extra colour-space id between the selector and
+	// the components (`38:2::r:g:b`). With the separators recorded there is no
+	// need to guess at it: a zero that is a SUB-parameter and is followed by
+	// three more is the placeholder, and a zero that is a red channel is not.
+	colon := p.sub[i+1]
 	switch p.n[i+1] {
 	case 5:
 		if i+2 < len(p.n) {
-			*dst = Indexed(uint8(p.n[i+2]))
+			set(Indexed(uint8(p.n[i+2])))
 			return i + 2
 		}
 		return i + 1
 	case 2:
 		j := i + 2
-		if j < len(p.n) && p.n[j] == 0 && len(p.n)-j >= 4 {
-			j++ // colon form's empty colour-space id
+		if colon && j+3 < len(p.n) && p.sub[j] {
+			j++ // the colour-space id slot
 		}
 		if j+2 < len(p.n) {
-			*dst = RGB(uint8(p.n[j]), uint8(p.n[j+1]), uint8(p.n[j+2]))
+			set(RGB(uint8(p.n[j]), uint8(p.n[j+1]), uint8(p.n[j+2])))
 			return j + 2
 		}
 		return len(p.n) - 1
