@@ -376,13 +376,29 @@ func TestRepaintReconstructsScreen(t *testing.T) {
 // observer — the last switch in it — not on whether ESC[?1049h appears anywhere
 // in it, which is a weaker condition that happens to be satisfied more often.
 //
+// "Leaves the observer on the alternate buffer" also implies the target is the
+// alternate buffer, which is why the condition has two terms and not three: the
+// tail is a SUFFIX of the same stream, alt state is decided by the last ESC[?1049
+// in the input, and if the tail holds one at all then the observer and the server
+// saw the same last one. A tail holding none leaves the observer on main whatever
+// the server knows.
+//
 // Measured here every run. Today exactly one capture (altscreen) already leaves
 // the observer on the alternate buffer from the ring replay alone, so the
-// precondition is in the tree rather than hypothetical; it simply targets a
-// VISIBLE cursor, so it never exposes the bit. htop is the one hidden-cursor
-// alt-screen capture and its tail leaves the observer on main. The two halves
-// exist separately and never together, which is the only reason the Windows
-// after-ring leg expects wantVis with no exception.
+// precondition is in the tree rather than hypothetical; its cursor visibility
+// after the tail already matches the target, so the repaint has nothing to
+// change and the gap stays shut. htop is the one hidden-cursor alt-screen
+// capture and its tail leaves the observer on main, which is exactly why its
+// after-ring leg is clean. The two halves exist separately and never together,
+// which is the only reason the Windows after-ring leg expects wantVis with no
+// exception.
+//
+// Which half a capture lands on is decided by how CHATTY its app is, not by
+// anything about the repaint: htop repaints several times a second, so its
+// ESC[?1049h is long gone from a 32 KiB window, while a quiet shell sitting in
+// the alternate screen still has its switch inside the window. The busy
+// full-screen app is the safe case here and the idle one is the exposed case,
+// which is the opposite of the intuition.
 //
 // Like knownOracleDefects in diff_test.go, this is not a suppression: it
 // asserts the gap is STILL THERE. A capture with both halves would make the
@@ -397,17 +413,25 @@ func TestRepaintAltObserverCoverageGap(t *testing.T) {
 		observer := vtgrid.New(c.Cols, c.Rows)
 		_, _ = observer.Write(ringTail(data, replayTailBytes))
 		_, _, wantVis := server.Cursor()
+		_, _, haveVis := observer.Cursor()
 
-		if !server.AltScreen() || !observer.AltScreen() {
+		if !observer.AltScreen() {
 			continue
 		}
 		t.Logf("%s: the ring tail alone leaves the observer on the alternate buffer "+
-			"(target cursor visible=%v)", c.Name, wantVis)
-		if !wantVis {
-			t.Errorf("%s now reaches the already-on-alt + hidden-cursor case from its ring "+
-				"tail alone. The gap this test guarded is closed: the Windows after-ring leg "+
-				"will exercise it and fail. Decide the leave-and-re-enter trade in "+
-				"buildRepaint's doc comment, then delete this test.", c.Name)
+			"(cursor visible after the tail=%v, target=%v)", c.Name, haveVis, wantVis)
+		// The trigger is a DISAGREEMENT, not specifically a hidden target. If the
+		// two already match, the repaint's DECTCEM is a no-op and its inability to
+		// land costs nothing. If they differ, the repaint must change the bit on a
+		// buffer it cannot reach — in either direction, since DECTCEM does not
+		// cross into an active alternate buffer at all.
+		if haveVis != wantVis {
+			t.Errorf("%s now reaches the case buildRepaint's DECTCEM ordering cannot fix: its "+
+				"ring tail leaves the observer on the alternate buffer with cursor visible=%v "+
+				"while the target is %v, so the repaint must change a bit it cannot reach. The "+
+				"gap this test guarded is closed and the Windows after-ring leg will fail on "+
+				"this corpus. Decide the leave-and-re-enter trade in buildRepaint's doc "+
+				"comment, then delete this test.", c.Name, haveVis, wantVis)
 		}
 	}
 }
