@@ -230,9 +230,22 @@ func (t *Terminal) clampCursor() {
 	}
 }
 
-// Write feeds terminal output into the grid. It never fails and never blocks:
-// unlike a full emulator there is no response channel, because a headless
-// screen has nobody to answer a device query. Queries are parsed and dropped.
+// Write feeds terminal output into the grid. It never fails and never blocks.
+//
+// There is no response channel: device queries — DSR (CSI 6 n), DA1 (CSI c),
+// XTVERSION (CSI > q), the OSC 10/11 colour queries, the Kitty keyboard
+// query — are parsed and dropped rather than answered. Every agent captured
+// in testdata/vtcorpus emits several of them within its first few hundred
+// bytes, so this is the common path and not an edge case.
+//
+// That has one benefit and one limit, both worth knowing. The benefit: a
+// caller cannot deadlock. x/vt answers a query by writing to its own output,
+// so feeding it a full-screen app's startup without draining that output
+// blocks forever — which is why cli/snapshot_native.go runs a discard
+// goroutine beside it. Nothing here ever produces a byte, so no drain is
+// needed. The limit: dropping a query is only correct when REPLAYING a
+// stream that already happened. In a live path the program is still waiting
+// for its answer, and it would be the program that hangs, not the reader.
 func (t *Terminal) Write(p []byte) (int, error) {
 	for _, b := range p {
 		t.feed(b)

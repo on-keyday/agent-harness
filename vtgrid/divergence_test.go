@@ -56,6 +56,7 @@ func TestLocateDivergence(t *testing.T) {
 			t.Logf("%s: diverges within bytes [%d,%d) at row %d\n"+
 				"    oracle: %s\n    ours  : %s\n    chunk : %s",
 				c.Name, off, end, row, clip(want[row]), clip(got[row]), describeSeqs(chunk))
+			pinpoint(t, c, data, off, end)
 			break
 		}
 		_ = oracle.Close()
@@ -130,4 +131,45 @@ func describeSeqs(b []byte) string {
 		return "(printable only)"
 	}
 	return strings.Join(out, " ")
+}
+
+// pinpoint re-runs both implementations up to the start of a diverging chunk
+// and then advances ONE BYTE AT A TIME, so the report names the exact offset
+// where the two screens part rather than a 512-byte window. Rebuilding costs
+// one full oracle feed per corpus, which is why it only runs for a corpus that
+// already showed a divergence.
+func pinpoint(t *testing.T, c vtCorpus, data []byte, from, to int) {
+	t.Helper()
+	oracle := vt.NewEmulator(c.Cols, c.Rows)
+	oracle.Scrollback().SetMaxLines(1)
+	done := make(chan struct{})
+	go func() { defer close(done); _, _ = io.Copy(io.Discard, oracle) }()
+	defer func() { _ = oracle.Close(); <-done }()
+	ours := New(c.Cols, c.Rows)
+
+	_, _ = oracle.Write(data[:from])
+	_, _ = ours.Write(data[:from])
+	if row := firstDiff(trimAll(splitRows(oracle.String(), c.Rows)), trimAll(ours.Lines())); row >= 0 {
+		t.Logf("    (already differing at row %d before byte %d — the chunk scan found it late)", row, from)
+	}
+	for i := from; i < to; i++ {
+		_, _ = oracle.Write(data[i : i+1])
+		_, _ = ours.Write(data[i : i+1])
+		want := trimAll(splitRows(oracle.String(), c.Rows))
+		got := trimAll(ours.Lines())
+		row := firstDiff(want, got)
+		if row < 0 {
+			continue
+		}
+		lo := i - 48
+		if lo < from {
+			lo = from
+		}
+		t.Logf("    → splits at byte %d, row %d\n"+
+			"      preceding: %q\n"+
+			"      oracle row: %s\n      ours   row: %s",
+			i, row, string(data[lo:i+1]), clip(want[row]), clip(got[row]))
+		return
+	}
+	t.Logf("    → byte-level replay did not reproduce it (state-dependent, not a single sequence)")
 }

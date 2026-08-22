@@ -76,7 +76,11 @@ var knownOracleDefects = map[string]map[int]string{
 			"second byte of U+2733 ✳, the glyph Claude Code puts in its window " +
 			"title, so x/vt ends the sequence one byte in and prints the rest of " +
 			"the title onto the grid. cli/snapshot_native.go already documents " +
-			"the symptom; see vtgrid.Terminal.str for the cause.",
+			"the symptom; see vtgrid.Terminal.str for the cause. " +
+			"TestLocateDivergence finds the same defect at INTERMEDIATE frames " +
+			"in altscreen, claude-tui, codex-tui and torture, where a later " +
+			"repaint covers it again before the final grid — four sightings, " +
+			"one cause, each pinpointed to the byte after ESC ] 0 ; U+2733.",
 	},
 }
 
