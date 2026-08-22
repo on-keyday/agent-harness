@@ -130,6 +130,17 @@ func loadExtCorpus(tb testing.TB, name string) []byte {
 //     survives into the alt buffer, which is why it sits here. The three
 //     emulators that do honour it either way are indifferent to the move.
 //
+//     This fixes the case where the observer is on the MAIN buffer, which is
+//     every observer that has a switch left to make. It does NOT fix an
+//     observer ALREADY on the alternate buffer — the ESC[?1049h is then a
+//     no-op, so there is nothing for the visibility to ride across, and on
+//     Windows the alt cursor stays visible. Leaving and re-entering closes it
+//     and is measured to work (see the Windows tests), at the cost of forcing
+//     a real buffer switch — a flash of the main screen — on every attach to
+//     an alt-screen session. That trade is not worth taking on a sequence
+//     nobody has yet watched land on a live attach, so it is recorded rather
+//     than applied. Weigh it when this is wired into SessionMux.
+//
 // Not carried here, on purpose: the input-affecting private modes (bracketed
 // paste, mouse, application cursor keys). vtgrid neither tracks nor exposes
 // them; server/mode_tracker.go's preamble does, and the two are complementary.
