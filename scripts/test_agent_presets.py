@@ -12,13 +12,18 @@ Run directly::
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from agent_presets import AgentsPresetError, expand_agents_preset  # noqa: E402
+import agent_presets  # noqa: E402
+from agent_presets import AgentsPresetError, bash_bin, expand_agents_preset  # noqa: E402
 
 
 class ExpandAgentsPresetTest(unittest.TestCase):
@@ -108,7 +113,14 @@ class ExpandAgentsPresetTest(unittest.TestCase):
 
     def test_bash_preset_argv_only_no_worktree_or_roots_injected(self) -> None:
         out = expand_agents_preset("bash", [])
-        self.assertEqual(out[out.index("--agent-bin") + 1], "bash")
+        emitted = out[out.index("--agent-bin") + 1]
+        if os.name == "nt" and bash_bin():
+            # Bare `bash` on Windows is the WSL launcher, so the preset must
+            # emit the resolved one — see BashBinTest below.
+            self.assertEqual(emitted, bash_bin())
+            self.assertTrue(Path(emitted).is_absolute(), emitted)
+        else:
+            self.assertEqual(emitted, "bash")
         self.assertNotIn("--no-worktree", out)
         self.assertNotIn("--roots", out)
 
@@ -269,6 +281,86 @@ class ExpandAgentsPresetTest(unittest.TestCase):
             expand_agents_preset("sandbox", []),
             expand_agents_preset("sandbox-claude", []),
         )
+
+
+class BashBinTest(unittest.TestCase):
+    """`bash` must never be resolved by name on Windows.
+
+    The bug: the preset shipped `"bin": "bash"`, the runner's exec.LookPath
+    found C:\\Windows\\System32\\bash.exe — the WSL launcher — and every task
+    submitted to the profile died with `execvpe(/bin/bash) failed` inside a
+    Linux namespace that has none of this checkout. The profile registered
+    fine, so the failure only showed up per task. Observed on a Windows runner,
+    not hypothetical.
+
+    Run on POSIX by faking the Windows layout, since that is where these tests
+    run and the resolution is pure.
+    """
+
+    def setUp(self) -> None:
+        self._dir = tempfile.TemporaryDirectory()
+        # Resolved, because the search walks up from git.exe with
+        # Path.resolve() and the temp root is a symlink on some platforms.
+        self.root = Path(self._dir.name).resolve()
+        # A System32 bash exists on every Windows box and must never be picked.
+        self.wsl = self.root / "Windows" / "System32" / "bash.exe"
+        self.wsl.parent.mkdir(parents=True)
+        self.wsl.touch()
+
+    def tearDown(self) -> None:
+        self._dir.cleanup()
+
+    def _git_install(self, git_rel: str) -> tuple[Path, Path]:
+        """Lay out a Git for Windows tree; return (git.exe, bin/bash.exe)."""
+        git = self.root / git_rel
+        git.parent.mkdir(parents=True, exist_ok=True)
+        git.touch()
+        bash = self.root / "Program Files" / "Git" / "bin" / "bash.exe"
+        bash.parent.mkdir(parents=True, exist_ok=True)
+        bash.touch()
+        return git, bash
+
+    def _resolve(self, which_git: str | None, env: dict[str, str]) -> str:
+        def fake_which(cmd: str, *a, **kw):
+            return which_git if cmd == "git" else str(self.wsl)
+
+        # _windows_bash rather than bash_bin: os.name cannot be faked here,
+        # because Path() takes its flavour from it and WindowsPath refuses to
+        # instantiate on POSIX, so the fake tree could not be built at all.
+        with mock.patch.object(shutil, "which", fake_which), \
+                mock.patch.dict(os.environ, env, clear=True):
+            return agent_presets._windows_bash()
+
+    def test_posix_uses_the_bare_name(self) -> None:
+        if os.name == "nt":
+            self.skipTest("POSIX branch")
+        self.assertEqual(bash_bin(), "bash")
+
+    def test_derived_from_git_on_path(self) -> None:
+        git, bash = self._git_install("Program Files/Git/cmd/git.exe")
+        self.assertEqual(self._resolve(str(git), {}), str(bash))
+
+    def test_derived_from_git_bashs_own_git(self) -> None:
+        # Inside Git Bash, `which git` answers <root>/usr/bin/git.exe, one level
+        # deeper than the PATH install's <root>/cmd/git.exe.
+        git, bash = self._git_install("Program Files/Git/usr/bin/git.exe")
+        self.assertEqual(self._resolve(str(git), {}), str(bash))
+
+    def test_found_via_program_files_without_git_on_path(self) -> None:
+        _, bash = self._git_install("Program Files/Git/cmd/git.exe")
+        env = {"ProgramFiles": str(self.root / "Program Files")}
+        self.assertEqual(self._resolve(None, env), str(bash))
+
+    def test_never_the_wsl_launcher(self) -> None:
+        # No Git anywhere, but a bash IS on PATH. The old code took that one;
+        # the answer has to be "none", not that one.
+        self.assertEqual(self._resolve(None, {}), "")
+
+    def test_absent_bash_is_falsy_for_the_dummy_harness_branch(self) -> None:
+        # scripts/dummy-harness.py branches on the empty string to ship no bash
+        # profile at all, so this must stay falsy rather than becoming a bare
+        # name again.
+        self.assertFalse(self._resolve(None, {}))
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ Arguments: $ARGUMENTS
 
    | tag          | default flags                                                                                                              | target |
    |--------------|----------------------------------------------------------------------------------------------------------------------------|--------|
-   | `bash`       | `--agents bash --no-worktree --roots $HOME/workspace` (bin+argv from `scripts/agent_presets.py`) | Linux / macOS shell runner |
+   | `bash`       | `--agents bash --no-worktree --roots $HOME/workspace` (bin+argv from `scripts/agent_presets.py`) | POSIX shell runner — Linux / macOS, and Windows via Git Bash (see below) |
    | `cmd`        | `--no-worktree --agent-bin C:\Windows\System32\cmd.exe --roots C:/workspace`                                              | Windows command prompt |
    | `powershell` | `--no-worktree --agent-bin C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe --roots C:/workspace`                | Windows PowerShell 5.1 (built-in) |
    | `sandbox`    | `--agents sandbox --agent-args "--dangerously-skip-permissions"` (bin+argv from `scripts/agent_presets.py`; add `--hostname $HARNESS_HOSTNAME-sandbox`, see below) | Linux rootless-podman confinement, claude (see below) |
@@ -161,6 +161,15 @@ Arguments: $ARGUMENTS
    `resume_conversation` interactive is a plain re-open (no `--continue`).
    `--agents bash` emits only that bin+argv; a real bash slot still needs
    `--no-worktree` and `--roots` (see the table row).
+
+   On Windows the preset's bin is **not** the bare name: `bash` on PATH there is
+   `C:/Windows/System32/bash.exe`, the WSL launcher, and every task dispatched
+   through it dies with `execvpe(/bin/bash) failed` inside a Linux namespace
+   that has never seen the checkout. `agent_presets.bash_bin()` resolves Git for
+   Windows' own bash instead, derived from wherever `git` itself lives, and
+   falls back to the bare name only on a machine with no Git for Windows at all.
+   This is the absolute-path rule below, applied to the one preset that was
+   still ignoring it.
 
    **Windows: always specify `--agent-bin` as an absolute path.** Task Scheduler / autostart sessions don't inherit the same PATH as an interactive shell, so a bare `cmd.exe` or `powershell.exe` can fail to resolve at spawn time. The presets bake the standard System32 paths in; if the user overrides `claude-bin=...` on Windows, the override should also be an absolute path. PowerShell 7+ (`pwsh.exe`) is a common override — its location varies by install method (typically `C:/Program Files/PowerShell/7/pwsh.exe`), so look it up before passing.
 

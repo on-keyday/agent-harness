@@ -29,7 +29,56 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
+
+
+def bash_bin() -> str:
+    """Absolute path to a POSIX bash, or "" if this machine has none.
+
+    Never the bare name on Windows. `bash` on PATH there is
+    C:\\Windows\\System32\\bash.exe, the WSL launcher, and the runner's
+    exec.LookPath finds it: the profile registers, tasks submit, and each one
+    dies with `execvpe(/bin/bash) failed` inside a Linux namespace that has
+    never seen this checkout. Observed on a Windows runner, not deduced.
+
+    Git for Windows ships a real bash beside the git that a clone of this repo
+    already required, so it is derived from there rather than searched for by
+    name. POSIX bash on every platform rather than cmd on Windows, because the
+    prompts are written once — in a skill, in a task submitted from Linux — and
+    a shell profile is only worth having if the same prompt runs on both.
+
+    Shared with scripts/dummy-harness.py, which builds the same profile for its
+    throwaway instances: a dummy that resolved bash differently from the real
+    runner would pass checks the thing it stands in for fails.
+    """
+    if os.name != "nt":
+        return "bash"
+    return _windows_bash()
+
+
+def _windows_bash() -> str:
+    """The search itself, split from the platform gate above so it can be tested
+    on POSIX, where these tests run: Path() takes its flavour from os.name at
+    construction, so a test that forced os.name to "nt" could not build the tree
+    it needs to search."""
+    roots: list[Path] = []
+    git = shutil.which("git")
+    if git:
+        # <root>/cmd/git.exe (a PATH install) and <root>/usr/bin/git.exe (what
+        # Git Bash itself puts first) both sit under the root holding bash.
+        here = Path(git).resolve().parent
+        roots += [here, here.parent, here.parent.parent]
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        base = os.environ.get(var)
+        if base:
+            roots += [Path(base) / "Git", Path(base) / "Programs" / "Git"]
+    for root in roots:
+        for cand in (root / "bash.exe", root / "bin" / "bash.exe",
+                     root / "usr" / "bin" / "bash.exe"):
+            if cand.is_file():
+                return str(cand)
+    return ""
 
 # The event-stream adapter (TaskKind stream), for the presets whose agent it
 # speaks. It is a harness binary, so it is taken from the checkout this module
@@ -168,7 +217,12 @@ KNOWN_AGENT_PRESETS: dict[str, dict[str, str]] = {
     # here (out of scope: --agents is about agent profiles, not
     # shell-sandbox concerns).
     "bash": {
-        "bin": "bash",
+        # Resolved, not the bare name — see bash_bin() for what the bare name
+        # finds on Windows. The bare name survives as the fallback only for a
+        # Windows box with no Git for Windows at all, which cannot have cloned
+        # this repo; there is no better answer there, and it leaves that machine
+        # behaving exactly as it did before.
+        "bin": bash_bin() or "bash",
         "oneshotArgv": "{args} -c {prompt}",
         "resumeOneshotArgv": "{args} -c {prompt}",
         "resumeInteractiveArgv": "{args}",

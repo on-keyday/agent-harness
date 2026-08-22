@@ -47,7 +47,10 @@ session on `host`, and bounce `target`.
 Every instance gets a `bash` profile alongside the agent one. A oneshot task
 submitted to it runs its prompt as a shell command with that task's
 HARNESS_* in the environment — which is how you exercise agent-side commands
-(`harness-cli agent send`, inbox, …) without hand-minting a ticket.
+(`harness-cli agent send`, inbox, …) without hand-minting a ticket. On Windows
+that bash is Git for Windows' own, resolved to an absolute path: bare `bash`
+there is the WSL launcher, which every such task dies inside. If none is found
+`up` says so and ships no bash profile.
 
 This is the canonical implementation; dummy-harness.sh is a thin wrapper, the
 same shape runner.sh and restart.sh already have. It is Python because the
@@ -74,10 +77,32 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import daemon  # noqa: E402  (path set above)
+# Both are stdlib-only by design, so they are safe to import above the venv
+# bootstrap. bash_bin comes from the preset table on purpose: a dummy instance
+# that resolved its shell differently from a real runner would pass checks the
+# thing it stands in for fails.
+from agent_presets import bash_bin  # noqa: E402  (path set above)
+from bootstrap import ensure_venv  # noqa: E402  (path set above)
+
+ensure_venv()
+
+# Only below here are we inside scripts/.venv. `daemon` imports psutil at MODULE
+# level, so importing it above the bootstrap made this script fail to start at
+# all — the deps live in the venv precisely so the system interpreter does not
+# need them, and the only reason it ever ran was a machine that happened to have
+# psutil installed system-wide. Same order as runner.py / server.py / restart.py.
+import daemon  # noqa: E402  (venv active, so psutil resolves)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BIN = REPO_ROOT / "bin"
+
+# Every text read/write below names its encoding, and that is load-bearing
+# rather than defensive style. Python's default for read_text/write_text and for
+# subprocess text mode is the LOCALE codec, which on a Japanese Windows install
+# is cp932 — and this file's own text contains U+2014, so writing the fake agent
+# died outright there. The same default silently covers the state file `down`
+# reads its pids back out of, i.e. the one file whose loss leaves a server and a
+# runner alive with nothing recorded to kill them by.
 
 # Session markers and live-harness credentials this script must not carry into
 # anything it starts. daemon._clean_child_env already drops the claude ones for
@@ -103,6 +128,23 @@ def scrub_own_env() -> None:
     for key in list(os.environ):
         if key in _SCRUB_EXACT or key.startswith(_SCRUB_PREFIXES):
             del os.environ[key]
+
+
+def survive_undisplayable_output() -> None:
+    """Same locale-codec default as the file I/O above, reaching the streams.
+
+    `print(__doc__)` is the no-subcommand usage path and the docstring holds
+    U+2014, so on a cp932 console a bare invocation answered with a traceback
+    instead of the usage. Encoding is left alone — whoever reads these streams
+    decodes with their own codec, and forcing UTF-8 would mangle a non-ASCII
+    temp path in the `export` lines. Only the error policy changes, so an
+    undisplayable character costs one glyph rather than the whole message.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")  # type: ignore[union-attr]
+        except (AttributeError, OSError, ValueError):
+            pass
 
 
 def die(msg: str) -> "NoReturn":  # type: ignore[valid-type]
@@ -179,7 +221,8 @@ def go_env_for_make() -> dict[str, str]:
             continue
         try:
             out = subprocess.run(
-                ["go", "env", key], capture_output=True, text=True, timeout=30
+                ["go", "env", key], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=30,
             )
         except (OSError, subprocess.SubprocessError):
             continue
@@ -204,6 +247,8 @@ def build() -> None:
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if proc.returncode != 0:
         sys.stderr.write(proc.stdout[-2000:])
@@ -237,19 +282,21 @@ emit('{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}
 emit('{"type":"result","subtype":"success","duration_ms":2000,"total_cost_usd":0}')
 '''
 
-BASH_PROFILE = json.dumps(
-    [
-        {
-            "name": "bash",
-            "bin": "bash",
-            "oneshotArgv": ["{args}", "-c", "{prompt}"],
-            "resumeOneshotArgv": ["{args}", "-c", "{prompt}"],
-            "resumeInteractiveArgv": ["{args}"],
-            "logFormat": "",
-        }
-    ],
-    separators=(",", ":"),
-)
+
+def bash_profile(bin_: str) -> str:
+    return json.dumps(
+        [
+            {
+                "name": "bash",
+                "bin": bin_,
+                "oneshotArgv": ["{args}", "-c", "{prompt}"],
+                "resumeOneshotArgv": ["{args}", "-c", "{prompt}"],
+                "resumeInteractiveArgv": ["{args}"],
+                "logFormat": "",
+            }
+        ],
+        separators=(",", ":"),
+    )
 
 
 def spawn(args: list[str], log: Path) -> subprocess.Popen:
@@ -296,7 +343,7 @@ def cmd_env(name: str) -> int:
     path = state_path(name)
     if not path.is_file():
         die(f"no instance (state file {path} missing); run 'up --detach' first")
-    st = json.loads(path.read_text())
+    st = json.loads(path.read_text(encoding="utf-8"))
     # The scrub at the top of this script only cleans the script's own
     # environment. Whoever evals this is a different shell — inside a harness
     # task it still carries HARNESS_AUTH_TICKET for the LIVE server, and
@@ -313,7 +360,7 @@ def cmd_down(name: str) -> int:
     if not path.is_file():
         print("dummy-harness: nothing to stop")
         return 0
-    st = json.loads(path.read_text())
+    st = json.loads(path.read_text(encoding="utf-8"))
     for key in ("RUNNER_PID", "SERVER_PID"):
         pid = st.get(key)
         if pid:
@@ -363,7 +410,9 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
             break
         time.sleep(0.25)
     if not listening(port):
-        sys.stderr.write((tmp / "server.log").read_text(errors="replace")[:2000])
+        sys.stderr.write(
+            (tmp / "server.log").read_text(encoding="utf-8", errors="replace")[:2000]
+        )
         kill_pid(server.pid)
         setup_err(f"server never listened on {port}")
 
@@ -374,8 +423,20 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
         str(daemon.bin_path("agent-runner")),
         "--server-cid", cid, "--psk", psk, "--roots", str(repo), "--no-worktree",
         "--max-tasks", "4",
-        "--agent-profiles", BASH_PROFILE,
     ]
+    # No profile at all beats one that registers and then fails per task: an
+    # absent `bash` agent is rejected at submit with a name you can act on,
+    # where a WSL launcher answers with a namespace error about a path nobody
+    # asked for. Said at `up` time because that is when it can still be fixed.
+    bash = bash_bin()
+    if bash:
+        runner_args += ["--agent-profiles", bash_profile(bash)]
+    else:
+        sys.stderr.write(
+            "dummy-harness: no POSIX bash found (Git for Windows not installed?). "
+            "This instance has no 'bash' profile, so the agent-side hands "
+            "documented in the dummy-harness skill are unavailable on it.\n"
+        )
     if agent == "claude":
         runner_args += [
             "--agent-bin", "claude",
@@ -387,7 +448,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
         ]
     else:
         fake = tmp / "fake-claude.py"
-        fake.write_text(FAKE_AGENT)
+        fake.write_text(FAKE_AGENT, encoding="utf-8")
         # agent-bin is the interpreter and the script leads every argv template,
         # so the fake needs no shebang and no exec bit — which is what makes it
         # work identically on Windows.
@@ -409,14 +470,16 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
             break
         out = subprocess.run(
             [str(daemon.bin_path("harness-cli")), "--server-cid", cid, "ls"],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if "agent=" in out.stdout:
             registered = True
             break
         time.sleep(0.25)
     if not registered:
-        sys.stderr.write((tmp / "runner.log").read_text(errors="replace")[-2000:])
+        sys.stderr.write(
+            (tmp / "runner.log").read_text(encoding="utf-8", errors="replace")[-2000:]
+        )
         kill_pid(runner.pid)
         kill_pid(server.pid)
         setup_err("runner never registered")
@@ -434,7 +497,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
         "SERVER_PID": server.pid,
         "RUNNER_PID": runner.pid,
         "SERVER_PORT": port,
-    }, indent=2))
+    }, indent=2), encoding="utf-8")
 
     me = Path(__file__).name
     print(f"dummy-harness: up  name={name}  agent={agent}  port={port}  repo={repo}")
@@ -452,6 +515,7 @@ def cmd_up(name: str, agent: str, model: str, detach: bool, extra: list[str]) ->
 
 
 def main(argv: list[str]) -> int:
+    survive_undisplayable_output()
     scrub_own_env()
 
     p = argparse.ArgumentParser(add_help=False)

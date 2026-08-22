@@ -141,3 +141,13 @@ harness-cli --server-cid "$CID" submit --repo "$REPO" --agent bash \
 
 That is also how you deliver an agentboard message to a session you are
 watching, since the wake fires on delivery.
+
+The bin behind that profile is resolved, not the bare name, and it is shared
+with the real `bash` runner preset (`agent_presets.bash_bin()`) so a dummy
+cannot pass a check the thing it stands in for fails. It matters on Windows:
+bare `bash` there is `C:/Windows/System32/bash.exe`, the WSL launcher, and a
+task dispatched through it dies with `execvpe(/bin/bash) failed` inside a Linux
+namespace holding none of the checkout. Git for Windows' bash is used instead.
+On a machine where none is found, `up` says so on stderr and ships **no** bash
+profile — so `--agent bash` is then rejected by name at submit rather than
+failing per task.
