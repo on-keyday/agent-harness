@@ -22,12 +22,25 @@ func TestModeTracker_BasicAndLastValueWins(t *testing.T) {
 func TestModeTracker_AltScreenLiveReentered(t *testing.T) {
 	tr := newModeTracker()
 	tr.feed([]byte("\x1b[?25l\x1b[?1049h\x1b[?2026h")) // cursor + alt-screen + sync
-	// Session is currently in the alt screen → the preamble must re-enter it
-	// FIRST (so a reattach lands the live app's frames on the alt buffer even
-	// when the original ESC[?1049h was evicted), then restore the cursor bit.
-	// Sync (2026) stays excluded (transient framing).
-	if got := tr.preamble(); !bytes.Equal(got, []byte("\x1b[?1049h\x1b[?25l")) {
-		t.Fatalf("preamble = %q, want ESC[?1049h ESC[?25l (alt re-entered, sync excluded)", got)
+	// Session is currently in the alt screen → the preamble must re-enter it (so
+	// a reattach lands the live app's frames on the alt buffer even when the
+	// original ESC[?1049h was evicted). Sync (2026) stays excluded (transient
+	// framing).
+	//
+	// The ORDER around that entry is the load-bearing part, and it is asserted
+	// here rather than described in a comment because it looks wrong: the leave
+	// is not redundant and the cursor mode is not misplaced. A real Windows
+	// console freezes the alternate buffer's cursor visibility at whatever the
+	// primary buffer held when ESC[?1049h ran, and DECTCEM issued from inside
+	// the alternate buffer never reaches it. So the cursor bit has to be set
+	// while the primary buffer is current and then carried across a switch that
+	// actually happens — hence leave, set, enter. Against a client already on
+	// the alternate buffer (a reattach into the same terminal) the leading
+	// ESC[?1049l is what keeps the entry from degenerating into a no-op; against
+	// one on the primary buffer it is inert.
+	want := []byte("\x1b[?1049l\x1b[?25l\x1b[?1049h")
+	if got := tr.preamble(); !bytes.Equal(got, want) {
+		t.Fatalf("preamble = %q, want %q (leave, hide, enter; sync excluded)", got, want)
 	}
 }
 

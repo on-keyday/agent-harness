@@ -87,23 +87,19 @@ func TestConsoleRepaintReconstructsScreen(t *testing.T) {
 					cursorOK++
 				}
 
-				// Cursor visibility carries a conhost quirk, so the expectation
-				// is not simply wantVis. DECTCEM issued while the alternate
-				// buffer is already active does not reach it — see
-				// TestConsoleDECTCEMDoesNotReachAlternateBuffer. buildRepaint
-				// therefore emits DECTCEM BEFORE the screen selection so the
-				// value rides across the switch, which works whenever the
-				// observer is on the main buffer. The poisoned state begins
-				// with ESC[?1049h, so for an alt-screen target there is no
-				// switch left to ride and the alternate buffer keeps the
-				// visible cursor it was created with.
-				expectVis := wantVis
-				if ob.name == "poisoned" && server.AltScreen() {
-					expectVis = true
-				}
-				if gotVis := conCursorVisible(t, h); gotVis != expectVis {
-					t.Errorf("cursor visible = %v, want %v (corpus cur_vis=%v, alt=%v)",
-						gotVis, expectVis, wantVis, server.AltScreen())
+				// No exception any more, and its removal is the point of the
+				// change that landed with it. DECTCEM issued while the
+				// alternate buffer is already active does not reach it (see
+				// TestConsoleDECTCEMDoesNotReachAlternateBuffer), and both
+				// observer states here can arrive already on that buffer — the
+				// poisoned one always, the ring one whenever the replay window
+				// contains the app's own ESC[?1049h, which at a real attach
+				// size it does. buildRepaint now LEAVES the alternate buffer
+				// before entering it, so the entry is a real switch and the
+				// pre-switch DECTCEM rides across it in either direction.
+				if gotVis := conCursorVisible(t, h); gotVis != wantVis {
+					t.Errorf("cursor visible = %v, want %v (alt=%v)",
+						gotVis, wantVis, server.AltScreen())
 				} else {
 					visOK++
 				}

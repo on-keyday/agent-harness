@@ -130,18 +130,26 @@ func loadExtCorpus(tb testing.TB, name string) []byte {
 //     survives into the alt buffer, which is why it sits here. The three
 //     emulators that do honour it either way are indifferent to the move.
 //
-//     This fixes the case where the observer is on the MAIN buffer, which is
-//     every observer that has a switch left to make. It does NOT fix an
-//     observer ALREADY on the alternate buffer — the ESC[?1049h is then a
-//     no-op, so there is nothing for the visibility to ride across, and on
-//     Windows the alt cursor stays visible. Leaving and re-entering closes it
-//     and is measured to work (see the Windows tests), at the cost of forcing
-//     a real buffer switch — a flash of the main screen — on every attach to
-//     an alt-screen session. That trade is not worth taking on a sequence
-//     nobody has yet watched land on a live attach, so it is recorded rather
-//     than applied. Weigh it when this is wired into SessionMux, and see
-//     TestRepaintAltObserverCoverageGap for why no test currently exercises it
-//     from a ring replay.
+//     Which is only half of it, hence the ESC[?1049l that now precedes the
+//     whole thing when the target is the alternate buffer. Conhost freezes the
+//     alternate buffer's cursor visibility at whatever MAIN held when the app
+//     issued its own ESC[?1049h, and nothing emitted from inside can move it in
+//     EITHER direction. An observer already on that buffer — which a real
+//     attach reaches routinely, see replayTailSizes — would otherwise be stuck
+//     with what the app inherited: htop keeps a cursor it wanted hidden (a
+//     stray block in a blank corner, cosmetic) and opencode-tui LOSES the one
+//     it wanted shown, which is its input caret sitting at the typing
+//     position. Forcing the leave makes the entry a real switch again, so the
+//     DECTCEM has something to ride across. Measured in both directions on
+//     conhost.
+//
+//     The cost is a genuine buffer switch on every attach to an alt-screen
+//     session. Whether that is a PERCEPTIBLE flash is not known: the sequence
+//     arrives as one contiguous write, so the terminal sees both halves within
+//     a frame and may never present the main buffer at all. Nobody has watched
+//     it on a live attach yet. If it does flash, the fix is to condition the
+//     leave on the visibility actually needing to change — but that requires
+//     knowing the observer's state, which the server does not.
 //
 // Not carried here, on purpose: the input-affecting private modes (bracketed
 // paste, mouse, application cursor keys). vtgrid neither tracks nor exposes
@@ -152,6 +160,13 @@ func buildRepaint(t *vtgrid.Terminal) []byte {
 	_, rows := t.Size()
 	x, y, vis := t.Cursor()
 	var b strings.Builder
+	// Leave the alternate buffer before entering it, so that the entry below is
+	// a REAL switch even for an observer already sitting on it. Without this the
+	// ESC[?1049h is a no-op and the DECTCEM has nothing to ride across; see the
+	// Windows note above for why that is not recoverable afterwards.
+	if t.AltScreen() {
+		b.WriteString("\x1b[?1049l")
+	}
 	// DECTCEM before the screen selection, and NOT beside the final cursor
 	// positioning where it would read more naturally. On a real Windows
 	// console the two halves of "restore the cursor" belong on opposite sides
@@ -188,9 +203,29 @@ func buildRepaint(t *vtgrid.Terminal) []byte {
 const poison = "\x1b[?1049h\x1b[5;20r\x1b[?6h\x1b[?25l\x1b[?7l\x1b[7;31;44m" +
 	"leftovers from a full-screen app\r\nsecond line of debris"
 
-// replayTailBytes is a ring snapshot's worth of history, cut at an arbitrary
-// offset — no ground-state scan, which is harsher than what the server does.
-const replayTailBytes = 32 << 10
+// replayTailBytes is what a real `session attach` replays: cli/attach_native.go
+// passes replayLimit 0, which is the whole ring, and the ring defaults to 1 MiB
+// (server/task_handler.go). Cut at an arbitrary offset with no ground-state
+// scan, which is harsher than what the server does.
+//
+// It was 32 KiB, chosen as "smaller than production must be safer". It is not:
+// a shorter tail is LESS likely to contain the app's ESC[?1049h, so it leaves
+// the observer on the main buffer and quietly skips the case where the repaint
+// has to fix an observer already on the alternate one. Every alt-screen capture
+// in the set reaches that case at 128 KiB and above, and at 32 KiB only one
+// does. Truncating harder is not the conservative choice it looks like.
+const replayTailBytes = 1 << 20
+
+// replayTailSizes are the replay sizes that actually occur, plus one far below
+// any of them. The corpora are 256 KiB, so the largest is the whole stream.
+var replayTailSizes = []struct {
+	Name string
+	N    int
+}{
+	{"tail-32k", 32 << 10},         // below anything production does
+	{"grid-pane-128k", 128 << 10},  // cli/preview_wasm.go GridPaneReplayLimit
+	{"full-ring", replayTailBytes}, // session attach: replayLimit 0
+}
 
 func ringTail(data []byte, n int) []byte {
 	if len(data) <= n {
@@ -263,11 +298,21 @@ func countCellMatch(a, b *vtgrid.Terminal) (match, total int) {
 // screen on an observer regardless of the state that observer was in.
 //
 // The ring-only column in the log is the CURRENT behaviour for the same input,
-// and it is the reason this exists: htop 5/40 rows, vim-split 2/40.
+// and it is the reason this exists: at a full-ring replay htop reconstructs 5
+// of 40 rows and vim-split 2 of 40.
+//
+// The ring observer is run at every replay size that actually occurs, not just
+// one. Size is not a smooth axis here: whether the app's ESC[?1049h falls
+// inside the window decides whether the observer arrives on the alternate
+// buffer, which is a different case for the repaint to solve and the one that
+// exposed the conhost DECTCEM defect. A single small tail tests the easy half
+// and reports full marks.
 func TestRepaintReconstructsScreen(t *testing.T) {
-	var totRows, totCells int
-	var okFresh, okDirty, okOracle, okPoison, okPoisonOrc int
-	var okCellFresh, okCellDirty, okCellPoison int
+	type observer struct {
+		Name string
+		Pre  []byte
+	}
+	var totRows, totCells, okRows, okCells, okOracle int
 
 	for _, c := range extCorpora {
 		data := loadExtCorpus(t, c.Name)
@@ -275,165 +320,60 @@ func TestRepaintReconstructsScreen(t *testing.T) {
 		server := vtgrid.New(c.Cols, c.Rows)
 		_, _ = server.Write(data)
 		want := trimRows(server.Lines())
+		cx, cy, cv := server.Cursor()
 		rp := buildRepaint(server)
 
-		// An observer starting from nothing.
-		fresh := vtgrid.New(c.Cols, c.Rows)
-		_, _ = fresh.Write(rp)
-
-		// An observer that consumed a truncated ring first.
-		tail := ringTail(data, replayTailBytes)
-		dirty := vtgrid.New(c.Cols, c.Rows)
-		_, _ = dirty.Write(tail)
-		ringOnly := countMatch(want, trimRows(dirty.Lines()))
-		_, _ = dirty.Write(rp)
-
-		// The same, through an independent emulator.
-		orc := oracleRows(append(append([]byte{}, tail...), rp...), c.Cols, c.Rows)
-
-		// An observer left in the reattach symptom.
-		pois := vtgrid.New(c.Cols, c.Rows)
-		_, _ = pois.Write([]byte(poison))
-		_, _ = pois.Write(rp)
-		poisOrc := oracleRows(append([]byte(poison), rp...), c.Cols, c.Rows)
-
-		mf := countMatch(want, trimRows(fresh.Lines()))
-		md := countMatch(want, trimRows(dirty.Lines()))
-		mo := countMatch(want, orc)
-		mp := countMatch(want, trimRows(pois.Lines()))
-		mpo := countMatch(want, poisOrc)
-		cmF, cTot := countCellMatch(server, fresh)
-		cmD, _ := countCellMatch(server, dirty)
-		cmP, _ := countCellMatch(server, pois)
-
-		for _, got := range []struct {
-			what string
-			n    int
-		}{
-			{"fresh", mf}, {"after-ring", md}, {"after-ring/x-vt", mo},
-			{"poisoned", mp}, {"poisoned/x-vt", mpo},
-		} {
-			if got.n != c.Rows {
-				t.Errorf("%s: %s rows %d/%d after repaint", c.Name, got.what, got.n, c.Rows)
-			}
+		observers := []observer{{"fresh", nil}, {"poisoned", []byte(poison)}}
+		for _, s := range replayTailSizes {
+			observers = append(observers, observer{"ring/" + s.Name, ringTail(data, s.N)})
 		}
-		for _, got := range []struct {
-			what string
-			n    int
-		}{{"fresh", cmF}, {"after-ring", cmD}, {"poisoned", cmP}} {
-			if got.n != cTot {
-				t.Errorf("%s: %s cells %d/%d after repaint", c.Name, got.what, got.n, cTot)
+
+		for _, ob := range observers {
+			term := vtgrid.New(c.Cols, c.Rows)
+			_, _ = term.Write(ob.Pre)
+			before := countMatch(want, trimRows(term.Lines()))
+			onAltBefore := term.AltScreen()
+			_, _ = term.Write(rp)
+
+			rows := countMatch(want, trimRows(term.Lines()))
+			cells, cTot := countCellMatch(server, term)
+			orc := countMatch(want,
+				oracleRows(append(append([]byte{}, ob.Pre...), rp...), c.Cols, c.Rows))
+
+			totRows += c.Rows
+			totCells += cTot
+			okRows += rows
+			okCells += cells
+			okOracle += orc
+
+			if rows != c.Rows {
+				t.Errorf("%s/%s: rows %d/%d after repaint", c.Name, ob.Name, rows, c.Rows)
 			}
-		}
-		cx, cy, cv := server.Cursor()
-		for _, o := range []struct {
-			what string
-			term *vtgrid.Terminal
-		}{{"after-ring", dirty}, {"poisoned", pois}} {
-			gx, gy, gv := o.term.Cursor()
+			if cells != cTot {
+				t.Errorf("%s/%s: cells %d/%d after repaint", c.Name, ob.Name, cells, cTot)
+			}
+			if orc != c.Rows {
+				t.Errorf("%s/%s: x-vt rows %d/%d after repaint", c.Name, ob.Name, orc, c.Rows)
+			}
+			gx, gy, gv := term.Cursor()
 			if gx != cx || gy != cy || gv != cv {
-				t.Errorf("%s: %s cursor (%d,%d,%v), want (%d,%d,%v)",
-					c.Name, o.what, gx, gy, gv, cx, cy, cv)
+				t.Errorf("%s/%s: cursor (%d,%d,%v), want (%d,%d,%v)",
+					c.Name, ob.Name, gx, gy, gv, cx, cy, cv)
 			}
-			if o.term.AltScreen() != server.AltScreen() {
-				t.Errorf("%s: %s alt-screen %v, want %v",
-					c.Name, o.what, o.term.AltScreen(), server.AltScreen())
+			if term.AltScreen() != server.AltScreen() {
+				t.Errorf("%s/%s: alt-screen %v, want %v",
+					c.Name, ob.Name, term.AltScreen(), server.AltScreen())
 			}
+
+			t.Logf("%-14s %-20s before=%2d/%d on-alt-before=%-5v  after=%2d/%d cells=%d/%d x-vt=%2d",
+				c.Name, ob.Name, before, c.Rows, onAltBefore, rows, c.Rows, cells, cTot, orc)
 		}
-
-		totRows += c.Rows
-		totCells += cTot
-		okFresh += mf
-		okDirty += md
-		okOracle += mo
-		okPoison += mp
-		okPoisonOrc += mpo
-		okCellFresh += cmF
-		okCellDirty += cmD
-		okCellPoison += cmP
-
-		t.Logf("%-14s rows=%d ring-only=%2d | fresh=%2d after-ring=%2d x-vt=%2d poisoned=%2d poisoned/x-vt=%2d  repaint=%dB",
-			c.Name, c.Rows, ringOnly, mf, md, mo, mp, mpo, len(rp))
 	}
 
 	pct := func(n, d int) float64 { return 100 * float64(n) / float64(d) }
-	t.Logf("ROWS  total=%d fresh=%d (%.1f%%) after-ring=%d (%.1f%%) x-vt=%d (%.1f%%) poisoned=%d (%.1f%%) poisoned/x-vt=%d (%.1f%%)",
-		totRows, okFresh, pct(okFresh, totRows), okDirty, pct(okDirty, totRows),
-		okOracle, pct(okOracle, totRows), okPoison, pct(okPoison, totRows),
-		okPoisonOrc, pct(okPoisonOrc, totRows))
-	t.Logf("CELLS total=%d fresh=%d (%.3f%%) after-ring=%d (%.3f%%) poisoned=%d (%.3f%%)",
-		totCells, okCellFresh, pct(okCellFresh, totCells),
-		okCellDirty, pct(okCellDirty, totCells), okCellPoison, pct(okCellPoison, totCells))
-}
-
-// TestRepaintAltObserverCoverageGap names the one case the corpus set cannot
-// reach, and fails when a new capture reaches it.
-//
-// buildRepaint's DECTCEM ordering fixes an observer that still has a screen
-// switch to make. An observer ALREADY on the alternate buffer is not fixed: the
-// ESC[?1049h is a no-op, so on Windows the hidden cursor stays visible. Whether
-// that is reachable from a ring replay depends on where the tail LEAVES the
-// observer — the last switch in it — not on whether ESC[?1049h appears anywhere
-// in it, which is a weaker condition that happens to be satisfied more often.
-//
-// "Leaves the observer on the alternate buffer" also implies the target is the
-// alternate buffer, which is why the condition has two terms and not three: the
-// tail is a SUFFIX of the same stream, alt state is decided by the last ESC[?1049
-// in the input, and if the tail holds one at all then the observer and the server
-// saw the same last one. A tail holding none leaves the observer on main whatever
-// the server knows.
-//
-// Measured here every run. Today exactly one capture (altscreen) already leaves
-// the observer on the alternate buffer from the ring replay alone, so the
-// precondition is in the tree rather than hypothetical; its cursor visibility
-// after the tail already matches the target, so the repaint has nothing to
-// change and the gap stays shut. htop is the one hidden-cursor alt-screen
-// capture and its tail leaves the observer on main, which is exactly why its
-// after-ring leg is clean. The two halves exist separately and never together,
-// which is the only reason the Windows after-ring leg expects wantVis with no
-// exception.
-//
-// Which half a capture lands on is decided by how CHATTY its app is, not by
-// anything about the repaint: htop repaints several times a second, so its
-// ESC[?1049h is long gone from a 32 KiB window, while a quiet shell sitting in
-// the alternate screen still has its switch inside the window. The busy
-// full-screen app is the safe case here and the idle one is the exposed case,
-// which is the opposite of the intuition.
-//
-// Like knownOracleDefects in diff_test.go, this is not a suppression: it
-// asserts the gap is STILL THERE. A capture with both halves would make the
-// Windows leg start failing with a bare "cursor visible = true, want false" and
-// no hint why, so the gap is better found here, on every platform, by the test
-// that knows what it means.
-func TestRepaintAltObserverCoverageGap(t *testing.T) {
-	for _, c := range extCorpora {
-		data := loadExtCorpus(t, c.Name)
-		server := vtgrid.New(c.Cols, c.Rows)
-		_, _ = server.Write(data)
-		observer := vtgrid.New(c.Cols, c.Rows)
-		_, _ = observer.Write(ringTail(data, replayTailBytes))
-		_, _, wantVis := server.Cursor()
-		_, _, haveVis := observer.Cursor()
-
-		if !observer.AltScreen() {
-			continue
-		}
-		t.Logf("%s: the ring tail alone leaves the observer on the alternate buffer "+
-			"(cursor visible after the tail=%v, target=%v)", c.Name, haveVis, wantVis)
-		// The trigger is a DISAGREEMENT, not specifically a hidden target. If the
-		// two already match, the repaint's DECTCEM is a no-op and its inability to
-		// land costs nothing. If they differ, the repaint must change the bit on a
-		// buffer it cannot reach — in either direction, since DECTCEM does not
-		// cross into an active alternate buffer at all.
-		if haveVis != wantVis {
-			t.Errorf("%s now reaches the case buildRepaint's DECTCEM ordering cannot fix: its "+
-				"ring tail leaves the observer on the alternate buffer with cursor visible=%v "+
-				"while the target is %v, so the repaint must change a bit it cannot reach. The "+
-				"gap this test guarded is closed and the Windows after-ring leg will fail on "+
-				"this corpus. Decide the leave-and-re-enter trade in buildRepaint's doc "+
-				"comment, then delete this test.", c.Name, haveVis, wantVis)
-		}
-	}
+	t.Logf("ROWS  %d/%d (%.1f%%)   x-vt %d/%d (%.1f%%)   CELLS %d/%d (%.3f%%)",
+		okRows, totRows, pct(okRows, totRows), okOracle, totRows, pct(okOracle, totRows),
+		okCells, totCells, pct(okCells, totCells))
 }
 
 // TestRepaintExportForBrowser writes the same inputs and expected screens to a
