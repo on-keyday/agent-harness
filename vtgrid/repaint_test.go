@@ -120,6 +120,16 @@ func loadExtCorpus(tb testing.TB, name string) []byte {
 //   - Rows are addressed absolutely rather than joined with ANSI()'s CRLF,
 //     which sidesteps the deferred-wrap a full-width row leaves pending.
 //
+//   - DECTCEM (cursor visibility) is emitted BEFORE the screen selection, while
+//     the cursor's POSITION is restored at the very end. Splitting the two
+//     halves of "put the cursor back" looks arbitrary and is not: on a real
+//     Windows console, DECTCEM issued while the alternate buffer is active does
+//     not take effect on it and lands on the MAIN buffer instead — so the
+//     hidden cursor stays visible AND the buffer underneath is corrupted.
+//     Measured on conhost in both directions; issued before the switch it
+//     survives into the alt buffer, which is why it sits here. The three
+//     emulators that do honour it either way are indifferent to the move.
+//
 // Not carried here, on purpose: the input-affecting private modes (bracketed
 // paste, mouse, application cursor keys). vtgrid neither tracks nor exposes
 // them; server/mode_tracker.go's preamble does, and the two are complementary.
@@ -127,7 +137,17 @@ func loadExtCorpus(tb testing.TB, name string) []byte {
 // which this one deliberately clears in order to address cells absolutely.
 func buildRepaint(t *vtgrid.Terminal) []byte {
 	_, rows := t.Size()
+	x, y, vis := t.Cursor()
 	var b strings.Builder
+	// DECTCEM before the screen selection, and NOT beside the final cursor
+	// positioning where it would read more naturally. On a real Windows
+	// console the two halves of "restore the cursor" belong on opposite sides
+	// of the switch; see the Windows note above.
+	if vis {
+		b.WriteString("\x1b[?25h")
+	} else {
+		b.WriteString("\x1b[?25l")
+	}
 	if t.AltScreen() {
 		b.WriteString("\x1b[?1049h")
 	} else {
@@ -145,13 +165,7 @@ func buildRepaint(t *vtgrid.Terminal) []byte {
 	}
 	b.WriteString("\x1b[0m")
 	b.WriteString("\x1b[?7h")
-	x, y, vis := t.Cursor()
 	fmt.Fprintf(&b, "\x1b[%d;%dH", y+1, x+1)
-	if vis {
-		b.WriteString("\x1b[?25h")
-	} else {
-		b.WriteString("\x1b[?25l")
-	}
 	return []byte(b.String())
 }
 
