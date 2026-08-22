@@ -388,21 +388,21 @@ func (t *Terminal) sgr(p csiParams) {
 		case c == 29:
 			t.pen.Attr &^= AttrStrike
 		case c >= 30 && c <= 37:
-			t.pen.FG = Indexed(uint8(c - 30))
+			t.pen.FG = Basic(uint8(c - 30))
 		case c == 38:
 			i = t.extendedColor(p, i, &t.pen.FG)
 		case c == 39:
 			t.pen.FG = Color{}
 		case c >= 40 && c <= 47:
-			t.pen.BG = Indexed(uint8(c - 40))
+			t.pen.BG = Basic(uint8(c - 40))
 		case c == 48:
 			i = t.extendedColor(p, i, &t.pen.BG)
 		case c == 49:
 			t.pen.BG = Color{}
 		case c >= 90 && c <= 97:
-			t.pen.FG = Indexed(uint8(c - 90 + 8))
+			t.pen.FG = Basic(uint8(c - 90 + 8))
 		case c >= 100 && c <= 107:
-			t.pen.BG = Indexed(uint8(c - 100 + 8))
+			t.pen.BG = Basic(uint8(c - 100 + 8))
 		}
 	}
 }

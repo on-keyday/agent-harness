@@ -128,20 +128,19 @@ func appendColorSGR(b *strings.Builder, c Color, base, ext, bright int) {
 	switch c.Kind {
 	case ColorDefault:
 		return
-	case ColorIndexed:
-		switch n := int(c.N); {
-		case n < 8:
+	case ColorBasic:
+		if n := int(c.N); n < 8 {
 			b.WriteByte(';')
 			b.WriteString(strconv.Itoa(base + n))
-		case n < 16:
+		} else {
 			b.WriteByte(';')
 			b.WriteString(strconv.Itoa(bright + n - 8))
-		default:
-			b.WriteByte(';')
-			b.WriteString(strconv.Itoa(ext))
-			b.WriteString(";5;")
-			b.WriteString(strconv.Itoa(n))
 		}
+	case ColorIndexed:
+		b.WriteByte(';')
+		b.WriteString(strconv.Itoa(ext))
+		b.WriteString(";5;")
+		b.WriteString(strconv.Itoa(int(c.N)))
 	case ColorRGB:
 		b.WriteByte(';')
 		b.WriteString(strconv.Itoa(ext))

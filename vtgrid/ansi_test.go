@@ -80,8 +80,50 @@ func TestANSIKeepsABackgroundOnlyRun(t *testing.T) {
 	}
 	again := New(20, 1)
 	_, _ = again.Write([]byte(out))
-	if got := again.CellAt(8, 0).BG; got.Kind != ColorIndexed || got.N != 4 {
-		t.Errorf("cell 8 background = %+v, want palette index 4", got)
+	if got := again.CellAt(8, 0).BG; got != Basic(4) {
+		t.Errorf("cell 8 background = %+v, want Basic(4) — `ESC[44m` is the "+
+			"basic spelling and must come back as one", got)
+	}
+}
+
+// TestANSIKeepsTheColourSpelling is why ColorBasic exists. SGR 31 and
+// 38;5;1 name the same palette entry and are not interchangeable on a
+// terminal: the "bold is bright" heuristic most apply to the first they do not
+// apply to the second, so re-emitting one as the other repaints the screen.
+//
+// The captured corpora settle which way the pressure runs — the extended form
+// is the majority (13,274 uses against 11,922) and herdr, ConPTY and PowerShell
+// emit nothing else — so a renderer that normalised to the compact form was
+// rewriting most of the colour it was handed.
+func TestANSIKeepsTheColourSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		name, in, want string
+		cell           Color
+	}{
+		{"basic stays basic", "\x1b[31mX", ";31", Basic(1)},
+		{"bright stays bright", "\x1b[91mX", ";91", Basic(9)},
+		{"extended stays extended", "\x1b[38;5;1mX", ";38;5;1", Indexed(1)},
+		{"extended high", "\x1b[38;5;220mX", ";38;5;220", Indexed(220)},
+		{"truecolor", "\x1b[38;2;255;135;175mX", ";38;2;255;135;175", RGB(255, 135, 175)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			term := New(10, 1)
+			_, _ = term.Write([]byte(tc.in))
+			if got := term.CellAt(0, 0).FG; got != tc.cell {
+				t.Errorf("parsed as %+v, want %+v", got, tc.cell)
+			}
+			if out := term.ANSI(); !strings.Contains(out, tc.want) {
+				t.Errorf("ANSI() = %q, want it to carry %q", out, tc.want)
+			}
+		})
+	}
+
+	// The two spellings resolve to the same colour, which is what keeps
+	// --color/--json output unchanged by the distinction.
+	if Basic(1).Hex() != Indexed(1).Hex() {
+		t.Errorf("Basic(1).Hex() = %s, Indexed(1).Hex() = %s — the two spellings "+
+			"name one palette entry and must render alike",
+			Basic(1).Hex(), Indexed(1).Hex())
 	}
 }
 

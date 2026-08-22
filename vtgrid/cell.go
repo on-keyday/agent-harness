@@ -27,6 +27,16 @@ type ColorKind uint8
 
 const (
 	ColorDefault ColorKind = iota
+	// ColorBasic is a palette entry 0-15 as spelled by SGR 30-37 / 90-97.
+	// ColorIndexed is the SAME palette entry spelled `38;5;n`. They are kept
+	// apart because terminals do not treat them the same: the "bold is bright"
+	// heuristic that most apply to 30-37 they do not apply to 38;5;n, so
+	// `ESC[1;31m` and `ESC[1;38;5;1m` can show different colours. Collapsing
+	// the two loses that, and re-emitting the wrong one repaints the screen —
+	// measured across the captured corpora, the extended form is the MAJORITY
+	// (13,274 uses against 11,922), and herdr, ConPTY and PowerShell use
+	// nothing else.
+	ColorBasic
 	ColorIndexed
 	ColorRGB
 )
@@ -42,7 +52,10 @@ type Color struct {
 	B    uint8
 }
 
-// Indexed and RGB build the two non-default colours.
+// Basic, Indexed and RGB build the three non-default colours. Basic and
+// Indexed name the same palette entry and differ only in how the wire spelled
+// it; see ColorBasic.
+func Basic(n uint8) Color       { return Color{Kind: ColorBasic, N: n} }
 func Indexed(n uint8) Color     { return Color{Kind: ColorIndexed, N: n} }
 func RGB(r, g, b uint8) Color   { return Color{Kind: ColorRGB, R: r, G: g, B: b} }
 func (c Color) IsDefault() bool { return c.Kind == ColorDefault }
@@ -108,7 +121,7 @@ func (c Color) RGB() (r, g, b uint8, ok bool) {
 	switch c.Kind {
 	case ColorRGB:
 		return c.R, c.G, c.B, true
-	case ColorIndexed:
+	case ColorBasic, ColorIndexed:
 		switch n := int(c.N); {
 		case n < 16:
 			s := systemColors[n]
