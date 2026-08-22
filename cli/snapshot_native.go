@@ -177,11 +177,41 @@ type ScreenSnapshot struct {
 	//
 	// Empty is a measurement, not a gap: a long-idle session may have set its
 	// title once, long enough ago that the ring dropped it.
-	Title string       `json:"title"`
-	Attrs bool         `json:"attrs"`
-	Color bool         `json:"color"`
-	Lines []string     `json:"lines"`
-	Spans []ScreenSpan `json:"spans"`
+	Title string `json:"title"`
+	// Cursor is where the session's cursor is and whether it is shown. Beside
+	// the grid rather than on it for the same reason as Title: it is terminal
+	// state, not a cell.
+	//
+	// It is here because nothing else could answer for it. The grid says what
+	// the screen READS; a reattach that lands the cursor in the middle of a
+	// finished transcript, or shows one an app asked to hide, is invisible in
+	// Lines and Spans, and those are the reattach defects this project keeps
+	// finding. Reported unconditionally: collecting it is free (the model
+	// already tracks it) and a field present only sometimes is a field a reader
+	// cannot rely on.
+	Cursor ScreenCursor `json:"cursor"`
+	// AltScreen is true when the session is on the alternate buffer — a
+	// full-screen app is live. The same grid means something different
+	// depending on it: on the alternate buffer it is an app's canvas that
+	// vanishes when the app exits, on the primary it is the tail of scrollback.
+	AltScreen bool         `json:"alt_screen"`
+	Attrs     bool         `json:"attrs"`
+	Color     bool         `json:"color"`
+	Lines     []string     `json:"lines"`
+	Spans     []ScreenSpan `json:"spans"`
+}
+
+// ScreenCursor is the cursor as the session's own terminal model holds it:
+// zero-based column and row into the grid, and whether it is being displayed.
+//
+// Visible is reported as its own bool rather than by moving an invisible cursor
+// off-grid or to a sentinel position, because the two facts are independent —
+// a hidden cursor still has a position, and an app that hides it while drawing
+// still moves it. Collapsing them would throw one away.
+type ScreenCursor struct {
+	X       int  `json:"x"`
+	Y       int  `json:"y"`
+	Visible bool `json:"visible"`
 }
 
 // Detect judges this screen with the rules for the named agent, so a caller
@@ -227,15 +257,18 @@ func (c *Client) SessionSnapshotANSI(ctx context.Context, taskIDHex string, defR
 // buildSnapshot is the single place a ScreenSnapshot is assembled, so the two
 // capture entry points cannot drift into two shapes of the same thing.
 func buildSnapshot(term *vtgrid.Terminal, taskIDHex, title string, cols, rows int, withAttrs, withColor bool) *ScreenSnapshot {
+	cx, cy, cvis := term.Cursor()
 	return &ScreenSnapshot{
-		Task:  taskIDHex,
-		Rows:  rows,
-		Cols:  cols,
-		Title: title,
-		Attrs: withAttrs,
-		Color: withColor,
-		Lines: screenLines(renderScreen(term), rows),
-		Spans: collectSpans(term, cols, rows, withAttrs, withColor),
+		Task:      taskIDHex,
+		Rows:      rows,
+		Cols:      cols,
+		Title:     title,
+		Cursor:    ScreenCursor{X: cx, Y: cy, Visible: cvis},
+		AltScreen: term.AltScreen(),
+		Attrs:     withAttrs,
+		Color:     withColor,
+		Lines:     screenLines(renderScreen(term), rows),
+		Spans:     collectSpans(term, cols, rows, withAttrs, withColor),
 	}
 }
 

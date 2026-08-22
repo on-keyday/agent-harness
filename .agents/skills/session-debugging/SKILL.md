@@ -186,7 +186,8 @@ when the foreground IS a shell.
   plain, 2,537 B with `--ansi`, and 1,045,629 B with `--raw`. Refused with
   `--json` and with `--raw`; composes with `--style`/`--color`/`--detect`.
 - **`--json`** emits one object instead of text — same screen, different
-  encoding: `{task, rows, cols, attrs, color, lines[], spans[]}`. `lines` is the
+  encoding: `{task, rows, cols, title, cursor{x,y,visible}, alt_screen, attrs,
+  color, lines[], spans[]}`. `lines` is the
   grid one row per entry and is always exactly `rows` long, and each span is
   `{row, start, end, attrs[], fg, bg, text}`, so `lines[span.row]` gives you the
   row a span sits on and you never parse the `--- styles ---` text. `attrs` and
@@ -225,11 +226,26 @@ when the foreground IS a shell.
 - The grid is **width-wrapped**: a long line (a SID, a URL) is split across
   rows, so a grep can miss it. `--json` does NOT fix this — `lines` is the same
   wrapped grid. For greppable logical lines use `exec` (below) or `--raw`.
-- `--json` also carries **`title`**: the session's last OSC window title, which
-  is NOT on the grid. Agents put their turn state there (Claude a spinner glyph
-  while working), which is why it is the highest-priority detection signal —
-  and why an empty `title` is a measurement rather than a gap, since a
-  long-quiet session's title may have aged out of the replay ring.
+- `--json` also carries three things that are **terminal state rather than
+  cells**, which no amount of reading the rendered text recovers. They appear
+  only there: the text forms print the screen, and the screen cannot show them.
+
+  - **`title`** — the session's last OSC window title. Agents put their turn
+    state there (Claude a spinner glyph while working), which is why it is the
+    highest-priority detection signal — and why an empty `title` is a
+    measurement rather than a gap, since a long-quiet session's title may have
+    aged out of the replay ring.
+  - **`cursor`** — `{x, y, visible}`, zero-based column and row into the same
+    grid `lines` describes. Two rows that read identically can have the cursor
+    in completely different places, so this is how you tell a prompt waiting
+    for input from a finished transcript, and where a line-editor's caret
+    actually sits before you send an arrow key. `visible` is separate from the
+    position because the two are independent: a hidden cursor still has one,
+    and an app that hides it while drawing still moves it.
+  - **`alt_screen`** — true while a full-screen app is live. The same grid means
+    different things either side of it: on the alternate buffer it is an app's
+    canvas that vanishes when the app exits, on the primary it is the tail of
+    scrollback. Worth checking before you conclude that output "disappeared".
 
 ### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json]] <id> <text>...`
 
@@ -362,5 +378,7 @@ as line boundaries — matching on `\n`-terminated lines alone misses markers.
 | Screen unchanged after `send` | Render lag (poll longer) or input plumbing broken → nonce echo round-trip |
 | A repeated key in one `send` does nothing | Runes in one write arrive as ONE key event (`"jjj"` matches no binding) → one call per keypress |
 | Screen looks garbled in snapshot | Render artifact vs real bytes → `--raw` and inspect escapes |
+| Can't tell which line the caret is on, or whether one is shown | The rendered text cannot carry it → `--json` and read `cursor` |
+| A full-screen app's output seems to have vanished | It was on the alternate buffer and the app exited → `--json` and read `alt_screen` |
 | `/clear` sent over the agentboard did nothing | Payload lands as prompt text, never as a slash command → `session send` |
 | `await-idle` woke you with nothing to do | The peer's agentboard reply was already the completion edge → don't arm one for a peer you asked to report back |

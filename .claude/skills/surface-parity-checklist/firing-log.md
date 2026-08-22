@@ -30,6 +30,38 @@ so: skipping the walk is itself a datum about when the trigger fails to fire.
 
 ## Entries
 
+### 2026-08-22 `0b59eb5` — cursor + alt_screen on the session snapshot object
+
+done:    10 (`session send --snapshot` shares `printSessionScreen`, so the two
+         paths cannot render different objects — verified it is the only path,
+         and its `--json` help still says "same shape" truthfully), 24 (same:
+         one renderer, so the meaning is identical by construction rather than
+         by agreement), 31 (reported unconditionally — collecting is free, and
+         a field present only sometimes is one a reader cannot rely on; also
+         kept `visible` separate from the position, since a hidden cursor still
+         has one), 32 (the struct tags are the only spelling of the grammar;
+         the text forms deliberately do not restate it), 33 (a `--cursor` flag
+         was considered and REJECTED: it would be inert under `--json`, which
+         is this item's failure shape — no flag means nothing can be ignored),
+         36, 38
+omitted: 35 (README documents `session snapshot`'s existence and its capability,
+         never its JSON shape — verified by grep; adding the first such
+         description here would put a second source of truth next to the
+         `--json` help text)
+         37 (no snapshot spec exists — the specs that mention it do so in
+         passing about other features)
+         38's second half: neither live pane DRAWS a cursor (TUI grid pane
+         reads `emu.Cursor()` for scroll anchoring only; the WebUI preview does
+         not touch it). Rendering a caret is a different deliverable from
+         reporting terminal state, with its own question — what style, and how
+         it composes with reverse-video content. Named rather than silently
+         skipped.
+missed:  —
+
+Note on 11–23: `n/a` for all of them, and for an honest reason rather than a
+reflex — they walk TASK fields across listings and detail views, and this field
+belongs to a SCREEN. That is what produced item 38.
+
 ### 2026-08-20 `d6be39c` — skills_injected on TaskInfo
 
 done:    11, 12, 14, 16, 17, 19, 20, 23, 24, 28, 31, 32, 35, 36, 37

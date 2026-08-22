@@ -103,6 +103,67 @@ func TestCollectSpansIsEmptyNotNilOnACleanScreen(t *testing.T) {
 	}
 }
 
+// The cursor and the buffer are terminal STATE, and no amount of reading Lines
+// recovers them: a cursor parked mid-transcript and one sitting at the prompt
+// produce identical rows, and so do the alternate and primary buffers. Both are
+// reported unconditionally, so a reader never has to ask whether the fields are
+// present before trusting them.
+func TestSnapshotReportsCursorAndBuffer(t *testing.T) {
+	// Cursor left at row 1 column 3 with a hidden cursor, on the primary buffer.
+	term := screenWith(20, 3, "hello\r\n\x1b[2;4H\x1b[?25l")
+	snap := buildSnapshot(term, "task", "", 20, 3, false, false)
+	if snap.Cursor.X != 3 || snap.Cursor.Y != 1 {
+		t.Errorf("cursor = (%d,%d), want (3,1)", snap.Cursor.X, snap.Cursor.Y)
+	}
+	if snap.Cursor.Visible {
+		t.Error("cursor reported visible after ESC[?25l")
+	}
+	if snap.AltScreen {
+		t.Error("alt_screen true on the primary buffer")
+	}
+
+	// Hiding does not move it: position and visibility are independent, and a
+	// snapshot that folded them together would lose one.
+	shown := screenWith(20, 3, "hello\r\n\x1b[2;4H\x1b[?25l\x1b[?25h")
+	if s := buildSnapshot(shown, "task", "", 20, 3, false, false); !s.Cursor.Visible ||
+		s.Cursor.X != 3 || s.Cursor.Y != 1 {
+		t.Errorf("cursor = %+v, want the same position, visible", s.Cursor)
+	}
+
+	alt := screenWith(20, 3, "\x1b[?1049hfullscreen")
+	if s := buildSnapshot(alt, "task", "", 20, 3, false, false); !s.AltScreen {
+		t.Error("alt_screen false after ESC[?1049h")
+	}
+}
+
+// The fields must survive to the wire under the names the --json help text
+// promises. Renaming a JSON tag is invisible to every Go-side test above.
+func TestSnapshotCursorMarshalsUnderItsDocumentedNames(t *testing.T) {
+	snap := buildSnapshot(screenWith(10, 1, "x"), "task", "", 10, 1, false, false)
+	b, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var got map[string]json.RawMessage
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, k := range []string{"cursor", "alt_screen"} {
+		if _, ok := got[k]; !ok {
+			t.Errorf("%q missing from the snapshot object: %s", k, b)
+		}
+	}
+	var cur map[string]json.RawMessage
+	if err := json.Unmarshal(got["cursor"], &cur); err != nil {
+		t.Fatalf("cursor is not an object: %s", got["cursor"])
+	}
+	for _, k := range []string{"x", "y", "visible"} {
+		if _, ok := cur[k]; !ok {
+			t.Errorf("cursor.%s missing: %s", k, got["cursor"])
+		}
+	}
+}
+
 // Spans carry absolute grid rows, so Lines must be exactly Rows long or
 // Lines[span.Row] is a bounds error on the reader's side. The emulator trims
 // trailing blank rows, which is the case that would otherwise break it.

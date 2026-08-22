@@ -238,6 +238,18 @@ written down per path (`prune` with ids vs the bare age sweep, `file push
     fell between the selectors and rendered as a block above its text at
     390px. Select by container, not by control type.
 
+38. **Live screen-rendering surfaces.** `tui/pane_streamer.go` (the TUI grid
+    pane) and the WebUI session preview render a session's SCREEN rather than a
+    task's fields, so nothing in 11–23 reaches them — those items walk task
+    listings, detail views and their JSON. When a change is about what a SCREEN
+    reports or shows, ask separately whether those two render it.
+    Found by walking, not by an incident: `session snapshot` gained `cursor` and
+    `alt_screen` as data while neither live pane draws a cursor at all — the TUI
+    pane reads `emu.Cursor()` for scroll anchoring and discards the column and
+    the visible bit. Recorded as `omitted` (reporting state and drawing a caret
+    are different deliverables) rather than shipped as an asymmetry nobody had
+    looked at, which is the outcome this item exists to force.
+
 ## Documentation surfaces
 
 35. `README.md` — the feature's section (e.g. "Capabilities and scope"),
