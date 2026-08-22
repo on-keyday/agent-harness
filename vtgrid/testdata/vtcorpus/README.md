@@ -41,17 +41,26 @@ Three things to know before using them:
 | `herdr-tui` | 36x173 | the herdr multiplexer repainting a pane | **absolute** cursor motion (CUP ×5127), and the only source of **OSC 8 hyperlinks** |
 | `htop` | 40x150 | htop filtered to root processes, captured **while still inside** the alternate screen | colour meters, tree view, 0.3 s repaint; VPA, and 2238 charset designations |
 | `opencode-tui` | 40x150 | opencode driven by keystrokes only, no provider configured | command palette, tab switching, input editing — the Kitty keyboard protocol (`CSI = u` / `? u` / `< u`) and OSC 1337/99 live here |
+| `pwsh` | 40x150 | PowerShell 7 as the interactive shell | PSReadLine writing VT **itself**, not through ConPTY: per-keystroke syntax highlighting, tab-completion cycling, `Write-Progress` |
 | `torture` | 40x150 | a script written for this purpose | SGR attrs + 16/256/truecolor, CJK/combining/emoji, DECSTBM, IL/DL/ICH/DCH, TBC/HTS, autowrap off/on, EL/ED |
 | `vim-split` | 40x150 | vim with a vertical split, scrolled ^F/^B/j | DECSTBM in anger, DA2/DSR queries, window ops (CSI t), DCS |
+| `win-cmd` | 40x150 | native `cmd.exe`: dir/tree/ver, `color` changes, a PowerShell progress bar | the Console API translated to VT by **ConPTY** — and a CJK console locale |
 
 `claude-tui` and `herdr-tui` are near-opposites in drawing strategy, which is
 why both are here: a renderer that only ever meets one of them will look
 correct and be wrong on the other.
 
-Across all eleven there are **37 distinct CSI final bytes**, ten OSC commands
+Across all thirteen there are **37 distinct CSI final bytes**, ten OSC commands
 and seven ESC finals. That number is the useful one — it says the surface a
 renderer has to cover is enumerable, and it is a measurement rather than an
 estimate.
+
+It also appears to be saturating. The first seven captures reached 25; the next
+three took it to 35; htop added two; and **`win-cmd` and `pwsh` added none at
+all**. That is weak evidence, not proof — every corpus here is a terminal
+someone drove on purpose, and none is a survey — but it is the difference
+between "we implemented what we happened to see" and "what we see stopped
+growing".
 
 The growth is the story. The first seven captures came to 25 CSI finals; adding
 codex, agy and opencode took it to 35, and htop to 37. The newcomers brought
@@ -61,6 +70,13 @@ cursor-shape and version queries, ECH, VPA, and OSC 4/12/66/99/1337.
 100% parity on first contact**, which is the useful evidence: what a screen
 model must do with an unknown sequence is recognise its extent and skip it, and
 that is testable separately from implementing it.
+
+`win-cmd` then added **no new sequence at all**, which is worth saying out
+loud: native Windows console programs do not speak VT: they call the Console
+API, and ConPTY renders their screen changes back out as escape sequences. What
+arrives is therefore ConPTY's vocabulary rather than the program's, and it is a
+narrow one — SGR, CUP and EL carry almost everything. A Windows corpus is
+valuable for the *shapes* ConPTY produces, not for sequence variety.
 
 One shared-blind-spot check, because a differential test cannot catch two
 implementations being wrong the *same* way: htop emits 2238 charset
@@ -97,6 +113,12 @@ all of those. Three lessons are baked into how it is written:
   the disclosure*. Shapes leak nothing, and they turned out to catch strictly
   more: connection ids, and the `/home/kf` fragments a TUI leaves when cursor
   motion splits a path across two writes, both of which a name list missed.
+- **A shape must be tight enough not to cry wolf.** The address pattern first
+  used `\d{1,3}` per octet and flagged `Microsoft Windows [Version
+  10.0.26200.9168]` as a 10.0.0.0/8 address. A guard that fires on a version
+  banner is worse than no guard, because the next person to meet it relaxes the
+  rule. Octets are bounded to 0-255 now, and `TestLocalIdentifierPatterns`
+  pins both directions — what must be caught and what must not.
 - **Prefer re-capturing over scrubbing.** One capture held server log lines
   whose base64 fields *encode* addresses; a text substitution does not reach
   those. Content you chose is safe in a way content you filtered is not.

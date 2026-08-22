@@ -13,10 +13,10 @@
 // and seven ESC finals (run TestVTCorpusCoverage). Everything outside that set
 // is recognised well enough to be skipped without corrupting the grid, and
 // nothing more — which is not a shortcut but the load-bearing behaviour: three
-// agent corpora (codex, agy, opencode) plus htop were added after the fact,
-// carrying the Kitty keyboard protocol, cursor-shape queries, VPA and OSC
-// 1337/99 — almost none of which this implements — and every one rendered at
-// 100% parity on first contact.
+// six corpora (codex, agy, opencode, htop, native cmd.exe and PowerShell) were
+// added after the fact, carrying the Kitty keyboard protocol, cursor-shape
+// queries, VPA and OSC 1337/99 — almost none of which this implements — and
+// every one rendered at 100% parity on first contact.
 //
 // In particular there is no scrollback here — the harness's 1 MiB replay ring
 // already is the scrollback, and holding a second copy as cells is what makes

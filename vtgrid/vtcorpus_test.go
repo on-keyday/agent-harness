@@ -44,7 +44,9 @@ var vtCorpora = []vtCorpus{
 	{"herdr-tui", 36, 173, "the herdr multiplexer repainting a pane that scrolls colored text"},
 	{"htop", 40, 150, "htop filtered to root processes, captured while still inside the alternate screen: colour meters, tree view, 0.3s repaint"},
 	{"opencode-tui", 40, 150, "opencode driven by keystrokes only (no provider configured): command palette, tab switching, input editing"},
+	{"pwsh", 40, 150, "PowerShell 7 as the interactive shell: PSReadLine syntax highlighting keystroke by keystroke, tab-completion cycling, Write-Progress"},
 	{"torture", 40, 150, "deliberate coverage: SGR, CJK, DECSTBM, IL/DL/ICH/DCH, tabs, autowrap"},
+	{"win-cmd", 40, 150, "native cmd.exe on Windows: dir/tree/ver, console colour changes and a PowerShell progress bar, all translated to VT by ConPTY"},
 	{"vim-split", 40, 150, "vim with a vertical split, scrolled with ^F/^B and j"},
 }
 
@@ -60,11 +62,20 @@ var vtCorpora = []vtCorpus{
 // The last entry names fields instead of values because their contents are
 // base64: an address inside one survives any text substitution, so a capture
 // carrying it has to be re-taken rather than scrubbed.
+// ipOctet bounds a dotted-quad component to 0-255. Writing \d{1,3} instead
+// looks equivalent and is not: a Windows build number is four dot-separated
+// numbers starting with 10, and `10.0.26200.9168` matched the loose form. A
+// guard that cries wolf on a version banner is worse than none, because the
+// next person weakens it.
+const ipOctet = `(?:25[0-5]|2[0-4]\d|[01]?\d?\d)`
+
 var localIdentifiers = []struct {
 	What string
 	Re   *regexp.Regexp
 }{
-	{"a private-range IPv4 address", regexp.MustCompile(`\b(?:10\.\d{1,3}|192\.168|172\.(?:1[6-9]|2\d|3[01]))\.\d{1,3}\.\d{1,3}\b`)},
+	{"a private-range IPv4 address", regexp.MustCompile(
+		`\b(?:10\.` + ipOctet + `\.` + ipOctet + `|192\.168\.` + ipOctet +
+			`|172\.(?:1[6-9]|2\d|3[01])\.` + ipOctet + `)\.` + ipOctet + `\b`)},
 	{"a user@host prompt or window title", regexp.MustCompile(`\b[a-z_][a-z0-9_-]{1,31}@[a-z0-9][a-z0-9.-]{1,63}\b`)},
 	{"a home-directory path", regexp.MustCompile(`(?:/home/|/Users/|\\Users\\)[A-Za-z0-9_.-]+`)},
 	{"a runner connection id", regexp.MustCompile(`\bws:[0-9.]+:\d+-\d+`)},
@@ -336,4 +347,47 @@ func appendInt(b []byte, n int) []byte {
 		n /= 10
 	}
 	return append(b, tmp[i:]...)
+}
+
+// TestLocalIdentifierPatterns checks the guard against inputs that must trip it
+// and inputs that must not. A privacy guard is code like any other: an
+// over-broad pattern is not "safe", it is a false alarm that teaches whoever
+// meets it to relax the rule.
+func TestLocalIdentifierPatterns(t *testing.T) {
+	mustFlag := []string{
+		"connect 192.168.3.14 ok",
+		"inside 10.1.2.3 subnet",
+		"172.16.0.1 and 172.31.255.254",
+		"user@somehost:~$ ",
+		"cd /home/someone/work",
+		"C:\\Users\\someone\\Desktop",
+		`"bound_runner_id":"ws:1.2.3.4:5-6"`,
+		"HARNESS_AUTH_TICKET=deadbeef",
+	}
+	mustNotFlag := []string{
+		"Microsoft Windows [Version 10.0.26200.9168]", // build number, not an address
+		"172.32.0.1 and 172.15.0.1",                   // outside the private 172.16/12 block
+		"10.0.300.1",                                  // 300 is not an octet
+		"go1.25.7 linux/amd64",
+		"C:\\Windows\\System32\\drivers",
+		"see https://example.com/a/b",
+	}
+	flags := func(s string) (string, bool) {
+		for _, id := range localIdentifiers {
+			if m := id.Re.FindString(s); m != "" {
+				return id.What + " " + m, true
+			}
+		}
+		return "", false
+	}
+	for _, s := range mustFlag {
+		if _, ok := flags(s); !ok {
+			t.Errorf("guard missed %q", s)
+		}
+	}
+	for _, s := range mustNotFlag {
+		if what, ok := flags(s); ok {
+			t.Errorf("guard false-positive on %q: matched %s", s, what)
+		}
+	}
 }
