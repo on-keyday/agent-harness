@@ -426,6 +426,27 @@ it exercises the real sequence rather than a copy.
   and gated on conhost.
 - **Observer resize while the control seat is empty.** Reaches the grid through
   the same funnel as a control resize, by construction.
+- **A control client sends its own size right after attaching**, so a reattach
+  is routinely repaint-then-resize-then-frames. Two things about it are worth
+  stating, because the obvious reading of each is backwards.
+
+  The repaint is generated at the GRID's size, while the control path
+  deliberately does not replay `lastWinSize` — the control client owns the size.
+  So a client whose terminal is a different size receives a repaint addressed in
+  rows it does not have, and the bottom of it collapses. There is no guard for
+  that and none is needed: **the case where the repaint is wrong is exactly the
+  case where the client is about to send a different size**, which resizes the
+  PTY, raises SIGWINCH, and makes the app draw the screen again. The mismatch
+  and its repair have the same precondition. That is structure, not luck, which
+  is why it is written down rather than left to be re-derived as a missing
+  check.
+
+  The mirror of it is where the repaint earns its keep. When the sizes MATCH —
+  the ordinary case of returning to the same terminal — the resize is a no-op,
+  no SIGWINCH fires, and **the app never redraws**. Nothing else puts the screen
+  right. So "a resize follows immediately anyway" is not an argument that the
+  repaint is redundant on reattach; it is only true when the repaint was going
+  to be superseded for being wrong.
 - **Runner stream dies.** `runnerPump` returns and calls `Stop`; the grid dies
   with the mux, like the ring.
 - **Server restart.** Unchanged: Detached survivors are Cancelled
