@@ -480,19 +480,43 @@ it exercises the real sequence rather than a copy.
 - **Live**: the two things no test covers, both on a real attach to a real
   terminal — whether the forced buffer switch reads as a flash, and how the
   scrollback seam immediately above the repaint looks (§5.2). Neither is a pass
-  or fail a machine can report; both are §12.
+  or fail a machine can report. **Both have now been done; see §12.**
 
-## 12. Deferred, with reasons
+## 12. Answered by looking, and what is still deferred
 
-- **Whether the forced `ESC[?1049l` is a perceptible flash.** The sequence
-  arrives as one contiguous write, so the terminal may never present the primary
-  buffer, but nobody has watched it on a live attach. If it does flash, the fix
-  is to condition the leave on the visibility actually needing to change — which
-  requires knowing the observer's state, which the server does not.
-- **How the scrollback seam above the repaint reads** (§5.2). It exists today
-  and is masked by the screen being wrong in the same way; correcting the screen
-  is what exposes it. Every remedy trades history away, so the choice waits for
-  someone to look rather than being made from the shape of the problem.
+Both live questions were open because no test can report them. Both are now
+answered, and the answers are recorded here rather than left as folklore — a
+"looked fine" that nobody wrote down becomes an open question again the next
+time somebody reads §5.2.
+
+- **The forced `ESC[?1049l` is not a perceptible flash.** Measured first: on a
+  real Windows console the gap between leaving the alternate buffer and
+  re-entering it is exactly six bytes — one `ESC[?25l` — and the main buffer is
+  never written to, so the worst a terminal could present in that window is the
+  user's own previous screen, unchanged. Then looked at: the operator attached
+  to a live alt-screen session from their own terminal and reported no visible
+  flash.
+  Scope, so this is not read as more than it is: one observation, one terminal,
+  one attach. It does not prove nothing ever shows; it establishes that nothing
+  is DRAWN to show, and that the case which prompted the worry does not exhibit
+  it. If a flash ever does appear, the fix is to condition the leave on the
+  visibility actually needing to change — which requires knowing the observer's
+  state, which the server does not.
+- **The scrollback seam is clean.** Measured on a session whose history actually
+  exceeded the ring (30,000 lines, ~2.5 MB; the first attempts at 4,000 lines
+  never truncated, so no seam could form and the check proved nothing). The
+  replay kept 1,049,243 bytes with lines 000001..017230 evicted, and across the
+  join: `scrollback[3999]` = SCROLL-LINE 029977, `screen row 0` = SCROLL-LINE
+  029978. Zero duplicated lines, no gap. A one-line duplication had been
+  PREDICTED from reading the repaint's CUP offsets and the prediction was wrong;
+  the repaint paints row 1 exactly where the replay left off.
+  The one artifact is not at the join: the ring cut lands mid-CRLF, so the
+  oldest end of the replayed scrollback opens with an orphaned newline and one
+  stray blank line. That is a property of cutting a byte ring at an arbitrary
+  offset, not of the repaint, and it is cosmetic.
+
+Still deferred:
+
 - **Server as the authority for `session snapshot` / the TUI grid pane.**
   Buildable on this, not with it.
 - **Persisting the grid across a server restart.** Detached survivors are
