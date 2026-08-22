@@ -9,15 +9,18 @@
 //
 // It is deliberately NOT a general-purpose emulator. The scope was chosen by
 // measuring what real sessions actually emit: across the captured corpora in
-// testdata/vtcorpus there are 35 distinct CSI final bytes, ten OSC commands
+// testdata/vtcorpus there are 37 distinct CSI final bytes, ten OSC commands
 // and seven ESC finals (run TestVTCorpusCoverage). Everything outside that set
 // is recognised well enough to be skipped without corrupting the grid, and
 // nothing more — which is not a shortcut but the load-bearing behaviour: three
-// agent corpora (codex, agy, opencode) were added after the fact carrying the
-// Kitty keyboard protocol, cursor-shape queries and OSC 1337/99, none of which
-// this implements, and all three rendered at 100% parity on first contact. In particular there is no scrollback here — the harness's 1 MiB
-// replay ring already is the scrollback, and holding a second copy as cells is
-// what makes a general emulator expensive.
+// agent corpora (codex, agy, opencode) plus htop were added after the fact,
+// carrying the Kitty keyboard protocol, cursor-shape queries, VPA and OSC
+// 1337/99 — almost none of which this implements — and every one rendered at
+// 100% parity on first contact.
+//
+// In particular there is no scrollback here — the harness's 1 MiB replay ring
+// already is the scrollback, and holding a second copy as cells is what makes
+// a general emulator expensive.
 //
 // What it does not model, and why:
 //

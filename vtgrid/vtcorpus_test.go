@@ -42,6 +42,7 @@ var vtCorpora = []vtCorpus{
 	{"codex-tui", 40, 150, "OpenAI Codex answering arithmetic: boxed panels and a bordered composer"},
 	{"conpty-ssh", 36, 173, "bash reached over ssh from Windows cmd.exe — the bytes pass through ConPTY"},
 	{"herdr-tui", 36, 173, "the herdr multiplexer repainting a pane that scrolls colored text"},
+	{"htop", 40, 150, "htop filtered to root processes, captured while still inside the alternate screen: colour meters, tree view, 0.3s repaint"},
 	{"opencode-tui", 40, 150, "opencode driven by keystrokes only (no provider configured): command palette, tab switching, input editing"},
 	{"torture", 40, 150, "deliberate coverage: SGR, CJK, DECSTBM, IL/DL/ICH/DCH, tabs, autowrap"},
 	{"vim-split", 40, 150, "vim with a vertical split, scrolled with ^F/^B and j"},

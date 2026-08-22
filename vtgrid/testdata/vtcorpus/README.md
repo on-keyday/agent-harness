@@ -39,6 +39,7 @@ Three things to know before using them:
 | `codex-tui` | 40x150 | OpenAI Codex answering arithmetic | boxed panels and a bordered composer; the densest CSI stream here (19k in 256 KB) |
 | `conpty-ssh` | 36x173 | bash over ssh, hosted by Windows `cmd.exe` | a third emitter: everything arrives as SGR runs over printable text, no OSC at all |
 | `herdr-tui` | 36x173 | the herdr multiplexer repainting a pane | **absolute** cursor motion (CUP ×5127), and the only source of **OSC 8 hyperlinks** |
+| `htop` | 40x150 | htop filtered to root processes, captured **while still inside** the alternate screen | colour meters, tree view, 0.3 s repaint; VPA, and 2238 charset designations |
 | `opencode-tui` | 40x150 | opencode driven by keystrokes only, no provider configured | command palette, tab switching, input editing — the Kitty keyboard protocol (`CSI = u` / `? u` / `< u`) and OSC 1337/99 live here |
 | `torture` | 40x150 | a script written for this purpose | SGR attrs + 16/256/truecolor, CJK/combining/emoji, DECSTBM, IL/DL/ICH/DCH, TBC/HTS, autowrap off/on, EL/ED |
 | `vim-split` | 40x150 | vim with a vertical split, scrolled ^F/^B/j | DECSTBM in anger, DA2/DSR queries, window ops (CSI t), DCS |
@@ -47,19 +48,39 @@ Three things to know before using them:
 why both are here: a renderer that only ever meets one of them will look
 correct and be wrong on the other.
 
-Across all ten there are **35 distinct CSI final bytes**, ten OSC commands and
-seven ESC finals. That number is the useful one — it says the surface a
+Across all eleven there are **37 distinct CSI final bytes**, ten OSC commands
+and seven ESC finals. That number is the useful one — it says the surface a
 renderer has to cover is enumerable, and it is a measurement rather than an
 estimate.
 
-The four agent corpora were captured in that order, and the count is the story:
-the first seven came to 25 CSI finals, and adding codex, agy and opencode took
-it to 35 — the newcomers brought the Kitty keyboard protocol (`CSI = u`,
-`? u`, `< u`, `> u`), `CSI q` cursor-shape and version queries, ECH, and OSC
-4/12/66/99/1337. **`vtgrid` implements none of those and rendered all three at
+The growth is the story. The first seven captures came to 25 CSI finals; adding
+codex, agy and opencode took it to 35, and htop to 37. The newcomers brought
+the Kitty keyboard protocol (`CSI = u`, `? u`, `< u`, `> u`), `CSI q`
+cursor-shape and version queries, ECH, VPA, and OSC 4/12/66/99/1337.
+**`vtgrid` implements almost none of those and rendered every one of them at
 100% parity on first contact**, which is the useful evidence: what a screen
 model must do with an unknown sequence is recognise its extent and skip it, and
 that is testable separately from implementing it.
+
+One shared-blind-spot check, because a differential test cannot catch two
+implementations being wrong the *same* way: htop emits 2238 charset
+designations, which both `vtgrid` and x/vt ignore. DEC Special Graphics is the
+pre-Unicode way to draw boxes — designate it with `ESC ( 0` and the bytes
+`qxlkmj` come out as `─│┌┐└┘` — so an implementation that ignores the
+designation renders line art as literal letters, and two such implementations
+agree with each other while both being wrong.
+
+It is not reachable in this corpus set, by either route:
+
+- every designation across every corpus is `ESC ( B`, select US-ASCII — the
+  default. `ESC ( 0` never appears, and neither does any G1 designation.
+- **SO (0x0E) count is zero** in all eleven, so nothing ever shifts to G1
+  either. The ten SI (0x0F) bytes shift *in* to G0, which is where the cursor
+  already is.
+
+Every box in these captures is drawn with UTF-8 box-drawing characters. That is
+checked, not assumed — and a future corpus that does designate `ESC ( 0` would
+invalidate it, which is why the check is written down rather than remembered.
 
 ## Keeping them publishable
 
