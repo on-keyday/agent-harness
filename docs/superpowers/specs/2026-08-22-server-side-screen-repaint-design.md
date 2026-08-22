@@ -115,9 +115,17 @@ allocations per operation, against a PTY that peaks in the tens of KB/s.
 ### 4.2 Initial size
 
 `m.lastWinSize` is empty until someone sends a size, and a detached session may
-have none at all. The grid is created at the size on `OpenExecRunnerRequest`
-when it carries one, else at **80x24**, and resized on every size change (§4.4).
-It is never created late, so it never misses a byte.
+have none at all. The grid is created at **80x24** and resized on every size
+change (§4.4). It is never created late, so it never misses a byte.
+
+**Correction, found while implementing:** an earlier draft of this section said
+the size could come from `OpenExecRunnerRequest`. It cannot. The wire protocol
+has no size field at all — `session new --rows/--cols` reaches the PTY as a
+TerminalWindowSize CONTROL frame, sent by `cli/initial_winsize.go` right after
+the stream opens. So the server only ever learns a size the same way it learns
+every other one, and there is nothing to pass to the constructor. The practical
+effect is small (the first frame corrects the default almost immediately) and
+the simplification is real: `NewSessionMux`'s signature does not change.
 
 80x24 rather than `session snapshot`'s 40x120 fallback because the two answer
 different questions: the snapshot flag is "render this for me at a size I chose"
