@@ -23,3 +23,16 @@ go.work.sum
 # webui-override-*.png slipped into a commit (3c8d789) because an explicit
 # `git add` path beats "untracked by habit" and nothing was stopping it.
 *.png
+
+# Binaries built into the REPO ROOT. `make build` writes to bin/, which is
+# ignored above, but a bare `go build ./cmd/harness-cli/` drops the binary in
+# the current directory instead — and a 12 MB harness-cli reached a commit
+# (619eb1b) that way, for the same reason the screenshots did: `git add -A`
+# does not care that nobody meant to add it. Anchored with a leading slash so
+# these only apply at the root and never shadow a real file deeper in the tree.
+/agent-runner
+/harness-cli
+/harness-server
+/harness-tui
+/harness-stream-adapter
+/sandbox-connect-proxy
