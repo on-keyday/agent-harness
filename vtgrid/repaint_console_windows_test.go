@@ -51,8 +51,11 @@ func TestConsoleRepaintReconstructsScreen(t *testing.T) {
 		wantX, wantY, wantVis := server.Cursor()
 		repaint := buildRepaint(server)
 
-		// The two observer states the repaint has to overcome: a 32 KiB byte-ring
-		// replay, and the state a torn-off full-screen app leaves behind.
+		// The two observer states the repaint has to overcome: a byte-ring replay
+		// at replayTailBytes — the whole ring, which is what `session attach`
+		// asks for — and the state a torn-off full-screen app leaves behind. The
+		// size matters and is not a detail: a shorter tail leaves the observer on
+		// the primary buffer, which is the easy half.
 		observers := []struct {
 			name string
 			pre  []byte
@@ -114,12 +117,18 @@ func TestConsoleRepaintReconstructsScreen(t *testing.T) {
 // leaves the observer on, by leaving it and watching the content change.
 //
 // The probe is content-based, so it is blind whenever the buffer underneath
-// happens to show the same screen. That is a real case, not a hypothetical:
-// opencode-tui has ring_only_match == 40, meaning the 32 KiB tail alone already
-// reconstructs all 40 rows on the main buffer, so leaving the alternate buffer
-// reveals an identical screen. Such corpora are reported and skipped rather
-// than counted as failures — a bare "17/18" with no explanation reads as a
-// defect to the next person.
+// happens to show the same screen: leaving the alternate buffer then reveals an
+// identical one and there is no change to see. Such corpora are reported and
+// skipped rather than counted as failures — a bare "17/18" with no explanation
+// reads as a defect to the next person.
+//
+// Every corpus is currently visible to it (0 blind), and that is a CONSEQUENCE
+// of the repaint forcing a real leave/re-enter rather than evidence the blind
+// case cannot happen: with the observer already on the alternate buffer, the
+// primary underneath is no longer the same screen. It was blind for
+// opencode-tui when the replay was short enough to leave the observer on the
+// primary buffer and the ring alone reconstructed all 40 rows. Keep the
+// handling; the worked example no longer fires.
 func TestConsoleRepaintLandsOnTheAlternateBuffer(t *testing.T) {
 	requireConsole(t)
 	defer restoreOutputCP(t)()

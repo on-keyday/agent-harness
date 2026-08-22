@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -79,6 +80,41 @@ func TestModeTracker_NonPrivateCSIIgnored(t *testing.T) {
 	if got := tr.preamble(); got != nil {
 		t.Fatalf("non-private CSI produced preamble %q, want nil", got)
 	}
+}
+
+// TestPreambleEmitsTheLeaveOnlyWhenItCarriesSomething pins the guarantee that
+// the fix costs nothing when it buys nothing: the forced ESC[?1049l exists only
+// to give a tracked cursor bit a real switch to ride, so a preamble with no
+// DECTCEM to hand over must not drag the client through a screen switch.
+func TestPreambleEmitsTheLeaveOnlyWhenItCarriesSomething(t *testing.T) {
+	const leave = "\x1b[?1049l"
+
+	t.Run("alt screen with a tracked cursor bit", func(t *testing.T) {
+		tr := newModeTracker()
+		tr.feed([]byte("\x1b[?1049h\x1b[?25l"))
+		pre := string(tr.preamble())
+		if !strings.Contains(pre, leave) {
+			t.Fatalf("preamble = %q, want it to contain the leave %q", pre, leave)
+		}
+		// And the leave has to come before the cursor bit, which has to come
+		// before the entry. That is the whole mechanism.
+		iLeave := strings.Index(pre, leave)
+		iCur := strings.Index(pre, "\x1b[?25l")
+		iEnter := strings.Index(pre, "\x1b[?1049h")
+		if !(iLeave < iCur && iCur < iEnter) {
+			t.Errorf("order is leave=%d cursor=%d enter=%d in %q; want leave < cursor < enter",
+				iLeave, iCur, iEnter, pre)
+		}
+	})
+
+	t.Run("alt screen with no tracked cursor bit", func(t *testing.T) {
+		tr := newModeTracker()
+		tr.feed([]byte("\x1b[?1049h"))
+		pre := tr.preamble()
+		if bytes.Contains(pre, []byte(leave)) {
+			t.Errorf("preamble = %q emitted a screen switch with no cursor bit to carry", pre)
+		}
+	})
 }
 
 // TestSessionMux_AttachRestoresEvictedCursorMode is the regression for the
