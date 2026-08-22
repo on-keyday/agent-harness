@@ -186,6 +186,84 @@ instead of a broken one.
 `capReplayTail`'s ground-state scan stays. Its job changes from "do not corrupt
 the screen" to "do not corrupt the scrollback", which is still a job.
 
+### 5.1 The repaint is unconditional, and the obvious measurement is a trap
+
+When the replayed ring already lands the exact screen, the repaint paints it
+again for nothing. That is real, and it is still not made conditional. Two
+reasons, and one warning about how to measure it.
+
+**The warning first, because the measurement invites a wrong answer.** Comparing
+"the screen from the replay alone" against "the screen from the whole capture"
+over `vtgrid/testdata/vtcorpus` gives:
+
+| replay size | rows identical | rows + cursor + alt identical |
+|---|---|---|
+| 32 KiB | 13/18 | 12/18 |
+| 128 KiB | 17/18 | 17/18 |
+| full ring | 18/18 | **18/18** |
+
+The full-ring row says nothing. The corpora are 256 KiB and the ring is 1 MiB,
+so "the whole ring" is the whole capture and the observer consumes byte-for-byte
+what the server consumed. It is a tautology, not a finding — the same shape of
+artifact as the 32 KiB tail that once hid the conhost DECTCEM defect. What the
+table does show is the only variable that matters: **whether the session's
+cumulative output still fits in the ring.** Inside it, the replay IS the history
+and the repaint is redundant; past it, the ring is truncated and the repaint is
+the whole point. A long-lived agent session passes 1 MiB early — htop alone does
+it in under a minute — so redundancy is the case for a young or quiet session,
+not the common one.
+
+**Row equality is not the test either.** At 32 KiB, opencode-tui's replay
+reproduces every row AND the cursor's position and visibility, and still leaves
+the observer on the primary buffer while the session is on the alternate one.
+Rows can match while the state does not — the axis `session snapshot` could not
+report until `fe894b4`.
+
+**And the condition would be a prediction about someone else's emulator.** To
+skip the repaint the server must decide what the CLIENT's terminal will make of
+the bytes it is about to send. It holds a vtgrid; the client is xterm.js, or
+conhost, or something else. That is the class of assumption this whole line of
+work has been removing, and a wrong prediction ships a wrong screen — strictly
+worse than painting a correct one twice.
+
+The cost of being unconditional is 3–9 KB against a replay of up to 1 MiB
+(0.3–0.9%) plus one screen repaint. The part that is NOT cheap is the forced
+`ESC[?1049l`/`ESC[?1049h`, and it already fires only for an alternate-screen
+target — 14 of the 18 corpora never emit it. If §12's live check finds that
+switch perceptible, the thing to make conditional is the leave/re-enter alone,
+on a question the server CAN answer from its own grid (is the target the
+alternate buffer), never the repaint on a question about the client.
+
+### 5.2 What scrolling back shows after a repaint
+
+The repaint scrolls nothing: absolute `CUP`, `EL`, and autowrap off for the
+duration. It therefore pushes nothing into scrollback and **overwrites the last
+screenful in place**.
+
+- Scrolling up shows the history that scrolled off DURING the ring replay.
+- The replay's final screen does not reappear. It is the thing the repaint
+  overwrote.
+- When the ring was truncated and that final screen was wrong, the wrong screen
+  is **destroyed rather than pushed into scrollback**, which is the outcome to
+  want.
+- For an alternate-screen target the repaint paints the alternate buffer, which
+  has no scrollback of its own, so scrolling up shows the PRIMARY buffer's
+  history — the same as a live session.
+
+**One seam remains.** Scrollback's newest lines are whatever the truncated
+replay drew, and the screen above them is the correct repaint. A ring that
+starts mid-episode leaves those lines partly drawn. `capReplayTail`'s
+ground-state scan keeps the crop from starting inside an escape sequence, but
+starting mid-DRAWING is not something a byte crop can fix.
+
+That seam exists today. It is currently invisible because the final screen is
+wrong in the same way, leaving nothing for it to contrast against; making the
+screen correct is what will make the seam legible. Whether it reads as
+acceptable history or as damage is a question for §12's live check, not for a
+test. The available remedies — a more conservative crop, a blank separator row,
+dropping more of the replay head — all trade history away, so none should be
+chosen before someone has looked.
+
 ## 6. The `Synth` frame type
 
 The repaint and the preamble are bytes the SERVER synthesised. Today the
@@ -370,8 +448,10 @@ it exercises the real sequence rather than a copy.
   screen AND the pre-episode scrollback; a reattach mid-episode still trims.
 - **`--raw`**: synthesised frames are distinguishable from PTY frames in its
   output, whatever presentation is chosen.
-- **Live**: the thing no test covers — watch a real attach, on a real terminal,
-  and see whether the forced buffer switch reads as a flash. §12.
+- **Live**: the two things no test covers, both on a real attach to a real
+  terminal — whether the forced buffer switch reads as a flash, and how the
+  scrollback seam immediately above the repaint looks (§5.2). Neither is a pass
+  or fail a machine can report; both are §12.
 
 ## 12. Deferred, with reasons
 
@@ -380,6 +460,10 @@ it exercises the real sequence rather than a copy.
   buffer, but nobody has watched it on a live attach. If it does flash, the fix
   is to condition the leave on the visibility actually needing to change — which
   requires knowing the observer's state, which the server does not.
+- **How the scrollback seam above the repaint reads** (§5.2). It exists today
+  and is masked by the screen being wrong in the same way; correcting the screen
+  is what exposes it. Every remedy trades history away, so the choice waits for
+  someone to look rather than being made from the shape of the problem.
 - **Server as the authority for `session snapshot` / the TUI grid pane.**
   Buildable on this, not with it.
 - **Persisting the grid across a server restart.** Detached survivors are
