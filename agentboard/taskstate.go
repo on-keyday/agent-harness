@@ -16,18 +16,54 @@ import (
 type taskState struct {
 	mu       sync.Mutex
 	patterns map[string]struct{}
-	conns    map[*ConnState]struct{}
-	rid      protocol.RunnerID
-	tid      protocol.TaskID
-	host     string
-	profile  string
+	// waiting counts the live synchronous Board.Wait calls per topic for this
+	// task. It does two jobs, and they have the same extent: a topic with a
+	// live wait is subscribed for the duration of that wait, and a publish to
+	// it must not also wake this task's PTY — the waiter is already being
+	// handed the message, so the wake would type a prompt into an agent about
+	// something it did not ask for. Refcounted because two waits on one topic
+	// may overlap; the entry is deleted at zero so matches needs no zero check.
+	waiting map[string]int
+	conns   map[*ConnState]struct{}
+	rid     protocol.RunnerID
+	tid     protocol.TaskID
+	host    string
+	profile string
 }
 
 func newTaskState() *taskState {
 	return &taskState{
 		patterns: make(map[string]struct{}),
+		waiting:  make(map[string]int),
 		conns:    make(map[*ConnState]struct{}),
 	}
+}
+
+// beginWait registers a live synchronous wait on topic. Paired with endWait.
+func (t *taskState) beginWait(topic string) {
+	t.mu.Lock()
+	t.waiting[topic]++
+	t.mu.Unlock()
+}
+
+// endWait retires one live wait on topic. Deleting at zero keeps matches a
+// plain map lookup rather than a lookup plus a count comparison.
+func (t *taskState) endWait(topic string) {
+	t.mu.Lock()
+	if n := t.waiting[topic] - 1; n > 0 {
+		t.waiting[topic] = n
+	} else {
+		delete(t.waiting, topic)
+	}
+	t.mu.Unlock()
+}
+
+// isWaiting reports whether this task has a live synchronous wait on topic.
+func (t *taskState) isWaiting(topic string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_, ok := t.waiting[topic]
+	return ok
 }
 
 func (t *taskState) addPattern(p string) {
@@ -42,10 +78,17 @@ func (t *taskState) removePattern(p string) {
 	t.mu.Unlock()
 }
 
+// matches reports whether a publish to topic reaches this task. It is the
+// union of the persistent subscription set and the topics under a live wait:
+// waiting on a topic subscribes to it for exactly the duration of the wait,
+// and leaves nothing behind afterwards.
 func (t *taskState) matches(topic string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_, ok := t.patterns[topic]
+	if _, ok := t.patterns[topic]; ok {
+		return true
+	}
+	_, ok := t.waiting[topic]
 	return ok
 }
 
@@ -61,12 +104,20 @@ func (t *taskState) detachConn(c *ConnState) {
 	t.mu.Unlock()
 }
 
+// snapshotPatterns returns the union matches tests against: the persistent
+// subscriptions plus any topic under a live wait, each name once. Feeding
+// Inbox a duplicated name would return that topic's ring twice.
 func (t *taskState) snapshotPatterns() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	out := make([]string, 0, len(t.patterns))
+	out := make([]string, 0, len(t.patterns)+len(t.waiting))
 	for p := range t.patterns {
 		out = append(out, p)
+	}
+	for p := range t.waiting {
+		if _, dup := t.patterns[p]; !dup {
+			out = append(out, p)
+		}
 	}
 	return out
 }

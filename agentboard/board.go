@@ -316,17 +316,20 @@ func (b *Board) Inbox(c *ConnState, since uint64) ([]RetainedMessage, uint64) {
 }
 
 // Wait blocks until at least one message arrives on topicName with seq > since,
-// or until ctx is done. Returns (messages, timedOut, error). Implicitly adds
-// topicName to the persistent (rid, tid) subscription set — Wait callers
-// inherit Subscribe's persistence semantics. Disable this side-effect by
-// pre-Subscribing then Unsubscribing if undesired.
+// or until ctx is done. Returns (messages, timedOut, error).
+//
+// For the duration of the call the topic is subscribed: beginWait/endWait
+// refcount it and taskState.matches is the union of the persistent pattern set
+// and the topics under a live wait. A wait therefore leaves no subscription
+// behind, and does not remove one the task already held. It used to call
+// addPattern and never undo it, so one wait on a peer's chat.<short-id>
+// subscribed the task to it for the rest of that task's life.
 func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since uint64) ([]RetainedMessage, bool, error) {
 	if c == nil || c.task == nil {
 		return nil, false, errors.New("not attached")
 	}
-	if !c.task.matches(topicName) {
-		c.task.addPattern(topicName)
-	}
+	c.task.beginWait(topicName)
+	defer c.task.endWait(topicName)
 	for {
 		b.mu.Lock()
 		var msgs []RetainedMessage
