@@ -106,6 +106,17 @@ Without either, `session exec <id> 'stty rows 40 cols 150'` still works when the
 foreground is a POSIX shell — but not when it is the full-screen TUI whose size
 you were trying to fix. Both flags are required together (one alone is ignored).
 
+**And `stty` does not tell the SERVER.** A size reaches it only as a
+`TerminalWindowSize` frame; `stty` is an ioctl on the PTY, so the program is
+resized and the server is not. Measured: after `stty`, `snapshot` still prints
+`reported no terminal size` and renders at its own `--rows/--cols` fallback,
+while the server keeps its screen grid at 80x24. A full-screen program then
+comes back PARTIAL — a few stray lines — which reads as the program being
+broken or the snapshot being unable to handle TUIs, and is neither. If you
+intend to READ the screen, size it with `session resize` / `send --resize`;
+keep `stty` for when you lack `exec_resize` and only the program's own belief
+matters.
+
 It matters when the worker's agent draws a full-screen TUI: at 0x0 codex and
 agy paint literally nothing, so `snapshot` returns a blank screen and the
 worker looks hung when it is merely undrawn. A claude worker is unaffected.

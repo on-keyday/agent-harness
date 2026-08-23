@@ -163,6 +163,33 @@ cols 140'` also works with only `exec_cowrite` — it types the resize rather
 than claiming it, so it is unaffected by who holds the seat, but it only works
 when the foreground IS a shell.
 
+**`stty` is not equivalent, and the difference bites exactly where you would
+reach for it.** A size reaches the SERVER only as a `TerminalWindowSize` frame;
+`stty` is an ioctl on the PTY, so the program sees the new size and the server
+never learns it. Measured: after `stty`, `snapshot` still prints
+`session … reported no terminal size` and renders at the `--rows/--cols`
+fallback; after `session send --resize`, it stops warning and renders at the
+size you gave. So on a session sized only by `stty`:
+
+- the server keeps rendering its own grid at **80x24**
+  (`server/session_mux.go:273-280` — the default it uses until a frame says
+  otherwise), while the program draws at whatever `stty` set;
+- the replay's screen repaint is built from that 80x24 grid, so a full-screen
+  program comes back **partial** rather than corrupt — a handful of lines out
+  of a screenful. `cli/snapshot_native.go` names this case and says it is
+  **untested**, which is a warning, not a reassurance.
+
+The failure looks like the program being broken or the snapshot being unable to
+handle full-screen apps. It is neither. Use `session resize` / `send --resize`
+whenever you intend to READ the screen afterwards, and keep `stty` for the case
+it is actually for: no `exec_resize`, and you only need the program itself to
+believe a size.
+
+A resize also makes the program repaint (SIGWINCH), which is useful on its own:
+`session send --resize <different size> --snapshot <id> ''` sizes, forces a full
+redraw, and renders — the reliable way to capture a TUI whose opening draw has
+already aged out of the replay ring.
+
 - The plain render **drops SGR**, so a *faint* placeholder / ghost-autocomplete
   / dim hint looks identical to real input. **`--style`** prints a
   `--- styles ---` section listing faint/bold/etc. spans
@@ -412,6 +439,7 @@ as line boundaries — matching on `\n`-terminated lines alone misses markers.
 | Screen unchanged after `send` | Render lag (poll longer) or input plumbing broken → nonce echo round-trip |
 | A repeated key in one `send` does nothing | Runes in one write arrive as ONE key event (`"jjj"` matches no binding) → one call per keypress |
 | Screen looks garbled in snapshot | Render artifact vs real bytes → `--raw` and inspect escapes |
+| A full-screen TUI renders as a few stray lines, and `snapshot` warns "reported no terminal size" | The session was sized with `stty`, which the server never sees → `session resize` / `send --resize`; combine with `--snapshot` in one call so the SIGWINCH redraw is what gets captured |
 | Can't tell which line the caret is on, or whether one is shown | The rendered text cannot carry it → `--json` and read `cursor` |
 | A full-screen app's output seems to have vanished | It was on the alternate buffer and the app exited → `--json` and read `alt_screen` |
 | `--detect` says `unknown` and you still need to know if anything is happening | Screen rules read the grid, which a pane border or an unknown UI corrupts → read `live` (`--json`, or the `live:` line under `--detect`); it is measured off the stream, not the grid |
