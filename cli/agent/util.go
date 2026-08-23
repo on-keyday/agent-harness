@@ -15,8 +15,8 @@ const SelfTopicPrefix = agentboard.SelfTopicPrefix
 
 // SelfTopic returns the inbound topic this agent owns under the SKILL.md
 // convention: chat.<first-8-hex-chars-of-task-id>. The returned string is
-// what `harness-cli agent subscribe --self` subscribes to, and what peers
-// should target as reply_topic.
+// what `harness-cli agent subscribe --self` subscribes to, and where the
+// server routes a reply that names no destination of its own.
 func SelfTopic(t protocol.TaskID) string {
 	return agentboard.SelfTopic(t)
 }

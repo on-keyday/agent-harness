@@ -11,8 +11,8 @@ import (
 // TestSelfTopic asserts the chat.<first-8-hex-of-task-id> convention used by
 // server-seeded task subscriptions and `harness-cli agent subscribe --self`.
 // SKILL.md ("Naming inbound channels") publishes this exact shape; if it ever
-// drifts from SelfTopic, peers that hand-derive `reply_topic` will miss
-// messages.
+// drifts from SelfTopic, the default reply destination stops matching the
+// topic the server actually subscribes a task to, and replies go nowhere.
 func TestSelfTopic(t *testing.T) {
 	cases := []struct {
 		name string

@@ -332,9 +332,11 @@ loop. The agent itself must not call them.
 
 For those scripts, briefly, so the rule above is the only thing you have to
 remember here: `wait --topic T [--since N] [--in-reply-to SEQ]` blocks for a
-matching message; `dispatch --topic T --data D` publishes and then blocks for
-the reply to THAT message on your own `chat.<short-id>`, which is where the
-server routes a reply. Neither writes any persistent position — `--since` is
+matching message; `dispatch --topic T --data D [--reply-to R]` publishes and
+then blocks for the reply to THAT message — on your own `chat.<short-id>`,
+where the server routes a reply, or on `R` when you name one, since
+`--reply-to` declares the destination and waits there in a single flag.
+Neither writes any persistent position — `--since` is
 the caller's own resume point. A wait does not wake the task it belongs to for
 the topic it is waiting on: the waiter is already being handed the message, so
 a wake on top of it would type a `<harness:agentboard-wake>` prompt into an
@@ -399,11 +401,13 @@ Reply with the parent message's `seq`, which every inbox record carries:
 harness-cli agent send --in-reply-to <seq> 'the answer ...'
 ```
 
-`--topic` is **not needed**: the server routes the reply to the sender of
-the parent message, resolved from that message's retained entry — not from
-anything in the payload. The delivered reply carries `in_reply_to`, so the
-receiver correlates it without parsing your text. Pass `--topic` as well
-only when the reply belongs somewhere other than the parent's sender.
+`--topic` is **not needed**: the server resolves the destination from the
+parent's retained entry — not from anything in the payload. That is the
+sender's `chat.<short-id>`, unless the sender declared somewhere else with
+`--reply-to`, in which case its answer goes there and you are told nothing,
+which is the point. The delivered reply carries `in_reply_to`, so the receiver
+correlates it without parsing your text. Pass `--topic` as well only when the
+reply belongs somewhere neither of you has named — it overrides both.
 
 The server validates the link when you publish. If the parent has fallen
 out of its topic ring (64 messages) or its TTL (30 minutes), was purged, or
@@ -438,8 +442,8 @@ harness-cli agent unsubscribe --self
 ```
 
 The server seeds the conventional inbound topic `chat.<short-id>` when it
-assigns the task to a runner. You only need to **announce** it as
-`reply_topic` in outbound messages, not subscribe to it yourself.
+assigns the task to a runner, so you neither subscribe to it nor announce it:
+a peer's `--in-reply-to` is routed back to you by the server.
 
 **There is no board-wide rendezvous topic.** Peers reach you id-directed on
 `chat.<short-id>`: the spawner already knows your task id, and anyone with
@@ -457,8 +461,8 @@ and no runtime adapter has injected an equivalent hook, poll
 The default and overwhelmingly common path is **id-directed**: you already
 know the other agent's task id (you spawned it, or you found it with `ls`),
 so you reach it on its inbound topic `chat.<first-8-hex-of-task-id>`
-directly. No shared topic, no broadcast — only the target is woken. Announce
-your own `chat.<short-id>` as `reply_topic` so it can reply.
+directly. No shared topic, no broadcast — only the target is woken. Nothing
+has to be announced for it to answer: its `--in-reply-to` comes back to you.
 
 Every delivered message carries `from.agent`: the agent profile the sending
 task was running under at publish time (`"claude"`, `"codex"`, …), attested by
@@ -579,7 +583,9 @@ agent-runner flags):
 
 - `--agent-bin` sets the peer binary — it defaults to `claude`, but a runner
   can point it at `bash` or any other program. Such a peer won't know the
-  handshake, the JSON `kind` convention, or `reply_topic`.
+  handshake or the JSON `kind` convention. Reply routing survives it: the
+  destination is resolved server-side from `--in-reply-to`, so a peer that
+  passes the seq back needs no convention at all.
   `--claude-bin` remains accepted as a deprecated alias.
 - Agent command lines are template-driven. Claude defaults use
   `--continue` for resume-conversation, but non-Claude runners should set
@@ -666,16 +672,29 @@ subscribe:  chat.<my-short-id>     # my inbound channel (peers write here) — s
 
 ### Naming inbound channels
 
-Use `chat.<first-8-chars-of-task-id>` as your personal inbound topic.
-Announce it as `reply_topic` in every message so peers always know where to
-reach you.
+Your inbound topic is `chat.<first-8-chars-of-task-id>`, and the server
+subscribes you to it when it assigns your task. You do not have to announce
+it: a reply carrying `--in-reply-to` is routed to the sender of the parent
+message, resolved server-side from the retained entry.
 
-`reply_topic` is the fallback, not the mechanism. It is payload text the
-sender writes, so it tells you nothing a peer did not choose to say.
-Prefer `--in-reply-to`: it is set by the transport, validated by the
-server, and survives the reply landing on the wrong topic — which
-`reply_topic` does not. Keep announcing `reply_topic` for peers that never
-set `in_reply_to` (`agent=bash`, or any peer without skill injection).
+**When you want the answer somewhere ELSE, say so when you ASK:**
+
+```bash
+harness-cli agent send --topic chat.<peer> --reply-to rr.dec-019 --data '...'
+```
+
+The server records `rr.dec-019` on your message and routes replies there. The
+peer needs no knowledge of it — it answers with `--in-reply-to <seq>` as
+always. Subscribe to the topic first if you intend to receive there.
+
+Precedence, when a reply arrives: an explicit `--topic` on the REPLY wins,
+then the destination the asker declared, then the asker's own
+`chat.<short-id>`.
+
+The `reply_topic` field some older payloads carry is legacy. No code reads it:
+it asked the RECIPIENT to parse the payload and honour it, which only ever
+worked on a peer that had read this skill — and the peers it named as its
+audience are the ones without it.
 
 ### Handshake flow (id-directed — the default)
 
@@ -689,24 +708,35 @@ set `in_reply_to` (`agent=bash`, or any peer without skill injection).
      "from": "<model>",
      "role": "<role>",
      "worktree": "<task-id>",
-     "message": "...",
-     "reply_topic": "chat.<short-id>"
+     "message": "..."
    }
    ```
+   No reply topic goes in the body. The peer's `hello_ack` carries
+   `--in-reply-to` and the server routes it home; if you want it elsewhere,
+   put that on the SEND as `--reply-to`, not in the payload.
 3. **End the turn after step 2.** Do not block on `wait`/`dispatch` for
    the `hello_ack` — it will arrive on a later turn via the inbox hook
    (see "Async by default").
 4. Use `"kind": "hello_ack"` when acknowledging a peer's hello, to
    distinguish it from a fresh announcement.
 
-### Per-subject reply topics (fallback)
+### Per-subject reply topics
 
-When a peer cannot be relied on to set `in_reply_to`, give each subject its
-own reply topic (`rr.dec-019`), tell the peer to reply there, and bucket
-incoming messages by the row's `topic` instead of by anything in the
-payload. A wrong topic is at least visible — the message lands on your
-`chat.<short-id>` with no subject — whereas a wrong payload shape reads as
-"no reply arrived".
+Give a subject its own reply topic when you want its answers kept out of your
+general inbox — a script that fans work out and collects each answer where it
+can wait for it, a long-running decision thread you want to read as a unit.
+Subscribe to it, name it with `--reply-to` on the ask, and bucket by the row's
+`topic` rather than by anything in the payload.
+
+The peer is not part of the arrangement and cannot get it wrong: it replies
+with `--in-reply-to` and the server reads the destination off the parent. What
+used to be the failure here — the peer answering "normally" and the answer
+landing in the very inbox you named a topic to keep clear — is not reachable.
+
+A script may then `dispatch --topic <peer> --reply-to rr.dec-019`, which
+declares the destination and waits on it in one flag, and on failure still
+reach its own caller with a plain `send --topic chat.<caller>`. (`dispatch`
+blocks, so it belongs in a script, never in an agent turn.)
 
 Limits worth knowing before you rely on it:
 

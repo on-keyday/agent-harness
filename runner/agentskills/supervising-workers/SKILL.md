@@ -34,8 +34,7 @@ harness-cli agent send --topic "chat.$SHORT_ID" --data "$(cat <<'JSON'
 {
   "kind": "hello",
   "from": "<your role>",
-  "message": "...",
-  "reply_topic": "chat.<your-short-id>"
+  "message": "..."
 }
 JSON
 )"
