@@ -46,7 +46,18 @@ Date: 2026-08-23
   server-side reply routing that sends a reply to the original sender's own
   topic (`server/agent_handler.go:156-168`).
 
-- **Underneath all four: the delivery position is on the wrong side.** The
+- **`agent inbox --stop-hook` is a mode with no installer.** The runner injects
+  exactly one hook (`runner/settings.go:37-39`), and a Stop hook is not it:
+  `runner/settings.go:64-71` records the retirement and its reason — a
+  Stop-hook re-entry holds Claude Code's stdin while the turn continues, so the
+  `WakeStdin` marker is deferred until the agent exits and messages get
+  processed in an autonomous chain instead of a user turn. `pruneStaleHarnessHooks`
+  (`runner/settings.go:138`) deletes any `harness-cli ` hook not in the current
+  list, so a Stop hook installed by an older runner is removed from the worktree
+  (`runner/settings_test.go:225-226,303`). The flag, `emitStopHookOutput`, the
+  mutual-exclusion check and two test files are all that remain of it.
+
+- **Underneath all of the above: the delivery position is on the wrong side.** The
   board keeps topics, rings and subscriptions in memory only — `Config.SeqSeed`
   exists precisely because "b.seq lives only in memory, so a bare restart would
   reset it to 0" while the cursor file does not
@@ -90,6 +101,9 @@ Every bullet above is addressed by this change. Specifically:
    subscription the task already held.
 4. `dispatch` waits for a message that answers the seq it published, on the
    topic the server actually routes replies to.
+5. `--stop-hook` and its emitter are deleted, leaving `agent inbox` with one
+   hook mode — the one the runner installs. The skill files need no edit for
+   this: none of the three mentions `--stop-hook`.
 
 Out of scope, decided rather than deferred:
 
@@ -263,15 +277,23 @@ messages were returned but the mark did not move.
 
 **`agent inbox`** — flags after this change: `--json` (accepted, output is
 always JSON Lines), `--in-reply-to SEQ` (client-side display filter),
-`--user-prompt-submit-hook`, `--stop-hook`. Removed: `--since-last`,
-`--commit`, `--since`.
+`--user-prompt-submit-hook`. Removed: `--since-last`, `--commit`, `--since`,
+and `--stop-hook`.
 
-The advancing read is used **exactly when one of the two hook-envelope flags is
+The advancing read is used **exactly when `--user-prompt-submit-hook` is
 given**; otherwise the plain read is used. This is what replaces the
 "`Never pass --commit by hand`" instruction in the skill: advancing now
-requires claiming to be a hook, and a hook envelope's output is not usable as a
-human-facing dump. The two hook flags remain mutually exclusive
-(`cli/agent/inbox.go:57-59`).
+requires claiming to be the one hook the runner installs, and that flag's
+output is a `UserPromptSubmit` envelope, not a usable human-facing dump.
+
+`--stop-hook` is deleted along with `cli/agent/stop_hook.go`,
+`emitStopHookOutput`, and the now-unnecessary mutual-exclusion check at
+`cli/agent/inbox.go:57-59`. `emitMessageLineForHook`
+(`cli/agent/json_emit.go:38`) keeps serving the surviving hook mode. Deleting
+rather than leaving it: with the Stop hook deliberately retired and actively
+pruned from worktrees, no path installs the flag, and carrying it forward would
+mean specifying advancing-read behaviour for a caller that the runner removes
+on sight.
 
 **`agent wait`** — `--topic`, `--since`, `--timeout`, and new
 `--in-reply-to SEQ`. Removed: `--since-last`. `cli/agent/cursor.go` and
@@ -384,10 +406,11 @@ E2E, `cli/agent/`:
 - `agent inbox` twice with no publishes between returns the same lines both
   times.
 
-Deleted: `cli/agent/cursor_test.go`, `cli/agent/inbox_peek_commit_e2e_test.go`.
-`cli/agent/inbox_stop_hook_e2e_test.go` and
-`cli/agent/inbox_prompt_hook_e2e_test.go` are updated to assert the advancing
-read rather than cursor-file contents.
+Deleted: `cli/agent/cursor_test.go`, `cli/agent/inbox_peek_commit_e2e_test.go`,
+`cli/agent/stop_hook_test.go`, `cli/agent/inbox_stop_hook_e2e_test.go`.
+`cli/agent/inbox_prompt_hook_e2e_test.go` is updated to assert the advancing
+read rather than cursor-file contents, and loses its
+`--stop-hook --user-prompt-submit-hook` rejection case (`:129`).
 
 Live check after rollout: `harness-cli board subscribers` shows a `shown=` /
 `pending=` pair for each task, and a `send` to a peer's `chat.<short-id>` moves
@@ -417,7 +440,11 @@ that peer's `pending` by one.
   reading without moving the live position, which the plain read now does for
   every caller.
 - **DECIDED (author)** — the advancing read is a separate wire kind and is
-  selected by the hook-envelope flags, not by a flag of its own.
+  selected by `--user-prompt-submit-hook`, not by a flag of its own.
+- **DECIDED (operator, 2026-08-23)** — `--stop-hook` and its emitter are
+  deleted rather than carried forward. The Stop hook was retired deliberately
+  (`runner/settings.go:64-71`) and worktrees are actively pruned of it
+  (`runner/settings.go:138`), so the flag has no installer.
 - **DECIDED (author)** — `dispatch --reply-topic` is removed, not deprecated.
 - **DECIDED (author)** — `taskState` keeps its `ticketKey{runner, task}`
   keying. A task that finishes loses its `taskState` at `Board.Revoke`, and
