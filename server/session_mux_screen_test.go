@@ -48,6 +48,38 @@ func TestSessionMuxScreenSurvivesRingEviction(t *testing.T) {
 	}
 }
 
+// The window title is the ring-eviction case in its most ordinary form: an app
+// titles itself once at startup and then runs for an hour, so by the time
+// anybody attaches the OSC that set it is long gone from the ring and the title
+// exists only in the grid. The measured symptom was `session snapshot`
+// reporting an empty title for a session that plainly had one.
+//
+// Asserted through screenRepaint rather than through the grid's Title()
+// accessor, because holding the title and HANDING IT OVER are separate
+// properties and only the second one is what a snapshot or a reattach reads.
+func TestSessionMuxScreenRepaintCarriesTitleTheRingEvicted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	runner := newFakeStream(t)
+	mux := NewSessionMux(ctx, "task", runner, NewRingBuffer(16), SessionHooks{})
+
+	titled := makeWireFrame(1, []byte("\x1b]0;a session title\x07"))
+	runner.QueueRead(titled)
+	waitFor(t, func() bool { return mux.RingBufferLen() == len(titled) })
+
+	// Push the OSC out of the ring entirely, the way an hour of output would.
+	bulk := makeWireFrame(1, []byte("\x1b[20;1Hlater"))
+	runner.QueueRead(bulk)
+	waitFor(t, func() bool { return mux.RingBufferLen() == len(bulk) })
+
+	if got := string(mux.replaySnapshot()); strings.Contains(got, "a session title") {
+		t.Fatalf("precondition broken: the ring still holds the title OSC (%q)", got)
+	}
+	if got := string(mux.screenRepaint()); !strings.Contains(got, "\x1b]0;a session title\x07") {
+		t.Errorf("the repaint dropped the title the ring evicted; repaint = %q", got)
+	}
+}
+
 // Both resize entry points reach the grid, because both funnel through
 // applyWinSizeFrame. The observer path is the one easy to miss: exec_resize
 // lets an observer stand in for the size whenever the control seat is empty,

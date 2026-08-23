@@ -198,6 +198,27 @@ func countCellMatch(a, b *vtgrid.Terminal) (match, total int) {
 	return match, total
 }
 
+// repaintOracleDefects is how many rows x/vt loses on a corpus's repaint in
+// cases where x/vt is the one that is wrong. Same shape and same reasoning as
+// knownOracleDefects in diff_test.go: an entry is NOT a suppression — the count
+// is asserted exactly, so a fix upstream fails this test and tells you to delete
+// the entry rather than going quiet and leaving a stale excuse in the tree.
+//
+// claude-tui is the single defect that map already records at row 36, reached
+// here by a second route. x/vt honours the eight-bit ST (0x9C) inside an OSC;
+// 0x9C is the second byte of U+2733 ✳; and that glyph opens the window title
+// Claude Code sets. So the title Repaint now re-emits ends one byte in and the
+// rest of it prints onto the grid. vtgrid.Terminal.str documents why this parser
+// refuses that terminator.
+//
+// Emitting the title is not what puts those bytes in front of an emulator for
+// the first time: the app itself sends that OSC live, to the same observer, over
+// the path that has always carried it. An emulator that breaks on it broke
+// before any repaint happened.
+var repaintOracleDefects = map[string]int{
+	"claude-tui": 1,
+}
+
 // TestRepaintReconstructsScreen asserts that the repaint lands the server's
 // screen on an observer regardless of the state that observer was in.
 //
@@ -256,8 +277,17 @@ func TestRepaintReconstructsScreen(t *testing.T) {
 			if cells != cTot {
 				t.Errorf("%s/%s: cells %d/%d after repaint", c.Name, ob.Name, cells, cTot)
 			}
-			if orc != c.Rows {
-				t.Errorf("%s/%s: x-vt rows %d/%d after repaint", c.Name, ob.Name, orc, c.Rows)
+			switch defect := repaintOracleDefects[c.Name]; {
+			case orc == c.Rows-defect:
+				// As expected — including the defect==0 case, which is most of them.
+			case defect > 0 && orc == c.Rows:
+				t.Errorf("%s/%s: x-vt now reconstructs all %d rows — its known "+
+					"defect no longer reproduces; delete the repaintOracleDefects "+
+					"entry for %s (and check knownOracleDefects in diff_test.go)",
+					c.Name, ob.Name, c.Rows, c.Name)
+			default:
+				t.Errorf("%s/%s: x-vt rows %d/%d after repaint, want %d",
+					c.Name, ob.Name, orc, c.Rows, c.Rows-defect)
 			}
 			gx, gy, gv := term.Cursor()
 			if gx != cx || gy != cy || gv != cv {

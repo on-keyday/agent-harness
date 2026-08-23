@@ -9,7 +9,9 @@ package vtgrid
 // what they pin now is that the parser gets the same answers directly.
 
 import (
+	"bytes"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/vt"
@@ -84,5 +86,56 @@ func TestTitleSurvivesAnEightBitSTLookalike(t *testing.T) {
 	case len(viaCallback) >= len(want):
 		t.Errorf("x/vt returned %q — neither the old truncation nor the right "+
 			"answer; the assumption behind knownOracleDefects needs re-checking", viaCallback)
+	}
+}
+
+// TestRepaintCarriesTitle is the gate on why the title is in Repaint at all: an
+// observer that never saw the OSC — because the ring no longer holds it — must
+// still learn the title from the repaint alone. Reconstructing through a FRESH
+// Terminal is the point; that is what a snapshot and a reattaching client both
+// are.
+func TestRepaintCarriesTitle(t *testing.T) {
+	const want = "✳ herdr agent harness 参考要素"
+	src := New(80, 24)
+	_, _ = src.Write([]byte(realTitleOSC + "some screen content"))
+
+	dst := New(80, 24)
+	_, _ = dst.Write(src.Repaint())
+	if got := dst.Title(); got != want {
+		t.Errorf("Title() after repaint = %q, want %q", got, want)
+	}
+}
+
+// An untitled screen must not emit an OSC. Title() cannot distinguish "never
+// titled" from "titled empty", and clearing an observer's own title on the
+// strength of that ambiguity is the worse of the two guesses.
+func TestRepaintOmitsAnEmptyTitle(t *testing.T) {
+	src := New(80, 24)
+	_, _ = src.Write([]byte("plain text, no title"))
+	if rp := src.Repaint(); bytes.Contains(rp, []byte("\x1b]")) {
+		t.Errorf("repaint of an untitled screen carries an OSC: %q", rp)
+	}
+}
+
+// A stored title can hold C0 controls: Terminal.str stops only at BEL and ST, so
+// a CR or a CAN inside an OSC is appended verbatim. Re-emitting those would hand
+// the observer a sequence terminals disagree about — xterm aborts the OSC on
+// CAN and prints the tail onto the screen the repaint just painted.
+func TestRepaintTitleDropsC0Controls(t *testing.T) {
+	src := New(80, 24)
+	_, _ = src.Write([]byte("\x1b]0;a\rb\x18c\x7fd\x07"))
+	if got := src.Title(); got != "a\rb\x18c\x7fd" {
+		t.Fatalf("precondition: Title() = %q, want the payload stored verbatim", got)
+	}
+
+	dst := New(80, 24)
+	_, _ = dst.Write(src.Repaint())
+	if got := dst.Title(); got != "abcd" {
+		t.Errorf("Title() after repaint = %q, want %q", got, "abcd")
+	}
+	// The dropped bytes must not have printed onto the grid either. Lines() pads
+	// to the full width, so a blank row is spaces rather than "".
+	if got := strings.TrimRight(dst.Lines()[0], " "); got != "" {
+		t.Errorf("row 0 after repaint = %q, want empty", got)
 	}
 }

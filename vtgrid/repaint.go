@@ -12,7 +12,7 @@ import (
 
 // Repaint synthesises the bytes that make a terminal show THIS screen, whatever
 // state it was in before: the screen selection, the modes needed to address
-// cells absolutely, every row, and the cursor.
+// cells absolutely, every row, the cursor, and the window title.
 //
 // It is the counterpart ANSI() names and declines to be — "There is no cursor
 // positioning and no screen clear: the result is a block of text, not a program
@@ -66,6 +66,19 @@ import (
 //     leave on the visibility actually needing to change — but that requires
 //     knowing the observer's state, which the server does not.
 //
+// The window TITLE is carried even though it is not on the grid, because the
+// alternative is that it is nowhere. It reaches an observer exactly once — in
+// the OSC that set it — and lives only in this model afterwards, so a replay
+// whose ring no longer holds that OSC hands the observer a screen with no title
+// at all. An app that titles itself at startup and then runs for an hour is the
+// ordinary case rather than the corner, and the symptom is `session snapshot`
+// reporting an empty title for a session that plainly has one.
+//
+// Emitted only when non-empty. This model cannot tell "never titled" from
+// "titled with an empty string" — Title() answers "" to both — and of the two
+// readings, the one that leaves the observer's own title alone is the safer
+// default.
+//
 // Not carried here, on purpose: the input-affecting private modes (bracketed
 // paste, mouse, application cursor keys). vtgrid neither tracks nor exposes
 // them; server/mode_tracker.go's preamble does, and the two are complementary.
@@ -108,6 +121,40 @@ func (t *Terminal) Repaint() []byte {
 	}
 	b.WriteString("\x1b[0m")
 	b.WriteString("\x1b[?7h")
+	// No measured ordering constraint here, unlike everything above it: an OSC
+	// writes no cell and moves no cursor. It sits before the cursor positioning
+	// only so that "the cursor is restored at the very end" stays literally
+	// true.
+	if title := t.Title(); title != "" {
+		b.WriteString(titleOSC(title))
+	}
 	fmt.Fprintf(&b, "\x1b[%d;%dH", y+1, x+1)
 	return []byte(b.String())
+}
+
+// titleOSC renders a window title as `OSC 0 ; title BEL` — command 0 because it
+// sets the icon name as well, which is the form the agents here emit, and BEL
+// because it is the terminator every emulator honours (this parser's own reason
+// for refusing the eight-bit ST is in Terminal.str).
+//
+// C0 controls and DEL are DROPPED rather than escaped or passed through. The
+// parser cannot have stored a BEL or an ESC — both end the string — but nothing
+// else in that range is filtered on the way IN, so a title can hold a CR or a
+// CAN. Terminals disagree about those inside an OSC: xterm treats CAN as an
+// abort, which ends the sequence and prints its tail onto the screen this
+// function has just painted. Dropping them costs a byte of a hostile title and
+// removes the disagreement. Filtering by byte is safe for UTF-8 — every byte of
+// a multi-byte rune is >= 0x80, so no filtered byte can be part of one.
+func titleOSC(title string) string {
+	var s strings.Builder
+	s.Grow(len(title) + 5)
+	s.WriteString("\x1b]0;")
+	for i := 0; i < len(title); i++ {
+		if b := title[i]; b < 0x20 || b == 0x7f {
+			continue
+		}
+		s.WriteByte(title[i])
+	}
+	s.WriteString("\x07")
+	return s.String()
 }
