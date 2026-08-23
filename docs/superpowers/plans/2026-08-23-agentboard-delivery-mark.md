@@ -12,7 +12,8 @@
 
 ## Global Constraints
 
-- **Work in the parent repo**, `/home/kforfk/workspace/remote-agent-harness/`, not in any `.harness-worktrees/<hash>/` directory. Verify with `git rev-parse --abbrev-ref HEAD` before writing code. Absolute paths under the parent repo resolve to the parent's checkout.
+- **Work in ONE checkout, and it is the one holding this plan.** The spec and this plan are committed on `harness/70fbad4a6eb6f1e992be8a669f1bcefd` in `.harness-worktrees/70fbad4a6eb6f1e992be8a669f1bcefd/`, so that worktree is where the code goes too. Verify with `git rev-parse --abbrev-ref HEAD` before writing code, and anchor every tool call to that directory: a bare absolute path under `/home/kforfk/workspace/remote-agent-harness/<rel>` resolves to the PARENT checkout, which would put edits and commits in different places (Pitfall 8). Landing to trunk happens afterwards via the `landing-to-main` skill, not by writing to the parent.
+  - **If this plan is executed by dispatched subagents instead**, the constraint inverts: subagents cannot reliably anchor to a worktree, so they work in the parent repo and the plan must be moved there first. Pick one before starting.
 - **Read `.claude/skills/implementation-pitfalls/SKILL.md` in full before writing code.**
 - **Verify with make targets, not ad-hoc `go build`**: `make check`, `make vet`, `make test`, `make wasm-check`. `./...` hides pattern breaks that the make targets catch.
 - **Build hygiene**: compile-check with `go build ./...` (writes no binary) or `go vet ./cmd/<x>`. Never bare `go build ./cmd/<x>/` — it drops an executable into the worktree root. The working tree must be exactly as clean after checks as before.
