@@ -95,8 +95,10 @@ Every bullet above is addressed by this change. Specifically:
    for publishes to T. Other tasks subscribed to T keep receiving it, and the
    waiting task keeps receiving wakes for its other topics.
 2. The delivery mark moves into `taskState` on the server, keyed per topic. The
-   client-side cursor file, `--since-last`, `--commit`, `--since` on `inbox`,
-   and the `prev`/`live` two-line format are deleted.
+   client-side cursor file, `--since-last`, `--commit`, and the `prev`/`live`
+   two-line format are deleted. `--since N` stays on both `inbox` and `wait`:
+   it is a caller-supplied query bound, writes nothing, and touches no shared
+   position.
 3. A wait's subscription lasts exactly as long as the wait, and never removes a
    subscription the task already held.
 4. `dispatch` waits for a message that answers the seq it published, on the
@@ -191,21 +193,12 @@ format WaitRequest:
     in_reply_to :u64
 ```
 
-**`InboxRequest` — `since` removed:**
-
-```
-format InboxRequest:
-    request_id :u32
-```
-
-**`InboxResponse` — `next_cursor` removed:**
-
-```
-format InboxResponse:
-    request_id :u32
-    msgs_len :u16
-    msgs :[msgs_len]DeliveredMessage
-```
+**`InboxRequest` and `InboxResponse` — unchanged.** `since` and `next_cursor`
+stay: a runtime with no `UserPromptSubmit` hook (the board currently carries
+`codex`, `bash` and `cmd.exe` tasks) polls `inbox` itself, passes the previous
+response's `next_cursor` as the next `since`, and never touches a shared
+position. What is deleted is the client-side *persistence* of that value, not
+the ability to name one.
 
 **Two new formats:**
 
@@ -261,8 +254,9 @@ per-target loop, `c.ping()` is unchanged and `fn(rid, tid)` is skipped when
 that target's `waiting[topicName] > 0`. The check reads the target's own
 `taskState`, so a second task subscribed to the same topic is unaffected.
 
-**`Board.Inbox`** loses its `since` parameter and returns every retained
-message on the task's subscribed topics.
+**`Board.Inbox`** is unchanged: it keeps its `since` parameter and returns
+every retained message above it on the task's subscribed topics. It does not
+read or write `shown`.
 
 **`Board.InboxAdvance(c *ConnState) []RetainedMessage`** is new. Under
 `b.mu` then `t.mu` (the existing order, stated at `agentboard/board.go:168`),
@@ -276,9 +270,11 @@ messages were returned but the mark did not move.
 ### 4. Agent CLI
 
 **`agent inbox`** — flags after this change: `--json` (accepted, output is
-always JSON Lines), `--in-reply-to SEQ` (client-side display filter),
-`--user-prompt-submit-hook`. Removed: `--since-last`, `--commit`, `--since`,
-and `--stop-hook`.
+always JSON Lines), `--since N`, `--in-reply-to SEQ` (client-side display
+filter), `--user-prompt-submit-hook`. Removed: `--since-last`, `--commit`,
+`--stop-hook`. With `--since` omitted the read starts at 0, which is the whole
+ring — today's behaviour and what the wake marker instructs
+(`runner/session.go:78`).
 
 The advancing read is used **exactly when `--user-prompt-submit-hook` is
 given**; otherwise the plain read is used. This is what replaces the
@@ -439,6 +435,12 @@ that peer's `pending` by one.
 - **DECIDED (author)** — peek is dropped along with `prev`. Its purpose was
   reading without moving the live position, which the plain read now does for
   every caller.
+- **DECIDED (operator, 2026-08-23)** — `--since N` stays on `inbox` as well as
+  on `wait`, and `InboxRequest.since` / `InboxResponse.next_cursor` stay on the
+  wire. The defects are in the *persisted, shared, unlocked* position, not in a
+  caller naming a bound for one read. A polling runtime with no
+  `UserPromptSubmit` hook needs it, and removing it from `inbox` while keeping
+  it on `wait` would have been inconsistent for no gain.
 - **DECIDED (author)** — the advancing read is a separate wire kind and is
   selected by `--user-prompt-submit-hook`, not by a flag of its own.
 - **DECIDED (operator, 2026-08-23)** — `--stop-hook` and its emitter are
