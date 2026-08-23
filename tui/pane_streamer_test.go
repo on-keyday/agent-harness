@@ -102,11 +102,14 @@ func TestPaneStreamerRateRollsOnAFullWindow(t *testing.T) {
 	}
 }
 
-// A pane that STOPS producing has to fall to zero on its own. Nothing rolls the
-// window once arrivals stop, so the decay has to come from dividing the same
-// count by a growing elapsed — otherwise a stuck pane would keep advertising the
-// rate it had when it wedged, which is the opposite of what the overlay is for.
-func TestPaneStreamerRateDecaysWhenOutputStops(t *testing.T) {
+// A pane that STOPS producing must READ zero, and it must get there in one step.
+//
+// The first implementation divided the open window's count by a growing elapsed,
+// which does reach zero — one render at a time, so a silent pane showed a number
+// counting down forever and the operator saw the grid animating while nothing
+// was happening. The value must therefore be STILL between rolls: a diagnostic
+// that moves on its own cannot be read by eye.
+func TestPaneStreamerRateHoldsStillThenDropsToZero(t *testing.T) {
 	p := NewPaneStreamer("t", 4, 20)
 	t0 := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 
@@ -115,13 +118,55 @@ func TestPaneStreamerRateDecaysWhenOutputStops(t *testing.T) {
 
 	p.recordArrivalLocked(1000, t0)
 	p.recordArrivalLocked(1000, t0.Add(time.Second)) // rolls: 2000 B over 1 s
-	if bps, _ := p.rateLocked(t0.Add(time.Second)); bps != 2000 {
-		t.Fatalf("completed window = %vB/s, want 2000", bps)
+
+	// Still, for every render inside the window after the last arrival. This is
+	// the assertion the countdown bug fails: sampling at four instants must give
+	// one value, not four.
+	for _, at := range []time.Duration{0, 200 * time.Millisecond, 500 * time.Millisecond, 999 * time.Millisecond} {
+		bps, fps := p.rateLocked(t0.Add(time.Second + at))
+		if bps != 2000 || fps != 2 {
+			t.Fatalf("at +%v the rate read %vB/s %vrd/s, want a still 2000/2", at, bps, fps)
+		}
 	}
-	// Then silence. The open window holds nothing, so once it is a full window
-	// long the reported rate is 0 and keeps shrinking rather than latching.
-	if bps, fps := p.rateLocked(t0.Add(11 * time.Second)); bps != 0 || fps != 0 {
-		t.Errorf("after 10 s of silence = %v/%v, want 0/0", bps, fps)
+
+	// Then one step to zero, and it stays there rather than drifting.
+	for _, at := range []time.Duration{time.Second, 3 * time.Second, 60 * time.Second} {
+		bps, fps := p.rateLocked(t0.Add(time.Second + at))
+		if bps != 0 || fps != 0 {
+			t.Errorf("after %v of silence = %v/%v, want 0/0", at, bps, fps)
+		}
+	}
+}
+
+// The countdown, exactly. It needs a burst SHORTER than a window: the window
+// never rolls, so its byte count freezes while its elapsed keeps growing, and
+// anything derived from the open window renders a smaller number on every tick.
+// A window that HAS rolled hides this — its count is reset to zero, so the same
+// arithmetic yields a steady 0 and the bug looks fixed.
+//
+// The invariant is the general one and does not name a value: between two
+// arrivals, what the pane reports MUST NOT CHANGE. Nothing happened, so nothing
+// may move.
+func TestPaneStreamerRateDoesNotDriftBetweenArrivals(t *testing.T) {
+	p := NewPaneStreamer("t", 4, 20)
+	t0 := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// A 50 KB burst delivered in 20 chunks over 100 ms — a replay burst, or one
+	// screen repaint. Well under rateWindow, so no window completes.
+	for i := 0; i < 20; i++ {
+		p.recordArrivalLocked(2500, t0.Add(time.Duration(i)*5*time.Millisecond))
+	}
+
+	wantB, wantF := p.rateLocked(t0.Add(time.Second))
+	for _, at := range []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 30 * time.Second} {
+		bps, fps := p.rateLocked(t0.Add(at))
+		if bps != wantB || fps != wantF {
+			t.Fatalf("at +%v the rate moved to %vB/s %vrd/s from %v/%v with no arrival in between; "+
+				"a value derived from the open window counts down on every render", at, bps, fps, wantB, wantF)
+		}
 	}
 }
 

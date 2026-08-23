@@ -674,6 +674,25 @@ missed:  **38** — the omission above was recorded with a FALSE reason, and the
          anything about the stream" — the question item 38 actually asks. An
          `omitted` verdict is only as good as the search behind it, and this one
          searched for the wrong noun.
+
+**And the fix itself then shipped a rendering defect no item covers.** The rate
+was derived from the OPEN window as count/elapsed, so an idle pane "decayed to
+zero on its own" — visibly, one render per tick. Operator, within minutes:
+「なんかすげー勢いで数値がカウントダウンするみたいになってますけど」. Nothing in 1–38
+asks whether a displayed value is STILL when its subject is; item 34 is the
+nearest neighbour and is about a column set's arity, 34a about a control's kind.
+This is the second instance of the general form the `9fef2b1` entry declined to
+number ("a property of the render that no item interrogates" — there, a centred
+chat pane). Two instances, still different enough not to share a number: one was
+a layout constant copied from a sibling, this one is a value that animates while
+its subject is static. Recorded so a third can be counted against them.
+
+Worth keeping for the test discipline rather than the checklist: the first
+negative control **passed**, i.e. failed to falsify. A rolled window resets its
+count, so count/elapsed yields a steady 0 and the buggy implementation looks
+correct — the bug only shows for a burst shorter than one window. A negative
+control that goes green is not a clean bill; it means the control did not reach
+the defect.
 n/a:     2–9, 11–23 — no grammar, no input surface, and 11–23 walk TASK fields
          across listings while this belongs to a CAPTURE. Same reasoning as the
          `fe894b4` entry that produced item 38.

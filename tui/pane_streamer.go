@@ -58,11 +58,22 @@ type PaneStreamer struct {
 	// the snapshot does — this stream's replay burst arrives once at attach and
 	// then the window rolls past it, whereas a fresh capture is mostly replay.
 	// Guarded by mu.
-	rateStart  time.Time // window start; zero until the first byte ever arrives
-	rateBytes  int       // accumulating in the current window
-	rateFrames int
-	lastBps    float64 // last COMPLETED window, shown while the current one is short
-	lastFps    float64
+	//
+	// Only a COMPLETED window is ever displayed. The first version reported the
+	// open one as count/elapsed so an idle pane would "decay to zero on its
+	// own" — which it did, visibly, one render at a time: the count stops
+	// growing while the divisor does not, so a silent pane showed a number
+	// ticking downward forever. Operator, immediately: 「なんかすげー勢いで数値が
+	// カウントダウンするみたいになってますけど」. A diagnostic that ANIMATES while
+	// nothing is happening reports the renderer's frame rate, not the session's.
+	// So the displayed pair changes only when a window rolls, and idleness is a
+	// separate, discrete fact — see rateLocked.
+	rateStart   time.Time // window start; zero until the first byte ever arrives
+	lastArrival time.Time // when a chunk last reached the model; drives the idle cut
+	rateBytes   int       // accumulating in the current window
+	rateFrames  int
+	lastBps     float64 // last COMPLETED window — this is what is shown
+	lastFps     float64
 }
 
 // rateWindow is how long a rate window runs before it is rolled. One second is
@@ -107,29 +118,37 @@ func (p *PaneStreamer) DiagLine() string {
 		p.rxBytes, p.reads, bps, fps, p.attaches, p.vtPanics, p.cols, p.rows, lc, cy, errS)
 }
 
-// rateLocked reports the pane's current arrival rate in bytes and frames per
-// second. Caller holds mu.
+// rateLocked reports the pane's arrival rate in bytes and frames per second.
+// Caller holds mu.
 //
-// Once the open window is at least one full rateWindow long it is reported
-// directly, which is what makes a pane that STOPS producing decay to zero on its
-// own: nothing rolls the window, so the same count is divided by a growing
-// elapsed. A shorter open window would read as a spike (2 frames in 40 ms is not
-// 50/s), so until it fills, the last completed window stands.
+// Two states, and nothing in between: either the pane has produced something
+// within the last rateWindow — in which case the last COMPLETED window's rate
+// stands, unchanged until the next one rolls — or it has not, in which case it
+// is 0. Silence is a step, not a slope.
+//
+// That is deliberate and was learned the hard way. Deriving a rate from the OPEN
+// window is arithmetically fine and visually wrong: the numerator freezes when
+// output stops while the denominator keeps growing, so the pane renders a
+// different number on every tick while nothing whatsoever is happening. On a
+// grid of six panes that reads as six counters racing downward.
+//
+// The cost is a beat of lag at both ends: nothing is reported for the first
+// rateWindow of a new pane (no window has completed yet), and a burst shorter
+// than rateWindow is reported for a full window after it ends. Both are
+// preferable to a number that moves on its own — a debug overlay is read by
+// eye, and a still value is what makes a changing one mean something.
 //
 // They are frames, not a frame RATE in the display sense: one screen repaint can
 // arrive as several reads and several repaints can coalesce into one, so this
 // counts transport boundaries. `rd/s` rather than `fps` in the line for exactly
 // that reason.
 func (p *PaneStreamer) rateLocked(now time.Time) (bps, fps float64) {
-	if p.rateStart.IsZero() {
-		return 0, 0 // nothing has ever arrived: 0 is the measurement, not a gap
+	if p.lastArrival.IsZero() || now.Sub(p.lastArrival) >= rateWindow {
+		// Never produced, or silent for at least a full window. 0 is the
+		// measurement here, not a missing value.
+		return 0, 0
 	}
-	elapsed := now.Sub(p.rateStart)
-	if elapsed < rateWindow {
-		return p.lastBps, p.lastFps
-	}
-	secs := elapsed.Seconds()
-	return float64(p.rateBytes) / secs, float64(p.rateFrames) / secs
+	return p.lastBps, p.lastFps
 }
 
 func (p *PaneStreamer) Err() error {
@@ -374,6 +393,7 @@ func (p *PaneStreamer) recordArrivalLocked(n int, now time.Time) {
 	if p.rateStart.IsZero() {
 		p.rateStart = now
 	}
+	p.lastArrival = now
 	p.rateBytes += n
 	p.rateFrames++
 	if elapsed := now.Sub(p.rateStart); elapsed >= rateWindow {

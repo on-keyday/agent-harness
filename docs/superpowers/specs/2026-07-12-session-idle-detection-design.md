@@ -348,10 +348,25 @@ rx=41230 rd=118 1274B/s 3.6rd/s at=1 vtp=0 sz=48x210 lc=44 cy=43 err=-
 
 Rolling one-second window (`rateWindow`), anchored on the FIRST arrival rather
 than on attach so a pane that was quiet for a minute does not average that
-minute into its first reading. A pane that STOPS producing decays to zero on its
-own: nothing rolls the window, so the same count is divided by a growing
-elapsed. A window shorter than `rateWindow` reports the last completed one
-instead of extrapolating — 2 frames in 40 ms is not 50/s.
+minute into its first reading. Only a COMPLETED window is displayed; silence for
+a full window reads as 0.
+
+**The displayed value must not move between arrivals**, and getting that wrong
+is what the first version shipped. It derived the rate from the OPEN window as
+count/elapsed, which "decays to zero on its own" — one render at a time. The
+operator saw it immediately: 「なんかすげー勢いで数値がカウントダウンするみたいに
+なってますけど」. The path is a burst SHORTER than a window (a replay burst, one
+repaint): the window never rolls, so its count freezes while its elapsed keeps
+growing and every tick renders a smaller number. A window that HAS rolled hides
+the bug — its count is reset, so the same arithmetic yields a steady 0.
+
+The cost of only showing completed windows is a beat of lag at both ends: a new
+pane reports nothing for its first `rateWindow`, and a sub-window burst is
+reported for a full window after it ends. Both beat a number that moves on its
+own — a debug overlay is read by eye, and a still value is what makes a changing
+one mean something. `TestPaneStreamerRateDoesNotDriftBetweenArrivals` pins the
+general invariant without naming a value: between two arrivals, what the pane
+reports may not change.
 
 It needs none of the snapshot's `anchored` machinery: this stream's replay burst
 arrives once at attach and the window rolls past it seconds later, whereas a
