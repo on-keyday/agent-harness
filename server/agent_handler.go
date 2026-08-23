@@ -151,22 +151,41 @@ func clientHelloStatusFromBoard(s agentboard.HelloStatus) protocol.ClientHelloSt
 
 // resolveReplyTarget maps a send request's (topic, in_reply_to) to the topic
 // actually published to. inReplyTo == 0 passes the requested topic through. A
-// non-zero inReplyTo must resolve to a message still on the board; when it does
-// and the request named no topic, the destination is the parent sender's own
-// inbound topic — taken from the retained entry, so it is the server's attested
-// sender and not something the requester supplied.
+// non-zero inReplyTo must resolve to a message still on the board.
+//
+// Three arms, in this order:
+//
+//   - an explicit --topic on the REPLY wins. The replier is answering and may
+//     know something the asker did not.
+//   - the parent's reply_to_topic, which the ASKER declared when it published.
+//     This is what lets a caller keep an answer out of its own inbox without
+//     the replier knowing anything: a peer sends --in-reply-to alone and the
+//     destination comes off the parent, server-side.
+//   - the parent sender's own chat.<short-id>, which is what every reply did
+//     before reply_to_topic existed and what one still does when the asker
+//     declared nothing.
+//
+// Every arm resolves against the RETAINED entry, so the destination is the
+// server's own record and not something the requester supplied.
+//
+// The parent is read whole (Retained) rather than as (topic, sender)
+// (LookupSeq), because the destination now lives on the message. Both are full
+// ring scans, so this costs nothing extra.
 func resolveReplyTarget(b *agentboard.Board, topic string, inReplyTo uint64) (string, bool) {
 	if inReplyTo == 0 {
 		return topic, true
 	}
-	_, parentTid, ok := b.LookupSeq(inReplyTo)
+	parent, ok := b.Retained(inReplyTo)
 	if !ok {
 		return "", false
 	}
-	if topic == "" {
-		return agentboard.SelfTopic(parentTid), true
+	if topic != "" {
+		return topic, true
 	}
-	return topic, true
+	if parent.ReplyToTopic != "" {
+		return parent.ReplyToTopic, true
+	}
+	return agentboard.SelfTopic(parent.FromTask), true
 }
 
 // retireRepliedParent applies the reply-retire rule: answering a message that
@@ -247,6 +266,12 @@ func (s *Server) agentHandleSend(conn ConnHandle, ac *agentConn, r *agentboard.S
 		var sendOpts []agentboard.SendOption
 		if r.NoRetireOnReply() {
 			sendOpts = append(sendOpts, agentboard.NoRetireOnReply())
+		}
+		// Where the SENDER wants replies to this message to go. Recorded on the
+		// retained entry and read back by resolveReplyTarget, so the replier
+		// needs no knowledge of it.
+		if len(r.ReplyToTopic) > 0 {
+			sendOpts = append(sendOpts, agentboard.WithReplyTo(string(r.ReplyToTopic)))
 		}
 		seq, deliveredTo, sendErr := s.Board.Send(destTopic, payload, fromRid, fromTid, fromHost, fromProfile, r.InReplyTo, sendOpts...)
 		var status agentboard.SendStatus
