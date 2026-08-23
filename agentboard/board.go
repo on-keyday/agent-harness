@@ -16,16 +16,24 @@ type Config struct {
 	MaxTopics  int
 	MaxPayload int
 	// SeqSeed is the starting value for the board-global publish sequence
-	// counter (b.seq). It exists to keep seq monotonic ACROSS server
-	// restarts: b.seq lives only in memory, so a bare restart would reset it
-	// to 0 and re-issue low seqs — but consumer `--since-last` cursors are
-	// persisted on disk (~/.cache/harness/agent-cursor-<task>) and survive
-	// the restart. A cursor left above the post-restart seq range then
-	// filters out every new message (seq > cursor is false), silently
-	// wedging the auto-inbox hook. The server seeds this with a
-	// strictly-increasing boot epoch (wall-clock ms << 20) so every restart
-	// begins in a higher range than any prior boot's cursors. Zero (the
-	// default, used by tests) preserves the legacy seq=1,2,3… behavior.
+	// counter (b.seq). The server seeds it with a strictly-increasing boot
+	// epoch (wall-clock ms << 20) so seq keeps rising across restarts, and an
+	// agent can detect a restart it was not told about: seq >> 20 is the
+	// server's boot time in Unix ms, so a fresh seq whose prefix differs from
+	// one seen earlier means the board was replaced in between.
+	//
+	// The delivery position no longer depends on this. It used to: consumer
+	// cursors were persisted on disk (~/.cache/harness/agent-cursor-<task>)
+	// and outlived the in-memory rings they indexed, so a restart that reset
+	// b.seq to 0 left every stale cursor above the new range, filtering out
+	// every message and silently wedging the auto-inbox hook. The mark now
+	// lives in taskState and dies with the board, which is the lifetime it
+	// should always have had.
+	//
+	// What monotonicity still buys is readability: a seq named in a log line,
+	// a `retract <seq>` or an `agent read <seq>` cannot silently mean a
+	// different message from an earlier boot. Zero (the default, used by
+	// tests) preserves the legacy seq=1,2,3… behavior.
 	SeqSeed uint64
 }
 

@@ -120,8 +120,8 @@ poll.
 `harness-cli agent inbox` is wired into the Claude Code hooks for this task:
 
 - `UserPromptSubmit` runs
-  `harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook`
-  (delivers any pending messages at the start of a turn and advances the cursor).
+  `harness-cli agent inbox --json --user-prompt-submit-hook`
+  (delivers any pending messages at the start of a turn).
 
 That covers every task kind, but how a new turn actually *starts* differs.
 An **interactive session** (`session new` / `interactive`) gets a live wake:
@@ -136,27 +136,26 @@ call `harness-cli agent inbox` yourself — nothing will push it to you.
 
 You do NOT need to call `inbox` manually in the common case (interactive
 sessions, or a one-shot task that only needs what already arrived at turn
-start). The hooks already feed the messages into your context. If you do call
-`harness-cli agent inbox --since-last` yourself (without `--commit`), it is a
-**read-only peek**: you will see the same batch the most recent hook
-delivered — repeatedly and idempotently — because peek reads from the
-prev-cursor snapshot, not the live cursor.
+start). The hook already feeds the messages into your context.
 
-**Never pass `--commit` by hand.** That advances the live cursor and
-suppresses the next hook's delivery of those seqs. `--commit` is for the
-hooks only.
+**Calling `harness-cli agent inbox` by hand is always safe.** It is a plain,
+idempotent read of the rings on every topic you subscribe to: it moves
+nothing, so running it twice returns the same thing twice and it can never
+take a message away from the hook. Re-read whenever you are unsure what you
+were shown. `--since N` bounds a read from below when you are polling and want
+only what is new to you (a runtime with no hook does this); it writes nothing
+either.
 
-**Known issue — `--since-last` can desync (interactive sessions).** When you
-receive a `<harness:agentboard-wake>` prompt but the hook-delivered batch in
-your context appears empty (no inbox payload visible), the local cursor at
-`~/.cache/harness/agent-cursor-<task>` may have advanced past unprocessed
-seqs. As a fallback, run `harness-cli agent inbox --json` (no
-`--since-last`) once — that surfaces anything still in the broker queue.
-If it returns content, treat it as the missed batch and act on it.
-Do not add `--commit` to the fallback call; it remains hook-only. (A
-one-shot task never receives a wake prompt at all, so this desync can only
-happen after a live wake — i.e. never for `submit` tasks; call `agent inbox
---json` there any time you simply want a fresh read.)
+**How the hook avoids re-delivering.** The position lives on the SERVER, per
+(task, topic) — how far the automatic injection path has reached for you. Only
+`--user-prompt-submit-hook` moves it, and it does so in the same server-side
+operation that hands the messages over, so there is no window where a batch was
+delivered but not recorded. You cannot advance it by accident: there is no flag
+that moves the mark without also producing the hook envelope.
+
+An operator can see exactly where you are — `harness-cli board subscribers`
+reports `shown=<seq> pending=<n>` per topic — so "did that message actually
+reach the agent" is now something to look up rather than guess at.
 
 ### Reading one message whole — `agent read`
 
@@ -176,8 +175,8 @@ record with the full body. Two things send you here:
   message whose parent you never saw, or a row from `agent retained`.
 
 Unlike `agent inbox`, it fetches nothing but the message you asked for, and
-it never truncates. It does not touch any cursor, so it is always safe to
-run by hand.
+it never truncates. Like a plain `inbox`, it moves no delivery position, so it
+is always safe to run by hand.
 
 Reading is limited to topics you subscribe to. A seq outside them reports
 the same "not readable" as one that has rotated out of its ring, so it is
@@ -249,11 +248,11 @@ harness-cli agent send --topic chat.<short-id> --data '...' --no-retire-on-reply
 
 ## Purging a topic's server-side buffer (`agent purge`)
 
-The cursor only governs what *you* re-read; the message itself stays in the
-server's per-topic ring buffer (default 64 entries) until it rotates out, the
-topic TTL-expires, or the task that exclusively subscribes it ends. A
-`since=0` fallback read (above) therefore re-surfaces it. To drop a payload
-from the **server side** entirely:
+The delivery mark only governs what the HOOK hands you next; the message itself
+stays in the server's per-topic ring buffer (default 64 entries) until it
+rotates out, the topic TTL-expires, or the task that exclusively subscribes it
+ends. A plain `agent inbox` therefore still shows it, marked or not. To drop a
+payload from the **server side** entirely:
 
 ```bash
 harness-cli agent purge --topic chat.<short-id>            # whole topic ring
@@ -267,8 +266,8 @@ and reports how many messages were dropped
 one retained message, leaving the rest of the ring intact. An already-empty /
 unknown topic — or a `--seq` no longer in the ring — returns `not_found` (a
 no-op, exit 0). The board seq counter is global, so purging does NOT reset
-sequence numbers — your persisted cursor stays valid and a post-purge message
-is delivered exactly once.
+sequence numbers — the server's delivery mark stays valid and a post-purge
+message is delivered exactly once.
 
 Because purge destroys live retained messages on a possibly-shared topic (it
 can wipe another agent's unconsumed inbound channel), it is gated by its own
@@ -330,6 +329,16 @@ Why this rule exists:
 `harness-cli agent wait` and `harness-cli agent dispatch` exist as
 shell-level escape hatches for scripting **outside** the agent's turn
 loop. The agent itself must not call them.
+
+For those scripts, briefly, so the rule above is the only thing you have to
+remember here: `wait --topic T [--since N] [--in-reply-to SEQ]` blocks for a
+matching message; `dispatch --topic T --data D` publishes and then blocks for
+the reply to THAT message on your own `chat.<short-id>`, which is where the
+server routes a reply. Neither writes any persistent position — `--since` is
+the caller's own resume point. A wait does not wake the task it belongs to for
+the topic it is waiting on: the waiter is already being handed the message, so
+a wake on top of it would type a `<harness:agentboard-wake>` prompt into an
+agent that has nothing new to read.
 
 ## Sending
 
@@ -717,6 +726,14 @@ spawned with a restricted `--caps` cannot run them — which is precisely when
 that would receive a publish to that topic. An empty result means nothing is
 listening. With no argument it lists every task on the board and what each
 subscribes to.
+
+Each subscribed topic carries `shown=<seq> pending=<n>`: how far the automatic
+injection path has reached for that task, and how many retained messages sit
+above it. `pending>0` on the peer's `chat.<short-id>` distinguishes the first
+two causes — the message reached its inbox and has not been handed over yet, as
+against a peer that already read it and has not answered. A topic with nothing
+published to it reads `shown=0 pending=0` rather than being omitted, so
+"subscribed, nothing yet" and "subscribed, all read" stay distinguishable.
 
 `harness-cli board topics` (same capability) answers it for everything at
 once: each row carries `subs=N`, so `subs=0` is a topic holding messages
