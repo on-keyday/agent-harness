@@ -800,6 +800,20 @@ format BoardSubscribersRequest:
 format SubscriptionPattern:
     name_len :u16
     name :[name_len]u8
+    # shown is the highest seq the automatic injection path has given this task
+    # for this topic; 0 when nothing has been advanced past. pending is how many
+    # retained messages sit above it.
+    #
+    # Together they make the delivery position READABLE. It used to be a file on
+    # the runner host (~/.cache/harness/agent-cursor-<task>) that no operator
+    # surface showed, which is why the shipped skill told agents to guess at a
+    # desync and re-read everything. Now `board subscribers` answers it.
+    #
+    # A topic under a live synchronous wait appears here like any other
+    # subscription, because for the duration of that wait the task really is a
+    # subscriber.
+    shown :u64
+    pending :u32
 
 format BoardSubscriberRow:
     task :TaskID

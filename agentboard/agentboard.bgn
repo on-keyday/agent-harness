@@ -36,6 +36,13 @@ enum AgentMessageKind:
     read_seq_response
     retract
     retract_response
+    # inbox_advance / inbox_advance_response are appended at the END rather
+    # than placed next to inbox / inbox_response: this enum is a positional
+    # :u8, so an insertion mid-list renumbers every later value, and a server
+    # and runner at different versions would then decode purge as
+    # list_retained — silently, instead of failing.
+    inbox_advance
+    inbox_advance_response
 
 enum HelloStatus:
     :u8
@@ -167,6 +174,15 @@ format WaitRequest:
     pattern :[pattern_len]u8
     since :u64
     timeout_ms :u32
+    # in_reply_to, when non-zero, filters the wait: only a message whose
+    # in_reply_to equals this satisfies it, and a non-matching publish on the
+    # topic does not end the wait. Zero means no filter.
+    #
+    # This is what tells a reply apart from unrelated traffic. `dispatch` sets
+    # it to the seq its own publish returned, so a message already retained on
+    # the topic — or an answer to somebody else's question — cannot be mistaken
+    # for the answer to this one.
+    in_reply_to :u64
 
 format WaitResponse:
     request_id :u32
@@ -182,6 +198,27 @@ format InboxRequest:
 format InboxResponse:
     request_id :u32
     next_cursor :u64
+    msgs_len :u16
+    msgs :[msgs_len]DeliveredMessage
+
+# InboxAdvanceRequest asks for the messages on this task's subscribed topics
+# that the automatic injection path has not yet been given, and records them as
+# given. It carries NO cursor, in either direction: the position is the
+# server's (taskState.shown, per topic), so a caller has none to assert and
+# none to write back.
+#
+# It exists as a separate kind from InboxRequest rather than a flag on it
+# because only one caller may ever send it — the UserPromptSubmit hook the
+# runner injects. As a flag, "do not pass this by hand" was an instruction in
+# the skill file; as a kind selected by --user-prompt-submit-hook, whose output
+# is a hook envelope, it is the shape of the CLI.
+#
+# A plain InboxRequest reads the same topics idempotently and moves nothing.
+format InboxAdvanceRequest:
+    request_id :u32
+
+format InboxAdvanceResponse:
+    request_id :u32
     msgs_len :u16
     msgs :[msgs_len]DeliveredMessage
 
@@ -384,4 +421,6 @@ format AgentMessage:
         AgentMessageKind.read_seq_response => read_seq_response :ReadSeqResponse
         AgentMessageKind.retract => retract :RetractRequest
         AgentMessageKind.retract_response => retract_response :RetractResponse
+        AgentMessageKind.inbox_advance => inbox_advance :InboxAdvanceRequest
+        AgentMessageKind.inbox_advance_response => inbox_advance_response :InboxAdvanceResponse
         .. => error("Unexpected agent message kind")
