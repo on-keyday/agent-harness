@@ -34,6 +34,7 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 	topic := fs.String("topic", "", "agentboard topic")
 	data := fs.String("data", "-", `payload string, or "-" to read stdin`)
 	inReplyTo := fs.Uint64("in-reply-to", 0, "seq of the message being replied to; with it, --topic may be omitted and the server routes to the parent's sender")
+	replyTo := fs.String("reply-to", "", "route replies to THIS message to this topic instead of your own chat.<short-id>; the peer needs no knowledge of it and answers with --in-reply-to alone")
 	noRetireOnReply := fs.Bool("no-retire-on-reply", false, "keep this message on the board even after its recipient replies (default: a reply withdraws it, so a peer whose context resets cannot re-read a spent instruction)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -122,6 +123,14 @@ func Send(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer)
 	// An empty topic is the wire's "derive the destination from the parent"; the
 	// schema assertion guarantees it can only be empty on a reply.
 	req.SetTopic([]byte(wireTopic))
+	// Where REPLIES to this message go. The server records it on the retained
+	// entry and resolveReplyTarget reads it back, so the peer answers with
+	// --in-reply-to alone and never has to learn the topic.
+	if *replyTo != "" {
+		if !req.SetReplyToTopic([]byte(*replyTo)) {
+			return errors.New("agent: --reply-to too long")
+		}
+	}
 
 	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Send}
 	if !msg.SetSend(req) {
