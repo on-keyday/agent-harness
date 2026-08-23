@@ -90,6 +90,22 @@ format SendRequest:
     # subscriber's reply says nothing about whether the others have read it.
     no_retire_on_reply :u1
     reserved :u7
+    # reply_to_topic is where a reply to THIS message is routed. Empty = the
+    # sender's own chat.<short-id>, which is what every message did before this
+    # field existed and what one still does when it says nothing.
+    #
+    # It is the SENDER declaring a destination, not the replier choosing one: a
+    # peer answers with --in-reply-to alone and never has to know the topic
+    # exists. The alternative was a `reply_topic` field in the PAYLOAD, which
+    # only works on a peer that reads the convention — and the convention is
+    # documented in a skill file such a peer has by definition not been given.
+    #
+    # Appended, not inserted: this is a REQUEST, so the skew that matters is a
+    # new client against an old server. The old server stops before these bytes
+    # and routes replies the way it always did, which is a degrade rather than
+    # a decode failure.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
 
 enum SendStatus:
     :u8
