@@ -26,8 +26,8 @@ import (
 
 	"github.com/on-keyday/agent-harness/appwire"
 	"github.com/on-keyday/agent-harness/pubsub"
-	"github.com/on-keyday/objtrsf/trsf"
 	"github.com/on-keyday/objtrsf/objproto"
+	"github.com/on-keyday/objtrsf/trsf"
 )
 
 // ControlHandler receives every application-kind payload that isn't Pubsub

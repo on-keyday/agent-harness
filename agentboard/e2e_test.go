@@ -14,9 +14,9 @@ import (
 	"github.com/on-keyday/agent-harness/peer"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/server"
+	"github.com/on-keyday/objtrsf/objproto"
 	"github.com/on-keyday/objtrsf/transport"
 	"github.com/on-keyday/objtrsf/trsf"
-	"github.com/on-keyday/objtrsf/objproto"
 )
 
 func trsfStreamIDForTest(id uint64) trsf.StreamID { return trsf.StreamID(id) }
@@ -51,7 +51,6 @@ func mkTid(b byte) protocol.TaskID {
 	t.Id[0] = b
 	return t
 }
-
 
 // startServer constructs a server.Server with a Board, binds it to addr,
 // and starts it in a goroutine.  Returns (board, cancel) — cancel stops the
