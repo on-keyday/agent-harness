@@ -13,21 +13,33 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 )
 
-// Dispatch sends a message to --topic, then blocks waiting for a reply on
-// --reply-topic, all over one Hello'd connection. JSON-Lines output of the
-// reply messages.
+// Dispatch publishes to --topic and blocks until a message ANSWERING that
+// publish arrives, all over one Hello'd connection. JSON-Lines output.
+//
+// There is no --reply-topic. A reply carrying --in-reply-to and no topic is
+// routed by the server to the ORIGINAL SENDER's own chat.<short-id> (see
+// resolveReplyTarget in server/agent_handler.go), so the reply topic is not a
+// caller's choice: a supplied one could only disagree with where the reply
+// actually lands.
+//
+// The wait is bounded below by the seq this call published AND filtered to
+// replies to it. Before, it waited on a caller-named topic from Since:0 with no
+// correlation, so every message already retained there satisfied it — including
+// an answer to somebody else's question.
+//
+// This is a shell-level tool for scripting OUTSIDE an agent's turn loop, for
+// the same reason `agent wait` is.
 func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent dispatch", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
 	topic := fs.String("topic", "", "topic to send to")
-	replyTopic := fs.String("reply-topic", "", "topic to wait for reply on")
 	data := fs.String("data", "-", `payload string or "-" for stdin`)
 	timeout := fs.Duration("timeout", 5*time.Minute, "max wait")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *topic == "" || *replyTopic == "" {
-		return errors.New("--topic and --reply-topic required")
+	if *topic == "" {
+		return errors.New("--topic required")
 	}
 
 	var payload []byte
@@ -105,22 +117,26 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	if err := conn.SendRaw(sendMsg); err != nil {
 		return err
 	}
+	var publishedSeq uint64
 	select {
 	case r := <-sendCh:
 		if r.Status != agentboard.SendStatus_Ok {
 			return fmt.Errorf("send failed: %v", r.Status)
 		}
+		publishedSeq = r.Seq
 	case <-ctx.Done():
 		return ctx.Err()
 	}
 
-	// Wait for reply
+	// Wait for the reply on OUR own topic — where the server routes it — above
+	// our own publish, and only for messages answering that seq.
 	wr := agentboard.WaitRequest{
 		RequestId: waitID,
-		Since:     0,
+		Since:     publishedSeq,
 		TimeoutMs: uint32(timeout.Milliseconds()),
+		InReplyTo: publishedSeq,
 	}
-	wr.SetPattern([]byte(*replyTopic))
+	wr.SetPattern([]byte(agentboard.SelfTopic(conn.TaskID())))
 	waitMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Wait}
 	if !waitMsg.SetWait(wr) {
 		return errors.New("agent: SetWait failed")
