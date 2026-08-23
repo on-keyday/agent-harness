@@ -108,31 +108,16 @@ Harness-specific facts:
   sends one to a session you are only driving with `send`/`snapshot`. So
   `harness-tui` started that way dies instantly with `terminal too small (need
   at least 80x24)`.
-- **Size it with `--resize`, NOT with `stty`.** This section used to say `stty`,
-  which predates `session resize` and is wrong for anything you then want to
-  READ:
+- **Size it with `--resize`, NOT with `stty`.** This section said `stty` until
+  2026-08-24; it predates `session resize` and is wrong for anything you then
+  intend to READ, because the server never learns a size set that way. The
+  mechanism is in `session-debugging` under `session resize` — the harness-
+  specific part is only that `harness-tui` is the program this bites hardest,
+  since it refuses to start at all below 80x24:
 
   ```bash
   harness-cli session send --resize 45x200 --snapshot --settle-ms 3000 "$ID" ''
   ```
-
-  `stty` is an ioctl on the PTY, so the TUI resizes and **the server never
-  learns**. Measured: after `stty`, `snapshot` still prints `reported no
-  terminal size` and renders at its own fallback, while the server keeps its
-  own screen grid at 80x24 (`server/session_mux.go:273-280`). The replay's
-  repaint is built from THAT grid, so a full-screen TUI comes back as a handful
-  of stray lines. `cli/snapshot_native.go` names this case and says it is
-  **untested** — and it is easy to misread the result as an alt-screen
-  limitation of `snapshot` rather than as a size you failed to set.
-- **Do the resize and the snapshot in ONE call, with a size that CHANGES.** The
-  resize is what makes the TUI repaint (SIGWINCH), and the repaint is what puts
-  a full screen into the replay ring. Resizing to the size it already has is a
-  no-op and leaves you reading whatever the ring happened to hold. Alternate
-  between two sizes across successive captures.
-- `snapshot --rows/--cols` will NOT size anything: the help says so —
-  "sizes the offscreen renderer only, never the PTY". They are the FALLBACK
-  used when the session reports no size, which is exactly the broken state
-  above, so seeing them take effect is a signal that the size is unset.
 - Once the TUI attaches to a session of its own, that nested PTY inherits the
   TUI's size, so `stty size` inside the attached shell is a free check that the
   handover really propagated the winsize.

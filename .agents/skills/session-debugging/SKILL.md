@@ -186,9 +186,22 @@ it is actually for: no `exec_resize`, and you only need the program itself to
 believe a size.
 
 A resize also makes the program repaint (SIGWINCH), which is useful on its own:
-`session send --resize <different size> --snapshot <id> ''` sizes, forces a full
-redraw, and renders — the reliable way to capture a TUI whose opening draw has
-already aged out of the replay ring.
+
+```bash
+harness-cli session send --resize 45x200 --snapshot --settle-ms 3000 "$ID" ''
+```
+
+That sizes, forces a full redraw, and renders in one call — the reliable way to
+capture a full-screen program whose opening draw has already aged out of the
+replay ring. Two details decide whether it works:
+
+- **One call.** A separate `session resize` followed by a `snapshot` can miss
+  the repaint, because the ring is what the snapshot reads and you are racing
+  the redraw into it. `--resize` on `send` applies before anything else the call
+  does, so the redraw and the capture are ordered.
+- **A size that CHANGES.** Resizing to the size it already has is a no-op — no
+  SIGWINCH, no repaint — and leaves you reading whatever the ring happened to
+  hold. Alternate between two sizes across successive captures.
 
 - The plain render **drops SGR**, so a *faint* placeholder / ghost-autocomplete
   / dim hint looks identical to real input. **`--style`** prints a
