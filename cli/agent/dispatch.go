@@ -16,16 +16,29 @@ import (
 // Dispatch publishes to --topic and blocks until a message ANSWERING that
 // publish arrives, all over one Hello'd connection. JSON-Lines output.
 //
-// There is no --reply-topic. A reply carrying --in-reply-to and no topic is
-// routed by the server to the ORIGINAL SENDER's own chat.<short-id> (see
-// resolveReplyTarget in server/agent_handler.go), so the reply topic is not a
-// caller's choice: a supplied one could only disagree with where the reply
-// actually lands.
+// WHERE the reply goes, and where this waits: its own chat.<short-id> by
+// default. --reply-to changes BOTH at once — it rides on the publish as
+// reply_to_topic, so the server routes the reply there (resolveReplyTarget in
+// server/agent_handler.go reads it off the parent), and it is what this call
+// waits on.
 //
-// The wait is bounded below by the seq this call published AND filtered to
-// replies to it. Before, it waited on a caller-named topic from Since:0 with no
-// correlation, so every message already retained there satisfied it — including
-// an answer to somebody else's question.
+// ONE flag sets both deliberately. The removed --reply-topic set only the wait
+// and told the peer nothing, so a peer answering with --in-reply-to had its
+// reply routed to the caller's OWN chat.<short-id> — the inbox a caller names a
+// reply topic to keep clean — while this call waited out its timeout somewhere
+// else. Splitting the two is the failure, not the feature.
+//
+// The peer needs no change and no knowledge: it answers with --in-reply-to
+// alone and the destination comes off the parent, server-side.
+//
+// WHAT satisfies it, on either topic: a message above the seq this call
+// published AND carrying that seq as its in_reply_to. Before, it waited from
+// Since:0 with no correlation, so every message already retained on the named
+// topic satisfied it — including an answer to somebody else's question.
+//
+// The correlation costs nothing on the --reply-to path: a reply reaches a
+// declared destination BY the server resolving in_reply_to against the parent,
+// so one without in_reply_to could not arrive there in the first place.
 //
 // replyDeadlineMargin is the slice of the budget reserved for the server's
 // timed-out WaitResponse to travel back before the local deadline fires. It
@@ -57,6 +70,7 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	fs := flag.NewFlagSet("agent dispatch", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
 	topic := fs.String("topic", "", "topic to send to")
+	replyTo := fs.String("reply-to", "", "declare THIS topic as where the reply goes, and wait there; default is your own chat.<short-id>")
 	data := fs.String("data", "-", `payload string or "-" for stdin`)
 	timeout := fs.Duration("timeout", 5*time.Minute, "max wait for the whole call (publish ack + reply)")
 	if err := fs.Parse(args); err != nil {
@@ -138,6 +152,11 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	}
 	sr := agentboard.SendRequest{RequestId: sendID, PayloadStreamId: uint64(sendStream.ID())}
 	sr.SetTopic([]byte(*topic))
+	if *replyTo != "" {
+		if !sr.SetReplyToTopic([]byte(*replyTo)) {
+			return errors.New("agent: --reply-to too long")
+		}
+	}
 	sendMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Send}
 	if !sendMsg.SetSend(sr) {
 		return errors.New("agent: SetSend failed")
@@ -175,7 +194,15 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		TimeoutMs: uint32(remaining.Milliseconds()),
 		InReplyTo: publishedSeq,
 	}
-	wr.SetPattern([]byte(agentboard.SelfTopic(conn.TaskID())))
+	// Wait where we told the peer's reply to go. ONE flag sets both halves on
+	// purpose: the removed --reply-topic set only the wait, so a peer answering
+	// with --in-reply-to had its reply routed to our own inbox while this call
+	// waited out its timeout somewhere else.
+	waitOn := agentboard.SelfTopic(conn.TaskID())
+	if *replyTo != "" {
+		waitOn = *replyTo
+	}
+	wr.SetPattern([]byte(waitOn))
 	waitMsg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Wait}
 	if !waitMsg.SetWait(wr) {
 		return errors.New("agent: SetWait failed")

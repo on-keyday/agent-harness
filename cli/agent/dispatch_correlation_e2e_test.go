@@ -215,3 +215,68 @@ func TestAgentCLI_E2E_DispatchTimeoutBoundsTheWholeCall(t *testing.T) {
 		t.Errorf("took only %v — it returned early, so this did not exercise the timeout", elapsed)
 	}
 }
+
+// dispatch --reply-to declares the destination AND waits there. The peer still
+// answers with --in-reply-to alone, so this is the whole feature end to end:
+// the script gets its answer and the asking task's own inbox never sees it.
+func TestAgentCLI_E2E_DispatchReplyToWaitsWhereItDeclared(t *testing.T) {
+	addr := freePortE2E(t)
+	board, _ := startServerE2E(t, addr)
+
+	const ridStrA = "ws:1.2.3.4:9505-55"
+	var ticketA, ticketB [16]byte
+	ticketA[0] = 0xC5
+	ticketB[0] = 0xC6
+	tidA := mkTidE2E(0x55)
+	tidB := mkTidE2E(0x56)
+	ridA := mkRidE2E([4]byte{1, 2, 3, 4}, 9505, 55)
+	ridB := mkRidE2E([4]byte{5, 6, 7, 8}, 9506, 56)
+	board.Registry().Register(ridA, tidA, ticketA)
+	board.Registry().Register(ridB, tidB, ticketB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	selfA := agent.SelfTopic(tidA)
+	selfB := agent.SelfTopic(tidB)
+	const replyTo = "rr.dispatch-1"
+
+	// The peer answers with --in-reply-to only, driven through the in-process
+	// board: setAgentEnv is process-global, so a second concurrent CLI identity
+	// would race the dispatcher's own. board.Send with a non-zero inReplyTo and
+	// the destination resolved the way the server resolves it is exactly what a
+	// `send --in-reply-to` from that peer produces.
+	go func() {
+		deadline := time.Now().Add(15 * time.Second)
+		for time.Now().Before(deadline) {
+			msgs, found := board.ListRetained(selfB)
+			if found && len(msgs) > 0 {
+				parent := msgs[0]
+				dest := parent.ReplyToTopic
+				if dest == "" {
+					dest = agentboard.SelfTopic(parent.FromTask)
+				}
+				_, _, _ = board.Send(dest, []byte(`{"a":"dispatched-answer"}`),
+					ridB, tidB, "peer-host", "", parent.Seq)
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}()
+
+	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	defer restoreA()
+
+	var out bytes.Buffer
+	if err := agent.Dispatch(ctx,
+		[]string{"--topic", selfB, "--reply-to", replyTo, "--data", `{"q":"q"}`, "--timeout", "15s"},
+		strings.NewReader(""), &out); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if !strings.Contains(out.String(), "dispatched-answer") {
+		t.Fatalf("dispatch = %q, want the answer from the declared topic", out.String())
+	}
+	if got := topicPayloads(t, board, selfA); strings.Contains(got, "dispatched-answer") {
+		t.Errorf("the asking task's own topic holds %q — it was supposed to stay clean", got)
+	}
+}
