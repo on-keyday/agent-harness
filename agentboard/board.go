@@ -138,6 +138,7 @@ func (b *Board) Detach(c *ConnState) {
 	if c == nil || c.task == nil {
 		return
 	}
+	c.close()
 	c.task.detachConn(c)
 }
 
@@ -343,6 +344,11 @@ func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since 
 		select {
 		case <-c.notify:
 			continue
+		case <-c.done:
+			// The agent's connection is gone; nobody is left to receive
+			// these messages. Reported as neither a hit nor a timeout: the
+			// caller is not there to tell the two apart.
+			return nil, false, nil
 		case <-ctx.Done():
 			return nil, true, nil
 		case <-b.stopCh:

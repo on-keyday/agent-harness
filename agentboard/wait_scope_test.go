@@ -55,3 +55,40 @@ func TestBoard_WaitStillReceivesWithoutPriorSubscribe(t *testing.T) {
 		t.Fatalf("wait = %+v, want one message 'ping'", msgs)
 	}
 }
+
+// The server builds the wait context from context.Background() plus the
+// client's timeout, so a killed CLI would otherwise leave this Wait running to
+// the full timeout -- and with it the waiter count that suppresses the wake.
+func TestBoard_WaitEndsWhenConnectionDetaches(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+
+	done := make(chan struct{})
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _, _ = b.Wait(ctx, conn, "topic/abandoned", 0)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	b.Detach(conn)
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("Wait did not return after its connection was detached")
+	}
+	if b.Subscribes(conn, "topic/abandoned") {
+		t.Fatal("the abandoned wait must still have released its subscription")
+	}
+}
+
+func TestBoard_DetachTwiceIsSafe(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	b.Detach(conn)
+	b.Detach(conn) // must not panic on a second close
+}

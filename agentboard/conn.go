@@ -1,6 +1,10 @@
 package agentboard
 
-import "github.com/on-keyday/agent-harness/runner/protocol"
+import (
+	"sync"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
 
 // ConnState is per-attached-client transient state. The persistent piece —
 // subscription pattern set — lives in the shared *taskState (one per
@@ -9,13 +13,28 @@ import "github.com/on-keyday/agent-harness/runner/protocol"
 type ConnState struct {
 	notify chan struct{} // pinged when a relevant publish happens
 	task   *taskState
+
+	// done is closed by Board.Detach when the agent's connection goes away.
+	// A blocked Board.Wait selects on it: the server builds the wait context
+	// from context.Background() plus the client's timeout, so without this a
+	// killed CLI leaves the wait — and the waiter count that suppresses this
+	// task's wake — alive for the rest of that timeout, up to five minutes.
+	closeOnce sync.Once
+	done      chan struct{}
 }
 
 func newConnState(task *taskState) *ConnState {
 	return &ConnState{
 		notify: make(chan struct{}, 1),
 		task:   task,
+		done:   make(chan struct{}),
 	}
+}
+
+// close marks the connection gone. Idempotent: Board.Detach can be reached
+// more than once for one ConnState.
+func (c *ConnState) close() {
+	c.closeOnce.Do(func() { close(c.done) })
 }
 
 func (c *ConnState) ping() {
