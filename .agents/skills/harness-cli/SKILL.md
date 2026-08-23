@@ -340,6 +340,29 @@ the topic it is waiting on: the waiter is already being handed the message, so
 a wake on top of it would type a `<harness:agentboard-wake>` prompt into an
 agent that has nothing new to read.
 
+**`wait` is "take everything after the cursor, block only if there is
+nothing" — not "wait for the next one".** It scans the retained ring BEFORE it
+blocks, so anything already there above `--since` comes back at once, and it
+comes back as a BATCH rather than one message. With `--since` omitted the
+cursor is 0, which the whole ring is above: on a topic that already holds
+messages, `wait` returns instantly with old ones and never waits at all.
+Measured: two pre-published messages came back together in 133 ms.
+
+That is why **a script meaning "wait for what happens NEXT" must pass
+`--since`** — the previous response's `next_cursor`, or a seq you already hold.
+Leaving it off does not look like a mistake: something IS returned, so the call
+reads as a successful wait for a message that in fact arrived earlier. It cost
+this repo a wrong diagnosis: a wake-suppression check ran `wait` with no
+`--since`, the wait exited on an old message before the publish under test, and
+the resulting wake was read as the suppression being broken.
+
+`dispatch` is built on the same scan and is safe from it in both directions: it
+sets `--since` to the seq it just published and filters on `in_reply_to`, so
+nothing retained beforehand can satisfy it — and a reply that arrives before its
+wait is even registered is still found, because the scan looks at the ring
+first. The property that traps a hand-written `wait` is the one that makes
+`dispatch` not miss a fast peer.
+
 ## Sending
 
 Topics in v1 are **exact match** — no wildcards.

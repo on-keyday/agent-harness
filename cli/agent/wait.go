@@ -21,6 +21,16 @@ import (
 // timeout, during which it can neither reason nor send to anyone else, and
 // replies arrive through the inbox hook regardless.
 //
+// It is "take everything after the cursor, block only if there is nothing" —
+// NOT "wait for the next message". Board.Wait scans the retained ring before it
+// blocks, so anything already there above --since returns at once, as a batch.
+// With --since omitted the cursor is 0 and the whole ring is above it: on a
+// topic that already holds messages this returns instantly with old ones.
+//
+// A caller meaning "what happens NEXT" must therefore pass --since. Omitting it
+// does not look like a mistake — something is returned, so the call reads as a
+// successful wait for a message that actually predates it.
+//
 // --since is the CALLER's own resume position (the previous response's
 // next_cursor). Nothing is persisted. It used to have a --since-last that read
 // and wrote the hook's cursor file, which was a board-global watermark over
@@ -34,7 +44,7 @@ func Wait(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent wait", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "server ConnectionID (env: HARNESS_SERVER_CID)")
 	topic := fs.String("topic", "", "topic to wait on")
-	since := fs.Uint64("since", 0, "wait for messages above this seq")
+	since := fs.Uint64("since", 0, "return messages above this seq; 0 (the default) matches the whole ring, so a non-empty topic returns at once")
 	inReplyTo := fs.Uint64("in-reply-to", 0, "only accept a message replying to this seq (0 = any)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "max block duration")
 	if err := fs.Parse(args); err != nil {

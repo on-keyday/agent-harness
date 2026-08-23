@@ -225,3 +225,70 @@ func TestBoard_WaitWithoutFilterAcceptsAnything(t *testing.T) {
 		t.Fatalf("wait = %+v timedOut=%v, want the reply to be accepted with no filter", msgs, timedOut)
 	}
 }
+
+// Wait is "take everything after the cursor, block only if there is nothing" —
+// not "wait for the next message". It scans the ring BEFORE blocking, so
+// anything already retained above `since` comes back at once and as a BATCH.
+//
+// This is the property that makes dispatch safe against a peer that replies
+// before dispatch's own wait is registered, and the same property that traps a
+// hand-written `wait` with no --since: it returns an OLD message and reads as
+// a successful wait for a new one.
+func TestBoard_WaitReturnsAlreadyRetainedAtOnce(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+
+	var first uint64
+	for i, body := range []string{"one", "two", "three"} {
+		seq, _, err := b.Send("topic/prefilled", []byte(body), testRid, testTid, "h", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = seq
+		}
+	}
+
+	// since=0: the whole ring is above it, so this must not block at all.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	msgs, timedOut, _ := b.Wait(ctx, conn, "topic/prefilled", 0, 0)
+	elapsed := time.Since(start)
+
+	if timedOut {
+		t.Fatal("Wait timed out on a topic that already held messages")
+	}
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want all 3 at once — Wait returns a batch, not one", len(msgs))
+	}
+	if elapsed > 200*time.Millisecond {
+		t.Errorf("took %v; a ring that already satisfies the cursor must not block", elapsed)
+	}
+
+	// since=<first>: only what is above it.
+	msgs, timedOut, _ = b.Wait(ctx, conn, "topic/prefilled", first, 0)
+	if timedOut || len(msgs) != 2 {
+		t.Fatalf("since=first: got %d msgs timedOut=%v, want 2", len(msgs), timedOut)
+	}
+
+	// since=<last>: nothing is above it, so this one DOES block and time out.
+	var last uint64
+	for _, m := range msgs {
+		if m.Seq > last {
+			last = m.Seq
+		}
+	}
+	blockCtx, blockCancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer blockCancel()
+	start = time.Now()
+	msgs, timedOut, _ = b.Wait(blockCtx, conn, "topic/prefilled", last, 0)
+	if !timedOut || len(msgs) != 0 {
+		t.Fatalf("since=last: got %d msgs timedOut=%v, want 0 and a timeout", len(msgs), timedOut)
+	}
+	if time.Since(start) < 100*time.Millisecond {
+		t.Error("returned early: nothing was above the cursor, so it should have blocked")
+	}
+}
