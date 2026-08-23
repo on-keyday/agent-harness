@@ -1,15 +1,13 @@
 package agent
 
 import (
-	"encoding/hex"
-
 	"github.com/on-keyday/agent-harness/agentboard"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func hexTaskID(t protocol.TaskID) string {
-	return hex.EncodeToString(t.Id[:])
-}
+// hexTaskID is gone with the cursor file it named: it existed only to build
+// $XDG_CACHE_HOME/harness/agent-cursor-<task>, and the delivery position now
+// lives on the server keyed by the connection's authenticated identity.
 
 // SelfTopicPrefix is the prefix the per-agent inbound topic convention uses.
 // See SKILL.md "Naming inbound channels".

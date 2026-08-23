@@ -119,21 +119,8 @@ func TestAgentCLI_E2E_Inbox_PromptHook_SingleMessage(t *testing.T) {
 	}
 }
 
-// The two hook envelopes are different shapes; asking for both is a
-// configuration error and must fail before any board round-trip.
-func TestAgentCLI_E2E_Inbox_HookModes_MutuallyExclusive(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	var out bytes.Buffer
-	err := agent.Inbox(ctx, []string{"--stop-hook", "--user-prompt-submit-hook"}, &out)
-	if err == nil {
-		t.Fatal("expected an error when both hook modes are set")
-	}
-	if !strings.Contains(err.Error(), "mutually exclusive") {
-		t.Errorf("error = %v, want it to mention mutual exclusion", err)
-	}
-	if out.Len() != 0 {
-		t.Errorf("expected no output, got %q", out.String())
-	}
-}
+// There is one hook mode now, so there is nothing to be mutually exclusive
+// with: --stop-hook was deleted along with the Stop hook itself, which
+// runner/settings.go retired and pruneStaleHarnessHooks removes from
+// worktrees. TestAgentCLI_E2E_RetiredInboxFlagsAreRejected covers that it
+// fails rather than being ignored.

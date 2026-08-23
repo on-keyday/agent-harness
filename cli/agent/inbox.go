@@ -3,7 +3,6 @@ package agent
 import (
 	"bytes"
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,49 +12,37 @@ import (
 	"github.com/on-keyday/agent-harness/appwire"
 )
 
-// Inbox returns the JSON-Lines dump of pending messages on subscribed topics.
-// This is the entry point invoked by the .claude/settings.json
-// UserPromptSubmit hook. Output goes to stdout.
+// Inbox returns the JSON-Lines dump of messages on subscribed topics.
 //
-// `--since-last` alone is a peek: it reads from the prev-cursor snapshot
-// (the position just before the most recent advance) so a manually
-// invoked inbox returns the same batch the hook just delivered to the
-// prompt context. The persisted cursor is NOT modified.
+// Two reads exist, and the flags pick between them:
 //
-// `--since-last --commit` is the consuming form used by the hooks: it
-// reads from the live cursor, advances it to NextCursor, and snapshots
-// the old live position into prev-cursor. Calling --commit by hand will
-// suppress the next hook's delivery of those seqs.
+//   - plain (the default): every retained message above --since, which defaults
+//     to 0 — the whole ring. Idempotent; it moves nothing. This is what an
+//     agent runs by hand, and what a runtime with no UserPromptSubmit hook
+//     (codex, bash, …) polls.
+//   - advancing (--user-prompt-submit-hook): the messages the automatic
+//     injection path has not yet been given, marked as given by the SERVER in
+//     the same operation. Only the runner-injected hook sends it — see
+//     runner/settings.go.
+//
+// There is deliberately no flag that advances without also producing the hook
+// envelope. The position used to be a client-side cursor file driven by a
+// --since-last/--commit pair, and "never pass --commit by hand" was an
+// instruction in a skill file; now advancing requires claiming to be the one
+// hook the runner installs, whose output is an envelope no human reads.
 //
 // --in-reply-to filters the emitted records to replies to that seq. It is
-// presentational only: the cursor still advances past every message the server
-// returned, so a filtered --commit run does not re-deliver what it hid.
-//
-// With --stop-hook, the output instead becomes a single JSON object
-// {"decision":"block","reason":<JSON-Lines>} that Claude Code's Stop hook
-// uses to keep the agent looping when new agentboard messages arrive
-// mid-turn. Empty inbox in --stop-hook mode produces no output.
-//
-// With --user-prompt-submit-hook, the output becomes the UserPromptSubmit
-// envelope carrying the JSON Lines as additionalContext. This is what the
-// injected hook uses; bare JSON Lines are silently discarded on that event
-// (see emitUserPromptSubmitHookOutput). Empty inbox produces no output.
-// The two hook modes are mutually exclusive.
+// presentational only: the advancing read still marks every message the server
+// returned, so a filtered run does not re-deliver what it hid.
 func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("agent inbox", flag.ContinueOnError)
 	serverCID := fs.String("server-cid", "", "")
-	sinceLast := fs.Bool("since-last", false, "use persisted cursor (peek; combine with --commit to advance)")
-	commit := fs.Bool("commit", false, "advance the persisted cursor (hook use only — manual callers should leave this off)")
-	since := fs.Uint64("since", 0, "cursor (ignored if --since-last)")
+	since := fs.Uint64("since", 0, "return messages above this seq (0 = the whole ring)")
 	asJSON := fs.Bool("json", false, "output JSON Lines (current default; flag accepted for forward compat)")
-	stopHook := fs.Bool("stop-hook", false, "wrap output as Claude Code Stop-hook block decision")
-	promptHook := fs.Bool("user-prompt-submit-hook", false, "wrap output as Claude Code UserPromptSubmit additionalContext")
+	promptHook := fs.Bool("user-prompt-submit-hook", false, "advancing read, wrapped as Claude Code UserPromptSubmit additionalContext")
 	inReplyTo := fs.Uint64("in-reply-to", 0, "only show messages replying to this seq (client-side filter)")
 	if err := fs.Parse(args); err != nil {
 		return err
-	}
-	if *stopHook && *promptHook {
-		return errors.New("--stop-hook and --user-prompt-submit-hook are mutually exclusive")
 	}
 	_ = asJSON // currently always JSON Lines
 
@@ -67,22 +54,10 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	defer conn.Close()
 
-	cursor := *since
-	var oldLive uint64
-	if *sinceLast {
-		live, prev, err := LoadCursor(hexTaskID(conn.TaskID()))
-		if err == nil {
-			oldLive = live
-			if *commit {
-				cursor = live
-			} else {
-				cursor = prev
-			}
-		}
-	}
-
 	reqID := rand.Uint32()
-	respCh := make(chan agentboard.InboxResponse, 1)
+	// Both response kinds carry the same body, so one channel of messages
+	// serves either read; which one arrives is decided by what was sent.
+	respCh := make(chan []agentboard.DeliveredMessage, 1)
 	conn.SetOnControl(func(kind appwire.AppKind, p []byte) {
 		if kind != appwire.AppKind_AgentMessage {
 			return
@@ -91,63 +66,70 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 		if _, err := msg.Decode(p); err != nil {
 			return
 		}
-		if msg.Kind == agentboard.AgentMessageKind_InboxResponse {
-			r := msg.InboxResponse()
-			if r != nil && r.RequestId == reqID {
+		switch msg.Kind {
+		case agentboard.AgentMessageKind_InboxResponse:
+			if r := msg.InboxResponse(); r != nil && r.RequestId == reqID {
 				select {
-				case respCh <- *r:
+				case respCh <- r.Msgs:
+				default:
+				}
+			}
+		case agentboard.AgentMessageKind_InboxAdvanceResponse:
+			if r := msg.InboxAdvanceResponse(); r != nil && r.RequestId == reqID {
+				select {
+				case respCh <- r.Msgs:
 				default:
 				}
 			}
 		}
 	})
 
-	msg := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Inbox}
-	msg.SetInbox(agentboard.InboxRequest{RequestId: reqID, Since: cursor})
+	var msg *agentboard.AgentMessage
+	if *promptHook {
+		msg = &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxAdvance}
+		msg.SetInboxAdvance(agentboard.InboxAdvanceRequest{RequestId: reqID})
+	} else {
+		msg = &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_Inbox}
+		msg.SetInbox(agentboard.InboxRequest{RequestId: reqID, Since: *since})
+	}
 	if err := conn.SendRaw(msg); err != nil {
 		return err
 	}
 
 	select {
-	case r := <-respCh:
+	case msgs := <-respCh:
 		// Fetch all payloads up front so a write-time decode error doesn't
 		// leave half the inbox emitted.
-		payloads := make([][]byte, len(r.Msgs))
-		for i, m := range r.Msgs {
+		payloads := make([][]byte, len(msgs))
+		for i, m := range msgs {
 			p, perr := conn.FetchDeliveredPayload(ctx, m.PayloadStreamId)
 			if perr != nil {
 				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
 			}
 			payloads[i] = p
 		}
-		// Only the hook modes get the inline guard: their output is spliced
-		// into the agent's next prompt, so an oversize body is context the
-		// agent never agreed to spend. Every other mode hands the record to a
-		// caller that can redirect it, and one of them is where the guarded
-		// record points for the full body.
+		// Only the hook mode gets the inline guard: its output is spliced into
+		// the agent's next prompt, so an oversize body is context the agent
+		// never agreed to spend. A plain read hands the record to a caller that
+		// can redirect it, and `agent read <seq>` is where the guarded record
+		// points for the full body.
 		emit := emitMessageLine
-		if *stopHook || *promptHook {
+		if *promptHook {
 			emit = emitMessageLineForHook
 		}
 		var body bytes.Buffer
-		for i, m := range r.Msgs {
+		for i, m := range msgs {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 				continue
 			}
 			emit(&body, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
 		}
-		switch {
-		case *stopHook:
-			emitStopHookOutput(stdout, body.String())
-		case *promptHook:
+		if *promptHook {
 			emitUserPromptSubmitHookOutput(stdout, body.String())
-		default:
-			if _, err := stdout.Write(body.Bytes()); err != nil {
-				return err
-			}
+			return nil
 		}
-		if *sinceLast && *commit {
-			_ = SaveCursor(hexTaskID(conn.TaskID()), r.NextCursor, oldLive)
+		if _, err := stdout.Write(body.Bytes()); err != nil {
+			return err
 		}
 		return nil
 	case <-ctx.Done():
