@@ -524,6 +524,7 @@ type SendOption func(*sendConfig)
 
 type sendConfig struct {
 	noRetireOnReply bool
+	replyToTopic    string
 }
 
 // NoRetireOnReply marks the message as one that must survive being answered:
@@ -533,6 +534,18 @@ type sendConfig struct {
 // on its own.
 func NoRetireOnReply() SendOption {
 	return func(c *sendConfig) { c.noRetireOnReply = true }
+}
+
+// WithReplyTo records where replies to this message should be routed, for
+// resolveReplyTarget to read off the retained entry. Empty (the zero value, and
+// what a caller passing no options gets) means the sender's own
+// chat.<short-id> — the behaviour every message had before this existed.
+//
+// An option rather than an eighth positional parameter, for the reason stated
+// on SendOption: Send already takes seven and is called from ~50 places that
+// have no opinion about this.
+func WithReplyTo(topic string) SendOption {
+	return func(c *sendConfig) { c.replyToTopic = topic }
 }
 
 // ListRetracted returns the topic's withdrawn messages — the ones an author

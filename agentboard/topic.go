@@ -27,7 +27,13 @@ type RetainedMessage struct {
 	// server could not attribute a runtime (see agentboard.bgn
 	// DeliveredMessage.from_agent_profile).
 	FromAgentProfile string
-	ReceivedAt       time.Time
+	// ReplyToTopic is where the SENDER asked replies to this message to go.
+	// Empty = the sender's own chat.<short-id>, which is what resolveReplyTarget
+	// falls back to. Frozen here with the message for the same reason
+	// FromAgentProfile is: the ring outlives the connection that produced the
+	// entry, and a reply may arrive long after that connection is gone.
+	ReplyToTopic string
+	ReceivedAt   time.Time
 	// RetractedAt is when the message's AUTHOR withdrew it, zero while it is
 	// live. Set only on entries in topic.retracted — an entry in the live ring
 	// always carries the zero value.
@@ -85,6 +91,7 @@ func (t *topic) append(seq uint64, payload []byte, fromRid protocol.RunnerID, fr
 		FromTask:         fromTid,
 		FromHostname:     fromHost,
 		FromAgentProfile: fromProfile,
+		ReplyToTopic:     cfg.replyToTopic,
 		ReceivedAt:       now,
 		NoRetireOnReply:  cfg.noRetireOnReply,
 	})
