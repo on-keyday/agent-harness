@@ -2,8 +2,11 @@ package agentboard
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
 // boardTaskIDFromByte builds a distinct agentboard.TaskID so two taskStates can
@@ -91,4 +94,84 @@ func TestBoard_DetachTwiceIsSafe(t *testing.T) {
 	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
 	b.Detach(conn)
 	b.Detach(conn) // must not panic on a second close
+}
+
+// The wake this suppresses is the one a script's own wait causes: the blocked
+// CLI gets the message AND the interactive agent sharing that task id gets a
+// <harness:agentboard-wake> prompt typed into its PTY about it. The skip is
+// keyed on (task, topic), so a second task subscribed to the same topic is
+// unaffected.
+func TestBoard_SendSkipsWakeForTheTaskWaitingOnThatTopic(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	waiter := b.Attach(RunnerID{}, boardTaskIDFromByte(1), "host-a", "")
+	defer b.Detach(waiter)
+	bystander := b.Attach(RunnerID{}, boardTaskIDFromByte(2), "host-b", "")
+	defer b.Detach(bystander)
+	_ = b.Subscribe(bystander, "topic/shared")
+
+	var mu sync.Mutex
+	woke := map[byte]int{}
+	b.SetOnDeliver(func(_ protocol.RunnerID, tid protocol.TaskID) {
+		mu.Lock()
+		woke[tid.Id[0]]++
+		mu.Unlock()
+	})
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, _, _ = b.Wait(ctx, waiter, "topic/shared", 0)
+	}()
+	time.Sleep(50 * time.Millisecond) // let the wait register
+
+	if _, _, err := b.Send("topic/shared", []byte("x"), testRid, testTid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if woke[1] != 0 {
+		t.Errorf("the waiting task was woken %d times, want 0", woke[1])
+	}
+	if woke[2] != 1 {
+		t.Errorf("the bystander subscriber was woken %d times, want 1", woke[2])
+	}
+}
+
+func TestBoard_WaitingTaskIsStillWokenForItsOtherTopics(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+
+	conn := b.Attach(RunnerID{}, boardTaskIDFromByte(3), "host-c", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "topic/other")
+
+	var mu sync.Mutex
+	wakes := 0
+	b.SetOnDeliver(func(_ protocol.RunnerID, _ protocol.TaskID) {
+		mu.Lock()
+		wakes++
+		mu.Unlock()
+	})
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, _, _ = b.Wait(ctx, conn, "topic/awaited", 0)
+	}()
+	time.Sleep(50 * time.Millisecond)
+
+	if _, _, err := b.Send("topic/other", []byte("y"), testRid, testTid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if wakes != 1 {
+		t.Errorf("wakes = %d, want 1 — a wait on one topic must not silence the others", wakes)
+	}
 }

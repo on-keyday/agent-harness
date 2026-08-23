@@ -281,7 +281,14 @@ func (b *Board) Send(topicName string, payload []byte, fromRid protocol.RunnerID
 		for _, c := range ts.snapshotConns() {
 			c.ping()
 		}
-		if fn != nil {
+		// A task synchronously waiting on THIS topic is already being handed
+		// the message by that wait. Waking it as well types a
+		// <harness:agentboard-wake> prompt into the PTY of an agent that
+		// shares the task id, about a message it did not ask for and that the
+		// waiter has already taken. The check is per (task, topic): another
+		// task subscribed to the same topic still gets its wake, and this task
+		// still gets woken for its other topics.
+		if fn != nil && !ts.isWaiting(topicName) {
 			rid, tid, _, _ := ts.identity()
 			fn(rid, tid)
 		}
