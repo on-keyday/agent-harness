@@ -650,6 +650,30 @@ omitted: 24's `--raw` half — `SessionSnapshotRaw` does NOT surface it. That pa
          it beside, and the measurement's intended consumer — a detection rule —
          does not exist yet. Building half of it there would ship an asymmetry
          nobody had looked at, which is the outcome this item exists to force.
+missed:  **38** — the omission above was recorded with a FALSE reason, and the
+         operator falsified it within the hour: 「tui に rate 足すみたいなのって既に
+         デバッグ用表示のあれなかったっけ」. The TUI grid pane has had a per-pane
+         diagnostic overlay the whole time — `HARNESS_GRID_DIAG` →
+         `PaneStreamer.DiagLine()`, overlaid on each pane's first body row
+         (`tui/grid.go`) — already counting `rxBytes` and `reads`. So "no verdict
+         to print it beside" was simply wrong: there was a surface, it was
+         printing the same two quantities CUMULATIVELY, and cumulative counters
+         are the thing a rate exists to replace (`rx=41230` cannot say whether
+         anything is arriving now; reading it needs two screenshots and a
+         subtraction, on exactly the pane you are watching because it looks
+         stuck). Fixed in the same session: `DiagLine` now carries `B/s` and
+         `rd/s` over a rolling one-second window, and the overlay gained a `diag
+         [on|off]` cmdline verb because an env var can only be set before launch
+         — a grid that goes wrong after ten minutes cannot be relaunched without
+         losing the state being diagnosed.
+
+         **What made the reason false is worth naming.** I searched for a place
+         to print a VERDICT, because that is what the CLI change had just built.
+         The TUI surface is not a verdict, it is a diagnostic overlay, so the
+         search that would have found it is "does this surface already report
+         anything about the stream" — the question item 38 actually asks. An
+         `omitted` verdict is only as good as the search behind it, and this one
+         searched for the wrong noun.
 n/a:     2–9, 11–23 — no grammar, no input surface, and 11–23 walk TASK fields
          across listings while this belongs to a CAPTURE. Same reasoning as the
          `fe894b4` entry that produced item 38.
@@ -706,7 +730,7 @@ Update when adding an entry.
 | 32 (one serializer, round-trip tested) | 6 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
 | 28a (follow the value to the request build) | 6 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. |
 | 34a (same KIND of control as its neighbours) | 2 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
-| 38 (live screen-rendering surfaces) | 3 | 0 | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third is an `omitted` again and the most pointed: the live panes hold the same stream and could measure `live` CONTINUOUSLY rather than by a 1500 ms sample — the sampled form is the weaker one, and saying so is the only reason that is a decision rather than an oversight. |
+| 38 (live screen-rendering surfaces) | 3 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. |
 | 29 (result messages name the target and the change) | 3 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 
 **Never fired yet:** 21, 26. Too few walks to call either dead — revisit after

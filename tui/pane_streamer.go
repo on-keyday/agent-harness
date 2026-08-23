@@ -44,7 +44,31 @@ type PaneStreamer struct {
 	reads    int
 	attaches int
 	vtPanics int
+
+	// Arrival RATE over a rolling window, which the cumulative counters above
+	// cannot answer: `rx=41230` says bytes arrived at some point, never whether
+	// any are arriving NOW. Reading a total requires two screenshots and a
+	// subtraction — the same "run it twice, the delta is the signal" the trsf
+	// dump has to tell its reader — and a pane you are watching because it looks
+	// stuck is exactly where that second sample is expensive.
+	//
+	// This is the CONTINUOUS form of what `session snapshot` reports as `live`:
+	// same quantities, but measured off a stream that is already being read
+	// rather than sampled over one 1500 ms capture. It needs no anchoring the way
+	// the snapshot does — this stream's replay burst arrives once at attach and
+	// then the window rolls past it, whereas a fresh capture is mostly replay.
+	// Guarded by mu.
+	rateStart  time.Time // window start; zero until the first byte ever arrives
+	rateBytes  int       // accumulating in the current window
+	rateFrames int
+	lastBps    float64 // last COMPLETED window, shown while the current one is short
+	lastFps    float64
 }
+
+// rateWindow is how long a rate window runs before it is rolled. One second is
+// the shortest window that reads as a rate to a human and the longest that still
+// reacts within one glance at the grid.
+const rateWindow = time.Second
 
 func NewPaneStreamer(taskID string, defRows, defCols int) *PaneStreamer {
 	if defRows <= 0 {
@@ -78,8 +102,34 @@ func (p *PaneStreamer) DiagLine() string {
 			errS = errS[:24]
 		}
 	}
-	return fmt.Sprintf("rx=%d rd=%d at=%d vtp=%d sz=%dx%d lc=%d cy=%d err=%s",
-		p.rxBytes, p.reads, p.attaches, p.vtPanics, p.cols, p.rows, lc, cy, errS)
+	bps, fps := p.rateLocked(time.Now())
+	return fmt.Sprintf("rx=%d rd=%d %.0fB/s %.1frd/s at=%d vtp=%d sz=%dx%d lc=%d cy=%d err=%s",
+		p.rxBytes, p.reads, bps, fps, p.attaches, p.vtPanics, p.cols, p.rows, lc, cy, errS)
+}
+
+// rateLocked reports the pane's current arrival rate in bytes and frames per
+// second. Caller holds mu.
+//
+// Once the open window is at least one full rateWindow long it is reported
+// directly, which is what makes a pane that STOPS producing decay to zero on its
+// own: nothing rolls the window, so the same count is divided by a growing
+// elapsed. A shorter open window would read as a spike (2 frames in 40 ms is not
+// 50/s), so until it fills, the last completed window stands.
+//
+// They are frames, not a frame RATE in the display sense: one screen repaint can
+// arrive as several reads and several repaints can coalesce into one, so this
+// counts transport boundaries. `rd/s` rather than `fps` in the line for exactly
+// that reason.
+func (p *PaneStreamer) rateLocked(now time.Time) (bps, fps float64) {
+	if p.rateStart.IsZero() {
+		return 0, 0 // nothing has ever arrived: 0 is the measurement, not a gap
+	}
+	elapsed := now.Sub(p.rateStart)
+	if elapsed < rateWindow {
+		return p.lastBps, p.lastFps
+	}
+	secs := elapsed.Seconds()
+	return float64(p.rateBytes) / secs, float64(p.rateFrames) / secs
 }
 
 func (p *PaneStreamer) Err() error {
@@ -308,8 +358,30 @@ func (p *PaneStreamer) feed(data []byte, rows, cols int, resize bool) (alive boo
 		p.cols, p.rows = cols, rows
 	}
 	p.rxBytes += len(data)
+	p.recordArrivalLocked(len(data), time.Now())
 	p.emu.Write(data)
 	return alive
+}
+
+// recordArrivalLocked folds one chunk into the rate window, rolling the window
+// once it has run a full rateWindow. Caller holds mu.
+//
+// It lives here rather than beside `p.reads++` in readStream because this is the
+// point where a chunk is known to have REACHED the screen model: a read that
+// races Stop is counted by neither, so the rate cannot outlive the pane it
+// describes.
+func (p *PaneStreamer) recordArrivalLocked(n int, now time.Time) {
+	if p.rateStart.IsZero() {
+		p.rateStart = now
+	}
+	p.rateBytes += n
+	p.rateFrames++
+	if elapsed := now.Sub(p.rateStart); elapsed >= rateWindow {
+		secs := elapsed.Seconds()
+		p.lastBps = float64(p.rateBytes) / secs
+		p.lastFps = float64(p.rateFrames) / secs
+		p.rateStart, p.rateBytes, p.rateFrames = now, 0, 0
+	}
 }
 
 // setErr records the pane's latest stream error (shown as "(ended)" in the

@@ -328,7 +328,42 @@ language in `detect_rules.json` matches text against screen regions, and giving
 it a numeric input is a schema change that should follow evidence about which
 thresholds actually separate the states, not precede it. The CLI report says
 `(no rule reads this yet)` so a reader cannot mistake it for part of the
-verdict. Likewise the two LIVE renderers (`tui/pane_streamer.go`, the WebUI
-preview) already hold the same stream and could measure it continuously rather
-than by sample; they have no verdict to print it beside, so they were left
-alone rather than given a half-surface.
+verdict.
+
+### Corrected same day — the TUI grid pane reports it continuously
+
+The paragraph above originally also said the two live renderers were left alone
+because "they have no verdict to print it beside". That was wrong, and the
+operator said so within the hour. `tui/grid.go` has had a per-pane diagnostic
+overlay all along — `HARNESS_GRID_DIAG` gates `PaneStreamer.DiagLine()` onto
+each pane's first body row — and it was already counting `rxBytes` and `reads`.
+It is not a verdict, which is why looking for one missed it; it is the
+diagnostic surface, which is what the question should have been about.
+
+So the grid pane now carries the CONTINUOUS form of the same measurement:
+
+```
+rx=41230 rd=118 1274B/s 3.6rd/s at=1 vtp=0 sz=48x210 lc=44 cy=43 err=-
+```
+
+Rolling one-second window (`rateWindow`), anchored on the FIRST arrival rather
+than on attach so a pane that was quiet for a minute does not average that
+minute into its first reading. A pane that STOPS producing decays to zero on its
+own: nothing rolls the window, so the same count is divided by a growing
+elapsed. A window shorter than `rateWindow` reports the last completed one
+instead of extrapolating — 2 frames in 40 ms is not 50/s.
+
+It needs none of the snapshot's `anchored` machinery: this stream's replay burst
+arrives once at attach and the window rolls past it seconds later, whereas a
+fresh capture is mostly replay by volume.
+
+`HARNESS_GRID_DIAG` is joined by a **`diag [on|off]` cmdline verb** (bare `diag`
+toggles). Both are needed and neither subsumes the other: the env var is the only
+way to have the overlay on for the FIRST paint — a pane that is black from the
+start — while a grid that goes wrong after ten minutes cannot be handed a new
+launch environment without losing the state being diagnosed. An explicit
+`on`/`off` is kept distinct from a toggle so a second operator cannot turn it off
+by asking for it on.
+
+The WebUI preview remains untouched: it renders through xterm.js in the browser
+and has no equivalent diagnostic row.

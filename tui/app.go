@@ -2539,8 +2539,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 	// treated as client-requiring, so a future Do*-dispatching action is
 	// guarded by default rather than silently re-opening this panic.
 	switch act.(type) {
-	case QuitAction, ClearAction, HelpAction, RepoAction, CapsAction, ScopeAction, RefreshAction, TrsfDebugAction:
-		// no client needed (Refresh/Trsf carry their own nil-client notice)
+	case QuitAction, ClearAction, HelpAction, RepoAction, CapsAction, ScopeAction, RefreshAction, TrsfDebugAction, GridDiagAction:
+		// no client needed (Refresh/Trsf carry their own nil-client notice;
+		// GridDiag is a local render setting and touches no RPC at all)
 	default:
 		if a.client == nil {
 			a.cmdresult.Append(WarnStyle.Render("not connected — wait for the connection or check the server"))
@@ -2599,6 +2600,21 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.")
 		a.cmdresult.Append("  push/pull overwrite — first try fails on existing dest; picker prompts overwrite? (y/n). y retries with force=true.")
 		a.cmdresult.Append("trsf                        - dump the client↔server transport's internal state (debug)")
+		a.cmdresult.Append("diag [on|off]               - grid panes overlay their own state + arrival rate on row 1 (debug; bare `diag` toggles, HARNESS_GRID_DIAG seeds it at startup)")
+		return a, nil
+	case GridDiagAction:
+		want := !GridDiagEnabled()
+		if v.Set != nil {
+			want = *v.Set
+		}
+		// Report the state that was actually SET, not the one requested: the two
+		// can only differ if this ever stops being a plain assignment, and a
+		// result line that echoes the request cannot say so.
+		if SetGridDiag(want) {
+			a.cmdresult.Append(OKStyle.Render("grid diag: on — panes show rx/rate/size on their first row"))
+		} else {
+			a.cmdresult.Append(OKStyle.Render("grid diag: off"))
+		}
 		return a, nil
 	case TrsfDebugAction:
 		if a.client == nil {

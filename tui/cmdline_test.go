@@ -1396,3 +1396,46 @@ func TestParseSessionStreamApproveRejectsBadShapes(t *testing.T) {
 		}
 	}
 }
+
+// `diag` toggles the grid's per-pane overlay, and an explicit on/off is NOT the
+// same request: a toggle would turn it off for an operator who typed `diag on`
+// because someone else already had it on. The nil/non-nil Set is what keeps
+// those apart.
+func TestParseDiag(t *testing.T) {
+	act, err := ParseCommand("diag", "")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	d, ok := act.(GridDiagAction)
+	if !ok {
+		t.Fatalf("got %T, want GridDiagAction", act)
+	}
+	if d.Set != nil {
+		t.Errorf("bare `diag` carries Set=%v, want nil (toggle)", *d.Set)
+	}
+
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{{"diag on", true}, {"diag off", false}} {
+		act, err := ParseCommand(tc.in, "")
+		if err != nil {
+			t.Fatalf("parse %q: %v", tc.in, err)
+		}
+		d, ok := act.(GridDiagAction)
+		if !ok {
+			t.Fatalf("%q: got %T, want GridDiagAction", tc.in, act)
+		}
+		if d.Set == nil || *d.Set != tc.want {
+			t.Errorf("%q: Set=%v, want %v", tc.in, d.Set, tc.want)
+		}
+	}
+}
+
+// An unrecognised argument must name what is accepted rather than silently
+// toggling — the same "take effect or error" rule the rest of the cmdline holds.
+func TestParseDiagRejectsAnUnknownArgument(t *testing.T) {
+	if _, err := ParseCommand("diag maybe", ""); err == nil {
+		t.Fatal("`diag maybe` parsed; want an error naming on/off")
+	}
+}

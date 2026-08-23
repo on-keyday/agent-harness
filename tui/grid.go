@@ -25,10 +25,28 @@ const (
 	gridStagger = 60 * time.Millisecond
 )
 
-// gridDiag is set once at startup from HARNESS_GRID_DIAG: when on, each pane
-// renders its DiagLine as the first body row so a black pane reveals its own
-// state (bytes received, emulator size, content row) in a screenshot.
+// gridDiag: when on, each pane renders its DiagLine as the first body row so a
+// black pane reveals its own state (bytes received, arrival rate, emulator size,
+// content row) in a screenshot.
+//
+// HARNESS_GRID_DIAG seeds it at startup and the `diag` cmdline verb flips it at
+// runtime. Both exist because they answer different situations: the env var is
+// the only way to have it on for the FIRST paint (a pane that is black from the
+// start), while a grid that goes wrong after ten minutes cannot be given a new
+// launch environment without losing the state being diagnosed.
+//
+// A package var rather than GridModel state because the grid is opened and
+// closed repeatedly and the setting has to outlive one opening — and it is
+// read and written only from bubbletea's single Update/View goroutine.
 var gridDiag = os.Getenv("HARNESS_GRID_DIAG") != ""
+
+// SetGridDiag turns the per-pane diagnostic overlay on or off and reports the
+// new state, so a caller renders what it actually set rather than what it asked
+// for.
+func SetGridDiag(on bool) bool { gridDiag = on; return gridDiag }
+
+// GridDiagEnabled reports whether the overlay is on (for a toggle).
+func GridDiagEnabled() bool { return gridDiag }
 
 type gridTickMsg struct{}
 

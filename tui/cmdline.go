@@ -55,6 +55,15 @@ type HelpAction struct{}
 // without waiting for the next event or resubscribe gap-fill.
 type RefreshAction struct{}
 
+// GridDiagAction turns the grid panes' per-pane diagnostic overlay on or off.
+// On means every pane replaces its top body row with rx/rate/size/content-row
+// state, which is how a black or apparently-stuck pane reports why.
+//
+// Set is nil for a bare `diag`, which TOGGLES. An explicit on/off is not the
+// same request as a toggle: a script or a second operator saying `diag on`
+// must not turn it OFF because someone already did.
+type GridDiagAction struct{ Set *bool }
+
 // TrsfDebugAction dumps the client↔server trsf transport's internal state into
 // the command-result panel (debug aid).
 type TrsfDebugAction struct{}
@@ -337,6 +346,7 @@ func (QuitAction) isAction()                {}
 func (HelpAction) isAction()                {}
 func (RefreshAction) isAction()             {}
 func (TrsfDebugAction) isAction()           {}
+func (GridDiagAction) isAction()            {}
 func (RepoAction) isAction()                {}
 func (InteractiveAction) isAction()         {}
 func (SessionNewAction) isAction()          {}
@@ -403,6 +413,19 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseServer(tokens[1:])
 	case "trsf":
 		return TrsfDebugAction{}, nil
+	case "diag":
+		if len(tokens) == 1 {
+			return GridDiagAction{}, nil
+		}
+		switch tokens[1] {
+		case "on":
+			on := true
+			return GridDiagAction{Set: &on}, nil
+		case "off":
+			off := false
+			return GridDiagAction{Set: &off}, nil
+		}
+		return nil, fmt.Errorf("diag: want `diag` (toggle), `diag on` or `diag off`, got %q", tokens[1])
 	case "notify":
 		return parseNotify(tokens[1:])
 	case "caps":
