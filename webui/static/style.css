@@ -1549,6 +1549,11 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 .board-topic-unpublished .board-topic-name { color: #9a9a9a; font-weight: 400; }
 .board-topic-unpublished .board-topic-meta { font-style: italic; }
 .board-msg-from { color: #7ec8e3; }
+/* shown_to reads as ordinary metadata when everyone has it, and warm when
+   somebody has not been handed it yet -- that row is the one an operator
+   asking "did it arrive" is looking for. Never hidden at zero. */
+.board-msg-shown { color: #888; }
+.board-msg-shown-pending { color: #ce9178; font-weight: 600; }
 .board-msg-host { color: #b5cea8; }
 .board-msg-agent { color: #ce9178; }
 .board-msg-time { color: #777; margin-left: auto; white-space: nowrap; }

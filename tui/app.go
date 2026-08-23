@@ -538,7 +538,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.boardModal.SetStatus("read: " + msg.Err.Error())
 			return a, nil
 		}
-		a.boardModal.ApplyMessages(msg.Topic, msg.Msgs, msg.Found)
+		a.boardModal.ApplyMessages(msg.Topic, msg.Msgs, msg.Subs, msg.Found)
 		return a, nil
 
 	case BoardSubscribersMsg:

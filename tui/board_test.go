@@ -110,7 +110,7 @@ func TestBoardModalDrillAndPop(t *testing.T) {
 	msgs := []cli.BoardMessage{
 		{Seq: 1, FromTaskHex: "aabbccdd", FromHostname: "host1", ReceivedAtMs: 1_000, Payload: []byte(`"hello"`)},
 	}
-	m.ApplyMessages("testtopic", msgs, true)
+	m.ApplyMessages("testtopic", msgs, nil, true)
 	if m.mode != boardMessages {
 		t.Fatalf("after ApplyMessages: want boardMessages, got %v", m.mode)
 	}
@@ -144,7 +144,7 @@ func TestBoardModalContentFormatsJSON(t *testing.T) {
 		ReceivedAtMs: 3_000,
 		Payload:      []byte(`{"key":"value","n":42}`),
 	}
-	m.ApplyMessages("jsontopic", []cli.BoardMessage{jsonMsg}, true)
+	m.ApplyMessages("jsontopic", []cli.BoardMessage{jsonMsg}, nil, true)
 
 	got := m.content.View()
 	// The pretty-printed JSON must contain indented fields.
@@ -213,7 +213,7 @@ func TestBoardModalEmptyStates(t *testing.T) {
 	m.SetSize(100, 30)
 
 	// Never published: BoardRead reports found=false.
-	m.ApplyMessages("rr.dec-019", nil, false)
+	m.ApplyMessages("rr.dec-019", nil, nil, false)
 	if m.mode != boardMessages {
 		t.Fatalf("mode = %v, want boardMessages even when nothing is retained", m.mode)
 	}
@@ -222,7 +222,7 @@ func TestBoardModalEmptyStates(t *testing.T) {
 	}
 
 	// Published then emptied: the topic exists, its ring is empty.
-	m.ApplyMessages("chat.aaaa", nil, true)
+	m.ApplyMessages("chat.aaaa", nil, nil, true)
 	if m.mode != boardMessages {
 		t.Fatalf("mode = %v, want boardMessages", m.mode)
 	}
@@ -232,5 +232,58 @@ func TestBoardModalEmptyStates(t *testing.T) {
 	}
 	if strings.Contains(v, "nothing published to this topic") {
 		t.Errorf("emptied ring must not be reported as never published:\n%s", v)
+	}
+}
+
+// The per-message delivery mark is the answer to "which of these has the peer
+// actually been handed". It must appear on EVERY row, including the ones
+// everybody has: eliding it at 1/1 would make an undelivered 0/1 read as the
+// only row that reports delivery at all, rather than as the exceptional one.
+func TestBoardModalMessagesShowDeliveryMark(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 30)
+
+	// One subscriber, shown up to seq 20: seq 10 and 20 have been handed over,
+	// seq 30 has not.
+	subs := []cli.BoardSubscriberRow{{
+		TaskHex:  "aabbccddeeff0011",
+		Hostname: "host-A",
+		Patterns: []cli.BoardSubscriberPattern{{Name: "t.deliver", Shown: 20, Pending: 1}},
+	}}
+	msgs := []cli.BoardMessage{
+		{Seq: 10, FromTaskHex: "11112222", ReceivedAtMs: 1_000},
+		{Seq: 20, FromTaskHex: "33334444", ReceivedAtMs: 2_000},
+		{Seq: 30, FromTaskHex: "55556666", ReceivedAtMs: 3_000},
+	}
+	m.ApplyMessages("t.deliver", msgs, subs, true)
+
+	view := m.View()
+	for _, want := range []string{
+		"seq=10", "seq=20", "seq=30",
+		"shown_to=1/1", // the two at or below the mark
+		"shown_to=0/1", // the one above it
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("view missing %q\n%s", want, view)
+		}
+	}
+	if got := strings.Count(view, "shown_to=1/1"); got != 2 {
+		t.Errorf("shown_to=1/1 appears %d times, want 2 (seq 10 and 20)", got)
+	}
+	if got := strings.Count(view, "shown_to=0/1"); got != 1 {
+		t.Errorf("shown_to=0/1 appears %d times, want 1 (seq 30)", got)
+	}
+}
+
+// A topic nobody subscribes to reports 0/0, which is a different fact from
+// 0/1 (someone subscribes and has not been handed it). Both print.
+func TestBoardModalMessagesMarkWithNoSubscribers(t *testing.T) {
+	m := NewBoardModal()
+	m.Open()
+	m.SetSize(120, 30)
+	m.ApplyMessages("t.orphan", []cli.BoardMessage{{Seq: 7, FromTaskHex: "abcdabcd"}}, nil, true)
+	if view := m.View(); !strings.Contains(view, "shown_to=0/0") {
+		t.Errorf("view missing shown_to=0/0\n%s", view)
 	}
 }

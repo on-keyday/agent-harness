@@ -1188,8 +1188,19 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 				rejectErr(reject, fmt.Errorf("boardRead: %w", err))
 				return
 			}
+			// The per-message delivery answer is computed HERE, in Go, and
+			// shipped as a result rather than as inputs: comparing board seqs
+			// in JS needs BigInt (they exceed Number.MAX_SAFE_INTEGER), and a
+			// second implementation of the comparison is exactly the mirror
+			// this codebase keeps getting bitten by. A subscribers failure is
+			// not fatal to the read — the messages still cross, with 0/0.
+			subs, serr := c.BoardSubscribers(rootCtx, topic)
+			if serr != nil {
+				subs = nil
+			}
 			msgsOut := make([]any, 0, len(msgs))
 			for _, m := range msgs {
+				shownN, shownTotal := cli.ShownTo(subs, topic, m.Seq)
 				msgsOut = append(msgsOut, map[string]any{
 					// Decimal string, not float64: board seq exceeds JS's
 					// 2^53 safe-integer range and would round, so a purge
@@ -1209,6 +1220,11 @@ func harnessBoardRead(this js.Value, args []js.Value) any {
 					// withdrawn message as if it were still live.
 					"retracted":     m.Retracted,
 					"retractedAtMs": float64(m.RetractedAtMs),
+					// How many of the topic's subscribers have been handed this
+					// message, out of how many subscribe at all. Small counts,
+					// so float64 is safe here — unlike seq.
+					"shownTo":      float64(shownN),
+					"shownToTotal": float64(shownTotal),
 				})
 			}
 			resolve.Invoke(js.ValueOf(map[string]any{

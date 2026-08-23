@@ -32,6 +32,9 @@ type BoardTopicsMsg struct {
 type BoardReadMsg struct {
 	Topic string
 	Msgs  []cli.BoardMessage
+	// Subs is the topic's subscriber set at read time, for the per-message
+	// delivery marks. Nil when it could not be fetched.
+	Subs  []cli.BoardSubscriberRow
 	Found bool
 	Err   error
 }
@@ -81,7 +84,14 @@ func DoBoardRead(c *cli.Client, topic string) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		msgs, found, err := c.BoardRead(ctx, topic)
-		return BoardReadMsg{Topic: topic, Msgs: msgs, Found: found, Err: err}
+		// Subscribers ride along so each message row can say who has actually
+		// been handed it. A failure here is not fatal to the listing: the rows
+		// print with shown_to=0/0 rather than not printing.
+		subs, serr := c.BoardSubscribers(ctx, topic)
+		if serr != nil {
+			subs = nil
+		}
+		return BoardReadMsg{Topic: topic, Msgs: msgs, Subs: subs, Found: found, Err: err}
 	}
 }
 
@@ -155,7 +165,10 @@ type BoardModal struct {
 	subRows   []cli.BoardSubscriberRow // rows shown in boardSubscribers mode
 	msgCursor int
 	content   viewport.Model // payload of msgs[msgCursor], pretty-printed if valid JSON
-	status    string         // one-line error / confirmation rendered below the table
+	// msgSubs is the subscriber set for curTopic, captured with the messages so
+	// each row can report how many subscribers have been handed it.
+	msgSubs []cli.BoardSubscriberRow
+	status  string // one-line error / confirmation rendered below the table
 }
 
 // Column positions in the topics table. boardTopicToRow builds its row in this
@@ -265,9 +278,10 @@ func (m *BoardModal) ApplyTopics(rows []cli.BoardTopicRow, subs map[string]int) 
 // ApplyMessages populates message-drilldown mode with the given messages for
 // topic. Sets mode to boardMessages on success. Called when DoBoardRead
 // completes.
-func (m *BoardModal) ApplyMessages(topic string, msgs []cli.BoardMessage, found bool) {
+func (m *BoardModal) ApplyMessages(topic string, msgs []cli.BoardMessage, subs []cli.BoardSubscriberRow, found bool) {
 	m.curTopic = topic
 	m.curFound = found
+	m.msgSubs = subs
 	m.msgs = make([]cli.BoardMessage, len(msgs))
 	copy(m.msgs, msgs)
 	m.msgCursor = 0
@@ -507,8 +521,11 @@ func (m BoardModal) View() string {
 				agentName = "-"
 			}
 			at := time.UnixMilli(int64(msg.ReceivedAtMs)).UTC().Format("15:04:05Z")
-			line := fmt.Sprintf("%s[%d] seq=%-5d  from=%s  agent=%s  %s",
-				cursor, i+1, msg.Seq, fromShort, agentName, at)
+			// One spelling of the delivery mark, shared with the CLI: the
+			// comparison is cli.ShownTo's, not a second copy here.
+			line := fmt.Sprintf("%s[%d] seq=%-5d  from=%s  agent=%s  %s  %s",
+				cursor, i+1, msg.Seq, fromShort, agentName, at,
+				cli.ShownToLabel(m.msgSubs, m.curTopic, msg.Seq))
 			// A withdrawn message reaches no agent any more; this view is the
 			// only place it still exists. Marked and muted rather than hidden —
 			// hiding it here would hand the operator the same blank the agents

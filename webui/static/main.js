@@ -5009,6 +5009,21 @@ const POLL_INTERVAL_MS = 5000;
           ? new Date(m.receivedAtMs).toISOString()
           : "-";
 
+        // How many subscribers have been handed this message. Printed on every
+        // row, zeros included: a message nobody has been given yet is exactly
+        // what an operator reading a topic is looking for, and eliding 0/1
+        // would make it look like the row does not report delivery at all.
+        // The comparison happens in Go (cli.ShownTo) -- board seqs exceed
+        // Number.MAX_SAFE_INTEGER, so doing it here would need BigInt and a
+        // second implementation of the same rule.
+        const shownSpan = document.createElement("span");
+        const shownN = m.shownTo || 0;
+        const shownTotal = m.shownToTotal || 0;
+        shownSpan.className = shownN < shownTotal
+          ? "board-msg-shown board-msg-shown-pending"
+          : "board-msg-shown";
+        shownSpan.textContent = `shown_to=${shownN}/${shownTotal}`;
+
         // Same rule as re= above: the badge appears only when it applies.
         const retractedSpan = document.createElement("span");
         retractedSpan.className = "board-msg-retracted-badge";
@@ -5040,6 +5055,7 @@ const POLL_INTERVAL_MS = 5000;
         hdr.appendChild(hostSpan);
         hdr.appendChild(agentSpan);
         hdr.appendChild(timeSpan);
+        hdr.appendChild(shownSpan);
         if (retractedSpan.textContent) hdr.appendChild(retractedSpan);
         hdr.appendChild(purgeBtn);
 

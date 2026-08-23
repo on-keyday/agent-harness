@@ -114,6 +114,43 @@ func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSub
 	return out, nil
 }
 
+// ShownTo reports how many of a topic's subscribers have already been handed
+// the message with this seq by the automatic injection path, out of how many
+// subscribe to the topic at all.
+//
+// It is derived rather than stored: the server keeps ONE watermark per
+// (task, topic), so "has this particular message been shown" is
+// `subscriber.Shown >= seq`. Deriving it here, once, is deliberate — the
+// alternative is each surface comparing 19-digit board seqs itself, and the
+// browser would have to do it in BigInt because those exceed
+// Number.MAX_SAFE_INTEGER. The wasm bridge therefore ships the RESULT of this
+// function rather than the inputs.
+//
+// total counts the topic's subscribers, so `0/0` (nobody subscribes) is
+// distinguishable from `0/1` (someone does and has not been handed it). Both
+// are printed by callers: zero is a measurement.
+func ShownTo(subs []BoardSubscriberRow, topic string, seq uint64) (n, total int) {
+	for _, r := range subs {
+		for _, p := range r.Patterns {
+			if p.Name != topic {
+				continue
+			}
+			total++
+			if p.Shown >= seq {
+				n++
+			}
+		}
+	}
+	return n, total
+}
+
+// ShownToLabel renders ShownTo for a text row. One spelling, so the CLI and the
+// TUI cannot drift apart on it.
+func ShownToLabel(subs []BoardSubscriberRow, topic string, seq uint64) string {
+	n, total := ShownTo(subs, topic, seq)
+	return fmt.Sprintf("shown_to=%d/%d", n, total)
+}
+
 // BoardTopics lists every topic currently held in the board with aggregate
 // metadata (last seq, last publish time, message count). Requires the caller
 // to hold Capability_BoardObserve; operator connections (ClientKind_Cli with no

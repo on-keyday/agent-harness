@@ -142,6 +142,15 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			fmt.Fprintf(os.Stderr, "board read: topic %q is on the board but holds no messages\n", topic)
 			return nil
 		}
+		// Who has actually been handed each of these. The subscriber rows carry
+		// one watermark per (task, topic); ShownTo turns that into a per-message
+		// answer, which is the question an operator reading a topic has. A
+		// failure here is not fatal to the listing: the rows still print, with
+		// shown_to=0/0, and the reason goes to stderr.
+		subs, serr := BoardSubscribers(ctx, cid, topic)
+		if serr != nil {
+			fmt.Fprintf(os.Stderr, "board read: delivery marks unavailable: %v\n", serr)
+		}
 		shown := 0
 		for _, m := range msgs {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
@@ -162,9 +171,10 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			if m.Retracted {
 				retracted = fmt.Sprintf(" RETRACTED at=%s", boardMsToRFC3339(m.RetractedAtMs))
 			}
-			fmt.Fprintf(out, "#%d%s from=%s host=%s agent=%s size=%d at=%s%s\n",
+			fmt.Fprintf(out, "#%d%s from=%s host=%s agent=%s size=%d at=%s %s%s\n",
 				m.Seq, re, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
-				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs), retracted)
+				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
+				ShownToLabel(subs, topic, m.Seq), retracted)
 			if json.Valid(m.Payload) {
 				var buf bytes.Buffer
 				_ = json.Indent(&buf, m.Payload, "", "  ")
