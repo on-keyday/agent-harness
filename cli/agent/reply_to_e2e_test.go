@@ -3,6 +3,7 @@ package agent_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -160,5 +161,87 @@ func TestAgentCLI_E2E_WithoutReplyToTheAnswerComesHome(t *testing.T) {
 
 	if got := topicPayloads(t, board, selfA); !strings.Contains(got, "came-home") {
 		t.Errorf("asker's own topic holds %q, want the answer (the default arm)", got)
+	}
+}
+
+// The declaration has to survive the delivery path, not just the board: the
+// recipient is the one party that can silently override it (by adding its own
+// --topic), and it cannot decline to do that without being able to see it.
+func TestAgentCLI_E2E_DeliveredMessageCarriesReplyToTopic(t *testing.T) {
+	addr := freePortE2E(t)
+	board, _ := startServerE2E(t, addr)
+
+	const (
+		ridStrA = "ws:1.2.3.4:9505-55"
+		ridStrB = "ws:5.6.7.8:9506-56"
+	)
+	var ticketA, ticketB [16]byte
+	ticketA[0] = 0xC5
+	ticketB[0] = 0xC6
+	tidA := mkTidE2E(0x55)
+	tidB := mkTidE2E(0x56)
+	board.Registry().Register(mkRidE2E([4]byte{1, 2, 3, 4}, 9505, 55), tidA, ticketA)
+	board.Registry().Register(mkRidE2E([4]byte{5, 6, 7, 8}, 9506, 56), tidB, ticketB)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	selfB := agent.SelfTopic(tidB)
+
+	restoreA := setAgentEnv(addr, ridStrA, tidA, ticketA)
+	var out bytes.Buffer
+	if err := agent.Send(ctx,
+		[]string{"--topic", selfB, "--reply-to", "rr.task-1", "--data", `{"q":"declared"}`}, nil, &out); err != nil {
+		restoreA()
+		t.Fatalf("declared Send: %v", err)
+	}
+	if err := agent.Send(ctx,
+		[]string{"--topic", selfB, "--data", `{"q":"plain"}`}, nil, &out); err != nil {
+		restoreA()
+		t.Fatalf("plain Send: %v", err)
+	}
+	restoreA()
+
+	// Register alone does not seed the chat.<short-id> subscription the live
+	// server creates at task assignment, and inbox reads only subscribed
+	// topics -- so without this the read comes back empty and the assertion
+	// below would pass vacuously if it were written as "no bad field".
+	restoreB := setAgentEnv(addr, ridStrB, tidB, ticketB)
+	var subOut, inbox bytes.Buffer
+	if err := agent.Subscribe(ctx, []string{"--self"}, &subOut); err != nil {
+		restoreB()
+		t.Fatalf("Subscribe --self: %v", err)
+	}
+	err := agent.Inbox(ctx, []string{"--json"}, &inbox)
+	restoreB()
+	if err != nil {
+		t.Fatalf("Inbox: %v", err)
+	}
+
+	var declared, plain bool
+	for _, line := range strings.Split(strings.TrimSpace(inbox.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if uerr := json.Unmarshal([]byte(line), &rec); uerr != nil {
+			t.Fatalf("inbox line %q: %v", line, uerr)
+		}
+		body, _ := json.Marshal(rec["payload"])
+		switch {
+		case strings.Contains(string(body), "declared"):
+			declared = true
+			if rec["reply_to_topic"] != "rr.task-1" {
+				t.Errorf("declared record reply_to_topic = %v, want rr.task-1", rec["reply_to_topic"])
+			}
+		case strings.Contains(string(body), "plain"):
+			plain = true
+			if _, ok := rec["reply_to_topic"]; ok {
+				t.Errorf("undeclared record carries reply_to_topic: %s", line)
+			}
+		}
+	}
+	if !declared || !plain {
+		t.Fatalf("inbox missed a message (declared=%v plain=%v):\n%s", declared, plain, inbox.String())
 	}
 }

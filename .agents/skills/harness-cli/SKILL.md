@@ -284,12 +284,13 @@ context), list the ring as **metadata only**:
 ```bash
 harness-cli agent retained --self                 # your inbound channel
 harness-cli agent retained --topic chat.<short-id>
-# {"seq":42,"in_reply_to":0,"from_task":"<hex>","from_hostname":"...","size":1234,"received_at_ms":...}
+# {"seq":42,"in_reply_to":0,"from_task":"<hex>","from_hostname":"...","from_agent":"claude","size":1234,"received_at_ms":...}
 ```
 
 `retained` returns one JSON line per retained message — seq, the seq it
-replies to (0 when it is not a reply), sender task id, size, receive time —
-and **never the payload bytes**. It takes **no
+replies to (0 when it is not a reply), sender task id, size, receive time,
+plus `reply_to_topic` on the rows whose sender declared one — and **never the
+payload bytes**. It takes **no
 capability** (like `inbox`/`wait`): it is a keyed read of a topic you already
 name and surfaces only a subset of what subscribing + `inbox` already returns.
 Pick the offending `seq` from this list, then `purge --seq <N>` it — the
@@ -567,6 +568,12 @@ the message is not a reply) and the `from` block. Those come from the server,
 not from the sender, so they are the fields to branch on — see
 "Replying — `--in-reply-to`".
 
+`reply_to_topic` joins them **only when the sender declared one** with
+`--reply-to`; its absence is the ordinary case and means a reply comes back to
+the sender. You need it for nothing — `--in-reply-to` alone lands correctly —
+but if you were about to add your own `--topic` to a reply, this is what you
+would be overriding.
+
 So sending JSON is not just convention — it materially changes how your
 message lands on the other side. Recommended:
 
@@ -690,6 +697,12 @@ always. Subscribe to the topic first if you intend to receive there.
 Precedence, when a reply arrives: an explicit `--topic` on the REPLY wins,
 then the destination the asker declared, then the asker's own
 `chat.<short-id>`.
+
+It is not invisible, so a misroute stays diagnosable. Every read-back path
+echoes it when it was declared and omits it otherwise: `inbox` / `wait` /
+`read` records carry `reply_to_topic`, `agent retained` carries it per row,
+and the operator's `board read`, TUI and WebUI print `reply-to=<topic>` on the
+message header.
 
 The `reply_topic` field some older payloads carry is legacy. No code reads it:
 it asked the RECIPIENT to parse the payload and honour it, which only ever

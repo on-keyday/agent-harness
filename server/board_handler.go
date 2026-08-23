@@ -131,6 +131,7 @@ func (h *TaskHandler) handleBoardRead(conn ConnHandle, requestID uint32, topic s
 		}
 		row.SetFromHostname([]byte(m.FromHostname))
 		row.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		row.SetReplyToTopic([]byte(m.ReplyToTopic))
 		if !m.RetractedAt.IsZero() {
 			row.SetRetracted(true)
 			row.RetractedAtUnixMs = uint64(m.RetractedAt.UnixMilli())

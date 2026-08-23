@@ -450,6 +450,7 @@ func (s *Server) agentHandleReadSeq(conn ConnHandle, ac *agentConn, r *agentboar
 	dm.SetTopic([]byte(m.Topic))
 	dm.SetFromHostname([]byte(m.FromHostname))
 	dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
+	dm.SetReplyToTopic([]byte(m.ReplyToTopic))
 
 	rr := agentboard.ReadSeqResponse{RequestId: r.RequestId, Status: agentboard.ReadSeqStatus_Ok}
 	rr.SetMsgs([]agentboard.DeliveredMessage{dm})
@@ -534,6 +535,8 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetFromHostname([]byte(m.FromHostname))
 		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
+		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
 		delivered = append(delivered, dm)
 	}
 	var to uint8
@@ -582,6 +585,8 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetFromHostname([]byte(m.FromHostname))
 		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
+		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
 		delivered = append(delivered, dm)
 	}
 	ir := agentboard.InboxResponse{
@@ -627,6 +632,8 @@ func (s *Server) agentHandleInboxAdvance(conn ConnHandle, ac *agentConn, r *agen
 		dm.SetTopic([]byte(m.Topic))
 		dm.SetFromHostname([]byte(m.FromHostname))
 		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
+		dm.SetReplyToTopic([]byte(m.ReplyToTopic))
 		delivered = append(delivered, dm)
 	}
 	out := agentboard.InboxAdvanceResponse{RequestId: r.RequestId}
@@ -837,6 +844,7 @@ func (s *Server) agentHandleListRetained(conn ConnHandle, ac *agentConn, req *ag
 		}
 		meta.SetFromHostname([]byte(m.FromHostname))
 		meta.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		meta.SetReplyToTopic([]byte(m.ReplyToTopic))
 		out.Metas = append(out.Metas, meta)
 	}
 	out.MetasLen = uint16(len(out.Metas))

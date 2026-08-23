@@ -82,8 +82,7 @@ func Read(ctx context.Context, args []string, stdout io.Writer) error {
 		if perr != nil {
 			return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
 		}
-		emitMessageLine(stdout, m.Seq, string(m.Topic), payload, m.FromRunnerId, m.FromTaskId,
-			string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
+		emitMessageLine(stdout, m, payload)
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

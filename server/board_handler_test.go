@@ -176,3 +176,35 @@ func TestHandleBoardSubscribers_NoFilterAndFilter(t *testing.T) {
 		t.Errorf("patterns = %d, want 1 (only the explicit subscribe; Attach does not seed)", len(filtered.Rows[0].Patterns))
 	}
 }
+
+// The operator surface is the only place the declared destination is visible.
+// Without it, "where did the answer to #N go" has no answer at all: the server
+// resolves the route off the parent's retained entry, and neither the ask nor
+// the reply mentions it in its text.
+func TestHandleBoardRead_CarriesReplyToTopic(t *testing.T) {
+	h, conn := newBoardTestHandler(t)
+	if _, _, err := h.Board.Send("chat.r", []byte("q"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0,
+		agentboard.WithReplyTo("rr.dec-019")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.Board.Send("chat.r", []byte("plain"), protocol.RunnerID{}, protocol.TaskID{}, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	h.handleBoardRead(conn, 1, "chat.r")
+
+	resp := lastTaskControlResponse(t, conn)
+	br := resp.BoardRead()
+	if br == nil || len(br.Msgs) != 2 {
+		t.Fatalf("board read = %+v, want 2 msgs", br)
+	}
+	if got := string(br.Msgs[0].ReplyToTopic); got != "rr.dec-019" {
+		t.Errorf("declared row ReplyToTopic = %q, want rr.dec-019", got)
+	}
+	// Empty, not the sender's own topic: the row reports what was DECLARED, and
+	// substituting the fallback here would make "declared nothing" and
+	// "declared its own inbox" the same reading.
+	if got := string(br.Msgs[1].ReplyToTopic); got != "" {
+		t.Errorf("undeclared row ReplyToTopic = %q, want empty", got)
+	}
+}

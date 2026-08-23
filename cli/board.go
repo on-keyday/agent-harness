@@ -37,8 +37,15 @@ type BoardMessage struct {
 	// runtime (e.g. a server-originated publish, which carries FromHostname
 	// "server").
 	FromAgentProfile string
-	ReceivedAtMs     uint64
-	Payload          []byte
+	// ReplyToTopic is where a reply to THIS message is routed -- the
+	// destination its SENDER declared with `agent send --reply-to`. Empty =
+	// none declared, so a reply comes back to the sender's own
+	// chat.<short-id>. It is the only place an operator can see that routing:
+	// the server resolves it off the parent, and neither message's text
+	// mentions it.
+	ReplyToTopic string
+	ReceivedAtMs uint64
+	Payload      []byte
 	// Retracted is true when the message's author withdrew it (agent retract).
 	// A withdrawn message is invisible to every agent-facing path and reaches
 	// only this operator view, so a retract at agent speed cannot shrink the
@@ -212,6 +219,7 @@ func (c *Client) BoardRead(ctx context.Context, topic string) ([]BoardMessage, b
 			FromTaskHex:      hex.EncodeToString(m.FromTask.Id[:]),
 			FromHostname:     string(m.FromHostname),
 			FromAgentProfile: string(m.FromAgentProfile),
+			ReplyToTopic:     string(m.ReplyToTopic),
 			ReceivedAtMs:     m.ReceivedAtUnixMs,
 			Retracted:        m.Retracted(),
 			RetractedAtMs:    m.RetractedAtUnixMs,

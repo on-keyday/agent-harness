@@ -21,7 +21,7 @@ func TestEmitMessageLine_InReplyToAlwaysPresent(t *testing.T) {
 	}{{"not a reply", 0}, {"reply", 42}} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			emitMessageLine(&buf, 7, "t", []byte("hi"), rid, tid, "h", "claude", tc.in)
+			emitMessageLine(&buf, mkDM(7, "t", rid, tid, "h", "claude", tc.in, ""), []byte("hi"))
 			var rec map[string]any
 			if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
 				t.Fatal(err)
@@ -53,7 +53,7 @@ func mkTestRid() agentboard.RunnerID {
 func TestEmitMessageLineForHook_OmitsBodyPastInlineLimit(t *testing.T) {
 	var buf bytes.Buffer
 	payload := bytes.Repeat([]byte("x"), hookInlineLimit+1)
-	emitMessageLineForHook(&buf, 500, "chat.abc", payload, mkTestRid(), agentboard.TaskID{}, "h", "claude", 0)
+	emitMessageLineForHook(&buf, mkDM(500, "chat.abc", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), payload)
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -81,7 +81,7 @@ func TestEmitMessageLineForHook_OmitsBodyPastInlineLimit(t *testing.T) {
 // boundary it was given: everything that fits today must still arrive inline.
 func TestEmitMessageLineForHook_InlinesAtTheLimit(t *testing.T) {
 	var buf bytes.Buffer
-	emitMessageLineForHook(&buf, 7, "t", bytes.Repeat([]byte("x"), hookInlineLimit), mkTestRid(), agentboard.TaskID{}, "h", "claude", 0)
+	emitMessageLineForHook(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), bytes.Repeat([]byte("x"), hookInlineLimit))
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -100,7 +100,7 @@ func TestEmitMessageLineForHook_InlinesAtTheLimit(t *testing.T) {
 // too, the pointer would lead nowhere and the body would be unreachable.
 func TestEmitMessageLine_NeverOmitsRegardlessOfSize(t *testing.T) {
 	var buf bytes.Buffer
-	emitMessageLine(&buf, 7, "t", bytes.Repeat([]byte("x"), 4*hookInlineLimit), mkTestRid(), agentboard.TaskID{}, "h", "claude", 0)
+	emitMessageLine(&buf, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), bytes.Repeat([]byte("x"), 4*hookInlineLimit))
 
 	var rec map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
@@ -108,5 +108,40 @@ func TestEmitMessageLine_NeverOmitsRegardlessOfSize(t *testing.T) {
 	}
 	if _, ok := rec["payload_b64"]; !ok {
 		t.Error("payload_b64 absent: the un-truncated read path is what read_with points at")
+	}
+}
+
+// mkDM builds a DeliveredMessage for the emit tests, which used to pass these
+// as positional arguments.
+func mkDM(seq uint64, topic string, rid agentboard.RunnerID, tid agentboard.TaskID, host, profile string, inReplyTo uint64, replyTo string) agentboard.DeliveredMessage {
+	m := agentboard.DeliveredMessage{Seq: seq, InReplyTo: inReplyTo, FromRunnerId: rid, FromTaskId: tid}
+	m.SetTopic([]byte(topic))
+	m.SetFromHostname([]byte(host))
+	m.SetFromAgentProfile([]byte(profile))
+	m.SetReplyToTopic([]byte(replyTo))
+	return m
+}
+
+// reply_to_topic is present only when the sender declared one. An empty field
+// on every ordinary record would say "nothing happened" once per message, and
+// a reader checking for the key is checking the thing that matters.
+func TestEmitMessageLine_ReplyToTopic(t *testing.T) {
+	var withIt, without bytes.Buffer
+	emitMessageLine(&withIt, mkDM(7, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, "rr.dec-019"), []byte("hi"))
+	emitMessageLine(&without, mkDM(8, "t", mkTestRid(), agentboard.TaskID{}, "h", "claude", 0, ""), []byte("hi"))
+
+	var got map[string]any
+	if err := json.Unmarshal(withIt.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["reply_to_topic"] != "rr.dec-019" {
+		t.Errorf("reply_to_topic = %v, want rr.dec-019", got["reply_to_topic"])
+	}
+	var bare map[string]any
+	if err := json.Unmarshal(without.Bytes(), &bare); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bare["reply_to_topic"]; ok {
+		t.Errorf("undeclared sender emitted reply_to_topic: %s", without.String())
 	}
 }

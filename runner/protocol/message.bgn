@@ -783,6 +783,14 @@ format BoardMessageRow:
     retracted :u1
     reserved  :u7
     retracted_at_unix_ms :u64   # 0 unless retracted is 1
+    # reply_to_topic is where a reply to THIS message is routed — the
+    # destination its SENDER declared. See agentboard/agentboard.bgn
+    # SendRequest.reply_to_topic. Empty = none declared, so a reply goes to the
+    # sender's own chat.<short-id>. An operator needs it to answer "where did
+    # the answer go", which is otherwise unanswerable: the routing happens
+    # server-side off the parent and appears nowhere in either message's text.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
 
 format BoardReadResponse:
     request_id :u32

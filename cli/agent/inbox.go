@@ -122,7 +122,7 @@ func Inbox(ctx context.Context, args []string, stdout io.Writer) error {
 			if *inReplyTo != 0 && m.InReplyTo != *inReplyTo {
 				continue
 			}
-			emit(&body, m.Seq, string(m.Topic), payloads[i], m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
+			emit(&body, m, payloads[i])
 		}
 		if *promptHook {
 			emitUserPromptSubmitHookOutput(stdout, body.String())

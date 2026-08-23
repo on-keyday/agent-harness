@@ -4991,6 +4991,15 @@ const POLL_INTERVAL_MS = 5000;
           replySpan.textContent = `re=${m.inReplyTo}`;
         }
 
+        // Same rule as re= above: only a sender that declared a reply
+        // destination gets this. It is a plain topic name, not a seq, so it
+        // needs none of inReplyTo's string handling.
+        const replyToSpan = document.createElement("span");
+        replyToSpan.className = "board-msg-reply-to";
+        if (m.replyToTopic) {
+          replyToSpan.textContent = `reply-to=${m.replyToTopic}`;
+        }
+
         const fromSpan = document.createElement("span");
         fromSpan.className = "board-msg-from";
         fromSpan.textContent = `from=${m.fromTask ? m.fromTask.slice(0, 8) : "-"}`;
@@ -5051,6 +5060,7 @@ const POLL_INTERVAL_MS = 5000;
 
         hdr.appendChild(seqSpan);
         if (replySpan.textContent) hdr.appendChild(replySpan);
+        if (replyToSpan.textContent) hdr.appendChild(replyToSpan);
         hdr.appendChild(fromSpan);
         hdr.appendChild(hostSpan);
         hdr.appendChild(agentSpan);

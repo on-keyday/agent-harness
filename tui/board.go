@@ -442,7 +442,14 @@ func (m *BoardModal) updateContentFromCursor() {
 		retracted = fmt.Sprintf("  RETRACTED at=%s",
 			time.UnixMilli(int64(msg.RetractedAtMs)).UTC().Format(time.RFC3339))
 	}
-	header := fmt.Sprintf("seq=%d%s  from=%s  host=%s  agent=%s  at=%s%s", msg.Seq, inReplyTo, fromShort, msg.FromHostname, agentName, at, retracted)
+	// Same rule as re= : only a sender that declared a reply destination gets
+	// this. It is the only view that shows where an answer to this message
+	// goes -- the server resolves it off this row, not off the reply's text.
+	replyTo := ""
+	if msg.ReplyToTopic != "" {
+		replyTo = fmt.Sprintf("  reply-to=%s", msg.ReplyToTopic)
+	}
+	header := fmt.Sprintf("seq=%d%s%s  from=%s  host=%s  agent=%s  at=%s%s", msg.Seq, inReplyTo, replyTo, fromShort, msg.FromHostname, agentName, at, retracted)
 	m.content.SetContent(header + "\n\n" + payloadStr)
 }
 

@@ -171,8 +171,16 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			if m.Retracted {
 				retracted = fmt.Sprintf(" RETRACTED at=%s", boardMsToRFC3339(m.RetractedAtMs))
 			}
-			fmt.Fprintf(out, "#%d%s from=%s host=%s agent=%s size=%d at=%s %s%s\n",
-				m.Seq, re, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
+			// Same rule again: only senders that declared a destination get
+			// this. It answers "where did the answer to #N go", which nothing
+			// else on the board can -- the routing is resolved server-side off
+			// this row and appears in no message's text.
+			replyTo := ""
+			if m.ReplyToTopic != "" {
+				replyTo = fmt.Sprintf(" reply-to=%s", m.ReplyToTopic)
+			}
+			fmt.Fprintf(out, "#%d%s%s from=%s host=%s agent=%s size=%d at=%s %s%s\n",
+				m.Seq, re, replyTo, m.FromTaskHex, m.FromHostname, boardAgentOrDash(m.FromAgentProfile),
 				len(m.Payload), boardMsToRFC3339(m.ReceivedAtMs),
 				ShownToLabel(subs, topic, m.Seq), retracted)
 			if json.Valid(m.Payload) {

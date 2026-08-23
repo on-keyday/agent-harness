@@ -1510,6 +1510,9 @@ body[data-active-tab="board"]    [data-tabgroup]:not([data-tabgroup="board"]) {
 }
 .board-msg-seq { font-weight: 700; color: #d4d4d4; }
 .board-msg-reply { color: #c586c0; }
+/* Distinct from .board-msg-reply: re= points BACKWARD at a parent seq,
+   reply-to= points FORWARD at where an answer will land. */
+.board-msg-reply-to { color: #4ec9b0; }
 /* A message its author withdrew: no agent can see it any more, and this pane
    is the only place it survives. Dimmed so it reads as inactive, not removed —
    the whole reason it is still here is that a human may want to read it. */

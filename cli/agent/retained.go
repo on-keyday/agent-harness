@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -102,10 +103,21 @@ func Retained(ctx context.Context, args []string, stdout io.Writer) error {
 				return nil
 			}
 			for _, m := range r.Metas {
-				fmt.Fprintf(stdout,
-					"{\"seq\":%d,\"in_reply_to\":%d,\"from_task\":%q,\"from_hostname\":%q,\"from_agent\":%q,\"size\":%d,\"received_at_ms\":%d}\n",
-					m.Seq, m.InReplyTo, hex.EncodeToString(m.FromTask.Id[:]), string(m.FromHostname),
-					string(m.FromAgentProfile), m.Size, m.ReceivedAtUnixMs)
+				// Marshalled rather than Fprintf'd: %q renders a GO string
+				// literal, which is not JSON for every input, and this line
+				// gained an optional field. A struct keeps the field ORDER the
+				// documented sample shows, which a map would sort away.
+				line, _ := json.Marshal(retainedLine{
+					Seq:          m.Seq,
+					InReplyTo:    m.InReplyTo,
+					FromTask:     hex.EncodeToString(m.FromTask.Id[:]),
+					FromHostname: string(m.FromHostname),
+					FromAgent:    string(m.FromAgentProfile),
+					ReplyToTopic: string(m.ReplyToTopic),
+					Size:         m.Size,
+					ReceivedAtMs: m.ReceivedAtUnixMs,
+				})
+				fmt.Fprintln(stdout, string(line))
 			}
 			return nil
 		default:
@@ -114,4 +126,19 @@ func Retained(ctx context.Context, args []string, stdout io.Writer) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// retainedLine is one `agent retained` output record. reply_to_topic is
+// omitempty because a sender that declared no destination is the ordinary
+// case: printing "" on every row would spend a field per message on saying
+// nothing was declared.
+type retainedLine struct {
+	Seq          uint64 `json:"seq"`
+	InReplyTo    uint64 `json:"in_reply_to"`
+	FromTask     string `json:"from_task"`
+	FromHostname string `json:"from_hostname"`
+	FromAgent    string `json:"from_agent"`
+	ReplyToTopic string `json:"reply_to_topic,omitempty"`
+	Size         uint32 `json:"size"`
+	ReceivedAtMs uint64 `json:"received_at_ms"`
 }

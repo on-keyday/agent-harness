@@ -217,7 +217,7 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 			if perr != nil {
 				return fmt.Errorf("fetch payload seq=%d: %w", m.Seq, perr)
 			}
-			emitMessageLine(stdout, m.Seq, string(m.Topic), payload, m.FromRunnerId, m.FromTaskId, string(m.FromHostname), string(m.FromAgentProfile), m.InReplyTo)
+			emitMessageLine(stdout, m, payload)
 		}
 		if r.TimedOut == 1 && len(r.Msgs) == 0 {
 			return errors.New("dispatch reply timeout")

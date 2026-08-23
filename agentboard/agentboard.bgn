@@ -183,6 +183,17 @@ format DeliveredMessage:
     # default".
     from_agent_profile_len :u8
     from_agent_profile :[from_agent_profile_len]u8
+    # reply_to_topic is where a reply to THIS message is routed — the
+    # destination its SENDER declared with SendRequest.reply_to_topic. Empty
+    # means the sender declared none, so a reply goes to its own
+    # chat.<short-id>. Echoed for the same reason in_reply_to is: the routing
+    # decision is the server's and is otherwise unobservable, which makes a
+    # misrouted reply undiagnosable from either end. A replier needs it for
+    # nothing — --in-reply-to alone lands correctly — but a replier that adds
+    # its own --topic silently overrides this, and it cannot decline to do that
+    # without being able to see it.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
 
 format WaitRequest:
     request_id :u32
@@ -338,6 +349,10 @@ format RetainedMeta:
     from_agent_profile :[from_agent_profile_len]u8
     size :u32
     received_at_unix_ms :u64
+    # See DeliveredMessage.reply_to_topic. Present here because choosing what
+    # to purge and diagnosing where an answer went are the same read.
+    reply_to_topic_len :u16
+    reply_to_topic :[reply_to_topic_len]u8
 
 format ListRetainedResponse:
     request_id :u32

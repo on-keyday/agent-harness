@@ -25,8 +25,8 @@ import (
 // in_reply_to is emitted on every record, 0 when the message is not a reply,
 // for the same reason the from block is unconditional: a consumer can address
 // the field without probing for it.
-func emitMessageLine(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string, inReplyTo uint64) {
-	emitMessageRecord(w, seq, topic, payload, fromRid, fromTid, fromHost, fromAgent, inReplyTo, 0)
+func emitMessageLine(w io.Writer, m agentboard.DeliveredMessage, payload []byte) {
+	emitMessageRecord(w, m, payload, 0)
 }
 
 // hookInlineLimit is the largest payload the hook modes splice into the
@@ -42,24 +42,36 @@ const hookInlineLimit = 64 * 1024
 // cost is worse than the byte count: payload_b64 inflates 4/3, and a
 // JSON-parseable body is ALSO embedded raw, for 7/3 in total. Past the limit
 // the record describes the message and says how to fetch it instead.
-func emitMessageLineForHook(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string, inReplyTo uint64) {
-	emitMessageRecord(w, seq, topic, payload, fromRid, fromTid, fromHost, fromAgent, inReplyTo, hookInlineLimit)
+func emitMessageLineForHook(w io.Writer, m agentboard.DeliveredMessage, payload []byte) {
+	emitMessageRecord(w, m, payload, hookInlineLimit)
 }
 
 // emitMessageRecord writes the JSON-Lines record. inlineLimit == 0 means the
 // body is always carried; a positive value replaces an over-limit body with
 // its size and a command that re-reads it.
-func emitMessageRecord(w io.Writer, seq uint64, topic string, payload []byte, fromRid agentboard.RunnerID, fromTid agentboard.TaskID, fromHost, fromAgent string, inReplyTo uint64, inlineLimit int) {
+// It takes the whole DeliveredMessage rather than its fields one at a time:
+// every caller was unpacking the same nine, several of them adjacent strings,
+// and reply_to_topic would have made a tenth that a misordered call site could
+// not fail to compile on.
+func emitMessageRecord(w io.Writer, m agentboard.DeliveredMessage, payload []byte, inlineLimit int) {
+	seq := m.Seq
 	rec := map[string]any{
 		"seq":         seq,
-		"in_reply_to": inReplyTo,
-		"topic":       topic,
+		"in_reply_to": m.InReplyTo,
+		"topic":       string(m.Topic),
 		"from": map[string]any{
-			"runner_id": boardRunnerIDString(fromRid),
-			"task_id":   hex.EncodeToString(fromTid.Id[:]),
-			"hostname":  fromHost,
-			"agent":     fromAgent,
+			"runner_id": boardRunnerIDString(m.FromRunnerId),
+			"task_id":   hex.EncodeToString(m.FromTaskId.Id[:]),
+			"hostname":  string(m.FromHostname),
+			"agent":     string(m.FromAgentProfile),
 		},
+	}
+	// Omitted when empty: absent means "the sender declared nothing, so a
+	// reply comes back to it" — the overwhelmingly common case, and one every
+	// reader already assumes. Emitting "" on every record would spend a field
+	// on saying nothing happened.
+	if len(m.ReplyToTopic) > 0 {
+		rec["reply_to_topic"] = string(m.ReplyToTopic)
 	}
 	if inlineLimit > 0 && len(payload) > inlineLimit {
 		// `agent read` addresses this seq alone and never truncates, which is
