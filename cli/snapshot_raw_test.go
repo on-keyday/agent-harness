@@ -67,12 +67,11 @@ func TestCollectRawSeparatesSynthesisedBytesFromPTYBytes(t *testing.T) {
 	}
 }
 
-// --with-synth keeps them, IN PLACE. Dropping them is the right default for
-// "show me what the PTY produced" and the wrong answer for the session that is
-// ABOUT the synthesised bytes — debugging the repaint is exactly when someone
-// reaches for raw output, and an unconditional filter forces that person off
-// this tool and onto a live attach. Interleaved rather than appended, because
-// where a repaint sits relative to the replay is most of what is being read.
+// Keeping them is what the CLI does by DEFAULT (`--without-synth` is the opt-out
+// that reaches the case above): they are what the server actually sent, and the
+// repaint is what reconstructs a screen whose opening bytes the ring has since
+// evicted. Interleaved rather than appended, because where a repaint sits
+// relative to the replay is most of what is being read.
 func TestCollectRawCanIncludeSynthesisedBytesInPlace(t *testing.T) {
 	var wire []byte
 	wire = append(wire, wireFrame(t, frame.FrameType_Stdout, "a")...)

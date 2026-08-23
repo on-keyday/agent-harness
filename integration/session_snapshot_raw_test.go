@@ -70,13 +70,27 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 
 	settle := 1500 * time.Millisecond
 
+	// The DEFAULT first: `--raw` emits the burst as it arrived, so the server's
+	// own additions must be IN it. This is the half that would have caught the
+	// render path quietly losing them.
+	withSynth, synthKept, err := c1.SessionSnapshotRaw(context.Background(), taskIDHex, settle, true)
+	if err != nil {
+		t.Fatalf("SessionSnapshotRaw(includeSynth=true): %v", err)
+	}
+	if synthKept == 0 {
+		t.Fatalf("no synthesised replay bytes were reported on the default path")
+	}
+	if !bytes.Contains(withSynth, []byte("\x1b[?25")) {
+		t.Fatalf("default raw output is missing the server's mode preamble; got %q", withSynth)
+	}
+
 	raw, synth, err := c1.SessionSnapshotRaw(context.Background(), taskIDHex, settle, false)
 	if err != nil {
-		t.Fatalf("SessionSnapshotRaw: %v", err)
+		t.Fatalf("SessionSnapshotRaw(includeSynth=false): %v", err)
 	}
 	// A real server replays a mode preamble and a screen repaint alongside the
-	// PTY bytes, and --raw withholds both. Asserting the count is non-zero is
-	// what keeps this an END-TO-END check that the separation happens on the
+	// PTY bytes, and --without-synth drops both. Asserting the count is non-zero
+	// is what keeps this an END-TO-END check that the separation happens on the
 	// wire: against a server that still sent them as Stdout frames, they would
 	// be counted as PTY output and this would read zero.
 	if synth == 0 {
@@ -84,7 +98,7 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 			"its own replay additions as Synth, so --raw cannot tell them from PTY output")
 	}
 	if bytes.Contains(raw, []byte("\x1b[?25")) {
-		t.Fatalf("raw output carries a mode preamble the PTY never emitted; got %q", raw)
+		t.Fatalf("--without-synth output carries a mode preamble the PTY never emitted; got %q", raw)
 	}
 	if !bytes.Contains(raw, []byte("\x1b[31m")) {
 		t.Fatalf("raw snapshot missing ESC[31m sequence; got %q", raw)
@@ -93,7 +107,9 @@ func TestSessionSnapshotRaw_PreservesEscapes(t *testing.T) {
 		t.Fatalf("raw snapshot missing payload text; got %q", raw)
 	}
 
-	text, err := c1.SessionSnapshot(context.Background(), taskIDHex, 40, 120, settle)
+	// true: the render feeds its emulator the whole burst, the server's own
+	// replay additions included — the same default the CLI ships.
+	text, err := c1.SessionSnapshot(context.Background(), taskIDHex, 40, 120, settle, true)
 	if err != nil {
 		t.Fatalf("SessionSnapshot: %v", err)
 	}

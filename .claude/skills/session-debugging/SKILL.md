@@ -78,9 +78,9 @@ harness-cli session send -e --snapshot --style "$ID" '\x1b[B'   # ↓, then look
 ```
 
 `--settle-ms` (default 1500) is the window the program gets to react before the
-render; `--rows/--cols/--style/--color/--ansi/--json/--detect` mean what they
-mean on `session snapshot`, and all of them are refused without `--snapshot`
-rather than silently ignored.
+render; `--rows/--cols/--style/--color/--ansi/--json/--without-synth/--detect`
+mean what they mean on `session snapshot`, and all of them are refused without
+`--snapshot` rather than silently ignored.
 
 When you are waiting for something rather than reading one result, poll for the
 expected render instead of guessing a sleep:
@@ -124,7 +124,7 @@ harness-cli session snapshot "$ID"   # then read the state you asserted on
 
 ## Command reference
 
-### `session snapshot [--style] [--color] [--ansi] [--detect] [--json|--raw] [--rows N --cols N] <id>`
+### `session snapshot [--style] [--color] [--ansi] [--detect] [--json|--raw] [--without-synth] [--rows N --cols N] <id>`
 
 Renders the session's current screen to plain text via a headless VT emulator
 (`--rows/--cols` are a fallback if the session reports no size). Note they only
@@ -198,18 +198,22 @@ when the foreground IS a shell.
   with character positions only while every earlier cell on the row is
   single-width, so slice by them at your own risk on a line holding CJK or
   emoji, and use the span's own `text` instead.
-- **`--raw`** instead writes the verbatim PTY replay bytes (escapes intact) —
+- **`--raw`** instead writes the verbatim replay bytes (escapes intact) —
   `cat` it into a real terminal to reproduce the screen exactly, or inspect the
   actual bytes when the rendered text looks wrong. Not combinable with
   `--style`/`--color`/`--json` (those describe the VT render; this is a
   different artifact); `--rows/--cols` are ignored.
-  It shows **only what the PTY produced**. The server also replays bytes it
-  synthesised — a terminal-mode preamble and a screen repaint built from its own
-  model of the screen — and those are withheld, with their size reported on
-  stderr so the omission is visible. **`--with-synth`** includes them, in the
-  position they arrived. Reach for it when the synthesised bytes ARE the
-  subject: debugging why a reattached screen looks wrong is exactly the case
-  where the bytes `--raw` normally omits are the ones you came to read.
+  It shows the burst **as it arrived**: the PTY's own bytes together with the
+  ones the server synthesised for the replay — a terminal-mode preamble and a
+  screen repaint built from its own model of the screen — with the synthesised
+  total reported on stderr, so you always know how much of what you are holding
+  the server wrote.
+- **`--without-synth`** drops those, leaving only what the PTY produced. It
+  applies to the rendered forms too, not just `--raw`. Reach for it when the
+  question is whether the SERVER's own replay is what made a screen look wrong;
+  that is the one case where the repaint is the noise rather than the answer.
+  Everywhere else you want the default, because the repaint is what reconstructs
+  a screen whose opening bytes the replay ring has since evicted.
 - **`--detect`** judges what STATE the screen shows instead of leaving you to
   read it: `working` / `blocked` / `idle` / `unknown`, plus the rule that
   decided and the text that rule read. **`blocked` means waiting on a HUMAN** —
@@ -239,9 +243,12 @@ when the foreground IS a shell.
 
   - **`title`** — the session's last OSC window title. Agents put their turn
     state there (Claude a spinner glyph while working), which is why it is the
-    highest-priority detection signal — and why an empty `title` is a
-    measurement rather than a gap, since a long-quiet session's title may have
-    aged out of the replay ring.
+    highest-priority detection signal. It survives a long quiet stretch: the
+    server's screen repaint re-emits the title from its own model, so one whose
+    original OSC has aged out of the replay ring still reaches you. An empty
+    `title` therefore means the session has not set one. (`--without-synth`
+    makes it read empty again, because that view is the ring alone — which is
+    what this said before the repaint carried the title.)
   - **`cursor`** — `{x, y, visible}`, zero-based column and row into the same
     grid `lines` describes. Two rows that read identically can have the cursor
     in completely different places, so this is how you tell a prompt waiting
@@ -254,7 +261,7 @@ when the foreground IS a shell.
     canvas that vanishes when the app exits, on the primary it is the tail of
     scrollback. Worth checking before you conclude that output "disappeared".
 
-### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json]] <id> <text>...`
+### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json] [--without-synth]] <id> <text>...`
 
 Injects keystrokes via a `cowrite` attach. **Flags go BEFORE `<id>`;
 everything after `<id>` is the text**, joined ssh-style
@@ -266,8 +273,8 @@ snapshot instead of submitting.
 `--snapshot` renders the screen after sending, on the same connection: one call
 instead of send + snapshot + a guessed sleep. The screen goes to **stdout** and
 the "N bytes sent" summary to **stderr**, so a pipe gets only the screen, and
-`-quiet` (which drops that summary) composes with it. The seven snapshot-only
-flags are refused without `--snapshot` instead of being ignored. They carry
+`-quiet` (which drops that summary) composes with it. Every snapshot-only flag
+is refused without `--snapshot` instead of being ignored. They carry
 `session snapshot`'s meanings unchanged, `--json` included, so one drive step
 can return structured screen data without a second dial.
 

@@ -34,8 +34,32 @@ import (
 //     output side, so a caller that does not drain it blocks forever — this
 //     function used to run a discard goroutine for exactly that. vtgrid never
 //     emits a byte, so there is nothing to drain and nothing to close.
-func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (*vtgrid.Terminal, string, int, int, error) {
-	captured, rows, cols, ok, _, err := c.CollectRaw(ctx, taskIDHex, settle, false)
+//
+// includeSynth defaults TRUE at every caller, and that is the whole reason this
+// path reconstructs a long-running session at all. The server ends a replay with
+// a screen repaint (and opens it with a mode preamble) precisely so a client
+// starting from a truncated ring lands on the real screen instead of on whatever
+// survived eviction; a snapshot IS such a client. The two LIVE renderers already
+// behave that way and always have — tui/pane_streamer.go and cli/preview_wasm.go
+// both read CommandExecutionStream.Stdout(), which merges Stdout and Synth — so
+// this renderer was the only one of the three that did not.
+//
+// Withholding them is a `--raw` promise, not a rendering one, and the commit that
+// taught CollectRaw to classify frames said so from the other side: merging the
+// two "is correct for anything that renders". The render call site inherited the
+// filter only because it shared the helper the filter was written into.
+//
+// Passing false is the operator asking the opposite question — "is the server's
+// own replay what made this screen wrong?" — which needs the PTY-only view.
+//
+// The repaint's absolute CUP addressing assumes the size it was built at, which
+// is the size the winsize Control frame resolves to below; the server sizes its
+// grid from that same frame. They part company only in the !ok fallback, where a
+// never-attached session reports no size at all: there the repaint paints the
+// server's 80x24 into whatever default was chosen, which is partial rather than
+// corrupt. Untested — no case in the suite reaches a sizeless session.
+func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (*vtgrid.Terminal, string, int, int, error) {
+	captured, rows, cols, ok, _, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
 	if err != nil {
 		return nil, "", 0, 0, err
 	}
@@ -90,8 +114,8 @@ func renderScreen(term *vtgrid.Terminal) string {
 // settle is how long to keep collecting bytes after attach before rendering;
 // the replay arrives in a burst, so a short window (e.g. 1.5s) is enough for a
 // static screen.
-func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (string, error) {
-	term, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (string, error) {
+	term, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return taskIDHex, err
 	}
@@ -99,10 +123,16 @@ func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows,
 }
 
 // SessionSnapshotRaw view-attaches to a detachable interactive session and
-// returns the verbatim PTY replay burst — escape sequences intact — without
+// returns the verbatim replay burst — escape sequences intact — without
 // rendering it. Unlike SessionSnapshot's flattened text, the result can be
 // written straight to a real terminal to reproduce the screen exactly, or
 // diffed byte-for-byte when the rendered text looks wrong.
+//
+// includeSynth=true (the default at the CLI) yields the stream AS IT ARRIVED,
+// server-synthesised bytes included, which is what reproduces an attach. false
+// yields the PTY-only view, for the question "did the server's own replay do
+// this?". synthesised is returned either way, so a caller can always say how
+// much of the burst the server invented.
 func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settle time.Duration, includeSynth bool) ([]byte, int, error) {
 	captured, _, _, _, synthesised, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
 	if err != nil {
@@ -117,8 +147,8 @@ func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settl
 // identical to real input; this side-channel surfaces the attribute the
 // flattened text throws away — without re-emitting raw escapes (which an LLM
 // reader can't use). Returns (plainText, styleReport).
-func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (string, string, error) {
-	term, _, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool) (string, string, error) {
+	term, _, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return taskIDHex, "", err
 	}
@@ -227,8 +257,8 @@ func (s *ScreenSnapshot) Detect(set DetectRuleSet) DetectExplain {
 // The grid stays width-WRAPPED here exactly as it is on screen — a long logical
 // line is still split across rows. Use SessionSnapshotRaw or `session exec` when
 // logical lines matter; this shape trades that for row/column addressability.
-func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor bool) (*ScreenSnapshot, error) {
-	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool) (*ScreenSnapshot, error) {
+	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return nil, err
 	}
@@ -246,8 +276,8 @@ func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string
 //
 // Attribute and colour spans are always collected here: the ANSI render needs
 // the same per-cell styling, so declining to collect it would save nothing.
-func (c *Client) SessionSnapshotANSI(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration) (string, *ScreenSnapshot, error) {
-	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle)
+func (c *Client) SessionSnapshotANSI(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (string, *ScreenSnapshot, error) {
+	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return "", nil, err
 	}

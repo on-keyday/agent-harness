@@ -564,26 +564,82 @@ covered the states I happened to drive: I never typed `!`, so shell mode did not
 exist for me. Screens an OPERATOR produces are a different distribution from
 screens an agent produces, and only one of those was in the test set.
 
+### 2026-08-23 (pre-landing) — the repaint carries the title; `--with-synth` inverts to `--without-synth`
+
+Operator report, not a bug filing: 「snapshot したときに title がない判定になるのよね
+しばらくしたときに」. One symptom, three causes stacked.
+
+done:    1, 10 (the flag went onto BOTH members that share `printSessionScreen`
+         — `session snapshot` and `session send --snapshot` — rather than onto
+         the one where `--raw` lives), 24 (the option now has a written meaning
+         on THREE paths: drop them from the emitted stream (`--raw`), from what
+         the emulator is fed (the render), and the same again under `send
+         --snapshot`; before this it had a meaning on one and was refused on the
+         others), 27 (`screenOpts` is this family's funnel and says so in its own
+         doc comment), 28a, 29, 31, 33, 35 (checked: the README's single mention
+         does not describe the withholding, so nothing contradicts), 36, 37, 38
+omitted: 3, 6, 7 — standing omission, unchanged: the TUI cmdline and the WebUI
+         `runCmd` parse no `session snapshot`/`send` at all.
+         8 — structurally impossible rather than unbuilt, same as the `--json`
+         and `--detect` entries: `cli/snapshot_native.go` is `//go:build !js`,
+         so there is no wasm render for the flag to steer.
+missed:  —
+
+**Item 38's first firing that changed the diff**, and on exactly the axis it was
+split out for. Asking "do the live panes render this?" is what turned up that
+`tui/pane_streamer.go` and `cli/preview_wasm.go` both read
+`CommandExecutionStream.Stdout()` — which MERGES Stdout and Synth — while the
+native snapshot renderer passed `includeSynth=false`. Three renderers, one
+deprived, and the deprived one is the only one anybody had complained about.
+That comparison is what converted "should the default change?" from taste into
+evidence: two thirds of the surfaces already behaved the new way.
+
+**Item 33 caught a live defect DURING the walk.** `--without-synth` was added to
+`session send`'s flag set and not to the `fs.Visit` stray-flag switch beside it,
+so without `--snapshot` it would have parsed and done nothing — this item's exact
+failure shape, in the same edit that invoked the item. Verified after fixing:
+`session send --without-synth <id> hello` now errors.
+
+**Item 28a found the caller untagged tooling cannot see.** Counting the builds
+turned up `c1.SessionSnapshot(...)` in `integration/session_snapshot_raw_test.go`,
+invisible to `go build ./...`, `go test ./...` and the untagged vet — caught by
+`make vet`'s second, `-tags integration` pass, which exists for this.
+
+**Item 36 caught a doc sentence the change FALSIFIED**, which is a different job
+from the mirror-drift it usually catches. `session-debugging`'s SKILL.md told
+agents that an empty `title` is a measurement because "a long-quiet session's
+title may have aged out of the replay ring". True when written; false the moment
+the repaint carried the title. A doc that stays byte-identical across its mirrors
+can still be wrong in all three.
+
+**The walk was skipped and then requested.** I had already written and tested the
+flag change before the operator asked 「そもそも checklist あるよな」. Same datum as
+the `74ff10d` entry: the trigger ("adding an option to any verb family") fires in
+the skill's text and not in practice. Two of the four items that did work here
+(33 and 28a) were found only because the walk ran, so the cost of skipping it was
+not hypothetical.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 8 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. Not-shown, not-kept, not-measured. |
+| 31 (don't hide a value for what it IS) | 9 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. Not-shown, not-kept, not-measured. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 9 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. |
+| 33 (take effect or error) | 10 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
-| 10 (other verb families) | 4 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
-| 1–10 (input surfaces) | 1 walk | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
-| 27 (shared funnel) | 2 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
+| 10 (other verb families) | 5 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
+| 1–10 (input surfaces) | 2 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
+| 27 (shared funnel) | 3 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
 | 32 (one serializer, round-trip tested) | 6 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
-| 28a (follow the value to the request build) | 4 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
+| 28a (follow the value to the request build) | 5 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. |
 | 34a (same KIND of control as its neighbours) | 2 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
-| 29 (result messages name the target and the change) | 1 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. |
+| 38 (live screen-rendering surfaces) | 2 | 0 | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. |
+| 29 (result messages name the target and the change) | 2 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. |
 
 **Never fired yet:** 21, 26. Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30

@@ -523,3 +523,47 @@ Still deferred:
   Cancelled today; changing that is the separate question of whether an
   interactive task should outlive the server at all, and it has its own
   answer already recorded.
+
+## 13. Amendment, 2026-08-23: the title rides the repaint, and the render consumes it
+
+Three changes, one cause. Reported symptom: `session snapshot --json` returns an
+empty `title` for a session that plainly has one, but only after it has been
+running a while.
+
+**The repaint now carries the window title.** `Repaint()` emits
+`OSC 0 ; title BEL` when the grid holds one. The title is not a cell, so §4's
+"screen model" did not obviously include it — but it reaches an observer exactly
+once, in the OSC that set it, and lives only in the model afterwards. An app that
+titles itself at startup and then runs for an hour is the ordinary case, so the
+ring evicts that OSC and every later reader sees no title at all. Claude Code
+hides this while it is BUSY (it re-emits the title on every spinner tick) and
+exhibits it precisely when the session has been quiet — which is when the title
+is the signal you wanted. C0 controls are stripped on the way out: the parser
+cannot store a BEL or an ESC, but a CR or a CAN survives into a title, and xterm
+aborts an OSC on CAN and prints the tail onto the screen just painted.
+
+**The native snapshot renderer now consumes Synth frames.** `collectScreen`
+passed `includeSynth=false`, so the one client that most needed the repaint threw
+it away. This was not a decision: §6.1 left the PRESENTATION of synthesised bytes
+open for `--raw`, `426c5e7` implemented the filter inside the shared `CollectRaw`
+— its own message noting that merging the two "is correct for anything that
+renders" — and the render call site inherited it. The two LIVE renderers never
+did: `tui/pane_streamer.go` and `cli/preview_wasm.go` both read
+`CommandExecutionStream.Stdout()`, which merges Stdout and Synth. Of three
+renderers, one was deprived.
+
+**`--with-synth` became `--without-synth`.** Including them is the default on
+every path — it is what the server actually sent — and the opt-out answers the
+one question that needs the other view: "is the server's own replay what made
+this screen wrong?" It now applies to the rendered forms as well, where the flag
+used to be refused outright because it did nothing there. The synthesised byte
+count is still reported on stderr in both directions.
+
+**This is NOT the deferred "server as the authority for `session snapshot`"
+item**, and §2's wording was misread that way once during this change, which is
+why the distinction is written here. Authority means the client stops running an
+emulator and displays a screen the server computed. Nothing of the sort happened:
+`session snapshot` still runs its own `vtgrid`, over bytes it renders itself. It
+simply stopped discarding part of the stream. §2's own next bullet is the
+license — "the repaint is ordinary terminal bytes, so every existing client
+renders it unchanged". A client rendering them is the design working.

@@ -319,8 +319,8 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	settleMs := fs.Uint("settle-ms", 1500, "ms to collect output before rendering")
 	style := fs.Bool("style", false, "also print attribute spans (faint/bold/italic/reverse/...) after the screen — the plain render drops SGR, so a faint placeholder/ghost reads like real input without this")
 	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
-	withSynth := fs.Bool("with-synth", false, "with --raw: ALSO emit the server-synthesised replay bytes (mode preamble, screen repaint), interleaved where they arrived, instead of withholding them. For debugging the replay itself — which is the one case where the bytes --raw normally omits are the bytes you came to look at")
-	raw := fs.Bool("raw", false, "write the verbatim PTY replay bytes to stdout instead of the VT-rendered screen — ONLY bytes the PTY emitted: the server's own replay additions (mode preamble, screen repaint) are withheld and their size reported on stderr — cat into a real terminal to reproduce it exactly, which is also why reply-soliciting sequences (OSC ?-queries, DSR, DA) are absent: the server strips them from every replay so a re-attach cannot make your terminal answer questions the session asked long ago; --rows/--cols are ignored and --style/--color are not allowed")
+	withoutSynth := fs.Bool("without-synth", false, "render/emit ONLY what the PTY produced, dropping the bytes the server synthesised for the replay (its terminal-mode preamble and the screen repaint built from its own model of the screen). Both are included by DEFAULT, because they are what the server actually sends and what every other renderer already draws — the repaint is what makes a screen reconstruct at all once the ring has evicted the bytes that drew it. Reach for this when the screen or the replay looks wrong and the question is whether the server's own additions caused it; their size is reported on stderr either way")
+	raw := fs.Bool("raw", false, "write the verbatim replay bytes to stdout instead of the VT-rendered screen — the burst AS IT ARRIVED, the server's own replay additions (mode preamble, screen repaint) included and their size reported on stderr; --without-synth drops them for the PTY-only view — cat into a real terminal to reproduce an attach exactly, which is also why reply-soliciting sequences (OSC ?-queries, DSR, DA) are absent: the server strips them from every replay so a re-attach cannot make your terminal answer questions the session asked long ago; --rows/--cols are ignored and --style/--color are not allowed")
 	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,title,cursor{x,y,visible},alt_screen,attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report. cursor and alt_screen are terminal state rather than cells and appear only here: the text forms print the screen, which cannot show where the cursor is or which buffer it is on")
 	ansi := fs.Bool("ansi", false, "re-emit the screen WITH its colours and attributes instead of as plain text — for a person looking at it, where --style/--color describe the styling in a list beside a colourless screen. Unlike --raw this is the final screen, not the whole replay: one screenful, not a megabyte of scrollback")
 	detect := fs.Bool("detect", false, "also judge what STATE the screen shows (working / blocked / idle / unknown) and print the rule and the text it read. blocked means waiting on a HUMAN, which byte-quiescence cannot tell from thinking; with --json the full per-rule explain rides along")
@@ -330,18 +330,13 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		return err
 	}
 	if len(pos) < 1 {
-		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--ansi] [--detect [--detect-agent NAME]] [--json] [--raw] <id>")
+		return fmt.Errorf("usage: session snapshot [--rows N --cols N --settle-ms MS] [--style] [--color] [--ansi] [--detect [--detect-agent NAME]] [--json] [--raw] [--without-synth] <id>")
 	}
 	// A typed option that silently does nothing is the failure this repo keeps
 	// re-fixing, so naming an agent without asking for detection is an error
 	// rather than a no-op.
 	if !*detect && flagExplicitlySet(fs, "detect-agent") {
 		return fmt.Errorf("--detect-agent takes effect only with --detect")
-	}
-	// Same rule as --detect-agent below: an option that silently does nothing is
-	// the failure this repo keeps re-fixing.
-	if *withSynth && !*raw {
-		return fmt.Errorf("--with-synth takes effect only with --raw")
 	}
 	if *raw && (*style || *colorOut) {
 		return fmt.Errorf("--raw cannot be combined with --style/--color (those report the VT render, which --raw bypasses)")
@@ -380,7 +375,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 
 	if *raw {
 		b, synth, err := c.SessionSnapshotRaw(ctx, taskIDHex,
-			time.Duration(*settleMs)*time.Millisecond, *withSynth)
+			time.Duration(*settleMs)*time.Millisecond, !*withoutSynth)
 		if err != nil {
 			return err
 		}
@@ -388,14 +383,17 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		// asked for. Saying it rather than staying silent is the point: a reader
 		// who reached for raw output because the render looked wrong needs to
 		// know whether what they are holding is only the PTY's bytes, and that
-		// --with-synth exists when the server's own are the subject.
+		// --without-synth exists when the PTY's own bytes are the subject.
+		// Reported in BOTH directions and gated on synth > 0 — on whether there
+		// were any such bytes, never on whether they were kept.
 		switch {
-		case synth > 0 && *withSynth:
+		case synth > 0 && !*withoutSynth:
 			fmt.Fprintf(os.Stderr, "harness-cli: %d of these bytes are server-synthesised replay "+
 				"(mode preamble and screen repaint), not PTY output\n", synth)
 		case synth > 0:
 			fmt.Fprintf(os.Stderr, "harness-cli: withheld %d bytes of server-synthesised replay "+
-				"(mode preamble and screen repaint); pass --with-synth to include them\n", synth)
+				"(mode preamble and screen repaint); the screen the server would have "+
+				"painted is not in this output\n", synth)
 		}
 		_, err = os.Stdout.Write(b)
 		return err
@@ -405,6 +403,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 		rows: uint16(*rows), cols: uint16(*cols),
 		settle:    time.Duration(*settleMs) * time.Millisecond,
 		withAttrs: *style, withColor: *colorOut, asJSON: *asJSON, ansi: *ansi,
+		includeSynth: !*withoutSynth,
 	}
 	if *detect {
 		opts.detectAgent = *detectAgent
@@ -427,6 +426,11 @@ type screenOpts struct {
 	ansi bool
 	// detectAgent selects the state-detection rule set; "" leaves detection off.
 	detectAgent string
+	// includeSynth feeds the emulator the bytes the SERVER synthesised for the
+	// replay as well as the PTY's own — true for every ordinary render, because
+	// the screen repaint is what reconstructs a session whose opening bytes the
+	// ring has evicted. False is the debugging view: what the PTY alone drew.
+	includeSynth bool
 }
 
 // printSessionScreen renders taskIDHex's current screen to stdout — plain, or
@@ -448,7 +452,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 	// verdict can accompany the picture rather than costing a second capture of
 	// a screen that has moved on since.
 	if o.ansi {
-		painted, snap, err := c.SessionSnapshotANSI(ctx, taskIDHex, o.rows, o.cols, o.settle)
+		painted, snap, err := c.SessionSnapshotANSI(ctx, taskIDHex, o.rows, o.cols, o.settle, o.includeSynth)
 		if err != nil {
 			return err
 		}
@@ -471,7 +475,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 	// Detection needs the title, which only the structured capture keeps, so
 	// asking for it selects that path regardless of the output encoding.
 	if o.asJSON || o.detectAgent != "" {
-		snap, err := c.SessionSnapshotStructured(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor)
+		snap, err := c.SessionSnapshotStructured(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor, o.includeSynth)
 		if err != nil {
 			return err
 		}
@@ -500,7 +504,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 	}
 
 	if o.withAttrs || o.withColor {
-		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor)
+		text, report, err := c.SessionSnapshotStyled(ctx, taskIDHex, o.rows, o.cols, o.settle, o.withAttrs, o.withColor, o.includeSynth)
 		if err != nil {
 			return err
 		}
@@ -510,7 +514,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 		return nil
 	}
 
-	snap, err := c.SessionSnapshot(ctx, taskIDHex, o.rows, o.cols, o.settle)
+	snap, err := c.SessionSnapshot(ctx, taskIDHex, o.rows, o.cols, o.settle, o.includeSynth)
 	if err != nil {
 		return err
 	}
@@ -791,6 +795,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 	colorOut := fs.Bool("color", false, "with --snapshot: also print fg/bg colour spans (hex) — verbose (most cells carry a colour); same flag as on `session snapshot`")
 	asJSON := fs.Bool("json", false, "with --snapshot: emit the screen as one JSON object instead of text — same shape as `session snapshot --json`")
 	ansi := fs.Bool("ansi", false, "with --snapshot: re-emit the screen WITH its colours and attributes rather than as plain text — same flag as on `session snapshot`")
+	withoutSynth := fs.Bool("without-synth", false, "with --snapshot: render/emit ONLY what the PTY produced, dropping the bytes the server synthesised for the replay (its terminal-mode preamble and the screen repaint built from its own model of the screen). Both are included by DEFAULT, because they are what the server actually sends and what every other renderer already draws — the repaint is what makes a screen reconstruct at all once the ring has evicted the bytes that drew it. Reach for this when the screen or the replay looks wrong and the question is whether the server's own additions caused it; their size is reported on stderr either way")
 	detect := fs.Bool("detect", false, "with --snapshot: also judge the resulting state (working / blocked / idle / unknown) — the drive loop's real question after sending a key")
 	detectAgent := fs.String("detect-agent", "claude", "with --detect: which agent's rule set to judge by")
 	if err := fs.Parse(args); err != nil {
@@ -805,7 +810,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		var stray []string
 		fs.Visit(func(f *flag.Flag) {
 			switch f.Name {
-			case "rows", "cols", "settle-ms", "style", "color", "json", "ansi", "detect", "detect-agent":
+			case "rows", "cols", "settle-ms", "style", "color", "json", "ansi", "without-synth", "detect", "detect-agent":
 				stray = append(stray, "--"+f.Name)
 			}
 		})
@@ -814,7 +819,7 @@ func runSessionSend(cid objproto.ConnectionID, args []string) error {
 		}
 	}
 	if fs.NArg() < 2 {
-		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json]] <id> <text>...
+		return fmt.Errorf(`usage: session send [-enter] [-e] [-quiet] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json] [--without-synth]] <id> <text>...
   -enter     append a carriage return, i.e. actually SUBMIT the line
   -e         interpret backslash escapes (\n \r \t \e \xHH \\) and append nothing.
              -e '\x03' = Ctrl-C, '\x1b' = Esc, '\x1b[A' = Up. NOT short for -enter:
@@ -908,6 +913,7 @@ argument to preserve exact whitespace.`)
 			rows: uint16(*rows), cols: uint16(*cols),
 			settle:    time.Duration(*settleMs) * time.Millisecond,
 			withAttrs: *style, withColor: *colorOut, asJSON: *asJSON, ansi: *ansi,
+			includeSynth: !*withoutSynth,
 		}
 		if *detect {
 			opts.detectAgent = *detectAgent
