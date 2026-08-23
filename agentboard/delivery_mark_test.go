@@ -111,6 +111,67 @@ func TestBoard_InboxAdvanceMarkIsPerTaskNotPerConnection(t *testing.T) {
 	}
 }
 
+// The operator view is the point of moving the mark server-side: the position
+// used to be a file on the runner host that no surface showed.
+func TestBoard_ListSubscribersCarriesShownAndPending(t *testing.T) {
+	b := newMarkBoard(t)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "topic/watched")
+
+	var thirdSeq uint64
+	for _, body := range []string{"a", "b", "c"} {
+		seq, _, err := b.Send("topic/watched", []byte(body), testRid, testTid, "h", "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		thirdSeq = seq
+	}
+	b.InboxAdvance(conn) // shows all three
+	if _, _, err := b.Send("topic/watched", []byte("d"), testRid, testTid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+
+	rows := b.ListSubscribers("")
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	var got SubscriberPattern
+	for _, p := range rows[0].Patterns {
+		if p.Name == "topic/watched" {
+			got = p
+		}
+	}
+	if got.Name == "" {
+		t.Fatalf("topic/watched missing from the row's patterns: %+v", rows[0].Patterns)
+	}
+	if got.Shown != thirdSeq {
+		t.Errorf("Shown = %d, want %d (the seq of the third message)", got.Shown, thirdSeq)
+	}
+	if got.Pending != 1 {
+		t.Errorf("Pending = %d, want 1 (the message published after the advance)", got.Pending)
+	}
+}
+
+// A subscribed topic nothing has ever been published to must still appear, with
+// a zero mark: "subscribed, nothing yet" is a real state and the operator view
+// exists to tell it apart from "subscribed, everything read".
+func TestBoard_ListSubscribersShowsUnpublishedTopic(t *testing.T) {
+	b := newMarkBoard(t)
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "topic/silent")
+
+	rows := b.ListSubscribers("")
+	if len(rows) != 1 || len(rows[0].Patterns) != 1 {
+		t.Fatalf("rows = %+v, want one row with one pattern", rows)
+	}
+	p := rows[0].Patterns[0]
+	if p.Name != "topic/silent" || p.Shown != 0 || p.Pending != 0 {
+		t.Errorf("pattern = %+v, want topic/silent with a zero mark", p)
+	}
+}
+
 // Two concurrent advances must not both return the same message: collecting
 // and marking happen under one acquisition of the task's lock.
 func TestBoard_InboxAdvanceIsAtomic(t *testing.T) {

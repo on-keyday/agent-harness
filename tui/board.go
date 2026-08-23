@@ -67,7 +67,7 @@ func DoBoardTopics(c *cli.Client) tea.Cmd {
 			subs = map[string]int{}
 			for _, sr := range srows {
 				for _, pat := range sr.Patterns {
-					subs[pat]++
+					subs[pat.Name]++
 				}
 			}
 		}
@@ -542,9 +542,15 @@ func (m BoardModal) View() string {
 			if agentName == "" {
 				agentName = "-"
 			}
+			// shown / pending per topic: how far the automatic injection
+			// path has reached for this task, and how much sits above it.
 			pats := "-"
 			if len(r.Patterns) > 0 {
-				pats = strings.Join(r.Patterns, ",")
+				parts := make([]string, 0, len(r.Patterns))
+				for _, p := range r.Patterns {
+					parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", p.Name, p.Shown, p.Pending))
+				}
+				pats = strings.Join(parts, ",")
 			}
 			list.WriteString(fmt.Sprintf("  %s  host=%s  agent=%s  topics=%s\n", short, host, agentName, pats))
 		}

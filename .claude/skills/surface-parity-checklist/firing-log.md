@@ -730,27 +730,85 @@ found by the walk that the diff had missed; what the walk produced here was the
 three `omitted` verdicts, which are the part that would otherwise have been
 silent.
 
+### 2026-08-23 (pre-landing) — `board subscribers` carries the delivery position
+
+The agentboard's "how far has this task been shown its messages" mark moved from
+a client-side cursor file into server state, and the whole point of moving it was
+that a file on the runner host is on NO operator surface. So the field exists
+because of this checklist's own axis, not merely subject to it.
+
+done:    5 (`tui/board.go` subscribers view), 6 (`renderBoardSubscribers`), 8
+         (the wasm bridge), 10 (`board topics` also consumes `BoardSubscribers`
+         for its per-topic counts — the same type change reached it on all three
+         surfaces), 24 (`board subscribers` with and without a topic: the mark is
+         per (task, topic), so both paths report identically), 27 (one builder,
+         `Board.ListSubscribers`; all three UIs read it through
+         `cli.BoardSubscribers`), 28a, 29, 31, 37
+omitted: 32 — the display string `name(shown=N pending=M)` is hand-written in
+         THREE places (CLI, TUI, JS). It is not a grammar: nothing re-parses it,
+         and each surface embeds it in a different row format. Recorded rather
+         than left implicit, because three copies of one format is the drift this
+         item exists for even when the format is display-only.
+         36 — the harness-cli skill's rewrite is a separate task in this plan;
+         it names `board subscribers` as the way to SEE the position.
+n/a:     1, 2, 9 (no flag, no grammar, not a spawn field). 3 and 7 for a reason
+         worth stating rather than assuming: `tui/cmdline.go` has no `board` verb
+         and `runCmd` has no `board` case — both verified by grep. The board is a
+         keybinding-reached modal and a tab panel respectively, so unlike the
+         `session snapshot` standing omission there is no parser that COULD have
+         taken it. 11–23 walk TASK fields across listings; this is a board row.
+         28 (the mark is in-memory taskState and dies with the board it indexes —
+         a spec Decision, not an oversight). 34, 34a, 38. 35 (grep: the README
+         has no `board subscribers` output reference). S1–S6 (no agent, bin,
+         argv, credential, egress or env change; also grepped `scripts/` for
+         `agent-cursor` / `since-last` to confirm the sandbox never referenced
+         the file being deleted).
+missed:  —
+
+Item **28a answered its counting question in two different ways in one walk**,
+which is worth recording because only one half was compiler-checked. Changing
+`Patterns` from `[]string` to `[]SubscriberPattern` made the Go compiler
+enumerate every consumer for me — five sites across `cli/`, `tui/` and the wasm
+bridge, each a build error until fixed. **JS has no such guard**, so the browser
+half was counted by grep instead: exactly two `.patterns` consumers in
+`main.js`, both updated. A type change is a free 28a walk on one side of the
+bridge and no help at all on the other.
+
+Item **8 nearly shipped a runtime panic that `make wasm-check` passed.** The
+bridge builds `[]any` and appended the pattern value into it — a struct satisfies
+`any`, so the compiler was content, and `js.ValueOf` would have panicked on a Go
+struct at runtime. The same edit surfaced a second, quieter one: board seq is
+UnixNano-seeded (~1.9e18), past `Number.MAX_SAFE_INTEGER`, so `shown` had to
+cross as a decimal STRING like `lastSeq` already does. A `float64` would have
+rounded to the nearest ~256 and nobody would have seen it.
+
+Item **31 is why the zero case has its own test.** A topic nothing has been
+published to reports `shown=0 pending=0`, not an omitted pattern — "subscribed,
+nothing yet" and "subscribed, all read" are different states and the whole field
+exists to separate them. `TestBoard_ListSubscribersShowsUnpublishedTopic` pins
+it. Gate on existence (is this topic subscribed), never on value.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 10 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. |
+| 31 (don't hide a value for what it IS) | 11 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
 | 33 (take effect or error) | 10 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
-| 10 (other verb families) | 6 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
+| 10 (other verb families) | 7 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
 | 1–10 (input surfaces) | 2 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
-| 27 (shared funnel) | 4 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 6 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
-| 28a (follow the value to the request build) | 6 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. |
+| 27 (shared funnel) | 5 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
+| 32 (one serializer, round-trip tested) | 7 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
+| 28a (follow the value to the request build) | 7 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
 | 34a (same KIND of control as its neighbours) | 2 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 | 38 (live screen-rendering surfaces) | 3 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. |
-| 29 (result messages name the target and the change) | 3 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
+| 29 (result messages name the target and the change) | 4 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 
 **Never fired yet:** 21, 26. Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30

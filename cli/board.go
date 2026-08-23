@@ -56,7 +56,18 @@ type BoardSubscriberRow struct {
 	TaskHex      string
 	Hostname     string
 	AgentProfile string
-	Patterns     []string
+	Patterns     []BoardSubscriberPattern
+}
+
+// BoardSubscriberPattern is one subscribed topic plus this task's delivery
+// position on it. Shown is the highest seq the automatic injection path has
+// given the task; Pending is how many retained messages sit above it. Both are
+// zero for a topic nothing has been published to. See
+// agentboard.SubscriberPattern.
+type BoardSubscriberPattern struct {
+	Name    string
+	Shown   uint64
+	Pending uint32
 }
 
 // BoardSubscribers lists each task's agentboard subscription set. A non-empty
@@ -83,11 +94,15 @@ func (c *Client) BoardSubscribers(ctx context.Context, topic string) ([]BoardSub
 	}
 	out := make([]BoardSubscriberRow, 0, len(bs.Rows))
 	for _, r := range bs.Rows {
-		patterns := make([]string, 0, len(r.Patterns))
+		patterns := make([]BoardSubscriberPattern, 0, len(r.Patterns))
 		for _, p := range r.Patterns {
-			patterns = append(patterns, string(p.Name))
+			patterns = append(patterns, BoardSubscriberPattern{
+				Name:    string(p.Name),
+				Shown:   p.Shown,
+				Pending: p.Pending,
+			})
 		}
-		sort.Strings(patterns)
+		sort.Slice(patterns, func(i, j int) bool { return patterns[i].Name < patterns[j].Name })
 		out = append(out, BoardSubscriberRow{
 			TaskHex:      hex.EncodeToString(r.Task.Id[:]),
 			Hostname:     string(r.Hostname),

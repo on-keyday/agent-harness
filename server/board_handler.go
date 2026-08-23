@@ -58,9 +58,15 @@ func (h *TaskHandler) handleBoardSubscribers(conn ConnHandle, requestID uint32, 
 		row.SetHostname([]byte(r.Hostname))
 		row.SetAgentProfile([]byte(r.AgentProfile))
 		patterns := make([]protocol.SubscriptionPattern, 0, len(r.Patterns))
-		for _, name := range r.Patterns {
+		for _, p := range r.Patterns {
 			var sp protocol.SubscriptionPattern
-			sp.SetName([]byte(name))
+			sp.SetName([]byte(p.Name))
+			// The delivery position, per topic. It used to live in a file on
+			// the runner host that no operator surface showed, which is why the
+			// shipped skill told agents to guess at a desync and re-read
+			// everything.
+			sp.Shown = p.Shown
+			sp.Pending = p.Pending
 			patterns = append(patterns, sp)
 		}
 		row.SetPatterns(patterns)

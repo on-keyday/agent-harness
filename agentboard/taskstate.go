@@ -29,8 +29,8 @@ type taskState struct {
 	// never touches it. Per topic rather than one scalar per task, because a
 	// reader covering ONE topic must not be able to claim progress on the
 	// others — that is exactly what the client-side cursor got wrong.
-	shown map[string]uint64
-	conns map[*ConnState]struct{}
+	shown   map[string]uint64
+	conns   map[*ConnState]struct{}
 	rid     protocol.RunnerID
 	tid     protocol.TaskID
 	host    string

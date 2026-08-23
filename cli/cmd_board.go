@@ -61,7 +61,7 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 		if srows, serr := BoardSubscribers(ctx, cid, ""); serr == nil {
 			for _, sr := range srows {
 				for _, pat := range sr.Patterns {
-					subs[pat]++
+					subs[pat.Name]++
 				}
 			}
 		} else {
@@ -193,9 +193,17 @@ func RunBoardSubcmd(ctx context.Context, cid objproto.ConnectionID, verb string,
 			return err
 		}
 		for _, r := range rows {
+			// shown / pending per topic: how far the automatic injection path
+			// has reached for this task, and how much sits above it. This is
+			// the answer to "did the agent actually get my message" that used
+			// to require guessing at a cursor file on the runner host.
 			pats := "-"
 			if len(r.Patterns) > 0 {
-				pats = strings.Join(r.Patterns, ",")
+				parts := make([]string, 0, len(r.Patterns))
+				for _, p := range r.Patterns {
+					parts = append(parts, fmt.Sprintf("%s(shown=%d pending=%d)", p.Name, p.Shown, p.Pending))
+				}
+				pats = strings.Join(parts, ",")
 			}
 			fmt.Fprintf(out, "%s host=%s agent=%s topics=%s\n",
 				r.TaskHex, boardHostOrDash(r.Hostname), boardAgentOrDash(r.AgentProfile), pats)

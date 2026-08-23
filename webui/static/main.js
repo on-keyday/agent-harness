@@ -4875,7 +4875,7 @@ const POLL_INTERVAL_MS = 5000;
         subCounts = new Map();
         for (const r of (all || [])) {
           for (const pat of (r.patterns || [])) {
-            subCounts.set(pat, (subCounts.get(pat) || 0) + 1);
+            subCounts.set(pat.name, (subCounts.get(pat.name) || 0) + 1);
           }
         }
       } catch (_) {
@@ -5102,7 +5102,13 @@ const POLL_INTERVAL_MS = 5000;
         // "-" rather than dropping the row.
         const host = r.hostname || "-";
         const agent = r.agentProfile || "-";
-        const pats = (r.patterns && r.patterns.length) ? r.patterns.join(",") : "-";
+        // shown / pending per topic: how far the automatic injection path
+        // has reached for this task, and how much sits above it. shown is a
+        // board seq, delivered as a decimal STRING because those exceed
+        // Number.MAX_SAFE_INTEGER -- render it, never arithmetic on it.
+        const pats = (r.patterns && r.patterns.length)
+          ? r.patterns.map((p) => `${p.name}(shown=${p.shown} pending=${p.pending})`).join(",")
+          : "-";
         line.textContent = `\u2022 ${id}  host=${host}  agent=${agent}  topics=${pats}`;
         boardSubscribersEl.appendChild(line);
       }

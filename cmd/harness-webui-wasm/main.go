@@ -1138,7 +1138,15 @@ func harnessBoardSubscribers(this js.Value, args []js.Value) any {
 			for _, r := range rows {
 				pats := make([]any, 0, len(r.Patterns))
 				for _, pt := range r.Patterns {
-					pats = append(pats, pt)
+					pats = append(pats, map[string]any{
+						"name": pt.Name,
+						// shown is a board seq, and those are UnixNano-seeded
+						// (~1.9e18) -- past Number.MAX_SAFE_INTEGER. Emit it as a
+						// decimal string for the same reason lastSeq is: a float64
+						// silently rounds to the nearest ULP (~256).
+						"shown":   strconv.FormatUint(pt.Shown, 10),
+						"pending": float64(pt.Pending),
+					})
 				}
 				out = append(out, map[string]any{
 					"taskId": r.TaskHex,

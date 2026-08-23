@@ -165,15 +165,26 @@ func TestBoardModalSubscribersMode(t *testing.T) {
 	m.SetSize(100, 30)
 
 	m.ApplySubscribers("rr.dec-019", []cli.BoardSubscriberRow{
-		{TaskHex: "aabbccddeeff0011", Hostname: "host-A", AgentProfile: "claude", Patterns: []string{"chat.aabbccdd", "rr.dec-019"}},
+		{TaskHex: "aabbccddeeff0011", Hostname: "host-A", AgentProfile: "claude", Patterns: []cli.BoardSubscriberPattern{
+			{Name: "chat.aabbccdd", Shown: 4200, Pending: 2},
+			{Name: "rr.dec-019", Shown: 0, Pending: 0},
+		}},
 		// Registered but never attached: empty hostname must render as "-".
-		{TaskHex: "1122334455667788", Hostname: "", AgentProfile: "codex", Patterns: []string{"rr.dec-019"}},
+		{TaskHex: "1122334455667788", Hostname: "", AgentProfile: "codex", Patterns: []cli.BoardSubscriberPattern{
+			{Name: "rr.dec-019", Shown: 0, Pending: 0},
+		}},
 	})
 	if m.mode != boardSubscribers {
 		t.Fatalf("mode = %v, want boardSubscribers", m.mode)
 	}
 	view := m.View()
-	for _, want := range []string{"subscribers of rr.dec-019 (2)", "aabbccdd", "host=host-A", "agent=codex", "host=-", "rr.dec-019"} {
+	// shown/pending ride in the topics cell, and a zero mark is PRINTED, not
+	// elided: "subscribed, nothing yet" and "subscribed, all read" are different
+	// states and the field exists to separate them.
+	for _, want := range []string{
+		"subscribers of rr.dec-019 (2)", "aabbccdd", "host=host-A", "agent=codex", "host=-",
+		"chat.aabbccdd(shown=4200 pending=2)", "rr.dec-019(shown=0 pending=0)",
+	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("view missing %q\n%s", want, view)
 		}

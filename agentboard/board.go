@@ -697,11 +697,26 @@ func (b *Board) ListSubscriptions(c *ConnState) []string {
 // registered (and so has its chat.<short-id> seeded) but has not yet run a
 // harness-cli command — Attach is what fills it in. That is a real state, not
 // missing data.
+// SubscriberPattern is one subscribed topic together with this task's delivery
+// position on it. Shown is the highest seq the automatic injection path has
+// given the task; Pending is how many retained messages sit above it. Both are
+// zero for a topic nothing has been published to — "subscribed, nothing yet",
+// which the view exists to tell apart from "subscribed, all read".
+//
+// A topic under a live synchronous wait appears here like any other
+// subscription, because for the duration of that wait the task really is a
+// subscriber.
+type SubscriberPattern struct {
+	Name    string
+	Shown   uint64
+	Pending uint32
+}
+
 type SubscriberRow struct {
 	Task         protocol.TaskID
 	Hostname     string
 	AgentProfile string
-	Patterns     []string
+	Patterns     []SubscriberPattern
 }
 
 // ListSubscribers returns one row per task known to the board. A non-empty
@@ -731,11 +746,29 @@ func (b *Board) ListSubscribers(topic string) []SubscriberRow {
 			continue
 		}
 		_, tid, host, profile := ts.identity()
+		marks := ts.shownSnapshot()
+		names := ts.snapshotPatterns()
+		pats := make([]SubscriberPattern, 0, len(names))
+		for _, n := range names {
+			shown := marks[n]
+			var pendingN uint32
+			b.mu.Lock()
+			tp, ok := b.topics[n]
+			b.mu.Unlock()
+			if ok {
+				for _, m := range tp.snapshot() {
+					if m.Seq > shown {
+						pendingN++
+					}
+				}
+			}
+			pats = append(pats, SubscriberPattern{Name: n, Shown: shown, Pending: pendingN})
+		}
 		out = append(out, SubscriberRow{
 			Task:         tid,
 			Hostname:     host,
 			AgentProfile: profile,
-			Patterns:     ts.snapshotPatterns(),
+			Patterns:     pats,
 		})
 	}
 	return out
