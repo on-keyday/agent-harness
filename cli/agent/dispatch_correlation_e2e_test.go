@@ -165,3 +165,53 @@ func TestAgentCLI_E2E_DispatchRejectsReplyTopicFlag(t *testing.T) {
 		t.Fatal("--reply-topic must no longer parse")
 	}
 }
+
+// --timeout must bound the WHOLE call. It used to bound only the server-side
+// reply wait, while the publish-acknowledgement wait above it had no deadline
+// of its own — so a value the caller set could be exceeded by a phase the flag
+// never reached.
+//
+// The assertion is two-sided on purpose. That it finishes WITHIN the budget is
+// the fix; that it does not finish far EARLY is what keeps this from passing
+// for the wrong reason (an unrelated failure returning
+// immediately would satisfy a one-sided bound too).
+func TestAgentCLI_E2E_DispatchTimeoutBoundsTheWholeCall(t *testing.T) {
+	addr := freePortE2E(t)
+	board, _ := startServerE2E(t, addr)
+
+	const ridStr = "ws:1.2.3.4:9405-45"
+	var ticket [16]byte
+	ticket[0] = 0xD5
+	tid := mkTidE2E(0x45)
+	rid := mkRidE2E([4]byte{1, 2, 3, 4}, 9405, 45)
+	board.Registry().Register(rid, tid, ticket)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	restore := setAgentEnv(addr, ridStr, tid, ticket)
+	defer restore()
+
+	const budget = 3 * time.Second
+	start := time.Now()
+	var out bytes.Buffer
+	err := agent.Dispatch(ctx,
+		[]string{"--topic", "nobody.answers.this", "--data", "q", "--timeout", budget.String()},
+		strings.NewReader(""), &out)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected a timeout error when nothing replies")
+	}
+	// The message names what happened; a bare context error would mean the
+	// local deadline beat the server's answer back, which is what
+	// replyDeadlineMargin exists to prevent.
+	if !strings.Contains(err.Error(), "dispatch reply timeout") {
+		t.Errorf("err = %v, want it to say 'dispatch reply timeout'", err)
+	}
+	if elapsed > budget+2*time.Second {
+		t.Errorf("took %v, want it bounded by --timeout (%v)", elapsed, budget)
+	}
+	if elapsed < budget/2 {
+		t.Errorf("took only %v — it returned early, so this did not exercise the timeout", elapsed)
+	}
+}

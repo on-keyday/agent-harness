@@ -27,6 +27,30 @@ import (
 // correlation, so every message already retained there satisfied it — including
 // an answer to somebody else's question.
 //
+// replyDeadlineMargin is the slice of the budget reserved for the server's
+// timed-out WaitResponse to travel back before the local deadline fires. It
+// buys the caller a message naming what happened ("dispatch reply timeout")
+// instead of a bare context error, which on a timeout is the whole content of
+// the answer.
+const replyDeadlineMargin = 500 * time.Millisecond
+
+// deadlineOf returns ctx's deadline, or now + a long fallback when it has
+// none. Dispatch always sets one, so the fallback is unreachable there; it
+// exists so this helper cannot silently produce a negative budget if a future
+// caller passes a deadline-less context.
+func deadlineOf(ctx context.Context) time.Time {
+	if d, ok := ctx.Deadline(); ok {
+		return d
+	}
+	return time.Now().Add(5 * time.Minute)
+}
+
+// --timeout bounds the WHOLE call, not just the reply. It used to bound only
+// the reply: the server-side wait got it as WaitRequest.TimeoutMs while the
+// publish-acknowledgement wait above had no deadline of its own and ran until
+// the process context died. `--timeout 8s` could therefore return well after
+// 8s, which is not something a caller can infer from a flag named "timeout".
+//
 // This is a shell-level tool for scripting OUTSIDE an agent's turn loop, for
 // the same reason `agent wait` is.
 func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer) error {
@@ -34,13 +58,17 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 	serverCID := fs.String("server-cid", "", "")
 	topic := fs.String("topic", "", "topic to send to")
 	data := fs.String("data", "-", `payload string or "-" for stdin`)
-	timeout := fs.Duration("timeout", 5*time.Minute, "max wait")
+	timeout := fs.Duration("timeout", 5*time.Minute, "max wait for the whole call (publish ack + reply)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *topic == "" {
 		return errors.New("--topic required")
 	}
+
+	// One deadline for everything below, so the flag means what it says.
+	ctx, cancelTimeout := context.WithTimeout(ctx, *timeout)
+	defer cancelTimeout()
 
 	var payload []byte
 	if *data == "-" {
@@ -128,12 +156,23 @@ func Dispatch(ctx context.Context, args []string, stdin io.Reader, stdout io.Wri
 		return ctx.Err()
 	}
 
+	// The server-side wait gets what is LEFT of the budget after the publish
+	// round trip, minus a margin. The margin is not padding: without it the
+	// server's timed-out answer and the local deadline fire together, and the
+	// caller gets `context deadline exceeded` instead of the message that says
+	// what actually happened. Reserving it means the friendly error wins the
+	// race while `--timeout` stays the hard bound on the call.
+	remaining := time.Until(deadlineOf(ctx)) - replyDeadlineMargin
+	if remaining <= 0 {
+		return errors.New("dispatch reply timeout")
+	}
+
 	// Wait for the reply on OUR own topic — where the server routes it — above
 	// our own publish, and only for messages answering that seq.
 	wr := agentboard.WaitRequest{
 		RequestId: waitID,
 		Since:     publishedSeq,
-		TimeoutMs: uint32(timeout.Milliseconds()),
+		TimeoutMs: uint32(remaining.Milliseconds()),
 		InReplyTo: publishedSeq,
 	}
 	wr.SetPattern([]byte(agentboard.SelfTopic(conn.TaskID())))
