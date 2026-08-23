@@ -278,3 +278,57 @@ Related, same date: `exec_attach` itself was split into `exec_view` /
 `2026-06-20-harness-cli-capabilities-design.md`. Where this spec says
 "`exec_attach` (same gate as snapshot/view attach)", the modern reading of
 that comparison is `exec_view`; but await_idle needs neither.
+
+## Amendment (2026-08-23) — the same signal, sampled client-side per capture
+
+`session snapshot` now reports a third thing beside the screen: `live`
+(`{window_ms, frames, bytes, anchored}`), measured in `cli/snapshot_raw.go`
+while the capture is running. It is the SAME underlying observation this spec
+builds on — PTY output arriving or not — taken at a different place and for a
+different consumer, so the two do not compete:
+
+|  | this spec (Layer 1/2) | `snapshot.live` |
+|---|---|---|
+| measured at | server, `SessionMux.runnerPump`, continuously | client, during one capture |
+| shape | a timestamp + an edge watcher | a count over a stated window |
+| answers | "has it been quiet for N ms" | "how much arrived while I looked" |
+| reaches | `ls`, `session ls`, TUI, WebUI | `session snapshot` only |
+
+Why it was added where the screen is rendered rather than derived from
+`output_idle_ms`: `--detect`'s rules read the rendered grid, and a grid can be
+corrupted by things that leave the byte stream untouched — a multiplexer's pane
+border, an unrecognised UI, a size the renderer had to guess. On a real capture
+inside a herdr pane every rule missed and the verdict was `unknown`, while the
+session was demonstrably mid-turn; `live` reported 13 frames / 1598 B in
+1261 ms from the same capture. Co-locating it with the verdict is the point —
+`output_idle_ms` is one RPC away but arrives without the screen it explains.
+
+**The window has to be anchored.** A view-attach opens with the server replaying
+its ring at wire speed, so a count over the whole settle window measures the
+LINK. The window therefore starts at the last synthesised frame — the repaint
+the server appends to close a replay — and `anchored: false` reports the case
+where none arrived, which makes the counts not a rate. Pinned by
+`TestLiveWindowStartsAtTheLastSynthesisedFrame`; with the reset removed the same
+capture reads 4 frames / 34 B / 1500 ms instead of 2 / 8 / 1300.
+
+Two limits are inherited from this spec's "Known limits (accepted)" and one is
+new:
+
+- Silence still cannot separate "waiting for a human" from "finished". `live`
+  narrows nothing there; that is what `--detect`'s `blocked` is for.
+- A timer-driven repainter still reads as busy.
+- **New: it is a 1500 ms sample, not a continuous measurement.** This spec's
+  measured basis (spinner ~110 ms, max busy-side gap 0.498 s) is the yardstick
+  for reading it — a working claude should not produce zero frames in a default
+  window — but a slower producer can, which is why `window_ms` is reported
+  beside the count and never elided.
+
+**Not built here, deliberately:** no detection rule reads `live`. The condition
+language in `detect_rules.json` matches text against screen regions, and giving
+it a numeric input is a schema change that should follow evidence about which
+thresholds actually separate the states, not precede it. The CLI report says
+`(no rule reads this yet)` so a reader cannot mistake it for part of the
+verdict. Likewise the two LIVE renderers (`tui/pane_streamer.go`, the WebUI
+preview) already hold the same stream and could measure it continuously rather
+than by sample; they have no verdict to print it beside, so they were left
+alone rather than given a half-surface.

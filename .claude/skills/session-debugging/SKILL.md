@@ -186,8 +186,9 @@ when the foreground IS a shell.
   plain, 2,537 B with `--ansi`, and 1,045,629 B with `--raw`. Refused with
   `--json` and with `--raw`; composes with `--style`/`--color`/`--detect`.
 - **`--json`** emits one object instead of text — same screen, different
-  encoding: `{task, rows, cols, title, cursor{x,y,visible}, alt_screen, attrs,
-  color, lines[], spans[]}`. `lines` is the
+  encoding: `{task, rows, cols, title, cursor{x,y,visible}, alt_screen,
+  live{window_ms,frames,bytes,anchored}, attrs, color, lines[], spans[]}`.
+  `lines` is the
   grid one row per entry and is always exactly `rows` long, and each span is
   `{row, start, end, attrs[], fg, bg, text}`, so `lines[span.row]` gives you the
   row a span sits on and you never parse the `--- styles ---` text. `attrs` and
@@ -220,7 +221,10 @@ when the foreground IS a shell.
   an approval, a menu, a question — which is the case PTY quiescence cannot
   tell from thinking, since both are silent. `--detect-agent NAME` picks the
   rule set (default `claude`); with `--json` the full per-rule explain rides
-  along under `detect`.
+  along under `detect`. The report also prints a `live:` line — the arrival
+  measurement described under `--json` below — beside the verdict. **No rule
+  reads it**: it is there for you to weigh when the screen-based verdict is
+  `unknown`, not as part of how the verdict was reached.
 
   Two things about the verdict are worth knowing before you act on one:
 
@@ -238,8 +242,9 @@ when the foreground IS a shell.
   rows, so a grep can miss it. `--json` does NOT fix this — `lines` is the same
   wrapped grid. For greppable logical lines use `exec` (below) or `--raw`.
 - `--json` also carries three things that are **terminal state rather than
-  cells**, which no amount of reading the rendered text recovers. They appear
-  only there: the text forms print the screen, and the screen cannot show them.
+  cells**, plus one that is not about the screen at all. None of them can be
+  recovered by reading the rendered text, and they appear only there: the text
+  forms print the screen, and the screen cannot show them.
 
   - **`title`** — the session's last OSC window title. Agents put their turn
     state there (Claude a spinner glyph while working), which is why it is the
@@ -260,6 +265,21 @@ when the foreground IS a shell.
     different things either side of it: on the alternate buffer it is an app's
     canvas that vanishes when the app exits, on the primary it is the tail of
     scrollback. Worth checking before you conclude that output "disappeared".
+  - **`live`** — how much output arrived in REAL TIME while the snapshot was
+    being taken: `{window_ms, frames, bytes, anchored}`. An attach opens with
+    the server replaying its ring at wire speed, so the window starts at the
+    replay's closing repaint and everything before it is discarded. This is the
+    one signal a **pane border, a resize or an unrecognised UI cannot corrupt**
+    — reach for it when `--detect` returns `unknown` and you still need to know
+    whether anything is happening. Two limits, both load-bearing:
+    `frames` counts TRANSPORT boundaries, not screen repaints (one repaint can
+    span several, several can coalesce into one), so it is an arrival rate and
+    not a frame rate; and silence does not separate "waiting for a human" from
+    "finished", which is the same wall quiescence hits. `anchored: false` means
+    no repaint arrived, so the window still holds replayed history and the
+    counts are not a rate at all. A zero count inside a stated window is a
+    measurement — `0 frames in 1500 ms` says something, `0 frames` alone does
+    not.
 
 ### `session send [-enter] [-e] [--flush-ms MS] [--snapshot [--rows N] [--cols N] [--settle-ms MS] [--style] [--color] [--ansi] [--json] [--without-synth]] <id> <text>...`
 
@@ -394,5 +414,6 @@ as line boundaries — matching on `\n`-terminated lines alone misses markers.
 | Screen looks garbled in snapshot | Render artifact vs real bytes → `--raw` and inspect escapes |
 | Can't tell which line the caret is on, or whether one is shown | The rendered text cannot carry it → `--json` and read `cursor` |
 | A full-screen app's output seems to have vanished | It was on the alternate buffer and the app exited → `--json` and read `alt_screen` |
+| `--detect` says `unknown` and you still need to know if anything is happening | Screen rules read the grid, which a pane border or an unknown UI corrupts → read `live` (`--json`, or the `live:` line under `--detect`); it is measured off the stream, not the grid |
 | `/clear` sent over the agentboard did nothing | Payload lands as prompt text, never as a slash command → `session send` |
 | `await-idle` woke you with nothing to do | The peer's agentboard reply was already the completion edge → don't arm one for a peer you asked to report back |

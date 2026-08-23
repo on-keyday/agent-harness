@@ -111,7 +111,7 @@ func TestCollectSpansIsEmptyNotNilOnACleanScreen(t *testing.T) {
 func TestSnapshotReportsCursorAndBuffer(t *testing.T) {
 	// Cursor left at row 1 column 3 with a hidden cursor, on the primary buffer.
 	term := screenWith(20, 3, "hello\r\n\x1b[2;4H\x1b[?25l")
-	snap := buildSnapshot(term, "task", "", 20, 3, false, false)
+	snap := buildSnapshot(term, "task", "", 20, 3, LiveActivity{}, false, false)
 	if snap.Cursor.X != 3 || snap.Cursor.Y != 1 {
 		t.Errorf("cursor = (%d,%d), want (3,1)", snap.Cursor.X, snap.Cursor.Y)
 	}
@@ -125,13 +125,13 @@ func TestSnapshotReportsCursorAndBuffer(t *testing.T) {
 	// Hiding does not move it: position and visibility are independent, and a
 	// snapshot that folded them together would lose one.
 	shown := screenWith(20, 3, "hello\r\n\x1b[2;4H\x1b[?25l\x1b[?25h")
-	if s := buildSnapshot(shown, "task", "", 20, 3, false, false); !s.Cursor.Visible ||
+	if s := buildSnapshot(shown, "task", "", 20, 3, LiveActivity{}, false, false); !s.Cursor.Visible ||
 		s.Cursor.X != 3 || s.Cursor.Y != 1 {
 		t.Errorf("cursor = %+v, want the same position, visible", s.Cursor)
 	}
 
 	alt := screenWith(20, 3, "\x1b[?1049hfullscreen")
-	if s := buildSnapshot(alt, "task", "", 20, 3, false, false); !s.AltScreen {
+	if s := buildSnapshot(alt, "task", "", 20, 3, LiveActivity{}, false, false); !s.AltScreen {
 		t.Error("alt_screen false after ESC[?1049h")
 	}
 }
@@ -139,7 +139,7 @@ func TestSnapshotReportsCursorAndBuffer(t *testing.T) {
 // The fields must survive to the wire under the names the --json help text
 // promises. Renaming a JSON tag is invisible to every Go-side test above.
 func TestSnapshotCursorMarshalsUnderItsDocumentedNames(t *testing.T) {
-	snap := buildSnapshot(screenWith(10, 1, "x"), "task", "", 10, 1, false, false)
+	snap := buildSnapshot(screenWith(10, 1, "x"), "task", "", 10, 1, LiveActivity{}, false, false)
 	b, err := json.Marshal(snap)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

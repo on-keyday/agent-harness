@@ -58,12 +58,13 @@ import (
 // never-attached session reports no size at all: there the repaint paints the
 // server's 80x24 into whatever default was chosen, which is partial rather than
 // corrupt. Untested — no case in the suite reaches a sizeless session.
-func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (*vtgrid.Terminal, string, int, int, error) {
-	captured, rows, cols, ok, _, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
+func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (*vtgrid.Terminal, string, int, int, LiveActivity, error) {
+	raw, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
 	if err != nil {
-		return nil, "", 0, 0, err
+		return nil, "", 0, 0, LiveActivity{}, err
 	}
-	if !ok || rows == 0 || cols == 0 {
+	rows, cols := raw.Rows, raw.Cols
+	if !raw.HasSize || rows == 0 || cols == 0 {
 		rows, cols = defRows, defCols
 		fmt.Fprintf(os.Stderr,
 			"harness-cli: session %s reported no terminal size; rendering at %dx%d (full-screen TUIs may mis-render)\n",
@@ -71,7 +72,7 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 	}
 
 	term := vtgrid.New(int(cols), int(rows))
-	_, _ = term.Write(captured)
+	_, _ = term.Write(raw.Bytes)
 
 	// The OSC 0/2 window title is NOT part of the cell grid, and for an agent it
 	// is the single most informative byte on the wire: Claude Code re-emits it on
@@ -86,7 +87,7 @@ func (c *Client) collectScreen(ctx context.Context, taskIDHex string, defRows, d
 	// its title — so the sequence ends one byte in and the rest of the title
 	// prints onto the grid. vtgrid does not accept 0x9C as a terminator in a
 	// UTF-8 stream, which fixes the title and the stray text together.
-	return term, term.Title(), int(cols), int(rows), nil
+	return term, term.Title(), int(cols), int(rows), raw.Live, nil
 }
 
 // renderScreen flattens the grid to text with trailing blanks removed from each
@@ -115,7 +116,7 @@ func renderScreen(term *vtgrid.Terminal) string {
 // the replay arrives in a burst, so a short window (e.g. 1.5s) is enough for a
 // static screen.
 func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (string, error) {
-	term, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+	term, _, _, _, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return taskIDHex, err
 	}
@@ -134,11 +135,11 @@ func (c *Client) SessionSnapshot(ctx context.Context, taskIDHex string, defRows,
 // this?". synthesised is returned either way, so a caller can always say how
 // much of the burst the server invented.
 func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settle time.Duration, includeSynth bool) ([]byte, int, error) {
-	captured, _, _, _, synthesised, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
+	raw, err := c.CollectRaw(ctx, taskIDHex, settle, includeSynth)
 	if err != nil {
 		return nil, 0, err
 	}
-	return captured, synthesised, nil
+	return raw.Bytes, raw.Synthesised, nil
 }
 
 // SessionSnapshotStyled is SessionSnapshot plus a textual report of styled
@@ -148,7 +149,7 @@ func (c *Client) SessionSnapshotRaw(ctx context.Context, taskIDHex string, settl
 // flattened text throws away — without re-emitting raw escapes (which an LLM
 // reader can't use). Returns (plainText, styleReport).
 func (c *Client) SessionSnapshotStyled(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool) (string, string, error) {
-	term, _, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+	term, _, cols, rows, _, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return taskIDHex, "", err
 	}
@@ -224,11 +225,19 @@ type ScreenSnapshot struct {
 	// full-screen app is live. The same grid means something different
 	// depending on it: on the alternate buffer it is an app's canvas that
 	// vanishes when the app exits, on the primary it is the tail of scrollback.
-	AltScreen bool         `json:"alt_screen"`
-	Attrs     bool         `json:"attrs"`
-	Color     bool         `json:"color"`
-	Lines     []string     `json:"lines"`
-	Spans     []ScreenSpan `json:"spans"`
+	AltScreen bool `json:"alt_screen"`
+	// Live is how much output arrived in real time while this snapshot was
+	// being captured — the one thing here that is not a property of the
+	// screen, and the only one a pane border cannot corrupt.
+	//
+	// Reported unconditionally, like Cursor: a zero frame count within a
+	// stated window is a measurement, and gating it on being non-zero would
+	// leave a reader unable to tell "nothing arrived" from "not collected".
+	Live  LiveActivity `json:"live"`
+	Attrs bool         `json:"attrs"`
+	Color bool         `json:"color"`
+	Lines []string     `json:"lines"`
+	Spans []ScreenSpan `json:"spans"`
 }
 
 // ScreenCursor is the cursor as the session's own terminal model holds it:
@@ -258,11 +267,11 @@ func (s *ScreenSnapshot) Detect(set DetectRuleSet) DetectExplain {
 // line is still split across rows. Use SessionSnapshotRaw or `session exec` when
 // logical lines matter; this shape trades that for row/column addressability.
 func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, withAttrs, withColor, includeSynth bool) (*ScreenSnapshot, error) {
-	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+	term, title, cols, rows, live, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return nil, err
 	}
-	return buildSnapshot(term, taskIDHex, title, cols, rows, withAttrs, withColor), nil
+	return buildSnapshot(term, taskIDHex, title, cols, rows, live, withAttrs, withColor), nil
 }
 
 // SessionSnapshotANSI is SessionSnapshotStructured plus the screen re-emitted
@@ -277,16 +286,16 @@ func (c *Client) SessionSnapshotStructured(ctx context.Context, taskIDHex string
 // Attribute and colour spans are always collected here: the ANSI render needs
 // the same per-cell styling, so declining to collect it would save nothing.
 func (c *Client) SessionSnapshotANSI(ctx context.Context, taskIDHex string, defRows, defCols uint16, settle time.Duration, includeSynth bool) (string, *ScreenSnapshot, error) {
-	term, title, cols, rows, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
+	term, title, cols, rows, live, err := c.collectScreen(ctx, taskIDHex, defRows, defCols, settle, includeSynth)
 	if err != nil {
 		return "", nil, err
 	}
-	return term.ANSI(), buildSnapshot(term, taskIDHex, title, cols, rows, true, true), nil
+	return term.ANSI(), buildSnapshot(term, taskIDHex, title, cols, rows, live, true, true), nil
 }
 
 // buildSnapshot is the single place a ScreenSnapshot is assembled, so the two
 // capture entry points cannot drift into two shapes of the same thing.
-func buildSnapshot(term *vtgrid.Terminal, taskIDHex, title string, cols, rows int, withAttrs, withColor bool) *ScreenSnapshot {
+func buildSnapshot(term *vtgrid.Terminal, taskIDHex, title string, cols, rows int, live LiveActivity, withAttrs, withColor bool) *ScreenSnapshot {
 	cx, cy, cvis := term.Cursor()
 	return &ScreenSnapshot{
 		Task:      taskIDHex,
@@ -295,6 +304,7 @@ func buildSnapshot(term *vtgrid.Terminal, taskIDHex, title string, cols, rows in
 		Title:     title,
 		Cursor:    ScreenCursor{X: cx, Y: cy, Visible: cvis},
 		AltScreen: term.AltScreen(),
+		Live:      live,
 		Attrs:     withAttrs,
 		Color:     withColor,
 		Lines:     screenLines(renderScreen(term), rows),

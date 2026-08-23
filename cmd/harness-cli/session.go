@@ -321,7 +321,7 @@ func runSessionSnapshot(cid objproto.ConnectionID, args []string) error {
 	colorOut := fs.Bool("color", false, "also print fg/bg color spans (hex) after the screen — verbose (most cells carry a color); combine with or use independently of --style")
 	withoutSynth := fs.Bool("without-synth", false, "render/emit ONLY what the PTY produced, dropping the bytes the server synthesised for the replay (its terminal-mode preamble and the screen repaint built from its own model of the screen). Both are included by DEFAULT, because they are what the server actually sends and what every other renderer already draws — the repaint is what makes a screen reconstruct at all once the ring has evicted the bytes that drew it. Reach for this when the screen or the replay looks wrong and the question is whether the server's own additions caused it; their size is reported on stderr either way")
 	raw := fs.Bool("raw", false, "write the verbatim replay bytes to stdout instead of the VT-rendered screen — the burst AS IT ARRIVED, the server's own replay additions (mode preamble, screen repaint) included and their size reported on stderr; --without-synth drops them for the PTY-only view — cat into a real terminal to reproduce an attach exactly, which is also why reply-soliciting sequences (OSC ?-queries, DSR, DA) are absent: the server strips them from every replay so a re-attach cannot make your terminal answer questions the session asked long ago; --rows/--cols are ignored and --style/--color are not allowed")
-	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,title,cursor{x,y,visible},alt_screen,attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report. cursor and alt_screen are terminal state rather than cells and appear only here: the text forms print the screen, which cannot show where the cursor is or which buffer it is on")
+	asJSON := fs.Bool("json", false, "emit the screen as one JSON object {task,rows,cols,title,cursor{x,y,visible},alt_screen,live{window_ms,frames,bytes,anchored},attrs,color,lines[],spans[]} instead of text — lines[] is the grid one row per entry and each span carries row/start/end/attrs/fg/bg, so a reader indexes lines[span.row] instead of parsing the `--- styles ---` report. cursor, alt_screen and live are not cells and appear only here: the text forms print the screen, which cannot show where the cursor is, which buffer it is on, or how much output arrived while it was being captured")
 	ansi := fs.Bool("ansi", false, "re-emit the screen WITH its colours and attributes instead of as plain text — for a person looking at it, where --style/--color describe the styling in a list beside a colourless screen. Unlike --raw this is the final screen, not the whole replay: one screenful, not a megabyte of scrollback")
 	detect := fs.Bool("detect", false, "also judge what STATE the screen shows (working / blocked / idle / unknown) and print the rule and the text it read. blocked means waiting on a HUMAN, which byte-quiescence cannot tell from thinking; with --json the full per-rule explain rides along")
 	detectAgent := fs.String("detect-agent", "claude", "with --detect: which agent's rule set to judge by")
@@ -467,7 +467,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 				return err
 			}
 			v := snap.Detect(set)
-			printDetectReport(&v)
+			printDetectReport(&v, snap.Live)
 		}
 		return nil
 	}
@@ -499,7 +499,7 @@ func printSessionScreen(ctx context.Context, c *cli.Client, taskIDHex string, o 
 			fmt.Println("\n--- styles ---")
 			fmt.Println(formatSpanReport(snap))
 		}
-		printDetectReport(verdict)
+		printDetectReport(verdict, snap.Live)
 		return nil
 	}
 
@@ -546,11 +546,22 @@ func detectRuleSet(agent string) (cli.DetectRuleSet, error) {
 // printDetectReport writes the human form of a verdict: the state, the rule
 // that produced it, and the text that rule read. The per-rule detail stays in
 // --json, the same split `session snapshot --style` already uses.
-func printDetectReport(v *cli.DetectExplain) {
+func printDetectReport(v *cli.DetectExplain, live cli.LiveActivity) {
 	if v == nil {
 		return
 	}
 	fmt.Println("\n--- detect ---")
+	// Printed beside the verdict rather than with the screen because it answers
+	// the same question the verdict does, from the one input a pane border, a
+	// resize or an unrecognised UI cannot corrupt. It is NOT part of the
+	// verdict: no rule reads it yet, so a reader has to weigh it themselves,
+	// and saying so here is cheaper than having them assume either way.
+	fmt.Printf("live:   %d frames / %d B in %d ms (no rule reads this yet)\n",
+		live.Frames, live.Bytes, live.WindowMs)
+	if !live.Anchored {
+		fmt.Println("        UNANCHORED: no end-of-replay repaint arrived, so the window still" +
+			" holds replayed history delivered at wire speed — the counts above are not a rate")
+	}
 	fmt.Printf("state:  %s\n", v.State)
 	fmt.Printf("agent:  %s (rules %s)\n", v.Agent, v.Version)
 	switch {
