@@ -35,7 +35,7 @@ var harnessHookEntries = []struct {
 	Event   string
 	Command string
 }{
-	{"UserPromptSubmit", "harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook"},
+	{"UserPromptSubmit", "harness-cli agent inbox --json --user-prompt-submit-hook"},
 }
 
 // harnessAllowEntry is the single permissions.allow entry the runner
@@ -85,13 +85,18 @@ const harnessAllowEntry = "Bash(harness-cli *)"
 // the file by hand. Resume idempotency in WorktreeManager.Create means a
 // retry just picks up where this failure left off.
 //
-// The --since-last cursor at ~/.cache/harness/agent-cursor-<task>
-// prevents the same seq from being delivered twice. The UserPromptSubmit
-// hook passes --commit to advance the live cursor; manual
-// `harness-cli agent inbox --since-last` callers (LLM-initiated) leave
-// it off and read from the prev-cursor snapshot — i.e. they see the
-// same batch the most recent hook just delivered, idempotently. See
-// cli/agent/cursor.go.
+// What stops the same seq from being delivered twice lives on the SERVER,
+// per (task, topic), in agentboard.taskState. --user-prompt-submit-hook is the
+// only caller that moves it: it asks for what has not been injected and the
+// server marks it injected in the same operation. A manual
+// `harness-cli agent inbox` is a plain read of the subscribed topics' rings and
+// moves nothing, so an agent can re-read as often as it likes. See
+// agentboard.Board.InboxAdvance.
+//
+// It used to be a client-side cursor file at ~/.cache/harness/agent-cursor-<task>
+// driven by a --since-last/--commit pair. That file was one board-global seq
+// watermark covering every subscribed topic, written unlocked by whichever
+// process ran last, and it outlived the in-memory rings it indexed.
 func WriteAgentSettings(worktreeDir string) error {
 	sub := filepath.Join(worktreeDir, ".claude")
 	if err := os.MkdirAll(sub, 0o755); err != nil {

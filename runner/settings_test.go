@@ -194,6 +194,13 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 							"type":    "command",
 							"command": "harness-cli agent inbox --since-last --json",
 						},
+						// The cursor-era line. --since-last / --commit no
+						// longer parse, so leaving it in place would make the
+						// hook exit non-zero on every turn.
+						map[string]any{
+							"type":    "command",
+							"command": "harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook",
+						},
 					},
 				},
 			},
@@ -226,14 +233,19 @@ func TestWriteAgentSettings_PrunesRetiredHarnessHooks(t *testing.T) {
 		t.Errorf("Stop event should be pruned, got %v", hooks["Stop"])
 	}
 
-	// UserPromptSubmit: legacy `--json` (no --commit) gone, current
-	// `--commit --json` added by mergeHarnessHooks.
+	// UserPromptSubmit: both cursor-era lines gone, current one added by
+	// mergeHarnessHooks. The --commit form matters most: its flags no longer
+	// parse, so a surviving copy would fail on every turn rather than quietly
+	// doing the wrong thing.
 	upGroups, _ := hooks["UserPromptSubmit"].([]any)
 	if groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --json") {
 		t.Errorf("legacy UserPromptSubmit hook (no --commit) should be pruned")
 	}
-	if !groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook") {
-		t.Errorf("current UserPromptSubmit hook missing after merge")
+	if groupCommandSearch(upGroups, "harness-cli agent inbox --since-last --commit --json --user-prompt-submit-hook") {
+		t.Errorf("cursor-era UserPromptSubmit hook should be pruned: its flags no longer parse")
+	}
+	if !groupCommandSearch(upGroups, "harness-cli agent inbox --json --user-prompt-submit-hook") {
+		t.Errorf("current UserPromptSubmit hook missing after merge: %v", upGroups)
 	}
 
 	// Retired auto-subscribe hooks are pruned; no current SessionStart hook is
