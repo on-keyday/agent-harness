@@ -26,7 +26,7 @@ func TestBoard_WaitLeavesNoSubscriptionBehind(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	_, timedOut, _ := b.Wait(ctx, conn, "topic/transient", 0)
+	_, timedOut, _ := b.Wait(ctx, conn, "topic/transient", 0, 0)
 	if !timedOut {
 		t.Fatal("expected the wait to time out")
 	}
@@ -50,7 +50,7 @@ func TestBoard_WaitStillReceivesWithoutPriorSubscribe(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	msgs, timedOut, _ := b.Wait(ctx, conn, "topic/unsubscribed", 0)
+	msgs, timedOut, _ := b.Wait(ctx, conn, "topic/unsubscribed", 0, 0)
 	if timedOut {
 		t.Fatal("the wait timed out; its own subscription did not make it a delivery target")
 	}
@@ -71,7 +71,7 @@ func TestBoard_WaitEndsWhenConnectionDetaches(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, _, _ = b.Wait(ctx, conn, "topic/abandoned", 0)
+		_, _, _ = b.Wait(ctx, conn, "topic/abandoned", 0, 0)
 		close(done)
 	}()
 
@@ -122,7 +122,7 @@ func TestBoard_SendSkipsWakeForTheTaskWaitingOnThatTopic(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_, _, _ = b.Wait(ctx, waiter, "topic/shared", 0)
+		_, _, _ = b.Wait(ctx, waiter, "topic/shared", 0, 0)
 	}()
 	time.Sleep(50 * time.Millisecond) // let the wait register
 
@@ -160,7 +160,7 @@ func TestBoard_WaitingTaskIsStillWokenForItsOtherTopics(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		_, _, _ = b.Wait(ctx, conn, "topic/awaited", 0)
+		_, _, _ = b.Wait(ctx, conn, "topic/awaited", 0, 0)
 	}()
 	time.Sleep(50 * time.Millisecond)
 
@@ -173,5 +173,55 @@ func TestBoard_WaitingTaskIsStillWokenForItsOtherTopics(t *testing.T) {
 	defer mu.Unlock()
 	if wakes != 1 {
 		t.Errorf("wakes = %d, want 1 — a wait on one topic must not silence the others", wakes)
+	}
+}
+
+// dispatch's correlation rests on this: neither an unrelated publish nor a
+// reply to somebody else's message may satisfy a wait that named a seq.
+func TestBoard_WaitFiltersByInReplyTo(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+	_ = b.Subscribe(conn, "topic/replies")
+
+	if _, _, err := b.Send("topic/replies", []byte("noise"), testRid, testTid, "h", "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Send("topic/replies", []byte("wrong"), testRid, testTid, "h", "", 999); err != nil {
+		t.Fatal(err)
+	}
+
+	go func() {
+		time.Sleep(40 * time.Millisecond)
+		_, _, _ = b.Send("topic/replies", []byte("right"), testRid, testTid, "h", "", 42)
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	msgs, timedOut, _ := b.Wait(ctx, conn, "topic/replies", 0, 42)
+	if timedOut {
+		t.Fatal("the wait timed out instead of matching the reply to seq 42")
+	}
+	if len(msgs) != 1 || string(msgs[0].Payload) != "right" {
+		t.Fatalf("wait = %+v, want only the reply to seq 42", msgs)
+	}
+}
+
+// in_reply_to = 0 must keep meaning "no filter", not "only non-replies".
+func TestBoard_WaitWithoutFilterAcceptsAnything(t *testing.T) {
+	b := New(Config{RingN: 64, TopicTTL: time.Hour, MaxTopics: 16, MaxPayload: 1024})
+	defer b.Close()
+	conn := b.Attach(RunnerID{}, TaskID{}, "test-host", "")
+	defer b.Detach(conn)
+
+	if _, _, err := b.Send("topic/any", []byte("a reply"), testRid, testTid, "h", "", 7); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	msgs, timedOut, _ := b.Wait(ctx, conn, "topic/any", 0, 0)
+	if timedOut || len(msgs) != 1 {
+		t.Fatalf("wait = %+v timedOut=%v, want the reply to be accepted with no filter", msgs, timedOut)
 	}
 }

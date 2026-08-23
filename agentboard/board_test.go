@@ -41,7 +41,7 @@ func TestBoard_WaitBlocksUntilMessageArrives(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	msgs, timedOut, _ := b.Wait(ctx, conn, "topic/bar", 0)
+	msgs, timedOut, _ := b.Wait(ctx, conn, "topic/bar", 0, 0)
 	if timedOut {
 		t.Fatal("Wait timed out unexpectedly")
 	}
@@ -59,7 +59,7 @@ func TestBoard_WaitTimesOut(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, timedOut, _ := b.Wait(ctx, conn, "topic/quiet", 0)
+	_, timedOut, _ := b.Wait(ctx, conn, "topic/quiet", 0, 0)
 	if !timedOut {
 		t.Fatal("Wait should have timed out")
 	}

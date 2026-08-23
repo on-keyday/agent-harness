@@ -50,7 +50,7 @@ func TestRetract_LeavesEveryAgentFacingPath(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if msgs, timedOut, _ := b.Wait(ctx, conn, "t.retract", 0); len(msgs) != 0 || !timedOut {
+	if msgs, timedOut, _ := b.Wait(ctx, conn, "t.retract", 0, 0); len(msgs) != 0 || !timedOut {
 		t.Errorf("Wait after retract = %d msgs (timedOut=%v), want 0 and a timeout", len(msgs), timedOut)
 	}
 	if _, ok := b.Retained(seq); ok {

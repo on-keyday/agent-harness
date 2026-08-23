@@ -365,7 +365,12 @@ func (b *Board) InboxAdvance(c *ConnState) []RetainedMessage {
 // behind, and does not remove one the task already held. It used to call
 // addPattern and never undo it, so one wait on a peer's chat.<short-id>
 // subscribed the task to it for the rest of that task's life.
-func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since uint64) ([]RetainedMessage, bool, error) {
+//
+// inReplyTo, when non-zero, narrows the wait to messages answering that seq: a
+// non-matching publish pings the connection, the loop re-scans, finds nothing
+// it wants, and blocks again. Zero means no filter, so a plain wait still
+// accepts a reply like any other message.
+func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since, inReplyTo uint64) ([]RetainedMessage, bool, error) {
 	if c == nil || c.task == nil {
 		return nil, false, errors.New("not attached")
 	}
@@ -378,6 +383,15 @@ func (b *Board) Wait(ctx context.Context, c *ConnState, topicName string, since 
 			msgs = t.since(since)
 		}
 		b.mu.Unlock()
+		if inReplyTo != 0 {
+			kept := msgs[:0]
+			for _, m := range msgs {
+				if m.InReplyTo == inReplyTo {
+					kept = append(kept, m)
+				}
+			}
+			msgs = kept
+		}
 		if len(msgs) > 0 {
 			return msgs, false, nil
 		}

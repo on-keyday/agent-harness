@@ -80,6 +80,8 @@ func (s *Server) handleAgentMessage(conn ConnHandle, payload []byte) {
 		go s.agentHandleWait(conn, ac, msg.Wait())
 	case agentboard.AgentMessageKind_Inbox:
 		s.agentHandleInbox(conn, ac, msg.Inbox())
+	case agentboard.AgentMessageKind_InboxAdvance:
+		s.agentHandleInboxAdvance(conn, ac, msg.InboxAdvance())
 	case agentboard.AgentMessageKind_ListTopics:
 		s.agentHandleListTopics(conn, ac, msg.ListTopics())
 	case agentboard.AgentMessageKind_ListSubscriptions:
@@ -487,7 +489,7 @@ func (s *Server) agentHandleWait(conn ConnHandle, ac *agentConn, r *agentboard.W
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(r.TimeoutMs)*time.Millisecond)
 	defer cancel()
-	msgs, timedOut, _ := s.Board.Wait(ctx, ac.state, string(r.Pattern), r.Since)
+	msgs, timedOut, _ := s.Board.Wait(ctx, ac.state, string(r.Pattern), r.Since, r.InReplyTo)
 	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
 	pending := make([]pendingPayload, 0, len(msgs))
 	for _, m := range msgs {
@@ -564,6 +566,48 @@ func (s *Server) agentHandleInbox(conn ConnHandle, ac *agentConn, r *agentboard.
 	ir.SetMsgs(delivered)
 	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxResponse}
 	resp.SetInboxResponse(ir)
+	s.sendAgent(conn, resp)
+	go flushDeliveredPayloads(pending)
+}
+
+// agentHandleInboxAdvance serves the read that moves the task's delivery mark.
+// Only the runner-injected UserPromptSubmit hook sends it.
+//
+// The body is agentHandleInbox's, minus the client-supplied cursor and the
+// next_cursor in the reply: the position is the server's (taskState.shown, per
+// topic), so the client neither asserts one nor is told one. Board.InboxAdvance
+// collects and marks under a single acquisition of the task's lock, so nothing
+// is returned here without also having been recorded as delivered.
+func (s *Server) agentHandleInboxAdvance(conn ConnHandle, ac *agentConn, r *agentboard.InboxAdvanceRequest) {
+	if !ac.helloed || r == nil {
+		return
+	}
+	msgs := s.Board.InboxAdvance(ac.state)
+	delivered := make([]agentboard.DeliveredMessage, 0, len(msgs))
+	pending := make([]pendingPayload, 0, len(msgs))
+	for _, m := range msgs {
+		stream, streamID, werr := openDeliveredPayloadStream(conn)
+		if werr != nil {
+			slog.Warn("agent_handler: inbox_advance deliver stream", "seq", m.Seq, "err", werr)
+			continue
+		}
+		pending = append(pending, pendingPayload{stream: stream, payload: m.Payload})
+		dm := agentboard.DeliveredMessage{
+			Seq:             m.Seq,
+			InReplyTo:       m.InReplyTo,
+			PayloadStreamId: streamID,
+			FromRunnerId:    protoToAgentboardRunnerID(m),
+			FromTaskId:      protoToAgentboardTaskID(m),
+		}
+		dm.SetTopic([]byte(m.Topic))
+		dm.SetFromHostname([]byte(m.FromHostname))
+		dm.SetFromAgentProfile([]byte(m.FromAgentProfile))
+		delivered = append(delivered, dm)
+	}
+	out := agentboard.InboxAdvanceResponse{RequestId: r.RequestId}
+	out.SetMsgs(delivered)
+	resp := &agentboard.AgentMessage{Kind: agentboard.AgentMessageKind_InboxAdvanceResponse}
+	resp.SetInboxAdvanceResponse(out)
 	s.sendAgent(conn, resp)
 	go flushDeliveredPayloads(pending)
 }
