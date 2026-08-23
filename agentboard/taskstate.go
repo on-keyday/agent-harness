@@ -24,7 +24,13 @@ type taskState struct {
 	// something it did not ask for. Refcounted because two waits on one topic
 	// may overlap; the entry is deleted at zero so matches needs no zero check.
 	waiting map[string]int
-	conns   map[*ConnState]struct{}
+	// shown is the highest seq per topic that the automatic injection path has
+	// already handed to this task. Only Board.InboxAdvance writes it; Inbox
+	// never touches it. Per topic rather than one scalar per task, because a
+	// reader covering ONE topic must not be able to claim progress on the
+	// others — that is exactly what the client-side cursor got wrong.
+	shown map[string]uint64
+	conns map[*ConnState]struct{}
 	rid     protocol.RunnerID
 	tid     protocol.TaskID
 	host    string
@@ -35,8 +41,40 @@ func newTaskState() *taskState {
 	return &taskState{
 		patterns: make(map[string]struct{}),
 		waiting:  make(map[string]int),
+		shown:    make(map[string]uint64),
 		conns:    make(map[*ConnState]struct{}),
 	}
+}
+
+// takeUnshown records msgs as shown for topic and returns the ones that were
+// above the mark. Collecting and marking happen under one acquisition of t.mu,
+// so two concurrent advances cannot both return the same message.
+func (t *taskState) takeUnshown(topic string, msgs []RetainedMessage) []RetainedMessage {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	mark := t.shown[topic]
+	out := make([]RetainedMessage, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Seq <= mark {
+			continue
+		}
+		out = append(out, m)
+		if m.Seq > t.shown[topic] {
+			t.shown[topic] = m.Seq
+		}
+	}
+	return out
+}
+
+// shownSnapshot copies the per-topic marks, for the operator view.
+func (t *taskState) shownSnapshot() map[string]uint64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]uint64, len(t.shown))
+	for k, v := range t.shown {
+		out[k] = v
+	}
+	return out
 }
 
 // beginWait registers a live synchronous wait on topic. Paired with endWait.

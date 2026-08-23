@@ -323,6 +323,39 @@ func (b *Board) Inbox(c *ConnState, since uint64) ([]RetainedMessage, uint64) {
 	return all, max
 }
 
+// InboxAdvance returns the retained messages on this task's subscribed topics
+// that the automatic injection path has not been given yet, and records them as
+// given. It is the only reader that moves taskState.shown; Inbox never touches
+// it, so an agent can re-read by hand as often as it likes.
+//
+// Lock discipline: b.mu is taken and RELEASED to snapshot the topic pointers,
+// and t.mu is taken afterwards. It never holds t.mu while acquiring b.mu, so
+// the b.mu -> t.mu order documented on Revoke holds. topic.snapshot takes the
+// topic's own lock, so the scan needs neither. A topic evicted between the
+// snapshot and the scan is read through the pointer we already hold — the same
+// approximate-read tradeoff evictExpiredTopics already accepts.
+func (b *Board) InboxAdvance(c *ConnState) []RetainedMessage {
+	if c == nil || c.task == nil {
+		return nil
+	}
+	patterns := c.task.snapshotPatterns()
+
+	b.mu.Lock()
+	found := make(map[string]*topic, len(patterns))
+	for _, p := range patterns {
+		if t, ok := b.topics[p]; ok {
+			found[p] = t
+		}
+	}
+	b.mu.Unlock()
+
+	out := make([]RetainedMessage, 0)
+	for p, t := range found {
+		out = append(out, c.task.takeUnshown(p, t.snapshot())...)
+	}
+	return out
+}
+
 // Wait blocks until at least one message arrives on topicName with seq > since,
 // or until ctx is done. Returns (messages, timedOut, error).
 //
