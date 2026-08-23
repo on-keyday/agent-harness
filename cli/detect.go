@@ -228,6 +228,10 @@ func compileCond(c DetectCond) error {
 func Detect(set DetectRuleSet, in DetectInput) DetectExplain {
 	out := DetectExplain{Agent: set.Agent, Version: set.Version, State: DetectUnknown}
 
+	// Undo any pane chrome first, so every rule below reads the agent's screen
+	// rather than the multiplexer's. `in` is a copy, so this is local.
+	in.Lines = stripFrameColumns(in.Lines)
+
 	var best *DetectRule
 	for i := range set.Rules {
 		r := &set.Rules[i]
@@ -395,6 +399,94 @@ func lastNonEmpty(lines []string) string {
 		}
 	}
 	return ""
+}
+
+// verticalFrameRunes are the glyphs a multiplexer draws down the side of a
+// pane. VERTICAL ones only: a corner or a tee ('┌', '├', '└') belongs to a box
+// drawn INSIDE the pane — a markdown table, a dialog — and cutting at one would
+// eat the content it encloses.
+const verticalFrameRunes = "│┃┆┇┊┋╎╏║▏▕|"
+
+// stripFrameColumns removes the left-hand chrome a multiplexer draws around a
+// pane, so everything below sees the agent's own screen.
+//
+// It has to run before anything else reads the grid, because inside a pane
+// EVERY row starts with the border and that breaks the screen model in three
+// places at once — measured on a captured 48×210 herdr pane:
+//
+//   - The agent's own dividers arrive as `│────▕`. isHorizontalRule counts '─'
+//     from the start of the line, so it stops seeing them: the input box goes
+//     invisible and promptBoxTop returns -1.
+//   - The pane's own sidebar divider shares its row with ordinary transcript
+//     text (`─────│  some prose`), and the "three or more may carry a label"
+//     branch accepts it. afterLastRule then anchors mid-screen: 5925 bytes of
+//     transcript where the same screen unframed yields 43.
+//   - Every line_regex in detect_rules.json is '^'-anchored and '│' is not
+//     whitespace, so even a repaired divider search would still match nothing.
+//
+// Cutting the column fixes all three and leaves the rules and their patterns
+// untouched. Nested panes peel one border per pass.
+func stripFrameColumns(lines []string) []string {
+	for {
+		cut := frameColumn(lines)
+		if cut < 0 {
+			return lines
+		}
+		out := make([]string, len(lines))
+		for i, l := range lines {
+			if r := []rune(l); len(r) > cut+1 {
+				out[i] = string(r[cut+1:])
+			}
+		}
+		lines = out
+	}
+}
+
+// frameColumn returns the column holding the pane's left border, or -1 when the
+// screen has none.
+//
+// Only the LEFT border is looked for. The patterns that read these regions are
+// '^'-anchored, so the right one cannot affect a match — and it is not reliably
+// there to find: on the captured pane the right edge reached only the 24 of 48
+// rows long enough to hold it, against 48 of 48 for the left border. A column
+// past the midpoint is rejected for the same reason it would be wrong to cut
+// there: doing so would discard most of the screen, which is content, not
+// chrome.
+func frameColumn(lines []string) int {
+	if len(lines) == 0 {
+		return -1
+	}
+	counts := map[int]int{}
+	width := 0
+	for _, l := range lines {
+		col := 0
+		for _, ch := range l {
+			if strings.ContainsRune(verticalFrameRunes, ch) {
+				counts[col]++
+			}
+			col++
+		}
+		if col > width {
+			width = col
+		}
+	}
+	// Four fifths of the rows, and never fewer than three: the border of a real
+	// pane is on every row, while a vertical glyph that belongs to the content
+	// is on a handful.
+	need := (len(lines)*4 + 4) / 5
+	if need < 3 {
+		need = 3
+	}
+	best := -1
+	for col, n := range counts {
+		if n < need || col >= width/2 {
+			continue
+		}
+		if best < 0 || col < best {
+			best = col
+		}
+	}
+	return best
 }
 
 // isHorizontalRule reports a box-drawing divider line. Agents draw their input

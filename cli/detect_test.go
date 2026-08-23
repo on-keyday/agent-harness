@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -334,6 +337,22 @@ func TestIsHorizontalRule(t *testing.T) {
 		{"   ", false},
 		{"❯ 1. Yes", false},
 		{"not a rule", false},
+
+		// The three shapes a multiplexer pane puts on screen. All three are
+		// judged here as they arrive RAW, which is why stripFrameColumns has to
+		// run before anything calls this — see TestPaneChromeBreaksTheScreenModel.
+		//
+		// Claude's own divider, wearing the pane border: not a rule, because the
+		// run no longer starts the line. This is defect A.
+		{"                    │────────────────▕", false},
+		// The pane's sidebar divider sharing a row with transcript prose: a rule,
+		// because 25 leading '─' satisfy the titled-divider branch no matter what
+		// follows. This is defect B, and it is asserted TRUE on purpose — nothing
+		// here was loosened or tightened to hide it; the column is removed instead.
+		{"─────────────────────────│  - after_last_rule 5848 B vs 43 B", true},
+		// A markdown table Claude printed, inside the pane. Never a rule: the
+		// stripper only removes VERTICAL glyphs, so a tee still starts the line.
+		{"                    │  ├──────┼──────┤  ▕", false},
 	} {
 		if got := isHorizontalRule(tc.line); got != tc.want {
 			t.Errorf("isHorizontalRule(%q) = %v, want %v", tc.line, got, tc.want)
@@ -363,6 +382,108 @@ func TestRuleSetValidationRejectsSilentlyBrokenRules(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := validateRuleSet(tc.set); err == nil {
 				t.Error("accepted a rule set that would fail silently at match time")
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Inside a multiplexer pane
+// ---------------------------------------------------------------------------
+
+// framedPane is an idle Claude screen captured 2026-08-23 from a session
+// running inside a herdr pane — same harness and same Claude build as the
+// unframed fixtures above, 48×210, with the pane's border down column 25. It is
+// on disk rather than inline because it is a whole real screen; the hostname in
+// its title is the only edit.
+//
+// Its title is the PANE's, not Claude's, so no title rule can fire on it. That
+// is a property of the capture, not a limitation of the fixture: a pane owns
+// the OSC title, so inside one the verdict has to come from the grid.
+func framedPane(t *testing.T) DetectInput {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("testdata", "framed_idle_pane.json"))
+	if err != nil {
+		t.Fatalf("read pane fixture: %v", err)
+	}
+	var f struct {
+		Title string   `json:"title"`
+		Lines []string `json:"lines"`
+	}
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatalf("decode pane fixture: %v", err)
+	}
+	return DetectInput{Lines: f.Lines, Title: f.Title}
+}
+
+// The three breakages are asserted on the RAW lines first. Without that half
+// the test would keep passing if the stripping became unnecessary, and would be
+// guarding nothing — the failure mode the fixture exists to prevent.
+func TestPaneChromeBreaksTheScreenModelUntilItIsStripped(t *testing.T) {
+	pane := framedPane(t)
+
+	// A: the input box is invisible, because its borders no longer start with
+	// the run of '─'.
+	if got := promptBoxTop(pane.Lines); got != -1 {
+		t.Fatalf("promptBoxTop on the raw pane = %d, want -1; the fixture no longer shows defect A", got)
+	}
+	if body := promptBoxBody(pane.Lines); len(body) != 0 {
+		t.Fatalf("prompt_box_body on the raw pane = %q, want empty", body)
+	}
+	// B: the anchor lands mid-screen, so "below the last divider" sweeps in the
+	// transcript. Measured 5925 bytes against 43 for the same screen unframed.
+	rawBelow := len(strings.Join(afterLastRule(pane.Lines), "\n"))
+	if rawBelow < 4000 {
+		t.Fatalf("after_last_rule on the raw pane = %d B, want the whole mid-screen sweep", rawBelow)
+	}
+
+	stripped := stripFrameColumns(pane.Lines)
+
+	if promptBoxTop(stripped) < 0 {
+		t.Fatal("the input box is still invisible after stripping the pane border")
+	}
+	body := strings.Join(promptBoxBody(stripped), "\n")
+	if !strings.Contains(body, "❯") {
+		t.Errorf("prompt_box_body after stripping = %q, want the prompt marker", body)
+	}
+	// C: and the marker is now at the start of its line, which is what the
+	// '^'-anchored patterns in detect_rules.json need.
+	if below := len(strings.Join(afterLastRule(stripped), "\n")); below > 600 {
+		t.Errorf("after_last_rule after stripping = %d B, want the footer only (measured 381)", below)
+	}
+}
+
+// End to end: the same capture, through the real rule set.
+func TestDetectInsideAMultiplexerPane(t *testing.T) {
+	got := Detect(claudeRules(t), framedPane(t))
+	if got.State != DetectIdle {
+		t.Fatalf("state = %q, want idle (matched %q, fallback %q)",
+			got.State, got.MatchedRule, got.FallbackReason)
+	}
+	if got.MatchedRule != "prompt_box_idle" {
+		t.Errorf("matched rule = %q, want prompt_box_idle", got.MatchedRule)
+	}
+}
+
+// Stripping must be inert on a screen with no pane around it. Claude draws
+// verticals of its own — a table, a diff gutter — and cutting at one would
+// throw away the content to its left.
+func TestFrameStrippingLeavesAnUnframedScreenAlone(t *testing.T) {
+	for name, fx := range map[string]string{
+		"idle":       fxIdlePromptBox,
+		"working":    fxWorkingWithInputBox,
+		"permission": fxPermissionPrompt,
+		"trust":      fxTrustDialog,
+		"shell mode": fxShellModePromptBox,
+		"bash":       fxBashPrompt,
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := lines(fx)
+			if col := frameColumn(l); col != -1 {
+				t.Errorf("frameColumn = %d, want none", col)
+			}
+			if got := stripFrameColumns(l); strings.Join(got, "\n") != strings.Join(l, "\n") {
+				t.Error("an unframed screen was modified")
 			}
 		})
 	}
