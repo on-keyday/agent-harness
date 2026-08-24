@@ -57,3 +57,24 @@ func TestResolveAuthTicket_RejectsBadHex(t *testing.T) {
 		t.Error("expected error on invalid hex")
 	}
 }
+
+// The workspace tier is consulted only when neither the flag nor the env
+// supplied a value. A flag default baked into flag.String would defeat this,
+// which is why harness-tui's connection flags default to empty.
+func TestResolveStringWith(t *testing.T) {
+	t.Setenv("HARNESS_TEST_RSW", "")
+	if got := ResolveStringWith("flag", "HARNESS_TEST_RSW", "file"); got != "flag" {
+		t.Errorf("flag should win: got %q", got)
+	}
+	t.Setenv("HARNESS_TEST_RSW", "env")
+	if got := ResolveStringWith("", "HARNESS_TEST_RSW", "file"); got != "env" {
+		t.Errorf("env should beat the file: got %q", got)
+	}
+	t.Setenv("HARNESS_TEST_RSW", "")
+	if got := ResolveStringWith("", "HARNESS_TEST_RSW", "file"); got != "file" {
+		t.Errorf("file should be used when neither flag nor env is set: got %q", got)
+	}
+	if got := ResolveStringWith("", "HARNESS_TEST_RSW", ""); got != "" {
+		t.Errorf("all empty should stay empty: got %q", got)
+	}
+}

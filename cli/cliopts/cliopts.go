@@ -98,3 +98,17 @@ func ResolveString(flagVal, envName string) string {
 	}
 	return os.Getenv(envName)
 }
+
+// ResolveStringWith is ResolveString with a third tier: a value from the
+// workspace config, consulted only when neither the flag nor the environment
+// supplied one.
+//
+// It takes the VALUE rather than the config file so this package does not
+// import cli/workspace: the resolution order lives here, the file format lives
+// there.
+func ResolveStringWith(flagVal, envName, fileVal string) string {
+	if v := ResolveString(flagVal, envName); v != "" {
+		return v
+	}
+	return fileVal
+}

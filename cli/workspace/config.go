@@ -16,10 +16,6 @@ import (
 	"strings"
 )
 
-// ConfigName names the file in error messages. The path it was actually read
-// from is reported separately by Load, which knows it.
-const ConfigName = ".harness/config"
-
 // Resume says what an apply does with a task found in a terminal state.
 type Resume string
 
@@ -92,7 +88,7 @@ func Parse(r io.Reader) (*File, error) {
 		}
 		if strings.HasPrefix(line, "[") {
 			if !strings.HasSuffix(line, "]") {
-				return nil, fmt.Errorf("%s:%d: unterminated section header %q", ConfigName, lineNo, line)
+				return nil, fmt.Errorf("line %d: unterminated section header %q", lineNo, line)
 			}
 			name, taskID, err := parseHeader(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"), lineNo)
 			if err != nil {
@@ -100,7 +96,7 @@ func Parse(r io.Reader) (*File, error) {
 			}
 			if taskID == "" {
 				if _, dup := f.Workspace(name); dup {
-					return nil, fmt.Errorf("%s:%d: workspace %q declared twice", ConfigName, lineNo, name)
+					return nil, fmt.Errorf("line %d: workspace %q declared twice", lineNo, name)
 				}
 				cur = &Workspace{Name: name, start: lineNo - 1, end: lineNo}
 				f.ws = append(f.ws, cur)
@@ -108,7 +104,7 @@ func Parse(r io.Reader) (*File, error) {
 				continue
 			}
 			if cur == nil || cur.Name != name {
-				return nil, fmt.Errorf("%s:%d: task block names workspace %q, which is not the open one", ConfigName, lineNo, name)
+				return nil, fmt.Errorf("line %d: task block names workspace %q, which is not the open one", lineNo, name)
 			}
 			cur.Tasks = append(cur.Tasks, Task{ID: taskID, Resume: ResumeNo, Runner: RunnerAssigned})
 			curTask = &cur.Tasks[len(cur.Tasks)-1]
@@ -116,11 +112,11 @@ func Parse(r io.Reader) (*File, error) {
 			continue
 		}
 		if cur == nil {
-			return nil, fmt.Errorf("%s:%d: %q appears before any [workspace …] header", ConfigName, lineNo, line)
+			return nil, fmt.Errorf("line %d: %q appears before any [workspace …] header", lineNo, line)
 		}
 		key, val, ok := strings.Cut(line, "=")
 		if !ok {
-			return nil, fmt.Errorf("%s:%d: %q is not `key = value`", ConfigName, lineNo, line)
+			return nil, fmt.Errorf("line %d: %q is not `key = value`", lineNo, line)
 		}
 		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
 		if err := assign(cur, curTask, key, val, lineNo); err != nil {
@@ -143,11 +139,11 @@ func parseHeader(body string, lineNo int) (name, taskID string, err error) {
 	case len(tok) == 4 && tok[0] == "workspace" && tok[2] == "task":
 		id := strings.ToLower(tok[3])
 		if !isHex32(id) {
-			return "", "", fmt.Errorf("%s:%d: %q is not a 32-hex task id", ConfigName, lineNo, tok[3])
+			return "", "", fmt.Errorf("line %d: %q is not a 32-hex task id", lineNo, tok[3])
 		}
 		return tok[1], id, nil
 	}
-	return "", "", fmt.Errorf("%s:%d: unknown section header [%s] (want [workspace <name>] or [workspace <name> task <32-hex>])", ConfigName, lineNo, body)
+	return "", "", fmt.Errorf("line %d: unknown section header [%s] (want [workspace <name>] or [workspace <name> task <32-hex>])", lineNo, body)
 }
 
 func isHex32(s string) bool {
@@ -174,19 +170,19 @@ func assign(ws *Workspace, tk *Task, key, val string, lineNo int) error {
 				tk.Resume = Resume(val)
 				return nil
 			}
-			return fmt.Errorf("%s:%d: resume = %q (want no, continue or fresh)", ConfigName, lineNo, val)
+			return fmt.Errorf("line %d: resume = %q (want no, continue or fresh)", lineNo, val)
 		case "runner":
 			switch Runner(val) {
 			case RunnerAssigned, RunnerAny:
 				tk.Runner = Runner(val)
 				return nil
 			}
-			return fmt.Errorf("%s:%d: runner = %q (want assigned or any)", ConfigName, lineNo, val)
+			return fmt.Errorf("line %d: runner = %q (want assigned or any)", lineNo, val)
 		case "forward":
 			tk.Forwards = append(tk.Forwards, val)
 			return nil
 		}
-		return fmt.Errorf("%s:%d: unknown key %q in a task block (want resume, runner or forward)", ConfigName, lineNo, key)
+		return fmt.Errorf("line %d: unknown key %q in a task block (want resume, runner or forward)", lineNo, key)
 	}
 	switch key {
 	case "server-cid":
@@ -198,7 +194,7 @@ func assign(ws *Workspace, tk *Task, key, val string, lineNo int) error {
 	case "grid":
 		ws.Grid, ws.GridSet = val, true
 	default:
-		return fmt.Errorf("%s:%d: unknown key %q in a workspace block (want server-cid, ws-path, repo or grid)", ConfigName, lineNo, key)
+		return fmt.Errorf("line %d: unknown key %q in a workspace block (want server-cid, ws-path, repo or grid)", lineNo, key)
 	}
 	return nil
 }

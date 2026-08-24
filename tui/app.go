@@ -271,17 +271,26 @@ func DoNotify(c *cli.Client, level, title, text string) tea.Cmd {
 type Config struct {
 	Server      string
 	DefaultRepo string
+	// WorkspaceFile / WorkspacePath are the parsed .harness/config and where it
+	// came from; both nil/empty when no config applies. WorkspaceName is the
+	// workspace to install, "" for none — an unknown name is rejected by the
+	// caller, which can still print to stderr.
+	WorkspaceFile *workspace.File
+	WorkspacePath string
+	WorkspaceName string
 }
 
 func New(cfg Config) *App {
 	cmd := textinput.New()
 	cmd.Prompt = "> "
-	cmd.Placeholder = "submit / interactive / session / file / server / cancel / notify / prune / repo / caps / clear / help / quit"
+	cmd.Placeholder = "submit / interactive / session / file / server / workspace / cancel / notify / prune / repo / caps / clear / help / quit"
 	cmd.CharLimit = 1024
 	cmd.Width = 60
 	a := &App{
 		server:          cfg.Server,
 		defaultRepo:     cfg.DefaultRepo,
+		workspaceFile:   cfg.WorkspaceFile,
+		workspacePath:   cfg.WorkspacePath,
 		runners:         NewRunners(),
 		tasks:           NewTasks(),
 		detail:          NewDetailPopup(),
@@ -309,6 +318,11 @@ func New(cfg Config) *App {
 		sessionScope:    protocol.TaskScope{Base: protocol.ScopeBase_Subtree},
 	}
 	a.tasks.Focus()
+	if cfg.WorkspaceName != "" {
+		if ws, ok := cfg.WorkspaceFile.Workspace(cfg.WorkspaceName); ok {
+			a.SetWorkspace(ws)
+		}
+	}
 	return a
 }
 

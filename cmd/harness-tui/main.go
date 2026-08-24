@@ -11,15 +11,29 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/tui"
 	"github.com/on-keyday/objtrsf/objproto"
 )
 
+// The connection flags default to EMPTY rather than to their built-in values.
+// A flag.String default is indistinguishable from an operator typing that same
+// value, so a baked-in default would always win over the workspace config and
+// `--workspace default` could never supply a server-cid. The built-in values
+// are applied after resolution instead (see defaultServerCID / defaultWSPath).
+const (
+	defaultServerCID = "ws:127.0.0.1:8539-*"
+	defaultWSPath    = "/ws"
+)
+
 var (
-	serverCID = flag.String("server-cid", "ws:127.0.0.1:8539-*", "harness-server ConnectionID (e.g. ws:host:port-id, * for random)")
-	repoFlag  = flag.String("repo", "", "default repo path for submit popup; must match a runner-registered RepoPath verbatim (no client-side normalization, since runner may be on a different OS)")
-	wsPath    = flag.String("ws-path", "/ws", "WebSocket URL path (overrides cli.WebSocketPath)")
+	serverCID  = flag.String("server-cid", "", "harness-server ConnectionID (e.g. ws:host:port-id, * for random; env HARNESS_SERVER_CID; default "+defaultServerCID+")")
+	repoFlag   = flag.String("repo", "", "default repo path for submit popup; must match a runner-registered RepoPath verbatim (no client-side normalization, since runner may be on a different OS)")
+	wsPath     = flag.String("ws-path", "", "WebSocket URL path (env HARNESS_WS_PATH; default "+defaultWSPath+")")
+	configPath = flag.String("config", "", "workspace config file (env HARNESS_CONFIG; default ./.harness/config)")
+	wsName     = flag.String("workspace", "", "workspace to apply on start and on every reconnect (see `workspace ls`)")
 
 	persist       = flag.Bool("persist", true, "auto-reconnect on disconnect (set --no-persist to disable)")
 	noPersist     = flag.Bool("no-persist", false, "shortcut for --persist=false")
@@ -29,8 +43,43 @@ var (
 
 func main() {
 	flag.Parse()
-	cli.WebSocketPath = *wsPath
-	peerCID, err := objproto.ParseConnectionID(*serverCID,
+
+	// A config that does not parse exits HERE, before bubbletea takes the alt
+	// screen — anything written after that is painted over.
+	wsFile, wsFilePath, err := workspace.Load(*configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config:", err)
+		os.Exit(2)
+	}
+	var ws *workspace.Workspace
+	if *wsName != "" {
+		w, ok := wsFile.Workspace(*wsName)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "config: no workspace named %q in %s\n", *wsName, wsFilePath)
+			os.Exit(2)
+		}
+		if err := w.Validate(); err != nil {
+			fmt.Fprintln(os.Stderr, "config:", err)
+			os.Exit(2)
+		}
+		ws = w
+	}
+	var wsServerCID, wsWSPath, wsRepo string
+	if ws != nil {
+		wsServerCID, wsWSPath, wsRepo = ws.ServerCID, ws.WSPath, ws.Repo
+	}
+
+	cli.WebSocketPath = cliopts.ResolveStringWith(*wsPath, "HARNESS_WS_PATH", wsWSPath)
+	if cli.WebSocketPath == "" {
+		cli.WebSocketPath = defaultWSPath
+	}
+	resolvedCID := cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)
+	if resolvedCID == "" {
+		resolvedCID = defaultServerCID
+	}
+	resolvedRepo := cliopts.ResolveStringWith(*repoFlag, "HARNESS_REPO_PATH", wsRepo)
+
+	peerCID, err := objproto.ParseConnectionID(resolvedCID,
 		objproto.ParseOption_AllowRandomID|objproto.ParseOption_ResolveAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "server-cid:", err)
@@ -49,8 +98,11 @@ func main() {
 	defer cancel()
 
 	app := tui.New(tui.Config{
-		Server:      *serverCID,
-		DefaultRepo: *repoFlag,
+		Server:        resolvedCID,
+		DefaultRepo:   resolvedRepo,
+		WorkspaceFile: wsFile,
+		WorkspacePath: wsFilePath,
+		WorkspaceName: *wsName,
 	})
 	program := tea.NewProgram(app, tea.WithAltScreen())
 	app.BindProgram(program)
