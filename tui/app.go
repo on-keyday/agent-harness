@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/on-keyday/agent-harness/cli"
+	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/agent-harness/topics"
 )
@@ -96,6 +97,16 @@ type App struct {
 	// pane instead of only the worktree-row summary. Set when the operator
 	// asks for the listing; a background refresh leaves it false.
 	gitStatusToContent bool
+
+	// workspace is the installed .harness/config workspace, or nil.
+	// workspaceArmed means an apply is due on the next snapshot: the apply
+	// needs task STATUSES to decide what to resume, and the snapshot is where
+	// those arrive.
+	workspace         *workspace.Workspace
+	workspaceArmed    bool
+	workspaceFile     *workspace.File
+	workspacePath     string
+	workspaceSaveName string // non-empty while a `workspace save` waits for the forward snapshot
 
 	// port-forward state
 	portForwardModal PortForwardModal
@@ -396,6 +407,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.refreshTasksTable()
+		if a.workspaceArmed {
+			a.workspaceArmed = false
+			return a, a.applyWorkspace()
+		}
 		return a, nil
 
 	case TaskEventMsg:
@@ -614,7 +629,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// it after the join closes the connect-time race where events
 			// landing between snapshot and join were lost. Resubscribe:
 			// gap-fill whatever the dead stream missed.
+			//
+			// Both cases arm the workspace apply. A reconnect must re-establish
+			// the forwards (they die with the connection that held their
+			// control streams) and may need the resume too: a server restart
+			// leaves an interrupted task Failed, which is exactly the state an
+			// apply brings back.
 			if a.client != nil {
+				if a.workspace != nil {
+					a.ArmWorkspace()
+				}
 				return a, RefreshSnapshot(a.client)
 			}
 		case msg.Topic == topics.RunnersStatus():
