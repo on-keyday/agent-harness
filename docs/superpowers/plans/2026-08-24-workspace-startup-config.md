@@ -2058,7 +2058,10 @@ func workspaceUsage() {
 
 // runWorkspace implements the `workspace` family. save reads the task's
 // forwards from the server-side registry, which is the only source a
-// short-lived CLI process has: it holds no forwards of its own.
+// short-lived CLI process has: it holds no forwards of its own. That registry
+// also carries forwards other clients established, so a CLI save can capture
+// more than the TUI's would — see the spec's "Writing a workspace". Filtering
+// by origin_cid is not the fix: this process owns none of them.
 func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID, cfgPath, serverCIDStr string) error {
 	if len(args) == 0 {
 		workspaceUsage()

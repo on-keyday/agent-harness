@@ -298,11 +298,22 @@ would leave the operator with a forward that is running and useless.
 - `resume` and `runner` default to `continue` / `assigned` for a saved block, and
   are the two values an operator is expected to hand-edit afterwards.
 
-**DECIDED (2026-08-24)** — only this client's own forwards are saved.
-`forward ls` reports the server-side registry, which includes forwards other
-clients established; a workspace describes what this client sets up, so saving
-the registry would produce a file that duplicates another operator's forwards on
-the next apply.
+**DECIDED (2026-08-24)** — the TUI saves only its own forwards, from
+`a.activeForwards`. `forward ls` reports the server-side registry, which
+includes forwards other clients established; a workspace describes what this
+client sets up, so saving the registry would produce a file that establishes
+another operator's forwards on the next apply.
+
+**DECIDED (2026-08-24)** — the CLI cannot follow that rule and does not pretend
+to. A short-lived `harness-cli` process holds no forwards of its own, so
+`workspace save` there reads the server-side registry for the named task and
+writes **every** forward registered against it, whichever client established
+it. Filtering by `PortForwardInfo.origin_cid` would not help: the invoking
+process's own CID owns none of them, so the filter would always yield nothing.
+The observable difference: on a task two clients are forwarding, a CLI save
+captures both and a TUI save captures one. `workspace show` before the next
+apply is how the operator sees which happened, and an unwanted line is deleted
+from the file.
 
 **DECIDED (2026-08-24)** — raw (`t`) forwards are not saved. They do not join
 `activeForwards` and bind nothing locally (`tui/app.go:106-112`), so there is no
