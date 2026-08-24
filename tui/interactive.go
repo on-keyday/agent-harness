@@ -117,28 +117,72 @@ func resumeSelectorOpts(assignedTo protocol.RunnerID) cli.SelectorOpts {
 // the Any selector.
 func DoResumeSession(c *cli.Client, assignedTo protocol.RunnerID, extraArgs []string, resumeTaskID string, auth Authority, resumeCapsOverride bool, resumeConversation bool, agentProfile string) tea.Cmd {
 	return func() tea.Msg {
-		opts := resumeSelectorOpts(assignedTo)
-		sel, err := cli.BuildSelector(opts)
-		if err != nil {
-			return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
-		}
-		stream, taskID, err := c.OpenInteractive(context.Background(), "", auth.opts(sessionRequest{
-			Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
+		stream, taskID, err := openResumeWithRetry(c, resumeSelectorOpts(assignedTo), sessionRequest{
+			ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
 			ResumeCapsOverride: resumeCapsOverride,
 			ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-		}))
-		if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
-			sel, err = cli.BuildSelector(cli.SelectorOpts{})
-			if err != nil {
-				return InteractiveReadyMsg{Err: fmt.Errorf("selector: %w", err)}
-			}
-			stream, taskID, err = c.OpenInteractive(context.Background(), "", auth.opts(sessionRequest{
-				Selector: sel, ExtraArgs: extraArgs, ResumeTaskID: resumeTaskID,
-				ResumeCapsOverride: resumeCapsOverride,
-				ResumeConversation: resumeConversation, AgentProfile: agentProfile,
-			}))
-		}
+		}, auth)
 		return InteractiveReadyMsg{Stream: stream, TaskID: taskID, Err: err}
+	}
+}
+
+// openResumeWithRetry opens a resumed session with opts, retrying once with the
+// Any selector when a PINNED attempt reports the runner is gone. Extracted from
+// DoResumeSession so the attaching and the detached resume paths cannot drift:
+// the retry is the part that is easy to omit and expensive to miss, because a
+// runner that restarted has a new RunnerID and the pin then always fails.
+//
+// req.Selector is filled in here; callers leave it zero.
+func openResumeWithRetry(c *cli.Client, opts cli.SelectorOpts, req sessionRequest, auth Authority) (*agentexec.CommandExecutionStream, string, error) {
+	sel, err := cli.BuildSelector(opts)
+	if err != nil {
+		return nil, "", fmt.Errorf("selector: %w", err)
+	}
+	req.Selector = sel
+	stream, taskID, err := c.OpenInteractive(context.Background(), "", auth.opts(req))
+	if opts.Runner != "" && errors.Is(err, cli.ErrPinnedNotFound) {
+		sel, err = cli.BuildSelector(cli.SelectorOpts{})
+		if err != nil {
+			return nil, "", fmt.Errorf("selector: %w", err)
+		}
+		req.Selector = sel
+		stream, taskID, err = c.OpenInteractive(context.Background(), "", auth.opts(req))
+	}
+	return stream, taskID, err
+}
+
+// workspaceResumeOpts picks the selector for a workspace resume: the task's own
+// runner for `runner = assigned`, the Any selector for `runner = any`. Same
+// split as r/R versus u/U.
+func workspaceResumeOpts(assignedTo protocol.RunnerID, unpinned bool) cli.SelectorOpts {
+	if unpinned {
+		return cli.SelectorOpts{}
+	}
+	return resumeSelectorOpts(assignedTo)
+}
+
+// DoResumeSessionDetached resumes a terminal task into a detachable session and
+// closes the local stream immediately, so nothing takes over the operator's
+// terminal. This is what a workspace apply uses: the screen is restored by the
+// grid, not by a handover.
+func DoResumeSessionDetached(c *cli.Client, assignedTo protocol.RunnerID, unpinned bool, resumeTaskID string, auth Authority, resumeConversation bool, agentProfile string, size TermSize) tea.Cmd {
+	return func() tea.Msg {
+		stream, taskID, err := openResumeWithRetry(c, workspaceResumeOpts(assignedTo, unpinned), sessionRequest{
+			ResumeTaskID:       resumeTaskID,
+			ResumeConversation: resumeConversation,
+			AgentProfile:       agentProfile,
+			// Both must be non-zero to take effect. Nobody attaches to this
+			// session, so the TUI's own terminal is the only size proxy there
+			// is — the same reasoning DoStartDetachedSession records.
+			InitialRows: size.Rows, InitialCols: size.Cols,
+		}, auth)
+		if err != nil {
+			return SessionStartedMsg{Err: err}
+		}
+		// Closing our end here is what makes it detached rather than a handover
+		// with no renderer.
+		_ = stream.Close()
+		return SessionStartedMsg{TaskID: taskID}
 	}
 }
 
