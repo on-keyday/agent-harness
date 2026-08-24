@@ -579,11 +579,12 @@ The config must reject a `forward` or `grid` value the command line would reject
 - Create: `cli/gridargs.go`
 - Create: `cli/workspace/validate.go`
 - Modify: `tui/cmdline.go:1316-1360` (`parseGrid` becomes a wrapper)
-- Test: `cli/gridargs_test.go`, `cli/workspace/validate_test.go`
+- Modify: `cli/port_forward_list.go` (add `PortForwardConfigSpec` beside `PortForwardSpecString`)
+- Test: `cli/gridargs_test.go`, `cli/port_forward_list_test.go`, `cli/workspace/validate_test.go`
 
 **Interfaces:**
 - Consumes: `workspace.Workspace` / `workspace.Task` from Task 1.
-- Produces: `cli.ParseGridArgs(args []string) (GridScopeMode, string, []string, error)`; `workspace.ForwardDir` with `ForwardLocal`/`ForwardRemote`; `workspace.ParseForwardValue(value string) (ForwardDir, cli.ForwardSpec, cli.RemoteForwardSpec, error)`; `(*Workspace).Validate() error`.
+- Produces: `cli.ParseGridArgs(args []string) (GridScopeMode, string, []string, error)`; `cli.PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool)`; `workspace.ForwardDir` with `ForwardLocal`/`ForwardRemote`; `workspace.ParseForwardValue(value string) (ForwardDir, cli.ForwardSpec, cli.RemoteForwardSpec, error)`; `(*Workspace).Validate() error`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -822,16 +823,97 @@ func (w *Workspace) Validate() error {
 }
 ```
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Render a registered forward back into a config value**
+
+Both save paths read the server-side registry and must turn a `PortForwardInfo`
+into the `-L …` / `-R …` line a workspace holds. `PortForwardSpecString`
+(`cli/port_forward_list.go:113`) is the display renderer and produces
+`127.0.0.1:3000 -> 127.0.0.1:3000`, which no parser accepts — this is a second
+function, tested by feeding its output back through the parser.
+
+Add to `cli/port_forward_list_test.go`:
+
+```go
+func TestPortForwardConfigSpecRoundTrips(t *testing.T) {
+	local := &protocol.PortForwardInfo{
+		Direction: protocol.PortForwardDirection_Local, BindPort: 3000, TargetPort: 3000,
+		ClientEndpoint: protocol.ClientEndpointKind_OsSocket,
+	}
+	local.SetBindAddr([]byte("127.0.0.1"))
+	local.SetTargetHost([]byte("127.0.0.1"))
+	got, ok := PortForwardConfigSpec(local)
+	if !ok || got != "-L 127.0.0.1:3000:127.0.0.1:3000" {
+		t.Fatalf("local = %q, %v", got, ok)
+	}
+	if _, err := ParseForwardSpec(strings.TrimPrefix(got, "-L ")); err != nil {
+		t.Errorf("the rendered -L does not parse back: %v", err)
+	}
+
+	remote := &protocol.PortForwardInfo{
+		Direction: protocol.PortForwardDirection_Remote, BindPort: 8080, TargetPort: 9090,
+		ClientEndpoint: protocol.ClientEndpointKind_OsSocket,
+	}
+	remote.SetBindAddr([]byte("127.0.0.1"))
+	remote.SetTargetHost([]byte("127.0.0.1"))
+	got, ok = PortForwardConfigSpec(remote)
+	if !ok || got != "-R 127.0.0.1:8080:127.0.0.1:9090" {
+		t.Fatalf("remote = %q, %v", got, ok)
+	}
+	if _, err := ParseRemoteForwardSpec(strings.TrimPrefix(got, "-R ")); err != nil {
+		t.Errorf("the rendered -R does not parse back: %v", err)
+	}
+
+	inproc := &protocol.PortForwardInfo{
+		Direction: protocol.PortForwardDirection_Local, TargetPort: 3000,
+		ClientEndpoint: protocol.ClientEndpointKind_InProcess,
+	}
+	inproc.SetTargetHost([]byte("127.0.0.1"))
+	if _, ok := PortForwardConfigSpec(inproc); ok {
+		t.Error("an in-process forward reported itself savable")
+	}
+}
+```
+
+Check the generated setter names on `protocol.PortForwardInfo` before writing
+this (`grep -n 'func (t \*PortForwardInfo) Set' runner/protocol/message.go`) and
+use the ones that exist.
+
+Then add beside `PortForwardSpecString`:
+
+```go
+// PortForwardConfigSpec renders a registered forward as the `-L …` / `-R …`
+// value a workspace config holds, and reports whether it can be rendered at
+// all. It is a SECOND renderer on purpose: PortForwardSpecString above writes
+// `bind -> target` for a person reading `forward ls`, which is not a spec any
+// parser accepts.
+//
+// ok is false for an in-process client endpoint. Per the schema
+// (runner/protocol/message.bgn ClientEndpointKind), such a forward's
+// client-side address pair is EMPTY — a raw TUI pane, a WebUI preview pin, a -W
+// stdio splice — so there is no local port to write down and nothing an apply
+// could re-establish. That test lives here, once, rather than at each caller.
+func PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool) {
+	if fi.ClientEndpoint != protocol.ClientEndpointKind_OsSocket {
+		return "", false
+	}
+	return fmt.Sprintf("%s %s:%d:%s:%d", PortForwardDirFlag(fi.Direction),
+		fi.BindAddr, fi.BindPort, fi.TargetHost, fi.TargetPort), true
+}
+```
+
+The four-field `[bind:]port:host:port` form is used rather than the three-field
+short form so a non-default bind address survives a save/apply round trip.
+
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `go test ./cli/... ./tui/ -run 'Grid|Forward|Validate' -v`
 Expected: PASS, and the pre-existing `tui` grid cmdline tests still pass — they exercise the wrapper.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add cli/gridargs.go cli/gridargs_test.go cli/workspace/validate.go cli/workspace/validate_test.go tui/cmdline.go
-git commit -m "refactor(cli): own the grid argument grammar so the workspace config can reuse it"
+git add cli/gridargs.go cli/gridargs_test.go cli/port_forward_list.go cli/port_forward_list_test.go cli/workspace/validate.go cli/workspace/validate_test.go tui/cmdline.go
+git commit -m "refactor(cli): own the grid grammar and render a forward back into a config spec"
 ```
 
 ---
@@ -1768,28 +1850,43 @@ func (a *App) runWorkspaceAction(v WorkspaceAction) tea.Cmd {
 
 `workspace.Block(ws)` renders one workspace for display. Implement it in `cli/workspace` as a thin wrapper over `renderWorkspace` (the code is in Task 10, Step 4), so what `show` prints and what `save` writes cannot drift. Add `a.workspaceFile *workspace.File` and `a.workspacePath string` to the App struct; Task 9 fills them. Both `(*File).Workspace` and `(*File).Names` tolerate a nil receiver, so a client with no config file needs no extra guard here.
 
-- [ ] **Step 5: Implement `saveWorkspace`**
+- [ ] **Step 5: Implement `saveWorkspace` in two phases**
+
+The forwards come from the server-side registry, not from `a.activeForwards`,
+so a save has to wait for a snapshot before it can write. `DoListForwards` is
+the existing command behind the `f` key; reuse it rather than adding a second
+listing path.
+
+Reading the registry is what lets a save capture a forward the operator
+established from a `harness-cli forward` in another terminal. What must NOT be
+written is an in-process forward — a raw `t` pane, a WebUI preview pin — and
+`cli.PortForwardConfigSpec` (Task 3) is where that test lives, once.
 
 ```go
-// saveWorkspace captures the live client state into the named workspace and
-// writes the file, replacing only that workspace's lines.
-//
-// The forwards saved are this client's own (a.activeForwards). `forward ls`
-// would also show forwards other clients established, and a workspace
-// describes what THIS client sets up. Raw (`t`) forwards are not saved: they
-// never join a.activeForwards and bind nothing locally, so no -L/-R spec
-// reproduces one.
+// saveWorkspace starts a save by asking the server which forwards exist. The
+// write happens in finishWorkspaceSave when the snapshot arrives.
 func (a *App) saveWorkspace(name string) tea.Cmd {
-	// The App does not keep its Config: tui.New copies cfg.Server into a.server
-	// and cfg.DefaultRepo into a.defaultRepo (tui/app.go:263-264).
-	ws := &workspace.Workspace{
-		Name:      name,
-		ServerCID: a.server,
-		Repo:      a.defaultRepo,
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("workspace save: not connected"))
+		return nil
 	}
+	a.workspaceSaveName = name
+	return DoListForwards(a.client, false)
+}
+
+// finishWorkspaceSave writes the named workspace from the live client state
+// plus the forward snapshot, replacing only that workspace's lines in the file.
+func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
+	name := a.workspaceSaveName
+	a.workspaceSaveName = ""
+
+	// tui.New copies cfg.Server into a.server and cfg.DefaultRepo into
+	// a.defaultRepo (tui/app.go:263-264); the App does not keep the Config.
+	ws := &workspace.Workspace{Name: name, ServerCID: a.server, Repo: a.defaultRepo}
 	if a.grid.IsOpen() {
 		ws.Grid, ws.GridSet = a.grid.ArgsString(), true
 	}
+
 	byTask := map[string]*workspace.Task{}
 	var order []string
 	add := func(id string) *workspace.Task {
@@ -1804,8 +1901,15 @@ func (a *App) saveWorkspace(name string) tea.Cmd {
 	if id := a.logs.TaskID(); id != "" {
 		add(id)
 	}
-	for _, s := range a.activeForwards {
-		add(s.TaskID).Forwards = append(add(s.TaskID).Forwards, s.Direction.flag()+" "+s.Spec)
+	skipped := 0
+	for i := range forwards {
+		spec, ok := cli.PortForwardConfigSpec(&forwards[i])
+		if !ok {
+			skipped++ // in-process: no local address to write down
+			continue
+		}
+		t := add(FormatTaskID(forwards[i].TaskId))
+		t.Forwards = append(t.Forwards, spec)
 	}
 	for _, id := range order {
 		ws.Tasks = append(ws.Tasks, *byTask[id])
@@ -1824,12 +1928,15 @@ func (a *App) saveWorkspace(name string) tea.Cmd {
 	}
 	if err := f.Save(path); err != nil {
 		a.cmdresult.Append(ErrorStyle.Render("workspace save: " + err.Error()))
-		return nil
+		return
 	}
-	a.cmdresult.Append(OKStyle.Render(fmt.Sprintf("workspace %s saved to %s: %d task(s), %d forward(s)",
-		name, path, len(ws.Tasks), countForwards(ws))))
+	// The skipped count is printed even when it is zero: "0 in-process" and a
+	// missing clause are different statements, and the operator who wondered
+	// where their `t` pane went needs the first one.
+	a.cmdresult.Append(OKStyle.Render(fmt.Sprintf(
+		"workspace %s saved to %s: %d task(s), %d forward(s), %d in-process skipped",
+		name, path, len(ws.Tasks), countForwards(ws), skipped)))
 	a.SetWorkspace(ws)
-	return nil
 }
 
 func countForwards(ws *workspace.Workspace) int {
@@ -1840,6 +1947,25 @@ func countForwards(ws *workspace.Workspace) int {
 	return n
 }
 ```
+
+Add `a.workspaceSaveName string` to the App struct, and in the existing
+`case ForwardsSnapshotMsg:` handler (`tui/app.go:454`) call the finisher before
+the handler's other work:
+
+```go
+		if a.workspaceSaveName != "" {
+			if msg.Err != nil {
+				a.cmdresult.Append(ErrorStyle.Render("workspace save: " + msg.Err.Error()))
+				a.workspaceSaveName = ""
+			} else {
+				a.finishWorkspaceSave(msg.Forwards)
+			}
+		}
+```
+
+Confirm `FormatTaskID` is the helper that produces the hex key — `tui/app.go:70`
+documents `tasksByID` as keyed by `FormatTaskID(t.Id)`. Use whatever that
+resolves to rather than hand-rolling `hex.EncodeToString`.
 
 `a.grid.ArgsString()` does not exist yet: add it to `GridModel` in `tui/grid.go`, rendering the model's current mode/anchor/ids back into the `grid` argument grammar (`--under <id>`, `--under <id> --descendants`, a bare id list, or empty for `all`). Read how `GridModel` stores its scope — `scopeLabel()` around `tui/grid.go:446` shows the fields — and render from those. Pin it with a test that `cli.ParseGridArgs(shlex.Split(ArgsString()))` returns the mode and anchor the model holds, for all four modes. A serializer whose comment claims it round-trips, without a test that runs the round trip, is a documented recurring defect in this repository.
 
@@ -2126,9 +2252,14 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 			return err
 		}
 		tk := workspace.Task{ID: *taskID, Resume: workspace.Resume(*resume), Runner: workspace.Runner(*runner)}
+		skipped := 0
 		for i := range forwards {
-			tk.Forwards = append(tk.Forwards,
-				cli.PortForwardDirFlag(forwards[i].Direction)+" "+cli.PortForwardSpecString(&forwards[i]))
+			spec, ok := cli.PortForwardConfigSpec(&forwards[i])
+			if !ok {
+				skipped++ // in-process: no local address to write down
+				continue
+			}
+			tk.Forwards = append(tk.Forwards, spec)
 		}
 		if f == nil {
 			f = workspace.New()
@@ -2141,7 +2272,8 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 		if err := f.Save(path); err != nil {
 			return err
 		}
-		fmt.Printf("workspace %s saved to %s: 1 task, %d forward(s)\n", name, path, len(tk.Forwards))
+		fmt.Printf("workspace %s saved to %s: 1 task, %d forward(s), %d in-process skipped\n",
+			name, path, len(tk.Forwards), skipped)
 		return nil
 	}
 	workspaceUsage()
@@ -2155,7 +2287,7 @@ func mustWorkspace(f *workspace.File, name string) *workspace.Workspace {
 }
 ```
 
-`cli.PortForwardSpecString` (`cli/port_forward_list.go:113`) renders a registered forward's endpoints; read it and confirm the string it produces is what `cli.ParseForwardSpec` / `ParseRemoteForwardSpec` accept. If it is not — for instance if it renders `a -> b` rather than a colon spec — write the spec from the `PortForwardInfo` fields directly and add a test that the result round-trips through the matching parser. Do not ship an unvalidated string into a config file.
+Use `cli.PortForwardConfigSpec` from Task 3 — never `cli.PortForwardSpecString`, which renders `127.0.0.1:3000 -> 127.0.0.1:3000` for a human reading `forward ls` and would write a config line no parser accepts. Both save paths go through the one renderer, and the in-process test lives inside it.
 
 Add `workspace.Block`:
 

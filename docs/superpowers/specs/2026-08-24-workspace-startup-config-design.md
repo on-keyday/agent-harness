@@ -292,42 +292,54 @@ would leave the operator with a forward that is running and useless.
 - `grid` from the open grid's mode, anchor and ids, rendered back into the
   `grid` command's argument grammar.
 - One task block per task that currently has workspace-eligible state: the task
-  being followed or attached, and every task holding an entry in
-  `a.activeForwards`.
-- `forward` lines from `a.activeForwards`.
+  being followed or attached, and every task the registry reports a savable
+  forward for.
+- `forward` lines from the server-side registry, for those tasks.
 - `resume` and `runner` default to `continue` / `assigned` for a saved block, and
   are the two values an operator is expected to hand-edit afterwards.
 
-**DECIDED (2026-08-24)** — the TUI saves only its own forwards, from
-`a.activeForwards`. `forward ls` reports the server-side registry, which
-includes forwards other clients established; a workspace describes what this
-client sets up, so saving the registry would produce a file that establishes
-another operator's forwards on the next apply.
+**DECIDED (2026-08-24)** — one rule, both save paths: write every forward the
+registry reports for the task whose `client_endpoint` is `os_socket`, and skip
+the `in_process` ones. The property that decides this is a field on the wire,
+not a client's private bookkeeping. `PortForwardInfo.client_endpoint`
+(`runner/protocol/message.bgn:1757`) separates a forward whose client side is an
+OS socket — the listener of a `-L`, the dial of a `-R` — from one that lives
+inside a client process: a raw `t` pane, a WebUI preview pin, a `-W` stdio
+splice. The schema states that an `in_process` forward's client-side address
+pair is empty, which is exactly why no `-L`/`-R` line can describe one.
 
-**DECIDED (2026-08-24)** — the CLI cannot follow that rule and does not pretend
-to. A short-lived `harness-cli` process holds no forwards of its own, so
-`workspace save` there reads the server-side registry for the named task and
-writes **every** forward registered against it, whichever client established
-it. Filtering by `PortForwardInfo.origin_cid` would not help: the invoking
-process's own CID owns none of them, so the filter would always yield nothing.
-The observable difference: on a task two clients are forwarding, a CLI save
-captures both and a TUI save captures one. `workspace show` before the next
-apply is how the operator sees which happened, and an unwanted line is deleted
-from the file.
+An earlier draft had the TUI save only the forwards it had started itself,
+because the registry also holds forwards other clients established. That was
+wrong twice over. There are no other operators on this deployment, so the
+forward the ownership rule actually dropped was the operator's own, established
+from a `harness-cli forward` in another terminal. And what cannot be written
+down is an endpoint kind, not an owner — the ownership rule both dropped
+savable forwards and would have kept unsavable ones had a raw pane been the
+client's own, which it always is.
 
-**DECIDED (2026-08-24)** — raw (`t`) forwards are not saved. They do not join
-`activeForwards` and bind nothing locally (`tui/app.go:106-112`), so there is no
-`-L`/`-R` spec that reproduces one; a raw forward's client endpoint is a TUI
-pane.
+**DECIDED (2026-08-24)** — the `-L`/`-R` value is rendered by one function,
+`cli.PortForwardConfigSpec(fi) (string, bool)`, used by both save paths and
+pinned by a test that feeds its output back through `cli.ParseForwardSpec` /
+`cli.ParseRemoteForwardSpec`. The `bool` reports whether the forward is savable
+at all, so the `os_socket` test lives with the renderer rather than being
+repeated at each call site. The existing `cli.PortForwardSpecString`
+(`cli/port_forward_list.go:113`) is NOT that function: it renders
+`127.0.0.1:3000 -> 127.0.0.1:3000` for a human reading `forward ls`, and writing
+that into a config would produce a line no parser accepts.
 
 **DECIDED (2026-08-24)** — saving replaces only the target workspace's own
 lines. Every other line in the file, comments included, is preserved
 byte-for-byte. A round-trip test pins parse → render → parse.
 
-The CLI counterpart is `harness-cli workspace save <name> --task <id>`, which
-takes the forwards from `forward ls --task <id>` and writes `resume = continue`,
-`runner = assigned`. Without it, a forward established from the CLI could only
-be captured by recreating it in the TUI.
+The CLI counterpart is `harness-cli workspace save <name> --task <id>`. It reads
+the same registry through the same renderer and writes `resume = continue`,
+`runner = assigned`. It exists because a workspace has to be authorable from a
+machine whose operator is not sitting in the TUI.
+
+Reading the registry rather than a client's own list is also what makes the TUI
+save reachable at all from a short-lived process: `harness-cli` holds no
+forwards of its own, so a rule phrased in terms of "this client's forwards"
+would have had no CLI implementation.
 
 ## Surfaces
 
@@ -381,6 +393,8 @@ names an agent preset in this repository — the `--agent` flag's help text is
   was removed from the file, and does not touch a hand-started forward.
 - A spec that fails to listen does not prevent the remaining specs, the resume
   step, or the grid step from running.
+- A save writes an `os_socket` forward, skips an `in_process` one, and every
+  value it writes parses back through the parser that owns that value's grammar.
 
 ## Consequences the operator should expect
 
@@ -395,3 +409,12 @@ names an agent preset in this repository — the `--agent` flag's help text is
 - **Two clients applying the same workspace both bind the local ports.** The
   second one's `-L` fails to bind and says so per line. Nothing prevents this;
   local ports are a property of the machine, not of the workspace.
+- **A save can capture a forward another process on the same machine is
+  holding.** The registry is the source, so a `harness-cli forward -L 3000:…`
+  running in another terminal is written into the file; the next apply then
+  tries to bind 3000 while that process still holds it, and reports the ordinary
+  bind conflict. This is the price of reading the registry, and the alternative
+  — saving only what the saving client itself started — costs more: it silently
+  drops the operator's own CLI-established forwards and has no implementation at
+  all in `harness-cli`, which holds none. The remedy is the same as any other
+  conflict: stop the other forward, or delete the line.
