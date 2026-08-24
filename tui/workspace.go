@@ -57,8 +57,9 @@ func (a *App) applyWorkspace() tea.Cmd {
 			info = &t
 		}
 
+		resuming := workspaceWantsResume(info, decl)
 		switch {
-		case workspaceWantsResume(info, decl):
+		case resuming:
 			a.cmdresult.Append(fmt.Sprintf("workspace %s: resuming %s (%s, %s)",
 				ws.Name, pfShortID(decl.ID), decl.Resume, decl.Runner))
 			cmds = append(cmds, DoResumeSessionDetached(a.client, info.AssignedTo,
@@ -71,7 +72,15 @@ func (a *App) applyWorkspace() tea.Cmd {
 				ws.Name, pfShortID(decl.ID))))
 		}
 
-		cmds = append(cmds, a.applyWorkspaceForwards(ws.Name, decl)...)
+		// A task being resumed gets NO forwards in this pass. tea.Batch runs its
+		// commands concurrently, so a forward registered here would race the
+		// resume that makes the task exist and lose — the server answers "no such
+		// task (id unknown or task not running)", which is what a live reconnect
+		// after a server restart actually printed. The SessionStartedMsg handler
+		// re-arms, and the snapshot that follows reconciles with the task alive.
+		if !resuming {
+			cmds = append(cmds, a.applyWorkspaceForwards(ws.Name, decl)...)
+		}
 	}
 
 	if ws.GridSet {
@@ -82,6 +91,11 @@ func (a *App) applyWorkspace() tea.Cmd {
 		}
 	}
 	if len(cmds) == 0 {
+		// An apply that had nothing to do must SAY so. Reconciling to a no-op is
+		// the healthy steady state and the expected answer to `workspace apply`
+		// after fixing a port conflict that turned out not to need fixing —
+		// silence there reads as a command that did not run.
+		a.cmdresult.Append(fmt.Sprintf("workspace %s: already reconciled (nothing to start, resume or stop)", ws.Name))
 		return nil
 	}
 	return tea.Batch(cmds...)
@@ -205,6 +219,21 @@ func (a *App) runWorkspaceAction(v WorkspaceAction) tea.Cmd {
 		return a.saveWorkspace(v.Name)
 	}
 	return nil
+}
+
+// workspaceDeclares reports whether the installed workspace names this task.
+// Used to decide whether a session start belongs to the workspace: an operator
+// running `session new -d` by hand must not trigger an apply.
+func (a *App) workspaceDeclares(taskID string) bool {
+	if a.workspace == nil || taskID == "" {
+		return false
+	}
+	for _, t := range a.workspace.Tasks {
+		if t.ID == taskID {
+			return true
+		}
+	}
+	return false
 }
 
 // workspaceConfigPath is where a save would write and where a load came from.

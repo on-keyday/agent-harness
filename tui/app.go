@@ -107,6 +107,9 @@ type App struct {
 	workspaceFile     *workspace.File
 	workspacePath     string
 	workspaceSaveName string // non-empty while a `workspace save` waits for the forward snapshot
+	// workspaceRetryOnRunner arms ONE re-apply for the next runner event, set
+	// when a workspace resume failed. See the SessionStartedMsg handler.
+	workspaceRetryOnRunner bool
 
 	// gridSel is the selection the open grid was built from. GridModel keeps
 	// only cli.GridSet's display LABEL ("<id8>+desc"), which truncates the
@@ -479,6 +482,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case RunnerEventMsg:
 		// server-side RunnerStatusEvent.RunnerId is a placeholder (not keyable),
 		// so we kick a full snapshot refresh on every runner event.
+		//
+		// A runner appearing is also the event that can make a failed workspace
+		// resume succeed, so consume the one armed retry here. Armed only by a
+		// failure, never standing: a workspace re-applied on EVERY runner event
+		// would reopen the grid overlay under the operator.
+		if a.workspaceRetryOnRunner && a.workspace != nil {
+			a.workspaceRetryOnRunner = false
+			a.ArmWorkspace()
+		}
 		return a, RefreshSnapshot(a.client)
 
 	case ConnSnapshotMsg:
@@ -1038,6 +1050,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SessionStartedMsg:
 		if msg.Err != nil {
 			a.cmdresult.Append(ErrorStyle.Render("session start failed: " + msg.Err.Error()))
+			// A workspace resume that failed is very often the reconnect after a
+			// server restart racing the RUNNER's own reconnect: the client is
+			// back first, so the apply finds no runner for the repo. Arm ONE
+			// retry for the next runner event rather than leaving the case this
+			// feature exists for failing by default. Measured against a dummy
+			// harness: the TUI reconnected ~10s before the runner did.
+			if a.workspace != nil {
+				a.workspaceRetryOnRunner = true
+			}
 			return a, nil
 		}
 		short := msg.TaskID
@@ -1045,6 +1066,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			short = short[:12]
 		}
 		a.cmdresult.Append(OKStyle.Render("started detached: ") + short)
+		// A workspace resume only makes the task exist again; its forwards were
+		// deliberately held back (see applyWorkspace). Re-arm so the snapshot
+		// this refresh triggers reconciles with the task alive and starts them.
+		// Terminates: the task is then live, so the next pass resumes nothing.
+		if a.workspaceDeclares(msg.TaskID) {
+			a.ArmWorkspace()
+		}
 		return a, RefreshSnapshot(a.client)
 
 	case InteractiveDoneMsg:
