@@ -324,7 +324,7 @@ be captured by recreating it in the TUI.
 | --- | --- |
 | `harness-tui` flags | `--config`, `--workspace` |
 | `harness-cli` global flags | `--config`, `--workspace`; they resolve `server-cid` / `ws-path` / `repo` only |
-| `harness-cli workspace` | new verb family: `save`, `apply`, `ls`, `show` |
+| `harness-cli workspace` | new verb family: `save`, `ls`, `show` — no `apply`, see below |
 | TUI command line | new verb family `workspace`: `save`, `apply`, `ls`, `show` |
 | TUI keybindings | omitted — re-applying is rare and the command line reaches it |
 | TUI popups / pickers | n/a — no new modal |
@@ -332,12 +332,22 @@ be captured by recreating it in the TUI.
 | server / runner / `.bgn` / WAL | n/a — no wire or server-state change |
 
 **DECIDED (2026-08-24)** — `harness-cli` reads only `server-cid`, `ws-path` and
-`repo` from a workspace. `grid`, and the per-task `resume` / `runner` /
-`forward`, are read by the TUI's apply routine and by `harness-cli workspace
-apply`; other `harness-cli` subcommands ignore them. This is a difference in
+`repo` from a workspace. `grid` and the per-task `resume` / `runner` /
+`forward` are read by the TUI's apply routine alone. This is a difference in
 which consumer reads which key, not an option accepted and dropped: no
 `harness-cli` subcommand advertises a flag whose value the workspace silently
 overrides.
+
+**DECIDED (2026-08-24)** — there is no `harness-cli workspace apply`. A forward
+lives exactly as long as the client holding its control stream, so a
+short-lived CLI process could only establish one by staying in the foreground
+for its lifetime — which is what `harness-cli forward` already is. An apply
+whose forwards vanish on exit would not be the same operation the TUI's apply
+performs, and giving one verb two lifetimes across two surfaces is how "which
+one took effect" becomes unanswerable. The observable gap this leaves: a
+headless machine with no TUI cannot restore a workspace's forwards. If that
+turns out to matter, the answer is a foreground `harness-cli workspace up` that
+holds them and says so in its name, not an `apply` that quietly differs.
 
 The word **workspace** is used rather than *profile* because *profile* already
 names an agent preset in this repository — the `--agent` flag's help text is
