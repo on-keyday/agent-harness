@@ -216,7 +216,7 @@ func (a *App) runWorkspaceAction(v WorkspaceAction) tea.Cmd {
 		return nil
 
 	case "save":
-		return a.saveWorkspace(v.Name)
+		return a.saveWorkspace(v.Name, v.All)
 	}
 	return nil
 }
@@ -252,28 +252,54 @@ func (a *App) workspaceConfigPath() string {
 // captured too. What must NOT be written is an in-process forward — a raw `t`
 // pane, a WebUI preview pin — and cli.PortForwardConfigSpec is where that test
 // lives, once, for this path and the CLI's alike.
-func (a *App) saveWorkspace(name string) tea.Cmd {
+func (a *App) saveWorkspace(name string, all bool) tea.Cmd {
 	if a.client == nil {
 		a.cmdresult.Append(WarnStyle.Render("workspace save: not connected"))
 		return nil
 	}
 	a.workspaceSaveName = name
+	a.workspaceSaveAll = all
 	return DoListForwards(a.client, false)
 }
 
-// finishWorkspaceSave writes the named workspace from the live client state
-// plus the forward snapshot, replacing only that workspace's lines in the file.
+// finishWorkspaceSave has the forward snapshot a save was waiting for. Unless
+// --all was given it OPENS THE PICKER rather than writing: which tasks belong
+// in a workspace is the operator's statement, and every automatic rule tried
+// before this was a guess wearing a criterion.
 func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
 	name := a.workspaceSaveName
-	a.workspaceSaveName = ""
+	all := a.workspaceSaveAll
+	a.workspaceSaveName, a.workspaceSaveAll = "", false
 
-	// tui.New copies cfg.Server into a.server and cfg.DefaultRepo into
-	// a.defaultRepo; the App does not keep the Config itself.
-	ws := &workspace.Workspace{Name: name, ServerCID: a.server, Repo: a.defaultRepo}
-	if a.grid.IsOpen() {
-		ws.Grid, ws.GridSet = a.gridArgsString(), true
+	byTaskFwd := map[string][]string{}
+	skippedFwd := 0
+	for i := range forwards {
+		spec, ok := cli.PortForwardConfigSpec(&forwards[i])
+		if !ok {
+			skippedFwd++
+			continue
+		}
+		id := FormatTaskID(forwards[i].TaskId)
+		byTaskFwd[id] = append(byTaskFwd[id], spec)
 	}
 
+	if !all {
+		existing, _ := a.workspaceFile.Workspace(name)
+		a.workspacePicker.Open(name, gridLiveTasks(a.visibleTasks()), existing, byTaskFwd)
+		a.workspacePicker.SetSize(a.width, a.height)
+		if skippedFwd > 0 {
+			a.cmdresult.Append(fmt.Sprintf(
+				"workspace %s: %d in-process forward(s) cannot be written down and are not listed", name, skippedFwd))
+		}
+		return
+	}
+	a.writeWorkspaceAll(name, forwards)
+}
+
+// writeWorkspaceAll is `workspace save <name> --all`: every live session, no
+// questions. Kept for the scripted case and as the escape hatch when the picker
+// would only be pressing enter.
+func (a *App) writeWorkspaceAll(name string, forwards []protocol.PortForwardInfo) {
 	byTask := map[string]*workspace.Task{}
 	var order []string
 	add := func(id string) *workspace.Task {
@@ -285,8 +311,13 @@ func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
 		order = append(order, id)
 		return t
 	}
-	if id := a.logs.TaskID(); id != "" {
-		add(id)
+	// --all's rule: every LIVE interactive session, by the same predicate the
+	// grid uses, plus every task with a savable forward. It is a defensible
+	// default and still only a default — which is why it is not what a bare
+	// `workspace save` does any more.
+	live := gridLiveTasks(a.visibleTasks())
+	for i := range live {
+		add(FormatTaskID(live[i].Id))
 	}
 	skipped := 0
 	for i := range forwards {
@@ -298,29 +329,32 @@ func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
 		t := add(FormatTaskID(forwards[i].TaskId))
 		t.Forwards = append(t.Forwards, spec)
 	}
+
+	// tui.New copies cfg.Server into a.server and cfg.DefaultRepo into
+	// a.defaultRepo; the App does not keep the Config itself.
+	ws := &workspace.Workspace{Name: name, ServerCID: a.server, Repo: a.defaultRepo}
+	if a.grid.IsOpen() {
+		ws.Grid, ws.GridSet = a.gridArgsString(), true
+	}
 	for _, id := range order {
 		ws.Tasks = append(ws.Tasks, *byTask[id])
 	}
 
-	f := a.workspaceFile
-	if f == nil {
-		f = workspace.New()
-		a.workspaceFile = f
+	// Observed = every task this save could say something about: the ones just
+	// enumerated, plus the ones the installed workspace already declares.
+	// Including the declared ones is what lets a save CLEAR a task's forwards
+	// after the operator stopped them — the registry reports presence, never
+	// absence. --all drops nothing: it made no per-task decision.
+	observed := map[string]bool{}
+	for _, id := range order {
+		observed[id] = true
 	}
-	f.Set(ws)
-	path := a.workspaceConfigPath()
-	a.workspacePath = path
-	if err := f.Save(path); err != nil {
-		a.cmdresult.Append(ErrorStyle.Render("workspace save: " + err.Error()))
-		return
+	if a.workspace != nil {
+		for _, t := range a.workspace.Tasks {
+			observed[t.ID] = true
+		}
 	}
-	// The skipped count is printed even when it is zero: "0 in-process" and a
-	// missing clause are different statements, and the operator wondering where
-	// their `t` pane went needs the first one.
-	a.cmdresult.Append(OKStyle.Render(fmt.Sprintf(
-		"workspace %s saved to %s: %d task(s), %d forward(s), %d in-process skipped",
-		name, path, len(ws.Tasks), countWorkspaceForwards(ws), skipped)))
-	a.SetWorkspace(ws)
+	a.writeWorkspace(ws, observed, 0, skipped)
 }
 
 func countWorkspaceForwards(ws *workspace.Workspace) int {
@@ -329,4 +363,53 @@ func countWorkspaceForwards(ws *workspace.Workspace) int {
 		n += len(t.Forwards)
 	}
 	return n
+}
+
+// commitWorkspacePicker writes the workspace the picker was filled in for.
+//
+// The picker's LISTED set is what the save observed, so an unticked row is a
+// decision to drop that task's block — not the merge's "I did not look at this
+// one, keep it".
+func (a *App) commitWorkspacePicker() tea.Cmd {
+	name := a.workspacePicker.Name()
+	tasks, observed := a.workspacePicker.Result()
+	dropped := len(a.workspacePicker.ExcludedIDs())
+	a.workspacePicker.Close()
+
+	ws := &workspace.Workspace{
+		Name: name, ServerCID: a.server, Repo: a.defaultRepo, Tasks: tasks,
+	}
+	if a.grid.IsOpen() {
+		ws.Grid, ws.GridSet = a.gridArgsString(), true
+	}
+	a.writeWorkspace(ws, observed, dropped, 0)
+	return nil
+}
+
+// writeWorkspace merges ws into the file and reports what it wrote. Both save
+// paths — the picker and --all — end here, so the merge rules and the result
+// line cannot differ between them.
+func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, dropped, skipped int) {
+	f := a.workspaceFile
+	if f == nil {
+		f = workspace.New()
+		a.workspaceFile = f
+	}
+	existing, _ := f.Workspace(ws.Name)
+	merged := workspace.Merge(existing, ws, observed)
+	f.Set(merged)
+
+	path := a.workspaceConfigPath()
+	a.workspacePath = path
+	if err := f.Save(path); err != nil {
+		a.cmdresult.Append(ErrorStyle.Render("workspace save: " + err.Error()))
+		return
+	}
+	line := fmt.Sprintf("workspace %s saved to %s: %d task(s), %d forward(s)",
+		merged.Name, path, len(merged.Tasks), countWorkspaceForwards(merged))
+	// Zeros are printed: "0 dropped" and a missing clause are different
+	// statements, and an operator who unticked a row needs to see it counted.
+	line += fmt.Sprintf(", %d dropped, %d in-process skipped", dropped, skipped)
+	a.cmdresult.Append(OKStyle.Render(line))
+	a.SetWorkspace(merged)
 }

@@ -107,3 +107,71 @@ func (f *File) Save(path string) error {
 	}
 	return os.WriteFile(path, f.Render(), 0o600)
 }
+
+// Merge returns the workspace a save should write.
+//
+// `observed` carries what the client could SEE: the connection values, the grid
+// selection, and the forwards of the tasks in `observedTasks`. `existing` is
+// what the file already holds. The merge exists because a save that simply
+// replaced the workspace destroyed two things it had no business touching:
+//
+//   - **Task blocks it never looked at.** Saving one task wiped every sibling
+//     block, so `harness-cli workspace save default --task X` silently deleted
+//     the operator's other tasks.
+//   - **`resume` and `runner`.** Those are POLICY, not observable state — this
+//     spec's own text calls them "the two values an operator is expected to
+//     hand-edit afterwards" — and a save reset them to the defaults every time.
+//
+// So: the `forward` lines of an OBSERVED task are replaced (that is the state
+// the save can actually see), every other task block is kept verbatim, and an
+// existing block's resume/runner always survive. A task appearing for the first
+// time takes the values `observed` gives it.
+func Merge(existing, observed *Workspace, observedTasks map[string]bool) *Workspace {
+	out := &Workspace{Name: observed.Name}
+	pick := func(newVal, oldVal string) string {
+		if newVal != "" {
+			return newVal
+		}
+		return oldVal
+	}
+	if existing == nil {
+		existing = &Workspace{}
+	}
+	out.ServerCID = pick(observed.ServerCID, existing.ServerCID)
+	out.WSPath = pick(observed.WSPath, existing.WSPath)
+	out.Repo = pick(observed.Repo, existing.Repo)
+	if observed.GridSet {
+		out.Grid, out.GridSet = observed.Grid, true
+	} else {
+		out.Grid, out.GridSet = existing.Grid, existing.GridSet
+	}
+
+	// Existing blocks first, in file order, so a save never reshuffles the file.
+	for _, old := range existing.Tasks {
+		merged := old
+		if observedTasks[old.ID] {
+			merged.Forwards = nil
+			for _, t := range observed.Tasks {
+				if t.ID == old.ID {
+					merged.Forwards = t.Forwards
+					break
+				}
+			}
+		}
+		out.Tasks = append(out.Tasks, merged)
+	}
+	// Then tasks this save saw for the first time.
+	for _, t := range observed.Tasks {
+		known := false
+		for _, old := range existing.Tasks {
+			if old.ID == t.ID {
+				known = true
+				break
+			}
+		}
+		if !known {
+			out.Tasks = append(out.Tasks, t)
+		}
+	}
+	return out
+}

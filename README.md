@@ -752,20 +752,40 @@ Inside the TUI, `workspace apply [name]` re-applies on demand, `workspace save
 inspect the file. From the CLI:
 
 ```bash
-bin/harness-cli workspace save <name> --task <32-hex> [--repo PATH]
+bin/harness-cli workspace save <name> [--task <32-hex>] [--repo PATH]
 bin/harness-cli workspace ls
 bin/harness-cli workspace show [<name>]
 bin/harness-cli --workspace default ls       # server-cid / ws-path / repo only
 ```
 
+The CLI has no picker — nothing to draw it on — so its `save` records every task
+the registry reports a forward for, or just the one `--task` names. `--task` is
+also how a task's forwards get CLEARED after you stop them: the registry reports
+presence, never absence, so a save can only clear what it was pointed at.
+
 Saving is how the file gets written — no task id or forward spec is meant to be
-typed by hand. Both save paths read the server-side forward registry and write
-every forward whose client endpoint is an OS socket, skipping the in-process
-ones (a raw `t` pane, a WebUI preview pin) with a count: those bind nothing
-locally, so no `-L`/`-R` line describes them. Reading the registry means a save
-also captures a forward established from a `harness-cli forward` in another
-terminal — and that the next apply will then contend for that port with the
-process still holding it, reported as an ordinary bind conflict.
+typed by hand. In the TUI, `workspace save <name>` opens a **picker**: every
+live session, every task the workspace already declares (still listed when it is
+no longer running, so dropping one is a decision rather than a side effect), and
+any task that only has a forward. Space includes or excludes a task, `r` cycles
+its `resume` (no / continue / fresh), `u` its `runner` (assigned / any), `a`/`n`
+tick all or none, Enter writes and Esc cancels. Which tasks belong in a
+workspace is a statement, not something a rule can infer from what happens to be
+running — `workspace save <name> --all` takes every live session without asking,
+for when pressing Enter is the only thing the picker would do.
+
+A save **merges**: task blocks it did not list are left alone, and an existing
+block's `resume` / `runner` are never reset — those are yours. The picker starts
+from what the file already says, so a second save defaults to "what I said last
+time", not to whatever is running now.
+
+Both save paths read the server-side forward registry and write every forward
+whose client endpoint is an OS socket, skipping the in-process ones (a raw `t`
+pane, a WebUI preview pin) with a count: those bind nothing locally, so no
+`-L`/`-R` line describes them. Reading the registry means a save also captures a
+forward established from a `harness-cli forward` in another terminal — and that
+the next apply will then contend for that port with the process still holding
+it, reported as an ordinary bind conflict.
 
 Applying **reconciles** rather than restarts. A declared forward already running
 is left alone, a missing one is started, and one no longer declared is stopped;

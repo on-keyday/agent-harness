@@ -457,6 +457,48 @@ healthy steady state and the expected answer to a `workspace apply` typed after
 fixing a conflict that turned out not to need fixing; silence read as a command
 that had not run.
 
+## Amendment (2026-08-24, second round) — a save asks instead of inferring
+
+The first implementation recorded "the task the logs pane is following, plus any
+task with a forward". With four Detached sessions open it wrote ONE block, and
+nothing in its report said why. The operator's question was 「1タスクしかsaveさ
+れないしそれが選ばれた基準も?」 and both halves were fair: the followed task is
+whatever row Enter was last pressed on, and a Detached session with no forward —
+the exact thing `resume` exists for — qualified under neither clause.
+
+Widening the rule to "every live session" was the obvious repair and is still
+wrong, for a reason the operator named next: 「いくつもdetachしてても再開時に確実
+にやりたいのは違うって場合もある」. **"Detached right now" and "what I want brought
+back" are different sets, and only one of them is knowable from the server.** A
+better guess is still a guess.
+
+**DECIDED (2026-08-24)** — `workspace save <name>` opens a picker. It lists every
+live interactive session, every task the named workspace already declares
+(listed even when it is no longer running, so dropping one is a decision rather
+than a consequence of it being down at that moment), and any task that only has
+a forward. Per row: include/exclude, and the `resume` / `runner` values cycled in
+place. `--all` keeps the non-interactive form.
+
+`resume` and `runner` are cycled rather than typed for item 34a's reason — both
+are small closed enums, so the surface should offer their states. It also removes
+the last routine reason to hand-edit the file, which was the other half of the
+report: 「そもそも編集しづらい」.
+
+**DECIDED (2026-08-24)** — a save MERGES rather than replaces. Two defects made
+this necessary, both demonstrated before the fix: writing one task's block
+deleted every sibling block in that workspace, and every save reset `resume` /
+`runner` to the defaults — the two values this spec's own text calls the ones an
+operator hand-edits. `workspace.Merge` replaces the `forward` lines of a task the
+save OBSERVED, keeps every other block verbatim, and never overwrites an existing
+block's policy. The picker's listed set is what counts as observed, so an
+unticked row drops its block while a task the picker never listed survives.
+
+**DECIDED (2026-08-24)** — `harness-cli workspace save`'s `--task` is optional.
+It was required, which is why the CLI wrote one block; `cli.PortForwardList` with
+an empty filter returns every forward, so the bare form records the same set the
+TUI would. `--task` narrows it, and is the only way to clear a task's forwards
+from the CLI, since the registry reports presence and never absence.
+
 ### What the end-to-end run confirmed
 
 With `.harness/config` supplying the connection and `bin/harness-tui --workspace

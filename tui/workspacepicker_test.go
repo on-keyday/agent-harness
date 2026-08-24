@@ -1,0 +1,114 @@
+package tui
+
+import (
+	"encoding/hex"
+	"testing"
+
+	"github.com/on-keyday/agent-harness/cli/workspace"
+	"github.com/on-keyday/agent-harness/runner/protocol"
+)
+
+// liveSessionTask builds a Detached interactive task with the given hex id.
+// Named apart from skills_marker_test.go's liveTask, which fills a different
+// shape for the Obs column's tests.
+func liveSessionTask(t *testing.T, idHex string) protocol.TaskInfo {
+	t.Helper()
+	raw, err := hex.DecodeString(idHex)
+	if err != nil || len(raw) != 16 {
+		t.Fatalf("bad fixture id %q: %v", idHex, err)
+	}
+	var ti protocol.TaskInfo
+	copy(ti.Id.Id[:], raw)
+	ti.Status = protocol.TaskStatus_Detached
+	ti.Kind = protocol.TaskKind_Interactive
+	return ti
+}
+
+// With no existing workspace, every live session starts ticked — that is the
+// sensible default — but the operator can untick, which is the whole point of
+// the picker existing.
+func TestWorkspacePickerDefaultsToLiveSessions(t *testing.T) {
+	var m WorkspacePickerModel
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA), liveSessionTask(t, wsTaskB)}, nil, nil)
+	tasks, observed := m.Result()
+	if len(tasks) != 2 {
+		t.Fatalf("len(tasks) = %d, want both live sessions ticked", len(tasks))
+	}
+	if len(observed) != 2 {
+		t.Errorf("observed = %v, want both listed rows", observed)
+	}
+	m.Toggle() // untick the focused row
+	tasks, observed = m.Result()
+	if len(tasks) != 1 {
+		t.Errorf("after untick: len(tasks) = %d, want 1", len(tasks))
+	}
+	if len(observed) != 2 {
+		t.Errorf("an unticked row must still be OBSERVED (so its block is dropped), got %v", observed)
+	}
+	if len(m.ExcludedIDs()) != 1 {
+		t.Errorf("ExcludedIDs = %v, want the unticked one", m.ExcludedIDs())
+	}
+}
+
+// An existing workspace's own tasks are what a save defaults to, and its
+// hand-edited policy is where the picker starts — not the defaults.
+func TestWorkspacePickerStartsFromTheExistingWorkspace(t *testing.T) {
+	var m WorkspacePickerModel
+	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{
+		{ID: wsTaskB, Resume: workspace.ResumeFresh, Runner: workspace.RunnerAny},
+	}}
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, existing, nil)
+
+	tasks, _ := m.Result()
+	if len(tasks) != 1 || tasks[0].ID != wsTaskB {
+		t.Fatalf("tasks = %+v, want only the already-declared one ticked", tasks)
+	}
+	if tasks[0].Resume != workspace.ResumeFresh || tasks[0].Runner != workspace.RunnerAny {
+		t.Errorf("hand-edited policy was not carried into the picker: %+v", tasks[0])
+	}
+	// The live session that is NOT declared is listed and unticked, so it can
+	// be added without editing the file.
+	if len(m.ExcludedIDs()) != 1 || m.ExcludedIDs()[0] != wsTaskA {
+		t.Errorf("the undeclared live session should be listed unticked, got %v", m.ExcludedIDs())
+	}
+}
+
+// A task the workspace declares but which is no longer running must still be
+// listed: dropping it has to be a decision, not a consequence of it being down
+// at the moment of the save.
+func TestWorkspacePickerListsADeclaredButDeadTask(t *testing.T) {
+	var m WorkspacePickerModel
+	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{{ID: wsTaskB, Resume: workspace.ResumeContinue}}}
+	m.Open("mine", nil, existing, nil)
+	tasks, observed := m.Result()
+	if len(tasks) != 1 || tasks[0].ID != wsTaskB {
+		t.Errorf("a declared-but-dead task was not listed/ticked: %+v", tasks)
+	}
+	if !observed[wsTaskB] {
+		t.Error("it must be observed too")
+	}
+}
+
+func TestWorkspacePickerCycles(t *testing.T) {
+	var m WorkspacePickerModel
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, nil)
+	if got := m.rows[0].Resume; got != workspace.ResumeContinue {
+		t.Fatalf("initial resume = %q", got)
+	}
+	m.CycleResume()
+	if got := m.rows[0].Resume; got != workspace.ResumeFresh {
+		t.Errorf("continue → %q, want fresh", got)
+	}
+	m.CycleResume()
+	if got := m.rows[0].Resume; got != workspace.ResumeNo {
+		t.Errorf("fresh → %q, want no", got)
+	}
+	m.CycleRunner()
+	if got := m.rows[0].Runner; got != workspace.RunnerAny {
+		t.Errorf("assigned → %q, want any", got)
+	}
+	m.SetAll(false)
+	if tasks, _ := m.Result(); len(tasks) != 0 {
+		t.Errorf("SetAll(false) left %d ticked", len(tasks))
+	}
+}

@@ -158,3 +158,69 @@ func TestBlockMatchesWhatSetWrites(t *testing.T) {
 		t.Errorf("Block and Set disagree:\n--- Block ---\n%s\n--- file ---\n%s", Block(ws), f.Render())
 	}
 }
+
+// A save must not delete task blocks it never looked at, and must not reset the
+// resume / runner an operator hand-edited. Both were real: saving one task wiped
+// its siblings and rewrote their policy to the defaults.
+func TestMergeKeepsUnobservedBlocksAndHandEditedPolicy(t *testing.T) {
+	existing, err := Parse(strings.NewReader(`[workspace default]
+repo = /abs/repo
+
+[workspace default task 3f2a9c00000000000000000000000001]
+resume  = fresh
+runner  = any
+forward = -L 3000:127.0.0.1:3000
+
+[workspace default task 7b1e000000000000000000000000000f]
+resume  = continue
+runner  = assigned
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex, _ := existing.Workspace("default")
+
+	// What a save of ONLY the first task observes.
+	observed := &Workspace{Name: "default", Repo: "/abs/repo", Tasks: []Task{{
+		ID: "3f2a9c00000000000000000000000001", Resume: ResumeContinue, Runner: RunnerAssigned,
+		Forwards: []string{"-L 3000:127.0.0.1:3000", "-R 8080:127.0.0.1:8080"},
+	}}}
+	got := Merge(ex, observed, map[string]bool{"3f2a9c00000000000000000000000001": true})
+
+	if len(got.Tasks) != 2 {
+		t.Fatalf("len(Tasks) = %d, want 2 — the unobserved sibling must survive", len(got.Tasks))
+	}
+	if got.Tasks[0].Resume != ResumeFresh || got.Tasks[0].Runner != RunnerAny {
+		t.Errorf("hand-edited policy was reset: resume=%q runner=%q", got.Tasks[0].Resume, got.Tasks[0].Runner)
+	}
+	if len(got.Tasks[0].Forwards) != 2 {
+		t.Errorf("observed forwards were not updated: %q", got.Tasks[0].Forwards)
+	}
+	if got.Tasks[1].ID != "7b1e000000000000000000000000000f" || len(got.Tasks[1].Forwards) != 0 {
+		t.Errorf("the unobserved block changed: %+v", got.Tasks[1])
+	}
+}
+
+// An OBSERVED task with no live forwards has its forward lines cleared — that is
+// what "save what is running now" means for a forward the operator stopped.
+func TestMergeClearsForwardsOfAnObservedTask(t *testing.T) {
+	existing, err := Parse(strings.NewReader(
+		"[workspace default]\n[workspace default task 3f2a9c00000000000000000000000001]\nforward = -L 3000:127.0.0.1:3000\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ex, _ := existing.Workspace("default")
+	got := Merge(ex, &Workspace{Name: "default"}, map[string]bool{"3f2a9c00000000000000000000000001": true})
+	if len(got.Tasks) != 1 || len(got.Tasks[0].Forwards) != 0 {
+		t.Errorf("an observed task's stopped forward was not cleared: %+v", got.Tasks)
+	}
+}
+
+// A first save has no existing workspace to merge with.
+func TestMergeWithNoExistingWorkspace(t *testing.T) {
+	got := Merge(nil, &Workspace{Name: "w", ServerCID: "ws:x-1", Tasks: []Task{{ID: "3f2a9c00000000000000000000000001"}}},
+		map[string]bool{"3f2a9c00000000000000000000000001": true})
+	if got.ServerCID != "ws:x-1" || len(got.Tasks) != 1 {
+		t.Errorf("first save lost its own content: %+v", got)
+	}
+}

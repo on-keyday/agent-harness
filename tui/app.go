@@ -107,6 +107,10 @@ type App struct {
 	workspaceFile     *workspace.File
 	workspacePath     string
 	workspaceSaveName string // non-empty while a `workspace save` waits for the forward snapshot
+	workspaceSaveAll  bool   // that save was `--all`: write without opening the picker
+	// workspacePicker chooses WHICH tasks a save records, and their resume /
+	// runner. See its doc comment for why no automatic rule replaced it.
+	workspacePicker WorkspacePickerModel
 	// workspaceRetryOnRunner arms ONE re-apply for the next runner event, set
 	// when a workspace resume failed. See the SessionStartedMsg handler.
 	workspaceRetryOnRunner bool
@@ -1192,6 +1196,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.chat.SetSize(a.width, a.height)
 		a.rawModal.SetSize(a.width, a.height)
 		a.authorityPicker.SetSize(a.width, a.height)
+		a.workspacePicker.SetSize(a.width, a.height)
 		return a, nil
 
 	case tea.KeyMsg:
@@ -1480,6 +1485,49 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Authority picker intercepts keys when open: j/k move, space
 		// toggles, enter applies, esc cancels.
+		if a.workspacePicker.IsOpen() {
+			switch {
+			case msg.Type == tea.KeyEsc:
+				a.workspacePicker.Close()
+				a.cmdresult.Append("workspace save: cancelled")
+				return a, nil
+			case msg.Type == tea.KeyUp:
+				a.workspacePicker.Move(-1)
+				return a, nil
+			case msg.Type == tea.KeyDown:
+				a.workspacePicker.Move(1)
+				return a, nil
+			case msg.Type == tea.KeySpace:
+				a.workspacePicker.Toggle()
+				return a, nil
+			case msg.Type == tea.KeyEnter:
+				return a, a.commitWorkspacePicker()
+			case msg.Type == tea.KeyRunes:
+				// Per rune, not msg.String(): fast key-repeat batches a "jjj"
+				// burst into ONE KeyMsg, and comparing the string would make it
+				// an unknown key rather than three moves.
+				for _, r := range msg.Runes {
+					switch r {
+					case 'j':
+						a.workspacePicker.Move(1)
+					case 'k':
+						a.workspacePicker.Move(-1)
+					case ' ':
+						a.workspacePicker.Toggle()
+					case 'r':
+						a.workspacePicker.CycleResume()
+					case 'u':
+						a.workspacePicker.CycleRunner()
+					case 'a':
+						a.workspacePicker.SetAll(true)
+					case 'n':
+						a.workspacePicker.SetAll(false)
+					}
+				}
+				return a, nil
+			}
+			return a, nil
+		}
 		if a.authorityPicker.IsOpen() {
 			switch {
 			case msg.Type == tea.KeyEsc:
@@ -2396,6 +2444,9 @@ func (a *App) View() string {
 	if a.forwardPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.forwardPicker.View())
 	}
+	if a.workspacePicker.IsOpen() {
+		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.workspacePicker.View())
+	}
 	if a.authorityPicker.IsOpen() {
 		return lipgloss.Place(a.width, a.height, lipgloss.Center, lipgloss.Center, a.authorityPicker.View())
 	}
@@ -2678,7 +2729,7 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
 		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
 		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
-		a.cmdresult.Append("workspace save <name>                              - write this client's task + forwards + grid into .harness/config")
+		a.cmdresult.Append("workspace save <name> [--all]                      - pick which tasks go in the workspace (--all: every live session, no picker)")
 		a.cmdresult.Append("workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)")
 		a.cmdresult.Append("workspace ls | show [name]                         - list the workspaces in .harness/config, or print one")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")

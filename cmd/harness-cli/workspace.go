@@ -13,9 +13,14 @@ import (
 )
 
 func workspaceUsage() {
-	fmt.Fprintln(os.Stderr, "usage: harness-cli workspace save <name> --task <32-hex> [--resume no|continue|fresh] [--runner assigned|any] [--repo PATH]")
+	fmt.Fprintln(os.Stderr, "usage: harness-cli workspace save <name> [--task <32-hex>] [--resume no|continue|fresh] [--runner assigned|any] [--repo PATH]")
 	fmt.Fprintln(os.Stderr, "       harness-cli workspace ls")
 	fmt.Fprintln(os.Stderr, "       harness-cli workspace show [<name>]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "save records every task the registry reports a forward for; --task narrows it")
+	fmt.Fprintln(os.Stderr, "to one, and is also how a task's forwards get CLEARED after you stop them.")
+	fmt.Fprintln(os.Stderr, "It MERGES: task blocks it did not observe are kept, and an existing block's")
+	fmt.Fprintln(os.Stderr, "resume / runner are never overwritten — those are yours to hand-edit.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "There is no `workspace apply` here: a forward lives exactly as long as the")
 	fmt.Fprintln(os.Stderr, "client holding its control stream, so a short-lived CLI process could only")
@@ -86,20 +91,27 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 		}
 		name := args[1]
 		fs := flag.NewFlagSet("workspace save", flag.ExitOnError)
-		taskID := fs.String("task", "", "task id (32 hex) whose forwards to capture")
-		resume := fs.String("resume", string(workspace.ResumeContinue), "no | continue | fresh")
-		runner := fs.String("runner", string(workspace.RunnerAssigned), "assigned | any")
+		taskID := fs.String("task", "", "record only this task (32 hex); omitted = every task the registry reports a forward for")
+		resume := fs.String("resume", string(workspace.ResumeContinue), "no | continue | fresh — for a task block being written for the FIRST time")
+		runner := fs.String("runner", string(workspace.RunnerAssigned), "assigned | any — for a task block being written for the FIRST time")
 		repo := fs.String("repo", "", "repo identifier to record in the workspace")
 		fs.Parse(args[2:])
-		if _, err := hex.DecodeString(*taskID); err != nil || len(*taskID) != 32 {
-			return fmt.Errorf("workspace save: --task must be a 32-hex task id, got %q", *taskID)
+		if *taskID != "" {
+			if _, err := hex.DecodeString(*taskID); err != nil || len(*taskID) != 32 {
+				return fmt.Errorf("workspace save: --task must be a 32-hex task id, got %q", *taskID)
+			}
 		}
 
+		// An empty filter lists every forward the caller may see, so a bare
+		// `workspace save <name>` records the same set the TUI would rather than
+		// one task. --task narrows it, and is also what lets a save CLEAR one
+		// task's forwards: the registry reports presence, never absence.
 		forwards, err := cli.PortForwardList(ctx, cid, *taskID)
 		if err != nil {
 			return err
 		}
-		tk := workspace.Task{ID: *taskID, Resume: workspace.Resume(*resume), Runner: workspace.Runner(*runner)}
+		byTask := map[string]*workspace.Task{}
+		var order []string
 		skipped := 0
 		for i := range forwards {
 			spec, ok := cli.PortForwardConfigSpec(&forwards[i])
@@ -107,33 +119,62 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 				skipped++ // in-process: no local address to write down
 				continue
 			}
-			tk.Forwards = append(tk.Forwards, spec)
+			id := hex.EncodeToString(forwards[i].TaskId.Id[:])
+			t, seen := byTask[id]
+			if !seen {
+				t = &workspace.Task{ID: id, Resume: workspace.Resume(*resume), Runner: workspace.Runner(*runner)}
+				byTask[id] = t
+				order = append(order, id)
+			}
+			t.Forwards = append(t.Forwards, spec)
+		}
+		observed := map[string]bool{}
+		for _, id := range order {
+			observed[id] = true
+		}
+		if *taskID != "" {
+			observed[*taskID] = true // named but forward-less: clear its forwards
 		}
 
-		ws := &workspace.Workspace{Name: name, ServerCID: serverCIDStr, Repo: *repo, Tasks: []workspace.Task{tk}}
+		ws := &workspace.Workspace{Name: name, ServerCID: serverCIDStr, Repo: *repo}
+		for _, id := range order {
+			ws.Tasks = append(ws.Tasks, *byTask[id])
+		}
 		// Validate here rather than trusting the flags: --resume / --runner are
 		// free-form strings at this layer, and an unknown one must be refused
 		// before it reaches the file, not on the next client's start-up.
-		if err := ws.Validate(); err != nil {
-			return err
+		for _, t := range ws.Tasks {
+			if err := validateWorkspaceEnums(t); err != nil {
+				return err
+			}
 		}
-		if err := validateWorkspaceEnums(tk); err != nil {
+		if err := ws.Validate(); err != nil {
 			return err
 		}
 		if f == nil {
 			f = workspace.New()
 		}
+		existing, _ := f.Workspace(name)
+		ws = workspace.Merge(existing, ws, observed)
 		f.Set(ws)
 		if err := f.Save(path); err != nil {
 			return err
 		}
-		fmt.Printf("workspace %s saved to %s: 1 task, %d forward(s), %d in-process skipped\n",
-			name, path, len(tk.Forwards), skipped)
+		fmt.Printf("workspace %s saved to %s: %d task(s), %d forward(s), %d in-process skipped\n",
+			name, path, len(ws.Tasks), countTaskForwards(ws), skipped)
 		return nil
 	}
 	workspaceUsage()
 	os.Exit(2)
 	return nil
+}
+
+func countTaskForwards(ws *workspace.Workspace) int {
+	n := 0
+	for _, t := range ws.Tasks {
+		n += len(t.Forwards)
+	}
+	return n
 }
 
 // validateWorkspaceEnums rejects a --resume / --runner value the file's grammar

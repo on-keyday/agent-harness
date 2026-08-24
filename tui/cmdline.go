@@ -249,6 +249,10 @@ type FileDeleteAction struct {
 type WorkspaceAction struct {
 	Sub  string // "save" | "apply" | "ls" | "show"
 	Name string // "" means the installed workspace, except for save
+	// All is `save --all`: write every live session without opening the
+	// picker. The picker is the default because which tasks belong in a
+	// workspace is a statement, not something a rule can infer.
+	All bool
 }
 
 // ForwardLsAction lists every port forward visible to this operator.
@@ -1092,14 +1096,27 @@ func parseForward(args []string) (Action, error) {
 // would let a slip overwrite one from the live client state; every other verb
 // is read-only or re-runs what is already installed, so they may default.
 func parseWorkspace(args []string) (Action, error) {
-	const usage = "workspace: usage: workspace save <name> | workspace apply [name] | workspace ls | workspace show [name]"
+	const usage = "workspace: usage: workspace save <name> [--all] | workspace apply [name] | workspace ls | workspace show [name]"
 	if len(args) == 0 {
 		return nil, fmt.Errorf("%s", usage)
 	}
 	sub := args[0]
+	rest := args[1:]
+	all := false
+	var positional []string
+	for _, a := range rest {
+		if a == "--all" {
+			all = true
+			continue
+		}
+		if strings.HasPrefix(a, "-") {
+			return nil, fmt.Errorf("workspace %s: unknown flag %q\n%s", sub, a, usage)
+		}
+		positional = append(positional, a)
+	}
 	var name string
-	if len(args) > 1 {
-		name = args[1]
+	if len(positional) > 0 {
+		name = positional[0]
 	}
 	switch sub {
 	case "save":
@@ -1107,13 +1124,16 @@ func parseWorkspace(args []string) (Action, error) {
 			return nil, fmt.Errorf("workspace save: needs a name\n%s", usage)
 		}
 	case "apply", "ls", "show":
+		if all {
+			return nil, fmt.Errorf("workspace %s: --all applies to save only\n%s", sub, usage)
+		}
 	default:
 		return nil, fmt.Errorf("workspace: unknown subcommand %q\n%s", sub, usage)
 	}
-	if len(args) > 2 {
+	if len(positional) > 1 {
 		return nil, fmt.Errorf("workspace %s: too many arguments\n%s", sub, usage)
 	}
-	return WorkspaceAction{Sub: sub, Name: name}, nil
+	return WorkspaceAction{Sub: sub, Name: name, All: all}, nil
 }
 
 // splitPathspecTokens peels "-- <path...>" off the tail. It runs BEFORE the
