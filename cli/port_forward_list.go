@@ -203,3 +203,25 @@ func PortForwardInfoJSONLine(fi *protocol.PortForwardInfo) string {
 func PortForwardOrigin(fi *protocol.PortForwardInfo) string {
 	return strings.ToLower(fi.OriginKind.String()) + " " + string(fi.OriginCid)
 }
+
+// PortForwardConfigSpec renders a registered forward as the `-L …` / `-R …`
+// value a workspace config holds, and reports whether it can be rendered at
+// all. It is a SECOND renderer on purpose: PortForwardSpecString above writes
+// `bind -> target` for a person reading `forward ls`, which is not a spec any
+// parser accepts.
+//
+// ok is false for an in-process client endpoint. Per the schema
+// (runner/protocol/message.bgn, ClientEndpointKind), such a forward's
+// client-side address pair is EMPTY — a raw TUI pane, a WebUI preview pin, a -W
+// stdio splice — so there is no local port to write down and nothing an apply
+// could re-establish. That test lives here, once, rather than at each caller.
+//
+// The four-field [bind:]port:host:port form is used rather than the three-field
+// short form so a non-default bind address survives a save/apply round trip.
+func PortForwardConfigSpec(fi *protocol.PortForwardInfo) (string, bool) {
+	if fi.ClientEndpoint != protocol.ClientEndpointKind_OsSocket {
+		return "", false
+	}
+	return fmt.Sprintf("%s %s:%d:%s:%d", PortForwardDirFlag(fi.Direction),
+		fi.BindAddr, fi.BindPort, fi.TargetHost, fi.TargetPort), true
+}

@@ -93,3 +93,42 @@ func TestPortForwardInfoJSONLine(t *testing.T) {
 		}
 	}
 }
+
+func TestPortForwardConfigSpecRoundTrips(t *testing.T) {
+	local := &protocol.PortForwardInfo{
+		Direction: protocol.PortForwardDirection_Local, BindPort: 3000, TargetPort: 3000,
+		ClientEndpoint: protocol.ClientEndpointKind_OsSocket,
+	}
+	local.SetBindAddr([]byte("127.0.0.1"))
+	local.SetTargetHost([]byte("127.0.0.1"))
+	got, ok := PortForwardConfigSpec(local)
+	if !ok || got != "-L 127.0.0.1:3000:127.0.0.1:3000" {
+		t.Fatalf("local = %q, %v", got, ok)
+	}
+	if _, err := ParseForwardSpec(strings.TrimPrefix(got, "-L ")); err != nil {
+		t.Errorf("the rendered -L does not parse back: %v", err)
+	}
+
+	remote := &protocol.PortForwardInfo{
+		Direction: protocol.PortForwardDirection_Remote, BindPort: 8080, TargetPort: 9090,
+		ClientEndpoint: protocol.ClientEndpointKind_OsSocket,
+	}
+	remote.SetBindAddr([]byte("127.0.0.1"))
+	remote.SetTargetHost([]byte("127.0.0.1"))
+	got, ok = PortForwardConfigSpec(remote)
+	if !ok || got != "-R 127.0.0.1:8080:127.0.0.1:9090" {
+		t.Fatalf("remote = %q, %v", got, ok)
+	}
+	if _, err := ParseRemoteForwardSpec(strings.TrimPrefix(got, "-R ")); err != nil {
+		t.Errorf("the rendered -R does not parse back: %v", err)
+	}
+
+	inproc := &protocol.PortForwardInfo{
+		Direction: protocol.PortForwardDirection_Local, TargetPort: 3000,
+		ClientEndpoint: protocol.ClientEndpointKind_InProcess,
+	}
+	inproc.SetTargetHost([]byte("127.0.0.1"))
+	if _, ok := PortForwardConfigSpec(inproc); ok {
+		t.Error("an in-process forward reported itself savable")
+	}
+}

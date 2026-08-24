@@ -1313,44 +1313,15 @@ func parseSetCaps(args []string) (Action, error) {
 // scope names individually (cli.GridSubtree). --descendants without --under is
 // rejected rather than silently ignored — there is no subtree to strip a root
 // from.
+// The grammar itself lives in cli.ParseGridArgs. The workspace config accepts
+// the same argument string and cannot import this package, so a copy here would
+// be a mirror with no way to fail loudly when the grammar grows.
 func parseGrid(args []string) (Action, error) {
-	usage := "grid: usage: grid [<task-id>...] | grid --under <task-id> [--descendants]"
-	act := GridAction{Mode: cli.GridAll}
-	var under string
-	descendants := false
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--descendants":
-			descendants = true
-		case "--under":
-			if i+1 >= len(args) {
-				return nil, fmt.Errorf("grid: --under needs a task id")
-			}
-			i++
-			under = args[i]
-		default:
-			if strings.HasPrefix(args[i], "-") {
-				return nil, fmt.Errorf("grid: unknown flag %q\n%s", args[i], usage)
-			}
-			act.IDs = append(act.IDs, args[i])
-		}
+	mode, anchor, ids, err := cli.ParseGridArgs(args)
+	if err != nil {
+		return nil, err
 	}
-
-	switch {
-	case under != "":
-		if len(act.IDs) > 0 {
-			return nil, fmt.Errorf("grid: --under names one subtree; drop the extra ids\n%s", usage)
-		}
-		act.Mode, act.Anchor = cli.GridSubtree, under
-		if descendants {
-			act.Mode = cli.GridDescendants
-		}
-	case descendants:
-		return nil, fmt.Errorf("grid: --descendants needs --under <task-id> to take the descendants OF\n%s", usage)
-	case len(act.IDs) > 0:
-		act.Mode = cli.GridIds
-	}
-	return act, nil
+	return GridAction{Mode: mode, Anchor: anchor, IDs: ids}, nil
 }
 
 // parseSetParent backs `caps set-parent <task-id> (--parent <task-id> |
