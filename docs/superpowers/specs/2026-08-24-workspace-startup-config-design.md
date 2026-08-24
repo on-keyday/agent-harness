@@ -231,26 +231,58 @@ has no way to be in. And `AttachMode_Control` is takeover among controls
 reconnect reclaims a session another client had taken: a phone that picked the
 session up during the outage loses it the moment the TUI's network returns.
 
-### Idempotency
+### Idempotency: apply reconciles, it does not restart
 
-Each apply first tears down the forwards a previous apply of the same workspace
-started, then re-establishes them. `PortForwardSession` (`tui/portforward.go:98`)
-gains a field marking a session as workspace-owned; it is client-local
-bookkeeping for teardown and is not reported anywhere, because the server-side
-registry has no notion of a workspace and inventing one would mean a wire field.
-Forwards the operator started by hand are never torn down by an apply.
+**DECIDED (2026-08-24)** — an apply compares the declared forwards against the
+workspace-owned forwards already running and acts only on the difference:
+
+- a declared spec already running as a workspace-owned forward is left alone;
+- a declared spec with nothing running is started;
+- a workspace-owned forward whose spec is no longer declared is stopped.
+
+Not "tear everything down, then re-establish". The intended recovery from a port
+conflict is to free the port and run `workspace apply`, and a
+teardown-then-rebind would drop the forwards that were working in order to
+retry the one that was not — breaking live connections through them, and racing
+this client's own closing listener for the port it is about to rebind.
+
+On a reconnect the running set is empty (the connection that held every control
+stream is gone), so the same rule reduces to starting all of them.
+
+`PortForwardSession` (`tui/portforward.go:98`) gains a field marking a session as
+workspace-owned. It is client-local bookkeeping for reconciliation and is not
+reported anywhere: the server-side registry has no notion of a workspace and
+inventing one would mean a wire field. Forwards the operator started by hand are
+not workspace-owned and are therefore never stopped by an apply.
 
 ### Failure
 
-- A parse error is reported on stderr and exits 2, before the TUI enters the alt
-  screen. It is an authoring mistake and is fixed immediately.
-- An apply failure — a local port already bound, a task no longer present, no
-  runner available — appends one line per item to `a.cmdresult` and the client
-  keeps running. The environment being wrong must not cost the operator the
-  client.
-- Each line names its subject and what happened, e.g.
-  `workspace default: -L 3000:127.0.0.1:3000 on 3f2a9c… failed: bind: address
-  already in use`, never a bare count.
+A parse error is reported on stderr and exits 2, before the TUI enters the alt
+screen. It is an authoring mistake and is fixed immediately.
+
+Every other failure — a local port already bound, a task no longer present, no
+runner available — appends one line to `a.cmdresult` and the apply continues to
+the next item. The environment being wrong must not cost the operator the
+client. Each line names its subject and what happened, e.g.
+`workspace default: -L 3000:127.0.0.1:3000 on 3f2a9c… failed: listen tcp
+127.0.0.1:3000: bind: address already in use`, never a bare count.
+
+**DECIDED (2026-08-24)** — one `cli.RunForward` call per declared spec, never
+one call with a slice of them. `RunForward` aborts every spec in the call when
+any one of them fails to listen (`cli/port_forward.go:215-225`), so a conflict on
+3000 would take 8080 down with it. `DoStartPortForward` already passes
+`[]cli.ForwardSpec{sp}`, so following it gives per-spec independence.
+
+**DECIDED (2026-08-24)** — a failed forward is not retried automatically. When
+the port is held by another program the retries cannot succeed, and
+`a.cmdresult` is a 200-line ring that evicts oldest-first, so a retry loop
+would push out the error the operator still needs to read. Recovery is: free the
+port, run `workspace apply`, which by the reconciliation rule starts only the
+missing forward.
+
+**DECIDED (2026-08-24)** — a bind conflict does not fall back to another local
+port. `3000` is written because something expects 3000; binding 3001 silently
+would leave the operator with a forward that is running and useless.
 
 ## Writing a workspace
 
@@ -323,8 +355,11 @@ names an agent preset in this repository — the `--agent` flag's help text is
 - A `forward` value reaches `cli.ParseForwardSpec` and a `grid` value reaches
   `parseGrid` — asserted by feeding a spec only those parsers accept.
 - `resume`/`runner` map to the four `r`/`R`/`u`/`U` combinations.
-- Applying twice tears down the first apply's forwards and leaves a hand-started
-  forward alone.
+- Reconciliation: a second apply leaves an already-running workspace-owned
+  forward untouched, starts one whose first attempt failed, stops one whose spec
+  was removed from the file, and does not touch a hand-started forward.
+- A spec that fails to listen does not prevent the remaining specs, the resume
+  step, or the grid step from running.
 
 ## Consequences the operator should expect
 
