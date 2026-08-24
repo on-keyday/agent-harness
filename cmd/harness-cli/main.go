@@ -1088,6 +1088,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      observe are kept and an existing block's resume/runner are never reset")
 	fmt.Fprintln(os.Stderr, "                                      (in-process forwards — a raw TUI pane, a WebUI preview pin — have no local")
 	fmt.Fprintln(os.Stderr, "                                      address to write down and are skipped, with a count)")
+	fmt.Fprintln(os.Stderr, "  workspace rm <name>                 delete one workspace from .harness/config (other workspaces and comments kept)")
 	fmt.Fprintln(os.Stderr, "  workspace ls | show [<name>]        list the workspaces in .harness/config, or print one")
 	fmt.Fprintln(os.Stderr, "                                      the TUI applies a workspace on start, on reconnect, and on `workspace apply`;")
 	fmt.Fprintln(os.Stderr, "                                      there is no apply here — a forward dies with the process that holds it")

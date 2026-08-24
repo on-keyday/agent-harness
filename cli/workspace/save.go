@@ -175,3 +175,36 @@ func Merge(existing, observed *Workspace, observedTasks map[string]bool) *Worksp
 	}
 	return out
 }
+
+// Remove deletes a workspace's lines from the file, reporting whether it was
+// there. Blank lines and comments outside its span are untouched, the same as
+// Set — the two are the only writers and share that rule.
+//
+// It exists because the file was otherwise append-only through the tools: a
+// workspace could be created and rewritten but never dropped, so removing one
+// meant opening an editor, which is the thing these verbs exist to avoid.
+func (f *File) Remove(name string) bool {
+	old, ok := f.Workspace(name)
+	if !ok {
+		return false
+	}
+	span := old.end - old.start
+	next := make([]string, 0, len(f.lines)-span)
+	next = append(next, f.lines[:old.start]...)
+	next = append(next, f.lines[old.end:]...)
+	f.lines = next
+
+	kept := f.ws[:0]
+	for _, w := range f.ws {
+		if w == old {
+			continue
+		}
+		if w.start > old.start {
+			w.start -= span
+			w.end -= span
+		}
+		kept = append(kept, w)
+	}
+	f.ws = kept
+	return true
+}

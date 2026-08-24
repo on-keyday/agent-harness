@@ -1096,7 +1096,7 @@ func parseForward(args []string) (Action, error) {
 // would let a slip overwrite one from the live client state; every other verb
 // is read-only or re-runs what is already installed, so they may default.
 func parseWorkspace(args []string) (Action, error) {
-	const usage = "workspace: usage: workspace save <name> [--all] | workspace apply [name] | workspace ls | workspace show [name]"
+	const usage = "workspace: usage: workspace save <name> [--all] | workspace apply [name] | workspace rm <name> | workspace ls | workspace show [name]"
 	if len(args) == 0 {
 		return nil, fmt.Errorf("%s", usage)
 	}
@@ -1122,6 +1122,15 @@ func parseWorkspace(args []string) (Action, error) {
 	case "save":
 		if name == "" {
 			return nil, fmt.Errorf("workspace save: needs a name\n%s", usage)
+		}
+	case "rm":
+		// A name is required, and there is no "the current one" shorthand:
+		// deleting is the one verb here that cannot be undone by re-running it.
+		if name == "" {
+			return nil, fmt.Errorf("workspace rm: needs a name\n%s", usage)
+		}
+		if all {
+			return nil, fmt.Errorf("workspace rm: --all applies to save only\n%s", usage)
 		}
 	case "apply", "ls", "show":
 		if all {

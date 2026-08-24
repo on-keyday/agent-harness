@@ -14,6 +14,7 @@ import (
 
 func workspaceUsage() {
 	fmt.Fprintln(os.Stderr, "usage: harness-cli workspace save <name> [--task <32-hex>] [--resume no|continue|fresh] [--runner assigned|any] [--repo PATH]")
+	fmt.Fprintln(os.Stderr, "       harness-cli workspace rm <name>")
 	fmt.Fprintln(os.Stderr, "       harness-cli workspace ls")
 	fmt.Fprintln(os.Stderr, "       harness-cli workspace show [<name>]")
 	fmt.Fprintln(os.Stderr, "")
@@ -61,6 +62,19 @@ func runWorkspace(ctx context.Context, args []string, cid objproto.ConnectionID,
 		for _, n := range names {
 			fmt.Println(n)
 		}
+		return nil
+
+	case "rm":
+		if len(args) != 2 {
+			return fmt.Errorf("workspace rm: exactly one name")
+		}
+		if f == nil || !f.Remove(args[1]) {
+			return fmt.Errorf("no workspace named %q in %s", args[1], path)
+		}
+		if err := f.Save(path); err != nil {
+			return err
+		}
+		fmt.Printf("workspace %s removed from %s\n", args[1], path)
 		return nil
 
 	case "show":

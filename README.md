@@ -751,8 +751,12 @@ Inside the TUI, `workspace apply [name]` re-applies on demand, `workspace save
 <name>` writes the current state back, and `workspace ls` / `show [name]`
 inspect the file. From the CLI:
 
+`workspace rm <name>` deletes one workspace — its own lines only; other
+workspaces and every comment stay as they were.
+
 ```bash
 bin/harness-cli workspace save <name> [--task <32-hex>] [--repo PATH]
+bin/harness-cli workspace rm <name>
 bin/harness-cli workspace ls
 bin/harness-cli workspace show [<name>]
 bin/harness-cli --workspace default ls       # server-cid / ws-path / repo only
@@ -770,8 +774,18 @@ no longer running, so dropping one is a decision rather than a side effect),
 every task that could be resumed — a finished one is exactly what `resume` is
 for, so those are offered unticked, most recent first — and any task that only
 has a forward. Space includes or excludes a task, `r` cycles
-its `resume` (no / continue / fresh), `u` its `runner` (assigned / any), `a`/`n`
-tick all or none, Enter writes and Esc cancels. Which tasks belong in a
+its `resume` (no / continue / fresh), `u` its `runner` (assigned / any), `f`
+edits that task's `forward` lines (comma-separated, parsed by the same parser
+`harness-cli forward` uses, so the picker cannot write a spec the command line
+would reject), `g` cycles the `grid` line (keep / this session's selection /
+none), `a`/`n` tick all or none, Enter writes and Esc cancels.
+
+The grid is chosen HERE rather than read from whether the grid is open, because
+it cannot be: the grid is a full-screen overlay that intercepts every key, so
+the command line is unreachable while it is up and the grid is always closed by
+the time a save runs. Likewise `f` exists because a workspace's forwards were
+otherwise real-time only — the list came from the registry, so declaring a
+forward for a task that is not running meant editing the file. Which tasks belong in a
 workspace is a statement, not something a rule can infer from what happens to be
 running — `workspace save <name> --all` takes every live session without asking,
 for when pressing Enter is the only thing the picker would do.

@@ -216,6 +216,28 @@ func (a *App) runWorkspaceAction(v WorkspaceAction) tea.Cmd {
 		}
 		return nil
 
+	case "rm":
+		if a.workspaceFile == nil || !a.workspaceFile.Remove(v.Name) {
+			a.cmdresult.Append(ErrorStyle.Render("workspace rm: no workspace named " + v.Name))
+			return nil
+		}
+		path := a.workspaceConfigPath()
+		a.workspacePath = path
+		if err := a.workspaceFile.Save(path); err != nil {
+			a.cmdresult.Append(ErrorStyle.Render("workspace rm: " + err.Error()))
+			return nil
+		}
+		// Uninstall it if it was the one being applied: leaving it installed
+		// would keep re-applying a workspace the file no longer describes, and
+		// the next reconnect would look like the delete had not happened.
+		if a.workspace != nil && a.workspace.Name == v.Name {
+			a.SetWorkspace(nil)
+			a.cmdresult.Append(OKStyle.Render("workspace " + v.Name + " removed from " + path + " (it was the installed one; nothing is installed now)"))
+			return nil
+		}
+		a.cmdresult.Append(OKStyle.Render("workspace " + v.Name + " removed from " + path))
+		return nil
+
 	case "save":
 		return a.saveWorkspace(v.Name, v.All)
 	}
@@ -287,7 +309,7 @@ func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
 	if !all {
 		existing, _ := a.workspaceFile.Workspace(name)
 		a.workspacePicker.Open(name, gridLiveTasks(a.visibleTasks()),
-			a.resumableTasks(), existing, byTaskFwd)
+			a.resumableTasks(), existing, byTaskFwd, a.gridArgsString(), a.gridSelSet)
 		a.workspacePicker.SetSize(a.width, a.height)
 		if skippedFwd > 0 {
 			a.cmdresult.Append(fmt.Sprintf(
@@ -335,7 +357,9 @@ func (a *App) writeWorkspaceAll(name string, forwards []protocol.PortForwardInfo
 	// tui.New copies cfg.Server into a.server and cfg.DefaultRepo into
 	// a.defaultRepo; the App does not keep the Config itself.
 	ws := &workspace.Workspace{Name: name, ServerCID: a.server, Repo: a.defaultRepo}
-	if a.grid.IsOpen() {
+	// --all records the session's grid selection if there was one. Same reason
+	// as the picker path: a.grid.IsOpen() is always false here.
+	if a.gridSelSet {
 		ws.Grid, ws.GridSet = a.gridArgsString(), true
 	}
 	for _, id := range order {
@@ -356,7 +380,7 @@ func (a *App) writeWorkspaceAll(name string, forwards []protocol.PortForwardInfo
 			observed[t.ID] = true
 		}
 	}
-	a.writeWorkspace(ws, observed, 0, skipped)
+	a.writeWorkspace(ws, observed, 0, skipped, false)
 }
 
 func countWorkspaceForwards(ws *workspace.Workspace) int {
@@ -381,23 +405,41 @@ func (a *App) commitWorkspacePicker() tea.Cmd {
 	ws := &workspace.Workspace{
 		Name: name, ServerCID: a.server, Repo: a.defaultRepo, Tasks: tasks,
 	}
-	if a.grid.IsOpen() {
-		ws.Grid, ws.GridSet = a.gridArgsString(), true
+	// The grid comes from the picker's row, not from a.grid.IsOpen(): the grid
+	// overlay intercepts every key, so it is always CLOSED by the time a save
+	// runs and that gate could never fire.
+	gridVal, gridSet, gridKeep := a.workspacePicker.GridResult()
+	if !gridKeep {
+		ws.Grid, ws.GridSet = gridVal, true
+		if !gridSet {
+			// "none": write nothing, and tell Merge not to carry the old value.
+			ws.Grid, ws.GridSet = "", false
+		}
 	}
-	a.writeWorkspace(ws, observed, dropped, 0)
+	a.writeWorkspace(ws, observed, dropped, 0, !gridKeep)
 	return nil
 }
 
 // writeWorkspace merges ws into the file and reports what it wrote. Both save
 // paths — the picker and --all — end here, so the merge rules and the result
 // line cannot differ between them.
-func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, dropped, skipped int) {
+// gridDecided says the caller made an explicit choice about the grid line, so
+// Merge must not carry the file's old value forward.
+func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, dropped, skipped int, gridDecided bool) {
 	f := a.workspaceFile
 	if f == nil {
 		f = workspace.New()
 		a.workspaceFile = f
 	}
 	existing, _ := f.Workspace(ws.Name)
+	if gridDecided && existing != nil {
+		// Merge keeps the existing grid when the observed workspace does not
+		// set one; an explicit "none" has to survive that, so the old value is
+		// dropped from the copy Merge reads.
+		clone := *existing
+		clone.Grid, clone.GridSet = "", false
+		existing = &clone
+	}
 	merged := workspace.Merge(existing, ws, observed)
 	f.Set(merged)
 

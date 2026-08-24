@@ -123,6 +123,13 @@ type App struct {
 	gridSelMode   cli.GridScopeMode
 	gridSelAnchor string
 	gridSelIDs    []string
+	// gridSelSet records that a grid was opened at least once this session, so
+	// a save can offer that selection AFTER the grid is closed. It has to: the
+	// grid is a full-screen overlay that intercepts every key, so the command
+	// line is unreachable while it is open and `a.grid.IsOpen()` is ALWAYS
+	// false by the time a `workspace save` runs. Gating on it made the grid
+	// unsavable in principle rather than merely unsaved.
+	gridSelSet bool
 
 	// port-forward state
 	portForwardModal PortForwardModal
@@ -1486,6 +1493,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Authority picker intercepts keys when open: j/k move, space
 		// toggles, enter applies, esc cancels.
 		if a.workspacePicker.IsOpen() {
+			// The forward editor owns every key while it is up, or typing "-L
+			// 3000:…" would be read as move/include/cycle commands. Only Enter
+			// and Esc are claimed back.
+			if a.workspacePicker.IsEditing() {
+				switch msg.Type {
+				case tea.KeyEsc:
+					a.workspacePicker.CancelEdit()
+					return a, nil
+				case tea.KeyEnter:
+					if err := a.workspacePicker.CommitEdit(); err != nil {
+						a.cmdresult.Append(ErrorStyle.Render("workspace save: " + err.Error()))
+					}
+					return a, nil
+				}
+				return a, a.workspacePicker.UpdateInput(msg)
+			}
 			switch {
 			case msg.Type == tea.KeyEsc:
 				a.workspacePicker.Close()
@@ -1518,6 +1541,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						a.workspacePicker.CycleResume()
 					case 'u':
 						a.workspacePicker.CycleRunner()
+					case 'g':
+						a.workspacePicker.CycleGrid()
+					case 'f':
+						a.workspacePicker.BeginEdit()
 					case 'a':
 						a.workspacePicker.SetAll(true)
 					case 'n':
@@ -2602,7 +2629,7 @@ func (a *App) openGrid(mode cli.GridScopeMode, anchor string, ids []string) tea.
 			"grid %s: no live interactive session in this set (%d task(s) in it)", label, len(set))))
 		return nil
 	}
-	a.gridSelMode, a.gridSelAnchor, a.gridSelIDs = mode, anchor, ids
+	a.gridSelMode, a.gridSelAnchor, a.gridSelIDs, a.gridSelSet = mode, anchor, ids, true
 	a.grid.Open(a.appCtx, a.client, set, label)
 	a.grid.SetSize(a.width, a.height)
 	return gridTick()
@@ -2729,7 +2756,8 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
 		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
 		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
-		a.cmdresult.Append("workspace save <name> [--all]                      - pick which tasks go in the workspace (--all: every live session, no picker)")
+		a.cmdresult.Append("workspace save <name> [--all]                      - pick which tasks, their resume/runner, their forwards and the grid (--all: no picker)")
+		a.cmdresult.Append("workspace rm <name>                                - delete one workspace from .harness/config")
 		a.cmdresult.Append("workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)")
 		a.cmdresult.Append("workspace ls | show [name]                         - list the workspaces in .harness/config, or print one")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")

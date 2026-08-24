@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 	"github.com/on-keyday/agent-harness/cli/workspace"
@@ -49,7 +51,34 @@ type WorkspacePickerModel struct {
 	// resumableTotal counts every resumable candidate found, including the ones
 	// past maxResumableRows that are not listed.
 	resumableTotal int
+
+	// The grid line is chosen here rather than read from a.grid.IsOpen(): the
+	// grid overlay eats every key, so it is always closed by the time a save
+	// runs and gating on it made the setting unreachable. gridChoice cycles
+	// keep → set → none; gridArgs is the selection a `set` would write.
+	// editing is the per-task forward editor: a one-line input over the focused
+	// row. A workspace's forwards were otherwise REAL-TIME ONLY — the list came
+	// from the registry and nothing could add to it — so declaring "-L 3000 next
+	// time" for a task that is not running was expressible only by hand-editing
+	// the file, which is the thing this picker exists to remove.
+	editing bool
+	input   textinput.Model
+
+	gridChoice   workspaceGridChoice
+	gridArgs     string
+	gridHave     bool // a grid was opened this session, so `set` has something to write
+	gridExisting string
+	gridDeclared bool // the file already carries a grid line
 }
+
+// workspaceGridChoice is the grid row's three states.
+type workspaceGridChoice int
+
+const (
+	gridKeep workspaceGridChoice = iota // leave the file's grid line as it is
+	gridSet                             // write the selection from this session
+	gridNone                            // remove the grid line
+)
 
 // maxResumableRows bounds the finished-task tail. Live sessions and declared
 // tasks are never capped: those sets are small by construction.
@@ -81,10 +110,24 @@ func (m *WorkspacePickerModel) SetSize(w, h int) { m.w, m.h = w, h }
 // terminal tasks start UNticked — there can be many, and their presence is an
 // offer rather than a proposal.
 func (m *WorkspacePickerModel) Open(name string, live, resumable []protocol.TaskInfo,
-	existing *workspace.Workspace, forwards map[string][]string) {
+	existing *workspace.Workspace, forwards map[string][]string,
+	gridArgs string, gridHave bool) {
 
 	m.open, m.name, m.cur = true, name, 0
 	m.rows = m.rows[:0]
+	m.gridArgs, m.gridHave = gridArgs, gridHave
+	m.gridExisting, m.gridDeclared = "", false
+	if existing != nil && existing.GridSet {
+		m.gridExisting, m.gridDeclared = existing.Grid, true
+	}
+	switch {
+	case m.gridDeclared:
+		m.gridChoice = gridKeep // the file already says something; do not silently change it
+	case gridHave:
+		m.gridChoice = gridSet // a grid was opened this session and none is recorded
+	default:
+		m.gridChoice = gridNone
+	}
 
 	declared := map[string]workspace.Task{}
 	var declaredOrder []string
@@ -212,6 +255,118 @@ func (m *WorkspacePickerModel) CycleRunner() {
 	}
 }
 
+// CycleGrid walks the grid row's three states, skipping `set` when this session
+// never opened a grid — offering a state that would write nothing is worse than
+// not offering it.
+func (m *WorkspacePickerModel) CycleGrid() {
+	switch m.gridChoice {
+	case gridKeep:
+		if m.gridHave {
+			m.gridChoice = gridSet
+		} else {
+			m.gridChoice = gridNone
+		}
+	case gridSet:
+		m.gridChoice = gridNone
+	default:
+		m.gridChoice = gridKeep
+	}
+}
+
+// GridResult says what to write: the value, whether to write one at all, and
+// whether to leave the file's line untouched.
+func (m *WorkspacePickerModel) GridResult() (value string, set, keep bool) {
+	switch m.gridChoice {
+	case gridSet:
+		return m.gridArgs, true, false
+	case gridNone:
+		return "", false, false
+	}
+	return "", false, true
+}
+
+// gridRowLabel renders the grid row for the header area.
+func (m *WorkspacePickerModel) gridRowLabel() string {
+	show := func(v string) string {
+		if strings.TrimSpace(v) == "" {
+			return "all sessions"
+		}
+		return v
+	}
+	switch m.gridChoice {
+	case gridSet:
+		return "grid: " + show(m.gridArgs) + "  (from this session)"
+	case gridNone:
+		return "grid: none"
+	}
+	if m.gridDeclared {
+		return "grid: " + show(m.gridExisting) + "  (unchanged)"
+	}
+	return "grid: none"
+}
+
+// IsEditing reports whether the forward input has the keyboard.
+func (m *WorkspacePickerModel) IsEditing() bool { return m.editing }
+
+// BeginEdit opens the forward editor on the focused row, pre-filled with what
+// that task would currently record — so an edit starts from the truth rather
+// than from a blank line the operator has to retype.
+func (m *WorkspacePickerModel) BeginEdit() {
+	if len(m.rows) == 0 {
+		return
+	}
+	if m.input.Prompt == "" {
+		m.input = textinput.New()
+	}
+	m.input.Placeholder = "-L [bind:]localport:remotehost:remoteport, -R …  (comma-separated, empty = none)"
+	m.input.CharLimit = 1024
+	m.input.Width = 64
+	m.input.SetValue(strings.Join(m.rows[m.cur].Forwards, ", "))
+	m.input.CursorEnd()
+	m.input.Focus()
+	m.editing = true
+}
+
+// CancelEdit drops the edit.
+func (m *WorkspacePickerModel) CancelEdit() {
+	m.editing = false
+	m.input.Blur()
+}
+
+// CommitEdit parses the typed line and replaces the focused row's forwards.
+// Every value goes through the same parser `harness-cli forward` uses, so the
+// picker cannot write a spec the command line would reject.
+func (m *WorkspacePickerModel) CommitEdit() error {
+	if !m.editing {
+		return nil
+	}
+	raw := strings.TrimSpace(m.input.Value())
+	var out []string
+	if raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			v := strings.TrimSpace(part)
+			if v == "" {
+				continue
+			}
+			if _, _, _, err := workspace.ParseForwardValue(v); err != nil {
+				return err
+			}
+			out = append(out, v)
+		}
+	}
+	m.rows[m.cur].Forwards = out
+	m.editing = false
+	m.input.Blur()
+	return nil
+}
+
+// UpdateInput feeds a key to the forward editor.
+func (m *WorkspacePickerModel) UpdateInput(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return cmd
+}
+
 // SetAll includes or excludes every row.
 func (m *WorkspacePickerModel) SetAll(include bool) {
 	for i := range m.rows {
@@ -257,7 +412,7 @@ func (m *WorkspacePickerModel) ExcludedIDs() []string {
 // off the top of a short terminal — that shipped once already, in the `?` popup,
 // and no checklist item asks whether a view FITS.
 func (m *WorkspacePickerModel) visibleRows() int {
-	const chrome = 9
+	const chrome = 11
 	n := m.h - chrome
 	if n < 3 {
 		n = 3
@@ -292,7 +447,8 @@ func (m *WorkspacePickerModel) View() string {
 		Padding(1, 2)
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "workspace %q — which tasks?\n\n", m.name)
+	fmt.Fprintf(&b, "workspace %q — which tasks?\n", m.name)
+	b.WriteString("  " + m.gridRowLabel() + "   " + FooterStyle.Render("(g cycles)") + "\n\n")
 	if len(m.rows) == 0 {
 		b.WriteString("  (no live session, no declared task, no resumable task, no forward)\n")
 	}
@@ -333,7 +489,12 @@ func (m *WorkspacePickerModel) View() string {
 			"  (%d more finished task(s) not listed — the %d most recent are)\n",
 			m.resumableTotal-maxResumableRows, maxResumableRows)))
 	}
+	if m.editing {
+		b.WriteString("\n" + m.rows[m.cur].IDHex[:8] + " forwards: " + m.input.View() + "\n")
+		b.WriteString(FooterStyle.Render("enter apply · esc cancel"))
+		return box.Render(b.String())
+	}
 	b.WriteString("\n" + FooterStyle.Render(
-		"↑↓/jk move · space include · r resume · u runner · a/n all/none · enter save · esc cancel"))
+		"↑↓/jk move · space include · r resume · u runner · f forwards · g grid · a/n all/none · enter save · esc cancel"))
 	return box.Render(b.String())
 }

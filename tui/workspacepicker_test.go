@@ -31,7 +31,7 @@ func liveSessionTask(t *testing.T, idHex string) protocol.TaskInfo {
 // the picker existing.
 func TestWorkspacePickerDefaultsToLiveSessions(t *testing.T) {
 	var m WorkspacePickerModel
-	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA), liveSessionTask(t, wsTaskB)}, nil, nil, nil)
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA), liveSessionTask(t, wsTaskB)}, nil, nil, nil, "", false)
 	tasks, observed := m.Result()
 	if len(tasks) != 2 {
 		t.Fatalf("len(tasks) = %d, want both live sessions ticked", len(tasks))
@@ -59,7 +59,7 @@ func TestWorkspacePickerStartsFromTheExistingWorkspace(t *testing.T) {
 	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{
 		{ID: wsTaskB, Resume: workspace.ResumeFresh, Runner: workspace.RunnerAny},
 	}}
-	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, existing, nil)
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, existing, nil, "", false)
 
 	tasks, _ := m.Result()
 	if len(tasks) != 1 || tasks[0].ID != wsTaskB {
@@ -81,7 +81,7 @@ func TestWorkspacePickerStartsFromTheExistingWorkspace(t *testing.T) {
 func TestWorkspacePickerListsADeclaredButDeadTask(t *testing.T) {
 	var m WorkspacePickerModel
 	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{{ID: wsTaskB, Resume: workspace.ResumeContinue}}}
-	m.Open("mine", nil, nil, existing, nil)
+	m.Open("mine", nil, nil, existing, nil, "", false)
 	tasks, observed := m.Result()
 	if len(tasks) != 1 || tasks[0].ID != wsTaskB {
 		t.Errorf("a declared-but-dead task was not listed/ticked: %+v", tasks)
@@ -93,7 +93,7 @@ func TestWorkspacePickerListsADeclaredButDeadTask(t *testing.T) {
 
 func TestWorkspacePickerCycles(t *testing.T) {
 	var m WorkspacePickerModel
-	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, nil, nil)
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, nil, nil, "", false)
 	if got := m.rows[0].Resume; got != workspace.ResumeContinue {
 		t.Fatalf("initial resume = %q", got)
 	}
@@ -122,7 +122,7 @@ func TestWorkspacePickerOffersResumableTasksUnticked(t *testing.T) {
 	var m WorkspacePickerModel
 	done := liveSessionTask(t, wsTaskB)
 	done.Status = protocol.TaskStatus_Succeeded
-	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, []protocol.TaskInfo{done}, nil, nil)
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, []protocol.TaskInfo{done}, nil, nil, "", false)
 
 	if len(m.rows) != 2 {
 		t.Fatalf("len(rows) = %d, want the live one and the finished one", len(m.rows))
@@ -151,7 +151,7 @@ func TestWorkspacePickerCapsAndReportsTheResumableTail(t *testing.T) {
 		ti.Status = protocol.TaskStatus_Succeeded
 		many = append(many, ti)
 	}
-	m.Open("mine", nil, many, nil, nil)
+	m.Open("mine", nil, many, nil, nil, "", false)
 	if len(m.rows) != maxResumableRows {
 		t.Errorf("len(rows) = %d, want the cap %d", len(m.rows), maxResumableRows)
 	}
@@ -172,7 +172,7 @@ func TestWorkspacePickerFitsAShortTerminal(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		live = append(live, liveSessionTask(t, fmt.Sprintf("%032x", i+1)))
 	}
-	m.Open("mine", live, nil, nil, nil)
+	m.Open("mine", live, nil, nil, nil, "", false)
 	m.SetSize(200, 24)
 	lines := strings.Count(m.View(), "\n") + 1
 	if lines > 24 {
@@ -190,5 +190,99 @@ func TestWorkspacePickerFitsAShortTerminal(t *testing.T) {
 	}
 	if !strings.Contains(m.View(), "> ") {
 		t.Error("the cursor scrolled out of the window")
+	}
+}
+
+// The grid setting is chosen HERE, not read from a.grid.IsOpen(). The grid is a
+// full-screen overlay that intercepts every key, so the command line is
+// unreachable while it is open and IsOpen() is always false by the time a save
+// runs — gating on it made the grid unsavable in principle.
+func TestWorkspacePickerGridChoice(t *testing.T) {
+	// No grid this session, none in the file: the only honest state is none.
+	var m WorkspacePickerModel
+	m.Open("mine", nil, nil, nil, nil, "", false)
+	if _, set, keep := m.GridResult(); set || keep {
+		t.Errorf("no grid anywhere should mean none, got set=%v keep=%v", set, keep)
+	}
+	m.CycleGrid() // none → keep (set is skipped: nothing to write)
+	if _, set, keep := m.GridResult(); set || !keep {
+		t.Errorf("cycle from none should reach keep, got set=%v keep=%v", set, keep)
+	}
+
+	// A grid was opened this session and the file has none: offer to write it.
+	m.Open("mine", nil, nil, nil, nil, "--under "+wsTaskA, true)
+	v, set, keep := m.GridResult()
+	if !set || keep || v != "--under "+wsTaskA {
+		t.Errorf("a session grid with none in the file should default to set: %q %v %v", v, set, keep)
+	}
+	m.CycleGrid()
+	if _, set, keep := m.GridResult(); set || keep {
+		t.Errorf("set → none expected, got set=%v keep=%v", set, keep)
+	}
+
+	// The file already declares one: default to leaving it alone.
+	existing := &workspace.Workspace{Name: "mine", Grid: "--under " + wsTaskB, GridSet: true}
+	m.Open("mine", nil, nil, existing, nil, "--under "+wsTaskA, true)
+	if _, set, keep := m.GridResult(); set || !keep {
+		t.Errorf("an existing grid line should default to keep, got set=%v keep=%v", set, keep)
+	}
+	if !strings.Contains(m.gridRowLabel(), "unchanged") {
+		t.Errorf("the row should say it is unchanged: %q", m.gridRowLabel())
+	}
+	m.CycleGrid()
+	if v, set, _ := m.GridResult(); !set || v != "--under "+wsTaskA {
+		t.Errorf("keep → set should offer THIS session's selection, got %q", v)
+	}
+}
+
+// Forwards were REAL-TIME ONLY: the list came from the registry and nothing
+// could add to it, so "-L 3000 next time" for a task that is not running could
+// only be said by editing the file. The editor parses through the same parser
+// the command line uses, so it cannot write a spec that would be rejected.
+func TestWorkspacePickerForwardEditor(t *testing.T) {
+	var m WorkspacePickerModel
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, nil,
+		map[string][]string{wsTaskA: {"-L 3000:127.0.0.1:3000"}}, "", false)
+
+	m.BeginEdit()
+	if !m.IsEditing() {
+		t.Fatal("BeginEdit did not open the editor")
+	}
+	if got := m.input.Value(); got != "-L 3000:127.0.0.1:3000" {
+		t.Errorf("the editor should start from what is there, got %q", got)
+	}
+
+	m.input.SetValue("-L 3000:127.0.0.1:3000, -R 8080:127.0.0.1:9090")
+	if err := m.CommitEdit(); err != nil {
+		t.Fatalf("CommitEdit: %v", err)
+	}
+	tasks, _ := m.Result()
+	if len(tasks[0].Forwards) != 2 || tasks[0].Forwards[1] != "-R 8080:127.0.0.1:9090" {
+		t.Errorf("forwards = %q", tasks[0].Forwards)
+	}
+
+	// A spec the command line would reject is refused here too, and the row is
+	// left as it was rather than half-written.
+	m.BeginEdit()
+	m.input.SetValue("-W nonsense")
+	if err := m.CommitEdit(); err == nil {
+		t.Error("a -W value was accepted")
+	}
+	if !m.IsEditing() {
+		t.Error("a rejected edit must stay open so it can be corrected")
+	}
+	tasks, _ = m.Result()
+	if len(tasks[0].Forwards) != 2 {
+		t.Errorf("a rejected edit changed the row: %q", tasks[0].Forwards)
+	}
+
+	// Emptying the line clears the task's forwards.
+	m.input.SetValue("")
+	if err := m.CommitEdit(); err != nil {
+		t.Fatal(err)
+	}
+	tasks, _ = m.Result()
+	if len(tasks[0].Forwards) != 0 {
+		t.Errorf("clearing left %q", tasks[0].Forwards)
 	}
 }

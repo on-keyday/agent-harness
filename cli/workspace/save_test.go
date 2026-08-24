@@ -224,3 +224,48 @@ func TestMergeWithNoExistingWorkspace(t *testing.T) {
 		t.Errorf("first save lost its own content: %+v", got)
 	}
 }
+
+func TestRemove(t *testing.T) {
+	src := `# keep me
+
+[workspace a]
+repo = /a
+
+[workspace b]
+repo = /b
+
+[workspace b task 3f2a9c00000000000000000000000001]
+resume = fresh
+`
+	f, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.Remove("nosuch") {
+		t.Error("Remove reported success for a workspace that is not there")
+	}
+	if !f.Remove("b") {
+		t.Fatal("Remove(b) reported failure")
+	}
+	out := string(f.Render())
+	if strings.Contains(out, "workspace b") || strings.Contains(out, "3f2a9c") {
+		t.Errorf("workspace b survived:\n%s", out)
+	}
+	if !strings.Contains(out, "# keep me") || !strings.Contains(out, "repo = /a") {
+		t.Errorf("removing b damaged the rest:\n%s", out)
+	}
+	reparsed, err := Parse(strings.NewReader(out))
+	if err != nil {
+		t.Fatalf("the file does not parse after Remove: %v\n%s", err, out)
+	}
+	if names := reparsed.Names(); len(names) != 1 || names[0] != "a" {
+		t.Errorf("Names() = %q, want [a]", names)
+	}
+	// Removing the first one must keep the spans of what follows correct.
+	if !f.Remove("a") {
+		t.Fatal("Remove(a) reported failure")
+	}
+	if _, err := Parse(strings.NewReader(string(f.Render()))); err != nil {
+		t.Fatalf("does not parse after removing both: %v", err)
+	}
+}

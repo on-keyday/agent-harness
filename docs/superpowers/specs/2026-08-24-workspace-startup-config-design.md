@@ -499,6 +499,45 @@ an empty filter returns every forward, so the bare form records the same set the
 TUI would. `--task` narrows it, and is the only way to clear a task's forwards
 from the CLI, since the registry reports presence and never absence.
 
+## Amendment (2026-08-24, third round) — three things the file could say and the tools could not
+
+Asked what else was only reachable by hand-editing, three answers, all defects
+of the same shape: state the file can hold that no verb could produce.
+
+**1. The grid could never be saved at all.** The save recorded it only when
+`a.grid.IsOpen()`, and the grid is a full-screen overlay that intercepts every
+key (`tui/app.go:1270` returns unconditionally), so the command line is
+unreachable while it is up and the gate was ALWAYS false by the time a save ran.
+Dead code from the operator's side, not merely a missed case.
+
+**DECIDED** — the App records the grid selection at `openGrid`, the one entry
+point, and keeps it after the overlay closes. The picker carries a grid row
+cycling **keep / this session's selection / none**, so the value is visible and
+both settable and removable. `none` is a real state, so the merge is told not to
+carry the file's old value forward when the row was decided.
+
+**2. Forwards were real-time only.** The picker showed a task's forwards but had
+no way to add one: the list came from the registry, so "record `-L 3000` for
+next time" required the forward to be running now — impossible for a task that
+is not.
+
+**DECIDED** — `f` on a picker row edits that task's `forward` lines, pre-filled
+with what it currently holds. Every value goes through
+`workspace.ParseForwardValue`, so the picker cannot write a spec the command line
+would reject, and a rejected edit leaves the row as it was rather than
+half-written.
+
+**3. There was no way to delete a workspace.** `save` / `apply` / `ls` / `show`
+could create and rewrite one but never drop it, so removing a workspace meant
+opening an editor — the thing these verbs exist to avoid.
+
+**DECIDED** — `workspace rm <name>` on both surfaces, backed by `File.Remove`,
+which deletes that workspace's line span and nothing else: other workspaces and
+every comment survive, the same rule `Set` follows. In the TUI, removing the
+INSTALLED workspace also uninstalls it — leaving it installed would keep
+re-applying something the file no longer describes, and the next reconnect would
+look like the delete had not happened.
+
 ### What the end-to-end run confirmed
 
 With `.harness/config` supplying the connection and `bin/harness-tui --workspace
