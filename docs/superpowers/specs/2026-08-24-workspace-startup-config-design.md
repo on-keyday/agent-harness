@@ -199,7 +199,8 @@ would have skipped the resume in the one case that most needs it.
 
 ### Steps
 
-Per task block, in order:
+Per task block, in order — but see the Amendment: "in order" was written as if
+the steps were sequential, and the TUI's command runner is concurrent.
 
 1. **`resume`** — when `resume` is not `no` and the task is terminal, call
    `DoStartDetachedSession` with `resumeTaskID` set to the block's task id and
@@ -418,3 +419,54 @@ names an agent preset in this repository — the `--agent` flag's help text is
   drops the operator's own CLI-established forwards and has no implementation at
   all in `harness-cli`, which holds none. The remedy is the same as any other
   conflict: stop the other forward, or delete the line.
+
+## Amendment (2026-08-24, after the first end-to-end run)
+
+Two defects that no unit test could have shown, both found by driving a real
+TUI against a dummy harness and restarting the server under it. Each is a place
+where the "Steps" section above described an ORDER the implementation had no way
+to keep.
+
+**1. The steps are not sequential, and one pair has to be.** The TUI issues work
+as `tea.Cmd`s and `tea.Batch` runs them CONCURRENTLY. A forward issued in the
+same pass as the resume that brings its task back therefore races that resume
+and loses: the live run printed `forward: register 127.0.0.1:34990: forward: no
+such task (id unknown or task not running)`.
+
+**DECIDED** — a task being resumed gets no forwards in that pass. The
+`SessionStartedMsg` that reports the resume re-arms the apply, and the snapshot
+that follows starts them with the task alive. It terminates because the task is
+then not in a terminal state, so the next pass resumes nothing. Only a task the
+installed workspace names re-arms, so an operator's own `session new -d` does
+not trigger an apply.
+
+**2. The reconnect wins a race the feature depends on losing.** After a server
+restart the client reconnects before the RUNNER does, so the apply runs against
+a server that has no runner yet: `interactive no_runner_for_repo: no idle runner
+for repo ""`. The apply is one pass per subscribe, so nothing retried, and the
+case this design exists for — a server restart leaves the task Failed, bring it
+back — failed by default.
+
+**DECIDED** — a failed workspace resume arms ONE re-apply for the next runner
+event. Armed by a failure, never standing: re-applying on every runner event
+would reopen the grid overlay under the operator. The measured gap was about ten
+seconds.
+
+**3. An apply with nothing to do now says so.** Reconciling to a no-op is the
+healthy steady state and the expected answer to a `workspace apply` typed after
+fixing a conflict that turned out not to need fixing; silence read as a command
+that had not run.
+
+### What the end-to-end run confirmed
+
+With `.harness/config` supplying the connection and `bin/harness-tui --workspace
+default` given no `--server-cid`: the task was resumed detached (`ls` showed
+`Detached`, `resumed_by=tui`, `cowrite=0 viewer=0` — nothing attached) and its
+forward appeared in `forward ls`. Restarting the target server and waiting
+produced, in the TUI's own result pane, the failed resume, the retry after the
+runner returned, and then the forward — with a new origin CID, so it was
+re-established rather than a survivor. Occupying one declared port left the
+other forward running and the resume unaffected, one line naming the port and
+`bind: address already in use`. Freeing it and running `workspace apply` started
+only the missing forward; the working one kept its forward id, so its
+connections were never broken.
