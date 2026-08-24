@@ -788,31 +788,138 @@ nothing yet" and "subscribed, all read" are different states and the whole field
 exists to separate them. `TestBoard_ListSubscribersShowsUnpublishedTopic` pins
 it. Gate on existence (is this topic subscribed), never on value.
 
+### 2026-08-24 (pre-landing) — `.harness/config`: a client workspace restored on start and reconnect
+
+A named set of connection values, a task to bring back, its forwards and a grid
+selection, applied by the TUI on start, on reconnect and on `workspace apply`.
+Walked BEFORE the spec was written, which is the first entry in this log where
+the trigger fired on time — and the walk changed the design twice before any
+code existed.
+
+done:    1 (`--config` / `--workspace` on both binaries, both usage blocks), 2
+         (the config delegates every value grammar it does not own: `forward`
+         to `cli.ParseForwardSpec` / `ParseRemoteForwardSpec`, `grid` to a
+         `cli.ParseGridArgs` EXTRACTED from `tui.parseGrid` for this — the new
+         package cannot import `tui`, and a copy would have been a mirror with
+         no way to fail loudly), 3 (`workspace save|apply|ls|show` in the TUI
+         cmdline), 9 (the workspace feeds `tui.Config`'s existing
+         `Server`/`DefaultRepo`, adding no second state), 10 (a new verb family
+         on the CLI and the TUI cmdline; `harness-cli forward` deliberately does
+         NOT read the file's forward lines — that verb takes its specs as
+         arguments and mixing an implicit source in makes "which one took
+         effect" unanswerable), 24 (per-path meaning written down: `harness-cli`
+         reads only server-cid / ws-path / repo, the TUI reads all of it, and
+         there is no `harness-cli workspace apply` at all), 25 (`GridSet` is a
+         presence bit — `grid =` with an empty value is the unnarrowed grid and
+         is NOT the same as omitting the key), 27 + 28a (the detached resume
+         goes through `auth.opts(sessionRequest{…})`, the funnel
+         `TestSessionOptsIsBuiltInOnePlace` guards; counted the starter call
+         sites before changing their signature — two, plus the ONE
+         `PortForwardSession{` construction site), 29 (every apply line names
+         its subject: `workspace default: -L 3000:… on 3f2a9c… failed: …`, never
+         a bare count), 30 (results to `a.cmdresult`), 31 (the save prints
+         `N in-process skipped` even at zero — the operator wondering where
+         their `t` pane went needs the zero), 32 (`cli.GridArgsString` is the
+         other half of `ParseGridArgs` and its round trip is pinned;
+         `cli.PortForwardConfigSpec` is pinned by feeding its output back
+         through the forward parsers), 33 (an unknown key, header or enum value
+         in the file is a parse ERROR, not a skipped line — a typo'd `fowardd`
+         would otherwise establish nothing while the file looks right), 35, 37,
+         **S5**
+omitted: 4 (no keybinding: re-applying is rare and the cmdline reaches it; a
+         dedicated key would need a free letter for an action taken once a day)
+         6, 7, 8 (WebUI): a browser has no file to read, which IS the reason
+         this design is client-local; and independently it cannot listen, so
+         `-L` has no equivalent there — its analogue is the preview pin, which
+         binds nothing locally, and `-R` (dial back to the viewer's own host)
+         means nothing on a phone. A workspace applied in the WebUI would mean
+         something different from the same file applied in the TUI.
+         36 — no agent-facing skill mentions the config, deliberately: an agent
+         must never read an operator's workspace, and documenting the flag in a
+         skill agents read would invite exactly that.
+n/a:     5, 11–23, 26, 28, 34, 34a, 38 — nothing new is DISPLAYED on a task or
+         runner row and nothing crosses the wire; `FromWorkspace` on
+         `PortForwardSession` is client-local teardown bookkeeping, which is why
+         it is NOT surfaced: the server-side registry has no notion of a
+         workspace and giving it one would mean a wire field. S1–S4, S6 (no
+         agent, bin, argv, credential or egress change).
+missed:  —
+
+Item **S5 fired, and it is the only item that could have caught this.** The
+sandbox wrapper forwards environment into the container BY PREFIX
+(`scripts/sandbox/agent-in-podman.sh:385`: `case "$name" in HARNESS_*) CLI+=(
+--env "$name" ) ;;`), so a `HARNESS_CONFIG` left in a runner's environment would
+ride into EVERY sandboxed agent — pointing at a path that inside the container
+either does not exist or is a different operator's file. Nothing in `cli/`,
+`tui/` or `cmd/` mentions that forwarding. The answer was to refuse to read any
+config when `HARNESS_AUTH_TICKET` is set, which is the unambiguous "I am an
+in-task agent" marker (`cli/cliopts/cliopts.go` requires it with no flag
+fallback). **Verified live, by accident and then on purpose**: running the new
+binary from inside this task silently ignored a malformed config, and the same
+file with the variable scrubbed exited 2 naming the line.
+
+Item **33 decided the parser's whole error posture**, not one flag. The
+alternative — skip what you do not recognise, the way most ini readers do —
+fails silently in the one direction that matters here: a workspace that
+establishes nothing looks identical to one that was never applied.
+
+Item **1 turned up a defect in code the change did not add.** `harness-tui`'s
+`--server-cid` and `--ws-path` carried their defaults INSIDE `flag.String`, and
+a flag default is indistinguishable from an operator typing that value — so the
+built-in would have beaten the workspace on every run and `--workspace default`
+could never have supplied a server-cid. Both defaults moved out of the flag and
+are applied after resolution. The pre-existing tier order (flag > env) was
+correct; adding a third tier below it is what exposed that the first tier was
+being populated by nobody.
+
+Item **2 is why a package boundary moved.** `cli/workspace` must not import
+`tui` (the dependency runs the other way), so the `grid` argument grammar could
+not stay in `tui/cmdline.go` if the config was to accept the same string an
+operator types. Extracting it to `cli.ParseGridArgs` is what let the config
+reuse the parser instead of mirroring it — the item's rule producing a
+refactor rather than a check.
+
+**Two design reversals came from the operator, not the walk**, and both are
+worth recording because the walk would not have caught either. The first: the
+config's `forward` lines had no task binding at all, because I wrote them as a
+flat list under the workspace — 「forwardタスクに紐づいてるよね??」. A forward is
+registered against a task id and a `-R` is bound to that task's RUNNER, so the
+binding belongs in the section header. The second: an `attach` key that
+collapsed the wire's three attach modes into one and, being `control`, would
+have silently taken a session back from another client on every reconnect —
+「そもそも欲しいのはresumeしてはほしいけどattachは別にしてほしくない」. The answer
+was to delete the key: resume runs DETACHED and the grid restores the screen,
+and grid panes attach as `cowrite`, which the schema defines as non-takeover.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 11 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. |
+| 31 (don't hide a value for what it IS) | 12 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. |
 | 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 10 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. |
+| 33 (take effect or error) | 11 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
-| 10 (other verb families) | 7 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
-| 1–10 (input surfaces) | 2 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
-| 27 (shared funnel) | 5 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 7 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
-| 28a (follow the value to the request build) | 7 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
+| S5 (env and addressing contract) | 1 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". |
+| 10 (other verb families) | 8 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
+| 1–10 (input surfaces) | 3 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
+| 27 (shared funnel) | 6 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
+| 32 (one serializer, round-trip tested) | 9 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
+| 28a (follow the value to the request build) | 8 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
 | 34a (same KIND of control as its neighbours) | 2 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
 | 38 (live screen-rendering surfaces) | 3 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. |
-| 29 (result messages name the target and the change) | 4 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
+| 29 (result messages name the target and the change) | 5 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 
 **Never fired yet:** 21, 26. Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30
-and 24 came off this list with the `87c10a2` entry.)
+and 24 came off this list with the `87c10a2` entry.) 25 fired again on the
+workspace entry, in its cleanest form yet: `grid =` with an empty value is a
+real selection and an omitted `grid` key is not, so presence needed its own bit
+in a plain Go struct — the same question the wire asks, one layer up from it.
 
 (8, 9, 22 and 25 came off this list with the `--scope-for` entry above; 27
 came off it by MISSING, which is still a firing.)

@@ -79,6 +79,10 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
       `agent {send | wait | inbox | dispatch | subscribe | unsubscribe
       | topics | subscriptions}`. See `runner/agentskills/harness-cli/
       SKILL.md` for conventions.
+    - Workspace config: `workspace {save,ls,show}` reads and writes
+      `.harness/config`, and the global `--config` / `--workspace` add a
+      third resolution tier below flag and env for `server-cid` /
+      `ws-path` / `repo`. See **Workspace config** below.
     - Capabilities: `submit` / `session new` / `interactive` take
       `--caps NAMES` to grant a spawned task a restricted capability set
       (`caps_child = caps_parent ∩ requested`, server-enforced) and
@@ -673,7 +677,7 @@ stale.
 
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
 / session stream attach / file {ls,push,pull,delete} / grid / caps / scope
-/ caps set / caps set-parent
+/ caps set / caps set-parent / workspace {save,apply,ls,show}
 / server dial-runner / cancel / prune / repo / clear / help / quit`.
 `session new --stream -d` opens an event-stream session (detached only in
 the TUI — there is no terminal to splice); `session stream attach <id>`
@@ -694,6 +698,96 @@ terminal (`Z`). Use `harness-cli prune-local` for local-only worktree
 cleanup; the TUI's `prune` command is server-only. slog output
 (transport / pubsub / etc.) is folded into the cmdresult pane with a
 `[log]` prefix so it never scribbles over the alt screen.
+
+## Workspace config
+
+Starting a client — and every reconnect after a drop — otherwise repeats the
+same steps by hand: pass the connection flags, bring the long-lived task back if
+it died, re-establish its port forwards one spec at a time, and reopen the grid.
+The forwards are not optional work after a reconnect: a forward's lifetime is
+the lifetime of the client connection holding its control stream, so a client
+that goes away takes every forward with it.
+
+A **workspace** is a named set of those values in `.harness/config`. Both
+`harness-tui` and `harness-cli` read it; the TUI is what applies one.
+
+```
+# .harness/config   (gitignored — it holds a LAN server-cid and local paths)
+
+[workspace default]
+server-cid = ws:HOSTNAME:8539-*
+repo       = /abs/path/to/repo
+grid       = --under 3f2a9c…            # the `grid` command's arguments, verbatim
+
+[workspace default task 3f2a9c…]
+resume  = continue                      # no (default) | continue (r/u) | fresh (R/U)
+runner  = assigned                      # assigned (r/R, default) | any (u/U)
+forward = -L 3000:127.0.0.1:3000
+forward = -R 8080:127.0.0.1:8080
+```
+
+The file is resolved as `--config <path>` → `HARNESS_CONFIG` →
+`./.harness/config` (current directory only; the search does not walk up). An
+explicitly named file that is missing is an error; a missing default is silent.
+**It is not read at all when `HARNESS_AUTH_TICKET` is set** — the sandbox
+wrapper forwards environment by `HARNESS_*` prefix, so an in-task agent must
+never pick up an operator's workspace.
+
+An unknown key, header or enum value is a parse error rather than a skipped
+line, so a typo'd `fowardd` cannot silently establish nothing. `forward` and
+`grid` values are handed to the same parsers `harness-cli forward` and the
+`grid` command use, so the config can never accept a spelling the command line
+rejects. There is no key for the PSK: the secret keeps its two existing homes.
+
+Nothing here is a wire change. Both forward directions terminate in a client
+process, so a declaration held server-side could never enact itself — which is
+why this is a client-side file.
+
+```bash
+bin/harness-tui --workspace default          # applies on start and every reconnect
+```
+
+Inside the TUI, `workspace apply [name]` re-applies on demand, `workspace save
+<name>` writes the current state back, and `workspace ls` / `show [name]`
+inspect the file. From the CLI:
+
+```bash
+bin/harness-cli workspace save <name> --task <32-hex> [--repo PATH]
+bin/harness-cli workspace ls
+bin/harness-cli workspace show [<name>]
+bin/harness-cli --workspace default ls       # server-cid / ws-path / repo only
+```
+
+Saving is how the file gets written — no task id or forward spec is meant to be
+typed by hand. Both save paths read the server-side forward registry and write
+every forward whose client endpoint is an OS socket, skipping the in-process
+ones (a raw `t` pane, a WebUI preview pin) with a count: those bind nothing
+locally, so no `-L`/`-R` line describes them. Reading the registry means a save
+also captures a forward established from a `harness-cli forward` in another
+terminal — and that the next apply will then contend for that port with the
+process still holding it, reported as an ordinary bind conflict.
+
+Applying **reconciles** rather than restarts. A declared forward already running
+is left alone, a missing one is started, and one no longer declared is stopped;
+forwards the operator started by hand are never touched. That is what makes
+`workspace apply` the recovery from a port conflict — freeing the port and
+re-applying starts only the forward that failed, leaving the ones that were
+working connected. A failed forward is not retried automatically and does not
+fall back to another local port; it reports one line and the apply continues to
+the next item.
+
+The resume brings a task back **detached** — nothing takes over the terminal;
+the grid is what restores the screen. It fires on start, on reconnect and on
+`workspace apply` alike, but only for a task the snapshot shows in a terminal
+state. A network blip leaves the task alive, so it cannot spawn anything there;
+a server restart marks an interrupted task Failed, which is exactly the case it
+exists for. One consequence worth expecting: a session ended on purpose exits 0,
+which is Succeeded, so the next apply resumes it — `resume = no`, or dropping
+the task block, is the answer.
+
+The WebUI has no workspace: a browser has no file to read, and it cannot listen,
+so `-L` has no equivalent there (its analogue is the preview pin, which binds
+nothing locally).
 
 ## WebUI
 

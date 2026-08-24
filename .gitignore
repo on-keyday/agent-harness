@@ -1,5 +1,9 @@
 harness-data/
 .harness-worktrees/
+# Client-side workspace config: which task to bring back, which forwards to
+# establish, which grid to open. Holds a LAN server-cid and local repo paths,
+# so it is machine-local like harness-data/ and bin/.run/.
+.harness/
 harness-tui.log
 server.log
 bin/
