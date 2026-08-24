@@ -46,7 +46,14 @@ type WorkspacePickerModel struct {
 	rows []workspacePickerRow
 	cur  int
 	w, h int
+	// resumableTotal counts every resumable candidate found, including the ones
+	// past maxResumableRows that are not listed.
+	resumableTotal int
 }
+
+// maxResumableRows bounds the finished-task tail. Live sessions and declared
+// tasks are never capped: those sets are small by construction.
+const maxResumableRows = 15
 
 func (m *WorkspacePickerModel) IsOpen() bool { return m.open }
 func (m *WorkspacePickerModel) Close()       { m.open = false; m.rows = nil }
@@ -56,14 +63,24 @@ func (m *WorkspacePickerModel) SetSize(w, h int) { m.w, m.h = w, h }
 
 // Open builds the candidate list for workspace `name`.
 //
-// Candidates are every live interactive session plus every task the named
-// workspace already declares, so a task that has since finished is still
-// listed — dropping it must be a decision, not a side effect of it not running
-// at the moment you saved.
+// Candidates, in this order:
+//
+//   - every live interactive session;
+//   - every task the workspace already declares, listed even when it is no
+//     longer running — dropping one must be a decision, not a side effect of it
+//     being down at the moment you saved;
+//   - every task that could be RESUMED (terminal, by the same decision the r/R
+//     keys make), most recent first. A finished task is exactly what `resume`
+//     exists for, so leaving these out made the picker exclude its own subject:
+//     "this one is done, bring it back next time I start" was expressible only
+//     by hand-editing the file.
+//   - anything that only has a forward.
 //
 // Pre-selection: an existing workspace's own tasks if it has any (a save then
-// defaults to "what I already said"), otherwise every live session.
-func (m *WorkspacePickerModel) Open(name string, live []protocol.TaskInfo,
+// defaults to "what I already said"), otherwise every live session. Resumable
+// terminal tasks start UNticked — there can be many, and their presence is an
+// offer rather than a proposal.
+func (m *WorkspacePickerModel) Open(name string, live, resumable []protocol.TaskInfo,
 	existing *workspace.Workspace, forwards map[string][]string) {
 
 	m.open, m.name, m.cur = true, name, 0
@@ -113,6 +130,21 @@ func (m *WorkspacePickerModel) Open(name string, live []protocol.TaskInfo,
 	}
 	for _, id := range declaredOrder {
 		add(id, id[:8]+"  (not running)", false)
+	}
+	// Cap the resumable tail: on a long-lived server every task ever run is
+	// terminal, and a picker listing all of them is unusable. The count that did
+	// not fit is REPORTED (see View) rather than silently dropped.
+	m.resumableTotal = 0
+	for i := range resumable {
+		id := FormatTaskID(resumable[i].Id)
+		if seen[id] {
+			continue
+		}
+		m.resumableTotal++
+		if m.resumableTotal > maxResumableRows {
+			continue
+		}
+		add(id, workspacePickerLabel(resumable[i]), false)
 	}
 	// Tasks that only have a forward, with no session and no declaration.
 	var extra []string
@@ -217,6 +249,39 @@ func (m *WorkspacePickerModel) ExcludedIDs() []string {
 	return out
 }
 
+// visibleRows is how many task rows fit: the box's own chrome (border, padding,
+// title, blank line, footer, and the "N more" line when there is one) comes off
+// the terminal height first.
+//
+// A modal that renders at its CONTENT's height pushes its own title and footer
+// off the top of a short terminal — that shipped once already, in the `?` popup,
+// and no checklist item asks whether a view FITS.
+func (m *WorkspacePickerModel) visibleRows() int {
+	const chrome = 9
+	n := m.h - chrome
+	if n < 3 {
+		n = 3
+	}
+	return n
+}
+
+// window returns the slice of rows to draw and the counts hidden above/below,
+// keeping the cursor inside it.
+func (m *WorkspacePickerModel) window() (rows []workspacePickerRow, above, below int) {
+	n := m.visibleRows()
+	if len(m.rows) <= n {
+		return m.rows, 0, 0
+	}
+	start := m.cur - n/2
+	if start < 0 {
+		start = 0
+	}
+	if start+n > len(m.rows) {
+		start = len(m.rows) - n
+	}
+	return m.rows[start : start+n], start, len(m.rows) - start - n
+}
+
 func (m *WorkspacePickerModel) View() string {
 	if !m.open {
 		return ""
@@ -229,11 +294,16 @@ func (m *WorkspacePickerModel) View() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "workspace %q — which tasks?\n\n", m.name)
 	if len(m.rows) == 0 {
-		b.WriteString("  (no live session, no declared task, no forward)\n")
+		b.WriteString("  (no live session, no declared task, no resumable task, no forward)\n")
 	}
-	for i, r := range m.rows {
+	rows, above, below := m.window()
+	if above > 0 {
+		b.WriteString(FooterStyle.Render(fmt.Sprintf("  ↑ %d more\n", above)))
+	}
+	for i, r := range rows {
+		idx := above + i
 		cursor := "  "
-		if i == m.cur {
+		if idx == m.cur {
 			cursor = "> "
 		}
 		mark := "[ ]"
@@ -249,10 +319,19 @@ func (m *WorkspacePickerModel) View() string {
 		}
 		line := fmt.Sprintf("%s%s %-52s  resume:%-8s runner:%-8s%s",
 			cursor, mark, r.Label, r.Resume, r.Runner, fwd)
-		if i == m.cur {
+		if idx == m.cur {
 			line = lipgloss.NewStyle().Foreground(colorFocused).Render(line)
 		}
 		b.WriteString(line + "\n")
+	}
+	if below > 0 {
+		b.WriteString(FooterStyle.Render(fmt.Sprintf("  ↓ %d more\n", below)))
+	}
+	// A cap that is not reported reads as "that is all there is".
+	if m.resumableTotal > maxResumableRows {
+		b.WriteString(FooterStyle.Render(fmt.Sprintf(
+			"  (%d more finished task(s) not listed — the %d most recent are)\n",
+			m.resumableTotal-maxResumableRows, maxResumableRows)))
 	}
 	b.WriteString("\n" + FooterStyle.Render(
 		"↑↓/jk move · space include · r resume · u runner · a/n all/none · enter save · esc cancel"))

@@ -766,8 +766,10 @@ presence, never absence, so a save can only clear what it was pointed at.
 Saving is how the file gets written — no task id or forward spec is meant to be
 typed by hand. In the TUI, `workspace save <name>` opens a **picker**: every
 live session, every task the workspace already declares (still listed when it is
-no longer running, so dropping one is a decision rather than a side effect), and
-any task that only has a forward. Space includes or excludes a task, `r` cycles
+no longer running, so dropping one is a decision rather than a side effect),
+every task that could be resumed — a finished one is exactly what `resume` is
+for, so those are offered unticked, most recent first — and any task that only
+has a forward. Space includes or excludes a task, `r` cycles
 its `resume` (no / continue / fresh), `u` its `runner` (assigned / any), `a`/`n`
 tick all or none, Enter writes and Esc cancels. Which tasks belong in a
 workspace is a statement, not something a rule can infer from what happens to be

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"encoding/hex"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/cli/workspace"
@@ -29,7 +31,7 @@ func liveSessionTask(t *testing.T, idHex string) protocol.TaskInfo {
 // the picker existing.
 func TestWorkspacePickerDefaultsToLiveSessions(t *testing.T) {
 	var m WorkspacePickerModel
-	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA), liveSessionTask(t, wsTaskB)}, nil, nil)
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA), liveSessionTask(t, wsTaskB)}, nil, nil, nil)
 	tasks, observed := m.Result()
 	if len(tasks) != 2 {
 		t.Fatalf("len(tasks) = %d, want both live sessions ticked", len(tasks))
@@ -57,7 +59,7 @@ func TestWorkspacePickerStartsFromTheExistingWorkspace(t *testing.T) {
 	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{
 		{ID: wsTaskB, Resume: workspace.ResumeFresh, Runner: workspace.RunnerAny},
 	}}
-	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, existing, nil)
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, existing, nil)
 
 	tasks, _ := m.Result()
 	if len(tasks) != 1 || tasks[0].ID != wsTaskB {
@@ -79,7 +81,7 @@ func TestWorkspacePickerStartsFromTheExistingWorkspace(t *testing.T) {
 func TestWorkspacePickerListsADeclaredButDeadTask(t *testing.T) {
 	var m WorkspacePickerModel
 	existing := &workspace.Workspace{Name: "mine", Tasks: []workspace.Task{{ID: wsTaskB, Resume: workspace.ResumeContinue}}}
-	m.Open("mine", nil, existing, nil)
+	m.Open("mine", nil, nil, existing, nil)
 	tasks, observed := m.Result()
 	if len(tasks) != 1 || tasks[0].ID != wsTaskB {
 		t.Errorf("a declared-but-dead task was not listed/ticked: %+v", tasks)
@@ -91,7 +93,7 @@ func TestWorkspacePickerListsADeclaredButDeadTask(t *testing.T) {
 
 func TestWorkspacePickerCycles(t *testing.T) {
 	var m WorkspacePickerModel
-	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, nil)
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, nil, nil, nil)
 	if got := m.rows[0].Resume; got != workspace.ResumeContinue {
 		t.Fatalf("initial resume = %q", got)
 	}
@@ -110,5 +112,83 @@ func TestWorkspacePickerCycles(t *testing.T) {
 	m.SetAll(false)
 	if tasks, _ := m.Result(); len(tasks) != 0 {
 		t.Errorf("SetAll(false) left %d ticked", len(tasks))
+	}
+}
+
+// A finished task must be OFFERABLE even when it is not already declared:
+// "this one is done, bring it back next time" is what resume is for, and the
+// first picker could express it only by hand-editing the file.
+func TestWorkspacePickerOffersResumableTasksUnticked(t *testing.T) {
+	var m WorkspacePickerModel
+	done := liveSessionTask(t, wsTaskB)
+	done.Status = protocol.TaskStatus_Succeeded
+	m.Open("mine", []protocol.TaskInfo{liveSessionTask(t, wsTaskA)}, []protocol.TaskInfo{done}, nil, nil)
+
+	if len(m.rows) != 2 {
+		t.Fatalf("len(rows) = %d, want the live one and the finished one", len(m.rows))
+	}
+	tasks, _ := m.Result()
+	if len(tasks) != 1 || tasks[0].ID != wsTaskA {
+		t.Errorf("a finished task must start UNticked: %+v", tasks)
+	}
+	// …and ticking it is all it takes to have it resumed on the next start.
+	m.Move(1)
+	m.Toggle()
+	tasks, _ = m.Result()
+	if len(tasks) != 2 {
+		t.Errorf("ticking the finished task did not include it: %+v", tasks)
+	}
+}
+
+// The finished tail is capped, and the count that did not fit is reported
+// rather than silently dropped.
+func TestWorkspacePickerCapsAndReportsTheResumableTail(t *testing.T) {
+	var m WorkspacePickerModel
+	var many []protocol.TaskInfo
+	for i := 0; i < maxResumableRows+7; i++ {
+		id := fmt.Sprintf("%032x", i+1)
+		ti := liveSessionTask(t, id)
+		ti.Status = protocol.TaskStatus_Succeeded
+		many = append(many, ti)
+	}
+	m.Open("mine", nil, many, nil, nil)
+	if len(m.rows) != maxResumableRows {
+		t.Errorf("len(rows) = %d, want the cap %d", len(m.rows), maxResumableRows)
+	}
+	if m.resumableTotal != maxResumableRows+7 {
+		t.Errorf("resumableTotal = %d, want every candidate counted", m.resumableTotal)
+	}
+	m.SetSize(200, 60)
+	if v := m.View(); !strings.Contains(v, "7 more finished task(s) not listed") {
+		t.Errorf("the cap is not reported:\n%s", v)
+	}
+}
+
+// A long list must not push the picker's own title and footer off a short
+// terminal — the `?` popup shipped exactly that defect once.
+func TestWorkspacePickerFitsAShortTerminal(t *testing.T) {
+	var m WorkspacePickerModel
+	var live []protocol.TaskInfo
+	for i := 0; i < 40; i++ {
+		live = append(live, liveSessionTask(t, fmt.Sprintf("%032x", i+1)))
+	}
+	m.Open("mine", live, nil, nil, nil)
+	m.SetSize(200, 24)
+	lines := strings.Count(m.View(), "\n") + 1
+	if lines > 24 {
+		t.Errorf("View is %d lines on a 24-row terminal", lines)
+	}
+	if !strings.Contains(m.View(), "which tasks?") {
+		t.Error("the title was pushed out of the box")
+	}
+	if !strings.Contains(m.View(), "enter save") {
+		t.Error("the footer was pushed out of the box")
+	}
+	// The cursor must stay visible when it moves to the end.
+	for i := 0; i < 39; i++ {
+		m.Move(1)
+	}
+	if !strings.Contains(m.View(), "> ") {
+		t.Error("the cursor scrolled out of the window")
 	}
 }

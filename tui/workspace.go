@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -285,7 +286,8 @@ func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
 
 	if !all {
 		existing, _ := a.workspaceFile.Workspace(name)
-		a.workspacePicker.Open(name, gridLiveTasks(a.visibleTasks()), existing, byTaskFwd)
+		a.workspacePicker.Open(name, gridLiveTasks(a.visibleTasks()),
+			a.resumableTasks(), existing, byTaskFwd)
 		a.workspacePicker.SetSize(a.width, a.height)
 		if skippedFwd > 0 {
 			a.cmdresult.Append(fmt.Sprintf(
@@ -412,4 +414,24 @@ func (a *App) writeWorkspace(ws *workspace.Workspace, observed map[string]bool, 
 	line += fmt.Sprintf(", %d dropped, %d in-process skipped", dropped, skipped)
 	a.cmdresult.Append(OKStyle.Render(line))
 	a.SetWorkspace(merged)
+}
+
+// resumableTasks are the tasks a workspace could bring back: the ones the r/R
+// keys would RESUME rather than reattach, most recent first.
+//
+// The predicate is resumeReattachAction's own verdict rather than a status list
+// written out again here — the picker must offer exactly what an apply can
+// actually do, and that decision already exists in one place.
+func (a *App) resumableTasks() []protocol.TaskInfo {
+	var out []protocol.TaskInfo
+	for _, t := range a.visibleTasks() {
+		ti := t
+		if resumeReattachAction(&ti, true).Kind == actionResume {
+			out = append(out, ti)
+		}
+	}
+	// Most recent first: the task just finished is the one most likely wanted,
+	// and it is what the listing cap keeps when there are more than fit.
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt > out[j].CreatedAt })
+	return out
 }
