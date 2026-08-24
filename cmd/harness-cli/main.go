@@ -20,6 +20,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
 	"github.com/on-keyday/objtrsf/objproto"
@@ -46,13 +47,36 @@ func (f *scopeForFlag) Set(v string) error {
 	return nil
 }
 
+// workspaceRepo is the `repo` a --workspace supplied, consulted by the two
+// places that fall back to HARNESS_REPO_PATH (the file subcommand here and
+// `session new` in session.go). A package-level var rather than an os.Setenv:
+// the workspace is a tier BELOW the environment, and writing it into the
+// environment would erase that distinction for anything reading it later.
+var workspaceRepo string
+
 func main() {
 	serverCID := flag.String("server-cid", "",
-		"server ConnectionID (env: HARNESS_SERVER_CID; default ws:127.0.0.1:8539-*)")
-	wsPath := flag.String("ws-path", "", "WebSocket URL path (env: HARNESS_WS_PATH; default /ws)")
+		"server ConnectionID (env: HARNESS_SERVER_CID; workspace: server-cid; default ws:127.0.0.1:8539-*)")
+	wsPath := flag.String("ws-path", "", "WebSocket URL path (env: HARNESS_WS_PATH; workspace: ws-path; default /ws)")
+	configPath := flag.String("config", "", "workspace config file (env: HARNESS_CONFIG; default ./.harness/config)")
+	wsName := flag.String("workspace", "", "workspace whose server-cid / ws-path / repo to use (see `workspace ls`)")
 	flag.Usage = usage
 	flag.Parse()
-	resolvedWS := cliopts.ResolveString(*wsPath, "HARNESS_WS_PATH")
+
+	wsFile, _, werr := workspace.Load(*configPath)
+	if werr != nil {
+		die(fmt.Errorf("config: %w", werr))
+	}
+	var wsServerCID, wsWSPath string
+	if *wsName != "" {
+		w, ok := wsFile.Workspace(*wsName)
+		if !ok {
+			die(fmt.Errorf("config: no workspace named %q", *wsName))
+		}
+		wsServerCID, wsWSPath, workspaceRepo = w.ServerCID, w.WSPath, w.Repo
+	}
+
+	resolvedWS := cliopts.ResolveStringWith(*wsPath, "HARNESS_WS_PATH", wsWSPath)
 	if resolvedWS == "" {
 		resolvedWS = "/ws"
 	}
@@ -67,8 +91,8 @@ func main() {
 	ctx := context.Background()
 
 	parseCID := func() objproto.ConnectionID {
-		val := *serverCID
-		if val == "" && os.Getenv("HARNESS_SERVER_CID") == "" {
+		val := cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)
+		if val == "" {
 			val = "ws:127.0.0.1:8539-*"
 		}
 		cid, err := cliopts.ResolveServerCID(val)
@@ -333,6 +357,8 @@ func main() {
 		if repoVal == "." {
 			if env := os.Getenv("HARNESS_REPO_PATH"); env != "" {
 				repoVal = env
+			} else if workspaceRepo != "" {
+				repoVal = workspaceRepo
 			}
 		}
 		abs, err := filepath.Abs(repoVal)
@@ -566,6 +592,12 @@ func main() {
 
 	case "git":
 		if err := runGit(parseCID(), args); err != nil {
+			die(err)
+		}
+
+	case "workspace":
+		if err := runWorkspace(ctx, args, parseCID(), *configPath,
+			cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)); err != nil {
 			die(err)
 		}
 
@@ -952,11 +984,13 @@ func readFlagBody(v string) ([]byte, error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] [--ws-path PATH] <subcommand> [args]")
+	fmt.Fprintln(os.Stderr, "usage: harness-cli [--server-cid CID] [--ws-path PATH] [--config PATH] [--workspace NAME] <subcommand> [args]")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Global flags fall back to env when omitted (flag > env > default):")
-	fmt.Fprintln(os.Stderr, "  --server-cid  HARNESS_SERVER_CID  (default ws:127.0.0.1:8539-*)")
-	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (default /ws)")
+	fmt.Fprintln(os.Stderr, "Global flags fall back to env, then to a --workspace (flag > env > workspace > default):")
+	fmt.Fprintln(os.Stderr, "  --server-cid  HARNESS_SERVER_CID  (workspace: server-cid; default ws:127.0.0.1:8539-*)")
+	fmt.Fprintln(os.Stderr, "  --ws-path     HARNESS_WS_PATH     (workspace: ws-path; default /ws)")
+	fmt.Fprintln(os.Stderr, "  --config      HARNESS_CONFIG      (default ./.harness/config; never read inside a task)")
+	fmt.Fprintln(os.Stderr, "  --workspace   NAME                which workspace in that file supplies server-cid / ws-path / repo")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Subcommands:")
 	fmt.Fprintln(os.Stderr, "  submit --repo REPO --task TEXT [--runner HEX | --host NAME | --ip ADDR] [--agent-arg ARG ...] [--agent NAME] [--resume TASK_ID] [--resume-conversation] [--caps NAMES] [--scope SPEC]")
@@ -1048,6 +1082,13 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      --subrepo DIR runs any of them inside a nested repository (a plain")
 	fmt.Fprintln(os.Stderr, "                                      nested repo is invisible from outside it); subrepos lists them")
 	fmt.Fprintln(os.Stderr, "                                      --submodule on diff/show inlines a submodule's own changes")
+	fmt.Fprintln(os.Stderr, "  workspace save <name> --task <32-hex> [--resume no|continue|fresh] [--runner assigned|any] [--repo PATH]")
+	fmt.Fprintln(os.Stderr, "                                      record the task's registered forwards into .harness/config as a named workspace")
+	fmt.Fprintln(os.Stderr, "                                      (in-process forwards — a raw TUI pane, a WebUI preview pin — have no local")
+	fmt.Fprintln(os.Stderr, "                                      address to write down and are skipped, with a count)")
+	fmt.Fprintln(os.Stderr, "  workspace ls | show [<name>]        list the workspaces in .harness/config, or print one")
+	fmt.Fprintln(os.Stderr, "                                      the TUI applies a workspace on start, on reconnect, and on `workspace apply`;")
+	fmt.Fprintln(os.Stderr, "                                      there is no apply here — a forward dies with the process that holds it")
 	fmt.Fprintln(os.Stderr, "  forward <task-id> [-L [bind:]localport:remotehost:remoteport] [-R [bind:]runnerport:dialhost:dialport] ...")
 	fmt.Fprintln(os.Stderr, "                                      -L: forward a local port through the runner to remote host:port (ssh -L)")
 	fmt.Fprintln(os.Stderr, "                                      -R: runner listens, connections dial back to a client-side host:port (ssh -R)")

@@ -632,6 +632,11 @@ func runSessionNew(cid objproto.ConnectionID, args []string) error {
 	if repoVal == "" {
 		repoVal = os.Getenv("HARNESS_REPO_PATH")
 	}
+	if repoVal == "" {
+		// Third tier: a --workspace's repo. Below the environment, per
+		// workspaceRepo's note in main.go.
+		repoVal = workspaceRepo
+	}
 	if repoVal == "" && *resume == "" {
 		return fmt.Errorf("session new: --repo required (or set HARNESS_REPO_PATH) — except when --resume is set, which uses the existing task's repo")
 	}
