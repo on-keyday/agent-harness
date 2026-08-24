@@ -111,6 +111,12 @@ type PortForwardSession struct {
 	Spec      string
 	Cancel    context.CancelFunc
 	ForwardID uint64
+	// FromWorkspace marks a forward started by a workspace apply. It is what
+	// reconciliation acts on: an apply may stop only forwards it owns, so one
+	// the operator started by hand is never taken away. Client-local
+	// bookkeeping — the server-side registry has no notion of a workspace, and
+	// giving it one would mean a wire field.
+	FromWorkspace bool
 }
 
 // selectForwards returns the active sessions for a task in one direction, sorted
@@ -179,12 +185,13 @@ type PortForwardStatusMsg struct{ Line string }
 // the server-assigned id when known synchronously (remote forwards); zero for
 // a local forward, whose id arrives later via PortForwardRegisteredMsg.
 type PortForwardStartedMsg struct {
-	ID        int
-	TaskID    string
-	Direction ForwardDirection
-	Spec      string
-	Cancel    context.CancelFunc
-	ForwardID uint64
+	ID            int
+	TaskID        string
+	Direction     ForwardDirection
+	Spec          string
+	Cancel        context.CancelFunc
+	ForwardID     uint64
+	FromWorkspace bool
 }
 
 // PortForwardRegisteredMsg backfills the server-assigned forward id onto a
@@ -257,14 +264,14 @@ func forwardStatusLogf(ctx context.Context, program *tea.Program) func(string) {
 	}
 }
 
-func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea.Program) tea.Cmd {
+func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea.Program, fromWorkspace bool) tea.Cmd {
 	return func() tea.Msg {
 		sp, err := cli.ParseForwardSpec(spec)
 		if err != nil {
 			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
-		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel})
+		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardLocal, Spec: spec, Cancel: cancel, FromWorkspace: fromWorkspace})
 		go func() {
 			onRegistered := func(_ cli.ForwardSpec, fid uint64) {
 				program.Send(PortForwardRegisteredMsg{ID: id, ForwardID: fid})
@@ -282,7 +289,7 @@ func DoStartPortForward(c *cli.Client, taskID, spec string, id int, program *tea
 // bound the listener (OpenRemoteForward blocks until the bind result) BEFORE
 // registering, so a bind failure shows a clear error instead of a misleading
 // "forward started" followed by an error.
-func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *tea.Program) tea.Cmd {
+func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *tea.Program, fromWorkspace bool) tea.Cmd {
 	return func() tea.Msg {
 		sp, err := cli.ParseRemoteForwardSpec(spec)
 		if err != nil {
@@ -294,7 +301,7 @@ func DoStartRemoteForward(c *cli.Client, taskID, spec string, id int, program *t
 			cancel()
 			return PortForwardStatusMsg{Line: forwardFailLine(taskID, err)}
 		}
-		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel, ForwardID: fid})
+		program.Send(PortForwardStartedMsg{ID: id, TaskID: taskID, Direction: ForwardRemote, Spec: spec, Cancel: cancel, ForwardID: fid, FromWorkspace: fromWorkspace})
 		go func() {
 			c.ServeRemoteForwardControl(ctx, sp, ctrl, forwardStatusLogf(ctx, program))
 			program.Send(PortForwardStoppedMsg{ID: id, TaskID: taskID})

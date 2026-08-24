@@ -1034,7 +1034,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 
 	case PortForwardStartedMsg:
-		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel, ForwardID: msg.ForwardID}
+		a.activeForwards[msg.ID] = &PortForwardSession{ID: msg.ID, TaskID: msg.TaskID, Direction: msg.Direction, Spec: msg.Spec, Cancel: msg.Cancel, ForwardID: msg.ForwardID, FromWorkspace: msg.FromWorkspace}
 		a.cmdresult.Append(OKStyle.Render("forward started: ") + pfShortID(msg.TaskID) + "  " + msg.Direction.flag() + " " + msg.Spec)
 		return a, nil
 
@@ -1550,9 +1550,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				a.nextForwardID++
 				if mode == ForwardRemote {
-					return a, DoStartRemoteForward(a.client, taskID, spec, a.nextForwardID, a.program)
+					return a, DoStartRemoteForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
 				}
-				return a, DoStartPortForward(a.client, taskID, spec, a.nextForwardID, a.program)
+				return a, DoStartPortForward(a.client, taskID, spec, a.nextForwardID, a.program, false)
 			}
 			var pfcmd tea.Cmd
 			a.portForwardModal, pfcmd = a.portForwardModal.Update(msg)
