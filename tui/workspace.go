@@ -139,3 +139,165 @@ func (a *App) workspaceGridCmd(ws *workspace.Workspace) (tea.Cmd, error) {
 	}
 	return a.openGrid(mode, anchor, ids), nil
 }
+
+// gridArgsString renders the open grid's selection back into the `grid`
+// command's argument string. It reads the selection App recorded at openGrid
+// rather than GridModel's scope field, which holds a display label with a
+// truncated anchor id and cannot be parsed back.
+func (a *App) gridArgsString() string {
+	return cli.GridArgsString(a.gridSelMode, a.gridSelAnchor, a.gridSelIDs)
+}
+
+// runWorkspaceAction handles the `workspace` verb. save and apply act on the
+// live client; ls and show read the file.
+func (a *App) runWorkspaceAction(v WorkspaceAction) tea.Cmd {
+	switch v.Sub {
+	case "apply":
+		if v.Name != "" {
+			ws, ok := a.workspaceFile.Workspace(v.Name)
+			if !ok {
+				a.cmdresult.Append(ErrorStyle.Render("workspace apply: no workspace named " + v.Name))
+				return nil
+			}
+			if err := ws.Validate(); err != nil {
+				a.cmdresult.Append(ErrorStyle.Render(err.Error()))
+				return nil
+			}
+			a.SetWorkspace(ws)
+		}
+		if a.workspace == nil {
+			a.cmdresult.Append(WarnStyle.Render("workspace apply: no workspace installed (start with --workspace <name>, or name one here)"))
+			return nil
+		}
+		return a.applyWorkspace()
+
+	case "ls":
+		names := a.workspaceFile.Names()
+		if len(names) == 0 {
+			a.cmdresult.Append("workspace ls: no workspaces in " + a.workspaceConfigPath())
+			return nil
+		}
+		for _, n := range names {
+			mark := "  "
+			if a.workspace != nil && a.workspace.Name == n {
+				mark = "* "
+			}
+			a.cmdresult.Append(mark + n)
+		}
+		return nil
+
+	case "show":
+		name := v.Name
+		if name == "" && a.workspace != nil {
+			name = a.workspace.Name
+		}
+		ws, ok := a.workspaceFile.Workspace(name)
+		if !ok {
+			a.cmdresult.Append(ErrorStyle.Render("workspace show: no workspace named " + name))
+			return nil
+		}
+		for _, line := range strings.Split(strings.TrimRight(string(workspace.Block(ws)), "\n"), "\n") {
+			a.cmdresult.Append(line)
+		}
+		return nil
+
+	case "save":
+		return a.saveWorkspace(v.Name)
+	}
+	return nil
+}
+
+// workspaceConfigPath is where a save would write and where a load came from.
+func (a *App) workspaceConfigPath() string {
+	if a.workspacePath != "" {
+		return a.workspacePath
+	}
+	return workspace.DefaultPath
+}
+
+// saveWorkspace starts a save by asking the server which forwards exist. The
+// write happens in finishWorkspaceSave when the snapshot arrives.
+//
+// The registry is the source rather than a.activeForwards, so a forward the
+// operator established from a `harness-cli forward` in another terminal is
+// captured too. What must NOT be written is an in-process forward — a raw `t`
+// pane, a WebUI preview pin — and cli.PortForwardConfigSpec is where that test
+// lives, once, for this path and the CLI's alike.
+func (a *App) saveWorkspace(name string) tea.Cmd {
+	if a.client == nil {
+		a.cmdresult.Append(WarnStyle.Render("workspace save: not connected"))
+		return nil
+	}
+	a.workspaceSaveName = name
+	return DoListForwards(a.client, false)
+}
+
+// finishWorkspaceSave writes the named workspace from the live client state
+// plus the forward snapshot, replacing only that workspace's lines in the file.
+func (a *App) finishWorkspaceSave(forwards []protocol.PortForwardInfo) {
+	name := a.workspaceSaveName
+	a.workspaceSaveName = ""
+
+	// tui.New copies cfg.Server into a.server and cfg.DefaultRepo into
+	// a.defaultRepo; the App does not keep the Config itself.
+	ws := &workspace.Workspace{Name: name, ServerCID: a.server, Repo: a.defaultRepo}
+	if a.grid.IsOpen() {
+		ws.Grid, ws.GridSet = a.gridArgsString(), true
+	}
+
+	byTask := map[string]*workspace.Task{}
+	var order []string
+	add := func(id string) *workspace.Task {
+		if t, ok := byTask[id]; ok {
+			return t
+		}
+		t := &workspace.Task{ID: id, Resume: workspace.ResumeContinue, Runner: workspace.RunnerAssigned}
+		byTask[id] = t
+		order = append(order, id)
+		return t
+	}
+	if id := a.logs.TaskID(); id != "" {
+		add(id)
+	}
+	skipped := 0
+	for i := range forwards {
+		spec, ok := cli.PortForwardConfigSpec(&forwards[i])
+		if !ok {
+			skipped++ // in-process: no local address to write down
+			continue
+		}
+		t := add(FormatTaskID(forwards[i].TaskId))
+		t.Forwards = append(t.Forwards, spec)
+	}
+	for _, id := range order {
+		ws.Tasks = append(ws.Tasks, *byTask[id])
+	}
+
+	f := a.workspaceFile
+	if f == nil {
+		f = workspace.New()
+		a.workspaceFile = f
+	}
+	f.Set(ws)
+	path := a.workspaceConfigPath()
+	a.workspacePath = path
+	if err := f.Save(path); err != nil {
+		a.cmdresult.Append(ErrorStyle.Render("workspace save: " + err.Error()))
+		return
+	}
+	// The skipped count is printed even when it is zero: "0 in-process" and a
+	// missing clause are different statements, and the operator wondering where
+	// their `t` pane went needs the first one.
+	a.cmdresult.Append(OKStyle.Render(fmt.Sprintf(
+		"workspace %s saved to %s: %d task(s), %d forward(s), %d in-process skipped",
+		name, path, len(ws.Tasks), countWorkspaceForwards(ws), skipped)))
+	a.SetWorkspace(ws)
+}
+
+func countWorkspaceForwards(ws *workspace.Workspace) int {
+	n := 0
+	for _, t := range ws.Tasks {
+		n += len(t.Forwards)
+	}
+	return n
+}

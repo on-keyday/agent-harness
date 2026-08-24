@@ -108,6 +108,15 @@ type App struct {
 	workspacePath     string
 	workspaceSaveName string // non-empty while a `workspace save` waits for the forward snapshot
 
+	// gridSel is the selection the open grid was built from. GridModel keeps
+	// only cli.GridSet's display LABEL ("<id8>+desc"), which truncates the
+	// anchor id and cannot be turned back into `--under <id>` — so `workspace
+	// save` records the selection here instead, at openGrid, the one entry
+	// point every grid path goes through.
+	gridSelMode   cli.GridScopeMode
+	gridSelAnchor string
+	gridSelIDs    []string
+
 	// port-forward state
 	portForwardModal PortForwardModal
 	forwardPicker    ForwardPicker
@@ -468,8 +477,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ForwardsSnapshotMsg:
 		if msg.Err != nil {
+			if a.workspaceSaveName != "" {
+				a.cmdresult.Append(ErrorStyle.Render("workspace save: " + msg.Err.Error()))
+				a.workspaceSaveName = ""
+			}
 			a.cmdresult.Append(WarnStyle.Render("forwards snapshot: " + msg.Err.Error()))
 			return a, nil
+		}
+		if a.workspaceSaveName != "" {
+			a.finishWorkspaceSave(msg.Forwards)
 		}
 		a.forwardsModal.ApplySnapshot(msg.Forwards)
 		// The text dump belongs only to the `forward ls` cmdline path
@@ -2493,6 +2509,7 @@ func (a *App) openGrid(mode cli.GridScopeMode, anchor string, ids []string) tea.
 			"grid %s: no live interactive session in this set (%d task(s) in it)", label, len(set))))
 		return nil
 	}
+	a.gridSelMode, a.gridSelAnchor, a.gridSelIDs = mode, anchor, ids
 	a.grid.Open(a.appCtx, a.client, set, label)
 	a.grid.SetSize(a.width, a.height)
 	return gridTick()
@@ -2619,6 +2636,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 		a.cmdresult.Append("file new <task-id> <rel>                           - write a new text file in the editor popup and push it")
 		a.cmdresult.Append("forward ls                                         - list every port forward visible to this operator (also: f key, kill: x then y/n)")
 		a.cmdresult.Append("forward kill <forward-id>                          - close one registered forward by id (also: tasks-pane P/B on the owning task)")
+		a.cmdresult.Append("workspace save <name>                              - write this client's task + forwards + grid into .harness/config")
+		a.cmdresult.Append("workspace apply [name]                             - re-apply a workspace now (also runs on start and on every reconnect)")
+		a.cmdresult.Append("workspace ls | show [name]                         - list the workspaces in .harness/config, or print one")
 		a.cmdresult.Append("server dial-runner <runner-cid>                    - ask the server to reverse-dial a Listen-mode runner (Phase A, ACL envs)")
 		a.cmdresult.Append("F (tasks focus): open file picker — Enter/→ to descend a dir, Backspace/← to go back. e edit / n new / u push / g pull / d delete / D rm -rf. Esc closes.")
 		a.cmdresult.Append("  picker push/pull input — Tab toggles local fs browser. Tab back to typing pre-fills the selected file's path; Enter commits.")
@@ -2964,6 +2984,9 @@ func (a *App) runAction(act Action) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		return a, DoFileDelete(a.client, full, v.RelPath, v.Recursive, v.Force)
+	case WorkspaceAction:
+		return a, a.runWorkspaceAction(v)
+
 	case ForwardLsAction:
 		// true: this IS `forward ls` — the text dump is the whole point.
 		return a, DoListForwards(a.client, true)

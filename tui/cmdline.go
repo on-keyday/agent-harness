@@ -242,6 +242,15 @@ type FileDeleteAction struct {
 	Force     bool
 }
 
+// WorkspaceAction is the `workspace <sub> [name]` family: save the current
+// client state into .harness/config, re-apply a workspace, or inspect what the
+// file holds. There is no `workspace open`-shaped verb for starting one piece
+// at a time; an apply is all-or-nothing by design.
+type WorkspaceAction struct {
+	Sub  string // "save" | "apply" | "ls" | "show"
+	Name string // "" means the installed workspace, except for save
+}
+
 // ForwardLsAction lists every port forward visible to this operator.
 type ForwardLsAction struct{}
 
@@ -365,6 +374,7 @@ func (FilePullAction) isAction()            {}
 func (FileDeleteAction) isAction()          {}
 func (FileEditAction) isAction()            {}
 func (FileNewAction) isAction()             {}
+func (WorkspaceAction) isAction()           {}
 func (ForwardLsAction) isAction()           {}
 func (ForwardKillAction) isAction()         {}
 func (ServerDialRunnerAction) isAction()    {}
@@ -409,6 +419,8 @@ func ParseCommand(input, defaultRepo string) (Action, error) {
 		return parseGit(tokens[1:])
 	case "forward":
 		return parseForward(tokens[1:])
+	case "workspace":
+		return parseWorkspace(tokens[1:])
 	case "server":
 		return parseServer(tokens[1:])
 	case "trsf":
@@ -1072,6 +1084,36 @@ func parseForward(args []string) (Action, error) {
 	default:
 		return nil, fmt.Errorf("forward: unknown sub-verb %q (want ls | kill)", args[0])
 	}
+}
+
+// parseWorkspace handles the `workspace <sub> [name]` family.
+//
+// `workspace save` requires a name. Defaulting it to the installed workspace
+// would let a slip overwrite one from the live client state; every other verb
+// is read-only or re-runs what is already installed, so they may default.
+func parseWorkspace(args []string) (Action, error) {
+	const usage = "workspace: usage: workspace save <name> | workspace apply [name] | workspace ls | workspace show [name]"
+	if len(args) == 0 {
+		return nil, fmt.Errorf("%s", usage)
+	}
+	sub := args[0]
+	var name string
+	if len(args) > 1 {
+		name = args[1]
+	}
+	switch sub {
+	case "save":
+		if name == "" {
+			return nil, fmt.Errorf("workspace save: needs a name\n%s", usage)
+		}
+	case "apply", "ls", "show":
+	default:
+		return nil, fmt.Errorf("workspace: unknown subcommand %q\n%s", sub, usage)
+	}
+	if len(args) > 2 {
+		return nil, fmt.Errorf("workspace %s: too many arguments\n%s", sub, usage)
+	}
+	return WorkspaceAction{Sub: sub, Name: name}, nil
 }
 
 // splitPathspecTokens peels "-- <path...>" off the tail. It runs BEFORE the
