@@ -29,24 +29,27 @@ It is out of scope here and its absence is a decision, not an oversight (§ Non-
 
 ## Decisions taken
 
-Each line is a decision, not a preference to be re-litigated by an implementer.
-`DECIDED (operator)` means the human chose it in the brainstorming session;
-`DECIDED (author)` means it was decided while writing this spec and is flippable
-by the operator on request.
+Every line here is decided — none of it is a preference for an implementer to
+settle later (Pitfall 7). The third column records only *who* decided, which
+matters for review rather than for implementation: **operator** means the human
+chose it in conversation, **this spec** means the author chose it while writing,
+so those are the rows the operator has never actually ruled on and the ones
+worth a second look. A "this spec" row is flipped by saying so, not by
+re-deciding it during implementation.
 
-| # | Decision | Status |
+| # | Decision | Decided by |
 | --- | --- | --- |
-| D1 | The listener runs client-side, in a harness client process — not in `harness-server` | DECIDED (operator) |
-| D2 | Both a CLI verb and TUI hosting ship in v1 | DECIDED (operator) |
-| D3 | The ssh user name selects the task | DECIDED (operator) |
-| D4 | The listener's lifetime is its host process's lifetime | DECIDED (operator) |
-| D5 | No ssh authentication on a loopback bind; a non-loopback bind requires `--authorized-keys` | DECIDED (operator); **reverses** an earlier D5, see § Authentication |
-| D6 | One **control** ssh session per task per gateway; a second control session is refused. Cowriters and viewers coexist freely | DECIDED (author) |
-| D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | DECIDED (author); **reverses** an earlier D7 in this spec, see § Detach |
-| D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
-| D9 | No `.bgn` / wire change | DECIDED (author) |
-| D10 | The pump and **both** reset strings live in `objtrsf/exec` — the screen group exported from `RemoteShell`'s literal, the input group *moved* out of this repo — and objtrsf lands and publishes first, then a `go.mod` bump | DECIDED (operator) |
-| D11 | The bare user name is a **cowrite** attach, so arriving over ssh never evicts an attached client; `.control` and `.view` are the other two forms | DECIDED (operator) |
+| D1 | The listener runs client-side, in a harness client process — not in `harness-server` | operator |
+| D2 | Both a CLI verb and TUI hosting ship in v1 | operator |
+| D3 | The ssh user name selects the task | operator |
+| D4 | The listener's lifetime is its host process's lifetime | operator |
+| D5 | No ssh authentication on a loopback bind; a non-loopback bind requires `--authorized-keys` | operator — **reverses** an earlier D5, see § Authentication |
+| D6 | One **control** ssh session per task per gateway; a second control session is refused. Cowriters and viewers coexist freely | this spec |
+| D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | this spec — **reverses** an earlier D7 in this spec, see § Detach |
+| D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | this spec |
+| D9 | No `.bgn` / wire change | this spec |
+| D10 | The pump and **both** reset strings live in `objtrsf/exec` — the screen group exported from `RemoteShell`'s literal, the input group *moved* out of this repo — and objtrsf lands and publishes first, then a `go.mod` bump | operator |
+| D11 | The bare user name is a **cowrite** attach, so arriving over ssh never evicts an attached client; `.control` and `.view` are the other two forms | operator |
 
 ## Why client-side and not in the server
 
