@@ -56,6 +56,7 @@ it while writing — those are the rows worth a second look.
 | D8 | New capability `exec_run = 0x8000`, and `all` widens to `0xffff` | this spec |
 | D9 | The exit code travels on harness wire, NOT as a new `objtrsf/exec` frame type | this spec |
 | D10 | **Synchronous only.** The child dies with the exec's streams; there is no detached form, because that form already exists and is called a task | this spec |
+| D11 | An exec is visible to anyone who can see its target task, and `TaskInfo` carries a running-exec count so the task's own row reports it | this spec |
 
 ## Why the exit code is not a frame (D9)
 
@@ -215,6 +216,15 @@ format ExecRunKillResponse:
     status :ExecRunStatus
 ```
 
+One field on an existing format:
+
+```
+format TaskInfo:
+    …
+    exec_count :u16      # running execs against this task's worktree (D11)
+```
+
+
 Capability enum change:
 
 ```
@@ -298,10 +308,34 @@ The ssh gateway inherits the same semantics, which is the point: a dropped ssh
 connection killing the command it was running is what `ssh host cmd` does
 everywhere else.
 
+## Who can see one (D11)
+
+An exec is not private to the client that started it. The registry is shared,
+the way the port-forward one is, and the rules follow the gates this server
+already draws (`server/capabilities.go:10`):
+
+| Question | Answer | Following |
+| --- | --- | --- |
+| May I list running execs? | **No capability needed**, bounded by task visibility | `ListPortForwards` is INFO-scoped — `visibleToCaller`, not a single cap. `AwaitIdle` needs none for the same reason: gating a fact `ls` already hands out would make the direct path cost more authority than polling for it |
+| May I see the argv? | Yes, to anyone who can see the task | A task's `prompt` is already in its `ls` row; an exec's argv is the same kind of fact about the same subject |
+| May I kill someone else's? | `exec_run` + the task in scope | The bit that authorizes running commands in a tree authorizes stopping them. Requiring `cancel` instead would leave a holder of `exec_run` able to start what it cannot stop |
+| May I read its output? | **No** | There is one reader, by D10. `forward ls` does not let you read a forward's bytes either |
+
+**And the task's own row reports it.** `TaskInfo` gains `exec_count :u16`, filled
+from the registry, so an operator watching a task sees that commands are running
+in its tree without going to look for them. That is the same answer the session
+observer counts give (`cowrite=0 viewer=0`), for the same reason — someone else
+is touching this thing — and it follows their rule too: **the count is printed
+at zero.** A row that elides `exec=0` reads as "this row does not report execs",
+which is exactly the ambiguity the observer counts were added to remove. It is
+printed for a task that HAS a worktree to run in and omitted for one that does
+not, gating on existence rather than on value.
+
 ## Capability and scope
 
-`exec_run` gates it, and `--scope` bounds WHICH tasks it may target — the same
-pair every task-targeted verb uses.
+`exec_run` gates starting and killing, and `--scope` bounds WHICH tasks it may
+target — the same pair every task-targeted verb uses. Listing is scoped by
+visibility instead, per D11.
 
 It is a new bit but not a new class of authority: a holder of `exec_cowrite`
 can already type any command into that session's shell, and a holder of `spawn`
@@ -321,6 +355,7 @@ surfaces hold it through `all`.
 | WebUI command input | `exec …` in `runCmd` |
 | wasm bridge | request construction for the above |
 | ssh gateway | `exec` maps onto it, sending `["sh","-c",<command>]`; stdout → channel, stderr → extended data, exit code → `exit-status` |
+| Display of `exec_count` | `ls` rows and `ls --json`, the TUI task table and detail popup, the WebUI task row meta and detail sheet, and the wasm snapshot conversion — the same set the observer counts had to reach, and for the same reason |
 
 The gateway mapping is what makes `ssh <task>@gw 'git status'` behave the way
 that syntax promises everywhere else — separate streams, real exit code, no
@@ -352,6 +387,12 @@ code; a missing binary is `failed`, not `exited`; `exec ls` shows a running one
 and stops showing it after it ends; `exec kill` ends one and the child dies;
 dropping the control stream deregisters it; a terminal task with no worktree is
 refused with `no_worktree`; a task outside the caller's scope is `not_found`.
+
+Visibility (D11): a second client, with no `exec_run`, sees a running exec in
+`exec ls` and sees `exec_count` on the task's row; the same client with
+`exec_run` and the task in scope can kill it; a client that cannot see the task
+sees neither. And `exec_count` is `0`, not absent, on a task with a worktree and
+nothing running.
 
 The one that needs saying out loud: **stdout and stderr must be asserted
 separately**, with a command that writes to both. Merging them is the exact
