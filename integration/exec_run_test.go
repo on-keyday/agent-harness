@@ -135,11 +135,22 @@ func TestExecRunE2E(t *testing.T) {
 	// that flag, so the close comes from the client. A timeout, not a plain
 	// call: the failure mode is a hang, which without one takes the whole
 	// package's deadline instead of this case.
-	t.Run("no_stdin_still_closes_the_childs_stdin", func(t *testing.T) {
+	t.Run("no_stdin_gives_the_child_dev_null", func(t *testing.T) {
+		var out bytes.Buffer
 		done := make(chan cli.ExecRunResult, 1)
 		go func() {
+			// The child asserts and reports which assertion failed as its exit
+			// code. Asserting only that it TERMINATES would pass on a pipe the
+			// client closed a few ms later, which is the weaker thing this
+			// replaced: that leaves a window where stdin is open and empty.
 			res, err := c.ExecRun(context.Background(), taskID,
-				[]string{"sh", "-c", "cat; echo drained"}, cli.ExecRunOpts{})
+				[]string{"sh", "-c", `
+					cat; [ $? = 0 ] || exit 21
+					[ -r /dev/stdin ] || exit 22
+					[ -t 0 ] && exit 23
+					readlink /proc/self/fd/0
+					exit 0`},
+				cli.ExecRunOpts{Stdout: &out})
 			if err != nil {
 				t.Errorf("ExecRun: %v", err)
 			}
@@ -148,7 +159,13 @@ func TestExecRunE2E(t *testing.T) {
 		select {
 		case res := <-done:
 			if res.Kind != protocol.ExecEventKind_Exited || res.ExitCode != 0 {
-				t.Errorf("result = %+v, want exited/0", res)
+				t.Fatalf("result = %+v (21=cat failed, 22=fd0 not readable, 23=fd0 is a tty)", res)
+			}
+			// Linux-only detail, so it is checked when it is there rather than
+			// asserted unconditionally: the exit-code checks above carry the
+			// property on every platform.
+			if got := strings.TrimSpace(out.String()); got != "" && got != os.DevNull {
+				t.Errorf("the child's stdin is %q, want %s", got, os.DevNull)
 			}
 		case <-time.After(15 * time.Second):
 			t.Fatal("a command that reads stdin never ended: its stdin was left open")

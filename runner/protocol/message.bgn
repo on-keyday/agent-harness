@@ -2080,9 +2080,16 @@ format ExecArgv:
 format ExecRunRequest:
     task_id :TaskID
     argv :ExecArgv
-    # stdin_enabled=0 closes the child's stdin immediately, which is what a
+    # stdin_enabled=0 gives the child /dev/null as its stdin, which is what a
     # non-interactive caller wants: a child that reads stdin then gets EOF
     # rather than hanging forever on a pipe nobody will write to.
+    #
+    # /dev/null rather than a pipe closed a moment later, and the difference is
+    # not pedantry: closing leaves a window (measured at 6ms) in which stdin is
+    # open and empty, so a child that distinguishes "no input yet" from "end of
+    # input" gets a racing answer. The runner reads this flag —
+    # objtrsf ExecuteOption.StdinDevNull — and for one release it did not,
+    # which is what made `exec <task> -- bash` from the TUI hang forever.
     stdin_enabled :u1
     reserved :u7
 

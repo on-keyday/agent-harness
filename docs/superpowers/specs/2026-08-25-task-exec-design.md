@@ -51,7 +51,7 @@ it while writing — those are the rows worth a second look.
 | D3 | CLI, TUI and WebUI all get it in v1 | operator |
 | D4 | The wire carries **argv**; a caller that wants a shell sends `["sh","-c",line]` itself | this spec |
 | D5 | The gate is whether the worktree DIRECTORY exists, not whether the task is running. A terminal task that still has one can be exec'd into | this spec |
-| D6 | stdin is carried | this spec |
+| D6 | stdin is carried; a caller that sends none gets the child **/dev/null**, not a pipe closed a moment later | this spec — the second half added after measuring |
 | D7 | No timeout. `exec kill` and the caller going away are the ways to stop one (the CONNECTION, not the stream — see § Synchronous only) | this spec |
 | D8 | New capability `exec_run = 0x8000`, and `all` widens to `0xffff` | this spec |
 | D9 | The exit code travels on harness wire, NOT as a new `objtrsf/exec` frame type | this spec |
@@ -138,9 +138,9 @@ format ExecArgv:
 format ExecRunRequest:
     task_id :TaskID
     argv :ExecArgv
-    # stdin_enabled=0 means the child's stdin is closed immediately, which is
-    # what a non-interactive caller wants: a child that reads stdin gets EOF
-    # instead of hanging forever on a pipe nobody will write to.
+    # stdin_enabled=0 gives the child /dev/null, which is what a
+    # non-interactive caller wants: a child that reads stdin gets EOF instead
+    # of hanging forever on a pipe nobody will write to.
     stdin_enabled :u1
     reserved :u7
 

@@ -80,9 +80,14 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	// The no-stdin case is not hypothetical politeness. The TUI and the WebUI
 	// pass no Stdin, and `exec <task> -- bash` from either hung forever with the
 	// shell waiting on an EOF that was never coming — measured against a live
-	// runner, the child still alive minutes later. The wire says as much
-	// (stdin_enabled=0, whose schema comment promises exactly this) but nothing
-	// on the runner reads that flag, so the close has to come from here.
+	// runner, the child still alive minutes later.
+	//
+	// A CURRENT runner needs none of this: stdin_enabled=0 makes it give the
+	// child /dev/null, which is strictly better (no window in which stdin is
+	// open and empty). This close stays as the cover for a runner that predates
+	// that — the deployment order is server first, THEN runners, so a new client
+	// against an old runner is a state the fleet passes through. The runner
+	// drops a 0-length frame silently for exactly this reason.
 	closeChildStdin := func(w io.Writer) {
 		if cl, ok := w.(io.Closer); ok {
 			_ = cl.Close()

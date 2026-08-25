@@ -152,6 +152,15 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		false, // no PTY: separate stdout and stderr is the point
 		env,
 		agentexec.ExecuteOption{
+			// The caller told us whether it will send stdin. When it will not
+			// — the TUI, the WebUI, a CLI invocation with a terminal attached —
+			// the child gets /dev/null rather than a pipe: EOF from the first
+			// read, with no window in which its stdin is open and empty.
+			//
+			// This flag reached the runner and was IGNORED until now, which is
+			// what made `exec <task> -- bash` from the TUI hang forever with
+			// the shell waiting on an EOF nobody was going to send.
+			StdinDevNull: !req.StdinEnabled(),
 			OnProcessExit: func(st *os.ProcessState, werr error) {
 				// The CHILD's own code, read from ProcessState rather than
 				// inferred from an error: the errgroup inside agentexec
