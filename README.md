@@ -348,6 +348,13 @@ and reused, so `known_hosts` stays valid.
 No scp/sftp and no `ssh -L` through it: `file push` / `file pull` and `forward`
 already cover those, and each is refused with a message that says so.
 
+`ssh <task>@host <command>` is refused too, and that one is a decision rather
+than a gap. `harness-cli session exec` runs a command line in a session, but it
+does so by typing into that session's foreground shell — it needs a POSIX shell
+to be there, merges stdout and stderr, and shows up in the scrollback of whoever
+is watching. `ssh host cmd` promises none of that, so the refusal names
+`session exec` instead of pretending to be it.
+
 ### X11 forwarding
 
 `harness-cli session new --x11 --repo <path>` injects `DISPLAY`/`XAUTHORITY`

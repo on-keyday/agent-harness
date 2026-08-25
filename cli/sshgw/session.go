@@ -107,7 +107,11 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 			// either way, so the useful shape is: accept, say why, exit 1.
 			_ = req.Reply(true, nil)
 			fmt.Fprint(ch.Stderr(),
-				"ssh-gateway: exec is not served here — this gateway attaches to a session's PTY, it runs no commands of its own. For files use `harness-cli file push` / `file pull`.\r\n")
+				"ssh-gateway: exec is not served here — this gateway is a session's PTY, not a command runner.\r\n"+
+					"  `harness-cli session exec <task-id> <cmd>` runs a command line in the session's FOREGROUND SHELL: it\r\n"+
+					"  types into that shell, merges stdout and stderr into one PTY stream, and needs a POSIX shell there.\r\n"+
+					"  That is a different thing from what `ssh host cmd` promises, which is why it is not wired to it.\r\n"+
+					"  For files: `harness-cli file push` / `file pull`.\r\n")
 			sendExit(ch, 1)
 			return
 		case "subsystem":

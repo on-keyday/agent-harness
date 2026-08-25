@@ -181,9 +181,24 @@ Accepted:
 
 Not served, each saying why:
 
-- `exec` (`ssh host <command>`) — there is no command surface here; the session
-  runs whatever the task already runs. **Accepted and then answered** with the
-  explanation on stderr and exit status 1, rather than refused. Refusing a
+- `exec` (`ssh host <command>`) — **not wired, and not for want of a command
+  surface.** `harness-cli session exec` is one, and `cli.SessionExec` is a
+  method on the long-lived client this gateway already holds, so connecting the
+  two is a few lines. It is deliberately not connected because its semantics are
+  not ssh's: it injects a line into the session's FOREGROUND SHELL, so it needs
+  a POSIX shell to be in the foreground (a session running an agent TUI has
+  none), it merges stdout and stderr into the one PTY stream, and the injected
+  line appears in the scrollback of whoever is watching that session. `ssh host
+  cmd` promises an independent execution with separated streams and no
+  side effects on anyone's terminal, and promising it while delivering the other
+  thing is worse than not offering it.
+  The construct that WOULD match — `submit --agent bash`, a fresh task in a
+  fresh worktree — is not addressable here: the ssh user name names an existing
+  task, and creating one as a side effect of `ssh t1 ls` is a worse surprise
+  than a refusal.
+  **Accepted and then answered** with the explanation on stderr and exit status
+  1, rather than refused; the message names `session exec` so an operator who
+  wanted that gets sent to it. Refusing a
   *request* delivers no reason: the client's `Start` fails and it tears the
   session down without ever draining stderr, so the sentence would be written
   and never read. Measured against `x/crypto/ssh` as the client while writing
@@ -596,6 +611,9 @@ that catches a missing `//go:build !js`.
   transfer, and for Remote-SSH a server binary staged on the far side), already
   served by `file push` / `file pull` / `git`. `subsystem` is refused explicitly
   so the failure names itself.
+- **`ssh host <command>`.** Not a missing capability — a refused mapping. See
+  § SSH surface: the nearest existing verb runs in the session's foreground
+  shell, which is not what that syntax means to anyone who types it.
 - **`ssh -L` / `-R` through the gateway.** `direct-tcpip` is refused; the harness
   has `forward` for this and a second path would drift.
 - **A server-hosted sshd.** § Why client-side and not in the server.
