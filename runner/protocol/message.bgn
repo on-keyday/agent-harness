@@ -2163,7 +2163,14 @@ format ExecRunInfo:
 format ExecRunListRequest:
     task_filter :TaskID  # all-zero = every exec the caller may see
 
+# ExecRunListResponse names a stream rather than carrying the rows inline, the
+# way PortForwardListResult and ListResult do and for their reason: a listing
+# whose rows carry whole argvs has no bound that fits a UDP path MTU.
 format ExecRunListResponse:
+    stream_id :u64    # server-initiated send-stream carrying ExecRunListBody
+                      # until EOF. 0 = the server could not allocate one.
+
+format ExecRunListBody:
     execs_len :u16
     execs :[execs_len]ExecRunInfo
 

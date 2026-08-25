@@ -596,6 +596,17 @@ func main() {
 			die(err)
 		}
 
+	case "exec":
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "usage: harness-cli exec <task-id> -- <command> [args...]")
+			fmt.Fprintln(os.Stderr, "       harness-cli exec ls [--task <task-id>] [--json]")
+			fmt.Fprintln(os.Stderr, "       harness-cli exec kill <exec-id> [<exec-id> ...]")
+			os.Exit(2)
+		}
+		if err := runExec(ctx, parseCID(), args); err != nil {
+			die(err)
+		}
+
 	case "workspace":
 		if err := runWorkspace(ctx, args, parseCID(), *configPath,
 			cliopts.ResolveStringWith(*serverCID, "HARNESS_SERVER_CID", wsServerCID)); err != nil {
@@ -1074,6 +1085,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  session exec [--timeout D] [--json] [--exit-only] [--raw] TASK_ID CMD...")
 	fmt.Fprintln(os.Stderr, "                                      run one shell command line in the session's foreground shell and block until it finishes")
 	fmt.Fprintln(os.Stderr, "                                      exits with the command's own code (124 timeout, 125 error, 126 foreground shell exited); needs a POSIX shell")
+	fmt.Fprintln(os.Stderr, "                                      NOT `exec`, which runs its own process in the worktree with separate stdout/stderr")
 	fmt.Fprintln(os.Stderr, "                                      flags must precede TASK_ID; everything after it is joined with spaces as the command line")
 	fmt.Fprintln(os.Stderr, "  session ls                          JSON Lines: interactive sessions only")
 	fmt.Fprintln(os.Stderr, "  session kill TASK_ID                cancel a session (alias of cancel)")
@@ -1134,6 +1146,15 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      list registered port forwards; --task filters, --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  forward kill FORWARD_ID [FORWARD_ID ...]")
 	fmt.Fprintln(os.Stderr, "                                      kill one or more registered forwards by id (from `forward ls`)")
+	fmt.Fprintln(os.Stderr, "  exec <task-id> -- <command> [args...]")
+	fmt.Fprintln(os.Stderr, "                                      run a command in the task's WORKTREE as its own process:")
+	fmt.Fprintln(os.Stderr, "                                      stdout and stderr stay separate, and the command's own exit code becomes ours")
+	fmt.Fprintln(os.Stderr, "                                      works on a FINISHED task too, as long as its worktree is still there —")
+	fmt.Fprintln(os.Stderr, "                                      a task that ended with uncommitted work keeps one")
+	fmt.Fprintln(os.Stderr, "                                      dies with this process; for something to leave running, submit a task instead")
+	fmt.Fprintln(os.Stderr, "                                      NOT `session exec`, which types into the session's foreground shell")
+	fmt.Fprintln(os.Stderr, "  exec ls [--task TASK_ID] [--json]   list running execs; --task filters, --json emits JSON lines")
+	fmt.Fprintln(os.Stderr, "  exec kill EXEC_ID [EXEC_ID ...]     stop one or more running execs by id (from `exec ls`)")
 	fmt.Fprintln(os.Stderr, "  ssh-gateway [--listen 127.0.0.1:2222] [--host-key PATH] [--authorized-keys PATH]")
 	fmt.Fprintln(os.Stderr, "                                      serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session,")
 	fmt.Fprintln(os.Stderr, "                                      so ssh config aliases, tmux and mosh reach a task with no harness binary there")

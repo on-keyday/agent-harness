@@ -148,20 +148,65 @@ func writeExecEvent(e *execRun, kind protocol.ExecEventKind, code int32, detail 
 // ListPortForwards — and for the reason await_idle needs no cap either: gating
 // a fact `ls` already hands out would make the direct path cost more authority
 // than polling for the same thing.
-func (h *TaskHandler) handleExecRunList(connID string, req *protocol.ExecRunListRequest) protocol.ExecRunListResponse {
-	filter := ""
-	if req.TaskFilter.Id != ([16]byte{}) {
-		filter = hex.EncodeToString(req.TaskFilter.Id[:])
+// The rows travel on their own send stream rather than inline, as
+// ListPortForwards' and ls' do: a listing whose rows carry whole argvs has no
+// bound that fits a UDP path MTU.
+func (h *TaskHandler) handleExecRunList(conn ConnHandle, requestID uint32, connID string, filter protocol.TaskID) {
+	respond := func(streamID uint64) {
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ExecRunList, RequestId: requestID}
+		resp.SetExecRunList(protocol.ExecRunListResponse{StreamId: streamID})
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+	}
+
+	var body protocol.ExecRunListBody
+	body.SetExecs(h.visibleExecRuns(connID, filter))
+
+	bodyBytes, err := body.EncodeCopy(nil)
+	if err != nil {
+		slog.Error("ExecRunList: encode body failed", "err", err)
+		respond(0)
+		return
+	}
+	stream := conn.CreateSendStream()
+	if stream == nil {
+		respond(0)
+		return
+	}
+	if werr := stream.AppendData(false, bodyBytes); werr != nil {
+		slog.Warn("ExecRunList: stream write failed", "err", werr)
+		_ = stream.Close()
+		respond(0)
+		return
+	}
+	if werr := stream.AppendData(true); werr != nil {
+		slog.Warn("ExecRunList: stream EOF failed", "err", werr)
+		_ = stream.Close()
+		respond(0)
+		return
+	}
+	respond(uint64(stream.ID()))
+}
+
+// visibleExecRuns returns the registrations connID may see.
+//
+// No capability is required and the bound is task VISIBILITY, following
+// visiblePortForwards — and for the reason await_idle needs no cap either:
+// gating a fact `ls` already hands out would make the direct path cost more
+// authority than polling for the same thing.
+func (h *TaskHandler) visibleExecRuns(connID string, filter protocol.TaskID) []protocol.ExecRunInfo {
+	taskFilter := ""
+	if filter.Id != ([16]byte{}) {
+		taskFilter = hex.EncodeToString(filter.Id[:])
 	}
 	all, allowed := h.visibleToCaller(connID)
-	var out protocol.ExecRunListResponse
-	for _, e := range h.execs().list(filter) {
+	out := make([]protocol.ExecRunInfo, 0, 8)
+	for _, e := range h.execs().list(taskFilter) {
 		if !all && !allowed[e.taskIDHex] {
 			continue
 		}
-		out.Execs = append(out.Execs, execRunInfo(e))
+		out = append(out, execRunInfo(e))
 	}
-	out.ExecsLen = uint16(len(out.Execs))
 	return out
 }
 

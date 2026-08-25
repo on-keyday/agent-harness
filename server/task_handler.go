@@ -459,10 +459,7 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 			slog.Error("TaskHandler: ExecRunList variant is nil")
 			return
 		}
-		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ExecRunList, RequestId: req.RequestId}
-		resp.SetExecRunList(h.handleExecRunList(cid, el))
-		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
-		conn.SendMessage(out) //nolint:errcheck
+		h.handleExecRunList(conn, req.RequestId, cid, el.TaskFilter)
 
 	case protocol.TaskControlKind_ExecRunKill:
 		// Gated inline: the target task is only known after the registry
