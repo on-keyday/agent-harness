@@ -1,6 +1,6 @@
 ---
 name: supervising-workers
-description: Use when acting on ANOTHER agent's task from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, or reading a worker's diff. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
+description: Use when acting on ANOTHER agent's task from inside a runner-spawned task — spawning / driving / killing worker sessions, one-shot `submit` + `logs` / `watch`, attenuating a child's capabilities with `--caps`, moving files in or out of a worker's worktree, running a command in one with `exec`, or reading a worker's diff. Peer-to-peer messaging, replying and subscriptions live in the `harness-cli` skill instead.
 ---
 
 # supervising-workers (another agent's task, end to end)
@@ -380,9 +380,14 @@ and the scope forms (`--json` for the machine-readable form).
   whether a denied RPC is a missing cap vs. a real error.
 
 Granular names: `spawn`, `cancel`, `exec_view`, `exec_cowrite`,
-`exec_control`, `file_read`, `file_write`, `forward_local`, `forward_remote`,
-`notify`, `prune`, `runner_admin`, `board_observe`, `purge` — plus the aliases
-`none` / `all`. The three attach caps are ranked and checked with implication:
+`exec_control`, `exec_resize`, `exec_run`, `file_read`, `file_write`,
+`forward_local`, `forward_remote`, `notify`, `prune`, `runner_admin`,
+`board_observe`, `purge` — plus the aliases `none` / `all`. `harness-cli caps`
+prints the authoritative list with a line each; this one can fall behind it.
+`exec_resize` and `exec_run` sit BESIDE the three attach caps rather than
+inside their ranking — resizing is availability and running a command in the
+worktree touches no session at all, so neither is implied by being allowed to
+type. The three attach caps are ranked and checked with implication:
 `exec_view` reads a session, `exec_cowrite` also types into one, `exec_control`
 also takes it over from whoever is driving. Grant a worker you only want to
 WATCH `exec_view`; grant one you need to DRIVE `exec_cowrite`. `exec_control`
@@ -467,6 +472,53 @@ harness-cli file pull "$TASK_ID" out/report.md ./report.md  # collect outputs
 Prefer this over having the worker paste large files through agentboard
 messages: `file` streams the bytes directly and keeps the agentboard for
 coordination, not bulk transfer.
+
+## Running a command in a worker's worktree — `harness-cli exec`
+
+`harness-cli exec` runs ONE command in a task's worktree as its **own
+process**. It needs `exec_run`.
+
+This is the verb for "build it and tell me if it passes". It is not
+`session exec`, and the difference decides which one you want:
+
+| | `exec <id> -- <cmd>` | `session exec <id> <cmd>` |
+| --- | --- | --- |
+| where it runs | its own process in the worktree | typed into the session's FOREGROUND SHELL |
+| needs a POSIX shell in the foreground | no | **yes** — times out against a TUI/REPL/claude |
+| stdout vs stderr | separate | merged onto the one PTY stream |
+| exit code | the command's own, and yours | parsed out of the combined output |
+| visible to whoever is watching that session | no | **yes** — it lands in their scrollback |
+| capability | `exec_run` | `exec_cowrite` |
+
+```bash
+# Words after -- are the argv, verbatim. Nothing re-splits them, so an
+# argument containing a space stays one argument.
+harness-cli exec <TASK_ID> -- make test
+harness-cli exec <TASK_ID> -- git status
+harness-cli exec <TASK_ID> -- sh -c 'go build ./... 2>&1 | head -40'
+
+# Redirect the two streams independently — the reason this verb exists.
+harness-cli exec <TASK_ID> -- make test >out.txt 2>err.txt
+
+# What is running right now, and how to stop one.
+harness-cli exec ls [-task <TASK_ID>] [--json]
+harness-cli exec kill <EXEC_ID>
+```
+
+The exit code is the command's own, so `if harness-cli exec "$TASK_ID" -- make
+test; then …` works. A command that never started — missing binary, no
+worktree, killed — exits **125** with the reason on stderr; 125 rather than 127
+because there is no shell here to have that convention.
+
+The target is the **worktree**, not the task's status. A worker that ended with
+uncommitted work keeps its tree, so `git status` and `make test` still run in
+it, which is exactly when you want them. A worker that ended clean had its tree
+removed and is refused.
+
+**It is synchronous and dies with you.** There is no detached form — that is
+what spawning a task is for. Do not use it to babysit something long: your turn
+ends, the exec is killed. Every client can see it in `exec ls` while it runs,
+and each task's row carries `execs=N`.
 
 ## Reading a worker's diff — `harness-cli git`
 

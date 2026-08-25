@@ -962,30 +962,115 @@ meaning items. On a verb whose whole content is a grammar and a set of
 refusals, the semantics axes are the checklist and the surface list is the
 formality.
 
+### 2026-08-25 (pre-landing) — `exec`: a command in a task's worktree, and `exec_count`
+
+A verb family AND a displayed field in one change, so both halves of the list
+fire — unlike the `ssh-gateway` walk immediately above, where 11–23 were all
+`n/a`.
+
+done:    1 (the verb, its per-verb usage, the `main.go` help block, AND a
+         cross-reference added to `session exec`'s line so the two are told
+         apart at the point of use rather than only in the README), 3
+         (`parseExecRun` in `tui/cmdline.go`, beside `parseForward`), 6 (WebUI
+         task-sheet action), 7 (`exec` case in `runCmd`), 8 (`harness.execRun` /
+         `execRunList` / `execRunKill` / `execArgvText`), 10 (a new family on all
+         three command surfaces plus ssh — and the walk CLOSED an asymmetry it
+         found rather than copying it: `forward ls` takes a `-task` filter on the
+         CLI and not in the TUI, so `exec ls` got the filter on both), 11
+         (`execs=N`), 12, 14 (free: `sessionJSON` embeds `taskJSON`), 15
+         (`exec_run` in the catalog, verified against a live server), 16, 17, 20,
+         **21**, 23, 24, 28a, 29, 30, 31, 32, 33, 34, 34a, 35, 36, 37
+omitted: 2 — there is no grammar to share: the argv is positional and each
+         surface's three-line `--` peel differs in shape (the CLI's returns
+         (taskID, argv), the TUI's also decides the sub-verb, the JS one is
+         inside a switch). The one thing that IS a grammar — argv QUOTING for
+         display — has a single implementation, `cli.ExecArgvString`, with the
+         wire form as an adapter and the browser calling it over the bridge.
+         4, 5 — no keybinding and no modal. The TUI cmdline resolves id
+         PREFIXES, so `exec ab12 -- make test` is already short, and a key would
+         have to open a text modal that duplicates the line directly below it.
+         The WebUI DOES get a sheet action, and the asymmetry is deliberate:
+         there the row you tapped supplies the 32-hex id, which is the friction
+         on a phone.
+         38 — a live pane renders a SESSION's screen, and an exec touches no
+         session; that is the property it exists for. Asked the question the way
+         the item's own recorded miss says to — "does this surface already
+         report anything about this?" — and grepped `PaneStreamer.DiagLine`: it
+         reports STREAM quantities for the pane's own attach (rx, reads, B/s),
+         not task fields. The count belongs on the row above the pane, where it
+         now is.
+n/a:     9, 26 (no spawn option), 13 (whoami reports the CALLER's own authority,
+         not per-task worktree state), 18 (runner detail describes a runner), 19
+         (the picker selects capability/scope TARGETS; a running command is not
+         a selection criterion), 22 (no dialog prefills from exec state), 25 (no
+         set-style RPC — nothing has to tell absent from zero on the wire), 27
+         (no shared request builder is involved; see 28a), 28 (`exec_count` is
+         DERIVED at read time from the registry, so there is no WAL field and no
+         replay meaning to decide for old records). S1–S6 (no agent added or
+         changed in bin, argv, log format, credential mode, egress or env).
+missed:  —
+
+Item **21 fires for the first time in this log**, and it came off the
+"never fired yet" list. Its shape is worth stating for the next walk: the WebUI
+task sheet is an ACTION list, not a field view, so what a verb owes it is the
+action — the field went to the row meta (item 20) directly above it.
+
+Item **36 found a real gap and a pre-existing one beside it.** `exec_run` is a
+GRANTABLE capability, so an agent can be given it — and no agent-facing text had
+the verb at all. `supervising-workers` gained a section (with the table that
+separates it from `session exec`, which is the confusion the whole feature
+exists to resolve). The same list turned out to be missing `exec_resize` too,
+from a change months earlier; both added, and the list now points at
+`harness-cli caps` as the authority so the next omission is recoverable.
+
+Item **31 fired twice with opposite answers, and both are right.** In `ls`, the
+JSON, the WebUI row and the TUI `d` popup the count prints at ZERO, because
+every task can be asked how many commands run in its tree and none is a real
+answer — and it is deliberately NOT gated on a live session, unlike the observer
+counts beside it, because a task that ended dirty keeps its tree and can still
+be exec'd. In the TUI table row it appears only when non-zero, which is a column
+ARITY constraint (the same one that already makes Obs itself width-conditional)
+and not a value judgement — recorded here rather than left to look like the
+elision this item keeps catching.
+
+**What the walk did NOT catch, and what did.** Running the verb against the
+dummy harness — whose runner is `--no-worktree` — refused EVERY exec with "no
+worktree for task". `execRunDir` knew only the worktree shape while the runner
+has two, and `gitSourceFor` in the same package has known both the whole time.
+Nothing in 1–38 asks it: the items walk operator SURFACES, and this was a
+resource-resolution shape on the runner. Item 24 is the nearest neighbour ("the
+same operation, other path") one layer out from an option's paths. Not proposing
+a number for one instance — but the general form is cheap to state and worth
+counting a second instance against: **when a feature resolves a path the runner
+already resolves elsewhere, read that sibling before writing a second
+resolution.** The e2e was green throughout, because it runs against a runner
+configured the canonical way.
+
 ## Standing tallies
 
 Update when adding an entry.
 
 | item | done | missed | note |
 |---|---|---|---|
-| 31 (don't hide a value for what it IS) | 12 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. |
-| 16 (TUI task table) | 2 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
+| 31 (don't hide a value for what it IS) | 13 | **3** | The first two were elisions the item's own text licensed, and the row-width exception was withdrawn for them. The third is a different shape and the most expensive: the re-grant dialog did not merely hide `exclude_self` and the visibility pair, it ERASED them on apply, because it rebuilt the scope from parts instead of carrying the whole. Not-shown and not-kept are one item's problem. The fourth extends the axis again: an empty `spans[]` could not say whether the measurement was TAKEN, so the object reports which style dimensions were collected. The fifth adds not-VALID: `live`'s counts are meaningless without the window they were taken over and without `anchored`, so all three ship together. Not-shown, not-kept, not-measured, not-valid. The thirteenth fired TWICE in one walk with opposite answers: `exec_count` prints at zero on every surface that has room, and appears only when non-zero in the TUI table row — because that one is a column ARITY constraint, not a judgement about the value. Both recorded, so the conditional one cannot later read as this item's failure shape. |
+| 16 (TUI task table) | 3 | 1 | Missed once as a defensible `omitted`; the constraint was real, the conclusion was not. |
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
-| 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
-| 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 12 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
+| 34 (dynamic column sets) | 3 | 0 | New. Second firing was the popup: same class, different widget. Third was the cheapest kind: a cell's CONTENT grew (`Nx` beside the observer pair) while the column COUNT stayed put, so the swap invariant was untouched — the item's question answered by checking that `rebuild()` is still the only cell builder. |
+| 17 (TUI detail popup) | 4 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
+| 33 (take effect or error) | 13 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
 | S5 (env and addressing contract) | 1 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". |
-| 10 (other verb families) | 8 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
-| 1–10 (input surfaces) | 3 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
+| 10 (other verb families) | 9 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
+| 1–10 (input surfaces) | 4 walks | 0 | `n/a` for every field-only change. Do NOT prune: they fired fully for the caps split, which is exactly the change that needed them. |
 | 27 (shared funnel) | 6 | **1** | Same walk. Satisfied as written and still shipped the defect: it names the BUILDERS, and the loss was in the builders' callers. 28a is the missing half; if 27 misses again, split it rather than reword it. |
-| 32 (one serializer, round-trip tested) | 9 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
-| 28a (follow the value to the request build) | 8 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
-| 34a (same KIND of control as its neighbours) | 2 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
-| 38 (live screen-rendering surfaces) | 3 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. |
-| 29 (result messages name the target and the change) | 5 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
+| 32 (one serializer, round-trip tested) | 10 | **2** | Both misses in one session, both the same wording defect: the item claimed round-trip tests that never existed, and "per RUNTIME" licensed the JS mirror that made the loss possible. `OverridesLabel` could not be pasted back; `scopeSpecFor`/`scopeSpecJS` each knew half the grammar. Reworded to one serializer, full stop. A third miss means the problem is not the wording. Fourth firing was PREVENTIVE and is the shape to aim for: it rejected the obvious two-scans implementation of `--json` before it existed, making the text report a projection of the structured form. |
+| 28a (follow the value to the request build) | 9 | 0 | Second firing caught the CLI's non-detach --stream splicing NDJSON into a raw terminal BEFORE landing — the first pre-landing catch in this log. Sixth is the cheap-check form the item describes: `grep -rn 'ScreenSnapshot{'` returns exactly one site, so the count answered the question outright. Seventh split the walk in half by language: a Go type change enumerated five consumers as build errors, while the browser's two had to be grepped — the item is free on one side of the wasm bridge and unassisted on the other. |
+| 34a (same KIND of control as its neighbours) | 3 | **1** | Missed by omission rather than by wrong shape: the control was right and was not carried to the sibling row in the same dialog. |
+| 38 (live screen-rendering surfaces) | 4 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. |
+| 29 (result messages name the target and the change) | 6 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
+| 36 (agent-facing skill texts) | 1 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
 
-**Never fired yet:** 21, 26. Too few walks to call either dead — revisit after
+**Never fired yet:** 26. (21 came off this list with the `exec` entry: the WebUI task sheet is an ACTION list, so a verb owes it the action while the field goes to the row meta above it.) Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30
 and 24 came off this list with the `87c10a2` entry.) 25 fired again on the
 workspace entry, in its cleanest form yet: `grid =` with an empty value is a
