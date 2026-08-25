@@ -125,6 +125,36 @@ func TestExecRunE2E(t *testing.T) {
 		}
 	})
 
+	// A caller with NO stdin must still leave the child with one that is at
+	// EOF. This is the TUI's and the WebUI's path — neither passes a Stdin —
+	// and it hung forever against a live runner: `exec <task> -- bash` sat with
+	// the shell waiting on an EOF nobody was going to send, the child still
+	// alive minutes later and the row still in `exec ls`.
+	//
+	// The wire says as much (stdin_enabled=0) and nothing on the runner reads
+	// that flag, so the close comes from the client. A timeout, not a plain
+	// call: the failure mode is a hang, which without one takes the whole
+	// package's deadline instead of this case.
+	t.Run("no_stdin_still_closes_the_childs_stdin", func(t *testing.T) {
+		done := make(chan cli.ExecRunResult, 1)
+		go func() {
+			res, err := c.ExecRun(context.Background(), taskID,
+				[]string{"sh", "-c", "cat; echo drained"}, cli.ExecRunOpts{})
+			if err != nil {
+				t.Errorf("ExecRun: %v", err)
+			}
+			done <- res
+		}()
+		select {
+		case res := <-done:
+			if res.Kind != protocol.ExecEventKind_Exited || res.ExitCode != 0 {
+				t.Errorf("result = %+v, want exited/0", res)
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("a command that reads stdin never ended: its stdin was left open")
+		}
+	})
+
 	t.Run("ls_shows_a_running_exec_and_the_task_reports_it", func(t *testing.T) {
 		done := make(chan struct{})
 		go func() {

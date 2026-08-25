@@ -72,18 +72,30 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	done := make(chan struct{}, 2)
 	go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stdout, stream.Stdout()) }()
 	go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stderr, stream.Stderr()) }()
+	// The child's stdin is closed when the caller's runs out — or IMMEDIATELY
+	// when there is no caller stdin at all. Closing writes the 0-length Stdin
+	// frame the executor reads as "close the child's stdin"; without it the
+	// child holds a pipe nobody will ever write to.
+	//
+	// The no-stdin case is not hypothetical politeness. The TUI and the WebUI
+	// pass no Stdin, and `exec <task> -- bash` from either hung forever with the
+	// shell waiting on an EOF that was never coming — measured against a live
+	// runner, the child still alive minutes later. The wire says as much
+	// (stdin_enabled=0, whose schema comment promises exactly this) but nothing
+	// on the runner reads that flag, so the close has to come from here.
+	closeChildStdin := func(w io.Writer) {
+		if cl, ok := w.(io.Closer); ok {
+			_ = cl.Close()
+		}
+	}
 	if opts.Stdin != nil {
-		// Close when the caller's stdin runs out: that writes the 0-length
-		// Stdin frame the executor reads as "close the child's stdin". Without
-		// it a filter like `cat` reads forever and the exec never ends — the
-		// command looks hung when it is only waiting for an EOF nobody sends.
 		go func() {
 			w := stream.Stdin()
 			_, _ = io.Copy(w, opts.Stdin)
-			if cl, ok := w.(io.Closer); ok {
-				_ = cl.Close()
-			}
+			closeChildStdin(w)
 		}()
+	} else {
+		closeChildStdin(stream.Stdin())
 	}
 
 	// Cancellation has to reach the PUMPS. They block on the stream, not on ctx,

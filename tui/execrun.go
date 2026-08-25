@@ -96,11 +96,19 @@ func (w *execLineWriter) emit(line string) {
 // execOutputLine renders one output line for cmdresult. stderr is marked, not
 // merged: an operator reading the panel must be able to tell which stream a
 // line came from without re-running the command.
+//
+// The line is SANITIZED, for the reason sanitizeOutput's own doc comment gives
+// about the raw-forward pane: this is arbitrary output from a command nobody
+// vetted, drawn inside a bordered panel, and one ESC sequence in it repositions
+// the cursor before the frame is drawn over the result. `make test` on a
+// colourised build and any progress bar with a bare CR are the ordinary cases,
+// not hostile ones. The pane had only trusted producers until this verb.
 func execOutputLine(line string, stderr bool) string {
+	clean := sanitizeOutput([]byte(line))
 	if stderr {
-		return WarnStyle.Render("2| ") + line
+		return WarnStyle.Render("2| ") + clean
 	}
-	return "1| " + line
+	return "1| " + clean
 }
 
 // execArgvLabel renders the command for a result line.
