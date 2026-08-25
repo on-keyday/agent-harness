@@ -42,8 +42,8 @@ by the operator on request.
 | D4 | The listener's lifetime is its host process's lifetime | DECIDED (operator) |
 | D5 | Public-key authentication is required; no password, no open loopback | DECIDED (author) |
 | D6 | One ssh session per task per gateway; a second is refused | DECIDED (author) |
-| D7 | `Ctrl+]` is NOT intercepted; detach = end the ssh session | DECIDED (author) |
-| D8 | On detach the gateway writes the same terminal-mode resets a CLI attach writes — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
+| D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | DECIDED (author); **reverses** an earlier D7 in this spec, see § Detach |
+| D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
 | D9 | No `.bgn` / wire change | DECIDED (author) |
 
 ## Why client-side and not in the server
@@ -212,8 +212,9 @@ Per accepted `shell` request:
    `pty-req` carries pixel dimensions too, so unlike `applyInitialWindowSize`
    (`cli/initial_winsize.go:20`, which has only rows/cols and passes 0/0) all
    four values are forwarded.
-4. Pump: channel → `stream.Stdin()`, `stream.Stdout()` → channel,
-   `stream.Stderr()` → the channel's extended data (stderr) stream.
+4. Pump: channel → `stream.Stdin()`, scanning the inbound bytes for `0x1D`
+   (§ Detach), `stream.Stdout()` → channel, `stream.Stderr()` → the channel's
+   extended data (stderr) stream.
 5. `window-change` → `SetTerminalWindowSize` with the new values.
 6. On either direction ending: § Detach below, then `exit-status` and close.
 
@@ -247,24 +248,58 @@ and a control session on the same task — view attaches take no seat
 
 ## Detach and terminal restoration (D7, D8)
 
-Ending the ssh session closes the attach stream, which the server treats as a
-detach (`server/session_mux.go:657`, `detachOnly`); the task stays alive in
-`Detached`. That makes the ordinary ssh disconnect — `~.`, closing the window,
-`exit` in the ssh client — the detach gesture.
+**Detach and disconnect are different actions, and SSH offers only the second
+one.** `Ctrl+]` is this system's detach gesture — the equivalent of tmux's
+`Ctrl+b d`: leave the session running, hand the terminal back, return to the
+shell you came from. `RemoteShell` implements it by scanning the input stream
+for a single `0x1d` (`exec/exec_shell.go`, `detachIndex`; a one-shot byte, not a
+prefix), and every attach surface advertises it (`cli/attach_native.go:64`,
+`tui/app.go:1055`).
 
-`Ctrl+]` is **not** intercepted (D7). `RemoteShell` scans for it
-(`exec/exec_shell.go` `detachIndex`) because a local tty in raw mode has no other
-way out; an ssh client has `~.` and its own disconnect. `0x1D` is forwarded to
-the session like any other byte. This diverges from the CLI and TUI, where
-`Ctrl+]` detaches, and the divergence is deliberate: intercepting it would make
-that byte unreachable for whatever runs in the session, to duplicate an escape
-ssh already provides.
+`~.` is not that gesture. It tears the connection down from the client side,
+which is the equivalent of closing the terminal window — the harness sees a
+dropped stream and marks the task `Detached`, but the operator got there by
+yanking the cable, not by leaving.
 
-Before closing the channel the gateway writes the terminal-mode resets (D8). The
-ssh client's terminal is a real terminal with the same residue problem a local
-attach has: a full-screen app that is detached mid-run never gets to tear down
-the alternate screen, mouse reporting, or its scroll region, and OpenSSH restores
-termios on exit but emits no escape sequences.
+So the gateway intercepts `0x1d` and ends the ssh session cleanly on it: the
+task detaches, `exit-status` 0 goes back, and `ssh` exits normally. Without it,
+an operator who reached a session through ssh has no way to leave one except by
+killing their connection, which is a capability the CLI and TUI both have and
+this surface would lack.
+
+**Reversal.** An earlier draft of this spec decided the opposite — do not
+intercept, because `~.` exists. That treated disconnect and detach as the same
+action; they are not, and the paragraph above is why.
+
+The interception's cost is unchanged and real: `0x1d` no longer reaches whatever
+runs in the session.
+
+### What this means for the resets
+
+Terminal-mode resets can only be written while the ssh client is still reading,
+which sorts the ways a session ends into two groups:
+
+| How the session ends | Resets land? |
+| --- | --- |
+| The detach key — a byte arriving on a live channel | **Yes** |
+| The far end ends it — the task exits, the attach stream errors, another client takes the control seat | **Yes**: the ssh client is still connected and reading |
+| The ssh client leaves — `~.`, the terminal window closes, the link drops, the process is killed | **No** |
+
+The third row is not a gap to be closed in a later version, and it is not the
+reason the detach key is intercepted — that reason is the paragraph above, and
+it holds whether or not any reset byte is ever written. Nothing in the SSH
+protocol lets a server write to a client that has stopped reading, so an
+operator who disconnects with `~.` out of a full-screen app gets the same
+terminal a killed `ssh` to any other host leaves behind. The remedies are
+operator-side and outside this design: `reset`, or an alias that appends the
+resets itself. This is documented in the CLI usage text and the TUI's
+`ssh-gateway` output so it is discoverable at the point of use rather than only
+here.
+
+What the resets are for: the ssh client's terminal is a real terminal with the
+same residue problem a local attach has — a full-screen app detached mid-run
+never gets to tear down the alternate screen, mouse reporting, or its scroll
+region, and SSH restores termios on exit while emitting no escape sequences.
 
 Today a CLI attach emits **two** groups, from two places, back to back
 (`cli/attach_native.go:72–74`):
@@ -275,7 +310,8 @@ Today a CLI attach emits **two** groups, from two places, back to back
 - `cli.RestoreLocalInputModes` — `cli.InputModeReset`, the input-sending modes
   (`cli/terminal_input_modes.go:33`)
 
-The gateway writes both groups into the ssh channel. The channel is the only
+On either end it can serve, the gateway writes both groups into the ssh channel
+before closing it. The channel is the only
 pipe to the ssh client's terminal, so the bytes a local attach writes to
 `os.Stdout` go there instead — the ssh client prints them to its own terminal,
 which is what needs resetting. Both groups, not some merged subset: they overlap
@@ -365,9 +401,16 @@ round — detach with the resets suppressed, per group, and record what breaks:
 
 | Run | Suppressed | Scenario |
 | --- | --- | --- |
-| 1 | `cli.InputModeReset` | attach to a session whose app had mouse tracking on, detach, move the mouse at the local shell prompt |
-| 2 | `cli.ScreenModeReset` | attach while a full-screen app (`htop`) runs, detach mid-run, then use the local shell |
+| 1 | `cli.InputModeReset` | attach to a session whose app had mouse tracking on, detach with `Ctrl+]`, move the mouse at the local shell prompt |
+| 2 | `cli.ScreenModeReset` | attach while a full-screen app (`htop`) runs, detach with `Ctrl+]` mid-run, then use the local shell |
 | 3 | both | either scenario |
+
+Every run leaves with the detach key, never with `~.`: the disconnect path
+writes nothing at all, so it would show a broken terminal whether or not the
+resets exist and can measure nothing about them. It is exercised once on its
+own — `~.` out of `htop` — to check that the limitation documented in § Detach
+is the observed behaviour and not an assumption about what OpenSSH does on the
+way out.
 
 A group whose suppression leaves the terminal usable in its scenario is not
 carrying its weight and is dropped from the gateway path, with the observation
