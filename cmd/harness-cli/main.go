@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/cli/agent"
 	"github.com/on-keyday/agent-harness/cli/cliopts"
+	"github.com/on-keyday/agent-harness/cli/sshgw"
 	"github.com/on-keyday/agent-harness/cli/workspace"
 	"github.com/on-keyday/agent-harness/runner/agentskills"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -712,7 +714,7 @@ func main() {
 			die(err)
 		}
 		defer c.Close()
-		fctx, cancel := interruptContext(ctx)
+		fctx, cancel := interruptContext("forward", ctx)
 		defer cancel()
 		logf := func(s string) { fmt.Fprintln(os.Stderr, s) }
 		if *wspec != "" {
@@ -775,6 +777,34 @@ func main() {
 		}
 		if forwardErr != nil {
 			os.Exit(1)
+		}
+
+	case "ssh-gateway":
+		fs := flag.NewFlagSet("ssh-gateway", flag.ExitOnError)
+		listen := fs.String("listen", sshgw.DefaultListen, "ssh listen host:port (no ssh auth on a loopback bind; --authorized-keys is required off loopback)")
+		hostKey := fs.String("host-key", "", "ssh host key path (default: alongside the workspace config; generated on first run, then reused)")
+		authKeys := fs.String("authorized-keys", "", "OpenSSH authorized_keys file; optional on a loopback bind, required otherwise")
+		fs.Parse(args)
+		keyPath := *hostKey
+		if keyPath == "" {
+			keyPath = sshHostKeyDefault(*configPath)
+		}
+		c, err := cli.Dial(ctx, parseCID(), protocol.ClientKind_Cli)
+		if err != nil {
+			die(err)
+		}
+		defer c.Close()
+		fmt.Fprintf(os.Stderr, "harness-cli: ssh gateway on %s — `ssh -p %s <32-hex-task-id>@%s` attaches; Ctrl-C stops it and every session it serves\n",
+			*listen, sshPortHint(*listen), sshHostHint(*listen))
+		fmt.Fprintln(os.Stderr, "harness-cli: bare user name = cowrite (evicts nobody), .control takes the seat, .view watches; Ctrl+] detaches")
+		gctx, cancel := interruptContext("ssh-gateway", ctx)
+		defer cancel()
+		if err := sshgw.Run(gctx, c, sshgw.Options{
+			Listen:             *listen,
+			HostKeyPath:        keyPath,
+			AuthorizedKeysPath: *authKeys,
+		}); err != nil {
+			die(err)
 		}
 
 	case "session":
@@ -899,6 +929,44 @@ func isTaskIDLike(s string) bool {
 	return true
 }
 
+// sshHostKeyDefault returns where `ssh-gateway` keeps its host key when
+// --host-key is not given: beside the workspace config, this project's one
+// existing per-repo client-state location.
+//
+// It resolves the config location itself rather than using what workspace.Load
+// found, because Load reports "" when the default .harness/config does not
+// exist — which is the ordinary case, and the one where the key still needs a
+// home. LoadOrCreateHostKey creates the directory.
+func sshHostKeyDefault(flagPath string) string {
+	p := flagPath
+	if p == "" {
+		p = os.Getenv("HARNESS_CONFIG")
+	}
+	if p == "" {
+		p = filepath.FromSlash(workspace.DefaultPath)
+	}
+	return filepath.Join(filepath.Dir(p), "ssh_host_ed25519_key")
+}
+
+// sshHostHint / sshPortHint split a bind address for the `ssh -p PORT user@HOST`
+// hint line. An address that does not split is printed back whole rather than
+// guessed at — the hint is a convenience, and a wrong one is worse than none.
+func sshHostHint(addr string) string {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil || host == "" {
+		return addr
+	}
+	return host
+}
+
+func sshPortHint(addr string) string {
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	return port
+}
+
 // forwardWConflictsWithLR reports whether -W was combined with -L or -R.
 // They are mutually exclusive: -W owns the foreground and exits with its
 // peer (like ssh -W, which implies ClearAllForwardings), while -L/-R are
@@ -925,7 +993,7 @@ const interruptStopGrace = 5 * time.Second
 // The dump is the point on Windows, where there is no SIGQUIT to ask for one:
 // the stack of a hung shutdown is exactly the evidence needed to fix it, and
 // it has to be captured on the machine that reproduces it.
-func interruptContext(parent context.Context) (context.Context, func()) {
+func interruptContext(label string, parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(parent)
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, os.Interrupt)
@@ -936,14 +1004,14 @@ func interruptContext(parent context.Context) (context.Context, func()) {
 		case <-ctx.Done():
 			return
 		}
-		fmt.Fprintln(os.Stderr, "forward: stopping…")
+		fmt.Fprintln(os.Stderr, label+": stopping…")
 		cancel()
 		select {
 		case <-stopped:
 		case <-sig: // second interrupt: stop waiting
-			forceExitWithStacks("interrupted twice")
+			forceExitWithStacks(label, "interrupted twice")
 		case <-time.After(interruptStopGrace):
-			forceExitWithStacks(fmt.Sprintf("did not stop within %s", interruptStopGrace))
+			forceExitWithStacks(label, fmt.Sprintf("did not stop within %s", interruptStopGrace))
 		}
 	}()
 	return ctx, func() {
@@ -955,10 +1023,10 @@ func interruptContext(parent context.Context) (context.Context, func()) {
 
 // forceExitWithStacks reports why the process is leaving and dumps every
 // goroutine, so a shutdown that hung leaves evidence rather than a mystery.
-func forceExitWithStacks(reason string) {
+func forceExitWithStacks(label, reason string) {
 	buf := make([]byte, 1<<20)
 	n := runtime.Stack(buf, true)
-	fmt.Fprintf(os.Stderr, "forward: %s — forcing exit. Goroutine dump follows.\n%s\n", reason, buf[:n])
+	fmt.Fprintf(os.Stderr, "%s: %s — forcing exit. Goroutine dump follows.\n%s\n", label, reason, buf[:n])
 	os.Exit(130)
 }
 
@@ -1105,6 +1173,16 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      list registered port forwards; --task filters, --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  forward kill FORWARD_ID [FORWARD_ID ...]")
 	fmt.Fprintln(os.Stderr, "                                      kill one or more registered forwards by id (from `forward ls`)")
+	fmt.Fprintln(os.Stderr, "  ssh-gateway [--listen 127.0.0.1:2222] [--host-key PATH] [--authorized-keys PATH]")
+	fmt.Fprintln(os.Stderr, "                                      serve ssh: `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session,")
+	fmt.Fprintln(os.Stderr, "                                      so ssh config aliases, tmux and mosh reach a task with no harness binary there")
+	fmt.Fprintln(os.Stderr, "                                      the user name picks the mode: bare = cowrite (evicts nobody), .control takes")
+	fmt.Fprintln(os.Stderr, "                                      the seat and owns the PTY size, .view watches")
+	fmt.Fprintln(os.Stderr, "                                      Ctrl+] detaches. ssh's own ~. DISCONNECTS instead: the session survives either")
+	fmt.Fprintln(os.Stderr, "                                      way, but a disconnect leaves your terminal's modes unreset (`reset` fixes it)")
+	fmt.Fprintln(os.Stderr, "                                      no ssh auth on a loopback bind; --authorized-keys is REQUIRED off loopback")
+	fmt.Fprintln(os.Stderr, "                                      no scp/sftp and no ssh -L: use `file push`/`file pull` and `forward`")
+	fmt.Fprintln(os.Stderr, "                                      foreground; Ctrl-C stops it and every session it serves")
 }
 
 func serverUsage() {
