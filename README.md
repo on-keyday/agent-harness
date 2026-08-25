@@ -75,6 +75,10 @@ messaging, WASM transport, PSK auth, etc. are alongside it under
     - Port forwarding: `forward <task-id> -L [bind:]lport:rhost:rport`
       (SSH `-L` style — the runner dials `rhost:rport`, bytes relayed
       over the same transport; `-L` repeatable, foreground until Ctrl-C).
+    - SSH front door: `ssh-gateway [--listen 127.0.0.1:2222]` serves ssh,
+      so `ssh -p 2222 <32-hex-task-id>@127.0.0.1` attaches to that session
+      from any ssh client — an `~/.ssh/config` alias, tmux, mosh, a script
+      — with no harness binary on that host. See **SSH gateway** below.
     - Agent runtime (called from inside agent sessions):
       `agent {send | wait | inbox | dispatch | subscribe | unsubscribe
       | topics | subscriptions}`. See `runner/agentskills/harness-cli/
@@ -308,6 +312,41 @@ bin/harness-cli notify-watch          # stream notifications (ring backlog + liv
 # examples/notify-hooks/discord.py is a ready Discord-webhook hook (URL from
 # --url / --url-file args or DISCORD_WEBHOOK_URL / _FILE env).
 ```
+
+### SSH gateway
+
+`harness-cli ssh-gateway` (or `ssh-gateway start` in the TUI) serves the SSH
+protocol from an ordinary harness client, so an `ssh` client can reach an
+interactive session. Nothing changes on the server: it is the existing attach,
+with an ssh channel where a local terminal would be.
+
+```
+ssh -p 2222 <32-hex-task-id>@127.0.0.1           # cowrite: type, evict nobody
+ssh -p 2222 <32-hex-task-id>.control@127.0.0.1   # take the seat (owns the PTY size)
+ssh -p 2222 <32-hex-task-id>.view@127.0.0.1      # watch only
+```
+
+The user name names the task and picks the mode. The **bare form is cowrite**
+so that arriving over ssh never detaches whatever you already had attached in
+the TUI; `.control` asks for that takeover explicitly, and is the form that
+owns the PTY size. A cowrite session's own resize only takes effect while no
+control client holds the seat — otherwise it renders at the controller's size.
+
+`Ctrl+]` detaches, the same gesture the CLI and TUI use, and leaves the session
+running. ssh's own `~.` is a *disconnect*, not a detach: the session survives
+that too, but the gateway is already gone by the time it happens and cannot
+reset your terminal's modes on the way out — `reset` fixes a terminal left on
+an alternate screen or emitting mouse reports.
+
+**Authentication follows the bind address.** On loopback there is none: an
+agent this harness starts runs as your UID and could read your ssh private key
+anyway, so keys would buy nothing. Off loopback that reasoning inverts, so
+`--listen` on any other address requires `--authorized-keys FILE` and refuses
+to start without it. The host key is generated once beside `.harness/config`
+and reused, so `known_hosts` stays valid.
+
+No scp/sftp and no `ssh -L` through it: `file push` / `file pull` and `forward`
+already cover those, and each is refused with a message that says so.
 
 ### X11 forwarding
 
@@ -678,7 +717,10 @@ stale.
 The cmdline accepts `submit / interactive / session {new,attach,ls,kill}
 / session stream attach / file {ls,push,pull,delete} / grid / caps / scope
 / caps set / caps set-parent / workspace {save,apply,ls,show}
-/ server dial-runner / cancel / prune / repo / clear / help / quit`.
+/ server dial-runner / ssh-gateway / cancel / prune / repo / clear / help / quit`.
+`ssh-gateway [start [bind:port] | stop]` hosts the SSH front door from the TUI
+itself (see **SSH gateway**); with no argument it reports the address it is
+listening on, or that it is not running. It dies with the TUI.
 `session new --stream -d` opens an event-stream session (detached only in
 the TUI — there is no terminal to splice); `session stream attach <id>`
 follows its events in the logs pane, which is where this kind's events

@@ -891,6 +891,77 @@ have silently taken a session back from another client on every reconnect —
 was to delete the key: resume runs DETACHED and the grid restores the screen,
 and grid panes attach as `cowrite`, which the schema defines as non-takeover.
 
+### 2026-08-25 (pre-landing) — `ssh-gateway`: an ssh front door to a session
+
+A listener inside an ordinary harness client. The ssh user name names the task
+and the attach mode; the channel is spliced to the existing AttachSession
+stream. No wire change, no server change.
+
+done:    1 (`ssh-gateway` verb + usage block in `cmd/harness-cli/main.go`), 3
+         (`parseSSHGateway` in `tui/cmdline.go`, beside `parseForward`), 10 (a
+         new verb family on the CLI and the TUI cmdline; nothing added to an
+         existing family), 24 (per-path meaning written down for the one option
+         that has paths: the three user-name forms, what each does to the
+         control seat and to the PTY size, and `--authorized-keys` being
+         optional on loopback and mandatory off it), 27 (both surfaces call
+         `sshgw.Listen`/`Run` with the same `Options`; the host-key default and
+         the address-splitting hints live in `sshgw` — `DefaultHostKeyPath`,
+         `HostOf`, `PortOf` — rather than being recomputed per surface), 28a
+         (counted the builds: `grep -rn 'sshgw.Options{'` returns exactly two,
+         one per surface, and the attach itself is built at ONE site inside the
+         package), 29 (start names the bound address and the invocation to
+         paste into `~/.ssh/config`; stop names the address it is stopping), 30
+         (TUI → `a.cmdresult`; the CLI writes to stderr and never to stdout),
+         31 (`ssh-gateway` with no argument prints "not running" rather than
+         nothing, and an unusable `pty-req` size is reported rather than
+         silently defaulted), 32 (the user-name grammar is parsed in ONE place,
+         `sshgw.ParseUserName`; the hint line that produces an example is built
+         from the same package's `HostOf`/`PortOf`. No JS mirror exists to
+         drift, because 6–8 are structurally n/a), 33 (a non-loopback
+         `--listen` with no keys is a startup REFUSAL, not a quietly open
+         listener; an unparseable host key is an error, not a regeneration; an
+         unknown user-name suffix is rejected naming the accepted forms), 35
+         (README: the harness-cli summary list, a new **SSH gateway** section,
+         and the TUI cmdline verb list), 37 (the spec was amended twice DURING
+         implementation — see the miss below)
+omitted: 4 (no keybinding: every task-pane key acts on the selected task, and a
+         gateway is process-scoped, so there is no row for a key to act on)
+         5 (no modal: `PortForwardModal` exists because a forward spec is four
+         fields with no default; a gateway takes one optional address)
+         36 (no agent-facing skill: this is an operator surface, and a listener
+         that hands out operator-grade attaches is not something to document to
+         agents)
+n/a:     2 (no caps/scope grammar), 6, 7, 8 (a browser cannot accept an inbound
+         TCP connection, so no wasm build can host a listener — `cli/sshgw` is
+         `!js` and `make wasm-check` proves it never enters that build), 9, 26
+         (no spawn), 11–23 (no new task or runner field; a gateway attach shows
+         up in the observer counts that already exist — verified in the live
+         run's `ls` row), 25, 28 (no wire field, no WAL), 34, 34a (no table
+         column, no form), 38 (the gateway renders no screen of its own; it
+         hands PTY bytes to an ssh client, and neither live pane is involved).
+         S1–S6: no agent added, renamed, or changed in bin, argv, log format,
+         credential mode, egress or launch env.
+missed:  33 — caught before landing, by the end-to-end test rather than by the
+         walk. `exec` was REFUSED with the reason written to the channel's
+         stderr, which reads as "takes effect or errors" and is neither: a
+         client whose request is refused tears the session down without ever
+         draining stderr, so the sentence was written and never seen. The test
+         asserted the reason ARRIVES, which is the assertion the item implies
+         and the walk does not make. Now accepted-then-answered with exit 1.
+         The item's wording is fine; what was missing is that "errors" has to
+         mean an error the operator can READ.
+
+Two things this walk is worth recording for beyond the numbers. First, item 6–8
+came back `n/a` for a structural reason rather than a scope decision, and that
+is the first time in this log that a whole UI is unreachable **by
+construction** — worth stating in the spec rather than leaving as three empty
+cells, because a later reader would otherwise read it as an omission someone
+might close. Second, the walk was run AFTER the code and found nothing 1–10
+had not already forced; the value came from 24, 32 and 33, which are the
+meaning items. On a verb whose whole content is a grammar and a set of
+refusals, the semantics axes are the checklist and the surface list is the
+formality.
+
 ## Standing tallies
 
 Update when adding an entry.
@@ -902,7 +973,7 @@ Update when adding an entry.
 | 13 (whoami) | 0 | 1 | Also elided `scope=subtree` until `d437f6e`. Easy to forget because it is not a task listing.
 | 34 (dynamic column sets) | 2 | 0 | New. Second firing was the popup: same class, different widget. |
 | 17 (TUI detail popup) | 3 | **1** | Missed the popup's own HEIGHT. The item asks whether a field is visible in the view, never whether the view fits the screen. |
-| 33 (take effect or error) | 11 | 0 | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. |
+| 33 (take effect or error) | 12 | **1** | First real firing: it turned "the server drops it silently" from acceptable into a bug worth an acknowledgement path. Third firing applied it to a flag-expansion collision rather than a wire value — the same axis one layer out. Fifth was two mutually-exclusive OUTPUT selectors (`--raw` vs `--json`), refused rather than ranked. The tenth is the first where the item caught a defect in the very edit that invoked it: a new flag added to the flag set and not to the stray-flag guard beside it. The twelfth is the first MISS: an ssh `exec` request was refused with the reason written to a stderr no refused-request client ever drains, so "errors" was satisfied while the operator saw nothing. "Errors" has to mean an error someone can READ, and the end-to-end test caught that, not the walk. |
 | S1 (preset derivation) | 1 | 0 | First firing of S1–S6 at all. Caught a feature that passed a full 1–37 walk and was still unlaunchable: the gap was agent-launch config, which no UI grep reaches. |
 | S5 (env and addressing contract) | 1 | 0 | New, and the second S-item to fire. Same lesson as S1 one axis over: the defect was invisible to every 1–37 item because it lived in the sandbox wrapper's `HARNESS_*` PREFIX forwarding, which no `cli/` / `tui/` / `cmd/` grep reaches. A new client-side env var is automatically an agent-side one, and the item's own wording predicted it: "a new `HARNESS_…` var rides along automatically". |
 | 10 (other verb families) | 8 | 0 | First `omitted`: a new `session` verb that the TUI/WebUI command lines do not parse — consistent with the rest of the non-TTY trio, but recorded rather than assumed. Third firing was the useful one: walking the family surfaced an asymmetry that PREDATED the change (`send --snapshot` took `--style` but not `--color`), and the item's answer was to close it in the same walk rather than to match it. |
