@@ -42,7 +42,18 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	if dataStream == nil {
 		return errResp(protocol.ExecRunStatus_InternalError)
 	}
-	ctrlStream := conn.CreateBidirectionalStream()
+	// A SEND stream, like the ExecRunList body's: the outcome only ever flows
+	// server to client, and asking for a bidirectional one would be actively
+	// wrong here. Finishing a bidi stream means CloseBoth, whose recv half
+	// cancels the PEER's send half of the same id — and GetBidirectionalStream
+	// resolves an id only while BOTH halves exist, so the client would lose the
+	// ability to look this stream up seconds before it reads it. That raced and
+	// was reproduced in trsf directly (TestCloseBothKeepsTheStreamResolvableByID).
+	// A unidirectional stream has no peer send half to cancel.
+	//
+	// It carries nothing until the exec ends, so the client deliberately does
+	// not look for it until the output is over. See (*Client).ExecRun.
+	ctrlStream := conn.CreateSendStream()
 	if ctrlStream == nil {
 		_ = dataStream.CloseBoth()
 		return errResp(protocol.ExecRunStatus_InternalError)
@@ -50,7 +61,7 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	runnerStream := runner.Conn.CreateBidirectionalStream()
 	if runnerStream == nil {
 		_ = dataStream.CloseBoth()
-		_ = ctrlStream.CloseBoth()
+		_ = ctrlStream.Close()
 		return errResp(protocol.ExecRunStatus_InternalError)
 	}
 
@@ -70,12 +81,18 @@ func (h *TaskHandler) handleOpenExecRun(conn ConnHandle, req *protocol.ExecRunRe
 	if _, _, err := runner.Conn.SendMessage(data); err != nil {
 		h.execs().remove(execID)
 		_ = dataStream.CloseBoth()
-		_ = ctrlStream.CloseBoth()
+		_ = ctrlStream.Close()
 		_ = runnerStream.CloseBoth()
 		slog.Error("exec_run: send to runner failed", "task_id", taskIDHex, "err", err)
 		return errResp(protocol.ExecRunStatus_InternalError)
 	}
-	go spliceBidi(dataStream, runnerStream, taskIDHex)
+	// HalfClose, not spliceBidi: the full-teardown variant closes BOTH streams
+	// the moment either direction ends, and for a command that finishes in
+	// milliseconds that can tear the client's data stream down before the
+	// client has resolved it by id. git_query and the file transfers splice the
+	// same way for the same reason — a request/response exchange, not an
+	// interactive PTY where a dead direction should end everything.
+	go spliceBidiHalfClose(dataStream, runnerStream, taskIDHex)
 
 	return protocol.ExecRunResponse{
 		Status:          protocol.ExecRunStatus_Ok,
@@ -133,13 +150,20 @@ func writeExecEvent(e *execRun, kind protocol.ExecEventKind, code int32, detail 
 	body, err := ev.Append(nil)
 	if err != nil {
 		slog.Error("exec_run: encode event", "exec_id", e.execID, "err", err)
-		_ = e.control.CloseBoth()
+		// EOF anyway: a client blocked on this stream would otherwise wait out
+		// its whole deadline for bytes that are never coming.
+		_ = e.control.AppendData(true)
 		return
 	}
-	if _, werr := e.control.Write(body); werr != nil {
+	// Body then EOF, exactly as handleExecRunList writes its rows. NOT Close():
+	// the EOF frame IS the end-of-outcome signal, and a separate close would
+	// only add the cancel this stream shape exists to avoid.
+	if werr := e.control.AppendData(false, body); werr != nil {
 		slog.Info("exec_run: client gone before the outcome landed", "exec_id", e.execID)
 	}
-	_ = e.control.CloseBoth()
+	if werr := e.control.AppendData(true); werr != nil {
+		slog.Info("exec_run: client gone before the outcome EOF landed", "exec_id", e.execID)
+	}
 }
 
 // handleExecRunList reports the running execs the caller may see.

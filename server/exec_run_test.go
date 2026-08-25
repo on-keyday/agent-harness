@@ -8,8 +8,9 @@ import (
 )
 
 // The control stream double is port_forward_test.go's recordingBidiStream: it
-// already captures writes and flips a closed flag, which is exactly what an
-// ExecEvent assertion needs.
+// captures writes and records end-of-stream, which is exactly what an ExecEvent
+// assertion needs. It is a bidi double standing in for a SendStream — the real
+// control stream is unidirectional on purpose (see handleOpenExecRun).
 
 // The exit code reaches the client as ONE ExecEvent on the control stream, and
 // the registration is dropped in the same step: an entry lives exactly as long
@@ -33,8 +34,8 @@ func TestExecRunFinishedPushesEventAndDrops(t *testing.T) {
 	if ev.Kind != protocol.ExecEventKind_Exited || ev.ExitCode != 1 {
 		t.Errorf("event = kind %v code %d, want exited/1", ev.Kind, ev.ExitCode)
 	}
-	if !ctrl.closed.Load() {
-		t.Error("the control stream must be closed after its one event — the close is what tells the client the outcome is complete")
+	if !ctrl.Ended() {
+		t.Error("the control stream must end after its one event — the EOF is what tells the client the outcome is complete")
 	}
 }
 

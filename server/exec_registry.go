@@ -25,7 +25,7 @@ type execRun struct {
 	runnerID   string
 	argv       []string
 	startedAt  time.Time
-	control    trsf.BidirectionalStream
+	control    trsf.SendStream
 	clientCID  string
 	clientKind protocol.ClientKind
 }

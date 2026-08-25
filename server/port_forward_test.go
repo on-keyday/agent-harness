@@ -514,12 +514,18 @@ func TestPortForwardControlEOFDeregisters(t *testing.T) {
 // recordingBidiStream captures AppendData/Write payloads and blocks ReadDirect
 // until CloseBoth. Used as a remote-forward control stream so a test can inspect
 // the notify written to it while keeping the server's control watcher parked.
+//
+// It records the EOF flag as well as the bytes, because a writer that ends its
+// stream with AppendData(true) rather than CloseBoth is signalling exactly the
+// same thing to a reading client — and a double that dropped the flag could not
+// tell "ended" from "still open".
 type recordingBidiStream struct {
 	streamID trsf.StreamID
 	mu       sync.Mutex
 	written  []byte
 	closeCh  chan struct{}
 	closed   atomic.Bool
+	eofSent  atomic.Bool
 }
 
 func newRecordingBidiStream(id trsf.StreamID) *recordingBidiStream {
@@ -545,12 +551,18 @@ func (s *recordingBidiStream) WriteContext(_ context.Context, p []byte) (int, er
 func (s *recordingBidiStream) Close() error      { return nil }
 func (s *recordingBidiStream) HasSendData() bool { return false }
 func (s *recordingBidiStream) Completed() bool   { return false }
-func (s *recordingBidiStream) AppendData(_ bool, payloads ...[]byte) error {
+func (s *recordingBidiStream) AppendData(eof bool, payloads ...[]byte) error {
 	for _, p := range payloads {
 		s.append(p)
 	}
+	if eof {
+		s.eofSent.Store(true)
+	}
 	return nil
 }
+
+// Ended reports whether the writer signalled end-of-stream, by either route.
+func (s *recordingBidiStream) Ended() bool { return s.eofSent.Load() || s.closed.Load() }
 func (s *recordingBidiStream) AppendDataContext(_ context.Context, eof bool, payloads ...[]byte) error {
 	return s.AppendData(eof, payloads...)
 }

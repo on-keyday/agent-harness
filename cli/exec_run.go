@@ -89,11 +89,6 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 		return ExecRunResult{}, fmt.Errorf("exec: data stream %d not visible", r.DataStreamId)
 	}
 	defer data.CloseBoth()
-	ctrl := peer.WaitForBidirectionalStream(ctx, c.Transport(), trsf.StreamID(r.ControlStreamId))
-	if ctrl == nil {
-		return ExecRunResult{}, fmt.Errorf("exec: control stream %d not visible", r.ControlStreamId)
-	}
-	defer ctrl.CloseBoth()
 
 	stream := agentexec.NewCommandExecutionStream(data)
 	// Both output pumps must be drained: an undrained demux side backpressures
@@ -102,17 +97,50 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 	go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stdout, stream.Stdout()) }()
 	go func() { defer func() { done <- struct{}{} }(); copyIfSet(opts.Stderr, stream.Stderr()) }()
 	if opts.Stdin != nil {
-		go func() { _, _ = io.Copy(stream.Stdin(), opts.Stdin) }()
+		// Close when the caller's stdin runs out: that writes the 0-length
+		// Stdin frame the executor reads as "close the child's stdin". Without
+		// it a filter like `cat` reads forever and the exec never ends — the
+		// command looks hung when it is only waiting for an EOF nobody sends.
+		go func() {
+			w := stream.Stdin()
+			_, _ = io.Copy(w, opts.Stdin)
+			if cl, ok := w.(io.Closer); ok {
+				_ = cl.Close()
+			}
+		}()
 	}
 
-	// The control stream carries exactly one ExecEvent and then closes; the
-	// close is the completion signal.
-	raw, err := io.ReadAll(ctrl)
-	if err != nil {
-		return ExecRunResult{}, fmt.Errorf("exec: read outcome: %w", err)
+	<-done
+	<-done
+
+	// The outcome stream is looked up HERE, not before the pumps: it carries
+	// nothing until the exec ends, and a stream with no bytes on it yet is not
+	// resolvable, so waiting for it up front would time out on every exec that
+	// outlives the lookup deadline — which is all of them.
+	//
+	// A RECEIVE stream, read the way ExecRunListWith reads its rows. The server
+	// makes it unidirectional on purpose; see handleOpenExecRun.
+	ctrl := waitForReceiveStream(ctx, c.Transport(), trsf.StreamID(r.ControlStreamId))
+	if ctrl == nil {
+		return ExecRunResult{}, fmt.Errorf("exec: outcome stream %d never arrived", r.ControlStreamId)
 	}
-	<-done
-	<-done
+
+	// It carries exactly one ExecEvent and then EOFs; the EOF is what says the
+	// outcome is complete.
+	var raw []byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return ExecRunResult{}, err
+		}
+		chunk, eof, rerr := ctrl.ReadDirect(64 * 1024)
+		if rerr != nil {
+			return ExecRunResult{}, fmt.Errorf("exec: read outcome: %w", rerr)
+		}
+		raw = append(raw, chunk...)
+		if eof {
+			break
+		}
+	}
 
 	var ev protocol.ExecEvent
 	if derr := ev.DecodeExactCopy(raw); derr != nil {
