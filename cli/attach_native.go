@@ -65,13 +65,10 @@ func (c *Client) SessionAttach(ctx context.Context, taskIDHex string, mode proto
 	}
 
 	// RemoteShell returns when the operator detaches (Ctrl+]) or the session
-	// ends, with the local terminal already back in cooked mode — so this is
-	// the moment we own the terminal again and the last one at which the modes
-	// the attach turned on can be taken back off. Before the error check: a
-	// failed RemoteShell hands the terminal back in the same state a clean one
-	// does, and leaving mouse reports on is the worse outcome either way.
+	// ends, with the local terminal already back in cooked mode and its screen
+	// and input modes reset — it writes both reset groups on the way out,
+	// whether it is returning cleanly or not (objtrsf exec.WriteTerminalReset).
 	err = stream.RemoteShell()
-	RestoreLocalInputModes(os.Stdout)
 	if err != nil {
 		return taskIDHex, err
 	}
