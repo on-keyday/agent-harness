@@ -117,6 +117,10 @@ func formatRunnerDetail(r protocol.RunnerInfo) string {
 	fmt.Fprintf(&sb, "status:        %s\n", runnerStatusStr(r.Status))
 	fmt.Fprintf(&sb, "id:            %s\n", protocol.RunnerIDToConnID(r.Id).String())
 	fmt.Fprintf(&sb, "host:          %s\n", string(r.Hostname))
+	// Always printed. A runner has a platform whether or not it reported one,
+	// and it decides real things — which shell an `ssh host cmd` reaches, which
+	// paths its roots are spelled in.
+	fmt.Fprintf(&sb, "os:            %s\n", cli.RunnerGOOSStr(r.Goos))
 	fmt.Fprintf(&sb, "agent:         %s\n", agentProfilesDescriptor(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()))
 	fmt.Fprintf(&sb, "tasks:         %d active / %d max\n", r.ActiveTasksLen, r.MaxTasks)
 	for i, root := range r.AllowedRoots {

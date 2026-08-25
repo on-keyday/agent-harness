@@ -126,6 +126,7 @@ func runnerExecRunRequest(req *protocol.ExecRunRequest, execID uint64, repoPath 
 		Argv:     req.Argv,
 	}
 	body.SetRepoPath([]byte(repoPath))
+	body.SetShellLine(req.ShellLine())
 	body.SetStdinEnabled(req.StdinEnabled())
 	return body
 }

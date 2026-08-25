@@ -69,6 +69,18 @@ format RunnerHello:
     version :u8
     hostname_len :u8
     hostname :[hostname_len]u8
+    # goos is runtime.GOOS on the runner's host — "linux", "windows", "darwin".
+    #
+    # A STRING rather than an enum: GOOS is an open set, and a runner on a
+    # platform this schema has not heard of should report it rather than be
+    # forced into "other". Empty means a runner that predates this field.
+    #
+    # It exists because the harness had no idea what OS a runner ran on, and
+    # things that MUST know were guessing. The ssh gateway hard-coded `sh -c`
+    # for every `ssh host cmd`, which happened to work on one Windows box
+    # because Git for Windows had put sh on PATH.
+    goos_len :u8
+    goos :[goos_len]u8
     max_tasks :u16
     allowed_roots_len :u8
     allowed_roots :[allowed_roots_len]AllowedRoot
@@ -501,6 +513,10 @@ format RunnerInfo:
     id :RunnerID
     hostname_len :u8
     hostname :[hostname_len]u8
+    # Relayed from RunnerHello.goos, so an operator can see which runners are
+    # which without opening a session on one.
+    goos_len :u8
+    goos :[goos_len]u8
     status :RunnerStatus
     max_tasks :u16
     allowed_roots_len :u8
@@ -2091,7 +2107,28 @@ format ExecRunRequest:
     # objtrsf ExecuteOption.StdinDevNull — and for one release it did not,
     # which is what made `exec <task> -- bash` from the TUI hang forever.
     stdin_enabled :u1
-    reserved :u7
+    # shell_line=1 means argv holds exactly ONE element: a command LINE for the
+    # runner's own shell to interpret, rather than an argv to exec directly.
+    # The runner picks `sh -c <line>` or `cmd /c <line>` from its own platform.
+    #
+    # It exists because D4 — "a caller that wants a shell sends ['sh','-c',line]
+    # itself" — assumes the caller knows what shell exists on the far side. That
+    # holds for a human typing `harness-cli exec`; it does NOT hold for the ssh
+    # gateway, which is handed one opaque string by `ssh host cmd` and has no
+    # human to ask. It hard-coded `sh -c`, which fails on a stock Windows runner
+    # and only worked on one because Git for Windows had put sh on PATH.
+    #
+    # The choice belongs to the party that KNOWS, which is the runner.
+    #
+    # Declared AFTER stdin_enabled, and that is not cosmetic: both live in the
+    # same byte, so putting a new flag FIRST shifts every bit behind it and a
+    # peer on the old build reads shell_line as stdin_enabled. Not a decode
+    # failure — a silent misreading, which is worse. Caught by running the ssh
+    # path against a not-yet-restarted server, where the gateway's shell_line=1
+    # arrived as stdin_enabled=1 and the command line was exec'd as a program
+    # name. New bits go at the END of the reserved run.
+    shell_line :u1
+    reserved :u6
 
 enum ExecRunStatus:
     :u8
@@ -2146,7 +2183,9 @@ format RunnerExecRunRequest:
     repo_path :[repo_path_len]u8
     argv :ExecArgv
     stdin_enabled :u1
-    reserved :u7
+    # Relayed verbatim; see ExecRunRequest.shell_line.
+    shell_line :u1
+    reserved :u6
 
 format ExecRunFinished:
     exec_id :u64

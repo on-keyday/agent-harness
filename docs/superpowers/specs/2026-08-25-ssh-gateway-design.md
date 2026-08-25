@@ -204,11 +204,16 @@ mapping is now the honest one it was not before.
 
 Details that follow from the mapping:
 
-- `sh -c <line>`, not a whitespace split. `ssh host cmd` sends ONE string it
-  expects a shell to interpret; re-splitting it here would break every quote and
-  redirection the operator typed. The wire carries an argv (task-exec D4)
-  precisely so this caller can choose the shell form while `harness-cli exec`
-  passes its words through untouched.
+- The line goes to the RUNNER as a line, for the runner's own shell
+  (`ExecRunOpts.ShellLine`). `ssh host cmd` sends ONE string it expects a shell
+  to interpret; re-splitting it here would break every quote and redirection the
+  operator typed.
+  **And the shell is not this end's to choose.** This sent `["sh","-c",line]`
+  for one release, which is right on unix and wrong on a stock Windows runner —
+  it worked on one only because Git for Windows had put `sh` on PATH. task-exec
+  D4's "the caller sends sh -c itself" assumes the caller knows what the far
+  side has, and a gateway handed an opaque string by an ssh client does not.
+  `shell_line` on the wire moves the choice to the runner, which knows.
 - The user-name suffix does **not** gate it. `.control` / `.view` / bare choose
   how a SHELL session attaches, and an exec never attaches; treating `.view` as
   read-only here would advertise an authority boundary the gateway does not have,

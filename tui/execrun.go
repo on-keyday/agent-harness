@@ -158,14 +158,14 @@ func (a *App) runExecRunAction(v ExecRunAction) tea.Cmd {
 			return nil
 		}
 		a.cmdresult.Append(fmt.Sprintf("exec %s: %s …", pfShortID(full), execArgvLabel(v.Argv)))
-		return DoExecRun(a.client, full, v.Argv, a.program)
+		return DoExecRun(a.client, full, v.Argv, v.Shell, a.program)
 	}
 }
 
 // DoExecRun runs one command in a task's worktree and streams its output into
 // cmdresult. It uses the long-lived client (never dials), like every other Do*
 // in this layer, and program MUST be App's *tea.Program.
-func DoExecRun(c *cli.Client, taskID string, argv []string, program *tea.Program) tea.Cmd {
+func DoExecRun(c *cli.Client, taskID string, argv []string, shell bool, program *tea.Program) tea.Cmd {
 	return func() tea.Msg {
 		if c == nil {
 			return ExecRunDoneMsg{TaskID: taskID, Argv: argv, Err: fmt.Errorf("not connected to server")}
@@ -199,8 +199,9 @@ func DoExecRun(c *cli.Client, taskID string, argv []string, program *tea.Program
 		go func() {
 			defer cancel()
 			res, err := c.ExecRun(context.Background(), taskID, argv, cli.ExecRunOpts{
-				Stdout: out,
-				Stderr: errw,
+				ShellLine: shell,
+				Stdout:    out,
+				Stderr:    errw,
 			})
 			out.flush()
 			errw.flush()

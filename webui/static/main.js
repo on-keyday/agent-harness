@@ -2119,7 +2119,7 @@ const POLL_INTERVAL_MS = 5000;
   //
   // A non-zero exit is reported, not thrown: the command ran and said what it
   // meant. Only a refusal (no such task, no worktree, denied) reaches the catch.
-  const execRunToOutput = async (taskId, argv) => {
+  const execRunToOutput = async (taskId, argv, shell = false) => {
     const out = makeExecSink("1| ");
     const err = makeExecSink("2| ");
     const label = `exec ${taskId.slice(0, 12)}…: ${window.harness.execArgvText(argv)}`;
@@ -2127,6 +2127,9 @@ const POLL_INTERVAL_MS = 5000;
       const res = await window.harness.execRun(taskId, argv, {
         onStdout: (c) => out.write(c),
         onStderr: (c) => err.write(c),
+        // One line for the RUNNER's own shell, which is what makes a pipe or a
+        // redirect mean anything. The runner picks sh -c or cmd /c.
+        shell,
       });
       out.flush();
       err.flush();
@@ -2383,15 +2386,24 @@ const POLL_INTERVAL_MS = 5000;
         // `exec <id> ls -la` is a command named ls, because a task id
         // introduced it.
         case "exec": {
-          const sub = tokens[1];
-          if (!sub) throw new Error("exec: usage: exec <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>");
+          // --shell is scanned BEFORE the task id: everything after the id is
+          // the argv verbatim, so re-scanning it would eat a command whose own
+          // first word is --shell.
+          let rest = tokens.slice(1);
+          let shell = false;
+          while (rest[0] === "--shell") { shell = true; rest = rest.slice(1); }
+          const sub = rest[0];
+          if (!sub) throw new Error("exec: usage: exec [--shell] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>");
+          if (shell && (sub === "ls" || sub === "kill")) {
+            throw new Error(`exec: --shell applies to running a command, not to ${sub}`);
+          }
           if (sub === "ls") {
             let filter = "";
-            for (let i = 2; i < tokens.length; i++) {
-              if (tokens[i] === "-task" || tokens[i] === "--task") {
+            for (let i = 1; i < rest.length; i++) {
+              if (rest[i] === "-task" || rest[i] === "--task") {
                 i++;
-                if (i >= tokens.length) throw new Error("exec ls: -task needs a task id");
-                filter = tokens[i];
+                if (i >= rest.length) throw new Error("exec ls: -task needs a task id");
+                filter = rest[i];
               } else {
                 throw new Error("exec ls: usage: exec ls [-task <task-id>]");
               }
@@ -2403,16 +2415,19 @@ const POLL_INTERVAL_MS = 5000;
             break;
           }
           if (sub === "kill") {
-            const id = parseInt(tokens[2], 10);
+            const id = parseInt(rest[1], 10);
             if (!Number.isFinite(id)) throw new Error("exec kill: usage: exec kill <exec-id>");
             await window.harness.execRunKill(id);
             out = `killed exec ${id}`;
             break;
           }
-          let argv = tokens.slice(2);
+          let argv = rest.slice(1);
           if (argv[0] === "--") argv = argv.slice(1);
           if (!argv.length) throw new Error("exec: a command is required");
-          out = await execRunToOutput(sub, argv);
+          // Joining is right here and only here: the operator asked for shell
+          // interpretation, so these words were never an argv to preserve.
+          if (shell) argv = [argv.join(" ")];
+          out = await execRunToOutput(sub, argv, shell);
           break;
         }
         case "forward": {
@@ -5945,7 +5960,10 @@ function renderRunners(runners) {
     let agents = (r.agentProfiles && r.agentProfiles.length > 0) ? r.agentProfiles.join(",") : (r.agentBin || "-");
     // "-" means the runner advertised no bin at all; "-+skills" would be noise.
     if (r.skillsInjected && agents !== "-") agents += "+skills";
-    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  tasks=${r.tasks}/${r.maxTasks}  agents=${agents}  roots=${roots}`;
+    // os= is always shown, "unknown" included: a runner has a platform whether
+    // or not it reported one, and it decides which shell an `ssh host cmd`
+    // reaches on it.
+    return `  ${pad(r.status, 8)} host=${r.hostname || "-"}  os=${r.goos || "unknown"}  tasks=${r.tasks}/${r.maxTasks}  agents=${agents}  roots=${roots}`;
   }).join("\n");
 }
 

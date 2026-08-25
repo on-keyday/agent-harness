@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/on-keyday/agent-harness/cli"
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -82,12 +83,26 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 		return nil
 	}
 
+	// --shell is scanned BEFORE the task id, because everything after the id is
+	// the argv VERBATIM: re-scanning that for flags is how a command whose own
+	// first word is `--shell` would be eaten.
+	shellLine := false
+	for len(args) > 0 && args[0] == "--shell" {
+		shellLine = true
+		args = args[1:]
+	}
 	taskID, argv, err := splitExecArgv(args)
 	if err != nil {
 		return err
 	}
 	if len(argv) == 0 {
-		return fmt.Errorf("usage: harness-cli exec <task-id> -- <command> [args...]")
+		return fmt.Errorf("usage: harness-cli exec [--shell] <task-id> -- <command> [args...]")
+	}
+	if shellLine {
+		// Joining is right here and ONLY here: the operator asked for shell
+		// interpretation, so these words were never an argv to preserve. The
+		// runner picks sh -c or cmd /c from its own platform.
+		argv = []string{strings.Join(argv, " ")}
 	}
 
 	c, err := cli.Dial(ctx, cid, protocol.ClientKind_Cli)
@@ -112,9 +127,10 @@ func runExec(ctx context.Context, cid objproto.ConnectionID, args []string) erro
 		stdin = os.Stdin
 	}
 	res, runErr := c.ExecRun(ectx, taskID, argv, cli.ExecRunOpts{
-		Stdin:  stdin,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+		ShellLine: shellLine,
+		Stdin:     stdin,
+		Stdout:    os.Stdout,
+		Stderr:    os.Stderr,
 	})
 
 	// Closed HERE, not in a defer: every path below ends in os.Exit, which runs

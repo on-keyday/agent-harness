@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/on-keyday/agent-harness/runner/protocol"
@@ -129,5 +130,54 @@ func TestExecCancelsCancelsTheContext(t *testing.T) {
 	case <-ctx.Done():
 	default:
 		t.Error("the stored cancel did not cancel its context")
+	}
+}
+
+// shell_line hands the runner ONE line for ITS OWN shell. The choice is made
+// here because this is the only party that knows what the far side has: the ssh
+// gateway hard-coded `sh -c` and it worked on one Windows box only because Git
+// for Windows had put sh on PATH.
+func TestShellLineArgvPicksThePlatformShell(t *testing.T) {
+	got, err := shellLineArgv([]string{"echo hi | wc -l"})
+	if err != nil {
+		t.Fatalf("shellLineArgv: %v", err)
+	}
+	var want []string
+	if runtime.GOOS == "windows" {
+		want = []string{"cmd", "/c", "echo hi | wc -l"}
+	} else {
+		want = []string{"sh", "-c", "echo hi | wc -l"}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("argv = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("argv = %q, want %q", got, want)
+		}
+	}
+}
+
+// The line is passed WHOLE. Splitting it would defeat the point: the caller
+// asked for shell interpretation precisely because quotes, pipes and
+// redirections are in there.
+func TestShellLineArgvDoesNotSplitTheLine(t *testing.T) {
+	got, err := shellLineArgv([]string{`echo "one two" > out.txt`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[len(got)-1] != `echo "one two" > out.txt` {
+		t.Errorf("last element = %q, want the line intact", got[len(got)-1])
+	}
+}
+
+// Anything but one element is a caller that built an argv AND asked for shell
+// interpretation, which cannot both be meant. Refused rather than guessed at:
+// picking either reading silently would run something the caller did not write.
+func TestShellLineArgvRefusesAnythingButOneElement(t *testing.T) {
+	for _, argv := range [][]string{nil, {}, {"sh", "-c", "true"}, {"a", "b"}} {
+		if _, err := shellLineArgv(argv); err == nil {
+			t.Errorf("shellLineArgv(%q) = nil error, want a refusal", argv)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -316,6 +317,10 @@ func driveAfterConn(ctx context.Context, cfg Config, pc *peer.Conn) (*RunHandle,
 // PskAuthRequest so the server can register the runner in one round-trip.
 func buildRunnerHello(cfg Config) protocol.RunnerHello {
 	hh := protocol.RunnerHello{Version: 1}
+	// The harness had no idea what OS a runner ran on, and the ssh gateway was
+	// guessing (`sh -c` for every command, on every platform). Reported once at
+	// hello time; it cannot change without a reconnect.
+	hh.SetGoos([]byte(runtime.GOOS))
 	maxTasks := cfg.MaxTasks
 	if maxTasks < 1 {
 		maxTasks = 1

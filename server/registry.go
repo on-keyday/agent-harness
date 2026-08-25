@@ -24,8 +24,12 @@ import (
 // ActiveTasks is a set of task IDs (hex strings) currently bound to this
 // runner. len(ActiveTasks) is the current load; capacity is MaxTasks.
 type RunnerEntry struct {
-	ID           string   // = objproto.ConnectionID.String()
-	Hostname     string   // from RunnerHello.hostname
+	ID       string // = objproto.ConnectionID.String()
+	Hostname string // from RunnerHello.hostname
+	// GOOS is runtime.GOOS on the runner's host, from RunnerHello.goos. Empty
+	// for a runner that predates the field — reported as "unknown" rather than
+	// guessed, because guessing it is what this exists to stop.
+	GOOS         string
 	AllowedRoots []string // POSIX '/'-paths, path.Clean'd at Hello receipt (wire-format)
 	MaxTasks     int      // from RunnerHello.max_tasks (>=1)
 	AgentBin     string   // from RunnerHello.agent_bin (basename of --claude-bin)

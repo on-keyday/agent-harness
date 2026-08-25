@@ -49,7 +49,7 @@ it while writing — those are the rows worth a second look.
 | D1 | Out-of-band: a separate process in the task's worktree, never the session's foreground shell | operator |
 | D2 | No task is created. Visibility comes from a server-side registry, the way port forwards get theirs | operator |
 | D3 | CLI, TUI and WebUI all get it in v1 | operator |
-| D4 | The wire carries **argv**; a caller that wants a shell sends `["sh","-c",line]` itself | this spec |
+| D4 | The wire carries **argv**; a caller that wants a shell sends `["sh","-c",line]` itself — **unless it cannot know what shell the far side has**, in which case `shell_line` hands the runner one LINE and the runner chooses | this spec — the second half added after measuring |
 | D5 | The gate is whether the worktree DIRECTORY exists, not whether the task is running. A terminal task that still has one can be exec'd into | this spec |
 | D6 | stdin is carried; a caller that sends none gets the child **/dev/null**, not a pipe closed a moment later | this spec — the second half added after measuring |
 | D7 | No timeout. `exec kill` and the caller going away are the ways to stop one (the CONNECTION, not the stream — see § Synchronous only) | this spec |
@@ -142,7 +142,13 @@ format ExecRunRequest:
     # non-interactive caller wants: a child that reads stdin gets EOF instead
     # of hanging forever on a pipe nobody will write to.
     stdin_enabled :u1
-    reserved :u7
+    # shell_line=1 means argv holds exactly ONE element: a command LINE for the
+    # RUNNER's own shell (see § Whose shell is it). Declared AFTER
+    # stdin_enabled, and that is not cosmetic — both live in one byte, so a new
+    # flag placed FIRST shifts every bit behind it and a peer on the old build
+    # reads it as stdin_enabled. New bits go at the END of the reserved run.
+    shell_line :u1
+    reserved :u6
 
 enum ExecRunStatus:
     :u8
@@ -225,12 +231,25 @@ format ExecRunKillResponse:
     status :ExecRunStatus
 ```
 
-One field on an existing format:
+Fields on existing formats:
 
 ```
 format TaskInfo:
     …
     exec_count :u16      # running execs against this task's worktree (D11)
+
+# The runner's platform, so nothing has to guess it. Not needed for the shell
+# choice — that is settled at the runner — but the harness had no idea what OS
+# a runner ran on, and the thing that most needed to know was guessing.
+format RunnerHello:
+    …
+    goos_len :u8
+    goos :[goos_len]u8   # runtime.GOOS; empty = a runner predating the field
+
+format RunnerInfo:
+    …
+    goos_len :u8
+    goos :[goos_len]u8   # relayed; rendered "unknown" when empty, never blank
 ```
 
 
@@ -246,6 +265,60 @@ edit `exec_view` / `exec_cowrite` / `exec_resize` each needed. The WAL persists
 the NUMBER, so a task already granted `all` holds `0x7fff` and does **not** gain
 `exec_run` until it is re-granted. That is the safe direction and needs no
 migration.
+
+## Whose shell is it (D4, amended)
+
+D4 said a caller that wants a shell sends `["sh","-c",line]` itself. That holds
+for a human typing `harness-cli exec`: they know what is on the far side. It
+does **not** hold for the ssh gateway, which `ssh host cmd` hands one opaque
+string with no human to ask — and it hard-coded `sh -c`, which is right on unix
+and wrong on a stock Windows runner. It appeared to work on one because Git for
+Windows had put `sh` on PATH.
+
+So `ExecRunRequest.shell_line` says "argv holds ONE element: a command line for
+YOUR shell", and the runner picks `sh -c` or `cmd /c` from its own platform.
+`cmd /c` follows what OpenSSH's own Windows server does with a remote command:
+the platform's default interpreter, not a POSIX one. A PowerShell variant is
+deliberately not offered — nothing has asked, and a second spelling nobody uses
+is a bug nobody notices.
+
+Available to every caller, not just the gateway: `harness-cli exec --shell`, the
+TUI cmdline's `exec --shell`, and `shell` on the WebUI bridge, because a pipe or
+a redirect is exactly what an operator reaches for and an argv cannot express
+one. Without it the words reach the child untouched, which stays the default.
+
+More than one argv element with `shell_line` is REFUSED at the client rather
+than guessed at: a caller that built an argv AND asked for shell interpretation
+cannot have meant both, and picking either reading would run something they did
+not write.
+
+**And the runner's platform is now on the wire** (`RunnerHello.goos`, relayed
+into `RunnerInfo.goos`, shown as `os=` in `ls`, the TUI runner detail and the
+WebUI runner row). Not because the shell choice needs it — that is settled at
+the runner — but because the harness had no idea what OS a runner ran on, and
+the thing that most needed to know was guessing. "unknown" for a runner that
+predates the field, never blank: blank would read as "this row does not report
+it".
+
+## Stopping an exec stops what it started
+
+`exec kill`, an interrupted caller, or a dropped ssh session must end the whole
+command, and for one release they ended only its first process.
+`exec.CommandContext` kills the direct child, which is right for a command that
+is one process and wrong for a shell: `sh -c 'sleep 300; :'` left sh dead and
+sleep running, adopted by init and in nobody's bookkeeping — the operator saw
+`no running execs` while the process was still there.
+
+Worse, the orphan INHERITED the child's stdout pipe, so the runner's own call
+never returned either: a goroutine parked forever on a stream the server had
+already forgotten.
+
+The runner now passes objtrsf's `ExecuteOption.KillProcessTree` for every exec:
+a process GROUP on unix (TERM to the group, KILL after a grace) and a JOB OBJECT
+with KILL_ON_JOB_CLOSE on Windows, which has no equivalent of a process group
+for lifetime. It is opt-in in objtrsf because the same non-PTY path serves
+callers whose child is one process; here it is always on, because an exec's
+whole contract is that stopping it stops the work.
 
 ## Runner behaviour
 

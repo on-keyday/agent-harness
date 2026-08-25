@@ -326,6 +326,7 @@ in anyone's scrollback, and the two output streams stay apart.
 
 ```bash
 bin/harness-cli exec <task-id> -- git status          # words after -- are the argv
+bin/harness-cli exec --shell <task-id> -- 'ls | wc -l'   # one line for the RUNNER's shell
 bin/harness-cli exec <task-id> -- make test           # exits with make's status
 bin/harness-cli exec <task-id> -- sh -c 'echo out; echo err 1>&2' 2>/dev/null
 bin/harness-cli exec ls [-task <task-id>] [--json]    # what is running right now
@@ -344,6 +345,14 @@ What it gives you that `session exec` does not:
   convention where there is no shell.
 - **No side effect on the session.** The agent's terminal is untouched, so this
   is safe to run against a session someone is watching.
+- **Stopping it stops what it started.** `exec kill`, Ctrl-C, or a dropped ssh
+  session ends the whole process tree, not just the first process.
+
+Words after `--` are an argv and reach the child untouched — no shell re-reads
+a quote. `--shell` is the other mode: the words become ONE line for the
+**runner's** shell (`sh -c` on unix, `cmd /c` on Windows), which is what makes a
+pipe or a redirect mean anything. The runner chooses, because a caller cannot
+know what the far side has — `harness-cli ls` shows each runner's `os=`.
 
 The target is the **worktree**, not the task's status: a task that ended with
 uncommitted work keeps its tree — `git status` and `make test` in it are exactly
@@ -415,10 +424,15 @@ stdout and stderr, and shows up in the scrollback of whoever is watching. `ssh
 host cmd` promises none of that, so mapping to it would have been a lie. `exec`
 is the construct with matching semantics, so the mapping is now honest.
 
-The command line reaches a shell intact (`sh -c '<line>'`), so quoting and
-redirection work. The `.control` / `.view` suffix does not gate it — those
-choose how a *shell* session attaches, and this never attaches — and an exec
-does not hold the control seat while it runs.
+The command line reaches a shell intact, so quoting and redirection work — and
+it is the **runner's** shell, chosen from the runner's own platform (`sh -c` or
+`cmd /c`). The gateway does not pick: it is handed an opaque string by the ssh
+client and has no way to know what the far side has.
+
+The `.control` / `.view` suffix does not gate it — those choose how a *shell*
+session attaches, and this never attaches — and an exec does not hold the
+control seat while it runs. Interrupting the ssh client stops the command,
+including anything it forked.
 
 ### X11 forwarding
 

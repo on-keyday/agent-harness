@@ -598,7 +598,7 @@ func main() {
 
 	case "exec":
 		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: harness-cli exec <task-id> -- <command> [args...]")
+			fmt.Fprintln(os.Stderr, "usage: harness-cli exec [--shell] <task-id> -- <command> [args...]")
 			fmt.Fprintln(os.Stderr, "       harness-cli exec ls [--task <task-id>] [--json]")
 			fmt.Fprintln(os.Stderr, "       harness-cli exec kill <exec-id> [<exec-id> ...]")
 			os.Exit(2)
@@ -1146,13 +1146,14 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "                                      list registered port forwards; --task filters, --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  forward kill FORWARD_ID [FORWARD_ID ...]")
 	fmt.Fprintln(os.Stderr, "                                      kill one or more registered forwards by id (from `forward ls`)")
-	fmt.Fprintln(os.Stderr, "  exec <task-id> -- <command> [args...]")
+	fmt.Fprintln(os.Stderr, "  exec [--shell] <task-id> -- <command> [args...]")
 	fmt.Fprintln(os.Stderr, "                                      run a command in the task's WORKTREE as its own process:")
 	fmt.Fprintln(os.Stderr, "                                      stdout and stderr stay separate, and the command's own exit code becomes ours")
 	fmt.Fprintln(os.Stderr, "                                      works on a FINISHED task too, as long as its worktree is still there —")
 	fmt.Fprintln(os.Stderr, "                                      a task that ended with uncommitted work keeps one")
 	fmt.Fprintln(os.Stderr, "                                      dies with this process; for something to leave running, submit a task instead")
 	fmt.Fprintln(os.Stderr, "                                      NOT `session exec`, which types into the session's foreground shell")
+	fmt.Fprintln(os.Stderr, "                                      --shell: hand it to the RUNNER's shell as one line (sh -c / cmd /c by its platform)")
 	fmt.Fprintln(os.Stderr, "  exec ls [--task TASK_ID] [--json]   list running execs; --task filters, --json emits JSON lines")
 	fmt.Fprintln(os.Stderr, "  exec kill EXEC_ID [EXEC_ID ...]     stop one or more running execs by id (from `exec ls`)")
 	fmt.Fprintln(os.Stderr, "  ssh-gateway [--listen 127.0.0.1:2222] [--host-key PATH] [--authorized-keys PATH]")

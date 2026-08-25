@@ -273,6 +273,11 @@ type ExecRunAction struct {
 	TaskID string
 	Argv   []string
 	ExecID uint64
+	// Shell hands the runner ONE line for its own shell instead of an argv.
+	// It is what makes a pipe or a redirect mean anything: without it the
+	// words reach the child untouched, which is right for `make test` and
+	// useless for `ls | wc -l`.
+	Shell bool
 }
 
 // SSHGatewayAction starts, stops or reports the ssh gateway this TUI hosts.
@@ -1130,9 +1135,20 @@ func parseForward(args []string) (Action, error) {
 // would silently change the command. A bare `--` ends any option scanning, so
 // a command that starts with a dash still reaches the runner intact.
 func parseExecRun(args []string) (Action, error) {
-	const usage = "exec: usage: exec <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>"
+	const usage = "exec: usage: exec [--shell] <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>"
+	// Scanned BEFORE the task id: everything after the id is the argv verbatim,
+	// so re-scanning that for flags would eat a command whose own first word is
+	// --shell.
+	shell := false
+	for len(args) > 0 && args[0] == "--shell" {
+		shell = true
+		args = args[1:]
+	}
 	if len(args) == 0 {
 		return nil, fmt.Errorf("%s", usage)
+	}
+	if shell && (args[0] == "ls" || args[0] == "kill") {
+		return nil, fmt.Errorf("exec: --shell applies to running a command, not to %s", args[0])
 	}
 	switch args[0] {
 	case "ls":
@@ -1169,7 +1185,12 @@ func parseExecRun(args []string) (Action, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("exec: a command is required\n%s", usage)
 	}
-	return ExecRunAction{Sub: "run", TaskID: taskID, Argv: argv}, nil
+	if shell {
+		// Joining is right here and only here: the operator asked for shell
+		// interpretation, so these words were never an argv to preserve.
+		argv = []string{strings.Join(argv, " ")}
+	}
+	return ExecRunAction{Sub: "run", TaskID: taskID, Argv: argv, Shell: shell}, nil
 }
 
 // parseSSHGateway handles `ssh-gateway [start [addr] | stop]`, and no args at

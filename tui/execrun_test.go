@@ -7,12 +7,13 @@ import (
 
 func TestParseExecRun(t *testing.T) {
 	cases := []struct {
-		in       []string
-		wantSub  string
-		wantID   string
-		wantCmd  []string
-		wantKill uint64
-		wantErr  bool
+		in        []string
+		wantSub   string
+		wantID    string
+		wantCmd   []string
+		wantKill  uint64
+		wantShell bool
+		wantErr   bool
 	}{
 		{in: []string{"ls"}, wantSub: "ls"},
 		{in: []string{"ls", "-task", "abcdef012345"}, wantSub: "ls", wantID: "abcdef012345"},
@@ -27,6 +28,14 @@ func TestParseExecRun(t *testing.T) {
 		{in: []string{"kill", "notanumber"}, wantErr: true},
 		{in: []string{"kill"}, wantErr: true},
 		{in: []string{"ls", "-task"}, wantErr: true},
+		// --shell joins the words back into one line for the runner's shell.
+		{in: []string{"--shell", "abcdef012345", "ls", "|", "wc", "-l"},
+			wantSub: "run", wantID: "abcdef012345", wantCmd: []string{"ls | wc -l"}, wantShell: true},
+		{in: []string{"--shell", "abcdef012345", "--", "a", "&&", "b"},
+			wantSub: "run", wantID: "abcdef012345", wantCmd: []string{"a && b"}, wantShell: true},
+		// It applies to running a command, not to the bookkeeping verbs.
+		{in: []string{"--shell", "ls"}, wantErr: true},
+		{in: []string{"--shell", "kill", "3"}, wantErr: true},
 	}
 	for _, tc := range cases {
 		act, err := parseExecRun(tc.in)
@@ -45,6 +54,9 @@ func TestParseExecRun(t *testing.T) {
 		}
 		if a.Sub != tc.wantSub || a.TaskID != tc.wantID {
 			t.Errorf("parseExecRun(%v) = %+v, want sub=%q id=%q", tc.in, a, tc.wantSub, tc.wantID)
+		}
+		if a.Shell != tc.wantShell {
+			t.Errorf("parseExecRun(%v) shell = %v, want %v", tc.in, a.Shell, tc.wantShell)
 		}
 		if a.ExecID != tc.wantKill {
 			t.Errorf("parseExecRun(%v) exec id = %d, want %d", tc.in, a.ExecID, tc.wantKill)

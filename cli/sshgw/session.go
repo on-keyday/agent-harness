@@ -190,11 +190,16 @@ func (g *Gateway) serveSession(ctx context.Context, user string, newCh ssh.NewCh
 // runExec runs one command line in the task's worktree and reports its exit
 // status as the ssh session's.
 //
-// `sh -c <line>` because that is what `ssh host cmd` means everywhere else: the
-// client sends ONE string it expects a shell to interpret, so re-splitting it
-// here on whitespace would break every quote and redirection the operator
-// typed. The wire carries an argv precisely so this caller can choose the shell
-// form while `harness-cli exec` passes the words through untouched.
+// The command line goes to the runner AS A LINE (ExecRunOpts.ShellLine), for
+// its own shell to interpret. That is what `ssh host cmd` means everywhere
+// else: the client sends ONE string it expects a shell to interpret, so
+// re-splitting it here on whitespace would break every quote and redirection
+// the operator typed.
+//
+// And the shell is not this end's to choose. Sending ["sh","-c",line] — which
+// this did — is right on unix and wrong on a Windows runner, where it worked
+// only because Git for Windows had put sh on PATH. The runner knows its own
+// platform; nothing here does.
 //
 // The user-name suffix (.control / .view / bare) does not gate this. It selects
 // how a SHELL session ATTACHES, and an exec never attaches — treating .view as
@@ -232,7 +237,11 @@ func (g *Gateway) runExec(ctx context.Context, ch ssh.Channel, taskID, cmdline s
 		}
 	}()
 
-	res, err := g.client.ExecRun(ctx, taskID, []string{"sh", "-c", cmdline}, cli.ExecRunOpts{
+	res, err := g.client.ExecRun(ctx, taskID, []string{cmdline}, cli.ExecRunOpts{
+		// The RUNNER picks the shell. This used to send ["sh","-c",line], which
+		// is right on unix and wrong on Windows — and only appeared to work
+		// there because Git for Windows had put sh on PATH.
+		ShellLine: true,
 		OnStarted: func(id uint64) { execID.Store(id) },
 		// Separate ends, all the way out to the ssh client: keeping them apart
 		// is the whole reason this is wired to `exec` and not to `session exec`.

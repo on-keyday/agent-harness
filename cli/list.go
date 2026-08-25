@@ -147,9 +147,10 @@ func renderList(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
+			RunnerGOOSStr(r.Goos),
 			len(r.ActiveTasks),
 			r.MaxTasks,
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
@@ -286,9 +287,10 @@ func renderListTree(lr *protocol.ListResultBody, out io.Writer) {
 		for i, ar := range r.AllowedRoots {
 			roots[i] = string(ar.Path)
 		}
-		fmt.Fprintf(out, "  %s  host=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
+		fmt.Fprintf(out, "  %s  host=%s  os=%s  tasks=%d/%d  %s  roots=%s  id=%s\n",
 			runnerStatusStr(r.Status),
 			string(r.Hostname),
+			RunnerGOOSStr(r.Goos),
 			len(r.ActiveTasks),
 			r.MaxTasks,
 			agentProfilesStr(r.AgentProfiles, string(r.AgentBin), r.SkillsInjected()),
@@ -337,11 +339,25 @@ type runnerJSON struct {
 	Id             string   `json:"id"`
 	Status         string   `json:"status"`
 	Hostname       string   `json:"hostname"`
+	GOOS           string   `json:"goos"`
 	ActiveTasks    int      `json:"active_tasks"`
 	MaxTasks       uint16   `json:"max_tasks"`
 	Agents         []string `json:"agents"`
 	SkillsInjected bool     `json:"skills_injected"`
 	Roots          []string `json:"roots"`
+}
+
+// RunnerGOOSStr words RunnerInfo.goos for a row.
+//
+// A runner that predates the field reports nothing, and "unknown" is the honest
+// rendering: blank would read as "this row does not report the OS", which is
+// the ambiguity every other field here was fixed to avoid. Printed always —
+// there is no runner without a platform.
+func RunnerGOOSStr(goos []byte) string {
+	if len(goos) == 0 {
+		return "unknown"
+	}
+	return string(goos)
 }
 
 // taskJSON is the JSON shape of a task row in `ls --json`. Fields mirror the
@@ -414,6 +430,7 @@ func renderListJSON(lr *protocol.ListResultBody, out io.Writer) {
 			Id:             protocol.RunnerIDToConnID(r.Id).String(),
 			Status:         runnerStatusJSON(r.Status),
 			Hostname:       string(r.Hostname),
+			GOOS:           RunnerGOOSStr(r.Goos),
 			ActiveTasks:    len(r.ActiveTasks),
 			MaxTasks:       r.MaxTasks,
 			Agents:         agentProfileNames(r.AgentProfiles, string(r.AgentBin)),

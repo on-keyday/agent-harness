@@ -1841,6 +1841,7 @@ func toRunnerInfo(r RunnerEntry) protocol.RunnerInfo {
 		LastSeen:    uint64(r.LastSeen.UnixNano()),
 	}
 	info.SetHostname([]byte(r.Hostname))
+	info.SetGoos([]byte(r.GOOS))
 	info.SetAgentBin([]byte(r.AgentBin))
 	// Echo the advertised profile set so operator surfaces (TUI/WebUI agent
 	// pickers, CLI list) can offer every selectable profile — not just the

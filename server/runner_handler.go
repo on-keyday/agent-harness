@@ -111,6 +111,7 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		entry := &RunnerEntry{
 			ID:             runnerID,
 			Hostname:       string(hello.Hostname),
+			GOOS:           string(hello.Goos),
 			AllowedRoots:   roots,
 			MaxTasks:       maxTasks,
 			AgentBin:       string(hello.AgentBin),

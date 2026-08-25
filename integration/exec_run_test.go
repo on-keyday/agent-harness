@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -169,6 +171,112 @@ func TestExecRunE2E(t *testing.T) {
 			}
 		case <-time.After(15 * time.Second):
 			t.Fatal("a command that reads stdin never ended: its stdin was left open")
+		}
+	})
+
+	// ShellLine hands the runner one LINE for its own shell, which is what makes
+	// a pipe mean anything. The choice of shell belongs to the runner: a caller
+	// handed an opaque command line — the ssh gateway — cannot know what the far
+	// side has, and hard-coding `sh -c` worked on one Windows box only because
+	// Git for Windows had put sh on PATH.
+	t.Run("shell_line_is_interpreted_by_the_runners_shell", func(t *testing.T) {
+		var out bytes.Buffer
+		res, err := c.ExecRun(context.Background(), taskID,
+			[]string{`echo one; echo two`}, cli.ExecRunOpts{ShellLine: true, Stdout: &out})
+		if err != nil {
+			t.Fatalf("ExecRun: %v", err)
+		}
+		if res.Kind != protocol.ExecEventKind_Exited || res.ExitCode != 0 {
+			t.Fatalf("result = %+v, want exited/0", res)
+		}
+		// Two lines means the `;` was interpreted rather than passed to echo.
+		if got := strings.Fields(out.String()); len(got) != 2 || got[0] != "one" || got[1] != "two" {
+			t.Errorf("output = %q, want the two lines a shell would produce", out.String())
+		}
+	})
+
+	// Without it the words reach the child untouched — which is the right
+	// default, and the reason ShellLine is a mode rather than always-on.
+	t.Run("without_shell_line_the_argv_reaches_the_child_verbatim", func(t *testing.T) {
+		var out bytes.Buffer
+		if _, err := c.ExecRun(context.Background(), taskID,
+			[]string{"echo", "one; echo two"}, cli.ExecRunOpts{Stdout: &out}); err != nil {
+			t.Fatalf("ExecRun: %v", err)
+		}
+		if got := strings.TrimSpace(out.String()); got != "one; echo two" {
+			t.Errorf("output = %q, want the semicolon printed rather than obeyed", got)
+		}
+	})
+
+	// A caller that built an argv AND asked for shell interpretation cannot
+	// have meant both. Refused at the client, before a round trip.
+	t.Run("shell_line_with_a_multi_word_argv_is_refused", func(t *testing.T) {
+		_, err := c.ExecRun(context.Background(), taskID,
+			[]string{"sh", "-c", "true"}, cli.ExecRunOpts{ShellLine: true})
+		if err == nil {
+			t.Fatal("want a refusal for ShellLine with more than one argv element")
+		}
+		if !strings.Contains(err.Error(), "exactly one") {
+			t.Errorf("error = %v, want it to name the one-element rule", err)
+		}
+	})
+
+	// An exec that is stopped must stop everything it STARTED. A command that
+	// forks leaves the grandchild running otherwise — and the grandchild
+	// inherits the child's stdout, so the runner's own call never returns
+	// either. Measured live against `sh -c 'sleep N; :'` before the fix.
+	t.Run("killing_an_exec_kills_what_it_forked", func(t *testing.T) {
+		pidFile := filepath.Join(t.TempDir(), "grandchild.pid")
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_, _ = c.ExecRun(context.Background(), taskID,
+				[]string{"sh", "-c", "sleep 60 & echo $! > " + pidFile + "; wait"},
+				cli.ExecRunOpts{})
+		}()
+
+		var pid int
+		eventually(t, func() bool {
+			b, rerr := os.ReadFile(pidFile)
+			if rerr != nil {
+				return false
+			}
+			p, cerr := strconv.Atoi(strings.TrimSpace(string(b)))
+			if cerr != nil || p <= 0 {
+				return false
+			}
+			pid = p
+			return true
+		}, 15*time.Second, 100*time.Millisecond, "the forked grandchild to report its pid")
+		t.Cleanup(func() {
+			if pid > 0 {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		})
+
+		var execID uint64
+		eventually(t, func() bool {
+			execs, lerr := c.ExecRunListWith(context.Background(), "")
+			if lerr != nil || len(execs) == 0 {
+				return false
+			}
+			execID = execs[0].ExecId
+			return true
+		}, 10*time.Second, 100*time.Millisecond, "the exec to register")
+
+		if err := c.ExecRunKillWith(context.Background(), execID); err != nil {
+			t.Fatalf("ExecRunKill: %v", err)
+		}
+
+		// The tree kill is TERM then KILL after a grace, so allow for both.
+		eventually(t, func() bool {
+			return syscall.Kill(pid, 0) != nil
+		}, 15*time.Second, 200*time.Millisecond, "the grandchild to be killed with its parent")
+
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Fatal("the exec call never returned: the orphan still holds its stdout")
 		}
 	})
 

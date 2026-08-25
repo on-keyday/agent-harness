@@ -37,6 +37,18 @@ type ExecRunOpts struct {
 	// left to reach the command. A caller that lives exactly as long as its
 	// connection (the CLI, the TUI, the WebUI) needs none of this.
 	OnStarted func(execID uint64)
+
+	// ShellLine hands the runner ONE command line for its own shell to
+	// interpret, instead of an argv to exec directly. argv must then hold
+	// exactly one element.
+	//
+	// For a caller that cannot know what shell the far side has. The ssh
+	// gateway is the case: `ssh host cmd` gives it one opaque string, there is
+	// no human to ask, and it hard-coded `sh -c` — which fails on a stock
+	// Windows runner. A caller that builds its own argv should keep doing that:
+	// the words then reach the child untouched, with no shell to re-interpret
+	// a quote.
+	ShellLine bool
 }
 
 // ExecRun runs argv in the task's worktree as its own process and blocks until
@@ -55,7 +67,11 @@ func (c *Client) ExecRun(ctx context.Context, taskIDHex string, argv []string, o
 		return ExecRunResult{}, errors.New("exec: empty command")
 	}
 	req := &protocol.TaskControlRequest{Kind: protocol.TaskControlKind_OpenExecRun}
+	if opts.ShellLine && len(argv) != 1 {
+		return ExecRunResult{}, fmt.Errorf("exec: ShellLine needs exactly one argv element, got %d", len(argv))
+	}
 	body := protocol.ExecRunRequest{TaskId: tid, Argv: buildExecArgv(argv)}
+	body.SetShellLine(opts.ShellLine)
 	body.SetStdinEnabled(opts.Stdin != nil)
 	req.SetOpenExecRun(body)
 

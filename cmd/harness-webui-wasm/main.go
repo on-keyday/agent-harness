@@ -762,7 +762,7 @@ func connRemoteAddr(cid string) string {
 // not need a label table.
 //
 //	harness.snapshot() -> Promise<{
-//	  runners:  [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
+//	  runners:  [{hostname, goos, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
 //	              viewers, cowriters, execCount, errorMsg}],
@@ -799,7 +799,10 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					profiles = append(profiles, string(p.Name))
 				}
 				runners = append(runners, map[string]any{
-					"hostname":       string(r.Hostname),
+					"hostname": string(r.Hostname),
+					// Which platform a runner is decides real things — the shell
+					// an `ssh host cmd` reaches, how its roots are spelled.
+					"goos":           cli.RunnerGOOSStr(r.Goos),
 					"status":         r.Status.String(),
 					"tasks":          float64(r.ActiveTasksLen),
 					"maxTasks":       float64(r.MaxTasks),
@@ -3023,7 +3026,7 @@ func (w jsChunkWriter) Write(p []byte) (int, error) {
 
 // harnessExecRun runs one command in a task's worktree and streams its output.
 //
-//	harness.execRun(taskIDHex, argv, {onStdout, onStderr}) -> Promise<{kind, exitCode, detail, exited}>
+//	harness.execRun(taskIDHex, argv, {onStdout, onStderr, shell}) -> Promise<{kind, exitCode, detail, exited}>
 //
 // The two callbacks are SEPARATE on purpose: keeping stdout and stderr apart is
 // the property this verb exists to provide, and a bridge that merged them would
@@ -3062,13 +3065,17 @@ func harnessExecRun(this js.Value, args []js.Value) any {
 				opts = args[2]
 			}
 			var onOut, onErr js.Value
+			shellLine := false
 			if opts.Type() == js.TypeObject {
 				onOut = opts.Get("onStdout")
 				onErr = opts.Get("onStderr")
+				shellLine = optBool(opts, "shell")
 			}
 			res, err := c.ExecRun(rootCtx, taskID, argv, cli.ExecRunOpts{
-				Stdout: jsChunkWriter{fn: onOut},
-				Stderr: jsChunkWriter{fn: onErr},
+				// One line for the RUNNER's shell, chosen from its own platform.
+				ShellLine: shellLine,
+				Stdout:    jsChunkWriter{fn: onOut},
+				Stderr:    jsChunkWriter{fn: onErr},
 			})
 			if err != nil {
 				rejectErr(reject, err)

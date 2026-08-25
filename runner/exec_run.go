@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/on-keyday/agent-harness/appwire"
@@ -43,6 +44,30 @@ func (s *Session) execRunDir(repoPath, taskIDHex string) (string, bool) {
 	}
 	wt := filepath.Join(repoPath, ".harness-worktrees", taskIDHex)
 	return wt, isWorktreeRoot(wt)
+}
+
+// shellLineArgv wraps one command line for THIS host's shell.
+//
+// The choice is made here because this is the only party that knows. A caller
+// handed an opaque command line — the ssh gateway, given one by `ssh host cmd`
+// — cannot know whether the far side has `sh`, and hard-coding it worked on one
+// Windows box only because Git for Windows had put sh on PATH.
+//
+// `cmd /c` on Windows follows what OpenSSH's own Windows server does with a
+// remote command: the platform's default interpreter, not a POSIX one. A
+// PowerShell variant is deliberately not offered yet — nothing has asked, and
+// inventing a second spelling before someone needs it is how a knob nobody uses
+// gets a bug nobody notices.
+func shellLineArgv(argv []string) ([]string, error) {
+	if len(argv) != 1 {
+		// The wire says one element. More than one means the caller built an
+		// argv AND asked for shell interpretation, which cannot both be meant.
+		return nil, fmt.Errorf("shell_line needs exactly one argv element, got %d", len(argv))
+	}
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", argv[0]}, nil
+	}
+	return []string{"sh", "-c", argv[0]}, nil
 }
 
 // execCancels holds the cancel func of every exec this runner is running, so a
@@ -120,6 +145,15 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 	for i := range req.Argv.Argv {
 		argv = append(argv, string(req.Argv.Argv[i].Arg))
 	}
+	if req.ShellLine() {
+		var serr error
+		argv, serr = shellLineArgv(argv)
+		if serr != nil {
+			_ = stream.CloseBoth()
+			finish(protocol.ExecEventKind_Failed, -1, serr.Error())
+			return
+		}
+	}
 	// The child sees what a task in this tree sees. Needing something else is
 	// what `env VAR=x <cmd>` in the argv is for.
 	env := BuildAgentEnv(AgentEnvSpec{
@@ -161,6 +195,12 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 			// what made `exec <task> -- bash` from the TUI hang forever with
 			// the shell waiting on an EOF nobody was going to send.
 			StdinDevNull: !req.StdinEnabled(),
+			// An exec that is stopped must stop everything it started. Without
+			// this, `sh -c 'make test'` leaves make's children running when the
+			// operator kills it — and worse, they inherit the child's stdout, so
+			// this call never returns and the runner leaks a goroutine parked on
+			// a stream the server has already forgotten.
+			KillProcessTree: true,
 			OnProcessExit: func(st *os.ProcessState, werr error) {
 				// The CHILD's own code, read from ProcessState rather than
 				// inferred from an error: the errgroup inside agentexec
