@@ -43,7 +43,7 @@ by the operator on request.
 | D5 | Public-key authentication is required; no password, no open loopback | DECIDED (author) |
 | D6 | One ssh session per task per gateway; a second is refused | DECIDED (author) |
 | D7 | `Ctrl+]` is NOT intercepted; detach = end the ssh session | DECIDED (author) |
-| D8 | On detach the gateway writes the same terminal-mode resets a CLI attach writes | DECIDED (author) |
+| D8 | On detach the gateway writes the same terminal-mode resets a CLI attach writes — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
 | D9 | No `.bgn` / wire change | DECIDED (author) |
 
 ## Why client-side and not in the server
@@ -354,11 +354,32 @@ the suite does not depend on an `ssh` binary being installed:
 
 Live (`dummy-harness` skill, two-instance topology): a real `ssh` client from a
 real terminal, plus tmux, driven with actual keystrokes — rendering is not proof
-that input works (`feedback_verify_interactive_input_not_just_render`). Confirm:
-resize reflows the agent, detach leaves the session running and reattachable from
-the TUI, and detaching out of a full-screen app (`htop`) leaves the ssh client's
-terminal usable — which is the observable D8 predicts, and the one that decides
-whether the two reset groups were both needed.
+that input works (`feedback_verify_interactive_input_not_just_render`). Confirm
+that resize reflows the agent and that detach leaves the session running and
+reattachable from the TUI.
+
+D8's resets get a **negative control**, not a confirmation. Detaching with the
+resets written and finding the terminal healthy proves nothing: healthy is also
+what "they were never needed" looks like. So the measurement is the other way
+round — detach with the resets suppressed, per group, and record what breaks:
+
+| Run | Suppressed | Scenario |
+| --- | --- | --- |
+| 1 | `cli.InputModeReset` | attach to a session whose app had mouse tracking on, detach, move the mouse at the local shell prompt |
+| 2 | `cli.ScreenModeReset` | attach while a full-screen app (`htop`) runs, detach mid-run, then use the local shell |
+| 3 | both | either scenario |
+
+A group whose suppression leaves the terminal usable in its scenario is not
+carrying its weight and is dropped from the gateway path, with the observation
+recorded here. What the mechanism predicts, so that a null result is recognised
+as surprising rather than as a pass: run 1 should break, because the server
+replays every tracked mode on attach and `excludedFromPreamble`
+(`server/mode_tracker.go:60`) excludes only the alternate-screen family and 2026
+— so mouse and bracketed-paste modes reach the ssh client's terminal on every
+attach regardless of what is running, and SSH restores termios on exit without
+emitting escape sequences. Run 2 depends on bytes from the live app rather than
+on the replay, so it is the genuinely open one; a null there means the OpenSSH
+client cleans up more than expected, which is worth knowing either way.
 
 Verification runs through the `make` targets (`make check`, `make wasm-check`,
 `make vet`, `make test`), not ad-hoc `go build ./...`; `wasm-check` is the one
