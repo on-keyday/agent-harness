@@ -45,7 +45,7 @@ by the operator on request.
 | D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | DECIDED (author); **reverses** an earlier D7 in this spec, see § Detach |
 | D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
 | D9 | No `.bgn` / wire change | DECIDED (author) |
-| D10 | The pump and the reset string are **exported from `objtrsf/exec`**, not copied into this repo; objtrsf lands and publishes first, then a `go.mod` bump | DECIDED (operator) |
+| D10 | The pump and **both** reset strings live in `objtrsf/exec` — the screen group exported from `RemoteShell`'s literal, the input group *moved* out of this repo — and objtrsf lands and publishes first, then a `go.mod` bump | DECIDED (operator) |
 
 ## Why client-side and not in the server
 
@@ -304,13 +304,16 @@ never gets to tear down the alternate screen, mouse reporting, or its scroll
 region, and SSH restores termios on exit while emitting no escape sequences.
 
 Today a CLI attach emits **two** groups, from two places, back to back
-(`cli/attach_native.go:72–74`):
+(`cli/attach_native.go:72–74`). D10 puts both in `objtrsf/exec` and has
+`RemoteShell` write them together; the names below are the ones after that move:
 
-- `RemoteShell`'s deferred write — Win32 input mode, `modifyOtherKeys`, alt
-  screen, cursor visibility, mouse modes, bracketed paste, `\x1b[r` (DECSTBM)
-  and `\x1b[?6l` (DECOM)
-- `cli.RestoreLocalInputModes` — `cli.InputModeReset`, the input-sending modes
-  (`cli/terminal_input_modes.go:33`)
+- **screen group** — `exec.ScreenModeReset`, today an unexported literal in
+  `RemoteShell`'s `defer`: Win32 input mode, `modifyOtherKeys`, alt screen,
+  cursor visibility, mouse modes, bracketed paste, `\x1b[r` (DECSTBM) and
+  `\x1b[?6l` (DECOM)
+- **input group** — `exec.InputModeReset`, today `cli.InputModeReset` written by
+  `cli.RestoreLocalInputModes` (`cli/terminal_input_modes.go:36`): the
+  input-sending modes
 
 On either end it can serve, the gateway writes both groups into the ssh channel
 before closing it. The channel is the only pipe to the ssh client's terminal, so
@@ -321,22 +324,43 @@ some merged subset: they overlap (`\x1b[?1000l`, `?1002l`, `?1003l`, `?1006l`,
 there is nothing to reconcile and no order to get right. The result is that an
 ssh detach leaves a terminal in the state a CLI detach leaves it in.
 
-Both groups come from where they already live (D10). `cli.InputModeReset` is
-exported already. The other group is an unexported literal inside `objtrsf`, and
-it is **exported from there** rather than copied here — a magic escape string
-kept in two repositories drifts, and this project already runs objtrsf changes
-through publish + `go.mod` bump as a matter of course.
+Neither group is copied into the gateway: both are taken from `objtrsf/exec`
+(D10).
 
-## Shared code exported from objtrsf (D10)
+## Shared code in objtrsf (D10)
 
-Two things the gateway needs are already written inside `objtrsf/exec`, reachable
-only through `RemoteShell`, which owns a local tty and therefore cannot serve an
-ssh channel. Both are exported instead of reimplemented:
+Three things the gateway needs live inside `objtrsf/exec` or should, and all
+three are reachable today only through `RemoteShell`, which owns a local tty and
+therefore cannot serve an ssh channel:
 
-| Exported | What it is | Why the gateway needs it |
+| Symbol | Where it is today | Change |
 | --- | --- | --- |
-| `exec.TerminalModeReset` (const) | the escape string `RemoteShell` writes in its `defer` | written to the ssh channel, per § above |
-| `(*CommandExecutionStream).PumpTerminalIO(in io.Reader, out io.Writer) error` | the existing unexported `pumpTerminalIO`, unchanged | the whole input/output pump, including detach-key interception |
+| `exec.ScreenModeReset` | an unexported literal in `RemoteShell`'s `defer` | extracted to a named exported const |
+| `exec.InputModeReset` | `cli.InputModeReset` in **this** repo (`cli/terminal_input_modes.go:36`) | **moved** to objtrsf, doc comment and all |
+| `(*CommandExecutionStream).PumpTerminalIO(in io.Reader, out io.Writer) error` | unexported `pumpTerminalIO` | exported; the body does not change |
+
+The input group moves rather than staying put because the split between the two
+was historical, not semantic: **every** call site in this repo writes them back
+to back, and there is no site that writes one without the other —
+`cli/attach_native.go:73–74`, `cli/open_interactive_native.go:144–145`,
+`cli/x11.go:173–174`, `tui/interactive.go:352–357`, which with the definition
+file is the complete set of references. Two consts a repository apart, whose
+byte ranges overlap and which are only ever emitted together, are two chances to
+edit one and miss the other.
+
+They stay two named consts rather than becoming one string. The reason is in
+their doc comments: one stops the terminal from *sending* things, the other puts
+the *screen* back, and the harness-side comment records why the boundary was
+drawn there (it mirrors the server's `excludedFromPreamble` split). Collapsing
+them would flatten that into one undifferentiated wall of escapes — and would
+also make the negative control in § Testing impossible to run per group.
+
+`RemoteShell` writes both in its `defer`, so the four harness call sites lose
+their trailing `RestoreLocalInputModes` line and `cli/terminal_input_modes.go` is
+deleted. That also brings the input group inside the raw-mode window that
+objtrsf's comment says it wants for the screen group — today it is emitted after
+`term.Restore`, in cooked mode. Whether that ordering ever mattered has not been
+observed; the alignment is a consequence of the move, not a fix being claimed.
 
 `pumpTerminalIO` already takes `io.Reader` / `io.Writer` and is already exercised
 with non-tty ends by objtrsf's own tests, so exporting it is a rename plus a doc
@@ -382,8 +406,8 @@ Filled per Pitfall 9 — every cell has a verdict, and omissions are decisions.
 | TUI popups/forms | **Intentionally omitted** — `PortForwardModal` exists because a forward spec is four fields with no default; a gateway takes one optional address |
 | TUI display | **Implemented** — start/stop/state are reported through the same result-line path the forward commands use (`tui/app.go:535`). The gateway is *not* added to `activeForwards`: that map is keyed per forward session and drives the `P`/`B` task-scoped stop keys and workspace capture, none of which apply |
 | WebUI buttons/forms, WebUI command line, WASM bridge | **Structurally impossible** — a page's JavaScript has no API for accepting an inbound TCP connection, so no wasm build can host a listener. The WebUI's equivalent of "reach this session from this device" is the WebUI itself |
-| Shared `cli/` | **Implemented** — the `cli/sshgw` package. No new const: `cli.InputModeReset` is reused as-is |
-| `objtrsf/exec` (separate module) | **Implemented** — `TerminalModeReset` and `PumpTerminalIO` exported (D10), landed and published before this repo's work starts |
+| Shared `cli/` | **Implemented** — the `cli/sshgw` package. `cli/terminal_input_modes.go` is deleted and its four call sites drop a line (D10) |
+| `objtrsf/exec` (separate module) | **Implemented** — `InputModeReset`, `ScreenModeReset` and `PumpTerminalIO` (D10), landed and published before this repo's work starts |
 | `server/`, `runner/`, protocol | **Not applicable** — no change (D9) |
 | Workspace config (`.harness/config`) | **Intentionally omitted** — a workspace records forwards so they can be re-established on reconnect; a gateway is not per-task and has one address, and `--listen` in the alias the operator already wrote is the same information |
 
@@ -437,8 +461,8 @@ round — detach with the resets suppressed, per group, and record what breaks:
 
 | Run | Suppressed | Scenario |
 | --- | --- | --- |
-| 1 | `cli.InputModeReset` | attach to a session whose app had mouse tracking on, detach with `Ctrl+]`, move the mouse at the local shell prompt |
-| 2 | `exec.TerminalModeReset` | attach while a full-screen app (`htop`) runs, detach with `Ctrl+]` mid-run, then use the local shell |
+| 1 | `exec.InputModeReset` | attach to a session whose app had mouse tracking on, detach with `Ctrl+]`, move the mouse at the local shell prompt |
+| 2 | `exec.ScreenModeReset` | attach while a full-screen app (`htop`) runs, detach with `Ctrl+]` mid-run, then use the local shell |
 | 3 | both | either scenario |
 
 Every run leaves with the detach key, never with `~.`: the disconnect path
