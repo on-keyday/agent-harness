@@ -9,45 +9,82 @@ import (
 	"github.com/on-keyday/agent-harness/runner/protocol"
 )
 
-func TestExecRunDir(t *testing.T) {
-	got := execRunDir("/repo", "0123456789abcdef0123456789abcdef")
-	want := filepath.Join("/repo", ".harness-worktrees", "0123456789abcdef0123456789abcdef")
-	if got != want {
-		t.Errorf("execRunDir = %q, want %q", got, want)
-	}
-}
-
 // The gate is the DIRECTORY existing, not the task's status: a task that ended
 // dirty keeps its worktree and is a valid target, while one that ended clean
-// had it removed and is not. Both reduce to "does this path exist".
-func TestExecRunDirExists(t *testing.T) {
+// had it removed and is not.
+func TestExecRunDir(t *testing.T) {
+	s := &Session{}
 	repo := t.TempDir()
 	id := "0123456789abcdef0123456789abcdef"
-	if execRunDirExists(repo, id) {
+	wt := filepath.Join(repo, ".harness-worktrees", id)
+
+	dir, ok := s.execRunDir(repo, id)
+	if dir != wt {
+		t.Errorf("dir = %q, want the task's worktree %q", dir, wt)
+	}
+	if ok {
 		t.Fatal("a repo with no worktrees must report none")
 	}
-	if err := os.MkdirAll(execRunDir(repo, id), 0o755); err != nil {
+
+	if err := os.MkdirAll(wt, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if !execRunDirExists(repo, id) {
-		t.Error("an existing worktree directory must be reported")
+	// A directory alone is NOT enough: an orphan left by a crashed cleanup
+	// exists and holds no .git, and a command run in it would act on something
+	// that is not the task's tree while reporting success. Same predicate
+	// git_query uses (isWorktreeRoot).
+	if _, ok := s.execRunDir(repo, id); ok {
+		t.Error("a directory with no .git entry must not count as a worktree")
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.execRunDir(repo, id); !ok {
+		t.Error("a real worktree checkout must be reported")
 	}
 }
 
 // A plain FILE at the worktree path is not a worktree. Reporting it as one
 // would send the runner into an exec with a cwd that cannot be entered, and
 // the failure would surface as an opaque chdir error instead of no_worktree.
-func TestExecRunDirExistsRejectsAFile(t *testing.T) {
+func TestExecRunDirRejectsAFile(t *testing.T) {
+	s := &Session{}
 	repo := t.TempDir()
 	id := "ffffffffffffffffffffffffffffffff"
-	if err := os.MkdirAll(filepath.Dir(execRunDir(repo, id)), 0o755); err != nil {
+	wt := filepath.Join(repo, ".harness-worktrees", id)
+	if err := os.MkdirAll(filepath.Dir(wt), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(execRunDir(repo, id), []byte("x"), 0o644); err != nil {
+	if err := os.WriteFile(wt, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if execRunDirExists(repo, id) {
+	if _, ok := s.execRunDir(repo, id); ok {
 		t.Error("a plain file must not count as a worktree")
+	}
+}
+
+// Under NoWorktree the runner never creates one and every task runs directly in
+// the repo, so the repo IS the task's working directory. A runner configured
+// that way refused every exec until this branch existed — found by running the
+// verb against the dummy harness, whose runner is exactly that shape.
+func TestExecRunDirNoWorktreeMode(t *testing.T) {
+	repo := t.TempDir()
+	id := "0123456789abcdef0123456789abcdef"
+	s := &Session{NoWorktree: true}
+
+	dir, ok := s.execRunDir(repo, id)
+	if dir != repo {
+		t.Errorf("dir = %q, want the repo itself %q", dir, repo)
+	}
+	if !ok {
+		t.Error("the repo exists, so an exec has somewhere to run")
+	}
+
+	// No .git required here: the repo is the agent's cwd in this mode whether
+	// or not it is a checkout, and demanding one would refuse the very setup
+	// the mode exists for.
+	if _, ok := (&Session{NoWorktree: true}).execRunDir(filepath.Join(repo, "nope"), id); ok {
+		t.Error("a repo path that does not exist must still be refused")
 	}
 }
 

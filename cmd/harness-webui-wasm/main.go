@@ -119,6 +119,10 @@ func main() {
 		"fileEditCommit":     js.FuncOf(harnessFileEditCommit),
 		"fileEditEncode":     js.FuncOf(harnessFileEditEncode),
 		"gitQuery":           js.FuncOf(harnessGitQuery),
+		"execRun":            js.FuncOf(harnessExecRun),
+		"execRunList":        js.FuncOf(harnessExecRunList),
+		"execRunKill":        js.FuncOf(harnessExecRunKill),
+		"execArgvText":       js.FuncOf(harnessExecArgvText),
 		"serverDialRunner":   js.FuncOf(harnessServerDialRunner),
 		"sendNotification":   js.FuncOf(harnessSendNotification),
 		"awaitIdle":          js.FuncOf(harnessAwaitIdle),
@@ -761,7 +765,7 @@ func connRemoteAddr(cid string) string {
 //	  runners:  [{hostname, status, tasks, maxTasks, roots, connectedAt, lastSeen, agentBin, agentProfiles, skillsInjected}],
 //	  tasks:    [{id, status, kind, repoPath, prompt, assignedTo, exitCode,
 //	              createdAt, startedAt, endedAt, agentProfile, skillsInjected,
-//	              viewers, cowriters, errorMsg}],
+//	              viewers, cowriters, execCount, errorMsg}],
 //	  conns:    [{cid, role, remoteAddr, principalTask, connectedAt, identified}],
 //	  forwards: [{forward_id, dir, task, spec, origin}]
 //	}>
@@ -870,6 +874,11 @@ func harnessSnapshot(this js.Value, args []js.Value) any {
 					// UI's own preview reads Detached with viewers > 0.
 					"viewers":   float64(t.Viewers),
 					"cowriters": float64(t.Cowriters),
+					// Commands running in the task's WORKTREE — a different
+					// subject from the session above, and deliberately not gated
+					// on one: a task that ended with uncommitted work keeps its
+					// tree and can still be exec'd.
+					"execCount": float64(t.ExecCount),
 					// Terminal-failure reason (e.g. "runner_disconnected"); empty
 					// for non-failed tasks. Rendered in red on the task card.
 					"errorMsg": string(t.ErrorMessage),
@@ -2983,6 +2992,199 @@ func harnessGitQuery(this js.Value, args []js.Value) any {
 				"entries":   entries,
 				"subrepos":  subrepos,
 			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// --- exec ------------------------------------------------------------------
+
+// jsChunkWriter hands each write to a JS callback as a Uint8Array, the way the
+// preview pump delivers pane output.
+//
+// Bytes, not a string: command output is whatever the child wrote, and routing
+// it through Go's string conversion would mangle anything that is not valid
+// UTF-8. The page decodes with TextDecoder, which it already does for previews.
+// A missing or non-function callback is a no-op that still DRAINS — an
+// undrained side backpressures the stream and stalls the child mid-output.
+type jsChunkWriter struct{ fn js.Value }
+
+func (w jsChunkWriter) Write(p []byte) (int, error) {
+	if w.fn.Type() != js.TypeFunction || len(p) == 0 {
+		return len(p), nil
+	}
+	arr := js.Global().Get("Uint8Array").New(len(p))
+	js.CopyBytesToJS(arr, p)
+	w.fn.Invoke(arr)
+	return len(p), nil
+}
+
+// harnessExecRun runs one command in a task's worktree and streams its output.
+//
+//	harness.execRun(taskIDHex, argv, {onStdout, onStderr}) -> Promise<{kind, exitCode, detail, exited}>
+//
+// The two callbacks are SEPARATE on purpose: keeping stdout and stderr apart is
+// the property this verb exists to provide, and a bridge that merged them would
+// throw it away one hop before the page.
+//
+// A command that ran and failed RESOLVES rather than rejecting — a non-zero
+// exit is the command's answer, not a transport failure, the same distinction
+// gitQuery draws for a non-ok git status. Only a refusal (no such task, no
+// worktree, denied) rejects.
+func harnessExecRun(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 2 {
+				rejectErr(reject, errors.New("execRun: missing taskID / argv args"))
+				return
+			}
+			taskID := args[0].String()
+			argvJS := args[1]
+			if argvJS.Type() != js.TypeObject || argvJS.Length() == 0 {
+				rejectErr(reject, errors.New("execRun: argv must be a non-empty array"))
+				return
+			}
+			argv := make([]string, 0, argvJS.Length())
+			for i := 0; i < argvJS.Length(); i++ {
+				argv = append(argv, argvJS.Index(i).String())
+			}
+			opts := js.Undefined()
+			if len(args) > 2 {
+				opts = args[2]
+			}
+			var onOut, onErr js.Value
+			if opts.Type() == js.TypeObject {
+				onOut = opts.Get("onStdout")
+				onErr = opts.Get("onStderr")
+			}
+			res, err := c.ExecRun(rootCtx, taskID, argv, cli.ExecRunOpts{
+				Stdout: jsChunkWriter{fn: onOut},
+				Stderr: jsChunkWriter{fn: onErr},
+			})
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(js.ValueOf(map[string]any{
+				"kind":     res.Kind.String(),
+				"exited":   res.Kind == protocol.ExecEventKind_Exited,
+				"exitCode": int(res.ExitCode),
+				"detail":   res.Detail,
+			}))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessExecArgvText renders a command line the way every other surface does.
+//
+//	harness.execArgvText(argv) -> string
+//
+// Synchronous, and exported rather than mirrored: the rule that an argument
+// containing a space is quoted so it cannot read as two arguments has one
+// implementation (cli.ExecArgvString), and a join in JS would drift from it
+// silently. Same reason scopeSpec crossed this bridge instead of being
+// rewritten in the page.
+func harnessExecArgvText(this js.Value, args []js.Value) any {
+	if len(args) < 1 || args[0].Type() != js.TypeObject {
+		return ""
+	}
+	argv := make([]string, 0, args[0].Length())
+	for i := 0; i < args[0].Length(); i++ {
+		argv = append(argv, args[0].Index(i).String())
+	}
+	return cli.ExecArgvString(argv)
+}
+
+// harnessExecRunList lists the running execs this caller may see.
+//
+//	harness.execRunList(taskFilterHex?) -> Promise<[{execId, taskId, startedUnixMs, argv, argvText, originKind, originCid}]>
+//
+// argvText comes from cli.ExecArgvString rather than a join in JS: the quoting
+// rule that keeps a two-word argument from reading as two arguments has one
+// implementation, and a mirror in the page could not fail loudly when it grows.
+func harnessExecRunList(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			filter := ""
+			if len(args) > 0 && args[0].Truthy() {
+				filter = args[0].String()
+			}
+			execs, err := c.ExecRunListWith(rootCtx, filter)
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			rows := make([]any, 0, len(execs))
+			for i := range execs {
+				e := &execs[i]
+				argv := cli.ExecArgvStrings(e.Argv)
+				jsArgv := make([]any, 0, len(argv))
+				for _, a := range argv {
+					jsArgv = append(jsArgv, a)
+				}
+				rows = append(rows, map[string]any{
+					"execId":        float64(e.ExecId),
+					"taskId":        hex.EncodeToString(e.TaskId.Id[:]),
+					"startedUnixMs": float64(e.StartedUnixMs),
+					"argv":          jsArgv,
+					"argvText":      cli.ExecArgvString(argv),
+					"originKind":    e.OriginKind.String(),
+					"originCid":     string(e.OriginCid),
+				})
+			}
+			resolve.Invoke(js.ValueOf(rows))
+		}()
+		return nil
+	})
+	defer executor.Release()
+	return js.Global().Get("Promise").New(executor)
+}
+
+// harnessExecRunKill stops one running exec by id.
+//
+//	harness.execRunKill(execId) -> Promise<execId>
+//
+// The registry is shared, so this reaches an exec another client started —
+// exactly as the forwards list does.
+func harnessExecRunKill(this js.Value, args []js.Value) any {
+	executor := js.FuncOf(func(this js.Value, promiseArgs []js.Value) any {
+		resolve := promiseArgs[0]
+		reject := promiseArgs[1]
+		go func() {
+			c, err := currentClient()
+			if err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			if len(args) < 1 {
+				rejectErr(reject, errors.New("execRunKill: missing execId arg"))
+				return
+			}
+			id := uint64(args[0].Float())
+			if err := c.ExecRunKillWith(rootCtx, id); err != nil {
+				rejectErr(reject, err)
+				return
+			}
+			resolve.Invoke(float64(id))
 		}()
 		return nil
 	})

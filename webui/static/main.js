@@ -2082,6 +2082,65 @@ const POLL_INTERVAL_MS = 5000;
     if (scroll) cmdOutput.scrollIntoView({ block: "end", behavior: "auto" });
   };
 
+  // makeExecSink buffers one of an exec's two streams into whole lines and
+  // marks each with its stream number.
+  //
+  // The command output pane is plain text (cmdOutput.textContent), so there is
+  // no per-line colour to distinguish stdout from stderr — and merging them
+  // would throw away, at the very last hop, the property this verb exists to
+  // provide. "1| " / "2| " is the same marking the TUI uses, so an operator
+  // reading either surface reads the same thing.
+  //
+  // TextDecoder with stream:true because a chunk boundary can land inside a
+  // multi-byte character; decoding each chunk independently would corrupt it.
+  const makeExecSink = (prefix) => {
+    const dec = new TextDecoder();
+    let buf = "";
+    return {
+      write(chunk) {
+        buf += dec.decode(chunk, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n")) >= 0) {
+          appendCmdOutput(prefix + buf.slice(0, i).replace(/\r$/, ""));
+          buf = buf.slice(i + 1);
+        }
+      },
+      // flush emits a last line that had no trailing newline. A command whose
+      // output does not end in "\n" still printed that line.
+      flush() {
+        buf += dec.decode();
+        if (buf) { appendCmdOutput(prefix + buf); buf = ""; }
+      },
+    };
+  };
+
+  // execRunToOutput runs one command in a task's worktree, streaming both
+  // streams into the command output pane, and returns the result line.
+  //
+  // A non-zero exit is reported, not thrown: the command ran and said what it
+  // meant. Only a refusal (no such task, no worktree, denied) reaches the catch.
+  const execRunToOutput = async (taskId, argv) => {
+    const out = makeExecSink("1| ");
+    const err = makeExecSink("2| ");
+    const label = `exec ${taskId.slice(0, 12)}…: ${window.harness.execArgvText(argv)}`;
+    try {
+      const res = await window.harness.execRun(taskId, argv, {
+        onStdout: (c) => out.write(c),
+        onStderr: (c) => err.write(c),
+      });
+      out.flush();
+      err.flush();
+      if (res.exited) return `${label}: exit ${res.exitCode}`;
+      return `${label}: ${res.kind}${res.detail ? `: ${res.detail}` : ""}`;
+    } catch (e) {
+      // Whatever the command managed to print before the failure is still
+      // output it produced; dropping it would misreport the run.
+      out.flush();
+      err.flush();
+      throw e;
+    }
+  };
+
   const runCmd = async () => {
     const line = cmdInput.value.trim();
     if (!line) return;
@@ -2319,6 +2378,43 @@ const POLL_INTERVAL_MS = 5000;
           out = `server dial-runner ${target}${via ? ` --via=${via}` : ""}: ${status}`;
           break;
         }
+        // Same words the TUI cmdline takes, so a hand that learned one surface
+        // knows the other. The sub-verb is decided by the FIRST token only:
+        // `exec <id> ls -la` is a command named ls, because a task id
+        // introduced it.
+        case "exec": {
+          const sub = tokens[1];
+          if (!sub) throw new Error("exec: usage: exec <task-id> [--] <cmd> [args...] | exec ls [-task <id>] | exec kill <exec-id>");
+          if (sub === "ls") {
+            let filter = "";
+            for (let i = 2; i < tokens.length; i++) {
+              if (tokens[i] === "-task" || tokens[i] === "--task") {
+                i++;
+                if (i >= tokens.length) throw new Error("exec ls: -task needs a task id");
+                filter = tokens[i];
+              } else {
+                throw new Error("exec ls: usage: exec ls [-task <task-id>]");
+              }
+            }
+            const es = await window.harness.execRunList(filter || undefined);
+            out = es.length
+              ? es.map((e) => `#${e.execId}  ${e.taskId.slice(0, 8)}…  ${e.originKind} ${e.originCid}  ${e.argvText}`).join("\n")
+              : "(no running execs)";
+            break;
+          }
+          if (sub === "kill") {
+            const id = parseInt(tokens[2], 10);
+            if (!Number.isFinite(id)) throw new Error("exec kill: usage: exec kill <exec-id>");
+            await window.harness.execRunKill(id);
+            out = `killed exec ${id}`;
+            break;
+          }
+          let argv = tokens.slice(2);
+          if (argv[0] === "--") argv = argv.slice(1);
+          if (!argv.length) throw new Error("exec: a command is required");
+          out = await execRunToOutput(sub, argv);
+          break;
+        }
         case "forward": {
           // forward ls renders from the snapshot the page already polls — no
           // extra RPC and no second wasm export (Task 7). forward kill goes
@@ -2451,6 +2547,10 @@ const POLL_INTERVAL_MS = 5000;
             "                            download a remote file, or -r for a directory as a .tar",
             "  server dial-runner <cid> [--via <cid>]",
             "                            ask the server to reverse-dial a Listen-mode runner; --via routes through a registered relay-runner",
+            "  exec <task-id> [--] <cmd> [args...]",
+            "                            run a command in the task's worktree as its own process, NOT in the session's shell (stdout 1| / stderr 2|)",
+            "  exec ls [-task <id>] | exec kill <exec-id>",
+            "                            list the running execs / stop one (the task row shows execs=N)",
             "  forward ls                list registered port forwards (from the last snapshot poll)",
             "  forward kill <forward-id> close a registered port forward (starting a socket-bound forward is CLI/TUI-only; open a browser-endpoint forward from the raw-connect pane instead)",
             "  help                      this list",
@@ -4601,6 +4701,12 @@ const POLL_INTERVAL_MS = 5000;
       if (taskSessionAlive(t)) {
         metaText += `  cowrite=${t.cowriters || 0} viewer=${t.viewers || 0}`;
       }
+      // Commands running in the task's WORKTREE. A different subject from the
+      // session above and NOT gated on one — a task that ended with
+      // uncommitted work keeps its tree and can still be exec'd — and printed
+      // at zero for the same reason the pair above is: 0 is a measurement,
+      // absence is not.
+      metaText += `  execs=${t.execCount || 0}`;
       meta.textContent = metaText;
       if (t.errorMsg) {
         const err = document.createElement("span");
@@ -4809,6 +4915,29 @@ const POLL_INTERVAL_MS = 5000;
     // prove operatorPSK), so there is no non-operator state to hide it in.
     addItem("🔑 caps/scope 再付与", "", () => openRegrantDialog(t));
     addItem("⇄ 親タスク変更", "", () => openParentDialog(t));
+
+    // Runs in the task's WORKTREE as its own process — not in the session's
+    // shell. Available for every task, including terminal ones: the gate is
+    // whether the tree is still on disk, which a task that ended with
+    // uncommitted work keeps.
+    //
+    // A text prompt rather than a built control, and deliberately: a command
+    // line IS free text, unlike caps or a scope, which decompose into things
+    // this form already has chips and radios for.
+    addItem("⌨ コマンド実行", "", async () => {
+      const line = window.prompt(`${t.id.slice(0, 12)}… の worktree で実行するコマンド`, "git status");
+      if (!line) return;
+      const argv = tokenize(line);
+      if (!argv.length) return;
+      setActiveTab("tasks");
+      appendCmdOutput(`> exec ${t.id.slice(0, 12)}… ${line}`, true);
+      try {
+        appendCmdOutput(await execRunToOutput(t.id, argv));
+      } catch (err) {
+        appendCmdOutput(`exec error: ${err.message}`);
+      }
+      refreshSnapshot();
+    });
 
     addItem("📁 ファイル", "", () => {
       fileTaskSelect.value = t.id;

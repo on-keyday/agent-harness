@@ -15,26 +15,34 @@ import (
 	"github.com/on-keyday/objtrsf/trsf"
 )
 
-// execRunDir is where an exec runs: the task's worktree.
-func execRunDir(repoPath, taskIDHex string) string {
-	return filepath.Join(repoPath, ".harness-worktrees", taskIDHex)
-}
-
-// execRunDirExists reports whether that directory is there.
+// execRunDir returns the directory an exec runs in, and whether it is there.
 //
-// This is the whole gate. NOT the task's status: a task that ended with
-// uncommitted work KEEPS its worktree — RemoveIfClean declines to remove a
-// dirty one — and running `git status` or `make test` in that tree is exactly
-// what an operator wants then. A task that ended clean had it removed and has
-// nowhere to run.
+// Two shapes, exactly as gitSourceFor resolves them. Normally it is the task's
+// own worktree. Under NoWorktree the runner never made one and every task runs
+// directly in the repo, so the repo IS the task's working directory — a runner
+// configured that way used to refuse every exec, because this only knew the
+// first shape.
 //
-// git_query's fallback for that case (run in the repo against the retained
-// harness/<id> branch) is deliberately NOT copied: it is safe for a read-only
-// git view and wrong for an arbitrary command, which would silently run against
-// a different tree than the caller named.
-func execRunDirExists(repoPath, taskIDHex string) bool {
-	st, err := os.Stat(execRunDir(repoPath, taskIDHex))
-	return err == nil && st.IsDir()
+// isWorktreeRoot rather than a bare Stat, for the reason git_query gives: an
+// orphan directory left by a crashed cleanup still exists and holds no .git,
+// and a command run inside it would act on something that is not the task's
+// tree while reporting success.
+//
+// Existence is the WHOLE gate — not the task's status. A task that ended with
+// uncommitted work KEEPS its worktree (RemoveIfClean declines to remove a dirty
+// one) and running `git status` or `make test` in that tree is exactly what an
+// operator wants then; one that ended clean had it removed and has nowhere to
+// run. git_query's fallback for that case — run in the repo against the
+// retained harness/<id> branch — is deliberately NOT copied: it is safe for a
+// read-only git view and wrong for an arbitrary command, which would silently
+// act on a different tree than the caller named.
+func (s *Session) execRunDir(repoPath, taskIDHex string) (string, bool) {
+	if s.NoWorktree {
+		st, err := os.Stat(repoPath)
+		return repoPath, err == nil && st.IsDir()
+	}
+	wt := filepath.Join(repoPath, ".harness-worktrees", taskIDHex)
+	return wt, isWorktreeRoot(wt)
 }
 
 // execCancels holds the cancel func of every exec this runner is running, so a
@@ -96,7 +104,8 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 		finish(protocol.ExecEventKind_Failed, -1, "repo is not under this runner's --roots: "+repoPath)
 		return
 	}
-	if !execRunDirExists(repoPath, taskIDHex) {
+	dir, ok := s.execRunDir(repoPath, taskIDHex)
+	if !ok {
 		_ = stream.CloseBoth()
 		finish(protocol.ExecEventKind_Failed, -1, "no worktree for task "+taskIDHex)
 		return
@@ -111,8 +120,6 @@ func (s *Session) handleExecRun(ctx context.Context, req *protocol.RunnerExecRun
 	for i := range req.Argv.Argv {
 		argv = append(argv, string(req.Argv.Argv[i].Arg))
 	}
-	dir := execRunDir(repoPath, taskIDHex)
-
 	// The child sees what a task in this tree sees. Needing something else is
 	// what `env VAR=x <cmd>` in the argv is for.
 	env := BuildAgentEnv(AgentEnvSpec{
