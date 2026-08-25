@@ -377,7 +377,15 @@ therefore cannot serve an ssh channel:
 | --- | --- | --- |
 | `exec.ScreenModeReset` | an unexported literal in `RemoteShell`'s `defer` | extracted to a named exported const |
 | `exec.InputModeReset` | `cli.InputModeReset` in **this** repo (`cli/terminal_input_modes.go:36`) | **moved** to objtrsf, doc comment and all |
+| `exec.WriteTerminalReset(w io.Writer)` | the `defer` body itself | new: writes both consts to `w`, so "the full reset" is composed in one place |
 | `(*CommandExecutionStream).PumpTerminalIO(in io.Reader, out io.Writer) error` | unexported `pumpTerminalIO` | exported; the body does not change |
+
+`WriteTerminalReset` exists so the *composition* has one home too, not just the
+two strings: `RemoteShell`'s `defer` calls it with `os.Stdout` and the gateway
+calls it with the ssh channel. Without it, a later third group added in objtrsf
+would reach `RemoteShell` and silently not reach the gateway — the same drift
+the move is meant to end, one level up. The consts stay exported alongside it
+because the negative control writes them individually.
 
 The input group moves rather than staying put because the split between the two
 was historical, not semantic: **every** call site in this repo writes them back
@@ -447,7 +455,7 @@ Filled per Pitfall 9 — every cell has a verdict, and omissions are decisions.
 | TUI display | **Implemented** — start/stop/state are reported through the same result-line path the forward commands use (`tui/app.go:535`). The gateway is *not* added to `activeForwards`: that map is keyed per forward session and drives the `P`/`B` task-scoped stop keys and workspace capture, none of which apply |
 | WebUI buttons/forms, WebUI command line, WASM bridge | **Structurally impossible** — a page's JavaScript has no API for accepting an inbound TCP connection, so no wasm build can host a listener. The WebUI's equivalent of "reach this session from this device" is the WebUI itself |
 | Shared `cli/` | **Implemented** — the `cli/sshgw` package. `cli/terminal_input_modes.go` is deleted and its four call sites drop a line (D10) |
-| `objtrsf/exec` (separate module) | **Implemented** — `InputModeReset`, `ScreenModeReset` and `PumpTerminalIO` (D10), landed and published before this repo's work starts |
+| `objtrsf/exec` (separate module) | **Implemented** — `InputModeReset`, `ScreenModeReset`, `WriteTerminalReset` and `PumpTerminalIO` (D10), landed and published before this repo's work starts |
 | `server/`, `runner/`, protocol | **Not applicable** — no change (D9) |
 | Workspace config (`.harness/config`) | **Intentionally omitted** — a workspace records forwards so they can be re-established on reconnect; a gateway is not per-task and has one address, and `--listen` in the alias the operator already wrote is the same information |
 
