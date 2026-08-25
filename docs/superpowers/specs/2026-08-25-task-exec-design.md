@@ -492,14 +492,27 @@ SIGINT to a `harness-cli exec … -- sh -c 'sleep 121'` left the registration in
 
 After both: SIGINT ends the process, drops the registration and kills the child.
 
-**A hard kill takes about a minute, and that is the transport's latency, not
-this feature's.** SIGKILL to the same command left it listed; the websocket
-closed within 3 s but the server declared the connection dead 66 s later
-(`deleting inactive connection`), and the teardown hook then fired and killed
-the child. Port forwards inherit the identical latency from the identical hook —
-their own note records "still listed 60 s later" as the pre-hook symptom. Worth
-knowing rather than fixing here: the reaper's interval belongs to the
-connection layer.
+**A hard kill took about a minute, which turned out to be a defect one layer
+down.** SIGKILL to the same command left it listed: the websocket closed within
+3 s but the endpoint declared the connection dead 66 s later (`deleting inactive
+connection`), and only then did the teardown hook fire.
+
+That minute is `objproto.AutoGarbageCollect`'s `connectionTimeout`, and it is
+not arbitrary — a connection's `lastTime` advances on RECEIVE only, so a peer
+that has stopped talking is indistinguishable from one that is merely quiet, and
+one minute is four of `trsf.AutoPing`'s fifteen seconds. Shortening it would
+reap live but quiet peers, and a UDP underlay has no close signal at all.
+
+The real gap was that the WebSocket receive loop knew the socket was dead and
+told nobody: it deleted its own map entry and returned. objtrsf `97de605` closes
+the connections that rode a dead underlay
+(`transport.CloseConnectionsAt`), which needs no new interface — the existing
+`CannotSend` path cannot serve, because it fires only when something is SENT to
+the dead peer and nothing is sent to one that has gone quiet.
+
+Re-measured after the bump: **2 s**, for an exec and for a port forward alike —
+they share this teardown, so the fix reached both. The sweep stays as the
+general mechanism for underlays that cannot tell.
 
 **Not done: the fleet restart.** This is a `.bgn` change, so deploying it needs
 the server restarted before the runners
