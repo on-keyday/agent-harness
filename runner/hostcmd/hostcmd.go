@@ -16,6 +16,14 @@
 // NOT for processes the operator is meant to see: the agent itself runs in a
 // PTY the operator attaches to (runner/process.go), and `file edit` launches
 // the user's $EDITOR on purpose (cli/file_edit.go). Both keep os/exec.
+//
+// One host-helper path does NOT come through here and cannot: `exec` runs its
+// child inside objtrsf (exec.ExecuteCommandWithOption), a different module, so
+// hostcmd_test.go's source walk has no way to reach it. objtrsf carries the
+// same flag itself, defaulted on and spelled as an opt-out
+// (ExecuteOption.ShowConsoleWindow), with this package named as where the
+// discipline came from. Anything else that starts a host process from OUTSIDE
+// this module owes the same, and no test here will say so.
 package hostcmd
 
 import (
