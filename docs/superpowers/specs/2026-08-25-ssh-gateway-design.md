@@ -40,12 +40,13 @@ by the operator on request.
 | D2 | Both a CLI verb and TUI hosting ship in v1 | DECIDED (operator) |
 | D3 | The ssh user name selects the task | DECIDED (operator) |
 | D4 | The listener's lifetime is its host process's lifetime | DECIDED (operator) |
-| D5 | Public-key authentication is required; no password, no open loopback | DECIDED (author) |
+| D5 | No ssh authentication on a loopback bind; a non-loopback bind requires `--authorized-keys` | DECIDED (operator); **reverses** an earlier D5, see § Authentication |
 | D6 | One ssh session per task per gateway; a second is refused | DECIDED (author) |
 | D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | DECIDED (author); **reverses** an earlier D7 in this spec, see § Detach |
 | D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
 | D9 | No `.bgn` / wire change | DECIDED (author) |
 | D10 | The pump and **both** reset strings live in `objtrsf/exec` — the screen group exported from `RemoteShell`'s literal, the input group *moved* out of this repo — and objtrsf lands and publishes first, then a `go.mod` bump | DECIDED (operator) |
+| D11 | The bare user name takes a **control** attach (and so takes the seat); `.view` and `.cowrite` are the other two forms | DECIDED (author) |
 
 ## Why client-side and not in the server
 
@@ -120,15 +121,16 @@ no network fetch is needed.
 | --- | --- | --- |
 | `--listen` | `127.0.0.1:2222` | bind address of the ssh listener |
 | `--host-key` | `<dir of .harness/config>/ssh_host_ed25519_key` | server host key; generated on first run if absent, mode 0600 |
-| `--authorized-keys` | `<dir of .harness/config>/ssh_authorized_keys` | accepted client public keys, OpenSSH `authorized_keys` format |
+| `--authorized-keys` | unset | accepted client public keys, OpenSSH `authorized_keys` format. Optional on a loopback bind, **required** otherwise (D5) |
 
-The key paths sit next to the workspace config because that is this project's
-one existing per-repo client-state location (`cli/workspace/locate.go:15`,
-`DefaultPath = ".harness/config"`). The repo has no home-directory convention —
-there is no `os.UserHomeDir` / `os.UserConfigDir` call anywhere in it — so
-defaulting into `~/.harness/` or reading `~/.ssh/authorized_keys` would invent
-one. Both defaults are derived from the *resolved* config path, so `--config` /
-`HARNESS_CONFIG` moves them together.
+The host-key path sits next to the workspace config because that is this
+project's one existing per-repo client-state location
+(`cli/workspace/locate.go:15`, `DefaultPath = ".harness/config"`). The repo has
+no home-directory convention — there is no `os.UserHomeDir` /
+`os.UserConfigDir` call anywhere in it — so defaulting into `~/.harness/` would
+invent one. The default is derived from the *resolved* config path, so
+`--config` / `HARNESS_CONFIG` moves it. `--authorized-keys` has no default at
+all: it is opt-in, and a path is given explicitly when it is used.
 
 Host-key generation follows the `--psk-file` precedent
 (`cmd/harness-server/main.go:35`): the file is the origin, created on first run
@@ -137,25 +139,31 @@ subsequent `ssh` print a host-key-changed warning and refuse to connect.
 
 ## Authentication (D5)
 
-Public key only. `ssh.ServerConfig` with `PublicKeyCallback` checking the
-presented key against `--authorized-keys`; `PasswordCallback` and
-`KeyboardInteractiveCallback` are left nil, and `NoClientAuth` stays false.
+On a loopback bind there is none: `NoClientAuth` is true, and anything that can
+open a TCP connection to the listener is served.
 
-If the authorized-keys file is missing or contains no usable key, the gateway
-**refuses to start** and prints the command that fixes it. It does not fall back
-to accepting any key: a silent fallback that widens authentication is the
-failure mode Pitfall-9's reviewer checklist calls out ("if a config is set, does
-any combination cause it to be ignored without log?"), inverted.
+**Reversal.** An earlier D5 required public keys, arguing that the gateway holds
+operator authority and that a non-sandboxed agent on this host can reach
+`127.0.0.1`, so an open port would be an agent → operator escalation. The second
+half is true and the conclusion still did not follow: **an agent started by the
+runner runs as the same UID as the operator**, so it can read
+`~/.ssh/id_ed25519` and authenticate as the operator. Public keys stop a
+different-UID process, and no different-UID process is in the picture — the
+sandboxed launch path is confined by `scripts/sandbox/init-firewall.sh` to the
+harness server's single port and cannot reach the listener at all. Requiring
+keys would have bought setup friction and no confinement.
 
-Why not "loopback is enough, skip auth": the gateway process holds operator
-authority — it is a client that has already proven `--operator-psk` — and
-agents on this host run outside any network namespace in the non-sandboxed
-launch path, so `127.0.0.1:2222` is reachable from them. An unauthenticated
-loopback listener would therefore be an agent → operator escalation of exactly
-the shape that `project_cap_escape_kind_client_operator` records as a fixed bug.
-The sandboxed launch path is narrower (`scripts/sandbox/init-firewall.sh` allows
-only the harness server's single port), but the gateway must not depend on which
-launch path an agent happened to take.
+What that argument does **not** license is an unauthenticated non-loopback bind:
+there, a different-UID reader on another machine is exactly the adversary, and
+the same reasoning inverts. So `--listen` and authentication are coupled in code
+— a bind address outside `127.0.0.0/8` / `::1` is refused unless
+`--authorized-keys` names a file with at least one usable key, at which point
+`PublicKeyCallback` gates every connection against it. `PasswordCallback` and
+`KeyboardInteractiveCallback` are nil in both configurations.
+
+The refusal is a startup error, not a warning-and-continue: quietly serving
+`0.0.0.0:2222` with no authentication is the widest possible reading of a
+mistyped flag.
 
 ## SSH surface
 
@@ -189,15 +197,38 @@ change what the already-running agent renders.
 | --- | --- |
 | 32 lowercase hex chars | that task, `protocol.AttachMode_Control` |
 | 32 lowercase hex chars + `.view` | that task, `protocol.AttachMode_View` |
-| anything else | authentication succeeds, the session channel is rejected with a message naming the two accepted forms |
+| 32 lowercase hex chars + `.cowrite` | that task, `protocol.AttachMode_Cowrite` |
+| anything else | authentication succeeds, the session channel is rejected with a message naming the accepted forms |
 
 The rejection deliberately happens at channel open, not at authentication:
 failing authentication for a malformed user name makes ssh retry keys and then
 report a credentials problem, which points the operator at the wrong thing.
 
-`AttachMode_Cowrite` is not exposed. It exists (`runner/protocol/message.go:20327`)
-and would need a third user-name form; nothing in P1–P4 asks for it, and adding
-a form is a one-line change if it is ever wanted.
+**Control is the bare form, and it takes the seat** (D11). `SessionMux.Attach`
+is a takeover: it cancels the previous controller and `CloseBoth`s its stream
+(`server/session_mux.go:410–428`). So `ssh <id>@…` while the TUI holds a control
+attach on that task detaches the TUI's. The TUI's grid panes are viewers and are
+untouched.
+
+That is the right default for a terminal the operator is sitting in: control is
+what owns the PTY size, and one human types in one place at a time.
+`.cowrite` is the way to type without taking the seat.
+
+What `.cowrite` costs is the size. Two gates decide an observer's resize, and
+both must pass: `allowResize`, resolved per caller from
+`Capability_ExecResize` (`server/task_handler.go:1401` — the gateway passes it,
+since `callerCaps` returns `Capability_All` for a connection with no principal
+task, `server/capabilities.go:94–98`), and then `applyObserverWinSize`, which
+honours the frame **only while the control seat is empty**
+(`server/session_mux.go`). Last-writer-wins was considered there and rejected
+after use: an observer resize redrew a human's terminal at a size they had not
+chosen, and their next SIGWINCH silently undid it.
+
+So a `.cowrite` ssh session alongside a controller renders at the *controller's*
+size, and an ssh window of a different size shows a broken screen. With no
+controller attached, the same session sizes the PTY itself. `.cowrite` is for
+typing alongside someone, not for a second full-size terminal — which is what
+the bare control form is for.
 
 ## Data plane
 
@@ -244,9 +275,10 @@ does not supersede: a control attach evicts the previous one server-side
 steal the seat from the operator's own TUI or CLI attach. A refusal is visible;
 a theft is not.
 
-Two ssh sessions on *different* tasks are unaffected, as are a `.view` session
-and a control session on the same task — view attaches take no seat
-(`cli/streamattach_native.go:22`).
+The refusal is per task *and* per mode: it is the control seat that is scarce.
+Two ssh sessions on different tasks are unaffected, and so are `.view` or
+`.cowrite` sessions alongside a control session on the same task — neither takes
+the seat (`cli/streamattach_native.go:22`, `server/session_mux.go:488`).
 
 ## Detach and terminal restoration (D7, D8)
 
@@ -422,7 +454,8 @@ unknown user-name form, task not found / already finished (mapped from
 `cli.attachStatusError`, `cli/attach.go:80`), wrong task kind, task already
 connected through this gateway, `exec` / `subsystem` / non-session channel.
 
-Startup failures — bind refused, missing authorized-keys, unreadable host key —
+Startup failures — bind refused, a non-loopback `--listen` with no usable
+`--authorized-keys` (D5), unreadable host key —
 are returned from `Run` and surface as a CLI exit with a message, and in the TUI
 as the same result line the forward commands use.
 
@@ -433,7 +466,9 @@ Unit:
 - user-name mapping: 32-hex, 32-hex + `.view`, uppercase hex, wrong length,
   empty, a name that merely contains a hex run
 - authorized-keys: accepted key, unknown key, comment / options lines, empty
-  file, missing file (must be a startup refusal, not an allow)
+  file
+- the bind/auth coupling (D5): loopback with no keys starts, non-loopback with
+  no usable key is refused at startup, non-loopback with keys starts and gates
 - host key: created on first run with mode 0600, byte-identical on second run
 - `pty-req` payload decode including the zero-size case
 
