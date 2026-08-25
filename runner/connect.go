@@ -533,6 +533,18 @@ func dispatchRunnerRequest(ctx context.Context, session *Session, log *slog.Logg
 			return
 		}
 		go session.handleGitQuery(ctx, gq)
+	case protocol.RunnerRequestType_OpenExecRun:
+		er := req.OpenExecRun()
+		if er == nil {
+			return
+		}
+		go session.handleExecRun(ctx, er)
+	case protocol.RunnerRequestType_CloseExecRun:
+		ce := req.CloseExecRun()
+		if ce == nil {
+			return
+		}
+		session.handleCloseExecRun(ce)
 	case protocol.RunnerRequestType_OpenPortForward:
 		pf := req.OpenPortForward()
 		if pf == nil {

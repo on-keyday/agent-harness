@@ -122,6 +122,12 @@ type taskEntry struct {
 type Session struct {
 	AllowedRoots []string // absolute paths this runner is allowed to serve
 
+	// execCancels holds the cancel func of every out-of-band exec running on
+	// this runner (execId -> cancel), so a close_exec_run request can stop one.
+	// A dedicated map because an exec belongs to no task entry: it may target a
+	// TERMINAL task whose per-task state this runner has already dropped.
+	execCancels execCancels
+
 	// Profiles is the set of agent launch profiles this runner was
 	// configured with: the default profile (from --agent-bin/--agent-args/
 	// --agent-*-argv) plus any extra profiles from --agent-profiles. Each
