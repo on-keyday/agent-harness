@@ -275,8 +275,14 @@ Today a CLI attach emits **two** groups, from two places, back to back
 - `cli.RestoreLocalInputModes` — `cli.InputModeReset`, the input-sending modes
   (`cli/terminal_input_modes.go:33`)
 
-The gateway writes the same union to the channel, so an ssh detach leaves a
-terminal in the state a CLI detach leaves it in. `cli.InputModeReset` is already
+The gateway writes both groups into the ssh channel. The channel is the only
+pipe to the ssh client's terminal, so the bytes a local attach writes to
+`os.Stdout` go there instead — the ssh client prints them to its own terminal,
+which is what needs resetting. Both groups, not some merged subset: they overlap
+(`\x1b[?1000l`, `?1002l`, `?1003l`, `?1006l`, `?2004l` are in each), and turning
+off a mode that is already off is a no-op, so there is nothing to reconcile and
+no order to get right. The result is that an ssh detach leaves a terminal in the
+state a CLI detach leaves it in. `cli.InputModeReset` is already
 exported and is used directly. The other group is unexported inside `objtrsf`,
 so a second const — `cli.ScreenModeReset`, next to `InputModeReset` — carries
 it, with a comment naming the objtrsf site it duplicates and why the copy exists
