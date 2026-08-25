@@ -28,6 +28,10 @@ enum RunnerRequestType:
     close_port_forward
     git_query          # read-only git query against a task's worktree
     open_exec_run      # run one argv in a task's worktree, out of band
+    close_exec_run     # cancel a running exec by id. Needed as its own
+                       # request because closing the exec's stream does NOT
+                       # stop the child: the frame pump reads EOF and ends
+                       # its input goroutine while the process runs on.
 
 # AllowedRoot is a single repository root path the runner is willing to accept tasks for.
 format AllowedRoot:
@@ -243,6 +247,7 @@ format RunnerRequest:
         RunnerRequestType.close_port_forward => close_port_forward :ClosePortForwardRequest
         RunnerRequestType.git_query => git_query :RunnerGitQueryRequest
         RunnerRequestType.open_exec_run => open_exec_run :RunnerExecRunRequest
+        RunnerRequestType.close_exec_run => close_exec_run :CloseExecRunRequest
 
 enum TaskControlKind:
     :u8
@@ -2161,6 +2166,12 @@ format ExecRunListRequest:
 format ExecRunListResponse:
     execs_len :u16
     execs :[execs_len]ExecRunInfo
+
+# CloseExecRunRequest asks the runner to cancel a running exec, which stops
+# the child through the SIGHUP -> SIGTERM -> SIGKILL ladder a detaching
+# session's agent gets. Mirrors ClosePortForwardRequest.
+format CloseExecRunRequest:
+    exec_id :u64
 
 format ExecRunKillRequest:
     exec_id :u64

@@ -59,6 +59,12 @@ type TaskHandler struct {
 	// portForwardsOnce) so struct-literal construction in tests need not set it.
 	portForwards *portForwardRegistry
 
+	// execRunsOnce / execRuns are the same lazy pair for out-of-band execs
+	// (execId → registration). Separate from portForwards because they answer
+	// different questions and are listed and killed by different verbs.
+	execRunsOnce sync.Once
+	execRuns     *execRegistry
+
 	// PruneFn handles a CLI-driven prune request. If nil, prune requests reply
 	// with all-zero counts. Server.New wires this to a closure that dispatches
 	// to TaskStore.PruneTerminal (time mode) or TaskStore.PruneByIDs (id mode).
@@ -425,6 +431,49 @@ func (h *TaskHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_GitQuery, RequestId: req.RequestId}
 		resp.SetGitQuery(gresp)
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_OpenExecRun:
+		// ExecRun is enforced centrally via requiredCap before dispatch; the
+		// TARGET is gated here, as GitQuery's is.
+		er := req.OpenExecRun()
+		if er == nil {
+			slog.Error("TaskHandler: OpenExecRun variant is nil")
+			return
+		}
+		eresp := protocol.ExecRunResponse{Status: protocol.ExecRunStatus_NotFound}
+		if h.inScope(cid, protocol.Capability_ExecRun, hex.EncodeToString(er.TaskId.Id[:])) {
+			eresp = h.handleOpenExecRun(conn, er)
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_OpenExecRun, RequestId: req.RequestId}
+		resp.SetOpenExecRun(eresp)
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_ExecRunList:
+		// No capability: the listing is bounded by task VISIBILITY inside the
+		// handler, like list_port_forwards.
+		el := req.ExecRunList()
+		if el == nil {
+			slog.Error("TaskHandler: ExecRunList variant is nil")
+			return
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ExecRunList, RequestId: req.RequestId}
+		resp.SetExecRunList(h.handleExecRunList(cid, el))
+		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
+		conn.SendMessage(out) //nolint:errcheck
+
+	case protocol.TaskControlKind_ExecRunKill:
+		// Gated inline: the target task is only known after the registry
+		// lookup, exactly as kill_port_forward's direction is.
+		ek := req.ExecRunKill()
+		if ek == nil {
+			slog.Error("TaskHandler: ExecRunKill variant is nil")
+			return
+		}
+		resp := protocol.TaskControlResponse{Kind: protocol.TaskControlKind_ExecRunKill, RequestId: req.RequestId}
+		resp.SetExecRunKill(h.handleExecRunKill(cid, ek))
 		out := resp.MustAppend([]byte{byte(appwire.AppKind_TaskControl)})
 		conn.SendMessage(out) //nolint:errcheck
 
@@ -1588,6 +1637,12 @@ func (h *TaskHandler) handleList(conn ConnHandle, requestID uint32, connID strin
 			taskInfos[i].Viewers = uint16(v)
 			taskInfos[i].Cowriters = uint16(cw)
 		}
+		// Out-of-band execs running in this task's worktree. Read from the
+		// registry rather than stored, for the same reason as the observer
+		// counts — and OUTSIDE the sessionMux branch, because an exec needs no
+		// live session: a task that ended dirty keeps its worktree and can be
+		// exec'd into long after its mux is gone.
+		taskInfos[i].ExecCount = h.execs().countForTask(t.ID)
 	}
 	var body protocol.ListResultBody
 	body.SetRunners(runnerInfos)

@@ -18,6 +18,10 @@ import (
 // after the registry lookup, so its gate lives inline in the dispatch case,
 // after h.pforwards().get.
 //
+// ExecRunList is absent because it is INFO-scoped like ListPortForwards, and
+// ExecRunKill because its target task is only known after the registry
+// lookup, so its gate lives inline in the handler as KillPortForward's does.
+//
 // GitQuery sits in this map rather than beside the direction-dependent file
 // ops because it is read-only by construction — there is no write direction to
 // discriminate. It is also the one task-scoped kind that does NOT require
@@ -42,6 +46,7 @@ var requiredCap = map[protocol.TaskControlKind]protocol.Capability{
 	protocol.TaskControlKind_BoardPurge:       protocol.Capability_Purge,
 	protocol.TaskControlKind_BoardSubscribers: protocol.Capability_BoardObserve,
 	protocol.TaskControlKind_GitQuery:         protocol.Capability_FileRead,
+	protocol.TaskControlKind_OpenExecRun:      protocol.Capability_ExecRun,
 }
 
 // attachModeCap returns the capability set that satisfies an attach in the

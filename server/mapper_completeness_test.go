@@ -93,6 +93,10 @@ func TestToTaskInfoMapsEveryField(t *testing.T) {
 		// TaskEntry to copy.
 		"Viewers":   "filled by the list handler from the live SessionMux, not from TaskEntry",
 		"Cowriters": "filled by the list handler from the live SessionMux, not from TaskEntry",
+		// Same family again: counted at List time from the server's exec
+		// registry. An exec dies with its caller, so there is nothing about it
+		// for a TaskEntry to hold.
+		"ExecCount": "filled by the list handler from the exec registry, not from TaskEntry",
 	})
 	// The reflect sweep above CANNOT see bit-packed fields: is_attached and
 	// skills_injected share one unexported byte, so setting either makes the

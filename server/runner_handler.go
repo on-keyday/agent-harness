@@ -34,6 +34,15 @@ type RunnerHandler struct {
 	// Nil-safe: tests that do not exercise the via-relay path leave it unwired.
 	OnEstablishRelayResponse func(conn ConnHandle, resp protocol.EstablishRelayResponse)
 
+	// OnExecRunFinished, when non-nil, hands an out-of-band exec's outcome to
+	// the TaskHandler that registered it — a func field rather than a handler
+	// reference, like the callbacks above, because the two handlers are wired
+	// together by Server.New and not by owning each other.
+	//
+	// Nil-safe: a runner handler with no exec registry behind it drops the
+	// report, which is what a test constructing one in isolation wants.
+	OnExecRunFinished func(fin *protocol.ExecRunFinished)
+
 	// TakePendingViaInfo, when non-nil, retrieves and removes the
 	// ViaRegistrationInfo stashed by the OnDialed callback for the given
 	// ConnectionID. Populated on Phase C (HandleWithVia) dials; nil return
@@ -175,6 +184,11 @@ func (h *RunnerHandler) Handle(conn ConnHandle, payload []byte) {
 		}
 		if h.OnTaskStarted != nil {
 			h.OnTaskStarted(taskID)
+		}
+
+	case protocol.RunnerMessageType_ExecRunFinished:
+		if fin := msg.ExecRunFinished(); fin != nil && h.OnExecRunFinished != nil {
+			h.OnExecRunFinished(fin)
 		}
 
 	case protocol.RunnerMessageType_TaskFinished:

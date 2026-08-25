@@ -238,6 +238,9 @@ func New(cfg Config) *Server {
 	// (wired here, after taskHandler construction, since runnerHandler is built
 	// just above it).
 	s.runnerHandler.OnRemoteForwardConn = s.taskHandler.handleRemoteForwardConn
+	// Same wiring, same reason: an out-of-band exec's outcome arrives on the
+	// runner connection and belongs to the registry the TaskHandler holds.
+	s.runnerHandler.OnExecRunFinished = s.taskHandler.onExecRunFinished
 	s.runnerHandler.OnRemoteForwardBindResult = s.taskHandler.handleRemoteForwardBindResult
 	s.dispatcher = &Dispatcher{
 		OnRunnerControl:      s.runnerHandler.Handle,

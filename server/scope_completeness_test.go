@@ -45,6 +45,11 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_OpenPortForward:     targetGated,
 	protocol.TaskControlKind_RegisterPortForward: targetGated,
 	protocol.TaskControlKind_KillPortForward:     targetGated,
+	// open_exec_run names a task; exec_run_kill names an EXEC that resolves to
+	// one, and gates on that task exactly as kill_port_forward does with a
+	// forward id.
+	protocol.TaskControlKind_OpenExecRun: targetGated,
+	protocol.TaskControlKind_ExecRunKill: targetGated,
 	// prune names a set of tasks, or sweeps by age; filtered to the caller's
 	// scope in the PruneFn closure.
 	protocol.TaskControlKind_PruneTasks: targetGated,
@@ -53,6 +58,10 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 	protocol.TaskControlKind_ListConns:        infoScoped,
 	protocol.TaskControlKind_GetTaskLog:       infoScoped,
 	protocol.TaskControlKind_ListPortForwards: infoScoped,
+	// exec_run_list is bounded by task VISIBILITY and needs no capability, for
+	// the reason await_idle needs none: gating a fact `ls` already hands out
+	// would make the direct path cost more authority than polling for it.
+	protocol.TaskControlKind_ExecRunList: infoScoped,
 
 	protocol.TaskControlKind_ClientHello: noTarget,
 	protocol.TaskControlKind_Notify:      noTarget,
@@ -74,7 +83,7 @@ var kindTargetClass = map[protocol.TaskControlKind]targetClass{
 }
 
 func TestEveryTaskControlKindIsClassified(t *testing.T) {
-	for i := 0; i <= int(protocol.TaskControlKind_SetParent); i++ {
+	for i := 0; i <= int(protocol.TaskControlKind_ExecRunKill); i++ {
 		k := protocol.TaskControlKind(i)
 		if k.String() == fmt.Sprintf("TaskControlKind(%d)", i) {
 			continue // gap in the enum, not a real kind
@@ -89,12 +98,12 @@ func TestEveryTaskControlKindIsClassified(t *testing.T) {
 	}
 }
 
-// set_parent is the last kind; if the enum grows past it the loop above stops
-// short and silently covers nothing new.
-func TestSetParentIsStillTheLastKind(t *testing.T) {
-	next := protocol.TaskControlKind(int(protocol.TaskControlKind_SetParent) + 1)
+// exec_run_kill is the last kind; if the enum grows past it the loop above
+// stops short and silently covers nothing new.
+func TestExecRunKillIsStillTheLastKind(t *testing.T) {
+	next := protocol.TaskControlKind(int(protocol.TaskControlKind_ExecRunKill) + 1)
 	if next.String() != fmt.Sprintf("TaskControlKind(%d)", int(next)) {
-		t.Fatalf("a kind was appended after set_parent (%v) — raise the loop bound in "+
+		t.Fatalf("a kind was appended after exec_run_kill (%v) — raise the loop bound in "+
 			"TestEveryTaskControlKindIsClassified, which otherwise stops before it", next)
 	}
 }

@@ -60,6 +60,11 @@ var capTargetClasses = map[protocol.Capability]capTargetClass{
 	protocol.Capability_ExecCowrite: {kind: capResolvedVia, via: "attachModeScopeCap"},
 	protocol.Capability_ExecControl: {kind: capResolvedVia, via: "attachModeScopeCap"},
 
+	// exec_run names a task in both of its requests: open_exec_run carries a
+	// task id, and exec_run_kill carries an exec id that resolves to one. Both
+	// pass the bit by name.
+	protocol.Capability_ExecRun: {kind: capResolvedLiteral},
+
 	protocol.Capability_ExecResize: {
 		kind: capNoTargetResolution,
 		reason: "resize rides an ATTACHED stream; the attach that opened it was " +
