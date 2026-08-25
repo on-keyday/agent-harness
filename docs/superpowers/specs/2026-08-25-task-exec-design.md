@@ -55,6 +55,7 @@ it while writing — those are the rows worth a second look.
 | D7 | No timeout. `exec kill` and dropping the control stream are the ways to stop one | this spec |
 | D8 | New capability `exec_run = 0x8000`, and `all` widens to `0xffff` | this spec |
 | D9 | The exit code travels on harness wire, NOT as a new `objtrsf/exec` frame type | this spec |
+| D10 | **Synchronous only.** The child dies with the exec's streams; there is no detached form, because that form already exists and is called a task | this spec |
 
 ## Why the exit code is not a frame (D9)
 
@@ -266,9 +267,36 @@ a mutex, a monotonic counter starting at 1 (so 0 is never an id).
 - `exec_run_finished` from the runner: look the entry up, push one `ExecEvent`
   onto its control stream, close it, drop the entry.
 - `exec_run_kill`: cancel the runner side, push `killed`, drop the entry.
-- **The entry's lifetime is its control stream's lifetime.** A client that dies
-  takes its execs' registrations with it; there is no TTL to tune and no reaper
-  to write.
+- **The entry's lifetime is its control stream's lifetime, and the child's too.**
+  A client that dies takes its execs' registrations with it AND cancels their
+  children (D10); there is no TTL to tune, no reaper to write, and nothing left
+  running in a worktree with nobody watching it.
+
+## Synchronous only (D10)
+
+An exec lives exactly as long as its caller is there to receive it. When the
+control stream goes away — the client exited, the terminal closed, the ssh
+connection dropped — the runner cancels the child through the same
+SIGHUP → SIGTERM → SIGKILL ladder a detaching session's agent gets, and the
+registration is dropped. Nothing survives to be collected later.
+
+That is a decision, not an omission, and it rests on the asynchronous form
+already existing: **`submit` is the detached one.** A task runs without a
+client attached, buffers its output in the log store, reports its status and
+exit code, can be cancelled and can be pruned. Giving `exec` a detached mode
+would mean a second, worse copy of all of that — starting with an output ring
+per exec, because a child whose stdout nobody is reading needs somewhere to put
+it, and that ring is exactly the machinery `SessionMux` already maintains for
+detached sessions.
+
+So the line is: **`exec` answers "run this now and tell me", `submit` answers
+"run this and I will come back".** The CLI help says so, because an operator who
+reaches for `exec` to start something long-running should be told where to go
+instead rather than discovering it when their laptop sleeps.
+
+The ssh gateway inherits the same semantics, which is the point: a dropped ssh
+connection killing the command it was running is what `ssh host cmd` does
+everywhere else.
 
 ## Capability and scope
 
@@ -347,3 +375,6 @@ server first** — this is a `.bgn` change and Pitfall 10 is about exactly this.
 - **Running on a runner without a task.** The target is a task's worktree; a
   runner-wide shell is a different feature with a different blast radius.
 - **A timeout.** D7. A caller that wants one wraps the argv in `timeout(1)`.
+- **A detached / resumable exec.** D10. `submit` is that feature, and it has the
+  output store, the status machinery and the pruning an exec would have to grow
+  from scratch.
