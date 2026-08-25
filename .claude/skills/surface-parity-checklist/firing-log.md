@@ -1078,14 +1078,29 @@ omitted: 4, 5 (no keybinding, no modal — `--shell` is a word on a line that
          38 (a live pane renders a SESSION's screen; a runner's platform is a
          row field and an exec touches no session)
 n/a:     2 (no new grammar — `--shell` is a boolean and the argv quoting rule
-         already has its one implementation), 6 (no WebUI form field: the
-         command line is where typing belongs, and 34a says a form is not),
+         already has its one implementation),
          9, 26 (no spawn), 13 (whoami reports the caller's own authority), 14
          (`session ls` carries TASK rows; goos is a runner field), 15, 16, 17,
          20, 21, 22 (task surfaces — this is a runner field and a verb option),
          25, 28 (nothing persisted; goos is re-reported on every hello), 34,
          34a. S1–S6 (no agent added or changed).
-missed:  —
+missed:  **6 — twice, and the entry above originally recorded it as `n/a`.**
+         The verdict was written from MEMORY of this list rather than from
+         reading it, which is the decay the skill's own text warns about; the
+         operator asked "checklist は見てますかね?" and re-reading it found both
+         in minutes.
+         (a) The WebUI task sheet's 「⌨ コマンド実行」 prompts for a COMMAND and
+         then `tokenize`d the line into an argv sent verbatim — so `ls | wc -l`,
+         the first thing anyone types into a one-line prompt, reached `ls` with
+         a literal `|` as an argument. A one-line prompt labelled "command" IS
+         the shell case by construction; nobody types an argv into one. It now
+         sends the line with ShellLine and says so in its own label.
+         (b) The Compose **host-pin dropdown** showed `host [status]` and not
+         the OS. That dropdown is where an operator CHOOSES where to spawn, and
+         this fleet is deliberately mixed (Windows and Linux runners on one
+         server), so the platform a task lands on — its paths, its shell — was
+         the one fact missing from the one control that decides it. Adding
+         `os=` to the runner ROW and stopping there is what "6" is for.
 
 **The walk found nothing. The operator did, and then the code did.** Worth
 recording plainly, because three separate defects reached a live fleet through
@@ -1132,6 +1147,7 @@ Update when adding an entry.
 | 38 (live screen-rendering surfaces) | 5 | **1** | Born as an `omitted` (neither live pane draws a cursor). Second firing is the one that justifies the number: asking it revealed that both live panes ALREADY merged the Synth frames the native snapshot renderer was dropping, which turned a default-value argument into a three-surface asymmetry with two votes against one. Third was recorded as `omitted` and was a MISS: the reason given ("no verdict to print it beside") was false — the TUI grid pane already had a diagnostic overlay printing the same quantities cumulatively, and the operator named it within the hour. The lesson is about the search, not the item: it asks whether the live panes report this, and I searched for a place to print a VERDICT because that is what I had just built elsewhere. An `omitted` is only as good as the search behind it. Fourth firing applied that lesson deliberately: grepped `DiagLine` for what the pane ALREADY reports before recording the omission, and found stream quantities rather than task fields. |
 | 29 (result messages name the target and the change) | 6 | 0 | First row. Fired on a VERDICT rather than a mutation: `--detect` printing only a state would have been unarguable, so the report names the rule, its region and priority, and the text it read. Same item, one layer out from a caps/scope result line. Third firing went further out still — a MEASUREMENT printed beside a verdict, which needed `(no rule reads this yet)` to stop being read as part of it. |
 | 36 (agent-facing skill texts) | 2 | 0 | First row. Fired as a real gap rather than mirror drift: `exec_run` is grantable to an AGENT and no agent-facing text had the verb, so a task could hold a capability it could not find. The same list was also missing `exec_resize` from months earlier — one omission hides the next, which is why the list now points at `harness-cli caps` as the authority. |
+| 6 (WebUI controls) | 3 | **2** | Both misses in one walk, and both because the verdict was written from memory instead of from the list. A one-line prompt labelled "command" is a shell line, not an argv — `ls \| wc -l` reached `ls` with a literal pipe. And the host-pin dropdown, the control that decides WHICH platform a task lands on, was the one place the new `os=` was not added. The shape to remember: item 6 is not "did the WebUI get a form field", it is "does every control that ALREADY decides this now say so". |
 
 **Never fired yet:** 26. (21 came off this list with the `exec` entry: the WebUI task sheet is an ACTION list, so a verb owes it the action while the field goes to the row meta above it.) Too few walks to call either dead — revisit after
 another change that adds a spawn OPTION rather than a display field. (29, 30

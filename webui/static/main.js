@@ -4940,14 +4940,17 @@ const POLL_INTERVAL_MS = 5000;
     // line IS free text, unlike caps or a scope, which decompose into things
     // this form already has chips and radios for.
     addItem("⌨ コマンド実行", "", async () => {
-      const line = window.prompt(`${t.id.slice(0, 12)}… の worktree で実行するコマンド`, "git status");
-      if (!line) return;
-      const argv = tokenize(line);
-      if (!argv.length) return;
+      const line = window.prompt(`${t.id.slice(0, 12)}… の worktree で実行するコマンド (シェルで解釈)`, "git status");
+      if (!line || !line.trim()) return;
       setActiveTab("tasks");
       appendCmdOutput(`> exec ${t.id.slice(0, 12)}… ${line}`, true);
       try {
-        appendCmdOutput(await execRunToOutput(t.id, argv));
+        // The LINE goes to the runner's shell, not a split argv. A one-line
+        // prompt labelled "command" is the shell case by construction: nobody
+        // types an argv into one, and `ls | wc -l` — the first thing anyone
+        // tries — reached ls with a literal "|" as an argument until this.
+        // The typed-argv form lives on the command line, after `--`.
+        appendCmdOutput(await execRunToOutput(t.id, [line], true));
       } catch (err) {
         appendCmdOutput(`exec error: ${err.message}`);
       }
@@ -5899,7 +5902,11 @@ function renderHostSelect(sel, runners) {
       seen.add(h);
       const opt = document.createElement("option");
       opt.value = h;
-      opt.textContent = `${h}  [${r.status}]`;
+      // The OS belongs here, not only on the runner row: this dropdown is
+      // where an operator CHOOSES where to spawn, and the fleet is mixed
+      // (Windows and Linux runners on the same server). Which platform a
+      // task lands on decides its paths and its shell.
+      opt.textContent = `${h}  [${r.status}]  ${r.goos || "unknown"}`;
       sel.appendChild(opt);
     }
   }
