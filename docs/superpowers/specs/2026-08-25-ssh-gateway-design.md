@@ -41,12 +41,12 @@ by the operator on request.
 | D3 | The ssh user name selects the task | DECIDED (operator) |
 | D4 | The listener's lifetime is its host process's lifetime | DECIDED (operator) |
 | D5 | No ssh authentication on a loopback bind; a non-loopback bind requires `--authorized-keys` | DECIDED (operator); **reverses** an earlier D5, see § Authentication |
-| D6 | One ssh session per task per gateway; a second is refused | DECIDED (author) |
+| D6 | One **control** ssh session per task per gateway; a second control session is refused. Cowriters and viewers coexist freely | DECIDED (author) |
 | D7 | `Ctrl+]` **is** intercepted — it is this system's detach gesture (tmux `Ctrl+b d`), and SSH offers only disconnect, never detach | DECIDED (author); **reverses** an earlier D7 in this spec, see § Detach |
 | D8 | The terminal-mode resets are written on the two ends the gateway observes in time, and are impossible on a client-initiated disconnect — both groups, minus any group the negative control in § Testing shows is not needed | DECIDED (author) |
 | D9 | No `.bgn` / wire change | DECIDED (author) |
 | D10 | The pump and **both** reset strings live in `objtrsf/exec` — the screen group exported from `RemoteShell`'s literal, the input group *moved* out of this repo — and objtrsf lands and publishes first, then a `go.mod` bump | DECIDED (operator) |
-| D11 | The bare user name takes a **control** attach (and so takes the seat); `.view` and `.cowrite` are the other two forms | DECIDED (author) |
+| D11 | The bare user name is a **cowrite** attach, so arriving over ssh never evicts an attached client; `.control` and `.view` are the other two forms | DECIDED (operator) |
 
 ## Why client-side and not in the server
 
@@ -65,8 +65,9 @@ is the accepted trade for P1–P4, all of which are same-machine cases.
 ## Shape
 
 ```
-ssh -p 2222 <32-hex-task-id>@127.0.0.1        # control attach
-ssh -p 2222 <32-hex-task-id>.view@127.0.0.1   # view attach
+ssh -p 2222 <32-hex-task-id>@127.0.0.1           # cowrite: type, evict nobody
+ssh -p 2222 <32-hex-task-id>.control@127.0.0.1   # take the seat (owns the PTY size)
+ssh -p 2222 <32-hex-task-id>.view@127.0.0.1      # watch only
 ```
 
 ```
@@ -195,40 +196,41 @@ change what the already-running agent renders.
 
 | User name | Result |
 | --- | --- |
-| 32 lowercase hex chars | that task, `protocol.AttachMode_Control` |
+| 32 lowercase hex chars | that task, `protocol.AttachMode_Cowrite` |
+| 32 lowercase hex chars + `.control` | that task, `protocol.AttachMode_Control` |
 | 32 lowercase hex chars + `.view` | that task, `protocol.AttachMode_View` |
-| 32 lowercase hex chars + `.cowrite` | that task, `protocol.AttachMode_Cowrite` |
 | anything else | authentication succeeds, the session channel is rejected with a message naming the accepted forms |
 
 The rejection deliberately happens at channel open, not at authentication:
 failing authentication for a malformed user name makes ssh retry keys and then
 report a credentials problem, which points the operator at the wrong thing.
 
-**Control is the bare form, and it takes the seat** (D11). `SessionMux.Attach`
-is a takeover: it cancels the previous controller and `CloseBoth`s its stream
-(`server/session_mux.go:410–428`). So `ssh <id>@…` while the TUI holds a control
-attach on that task detaches the TUI's. The TUI's grid panes are viewers and are
-untouched.
+**The bare form is cowrite, so `ssh <id>@…` never takes the seat** (D11).
+`SessionMux.Attach` is a takeover — it cancels the previous controller and
+`CloseBoth`s its stream (`server/session_mux.go:410–428`) — so a control default
+would mean that reaching a task over ssh silently detaches whatever the operator
+had attached in the TUI. Arriving somewhere should not evict you from it. The
+takeover is still available, spelled out, as `.control`.
 
-That is the right default for a terminal the operator is sitting in: control is
-what owns the PTY size, and one human types in one place at a time.
-`.cowrite` is the way to type without taking the seat.
+The cost of the default is the PTY size, and only while someone else holds the
+seat. Two gates decide an observer's resize and both must pass: `allowResize`,
+resolved per caller from `Capability_ExecResize` (`server/task_handler.go:1401`
+— the gateway passes it, since `callerCaps` returns `Capability_All` for a
+connection with no principal task, `server/capabilities.go:94–98`), and then
+`applyObserverWinSize`, which honours the frame **only while the control seat is
+empty**. Last-writer-wins was considered there and rejected after use: an
+observer resize redrew a human's terminal at a size they had not chosen, and
+their next SIGWINCH silently undid it.
 
-What `.cowrite` costs is the size. Two gates decide an observer's resize, and
-both must pass: `allowResize`, resolved per caller from
-`Capability_ExecResize` (`server/task_handler.go:1401` — the gateway passes it,
-since `callerCaps` returns `Capability_All` for a connection with no principal
-task, `server/capabilities.go:94–98`), and then `applyObserverWinSize`, which
-honours the frame **only while the control seat is empty**
-(`server/session_mux.go`). Last-writer-wins was considered there and rejected
-after use: an observer resize redrew a human's terminal at a size they had not
-chosen, and their next SIGWINCH silently undid it.
+So:
 
-So a `.cowrite` ssh session alongside a controller renders at the *controller's*
-size, and an ssh window of a different size shows a broken screen. With no
-controller attached, the same session sizes the PTY itself. `.cowrite` is for
-typing alongside someone, not for a second full-size terminal — which is what
-the bare control form is for.
+| State of the task | `ssh <id>@…` (cowrite) |
+| --- | --- |
+| Nobody holds the seat — the ordinary state of a detached session | the ssh window sizes the PTY itself; everything renders at its own size |
+| A controller is attached (the TUI, a CLI attach, a `.control` ssh session) | the ssh window renders at *that* client's size, and a differently-sized window shows a broken screen |
+
+The second row is the case where `.control` is the answer, and the operator
+reaching for it is choosing the eviction rather than being handed it.
 
 ## Data plane
 
@@ -268,17 +270,20 @@ xterm parser badly enough to force a page reload.
 A gateway is on the browser's side of that line: nothing stops two `ssh` windows
 from naming the same task.
 
-The gateway therefore keeps a map of task id → live session and **refuses the
-second one**, writing a message that names the already-connected session. It
-does not supersede: a control attach evicts the previous one server-side
-(`server/session_mux.go:373`), so superseding would let a second `ssh` silently
-steal the seat from the operator's own TUI or CLI attach. A refusal is visible;
-a theft is not.
+What is scarce is the control seat, and only it. The gateway therefore keeps a
+map of task id → live **control** session and **refuses a second control
+session** on that task, writing a message that names the one already connected.
+It does not supersede: `SessionMux.Attach` evicts the previous controller
+server-side (`server/session_mux.go:373`), so superseding would let a second
+`ssh` silently take the seat from the operator's own TUI or CLI attach. A
+refusal is visible; a theft is not.
 
-The refusal is per task *and* per mode: it is the control seat that is scarce.
-Two ssh sessions on different tasks are unaffected, and so are `.view` or
-`.cowrite` sessions alongside a control session on the same task — neither takes
-the seat (`cli/streamattach_native.go:22`, `server/session_mux.go:488`).
+Cowriters and viewers are not counted or refused. Coexisting is what those modes
+are for — the mux fans output out to all of them and forwards a cowriter's input
+without touching the seat (`server/session_mux.go:488`,
+`cli/streamattach_native.go:22`) — and since the default user-name form is
+cowrite (D11), the ordinary case of two `ssh` windows on one task is simply
+allowed.
 
 ## Detach and terminal restoration (D7, D8)
 
@@ -476,10 +481,16 @@ Integration (`integration/`), using `golang.org/x/crypto/ssh` as the *client* so
 the suite does not depend on an `ssh` binary being installed:
 
 - connect → `pty-req` → `shell` → the replay burst arrives on the channel
-- `window-change` reaches the session (assert against the size the session
-  reports, not against the frame having been written)
-- second connection to the same task is refused with the expected message
-- a `.view` connection alongside a control connection is accepted
+- `window-change` from a bare (cowrite) connection with the seat empty reaches
+  the session — assert against the size the session reports, not against the
+  frame having been written
+- the same `window-change` with a controller attached does **not** change the
+  size: the seat rule (D11), which is the half a frame-was-written assertion
+  would miss entirely
+- a second bare connection to the same task is accepted; a second `.control`
+  connection is refused with the expected message
+- a `.control` connection evicts a control attach held elsewhere, and a bare
+  one does not
 - closing the channel leaves the task alive and `Detached`
 - the mode-reset bytes are the last thing written before close
 
