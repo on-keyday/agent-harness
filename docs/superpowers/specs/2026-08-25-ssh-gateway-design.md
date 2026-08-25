@@ -558,6 +558,34 @@ emitting escape sequences. Run 2 depends on bytes from the live app rather than
 on the replay, so it is the genuinely open one; a null there means the OpenSSH
 client cleans up more than expected, which is worth knowing either way.
 
+### Observed, 2026-08-25
+
+The observable: the ssh client ran inside a harness `bash` session, so its own
+terminal is that session's PTY, and `session snapshot` renders it through a real
+screen model. A terminal left on the alternate buffer therefore SHOWS `htop`
+where the shell prompt should be — no guessing from bytes.
+
+Suppression was applied at the gateway's call site (one line in
+`cli/sshgw/session.go`) rather than by editing the local objtrsf checkout as the
+plan suggested: it needs no `replace` directive and no cross-repo rebuild, and
+it suppresses exactly what this path writes.
+
+| Run | Suppressed | Result |
+| --- | --- | --- |
+| baseline | nothing | after `Ctrl+]`: the shell prompt is back, `htop`'s screen is gone, the outer shell runs a command normally |
+| 2 | `ScreenModeReset` | **broke.** The outer terminal stayed on the alternate buffer, still showing `htop`. The screen group is load-bearing, so the spec's one genuinely open question is answered and D8 keeps both groups |
+| 1 | `InputModeReset` | **not run as a suppression.** Leaving mouse reporting on is only observable by generating a mouse event, which this setup cannot do. Measured the mechanism's first half instead (below) |
+| — | n/a — disconnected with `~.` out of `htop` | the terminal was left on the alternate buffer, exactly as § Detach's third row predicts. The limitation is observed behaviour, not an assumption about what OpenSSH does on the way out |
+
+For run 1, what was measured is that the modes ARRIVE: with `htop` running in
+the target session, the bytes the gateway wrote to the ssh channel contained
+`\x1b[?1000h` (X11 mouse), `\x1b[?1006h` (SGR mouse coordinates), `\x1b[?2004h`
+(bracketed paste), `\x1b[?25l` and `\x1b[?1049h`. `?1002h`/`?1003h` did not
+appear, because `htop` does not enable them. So the modes this group turns off
+demonstrably reach the ssh client's terminal; whether leaving them on is visible
+to its owner is the half that needs a mouse. The group is kept on that plus the
+incident reproduced in its own doc comment.
+
 Verification runs through the `make` targets (`make check`, `make wasm-check`,
 `make vet`, `make test`), not ad-hoc `go build ./...`; `wasm-check` is the one
 that catches a missing `//go:build !js`.
